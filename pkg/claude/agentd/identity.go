@@ -67,6 +67,9 @@ type peer struct {
 	HasClaudeAncestor bool
 	HumanTokenValid   bool
 	DashboardHuman    bool
+	// ExternalSteward is set only by authenticateExternalSteward: ConvID is the
+	// principal a verified credential named, not anything in the process tree.
+	ExternalSteward bool
 }
 
 // peerFromContext returns the peer attached by the identity middleware.
@@ -114,7 +117,12 @@ const (
 //     caller is therefore never offered the token branch.
 //   - Only a caller with no CC ancestor is eligible to be the human, and
 //     only with a valid token. Anything else is classUnconfirmed → 403.
+//   - An external steward comes before all of these: it is an agent whatever
+//     else the request carries, which is what keeps it out of requireHuman.
 func classify(p *peer) callerClass {
+	if p.ExternalSteward {
+		return classAgent
+	}
 	if p.DashboardHuman {
 		return classHuman
 	}
@@ -204,8 +212,9 @@ func authedCaller(w http.ResponseWriter, r *http.Request) (convID string, isHuma
 func asDashboardHumanPeer(r *http.Request) *http.Request {
 	// A peer's operator on a peer-granted route is not this node's human: its
 	// request stays unidentified, so human-only checks refuse it and every
-	// permission gate answers from its grants (peer_grant_routes.go).
-	if peerGrantFromRequest(r) != nil {
+	// permission gate answers from its grants (peer_grant_routes.go). The same
+	// holds for a peer's action on one agent (peer_actions.go).
+	if peerGrantFromRequest(r) != nil || peerActionFromRequest(r) != nil {
 		return r
 	}
 	p := &peer{PID: 1, DashboardHuman: true}
@@ -259,10 +268,18 @@ func isDashboardSpawnPeer(r *http.Request) bool {
 func withIdentity(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := &peer{}
+		credential := takeExternalStewardCredential(r)
 		if uconn, ok := r.Context().Value(unixConnKey{}).(*net.UnixConn); ok && uconn != nil {
 			if pid, err := peerPID(uconn); err == nil {
 				p.PID = pid
 				claimedID := strings.TrimSpace(r.Header.Get(agentipc.SessionClaimHeader))
+				if credential != "" {
+					if !authenticateExternalSteward(w, r, p, claimedID, credential) {
+						return
+					}
+					h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), peerKey{}, p)))
+					return
+				}
 				runtimeClaim := strings.TrimSpace(r.Header.Get(session.HTTPProxyRuntimeClaimHeader))
 				httpGatewayRoute := strings.HasPrefix(r.URL.Path, "/v1/models/") || r.URL.Path == "/v1/http/environment" || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/")
 				proofClaim, proofKey := "pane:"+claimedID, brokerProofKey
@@ -378,17 +395,22 @@ func requireAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 // `agent.default_permissions` / `agent.permission_overrides`. Keep this
 // list in sync with the agent-coord skill / docs.
 const (
-	PermSelfRename                        = "self.rename"
-	PermSelfCompact                       = "self.compact"
-	PermSelfInterrupt                     = "self.interrupt"
-	PermSelfClone                         = "self.clone"
-	PermSelfRemoteControl                 = "self.remote-control"
-	PermSelfTask                          = "self.task"
-	PermSelfPR                            = "self.pr"
-	PermSelfTags                          = "self.tags"
-	PermSelfDirRepair                     = "self.dir-repair"
-	PermSelfMorph                         = "self.morph"
-	PermSelfProcess                       = "self.process"
+	PermSelfRename        = "self.rename"
+	PermSelfCompact       = "self.compact"
+	PermSelfInterrupt     = "self.interrupt"
+	PermSelfClone         = "self.clone"
+	PermSelfRemoteControl = "self.remote-control"
+	PermSelfTask          = "self.task"
+	PermSelfPR            = "self.pr"
+	PermSelfTags          = "self.tags"
+	PermSelfDirRepair     = "self.dir-repair"
+	PermSelfMorph         = "self.morph"
+	PermSelfProcess       = "self.process"
+	PermSelfPage          = "self.page"
+	// Live pages another member of the page's group showed (pages_share.go).
+	PermGroupsPagesRead                   = "groups.pages.read"
+	PermGroupsPagesPatch                  = "groups.pages.patch"
+	PermGroupsPagesManage                 = "groups.pages.manage"
 	PermAgentProcess                      = "agent.process"
 	PermGroupsMembersProcess              = "groups.members.process"
 	PermAgentMorph                        = "agent.morph"
@@ -485,6 +507,10 @@ const (
 	// environment. Keep it separate from profiles.manage: permission to edit a
 	// spawn-dialog preset must not imply permission to widen a sandbox.
 	PermSandboxProfilesManage = "sandbox-profiles.manage"
+	// PermRelaunchPolicyManage changes the global relaunch policy
+	// (relaunch_policy.go), and lets an agent set a per-agent row that keeps
+	// old settings (spawn_relaunch_overrides.go). Reads are open.
+	PermRelaunchPolicyManage = "relaunch-policy.manage"
 	// Draft is intentionally separate from Manage: a dashboard-summoned scribe
 	// may propose a validated profile for human review, but cannot persist it,
 	// assign it, or use it to launch an agent.
@@ -511,8 +537,9 @@ const (
 	// Group-route authority is deliberately split: publishing exposes a
 	// publisher-owned listener, while consuming opens a lease to a peer route.
 	// Neither slug is a global default and neither substitutes for membership.
-	PermRoutesPublish = "routes.publish"
-	PermRoutesConsume = "routes.consume"
+	PermRoutesPublish     = "routes.publish"
+	PermRoutesPublishHost = "routes.publish-host"
+	PermRoutesConsume     = "routes.consume"
 	// The Git-remote / GitHub proxy lends agentd's OWN credentials — an SSH
 	// key, a GitHub token — to an agent that has been deliberately sandboxed
 	// away from them. That makes these unlike every other slug here: holding
@@ -533,6 +560,12 @@ const (
 	PermGitHubRead  = "proxy.github.read"
 	PermGitHubWrite = "proxy.github.write"
 	PermGitHubMerge = "proxy.github.merge"
+	// The GitLab trio mirrors the GitHub one verb for verb: read, write,
+	// merge, each remote-scoped, none default-granted, with merge split off
+	// from write for the same reason.
+	PermGitLabRead  = "proxy.gitlab.read"
+	PermGitLabWrite = "proxy.gitlab.write"
+	PermGitLabMerge = "proxy.gitlab.merge"
 	PermHTTP        = "proxy.http"
 	PermLinearRead  = "proxy.linear.read"
 	PermLinearWrite = "proxy.linear.write"
@@ -586,7 +619,7 @@ func resolvePermission(convID, slug string) permResolution {
 func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int64) {
 	cfg, _ := config.LoadShared()
 	v := resolveEffectivePermissionVerdict(convID, slug,
-		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(permissionUmbrellaFor(slug)))
 	return contextFreeResolution(v), v.SudoGrantID
 }
 
@@ -594,40 +627,48 @@ func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int6
 // gates use. They need the whole verdict, not just the resolution, because a
 // scoped allow can only be answered against the request's ActionContext.
 func resolvePermissionVerdictForRequest(r *http.Request, convID, slug string) permVerdict {
-	src := localPermissionSources(loadPermSources(convID))
+	src := sudoSourcesForRequest(r, localPermissionSources(loadPermSources(convID)))
 	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
-		return resolveEffectivePermissionVerdictFrom(src, slug, defaults[slug], defaults[PermGroupsAdmin])
+		return resolveEffectivePermissionVerdictFrom(src, slug, defaults[slug], defaults[permissionUmbrellaFor(slug)])
 	}
 	cfg, _ := config.Load()
 	return resolveEffectivePermissionVerdictFrom(src, slug,
-		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(permissionUmbrellaFor(slug)))
 }
 
-// resolveEffectivePermissionVerdict adds the groups.admin umbrella to the
-// ordinary exact-slug resolver. Exact decisions always go first: in
-// particular, a dedicated deny suppresses an umbrella grant. An umbrella deny
-// does not suppress a separately granted dedicated capability; it only removes
-// the umbrella source.
-func resolveEffectivePermissionVerdict(convID, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
-	src := localPermissionSources(loadPermSources(convID))
-	return resolveEffectivePermissionVerdictFrom(src, slug, defaultAllowed, adminDefaultAllowed)
+// resolveEffectivePermissionVerdict adds the umbrella slugs (groups.admin, and
+// resources.read/write: permissionUmbrellaFor) to the ordinary exact-slug
+// resolver. Exact decisions always go first: in particular, a dedicated deny
+// suppresses an umbrella grant. An umbrella deny does not suppress a
+// separately granted dedicated capability; it only removes the umbrella
+// source. umbrellaDefaultAllowed is whether slug's umbrella is a default.
+//
+// It has no request to count against, so a use-limited grant does not speak here.
+func resolveEffectivePermissionVerdict(convID, slug string, defaultAllowed, umbrellaDefaultAllowed bool) permVerdict {
+	src := withoutLimitedSudo(localPermissionSources(loadPermSources(convID)))
+	return resolveEffectivePermissionVerdictFrom(src, slug, defaultAllowed, umbrellaDefaultAllowed)
 }
 
-func resolveEffectivePermissionVerdictFrom(src permSources, slug string, defaultAllowed, adminDefaultAllowed bool) permVerdict {
+func resolveEffectivePermissionVerdictFrom(src permSources, slug string, defaultAllowed, umbrellaDefaultAllowed bool) permVerdict {
 	if !IsKnownPermSlug(slug) {
 		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
 	}
 	exact := resolvePermissionVerdictFrom(src, slug, defaultAllowed)
-	if exact.Resolution == permDeny || !IsGroupsAdminImpliedSlug(slug) {
+	umbrella := permissionUmbrellaFor(slug)
+	if exact.Resolution == permDeny || umbrella == "" {
 		return exact
 	}
-	admin := resolvePermissionVerdictFrom(src, PermGroupsAdmin, adminDefaultAllowed)
+	// An umbrella may itself sit under one (resources.write implies
+	// resources.read), so it resolves through this same function. That
+	// second step reads no defaults list: neither resource umbrella is meant
+	// to be a default.
+	admin := resolveEffectivePermissionVerdictFrom(src, umbrella, umbrellaDefaultAllowed, false)
 	if exact.Resolution == permUndecided && admin.Resolution == permAllow {
 		return admin
 	}
 	// A scoped dedicated allow may not cover this particular action. An
 	// unscoped umbrella still does, so prefer it here; otherwise the gate would
-	// stop at the unsatisfied dedicated scope and never reach groups.admin.
+	// stop at the unsatisfied dedicated scope and never reach the umbrella.
 	if exact.Resolution == permAllow && contextFreeResolution(exact) == permUndecided &&
 		admin.Resolution == permAllow && contextFreeResolution(admin) == permAllow {
 		return admin
@@ -698,7 +739,10 @@ type permVerdict struct {
 
 type sudoPermSource struct {
 	ID        int64
+	Slug      string
 	ScopeJSON string
+	// Limited marks a grant with a use limit: see sudoSourcesForRequest.
+	Limited bool
 }
 
 type overridePermSource struct {
@@ -730,6 +774,8 @@ type permSources struct {
 	// authorization is structurally tied to one target group (routes). The
 	// ordinary resolver still unions group scopes through group above.
 	groupRows map[string][]db.AgentGroupPermission
+	// externalSteward applies the ceiling: see external_steward.go.
+	externalSteward bool
 }
 
 // loadPermSources reads every standing source for convID. Read errors
@@ -771,16 +817,18 @@ func loadPermSourcesForState(convID string, failOnTierReadError, allowAway bool)
 		override:   map[string]overridePermSource{},
 		group:      map[string][]string{},
 		groupRows:  map[string][]db.AgentGroupPermission{},
+
+		externalSteward: db.IsExternalStewardConv(convID),
 	}
 	// ListActiveSudoGrants orders by expires_at ascending, so the first
 	// row for a slug is the one LookupActiveSudoGrantID would have picked.
-	if grants, err := db.ListActiveSudoGrants(convID); err == nil {
+	if grants, err := db.ListActiveSudoGrants(convID); err == nil && !out.externalSteward {
 		for _, g := range grants {
 			if g == nil {
 				continue
 			}
 			if _, seen := out.sudo[g.Slug]; !seen {
-				out.sudo[g.Slug] = sudoPermSource{ID: g.ID, ScopeJSON: g.ScopeJSON}
+				out.sudo[g.Slug] = sudoPermSource{ID: g.ID, Slug: g.Slug, ScopeJSON: g.ScopeJSON, Limited: g.UsesLimit > 0}
 			}
 		}
 	}
@@ -848,6 +896,12 @@ func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug 
 func resolvePermissionVerdictFrom(src permSources, slug string, defaultAllowed bool) permVerdict {
 	if !src.resolvable {
 		return permVerdict{Resolution: permUndecided, Source: permSourceNone}
+	}
+	if src.externalSteward {
+		if externalStewardRefuses(slug) {
+			return permVerdict{Resolution: permDeny, Source: permSourceNone}
+		}
+		defaultAllowed = false
 	}
 	if grant, ok := src.sudo[slug]; ok && grant.ID != 0 {
 		return permVerdict{Resolution: permAllow, Source: permSourceSudo, SudoGrantID: grant.ID, ScopeJSON: []string{grant.ScopeJSON}}
@@ -1012,7 +1066,7 @@ func resolvePermissionVerdictForAction(r *http.Request, convID, slug string, act
 // resolveRemotePermissionVerdictForActionFrom also accepts sources loaded under
 // the route gate's strict read policy, without weakening that caller's errors.
 func resolveRemotePermissionVerdictForActionFrom(r *http.Request, src permSources, slug string, actx ActionContext) permVerdict {
-	if !db.FederationPeerUnrestricted(actx.RemotePeer) {
+	if actx.strictPeerScope || !db.FederationPeerUnrestricted(actx.RemotePeer) {
 		return resolveRemotePermissionVerdictFrom(src, slug)
 	}
 	// Unrestricted peers also admit truly unscoped standing grants. Bind those
@@ -1114,7 +1168,7 @@ func resolveRemotePermissionVerdictFrom(src permSources, slug string) permVerdic
 	}
 	// Copy only the requested slug. Do not mutate shared source maps: discovery
 	// and audit readers may evaluate local and remote actions from one snapshot.
-	remote := permSources{resolvable: src.resolvable,
+	remote := permSources{resolvable: src.resolvable, externalSteward: src.externalSteward,
 		sudo: map[string]sudoPermSource{}, override: map[string]overridePermSource{}, group: map[string][]string{}}
 	if sudo, ok := src.sudo[slug]; ok && hasPeer(sudo.ScopeJSON) {
 		remote.sudo[slug] = sudo
@@ -1246,13 +1300,10 @@ func permissionVerdictAllowsAction(v permVerdict, convID, perm string, actx Acti
 // (including owner/member-derived grants). This decision-time check retains
 // scoped sudo provenance that a context-free audit re-resolution cannot see.
 func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionContext) int64 {
-	cfg, _ := config.Load()
-	src := loadPermSources(convID)
-	withoutSudo := src
-	withoutSudo.sudo = map[string]sudoPermSource{}
-	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
-		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
-	if allowed, _ := permissionVerdictAllowsAction(standing, convID, perm, actx); allowed {
+	if grant, ok := limitedSudoSource(r, convID, perm, actx); ok {
+		return grant.ID
+	}
+	if standingPermissionAllows(convID, perm, actx) {
 		return 0
 	}
 	effective := resolvePermissionVerdictForRequest(r, convID, perm)
@@ -1260,6 +1311,27 @@ func loadBearingSudoGrantID(r *http.Request, convID, perm string, actx ActionCon
 		return effective.SudoGrantID
 	}
 	return 0
+}
+
+// standingPermissionAllows reports whether the action is allowed with every
+// sudo grant left out.
+func standingPermissionAllows(convID, perm string, actx ActionContext) bool {
+	withoutSudo := loadPermSources(convID)
+	withoutSudo.sudo = map[string]sudoPermSource{}
+	return permissionAllowedFrom(withoutSudo, convID, perm, actx)
+}
+
+// permissionAllowedFrom reports whether the given sources allow the action.
+func permissionAllowedFrom(src permSources, convID, perm string, actx ActionContext) bool {
+	cfg, _ := config.Load()
+	verdict := resolveEffectivePermissionVerdictFrom(src, perm,
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(permissionUmbrellaFor(perm)))
+	if actx.bulkGroupMemberCoverage {
+		allowed, _, err := permissionVerdictAllowsBulkGroupAction(verdict, convID, perm, actx)
+		return err == nil && allowed
+	}
+	allowed, _ := permissionVerdictAllowsAction(verdict, convID, perm, actx)
+	return allowed
 }
 
 // requirePermissionEx is the shared core of requirePermission and
@@ -1318,6 +1390,9 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
+	if refuseExternalStewardCeiling(w, p, perm) {
+		return "", false
+	}
 	title := ""
 	row, _ := db.GetConvIndex(p.ConvID)
 	if row != nil {
@@ -1354,6 +1429,9 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 			writeError(w, http.StatusInternalServerError, "io", evalErr.Error())
 			return "", false
 		}
+		if allowed && !spendSudoUse(w, r, p.ConvID, perm, actionCtx) {
+			return "", false
+		}
 		recordAuditPermissionScope(r, perm, matched)
 	}
 	if !allowed {
@@ -1368,6 +1446,12 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 					return "", false
 				}
 			}
+
+			slot, ok := admitApproval(w, p.ConvID)
+			if !ok {
+				return "", false
+			}
+			defer approvals.release(slot)
 
 			// Snapshot a safe description now so the popup can show what's
 			// being approved. The preview helper replaces r.Body with a
@@ -1385,6 +1469,11 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 				bodyPreview = raw
 				bodyLabel = "Clipboard content"
 			}
+			bodyPreview, bodyLabel, heldErr := approvalPreviewFacts(r, slot, bodyPreview, bodyLabel)
+			if heldErr != nil {
+				refuseApprovalBody(w, heldErr)
+				return "", false
+			}
 			// The scope the popup's scoped "always allow" may persist is
 			// derived from the SAME context this gate evaluates grants
 			// against — never re-parsed from the URL or body — so a scope the
@@ -1392,32 +1481,11 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 			// than leaving them clicking the same popup forever. A site that
 			// describes nothing offers only the blanket button.
 			scopeJSON, scopeDisplay := approvalScopeForSlug(perm, actionContextOf(actx))
-			observabilityPath, sensitivePath := projectSafeHTTPLogPath(r.URL.Path)
-			observabilityQuery := r.URL.RawQuery
-			if sensitivePath {
-				observabilityQuery = ""
-			}
-			req := &approvalRequest{
-				id:              newApprovalID(),
-				perm:            perm,
-				convID:          p.ConvID,
-				convTitle:       title,
-				method:          r.Method,
-				path:            observabilityPath,
-				rawQuery:        observabilityQuery,
-				bodyPreview:     bodyPreview,
-				bodyLabel:       bodyLabel,
-				targetGroup:     targetGroup,
-				targetConvID:    targetConvID,
-				targetConvTitle: targetConvTitle,
-				autoGrantable:   IsAutoGrantableSlug(perm),
-				scopeJSON:       scopeJSON,
-				scopeDisplay:    scopeDisplay,
-				createdAt:       time.Now(),
-				timeout:         timeout,
-				decision:        make(chan approvalOutcome, 1),
-				extend:          make(chan time.Duration, 1),
-			}
+			req := newAgentApprovalRequest(r, perm, p.ConvID, title, timeout)
+			req.bodyPreview, req.bodyLabel = bodyPreview, bodyLabel
+			req.targetGroup, req.targetConvID, req.targetConvTitle = targetGroup, targetConvID, targetConvTitle
+			req.autoGrantable = IsAutoGrantableSlug(perm)
+			req.scopeJSON, req.scopeDisplay = scopeJSON, scopeDisplay
 			if requestHumanApproval(req, popupBaseURL) {
 				markWriteProofHumanApproval(r, perm, p.ConvID)
 				return p.ConvID, true
@@ -1426,8 +1494,19 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 				fmt.Sprintf("human declined or timed out after %s on permission %q", timeout, perm))
 			return "", false
 		}
+		if a := actionContextOf(actx); a.RemotePeer != "" {
+			// A remote action passes only a peer= grant: the config defaults
+			// the local hint names never reach a peer, so name the scope.
+			reach := a.RemotePeer
+			if a.RemoteGroup != "" {
+				reach += "/" + a.RemoteGroup
+			}
+			writeError(w, http.StatusForbidden, "permission",
+				fmt.Sprintf("caller is not granted permission %q for peer=%s (an operator grants it to the agent, or to a group it is in, with --scope peer=%s; or call again with "+askHumanHint+" to ask the human via popup)", perm, reach, reach))
+			return "", false
+		}
 		writeError(w, http.StatusForbidden, "permission",
-			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json; or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)", perm))
+			fmt.Sprintf("caller is not granted permission %q (grant via agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json; or call again with "+askHumanHint+" to ask the human via popup)", perm))
 		return "", false
 	}
 	return p.ConvID, true
@@ -2230,3 +2309,8 @@ func connAcceptedAt(ctx context.Context) time.Time {
 	at, _ := ctx.Value(connAcceptedAtKey{}).(time.Time)
 	return at
 }
+
+// askHumanHint is how a permission denial tells an API caller to ask the
+// human: the request header. The tclaude CLI rewrites it to its own
+// --ask-human flag when it prints the error (agent.DaemonError).
+const askHumanHint = "X-Tclaude-Ask-Human: <duration>"

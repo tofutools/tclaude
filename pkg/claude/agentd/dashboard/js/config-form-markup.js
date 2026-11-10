@@ -1,11 +1,34 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { createContext, h } from 'preact';
-import { useContext, useState } from 'preact/hooks';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { browserNotifyPermission, requestBrowserNotifyPermission } from './browser-notify.js';
+import { Button } from './ui-components.js';
+import { pickDirectory } from './helpers.js';
+import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNotifyPermission } from './browser-notify.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
-import { configLocation, configPanel, setConfigPanel } from './config-panel.js';
+import { CONFIG_PANEL_ALIASES, configLocation, configPanel, configSection, setConfigPanel } from './config-panel.js';
+import { FormFillBar } from './form-fill-bar.js';
+import { clearSecret, configAccess, configNodeName, configPeerTarget, keepSecret, panelAccess, panelRowKeys, registerPanelKey, remoteAccess, replaceSecret, rowAccess, secretEdits, secretOf } from './config-access.js';
+import { nodeHref } from './fleet-model.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
+import { KnowledgeSourceRow } from './knowledge-source-island.js';
+import { ExternalStewardManager } from './config-external-stewards.js';
+import { RelaunchPolicyTable } from './relaunch-policy-table.js';
+import { RemoteAdminPanel } from './remote-admin.js';
+import { ServicePanel } from './config-service.js';
+import { LauncherPanel } from './config-launcher.js';
+import { UpdatesPart, afterRender } from './config-installation.js';
+import { UpdateNowPanel, createNodeUpdateActions } from './node-update.js';
+import { shellConfirm, shellToast } from './shell-state.js';
+import { StewardDefaultPermissions } from './steward-default-permissions.js';
+import { dashboardState } from './snapshot-store.js';
+import { DICTATED_MARKER } from './companion-model.js';
+import { COMMA_PAUSE_DEFAULT, CONTINUOUS_IDLE_DEFAULT, CONTINUOUS_IDLE_MAX, CONTINUOUS_IDLE_MIN, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN } from './voice-config.js';
+import { LocalSpeechRow, syncVoiceSection } from './voice-config-section.js';
+import { KEYBINDINGS_LIST, shortcutText } from './keybindings.js';
+import { SIDE_PANEL_TUNING_FIELDS, sidePanelTuningId } from './side-panel-tuning-fields.js';
+import { KeyboardShortcutList, Keys } from './shortcut-keys.js';
+import { CUSTOM_TIMEOUT_DEFAULT, INSTALL_DIR_DEFAULT, LastScheduledRun, methodInfo, selfUpdateDeps, selfUpdateDraft, selfUpdateMeta, MethodOptions, PackageManagerNote, SETUP_FLAGS, SETUP_HARNESSES, ScheduleNote, SelfUpdateDetected, SelfUpdateMetaLoader, SelfUpdateMethodNote, SetupPreview, ShadowNote, ShowWhen, WEEKDAYS, needsPackageManagerAck } from './config-self-update.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -27,6 +50,50 @@ function ConfigSelect(props) { return routedControl('select', props); }
 function ConfigTextarea(props) { return routedControl('textarea', props); }
 function ConfigButton(props) { return routedControl('button', props); }
 
+// StewardDirInput is steward.dir: a typed path plus the shared directory
+// picker. A pick writes the input and fires an input event on it, so the form
+// marks itself dirty exactly as typing would.
+function StewardDirInput() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const browse = async () => {
+    if (busy) return;
+    const input = document.getElementById('cfg-steward-dir');
+    setError('');
+    setBusy(true);
+    try {
+      const result = await pickDirectory({
+        startDir: (input?.value || '').trim(),
+        title: 'Select the directory a new Steward starts in',
+      });
+      if (result.error) setError(result.error);
+      else if (result.path && input) {
+        input.value = result.path;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<div class="cfg-dir-picker">
+    <div class="cfg-dir-picker-row">
+      <${ConfigInput} type="text" id="cfg-steward-dir" spellcheck="false" autocomplete="off"
+        aria-label="Steward start directory" placeholder="~/.tclaude/scribe" />
+      <${Button} id="cfg-steward-dir-browse" class="dir-browse-btn" disabled=${busy}
+        title="Browse for a directory" onClick=${() => { void browse(); }}>${busy ? 'Opening…' : 'Browse…'}<//>
+    </div>
+    ${error && html`<div class="cfg-hint ui-hint ui-error" role="alert">${error}</div>`}
+  </div>`;
+}
+
+// KnowledgeSourceSetting shows what is stored and offers to fetch or remove it.
+function KnowledgeSourceSetting() {
+  return html`<${Setting} title="Stored source" summary="What this machine holds now.">
+    <${KnowledgeSourceRow} snapshot=${dashboardState.snapshot} />
+  </${Setting}>`;
+}
+
 // BrowserNotifyPermissionButton is the one-per-browser permission grant for
 // browser delivery. It is a plain button, NOT a ConfigButton: the permission
 // lives in the browser, not in config.json, so clicking it must not route a
@@ -37,14 +104,14 @@ function ConfigButton(props) { return routedControl('button', props); }
 function BrowserNotifyPermissionButton() {
   const [state, setState] = useState(() => browserNotifyPermission());
   if (state === 'unsupported') {
-    return html`<span class="cfg-hint" style="padding-left:0">This browser cannot raise notifications here (needs https or localhost).</span>`;
+    return html`<span class="cfg-hint ui-hint" style="padding-left:0">${notificationsUnsupportedNote()}</span>`;
   }
   if (state === 'granted') return html`<span class="cfg-inline">✓ browser permission granted</span>`;
   const denied = state === 'denied';
-  return html`<button type="button" class="cfg-inline" disabled=${denied}
+  return html`<${Button} size="sm" class="cfg-inline" disabled=${denied}
     onClick=${async () => { setState(await requestBrowserNotifyPermission()); }}>
     ${denied ? 'Browser permission blocked — allow it in site settings' : 'Grant browser permission'}
-  </button>`;
+  <//>`;
 }
 
 function appendAndFocus(event, id, values, value, onChange) {
@@ -63,10 +130,10 @@ function StringList({ id, values = [], datalist, placeholder, onChange }) {
       <${ConfigInput} type="text" value=${value} placeholder=${placeholder || ''} aria-label=${placeholder || undefined}
         list=${datalist || undefined} autocomplete="off" spellcheck=${false}
         onInput=${event => update(index, event.currentTarget.value)} />
-      <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
+      <${ConfigButton} type="button" class="ui-btn ui-sm ui-btn-ghost ui-btn-danger cfg-row-del" title="Remove"
         onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
     </div>`)}
-    <${ConfigButton} type="button" class="cfg-list-add"
+    <${ConfigButton} type="button" class="ui-btn ui-sm cfg-list-add"
       onClick=${event => appendAndFocus(event, id, values, '', onChange)}>+ add</${ConfigButton}>
   </div>`;
 }
@@ -83,10 +150,10 @@ function TransitionList({ values = [], onChange }) {
       <${ConfigInput} type="text" value=${item.to || ''} placeholder="to state" aria-label="to state"
         data-role="to" list="cfg-state-list" autocomplete="off" spellcheck=${false}
         onInput=${event => update(index, 'to', event.currentTarget.value)} />
-      <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
+      <${ConfigButton} type="button" class="ui-btn ui-sm ui-btn-ghost ui-btn-danger cfg-row-del" title="Remove"
         onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
     </div>`)}
-    <${ConfigButton} type="button" class="cfg-list-add"
+    <${ConfigButton} type="button" class="ui-btn ui-sm cfg-list-add"
       onClick=${event => appendAndFocus(event, id, values, { from: '', to: '' }, onChange)}>+ add transition</${ConfigButton}>
   </div>`;
 }
@@ -103,11 +170,34 @@ function ThresholdList({ values = [], onChange }) {
       <${ConfigInput} type="number" min="1" value=${item.min_tokens ?? ''} placeholder="min used tokens before compaction"
         aria-label="min used tokens before compaction" data-role="min" autocomplete="off" style="min-width:170px"
         onInput=${event => update(index, 'min_tokens', event.currentTarget.value)} />
+      <${ConfigButton} type="button" class="ui-btn ui-sm ui-btn-ghost ui-btn-danger cfg-row-del" title="Remove"
+        onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
+    </div>`)}
+    <${ConfigButton} type="button" class="ui-btn ui-sm cfg-list-add"
+      onClick=${event => appendAndFocus(event, id, values, { window_size: '', min_tokens: '' }, onChange)}>+ add floor</${ConfigButton}>
+  </div>`;
+}
+
+// GitLabHostList edits agent.git_proxy.gitlab_hosts as rows of remote host →
+// instance base URL. The map's keys are the hosts, so the rows are the map's
+// entries in a stable order; the adapter turns them back into the map.
+function GitLabHostList({ values = [], onChange }) {
+  const id = 'cfg-gitproxy-gitlab-hosts';
+  const update = (index, field, value) => onChange(id, values.map((item, i) => i === index ? { ...item, [field]: value } : item));
+  return html`<div class="cfg-list" id=${id}>
+    ${values.map((item, index) => html`<div class="cfg-list-row" key=${index}>
+      <${ConfigInput} type="text" value=${item.host || ''} placeholder="remote host" aria-label="remote host"
+        data-role="host" autocomplete="off" spellcheck=${false}
+        onInput=${event => update(index, 'host', event.currentTarget.value)} />
+      <span class="cfg-arrow">→</span>
+      <${ConfigInput} type="text" value=${item.base || ''} placeholder="https://gitlab.example.com:8929" aria-label="instance base URL"
+        data-role="base" autocomplete="off" spellcheck=${false} style="min-width:240px"
+        onInput=${event => update(index, 'base', event.currentTarget.value)} />
       <${ConfigButton} type="button" class="cfg-row-del" title="Remove"
         onClick=${() => onChange(id, values.filter((_, i) => i !== index))}>×</${ConfigButton}>
     </div>`)}
     <${ConfigButton} type="button" class="cfg-list-add"
-      onClick=${event => appendAndFocus(event, id, values, { window_size: '', min_tokens: '' }, onChange)}>+ add floor</${ConfigButton}>
+      onClick=${event => appendAndFocus(event, id, values, { host: '', base: '' }, onChange)}>+ add instance</${ConfigButton}>
   </div>`;
 }
 
@@ -122,17 +212,25 @@ function ThresholdList({ values = [], onChange }) {
 // ===================================================================
 
 // Their ids are the /config/<section> routes: keep KNOWN_SUBTABS in
-// nav-history-core.js in step.
+// nav-history-core.js in step. /config/service and /config/updates open
+// Installation at that part (CONFIG_PANEL_ALIASES in config-panel.js).
 export const CONFIG_PANELS = Object.freeze([
   { id: 'appearance', icon: '🎨', title: 'Appearance', lede: 'How the dashboard looks: activity bots, which tabs show, and header and row chrome.' },
   { id: 'terminals', icon: '🖥️', title: 'Terminals & windows', lede: 'Which terminal opens, how agent windows are focused and tiled, and how web terminals attach.' },
+  { id: 'keyboard', icon: '⌨️', title: 'Keyboard', lede: 'Every dashboard keyboard shortcut, where it works and its keys on each platform. Change the ones marked Change by pressing new keys; changes apply after Save.' },
+  { id: 'voice', icon: '🎙️', title: 'Voice', lede: 'Spoken phrases and the opt-in hands-free settings for dictating to terminals and chat windows. Hands-free settings are off by default.' },
   { id: 'notifications', icon: '🔔', title: 'Notifications', lede: 'When and how tclaude tells you an agent needs attention. Everything still lands in the Messages tab.' },
   { id: 'agents', icon: '🤖', title: 'Agents & spawning', lede: 'Group joining, spawn guardrails, naming and the permissions every agent starts with.' },
+  { id: 'launch', icon: '🚀', title: 'Launch', lede: 'What a resume or reincarnation does with each launch input, and why. Explicit flags always stay, and a resume never fails: a value that no longer applies falls back to the stored one with a warning.' },
   { id: 'context', icon: '🧠', title: 'Context & sessions', lede: 'Compaction, context nudges, resume prompts and how long Claude Code keeps transcripts.' },
   { id: 'costs', icon: '💲', title: 'Usage & costs', lede: 'Cost display, WHAT-IF estimates, subscription usage bars and rate-limit gating.' },
   { id: 'assistants', icon: '💬', title: 'Ask & scribe', lede: 'Defaults for tclaude ask and for the scribe agents behind the 🤖 Edit with agent buttons.' },
+  { id: 'steward', icon: '✦', title: 'Steward', lede: 'Whether you have a Steward, your helper in the companion window, and what it may do without asking.' },
+  { id: 'git', icon: '🔀', title: 'Git & forges', lede: 'What agents may fetch, push and open pull or merge requests against through the credential proxy, and the keys and tokens it uses. Changes apply to the next proxy call; no restart.' },
   { id: 'daemon', icon: '🌐', title: 'Daemon & network', lede: 'How agentd starts, where the dashboard listens, operator tokens and remote access.' },
+  { id: 'installation', icon: '📦', title: 'Installation', lede: 'How tclaude is installed, started and updated on this machine. Each part says whether it is set up, with its main action next to it. Nothing here runs on its own until you turn it on.' },
   { id: 'logs', icon: '🧾', title: 'Logs & housekeeping', lede: 'Log verbosity and rotation, and long-horizon cleanup of retired agents.' },
+  { id: 'processes', icon: '🔁', title: 'Processes', lede: 'Policy for process workflows shared as .pwf files.' },
   { id: 'experimental', icon: '🧪', title: 'Experimental', lede: 'Opt-in flags for features under active development.' },
   { id: 'advanced', icon: '{ }', title: 'Advanced', lede: 'Structures without a dedicated form, edited as raw JSON.' },
 ]);
@@ -147,7 +245,7 @@ const BADGES = {
 };
 function Badge({ kind }) {
   const [cls, label, title] = BADGES[kind];
-  return html`<span class=${`cfg-badge ${cls}`} title=${title}>${label}</span>`;
+  return html`<span class=${`ui-tag cfg-badge ${cls}`} title=${title}>${label}</span>`;
 }
 
 // Setting is one row. `forId` makes the title the <label> of a single control
@@ -155,8 +253,18 @@ function Badge({ kind }) {
 // each control inline. `wide` stacks the controls under the text for lists
 // and tables that need the full width.
 function Setting({ title, summary, more, k, badges = [], forId, wide = false, child = false, children }) {
-  const cls = ['cfg-field', 'cfg-row', wide && 'cfg-row-wide', child && 'cfg-row-child'].filter(Boolean).join(' ');
-  return html`<div class=${cls} data-cfg-key=${k || undefined}>
+  const row = useRowAccess(k);
+  // In a fused view editing a peer, a row without a config key is its own
+  // component reading this node: it links to the peer's own page instead.
+  const elsewhere = !k && row.peer;
+  // A row without a key explains itself only when it has controls to grey.
+  const ctl = useRef(null);
+  const [hasControls, setHasControls] = useState(true);
+  useLayoutEffect(() => {
+    if (!k) setHasControls(!!ctl.current?.querySelector('input, select, textarea, button'));
+  });
+  const cls = ['cfg-field', 'cfg-row', wide && 'cfg-row-wide', child && 'cfg-row-child', row.remote && row.access.state !== 'write' && 'cfg-row-readonly'].filter(Boolean).join(' ');
+  return html`<div class=${cls} data-cfg-key=${k || undefined} data-cfg-access=${row.remote ? row.access.state : undefined}>
     <div class="cfg-row-text">
       <div class="cfg-row-title">
         ${forId ? html`<label class="cfg-label" for=${forId}>${title}</label>` : html`<span class="cfg-label">${title}</span>`}
@@ -165,20 +273,300 @@ function Setting({ title, summary, more, k, badges = [], forId, wide = false, ch
       ${summary && html`<div class="cfg-row-summary">${summary}</div>`}
       ${(more || k) && html`<div class="cfg-row-meta">
         ${k && html`<code class="cfg-key">${k}</code>`}
-        ${more && html`<details class="cfg-more"><summary>More…</summary><div class="cfg-hint">${more}</div></details>`}
+        ${more && html`<details class="cfg-more"><summary>More…</summary><div class="cfg-hint ui-hint">${more}</div></details>`}
       </div>`}
+      <${RowAccessNote} row=${row} hasControls=${hasControls} />
     </div>
-    <div class="cfg-row-ctl">${children}</div>
+    ${elsewhere && html`<${OnPeerPage} peer=${row.peer} panel=${row.panel} />`}
+    <${RowControls} row=${row} domRef=${ctl} hidden=${elsewhere}>${children}<//>
   </div>`;
 }
 
-function Toggle({ id, label }) {
-  return html`<${ConfigInput} type="checkbox" class="cfg-switch" role="switch" id=${id} aria-label=${label || undefined} />`;
+// useRowAccess is what the viewer may do with the row of config key k on
+// a peer's page (config-access.js); on this node's own page, everything.
+// The panel's own components gate Installation's rows without a key.
+function useRowAccess(k) {
+  const panel = useContext(PanelContext);
+  registerPanelKey(panel, k);
+  const model = configAccess.value;
+  const remote = remoteAccess(model);
+  const access = !k && panel === 'installation' ? { state: 'write', note: '' } : rowAccess(k, model);
+  const secret = secretOf(k, model);
+  const edits = secretEdits.value;
+  const replacing = !!(secret && edits.replace[secret.path]);
+  const clearing = !!(secret && edits.clear[secret.path]);
+  const readOnly = remote && (access.state !== 'write' || (secret && !replacing));
+  return { k, panel, remote, access, secret, replacing, clearing, readOnly, peer: configPeerTarget() };
+}
+
+// RowAccessNote says why a row is read-only, and shows a withheld secret.
+// A row without a config key that has controls says it is not changed from
+// a peer's page; one that only shows a status says nothing.
+function RowAccessNote({ row, hasControls = true }) {
+  const note = row.access.note || (row.remote && row.readOnly && !row.k && hasControls && !row.peer ? 'Not changed from a peer’s page' : '');
+  return html`${note && html`<div class="cfg-access-note ui-hint">🔒 ${note}</div>`}
+    ${row.secret && html`<${SecretState} secret=${row.secret} panel=${row.panel} writable=${row.access.state === 'write'} replacing=${row.replacing} clearing=${row.clearing} />`}`;
+}
+
+// RowControls holds a row's controls in a <fieldset>, so a read-only row
+// disables them all at once: the form's own enable/disable code cannot
+// undo it.
+function RowControls({ row, domRef, hidden = false, children }) {
+  return html`<fieldset class="cfg-row-ctl" ref=${domRef} disabled=${row.readOnly || hidden} hidden=${hidden}>${children}</fieldset>`;
+}
+
+// OnPeerPage stands in, in a fused view editing a peer, for a part of the
+// form that reads this node directly: it opens on the peer's own page.
+function OnPeerPage({ peer, panel }) {
+  const href = nodeHref(peer.id, { pathname: `/config/${panel || ''}`, search: '' });
+  return html`<div class="cfg-on-peer-page ui-hint">Shown on <a href=${href}>${peer.name}’s own page ↗</a></div>`;
+}
+
+// PeerLocalOnly greys a part of the form that acts on this machine itself
+// (remote access setup) on a peer's page.
+function PeerLocalOnly({ children }) {
+  // The parts stay mounted, hidden: the form reads its fields by id.
+  const peer = configPeerTarget();
+  if (peer) return html`<${OnPeerPage} peer=${peer} panel="daemon" /><div hidden>${children}</div>`;
+  const remote = remoteAccess(configAccess.value);
+  if (!remote) return children;
+  return html`<div class="cfg-access-note ui-hint">🔒 Set up on the node itself</div>
+    <fieldset class="cfg-peer-local-only" disabled>${children}</fieldset>`;
+}
+
+// TerminalAttachRow is dashboard.terminal_attach: the strategy and its
+// timing overrides in one row, gated like a Setting on a peer's page.
+function TerminalAttachRow() {
+  const row = useRowAccess('dashboard.terminal_attach');
+  return html`<div class=${`cfg-field cfg-row cfg-row-wide cfg-terminal-attach-field${row.remote && row.access.state !== 'write' ? ' cfg-row-readonly' : ''}`}
+          data-cfg-key="dashboard.terminal_attach" data-cfg-access=${row.remote ? row.access.state : undefined}>
+          <div class="cfg-row-text">
+            <div class="cfg-row-title"><label class="cfg-label" for="cfg-terminal-attach-mode">Resize strategy</label></div>
+            <div class="cfg-row-summary">Choose how the browser establishes terminal geometry when attaching to tmux.</div>
+            <div class="cfg-row-meta">
+              <code class="cfg-key">dashboard.terminal_attach</code>
+              <details class="cfg-more"><summary>More…</summary>
+                <div class="cfg-hint ui-hint cfg-terminal-attach-hint"><strong>Repair after attach</strong> preserves today's three-step sequence. <strong>Initial resize only</strong> skips the visible nudge and restore. <strong>Resize before attach</strong> waits between sending the fitted grid and starting the tmux attachment. Stored under <code>dashboard.terminal_attach</code>.</div>
+              </details>
+            </div>
+            <${RowAccessNote} row=${row} />
+          </div>
+          <${RowControls} row=${row}>
+            <${ConfigSelect} id="cfg-terminal-attach-mode" aria-label="Web terminal attach resize strategy">
+              <option value="repair">Repair after attach (default)</option>
+              <option value="initial">Initial resize only</option>
+              <option value="pre_attach">Resize before attach</option>
+            </${ConfigSelect}>
+            <div class="cfg-terminal-attach-timings">
+              <strong class="ui-eyebrow ui-eyebrow-section">Timing overrides</strong>
+              <label><span>Before initial resize</span><${ConfigInput} type="number" id="cfg-terminal-attach-initial-delay" min="0" max="10000" placeholder="0" aria-label="Initial terminal resize delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
+              <label><span>Post-attach repair wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-repair-delay" min="0" max="10000" placeholder="250" aria-label="Post-attach terminal repair delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
+              <label><span>Resize-to-attach wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-pre-delay" min="0" max="10000" placeholder="250" aria-label="Resize before attach delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
+              <span class="cfg-terminal-attach-note">Blank uses the shown default; explicit <code>0</code> means no wait.</span>
+            </div>
+          <//>
+        </div>`;
+}
+
+// SecretState is a withheld secret's row on a peer's page: whether it is
+// set, never its value, with Replace and Clear where the viewer may change
+// it. Replacing sends the new value; one left empty keeps the old.
+function SecretState({ secret, panel, writable, replacing, clearing }) {
+  const state = clearing ? 'will be cleared' : replacing ? 'replacing' : secret.set ? 'set' : 'not set';
+  return html`<div class="cfg-secret" data-cfg-secret=${secret.path}>
+    <span class=${`ui-tag cfg-secret-state${secret.set && !clearing ? ' is-set' : ''}`} title="The node withholds this value from every peer">${state}</span>
+    ${writable && html`<span class="cfg-secret-actions">
+      ${!replacing && html`<${Button} size="sm" data-cfg-secret-act="replace" onClick=${() => replaceSecret(secret.path, panel)}>Replace<//>`}
+      ${secret.set && !clearing && html`<${Button} size="sm" data-cfg-secret-act="clear" onClick=${() => clearSecret(secret.path, panel)}>Clear<//>`}
+      ${(replacing || clearing) && html`<${Button} size="sm" data-cfg-secret-act="keep" onClick=${() => keepSecret(secret.path, panel)}>Keep<//>`}
+    </span>`}
+  </div>`;
+}
+
+// PanelAccessTag marks a rail entry the viewer can only partly or not
+// change on a peer's page.
+function PanelAccessTag({ id }) {
+  const state = panelAccess(panelRowKeys(id), configAccess.value);
+  if (!state || state === 'write') return null;
+  return html`<span class=${`ui-tag cfg-rail-access cfg-rail-access-${state}`} title=${state === 'read' ? 'Read-only on this node' : 'Some settings are read-only on this node'}>${state === 'read' ? 'read-only' : 'partial'}</span>`;
+}
+
+const PanelContext = createContext('');
+
+// UpdatesPanel is Config › Installation › Updates: updates.self. The inputs are ordinary
+// uncontrolled Config fields; the notes around them read the daemon's
+// install detection (config-self-update.js) and the adapter's draft mirror.
+// SelfUpdateTryIt is the Updates part's Check now / Test method / Update now
+// row (node-update.js UpdateNowPanel) for the node this page edits: this
+// node, or on a peer's own page that peer through its proxied /api routes.
+// It acts on the saved settings, so unsaved method edits hold it back.
+function SelfUpdateTryIt({ open }) {
+  const meta = selfUpdateMeta.value;
+  const saved = meta?.settings?.method || '';
+  const info = methodInfo(saved, meta);
+  const name = configNodeName();
+  // The Config form's own fetch, which the adapter configures.
+  const actions = useMemo(() => createNodeUpdateActions({ fetchImpl: (...a) => selfUpdateDeps.fetchImpl(...a) }), []);
+  // A fused view editing a peer hides this panel (the peer's own page has
+  // it): read nothing for it here.
+  if (!open || configPeerTarget()) return null;
+  return html`<${UpdateNowPanel} actions=${actions} node=${{ id: name || 'self', label: name || 'this node', local: true }}
+    method=${meta && !meta.error ? saved : undefined} methodLabel=${info?.label || saved} notifyOnly=${!!info?.notify_only}
+    unsaved=${!!selfUpdateDraft.value.unsaved} confirm=${shellConfirm} toast=${shellToast} idp="cfg-" />`;
+}
+
+function UpdatesPanel({ open }) {
+  const showSchedule = (d) => d.frequency !== 'off';
+  return html`<${SelfUpdateMetaLoader} open=${open} />
+    <${Group} title="Method" lede=${html`CLI: <code>tclaude update config show</code> · <code>tclaude update config set method ${'<method>'}</code>`}>
+      <${Setting} title="How this node is installed" wide>
+        <${SelfUpdateDetected} />
+      </${Setting}>
+      <${Setting} title="Update method" forId="cfg-selfupdate-method" k="updates.self.method"
+        summary="How tclaude updates itself. Package-manager methods are opt-in and ask you to confirm."
+        more=${html`<strong>Release download</strong> fetches the GitHub release archive and verifies its checksum. <strong>Build with go install</strong> builds the release tag with your Go toolchain. <strong>Build from a checkout</strong> fetches the release tag (or a branch) in a git checkout you name and builds it; it refuses a checkout with uncommitted changes. <strong>Custom command</strong> runs your own command, and accepts whatever version it installs. <strong>Let tclaude run …</strong> asks that package manager to upgrade tclaude. <strong>Notify me</strong> only checks and tells you. Every method that installs is checked afterwards: the new binary must report the expected version (a custom command's binary must still run as tclaude and speak the same federation protocol).`}>
+        <${ConfigSelect} id="cfg-selfupdate-method" aria-label="Update method"><${MethodOptions} /></${ConfigSelect}>
+      </${Setting}>
+      <div class="cfg-su-noterow"><${SelfUpdateMethodNote} /></div>
+      <${Setting} title="Try it" wide
+        summary="Check for a newer release, test the saved method without installing anything, or update now."
+        more=${html`<strong>Check now</strong> asks GitHub for the latest release (a checkout that follows a branch checks for new commits). <strong>Test method</strong> is a dry run: it says whether the method can run here and what it would run, and checks write access, the tools on PATH and the checkout, without fetching, building or running anything. <strong>Update now</strong> applies an update with the saved method and restarts agentd if a binary changed; agent sessions keep running. CLI: <code>tclaude update --check</code> · <code>--dry-run</code> · <code>--apply</code>.`}>
+        <${SelfUpdateTryIt} open=${open} />
+      </${Setting}>
+      <${ShowWhen} test=${(d) => d.method === 'source_checkout'}>
+        <${Setting} title="Checkout" forId="cfg-selfupdate-checkout-path" k="updates.self.source_checkout.path" child
+          summary="A git checkout of tclaude. Updating refuses if it has uncommitted changes.">
+          <${ConfigInput} type="text" id="cfg-selfupdate-checkout-path" placeholder="~/git/tclaude" aria-label="Checkout path" autocomplete="off" spellcheck="false" style="min-width:240px" />
+        </${Setting}>
+        <${Setting} title="Branch or tag" forId="cfg-selfupdate-checkout-ref" k="updates.self.source_checkout.ref" child
+          summary="Empty builds the release tag being installed.">
+          <${ConfigInput} type="text" id="cfg-selfupdate-checkout-ref" placeholder="(the release tag)" aria-label="Checkout branch or tag" autocomplete="off" spellcheck="false" />
+        </${Setting}>
+      </${ShowWhen}>
+      <${ShowWhen} test=${(d) => d.method === 'custom'}>
+        <${Setting} title="Update command" forId="cfg-selfupdate-custom-command" k="updates.self.custom.command" child wide
+          summary=${html`tclaude runs this with <code>/bin/sh -c</code> and restarts agentd if it installed a new binary. It may use <code>TCLAUDE_UPDATE_VERSION</code> (the latest release) and <code>TCLAUDE_UPDATE_BINARIES</code>; it doesn't have to. Afterwards tclaude checks the binary still runs and speaks the same federation protocol.`}
+          more=${html`For example <code>cd ~/git/tclaude && git pull && go install .</code>. Any version it installs is accepted; one other than the latest release is noted as a warning. A command that changes nothing means already up to date. Update now always runs it; scheduled and start-up runs run it only when this node is not already on the latest release.`}>
+          <${ConfigTextarea} class="ui-textarea" id="cfg-selfupdate-custom-command" rows="3" spellcheck="false" aria-label="Update command" placeholder="~/bin/update-tclaude.sh" />
+        </${Setting}>
+        <${Setting} title="Timeout (seconds)" forId="cfg-selfupdate-custom-timeout" k="updates.self.custom.timeout_seconds" child>
+          <${ConfigInput} type="number" id="cfg-selfupdate-custom-timeout" min="1" max="86400" placeholder=${String(CUSTOM_TIMEOUT_DEFAULT)} aria-label="Update command timeout in seconds" />
+        </${Setting}>
+      </${ShowWhen}>
+      <${ShowWhen} test=${(d, meta) => needsPackageManagerAck(d, meta)}>
+        <${Setting} title="Package manager" k="updates.self.package_manager_ack" child wide>
+          <${PackageManagerNote} />
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-selfupdate-pm-ack" /> I understand the package manager still manages tclaude here</label>
+        </${Setting}>
+        <${Setting} title="Install to" forId="cfg-selfupdate-install-dir" k="updates.self.install_dir" child
+          summary="A user bin dir for the binaries tclaude downloads or builds.">
+          <${ConfigInput} type="text" id="cfg-selfupdate-install-dir" placeholder=${INSTALL_DIR_DEFAULT} aria-label="Install directory" autocomplete="off" spellcheck="false" style="min-width:200px" />
+        </${Setting}>
+        <div class="cfg-su-noterow"><${ShadowNote} /></div>
+      </${ShowWhen}>
+    </${Group}>
+
+    <${Group} title="When">
+      <${Setting} title="Scheduled updates" forId="cfg-selfupdate-frequency" k="updates.self.schedule.frequency"
+        summary="Runs the method above in a local time window. Each run shows up as an update job and notifies you.">
+        <${ConfigSelect} id="cfg-selfupdate-frequency" aria-label="Scheduled updates">
+          <option value="off">Off</option><option value="daily">Daily</option><option value="weekly">Weekly</option>
+        </${ConfigSelect}>
+      </${Setting}>
+      <${ShowWhen} test=${showSchedule}>
+        <${ShowWhen} test=${(d) => d.frequency === 'weekly'}>
+          <${Setting} title="Day" forId="cfg-selfupdate-weekday" k="updates.self.schedule.weekday" child>
+            <${ConfigSelect} id="cfg-selfupdate-weekday" aria-label="Day of the week">
+              ${WEEKDAYS.map((day) => html`<option key=${day} value=${day}>${day[0].toUpperCase() + day.slice(1)}</option>`)}
+            </${ConfigSelect}>
+          </${Setting}>
+        </${ShowWhen}>
+        <${Setting} title="Time window" k="updates.self.schedule.window_start · window_end" child
+          summary="Local 24-hour time (HH:MM). The run starts inside this window; a window may wrap past midnight.">
+          <${ConfigInput} type="text" id="cfg-selfupdate-window-start" aria-label="Window start (HH:MM)" placeholder="03:00" pattern="[0-2][0-9]:[0-5][0-9]" maxlength="5" inputmode="numeric" autocomplete="off" style="width:6em" />
+          <span aria-hidden="true">–</span>
+          <${ConfigInput} type="text" id="cfg-selfupdate-window-end" aria-label="Window end (HH:MM)" placeholder="05:00" pattern="[0-2][0-9]:[0-5][0-9]" maxlength="5" inputmode="numeric" autocomplete="off" style="width:6em" />
+        </${Setting}>
+        <${Setting} title="Wait while agents are working" forId="cfg-selfupdate-defer" k="updates.self.schedule.defer_while_agents_working" child
+          summary="Wait inside the window for no agent to be working; skip this run if that never happens.">
+          <${Toggle} id="cfg-selfupdate-defer" />
+        </${Setting}>
+        <div class="cfg-su-noterow"><${ScheduleNote} /></div>
+      </${ShowWhen}>
+      <${Setting} title="Update when the daemon starts" forId="cfg-selfupdate-on-start" k="updates.self.update_on_start"
+        summary="Each time agentd starts, check for an update and apply it with the method above.">
+        <${Toggle} id="cfg-selfupdate-on-start" />
+      </${Setting}>
+      <${Setting} title="Last scheduled run"><${LastScheduledRun} /></${Setting}>
+    </${Group}>
+
+    <${Group} title="After an update">
+      <${Setting} title="Run setup with the new version" forId="cfg-selfupdate-setup-enabled" k="updates.self.post_update_setup.enabled"
+        summary=${html`After a successful update the new binary runs <code>tclaude setup --yes</code> with the options below. Its result is kept on the update job.`}>
+        <${Toggle} id="cfg-selfupdate-setup-enabled" />
+      </${Setting}>
+      <${Setting} title="Setup options" k="updates.self.post_update_setup.flags · harness" child wide>
+        <div class="cfg-su-flags">
+          ${SETUP_FLAGS.map(({ flag, label }) => html`<label key=${flag} class="cfg-inline">
+            <${ConfigInput} type="checkbox" id=${`cfg-selfupdate-flag-${flag}`} data-cfg-setup-flag=${flag} />
+            <span class="cfg-su-flag">${label}<code class="cfg-key">--${flag}</code></span></label>`)}
+          <label class="cfg-inline">Harness
+            <${ConfigSelect} id="cfg-selfupdate-setup-harness" aria-label="Setup harness">
+              <option value="">(setup's default)</option>
+              ${SETUP_HARNESSES.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
+            </${ConfigSelect}></label>
+        </div>
+        <${SetupPreview} />
+      </${Setting}>
+    </${Group}>`;
+}
+
+const VOICE_PAUSE_ROWS = [
+  { id: 'cfg-voice-comma', title: 'Comma at a pause', k: 'dashboard.voice.comma_pause_seconds', fallback: COMMA_PAUSE_DEFAULT, summary: 'add a comma where you pause this long while dictating' },
+  { id: 'cfg-voice-period', title: 'Period at a pause', k: 'dashboard.voice.period_pause_seconds', fallback: PERIOD_PAUSE_DEFAULT, summary: 'add a period and capitalize what follows where you pause this long' },
+];
+
+function Toggle({ id, label, onChange }) {
+  return html`<${ConfigInput} type="checkbox" class="cfg-switch" role="switch" id=${id} aria-label=${label || undefined} onChange=${onChange} />`;
+}
+
+// What an assistant outside tclaude can do, shown before it is turned on. The
+// list comes from the daemon, so it is the list the MCP server offers. The switch
+// is always rendered, because the config adapter binds to it on every load.
+function ExternalStewardGroup({ loads }) {
+  const info = loads?.value?.external_steward;
+  return html`<${Group} title="External stewards" lede=${html`An assistant you run yourself can act as a steward through
+    <code>tclaude mcp serve</code>, using a credential only you can make. It can't answer permission questions, and it
+    can never hold sudo.`}>
+    <${Setting} title="Allow external stewards" forId="cfg-steward-external-enabled" k="steward.external_enabled"
+      summary="While this is off, no credential can be made or used. Check what it can do below before turning it on.">
+      <${Toggle} id="cfg-steward-external-enabled" />
+    </${Setting}>
+    ${info?.tools?.length > 0 && html`<${Setting} title="What it can do" wide summary="These are all the tools it gets.">
+      <table class="cfg-tool-list ui-compact">
+        <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th><th scope="col">Who decides</th></tr></thead>
+        <tbody>${info.tools.map(tool => html`<tr key=${tool.name}>
+          <td><code>${tool.name}</code></td>
+          <td>${tool.description}</td>
+          <td>${tool.access}</td>
+        </tr>`)}</tbody>
+      </table>
+    </${Setting}>`}
+    ${info && html`<${Setting} title="Your external stewards" wide
+      summary="A credential is shown once and stored only as a hash. Renewing makes a new one, and the old ones keep working until they expire.">
+      <${ExternalStewardManager} enabled=${!!info.enabled} />
+    </${Setting}>`}
+    <${Setting} title="Workers per external steward" forId="cfg-steward-external-max-children" k="steward.external_max_children"
+      summary="An external steward can start workers only where you choose above. Its workers stop at the first action that isn't read-only until you answer, and it can't answer for you."
+      more="Past this many running at once, it's refused. Workers keep running if its credential ends: revoking lists them with an option to stop them, and you're notified when a credential expires.">
+      <${ConfigInput} type="number" id="cfg-steward-external-max-children" min="1" placeholder="3" />
+    </${Setting}>
+  </${Group}>`;
 }
 
 function Group({ title, lede, children }) {
   return html`<div class="cfg-section">
-    <h3>${title}</h3>
+    <h3 class="ui-eyebrow ui-eyebrow-section">${title}</h3>
     ${lede && html`<p class="cfg-group-lede">${lede}</p>`}
     ${children}
   </div>`;
@@ -193,7 +581,7 @@ function Panel({ id, active, children }) {
       <h2 id=${`cfg-panel-title-${id}`}><span class="cfg-panel-icon" aria-hidden="true">${panel.icon}</span> ${panel.title}</h2>
       <p>${panel.lede}</p>
     </div>
-    ${children}
+    <${PanelContext.Provider} value=${id}>${id === 'installation' && configPeerTarget() ? html`<${OnPeerPage} peer=${configPeerTarget()} panel=${id} /><div hidden>${children}</div>` : children}<//>
   </div>`;
 }
 
@@ -227,6 +615,7 @@ function ConfigRail({ active, select, dirtyPanels }) {
         <span class="cfg-rail-icon" aria-hidden="true">${panel.icon}</span>
         <span class="cfg-rail-title">${panel.title}</span>
         <${RailDirtyDot} dirtyPanels=${dirtyPanels} id=${panel.id} />
+        <${PanelAccessTag} id=${panel.id} />
         <span class="cfg-rail-hits" data-cfg-hits=${panel.id}></span>
       </${ConfigButton}>`)}
     </div>
@@ -236,33 +625,41 @@ function ConfigRail({ active, select, dirtyPanels }) {
 // Static form structure. State, conditional enablement, lists, validation,
 // and actions are owned by the Config island and adapter; every control keeps
 // its historical id so the adapter's load/save round-trip is unchanged.
-export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEvent = () => {}, dirtyPanels = null }) {
+export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEvent = () => {}, dirtyPanels = null, loads = null }) {
   // The open section lives in configPanel so the history router can read and
   // restore it; picking one on the rail is a navigation (a history entry).
   const active = configPanel.value;
+  // shown is the rail section: an alias route (/config/service) shows its
+  // section and scrolls to its part.
+  const shown = configSection(active);
+  const scrollToPart = () => {
+    if (!Object.hasOwn(CONFIG_PANEL_ALIASES, configPanel.peek())) return;
+    globalThis.document?.getElementById(`cfg-install-${configPanel.peek()}`)?.scrollIntoView?.({ block: 'start' });
+  };
+  useEffect(scrollToPart, [active]);
   const select = (id) => {
     if (!setConfigPanel(id)) return;
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: configLocation(id) } }));
   };
   return html`
     <${ConfigEventContext.Provider} value=${onFormEvent}>
-    <div class="config-form">
+    <div class="config-form" data-capture-form="Config">
 
     <h2 class="cfg-wizard-title" aria-hidden="true">📜 The Wizard's Almanac</h2>
     <div class="cfg-layout" id="cfg-layout">
-    <${ConfigRail} active=${active} select=${select} dirtyPanels=${dirtyPanels} />
+    <${ConfigRail} active=${shown} select=${select} dirtyPanels=${dirtyPanels} />
     <div class="cfg-main">
 
     <p class="cfg-intro">
-      Editing <code id="cfg-path">~/.tclaude/config.json</code>. Edits stay in this form until you
+      Editing <code id="cfg-path">~/.tclaude/data/config.json</code>. Edits stay in this form until you
       press <strong>Save changes</strong>, which shows a diff before anything is written. Most
       settings apply on next use; ones marked <${Badge} kind="restart" /> apply after an agentd restart.
     </p>
     <div id="cfg-notice" class="cfg-notice" style="display:none"></div>
     <div id="cfg-errors" class="cfg-errors" style="display:none"></div>
-    <div class="cfg-filter-empty" id="cfg-filter-empty" hidden>No settings match “<span id="cfg-filter-empty-q"></span>”.</div>
+    <div class="cfg-filter-empty ui-empty-block" id="cfg-filter-empty" hidden>No settings match “<span id="cfg-filter-empty-q"></span>”.</div>
 
-    <${Panel} id="appearance" active=${active}>
+    <${Panel} id="appearance" active=${shown}>
       <${Group} title="Activity bots">
         <${Setting} title="Regular mode" forId="cfg-dashboard-activity-bots-regular" k="dashboard.activity_bots.regular"
           summary="Robot icons in each group header and the top bar, one per status present."
@@ -293,6 +690,36 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
       </${Group}>
 
+      <${Group} title="Overlays">
+        <${Setting} title="Preview background" forId="cfg-dashboard-overlay-backdrop" k="dashboard.overlay_backdrop"
+          summary="What image and markdown previews do to the page behind them."
+          more=${html`Blur is slow in a browser running without hardware acceleration, so it is off by default. Dim keeps the page dark behind the preview. Disconnect screens always stay dim so their message stays readable; blur adds to that when chosen.`}>
+          <${ConfigSelect} id="cfg-dashboard-overlay-backdrop" aria-label="Preview background">
+            <option value="dim">Dim</option>
+            <option value="blur">Blur</option>
+            <option value="both">Both</option>
+            <option value="none">Nothing</option>
+          </${ConfigSelect}>
+        </${Setting}>
+        <${Setting} title="Window controls" forId="cfg-dashboard-window-controls" k="dashboard.window_controls"
+          summary="The buttons on an overlay window's title bar."
+          more=${html`Standard, the default, puts plain symbols on the far right, as elsewhere in the dashboard: − minimizes to the dock, ⇄ opens the window in the Collab tab (or maximizes, where it cannot go there), × closes. The OS looks are opt-in: they draw the native minimize, maximize and close, and Match my OS picks the one for the system your browser runs on (GNOME-style on Linux). Classic keeps a plain minimize and close in the bar. In every look, a double click on the title bar maximizes or restores.`}>
+          <${ConfigSelect} id="cfg-dashboard-window-controls" aria-label="Window controls">
+            <option value="auto">Standard</option>
+            <option value="os">Match my OS (opt-in)</option>
+            <option value="macos">macOS (opt-in)</option>
+            <option value="windows">Windows (opt-in)</option>
+            <option value="linux">Linux (opt-in)</option>
+            <option value="classic">Classic</option>
+          </${ConfigSelect}>
+        </${Setting}>
+        <${Setting} title="Snap Assist" forId="cfg-dashboard-snap-assist" k="dashboard.no_snap_assist"
+          summary="after you snap an overlay window, offer the other windows for the space left empty"
+          more=${html`As on Windows: the largest empty space shows a card for each overlay window outside the tiling, minimized ones too. Pick one to put it there, and the next empty space asks, until none is left. A click elsewhere, Escape or any drag stops it. It only follows a snap of your own, never a reload. On by default. Stored as <code>dashboard.no_snap_assist</code> (on is omitted; unchecked writes <code>true</code>).`}>
+          <${Toggle} id="cfg-dashboard-snap-assist" />
+        </${Setting}>
+      </${Group}>
+
       <${Group} title="Tabs">
         <${Setting} title="Plugins tab" forId="cfg-dashboard-always-show-plugins" k="dashboard.always_show_plugins_tab"
           summary="always show the Plugins tab, even with no plugins installed"
@@ -314,7 +741,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${Setting}>
         <${Setting} title="Group quick options" forId="cfg-dashboard-group-quick-fold" k="dashboard.group_quick_options"
           summary="auto-fold quick options to icons, expand on hover"
-          more=${html`Each group header carries a row of editable "quick option" chips — 📝 description, 📁 default dir, 🧠 default profile, 🔗 links. They can grow the header wide. <strong>Checked</strong> (default) folds them to <em>icon-only</em> at rest and slides the text open when you hover the group header — a horizontal accordion that reclaims the space. The group name, activity bots and 👥 member count always stay visible. <strong>Unchecked</strong> keeps the full chips always shown (the original look). Touch devices (which can't hover) always see the full chips regardless. You can also <em>pin</em> a single group's chips open from its ⚙ menu (📌 pin quick options) so it stays expanded even with auto-fold on. Stored as <code>dashboard.group_quick_options</code> (the default <code>hover</code> is omitted; unchecked writes <code>expanded</code>).`}>
+          more=${html`Each group header carries a row of editable "quick option" chips — 📝 description, 📁 default dir, 🧠 default profile, 🛡 sandbox profile, 💰 usage profile, 🔗 links. They can grow the header wide. <strong>Checked</strong> (default) folds them to <em>icon-only</em> at rest and slides the text open when you hover the group header — a horizontal accordion that reclaims the space. The group name, activity bots and 👥 member count always stay visible. <strong>Unchecked</strong> keeps the full chips always shown (the original look). Touch devices (which can't hover) always see the full chips regardless. You can also <em>pin</em> a single group's chips open from its ⚙ menu (📌 pin quick options) so it stays expanded even with auto-fold on. Stored as <code>dashboard.group_quick_options</code> (the default <code>hover</code> is omitted; unchecked writes <code>expanded</code>).`}>
           <${Toggle} id="cfg-dashboard-group-quick-fold" />
         </${Setting}>
         <${Setting} title="Group descriptions" forId="cfg-dashboard-show-group-description" k="dashboard.show_group_description" badges=${['deprecated']}
@@ -337,11 +764,30 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           more=${html`When Groups shows several nodes together, the toolbar's 🧠 default spawn profile, 🛡 sandbox profile and <strong>+ new group</strong> act on one node at a time, named by the coloured node chip in front of them. <strong>On</strong> (default): clicking a group's header or one of its controls, right-clicking it or dropping onto it switches the toolbar to that group's node, and the chip flashes. <strong>Off</strong>: the toolbar stays on the node you pick in the chip. Stored as <code>dashboard.fused_toolbar_fixed_node</code> (on is the default and omitted; off writes <code>true</code>).`}>
           <${Toggle} id="cfg-dashboard-fused-toolbar-follow" />
         </${Setting}>
+        <${Setting} title="Collapse empty Usage views" forId="cfg-dashboard-usage-collapse-subviews" k="dashboard.usage_collapse_subviews"
+          summary="when only quota or only costs has data, show that view alone without the Overview / Quota / Costs switcher"
+          more=${html`The <strong>Usage</strong> tab has three views: <strong>Overview</strong>, <strong>Quota</strong> (subscription quota forecasts) and <strong>Costs</strong> (pay-per-token spend and WHAT-IF estimates). <strong>Off</strong> (default): all three are always offered once either side has data, and an empty side shows its own empty state — e.g. with only pay-per-token agents, Quota just says there are no samples yet. <strong>On</strong>: with only one side populated, the tab shows that view directly and hides the switcher. The tab itself is hidden when neither side has anything either way. Stored as <code>dashboard.usage_collapse_subviews</code> (off is the default and omitted; on writes <code>true</code>).`}>
+          <${Toggle} id="cfg-dashboard-usage-collapse-subviews" />
+        </${Setting}>
         <${Setting} title="Open PRs indicator" k="dashboard.always_show_open_prs"
           summary="The footer's Open PRs popover: whether it shows at zero, and how far back the Closed filter reaches."
           more=${html`The bottom-right <strong>Open PRs</strong> indicator opens a popover listing the pull requests <em>you</em> have open across every repository, with CI state and the agent working each one. <strong>Checked</strong> (default) keeps it in the footer permanently, so it stays a fixed entry point (and reaches the recently-closed list) even when nothing is open; unchecked hides it whenever you have no open PRs. It is always hidden until the daemon has resolved a GitHub identity — with no <code>gh</code> login there is nothing to count. The <strong>days</strong> field adds a separate <em>Closed Nd</em> filter in the popover listing your recently merged and closed PRs; it never mixes into the open list or the count. Default 3 days, max 30; <strong>0</strong> hides the filter, while the shared dashboard PR poll still checks a one-day terminal window to keep Groups badges current. Stored as <code>dashboard.always_show_open_prs</code> (default true, so only <code>false</code> is written) and <code>dashboard.recent_pr_window_days</code> (the default is omitted).`}>
           <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-always-show-open-prs" /> always show the footer's Open PRs indicator, even at zero</label>
           <label class="cfg-inline">show pull requests merged or closed in the last <${ConfigInput} type="number" id="cfg-dashboard-recent-pr-window-days" min="0" max="30" step="1" placeholder="3" aria-label="Recently closed pull request window (days)" style="width:6em" /> days</label>
+        </${Setting}>
+        <${Setting} title="Side panel at the edge" k="dashboard.side_panel_*" wide
+          summary="Show the folded side panel when the pointer reaches the right edge, or is flung at it."
+          more=${html`On the <strong>Groups</strong> and <strong>Collab</strong> tabs, a folded right side panel peeks in when the pointer heads for the right edge (no button held, no drag under way), floats in over the page when the pointer moves onto the peek, and goes again a moment after the pointer leaves it, unless something in it has focus or one of its menus is open. A pointer resting or moving slowly by the edge opens nothing. Its handle still unfolds it for good. Pointer only: nothing changes on touch screens or for the keyboard, which keep the handle. <strong>Predictive peek</strong>: a pointer flung at the edge slides the panel's leading edge in before it gets there; moving onto it reveals the panel, and a peek the motion does not follow through on goes again. The closer to the panel a motion starts, the less speed it needs, down to the floor, and a small move by the edge travels too little to count; a fast snap into the edge zone peeks the panel too, even with the predictive peek off. <strong>Growing peek</strong> (off by default): the peek widens as the pointer closes in, and crossing where the open panel's edge would be, or stopping there, reveals it; off, opening is a move onto the peek. The first two default on and the growing peek off, so only a change from that is written (<code>dashboard.side_panel_edge_reveal</code>, <code>dashboard.side_panel_predictive_peek</code>, <code>dashboard.side_panel_growing_peek</code>). The <strong>Advanced</strong> values are stored as <code>dashboard.side_panel_*</code> keys (e.g. <code>side_panel_retract_ms</code>); blank runs the default shown, and out-of-range values are clamped.`}>
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-side-panel-edge-reveal" /> show the side panel when the pointer reaches the right edge</label>
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-side-panel-predictive-peek" /> peek it in when the pointer is flung at the edge</label>
+          <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-side-panel-growing-peek" /> grow the peek as the pointer closes in, and reveal the panel on crossing into it or stopping at it</label>
+          <details class="cfg-advanced cfg-side-panel-advanced"><summary>Advanced</summary>
+            <div class="cfg-terminal-attach-timings cfg-side-panel-tuning">
+              ${SIDE_PANEL_TUNING_FIELDS.map((f) => html`<label key=${f.key}><span>${f.label}</span><${ConfigInput} type="number" id=${sidePanelTuningId(f.key)} min=${String(f.min)} max=${String(f.max)} step="1" placeholder=${String(f.def)} aria-label=${`${f.label} (${f.unit})`} /><span class="cfg-terminal-attach-unit">${f.unit}</span></label>`)}
+              <span class="cfg-terminal-attach-note">Blank uses the shown default.</span>
+              <${ConfigButton} type="button" class="ui-btn ui-sm" id="cfg-side-panel-reset">Reset to defaults</${ConfigButton}>
+            </div>
+          </details>
         </${Setting}>
       </${Group}>
 
@@ -354,7 +800,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="terminals" active=${active}>
+    <${Panel} id="terminals" active=${shown}>
       <${Group} title="Terminal">
         <${Setting} title="Terminal" forId="cfg-terminal" k="terminal"
           summary="Terminal emulator the dashboard's spawn auto-focus / shell-attach opens. Empty = auto-detect.">
@@ -435,39 +881,14 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
 
       <${Group} title="Web terminal attachment">
-        <div class="cfg-field cfg-row cfg-row-wide cfg-terminal-attach-field" data-cfg-key="dashboard.terminal_attach">
-          <div class="cfg-row-text">
-            <div class="cfg-row-title"><label class="cfg-label" for="cfg-terminal-attach-mode">Resize strategy</label></div>
-            <div class="cfg-row-summary">Choose how the browser establishes terminal geometry when attaching to tmux.</div>
-            <div class="cfg-row-meta">
-              <code class="cfg-key">dashboard.terminal_attach</code>
-              <details class="cfg-more"><summary>More…</summary>
-                <div class="cfg-hint cfg-terminal-attach-hint"><strong>Repair after attach</strong> preserves today's three-step sequence. <strong>Initial resize only</strong> skips the visible nudge and restore. <strong>Resize before attach</strong> waits between sending the fitted grid and starting the tmux attachment. Stored under <code>dashboard.terminal_attach</code>.</div>
-              </details>
-            </div>
-          </div>
-          <div class="cfg-row-ctl">
-            <${ConfigSelect} id="cfg-terminal-attach-mode" aria-label="Web terminal attach resize strategy">
-              <option value="repair">Repair after attach (default)</option>
-              <option value="initial">Initial resize only</option>
-              <option value="pre_attach">Resize before attach</option>
-            </${ConfigSelect}>
-            <div class="cfg-terminal-attach-timings">
-              <strong>Timing overrides</strong>
-              <label><span>Before initial resize</span><${ConfigInput} type="number" id="cfg-terminal-attach-initial-delay" min="0" max="10000" placeholder="0" aria-label="Initial terminal resize delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
-              <label><span>Post-attach repair wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-repair-delay" min="0" max="10000" placeholder="250" aria-label="Post-attach terminal repair delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
-              <label><span>Resize-to-attach wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-pre-delay" min="0" max="10000" placeholder="250" aria-label="Resize before attach delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
-              <span class="cfg-terminal-attach-note">Blank uses the shown default; explicit <code>0</code> means no wait.</span>
-            </div>
-          </div>
-        </div>
+        <${TerminalAttachRow} />
       </${Group}>
 
       <${Group} title="Web terminal tabs">
         <${Setting} title="Auto-close tabs" k="dashboard.close_terminal_tabs" wide
           summary="Close a terminal tab by itself when its tmux side goes away."
           more=${html`<strong>Session ended</strong>: the tmux session is gone — the shell exited (<code>exit</code> / Ctrl-D), the agent exited, or the session was killed. Reconnecting a shell would only start a fresh one, so shell tabs close by default; agent windows stay open so the exit stays visible. <strong>Detached</strong>: the tmux client left but the session lives on — <kbd>prefix</kbd>+<kbd>d</kbd>, or the session was opened elsewhere. Kept by default so Reconnect can bring it back. Closing a tab detaches every viewer of that session, so with <em>Detached</em> on, the other open tabs on it close too. Applies to tabs already open. Stored under <code>dashboard.close_terminal_tabs</code> (defaults are omitted).`}>
-          <table class="cfg-close-tabs" aria-label="Auto-close terminal tabs">
+          <table class="cfg-close-tabs ui-compact" aria-label="Auto-close terminal tabs">
             <thead><tr><th></th>${CLOSE_TAB_TARGETS.map(([, label]) => html`<th scope="col">${label}</th>`)}</tr></thead>
             <tbody>${CLOSE_TAB_EVENTS.map(([event, label]) => html`<tr>
               <th scope="row">${label}</th>
@@ -480,7 +901,54 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="notifications" active=${active}>
+    <${Panel} id="voice" active=${shown}>
+      <${Group} title="Phrases" lede="What you can say. Dictation listens in your browser's language, so pick phrases in that language: an English phrase may not be heard on another one.">
+        ${VOICE_ACTIONS.map(({ action, title, summary, more }) => html`<${Setting} key=${action} title=${title} forId=${`cfg-voice-on-${action}`} k="dashboard.voice.phrases"
+          summary=${summary} more=${more}>
+          <${ConfigInput} type="checkbox" id=${`cfg-voice-on-${action}`} aria-label=${`${title} on`} onChange=${() => syncVoiceSection()} />
+          <${ConfigInput} type="text" id=${`cfg-voice-phrase-${action}`} data-voice-action=${action} maxLength="60" aria-label=${title} style="width:14em" />
+        </${Setting}>`)}
+        <div class="cfg-hint ui-hint" id="cfg-voice-wake-no-listener" style="padding-left:0" hidden>A wake phrase won't start anything until the wake phrase listener below is on too.</div>
+      </${Group}>
+      <${Group} title="Dictation">
+        <${Setting} title="Mark dictated messages" forId="cfg-voice-mark" k="dashboard.voice.mark_dictated"
+          summary=${html`start messages dictated to an agent with <code>${DICTATED_MARKER}</code>, so it knows why sensible symbols may be missing`}
+          more="A draft with dictated words in it stays marked after you edit it. Typed messages aren't marked, and neither is anything put in a plain shell.">
+          <${Toggle} id="cfg-voice-mark" />
+        </${Setting}>
+        ${VOICE_PAUSE_ROWS.map(({ id, title, k, fallback, summary }) => html`<${Setting} key=${id} title=${title} forId=${id} k=${k} summary=${summary}
+          more="Timing comes from the gaps between recognition results, so it is approximate and a mark can land a word off. Marks the recognizer added aren't doubled. Pauses add nothing in a plain shell, or in languages written without spaces or with marks of their own, such as Japanese, Chinese, Arabic or Hindi. Both must be shorter than send after silence.">
+          <${Toggle} id=${id} />
+          <label class="cfg-inline">after <${ConfigInput} type="number" id=${`${id}-seconds`} min=${VOICE_PAUSE_MIN} max=${VOICE_PAUSE_MAX} step="0.1" placeholder=${String(fallback)} aria-label=${`Seconds of pause for ${title.toLowerCase()}`} style="width:5em" /> seconds</label>
+        </${Setting}>`)}
+      </${Group}>
+      <${Group} title="Hands-free" lede="Off unless you turn them on. Neither runs on plain HTTP pages away from localhost, or sends by itself in a plain shell.">
+        <${Setting} title="Wake phrase listener" forId="cfg-voice-wake" k="dashboard.voice.wake_enabled" badges=${['refresh']}
+          summary=${html`<strong>Keeps a microphone open while a dashboard tab is showing</strong>, so saying the wake phrase starts dictation with no click. Without on-device speech, <strong>everything said in the room goes to your browser's speech service, Google's in Chrome, for as long as it listens</strong>, not only what you dictate. On-device speech is recommended here.`}
+          more="It dictates into the terminal or chat window with focus, or the only one showing; otherwise it stays idle and says so. An indicator shows whenever it is on, with a Pause button. It stops while the tab is hidden, runs in one tab at a time, and waits while a reply is read aloud. Plain HTTP pages can't use it, because browsers refuse the microphone there.">
+          <${Toggle} id="cfg-voice-wake" onChange=${() => syncVoiceSection()} />
+        </${Setting}>
+        <div class="cfg-hint ui-hint" id="cfg-voice-wake-no-phrase" style="padding-left:0" hidden>The listener has nothing to listen for until a wake phrase above is on too.</div>
+        <${Setting} title="On-device speech" summary="Recognition that stays on this machine, for dictation and the wake listener. It's a language pack Chrome downloads and manages, not part of tclaude. Its size isn't known here. Nothing downloads without your click, and accuracy may differ."
+          more="Once installed it is used automatically. If it later stops working, the wake listener stops and says why rather than switching to a speech service; a dictation carries on through the service and says so. This row is about this browser, so it isn't saved with the settings below.">
+          <${LocalSpeechRow} />
+        </${Setting}>
+        <${Setting} title="Send after silence" forId="cfg-voice-silence" k="dashboard.voice.silence_send_seconds"
+          summary="send a dictated message to an agent after this many seconds with no new speech"
+          more="The draft counts down first. Press Esc, press Cancel or speak again to stop it. An empty draft never sends, and it never runs in a plain shell.">
+          <${Toggle} id="cfg-voice-silence" onChange=${() => syncVoiceSection()} />
+          <label class="cfg-inline">after <${ConfigInput} type="number" id="cfg-voice-silence-seconds" min=${SILENCE_SEND_MIN} max=${SILENCE_SEND_MAX} step="1" placeholder=${String(SILENCE_SEND_DEFAULT)} aria-label="Seconds of silence before sending" style="width:5em" /> seconds</label>
+        </${Setting}>
+        <${Setting} title="Continuous mode" forId="cfg-voice-continuous" k="dashboard.voice.continuous_enabled"
+          summary=${html`after a voice message sends, the next thing you say sends another, with no wake phrase, while the agent is still working. <strong>The microphone stays open, so without on-device speech everything said in the room goes to your browser's speech service, Google's in Chrome, for as long as it runs.</strong> On-device speech is recommended here.`}
+          more="Each message after the first sends on send after silence, or after 3 seconds if that is off, and queues while the agent is busy. It stays on the agent it started on: changing focus, closing that terminal or hiding the tab stops it. So do Esc, Stop, typing in the draft, the stop phrase and a failed send. An indicator shows on the draft while it runs. It stops rather than sends when the agent is blocked on you, at a prompt or held on an approval request, so it can't answer one. An open decision doesn't stop it. It needs an agent on this node whose harness takes messages mid-turn: Gemini CLI, pi, peers' agents, detached terminal windows and plain shells get one message at a time. Replies aren't read aloud while it listens.">
+          <${Toggle} id="cfg-voice-continuous" />
+          <label class="cfg-inline">stop after <${ConfigInput} type="number" id="cfg-voice-continuous-idle" min=${CONTINUOUS_IDLE_MIN} max=${CONTINUOUS_IDLE_MAX} step="1" placeholder=${String(CONTINUOUS_IDLE_DEFAULT)} aria-label="Seconds of silence before continuous mode stops" style="width:6em" /> seconds of silence</label>
+        </${Setting}>
+        <div class="cfg-hint ui-hint" id="cfg-voice-hands-free-warning" style="padding-left:0" role="alert" hidden>⚠ With both on, <strong>sound in the room can send mail to an agent</strong>: anything that says the wake phrase starts a dictation, and silence sends it.</div>
+      </${Group}>
+    </${Panel}>
+    <${Panel} id="notifications" active=${shown}>
       <${Group} title="Delivery">
         <${Setting} title="Desktop notifications" forId="cfg-notif-enabled" k="notifications.enabled"
           summary="Master switch for notification banners.">
@@ -544,7 +1012,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="agents" active=${active}>
+    <${Panel} id="agents" active=${shown}>
       <${Group} title="Terminal startup groups">
         <${Setting} title="Auto-join" forId="cfg-session-auto-join-group" k="session.auto_join_group"
           summary=${html`a bare <code>tclaude</code> joins the group configured for its directory`}
@@ -600,7 +1068,15 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="context" active=${active}>
+    <${Panel} id="launch" active=${shown}>
+      <${Group} title="Relaunch policy" lede=${html`One answer per configurable row, for every agent. Re-resolve reads the
+        current value; Reuse keeps the one stored at the agent's last launch. The other rows follow their layer. See${' '}
+        <code>docs/launch-resolution.md</code>, or <code>tclaude agent relaunch-policy show</code>.`}>
+        <${RelaunchPolicyTable} />
+      </${Group}>
+    </${Panel}>
+
+    <${Panel} id="context" active=${shown}>
       <${Group} title="Compaction">
         <${Setting} title="Pre-compact guard" wide k="pre_compact_guard" badges=${['claude']}
           summary="Refuse automatic compaction until used context reaches a per-window floor."
@@ -638,12 +1114,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="costs" active=${active}>
+    <${Panel} id="costs" active=${shown}>
       <${Group} title="Usage limits">
         <${Setting} title="Limits & budgets"
           summary="Spend caps, quota guards and per-agent usage profiles live in their own manager."
           more=${html`Global and group limits (for example "$500 a month, alert at 50%, wrap everyone up at 100%"), usage profiles that budget each agent, and per-agent extensions. The former daily/monthly spend limits were converted into global limits there.`}>
-          <button type="button" class="tool" id="cfg-open-usage-rules" onClick=${() => openUsageRulesManager()}>Open usage limits & budgets…</button>
+          <${Button} size="sm" id="cfg-open-usage-rules" onClick=${() => openUsageRulesManager()}>Open usage limits & budgets…<//>
         </${Setting}>
       </${Group}>
       <${Group} title="Cost display">
@@ -710,13 +1186,13 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="assistants" active=${active}>
+    <${Panel} id="assistants" active=${shown}>
       <${Group} title="tclaude ask">
         <${Setting} title="Ask — profile" forId="ask-profile" k="ask.profile"
           summary="Run fresh tclaude ask questions on a saved spawn profile's harness, model and effort."
           more=${html`Optional. Pick a saved <strong>spawn profile</strong> (from the Groups tab) to run fresh <code>tclaude ask</code> questions on its harness — the harness-independent way to ask <strong>Codex</strong> as well as Claude. When set, the profile's harness / model / effort are used and the Model / Effort below are ignored. Leave as <em>(none)</em> to use Claude with the Model / Effort below.`}>
           <${ConfigSelect} id="ask-profile" aria-label="Ask default profile" style="min-width:160px"></${ConfigSelect}>
-          <span id="ask-profile-state" class="cfg-hint"></span>
+          <span id="ask-profile-state" class="cfg-hint ui-hint"></span>
         </${Setting}>
         <${Setting} title="Ask — sandbox" forId="ask-sandbox" k="ask.sandbox"
           summary="Apply the current sandbox policy to each ask turn. Dashboard global default is the default."
@@ -746,7 +1222,70 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="daemon" active=${active}>
+    <${Panel} id="git" active=${shown}>
+      <${Group} title="Proxy access" lede=${html`Agents without credentials of their own fetch, push and use GitHub and
+        GitLab through <code>tclaude proxy</code>; agentd runs the call with the key or token below. See
+        <code>docs/proxies.md</code>.`}>
+        <${Setting} title="Allowed remotes" wide k="agent.git_proxy.allowed_remotes"
+          summary="Repositories the proxy may work with, as host/owner/repo patterns. Empty turns the proxy off."
+          more=${html`<code>github.com</code> covers every repository on the host, <code>github.com/acme</code> or
+            <code>github.com/acme/*</code> every repository of one owner, and <code>github.com/acme/app</code> one
+            repository. <code>*</code> matches one segment. A GitLab group path is written whole:
+            <code>gitlab.example.com/team/sub/*</code>. Write the host without a port, even for an instance on
+            another port. Agents also need a <code>proxy.*</code> permission; none is granted by default.`}>
+          <${StringList} id="cfg-gitproxy-remotes" values=${lists['cfg-gitproxy-remotes']} placeholder="gitlab.example.com/team/*" onChange=${onListChange} />
+        </${Setting}>
+        <${Setting} title="Protected branches" wide k="agent.git_proxy.protected_refs"
+          summary="Branches no agent may push to through the proxy, force or not."
+          more=${html`<em>Default</em> protects <code>main</code> and <code>master</code>. <em>None</em> turns the
+            protection off. A custom entry may use <code>*</code> within one segment, so <code>release/*</code>
+            protects the whole namespace. Pull and merge requests may still target any branch.`}>
+          <${ConfigSelect} id="cfg-gitproxy-protected-mode" aria-label="Protected branches">
+            <option value="default">Default (main, master)</option>
+            <option value="custom">Custom</option>
+            <option value="none">None</option>
+          </${ConfigSelect}>
+          <div id="cfg-gitproxy-protected-wrap">
+            <${StringList} id="cfg-gitproxy-protected" values=${lists['cfg-gitproxy-protected']} placeholder="branch or release/*" onChange=${onListChange} />
+          </div>
+        </${Setting}>
+        <${Setting} title="Force push with lease" forId="cfg-gitproxy-forcepush" k="agent.git_proxy.allow_force_push"
+          summary="Let agents push --force-with-lease to their own branches. Protected branches are never force-pushable.">
+          <${Toggle} id="cfg-gitproxy-forcepush" />
+        </${Setting}>
+      </${Group}>
+
+      <${Group} title="Credentials" lede="Paths to files on this machine. The form never reads them; ~ expands to your home directory.">
+        <${Setting} title="SSH key" forId="cfg-gitproxy-sshkey" k="agent.git_proxy.ssh_key"
+          summary="Empty uses the daemon's ssh-agent, which is preferred: no key file is handed to git."
+          more=${html`The path to a private key, not its passphrase. The proxy runs ssh with <code>BatchMode=yes</code>,
+            so a key with a passphrase must already be loaded into an agent.`}>
+          <${ConfigInput} type="text" id="cfg-gitproxy-sshkey" placeholder="~/.ssh/id_ed25519" autocomplete="off" spellcheck="false" style="min-width:240px" />
+        </${Setting}>
+        <${Setting} title="GitHub token file" forId="cfg-gitproxy-ghtoken" k="agent.git_proxy.github_token_file"
+          summary=${html`Empty lets <code>gh</code> use its own login.`}>
+          <${ConfigInput} type="text" id="cfg-gitproxy-ghtoken" placeholder="~/.config/tclaude/github-token" autocomplete="off" spellcheck="false" style="min-width:240px" />
+        </${Setting}>
+      </${Group}>
+
+      <${Group} title="GitLab" lede="Open MRs and merge request badges follow these within 30 seconds.">
+        <${Setting} title="GitLab instances" wide k="agent.git_proxy.gitlab_hosts"
+          summary=${html`The host in a remote URL → the https base URL of the instance that serves it. Listing any
+            instance turns off the built-in <code>gitlab.com</code>; list it too to keep it.`}
+          more=${html`A self-hosted instance cannot be told from any other git server by its name, so it must be
+            listed here. The base may carry a port (<code>https://gitlab.example.com:8929</code>) but no path. The
+            token below is sent only to these bases.`}>
+          <${GitLabHostList} values=${lists['cfg-gitproxy-gitlab-hosts']} onChange=${onListChange} />
+        </${Setting}>
+        <${Setting} title="GitLab token file" forId="cfg-gitproxy-gltoken" k="agent.git_proxy.gitlab_token_file"
+          summary="One token for every instance above, with the api scope."
+          more="With no file the GitLab proxy refuses every call and says so; there is no CLI fallback.">
+          <${ConfigInput} type="text" id="cfg-gitproxy-gltoken" placeholder="~/.config/tclaude/gitlab-token" autocomplete="off" spellcheck="false" style="min-width:240px" />
+        </${Setting}>
+      </${Group}>
+    </${Panel}>
+
+    <${Panel} id="daemon" active=${shown}>
       <${Group} title="Startup">
         <${Setting} title="Auto-launch dashboard" forId="cfg-agent-autolaunch" k="agent.auto_launch_dashboard"
           summary=${html`open the dashboard when <code>agentd serve</code> starts`}>
@@ -778,7 +1317,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
 
       <${Group} title="Security">
-        <${Setting} title="Persist operator token" k="agent.persist_operator_token" badges=${['restart']}
+        <${Setting} title="Persist operator token" k="agent.persist_operator_token" badges=${['restart']} wide
           summary="Keep the same operator token across agentd restarts, in a private file or the OS keychain."
           more=${html`Default off: a fresh token is minted every <code>agentd serve</code>. File persistence stores it at <code>0600 ~/.tclaude/data/operator_token</code>, which the human CLI reads automatically and agent sandboxes deny. Keychain storage is an explicit opt-in because keychain access is platform-dependent and may prompt; the CLI does not retrieve it automatically. Existing tokens are not copied between stores. The secret is never written to <code>config.json</code>. Takes effect on the next <code>agentd serve</code>.`}>
           <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-persisttoken" /> keep the same operator token across restarts in the private file (same as <code>--persist-operator-token</code>)</label>
@@ -822,10 +1361,18 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <span class="cfg-remote-status" id="cfg-remote-status"></span>
         </${Setting}>
       </${Group}>
-      <div id="cfg-remote-admin-slot"></div>
+      <${PeerLocalOnly}><${RemoteAdminPanel} /><//>
     </${Panel}>
 
-    <${Panel} id="logs" active=${active}>
+    <${Panel} id="installation" active=${shown}>
+      <${ServicePanel} open=${shown === 'installation'} onRead=${() => afterRender(scrollToPart)} />
+      <${LauncherPanel} open=${shown === 'installation'} />
+      <${UpdatesPart}>
+        <${UpdatesPanel} open=${shown === 'installation'} />
+      <//>
+    </${Panel}>
+
+    <${Panel} id="logs" active=${shown}>
       <${Group} title="Logging">
         <${Setting} title="Log level" forId="cfg-log-level" k="log_level" summary="Verbosity of agentd's output.log.">
           <${ConfigSelect} id="cfg-log-level" aria-label="Log level">
@@ -849,7 +1396,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
 
       <${Group} title="Log rotation">
         <${Setting} title="Max log size" forId="cfg-logrot-maxsize" k="log_rotation.max_size" badges=${['restart']}
-          summary=${html`Size cap for <code>~/.tclaude/output.log</code> before <code>agentd</code> rotates it (<code>10MiB</code>, <code>50m</code>, <code>500k</code>). Empty = built-in default (10 MiB). <code>0</code> disables rotation.`}>
+          summary=${html`Size cap for <code>~/.tclaude/data/output.log</code> before <code>agentd</code> rotates it (<code>10MiB</code>, <code>50m</code>, <code>500k</code>). Empty = built-in default (10 MiB). <code>0</code> disables rotation.`}>
           <${ConfigInput} type="text" id="cfg-logrot-maxsize" placeholder="10MiB" aria-label="Log rotation max size" autocomplete="off" spellcheck="false" style="min-width:110px" />
         </${Setting}>
         <${Setting} title="Keep" k="log_rotation.keep" badges=${['restart']}
@@ -875,22 +1422,90 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="experimental" active=${active}>
+    <${Panel} id="steward" active=${shown}>
+      <${Group} title="Stewards">
+        <${Setting} title="Stewards" forId="cfg-steward-enabled" k="steward.disabled" badges=${['refresh']}
+          summary=${html`a Steward in the companion window, and external stewards if allowed below`}
+          more="On by default. Turning it on spawns nothing and grants nothing: a Steward exists only once you summon one. Uncheck to opt out: no Steward can be summoned or made, the companion offers no Steward (no chips, no summon, no Ctrl+.), and external stewards are refused. Drawing boards, live pages, decisions and the rest of Collab stay on. A Steward already running is not stopped; retire it from its row.">
+          <${Toggle} id="cfg-steward-enabled" />
+        </${Setting}>
+      </${Group}>
+      <${Group} title="Access" lede="Set when a Steward is summoned, so a running Steward keeps what it was born with: retire it to apply a change. Anything beyond this asks you first. Agents can reply to a Steward that wrote to them; writing to it first needs message.direct or a shared group.">
+        <${Setting} title="Reads" forId="cfg-steward-reads" k="steward.reads"
+          summary="What a Steward can read."
+          more="Every level lists all agents and groups, as you see them, and reads drawing boards and the dashboard view. Operator level adds processes, triggers, usage, costs, host load, federation activity and agents' context state. Reads never include other agents' mail through the API, private setup text, or GitHub, Linear and AWB through your credentials. At every level a Steward can capture your dashboard, so it sees what is on screen, including any open messages, and you see a notice each time.">
+          <${ConfigSelect} id="cfg-steward-reads" aria-label="What a Steward can read">
+            <option value="operator">Operator level (default)</option>
+            <option value="fleet">Fleet and drawing boards only</option>
+          </${ConfigSelect}>
+        </${Setting}>
+        <${Setting} title="Writes" forId="cfg-steward-writes" k="steward.writes"
+          summary="What a Steward can change without asking."
+          more="Every level can draw on drawing boards, point at the dashboard and notify you. Messaging also lets it message any agent. Starting workers adds spawning agents and setting their task link, and the workers it starts run on your account.">
+          <${ConfigSelect} id="cfg-steward-writes" aria-label="What a Steward can change without asking">
+            <option value="messaging">Message agents (default)</option>
+            <option value="none">Drawing boards and notifying you only</option>
+            <option value="workers">Message agents and start workers</option>
+          </${ConfigSelect}>
+        </${Setting}>
+        <${Setting} title="Default permissions"
+          summary="What a new Steward gets beyond Reads and Writes, or is denied from them. Saved from the editor, not with this form. A running Steward keeps what it has.">
+          <${StewardDefaultPermissions} />
+        </${Setting}>
+      </${Group}>
+      <${Group} title="Launch">
+        <${Setting} title="Spawn profile" forId="cfg-steward-profile" k="steward.profile"
+          summary="The spawn profile a new Steward launches with. Unset, it uses the global default profile.">
+          <${ConfigSelect} id="cfg-steward-profile" aria-label="Steward spawn profile" style="min-width:160px"></${ConfigSelect}>
+        </${Setting}>
+        <${Setting} title="Start directory" forId="cfg-steward-dir" wide k="steward.dir"
+          summary="The directory a new Steward starts in. Unset, it starts in the shared scribe directory, ~/.tclaude/scribe. A running Steward stays where it started."
+          more="An absolute path or one under ~/, and it must exist when the Steward is summoned. Point it at a repository and the Steward's harness reads that repository's project instructions and memory, and the folder is pre-trusted for the Steward's harness, unless it is your home directory or above it. A sandbox profile that denies the directory refuses the summon.">
+          <${StewardDirInput} />
+        </${Setting}>
+      </${Group}>
+      <${Group} title="Knowledge base">
+        <${Setting} title="Source download" forId="cfg-steward-source-download" k="steward.source_download"
+          summary="Whether tclaude's source is downloaded for a Steward to read. The docs are always there, built in."
+          more="Comes from github.com/tofutools/tclaude, in the background with a progress bar, and never without your say. Only the running version is kept, and a version already held is not fetched again. Ask puts the question once for each new version. An agent can't change this or start a download.">
+          <${ConfigSelect} id="cfg-steward-source-download" aria-label="Source download">
+            <option value="ask">Ask for each new version</option>
+            <option value="each_version">Download each new version</option>
+            <option value="never">Never</option>
+          </${ConfigSelect}>
+        </${Setting}>
+        <${KnowledgeSourceSetting} />
+      </${Group}>
+      <${Group} title="Name and startup">
+        <${Setting} title="Name" forId="cfg-steward-name" k="steward.name"
+          summary="What you call your Steward. Shown in the companion, and agents can address it by this name as well as by steward. A running Steward is told when it changes.">
+          <${ConfigInput} type="text" id="cfg-steward-name" maxlength="32" spellcheck="false" aria-label="Steward name" placeholder="Steward" />
+        </${Setting}>
+        <${Setting} title="Startup prompt" forId="cfg-steward-startup-prompt" wide k="steward.startup_prompt"
+          summary="Your own instructions, added to what every new Steward is told when it starts. A running Steward keeps the prompt it started with.">
+          <${ConfigTextarea} id="cfg-steward-startup-prompt" class="cfg-json" rows="6" maxlength="10000" aria-label="Steward startup prompt"
+            placeholder="Optional. For example: Reply in Swedish. Start every brief with open pull requests."></${ConfigTextarea}>
+        </${Setting}>
+      </${Group}>
+      <${ExternalStewardGroup} loads=${loads} />
+    </${Panel}>
+
+    <${Panel} id="processes" active=${shown}>
+      <${Group} title="Workflow files">
+        <${Setting} title="Refuse unsigned workflows" forId="cfg-processes-refuse-unsigned" k="processes.refuse_unsigned_imports"
+          summary=${html`refuse to import a <code>.pwf</code> workflow file without a valid signature`}
+          more="The import review still shows such a file and says why it is refused. A valid signature from a key this node does not know passes: the file is unchanged since signing, but the signer is not known. Off by default.">
+          <${Toggle} id="cfg-processes-refuse-unsigned" />
+        </${Setting}>
+      </${Group}>
+    </${Panel}>
+
+    <${Panel} id="experimental" active=${shown}>
       <${Group} title="Feature flags"
-        lede=${html`Opt-in flags for features under active development. Such features ship dark on
+        lede=${html`Opt-in flags for features under active development. Most ship dark on
           <code>main</code> — off by default and invisible in normal use — so they can land in
-          small increments without a long-lived feature branch. Expect rough edges while a
+          small increments without a long-lived feature branch, and a few stay listed while on by default. Expect rough edges while a
           flag is listed here; when a feature graduates, its flag disappears.`}>
-        <${Setting} title="Processes" forId="cfg-feature-processes" k="features.processes"
-          summary=${html`enable the in-development <strong>Processes</strong> feature`}
-          more="Repeatable process graphs run by agents, programs and you: a template editor with an AI scribe, runs scoped to a group or an agent, and run views in Groups and Terminals. Off by default while it is tested and iterated on; the tab, the Groups and Terminals process views, the process API and the run engine all stay absent until enabled.">
-          <${Toggle} id="cfg-feature-processes" />
-        </${Setting}>
-        <${Setting} title="Triggers" forId="cfg-feature-triggers" k="features.triggers" badges=${['refresh']}
-          summary=${html`enable the in-development <strong>Triggers</strong> automation feature`}
-          more="PR-opened rules with bounded spawn and message actions. Off by default; the Automations subview, Groups projection, engine, and API stay absent until enabled.">
-          <${Toggle} id="cfg-feature-triggers" />
-        </${Setting}>
         <${Setting} title="Groups Route map" forId="cfg-feature-groups-route-map" k="features.groups_route_map" badges=${['refresh']}
           summary=${html`enable the opt-in <strong>Members | Route map</strong> Groups view`}
           more="Read-only agent route leases and health for selected groups. Off by default; the route map and its snapshot projection stay absent until enabled.">
@@ -906,8 +1521,8 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           </${ConfigSelect}>
         </${Setting}>
         <${Setting} title="Command palette in terminals" forId="cfg-feature-terminal-command-palette-shortcut" k="features.terminal_command_palette_shortcut" badges=${['refresh']}
-          summary=${html`let <strong>Ctrl/Cmd+K</strong> open the command palette while a web terminal has focus`}
-          more="Off by default because Ctrl/Cmd+K clears the current input line in the supported harnesses. When enabled, the dashboard claims that chord inside web terminals instead.">
+          summary=${html`let <${Keys} id="palette" /> open the command palette while a web terminal has focus`}
+          more=${`Off by default because ${shortcutText('palette')} clears the current input line in the supported harnesses. When enabled, the dashboard claims that chord inside web terminals instead.`}>
           <${Toggle} id="cfg-feature-terminal-command-palette-shortcut" />
         </${Setting}>
         <${Setting} title="Recorded sandbox details" forId="cfg-feature-recorded-sandbox-details" k="features.recorded_sandbox_details" badges=${['refresh']}
@@ -923,7 +1538,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
     </${Panel}>
 
-    <${Panel} id="advanced" active=${active}>
+    <${Panel} id="keyboard" active=${shown}>
+      <${KeyboardShortcutList} Setting=${Setting} drafts=${lists[KEYBINDINGS_LIST]}
+        onChange=${(values) => onListChange(KEYBINDINGS_LIST, values)} />
+    </${Panel}>
+
+    <${Panel} id="advanced" active=${shown}>
       <${Group} title="Sudo configuration">
         <${Setting} title="Sudo (raw JSON)" wide k="agent.sudo"
           summary=${html`The <code>agent.sudo</code> block (time-bounded permission elevations, with optional
@@ -943,6 +1563,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <option value="exited"></option>
     </datalist>
 
+    <${FormFillBar} form="config" generation=${loads} />
     <div class="cfg-footer">
       <${SaveSummary} dirtyPanels=${dirtyPanels} />
       <span class="cfg-status" id="cfg-status">loading…</span>

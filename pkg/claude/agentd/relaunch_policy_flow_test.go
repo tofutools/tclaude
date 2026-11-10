@@ -1,0 +1,174 @@
+package agentd_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+// Launch slice 6d (tcl-4qj8c6): the harness_config relaunch row decides how an
+// explicit --harness-config posture weighs against the sandbox profiles' on
+// every relaunch. Nothing configured is explicit-wins.
+
+func setRelaunchPolicy(t *testing.T, f *testharness.Flow, field, mode string) {
+	t.Helper()
+	rec := humanReq(t, f, http.MethodPut, "/v1/relaunch-policy", map[string]any{"field": field, "mode": mode})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+func resumedHarnessConfig(t *testing.T, f *testharness.Flow, conv string) sandboxpolicy.HarnessConfigAccess {
+	t.Helper()
+	for _, session := range f.World.Tmux.Sessions() {
+		f.MarkOffline(session)
+	}
+	f.AssertResumeSpawned(f.AsHuman().Resume(conv))
+	policy, ok := f.World.SpawnSandboxPolicy(conv)
+	require.True(t, ok)
+	return policy.Effective.HarnessConfig
+}
+
+func TestRelaunchPolicy_HarnessConfigModesOnResume(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "floored", HarnessConfig: sandboxpolicy.HarnessConfigAccessDefault})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("floored"))
+	conv, _ := spawnPinned(t, f, "writer", "write")
+
+	assert.Equal(t, sandboxpolicy.HarnessConfigAccessWrite, resumedHarnessConfig(t, f, conv), "explicit-wins by default")
+
+	setRelaunchPolicy(t, f, "harness_config", "tighten-only")
+	assert.True(t, sandboxpolicy.HarnessConfigFloorApplies(resumedHarnessConfig(t, f, conv)),
+		"tighten-only: the profiles keep the floor, so an explicit write gets it back")
+
+	setRelaunchPolicy(t, f, "harness_config", "explicit-wins")
+	assert.Equal(t, sandboxpolicy.HarnessConfigAccessWrite, resumedHarnessConfig(t, f, conv),
+		"switching back restores the explicit posture")
+}
+
+func TestRelaunchPolicy_ChainWinsAndTheRepairFinder(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "chain", HarnessConfig: sandboxpolicy.HarnessConfigAccessWrite})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("chain"))
+	conv, agentID := spawnPinned(t, f, "pinned", "read")
+
+	setRelaunchPolicy(t, f, "harness_config", "chain-wins")
+	assert.Equal(t, sandboxpolicy.HarnessConfigAccessWrite, resumedHarnessConfig(t, f, conv), "chain-wins takes the profiles' posture")
+	assert.NotContains(t, listHarnessConfigRepairs(t, f), agentID, "a posture the policy gave up is not a lost pin")
+
+	setRelaunchPolicy(t, f, "harness_config", "explicit-wins")
+	assert.Contains(t, listHarnessConfigRepairs(t, f), agentID, "under explicit-wins the recorded launch is missing its pin")
+	assert.Equal(t, sandboxpolicy.HarnessConfigAccessRead, resumedHarnessConfig(t, f, conv), "and the next relaunch restores it")
+}
+
+func TestRelaunchPolicy_ReadOpenSetGated(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	const caller = "rlp0-1111-2222-3333-4444"
+	f.HaveMember("crew", caller)
+
+	rec := agentReq(t, f, caller, http.MethodGet, "/v1/relaunch-policy", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var view struct {
+		Rows []struct {
+			Field    string `json:"field"`
+			Mode     string `json:"mode"`
+			Default  string `json:"default"`
+			Set      bool   `json:"set"`
+			Settable bool   `json:"settable"`
+			Why      string `json:"why"`
+		} `json:"rows"`
+		Fields []struct {
+			Key   string `json:"key"`
+			Layer string `json:"layer"`
+			Why   string `json:"why"`
+		} `json:"fields"`
+		CanManage bool `json:"can_manage"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &view))
+	assert.False(t, view.CanManage, "no relaunch-policy.manage yet")
+	assert.NotEmpty(t, view.Fields, "every registry row, for the read-only part of the table")
+	rows := map[string]int{}
+	for i, row := range view.Rows {
+		rows[row.Field] = i
+	}
+	require.Contains(t, rows, "harness_config")
+	hc := view.Rows[rows["harness_config"]]
+	assert.Equal(t, "explicit-wins", hc.Mode)
+	assert.Equal(t, "explicit-wins", hc.Default)
+	assert.True(t, hc.Settable)
+	assert.False(t, hc.Set)
+	assert.NotEmpty(t, hc.Why)
+	for _, field := range []string{"group_env", "group_remote_control", "sandbox_profile_contents"} {
+		require.Contains(t, rows, field)
+		assert.True(t, view.Rows[rows[field]].Settable, field)
+		assert.Equal(t, "re-resolve", view.Rows[rows[field]].Mode, field)
+	}
+	assert.NotContains(t, rows, "group_startup_context", "not a relaunch input")
+
+	body := map[string]any{"field": "harness_config", "mode": "chain-wins"}
+	assert.Equal(t, http.StatusForbidden, agentReq(t, f, caller, http.MethodPut, "/v1/relaunch-policy", body).Code)
+	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermRelaunchPolicyManage, "test"))
+	granted := agentReq(t, f, caller, http.MethodPut, "/v1/relaunch-policy", body)
+	assert.Equal(t, http.StatusOK, granted.Code)
+	assert.Contains(t, granted.Body.String(), `"can_manage":true`)
+
+	assert.Equal(t, http.StatusBadRequest, humanReq(t, f, http.MethodPut, "/v1/relaunch-policy",
+		map[string]any{"field": "group_startup_context", "mode": "reuse"}).Code, "a row the policy cannot set")
+	assert.Equal(t, http.StatusBadRequest, humanReq(t, f, http.MethodPut, "/v1/relaunch-policy",
+		map[string]any{"field": "harness_config", "mode": "reuse"}).Code, "a mode the row does not offer")
+
+	// Setting the default clears the stored row.
+	setRelaunchPolicy(t, f, "harness_config", "explicit-wins")
+	stored, err := db.ListRelaunchPolicyRows()
+	require.NoError(t, err)
+	assert.Empty(t, stored)
+}
+
+// A clone launches under the relaunch policy too (tcl-bepvre). A Claude
+// clone reuses the source's stored sandbox, whose posture is the explicit
+// write, so before this it inherited that write under every policy until its
+// own first resume.
+func TestRelaunchPolicy_HarnessConfigModesOnClone(t *testing.T) {
+	cloneHarnessConfig := func(t *testing.T, f *testharness.Flow, conv string) sandboxpolicy.HarnessConfigAccess {
+		t.Helper()
+		clone := f.AsHuman().CloneFresh(conv)
+		policy, ok := f.World.SpawnSandboxPolicy(clone.NewConv)
+		require.True(t, ok)
+		return policy.Effective.HarnessConfig
+	}
+
+	t.Run("chain-wins", func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("crew")
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "chain", HarnessConfig: sandboxpolicy.HarnessConfigAccessWrite})
+		require.NoError(t, err)
+		require.NoError(t, db.SetGlobalSandboxProfile("chain"))
+		conv, _ := spawnPinned(t, f, "pinned", "read")
+
+		assert.Equal(t, sandboxpolicy.HarnessConfigAccessRead, cloneHarnessConfig(t, f, conv), "explicit-wins: the clone keeps the pin")
+		setRelaunchPolicy(t, f, "harness_config", "chain-wins")
+		assert.Equal(t, sandboxpolicy.HarnessConfigAccessWrite, cloneHarnessConfig(t, f, conv), "chain-wins: the clone takes the profiles' posture")
+	})
+	t.Run("tighten-only", func(t *testing.T) {
+		f := newFlow(t)
+		f.HaveGroup("crew")
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "floored", HarnessConfig: sandboxpolicy.HarnessConfigAccessDefault})
+		require.NoError(t, err)
+		require.NoError(t, db.SetGlobalSandboxProfile("floored"))
+		conv, _ := spawnPinned(t, f, "writer", "write")
+
+		setRelaunchPolicy(t, f, "harness_config", "tighten-only")
+		assert.True(t, sandboxpolicy.HarnessConfigFloorApplies(cloneHarnessConfig(t, f, conv)),
+			"tighten-only: the profiles keep the floor, so the clone gets it rather than the write")
+	})
+}

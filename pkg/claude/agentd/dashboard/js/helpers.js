@@ -8,6 +8,7 @@
 // the dependency-free theme helper used by shared presentation-copy builders.
 import { dashPrefs } from './prefs.js';
 import { wizWord } from './slop.js';
+import { isZeroTime } from './cell-format.js';
 
 const $ = (sel, root) => (root || document).querySelector(sel);
 const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -24,6 +25,13 @@ const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 function isModifiedClick(e) {
   return e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0;
 }
+// browserOS names the operating system the browser runs on: 'macos', 'windows',
+// or 'linux' for anything else.
+function browserOS() {
+  const platform = navigator.platform || navigator.userAgent || '';
+  if (/Mac|iPhone|iPad/.test(platform)) return 'macos';
+  return /Win/.test(platform) ? 'windows' : 'linux';
+}
 // isMacChromeZeroReleaseLeave recognises the all-zero dragleave (null
 // relatedTarget, zero client AND screen coordinates) that macOS Chrome emits
 // at the in-place mouse release ending a Cmd/Ctrl copy drag, typically
@@ -35,7 +43,7 @@ function isMacChromeZeroReleaseLeave(e) {
   return !e.relatedTarget
     && e.clientX === 0 && e.clientY === 0
     && e.screenX === 0 && e.screenY === 0
-    && /Mac/.test(navigator.platform || navigator.userAgent)
+    && browserOS() === 'macos'
     && /(?:Chrome|Chromium)\//.test(navigator.userAgent)
     && !/(?:Edg|OPR|Vivaldi)\//.test(navigator.userAgent)
     && !navigator.brave;
@@ -360,13 +368,24 @@ function harnessCanRemoteControl(snapshot, name) {
   return h ? !!h.can_remote_control : true;
 }
 
+// harnessCanCompact reports whether an agent on harness `name` can be
+// compacted, per the snapshot's harness catalog (dashboardHarness.can_compact).
+// Fail-OPEN like harnessCanRename; the server re-gates on the harness.
+function harnessCanCompact(snapshot, name) {
+  const list = (snapshot && snapshot.harnesses) || [];
+  const h = list.find(x => x.name === (name || 'claude'));
+  return h ? !!h.can_compact : true;
+}
+
 const SLOP_SYMBOLS = ['🍒', '🍋', '🍇', '🍊', '🔔', '⭐', '💎', '7️⃣'];
 // relTime renders an ISO timestamp as a coarse "Ns/m/h ago" string.
-// Mirrors the session ls UPDATED column. Empty input → "" (no chip).
+// Mirrors the session ls UPDATED column. Empty input → "" (no chip), and so
+// is Go's zero time (year 1, a time that was never set), which would
+// otherwise read as hundreds of thousands of days ago.
 function relTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
-  if (isNaN(d)) return '';
+  if (isNaN(d) || isZeroTime(d)) return '';
   const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
   if (sec < 60) return sec + 's ago';
   if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
@@ -448,6 +467,12 @@ function offlineDefault(tab) {
 function groupOfflineOverride(name) {
   const v = dashPrefs.getItem('tclaude.dash.group.offline.' + name);
   return (v === 'show' || v === 'hide') ? v : 'inherit';
+}
+
+function setGroupOfflineOverride(name, value) {
+  const key = 'tclaude.dash.group.offline.' + name;
+  if (value === 'show' || value === 'hide') dashPrefs.setItem(key, value);
+  else dashPrefs.removeItem(key);
 }
 
 // groupShowOffline: effective decision for one group — the override
@@ -594,10 +619,10 @@ function syncWizardOrbit() {
 export {
   syncBotAnimations,
   syncWizardOrbit,
-  $, $$, isModifiedClick, isMacChromeZeroReleaseLeave, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
+  $, $$, isModifiedClick, browserOS, isMacChromeZeroReleaseLeave, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
   makeModalResizable, bindModalSubmitHotkey,
-  harnessCanRename, harnessCanRemoteControl,
-  relTime, shortCwd, displayModel, offlineDefault, groupOfflineOverride, groupShowOffline,
+  harnessCanRename, harnessCanRemoteControl, harnessCanCompact,
+  relTime, shortCwd, displayModel, offlineDefault, groupOfflineOverride, setGroupOfflineOverride, groupShowOffline,
   // slop-fx.js and the native member reels share one symbol sequence.
   SLOP_SYMBOLS,
   // Shared native/web directory-picker boundary. The Preact island registers

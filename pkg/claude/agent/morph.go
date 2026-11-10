@@ -59,9 +59,8 @@ func morphCmd() *cobra.Command {
 			"and otherwise waits until it next goes idle (at most 30 minutes). --now stops a " +
 			"busy or stuck agent immediately. A self-morph always waits for the current turn " +
 			"to end.\n\n" +
-			"Permissions: self.morph to morph yourself; agent.morph, or groups.members.morph " +
-			"(conferred by group ownership) covering every group of the target, to morph " +
-			"another agent. A grant scoped to spawn_profile allows only --profile morphs into " +
+			"Permissions: self.morph to morph yourself. To morph another agent: " +
+			CrossAgentAuth("morph") + " A grant scoped to spawn_profile allows only --profile morphs into " +
 			"those profiles. The operator needs no grant.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *morphParams, _ *cobra.Command) error {
@@ -69,7 +68,7 @@ func morphCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *morphParams, _ *cobra.Command, _ []string) {
-			os.Exit(runMorph(p, os.Stdout, os.Stderr))
+			os.Exit(runMorph(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -345,7 +344,7 @@ func morphHandoffCmd() *cobra.Command {
 			"earlier handoff. Keep it under 64 KiB and point at files for detail.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *morphHandoffParams, _ *cobra.Command, _ []string) {
-			os.Exit(runMorphHandoff(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runMorphHandoff(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

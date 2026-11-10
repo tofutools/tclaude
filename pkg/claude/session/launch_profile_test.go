@@ -213,3 +213,167 @@ func TestSandboxImplementationDecision_RejectsFreshOpenCodeBuiltinButGrandfather
 		false,
 	), "a historical pure replay remains launchable")
 }
+
+// postureProfile is a Claude default profile that pins a non-default value on
+// every launch-posture field a terminal launch takes from it.
+func postureProfile() db.SpawnProfile {
+	return db.SpawnProfile{
+		Name: "posture-default", Harness: harness.DefaultName,
+		Sandbox:                harness.ClaudeSandboxOff,
+		SandboxImplementation:  string(sandboxpolicy.ImplementationOff),
+		Approval:               "acceptEdits",
+		AskUserQuestionTimeout: "5m",
+		AutoCompactWindow:      "450000",
+		TrustDir:               ptr(true),
+		RemoteControl:          ptr(true),
+		AutoMemory:             ptr(true),
+		PeerMessaging:          ptr(true),
+		ContextFeatures:        map[string]string{"bundled-skills": "off", "artifact": "off"},
+	}
+}
+
+func TestGlobalDefaultLaunchProfile_FreshLaunchInheritsLaunchPosture(t *testing.T) {
+	setGlobalLaunchProfile(t, postureProfile())
+	params := &NewParams{}
+	require.NoError(t, applyGlobalDefaultLaunchProfile(params, explicitLaunchFields{}))
+	assert.Equal(t, harness.DefaultName, params.Harness)
+	assert.Equal(t, harness.ClaudeSandboxOff, params.Sandbox)
+	assert.Equal(t, `global default profile "posture-default"`, params.SandboxChosenBy)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff), params.SandboxImpl)
+	assert.True(t, params.sandboxImplExplicit, "a profile implementation is a fresh decision")
+	assert.Equal(t, "acceptEdits", params.Approval)
+	assert.Equal(t, "5m", params.AskUserQuestionTimeout)
+	assert.Equal(t, "450000", params.AutoCompactWindow)
+	assert.True(t, params.TrustDir)
+	assert.True(t, params.RemoteControl)
+	assert.True(t, params.AutoMemory)
+	assert.True(t, params.PeerMessaging)
+	assert.Equal(t, "artifact=off,bundled-skills=off", params.ContextFeatures)
+}
+
+func TestGlobalDefaultLaunchProfile_ExplicitPostureFlagsWin(t *testing.T) {
+	setGlobalLaunchProfile(t, postureProfile())
+	params := &NewParams{Sandbox: harness.ClaudeSandboxOn}
+	require.NoError(t, applyGlobalDefaultLaunchProfile(params, explicitLaunchFields{
+		"sandbox": true, "auto-memory": true,
+	}))
+	assert.Equal(t, harness.ClaudeSandboxOn, params.Sandbox)
+	assert.Empty(t, params.SandboxImpl,
+		"an explicit --sandbox keeps the profile's implementation out too: off would force it off")
+	assert.False(t, params.AutoMemory, "an explicit --auto-memory=false must not be filled")
+	assert.Equal(t, "acceptEdits", params.Approval, "omitted fields still come from the profile")
+}
+
+func TestGlobalDefaultLaunchProfile_ForeignHarnessPostureIsNotApplied(t *testing.T) {
+	setGlobalLaunchProfile(t, postureProfile())
+	params := &NewParams{Harness: "codex"}
+	require.NoError(t, applyGlobalDefaultLaunchProfile(params, explicitLaunchFields{"harness": true}))
+	assert.Empty(t, params.Sandbox)
+	assert.Empty(t, params.SandboxImpl)
+	assert.Empty(t, params.Approval)
+	assert.False(t, params.AutoMemory)
+}
+
+func setGlobalLaunchProfileInCurrentHome(t *testing.T, prof db.SpawnProfile) {
+	t.Helper()
+	id, err := db.CreateSpawnProfile(&prof)
+	require.NoError(t, err)
+	require.NoError(t, db.SetDashboardProfileRef(
+		db.DashboardDefaultSpawnProfileNamePrefKey,
+		db.DashboardDefaultSpawnProfileIDPrefKey,
+		prof.Name, id))
+}
+
+// A resume keeps every posture the conversation recorded — including one
+// recorded as "nothing pinned" — and takes the profile only for the rest.
+func TestResumeDefaultLaunchProfile_FillsOnlyUnrecordedFields(t *testing.T) {
+	cwd := carryoverTestHome(t)
+	setGlobalLaunchProfileInCurrentHome(t, postureProfile())
+	seedResumableConv(t, cwd, &db.AgentRelaunchProfile{
+		Version:            db.RelaunchProfileVersion,
+		HarnessBuiltinMode: ptr(harness.ClaudeSandboxOn),
+		AutoMemory:         ptr(false),
+	})
+
+	params := &NewParams{Resume: carryoverConvID, Dir: cwd}
+	explicit := explicitLaunchFields{"ask-for-approval": true}
+	require.NoError(t, applyRecordedLaunchPosture(params, explicit))
+	require.NoError(t, applyResumeDefaultLaunchProfile(params, explicit))
+
+	assert.Equal(t, harness.ClaudeSandboxOn, params.Sandbox, "recorded mode wins over the profile")
+	assert.False(t, params.AutoMemory, "a recorded false is the conversation's decision")
+	assert.Empty(t, params.Approval, "an explicit flag wins over the profile")
+	assert.Empty(t, params.SandboxImpl, "a recorded sandbox mode keeps the whole containment decision")
+	assert.Equal(t, "450000", params.AutoCompactWindow, "an unrecorded field falls back to the profile")
+	assert.Empty(t, params.Harness, "a resume never takes the profile's harness")
+	assert.Empty(t, params.Model)
+}
+
+func TestResumeDefaultLaunchProfile_LegacyConversationGetsProfile(t *testing.T) {
+	cwd := carryoverTestHome(t)
+	setGlobalLaunchProfileInCurrentHome(t, postureProfile())
+	seedResumableConv(t, cwd, nil)
+
+	params := &NewParams{Resume: carryoverConvID, Dir: cwd}
+	require.NoError(t, applyRecordedLaunchPosture(params, explicitLaunchFields{}))
+	require.NoError(t, applyResumeDefaultLaunchProfile(params, explicitLaunchFields{}))
+	assert.Equal(t, harness.ClaudeSandboxOff, params.Sandbox)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff), params.SandboxImpl)
+}
+
+func TestResumeDefaultLaunchProfile_SkipsForeignHarnessAndManagedLaunches(t *testing.T) {
+	carryoverTestHome(t)
+	setGlobalLaunchProfileInCurrentHome(t, postureProfile())
+	for _, params := range []*NewParams{
+		{Resume: carryoverConvID, Harness: "codex"},
+		{Resume: carryoverConvID, ManagedLaunch: true},
+		{},
+	} {
+		require.NoError(t, applyResumeDefaultLaunchProfile(params, explicitLaunchFields{}))
+		assert.Empty(t, params.Sandbox)
+		assert.Empty(t, params.SandboxImpl)
+	}
+}
+
+func TestGlobalDefaultLaunchProfile_PermissionProfileKeepsProfileSandboxOut(t *testing.T) {
+	setGlobalLaunchProfile(t, db.SpawnProfile{
+		Name: "codex-default", Harness: "codex", Sandbox: "workspace-write",
+	})
+	params := &NewParams{Harness: "codex", PermissionProfile: "mine"}
+	require.NoError(t, applyGlobalDefaultLaunchProfile(params, explicitLaunchFields{
+		"harness": true, "permission-profile": true,
+	}))
+	assert.Empty(t, params.Sandbox, "--permission-profile and --sandbox are mutually exclusive")
+}
+
+func TestResumeDefaultLaunchProfile_RecordedSandboxKeepsProfileImplementationOut(t *testing.T) {
+	cwd := carryoverTestHome(t)
+	setGlobalLaunchProfileInCurrentHome(t, postureProfile())
+	seedResumableConv(t, cwd, &db.AgentRelaunchProfile{
+		Version:            db.RelaunchProfileVersion,
+		HarnessBuiltinMode: ptr(harness.ClaudeSandboxOn),
+	})
+
+	params := &NewParams{Resume: carryoverConvID, Dir: cwd}
+	require.NoError(t, applyRecordedLaunchPosture(params, explicitLaunchFields{}))
+	require.NoError(t, applyResumeDefaultLaunchProfile(params, explicitLaunchFields{}))
+	assert.Equal(t, harness.ClaudeSandboxOn, params.Sandbox)
+	assert.Empty(t, params.SandboxImpl,
+		"the profile's off implementation would silently drop the recorded --sandbox on")
+}
+
+// The terminal command path is what makes the resume fallback live; the fill
+// functions above are only reachable through it. runNew launches tmux, so the
+// wiring is pinned structurally: record first, then the profile, then launch.
+func TestTerminalResumeAppliesProfileAfterRecordedPosture(t *testing.T) {
+	fn := guardFunc(guardParse(t, "launch_profile.go", ""), "runNewWithGlobalDefault")
+	require.NotNil(t, fn)
+	order := callOrder(fn, "applyRecordedLaunchPosture", "applyResumeDefaultLaunchProfile", "runNew")
+	recorded, okRecorded := order["applyRecordedLaunchPosture"]
+	profile, okProfile := order["applyResumeDefaultLaunchProfile"]
+	launch, okLaunch := order["runNew"]
+	require.True(t, okRecorded && okProfile && okLaunch,
+		"runNewWithGlobalDefault must call all three: %v", order)
+	assert.Less(t, int(recorded), int(profile), "the record must win over the profile")
+	assert.Less(t, int(profile), int(launch), "the profile must be applied before launch")
+}

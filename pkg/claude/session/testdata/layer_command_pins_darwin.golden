@@ -1,0 +1,1531 @@
+== host-open/command
+ok: /usr/bin/sandbox-exec -p '(version 1)
+(allow default)
+
+; Filesystem policy is deny-only. Positive descendants are carved out
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_0")) (subpath (param "WRITE_DENY_0")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (literal "/dev/ptmx"))
+    (require-not (literal "/dev/fd"))
+    (require-not (subpath "/dev/fd"))
+    (require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))
+    (require-not (literal (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (subpath (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (literal (param "WRITE_DENY_0_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_0_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_1")) (subpath (param "WRITE_DENY_1")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_2")) (subpath (param "WRITE_DENY_2")))
+    (require-not (literal (param "WRITE_DENY_2_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_2_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_5")) (subpath (param "WRITE_DENY_5")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_6")) (subpath (param "WRITE_DENY_6")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_7")) (subpath (param "WRITE_DENY_7")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_8")) (subpath (param "WRITE_DENY_8")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_9")) (subpath (param "WRITE_DENY_9")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_10")) (subpath (param "WRITE_DENY_10")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_11")) (subpath (param "WRITE_DENY_11")))
+  ))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+    (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+    (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+    )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+    (literal (param "PROTECTED_ANCESTOR_4"))
+    (literal (param "PROTECTED_ANCESTOR_5"))
+    (literal (param "PROTECTED_ANCESTOR_6"))
+  ))
+' -DWRITE_DENY_0=/ -DDARWIN_RUNTIME_TMPDIR=/private/var/folders/ab/runtime/T -DWRITE_DENY_0_REOPEN_0=/private/tmp -DWRITE_DENY_1=$ROOT/extra/hide -DWRITE_DENY_2=$ROOT/extra/private -DWRITE_DENY_2_REOPEN_0=$ROOT/extra/private/current -DWRITE_DENY_3=$ROOT/extra/ro -DWRITE_DENY_4=$ROOT/home/.claude/sessions -DWRITE_DENY_5=$ROOT/home/.tclaude-agentd.sock -DWRITE_DENY_6=$ROOT/home/.tclaude/agentd.sock -DWRITE_DENY_7=$ROOT/home/.tclaude/api/agentd-socket -DWRITE_DENY_8=$ROOT/home/.tclaude/api/agentd.sock -DWRITE_DENY_9=$ROOT/home/.tclaude/data -DWRITE_DENY_10=$ROOT/pin.sock -DWRITE_DENY_11=$ROOT/tmux/tmux-$UID -DREAD_DENY_0=$ROOT/extra/hide -DREAD_DENY_1=$ROOT/extra/private -DREAD_DENY_1_REOPEN_0=$ROOT/extra/private/current -DREAD_DENY_2=$ROOT/home/.claude/sessions -DREAD_DENY_3=$ROOT/home/.tclaude/data -DREAD_DENY_4=$ROOT/tmux/tmux-$UID -DPROTECTED_ANCESTOR_0=/private -DPROTECTED_ANCESTOR_1=/private/tmp -DPROTECTED_ANCESTOR_2=$ROOT -DPROTECTED_ANCESTOR_3=$ROOT/extra -DPROTECTED_ANCESTOR_4=$ROOT/home -DPROTECTED_ANCESTOR_5=$ROOT/home/.claude -DPROTECTED_ANCESTOR_6=$ROOT/home/.tclaude -- /bin/bash -p -c 'exec agent --flag'
+== host-open/command+loopback
+ok: /usr/bin/sandbox-exec -p '(version 1)
+(allow default)
+
+; Filesystem policy is deny-only. Positive descendants are carved out
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_0")) (subpath (param "WRITE_DENY_0")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (literal "/dev/ptmx"))
+    (require-not (literal "/dev/fd"))
+    (require-not (subpath "/dev/fd"))
+    (require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))
+    (require-not (literal (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (subpath (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (literal (param "WRITE_DENY_0_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_0_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_1")) (subpath (param "WRITE_DENY_1")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_2")) (subpath (param "WRITE_DENY_2")))
+    (require-not (literal (param "WRITE_DENY_2_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_2_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_5")) (subpath (param "WRITE_DENY_5")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_6")) (subpath (param "WRITE_DENY_6")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_7")) (subpath (param "WRITE_DENY_7")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_8")) (subpath (param "WRITE_DENY_8")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_9")) (subpath (param "WRITE_DENY_9")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_10")) (subpath (param "WRITE_DENY_10")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_11")) (subpath (param "WRITE_DENY_11")))
+  ))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+    (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+    (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+    )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+    (literal (param "PROTECTED_ANCESTOR_4"))
+    (literal (param "PROTECTED_ANCESTOR_5"))
+    (literal (param "PROTECTED_ANCESTOR_6"))
+  ))
+' -DWRITE_DENY_0=/ -DDARWIN_RUNTIME_TMPDIR=/private/var/folders/ab/runtime/T -DWRITE_DENY_0_REOPEN_0=/private/tmp -DWRITE_DENY_1=$ROOT/extra/hide -DWRITE_DENY_2=$ROOT/extra/private -DWRITE_DENY_2_REOPEN_0=$ROOT/extra/private/current -DWRITE_DENY_3=$ROOT/extra/ro -DWRITE_DENY_4=$ROOT/home/.claude/sessions -DWRITE_DENY_5=$ROOT/home/.tclaude-agentd.sock -DWRITE_DENY_6=$ROOT/home/.tclaude/agentd.sock -DWRITE_DENY_7=$ROOT/home/.tclaude/api/agentd-socket -DWRITE_DENY_8=$ROOT/home/.tclaude/api/agentd.sock -DWRITE_DENY_9=$ROOT/home/.tclaude/data -DWRITE_DENY_10=$ROOT/pin.sock -DWRITE_DENY_11=$ROOT/tmux/tmux-$UID -DREAD_DENY_0=$ROOT/extra/hide -DREAD_DENY_1=$ROOT/extra/private -DREAD_DENY_1_REOPEN_0=$ROOT/extra/private/current -DREAD_DENY_2=$ROOT/home/.claude/sessions -DREAD_DENY_3=$ROOT/home/.tclaude/data -DREAD_DENY_4=$ROOT/tmux/tmux-$UID -DPROTECTED_ANCESTOR_0=/private -DPROTECTED_ANCESTOR_1=/private/tmp -DPROTECTED_ANCESTOR_2=$ROOT -DPROTECTED_ANCESTOR_3=$ROOT/extra -DPROTECTED_ANCESTOR_4=$ROOT/home -DPROTECTED_ANCESTOR_5=$ROOT/home/.claude -DPROTECTED_ANCESTOR_6=$ROOT/home/.tclaude -- /bin/bash -p -c 'exec agent --flag'
+== host-open/command+route-slots
+error: darwin route slots require an isolated or filtered Seatbelt network floor
+== host-open/command+route-slots-invalid
+error: darwin route slot port 0 is outside TCP port range
+== host-open/command+route-slots+loopback
+error: darwin route slots require an isolated or filtered Seatbelt network floor
+== host-open/command+route-helper
+error: linux group-route helper is unavailable
+== host-open/server
+ok: /usr/bin/sandbox-exec -p '(version 1)
+(allow default)
+
+; Filesystem policy is deny-only. Positive descendants are carved out
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_0")) (subpath (param "WRITE_DENY_0")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (literal "/dev/ptmx"))
+    (require-not (literal "/dev/fd"))
+    (require-not (subpath "/dev/fd"))
+    (require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))
+    (require-not (literal (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (subpath (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (literal (param "WRITE_DENY_0_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_0_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_1")) (subpath (param "WRITE_DENY_1")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_2")) (subpath (param "WRITE_DENY_2")))
+    (require-not (literal (param "WRITE_DENY_2_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_2_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_5")) (subpath (param "WRITE_DENY_5")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_6")) (subpath (param "WRITE_DENY_6")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_7")) (subpath (param "WRITE_DENY_7")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_8")) (subpath (param "WRITE_DENY_8")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_9")) (subpath (param "WRITE_DENY_9")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_10")) (subpath (param "WRITE_DENY_10")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_11")) (subpath (param "WRITE_DENY_11")))
+  ))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+    (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+    (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+    )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+    (literal (param "PROTECTED_ANCESTOR_4"))
+    (literal (param "PROTECTED_ANCESTOR_5"))
+    (literal (param "PROTECTED_ANCESTOR_6"))
+  ))
+' -DWRITE_DENY_0=/ -DDARWIN_RUNTIME_TMPDIR=/private/var/folders/ab/runtime/T -DWRITE_DENY_0_REOPEN_0=/private/tmp -DWRITE_DENY_1=$ROOT/extra/hide -DWRITE_DENY_2=$ROOT/extra/private -DWRITE_DENY_2_REOPEN_0=$ROOT/extra/private/current -DWRITE_DENY_3=$ROOT/extra/ro -DWRITE_DENY_4=$ROOT/home/.claude/sessions -DWRITE_DENY_5=$ROOT/home/.tclaude-agentd.sock -DWRITE_DENY_6=$ROOT/home/.tclaude/agentd.sock -DWRITE_DENY_7=$ROOT/home/.tclaude/api/agentd-socket -DWRITE_DENY_8=$ROOT/home/.tclaude/api/agentd.sock -DWRITE_DENY_9=$ROOT/home/.tclaude/data -DWRITE_DENY_10=$ROOT/pin.sock -DWRITE_DENY_11=$ROOT/tmux/tmux-$UID -DREAD_DENY_0=$ROOT/extra/hide -DREAD_DENY_1=$ROOT/extra/private -DREAD_DENY_1_REOPEN_0=$ROOT/extra/private/current -DREAD_DENY_2=$ROOT/home/.claude/sessions -DREAD_DENY_3=$ROOT/home/.tclaude/data -DREAD_DENY_4=$ROOT/tmux/tmux-$UID -DPROTECTED_ANCESTOR_0=/private -DPROTECTED_ANCESTOR_1=/private/tmp -DPROTECTED_ANCESTOR_2=$ROOT -DPROTECTED_ANCESTOR_3=$ROOT/extra -DPROTECTED_ANCESTOR_4=$ROOT/home -DPROTECTED_ANCESTOR_5=$ROOT/home/.claude -DPROTECTED_ANCESTOR_6=$ROOT/home/.tclaude -- /bin/bash -p -c 'exec opencode serve'
+== host-open/server+loopback
+error: seatbelt loopback bind exception requires an isolated or filtered network floor
+== packet/command
+error: tclaude’s sandbox on macOS filtered networking supports only a non-empty loopback-only list
+== packet/command+loopback
+error: tclaude’s sandbox on macOS filtered networking supports only a non-empty loopback-only list
+== packet/command+route-slots
+error: tclaude’s sandbox on macOS filtered networking supports only a non-empty loopback-only list
+== packet/command+route-slots-invalid
+error: darwin route slot port 0 is outside TCP port range
+== packet/command+route-slots+loopback
+error: tclaude’s sandbox on macOS filtered networking supports only a non-empty loopback-only list
+== packet/command+route-helper
+error: linux group-route helper is unavailable
+== packet/server
+error: tclaude’s sandbox on macOS filtered networking supports only a non-empty loopback-only list
+== packet/server+loopback
+error: tclaude’s sandbox on macOS filtered networking supports only a non-empty loopback-only list
+== proxy/command
+ok: $EXE session tclaude-layer-darwin-proxy-launcher --launch decoded({"binary":"/usr/bin/sandbox-exec","phase0_write_dirs":["$ROOT/proxy/state","$ROOT/proxy/cwd","/private/tmp","/private/tmp/claude-$UID","$ROOT/home/Library/Keychains","$ROOT/extra/phase0"],"private_write_dirs":[{"parent":"$ROOT/extra/private","current":"$ROOT/extra/private/current"}],"final_hide_dirs":["$ROOT/extra/hide"],"read_only_binds":[{"source":"$ROOT/extra/ro","target":"$ROOT/extra/ro"}],"socket_paths":["$ROOT/home/.tclaude/api/agentd-socket/agentd.sock","$ROOT/home/.tclaude/api/agentd.sock","$ROOT/home/.tclaude-agentd.sock","$ROOT/home/.tclaude/agentd.sock","$ROOT/pin.sock"],"plan":{"Entries":[{"Path":"$ROOT/proxy/cwd","Mode":2,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/agents","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/commands","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/cowork_plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/hooks","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/local","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/output-styles","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/routines","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/rules","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/skills","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/workflows","Mode":1,"Source":"","SizeBytes":0}],"Aliases":null,"NetworkPosture":2,"RootPosture":1,"DarwinAllowMachRegister":false,"NetworkEngine":"proxy","FilteredNetwork":{"protocol_contract":"ordinary IPv4/IPv6 TCP and UDP connections (QUIC is UDP; raw and packet sockets are not an authored class)","default_verdict":"drop","rules":[{"entry_index":0,"selector":"domain","value":"example.com","ports":[443]}]}},"harness_command":"exec agent --flag"})
+== proxy/command+loopback
+ok: $EXE session tclaude-layer-darwin-proxy-launcher --launch decoded({"binary":"/usr/bin/sandbox-exec","phase0_write_dirs":["$ROOT/proxy/state","$ROOT/proxy/cwd","/private/tmp","/private/tmp/claude-$UID","$ROOT/home/Library/Keychains","$ROOT/extra/phase0"],"private_write_dirs":[{"parent":"$ROOT/extra/private","current":"$ROOT/extra/private/current"}],"final_hide_dirs":["$ROOT/extra/hide"],"read_only_binds":[{"source":"$ROOT/extra/ro","target":"$ROOT/extra/ro"}],"socket_paths":["$ROOT/home/.tclaude/api/agentd-socket/agentd.sock","$ROOT/home/.tclaude/api/agentd.sock","$ROOT/home/.tclaude-agentd.sock","$ROOT/home/.tclaude/agentd.sock","$ROOT/pin.sock"],"plan":{"Entries":[{"Path":"$ROOT/proxy/cwd","Mode":2,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/agents","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/commands","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/cowork_plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/hooks","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/local","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/output-styles","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/routines","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/rules","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/skills","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/workflows","Mode":1,"Source":"","SizeBytes":0}],"Aliases":null,"NetworkPosture":2,"RootPosture":1,"DarwinAllowMachRegister":false,"NetworkEngine":"proxy","FilteredNetwork":{"protocol_contract":"ordinary IPv4/IPv6 TCP and UDP connections (QUIC is UDP; raw and packet sockets are not an authored class)","default_verdict":"drop","rules":[{"entry_index":0,"selector":"domain","value":"example.com","ports":[443]}]}},"harness_command":"exec agent --flag","loopback_bind_port":4567})
+== proxy/command+route-slots
+ok: $EXE session tclaude-layer-darwin-proxy-launcher --launch decoded({"binary":"/usr/bin/sandbox-exec","phase0_write_dirs":["$ROOT/proxy/state","$ROOT/proxy/cwd","/private/tmp","/private/tmp/claude-$UID","$ROOT/home/Library/Keychains","$ROOT/extra/phase0"],"private_write_dirs":[{"parent":"$ROOT/extra/private","current":"$ROOT/extra/private/current"}],"final_hide_dirs":["$ROOT/extra/hide"],"read_only_binds":[{"source":"$ROOT/extra/ro","target":"$ROOT/extra/ro"}],"socket_paths":["$ROOT/home/.tclaude/api/agentd-socket/agentd.sock","$ROOT/home/.tclaude/api/agentd.sock","$ROOT/home/.tclaude-agentd.sock","$ROOT/home/.tclaude/agentd.sock","$ROOT/pin.sock"],"plan":{"Entries":[{"Path":"$ROOT/proxy/cwd","Mode":2,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/agents","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/commands","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/cowork_plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/hooks","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/local","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/output-styles","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/routines","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/rules","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/skills","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/workflows","Mode":1,"Source":"","SizeBytes":0}],"Aliases":null,"NetworkPosture":2,"RootPosture":1,"DarwinAllowMachRegister":false,"NetworkEngine":"proxy","FilteredNetwork":{"protocol_contract":"ordinary IPv4/IPv6 TCP and UDP connections (QUIC is UDP; raw and packet sockets are not an authored class)","default_verdict":"drop","rules":[{"entry_index":0,"selector":"domain","value":"example.com","ports":[443]}]}},"harness_command":"exec agent --flag","route_slots":[$SLOT],"route_authority":{"socket_path":"/home/test/.tclaude/api/agentd.sock","agent_id":"agt_test","conv_id":"conv_test","launch_generation":"launch_test","group_ids":[42],"handoff_socket_path":"/home/test/.tclaude/data/route-helper-handoff.sock"}})
+== proxy/command+route-slots-invalid
+error: darwin route slot port 0 is outside TCP port range
+== proxy/command+route-slots+loopback
+ok: $EXE session tclaude-layer-darwin-proxy-launcher --launch decoded({"binary":"/usr/bin/sandbox-exec","phase0_write_dirs":["$ROOT/proxy/state","$ROOT/proxy/cwd","/private/tmp","/private/tmp/claude-$UID","$ROOT/home/Library/Keychains","$ROOT/extra/phase0"],"private_write_dirs":[{"parent":"$ROOT/extra/private","current":"$ROOT/extra/private/current"}],"final_hide_dirs":["$ROOT/extra/hide"],"read_only_binds":[{"source":"$ROOT/extra/ro","target":"$ROOT/extra/ro"}],"socket_paths":["$ROOT/home/.tclaude/api/agentd-socket/agentd.sock","$ROOT/home/.tclaude/api/agentd.sock","$ROOT/home/.tclaude-agentd.sock","$ROOT/home/.tclaude/agentd.sock","$ROOT/pin.sock"],"plan":{"Entries":[{"Path":"$ROOT/proxy/cwd","Mode":2,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/agents","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/commands","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/cowork_plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/hooks","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/local","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/output-styles","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/routines","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/rules","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/skills","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/workflows","Mode":1,"Source":"","SizeBytes":0}],"Aliases":null,"NetworkPosture":2,"RootPosture":1,"DarwinAllowMachRegister":false,"NetworkEngine":"proxy","FilteredNetwork":{"protocol_contract":"ordinary IPv4/IPv6 TCP and UDP connections (QUIC is UDP; raw and packet sockets are not an authored class)","default_verdict":"drop","rules":[{"entry_index":0,"selector":"domain","value":"example.com","ports":[443]}]}},"harness_command":"exec agent --flag","loopback_bind_port":4567,"route_slots":[$SLOT],"route_authority":{"socket_path":"/home/test/.tclaude/api/agentd.sock","agent_id":"agt_test","conv_id":"conv_test","launch_generation":"launch_test","group_ids":[42],"handoff_socket_path":"/home/test/.tclaude/data/route-helper-handoff.sock"}})
+== proxy/command+route-helper
+error: linux group-route helper is unavailable
+== proxy/server
+ok: $EXE session tclaude-layer-darwin-proxy-launcher --launch decoded({"binary":"/usr/bin/sandbox-exec","phase0_write_dirs":["$ROOT/proxy/state","$ROOT/proxy/cwd","/private/tmp","/private/tmp/claude-$UID","$ROOT/home/Library/Keychains","$ROOT/extra/phase0"],"private_write_dirs":[{"parent":"$ROOT/extra/private","current":"$ROOT/extra/private/current"}],"final_hide_dirs":["$ROOT/extra/hide"],"read_only_binds":[{"source":"$ROOT/extra/ro","target":"$ROOT/extra/ro"}],"socket_paths":["$ROOT/home/.tclaude/api/agentd-socket/agentd.sock","$ROOT/home/.tclaude/api/agentd.sock","$ROOT/home/.tclaude-agentd.sock","$ROOT/home/.tclaude/agentd.sock","$ROOT/pin.sock"],"plan":{"Entries":[{"Path":"$ROOT/proxy/cwd","Mode":2,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/agents","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/commands","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/cowork_plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/hooks","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/local","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/output-styles","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/routines","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/rules","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/skills","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/workflows","Mode":1,"Source":"","SizeBytes":0}],"Aliases":null,"NetworkPosture":2,"RootPosture":1,"DarwinAllowMachRegister":false,"NetworkEngine":"proxy","FilteredNetwork":{"protocol_contract":"ordinary IPv4/IPv6 TCP and UDP connections (QUIC is UDP; raw and packet sockets are not an authored class)","default_verdict":"drop","rules":[{"entry_index":0,"selector":"domain","value":"example.com","ports":[443]}]}},"harness_command":"exec opencode serve"})
+== proxy/server+loopback
+ok: $EXE session tclaude-layer-darwin-proxy-launcher --launch decoded({"binary":"/usr/bin/sandbox-exec","phase0_write_dirs":["$ROOT/proxy/state","$ROOT/proxy/cwd","/private/tmp","/private/tmp/claude-$UID","$ROOT/home/Library/Keychains","$ROOT/extra/phase0"],"private_write_dirs":[{"parent":"$ROOT/extra/private","current":"$ROOT/extra/private/current"}],"final_hide_dirs":["$ROOT/extra/hide"],"read_only_binds":[{"source":"$ROOT/extra/ro","target":"$ROOT/extra/ro"}],"socket_paths":["$ROOT/home/.tclaude/api/agentd-socket/agentd.sock","$ROOT/home/.tclaude/api/agentd.sock","$ROOT/home/.tclaude-agentd.sock","$ROOT/home/.tclaude/agentd.sock","$ROOT/pin.sock"],"plan":{"Entries":[{"Path":"$ROOT/proxy/cwd","Mode":2,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/agents","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/commands","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/cowork_plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/hooks","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/local","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/output-styles","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/plugins","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/routines","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/rules","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/skills","Mode":1,"Source":"","SizeBytes":0},{"Path":"$ROOT/proxy/state/workflows","Mode":1,"Source":"","SizeBytes":0}],"Aliases":null,"NetworkPosture":2,"RootPosture":1,"DarwinAllowMachRegister":false,"NetworkEngine":"proxy","FilteredNetwork":{"protocol_contract":"ordinary IPv4/IPv6 TCP and UDP connections (QUIC is UDP; raw and packet sockets are not an authored class)","default_verdict":"drop","rules":[{"entry_index":0,"selector":"domain","value":"example.com","ports":[443]}]}},"harness_command":"exec opencode serve","loopback_bind_port":4567})
+== isolated/command
+ok: /usr/bin/sandbox-exec -p '(version 1)
+(allow default)
+
+; Filesystem policy is deny-only. Positive descendants are carved out
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
+
+; Isolated networking denies host/public connectivity and listeners.
+; Only allowlisted connects at the parameterized socket spellings are excepted.
+(deny network-bind)
+(deny network-outbound
+  (require-all
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_0"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_1"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_2"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_3"))))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_0")) (subpath (param "WRITE_DENY_0")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (literal "/dev/ptmx"))
+    (require-not (literal "/dev/fd"))
+    (require-not (subpath "/dev/fd"))
+    (require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))
+    (require-not (literal (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (subpath (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (literal (param "WRITE_DENY_0_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_0_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_1")) (subpath (param "WRITE_DENY_1")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_2")) (subpath (param "WRITE_DENY_2")))
+    (require-not (literal (param "WRITE_DENY_2_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_2_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_5")) (subpath (param "WRITE_DENY_5")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_6")) (subpath (param "WRITE_DENY_6")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_7")) (subpath (param "WRITE_DENY_7")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_8")) (subpath (param "WRITE_DENY_8")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_9")) (subpath (param "WRITE_DENY_9")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_10")) (subpath (param "WRITE_DENY_10")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_11")) (subpath (param "WRITE_DENY_11")))
+  ))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+    (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+    (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+    )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+    (literal (param "PROTECTED_ANCESTOR_4"))
+    (literal (param "PROTECTED_ANCESTOR_5"))
+    (literal (param "PROTECTED_ANCESTOR_6"))
+  ))
+' -DAGENTD_SOCKET_0=$ROOT/home/.tclaude-agentd.sock -DAGENTD_SOCKET_1=$ROOT/home/.tclaude/agentd.sock -DAGENTD_SOCKET_2=$ROOT/home/.tclaude/api/agentd.sock -DAGENTD_SOCKET_3=$ROOT/pin.sock -DWRITE_DENY_0=/ -DDARWIN_RUNTIME_TMPDIR=/private/var/folders/ab/runtime/T -DWRITE_DENY_0_REOPEN_0=/private/tmp -DWRITE_DENY_1=$ROOT/extra/hide -DWRITE_DENY_2=$ROOT/extra/private -DWRITE_DENY_2_REOPEN_0=$ROOT/extra/private/current -DWRITE_DENY_3=$ROOT/extra/ro -DWRITE_DENY_4=$ROOT/home/.claude/sessions -DWRITE_DENY_5=$ROOT/home/.tclaude-agentd.sock -DWRITE_DENY_6=$ROOT/home/.tclaude/agentd.sock -DWRITE_DENY_7=$ROOT/home/.tclaude/api/agentd-socket -DWRITE_DENY_8=$ROOT/home/.tclaude/api/agentd.sock -DWRITE_DENY_9=$ROOT/home/.tclaude/data -DWRITE_DENY_10=$ROOT/pin.sock -DWRITE_DENY_11=$ROOT/tmux/tmux-$UID -DREAD_DENY_0=$ROOT/extra/hide -DREAD_DENY_1=$ROOT/extra/private -DREAD_DENY_1_REOPEN_0=$ROOT/extra/private/current -DREAD_DENY_2=$ROOT/home/.claude/sessions -DREAD_DENY_3=$ROOT/home/.tclaude/data -DREAD_DENY_4=$ROOT/tmux/tmux-$UID -DPROTECTED_ANCESTOR_0=/private -DPROTECTED_ANCESTOR_1=/private/tmp -DPROTECTED_ANCESTOR_2=$ROOT -DPROTECTED_ANCESTOR_3=$ROOT/extra -DPROTECTED_ANCESTOR_4=$ROOT/home -DPROTECTED_ANCESTOR_5=$ROOT/home/.claude -DPROTECTED_ANCESTOR_6=$ROOT/home/.tclaude -- /bin/bash -p -c 'exec agent --flag'
+== isolated/command+loopback
+ok: /usr/bin/sandbox-exec -p '(version 1)
+(allow default)
+
+; Filesystem policy is deny-only. Positive descendants are carved out
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
+
+; Isolated networking denies host/public connectivity and listeners.
+; Only allowlisted connects at the parameterized socket spellings are excepted.
+(deny network-bind (require-not (local tcp "localhost:4567")))
+(deny network-outbound
+  (require-all
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_0"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_1"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_2"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_3"))))
+    (require-not (remote tcp "localhost:4567"))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_0")) (subpath (param "WRITE_DENY_0")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (literal "/dev/ptmx"))
+    (require-not (literal "/dev/fd"))
+    (require-not (subpath "/dev/fd"))
+    (require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))
+    (require-not (literal (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (subpath (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (literal (param "WRITE_DENY_0_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_0_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_1")) (subpath (param "WRITE_DENY_1")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_2")) (subpath (param "WRITE_DENY_2")))
+    (require-not (literal (param "WRITE_DENY_2_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_2_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_5")) (subpath (param "WRITE_DENY_5")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_6")) (subpath (param "WRITE_DENY_6")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_7")) (subpath (param "WRITE_DENY_7")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_8")) (subpath (param "WRITE_DENY_8")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_9")) (subpath (param "WRITE_DENY_9")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_10")) (subpath (param "WRITE_DENY_10")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_11")) (subpath (param "WRITE_DENY_11")))
+  ))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+    (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+    (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+    )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+    (literal (param "PROTECTED_ANCESTOR_4"))
+    (literal (param "PROTECTED_ANCESTOR_5"))
+    (literal (param "PROTECTED_ANCESTOR_6"))
+  ))
+' -DAGENTD_SOCKET_0=$ROOT/home/.tclaude-agentd.sock -DAGENTD_SOCKET_1=$ROOT/home/.tclaude/agentd.sock -DAGENTD_SOCKET_2=$ROOT/home/.tclaude/api/agentd.sock -DAGENTD_SOCKET_3=$ROOT/pin.sock -DWRITE_DENY_0=/ -DDARWIN_RUNTIME_TMPDIR=/private/var/folders/ab/runtime/T -DWRITE_DENY_0_REOPEN_0=/private/tmp -DWRITE_DENY_1=$ROOT/extra/hide -DWRITE_DENY_2=$ROOT/extra/private -DWRITE_DENY_2_REOPEN_0=$ROOT/extra/private/current -DWRITE_DENY_3=$ROOT/extra/ro -DWRITE_DENY_4=$ROOT/home/.claude/sessions -DWRITE_DENY_5=$ROOT/home/.tclaude-agentd.sock -DWRITE_DENY_6=$ROOT/home/.tclaude/agentd.sock -DWRITE_DENY_7=$ROOT/home/.tclaude/api/agentd-socket -DWRITE_DENY_8=$ROOT/home/.tclaude/api/agentd.sock -DWRITE_DENY_9=$ROOT/home/.tclaude/data -DWRITE_DENY_10=$ROOT/pin.sock -DWRITE_DENY_11=$ROOT/tmux/tmux-$UID -DREAD_DENY_0=$ROOT/extra/hide -DREAD_DENY_1=$ROOT/extra/private -DREAD_DENY_1_REOPEN_0=$ROOT/extra/private/current -DREAD_DENY_2=$ROOT/home/.claude/sessions -DREAD_DENY_3=$ROOT/home/.tclaude/data -DREAD_DENY_4=$ROOT/tmux/tmux-$UID -DPROTECTED_ANCESTOR_0=/private -DPROTECTED_ANCESTOR_1=/private/tmp -DPROTECTED_ANCESTOR_2=$ROOT -DPROTECTED_ANCESTOR_3=$ROOT/extra -DPROTECTED_ANCESTOR_4=$ROOT/home -DPROTECTED_ANCESTOR_5=$ROOT/home/.claude -DPROTECTED_ANCESTOR_6=$ROOT/home/.tclaude -- /bin/bash -p -c 'exec agent --flag'
+== isolated/command+route-slots
+ok: /usr/bin/sandbox-exec -p '(version 1)
+(allow default)
+
+; Filesystem policy is deny-only. Positive descendants are carved out
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
+
+; Isolated networking denies host/public connectivity and listeners.
+; Only allowlisted connects at the parameterized socket spellings are excepted.
+(deny network-bind
+  (require-all
+    (require-not (local tcp "localhost:$SLOT"))
+  ))
+(deny network-outbound
+  (require-all
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_0"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_1"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_2"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_3"))))
+    (require-not (remote tcp "localhost:$SLOT"))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_0")) (subpath (param "WRITE_DENY_0")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (literal "/dev/ptmx"))
+    (require-not (literal "/dev/fd"))
+    (require-not (subpath "/dev/fd"))
+    (require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))
+    (require-not (literal (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (subpath (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (literal (param "WRITE_DENY_0_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_0_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_1")) (subpath (param "WRITE_DENY_1")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_2")) (subpath (param "WRITE_DENY_2")))
+    (require-not (literal (param "WRITE_DENY_2_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_2_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_5")) (subpath (param "WRITE_DENY_5")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_6")) (subpath (param "WRITE_DENY_6")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_7")) (subpath (param "WRITE_DENY_7")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_8")) (subpath (param "WRITE_DENY_8")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_9")) (subpath (param "WRITE_DENY_9")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_10")) (subpath (param "WRITE_DENY_10")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_11")) (subpath (param "WRITE_DENY_11")))
+  ))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+    (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+    (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+    )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+    (literal (param "PROTECTED_ANCESTOR_4"))
+    (literal (param "PROTECTED_ANCESTOR_5"))
+    (literal (param "PROTECTED_ANCESTOR_6"))
+  ))
+' -DAGENTD_SOCKET_0=$ROOT/home/.tclaude-agentd.sock -DAGENTD_SOCKET_1=$ROOT/home/.tclaude/agentd.sock -DAGENTD_SOCKET_2=$ROOT/home/.tclaude/api/agentd.sock -DAGENTD_SOCKET_3=$ROOT/pin.sock -DWRITE_DENY_0=/ -DDARWIN_RUNTIME_TMPDIR=/private/var/folders/ab/runtime/T -DWRITE_DENY_0_REOPEN_0=/private/tmp -DWRITE_DENY_1=$ROOT/extra/hide -DWRITE_DENY_2=$ROOT/extra/private -DWRITE_DENY_2_REOPEN_0=$ROOT/extra/private/current -DWRITE_DENY_3=$ROOT/extra/ro -DWRITE_DENY_4=$ROOT/home/.claude/sessions -DWRITE_DENY_5=$ROOT/home/.tclaude-agentd.sock -DWRITE_DENY_6=$ROOT/home/.tclaude/agentd.sock -DWRITE_DENY_7=$ROOT/home/.tclaude/api/agentd-socket -DWRITE_DENY_8=$ROOT/home/.tclaude/api/agentd.sock -DWRITE_DENY_9=$ROOT/home/.tclaude/data -DWRITE_DENY_10=$ROOT/pin.sock -DWRITE_DENY_11=$ROOT/tmux/tmux-$UID -DREAD_DENY_0=$ROOT/extra/hide -DREAD_DENY_1=$ROOT/extra/private -DREAD_DENY_1_REOPEN_0=$ROOT/extra/private/current -DREAD_DENY_2=$ROOT/home/.claude/sessions -DREAD_DENY_3=$ROOT/home/.tclaude/data -DREAD_DENY_4=$ROOT/tmux/tmux-$UID -DPROTECTED_ANCESTOR_0=/private -DPROTECTED_ANCESTOR_1=/private/tmp -DPROTECTED_ANCESTOR_2=$ROOT -DPROTECTED_ANCESTOR_3=$ROOT/extra -DPROTECTED_ANCESTOR_4=$ROOT/home -DPROTECTED_ANCESTOR_5=$ROOT/home/.claude -DPROTECTED_ANCESTOR_6=$ROOT/home/.tclaude -- /bin/bash -p -c 'export TCLAUDE_DARWIN_ROUTE_SLOTS=$SLOT; exec agent --flag'
+== isolated/command+route-slots-invalid
+error: darwin route slot port 0 is outside TCP port range
+== isolated/command+route-slots+loopback
+ok: /usr/bin/sandbox-exec -p '(version 1)
+(allow default)
+
+; Filesystem policy is deny-only. Positive descendants are carved out
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
+
+; Isolated networking denies host/public connectivity and listeners.
+; Only allowlisted connects at the parameterized socket spellings are excepted.
+(deny network-bind
+  (require-all
+    (require-not (local tcp "localhost:4567"))
+    (require-not (local tcp "localhost:$SLOT"))
+  ))
+(deny network-outbound
+  (require-all
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_0"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_1"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_2"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_3"))))
+    (require-not (remote tcp "localhost:4567"))
+    (require-not (remote tcp "localhost:$SLOT"))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_0")) (subpath (param "WRITE_DENY_0")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (literal "/dev/ptmx"))
+    (require-not (literal "/dev/fd"))
+    (require-not (subpath "/dev/fd"))
+    (require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))
+    (require-not (literal (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (subpath (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (literal (param "WRITE_DENY_0_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_0_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_1")) (subpath (param "WRITE_DENY_1")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_2")) (subpath (param "WRITE_DENY_2")))
+    (require-not (literal (param "WRITE_DENY_2_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_2_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_5")) (subpath (param "WRITE_DENY_5")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_6")) (subpath (param "WRITE_DENY_6")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_7")) (subpath (param "WRITE_DENY_7")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_8")) (subpath (param "WRITE_DENY_8")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_9")) (subpath (param "WRITE_DENY_9")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_10")) (subpath (param "WRITE_DENY_10")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_11")) (subpath (param "WRITE_DENY_11")))
+  ))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+    (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+    (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+    )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+    (literal (param "PROTECTED_ANCESTOR_4"))
+    (literal (param "PROTECTED_ANCESTOR_5"))
+    (literal (param "PROTECTED_ANCESTOR_6"))
+  ))
+' -DAGENTD_SOCKET_0=$ROOT/home/.tclaude-agentd.sock -DAGENTD_SOCKET_1=$ROOT/home/.tclaude/agentd.sock -DAGENTD_SOCKET_2=$ROOT/home/.tclaude/api/agentd.sock -DAGENTD_SOCKET_3=$ROOT/pin.sock -DWRITE_DENY_0=/ -DDARWIN_RUNTIME_TMPDIR=/private/var/folders/ab/runtime/T -DWRITE_DENY_0_REOPEN_0=/private/tmp -DWRITE_DENY_1=$ROOT/extra/hide -DWRITE_DENY_2=$ROOT/extra/private -DWRITE_DENY_2_REOPEN_0=$ROOT/extra/private/current -DWRITE_DENY_3=$ROOT/extra/ro -DWRITE_DENY_4=$ROOT/home/.claude/sessions -DWRITE_DENY_5=$ROOT/home/.tclaude-agentd.sock -DWRITE_DENY_6=$ROOT/home/.tclaude/agentd.sock -DWRITE_DENY_7=$ROOT/home/.tclaude/api/agentd-socket -DWRITE_DENY_8=$ROOT/home/.tclaude/api/agentd.sock -DWRITE_DENY_9=$ROOT/home/.tclaude/data -DWRITE_DENY_10=$ROOT/pin.sock -DWRITE_DENY_11=$ROOT/tmux/tmux-$UID -DREAD_DENY_0=$ROOT/extra/hide -DREAD_DENY_1=$ROOT/extra/private -DREAD_DENY_1_REOPEN_0=$ROOT/extra/private/current -DREAD_DENY_2=$ROOT/home/.claude/sessions -DREAD_DENY_3=$ROOT/home/.tclaude/data -DREAD_DENY_4=$ROOT/tmux/tmux-$UID -DPROTECTED_ANCESTOR_0=/private -DPROTECTED_ANCESTOR_1=/private/tmp -DPROTECTED_ANCESTOR_2=$ROOT -DPROTECTED_ANCESTOR_3=$ROOT/extra -DPROTECTED_ANCESTOR_4=$ROOT/home -DPROTECTED_ANCESTOR_5=$ROOT/home/.claude -DPROTECTED_ANCESTOR_6=$ROOT/home/.tclaude -- /bin/bash -p -c 'export TCLAUDE_DARWIN_ROUTE_SLOTS=$SLOT; exec agent --flag'
+== isolated/command+route-helper
+error: linux group-route helper is unavailable
+== isolated/server
+ok: /usr/bin/sandbox-exec -p '(version 1)
+(allow default)
+
+; Filesystem policy is deny-only. Positive descendants are carved out
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
+
+; Isolated networking denies host/public connectivity and listeners.
+; Only allowlisted connects at the parameterized socket spellings are excepted.
+(deny network-bind)
+(deny network-outbound
+  (require-all
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_0"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_1"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_2"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_3"))))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_0")) (subpath (param "WRITE_DENY_0")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (literal "/dev/ptmx"))
+    (require-not (literal "/dev/fd"))
+    (require-not (subpath "/dev/fd"))
+    (require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))
+    (require-not (literal (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (subpath (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (literal (param "WRITE_DENY_0_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_0_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_1")) (subpath (param "WRITE_DENY_1")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_2")) (subpath (param "WRITE_DENY_2")))
+    (require-not (literal (param "WRITE_DENY_2_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_2_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_5")) (subpath (param "WRITE_DENY_5")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_6")) (subpath (param "WRITE_DENY_6")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_7")) (subpath (param "WRITE_DENY_7")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_8")) (subpath (param "WRITE_DENY_8")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_9")) (subpath (param "WRITE_DENY_9")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_10")) (subpath (param "WRITE_DENY_10")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_11")) (subpath (param "WRITE_DENY_11")))
+  ))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+    (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+    (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+    )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+    (literal (param "PROTECTED_ANCESTOR_4"))
+    (literal (param "PROTECTED_ANCESTOR_5"))
+    (literal (param "PROTECTED_ANCESTOR_6"))
+  ))
+' -DAGENTD_SOCKET_0=$ROOT/home/.tclaude-agentd.sock -DAGENTD_SOCKET_1=$ROOT/home/.tclaude/agentd.sock -DAGENTD_SOCKET_2=$ROOT/home/.tclaude/api/agentd.sock -DAGENTD_SOCKET_3=$ROOT/pin.sock -DWRITE_DENY_0=/ -DDARWIN_RUNTIME_TMPDIR=/private/var/folders/ab/runtime/T -DWRITE_DENY_0_REOPEN_0=/private/tmp -DWRITE_DENY_1=$ROOT/extra/hide -DWRITE_DENY_2=$ROOT/extra/private -DWRITE_DENY_2_REOPEN_0=$ROOT/extra/private/current -DWRITE_DENY_3=$ROOT/extra/ro -DWRITE_DENY_4=$ROOT/home/.claude/sessions -DWRITE_DENY_5=$ROOT/home/.tclaude-agentd.sock -DWRITE_DENY_6=$ROOT/home/.tclaude/agentd.sock -DWRITE_DENY_7=$ROOT/home/.tclaude/api/agentd-socket -DWRITE_DENY_8=$ROOT/home/.tclaude/api/agentd.sock -DWRITE_DENY_9=$ROOT/home/.tclaude/data -DWRITE_DENY_10=$ROOT/pin.sock -DWRITE_DENY_11=$ROOT/tmux/tmux-$UID -DREAD_DENY_0=$ROOT/extra/hide -DREAD_DENY_1=$ROOT/extra/private -DREAD_DENY_1_REOPEN_0=$ROOT/extra/private/current -DREAD_DENY_2=$ROOT/home/.claude/sessions -DREAD_DENY_3=$ROOT/home/.tclaude/data -DREAD_DENY_4=$ROOT/tmux/tmux-$UID -DPROTECTED_ANCESTOR_0=/private -DPROTECTED_ANCESTOR_1=/private/tmp -DPROTECTED_ANCESTOR_2=$ROOT -DPROTECTED_ANCESTOR_3=$ROOT/extra -DPROTECTED_ANCESTOR_4=$ROOT/home -DPROTECTED_ANCESTOR_5=$ROOT/home/.claude -DPROTECTED_ANCESTOR_6=$ROOT/home/.tclaude -- /bin/bash -p -c 'exec opencode serve'
+== isolated/server+loopback
+ok: /usr/bin/sandbox-exec -p '(version 1)
+(allow default)
+
+; Filesystem policy is deny-only. Positive descendants are carved out
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
+
+; Isolated networking denies host/public connectivity and listeners.
+; Only allowlisted connects at the parameterized socket spellings are excepted.
+(deny network-bind (require-not (local tcp "localhost:4567")))
+(deny network-outbound
+  (require-all
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_0"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_1"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_2"))))
+    (require-not
+      (remote unix-socket
+        (literal (param "AGENTD_SOCKET_3"))))
+    (require-not (remote tcp "localhost:4567"))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_0")) (subpath (param "WRITE_DENY_0")))
+    (require-not (literal "/dev/null"))
+    (require-not (literal "/dev/tty"))
+    (require-not (literal "/dev/ptmx"))
+    (require-not (literal "/dev/fd"))
+    (require-not (subpath "/dev/fd"))
+    (require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))
+    (require-not (literal (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (subpath (param "DARWIN_RUNTIME_TMPDIR")))
+    (require-not (literal (param "WRITE_DENY_0_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_0_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_1")) (subpath (param "WRITE_DENY_1")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_2")) (subpath (param "WRITE_DENY_2")))
+    (require-not (literal (param "WRITE_DENY_2_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_2_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_5")) (subpath (param "WRITE_DENY_5")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_6")) (subpath (param "WRITE_DENY_6")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_7")) (subpath (param "WRITE_DENY_7")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_8")) (subpath (param "WRITE_DENY_8")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_9")) (subpath (param "WRITE_DENY_9")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_10")) (subpath (param "WRITE_DENY_10")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_11")) (subpath (param "WRITE_DENY_11")))
+  ))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+    (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+    (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+    )))
+
+(deny file-read*
+  (require-all
+    (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+  ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+    )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+    (literal (param "PROTECTED_ANCESTOR_3"))
+    (literal (param "PROTECTED_ANCESTOR_4"))
+    (literal (param "PROTECTED_ANCESTOR_5"))
+    (literal (param "PROTECTED_ANCESTOR_6"))
+  ))
+' -DAGENTD_SOCKET_0=$ROOT/home/.tclaude-agentd.sock -DAGENTD_SOCKET_1=$ROOT/home/.tclaude/agentd.sock -DAGENTD_SOCKET_2=$ROOT/home/.tclaude/api/agentd.sock -DAGENTD_SOCKET_3=$ROOT/pin.sock -DWRITE_DENY_0=/ -DDARWIN_RUNTIME_TMPDIR=/private/var/folders/ab/runtime/T -DWRITE_DENY_0_REOPEN_0=/private/tmp -DWRITE_DENY_1=$ROOT/extra/hide -DWRITE_DENY_2=$ROOT/extra/private -DWRITE_DENY_2_REOPEN_0=$ROOT/extra/private/current -DWRITE_DENY_3=$ROOT/extra/ro -DWRITE_DENY_4=$ROOT/home/.claude/sessions -DWRITE_DENY_5=$ROOT/home/.tclaude-agentd.sock -DWRITE_DENY_6=$ROOT/home/.tclaude/agentd.sock -DWRITE_DENY_7=$ROOT/home/.tclaude/api/agentd-socket -DWRITE_DENY_8=$ROOT/home/.tclaude/api/agentd.sock -DWRITE_DENY_9=$ROOT/home/.tclaude/data -DWRITE_DENY_10=$ROOT/pin.sock -DWRITE_DENY_11=$ROOT/tmux/tmux-$UID -DREAD_DENY_0=$ROOT/extra/hide -DREAD_DENY_1=$ROOT/extra/private -DREAD_DENY_1_REOPEN_0=$ROOT/extra/private/current -DREAD_DENY_2=$ROOT/home/.claude/sessions -DREAD_DENY_3=$ROOT/home/.tclaude/data -DREAD_DENY_4=$ROOT/tmux/tmux-$UID -DPROTECTED_ANCESTOR_0=/private -DPROTECTED_ANCESTOR_1=/private/tmp -DPROTECTED_ANCESTOR_2=$ROOT -DPROTECTED_ANCESTOR_3=$ROOT/extra -DPROTECTED_ANCESTOR_4=$ROOT/home -DPROTECTED_ANCESTOR_5=$ROOT/home/.claude -DPROTECTED_ANCESTOR_6=$ROOT/home/.tclaude -- /bin/bash -p -c 'exec opencode serve'

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,8 +13,11 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
@@ -33,12 +37,24 @@ import (
 // many templates still fits comfortably.
 const maxPWFUpload = 32 << 20
 
-// GET /v1/process/templates/{id}/export?version=&title=&summary=[&check=1]
+// GET /v1/process/templates/{id}/export?version=&title=&summary=&author=&licence=[&check=1]
+// [&assignee=<agent>=<role>...][&assignees=roles][&strict=1]
+// [&performer=<role>=<agent>...[&performer_history=1][&allow_flagged=true]]
 //
 // A template that fails validation exports as it is, as the store saves it:
 // the file carries it and every reader reports its problems. With check=1
-// the response is those problems as JSON instead of the file, so the
-// dashboard can ask before sharing a workflow that cannot run yet.
+// the response is those problems and the machine-specific paths the file
+// would carry as JSON instead of the file, so the dashboard can ask before
+// sharing a workflow that cannot run yet or that reveals a username. It also
+// lists the steps naming a specific agent, with the agent's role here when it
+// has exactly one.
+//
+// assignee= and assignees=roles export those steps with a role instead (see
+// process_pwf_export.go). strict=1 refuses to export anything a check would
+// point out.
+//
+// performer= ships an agent for a role, which makes the file a .paf that holds
+// both (see process_envelope.go).
 func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProcessTemplatesRead); !ok {
 		return
@@ -58,7 +74,7 @@ func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
 		return
 	}
-	bundle.Title, bundle.Summary = q.Get("title"), q.Get("summary")
+	bundle.Title, bundle.Summary, bundle.Author, bundle.Licence = q.Get("title"), q.Get("summary"), q.Get("author"), q.Get("licence")
 	if q.Get("check") == "1" {
 		problems, err := pwf.Problems(bundle)
 		if err != nil {
@@ -68,7 +84,50 @@ func handleProcessTemplateExport(w http.ResponseWriter, r *http.Request) {
 		if problems == nil {
 			problems = []string{}
 		}
-		writeProcessJSON(w, http.StatusOK, map[string]any{"problems": problems})
+		paths, err := pwf.ScanPaths(bundle)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
+			return
+		}
+		if paths == nil {
+			paths = []pwf.PathFinding{}
+		}
+		assignees, err := pwfAssigneesWithRoles(r, bundle)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, map[string]any{"problems": problems, "paths": paths, "assignees": assignees})
+		return
+	}
+	roles, err := pwfExportRoles(r, bundle)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if bundle, err = pwfConvertAssignees(bundle, roles); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
+		return
+	}
+	if q.Get("strict") == "1" {
+		issues, err := pwfStrictIssues(bundle)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "process_export", err.Error())
+			return
+		}
+		if len(issues) > 0 {
+			writeError(w, http.StatusUnprocessableEntity, "process_export_not_portable",
+				"not exported, because the workflow is not portable:\n  "+strings.Join(issues, "\n  "))
+			return
+		}
+	}
+	performers, err := parseWorkflowPerformers(q, bundle)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if len(performers) > 0 {
+		serveWorkflowWithPerformers(w, r, bundle, performers, r.PathValue("id"))
 		return
 	}
 	opts := pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}}
@@ -179,6 +238,8 @@ func isPWFNotFound(err error) bool {
 type pwfImportView struct {
 	Title      string             `json:"title"`
 	Summary    string             `json:"summary,omitempty"`
+	Author     string             `json:"author,omitempty"`
+	Licence    string             `json:"licence,omitempty"`
 	Root       string             `json:"root"`
 	RootID     string             `json:"rootId"`
 	Readme     string             `json:"readme,omitempty"`
@@ -191,18 +252,25 @@ type pwfImportView struct {
 	// Problems keep the workflow from running as carried (pwf
 	// Archive.Problems): it imports all the same, and a run refuses to start
 	// until they are fixed here.
-	Problems  []string              `json:"problems"`
+	Problems []string `json:"problems"`
+	// Paths are machine-specific paths the file carries (pwf Archive.Paths).
+	Paths     []pwf.PathFinding     `json:"paths"`
 	Templates []pwfTemplateImported `json:"templates"`
 	// RoleMap lists every role name the agent steps use (the role they ask
 	// for and the profile a fallback spawns) and what they use after the
 	// import; LocalRoles are the names a role can be mapped to here.
 	RoleMap    []pwfRoleMapping `json:"roleMap"`
 	LocalRoles []string         `json:"localRoles"`
+	// Envelope is set for a workflow read out of a .paf.
+	Envelope *pwfEnvelopeView `json:"envelope,omitempty"`
 	// Rename and Group echo the importer's choices; Pinned reports that an
 	// applied import pinned the root to Group.
 	Rename bool   `json:"rename,omitempty"`
 	Group  string `json:"group,omitempty"`
 	Pinned bool   `json:"pinned,omitempty"`
+	// Refused says why this node's policy refuses to import the file; a review
+	// still shows it, and an apply is refused.
+	Refused string `json:"refused,omitempty"`
 	// Updates counts templates whose local head the import would move; an
 	// import with updates needs replace.
 	Updates int  `json:"updates"`
@@ -249,22 +317,36 @@ type pwfTemplateImported struct {
 // pwfImportOptions). Without apply it is a preview and changes nothing; an
 // apply must carry the reviewDigest of the preview it acts on.
 func handleProcessImport(w http.ResponseWriter, r *http.Request) {
+	// A .paf carries whole conversations, so the body is spooled to disk under
+	// the agent transfer limit; a .pwf keeps its own, smaller bound.
+	r.Body = http.MaxBytesReader(w, r.Body, max(maxPWFUpload, agentTransferLimit()))
+	r = withApprovalFacts(r, func(body []byte) string { return processImportApprovalFacts(r, body) })
 	caller, ok := requirePermission(w, r, PermProcessTemplatesManage)
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxPWFUpload)
-	data, err := io.ReadAll(r.Body)
+	file, err := os.CreateTemp("", ".workflow-import-archive-")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_import", err.Error())
+		return
+	}
+	defer func() { _ = file.Close(); _ = os.Remove(file.Name()) }()
+	hash := sha256.New()
+	size, err := io.Copy(io.MultiWriter(file, hash), r.Body)
 	if err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("a workflow file is at most %d bytes", maxPWFUpload))
 		return
 	}
-	archive, err := pwf.Open(bytes.NewReader(data), int64(len(data)), pwf.DefaultLimits())
+	q := r.URL.Query()
+	archive, envelope, envelopeKey, err := openWorkflowFile(file, size, q.Get("workflow"))
+	if errors.Is(err, errPWFTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "too_large", err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_pwf", err.Error())
 		return
 	}
-	q := r.URL.Query()
 	opts, err := parsePWFImportOptions(q)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -299,10 +381,14 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_import", err.Error())
 		return
 	}
-	view, err := pwfImportPreview(r.Context(), fs, archive, data, planned, opts, uses, local)
+	opts.Workflow = envelopeKey
+	view, err := pwfImportPreview(r.Context(), fs, archive, hash.Sum(nil), planned, opts, uses, local)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_import", err.Error())
 		return
+	}
+	if envelope != nil {
+		view.Envelope = pwfEnvelopeSummary(envelope, envelopeKey, opts)
 	}
 	if group != nil {
 		// Refuse a full group before anything is stored.
@@ -316,6 +402,10 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if q.Get("apply") != "1" {
 		writeProcessJSON(w, http.StatusOK, view)
+		return
+	}
+	if view.Refused != "" {
+		writeError(w, http.StatusForbidden, "process_import_unsigned", view.Refused)
 		return
 	}
 	if q.Get("review") != view.ReviewDigest {
@@ -334,7 +424,7 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_actor", err.Error())
 		return
@@ -351,6 +441,16 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 	for i := range view.Templates {
 		if !view.Templates[i].Head {
 			rows = append(rows, &view.Templates[i])
+		}
+	}
+	// An operator's lock on a template refuses the whole import before any
+	// of it is stored (group_resource_locks.go).
+	for _, row := range rows {
+		if row.Status == "identical" {
+			continue
+		}
+		if id := planned[row.Ref].Tmpl.ID; refuseLockedForAgent(w, r, resourceKindProcess, id, "process template "+id) {
+			return
 		}
 	}
 	for _, row := range rows {
@@ -398,17 +498,88 @@ func handleProcessImport(w http.ResponseWriter, r *http.Request) {
 	writeProcessJSON(w, http.StatusOK, view)
 }
 
+// processImportApprovalFacts is the review a popup shows for an import, the one
+// the CLI prints: the file itself says nothing a person can judge. The handler
+// checks everything again and refuses what this cannot read.
+func processImportApprovalFacts(r *http.Request, data []byte) string {
+	review, err := processImportReview(r, data)
+	if err != nil {
+		return "This workflow file cannot be reviewed: " + guideText(err.Error(), 300)
+	}
+	q := r.URL.Query()
+	return processImportApprovalText(review, q.Get("apply") == "1", q.Get("replace") == "1")
+}
+
+// processImportApprovalText states what approving does for a workflow import.
+func processImportApprovalText(review agent.ImportReview, apply, replace bool) string {
+	lead := "Approving lets the agent read this review. Nothing is imported yet."
+	switch {
+	case apply && review.Refused != "":
+		lead = "This node refuses this file, so approving imports nothing: " + review.Refused
+	case apply:
+		lead = "Approving imports this workflow. It stores templates and starts no run."
+		if replace {
+			lead += " Imported versions become current where this node already has the template."
+		}
+	case review.Refused != "":
+		lead += " This node would refuse it: " + review.Refused
+	}
+	return approvalReviewText(lead, review)
+}
+
+func processImportReview(r *http.Request, data []byte) (agent.ImportReview, error) {
+	q := r.URL.Query()
+	archive, envelope, envelopeKey, err := openWorkflowFile(bytes.NewReader(data), int64(len(data)), q.Get("workflow"))
+	if err != nil {
+		return agent.ImportReview{}, err
+	}
+	opts, err := parsePWFImportOptions(q)
+	if err != nil {
+		return agent.ImportReview{}, err
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		return agent.ImportReview{}, err
+	}
+	planned, _, err := pwfImportPlan(r.Context(), fs, archive, opts)
+	if err != nil {
+		return agent.ImportReview{}, err
+	}
+	local, err := pwfLocalRoleNames(r)
+	if err != nil {
+		return agent.ImportReview{}, err
+	}
+	opts.Workflow = envelopeKey
+	fileDigest := sha256.Sum256(data)
+	view, err := pwfImportPreview(r.Context(), fs, archive, fileDigest[:], planned, opts, pwfRoleUses(archive), local)
+	if err != nil {
+		return agent.ImportReview{}, err
+	}
+	if envelope != nil {
+		view.Envelope = pwfEnvelopeSummary(envelope, envelopeKey, opts)
+	}
+	preview, err := json.Marshal(view)
+	if err != nil {
+		return agent.ImportReview{}, err
+	}
+	return agent.WorkflowImportReview(preview)
+}
+
 // pwfImportPreview says what importing the planned templates changes here.
 // RootID is the root's id as stored (renamed, when it was).
-func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []byte, planned map[string]*pwfPlanned,
+func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, fileDigest []byte, planned map[string]*pwfPlanned,
 	opts pwfImportOptions, uses map[string][]string, local []string) (pwfImportView, error) {
 	wf := a.Workflow
 	view := pwfImportView{
-		Title: wf.Title, Summary: wf.Summary, Root: wf.Root, RootID: planned[wf.Root].ID, Readme: string(a.Readme),
+		Title: wf.Title, Summary: wf.Summary, Author: wf.Author, Licence: wf.Licence, Root: wf.Root, RootID: planned[wf.Root].ID, Readme: string(a.Readme),
 		Params: wf.Params, Roles: wf.Roles, Programs: wf.Programs, Assignees: wf.Assignees, Humans: wf.Humans,
 		Problems:   append([]string{}, a.Problems...),
+		Paths:      append([]pwf.PathFinding{}, a.Paths...),
 		Signatures: pwfSignatureViews(a.Signatures), RoleMap: []pwfRoleMapping{}, LocalRoles: local,
 		Rename: opts.Rename, Group: opts.Group,
+	}
+	if pwfRefusedUnsigned(a) {
+		view.Refused = "this node refuses workflows without a valid signature (processes.refuse_unsigned_imports)"
 	}
 	known := map[string]bool{}
 	for _, name := range local {
@@ -455,13 +626,25 @@ func pwfImportPreview(ctx context.Context, fs *store.FS, a *pwf.Archive, data []
 		view.Templates = append(view.Templates, row)
 	}
 	digest := sha256.New()
-	digest.Write(data)
+	digest.Write(fileDigest)
 	for _, row := range view.Templates {
 		fmt.Fprintf(digest, "\n%s %s %s %s", row.Ref, row.ImportRef, row.Status, row.CurrentRef)
 	}
 	fmt.Fprintf(digest, "\n%s", opts.digestKey())
 	view.ReviewDigest = hex.EncodeToString(digest.Sum(nil))
 	return view, nil
+}
+
+// pwfRefusedUnsigned applies the operator's policy. A signature that does not
+// verify proves nothing, so it counts as none; a valid one by an unknown key
+// passes, since the policy asks for a signature, not for a known signer. A
+// config that cannot be read refuses: the policy it may hold is unknown.
+func pwfRefusedUnsigned(a *pwf.Archive) bool {
+	cfg, err := config.Load()
+	if err == nil && !cfg.RefuseUnsignedWorkflows() {
+		return false
+	}
+	return !slices.ContainsFunc(a.Signatures, func(s paf.SignatureResult) bool { return s.Status == paf.SignatureValid })
 }
 
 // pwfSignatureViews labels valid signatures by key: this node, a known

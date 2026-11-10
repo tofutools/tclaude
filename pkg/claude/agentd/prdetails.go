@@ -84,6 +84,11 @@ type prDetails struct {
 	MergedAt     string    `json:"merged_at,omitempty"`
 	ClosedAt     string    `json:"closed_at,omitempty"`
 	FetchedAt    time.Time `json:"fetched_at"`
+
+	// NoDiffstat marks a card without line, file and commit counts: a GitLab
+	// instance whose GraphQL schema lacks them. The counts are then zero
+	// because unknown, not because the change is empty.
+	NoDiffstat bool `json:"no_diffstat,omitempty"`
 }
 
 func prDetailsCacheKey(rawURL string) string {
@@ -291,11 +296,7 @@ func schedulePRDetailsRefresh(rawURL string) bool {
 	requestedAt := time.Now()
 	goBackground(func() {
 		defer prDetailsInflight.Delete(key)
-		raw, ok := prDetailsFetcher(rawURL)
-		var details prDetails
-		if ok {
-			details, ok = parsePRDetails(raw)
-		}
+		details, ok := fetchPRDetails(rawURL)
 		if !ok {
 			prDetailsFailedAt.Store(key, time.Now())
 			return
@@ -306,6 +307,19 @@ func schedulePRDetailsRefresh(rawURL string) bool {
 		sharePRDetailsObservation(rawURL, details, requestedAt)
 	})
 	return true
+}
+
+// fetchPRDetails reads one card: through the GitLab API for a merge request,
+// through `gh` for a pull request.
+func fetchPRDetails(rawURL string) (prDetails, bool) {
+	if isGitLabPresentedPRURL(rawURL) {
+		return gitlabPRDetails(rawURL)
+	}
+	raw, ok := prDetailsFetcher(rawURL)
+	if !ok {
+		return prDetails{}, false
+	}
+	return parsePRDetails(raw)
 }
 
 // sharePRDetailsObservation feeds a hover read's state and title into the
@@ -320,7 +334,7 @@ func sharePRDetailsObservation(rawURL string, details prDetails, observedAt time
 	}
 	state := savePresentedPRCache(presentedPRCacheKey(rawURL), rawURL, presentedPRInfo{
 		Title:     truncateAuthoredPRTitle(details.Title),
-		Number:    deriveGitHubPRNumber(rawURL),
+		Number:    deriveForgePRNumber(rawURL),
 		URL:       strings.TrimSpace(rawURL),
 		State:     details.State,
 		FetchedAt: observedAt,
@@ -338,7 +352,9 @@ type prDetailsResponse struct {
 	Refreshing bool       `json:"refreshing"`
 }
 
-// handleDashboardPRDetails serves GET /api/pr-details?url=<github pr url>.
+// handleDashboardPRDetails serves GET /api/pr-details?url=<pull or merge
+// request url>. A merge request is read only on a configured GitLab instance
+// and an allow-listed project, the gate its CI pill passes.
 // Cookie-authed (dashboard-only) and read-only. A merged PR's card is frozen
 // once cached: nothing about it changes any more. A closed one is not — it
 // can be reopened.
@@ -355,8 +371,8 @@ func handleDashboardPRDetails(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "url is required")
 		return
 	}
-	if len(rawURL) > maxAgentPRURLLen || !isGitHubPresentedPRURL(rawURL) {
-		writeError(w, http.StatusBadRequest, "bad_request", "url must be a GitHub pull request URL")
+	if len(rawURL) > maxAgentPRURLLen || !isForgePresentedPRURL(rawURL) {
+		writeError(w, http.StatusBadRequest, "bad_request", "url must be a GitHub pull request or GitLab merge request URL")
 		return
 	}
 	details, ok := loadPRDetails(rawURL)

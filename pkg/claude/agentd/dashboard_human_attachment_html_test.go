@@ -13,10 +13,10 @@ func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
 	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
 
 	for needle, why := range map[string]string{
-		"function MessageAttachments(": "the Preact Messages reader renders attachment metadata",
-		"messageAttachments(message)":  "the reader renders every published file, not just the first",
-		`class="mail-attachment"`:      "the reader includes the attachment card",
-		`ImageAttachmentPreview`:       "Messages reuses the shared image preview",
+		"function MessageAttachments(":             "the Preact Messages reader renders attachment metadata",
+		"messageAttachments(message)":              "the reader renders every published file, not just the first",
+		`class="mail-attachment ui-card ui-inset"`: "the reader includes the attachment card",
+		`ImageAttachmentPreview`:                   "Messages reuses the shared image preview",
 	} {
 		if !strings.Contains(island, needle) {
 			t.Errorf("dashboard source missing %q (%s)", needle, why)
@@ -60,10 +60,6 @@ func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
 			t.Errorf("dashboard CSS is missing the %s skin", rule)
 		}
 	}
-	// A scrolling surface in this dashboard gets the house scrollbar, per theme.
-	if !strings.Contains(css, ":is(.markdown-preview-stage, .image-preview-stage)::-webkit-scrollbar {") {
-		t.Error("the attachment viewers' scrolling stages have no styled scrollbar")
-	}
 	for _, name := range []string{"js/image-preview-overlay.js", "js/markdown-attachment.js"} {
 		if !strings.Contains(dashboardAssetFile(t, name), "DialogResizer") {
 			t.Errorf("%s does not offer the resize grip", name)
@@ -72,10 +68,15 @@ func TestDashboardHTML_HumanAttachmentWired(t *testing.T) {
 	for needle, why := range map[string]string{
 		"role=\"dialog\"":     "the image viewer exposes dialog semantics",
 		"aria-modal=\"true\"": "the image viewer is modal",
-		"method: 'HEAD'":      "the image viewer distinguishes missing files before loading",
+		"source.check(":       "the image viewer distinguishes missing files before loading",
 	} {
 		if !strings.Contains(preview, needle) {
 			t.Errorf("image preview source missing %q (%s)", needle, why)
 		}
+	}
+	// A message's files are checked with a HEAD on their route before the
+	// viewer loads them (attachment-source.js messageFileSource).
+	if source := string(mustReadFS(dashboardAssetsFS, "js/attachment-source.js")); !strings.Contains(source, "method: 'HEAD'") {
+		t.Error("a message's files are no longer checked with a HEAD before the viewer loads them")
 	}
 }

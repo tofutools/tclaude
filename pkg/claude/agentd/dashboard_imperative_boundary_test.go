@@ -1,4 +1,4 @@
-//ci:reads docs/dashboard.md
+//ci:reads CONTRIBUTING.md
 
 package agentd
 
@@ -12,7 +12,7 @@ import (
 )
 
 func TestDashboardImperativeOwnershipInventory(t *testing.T) {
-	docsPath := filepath.Join("..", "..", "..", "docs", "dashboard.md")
+	docsPath := filepath.Join("..", "..", "..", "CONTRIBUTING.md")
 	docsBytes, err := os.ReadFile(docsPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", docsPath, err)
@@ -37,15 +37,15 @@ func TestDashboardImperativeOwnershipInventory(t *testing.T) {
 		}
 		match := marker.FindStringSubmatch(source)
 		if len(match) != 2 {
-			t.Errorf("%s directly creates/injects DOM without an ownership marker; ordinary operator UI belongs in a Preact island. If this is a necessary opaque/browser boundary, add `// dashboard-imperative-boundary: <documented-category>` and document its owner, disposal, and behavioral test contract in docs/dashboard.md", name)
+			t.Errorf("%s directly creates/injects DOM without an ownership marker; ordinary operator UI belongs in a Preact island. If this is a necessary opaque/browser boundary, add `// dashboard-imperative-boundary: <documented-category>` and document its owner, disposal, and behavioral test contract in CONTRIBUTING.md", name)
 			continue
 		}
 		category := match[1]
 		if !categories[category] {
-			t.Errorf("%s uses undocumented imperative category %q; add a reviewed category with ownership, disposal, and behavioral tests to docs/dashboard.md", name, category)
+			t.Errorf("%s uses undocumented imperative category %q; add a reviewed category with ownership, disposal, and behavioral tests to CONTRIBUTING.md", name, category)
 		}
 		if !strings.Contains(docs, "`"+category+"`") {
-			t.Errorf("docs/dashboard.md does not describe imperative category %q used by %s", category, name)
+			t.Errorf("CONTRIBUTING.md does not describe imperative category %q used by %s", category, name)
 		}
 	}
 }

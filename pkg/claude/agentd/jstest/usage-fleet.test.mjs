@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const CAP = { name: 'fleet cap', metric: 'total_usd', period: 'month', budget: 100,
@@ -91,6 +92,22 @@ test('fleet tab shows readings per node, what each node shares, and peers\' cont
   assert.equal(body.target, 'all');
   assert.equal(body.include_self, true);
   assert.equal(body.rule.name, 'org');
+  await mounted.unmount();
+});
+
+test('below 640px the nodes table drops Today and This week, but an unshared node keeps its note and grant chips', async (t) => {
+  const { host, mounted } = await mount(t);
+  const css = await readFile(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  const narrow = css.split('@media (max-width: 640px) {').slice(1).map((rest) => rest.slice(0, rest.indexOf('\n}')))
+    .flatMap((block) => [...block.matchAll(/([^{}]*\.usage-fleet-nodes[^{}]*)\{\s*display:\s*none;?\s*\}/g)].map((r) => r[1].trim()));
+  assert.ok(narrow.length, 'dashboard.css hides some usage-fleet-nodes cells below 640px');
+  const hidden = new Set(narrow.flatMap((sel) => [...host.querySelectorAll(sel)]));
+  const ben = host.querySelector('[data-fleet-node="inst_ben"]');
+  assert.ok(![...ben.children].some((td) => hidden.has(td)), 'the unshared row keeps every cell: its note spans the money columns and its chips follow');
+  const ann = [...host.querySelector('[data-fleet-node="inst_ann"]').children];
+  assert.deepEqual(ann.map((td) => hidden.has(td)), [false, true, true, false, false, false, false], 'a shared row drops Today and This week');
+  const head = [...host.querySelectorAll('.usage-fleet-nodes thead th')].filter((th) => hidden.has(th)).map((th) => th.textContent);
+  assert.deepEqual(head, ['Today', 'This week']);
   await mounted.unmount();
 });
 

@@ -1,5 +1,6 @@
 import { pickDirectory, shortId } from './helpers.js';
 import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey, wizWord } from './slop.js';
+import { loadKeyboardLayout } from './keybindings.js';
 import {
   bindWizardCursorTrail, bindWizardCastFx, bindWizardStatusWatch,
   bindWizardMarquee, bindWizardSpectacle, bindWizardEnterBanner, wizardSummon,
@@ -40,6 +41,9 @@ applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
 import { bindToolbarActionsMenu } from './toolbar-actions-menu.js';
 import { bindDnd } from './dnd.js';
+import { bindResourceDnd } from './resource-dnd.js';
+import { bindTaskRowDrag } from './row-drag.js';
+import { startPeerDrawingBoards } from './peer-drawing-boards.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindGroupsDragAutoScroll } from './groups-drag-autoscroll.js';
 import { bindDockDnd } from './dock-dnd.js';
@@ -47,18 +51,19 @@ import { bindDockSaveDnd } from './dock-save-dnd.js';
 import { bindGroupsCleanupButtons } from './modal-message.js';
 import {
   activeMessageAccessDialogKind, openOperatorMessageDialog,
-  openPermEditModal, openSudoGrantModal, openSpawnPermEditor, openContextFeaturesEditor, pickAgent,
+  openPermEditModal, openSudoEditModal, openSpawnPermEditor, openContextFeaturesEditor, openRelaunchPolicyEditor, pickAgent,
 } from './message-access-dialog-controller.js';
 import {
-  bindTemplatesUI, bindGroupImportModal, openTemplatesManageModal, summonTemplateScribe,
+  bindTemplatesUI, bindGroupImportModal, openTemplatesManageModal,
 } from './modal-templates.js';
+import { summonTemplateScribe } from './template-scribe.js';
 import { bindProfilesUI, openProfileEditor } from './modal-profiles.js';
 import { getDashDefaultProfile, loadProfiles } from './profiles.js';
 import { bindSandboxProfilesUI, loadSandboxProfiles, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
 import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
 import { configureQueuedSpawns } from './queued-spawns.js';
-import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
+import { configureSpawnQueue } from './spawn-queue-block.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
@@ -71,12 +76,12 @@ import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import { bindActivityTab } from './activity-tab.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountVoiceWakeFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDoctorFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountAccessPanelFeature, mountCompanionFeature, mountDrawingBoardOverlayFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountKnowledgeSourceFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
-import { onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
+import { bindShortcutOverrides, onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
 import { startBrowserNotifyPoll } from './browser-notify.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -169,6 +174,16 @@ async function settleInitialLayout() {
     }),
     () => mountSpawnHarnessPolicyFeature({ confirmDiscard, notify: toast }),
     () => mountDockFeature(),
+    () => mountCompanionFeature({
+      notify: toast,
+      onComposeMessage: (seed) => openOperatorMessageDialog(seed),
+      openPermissions: (conv, label) => openPermEditModal(conv, label),
+      openSudo: (agentID, label) => openSudoEditModal(agentID, label),
+    }),
+    () => mountVoiceWakeFeature(),
+    () => mountAccessPanelFeature({ notify: toast }),
+    () => mountKnowledgeSourceFeature({ notify: toast }),
+    () => mountDrawingBoardOverlayFeature(),
     () => mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
       refresh: dashboardActions.refresh,
@@ -176,6 +191,7 @@ async function settleInitialLayout() {
       notify: toast,
     }),
     () => mountCostsFeature(),
+    () => mountDoctorFeature({ notify: toast }),
     () => mountUsageHistoryFeature(),
     () => mountUsageHubFeature(),
     () => mountAccessFeature({
@@ -187,7 +203,7 @@ async function settleInitialLayout() {
           title: 'Grant sudo to', identity: 'agent', showSudo: true,
           includeOfflineHint: 'Include offline / archived agents (the daemon will still grant; the agent sees the slug on next wake)',
         });
-        if (agentID) openSudoGrantModal(agentID);
+        if (agentID) openSudoEditModal(agentID);
       },
     }),
     () => mountLogsFeature(),
@@ -226,6 +242,7 @@ async function settleInitialLayout() {
       openProfileEditor,
       openPermissions: (options) => openSpawnPermEditor({ ...options, group: options.group || 'the spawn group' }),
       openContextFeatures: (options) => openContextFeaturesEditor(options),
+      openRelaunchPolicy: (options) => openRelaunchPolicyEditor(options),
       confirm: confirmModal,
       confirmDiscard,
       notify: toast,
@@ -241,6 +258,7 @@ async function settleInitialLayout() {
       getSnapshot: () => lastSnapshot,
       openProfilePermissions: (options) => openSpawnPermEditor({ ...options, group: 'the spawn group' }),
       openProfileContextFeatures: (options) => openContextFeaturesEditor(options),
+      openProfileRelaunchPolicy: (options) => openRelaunchPolicyEditor(options),
       refreshSandboxSpawn: refreshAgentSpawnSandboxPolicy,
       summonSandboxScribe,
       summonTemplateScribe,
@@ -264,6 +282,7 @@ async function settleInitialLayout() {
     }),
     () => {
       configureQueuedSpawns({ confirm: confirmModal, notify: toast, refresh: dashboardActions.refresh });
+      configureSpawnQueue({ confirm: confirmModal, notify: toast, refresh: dashboardActions.refresh });
       return mountQueuedSpawnsFeature();
     },
     () => mountGitRepositoriesFeature(),
@@ -338,6 +357,14 @@ async function settleInitialLayout() {
     bindDetailsPersistence(), bindGroupTitleToggle(), bindToolbarActionsMenu(), bindRowActions(),
   );
   pageCleanups.push(bindDnd(), bindGroupReorder(), bindGroupsDragAutoScroll());
+  // A drawing board or page row dragged onto another group's box moves it there
+  // (resource-dnd.js, its own MIME type).
+  pageCleanups.push(bindResourceDnd());
+  // A task row in a task board's List drags as a whole, as agent and
+  // resource rows do (row-drag.js); groups-taskboard.js owns the drag itself.
+  pageCleanups.push(bindTaskRowDrag());
+  // A peer's page reads the drawing boards it shares (peer-drawing-boards.js, tcl-ug8bb8).
+  if (globalThis.__tclaudeRemoteNode?.id) pageCleanups.push(startPeerDrawingBoards());
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
   // (JOH-375). Its document-level listeners coexist with dnd.js /
   // group-reorder.js via a distinct custom MIME + self-gating state.
@@ -365,13 +392,14 @@ async function settleInitialLayout() {
   bindSandboxProfilesUI();
   bindRolesUI();
   bindGroupImportModal();
-  bindRemoteAdmin();
-  document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
   bindCostDisplayToggle();
   // Slop-mode flair — each binder installs a delegated listener (or
   // starts an interval) once. They no-op while slop is off and the
   // body-class check inside each handler is what actually gates the
   // effect, so toggling slop mid-session needs no re-binding.
+  // Shortcut labels show what each key position types on this layout.
+  void loadKeyboardLayout();
+  bindShortcutOverrides();
   bindSlopHotkey();
   bindSlopClickFx();
   bindSlopMachineClicks();
@@ -419,10 +447,9 @@ async function settleInitialLayout() {
   // The static shell deliberately starts paint-curtained: URL theme classes,
   // server-backed dock preferences, and snapshot-owned feature islands all
   // change geometry during bootstrap. Complete one authoritative refresh before
-  // restoring the URL so snapshot-gated tab visibility is known: Processes, for
-  // example, starts CSS-hidden until processes_enabled arrives. Restoring its
-  // route any earlier would mistake that provisional hidden state for a stale link
-  // and rewrite /automations/processes/... to the home screen. Two animation-frame turns
+  // restoring the URL so snapshot-gated tab visibility is known. Restoring a
+  // route any earlier would mistake a provisional hidden state for a stale
+  // link and rewrite it to the home screen. Two animation-frame turns
   // then let Preact/Signals and the
   // ResizeObserver-driven dock/nav geometry settle before visibility changes.
   // dashboard.css carries an eight-second CSS-only failsafe in case the module

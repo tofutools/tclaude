@@ -731,8 +731,9 @@ func TestTclaudeLayerLaunchSpecCarriesTheEngineToThePlan(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.NetworkEngineProxy, spec.Contract.NetworkEngine)
-	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(spec)
+	rendered, err := tclaudeLayerSpecRenderInput(spec)
 	require.NoError(t, err)
+	plan := rendered.Plan
 	assert.True(t, tclaudeLayerPlanDeploysProxy(plan))
 	assert.Equal(t, sandboxpolicy.NetworkIsolatedWithAgentd,
 		tclaudeLayerPlanFloorPosture(plan))

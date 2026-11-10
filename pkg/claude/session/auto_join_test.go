@@ -46,8 +46,16 @@ func TestAutomaticGroupEligibilityPreservesDirectModes(t *testing.T) {
 	assert.False(t, automaticGroupEligible(&NewParams{NoDaemon: true}, nil))
 	assert.False(t, automaticGroupEligible(&NewParams{Resume: "abc"}, nil))
 	assert.False(t, automaticGroupEligible(&NewParams{Shell: true}, nil))
-	assert.False(t, automaticGroupEligible(&NewParams{}, explicitLaunchFields{"label": true}))
 	assert.True(t, automaticGroupEligible(&NewParams{}, nil))
+}
+
+func TestExplicitSoloOnlyFlags(t *testing.T) {
+	// Solo-only flags no longer make a launch ineligible outright: they keep it
+	// solo through resolveSoloLaunchFlags, which says so (auto_join_cli_test.go).
+	assert.True(t, automaticGroupEligible(&NewParams{}, explicitLaunchFields{"label": true}))
+	assert.Equal(t, []string{"--label", "--session-id"},
+		explicitSoloOnlyFlags(explicitLaunchFields{"session-id": true, "label": true, "initial-prompt": true}),
+		"--initial-prompt is carried as the brief on a group launch, so it is not solo-only")
 }
 
 func TestNoDaemonIsNotAGroupLaunchMode(t *testing.T) {

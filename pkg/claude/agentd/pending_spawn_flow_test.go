@@ -531,6 +531,16 @@ func (s *delayedCodexSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	}); err != nil {
 		return err
 	}
+	if args.RouteHelperLaunchGeneration != "" {
+		if err := db.SetSessionExitLaunchGeneration(label, args.RouteHelperLaunchGeneration); err != nil {
+			return err
+		}
+	}
+	s.w.RecordSpawnRouteHelper(cx.ConvID, testharness.RouteHelperLaunch{
+		AgentID: args.RouteHelperAgentID, ConvID: args.RouteHelperConvID,
+		LaunchGeneration: args.RouteHelperLaunchGeneration, Credential: args.RouteHelperCredential,
+		GroupIDs: args.RouteHelperGroupIDs,
+	})
 	s.w.Tmux.Register(label, cx.Cwd, cx)
 	go func() {
 		<-s.release

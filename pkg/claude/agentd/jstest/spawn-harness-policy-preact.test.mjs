@@ -104,7 +104,7 @@ test('policy dialog preserves its draft while live wizard copy changes', async (
     'textarea[aria-label="claude to codex forbidden-summon reason"]',
   );
   assert.equal(themedReason.value, 'reserve credits');
-  assert.equal(themedReason.placeholder, 'Reason revealed to the summoning familiar');
+  assert.equal(themedReason.placeholder, 'Reason revealed to the summoning hero');
 
   await harness.act(() => cleanups.reverse().forEach((cleanup) => cleanup()));
   opener.remove();

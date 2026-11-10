@@ -1,8 +1,11 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
 import { shortID } from './fleet-admin-model.js';
+import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -14,15 +17,10 @@ const TERMINAL = new Set(['completed', 'failed', 'canceled', 'timeout', 'refused
 const BAD = new Set(['failed', 'canceled', 'timeout', 'refused', 'interrupted', 'output_unavailable', 'unknown']);
 const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-function errText(error) { return error?.message || String(error); }
-
 // expired pending jobs can no longer start (approve is a silent no-op).
 function expired(j) { const t = Date.parse(j.expires || ''); return Number.isFinite(t) && t > 0 && t <= Date.now(); }
 
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) && t.getFullYear() > 1 ? t.toLocaleString() : '—';
-}
+const when = (iso) => localStamp(iso);
 
 function parse(raw) {
   if (raw && typeof raw === 'object') return raw;
@@ -99,28 +97,27 @@ function RunJobDialog({ peers, pools, actions, confirm, onClose, onDone }) {
       onDone(`${results.length - failed.length} job${results.length - failed.length === 1 ? '' : 's'} sent${failed.length ? `; ${failed.length} refused (${failed.map((x) => `${label(x.peer)}: ${x.error || x.status}`).join('; ')})` : ''}${undelivered.length ? `; ${undelivered.length} not delivered yet — Retry resends the same request` : ''}`, failed.length > 0);
     }).catch((e) => setError(errText(e)));
   };
-  return html`<${Overlay} id="fleet-run-job" labelledby="fleet-run-job-title" onClose=${onClose}>
-    <h3 id="fleet-run-job-title">Run a job in a peer's repository</h3>
-    <label class="fa-jb-row"><span class="fa-k">where</span><select id="fleet-job-target" value=${form.target} onChange=${set('target')}>
+  return html`<${Dialog} id="fleet-run-job" onClose=${onClose} title="Run a job in a peer's repository">
+    <label class="fa-jb-row"><span class="fa-k">where</span><${Select} size="sm" id="fleet-job-target" value=${form.target} onChange=${set('target')}>
       <option value="pick">nodes I pick</option><option value="auto">automatic: any trusted node</option>
-      ${pools.map((p) => html`<option key=${p} value=${`group:${p}`}>automatic: a node of pool ${p}</option>`)}</select></label>
+      ${pools.map((p) => html`<option key=${p} value=${`group:${p}`}>automatic: a node of pool ${p}</option>`)}<//></label>
     ${form.target === 'pick'
       ? html`<div class="fa-jb-nodes">${peers.map((p) => html`<label key=${p.id} class=${p.online ? '' : 'muted'}><input type="checkbox" data-node=${p.id} checked=${form.nodes.includes(p.id)} onChange=${toggle(p.id)} /> ${p.label}${p.online ? '' : ' (offline)'}</label>`)}</div>`
-      : html`<label class="fa-jb-row"><span class="fa-k">prefer</span><select id="fleet-job-prefer" value=${form.prefer} onChange=${set('prefer')}><option value="least-loaded">least loaded</option><option value="most-free-ram">most free RAM</option></select></label>`}
+      : html`<label class="fa-jb-row"><span class="fa-k">prefer</span><${Select} size="sm" id="fleet-job-prefer" value=${form.prefer} onChange=${set('prefer')}><option value="least-loaded">least loaded</option><option value="most-free-ram">most free RAM</option><//></label>`}
     <label class="fa-jb-row"><span class="fa-k">repo</span><input id="fleet-job-repo" value=${form.repo} placeholder="the peer's allowed repository alias" autocomplete="off" spellcheck="false" onInput=${set('repo')} /></label>
     <label class="fa-jb-row"><span class="fa-k">ref</span><input id="fleet-job-ref" value=${form.ref} placeholder="branch, full ref or exact commit" autocomplete="off" spellcheck="false" onInput=${set('ref')} /></label>
     <label class="fa-jb-row"><span class="fa-k">group</span><input id="fleet-job-group" value=${form.group} placeholder="receiving group on the peer" autocomplete="off" onInput=${set('group')} /></label>
-    <label class="fa-jb-row"><span class="fa-k">harness</span><select id="fleet-job-harness" value=${form.harness} onChange=${set('harness')}>
-      <option value="">shell command</option>${['claude', 'codex', 'opencode', 'copilot', 'gemini', 'pi'].map((x) => html`<option key=${x} value=${x}>${x} task</option>`)}</select></label>
+    <label class="fa-jb-row"><span class="fa-k">harness</span><${Select} size="sm" id="fleet-job-harness" value=${form.harness} onChange=${set('harness')}>
+      <option value="">shell command</option>${['claude', 'codex', 'opencode', 'copilot', 'gemini', 'pi'].map((x) => html`<option key=${x} value=${x}>${x} task</option>`)}<//></label>
     <label class="fa-jb-row"><span class="fa-k">command</span><textarea id="fleet-job-command" rows="3" spellcheck="false" placeholder=${form.harness ? 'the task for the agent' : 'shell command'} onInput=${set('command')}>${form.command}</textarea></label>
     <label class="fa-jb-row"><span class="fa-k">timeout</span><input id="fleet-job-timeout" value=${form.timeout} inputmode="numeric" onInput=${set('timeout')} /></label>
     <label class="fa-jb-row"><span class="fa-k">require</span><input id="fleet-job-require" value=${form.require} placeholder="os=darwin,harness=codex,label=gpu (optional)" autocomplete="off" spellcheck="false" onInput=${set('require')} /></label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation job run --node … --repo … --ref … --group … --command … [--follow]</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button id="fleet-job-send" type="button" class="primary" onClick=${submit}>Send…</button>
-      <button type="button" onClick=${onClose}>Close</button></div>
-  </${Overlay}>`;
+      <${Button} variant="primary" id="fleet-job-send" onClick=${submit}>Send…</${Button}>
+      <${Button} onClick=${onClose}>Close</${Button}></div>
+  </${Dialog}>`;
 }
 
 // appendOutput adds live chunks to the per-stream text, keeping the newest
@@ -228,18 +225,17 @@ function OutputDialog({ job, label, actions, timers, active, onClose }) {
   }, [out]);
   const onScroll = (e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8; };
   const shown = live ? out : logs;
-  return html`<${Overlay} id="fleet-job-logs" labelledby="fleet-job-logs-title" onClose=${onClose}>
-    <h3 id="fleet-job-logs-title">Job ${job.id} ${job.incoming ? 'from' : 'on'} ${label(job.peer)}</h3>
+  return html`<${Dialog} id="fleet-job-logs" onClose=${onClose} title=${html`Job ${job.id} ${job.incoming ? 'from' : 'on'} ${label(job.peer)}`}>
     <div class="muted">${job.repo}@${job.ref}${job.commit ? ` (${job.commit.slice(0, 12)})` : ''} · ${live ? html`<span class="fa-jb-live">● live</span>${!visible || !active ? ' (paused while hidden)' : ''}` : `${job.terminal ? job.state : 'finished'}${job.exit != null ? ` · exit ${job.exit}` : ''}${job.code ? ` · ${job.code}` : ''}`}</div>
     ${live && (out.trimmed || out.skipped) && html`<div class="muted">${out.skipped ? 'Some earlier output was skipped by the node. ' : ''}${out.trimmed ? 'Only the most recent output is kept here; the full output is in the logs once the job ends.' : ''}</div>`}
     ${live && note && html`<div class="muted" id="fleet-job-wait">${note}</div>`}
-    ${live && failed && html`<div class="fa-danger" role="alert">Live output stopped: ${failed} <button type="button" class="fa-link" onClick=${() => { setFailed(''); setRetry((n) => n + 1); }}>retry</button></div>`}
+    ${live && failed && html`<div class="fa-danger" role="alert">Live output stopped: ${failed} <${Button} size="sm" variant="link" class="fa-link" onClick=${() => { setFailed(''); setRetry((n) => n + 1); }}>retry<//></div>`}
     ${shown == null ? html`<div class="empty">Loading…</div>` : shown.error ? html`<div class="fa-danger" role="alert">${shown.error}</div>` : html`
       <div class="fa-k">stdout</div><pre class="fa-run-out" ref=${pre} onScroll=${onScroll}>${shown.stdout || ''}</pre>
       ${shown.stderr ? html`<div class="fa-k">stderr</div><pre class="fa-run-out err">${shown.stderr}</pre>` : ''}`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation job status ${job.id}</code>${live ? html`; live output: <code>job run … --follow</code>` : ''}</div>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
-  </${Overlay}>`;
+    <div class="modal-buttons"><span class="spacer"></span><${Button} onClick=${onClose}>Close</${Button}></div>
+  </${Dialog}>`;
 }
 
 function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
@@ -263,8 +259,7 @@ function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
     }).then((r) => { if (r) onDone(`Repository ${body.name} saved`); })
       .catch((e) => setError(errText(e)));
   };
-  return html`<${Overlay} id="fleet-repo" labelledby="fleet-repo-title" onClose=${onClose}>
-    <h3 id="fleet-repo-title">${repo ? `${repo.enabled ? 'Edit' : 'Re-enable'} repository ${repo.name}` : 'Allow a repository for remote jobs'}</h3>
+  return html`<${Dialog} id="fleet-repo" onClose=${onClose} title=${repo ? `${repo.enabled ? 'Edit' : 'Re-enable'} repository ${repo.name}` : 'Allow a repository for remote jobs'}>
     <label class="fa-jb-row"><span class="fa-k">alias</span><input id="fleet-repo-name" value=${form.name} disabled=${!!repo} placeholder="name peers use (--repo)" autocomplete="off" spellcheck="false" onInput=${set('name')} /></label>
     <label class="fa-jb-row"><span class="fa-k">URL</span><input id="fleet-repo-url" value=${form.url} placeholder="git remote, e.g. git@github.com:org/repo.git" autocomplete="off" spellcheck="false" onInput=${set('url')} /></label>
     <label class="fa-jb-row"><span class="fa-k">clone</span><input id="fleet-repo-clone" value=${form.clone} placeholder="/abs/path of the local clone on this node" autocomplete="off" spellcheck="false" onInput=${set('clone')} /></label>
@@ -273,9 +268,9 @@ function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation repos ${repo ? 'update' : 'add'} …</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button id="fleet-repo-save" type="button" class="primary" onClick=${save}>${repo ? 'Save…' : 'Allow…'}</button>
-      <button type="button" onClick=${onClose}>Close</button></div>
-  </${Overlay}>`;
+      <${Button} variant="primary" id="fleet-repo-save" onClick=${save}>${repo ? 'Save…' : 'Allow…'}</${Button}>
+      <${Button} onClick=${onClose}>Close</${Button}></div>
+  </${Dialog}>`;
 }
 
 // JobsPage lists remote jobs (sent by this node and received from peers) with
@@ -345,15 +340,13 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
   const repoRows = Array.isArray(repos) ? repos : [];
   return html`<div class="fa-jobs">
     <div class="fa-grant-form">
-      <button id="fleet-job-open" type="button" disabled=${!view.trusted.length} onClick=${() => setDialog({ kind: 'run' })}>Run a job…</button>
-      <button id="fleet-jobs-refresh" type="button" onClick=${reload}>Refresh</button>
+      <${Button} size="sm" id="fleet-job-open" disabled=${!view.trusted.length} onClick=${() => setDialog({ kind: 'run' })}>Run a job…<//>
+      <${Button} size="sm" id="fleet-jobs-refresh" onClick=${reload}>Refresh<//>
       <span class="muted">${pending ? html`<span class="fa-warn">${pending} waiting for your approval. </span>` : ''}CLI: <code>tclaude federation job ls</code></span>
     </div>
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${jobs == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : !list.length ? html`<div class="empty">No remote jobs.</div>` : html`
-    <table class="fa-table" id="fleet-jobs">
-      <thead><tr><th></th><th>Peer</th><th>Repo</th><th>Group</th><th>Command</th><th>Created</th><th>State</th><th></th></tr></thead>
-      <tbody>${list.map((j) => html`<tr key=${j.id} data-job=${j.id}>
+    <${FaTable} id="fleet-jobs" head=${['', 'Peer', 'Repo', 'Group', 'Command', 'Created', 'State', '']}>${list.map((j) => html`<tr key=${j.id} data-job=${j.id}>
         <td title=${j.incoming ? 'received: runs on this node' : 'sent: runs on the peer'}>${j.incoming ? '⇠' : '⇢'}</td>
         <td>${label(j.peer)}${j.caller ? html` <span class="muted">(${j.caller})</span>` : ''}</td>
         <td><code>${j.repo}@${j.ref}</code></td>
@@ -362,27 +355,23 @@ export function JobsPage({ view, pools, groups, actions, confirm, toast, timers,
         <td class="fa-nowrap">${when(j.created)}</td>
         <td class=${BAD.has(j.state) ? 'fa-danger' : j.state === 'pending' && j.incoming ? 'fa-warn' : ''}>${j.state}${j.exit != null && j.terminal ? ` (${j.exit})` : ''}${j.code ? html` <span class="muted">${j.code}</span>` : ''}</td>
         <td class="fa-acts">
-          ${j.incoming && j.state === 'pending' && !expired(j) && html`<button type="button" data-fa="approve" onClick=${() => approve(j)}>Approve…</button>`}
-          ${!j.terminal && j.state !== 'unknown' && html`<button type="button" data-fa="cancel" onClick=${() => cancel(j)}>Cancel…</button>`}
-          ${!j.incoming && j.state === 'submitted' && html`<button type="button" data-fa="retry" onClick=${() => retry(j)}>Resend…</button>`}
-          ${j.incoming && j.state === 'unknown' && html`<button type="button" data-fa="ack" onClick=${() => ack(j)}>Acknowledge stopped…</button>`}
-          ${j.terminal && j.hasLogs && html`<button type="button" data-fa="logs" onClick=${() => setDialog({ kind: 'logs', job: j })}>Output</button>`}
-          ${canFollow(j) && html`<button type="button" data-fa="follow" onClick=${() => setDialog({ kind: 'logs', job: j })}>Live output</button>`}
+          ${j.incoming && j.state === 'pending' && !expired(j) && html`<${Button} size="sm" data-fa="approve" onClick=${() => approve(j)}>Approve…<//>`}
+          ${!j.terminal && j.state !== 'unknown' && html`<${Button} size="sm" variant="ghost danger" data-fa="cancel" onClick=${() => cancel(j)}>Cancel…<//>`}
+          ${!j.incoming && j.state === 'submitted' && html`<${Button} size="sm" data-fa="retry" onClick=${() => retry(j)}>Resend…<//>`}
+          ${j.incoming && j.state === 'unknown' && html`<${Button} size="sm" data-fa="ack" onClick=${() => ack(j)}>Acknowledge stopped…<//>`}
+          ${j.terminal && j.hasLogs && html`<${Button} size="sm" data-fa="logs" onClick=${() => setDialog({ kind: 'logs', job: j })}>Output<//>`}
+          ${canFollow(j) && html`<${Button} size="sm" data-fa="follow" onClick=${() => setDialog({ kind: 'logs', job: j })}>Live output<//>`}
         </td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     <h4>Repositories peers may run jobs in here</h4>
-    <div class="fa-grant-form"><button id="fleet-repo-add" type="button" onClick=${() => setDialog({ kind: 'repo' })}>Allow a repository…</button>
+    <div class="fa-grant-form"><${Button} size="sm" id="fleet-repo-add" onClick=${() => setDialog({ kind: 'repo' })}>Allow a repository…<//>
       <span class="muted">CLI: <code>tclaude federation repos ls</code></span></div>
     ${repos?.error ? html`<div class="fa-danger">${repos.error}</div>` : repos == null ? '' : !repoRows.length ? html`<div class="empty">No repositories allowed: peers cannot run jobs here.</div>` : html`
-    <table class="fa-table" id="fleet-repos">
-      <thead><tr><th>Alias</th><th>Clone</th><th>URL</th><th>Groups</th><th>Rev</th><th></th></tr></thead>
-      <tbody>${repoRows.map((r) => html`<tr key=${r.name} data-repo=${r.name} class=${r.enabled ? '' : 'muted'}>
+    <${FaTable} id="fleet-repos" head=${['Alias', 'Clone', 'URL', 'Groups', 'Rev', '']}>${repoRows.map((r) => html`<tr key=${r.name} data-repo=${r.name} class=${r.enabled ? '' : 'muted'}>
         <td>${r.name}</td><td class="fa-wrap"><code>${r.definition?.clone || ''}</code></td><td class="fa-wrap"><code>${r.definition?.url || ''}</code></td>
         <td>${groupText(r)}</td><td>${r.revision}</td>
-        <td class="fa-acts">${r.enabled ? html`<button type="button" data-fa="edit" onClick=${() => setDialog({ kind: 'repo', repo: r })}>Edit…</button><button type="button" data-fa="disable" onClick=${() => disableRepo(r)}>Disable…</button>` : html`<span class="muted">disabled </span><button type="button" data-fa="enable" onClick=${() => setDialog({ kind: 'repo', repo: r })}>Re-enable…</button>`}</td>
-      </tr>`)}</tbody>
-    </table>`}
+        <td class="fa-acts">${r.enabled ? html`<${Button} size="sm" data-fa="edit" onClick=${() => setDialog({ kind: 'repo', repo: r })}>Edit…<//><${Button} size="sm" data-fa="disable" onClick=${() => disableRepo(r)}>Disable…<//>` : html`<span class="muted">disabled </span><${Button} size="sm" data-fa="enable" onClick=${() => setDialog({ kind: 'repo', repo: r })}>Re-enable…<//>`}</td>
+      </tr>`)}<//>`}
     ${dialog?.kind === 'run' && html`<${RunJobDialog} peers=${view.trusted} pools=${pools} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}
     ${dialog?.kind === 'logs' && html`<${OutputDialog} job=${(jobs || []).find((x) => x.id === dialog.job.id) || dialog.job} label=${label} actions=${actions} timers=${timers} active=${active} onClose=${() => setDialog(null)} />`}
     ${dialog?.kind === 'repo' && html`<${RepoDialog} repo=${dialog.repo} groups=${groups} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${done} />`}

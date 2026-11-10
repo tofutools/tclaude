@@ -146,6 +146,32 @@ func TestOpenAndMigrate(t *testing.T) {
 	require.Equal(t, currentVersion, ver, "expected version %d, got %d", currentVersion, ver)
 }
 
+// TestCloseForTestTeardownRefusesLateOpen — a goroutine that reaches Open
+// after a test world's teardown must not recreate the database inside the
+// HOME the testing package is about to remove, while the next test's HOME
+// still opens normally.
+func TestCloseForTestTeardownRefusesLateOpen(t *testing.T) {
+	setupTestDB(t)
+	home := os.Getenv("HOME")
+	_, err := Open()
+	require.NoError(t, err)
+	_ = StatusSnapshotGeneration()
+
+	CloseForTestTeardown(home)
+	_, err = Open()
+	require.Error(t, err, "a late Open into a torn-down HOME")
+	_ = StatusSnapshotGeneration()
+	require.NoError(t, os.RemoveAll(filepath.Join(home, ".tclaude")))
+	_, err = Open()
+	require.Error(t, err, "the refusal is not memoized away")
+	_, statErr := os.Stat(filepath.Join(home, ".tclaude"))
+	require.True(t, os.IsNotExist(statErr), "nothing was recreated under the torn-down HOME: %v", statErr)
+
+	setupTestDB(t)
+	_, err = Open()
+	require.NoError(t, err, "the next test's HOME opens normally")
+}
+
 func TestOpenUsesNormalSynchronousInProductionMode(t *testing.T) {
 	t.Setenv("TCLAUDE_TEST_KEEP_FSYNC", "1")
 	setupTestDB(t)
@@ -217,42 +243,6 @@ func TestSessionCRUD(t *testing.T) {
 	require.NoError(t, DeleteSession("test-001"), "DeleteSession")
 	exists, _ = SessionExists("test-001")
 	assert.False(t, exists, "session should not exist after delete")
-}
-
-func TestCleanupOldExited(t *testing.T) {
-	setupTestDB(t)
-
-	// Create an "exited" session with old timestamp
-	old := &SessionRow{
-		ID:        "old-exited",
-		Status:    "exited",
-		CreatedAt: time.Now().Add(-48 * time.Hour),
-		UpdatedAt: time.Now().Add(-48 * time.Hour),
-	}
-	// Save manually to set UpdatedAt in the past
-	db, _ := Open()
-	_, err := db.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, auto_registered, created_at, updated_at)
-		VALUES (?, '', 0, '', '', 'exited', '', 0, ?, ?)`,
-		old.ID, dbTime(old.CreatedAt), dbTime(old.UpdatedAt))
-	require.NoError(t, err, "insert old session")
-
-	// Create a fresh "exited" session
-	fresh := &SessionRow{
-		ID:        "fresh-exited",
-		Status:    "exited",
-		CreatedAt: time.Now(),
-	}
-	require.NoError(t, SaveSession(fresh), "SaveSession fresh")
-
-	// Cleanup with 24h threshold
-	deleted, err := CleanupOldExited(24 * time.Hour)
-	require.NoError(t, err, "CleanupOldExited")
-	assert.Equal(t, int64(1), deleted, "deleted count")
-
-	// Fresh one should still exist
-	exists, _ := SessionExists("fresh-exited")
-	assert.True(t, exists, "fresh-exited should still exist")
 }
 
 func TestMaxUpdatedAt(t *testing.T) {

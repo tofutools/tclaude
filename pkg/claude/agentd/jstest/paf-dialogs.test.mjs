@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 const SNAPSHOT = {
   groups: [{ name: 'team', members: [] }, { name: 'ops', members: [] }],
@@ -31,6 +32,7 @@ async function mountManagement(t, actions, descriptor) {
   }));
   const settle = () => harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   const choose = async (select, value) => {
+    if (select.classList.contains('choice-combobox')) return comboPick(harness, select, value);
     [...select.options].forEach((option) => option.removeAttribute('selected'));
     [...select.options].find((option) => option.value === value).setAttribute('selected', '');
     await harness.act(() => harness.fireEvent(select, 'change'));
@@ -53,6 +55,7 @@ test('PAF model builds the export, landing and query shapes the routes take', as
   assert.equal(model.queryString(model.exportParams({ agent: 'agt_1', history: false })), '?agent=agt_1&format=paf');
   assert.equal(model.queryString(model.landingParams({ harness: 'codex', members: { c1: { harness: 'claude', model: 'claude-opus-5-5' }, c2: { harness: '' } } })),
     '?harness=codex&member_harness=c1%3Dclaude&member_model=c1%3Dclaude-opus-5-5');
+  assert.equal(model.queryString(model.exportParams({ agent: 'agt_1', history: false, workflows: true })), '?agent=agt_1&format=paf&workflows=own');
   assert.equal(model.rungBadge('none').text, 'config only');
   assert.match(model.lossSummary({ source_entries: 412, carried_entries: 371, items: [{ kind: 'provider_reasoning', count: 41 }] }),
     /carries 371 \/ 412 entries · losses: 41 provider reasoning/);
@@ -88,7 +91,7 @@ test('a flagged agent export shows the findings and downloads only after acknowl
   await tick(host.querySelector('#paf-export-native'), false);
   await harness.act(() => host.querySelector('#paf-export-download').click());
   await settle();
-  assert.deepEqual(calls[0], ['export', { agent: 'agt_1', history: true, native: false, neutral: true, allowFlagged: false }]);
+  assert.deepEqual(calls[0], ['export', { agent: 'agt_1', history: true, native: false, neutral: true, allowFlagged: false, workflows: false }]);
   assert.match(host.querySelector('#paf-findings').textContent, /github_token \(history line 3\)/);
   assert.equal(host.querySelector('#paf-export-download').disabled, true, 'download waits for the acknowledgement');
   await harness.act(() => host.querySelector('#paf-export-redact').click());
@@ -149,17 +152,19 @@ test('the import dialog previews an agent file that is not a group, then imports
   assert.equal(calls.at(-1).start, '', 'Import & start starts it');
 });
 
-test('offline import is offered only when a conversation lands on a harness that can take it', async (t) => {
+test('offline import is offered only when a conversation lands', async (t) => {
   const harness = await createPreactHarness(t);
   const { offlineImportBlocker, agentImportParams } = await harness.importDashboardModule('js/paf-dialogs.js');
   const base = { history: true, agent: { harness: 'claude' }, history_landing: { harness: 'claude' } };
-  assert.equal(offlineImportBlocker(base, { harness: '' }), '');
-  assert.match(offlineImportBlocker({ ...base, history: false }, { harness: '' }), /No conversation lands/);
-  assert.match(offlineImportBlocker(base, { harness: 'opencode' }), /OpenCode/);
-  assert.match(offlineImportBlocker({ ...base, history_landing: { harness: 'opencode' } }, { harness: '' }), /OpenCode/);
+  assert.equal(offlineImportBlocker(base), '');
+  assert.equal(offlineImportBlocker({ ...base, history_landing: { harness: 'opencode' } }), '');
+  assert.match(offlineImportBlocker({ ...base, history: false }), /No conversation lands/);
   const choices = { group: 'team', name: '', harness: '', model: '', cwd: '', keepPaths: true };
   assert.equal(agentImportParams(choices).start, '', 'a preview never sends start');
   assert.equal(agentImportParams(choices, true, false).start, 'false');
+  assert.equal(agentImportParams(choices).agent, '', 'an ordinary import names no agent of the file');
+  const landing = agentImportParams({ ...choices, agent: 'scout', role: ' dev ' });
+  assert.deepEqual([landing.agent, landing.role], ['scout', 'dev'], 'a performer lands by its key, under the role asked for');
 });
 
 test('a group preview offers per-member harness and model and re-inspects with them', async (t) => {
@@ -169,8 +174,8 @@ test('a group preview offers per-member harness and model and re-inspects with t
     source: 'paf', source_group: 'crew', format_version: 5, agent_count: 2, message_count: 3, conv_count: 2, missing_convs: 0,
     target_name: 'crew', target_name_valid: true, group_name_taken: false, conv_collisions: [], findings: [],
     landings: [
-      { conv_id: 'c1', title: 'alice', source_harness: 'claude', harness: 'claude', rung: 'native' },
-      { conv_id: 'c2', title: 'cody', source_harness: 'opencode', harness: 'opencode', rung: 'none', warnings: ['config only'] },
+      { conv_id: 'c1', title: 'alice', source_harness: 'claude', harness: 'claude', rung: 'native', posture: { sandbox_implementation: 'tclaude-layer', sandbox_profiles: ['walled'], resolved_by: 'install default' } },
+      { conv_id: 'c2', title: 'cody', source_harness: 'opencode', harness: 'opencode', rung: 'none', warnings: ['config only'], posture: { sandbox_implementation: 'tclaude-layer', opencode_state: 'private', refused: 'no bwrap here' } },
     ],
   };
   const actions = {
@@ -184,6 +189,8 @@ test('a group preview offers per-member harness and model and re-inspects with t
   const rows = [...host.querySelectorAll('#group-import-landings tbody tr')];
   assert.deepEqual(rows.map((row) => row.dataset.member), ['alice', 'cody']);
   assert.match(rows[1].textContent, /config only/);
+  assert.match(rows[0].textContent, /tclaude-layer · walled/);
+  assert.match(rows[1].textContent, /no bwrap here/);
   await choose(host.querySelector('#group-import-member-c2-harness'), 'codex');
   await settle();
   assert.deepEqual(inspected.at(-1).members, { c2: { harness: 'codex', model: '' } });
@@ -195,6 +202,33 @@ test('a group preview offers per-member harness and model and re-inspects with t
   await settle();
   assert.equal(imported[0][1], '/tmp/app');
   assert.deepEqual(imported[0][3].members, { c2: { harness: 'codex', model: '' } });
+});
+
+test('a group import shows its warnings on the preview and stays open on them after landing', async (t) => {
+  const inspection = {
+    source: 'paf', source_group: 'crew', format_version: 5, agent_count: 0, message_count: 0, conv_count: 0, missing_convs: 0,
+    target_name: 'crew', target_name_valid: true, group_name_taken: false, conv_collisions: [], findings: [],
+    file_warnings: ['Scheduled jobs nightly land disabled.'],
+  };
+  const actions = {
+    async inspectGroupImport() { return inspection; },
+    async importGroup() { return { summary: 'Imported group "crew"', warnings: inspection.file_warnings }; },
+    async importAgentPAF() { throw new Error('should not be tried for a group'); },
+  };
+  const { host, settle } = await mountManagement(t, actions, { kind: 'group-import', file: { name: 'crew.paf' } });
+  await settle();
+  assert.match(host.querySelector('#group-import-warnings .gi-warn').textContent, /nightly land disabled/);
+  const into = host.querySelector('#group-import-into');
+  into.value = '/tmp/app';
+  into.dispatchEvent(new host.ownerDocument.defaultView.Event('input', { bubbles: true }));
+  await settle();
+  host.querySelector('#group-import-submit').click();
+  await settle();
+  assert.match(host.querySelector('#group-import-result-summary').textContent, /Imported group "crew"/);
+  assert.match(host.querySelector('#group-import-result .gi-warn').textContent, /nightly land disabled/);
+  host.querySelector('#group-import-done').click();
+  await settle();
+  assertAbsent(host.querySelector('#group-import-result'), 'Done closes the result');
 });
 
 test('a dropped .paf opens the import dialog unless a drop zone took it or a dialog is open', async (t) => {
@@ -212,14 +246,18 @@ test('a dropped .paf opens the import dialog unless a drop zone took it or a dia
   drop('notes.txt');
   drop('logs.zip', { prevented: true });
   assert.deepEqual(opened, [], 'other files and handled drops are left alone');
+  // The page always holds hidden dialogs; they must not stop a drop.
+  const hidden = document.body.appendChild(document.createElement('div'));
+  hidden.setAttribute('role', 'dialog');
+  hidden.setAttribute('aria-modal', 'true');
   drop('reviewer.paf');
   assert.deepEqual(opened, ['reviewer.paf']);
-  const dialog = document.body.appendChild(document.createElement('div'));
-  dialog.setAttribute('role', 'dialog');
-  dialog.setAttribute('aria-modal', 'true');
+  hidden.remove();
+  const overlay = document.body.appendChild(document.createElement('div'));
+  overlay.className = 'modal-overlay show';
   drop('other.paf');
   assert.deepEqual(opened, ['reviewer.paf'], 'an open dialog is not replaced');
-  dialog.remove();
+  overlay.remove();
 });
 
 test('a library manager is in the URL (?manage=): opening announces it, Back closes it', async (t) => {
@@ -249,4 +287,77 @@ test('a library manager is in the URL (?manage=): opening announces it, Back clo
   assert.equal(state.manager.value, 'profiles');
   state.dialog.value = null;
   await harness.act(() => state.closeManager());
+});
+
+test('a group import cut needs confirmation only for a member that lands cut', async (t) => {
+  const harness = await createPreactHarness(t);
+  const dialogs = await harness.importDashboardModule('js/paf-dialogs.js');
+  const model = await harness.importDashboardModule('js/paf-model.js');
+  const rows = [
+    { conv_id: 'a', title: 'alice', rung: 'translated', losses: { needs_summary: true, dropped_percent: 60 } },
+    { conv_id: 'b', title: 'bob', rung: 'translated', losses: { needs_summary: false } },
+    { conv_id: 'c', title: 'carol', rung: 'none', losses: { needs_summary: true } },
+  ];
+  assert.deepEqual(dialogs.memberCutsToConfirm(rows).map((row) => row.title), ['alice']);
+  assert.deepEqual(dialogs.memberCutsToConfirm(undefined), []);
+  assert.match(model.queryString(model.landingParams({ confirmHistoryLoss: true })), /confirm_history_loss=true/);
+  assert.doesNotMatch(model.queryString(model.landingParams({})), /confirm_history_loss/);
+});
+
+test('the import confirm list starts as previewed, and the import sends what stays ticked', async (t) => {
+  const imported = [];
+  const revealed = [];
+  const inspection = {
+    source: 'paf', source_group: 'crew', format_version: 5, agent_count: 1, message_count: 0, conv_count: 1, missing_convs: 0,
+    target_name: 'crew', target_name_valid: true, group_name_taken: false, conv_collisions: [], findings: [],
+    file_warnings: ['listed warning', 'other warning'],
+    confirm: {
+      digest: 'abc', can_keep: true, warnings: ['other warning'],
+      items: [
+        { id: 'owner:c1', kind: 'owners', label: 'owner lead', gives: 'Owns the group.', default: true },
+        { id: 'env:TOKEN', kind: 'environment', label: 'environment variable TOKEN', gives: 'Set in every spawn.', revealable: true },
+      ],
+    },
+  };
+  const actions = {
+    async inspectGroupImport() { return inspection; },
+    async importGroup(...args) { imported.push(args); return { summary: 'Imported', warnings: [], kept: ['environment variable TOKEN'], dropped: ['owner lead'] }; },
+    async importAgentPAF() { throw new Error('should not be tried for a group'); },
+    async revealImportValue(file, item) { revealed.push(item); return { value: 'the-value' }; },
+  };
+  const { host, settle, tick } = await mountManagement(t, actions, { kind: 'group-import', file: { name: 'crew.paf' } });
+  await settle();
+  const owner = host.querySelector('[data-item="owner:c1"] input');
+  const env = host.querySelector('[data-item="env:TOKEN"] input');
+  assert.equal(owner.getAttribute('checked') !== null, true, 'owners start ticked');
+  assert.equal(env.getAttribute('checked') !== null, false, 'environment starts unticked');
+  assert.doesNotMatch(host.textContent, /the-value/);
+  assert.deepEqual([...host.querySelectorAll('#group-import-warnings .gi-warn')].map((row) => row.textContent), ['⚠ other warning'], 'the list already shows the rest');
+
+  host.querySelector('[data-item="env:TOKEN"] .import-confirm-reveal').click();
+  await settle();
+  assert.deepEqual(revealed, ['env:TOKEN']);
+  assert.match(host.querySelector('[data-item="env:TOKEN"] .import-confirm-value').textContent, /the-value/);
+
+  await tick(owner, false);
+  await tick(env, true);
+  const into = host.querySelector('#group-import-into');
+  into.value = '/tmp/app';
+  into.dispatchEvent(new host.ownerDocument.defaultView.Event('input', { bubbles: true }));
+  await settle();
+  host.querySelector('#group-import-submit').click();
+  await settle();
+  assert.deepEqual(imported[0][4], { keep: ['env:TOKEN'], keep_digest: 'abc' });
+  assert.match(host.querySelector('#import-outcome-kept').textContent, /TOKEN/);
+  assert.match(host.querySelector('#import-outcome-dropped').textContent, /owner lead/);
+});
+
+test('an emptied confirm list says so, and a caller who cannot keep sends nothing', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { keepParams } = await harness.importDashboardModule('js/paf-model.js');
+  const confirm = { digest: 'abc', can_keep: true, items: [{ id: 'owner:c1', default: true }] };
+  assert.deepEqual(keepParams(confirm), { keep: ['owner:c1'], keep_digest: 'abc' });
+  assert.deepEqual(keepParams(confirm, { 'owner:c1': false }), { keep_none: 'true' });
+  assert.deepEqual(keepParams({ ...confirm, can_keep: false }), {});
+  assert.deepEqual(keepParams({ ...confirm, items: [] }), {});
 });

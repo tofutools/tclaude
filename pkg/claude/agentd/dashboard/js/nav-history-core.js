@@ -42,16 +42,16 @@ export const DEFAULT_TAB = 'groups';
 // rather than an invalid tab, which keeps a stale/typo'd URL from breaking
 // navigation (AC #5).
 export const KNOWN_TABS = new Set([
-  'groups', 'terminals', 'jobs', 'processes', 'plugins',
-  'access', 'messages', 'usage', 'activity', 'config', 'vegas',
+  'groups', 'terminals', 'drawing-boards', 'collab-processes', 'jobs', 'processes', 'plugins',
+  'access', 'messages', 'usage', 'diagnostics', 'config', 'vegas',
   'map',
   'fleet-admin',
 ]);
 
 // KNOWN_SUBTABS enumerates the valid second-segment values per tab that has a
 // sub-navigation. These tabs have one today:
-//   - Groups: Members (bare), the Route map, the Agents and Processes
-//     lenses, and the single-run focus (runs).
+//   - Groups: Members (bare), the Route map, and the single-run focus
+//     (runs). The retired lens links (agents / processes) parse as bare.
 //   - Access: the segmented control (permissions / slugs / sudo).
 //   - Automations (historical internal tab id: jobs): kind views.
 //   - Processes: the template library/editor. Processes renders as a subtab
@@ -60,24 +60,27 @@ export const KNOWN_TABS = new Set([
 //     about the nesting.
 //   - Usage: the quota forecasts and the costs views; the bare tab is the
 //     Overview that summarises both.
-//   - Activity: audit / logs / performance (formerly three top-level tabs).
+//   - Diagnostics: audit / logs / performance (formerly three top-level
+//     tabs, then the Activity tab).
 //   - Config: the settings rail's sections. Keep in step with CONFIG_PANELS
-//     in config-form-markup.js.
+//     in config-form-markup.js. 'service' and 'updates' were sections of
+//     their own and are now parts of Installation: they stay valid and open
+//     Installation at that part (CONFIG_PANEL_ALIASES in config-panel.js).
 //   - Fleet config (fleet-admin): its sections; the bare tab is the landing
 //     (the setup guide until setup is done, else Peers). Keep in step with
 //     SUB_PAGES in fleet-admin-island.js.
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
-  groups: new Set(['members', 'routes', 'agents', 'processes', 'runs']),
+  groups: new Set(['members', 'routes', 'runs']),
   access: new Set(['permissions', 'slugs', 'sudo']),
   jobs: new Set(['exports', 'cron-jobs', 'standing-orders', 'triggers']),
   processes: new Set(['templates']),
   usage: new Set(['quota', 'costs']),
-  activity: new Set(['audit', 'logs', 'performance']),
+  diagnostics: new Set(['audit', 'logs', 'performance', 'doctor']),
   config: new Set([
-    'appearance', 'terminals', 'notifications', 'agents', 'context', 'costs',
-    'assistants', 'daemon', 'logs', 'experimental', 'advanced',
+    'appearance', 'terminals', 'keyboard', 'notifications', 'agents', 'launch', 'context', 'costs',
+    'assistants', 'steward', 'voice', 'git', 'daemon', 'installation', 'service', 'updates', 'logs', 'processes', 'experimental', 'advanced',
   ]),
   'fleet-admin': new Set([
     'setup', 'peers', 'harnesses', 'run', 'spawns', 'invites', 'grants', 'models', 'sharing',
@@ -86,15 +89,23 @@ export const KNOWN_SUBTABS = {
 };
 
 // LEGACY_TAB_LOCATIONS maps retired top-level tabs to the location that now
-// shows them. Audit, Logs and Debug merged into Activity; their old paths (and
-// the /?tab=<name> alias) stay reload-safe and heal to the canonical
-// /activity/<subtab> in place, like /jobs → /automations. Costs likewise
+// shows them. Audit, Logs, Debug and Doctor merged into Diagnostics; their old paths
+// (and the /?tab=<name> alias) stay reload-safe and heal to the canonical
+// /diagnostics/<subtab> in place, like /jobs → /automations. Costs likewise
 // became the Usage tab's costs subtab.
 export const LEGACY_TAB_LOCATIONS = Object.freeze({
   costs: Object.freeze({ tab: 'usage', subtab: 'costs' }),
-  audit: Object.freeze({ tab: 'activity', subtab: 'audit' }),
-  logs: Object.freeze({ tab: 'activity', subtab: 'logs' }),
-  debug: Object.freeze({ tab: 'activity', subtab: 'performance' }),
+  audit: Object.freeze({ tab: 'diagnostics', subtab: 'audit' }),
+  logs: Object.freeze({ tab: 'diagnostics', subtab: 'logs' }),
+  debug: Object.freeze({ tab: 'diagnostics', subtab: 'performance' }),
+  doctor: Object.freeze({ tab: 'diagnostics', subtab: 'doctor' }),
+});
+
+// RENAMED_TABS maps a tab's former name to its current one. Unlike a retired
+// tab, a renamed one keeps its subtabs, so /activity/logs heals to
+// /diagnostics/logs rather than to the bare tab.
+export const RENAMED_TABS = Object.freeze({
+  activity: 'diagnostics',
 });
 
 // SELECTABLE_SUBTABS enumerates the tab/subtab pairs whose view can address a
@@ -114,9 +125,12 @@ export const SELECTABLE_SUBTABS = {
 // with no subtab in between — so the entity lives in the SECOND path segment:
 //   - terminals/<agent-id> — the Terminals tab is viewing that agent's terminal.
 //   - messages/<folder> — the Messages tab has that folder open.
+//   - drawing-boards/<drawing-board-id> — that drawing board's tab is active in the Terminals section.
+//   - collab-processes/<template-id> — that process template's editor is the
+//     active tab of the Collab strip; its path is /collab/processes/<id>.
 // These tabs must not also appear in KNOWN_SUBTABS: a tab cannot have both a
 // subtab and a tab-level selection, because both would claim segment two.
-export const SELECTABLE_TABS = new Set(['terminals', 'messages']);
+export const SELECTABLE_TABS = new Set(['terminals', 'drawing-boards', 'collab-processes', 'messages']);
 
 // ITEM_TABS enumerates tab-level-selection tabs whose selection can itself
 // have one entry open, carried as `item` in the THIRD path segment:
@@ -143,8 +157,12 @@ export const ITEM_SUBTABS = {
 //     node chip narrowing the view).
 //   - groups: group (the group the Route map shows), view (its table view).
 //   - usage: period (the Costs span: 7d / 30d / 90d, or a past month YYYY-MM).
+//   - drawing-boards: crop (x,y,width,height) and elements (ids, comma
+//     separated): the part of the board to show (drawing-board-model.js
+//     drawingBoardFocusOf), as a task's drawing on a linked node opens it.
 export const TAB_PARAMS = {
   usage: ['period'],
+  'drawing-boards': ['crop', 'elements'],
   messages: ['q', 'from', 'page', 'box', 'at', 'scope'],
   groups: ['group', 'view'],
 };
@@ -154,7 +172,13 @@ export const TAB_PARAMS = {
 // and a link opens it. Written after the tab's own params.
 //   - manage: the library manager open (MANAGE_KINDS).
 //   - notification: the human-notification reader, as <sender>:<message-id>.
-export const OVERLAY_PARAMS = ['manage', 'notification'];
+//   - task: a task's edit form, as <task-id>[@<node>]:<group> (task-route.js).
+export const OVERLAY_PARAMS = ['manage', 'notification', 'task'];
+const TASK_ROUTE = /^tk_[0-9a-z]+(@inst_[0-9a-z]+)?:.+$/;
+// A drawing board's focus: four numbers, and up to 200 element ids.
+const FOCUS_NUMBER = '-?\\d+(\\.\\d+)?';
+const FOCUS_CROP = new RegExp(`^${FOCUS_NUMBER}(,${FOCUS_NUMBER}){3}$`);
+const FOCUS_ELEMENTS = /^[A-Za-z0-9_-]{1,64}(,[A-Za-z0-9_-]{1,64}){0,199}$/;
 export const MANAGE_KINDS = new Set(['profiles', 'roles', 'sandbox', 'templates']);
 
 // normalizeParams keeps the tab's known params (and the overlay params) with
@@ -169,6 +193,9 @@ function normalizeParams(tab, params) {
     const str = String(value);
     if (str === '' || (key === 'page' && !(Number(str) > 1))) continue;
     if (key === 'manage' && !MANAGE_KINDS.has(str)) continue;
+    if (key === 'task' && !TASK_ROUTE.test(str)) continue;
+    if (key === 'crop' && !FOCUS_CROP.test(str)) continue;
+    if (key === 'elements' && !FOCUS_ELEMENTS.test(str)) continue;
     out[key] = key === 'page' ? String(Math.floor(Number(str))) : str;
   }
   return Object.keys(out).length ? out : undefined;
@@ -188,6 +215,7 @@ export function normalizeLocation(loc) {
   // A retired tab (a history stack persisted before the Activity merge) heals
   // to its new home rather than collapsing to the default.
   if (loc && Object.hasOwn(LEGACY_TAB_LOCATIONS, loc.tab)) loc = LEGACY_TAB_LOCATIONS[loc.tab];
+  if (loc && Object.hasOwn(RENAMED_TABS, loc.tab)) loc = { ...loc, tab: RENAMED_TABS[loc.tab] };
   const tab = loc && KNOWN_TABS.has(loc.tab) ? loc.tab : DEFAULT_TAB;
   const out = { tab };
   const subs = KNOWN_SUBTABS[tab];
@@ -384,7 +412,9 @@ export function toPath(loc) {
   }
   // Processes is presented as an Automations subtab, so its canonical route
   // nests under /automations; the internal tab id stays "processes".
-  const segs = l.tab === 'processes' ? ['automations', 'processes'] : [l.tab];
+  // A process editor in a Collab tab is /collab/processes/<id>.
+  const segs = l.tab === 'processes' ? ['automations', 'processes']
+    : l.tab === 'collab-processes' ? ['collab', 'processes'] : [l.tab];
   if (l.subtab) segs.push(l.subtab);
   if (l.selection) segs.push(encodeSegment(l.selection));
   if (l.item) segs.push(encodeSegment(l.item));
@@ -428,7 +458,10 @@ export function fromPath(pathname, search) {
   const params = {};
   for (const [key, value] of query) params[key] = value;
   const parts = pathPart.split('/').filter(Boolean);
-  if (parts.length === 0 || parts[0] === 'dashboard') return defaultLocation();
+  // The bare / is the default tab, whose canonical path it is (toPath), so it
+  // keeps its params: a Groups location's query (an overlay such as
+  // ?task=) must survive Back/Forward and a reload.
+  if (parts.length === 0 || parts[0] === 'dashboard') return normalizeLocation({ ...defaultLocation(), params });
   let [tab, second, third, fourth] = parts;
   // /jobs is retained as a reload-safe legacy alias. toPath always emits the
   // canonical /automations route, so init/popstate heals old URLs in place.
@@ -438,9 +471,13 @@ export function fromPath(pathname, search) {
   if (tab === 'automations' && second === 'processes') {
     [tab, second, third, fourth] = ['processes', third, parts[3], parts[4]];
   } else if (tab === 'automations') tab = 'jobs';
+  if (tab === 'collab' && second === 'processes') {
+    [tab, second, third] = ['collab-processes', third, fourth];
+  }
   // /fleet was the merged all-nodes view; it is now Groups with every node
   // fused (fleet-state.js reads the path for that), healed in place.
   if (tab === 'fleet') return defaultLocation();
+  if (Object.hasOwn(RENAMED_TABS, tab)) tab = RENAMED_TABS[tab];
   if (Object.hasOwn(LEGACY_TAB_LOCATIONS, tab)) return normalizeLocation({ tab });
   // On a tab-level-selection tab there is no subtab, so segment two IS the
   // entity (/terminals/<agent-id>) — mirroring how toPath emits it. Reading it
@@ -451,6 +488,15 @@ export function fromPath(pathname, search) {
     return normalizeLocation({ tab, selection: decodeSelection(second), item: decodeSelection(third), params });
   }
   return normalizeLocation({ tab, subtab: second, selection: decodeSelection(third), item: decodeSelection(fourth), params });
+}
+
+// isKnownPath reports whether fromPath reads a pathname as a real route rather
+// than falling back to the default location for an unknown first segment. A
+// caller that must refuse a bad path asks this first: the two parse alike.
+export function isKnownPath(pathname) {
+  const [first] = String(pathname || '').split(/[?#]/, 1)[0].split('/').filter(Boolean);
+  return first === undefined || first === 'dashboard' || first === 'automations' || first === 'fleet' || first === 'collab'
+    || KNOWN_TABS.has(first) || Object.hasOwn(RENAMED_TABS, first) || Object.hasOwn(LEGACY_TAB_LOCATIONS, first);
 }
 
 // ---- Stale-target resolution --------------------------------------------

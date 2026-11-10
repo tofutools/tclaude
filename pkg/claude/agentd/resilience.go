@@ -599,6 +599,8 @@ func captureResilienceSnapshot(conv string, now time.Time) (*resilienceCapture, 
 	parts := pafHistoryParts{
 		Snapshot: &paf.Snapshot{Name: "resilience", TakenAt: at, State: snapshotStateIdle},
 		Lineage:  []paf.LineageStep{{Op: paf.OpSnapshot, At: at, From: &paf.Ref{Conversation: conv}, Detail: "resilience snapshot"}},
+		// Custody hands it to another node.
+		LossCountsOnly: true,
 	}
 	// Signed by this instance, so a custodian can check where it came from.
 	archive, err := archiveAgentPAFWith(b, true, parts)

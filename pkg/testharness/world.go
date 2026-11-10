@@ -183,8 +183,9 @@ func New(t *testing.T) *World {
 	db.ResetForTest()
 	// The owning flow fixture drains daemon work before this cleanup runs.
 	// Close SQLite connections before HOME restoration and TempDir removal,
-	// including the WAL sidecars held by idle pooled connections.
-	t.Cleanup(db.ResetForTest)
+	// including the WAL sidecars held by idle pooled connections, and refuse
+	// any later Open into this HOME from work the drain does not track.
+	t.Cleanup(func() { db.CloseForTestTeardown(home) })
 	return &World{
 		HomeDir:             home,
 		Tmux:                newTmuxSim(),
@@ -341,8 +342,8 @@ func (w *World) RecordSpawnSandboxPolicy(convID string, snapshot *sandboxpolicy.
 		return
 	}
 	copy := sandboxpolicy.NewSnapshot(snapshot.Effective, snapshot.Applied)
-	copy.ResolutionGroupID = snapshot.ResolutionGroupID
-	copy.ProfilesOmitted = snapshot.ProfilesOmitted
+	copy.CopyGroupProvenance(*snapshot)
+	copy.CopyOmission(*snapshot)
 	copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	copy.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
 	copy.LaunchEnvironmentOverrides = append(
@@ -358,8 +359,8 @@ func (w *World) SpawnSandboxPolicy(convID string) (*sandboxpolicy.Snapshot, bool
 		return nil, ok
 	}
 	copy := sandboxpolicy.NewSnapshot(snapshot.Effective, snapshot.Applied)
-	copy.ResolutionGroupID = snapshot.ResolutionGroupID
-	copy.ProfilesOmitted = snapshot.ProfilesOmitted
+	copy.CopyGroupProvenance(*snapshot)
+	copy.CopyOmission(*snapshot)
 	copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	copy.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
 	copy.LaunchEnvironmentOverrides = append(

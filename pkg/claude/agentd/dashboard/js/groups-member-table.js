@@ -1,13 +1,15 @@
 import { Fragment, h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
+import { EyeIcon, TrashIcon } from './row-icons.js';
+import { Button, MenuHeading, MenuItem, MenuSep } from './ui-components.js';
 import { AgentBudgetBadge } from './usage-profile-chip.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { applySortState, tableSortState, MEMBER_ACCESSORS } from './sort.js';
 import { visibleMemberCols, memberColHidden } from './member-columns.js';
 import {
   shortAgentId, idTooltip, relTime, shortCwd, displayModel,
-  harnessCanRename, harnessCanRemoteControl,
+  harnessCanRename, harnessCanRemoteControl, harnessCanCompact,
   SLOP_SYMBOLS,
 } from './helpers.js';
 import { isWizardActive } from './slop.js';
@@ -22,9 +24,7 @@ import { bodilessNotice } from './human-attachments.js';
 import { HarnessMark } from './harness-mark.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
-import { PRChecksBadge } from './pr-checks-hover.js';
-import { PRReviewBadge } from './pr-review-badge.js';
-import { PRLinkHover } from './pr-link-hover.js';
+import { PRChain, prDescription } from './pr-chain.js';
 import { ViewersBadge, remoteViewers, viewersOf } from './remote-viewers.js';
 import { fleetState } from './fleet-state.js';
 import { nodeRef, presenceView } from './agent-presence.js';
@@ -33,7 +33,10 @@ import { TELEPORT_ROUTES } from './launch-target-dialog.js';
 import { unrestrictedOn } from './node-trust.js';
 import { isPageNode } from './node-api.js';
 import { discardQueuedSpawn, editQueuedSpawn, launchQueuedSpawn, queuedSpawnLabel } from './queued-spawns.js';
+import { modClickText } from './keybindings.js';
 
+import { AgentTaskIndicator } from './taskboard-agent-indicator.js';
+import { onActivateKey } from './table-kit.js';
 const html = htm.bind(h);
 
 function ThemeText({ regular, wizard = regular }) {
@@ -67,6 +70,11 @@ function memberWaking(member) {
 }
 
 function AgentStatusDot({ member }) {
+  // tclaude can't start it, so this dot has nothing to do when clicked.
+  if (member.external_steward) {
+    const title = 'External steward: an assistant running outside tclaude';
+    return html`<span class="status-dot status-dot-offline status-dot-external" title=${title} aria-label=${title}>○</span>`;
+  }
   const state = member.state || {};
   const label = member.title || member.conv_id;
   const online = !!member.online;
@@ -94,7 +102,7 @@ function AgentStatusDot({ member }) {
   const className = errored
     ? 'status-dot status-dot-error'
     : online ? 'status-dot status-dot-online' : 'status-dot status-dot-offline';
-  return html`<button
+  return html`<button data-ui-exempt
     type="button" class=${className} data-act="dot-toggle" ...${memberAttrs(member)}
     data-online=${online ? '1' : '0'} title=${title} aria-label=${title}
   >${online ? '●' : '○'}</button>`;
@@ -132,7 +140,7 @@ function shortEffort(effort) {
 
 function RemoteBadge({ member }) {
   if (!member.online || !member.state?.remote_control) return null;
-  const title = 'Remote Access is ON — this agent is reachable from the Claude app/phone. Click to open its live session (Claude Code TUI) in a web terminal; Ctrl/Cmd-click opens it without leaving this tab. Best-known state (the harness has no readback); toggle it from the row’s ⚙ menu.';
+  const title = 'Remote Access is ON — this agent is reachable from the Claude app/phone. Click to open its live session (Claude Code TUI) in a web terminal; ' + modClickText() + ' opens it without leaving this tab. Best-known state (the harness has no readback); toggle it from the row’s ⚙ menu.';
   return html`<span class="remote-badge" data-act="web-open-window" ...${memberAttrs(member)} title=${title}>📱</span>`;
 }
 
@@ -195,6 +203,13 @@ function BrokerRefusalBadge({ member }) {
 }
 
 export function HarnessLine({ member, snapshot, local = true }) {
+  if (member.external_steward) return html`<span class="runtime-meta runtime-meta-offline">External steward</span>`;
+  const parent = member.spawned_by_external_steward;
+  if (parent) return html`<${HarnessLineBody} member=${member} snapshot=${snapshot} local=${local} /><span class="runtime-meta">Started by ${parent}</span>`;
+  return html`<${HarnessLineBody} member=${member} snapshot=${snapshot} local=${local} />`;
+}
+
+function HarnessLineBody({ member, snapshot, local }) {
   const state = member.state || {};
   const offline = !member.online;
   const metadataClass = `runtime-meta${offline ? ' runtime-meta-offline' : ''}`;
@@ -202,7 +217,7 @@ export function HarnessLine({ member, snapshot, local = true }) {
   const labels = harnessLabels(harness);
   const model = state.model || '';
   // Both indicators trail the metadata text as bare glyphs, tightly packed:
-  // "CC · Opus 4.8 high 🔒 📱". The sandbox one used to own a framed chip on its
+  // "<logo> · Opus 4.8 high 🔒 📱". The sandbox one used to own a framed chip on its
   // own line below, which cost a whole row of height to say what a padlock says.
   const sandbox = html`<${SandboxBadge} member=${member}
     showDetails=${!!snapshot?.recorded_sandbox_details_enabled} />`;
@@ -292,20 +307,34 @@ function osSandboxBadge(mode, state, unverified, implementation) {
       danger,
     };
   }
-  if (mode === 'on' || mode === 'off') return { status: 'OFF', danger: true };
+  // Codex records "off" for danger-full-access when no managed requirement
+  // overrules it.
+  if (mode === 'on' || mode === 'off' || mode === 'danger-full-access') return { status: 'OFF', danger: true };
   return null;
 }
 
+// sandboxEnforcementGap names the worst gap the launch recorded between the
+// configured rules and what is enforced, or '' when there is none. Any reason
+// counts, so a rule the launch dropped or loosened can never earn the padlock,
+// and neither can a reason added later. Resource limits are not confinement;
+// they have their own line in the tooltip.
+function sandboxEnforcementGap(member) {
+  const effects = (member.state?.sandbox_access_notices || [])
+    .filter((notice) => notice?.class === 'degradation' && notice?.axis !== 'resource_limits')
+    .map((notice) => notice?.effect);
+  if (effects.includes('not_enforced')) return 'NOT ENFORCED';
+  return effects.includes('enforced_wider') ? 'PARTLY ENFORCED' : '';
+}
+
 // sandboxIndicator resolves an agent's sandbox posture to the glyph that trails
-// its harness line, or null when there is nothing to say.
+// its harness line, or null when there is nothing to say. `confined` separates
+// a partly enforced sandbox, which shares the warning glyph but is still on,
+// from the warnings whose agent has no working boundary to take down.
 function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
-  const unenforcedOverride = (member.state?.sandbox_access_notices || []).some((notice) =>
-    notice?.class === 'degradation'
-      && notice?.axis === 'network'
-      && notice?.reason === 'operator_unenforced_launch_override'
-      && notice?.effect === 'not_enforced');
+  const gap = sandboxEnforcementGap(member);
+  const confined = gap === 'PARTLY ENFORCED';
   // A recorded verdict wins: it is the resolved outcome, where the mode is only
   // the request. Absent one (a pre-column row, or Codex — whose --sandbox mode
   // IS its posture) the mode-driven branch below is unchanged.
@@ -314,10 +343,8 @@ function sandboxIndicator(member) {
     const badge = osSandboxBadge(mode, state,
       !!member.state?.os_sandbox_unverified, member.state?.sandbox_implementation || '');
     if (!badge) return null;
-    if (unenforcedOverride) {
-      return { status: 'NOT ENFORCED', danger: true, offline };
-    }
-    return { status: badge.status, danger: badge.danger, offline };
+    if (gap && !badge.danger) return { status: gap, danger: true, confined, offline };
+    return { status: badge.status, danger: badge.danger, confined: !badge.danger, offline };
   }
   if (!mode || mode === 'inherit') return null;
   // These modes explicitly do not provide OS confinement. OpenCode's
@@ -325,12 +352,10 @@ function sandboxIndicator(member) {
   // it must not earn the padlock that confined Codex modes receive through
   // this pre-verdict fallback.
   const danger = mode === 'danger-full-access' || mode === 'off'
-    || mode === 'access-control' || unenforcedOverride;
-  return {
-    status: unenforcedOverride ? 'NOT ENFORCED' : danger ? 'OFF' : 'ON',
-    danger,
-    offline,
-  };
+    || mode === 'access-control';
+  if (danger) return { status: 'OFF', danger: true, confined: false, offline };
+  if (gap) return { status: gap, danger: true, confined, offline };
+  return { status: 'ON', danger: false, confined: true, offline };
 }
 
 function sandboxImplementationLabel(member, badge) {
@@ -390,13 +415,16 @@ function codexOwnSandboxUnlockUnsupported(member, unlocked) {
 }
 
 function sandboxTooltip(member, badge, actionable, unlocked) {
-  const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
+  const unlockUnsupported = badge.confined && codexOwnSandboxUnlockUnsupported(member, unlocked);
   const lines = [
     `Status: ${unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status}`,
     `Implementation: ${sandboxImplementationLabel(member, badge)}`,
     `Profile: ${sandboxProfileLabel(member)}`,
     ...resourceLimitLines(member),
   ];
+  if (badge.status === 'PARTLY ENFORCED') {
+    lines.push('The sandbox is on, but some rules are enforced more loosely than configured.');
+  }
   for (const notice of member.state?.sandbox_access_notices || []) {
     if (notice?.detail) lines.push(`Warning: ${notice.detail}`);
   }
@@ -483,9 +511,10 @@ export function SandboxBadge({ member, showDetails = false }) {
   // A warning can also mean a normally unconfined launch or an unverified
   // verdict. Only the warning produced by this temporary override is a
   // restore shortcut; otherwise clicking a warning would misleadingly offer
-  // to "unlock" an agent that is already unconfined.
-  const unlockUnsupported = !badge.danger && codexOwnSandboxUnlockUnsupported(member, unlocked);
-  const actionable = !!member.online && !unlockUnsupported && (unlocked || !badge.danger);
+  // to "unlock" an agent that is already unconfined. A partly enforced
+  // sandbox is still on, so its warning keeps the padlock's click.
+  const unlockUnsupported = badge.confined && codexOwnSandboxUnlockUnsupported(member, unlocked);
+  const actionable = !!member.online && !unlockUnsupported && (unlocked || badge.confined);
   const action = unlocked ? 'restore' : 'unlock';
   const title = sandboxTooltip(member, badge, actionable, unlocked);
   const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}${actionable ? ' sandbox-action' : ''}`;
@@ -496,7 +525,7 @@ export function SandboxBadge({ member, showDetails = false }) {
     data-act=${actionable ? 'sandbox-restart' : null}
     data-action=${actionable ? action : null}
     ...${actionable ? memberAttrs(member) : {}}
-    aria-label=${title} title=${title}>${badge.danger ? '⚠' : '🔒'}</span>${showDetails ? html`<button
+    aria-label=${title} title=${title}>${badge.danger ? '⚠' : '🔒'}</span>${showDetails ? html`<button data-ui-exempt
     type="button" class="sandbox-details-chevron" data-act="sandbox-details"
     data-details=${sandboxRecordedDetails(member)} ...${memberAttrs(member)}
     title="Recorded sandbox details" aria-label="Recorded sandbox details">›</button>` : null}</span>`;
@@ -729,16 +758,6 @@ function StateCell({ member }) {
     ? html`<${ActivityBadges} state=${state} />` : null}<${AgentBudgetBadge} agentID=${member.agent_id} /></td>`;
 }
 
-function EyeIcon({ hidden = false }) {
-  return hidden
-    ? html`<svg class="eye-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`
-    : html`<svg class="eye-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
-}
-
-function TrashIcon() {
-  return html`<svg class="trash-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
-}
-
 function menuMemberAttrs(member, selector) {
   if (!member) return {};
   const attrs = { 'data-label': member.title || member.conv_id };
@@ -750,8 +769,10 @@ function menuMemberAttrs(member, selector) {
   return attrs;
 }
 
+// MenuButton is one ⚙ menu item. className 'danger' (cannot be undone) and
+// 'warn' (reversible but disruptive) pick the item's tone.
 function MenuButton({ member, selector = 'agent', group, act, regular, wizard = regular, title, className, disabled, attrs = {} }) {
-  return html`<button role="menuitem" class=${className} data-act=${act} ...${menuMemberAttrs(member, selector)} data-group=${group?.name} ...${attrs} title=${title} disabled=${disabled}><${ThemeText} regular=${regular} wizard=${wizard} /></button>`;
+  return html`<${MenuItem} danger=${className === 'danger'} warn=${className === 'warn'} data-act=${act} ...${menuMemberAttrs(member, selector)} data-group=${group?.name} ...${attrs} title=${title} disabled=${disabled}><${ThemeText} regular=${regular} wizard=${wizard} /><//>`;
 }
 
 function NotifyMenuItem({ member }) {
@@ -762,13 +783,13 @@ function NotifyMenuItem({ member }) {
   let regular, wizard, title;
   if (mode === 'off') {
     regular = `${glyph} notify: off`; wizard = `${glyph} omens: silent`;
-    title = wizardCopy(`notifications muted for ${label} — click to force ON (overrides a group mute)`, `omens silenced for familiar ${label} — click to restore them (overrides a party silence)`);
+    title = wizardCopy(`notifications muted for ${label} — click to force ON (overrides a group mute)`, `omens silenced for hero ${label} — click to restore them (overrides a party silence)`);
   } else if (mode === 'on') {
     regular = `${glyph} notify: on`; wizard = `${glyph} omens: on`;
-    title = wizardCopy(`notifications forced ON for ${label} (overrides a group mute) — click to inherit from group`, `omens forced ON for familiar ${label} (overrides a party silence) — click to inherit from the party`);
+    title = wizardCopy(`notifications forced ON for ${label} (overrides a group mute) — click to inherit from group`, `omens forced ON for hero ${label} (overrides a party silence) — click to inherit from the party`);
   } else {
     regular = `${glyph} notify: inherit (${effective ? 'on' : 'off'})`; wizard = `${glyph} omens: inherit (${effective ? 'on' : 'silent'})`;
-    title = wizardCopy(`notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`, `omens inherit from the party (currently ${effective ? 'on' : 'silent'}) for familiar ${label} — click to silence`);
+    title = wizardCopy(`notifications inherit (currently ${effective ? 'on' : 'off — a group is muted'}) for ${label} — click to mute`, `omens inherit from the party (currently ${effective ? 'on' : 'silent'}) for hero ${label} — click to silence`);
   }
   return html`<${MenuButton} member=${member} act="toggle-agent-notify" attrs=${{ 'data-mode': mode }} regular=${regular} wizard=${wizard} title=${title} />`;
 }
@@ -779,9 +800,18 @@ function RemoteMenuItem({ member, canRemote }) {
   const on = !!member.state?.remote_control;
   const glyph = on ? '📱' : '📴';
   const title = on
-    ? wizardCopy(`Remote Access is ON for ${label} — reachable from the Claude app/phone. Click to turn it OFF.`, `Remote scrying is ON for familiar ${label} — reachable from the Claude app/phone. Click to close it.`)
-    : wizardCopy(`Remote Access is OFF for ${label}. Click to turn it ON — expose this agent to the Claude app/phone.`, `Remote scrying is OFF for familiar ${label}. Click to open it to the Claude app/phone.`);
+    ? wizardCopy(`Remote Access is ON for ${label} — reachable from the Claude app/phone. Click to turn it OFF.`, `Remote scrying is ON for hero ${label} — reachable from the Claude app/phone. Click to close it.`)
+    : wizardCopy(`Remote Access is OFF for ${label}. Click to turn it ON — expose this agent to the Claude app/phone.`, `Remote scrying is OFF for hero ${label}. Click to open it to the Claude app/phone.`);
   return html`<${MenuButton} member=${member} act="toggle-remote-control" attrs=${{ 'data-intent': on ? 'off' : 'on' }} regular=${`${glyph} remote: ${on ? 'on' : 'off'}`} wizard=${`${glyph} remote scrying: ${on ? 'on' : 'off'}`} title=${title} />`;
+}
+
+function CompactMenuItem({ member, snapshot }) {
+  if (!harnessCanCompact(snapshot, member.state?.harness)) return null;
+  const label = member.title || member.conv_id;
+  return html`<${MenuButton} member=${member} act="compact-agent" regular="compact" wizard="distill memory" disabled=${!member.online}
+    title=${member.online
+    ? wizardCopy(`Compact ${label}'s context window now`, `Distill ${label}'s memory now`)
+    : `Compact is unavailable while ${label} is offline`} />`;
 }
 
 function FastModeMenuItem({ member }) {
@@ -808,7 +838,7 @@ function RestartMenuItem({ member }) {
     ? `${regular} is unavailable while ${label} is offline`
     : `Stop and restart ${label} under its current launch configuration. Re-resolves sandbox-profile rules. Requires the agent to be fully idle with no background agents or shell commands.`;
   return html`<${MenuButton}
-    member=${member} act="restart" regular=${regular} wizard="↻ reincant familiar"
+    member=${member} act="restart" regular=${regular} wizard="↻ reincant hero"
     title=${title} disabled=${!member.online}
   />`;
 }
@@ -834,23 +864,23 @@ function SandboxRestartMenuItem({ member }) {
 }
 
 // SandboxImplMenuItem opens the picker that assigns the sandbox IMPLEMENTATION
-// this agent will relaunch under. It is the inverse of the two items above: they
-// need a LIVE agent because they restart one, while this records durable intent
-// that the next launch applies — so a running agent is exactly when it cannot be
-// used, and saying why beats a 409 the operator has to click to discover.
+// this agent will relaunch under. The implementation is applied by a launch, so
+// for a running agent the dialog offers to restart it (stop, assign, resume)
+// rather than making the operator stop it first; a stopped agent is assigned and
+// left stopped.
 function SandboxImplMenuItem({ member }) {
   const label = member.title || member.conv_id;
-  const regular = '🧩 sandbox implementation…';
+  const regular = '🧩 sandbox implementation / profile…';
   const title = member.online
-    ? `${regular} is unavailable while ${label} is running — the implementation is applied by the launch that follows it. Stop the agent first, assign, then wake it.`
-    : `Choose which layer owns OS-level confinement for ${label}'s next launch — for example a per-agent cgroup (resource-only) for an agent created before that existed. Recorded now, applied when you wake it.`;
+    ? `Choose which layer owns OS-level confinement for ${label}, and which sandbox profile it applies. It is running, so assigning restarts it (it must be idle) under the new sandbox.`
+    : `Choose which layer owns OS-level confinement for ${label}'s next launch — for example a per-agent cgroup (resource-only) for an agent created before that existed — and which sandbox profile it applies. Recorded now, applied when you wake it.`;
   // data-harness is a fallback only. The dialog renders its catalog from the
   // harness the SERVER reports with the posture; this covers the case where that
   // field is absent, and is never consulted otherwise.
   return html`<${MenuButton}
-    member=${member} act="sandbox-impl" regular=${regular} wizard="🧩 ward implementation…"
+    member=${member} act="sandbox-impl" regular=${regular} wizard="🧩 ward implementation / ward…"
     attrs=${{ 'data-harness': member.state?.harness || '' }}
-    title=${title} disabled=${!!member.online}
+    title=${title}
   />`;
 }
 
@@ -897,18 +927,30 @@ function SendElsewhereItems({ member, group, snapshot }) {
   // Without a fleet (no hub connection, or no linked node yet) move and
   // teleport stay in the menu, greyed out with the reason, as the node chips do.
   const off = fleet ? '' : sendElsewhereOffReason(fleetState.node.value);
-  return html`<div class="menu-section-label" role="presentation">send elsewhere</div>
-    ${item('move', peerRow ? 'move here…' : 'move to…', 'relocate familiar…', off || (peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`), !!off)}
-    ${TELEPORT_ROUTES && !peerRow ? item('teleport', 'teleport to…', 'teleport familiar…', off || `Teleport ${label} to another node; its home keeps its place for Recall home`, !!off) : null}
-    ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror familiar to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
-    ${!peerRow || acting ? html`<${MenuButton} member=${member} group=${group} act="snapshot-agent" attrs=${peerRow ? attrs('') : {}} regular="📸 snapshot…" wizard="📸 capture familiar…" title=${`Keep a named snapshot of ${label} on ${peerRow ? `${rowNode.name || 'its node'}` : 'this node'}; spawn from it, share or publish it later`} />` : null}
-    ${!peerRow || acting ? html`<${MenuButton} member=${member} group=${group} act="export-paf" attrs=${peerRow ? attrs('') : {}} regular="⤓ export (PAF)…" wizard="⤓ seal familiar (PAF)…" title=${`Export ${label} as a portable PAF file; importing it anywhere creates a new agent`} />` : null}
-    ${!peerRow || acting ? item('morph', 'morph…', 'shapeshift familiar…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
-    ${TELEPORT_ROUTES && kind === 'visiting' && !pageNode && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall familiar home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
+  return html`<${MenuHeading}>send elsewhere<//>
+    ${item('move', peerRow ? 'move here…' : 'move to…', 'relocate hero…', off || (peerRow ? `Move ${label} to a group on this node, with its history` : `Move ${label} to a group on another node, with its history; it retires here once its copy runs there`), !!off)}
+    ${TELEPORT_ROUTES && !peerRow ? item('teleport', 'teleport to…', 'teleport hero…', off || `Teleport ${label} to another node; its home keeps its place for Recall home`, !!off) : null}
+    ${!peerRow ? item('clone', fleet ? 'clone to…' : 'clone…', 'mirror hero to…', `Clone ${label} here or onto another node; the original keeps running`) : null}
+    ${!peerRow || acting ? html`<${MenuButton} member=${member} group=${group} act="snapshot-agent" attrs=${peerRow ? attrs('') : {}} regular="📸 snapshot…" wizard="📸 capture hero…" title=${`Keep a named snapshot of ${label} on ${peerRow ? `${rowNode.name || 'its node'}` : 'this node'}; spawn from it, share or publish it later`} />` : null}
+    ${!peerRow || acting ? html`<${MenuButton} member=${member} group=${group} act="export-paf" attrs=${peerRow ? attrs('') : {}} regular="⤓ export (PAF)…" wizard="⤓ seal hero (PAF)…" title=${`Export ${label} as a portable PAF file; importing it anywhere creates a new agent`} />` : null}
+    ${!peerRow || acting ? item('morph', 'morph…', 'shapeshift hero…', `Relaunch ${label} in place with another spawn profile (model, effort, harness); it keeps its identity`) : null}
+    ${TELEPORT_ROUTES && kind === 'visiting' && !pageNode && (!peerRow || view.home.local) ? item('home', '⌂ recall home…', '⌂ recall hero home…', `Send ${label} straight home to ${view.home.name}`) : null}`;
+}
+
+// MakeStewardMenuItem hands this agent the Steward role, with a confirmation.
+// It is this node's operator's: not on another node's row, and absent while the
+// operator has opted out of stewards (steward.disabled).
+function MakeStewardMenuItem({ member, group, snapshot }) {
+  const remote = snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) || (member.fleet_node?.id && !isPageNode(member.fleet_node.id));
+  if (snapshot?.stewards_disabled || remote || !member.agent_id) return null;
+  if (member.state?.harness === 'shell' || member.agent_id === snapshot.steward_active) return null;
+  const label = member.title || member.conv_id;
+  return html`<${MenuButton} member=${member} act="make-steward" regular="✦ make Steward…" wizard="✦ crown Steward…"
+    title=${`Make ${label} the Steward. It keeps its conversation and working directory, and you choose what happens to the current one.`} />`;
 }
 
 function MenuSeparator() {
-  return html`<div class="menu-sep" role="separator"></div>`;
+  return html`<${MenuSep} />`;
 }
 
 function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
@@ -916,25 +958,28 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
   const label = member.title || member.conv_id;
   const canRemote = harnessCanRemoteControl(snapshot, member.state?.harness);
   const prefill = JSON.stringify({ targetMode: 'solo', target: member.agent_id || member.conv_id, owner: member.agent_id || member.conv_id });
+  // No pane, no launch and no sudo: these could only fail for an external steward.
+  const runsHere = !member.external_steward;
   return html`
-    <${MenuButton} member=${member} act="view-agent-messages" regular="view messages" wizard="view missives" title=${wizardCopy("Open this agent's messages in the Messages tab", "Open this familiar's missives in the Messages tab")} />
-    <${MenuButton} member=${member} act="terminal-chooser" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="terminals & windows…" wizard="🔮 scrying portals…" title=${wizardCopy("Open a terminal: attach to this agent's live session, or a separate shell in its working directory — as a native window or in the browser (term / web term / open window / web window)", "Open a scrying portal: gaze into this familiar's live session, or open a shell of your own in its lair — as a mortal window or a browser crystal (term / web term / open window / web window)")} />
-    <${MenuButton} member=${member} act="export-summary" regular="summary…" wizard="inscribe scroll…" disabled=${!member.online} title=${member.online ? wizardCopy('Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.', 'Ask this familiar to inscribe a shareable account of its conversation and bring it here. Multiple scrolls are bundled automatically.') : wizardCopy('Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.', 'The familiar must be channeling to inscribe an export. Unavailable while it slumbers.')} />
-    <${MenuButton} member=${member} act="debug-export" regular="export debug info" wizard="inscribe ward diagnostics" title=${wizardCopy('Download the requested, resolved, and running launch configurations, including exact sandbox implementation and composed profiles. Task text and authorization tokens are redacted.', 'Download this familiar\'s requested, resolved, and running summoning configurations, including exact ward implementation and composed profiles. Quest text and authorization runes are redacted.')} />
+    <${MenuButton} member=${member} act="view-agent-messages" regular="view messages" wizard="view missives" title=${wizardCopy("Open this agent's messages in the Messages tab", "Open this hero's missives in the Messages tab")} />
+    ${runsHere && html`<${MenuButton} member=${member} act="terminal-chooser" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="terminals & windows…" wizard="🔮 scrying portals…" title=${wizardCopy("Open a terminal: attach to this agent's live session, or a separate shell in its working directory — as a native window or in the browser (term / web term / open window / web window)", "Open a scrying portal: gaze into this hero's live session, or open a shell of your own in its lair — as a mortal window or a browser crystal (term / web term / open window / web window)")} />`}
+    <${MenuButton} member=${member} act="export-summary" regular="summary…" wizard="inscribe scroll…" disabled=${!member.online} title=${member.online ? wizardCopy('Ask this agent to produce a shareable export of the conversation (a summary / report) and download it here. Multiple files are zipped automatically.', 'Ask this hero to inscribe a shareable account of its conversation and bring it here. Multiple scrolls are bundled automatically.') : wizardCopy('Export needs a running agent — it produces the file in its own session. Unavailable while the agent is offline.', 'The hero must be channeling to inscribe an export. Unavailable while it slumbers.')} />
+    <${MenuButton} member=${member} act="debug-export" regular="export debug info" wizard="inscribe ward diagnostics" title=${wizardCopy('Download the requested, resolved, and running launch configurations, including exact sandbox implementation and composed profiles. Task text and authorization tokens are redacted.', 'Download this hero\'s requested, resolved, and running summoning configurations, including exact ward implementation and composed profiles. Quest text and authorization runes are redacted.')} />
     <${MenuSeparator} />
-    ${!ungrouped ? html`<${MenuButton} member=${member} group=${group} act="edit-member" attrs=${{ onClick: (event) => {
+    ${!ungrouped && actions.openMemberEditor ? html`<${MenuButton} member=${member} group=${group} act="edit-member" attrs=${{ onClick: (event) => {
       event.preventDefault();
       event.stopPropagation();
       interactions.closeMenu(true);
       actions.openMemberEditor(member, group, 'title');
-    } }} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this familiar — title, class, description, party ownership, and grimoire')} />
-      <${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this familiar an owner of the party')} />` : null}
-    <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this familiar's grimoire of permanent boons and bindings")} />
-    <${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this familiar a time-bounded sudo boon')} />
+    } }} regular="edit" wizard="enchant" title=${wizardCopy('Edit this agent — title, role, description, ownership, permissions', 'Enchant this hero — title, class, description, party ownership, and grimoire')} />` : null}
+    ${!ungrouped ? html`<${MenuButton} member=${member} group=${group} act=${member.owner ? 'revoke-owner' : 'grant-owner'} className=${member.owner ? 'warn' : undefined} regular=${member.owner ? 'revoke owner' : 'make owner'} wizard=${member.owner ? 'revoke party owner' : 'make party owner'} title=${wizardCopy(member.owner ? 'Revoke group owner status' : 'Make this agent an owner of the group', member.owner ? 'Revoke party owner status' : 'Make this hero an owner of the party')} />` : null}
+    <${MenuButton} member=${member} selector="conv" act="perm-edit" regular="permissions" wizard="grimoire" title=${wizardCopy("Edit this agent's permanent permissions (grant / deny / inherit-default)", "Open this hero's grimoire of permanent boons and bindings")} />
+    ${runsHere && html`<${MenuButton} member=${member} act="sudo-grant" regular="+ sudo" wizard="+ sudo" title=${wizardCopy('Grant a time-bounded sudo elevation to this agent', 'Grant this hero a time-bounded sudo boon')} />`}
+    ${runsHere && html`<${MakeStewardMenuItem} member=${member} group=${group} snapshot=${snapshot} />`}
     <${NotifyMenuItem} member=${member} />
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
     <${FastModeMenuItem} member=${member} />
-    <${MenuButton} member=${member} group=${group} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for familiar ${label}`)} />
+    <${MenuButton} member=${member} group=${group} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for hero ${label}`)} />
     ${member.agent_id && !snapshot?.peer_view && !(group?.fleet_node && !group.fleet_node.local) && !(member.fleet_node?.id && !isPageNode(member.fleet_node.id)) ? html`<${MenuButton} member=${member} group=${group} act="usage-budget" attrs=${{ onClick: (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -942,27 +987,28 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
       openUsageRulesManager({ tab: 'agents', agent: member.agent_id });
     } }} regular="💰 usage budget…" wizard="💰 tithe…" title=${wizardCopy(`See ${label}'s usage budgets; set its own usage profiles, extend a budget, snooze or exempt it`, `Weigh ${label}'s tithes; set its own, extend, snooze or exempt it`)} />` : null}
     <${MenuSeparator} />
-    ${snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror familiar" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this familiar into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
-    <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate familiar" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
-    <${RestartMenuItem} member=${member} />
-    <${SubscriptionMenuItems} member=${member} />
-    <${SandboxRestartMenuItem} member=${member} />
-    <${SandboxImplMenuItem} member=${member} />
+    ${snapshot?.peer_view || (group?.fleet_node && !group.fleet_node.local) ? html`<${MenuButton} member=${member} act="clone" regular="clone" wizard="mirror hero" title=${wizardCopy("Ask the peer to fork a sibling of this agent that inherits its groups and permissions. The original keeps running.", "Ask the peer to mirror this hero into a sibling that inherits its parties and boons. The original keeps channeling.")} />` : null}
+    <${CompactMenuItem} member=${member} snapshot=${snapshot} />
+    ${runsHere && html`<${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate hero" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this hero — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />`}
+    ${runsHere && html`<${RestartMenuItem} member=${member} />`}
+    ${runsHere && html`<${SubscriptionMenuItems} member=${member} />`}
+    ${runsHere && html`<${SandboxRestartMenuItem} member=${member} />`}
+    ${runsHere && html`<${SandboxImplMenuItem} member=${member} />`}
     <${MenuSeparator} />
     <${SendElsewhereItems} member=${member} group=${ungrouped ? null : group} snapshot=${snapshot} />
     <${MenuSeparator} />
     ${ungrouped
-      ? html`<${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this familiar and its conversation scroll')} />`
-      : html`<${MenuButton} member=${member} group=${group} act="remove-member" className="danger" regular="remove" wizard="dismiss from party" title=${wizardCopy('Remove this agent from the group', 'Remove this familiar from the party')} /><${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} />`}
+      ? html`<${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this hero — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase hero" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this hero and its conversation scroll')} />`
+      : html`<${MenuButton} member=${member} group=${group} act="remove-member" className="danger" regular="remove" wizard="dismiss from party" title=${wizardCopy('Remove this agent from the group', 'Remove this hero from the party')} /><${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this hero — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} />`}
   `;
 }
 
 function MemberActions({ member, group, snapshot, actions, ungrouped, menuKey }) {
   const offlineWhy = member.online ? '' : ' — unavailable while the agent is offline';
   return html`<div class="row-actions">
-    <button class="icon-btn" data-act="jump" ...${memberAttrs(member)} disabled=${!member.online} title=${`Focus this agent's terminal window; when using web terminals, Ctrl/Cmd-click keeps this tab open${offlineWhy}`} aria-label="Focus window"><${EyeIcon} /></button>
-    <button class="icon-btn" data-act="hide" ...${memberAttrs(member)} disabled=${!member.online} title=${`Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${offlineWhy}`} aria-label="Hide window"><${EyeIcon} hidden=${true} /></button>
-    <button class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-stable-agent=${member.agent_id || ''} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /></button>
+    <${Button} size="sm" icon=${true} class="icon-btn" data-act="jump" ...${memberAttrs(member)} disabled=${!member.online} title=${`Focus this agent's terminal window; when using web terminals, ${modClickText()} keeps this tab open${offlineWhy}`} aria-label="Focus window"><${EyeIcon} /><//>
+    <${Button} size="sm" icon=${true} class="icon-btn" data-act="hide" ...${memberAttrs(member)} disabled=${!member.online} title=${`Hide this agent's terminal window — detaches its tmux client. The agent keeps running.${offlineWhy}`} aria-label="Hide window"><${EyeIcon} hidden=${true} /><//>
+    <${Button} size="sm" icon=${true} class="icon-btn warn" data-act="retire-agent" data-conv=${member.conv_id} data-stable-agent=${member.agent_id || ''} data-label=${member.title || member.conv_id} title="Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored)." aria-label="Retire agent"><${TrashIcon} /><//>
     <${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} /><//>
   </div>`;
 }
@@ -972,11 +1018,16 @@ function MemberActions({ member, group, snapshot, actions, ungrouped, menuKey })
 // (no group, as for an ungrouped agent). One on another node, which this
 // node's roster does not carry, gets what a fused Groups view offers its
 // rows: moving it here. It needs a GroupsInteractionProvider above it.
-export function AgentGearMenu({ member, node = null, snapshot, menuKey }) {
+//
+// group, when given (the Collab panel, tcl-usrm7h), is the group the agent is
+// listed under there: the menu then has that group's items (owner, remove),
+// as its Groups row would, but not the row's inline editor. extra are items
+// the caller puts first (the panel's Move to group).
+export function AgentGearMenu({ member, node = null, snapshot, menuKey, group = null, extra = null }) {
   if (node && !node.local) {
     return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu"><${SendElsewhereItems} member=${member} group=${{ fleet_node: node }} snapshot=${snapshot} /><//>`;
   }
-  return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu"><${MemberMenu} member=${member} group=${null} snapshot=${snapshot} actions=${{}} ungrouped=${true} /><//>`;
+  return html`<${ActionMenu} menuKey=${menuKey} kind="row-menu">${extra}<${MemberMenu} member=${member} group=${group} snapshot=${snapshot} actions=${{}} ungrouped=${!group} /><//>`;
 }
 
 function SudoBadge({ grants, conv }) {
@@ -1018,7 +1069,7 @@ function HumanNotificationAttention({ member, snapshot }) {
     openMemberNotification(member, message, event.currentTarget,
       event.currentTarget.closest('.rowname')?.querySelector('.rowname-text'));
   };
-  return html`<button type="button" class="human-notification-attention"
+  return html`<button data-ui-exempt type="button" class="human-notification-attention"
     ...${memberAttrs(member)}
     data-sender=${humanNotificationSenderQuery(member)}
     aria-label=${title} aria-describedby=${previewID}
@@ -1044,7 +1095,7 @@ function MemberName({ member, snapshot, actions, grants, editorKey }) {
   const state = member.state || {};
   const canRename = harnessCanRename(snapshot, state.harness);
   const idPrefix = memberColHidden('id') ? `${idTooltip(member.agent_id, member.conv_id)} — ` : '';
-  if (!canRename) return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><span class="rowname-text rowname-fixed" title=${`${idPrefix}This agent's harness does not support renaming`}>${member.title || '(unnamed)'}</span><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
+  if (!canRename) return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><span class="rowname-text rowname-fixed" title=${`${idPrefix}This agent's harness does not support renaming`}>${member.title || '(unnamed)'}</span><${PresenceBadge} member=${member} /><${SubscriptionBadge} member=${member} /><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
   return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><${InlineEditor}
     editorKey=${editorKey} value=${member.title || ''} className="rowname-input"
     placeholder="1-64 chars: A-Za-z0-9 _ - [ ] { } ( ) — Enter saves, Esc cancels"
@@ -1083,7 +1134,7 @@ function SubscriptionBadge({ member }) {
   if (sub.held) return html`<span class="presence-badge subscription-badge" style=${who.color ? `--nc:${who.color}` : undefined} title=${title} data-subscription="held">${text}</span>`;
   // A lost token is actionable: its owner sends it again, anyone else may
   // switch the agent to the node's own login (subscription-relaunch.js).
-  return html`<button type="button" class="presence-badge subscription-badge lost" style=${who.color ? `--nc:${who.color}` : undefined} title=${`${title} Click to ${who.local ? 'send it again' : 'switch it to the node\'s own login'}.`}
+  return html`<button data-ui-exempt type="button" class="presence-badge subscription-badge lost" style=${who.color ? `--nc:${who.color}` : undefined} title=${`${title} Click to ${who.local ? 'send it again' : 'switch it to the node\'s own login'}.`}
     data-subscription="lost" data-act="claude-subscription" ...${menuMemberAttrs(member, 'agent')} data-online=${member.online ? '1' : '0'}>${text}</button>`;
 }
 
@@ -1122,14 +1173,14 @@ function AwayRow({ member, view, columns, group }) {
       case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
       case 'title': return html`<td class="name-cell"><div class="rowname"><span class="rowname-text rowname-fixed">${member.title || '(unnamed)'}</span>
         <span class="presence-badge presence-away" style=${view.at.color ? `--nc:${view.at.color}` : undefined} title=${view.title} data-presence="away">${view.label}</span>
-        <button type="button" class="fa-link away-goto" data-away-goto=${member.agent_id || ''}
+        <${Button} size="sm" variant="link" class="away-goto" data-away-goto=${member.agent_id || ''}
           title=${visiting ? `Scroll to ${member.title || 'it'} on ${view.at.name}` : `Open ${view.at.name}'s dashboard`}
           onClick=${(event) => { event.preventDefault(); event.stopPropagation(); showVisitingRow(member, view.at); }}
-        >${visiting ? '↓ show' : view.at.local ? 'open on this node ↗' : `open on ${view.at.name} ↗`}</button>
-        ${TELEPORT_ROUTES ? html`<button type="button" class="away-recall" data-act="send-elsewhere" data-mode="home" data-presence="away"
+        >${visiting ? '↓ show' : view.at.local ? 'open on this node ↗' : `open on ${view.at.name} ↗`}<//>
+        ${TELEPORT_ROUTES ? html`<${Button} size="sm" variant="success" class="away-recall" data-act="send-elsewhere" data-mode="home" data-presence="away"
           data-agent=${member.agent_id} data-conv=${member.conv_id} data-label=${member.title || member.conv_id} data-group=${group?.name || ''}
           data-home-node=${view.home.id} data-home-name=${view.home.name}
-          title=${`Recall ${member.title || 'it'} straight home from ${view.at.name}`}>⌂ recall home…</button>` : null}</div></td>`;
+          title=${`Recall ${member.title || 'it'} straight home from ${view.at.name}`}>⌂ recall home…<//>` : null}</div></td>`;
       default: return html`<td></td>`;
     }
   };
@@ -1148,17 +1199,13 @@ function editableMemberCellAttrs(member, group, actions, act, focus) {
     'data-act': act, 'data-group': group.name, ...memberAttrs(member),
     role: 'button', tabindex: '0',
     onClick: (event) => openMemberCellEditor(event, actions, member, group, focus),
-    onKeyDown: (event) => {
-      if (event.isComposing || event.keyCode === 229) return;
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      openMemberCellEditor(event, actions, member, group, focus);
-    },
+    onKeyDown: onActivateKey((event) => openMemberCellEditor(event, actions, member, group, focus), { prevent: false, ime: true }),
   };
 }
 
 function RoleCell({ member, group, actions }) {
   const hasRole = member.role && member.role !== 'owner';
-  const owner = member.owner ? html`<span class="owner-badge">owner</span>` : null;
+  const owner = member.owner ? html`<span class="ui-tag ui-tag-own owner-badge">owner</span>` : null;
   const pureOwner = member.owner && member.role === 'owner';
   if (!group || pureOwner) return member.owner ? html`${hasRole ? member.role : null}${hasRole ? ' ' : null}${owner}` : (member.role || '');
   return html`<span class="role-edit" ...${editableMemberCellAttrs(member, group, actions, 'edit-role', 'role')} title="Edit role, ownership and permissions">${hasRole ? member.role : null}${hasRole && member.owner ? ' ' : null}${owner || (!hasRole ? html`<span class="role-add">+ role</span>` : null)}</span>`;
@@ -1192,36 +1239,33 @@ function CwdCell({ member, group }) {
   return html`<${StackedLocation} start=${path(startup, 'start')} current=${path(current, 'worktree')} differ=${!!current && !!startup && current !== startup} />`;
 }
 
-// PR states that have their own badge colour. Anything else — including a
-// cache entry written before a state was recorded — falls back to unknown.
-const PR_STATE_CLASSES = ['open', 'draft', 'merged', 'closed'];
-const prStateClass = (state) => (PR_STATE_CLASSES.includes(state) ? `pr-state-${state}` : 'pr-state-unknown');
-
 function BranchCell({ member }) {
-  const branch = (name, url, prNumber, prURL, prState, checks, reviews, prTitle) => {
+  const branch = (name, url, pr) => {
     if (!name) return html`<span class="muted">—</span>`;
     const branchNode = url
-      ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch on GitHub — ${name}`}>⎇ ${name}</a>`
+      ? html`<a class="branch branch-link" href=${url} target="_blank" rel="noopener noreferrer" draggable=${false} title=${`Open branch — ${name}`}>⎇ ${name}</a>`
       : html`<span class="branch" title=${`git branch: ${name}`}>⎇ ${name}</span>`;
-    const stateClass = prStateClass(prState);
-    const stateLabel = prState ? prState[0].toUpperCase() + prState.slice(1) : 'Pull request';
     // .pr-chain keeps the link and its badges one inline run: inside an
     // init/now .loc-row (a flex row with a gap) they would otherwise each
     // become a flex item and sit wider apart than on a single-branch row.
-    return html`${branchNode}${prNumber && prURL ? html` <span class="pr-chain"><${PRLinkHover} url=${prURL} prNumber=${prNumber} title=${prTitle} prState=${prState} className=${stateClass} label=${`#${prNumber}`} describe=${`${stateLabel} pull request #${prNumber}`} /><${PRChecksBadge} url=${prURL} prNumber=${prNumber} summary=${checks} prState=${prState} /><${PRReviewBadge} url=${prURL} prNumber=${prNumber} reviews=${reviews} prState=${prState} /></span>` : null}`;
+    return html`${branchNode}${pr.number && pr.url ? html` <${PRChain} pr=${pr} />` : null}`;
   };
-  const start = branch(member.startup_branch || '', member.startup_branch_url || '', member.startup_pr_number || 0, member.startup_pr_url || '', member.startup_pr_state || '', member.startup_checks, member.startup_reviews, member.startup_pr_title || '');
-  const current = branch(member.branch || '', member.branch_url || '', member.branch_pr_number || 0, member.branch_pr_url || '', member.branch_pr_state || '', member.branch_checks, member.branch_reviews, member.branch_pr_title || '');
+  const start = branch(member.startup_branch || '', member.startup_branch_url || '', {
+    number: member.startup_pr_number || 0, url: member.startup_pr_url || '', state: member.startup_pr_state || '',
+    checks: member.startup_checks, reviews: member.startup_reviews, title: member.startup_pr_title || '',
+  });
+  const current = branch(member.branch || '', member.branch_url || '', {
+    number: member.branch_pr_number || 0, url: member.branch_pr_url || '', state: member.branch_pr_state || '',
+    checks: member.branch_checks, reviews: member.branch_reviews, title: member.branch_pr_title || '',
+  });
   const seen = new Set([member.startup_pr_url, member.branch_pr_url].filter(Boolean));
   const presented = (member.presented_prs || []).filter((pr) => {
     const url = String(pr.url || '').trim();
     if (!url || seen.has(url) || !/^https?:\/\//i.test(url)) return false;
     seen.add(url); return true;
   });
-  return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} wrap />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => {
-    const stateClass = prStateClass(pr.state);
-    return html`<span key=${pr.url} class="presented-pr pr-chain"><${PRLinkHover} url=${pr.url} prNumber=${pr.number} title=${pr.title || ''} prState=${pr.state || ''} className=${`${stateClass}${pr.number ? '' : ' pr-label'}`} label=${pr.number ? `#${pr.number}` : pr.summary || 'PR'} describe=${pr.summary ? `${pr.summary} — ${pr.url}` : `Presented pull request — ${pr.url}`} /><${PRChecksBadge} url=${pr.url} prNumber=${pr.number} summary=${pr.checks} prState=${pr.state} /><${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} prState=${pr.state} /></span>`;
-  })}</span>` : null}`;
+  return html`<${StackedLocation} start=${start} current=${current} differ=${(member.startup_branch || '') !== (member.branch || '')} wrap />${presented.length ? html` <span class="presented-prs">${presented.map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} className="presented-pr"
+    describe=${prDescription(pr, { presented: true })} />`)}</span>` : null}`;
 }
 
 function TaskCell({ member }) {
@@ -1246,9 +1290,9 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
     // metadata text instead of claiming a line of their own under the cell.
     case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} snapshot=${snapshot} local=${!group?.fleet_node || !!group.fleet_node.local} /></td>`;
     case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
-    case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} /></td>`;
+    case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} />${!ungrouped && html`<${AgentTaskIndicator} group=${group} member=${member} />`}</td>`;
     case 'state': return html`<${StateCell} member=${member} />`;
-    case 'last': return html`<td><span class="last-hook">${relTime(state.last_hook)}</span></td>`;
+    case 'last': return html`<td><span class="last-hook" title=${state.last_hook || ''}>${relTime(state.last_hook)}</span></td>`;
     case 'age': return html`<td><span class="last-hook" title=${member.created_at || ''}>${relTime(member.created_at)}</span></td>`;
     case 'cwd': return html`<td><${CwdCell} member=${member} group=${group} /></td>`;
     case 'branch': return html`<td><${BranchCell} member=${member} /></td>`;
@@ -1297,13 +1341,13 @@ function QueuedMemberRow({ entry, columns }) {
   const cell = (column) => {
     switch (column.key) {
       case 'ctl': return html`<td><div class="agent-ctl">
-        <button type="button" class="status-dot queued-play" data-act="queued-spawn-launch" data-group=${entry.group}
+        <button data-ui-exempt type="button" class="status-dot queued-play" data-act="queued-spawn-launch" data-group=${entry.group}
           title=${`queued — click to spawn ${label} now (opens the dialog and launches it; worktree, fetch and spawn checks run now)`}
           aria-label=${`Spawn ${label} now`} onClick=${act(launchQueuedSpawn)}>▶</button>
         <div class="row-actions">
-          <button class="icon-btn" disabled title="Focus this agent's terminal window — unavailable until the queued agent is spawned" aria-label="Focus window"><${EyeIcon} /></button>
-          <button class="icon-btn warn" data-act="queued-spawn-discard" data-group=${entry.group} title="Discard this queued agent — remove it from the queue without launching" aria-label=${`Discard queued ${label}`} onClick=${act(discardQueuedSpawn)}><${TrashIcon} /></button>
-          <button type="button" class="cog-btn" data-act="queued-spawn-edit" data-group=${entry.group} title="Review or edit the queued spawn in the spawn dialog" aria-label=${`Edit queued ${label}`} onClick=${edit}><span class="cog-glyph">⚙︎</span></button>
+          <${Button} size="sm" icon=${true} class="icon-btn" disabled title="Focus this agent's terminal window — unavailable until the queued agent is spawned" aria-label="Focus window"><${EyeIcon} /><//>
+          <${Button} size="sm" icon=${true} class="icon-btn warn" data-act="queued-spawn-discard" data-group=${entry.group} title="Discard this queued agent — remove it from the queue without launching" aria-label=${`Discard queued ${label}`} onClick=${act(discardQueuedSpawn)}><${TrashIcon} /><//>
+          <${Button} size="sm" icon=${true} class="cog-btn" data-act="queued-spawn-edit" data-group=${entry.group} title="Review or edit the queued spawn in the spawn dialog" aria-label=${`Edit queued ${label}`} onClick=${edit}><span class="cog-glyph">⚙︎</span><//>
         </div></div>
         ${draft.profile || harness ? html`<div class="agent-harness" title=${draft.profile ? `Queued with profile ${draft.profile}` : `Queued for ${labels.long}${draft.model ? ` · ${draft.model}` : ''}`}><span class="runtime-meta runtime-meta-offline">${draft.profile
           ? String(draft.profile)

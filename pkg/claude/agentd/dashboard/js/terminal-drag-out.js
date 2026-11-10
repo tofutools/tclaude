@@ -1,7 +1,7 @@
 // Geometry for the "drag a terminal out of its home region" gesture.
 //
 // HTML5 drag and drop never tells a page that a drag ended over some other
-// browser window, so detach (dashboard tab strip -> own browser tab) and
+// browser window, so detach (dashboard tab strip -> overlay or own browser window) and
 // reattach (solo pop-out -> dashboard) have to be inferred from where the drag
 // ended: released outside the region that owns the terminal, far enough out
 // that a sloppy reorder cannot trigger it, and with no drop target inside that
@@ -9,8 +9,8 @@
 //
 // The rule is deliberately conservative. Anything it cannot recognise — a
 // cancelled drag, a coordinate the browser did not report — resolves to "not a
-// drag-out", so the gesture degrades to the explicit ⧉ tab / ↩ dashboard
-// buttons instead of half-firing.
+// drag-out", so the gesture degrades to the explicit buttons instead of
+// half-firing.
 
 export const DRAG_OUT_MARGIN = 56;
 
@@ -52,11 +52,9 @@ export function dragLeftRegion(event, region, margin = DRAG_OUT_MARGIN) {
   return draggedOut(dragOutPoint(event), rect, margin);
 }
 
-// A tab dragged off the strip lands in a window of its own rather than another
-// tab of the window it just left — dragging a terminal *out* should get it out
-// of the way, which a tab behind the dashboard does not. Only window features
-// make a browser choose a window over a tab; passing none (the ⧉ tab button and
-// the tab context menu) still opens an ordinary tab.
+// A terminal leaving for a separate window gets a real window rather than another
+// tab of the one it just left. Only window features make a browser choose a
+// window over a tab.
 //
 // Every browser treats the features as a request. A user setting that forces
 // tabs, or a screen too small for the asked-for size, quietly wins; the handoff
@@ -81,6 +79,26 @@ function clampAxis(length, start, min, availLength, availStart) {
   const limit = availStart + availLength - span;
   const placed = outside ? start : Math.max(availStart, Math.min(start, limit));
   return { span, start: Math.round(placed) };
+}
+
+// elementScreenPoint is where a page element's corner sits on screen: the
+// browser window's position, its chrome, and the element's place in the
+// viewport. Browsers do not report the viewport's own position, so the chrome
+// is estimated from the outer and inner sizes: the width splits between both
+// side borders and the height sits above the page. A negative estimate (a
+// zoomed page) counts as none. Returns null when the window has no position.
+export function elementScreenPoint(win, rect) {
+  const screenX = Number(win?.screenX);
+  const screenY = Number(win?.screenY);
+  if (!Number.isFinite(screenX) || !Number.isFinite(screenY)) return null;
+  const chrome = (outer, inner) => {
+    const span = Number(outer) - Number(inner);
+    return Number.isFinite(span) && span > 0 ? span : 0;
+  };
+  return {
+    x: Math.round(screenX + chrome(win.outerWidth, win.innerWidth) / 2 + (Number(rect?.left) || 0)),
+    y: Math.round(screenY + chrome(win.outerHeight, win.innerHeight) + (Number(rect?.top) || 0)),
+  };
 }
 
 // detachWindowFeatures sizes the detached window to the pane the terminal is

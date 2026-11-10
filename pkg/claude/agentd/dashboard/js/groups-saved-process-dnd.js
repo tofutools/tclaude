@@ -13,6 +13,7 @@
 
 import { $, $$ } from './helpers.js';
 import { isWizardActive } from './slop.js';
+import { bindRowDragGuard } from './row-drag.js';
 
 export const SAVED_PROCESS_DRAG_MIME = 'application/x-tclaude-saved-process';
 
@@ -60,20 +61,7 @@ function bind() {
     off.push(() => document.removeEventListener(type, listener));
   };
   // A press on the chip's buttons must stay a click, not start a drag.
-  let suppressed = null;
-  const restore = () => {
-    if (!suppressed) return;
-    suppressed.draggable = true;
-    suppressed = null;
-  };
-  listen('pointerdown', (e) => {
-    const chip = e.target.closest?.('[data-saved-process-drag]');
-    if (!chip || !e.target.closest('button')) return;
-    chip.draggable = false;
-    suppressed = chip;
-  });
-  listen('pointerup', restore);
-  listen('pointercancel', restore);
+  off.push(bindRowDragGuard(document, '[data-saved-process-drag]', 'button').unbind);
   const trashTarget = (e) => e.target.closest?.('#dnd-trash');
   listen('dragstart', (e) => {
     const chip = e.target.closest?.('[data-saved-process-drag]');
@@ -87,7 +75,10 @@ function bind() {
     source = chip;
     chip.addEventListener('dragend', endDrag, { once: true });
     e.dataTransfer.setData(SAVED_PROCESS_DRAG_MIME, spec.templateId);
-    e.dataTransfer.effectAllowed = 'move';
+    // copyMove: the chip is also a resource row (resource-dnd.js), whose
+    // Ctrl/Cmd-drop onto another group copies it there; 'move' alone would
+    // make that drop refused.
+    e.dataTransfer.effectAllowed = 'copyMove';
     chip.classList.add('gq-saved-drag-source');
     $('#dnd-trash')?.classList.add('show', 'dnd-trash-unpin-mode');
   });

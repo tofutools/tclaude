@@ -16,7 +16,7 @@ import {
   setMemberColHidden,
 } from './member-columns.js';
 import { resetListOffsets } from './list-paging.js';
-import { GROUPS_FOCUS_PREF, normalizeGroupsFocus, restoreGroupsFocus } from './groups-focus.js';
+import { clearStaleGroupsLensPrefs } from './groups-focus.js';
 import { DEFAULT_RUN_FILTER, normalizeRunFilter } from './process-context.js';
 
 // The run filter became a checklist (process-context.js RUN_KINDS). A fresh
@@ -30,43 +30,43 @@ export const GROUP_VIEW_OPTIONS = Object.freeze([
     key: 'offline', defaultValue: true, pref: 'tclaude.dash.offline.groups',
     label: 'show offline',
     wizardLabel: 'show slumbering',
-    title: 'Show members whose tmux pane is offline. This is the tab-wide default — each group header has a per-group override.',
-    wizardTitle: 'Show slumbering familiars. This is the tab-wide default — each party banner has a per-party override.',
+    title: 'Show members whose tmux pane is offline. This is the tab-wide default — the ⚙ menu on each group has a per-group override.',
+    wizardTitle: 'Show slumbering heroes. This is the tab-wide default — the ⚙ menu on each party has a per-party override.',
   },
   {
     key: 'ungrouped', defaultValue: true, pref: 'tclaude.dash.ungrouped.groups',
     label: 'show ungrouped',
     wizardLabel: 'show unbound',
     title: `Show the virtual "Ungrouped" group at the bottom — online agents that aren't in any group. Drag rows onto a group to add them; drag group members onto it to remove them.`,
-    wizardTitle: `Show the ethereal "Unbound" party at the bottom — familiars not bound to any party. Drag them onto a party to bind them; drag party familiars back onto it to release them.`,
+    wizardTitle: `Show the ethereal "Unbound" party at the bottom — heroes not bound to any party. Drag them onto a party to bind them; drag party heroes back onto it to release them.`,
   },
   {
     key: 'retired', defaultValue: false, pref: 'tclaude.dash.retired.groups',
     label: 'show retired',
     wizardLabel: 'show banished',
     title: 'Show the virtual "Retired" group — agents that were demoted back to plain conversations. Click reinstate to bring one back.',
-    wizardTitle: 'Show the ethereal "Banished" party — familiars returned to plain scrolls. Restore one to bring it back.',
+    wizardTitle: 'Show the ethereal "Banished" party — heroes returned to plain scrolls. Restore one to bring it back.',
   },
   {
     key: 'conversations', defaultValue: false, pref: 'tclaude.dash.conversations.groups',
     label: 'show conversations',
     wizardLabel: 'show plain scrolls',
     title: `Show the virtual "Conversations" group — recent conversations that aren't agents. Drag one onto a group (or click promote) to make it an agent.`,
-    wizardTitle: `Show the ethereal "Plain scrolls" party — recent scrolls without familiars. Drag one onto a party (or click awaken) to awaken it as a familiar.`,
+    wizardTitle: `Show the ethereal "Plain scrolls" party — recent scrolls without heroes. Drag one onto a party (or click awaken) to awaken it as a hero.`,
   },
   {
     key: 'replaced', defaultValue: false, pref: 'tclaude.dash.replaced.groups',
     label: 'show replaced generations',
     wizardLabel: 'show past incarnations',
     title: 'Show the virtual "Replaced generations" group — superseded past generations of agents (left behind by reincarnate / /clear). Archival and read-mostly: copy a conv-id to inspect it, or delete a generation to prune it. The live agent is never affected.',
-    wizardTitle: 'Show the ethereal "Past incarnations" party — superseded lives left behind by reincarnate / /clear. Copy a conv-id to scry one, or erase an incarnation to prune it. The living familiar is never affected.',
+    wizardTitle: 'Show the ethereal "Past incarnations" party — superseded lives left behind by reincarnate / /clear. Copy a conv-id to scry one, or erase an incarnation to prune it. The living hero is never affected.',
   },
   {
     key: 'scribe', defaultValue: false, pref: 'tclaude.dash.scribe.groups',
     label: 'show offline scribes',
     wizardLabel: 'show slumbering scribes',
     title: 'Live scribe groups and their independently named agents are always shown. Enable this to also show dormant system groups left by offline scribes.',
-    wizardTitle: 'Live scribe parties and their familiars are always shown. Enable this to also show dormant circles left by slumbering scribes.',
+    wizardTitle: 'Live scribe parties and their heroes are always shown. Enable this to also show dormant circles left by slumbering scribes.',
   },
 ]);
 
@@ -199,6 +199,7 @@ export function createGroupsState({
     GROUP_VIEW_OPTIONS.map((option) => [option.key, option.defaultValue]),
   ));
   const viewOpen = signal(false);
+  const contentSearchOpen = signal(false);
   const memberEditor = signal(null);
   const addMemberDialog = signal(null);
   const standingOrdersDialog = signal(null);
@@ -208,13 +209,11 @@ export function createGroupsState({
   const routeGroup = signal('');
   // The Route map's view: 'graph' or the exact 'list' (?view=list).
   const routeView = signal('graph');
-  // Both | Agents | Processes lens (groups-focus.js); restored from prefs in initialize().
-  const focus = signal('both');
-  // The ticked run kinds (running / planned / done) over the Processes
-  // lens's run cards, as a canonical "running,planned" string.
+  // The ticked run kinds (running / planned / done) over the group cards'
+  // Processes sections, as a canonical "running,planned" string.
   const processFilter = signal(DEFAULT_RUN_FILTER);
-  // The single-run focus (G5): { group, runId } while one run is open in the
-  // Processes lens, else null. Session-only: a reload lands on the cards.
+  // The single-run focus (G5): { group, runId } while one run is open in
+  // place of the group tree, else null. Session-only: a reload lands on the cards.
   const focusedRun = signal(null);
   const renderRevision = signal(0);
   // listed is the view another list shows with these controls -- the fused
@@ -251,9 +250,9 @@ export function createGroupsState({
       const saved = prefs.getItem(option.pref);
       restored[option.key] = saved === null ? option.defaultValue : saved === '1';
     }
+    clearStaleGroupsLensPrefs(prefs);
     batch(() => {
       query.value = prefs.getItem(FILTER_KEY) || '';
-      focus.value = restoreGroupsFocus(prefs);
       processFilter.value = normalizeRunFilter(prefs.getItem(PROCESS_FILTER_PREF));
       visibility.value = restored;
       renderRevision.value++;
@@ -304,13 +303,6 @@ export function createGroupsState({
 
   function setRouteView(value) {
     routeView.value = value === 'list' ? 'list' : 'graph';
-  }
-
-  function setFocus(value) {
-    const next = normalizeGroupsFocus(value);
-    if (focus.value === next) return;
-    focus.value = next;
-    prefs.setItem(GROUPS_FOCUS_PREF, next);
   }
 
   function setFocusedRun(value) {
@@ -433,10 +425,10 @@ export function createGroupsState({
   }
 
   return Object.freeze({
-    snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog,
-    standingOrdersDialog, subview, routeSelection, routeGroup, setRouteGroup, routeView, setRouteView, focus, processFilter, focusedRun, renderRevision, listed,
+    snapshot, query, visibility, viewOpen, contentSearchOpen, memberEditor, addMemberDialog,
+    standingOrdersDialog, subview, routeSelection, routeGroup, setRouteGroup, routeView, setRouteView, processFilter, focusedRun, renderRevision, listed,
     view, columnOptions, deviationCount,
-    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setFocus, setProcessFilter, setFocusedRun,
+    initialize, publish, setQuery, setVisible, setColumnShown, rerender, setSubview, setProcessFilter, setFocusedRun,
     openMemberEditor, closeMemberEditor,
     openAddMember, closeAddMember, optimisticAddMember,
     openStandingOrders, closeStandingOrders,

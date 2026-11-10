@@ -11,26 +11,23 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { attachmentSize, messageAttachments, messageExportHref } from './human-attachments.js';
+import { useDismissablePopover } from './hover-popover.js';
+import { clipboardFailure, writeClipboard } from './insecure-origin.js';
+import { Button } from './ui-components.js';
+import { downloadURL } from './download.js';
 
 const html = htm.bind(h);
 
-// triggerDownload hands an authenticated same-origin URL to the browser's own
-// download path, so a large zip streams to disk instead of through JS memory.
-// The anchor lives only for the click.
-// dashboard-imperative-boundary: browser-io
-export function triggerDownload(href, documentRef = globalThis.document) {
-  const link = documentRef.createElement('a');
-  link.href = href;
-  link.download = '';
-  link.rel = 'noopener';
-  documentRef.body.appendChild(link);
-  link.click();
-  link.remove();
-}
+
+const SHARED_CLIPBOARD = {
+  async writeText(text) {
+    if (!await writeClipboard(text)) throw new Error(clipboardFailure());
+  },
+};
 
 export function MessageDownloadMenu({
-  message, node = '', toast, download = triggerDownload, fetchImpl = globalThis.fetch?.bind(globalThis),
-  clipboard = globalThis.navigator?.clipboard,
+  message, node = '', toast, download = downloadURL, fetchImpl = globalThis.fetch?.bind(globalThis),
+  clipboard = SHARED_CLIPBOARD,
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
@@ -40,13 +37,7 @@ export function MessageDownloadMenu({
   const totalBytes = attachments.reduce((sum, attachment) => sum + Number(attachment.size_bytes || 0), 0);
 
   useEffect(() => {
-    if (!open) return undefined;
-    rootRef.current?.querySelector('[role="menuitem"]')?.focus();
-    const dismiss = (event) => {
-      if (!rootRef.current?.contains(event.target)) setOpen(false);
-    };
-    document.addEventListener('mousedown', dismiss);
-    return () => document.removeEventListener('mousedown', dismiss);
+    if (open) rootRef.current?.querySelector('[role="menuitem"]')?.focus();
   }, [open]);
   // A different message in the reader closes a menu left open for the last one.
   useEffect(() => setOpen(false), [message.id]);
@@ -55,13 +46,14 @@ export function MessageDownloadMenu({
     setOpen(false);
     caretRef.current?.focus();
   };
+  useDismissablePopover(rootRef, open, (why) => { if (why === 'outside') setOpen(false); else close(); });
   const run = (action) => {
     close();
     action();
   };
   const copyMarkdown = async () => {
     try {
-      if (!clipboard?.writeText) throw new Error('clipboard unavailable');
+      if (!clipboard?.writeText) throw new Error(clipboardFailure());
       const response = await fetchImpl(messageExportHref(message.id, false, node));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       await clipboard.writeText(await response.text());
@@ -97,21 +89,21 @@ export function MessageDownloadMenu({
     if (open && next && !rootRef.current?.contains(next)) setOpen(false);
   };
   return html`<span class="mail-download" ref=${rootRef} onFocusOut=${onFocusOut}>
-    <button type="button" class="mail-download-main"
+    <${Button} size="sm" class="mail-download-main"
       title=${count ? `Download this message with its ${filesNote} as a .zip` : 'Download this message as Markdown'}
-      onClick=${() => download(messageExportHref(message.id, count > 0, node))}>⤓ download</button><button
-      type="button" class="mail-download-caret" ref=${caretRef} aria-haspopup="menu" aria-expanded=${String(open)}
+      onClick=${() => download(messageExportHref(message.id, count > 0, node))}>⤓ download<//><${Button}
+      size="sm" icon=${true} class="mail-download-caret" domRef=${caretRef} aria-haspopup="menu" aria-expanded=${String(open)}
       aria-label="More download options" title="More download options"
-      onClick=${() => setOpen(!open)}>▾</button>
-    ${open && html`<div class="mail-download-menu" role="menu" aria-label="Download message" onKeyDown=${onMenuKeyDown}>
-      ${count > 0 && html`<button type="button" role="menuitem" data-export="zip"
+      onClick=${() => setOpen(!open)}>▾<//>
+    ${open && html`<div class="ui-menu ui-sm mail-download-menu" role="menu" aria-label="Download message" onKeyDown=${onMenuKeyDown}>
+      ${count > 0 && html`<button type="button" class="ui-menu-item" role="menuitem" data-export="zip"
         onClick=${() => run(() => download(messageExportHref(message.id, true, node)))}>
         <span class="mail-download-icon" aria-hidden="true">📦</span><span>Message + attachments (.zip)<small>message.md + ${filesNote}</small></span></button>`}
-      <button type="button" role="menuitem" data-export="md"
+      <button type="button" class="ui-menu-item" role="menuitem" data-export="md"
         onClick=${() => run(() => download(messageExportHref(message.id, false, node)))}>
         <span class="mail-download-icon" aria-hidden="true">📄</span><span>Message only (.md)<small>${count ? 'headers + body, attachments listed by name' : 'headers + body'}</small></span></button>
-      <div class="mail-download-sep" role="separator"></div>
-      <button type="button" role="menuitem" data-export="copy" onClick=${() => run(copyMarkdown)}>
+      <div class="ui-menu-sep mail-download-sep" role="separator"></div>
+      <button type="button" class="ui-menu-item" role="menuitem" data-export="copy" onClick=${() => run(copyMarkdown)}>
         <span class="mail-download-icon" aria-hidden="true">📋</span><span>Copy as Markdown<small>paste straight into a chat or a PR</small></span></button>
     </div>`}
   </span>`;

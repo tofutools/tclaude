@@ -51,6 +51,9 @@ const (
 	// retiring the group's members left it with no live recipients. A later
 	// `groups resume` re-enables exactly the jobs carrying this marker.
 	CronDisabledReasonGroupRetired = "group-retired"
+	// CronDisabledReasonStewardStandby — a job paused because its owner left the
+	// Steward's seat for the roster. It runs again when the owner is reseated.
+	CronDisabledReasonStewardStandby = "steward-standby"
 )
 
 // ErrAgentCronOwnerRetired is the canonical rejection for a cron write whose
@@ -125,6 +128,12 @@ type AgentCronJob struct {
 	// group resume re-enables only the auto-paused ones. Unset (and ignored)
 	// for an enabled job.
 	DisabledReason string
+	// OwnerPeer is the linked node that scheduled this job here (schema v315),
+	// "" for a local job, and OwnerPeerAgent the agent of it that did, "" for
+	// its operator. A peer job has no owner agent, is never operator-authored,
+	// and fires only while the peer's grants still reach its target.
+	OwnerPeer      string
+	OwnerPeerAgent string
 	CreatedAt      time.Time
 	LastRunAt      time.Time // zero → never run; both modes anchor first due time on CreatedAt
 	LastRunStatus  string
@@ -134,6 +143,9 @@ type AgentCronJob struct {
 // delivering to a single conv. Callers MUST use this (not GroupID > 0)
 // as the discriminator — a conv-targeted job routed through a shared
 // group also carries a non-zero GroupID.
+// IsPeerOwned reports whether a linked node scheduled the job.
+func (j *AgentCronJob) IsPeerOwned() bool { return j.OwnerPeer != "" }
+
 func (j *AgentCronJob) IsGroupTarget() bool {
 	return j.TargetKind == CronTargetGroup
 }
@@ -219,7 +231,7 @@ const cronSelect = `SELECT j.id, j.name,
 	j.disabled_reason, j.run_immediately, j.queue_when_offline, j.operator_authored,
 	j.action_kind,j.spawn_profile,j.spawn_role_refs_json,j.spawn_name_template,
 	j.spawn_instruction_template,j.spawn_concurrency_policy,j.spawn_max_live_workers,
-	j.spawn_worker_deadline_seconds
+	j.spawn_worker_deadline_seconds, j.owner_peer, j.owner_peer_agent
 	FROM agent_cron_jobs j
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
@@ -263,6 +275,9 @@ func insertAgentCronJob(j *AgentCronJob, routingCaller *string) (int64, error) {
 			return 0, fmt.Errorf("InsertAgentCronJobWithRoutingAuthority: %w", err)
 		}
 	}
+	if j.OwnerPeer != "" && (j.OwnerConv != "" || j.OperatorAuthored || j.ActionKind == CronActionSpawn) {
+		return 0, errors.New("a peer-owned cron job has no local owner, is not operator-authored and sends messages only")
+	}
 	ownerAgent, err := cronConvToAgentTx(tx, j.OwnerConv)
 	if err != nil {
 		return 0, err
@@ -300,12 +315,12 @@ func insertAgentCronJob(j *AgentCronJob, routingCaller *string) (int64, error) {
 		 cron_expr, subject, body, enabled, run_immediately, queue_when_offline, operator_authored,
 		 action_kind,spawn_profile,spawn_role_refs_json,spawn_name_template,spawn_instruction_template,
 		 spawn_concurrency_policy,spawn_max_live_workers,spawn_worker_deadline_seconds,
-		 created_at,last_run_at,last_run_status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '')`,
+		 owner_peer,owner_peer_agent,created_at,last_run_at,last_run_status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '')`,
 		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.TargetRole, j.IntervalSeconds,
 		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), boolToInt(j.QueueWhenOffline), boolToInt(j.OperatorAuthored),
 		actionKind, j.SpawnProfile, string(rolesJSON), j.SpawnNameTemplate, j.SpawnInstructionTemplate,
-		policy, maxLive, j.SpawnWorkerDeadlineSeconds, now)
+		policy, maxLive, j.SpawnWorkerDeadlineSeconds, j.OwnerPeer, j.OwnerPeerAgent, now)
 	if err != nil {
 		return 0, err
 	}
@@ -489,20 +504,7 @@ func ListAgentCronJobs() ([]*AgentCronJob, error) {
 }
 
 func listAgentCronJobs(d *sql.DB, query string) ([]*AgentCronJob, error) {
-	rows, err := d.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentCronJob
-	for rows.Next() {
-		j, err := scanAgentCronJob(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, j)
-	}
-	return out, rows.Err()
+	return queryRows(d, scanAgentCronJob, query)
 }
 
 // ListDueAgentCronJobs returns enabled jobs whose next-fire time has passed.
@@ -609,6 +611,23 @@ func SetAgentCronJobEnabled(id int64, enabled bool) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// DisableEnabledAgentCronJob disables job id only while it is enabled, as a
+// hand pause (an empty disabled_reason). A job already disabled is left exactly as
+// it is, so an automatic pause (group-retired, steward-standby) keeps the
+// marker that brings it back. Reports whether it changed the job.
+func DisableEnabledAgentCronJob(id int64) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE agent_cron_jobs SET enabled = 0, disabled_reason = '' WHERE id = ? AND enabled = 1`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // DisableGroupTargetCronJobsForRetire disables every currently-ENABLED
@@ -754,6 +773,14 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	}
 	if !exists {
 		return 0, nil
+	}
+	var ownerPeer string
+	if err := tx.QueryRow(`SELECT owner_peer FROM agent_cron_jobs WHERE id = ?`, id).Scan(&ownerPeer); err != nil {
+		return 0, err
+	}
+	if ownerPeer != "" && (p.OwnerConv != nil || (p.OperatorAuthored != nil && *p.OperatorAuthored) ||
+		(p.ActionKind != nil && *p.ActionKind != CronActionMessage)) {
+		return 0, fmt.Errorf("UpdateAgentCronJobFields: a peer's job %d takes no local owner, operator attribution or spawn action", id)
 	}
 	sets := make([]string, 0, 9)
 	args := make([]any, 0, 10)
@@ -955,22 +982,15 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 		q += ` LIMIT ?`
 		args = append(args, limit)
 	}
-	rows, err := d.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentCronRun
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*AgentCronRun, error) {
 		var r AgentCronRun
 		var fired dbTimestamp
 		if err := rows.Scan(&r.ID, &r.JobID, &fired, &r.Status, &r.ErrorMsg, &r.WorkerID, &r.WorkerAgent); err != nil {
 			return nil, err
 		}
 		r.FiredAt = fired.Time()
-		out = append(out, &r)
-	}
-	return out, rows.Err()
+		return &r, nil
+	}, q, args...)
 }
 
 func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
@@ -983,7 +1003,8 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr, &j.TargetRole,
 		&j.DisabledReason, &runImmediately, &queueWhenOffline, &operatorAuthored,
 		&j.ActionKind, &j.SpawnProfile, &rolesJSON, &j.SpawnNameTemplate, &j.SpawnInstructionTemplate,
-		&j.SpawnConcurrencyPolicy, &j.SpawnMaxLiveWorkers, &j.SpawnWorkerDeadlineSeconds)
+		&j.SpawnConcurrencyPolicy, &j.SpawnMaxLiveWorkers, &j.SpawnWorkerDeadlineSeconds,
+		&j.OwnerPeer, &j.OwnerPeerAgent)
 	if err != nil {
 		return nil, err
 	}
@@ -1000,4 +1021,20 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	j.CreatedAt = created.Time()
 	j.LastRunAt = lastRun.Time()
 	return &j, nil
+}
+
+// CountPeerCronJobs counts the cron jobs a linked peer scheduled here; with
+// agent set, only those that agent of it scheduled.
+func CountPeerCronJobs(peer, agent string) (int, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	q, args := `SELECT COUNT(*) FROM agent_cron_jobs WHERE owner_peer = ?`, []any{peer}
+	if agent != "" {
+		q, args = q+` AND owner_peer_agent = ?`, append(args, agent)
+	}
+	var n int
+	err = d.QueryRow(q, args...).Scan(&n)
+	return n, err
 }

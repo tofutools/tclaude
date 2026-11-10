@@ -3,20 +3,14 @@ import { idempotentRequestHeaders } from './request-idempotency.js';
 import { processTemplateDeleteConfirmation } from './process-template-delete.js';
 import { dashboardState } from './snapshot-store.js';
 import {
-  PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
+  PROCESS_SCRIBE_GRANT_META, PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeGrantBody, processScribeHandoff,
   processScribeScopeLabel, processScribeSessions, processScribeTaskRef,
 } from './process-scribe.js';
-
-function mintUUID() {
-  const crypto = globalThis.crypto;
-  if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
+import { randomUUID } from './insecure-origin.js';
+import { focusOverlayWindow, openOverlayWindow, overlayHostUp } from './overlay-instances.js';
+import { floatProcessEditor, floatingProcessTab, returnLiveEditor, revealProcessTab, stripProcesses, takeFloatingEditor } from './process-editor-place.js';
+import { editorToWindow, processEditorAway } from './process-editor-window.js';
+import { askExistingAgent, openHelperWindow, summonHelper } from './get-help.js';
 
 export function processActorPresentation(snapshot, actor) {
   const ref = String(actor || '');
@@ -62,7 +56,7 @@ export function createProcessesActions({
   dispatchNavigated = (location, { correction = false } = {}) => document.dispatchEvent(
     new CustomEvent('tclaude:navigated', location ? { detail: { location, correction } } : undefined),
   ),
-  mintAttemptID = mintUUID,
+  mintAttemptID = randomUUID,
 } = {}) {
   let listedHeadsSignature = null;
   let headObservationPending = false;
@@ -163,11 +157,44 @@ export function createProcessesActions({
     if (navigate) announceLocation();
     return true;
   }
-  // `scribe` ({prompt}) asks for a process scribe on the template once its
-  // editor is up: the Groups quick start's "Draft steps" hands one over.
-  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false, scribe = null } = {}) {
-    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, scribe, key: `${id}:${blank}:${Date.now()}` });
-    state.setNotice(blank ? `Blank template “${name}” ready.` : `Opening ${name || id}.`);
+  async function openEditor(id, blank = false, name = '', { navigate = true, view = null, readable = false, live = null, handoff = null } = {}) {
+    // A template is edited in one place: one floating in an overlay window, or in
+    // a browser window of its own, comes forward there instead.
+    const called = name || state.view.value.templates.find((template) => template.id === id)?.name || id;
+    const elsewhere = !blank && !live && !handoff ? processEditorAway(id) : null;
+    if (elsewhere) {
+      elsewhere.focus?.();
+      state.setNotice(`${called} is open in a separate window.`);
+      return false;
+    }
+    // One open as a Collab tab comes forward there when the operator opens it
+    // here. A location restored from the URL (Back, a bookmark) names this tab,
+    // so the editor comes back here instead, unsaved edits and all, rather
+    // than bouncing to Collab.
+    if (!blank && !live && !handoff && stripProcesses.peek().includes(id)) {
+      if (navigate && revealProcessTab(id)) {
+        state.setNotice(`${called} is open in a Collab tab.`);
+        return false;
+      }
+      const held = takeFloatingEditor(id);
+      if (held) return openEditor(id, false, called, { navigate, live: held });
+    }
+    let floating = !blank && !live && !handoff ? floatingProcessTab(id) : null;
+    // With no overlay to show it, a floating editor docks here
+    // instead, edits and all, and a tab with no editor yet just goes.
+    if (floating && !overlayHostUp.peek()) {
+      const held = takeFloatingEditor(id);
+      if (held) return openEditor(id, false, floating.label || called, { navigate, live: held });
+      floating = null;
+    }
+    if (floating) {
+      openOverlayWindow(floating);
+      focusOverlayWindow(floating.id);
+      state.setNotice(`${floating.label || called} is open in an overlay window.`);
+      return false;
+    }
+    state.setCanvas({ kind: 'editor', id, blank, name, view, readable, live, handoff, key: `${id}:${blank}:${Date.now()}` });
+    state.setNotice(blank ? `Blank template “${name}” ready.` : live || handoff ? `${name || id} is back, unsaved edits and all.` : `Opening ${name || id}.`);
     // `navigate: false` is the router restoring this location FROM the URL —
     // pushing it back would forge a duplicate history entry.
     if (navigate) announceLocation();
@@ -276,12 +303,12 @@ export function createProcessesActions({
     const showing = state.location.value;
     if (showing.subtab === name && (showing.selection || '') === target) return target === requested;
     if (!(await activateSubtab(name, { navigate: false }))) return false;
-    if (target) await openEditor(target, false, '', { navigate: false });
+    if (target && (await openEditor(target, false, '', { navigate: false })) === false) return false;
     return target === requested;
   }
   async function summonScribe(anchor = { kind: 'library' }, handoffOptions = {}) {
     try {
-      const { freshnessGuard, background = false, ...briefOptions } = handoffOptions;
+      const { freshnessGuard, ...briefOptions } = handoffOptions;
       const handoff = processScribeHandoff(anchor);
       const task = processScribeTaskRef(handoff, dashboardOrigin);
       const scribes = processScribeSessions(dashboardState.snapshot.value);
@@ -295,8 +322,8 @@ export function createProcessesActions({
         : '';
       const approved = await confirm({
         title: exactLive ? 'Reuse or replace process scribe?' : 'Grant process-scribe access?',
-        body: `Scope: ${target}. The daemon reuses a live same-scope scribe only when its exact permissions match and it has no active temporary elevation; otherwise this approval creates a fresh scribe receiving only process.templates.read and process.templates.manage while leaving the existing scribe unchanged. Every other registered capability is explicitly denied. Manage allows validated CAS saves, but summoning never instantiates or runs a process.${transition}`,
-        meta: 'process.templates.read + process.templates.manage',
+        body: processScribeGrantBody(target, transition),
+        meta: PROCESS_SCRIBE_GRANT_META,
         okLabel: exactLive ? 'Reuse or summon' : incompatible.length ? 'Start separate scribe' : 'Grant & summon',
       });
       if (!approved) {
@@ -313,25 +340,12 @@ export function createProcessesActions({
         state.setNotice('Process scribe cancelled because the editor context changed during approval. Review the current context and try again.');
         return null;
       }
-      const response = await fetchImpl('/api/scribe', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS,
-          exclusive: true, scope: handoff.scope, brief: processScribeBrief(handoff, briefOptions),
-          task_ref_url: task.url, task_ref_label: task.label,
-          // A docked editor's scribe starts in the background like a regular
-          // spawn: the dock is its surface, and its terminal opens only on
-          // demand. Without a dock (the library) its terminal is its surface.
-          background: background === true,
-        }),
+      // It starts in the background and opens in a regular chat window.
+      const result = await summonHelper({
+        name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS, exclusive: true, scope: handoff.scope,
+        brief: processScribeBrief(handoff, briefOptions), taskRef: task, confirmed: true, fetchImpl,
       });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
-      const name = result.name || PROCESS_SCRIBE_NAME;
-      if (result.focus_mode === 'browser' && result.focus_ws) {
-        const { openTerminalPane } = await import('./terminals-tab.js');
-        openTerminalPane({ ws: result.focus_ws, label: name, hideConv: result.conv_id || null, agent: result.agent_id || result.conv_id || null });
-      }
+      const name = result.name;
       state.setNotice(`${result.reused ? 'Reopened' : 'Summoned'} process scribe ${name}.`);
       notify(`${result.reused ? 'reopened' : 'summoned'} process scribe ${name}`);
       return result;
@@ -342,27 +356,57 @@ export function createProcessesActions({
       return null;
     }
   }
+  // askAgent is Get help › Ask an existing agent… for the editor: the agent
+  // gets the same brief a new scribe would, and the process-scribe grants it
+  // lacks after the same confirmation.
+  async function askAgent(helper, anchor, handoffOptions = {}) {
+    try {
+      const { freshnessGuard, ...briefOptions } = handoffOptions;
+      const handoff = processScribeHandoff(anchor);
+      const target = processScribeScopeLabel(handoff.scope);
+      // As for a new scribe, the editor must not have moved on while the
+      // operator read the grant: a stale answer grants and sends nothing.
+      let stale = false;
+      const fresh = () => {
+        try { stale = typeof freshnessGuard === 'function' && freshnessGuard() !== true; } catch { stale = true; }
+        return !stale;
+      };
+      const result = await askExistingAgent({
+        helper, slugs: PROCESS_SCRIBE_SLUGS, subject: 'Process help', brief: processScribeBrief(handoff, briefOptions), fetchImpl,
+        confirm: async (options) => (await confirm(options)) && fresh(),
+        confirmation: (missing) => ({
+          title: 'Grant process-scribe access?',
+          body: `${helper.label} is granted ${missing.join(' and ')}, to help with ${target}. This is a standing grant on that agent, for every process template (not only this one), and it keeps its other permissions; revoke it in Access when it is done. It never instantiates or runs a process.`,
+          meta: missing.join(', '), okLabel: 'Grant & ask',
+        }),
+      });
+      if (stale) {
+        state.setNotice('Cancelled because the editor context changed during approval; nothing was granted or sent. Review the current context and try again.');
+        return null;
+      }
+      if (!result) {
+        state.setNotice('Cancelled; no permissions changed and nothing was sent.');
+        return null;
+      }
+      state.setNotice(`Asked ${result.name} to help with ${target}.`);
+      return result;
+    } catch (error) {
+      const message = error?.message || String(error);
+      state.setNotice(`Could not ask ${helper?.label || 'the agent'}: ${message}`);
+      notify(`Could not ask ${helper?.label || 'the agent'}: ${message}`, true);
+      return null;
+    }
+  }
   function describeActor(actor) {
     return processActorPresentation(dashboardState.snapshot.value, actor);
   }
+  // openAgent shows an agent in its regular chat window, or a terminal tab
+  // without the companion.
   async function openAgent(agentId, label) {
     if (!agentId) return false;
-    try {
-      const response = await fetchImpl(`/api/open-window/${encodeURIComponent(agentId)}`, {
-        method: 'POST', credentials: 'same-origin',
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `${response.status} ${response.statusText}`);
-      if (result.mode === 'browser' && result.ws) {
-        const { openTerminalPane } = await import('./terminals-tab.js');
-        openTerminalPane({ ws: result.ws, label, hideConv: agentId, agent: agentId });
-      }
-      state.setNotice(`Opened ${label}.`);
-      return true;
-    } catch (error) {
-      state.setNotice(`Could not open ${label}: ${error.message}. Refresh Processes and summon a new scribe if this session is stale.`);
-      return false;
-    }
+    const opened = await openHelperWindow(agentId, label);
+    state.setNotice(opened === 'chat' ? `Opened ${label} in its chat window.` : `Opened ${label}.`);
+    return !!opened;
   }
   async function openActor(actor) {
     const presentation = describeActor(actor);
@@ -609,6 +653,52 @@ export function createProcessesActions({
       state.endMutation();
     }
   }
+  // floatEditor moves the open editor to an overlay window, as it is: nothing is
+  // saved or dropped, and this tab goes back to the templates.
+  function floatEditor() {
+    const editor = state.currentEditor();
+    const spec = state.canvas.value;
+    if (!editor || !spec?.id || spec.blank) return false;
+    const label = editor.model?.template?.name || spec.name || spec.id;
+    floatProcessEditor({ id: spec.id, label, editor });
+    state.setEditor(null); state.setCanvas(null);
+    state.setNotice(`${label} is open in an overlay window.`);
+    announceLocation();
+    void load('templates', { quiet: true });
+    return true;
+  }
+  // releaseEditor lets the open editor of template id go, as it is, to a place
+  // that takes it (a Collab tab), and answers it: { mount, editor, label }.
+  function releaseEditor(id) {
+    const editor = state.currentEditor();
+    const spec = state.canvas.value;
+    if (!editor || !spec?.id || spec.blank || spec.id !== id) return null;
+    const label = editor.model?.template?.name || spec.name || spec.id;
+    const shown = state.view.value.active;
+    state.setEditor(null); state.setCanvas(null);
+    state.setNotice(`${label} is open in Collab.`);
+    if (shown) announceLocation();
+    void load('templates', { quiet: true });
+    return { mount: editor.mount, editor, label };
+  }
+  // editorToSeparateWindow moves the open editor's draft to a browser window of
+  // its own. Should that window close before it takes the draft up, the editor
+  // comes back here as it was.
+  function editorToSeparateWindow({ rect = null, win = globalThis.window } = {}) {
+    const editor = state.currentEditor();
+    const spec = state.canvas.value;
+    if (!editor || !spec?.id || spec.blank) return false;
+    const label = editor.model?.template?.name || spec.name || spec.id;
+    const live = { mount: editor.mount, editor };
+    const restore = (back) => void returnLiveEditor(spec.id, label, back);
+    if (!editorToWindow({ id: spec.id, label, live, rect, win, notify, restore })) return false;
+    live.mount.remove();
+    state.setEditor(null); state.setCanvas(null);
+    state.setNotice(`${label} is open in a separate window.`);
+    announceLocation();
+    void load('templates', { quiet: true });
+    return true;
+  }
   async function closeCanvas() {
     if (!(await canLeaveEditor())) return false;
     state.setEditor(null); state.setCanvas(null); await load(state.subtab.value);
@@ -620,10 +710,10 @@ export function createProcessesActions({
   function refreshActive() { return load('templates'); }
   return Object.freeze({
     load, observeTemplateHeads, activateSubtab, openEditor, openReferencedTemplate, canLeaveEditor, applyLocation, announceLocation, correctLocation,
-    summonScribe, describeActor, openActor,
+    summonScribe, askAgent, describeActor, openActor,
     openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
-    closeCanvas, refreshActive,
+    closeCanvas, floatEditor, releaseEditor, editorToSeparateWindow, refreshActive,
   });
 }

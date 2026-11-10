@@ -1,14 +1,15 @@
 package conv
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -42,7 +43,7 @@ func ResumeCmd() *cobra.Command {
 			return clcommon.GetConversationCompletions(global), cobra.ShellCompDirectiveKeepOrder | cobra.ShellCompDirectiveNoFileComp
 		},
 		RunFunc: func(params *ResumeParams, cmd *cobra.Command, args []string) {
-			exitCode := RunResume(params, os.Stdout, os.Stderr)
+			exitCode := RunResume(params, cliStdout, cliStderr)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -123,7 +124,26 @@ func resolveConvForResume(convID string, global bool, cwd string) (*resolvedConv
 	return nil, nil
 }
 
-func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
+// resolveAgentForResume is the fallback for a selector that matched no
+// conversation: the name or agent_id `tclaude agent ls` shows. Agents are
+// global, so the project scope doesn't apply. Returns (nil, nil) when the
+// selector names no agent.
+func resolveAgentForResume(selector, cwd string) (*resolvedConv, error) {
+	convID, err := session.ResolveAgentResumeSelector(selector)
+	if err != nil || convID == "" {
+		return nil, err
+	}
+	rc, err := resolveConvForResume(convID, true, cwd)
+	if err != nil {
+		return nil, err
+	}
+	if rc == nil {
+		return nil, fmt.Errorf("no conversation to resume (conversation %s): it may have ended before its first message", convID)
+	}
+	return rc, nil
+}
+
+func RunResume(params *ResumeParams, stdout, stderr io.Writer) int {
 	// Extract just the ID from autocomplete format (e.g., "0459cd73_[myproject]_prompt..." -> "0459cd73")
 	convID := clcommon.ExtractIDFromCompletion(params.ConvID)
 
@@ -141,6 +161,13 @@ func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
 		return 1
 	}
 	if rc == nil {
+		rc, err = resolveAgentForResume(params.ConvID, cwd)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error resolving agent %s: %v\n", params.ConvID, err)
+			return 1
+		}
+	}
+	if rc == nil {
 		fmt.Fprintf(stderr, "Conversation %s not found\n", convID)
 		if !params.Global {
 			fmt.Fprintf(stderr, "Hint: use -g to search all projects\n")
@@ -151,7 +178,10 @@ func RunResume(params *ResumeParams, stdout, stderr *os.File) int {
 	return runResumeWithSession(rc, !params.Detached, params.SendKeys, stdout, stderr)
 }
 
-func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stderr *os.File) int {
+// errResumeReported is a resume failure already printed to the operator.
+var errResumeReported = errors.New("resume failure already reported")
+
+func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stderr io.Writer) int {
 	// Check tmux is installed
 	if err := session.CheckTmuxInstalled(); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -184,8 +214,21 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		return 1
 	}
 	defer release()
+	if err := session.ReinstateRetiredForResume(rc.ConvID, rc.ProjectPath); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
 
 	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", rc.ProjectPath))
+
+	// The agent's sandbox, prepared as an ordinary resume prepares it.
+	relaunch, err := prepareStandaloneRelaunch(rc.ConvID, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+	launched := false
+	defer func() { relaunch.settle(launched) }()
 
 	// Build the in-tmux launch command via the conv's own harness, mirroring
 	// the watch-mode resume (createSessionForConv): a Codex conv relaunches
@@ -199,6 +242,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		rc.ConvID,
 		clcommon.ExtractClaudeExtraArgs(),
 		&launchEffectiveSandbox,
+		relaunch,
 	)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
@@ -230,37 +274,14 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	if notice := describeResumedApproval(h, approvalState); notice != "" {
 		fmt.Fprintln(stdout, notice)
 	}
-	// Read the auto-memory posture BEFORE this resume writes its own session
-	// row: AutoMemoryForConv resolves the conv's most-recently-updated row, so
-	// reading after the write would just echo the new row's column default and
-	// decay an opt-in to off on the next resume. resumeLaunchCmd already
-	// applied this same recorded posture to the launch env; re-recording it
-	// below keeps the value alive across repeated resumes.
-	autoMemory, err := db.AutoMemoryForConv(rc.ConvID)
-	if err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
-		return 1
-	}
-	// Same read-before-write ordering for the peer-messaging posture, for
-	// exactly the same reason: reading after this resume's own row exists would
-	// echo the new row's column default and decay an opt-in to off.
-	peerMessaging, err := db.PeerMessagingForConv(rc.ConvID)
-	if err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
-		return 1
-	}
-	// Same read-before-write ordering for the startup-context trims, for exactly
-	// the same reason: reading after this resume's own row exists would echo the
-	// new row's empty default and quietly un-trim the agent on the next resume.
-	contextFeatures, err := db.ContextFeaturesForConv(rc.ConvID)
-	if err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
-		return 1
-	}
-	// Same read-before-write ordering for the auto-compaction window: reading
-	// after this resume's own row exists would echo the new row's empty default
-	// and hand the next resume the model's full window back.
-	autoCompactWindow, err := db.AutoCompactWindowForConv(rc.ConvID)
+	// Read the recorded launch posture (auto memory, peer messaging,
+	// startup-context trims, auto-compaction window) BEFORE this resume writes
+	// its own session row: the *ForConv readers resolve the conv's
+	// most-recently-updated row, so reading after the write would just echo
+	// the new row's column defaults and decay an opt-in on the next resume.
+	// resumeLaunchCmd already applied this same posture to the launch env;
+	// re-recording it below keeps it alive across repeated resumes.
+	autoMemory, peerMessaging, contextFeatures, autoCompactWindow, err := resumeContextPosture(rc.ConvID)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
@@ -273,7 +294,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
-	remoteControl, err := resumeRemoteControl(h, rc.ConvID)
+	remoteControl, err := relaunch.remoteControl(h, rc.ConvID)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
@@ -284,54 +305,74 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
 	// ps-visible-credentials exposure the spawn path already fixed.
 	launchStarted := time.Now()
-	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, rc.ProjectPath, launchCmd, h.Name,
-		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
-		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
-		return 1
+	// A no-sandbox Codex launch's managed requirements (codex_requirements.go),
+	// read before the pane starts, with the environment it launches with.
+	var codexEnvironment []sandboxpolicy.EnvironmentEntry
+	if launchEffectiveSandbox != nil {
+		codexEnvironment = sandboxpolicy.EnvironmentForLaunch(launchEffectiveSandbox)
 	}
+	codexImplementation, _ := resumeSandboxImplementation(rc.ConvID)
+	codexVerdict, codexChecked := session.VerifyCodexSandboxOff(h, codexImplementation,
+		resumeHarnessBuiltinMode(rc.ConvID), rc.ProjectPath, codexEnvironment)
+	launched, err = commitResumeLaunch(relaunch, func() error {
+		return session.LaunchResumedTmuxSession(sessionID, tmuxSession, rc.ProjectPath, launchCmd, h.Name,
+			session.CodexProfileMarkerArgs(profilePath)...)
+	}, func() error {
+		// Get PID and save state (starts as idle, waiting for user input).
+		// Carry the resolved harness onto the saved row so a non-claude tag is
+		// not coalesced back to "claude" by the DB layer (JOH-218).
+		pid := session.ParsePIDFromTmux(tmuxSession)
+		// A resume is a fresh launch: re-resolve whether the OS sandbox actually
+		// confines it rather than carrying the predecessor's verdict, because the
+		// operator may have changed settings.json since (TCL-729).
+		resumeMode := resumeHarnessBuiltinMode(rc.ConvID)
+		resumeChosenBy := resumeSandboxChosenBy(rc.ConvID)
+		resumeImplementation, err := resumeSandboxImplementation(rc.ConvID)
+		if err != nil {
+			return err
+		}
+		launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, rc.ProjectPath)
+		if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
+			launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(rc.ConvID)
+		}
+		if codexChecked {
+			launchOSSandbox = codexVerdict
+		}
+		state := &session.SessionState{
+			ID:                       sessionID,
+			TmuxSession:              tmuxSession,
+			PID:                      pid,
+			Cwd:                      rc.ProjectPath,
+			ConvID:                   rc.ConvID,
+			Status:                   session.StatusIdle,
+			Harness:                  h.Name,
+			HarnessBuiltinMode:       resumeMode,
+			SandboxImplementation:    string(resumeImplementation),
+			HarnessBuiltinModeSource: resumeChosenBy,
+			OSSandboxState:           launchOSSandbox.State,
+			OSSandboxSource:          launchOSSandbox.Source,
+			OSSandboxUnverified:      launchOSSandbox.Unverified,
+			EffectiveSandbox:         launchEffectiveSandbox,
+			ApprovalPolicy:           approvalPolicy,
+			ApprovalAutoReview:       autoReview,
+			AskUserQuestionTimeout:   askTimeout,
+			Created:                  launchStarted,
+			Updated:                  time.Now(),
+		}
 
-	// Get PID and save state (starts as idle, waiting for user input).
-	// Carry the resolved harness onto the saved row so a non-claude tag is
-	// not coalesced back to "claude" by the DB layer (JOH-218).
-	pid := session.ParsePIDFromTmux(tmuxSession)
-	// A resume is a fresh launch: re-resolve whether the OS sandbox actually
-	// confines it rather than carrying the predecessor's verdict, because the
-	// operator may have changed settings.json since (TCL-729).
-	resumeMode := resumeHarnessBuiltinMode(rc.ConvID)
-	resumeChosenBy := resumeSandboxChosenBy(rc.ConvID)
-	resumeImplementation, err := resumeSandboxImplementation(rc.ConvID)
+		if err := session.SaveSessionStateAfterLaunch(state); err != nil {
+			fmt.Fprintf(stderr, "Failed to save session state: %v\n", err)
+			return errResumeReported
+		}
+		return nil
+	})
 	if err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
-		return 1
-	}
-	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, rc.ProjectPath)
-	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
-		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(rc.ConvID)
-	}
-	state := &session.SessionState{
-		ID:                       sessionID,
-		TmuxSession:              tmuxSession,
-		PID:                      pid,
-		Cwd:                      rc.ProjectPath,
-		ConvID:                   rc.ConvID,
-		Status:                   session.StatusIdle,
-		Harness:                  h.Name,
-		HarnessBuiltinMode:       resumeMode,
-		SandboxImplementation:    string(resumeImplementation),
-		HarnessBuiltinModeSource: resumeChosenBy,
-		OSSandboxState:           launchOSSandbox.State,
-		OSSandboxSource:          launchOSSandbox.Source,
-		OSSandboxUnverified:      launchOSSandbox.Unverified,
-		EffectiveSandbox:         launchEffectiveSandbox,
-		ApprovalPolicy:           approvalPolicy,
-		ApprovalAutoReview:       autoReview,
-		AskUserQuestionTimeout:   askTimeout,
-		Created:                  launchStarted,
-		Updated:                  time.Now(),
-	}
-
-	if err := session.SaveSessionStateAfterLaunch(state); err != nil {
-		fmt.Fprintf(stderr, "Failed to save session state: %v\n", err)
+		switch {
+		case !launched:
+			fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
+		case !errors.Is(err, errResumeReported):
+			fmt.Fprintf(stderr, "%v\n", err)
+		}
 		return 1
 	}
 	// Carry the posture onto the row this resume just created. Out-of-band,

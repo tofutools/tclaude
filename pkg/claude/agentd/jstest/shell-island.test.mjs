@@ -157,7 +157,7 @@ test('disconnect overlay is removed on reconnect so its compositor layers cannot
 
   await harness.act(() => state.setConnection('connected'));
   assertAbsent(mounted.container.querySelector('#disconnect-overlay'),
-    'reconnect destroys the backdrop-filter and animation subtree');
+    'reconnect destroys the overlay and animation subtree');
   await mounted.unmount();
 });
 
@@ -210,6 +210,38 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
   await mounted.unmount();
 });
 
+test('Escape on a PR badge with no card open closes the footer open PRs popover', async (t) => {
+  // The PR link, CI and review badges share one Escape rule: it closes their
+  // own card when it is open, and is otherwise left to the popover around them.
+  for (const selector of ['.open-pr-row .prd-hover a', '.open-pr-row .ci-badge:not(.rv-badge)', '.open-pr-row .rv-badge']) {
+    const harness = await createPreactHarness(t);
+    const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+      harness.importDashboardModule('js/snapshot-store.js'),
+      harness.importDashboardModule('js/shell-island.js'),
+    ]);
+    const state = createDashboardState();
+    const mounted = await harness.mount(harness.html`<${OpenPRs} state=${state} />`);
+    state.beginRequest();
+    await harness.act(() => state.commitRequest(1, { authored_open_prs: {
+      available: true, total: 1, updated_at: '2026-08-13T08:00:00Z',
+      items: [{ number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Fails', repository: 'acme/app',
+        checks: { total: 1, failed: 1, state: 'failing' }, reviews: { approved: 1, reviewers_known: true } }],
+    } }));
+    await harness.act(() => getByRole(mounted.container, 'button', { name: /Open PRs/ }).click());
+    const badge = mounted.container.querySelector(selector);
+    assert.ok(badge, `${selector} renders in the popover`);
+    assert.equal(badge.getAttribute('aria-expanded'), 'false', `${selector} has no card open`);
+    await harness.act(() => harness.fireEvent(badge.closest('.ci-hover'), 'mouseenter'));
+    assert.equal(badge.getAttribute('aria-expanded'), 'true', `hovering ${selector} opens its card`);
+    await harness.act(() => harness.fireEvent(badge, 'keydown', { key: 'Escape' }));
+    assert.equal(badge.getAttribute('aria-expanded'), 'false', `Escape on ${selector} closes its open card first`);
+    assert.ok(mounted.container.querySelector('#open-prs-popover'), `the popover stays while ${selector} closes its card`);
+    await harness.act(() => harness.fireEvent(badge, 'keydown', { key: 'Escape' }));
+    assertAbsent(mounted.container.querySelector('#open-prs-popover'), `Escape on ${selector} closes the popover`);
+    await mounted.unmount();
+  }
+});
+
 test('footer open PR counter is neutral while only clean CI is running', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
@@ -230,7 +262,7 @@ test('footer open PR counter is neutral while only clean CI is running', async (
   await mounted.unmount();
 });
 
-test('footer open PRs gives the pointer one second to reach the popover', async (t) => {
+test('footer open PRs gives the pointer the shared hover grace to reach the popover', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -253,15 +285,17 @@ test('footer open PRs gives the pointer one second to reach the popover', async 
     'leaving does not close the popover immediately');
 
   // Returning before the grace period expires cancels that close. A second
-  // leave starts a fresh, complete grace period: 800ms after that second
+  // leave starts a fresh, complete grace period: 80% of it after that second
   // leave, the original timer would already have fired if it survived.
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/hover-popover.js');
+  const wait = (ms) => harness.act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+  await wait(HOVER_CLOSE_MS * 0.4);
   await harness.act(() => harness.fireEvent(root, 'mouseenter'));
   await harness.act(() => harness.fireEvent(root, 'mouseleave'));
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 800)));
+  await wait(HOVER_CLOSE_MS * 0.8);
   assert.ok(mounted.container.querySelector('#open-prs-popover'),
     're-entry cancels the old timer and the final leave gets a full grace period');
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+  await wait(HOVER_CLOSE_MS * 0.4);
   assertAbsent(mounted.container.querySelector('#open-prs-popover'));
 
   const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
@@ -297,7 +331,7 @@ test('footer open PRs stays mounted at zero and lists recently closed PRs', asyn
 
   await harness.act(() => trigger.click());
   assert.equal(mounted.container.querySelectorAll('.open-pr-row').length, 0);
-  assert.match(mounted.container.querySelector('.open-prs-empty').textContent, /No open pull requests\./);
+  assert.match(mounted.container.querySelector('.ui-empty-block').textContent, /No open pull requests\./);
 
   await harness.act(() => getByRole(mounted.container, 'button', { name: /Closed 3d 1/ }).click());
   assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Landed']);
@@ -367,7 +401,7 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   assert.equal(body.classList.contains('confirm-body-preformatted'), true);
   assertAbsent(mounted.container.querySelector('#confirm-cancel'));
   const close = getByRole(mounted.container, 'button', { name: 'Close' });
-  assert.equal(close.classList.contains('confirm-danger'), false);
+  assert.equal(close.classList.contains('ui-btn-danger'), false);
   await harness.act(() => close.click());
   assert.equal(await closed, true);
   await mounted.unmount();
@@ -390,6 +424,29 @@ test('a confirmation starts focus on its action (so a plain Enter confirms) and 
   assertSameNode(harness.document.activeElement, mounted.container.querySelector('#confirm-ok'));
   await harness.act(() => mounted.container.querySelector('#confirm-ok').click());
   assert.equal(await answered, true);
+  await mounted.unmount();
+});
+
+test('a confirmation renders its checkboxes and hands the choices back on the caller\'s objects', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createShellState }, { Confirm }] = await Promise.all([
+    harness.importDashboardModule('js/shell-state.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const feedback = createShellState();
+  const mounted = await harness.mount(harness.html`<${Confirm} feedback=${feedback} />`);
+  const checks = [{ label: 'Apply sandbox', checked: true }, { label: 'Apply environment', checked: true, hint: 'next restart' }];
+  let answered;
+  await harness.act(() => { answered = feedback.confirm({ title: 'Move?', checks }); });
+  const boxes = [...mounted.container.querySelectorAll('.confirm-check input')];
+  assert.equal(boxes.length, 2);
+  assert.match(mounted.container.querySelector('.confirm-checks').textContent, /next restart/);
+  boxes[0].focus();
+  await harness.act(() => { boxes[0].checked = false; boxes[0].dispatchEvent(new harness.window.Event('change', { bubbles: true })); });
+  assertSameNode(harness.document.activeElement, boxes[0], 'toggling keeps focus on the checkbox, not the action');
+  await harness.act(() => mounted.container.querySelector('#confirm-ok').click());
+  assert.equal(await answered, true);
+  assert.deepEqual(checks.map((check) => check.checked), [false, true]);
   await mounted.unmount();
 });
 
@@ -435,7 +492,7 @@ test('global activity keeps keyed native bot identity across polls and wizard ch
   assertSameNode(mounted.container.querySelector('.ga-regular'), regular,
     'theme wording changes do not remount hidden animation rows');
   assertSameNode(regular.querySelector('.actbot-working'), working);
-  assert.match(mounted.container.querySelector('#global-activity').title, /familiars channeling/);
+  assert.match(mounted.container.querySelector('#global-activity').title, /heroes channeling/);
   await mounted.unmount();
 });
 
@@ -588,6 +645,95 @@ test('footer open PRs ignores a PR after confirming, and brings it back', async 
   await mounted.unmount();
 });
 
+test('footer open MRs ignores a merge request in the store Open PRs uses, and brings it back', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { dashPrefs }, { OpenPRs, OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const pref = 'tclaude.dash.open-prs.ignored';
+  dashPrefs.removeItem(pref);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<div><${OpenPRs} state=${state} /><${OpenMRs} state=${state} /></div>`);
+  const mr = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, {
+    authored_open_prs: { available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'A PR', repository: 'acme/app' },
+    ] },
+    authored_open_mrs: { available: true, total: 2, items: [
+      { number: 7, url: `${mr}7`, title: 'Keep', repository: 'acme/app' },
+      { number: 8, url: `${mr}8`, title: 'Stale idea', repository: 'acme/app' },
+    ] },
+  }));
+  const prs = mounted.container.querySelector('.open-prs:not(.open-mrs)');
+  const mrs = mounted.container.querySelector('.open-mrs');
+  const titles = () => [...mrs.querySelectorAll('.open-pr-title')].map((node) => node.textContent);
+
+  // A pull request ignored first must survive the merge request's save.
+  await harness.act(() => getByRole(prs, 'button', { name: /Open PRs/ }).click());
+  await harness.act(() => getByRole(prs, 'button', { name: /Ignore pull request #1/ }).click());
+  await harness.act(() => getByRole(prs, 'button', { name: /^Ignore$/ }).click());
+
+  await harness.act(() => getByRole(mrs, 'button', { name: /Open MRs/ }).click());
+  await harness.act(() => getByRole(mrs, 'button', { name: /Ignore merge request !8/ }).click());
+  const dialog = mrs.querySelector('[role="alertdialog"]');
+  assert.match(dialog.querySelector('h4').textContent, /^Ignore merge request !8\?$/);
+  await harness.act(() => getByRole(mrs, 'button', { name: /^Ignore$/ }).click());
+  assert.deepEqual(titles(), ['Keep']);
+  assert.match(mrs.querySelector('.open-mrs-scope + .open-prs-count').textContent, /^1$/, 'the footer count leaves it out');
+
+  const stored = JSON.parse(dashPrefs.getItem(pref));
+  assert.deepEqual(Object.keys(stored).sort(), ['acme/app#1', 'mr:gitlab.example.test:8929/acme/app!8'],
+    'one store, both kinds, neither save dropping the other');
+
+  await harness.act(() => getByRole(mrs, 'button', { name: /Ignored 1/ }).click());
+  assert.deepEqual(titles(), ['Stale idea']);
+  await harness.act(() => getByRole(mrs, 'button', { name: /Bring back merge request !8/ }).click());
+  assert.deepEqual(Object.keys(JSON.parse(dashPrefs.getItem(pref))), ['acme/app#1'], 'the pull request stays ignored');
+
+  if (!prs.querySelector('#open-prs-popover')) await harness.act(() => getByRole(prs, 'button', { name: /Open PRs/ }).click());
+  assert.ok(getByRole(prs, 'button', { name: /Ignored 1/ }), 'Open PRs counts only its own kind');
+  dashPrefs.removeItem(pref);
+  await mounted.unmount();
+});
+
+test('footer open MRs shows your recently closed merge requests with their final CI on request', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  const mr = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
+    available: true, total: 1, recent_window_days: 3,
+    items: [{ number: 7, url: `${mr}7`, title: 'Open one', repository: 'acme/app', checks: { total: 1, pending: 1, state: 'pending' } }],
+    recent: [{ number: 5, url: `${mr}5`, title: 'Landed', repository: 'acme/app', state: 'merged',
+      closed_at: '2026-11-02T10:00:00Z', checks: { total: 1, failed: 1, state: 'failing' } }],
+  } }));
+  const c = mounted.container;
+  await harness.act(() => getByRole(c, 'button', { name: /Open MRs/ }).click());
+  await harness.act(() => getByRole(c, 'button', { name: /Closed 3d 1/ }).click());
+  const rows = [...c.querySelectorAll('.open-pr-row')];
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].textContent, /Landed/);
+  assert.match(rows[0].textContent, /merged/);
+  assert.equal(rows[0].querySelector('.open-pr-ignore'), null, 'history is not ignored');
+  assert.equal(rows[0].querySelector('.rv-badge'), null, 'nor reviewed');
+  assert.equal(rows[0].querySelector('.ci-badge'), null, 'its last pipeline stays quiet until asked for');
+  const finalCI = getByLabelText(c, 'Final CI');
+  finalCI.checked = true;
+  await harness.act(() => harness.fireEvent(finalCI, 'change'));
+  assert.ok(c.querySelector('.open-pr-row .ci-badge'), 'Final CI shows the last pipeline result');
+  await harness.act(() => getByRole(c, 'button', { name: /Open 1/ }).click());
+  assert.match(c.querySelector('.open-pr-row').textContent, /Open one/);
+  await mounted.unmount();
+});
+
 test('footer open PR titles open the PR details card unless turned off', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { dashPrefs }, { OpenPRs }] = await Promise.all([
@@ -613,7 +759,8 @@ test('footer open PR titles open the PR details card unless turned off', async (
   assert.ok(card, 'the shared PR details card opens on the title');
   assert.match(card.querySelector('.prd-title').textContent, /Hover me\s+#4/);
   assert.equal(card.querySelector('.prd-repo').textContent.trim(), 'acme/app');
-  await harness.act(() => harness.fireEvent(hoverRoot(), 'mouseleave'));
+  // mouseleave does not bubble: this leaves the card, not the open popover.
+  await harness.act(() => hoverRoot().dispatchEvent(new (hoverRoot().ownerDocument.defaultView.Event)('mouseleave')));
   // The card lingers briefly after the pointer leaves; wait that out so the
   // Escape below reaches a title with no card open.
   const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/pr-checks-hover.js');
@@ -688,7 +835,7 @@ test('footer open PRs tracks colleagues in their own tabs', async (t) => {
     "a colleague's ignore stays out of your Ignored list");
 
   await harness.act(() => getByRole(c, 'tab', { name: /bob/ }).click());
-  assert.match(c.querySelector('.open-prs-empty').textContent, /Searching GitHub for bob’s pull requests/);
+  assert.match(c.querySelector('.ui-empty-block').textContent, /Searching GitHub for bob’s pull requests/);
 
   await harness.act(() => getByRole(c, 'button', { name: /Add person/ }).click());
   const field = c.querySelector('input[aria-label="GitHub username"]');
@@ -739,5 +886,228 @@ test('the header\'s global notification hint opens the quick reader on the first
   assert.equal(opened.length, 1);
   assert.equal(opened[0].messageId, 9);
   assert.equal(opened[0].sender.agent, 'agt_x');
+  await mounted.unmount();
+});
+
+test('footer open MRs lists GitLab merge requests next to open PRs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_prs: { available: true, total: 0, items: [] } }));
+  assert.equal(mounted.container.querySelector('.open-mrs'), null, 'absent until the daemon has a GitLab list');
+
+  const base = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(2, { authored_open_mrs: {
+    available: true, total: 2, updated_at: '2026-11-02T10:00:00Z',
+    items: [
+      { number: 7, url: `${base}7`, title: 'Ready one', repository: 'acme/app', agent_title: 'builder', agent_id: 'agt_1',
+        checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 2 } },
+      { number: 8, url: `${base}8`, title: 'Stuck one', repository: 'acme/app', conflicts: true,
+        checks: { total: 1, pending: 1, state: 'pending' }, reviews: { approved: 0 } },
+    ],
+    instances: [
+      { host: 'gitlab.example.test:8929', url: 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe' },
+      { host: 'other.example.test', error: 'GitLab applied a rate limit; retry in 2m0s' },
+    ],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open MRs/ });
+  assert.ok(mounted.container.querySelector('.open-mrs.has-attention'));
+  await harness.act(() => trigger.click());
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  const rows = [...mounted.container.querySelectorAll('.open-pr-row')];
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /acme\/app · !7 · builder/);
+  assert.doesNotMatch(rows[0].textContent, /approval/, 'the review pill carries the approvals, not the meta line');
+  assert.match(rows[1].textContent, /!8 · conflict · no active agent/);
+  assert.equal(rows[0].querySelector('.ci-count').textContent, 'pipeline', 'one head pipeline, not a check count');
+  const pill = rows[0].querySelector('.rv-badge');
+  assert.ok(pill?.classList.contains('rv-approved'), 'a merge request has the same review pill as a pull request');
+  assert.equal(pill.textContent.trim(), '2');
+  assert.match(pill.getAttribute('aria-label'), /Reviews for !7 .*Opens the merge request on GitLab/);
+  assert.ok(rows[0].querySelector('.prd-hover .open-pr-title'), 'the title opens the merge request\'s details card');
+  const link = getByRole(mounted.container, 'link', { name: /Open all on gitlab\.example\.test:8929/ });
+  assert.equal(link.getAttribute('href'), 'https://gitlab.example.test:8929/dashboard/merge_requests?state=opened&author_username=jdoe');
+  assert.match(mounted.container.querySelector('.open-prs-stale').textContent, /other\.example\.test: GitLab applied a rate limit/);
+
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Ready to merge 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Ready one']);
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Unattached 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Stuck one']);
+
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assertAbsent(mounted.container.querySelector('#open-mrs-popover'));
+  assertSameNode(harness.document.activeElement, trigger);
+  await mounted.unmount();
+});
+
+test('footer open MRs shows mine and all, and a tab per project for everyone\'s', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  const base = 'https://gitlab.example.test:8929';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
+    available: true, total: 0, items: [], everyone_total: 2,
+    instances: [{ host: 'gitlab.example.test:8929', url: `${base}/dashboard/merge_requests?state=opened&author_username=jdoe`,
+      everyone_error: 'GitLab applied a rate limit; retry in 1m30s' }],
+    projects: [{ host: 'gitlab.example.test:8929', project: 'contoso/player', url: `${base}/contoso/player/-/merge_requests`,
+      total: 2, agents: true, items: [
+        { number: 249, url: `${base}/contoso/player/-/merge_requests/249`, title: 'Merge 1st', repository: 'contoso/player',
+          author: 'martin', agent_title: 'builder', agent_id: 'agt_1', checks: { total: 1, passed: 1, state: 'passing' }, reviews: { approved: 1 } },
+        { number: 250, url: `${base}/contoso/player/-/merge_requests/250`, title: 'Merge 2nd', repository: 'contoso/player',
+          author: 'agent-bot', conflicts: true, checks: { total: 1, pending: 1, state: 'pending' } },
+      ] }],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open MRs/ });
+  assert.match(trigger.textContent, /Open MRs\s*mine\s*0\s*all\s*2/, 'two numbers, each named');
+  assert.ok(mounted.container.querySelector('.open-mrs.is-empty'), 'nothing of yours: the dot stays grey');
+  assert.equal(mounted.container.querySelector('.open-mrs-all-count').textContent, '2');
+
+  await harness.act(() => trigger.click());
+  assert.match(mounted.container.querySelector('.ui-empty-block').textContent, /No open merge requests/);
+  assert.equal(mounted.container.querySelector('.open-prs-stale'), null,
+    'a failed project-wide read is not an instance failure on Mine');
+  const tab = getByRole(mounted.container, 'tab', { name: /player 2/ });
+  assert.equal(getByRole(mounted.container, 'tab', { name: /Mine 0/ }).getAttribute('aria-selected'), 'true');
+  await harness.act(() => tab.click());
+  assert.equal(tab.getAttribute('aria-selected'), 'true');
+  assert.match(mounted.container.querySelector('.open-prs-head').textContent, /Open merge requests in contoso\/player/);
+  assert.match(mounted.container.querySelector('.open-prs-stale').textContent,
+    /Everyone's merge requests on gitlab\.example\.test:8929 are from an earlier read: GitLab applied a rate limit/);
+  const rows = [...mounted.container.querySelectorAll('.open-pr-row')];
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /!249 · by martin · builder/);
+  assert.equal(rows[0].querySelector('.rv-badge').textContent.trim(), '1', 'a project tab row has the review pill too');
+  assert.match(rows[1].textContent, /!250 · by agent-bot · conflict · no active agent/);
+  const link = getByRole(mounted.container, 'link', { name: /Open in GitLab/ });
+  assert.equal(link.getAttribute('href'), `${base}/contoso/player/-/merge_requests`);
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Ready to merge 1/ }).click());
+  assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Merge 1st']);
+  await mounted.unmount();
+});
+
+test('hover details is one setting across Open PRs and Open MRs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs, OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<div><${OpenPRs} state=${state} /><${OpenMRs} state=${state} /></div>`);
+  const mr = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, {
+    authored_open_prs: { available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'A PR', repository: 'acme/app', checks: { total: 1, passed: 1, state: 'passing' } },
+    ] },
+    authored_open_mrs: { available: true, total: 1, items: [
+      { number: 2, url: `${mr}2`, title: 'An MR', repository: 'acme/app', checks: { total: 1, passed: 1, state: 'passing' } },
+    ] },
+  }));
+  const prs = mounted.container.querySelector('.open-prs:not(.open-mrs)');
+  const mrs = mounted.container.querySelector('.open-mrs');
+  await harness.act(() => getByRole(mrs, 'button', { name: /Open MRs/ }).click());
+  assert.ok(mrs.querySelector('.open-pr-row .prd-hover'), 'on by default');
+  const box = getByLabelText(mrs, 'Hover details');
+  box.checked = false;
+  await harness.act(() => harness.fireEvent(box, 'change'));
+  assert.equal(mrs.querySelector('.open-pr-row .prd-hover'), null, 'off: the title is a plain link');
+  await harness.act(() => getByRole(prs, 'button', { name: /Open PRs/ }).click());
+  assert.ok(!getByLabelText(prs, 'Hover details').checked, 'turning it off in Open MRs turns it off in Open PRs');
+  assert.equal(prs.querySelector('.open-pr-row .prd-hover'), null);
+  await mounted.unmount();
+});
+
+test('include drafts is one setting across Open PRs and Open MRs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs, OpenPRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<div><${OpenPRs} state=${state} /><${OpenMRs} state=${state} /></div>`);
+  const mr = 'https://gitlab.example.test:8929/acme/app/-/merge_requests/';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, {
+    authored_open_prs: { available: true, total: 1, items: [
+      { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Draft PR', repository: 'acme/app', draft: true, checks: { total: 1, failed: 1, state: 'failing' } },
+    ] },
+    authored_open_mrs: { available: true, total: 1, items: [
+      { number: 2, url: `${mr}2`, title: 'Draft MR', repository: 'acme/app', draft: true, checks: { total: 1, failed: 1, state: 'failing' } },
+    ] },
+  }));
+  const prs = mounted.container.querySelector('.open-prs:not(.open-mrs)');
+  const mrs = mounted.container.querySelector('.open-mrs');
+  await harness.act(() => getByRole(prs, 'button', { name: /Open PRs/ }).click());
+  await harness.act(() => getByRole(prs, 'button', { name: /Needs attention 0/ }).click());
+  const box = getByLabelText(prs, 'Include drafts');
+  box.checked = true;
+  await harness.act(() => harness.fireEvent(box, 'change'));
+  assert.ok(mrs.classList.contains('has-attention'), 'ticking it in Open PRs counts the draft MR in Open MRs too');
+  await mounted.unmount();
+});
+
+test('a project-wide read that never answered says so on Mine, and all reads ?', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  const base = 'https://gitlab.example.test:8929';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
+    available: true, total: 1, everyone_total: 0, projects: [],
+    items: [{ number: 7, url: `${base}/acme/app/-/merge_requests/7`, title: 'Mine', repository: 'acme/app',
+      checks: { total: 1, passed: 1, state: 'passing' } }],
+    instances: [{ host: 'gitlab.example.test:8929', url: `${base}/dashboard/merge_requests?state=opened&author_username=jdoe`,
+      everyone_error: 'context deadline exceeded' }],
+  } }));
+  const trigger = getByRole(mounted.container, 'button', { name: /Open MRs/ });
+  assert.equal(mounted.container.querySelector('.open-mrs-all-count').textContent, '?', 'unknown, not zero');
+  await harness.act(() => trigger.click());
+  assert.match(mounted.container.querySelector('.open-prs-stale').textContent,
+    /Everyone's merge requests on gitlab\.example\.test:8929 could not be read: context deadline exceeded/);
+  assert.match(mounted.container.querySelector('.ci-badge').getAttribute('aria-label'), /Opens the pipeline on GitLab/,
+    'a merge request badge names GitLab');
+  await mounted.unmount();
+});
+
+test('a project-limited token reads everyone\'s project by project and says so, not as an error', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { OpenMRs }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${OpenMRs} state=${state} />`);
+  const base = 'https://gitlab.example.test:8929';
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { authored_open_mrs: {
+    available: true, total: 0, items: [], everyone_total: 1,
+    instances: [{ host: 'gitlab.example.test:8929', url: `${base}/dashboard/merge_requests?state=opened&author_username=jdoe`,
+      everyone_by_project: 3 }],
+    projects: [{ host: 'gitlab.example.test:8929', project: 'acme/app', url: `${base}/acme/app/-/merge_requests`,
+      total: 1, items: [{ number: 4, url: `${base}/acme/app/-/merge_requests/4`, title: 'Theirs', repository: 'acme/app', author: 'ann' }] }],
+  } }));
+  assert.equal(mounted.container.querySelector('.open-mrs-all-count').textContent, '1', 'a count, not ?');
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Open MRs/ }).click());
+  assert.equal(mounted.container.querySelector('.open-prs-stale'), null, 'no error');
+  assert.match(mounted.container.querySelector('.open-prs-note').textContent,
+    /Everyone's merge requests on gitlab\.example\.test:8929: 3 projects, read individually: this token can't list the whole instance/);
+  await harness.act(() => getByRole(mounted.container, 'tab', { name: /app 1/ }).click());
+  assert.match(mounted.container.querySelector('.open-prs-note').textContent, /3 projects, read individually/,
+    'the project tab says it too');
   await mounted.unmount();
 });

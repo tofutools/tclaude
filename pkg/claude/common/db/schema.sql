@@ -188,7 +188,7 @@ CREATE TABLE "agent_groups" (
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  INTEGER NOT NULL
 		, archived_at INTEGER, default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER, attachment_url TEXT NOT NULL DEFAULT '', attachment_label TEXT NOT NULL DEFAULT '', route_generation INTEGER NOT NULL DEFAULT 0, owner_scopes_json TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144), default_spawn_group INTEGER NOT NULL DEFAULT 0, environment_json TEXT NOT NULL DEFAULT '[]', reinject_after_compact TEXT NOT NULL DEFAULT '', default_prompts TEXT NOT NULL DEFAULT '[]') STRICT;
+			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144), default_spawn_group INTEGER NOT NULL DEFAULT 0, environment_json TEXT NOT NULL DEFAULT '[]', reinject_after_compact TEXT NOT NULL DEFAULT '', default_prompts TEXT NOT NULL DEFAULT '[]', mission_header TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_agent_groups_archived
 			ON agent_groups(archived_at);
@@ -269,11 +269,13 @@ CREATE TABLE "agent_cron_jobs" (
 			last_run_at      INTEGER,
 			last_run_status  TEXT NOT NULL DEFAULT ''
 		, target_kind TEXT NOT NULL DEFAULT 'conv'
-			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '', target_role TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', run_immediately INTEGER NOT NULL DEFAULT 0, queue_when_offline INTEGER NOT NULL DEFAULT 0, operator_authored INTEGER NOT NULL DEFAULT 0, action_kind TEXT NOT NULL DEFAULT 'message' CHECK (action_kind IN ('message','spawn')), spawn_profile TEXT NOT NULL DEFAULT '', spawn_role_refs_json TEXT NOT NULL DEFAULT '[]', spawn_name_template TEXT NOT NULL DEFAULT '', spawn_instruction_template TEXT NOT NULL DEFAULT '', spawn_concurrency_policy TEXT NOT NULL DEFAULT 'Forbid' CHECK (spawn_concurrency_policy IN ('Forbid','Replace','Allow')), spawn_max_live_workers INTEGER NOT NULL DEFAULT 1 CHECK (spawn_max_live_workers > 0), spawn_worker_deadline_seconds INTEGER NOT NULL DEFAULT 0 CHECK (spawn_worker_deadline_seconds >= 0)) STRICT;
+			CHECK (target_kind IN ('conv', 'group')), cron_expr TEXT NOT NULL DEFAULT '', target_role TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', run_immediately INTEGER NOT NULL DEFAULT 0, queue_when_offline INTEGER NOT NULL DEFAULT 0, operator_authored INTEGER NOT NULL DEFAULT 0, action_kind TEXT NOT NULL DEFAULT 'message' CHECK (action_kind IN ('message','spawn')), spawn_profile TEXT NOT NULL DEFAULT '', spawn_role_refs_json TEXT NOT NULL DEFAULT '[]', spawn_name_template TEXT NOT NULL DEFAULT '', spawn_instruction_template TEXT NOT NULL DEFAULT '', spawn_concurrency_policy TEXT NOT NULL DEFAULT 'Forbid' CHECK (spawn_concurrency_policy IN ('Forbid','Replace','Allow')), spawn_max_live_workers INTEGER NOT NULL DEFAULT 1 CHECK (spawn_max_live_workers > 0), spawn_worker_deadline_seconds INTEGER NOT NULL DEFAULT 0 CHECK (spawn_worker_deadline_seconds >= 0), owner_peer TEXT NOT NULL DEFAULT '', owner_peer_agent TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_agent_cron_jobs_owner ON agent_cron_jobs(owner_agent);
 
 CREATE INDEX idx_agent_cron_jobs_target ON agent_cron_jobs(target_agent);
+
+CREATE INDEX idx_agent_cron_jobs_owner_peer ON agent_cron_jobs(owner_peer) WHERE owner_peer <> '';
 
 CREATE TABLE "agent_cron_runs" (
 			id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -451,13 +453,17 @@ CREATE TABLE "human_messages" (
 			body        TEXT NOT NULL,
 			created_at  INTEGER NOT NULL,
 			read_at     INTEGER
-		, from_agent TEXT NOT NULL DEFAULT '', process_run_id TEXT NOT NULL DEFAULT '', process_node_id TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '') STRICT;
+		, from_agent TEXT NOT NULL DEFAULT '', process_run_id TEXT NOT NULL DEFAULT '', process_node_id TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', options TEXT NOT NULL DEFAULT '', recommended INTEGER NOT NULL DEFAULT 0, decision TEXT NOT NULL DEFAULT '', decided_at INTEGER, action TEXT NOT NULL DEFAULT '', dismissed_at INTEGER, dismissed_by TEXT NOT NULL DEFAULT '', dismiss_reason TEXT NOT NULL DEFAULT ''
+				CHECK(length(CAST(dismiss_reason AS BLOB)) <= 2048)) STRICT;
 
 CREATE INDEX idx_human_messages_created
 			ON human_messages(created_at);
 
 CREATE INDEX idx_human_messages_unread
 			ON human_messages(id) WHERE read_at IS NULL;
+
+CREATE INDEX idx_human_messages_undecided
+			ON human_messages(id) WHERE options != '' AND decision = '' AND dismissed_at IS NULL;
 
 CREATE TABLE "conv_branch_history" (
 			conv_id    TEXT NOT NULL,
@@ -483,21 +489,6 @@ CREATE TABLE "agent_workspace" (
 			pr_state       TEXT NOT NULL DEFAULT '',
 			updated_at     INTEGER
 		, agent_id TEXT NOT NULL DEFAULT '') STRICT;
-
-CREATE TABLE "session_cost_daily" (
-			session_id TEXT NOT NULL,
-			day        TEXT NOT NULL,
-			conv_id    TEXT NOT NULL DEFAULT '',
-			cost_usd   REAL NOT NULL DEFAULT 0, updated_at INTEGER, virtual_cost_usd REAL NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '', agent_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude',
-			PRIMARY KEY (session_id, day)
-		) STRICT;
-
-CREATE INDEX idx_session_cost_daily_day ON session_cost_daily(day);
-
-CREATE INDEX idx_session_cost_daily_walk
-			ON session_cost_daily(
-				COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
-			);
 
 CREATE TABLE "dashboard_prefs" (
 			key        TEXT PRIMARY KEY,
@@ -565,7 +556,7 @@ CREATE TABLE "spawn_profiles" (
 			include_group_default_context INTEGER,
 			created_at                    INTEGER NOT NULL,
 			updated_at                    INTEGER NOT NULL
-		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER, role_ref TEXT NOT NULL DEFAULT '', role_refs TEXT NOT NULL DEFAULT '[]', fetch_latest_worktree INTEGER, environment_json TEXT NOT NULL DEFAULT '[]', peer_messaging INTEGER, model_proxy TEXT NOT NULL DEFAULT '', prompt_refs TEXT NOT NULL DEFAULT '[]') STRICT;
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER, role_ref TEXT NOT NULL DEFAULT '', role_refs TEXT NOT NULL DEFAULT '[]', fetch_latest_worktree INTEGER, environment_json TEXT NOT NULL DEFAULT '[]', peer_messaging INTEGER, model_proxy TEXT NOT NULL DEFAULT '', prompt_refs TEXT NOT NULL DEFAULT '[]', relaunch_policy TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TRIGGER spawn_profile_name_not_alias_insert
 		BEFORE INSERT ON spawn_profiles
@@ -652,7 +643,7 @@ CREATE TABLE "agents" (
 			retired_by      TEXT NOT NULL DEFAULT '',
 			retire_reason   TEXT NOT NULL DEFAULT '',
 			pending_name    TEXT NOT NULL DEFAULT ''
-		, retired_by_agent TEXT NOT NULL DEFAULT '', initial_spawn_config TEXT NOT NULL DEFAULT '', task_ref_url TEXT NOT NULL DEFAULT '', task_ref_label TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', relaunch_profile TEXT NOT NULL DEFAULT '') STRICT;
+		, retired_by_agent TEXT NOT NULL DEFAULT '', initial_spawn_config TEXT NOT NULL DEFAULT '', task_ref_url TEXT NOT NULL DEFAULT '', task_ref_label TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', relaunch_profile TEXT NOT NULL DEFAULT '', launch_layers TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE UNIQUE INDEX idx_agents_process_command ON agents(process_command_id) WHERE process_command_id <> '';
 
@@ -661,6 +652,30 @@ CREATE TRIGGER usage_profile_assignments_agent_gone
 				DELETE FROM usage_profile_assignments
 				WHERE scope = 'agent' AND scope_id = OLD.agent_id;
 			END;
+
+CREATE TRIGGER external_steward_retired
+		AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
+			UPDATE external_steward_credentials SET revoked_at = NEW.retired_at
+			WHERE agent_id = NEW.agent_id AND revoked_at IS NULL;
+		END;
+
+CREATE INDEX idx_agents_active ON agents(agent_id) WHERE retired_at IS NULL;
+
+CREATE TRIGGER group_tasks_unassign_on_retire
+		AFTER UPDATE OF retired_at ON agents
+		WHEN NEW.retired_at IS NOT NULL AND OLD.retired_at IS NULL
+		BEGIN
+			INSERT INTO group_task_events (task_id, at, actor, kind, detail)
+				SELECT id, NEW.retired_at, 'system:retire', 'unassigned', 'assignee retired'
+				FROM group_tasks WHERE assignee_id = NEW.agent_id AND status IN ('open','blocked');
+			UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL, updated_at = NEW.retired_at
+				WHERE assignee_id = NEW.agent_id AND status IN ('open','blocked');
+		END;
+
+CREATE TRIGGER collab_drawing_board_sessions_agent_retired
+ AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
+ DELETE FROM collab_drawing_board_sessions WHERE agent_id = NEW.agent_id;
+END;
 
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
@@ -685,6 +700,19 @@ CREATE TABLE "agent_group_members" (
 CREATE INDEX idx_agent_group_members_agent
 				ON agent_group_members(agent_id);
 
+CREATE TRIGGER group_tasks_unassign_on_leave
+		AFTER DELETE ON agent_group_members
+		BEGIN
+			INSERT INTO group_task_events (task_id, at, actor, kind, detail)
+				SELECT id, CAST((julianday('now') - 2440587.5) * 86400000000000 AS INTEGER),
+					'system:membership', 'unassigned', 'assignee left the group'
+				FROM group_tasks
+				WHERE group_id = OLD.group_id AND assignee_id = OLD.agent_id AND status IN ('open','blocked');
+			UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL,
+					updated_at = CAST((julianday('now') - 2440587.5) * 86400000000000 AS INTEGER)
+				WHERE group_id = OLD.group_id AND assignee_id = OLD.agent_id AND status IN ('open','blocked');
+		END;
+
 CREATE TABLE "agent_group_owners" (
 				group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
 				agent_id   TEXT NOT NULL,
@@ -702,7 +730,8 @@ CREATE TABLE "agent_permissions" (
 				granted_at INTEGER NOT NULL,
 				granted_by TEXT NOT NULL DEFAULT '',
 				effect     TEXT NOT NULL DEFAULT 'grant' CHECK (effect IN ('grant', 'deny')), scope_json TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144),
+			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144), birth_source TEXT NOT NULL DEFAULT ''
+				CHECK(length(CAST(birth_source AS BLOB)) BETWEEN 0 AND 4096),
 				PRIMARY KEY (agent_id, slug)
 			) STRICT;
 
@@ -719,7 +748,7 @@ CREATE TABLE "agent_sudo_grants" (
 				reason      TEXT NOT NULL DEFAULT '',
 				revoked_at  INTEGER
 			, scope_json TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144)) STRICT;
+			CHECK(length(CAST(scope_json AS BLOB)) BETWEEN 0 AND 262144), carried_id INTEGER NOT NULL DEFAULT 0, uses_limit INTEGER NOT NULL DEFAULT 0, uses_left INTEGER NOT NULL DEFAULT 0) STRICT;
 
 CREATE INDEX idx_sudo_active
 				ON agent_sudo_grants(agent_id, expires_at) WHERE revoked_at IS NULL;
@@ -1925,16 +1954,6 @@ CREATE INDEX idx_process_agent_dispatches_agent
 CREATE INDEX idx_process_agent_dispatches_open
 	ON process_agent_dispatches(state) WHERE state IN ('pending', 'needs_performer', 'delivered', 'reported');
 
-CREATE TABLE agent_turn_replies (
-	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	agent_id   TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
-	conv_id    TEXT NOT NULL,
-	body       TEXT NOT NULL,
-	created_at INTEGER NOT NULL
-) STRICT;
-
-CREATE INDEX idx_agent_turn_replies_agent ON agent_turn_replies(agent_id, id);
-
 CREATE TABLE process_template_listing (
 	template_id TEXT PRIMARY KEY CHECK(length(CAST(template_id AS BLOB)) <= 256),
 	listed      INTEGER NOT NULL CHECK(listed IN (0, 1)),
@@ -2049,3 +2068,487 @@ CREATE TABLE "usage_profile_assignments" (
 
 CREATE INDEX idx_usage_profile_assignments_profile
 			ON usage_profile_assignments(profile_id);
+
+CREATE TABLE "session_cost_daily" (
+				session_id       TEXT NOT NULL,
+				day              TEXT NOT NULL,
+				conv_id          TEXT NOT NULL DEFAULT '',
+				cost_usd         REAL NOT NULL DEFAULT 0,
+				updated_at       INTEGER,
+				virtual_cost_usd REAL NOT NULL DEFAULT 0,
+				model            TEXT NOT NULL DEFAULT '',
+				agent_id         TEXT NOT NULL DEFAULT '',
+				harness          TEXT NOT NULL DEFAULT 'claude',
+				PRIMARY KEY (session_id, conv_id, day)
+			) STRICT;
+
+CREATE INDEX idx_session_cost_daily_day ON session_cost_daily(day);
+
+CREATE INDEX idx_session_cost_daily_walk
+				ON session_cost_daily(
+					COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
+				);
+
+CREATE TRIGGER cost_opening_stale_insert AFTER INSERT ON session_cost_daily
+			WHEN NEW.day < (SELECT day FROM cost_opening_meta)
+			BEGIN UPDATE cost_opening_meta SET stale = 1; END;
+
+CREATE TRIGGER cost_opening_stale_delete AFTER DELETE ON session_cost_daily
+			WHEN OLD.day < (SELECT day FROM cost_opening_meta)
+			BEGIN UPDATE cost_opening_meta SET stale = 1; END;
+
+CREATE TRIGGER cost_opening_stale_update AFTER UPDATE ON session_cost_daily
+			WHEN (OLD.day < (SELECT day FROM cost_opening_meta) OR NEW.day < (SELECT day FROM cost_opening_meta))
+			 AND (OLD.session_id IS NOT NEW.session_id OR OLD.conv_id IS NOT NEW.conv_id OR OLD.day IS NOT NEW.day
+			  OR OLD.cost_usd IS NOT NEW.cost_usd OR OLD.virtual_cost_usd IS NOT NEW.virtual_cost_usd
+			  OR OLD.updated_at IS NOT NEW.updated_at OR OLD.model IS NOT NEW.model OR OLD.harness IS NOT NEW.harness)
+			BEGIN UPDATE cost_opening_meta SET stale = 1; END;
+
+CREATE TABLE agent_retained_group_permissions (
+			agent_id    TEXT NOT NULL,
+			group_id    INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			retained_at INTEGER NOT NULL,
+			retained_by TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (agent_id, group_id)
+		) STRICT;
+
+CREATE INDEX idx_agent_retained_group_permissions_group
+			ON agent_retained_group_permissions(group_id);
+
+CREATE TABLE agent_host_routes (
+ id TEXT PRIMARY KEY,
+ publisher_agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+ publisher_conv_id TEXT NOT NULL,
+ publisher_launch_generation TEXT NOT NULL,
+ name TEXT NOT NULL,
+ transport TEXT NOT NULL,
+ target TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('ready','withdrawn','publisher-lost')),
+ created_at INTEGER NOT NULL,
+ withdrawn_at INTEGER,
+ withdraw_reason TEXT NOT NULL DEFAULT '',
+ UNIQUE(publisher_agent_id, name)
+) STRICT;
+
+CREATE INDEX idx_agent_host_routes_publisher ON agent_host_routes(publisher_conv_id, state);
+
+CREATE TABLE "collab_drawing_boards" (
+ id TEXT PRIMARY KEY,
+ title TEXT NOT NULL,
+ version INTEGER NOT NULL DEFAULT 0,
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL,
+ updated_by TEXT NOT NULL DEFAULT '',
+ snapshot_version INTEGER,
+ snapshot_at INTEGER
+, group_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL) STRICT;
+
+CREATE INDEX idx_collab_drawing_boards_group ON collab_drawing_boards(group_id);
+
+CREATE TABLE "collab_drawing_board_elements" (
+ drawing_board_id TEXT NOT NULL REFERENCES "collab_drawing_boards"(id) ON DELETE CASCADE,
+ element_id TEXT NOT NULL,
+ element_version INTEGER NOT NULL,
+ nonce INTEGER NOT NULL,
+ server_version INTEGER NOT NULL,
+ is_deleted INTEGER NOT NULL DEFAULT 0,
+ body TEXT NOT NULL,
+ PRIMARY KEY(drawing_board_id, element_id)
+) STRICT;
+
+CREATE INDEX idx_collab_drawing_board_elements_server_version ON collab_drawing_board_elements(drawing_board_id, server_version);
+
+CREATE TABLE "collab_drawing_board_participants" (
+ drawing_board_id TEXT NOT NULL REFERENCES "collab_drawing_boards"(id) ON DELETE CASCADE,
+ agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+ added_at INTEGER NOT NULL,
+ PRIMARY KEY(drawing_board_id, agent_id)
+) STRICT;
+
+CREATE INDEX idx_collab_drawing_board_participants_agent ON collab_drawing_board_participants(agent_id);
+
+CREATE TABLE held_context_reinjections (
+		session_id        TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+		conv_id           TEXT NOT NULL,
+		transcript_offset INTEGER NOT NULL
+	);
+
+CREATE TABLE "collab_drawing_board_history" (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ drawing_board_id TEXT NOT NULL REFERENCES "collab_drawing_boards"(id) ON DELETE CASCADE,
+ actor TEXT NOT NULL,
+ stack TEXT NOT NULL CHECK (stack IN ('undo', 'redo')),
+ body TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX idx_collab_drawing_board_history_stack ON collab_drawing_board_history(drawing_board_id, actor, stack, id);
+
+CREATE TABLE "collab_drawing_board_sessions" (
+ drawing_board_id TEXT NOT NULL REFERENCES "collab_drawing_boards"(id) ON DELETE CASCADE,
+ agent_id TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+ started_at INTEGER NOT NULL,
+ last_active_at INTEGER NOT NULL,
+ PRIMARY KEY(drawing_board_id, agent_id)
+) STRICT;
+
+CREATE INDEX idx_collab_drawing_board_sessions_agent ON collab_drawing_board_sessions(agent_id);
+
+CREATE TABLE dashboard_marks (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ agent_id TEXT NOT NULL,
+ agent_name TEXT NOT NULL DEFAULT '',
+ kind TEXT NOT NULL,
+ spec TEXT NOT NULL,
+ tip TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL,
+ ended_by TEXT NOT NULL DEFAULT '',
+ reply TEXT NOT NULL DEFAULT '',
+ replied_at INTEGER,
+ created_at INTEGER NOT NULL,
+ expires_at INTEGER NOT NULL,
+ ended_at INTEGER
+) STRICT;
+
+CREATE INDEX idx_dashboard_marks_state ON dashboard_marks(state, id);
+
+CREATE TABLE dashboard_captures (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ agent_id TEXT NOT NULL,
+ agent_name TEXT NOT NULL DEFAULT '',
+ label TEXT NOT NULL DEFAULT '',
+ context TEXT NOT NULL DEFAULT '',
+ size INTEGER NOT NULL,
+ created_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE steward_carried_permissions (
+ slug TEXT PRIMARY KEY,
+ effect TEXT NOT NULL CHECK(effect IN ('grant', 'deny')),
+ scope_json TEXT NOT NULL DEFAULT '',
+ granted_by TEXT NOT NULL,
+ granted_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE steward_carried_sudo (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ slug TEXT NOT NULL,
+ scope_json TEXT NOT NULL DEFAULT '',
+ granted_at INTEGER NOT NULL,
+ expires_at INTEGER NOT NULL,
+ granted_by TEXT NOT NULL,
+ reason TEXT NOT NULL DEFAULT '',
+ revoked_at INTEGER
+, uses_limit INTEGER NOT NULL DEFAULT 0, uses_left INTEGER NOT NULL DEFAULT 0) STRICT;
+
+CREATE TABLE conv_loss_reports (
+		conv_id TEXT PRIMARY KEY,
+		report  TEXT NOT NULL
+	);
+
+CREATE TABLE cost_opening_meta (
+			id         INTEGER PRIMARY KEY CHECK (id = 1),
+			day        TEXT    NOT NULL,
+			stale      INTEGER NOT NULL,
+			generation INTEGER NOT NULL
+		);
+
+CREATE TABLE cost_opening_convs (
+			walk_key TEXT PRIMARY KEY,
+			state    TEXT NOT NULL
+		) WITHOUT ROWID;
+
+CREATE TABLE cost_opening_sessions (
+			session_id TEXT PRIMARY KEY,
+			state      TEXT NOT NULL
+		) WITHOUT ROWID;
+
+CREATE TABLE cost_opening_spend (
+			conv_id        TEXT PRIMARY KEY,
+			first_real_day TEXT NOT NULL,
+			first_any_day  TEXT NOT NULL
+		) WITHOUT ROWID;
+
+CREATE TABLE steward_offered_permissions (
+		agent_id TEXT NOT NULL,
+		slug     TEXT NOT NULL,
+		PRIMARY KEY (agent_id, slug)
+	) STRICT;
+
+CREATE TABLE steward_roster (
+		agent_id TEXT NOT NULL PRIMARY KEY,
+		seat     TEXT NOT NULL CHECK (seat IN ('active', 'standby')),
+		since    INTEGER NOT NULL,
+		set_by   TEXT NOT NULL
+	) STRICT;
+
+CREATE UNIQUE INDEX steward_roster_one_active
+		ON steward_roster (seat) WHERE seat = 'active';
+
+CREATE TABLE external_stewards (
+		agent_id   TEXT NOT NULL PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
+		name       TEXT NOT NULL UNIQUE,
+		created_at INTEGER NOT NULL,
+		created_by TEXT NOT NULL
+	) STRICT;
+
+CREATE TABLE external_steward_credentials (
+		token_id     TEXT NOT NULL PRIMARY KEY,
+		agent_id     TEXT NOT NULL REFERENCES external_stewards(agent_id) ON DELETE CASCADE,
+		token_hash   BLOB NOT NULL,
+		created_at   INTEGER NOT NULL,
+		created_by   TEXT NOT NULL,
+		expires_at   INTEGER NOT NULL,
+		revoked_at   INTEGER,
+		last_used_at INTEGER
+	) STRICT;
+
+CREATE INDEX idx_external_steward_credentials_agent
+		ON external_steward_credentials (agent_id);
+
+CREATE TABLE spawn_queue (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id         INTEGER NOT NULL,
+		name             TEXT NOT NULL DEFAULT '',
+		requester_kind   TEXT NOT NULL,
+		requester_agent  TEXT NOT NULL DEFAULT '',
+		requester_name   TEXT NOT NULL DEFAULT '',
+		requester_member INTEGER NOT NULL DEFAULT 0,
+		request_body     TEXT,
+		proof_dirs       TEXT NOT NULL DEFAULT '',
+		state            TEXT NOT NULL,
+		reason           TEXT NOT NULL DEFAULT '',
+		reserved_agent   TEXT NOT NULL DEFAULT '',
+		created_at       INTEGER NOT NULL,
+		updated_at       INTEGER NOT NULL
+	, fed_request_id INTEGER NOT NULL DEFAULT 0) STRICT;
+
+CREATE INDEX idx_spawn_queue_state ON spawn_queue (state, id);
+
+CREATE TABLE group_resource_locks (
+		kind        TEXT NOT NULL,
+		resource_id TEXT NOT NULL,
+		locked_at   INTEGER NOT NULL,
+		PRIMARY KEY (kind, resource_id)
+	) STRICT;
+
+CREATE TABLE relaunch_policy (
+			scope      TEXT NOT NULL CHECK(length(scope) BETWEEN 1 AND 64),
+			field      TEXT NOT NULL CHECK(length(field) BETWEEN 1 AND 64),
+			mode       TEXT NOT NULL CHECK(length(mode) BETWEEN 1 AND 64),
+			updated_at INTEGER NOT NULL,
+			updated_by TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (scope, field)
+		) STRICT;
+
+CREATE TABLE group_pages (
+			id            TEXT PRIMARY KEY,
+			group_id      INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			owner         TEXT NOT NULL,
+			name          TEXT NOT NULL,
+			title         TEXT NOT NULL DEFAULT '',
+			kind          TEXT NOT NULL,
+			target        TEXT NOT NULL DEFAULT '',
+			path          TEXT NOT NULL DEFAULT '',
+			worktree      TEXT NOT NULL DEFAULT '',
+			port          INTEGER NOT NULL DEFAULT 0,
+			agents_locked INTEGER NOT NULL DEFAULT 0,
+			state         TEXT NOT NULL CHECK(state IN ('open','closed')),
+			closed_reason TEXT NOT NULL DEFAULT '',
+			created_at    INTEGER NOT NULL,
+			updated_at    INTEGER NOT NULL,
+			closed_at     INTEGER, title_by_operator INTEGER NOT NULL DEFAULT 0,
+			UNIQUE (group_id, owner, name)
+		) STRICT;
+
+CREATE INDEX idx_group_pages_group ON group_pages(group_id, state);
+
+CREATE TABLE group_page_marks (
+			page_id TEXT NOT NULL REFERENCES group_pages(id) ON DELETE CASCADE,
+			seq     INTEGER NOT NULL,
+			batch   TEXT NOT NULL,
+			PRIMARY KEY (page_id, seq)
+		) STRICT;
+
+CREATE TABLE group_page_patches (
+			page_id   TEXT PRIMARY KEY REFERENCES group_pages(id) ON DELETE CASCADE,
+			mark_seq  INTEGER NOT NULL DEFAULT 0,
+			patch_seq INTEGER NOT NULL DEFAULT 0,
+			patches   TEXT NOT NULL DEFAULT '[]'
+		) STRICT;
+
+CREATE TABLE federation_peer_agent_views (
+			peer TEXT PRIMARY KEY,
+			policy TEXT NOT NULL CHECK (policy IN ('allow','deny')),
+			updated_at INTEGER NOT NULL
+		) STRICT;
+
+CREATE TABLE sandbox_profile_peer_owners (
+			profile_id INTEGER PRIMARY KEY REFERENCES sandbox_profiles(id) ON DELETE CASCADE,
+			peer       TEXT NOT NULL
+		);
+
+CREATE TABLE group_tasks (
+			id           TEXT PRIMARY KEY,
+			group_id     INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			title        TEXT NOT NULL,
+			body         TEXT NOT NULL DEFAULT '',
+			stage        TEXT NOT NULL CHECK(stage IN ('idea','next')),
+			status       TEXT NOT NULL CHECK(status IN ('open','blocked','done','dropped')),
+			rank         TEXT NOT NULL,
+			block_reason TEXT NOT NULL DEFAULT '',
+			ref_kind     TEXT NOT NULL DEFAULT '' CHECK(ref_kind IN ('','awb','linear','github','url')),
+			ref_url      TEXT NOT NULL DEFAULT '',
+			ref_label    TEXT NOT NULL DEFAULT '',
+			assignee_id  TEXT REFERENCES agents(agent_id) ON DELETE SET NULL,
+			assigned_by  TEXT NOT NULL DEFAULT '',
+			assigned_at  INTEGER,
+			outcome      TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','succeeded','failed')),
+			outcome_note TEXT NOT NULL DEFAULT '',
+			failures     INTEGER NOT NULL DEFAULT 0,
+			created_by   TEXT NOT NULL,
+			created_at   INTEGER NOT NULL,
+			updated_at   INTEGER NOT NULL,
+			closed_at    INTEGER,
+			archived_at  INTEGER
+		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '', more_refs TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '' CHECK(kind IN ('','epic')), parent_id TEXT REFERENCES group_tasks(id) ON DELETE SET NULL, close_suggested_at INTEGER, close_nudged INTEGER NOT NULL DEFAULT 0) STRICT;
+
+CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank);
+
+CREATE INDEX idx_group_tasks_closed ON group_tasks(closed_at) WHERE closed_at IS NOT NULL;
+
+CREATE INDEX idx_group_tasks_assignee ON group_tasks(assignee_id) WHERE assignee_id IS NOT NULL;
+
+CREATE INDEX idx_group_tasks_blocked_on ON group_tasks(blocked_on) WHERE blocked_on <> '';
+
+CREATE TRIGGER group_tasks_column_clear
+			AFTER UPDATE OF stage, status, group_id ON group_tasks
+			WHEN NEW.column_slug <> '' AND (NEW.stage <> 'next' OR NEW.status NOT IN ('open','blocked')
+				OR NOT EXISTS (SELECT 1 FROM group_task_columns c WHERE c.group_id = NEW.group_id AND c.slug = NEW.column_slug))
+			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
+
+CREATE TRIGGER group_task_questions_close
+			AFTER UPDATE OF status ON group_tasks
+			WHEN NEW.status IN ('done','dropped') AND OLD.status IN ('open','blocked')
+			BEGIN
+				UPDATE group_task_questions SET state = 'closed', closed_at = COALESCE(NEW.closed_at, NEW.updated_at)
+					WHERE task_id = NEW.id AND state = 'open';
+			END;
+
+CREATE TRIGGER group_tasks_column_cordoned_on_move
+			AFTER UPDATE OF group_id ON group_tasks
+			WHEN NEW.column_slug <> '' AND OLD.group_id <> NEW.group_id AND EXISTS (SELECT 1 FROM group_task_column_states s
+				WHERE s.group_id = NEW.group_id AND s.slug = NEW.column_slug AND s.state = 'cordoned')
+			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
+
+CREATE INDEX idx_group_tasks_status ON group_tasks(status, group_id);
+
+CREATE INDEX idx_group_tasks_history ON group_tasks(group_id, closed_at)
+			WHERE archived_at IS NULL AND status IN ('done','dropped');
+
+CREATE INDEX idx_group_tasks_parent ON group_tasks(parent_id) WHERE parent_id IS NOT NULL;
+
+CREATE TABLE group_task_deps (
+			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			depends_on TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			PRIMARY KEY (task_id, depends_on),
+			CHECK (task_id <> depends_on)
+		) STRICT;
+
+CREATE INDEX idx_group_task_deps_on ON group_task_deps(depends_on);
+
+CREATE TABLE group_task_events (
+			id      INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			at      INTEGER NOT NULL,
+			actor   TEXT NOT NULL,
+			kind    TEXT NOT NULL,
+			detail  TEXT NOT NULL DEFAULT ''
+		, body TEXT NOT NULL DEFAULT '', comment_kind TEXT NOT NULL DEFAULT '', client_key TEXT, comment_id INTEGER, edited_at INTEGER, deleted_at INTEGER, changes TEXT NOT NULL DEFAULT '') STRICT;
+
+CREATE INDEX idx_group_task_events_task ON group_task_events(task_id, id);
+
+CREATE UNIQUE INDEX idx_group_task_events_key ON group_task_events(task_id, actor, client_key)
+			WHERE client_key IS NOT NULL;
+
+CREATE INDEX idx_group_task_events_kind ON group_task_events(task_id, kind);
+
+CREATE TABLE group_taskboard_locks (
+			group_id   INTEGER PRIMARY KEY REFERENCES agent_groups(id) ON DELETE CASCADE,
+			writers    TEXT NOT NULL DEFAULT '[]',
+			set_by     TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		) STRICT;
+
+CREATE TABLE group_task_attachments (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id      TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			name         TEXT NOT NULL,
+			sha256       TEXT NOT NULL,
+			size_bytes   INTEGER NOT NULL,
+			content_type TEXT NOT NULL,
+			added_by     TEXT NOT NULL,
+			added_at     INTEGER NOT NULL
+		, comment_id INTEGER REFERENCES group_task_events(id) ON DELETE CASCADE, drawing TEXT) STRICT;
+
+CREATE UNIQUE INDEX idx_group_task_attachments_name ON group_task_attachments(task_id, name COLLATE NOCASE);
+
+CREATE INDEX idx_group_task_attachments_sha ON group_task_attachments(sha256);
+
+CREATE INDEX idx_group_task_attachments_comment ON group_task_attachments(comment_id)
+			WHERE comment_id IS NOT NULL;
+
+CREATE TABLE group_task_columns (
+			group_id   INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			slug       TEXT NOT NULL,
+			label      TEXT NOT NULL,
+			position   INTEGER NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (group_id, slug)
+		) STRICT;
+
+CREATE TRIGGER group_task_columns_removed
+			AFTER DELETE ON group_task_columns
+			BEGIN UPDATE group_tasks SET column_slug = '' WHERE group_id = OLD.group_id AND column_slug = OLD.slug; END;
+
+CREATE TRIGGER group_task_columns_removed_state
+			AFTER DELETE ON group_task_columns
+			BEGIN DELETE FROM group_task_column_states WHERE group_id = OLD.group_id AND slug = OLD.slug; END;
+
+CREATE TABLE federation_peer_questions (
+			peer       TEXT NOT NULL,
+			task       TEXT NOT NULL,
+			agent      TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL,
+			PRIMARY KEY (peer, task, agent)
+		) STRICT;
+
+CREATE TABLE group_task_questions (
+			id              INTEGER PRIMARY KEY,
+			task_id         TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
+			n               INTEGER NOT NULL,
+			event_id        INTEGER NOT NULL,
+			title           TEXT NOT NULL,
+			spec            TEXT NOT NULL,
+			asked_by        TEXT NOT NULL,
+			asked_via       TEXT NOT NULL DEFAULT '',
+			asked_at        INTEGER NOT NULL,
+			state           TEXT NOT NULL DEFAULT 'open',
+			blocks          INTEGER NOT NULL DEFAULT 0,
+			answer          TEXT NOT NULL DEFAULT '',
+			answer_event_id INTEGER,
+			closed_at       INTEGER, source TEXT NOT NULL DEFAULT '',
+			UNIQUE (task_id, n)
+		) STRICT;
+
+CREATE INDEX idx_group_task_questions_open ON group_task_questions(task_id) WHERE state = 'open';
+
+CREATE UNIQUE INDEX idx_group_task_questions_source ON group_task_questions(source) WHERE source <> '';
+
+CREATE TABLE group_task_column_states (
+			group_id INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			slug     TEXT NOT NULL,
+			state    TEXT NOT NULL CHECK (state IN ('hidden', 'cordoned')),
+			PRIMARY KEY (group_id, slug)
+		) STRICT;

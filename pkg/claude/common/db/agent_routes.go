@@ -23,6 +23,7 @@ const (
 // data plane deliberately does not appear here; adapters consume this
 // generation-bound record in a later milestone.
 type AgentRoute struct {
+	HostOnly                  bool
 	ID                        string
 	GroupID                   int64
 	GroupName                 string
@@ -132,6 +133,9 @@ func createAgentRoute(groupID int64, publisherAgentID, publisherConvID, launchGe
 // GetAgentRoute returns one route, including the stable group name snapshot
 // resolved from the current group row (display names never form identity).
 func GetAgentRoute(routeID string) (*AgentRoute, error) {
+	if IsHostRouteID(routeID) {
+		return getHostAgentRoute(routeID)
+	}
 	d, err := Open()
 	if err != nil {
 		return nil, err
@@ -148,24 +152,11 @@ func ListAgentRoutes(groupID int64) ([]*AgentRoute, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT r.id, r.group_id, g.name, r.publisher_agent_id, r.publisher_conv_id,
+	return queryRows(d, scanAgentRoute, `SELECT r.id, r.group_id, g.name, r.publisher_agent_id, r.publisher_conv_id,
 		r.publisher_launch_generation, r.group_generation, r.name, r.transport, r.target, r.state,
 		r.created_at, r.withdrawn_at, r.withdraw_reason
 		FROM agent_routes r JOIN agent_groups g ON g.id = r.group_id
 		WHERE r.group_id = ? AND `+notFederationMirror+` ORDER BY r.created_at, r.id`, groupID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentRoute
-	for rows.Next() {
-		route, err := scanAgentRoute(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, route)
-	}
-	return out, rows.Err()
 }
 
 // DashboardRouteHistoryPerGroup is the hard projection bound for route
@@ -241,10 +232,16 @@ func ListAgentRoutesBatch(groupIDs []int64) (map[int64][]*AgentRoute, error) {
 // route. It also closes all outstanding leases so a withdrawn route cannot
 // leave stale consumer authority behind.
 func WithdrawAgentRoute(routeID, publisherAgentID, publisherConvID, reason string) error {
+	if IsHostRouteID(routeID) {
+		return transitionHostAgentRoute(routeID, publisherAgentID, publisherConvID, RouteStateWithdrawn, reason)
+	}
 	return transitionAgentRoute(routeID, publisherAgentID, publisherConvID, RouteStateWithdrawn, reason, "withdraw")
 }
 
 func MarkAgentRoutePublisherLost(routeID, reason string) error {
+	if IsHostRouteID(routeID) {
+		return transitionHostAgentRoute(routeID, "", "", RouteStatePublisherLost, reason)
+	}
 	d, err := Open()
 	if err != nil {
 		return err
@@ -281,6 +278,9 @@ func MarkAgentRoutePublisherLost(routeID, reason string) error {
 // leave a consumable route behind while the reaper or SessionEnd hook settles
 // the session row.
 func markAgentRoutesPublisherLostTx(tx *sql.Tx, publisherConvID, launchGeneration, reason string) error {
+	if err := markHostAgentRoutesPublisherLostTx(tx, publisherConvID, launchGeneration, reason); err != nil {
+		return err
+	}
 	if strings.TrimSpace(publisherConvID) == "" {
 		return nil
 	}
@@ -384,6 +384,9 @@ func markAgentRouteConsumerLeasesLostTx(tx *sql.Tx, consumerAgentID, consumerCon
 }
 
 func OpenAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGeneration string, groupGeneration int64) (*AgentRouteLease, error) {
+	if IsHostRouteID(routeID) {
+		return nil, errors.New("host-only routes cannot be consumed by agents")
+	}
 	return openAgentRouteLease(routeID, consumerAgentID, consumerConvID, launchGeneration, groupGeneration, nil)
 }
 
@@ -475,17 +478,7 @@ func ListAgentRouteLeases(groupID int64, consumerAgentID, consumerConvID string)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT l.id, l.route_id, l.consumer_agent_id, l.consumer_conv_id,
-		l.consumer_launch_generation, l.group_generation, l.state, l.opened_at, l.closed_at
-		FROM agent_route_leases l JOIN agent_routes r ON r.id = l.route_id
-		WHERE r.group_id = ? AND l.consumer_agent_id = ? AND l.consumer_conv_id = ? AND `+notFederationProxy+`
-		ORDER BY l.opened_at, l.id`, groupID, consumerAgentID, consumerConvID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*AgentRouteLease
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*AgentRouteLease, error) {
 		var lease AgentRouteLease
 		var openedAt, closedAt dbTimestamp
 		if err := rows.Scan(&lease.ID, &lease.RouteID, &lease.ConsumerAgentID, &lease.ConsumerConvID,
@@ -494,9 +487,12 @@ func ListAgentRouteLeases(groupID int64, consumerAgentID, consumerConvID string)
 		}
 		lease.OpenedAt = openedAt.Time()
 		lease.ClosedAt = closedAt.Time()
-		out = append(out, &lease)
-	}
-	return out, rows.Err()
+		return &lease, nil
+	}, `SELECT l.id, l.route_id, l.consumer_agent_id, l.consumer_conv_id,
+		l.consumer_launch_generation, l.group_generation, l.state, l.opened_at, l.closed_at
+		FROM agent_route_leases l JOIN agent_routes r ON r.id = l.route_id
+		WHERE r.group_id = ? AND l.consumer_agent_id = ? AND l.consumer_conv_id = ? AND `+notFederationProxy+`
+		ORDER BY l.opened_at, l.id`, groupID, consumerAgentID, consumerConvID)
 }
 
 // ListAgentRouteLeasesBatch returns a bounded lease projection grouped by route
@@ -659,4 +655,17 @@ func scanAgentRoute(s rowScanner) (*AgentRoute, error) {
 	route.CreatedAt = createdAt.Time()
 	route.WithdrawnAt = withdrawnAt.Time()
 	return &route, nil
+}
+
+// RecordHostRouteAudit records ephemeral operator leases without inventing an
+// agent identity or persisting authority that could survive a daemon restart.
+func RecordHostRouteAudit(action string, groupID int64, routeID, leaseID, detail string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT INTO agent_route_audit
+		(at, action, result, group_id, route_id, lease_id, actor_agent_id, actor_conv_id, detail)
+		VALUES (?, ?, 'ok', ?, ?, ?, '', '', ?)`, dbTime(time.Now()), action, groupID, routeID, leaseID, detail)
+	return err
 }

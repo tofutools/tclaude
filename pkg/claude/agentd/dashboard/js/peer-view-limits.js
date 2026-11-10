@@ -23,13 +23,13 @@ import { shellToast } from './shell-state.js';
 // Jobs (cron, standing orders, triggers) and Access (this node's pending
 // approvals) have no peer grant of their own: unrestricted trust reaches them
 // as the local operator does (local_dashboard).
-const TAB_FEATURES = Object.freeze({ groups: 'groups', usage: 'costs', costs: 'costs', activity: 'audit', messages: 'node.messages', jobs: 'local_dashboard', access: 'local_dashboard', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local' });
+const TAB_FEATURES = Object.freeze({ groups: 'groups', config: 'node.config', usage: 'costs', costs: 'costs', diagnostics: 'audit', messages: 'node.messages', jobs: 'local_dashboard', access: 'local_dashboard', map: 'local', fleet: 'local', 'fleet-admin': 'local', terminals: 'local', 'drawing-boards': 'local' });
 
 // SUBTAB_FEATURES narrows a tab's feature per subtab. Activity is offered on a
 // peer view for its audit log; the daemon log and poll timings have no peer
 // grant, so only unrestricted trust reaches them.
 const SUBTAB_FEATURES = Object.freeze({
-  activity: Object.freeze({ audit: 'audit', logs: 'local_dashboard', performance: 'local_dashboard' }),
+  diagnostics: Object.freeze({ audit: 'audit', logs: 'local_dashboard', performance: 'local_dashboard', doctor: 'local_dashboard' }),
 });
 
 // READ_ONLY_ACTS are data-act controls that only change this browser's view
@@ -71,33 +71,41 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   // A member's role belongs to the group (its description cell also edits
   // the agent's tags: an agent control).
   'edit-role': ['groups.members.manage'],
-  // A clone's members spawn with the node's launch settings, and delete and
-  // cleanup remove what no peer grant hands out: unrestricted trust only (a
-  // feature no restricted peer shares).
-  'clone-group': ['feature:groups.create.full'],
-  'delete-group': ['feature:groups.manage.full'],
+  // A clone takes groups.clone there (and node.groups.create, which the
+  // daemon checks); cleanup removes what no peer grant hands out:
+  // unrestricted trust only (a feature no restricted peer shares).
+  'clone-group': ['groups.clone'],
   'cleanup-group': ['feature:groups.manage.full'],
-  // Removing a member from the group: unrestricted trust only.
-  'remove-member': ['feature:agents.manage.full'],
+  // Its structure (peer_group_structure.go): the node names what else a
+  // request takes (the add grant in the agent's other groups, a link's other
+  // end, another group's sandbox or environment).
+  'delete-group': ['groups.delete'],
+  'remove-member': ['groups.members.remove'],
+  'add-member': ['groups.members.add'],
+  'link-new': ['groups.link.add'],
+  'link-edit': ['groups.link.add'],
+  'link-delete': ['groups.link.remove'],
+  // The group's advisory process advances under process.advance there.
+  'advance-phase': ['process.advance'],
+  // A deployed force's re-brief re-sends its template's own work pattern.
+  'rebrief-force': ['templates.instantiate'],
+  // Its owners and member permissions, held to the peer ceiling: what a
+  // peer confers never exceeds what it holds here (peer_ceiling.go). Making
+  // an owner confers spawning and the member lifecycle, which no peer may
+  // confer, so in practice a peer only removes owners. The permissions
+  // editor saves the whole list, which takes the grant that shows it.
+  'grant-owner': ['groups.owners.manage'],
+  'revoke-owner': ['groups.owners.manage'],
+  'set-group-permissions': ['groups.settings.member-permissions'],
   // What no peer grant covers, which unrestricted trust reaches as this
-  // node's operator does (the local_dashboard routes): its process, force
-  // and ownership controls, the auto-join default, its member permissions, its
-  // links within its node, new cron jobs, its standing orders, adding
-  // members, its cross-harness spawn policy and saving it as a template there.
-  'advance-phase': ['feature:local_dashboard'],
-  'rebrief-force': ['feature:local_dashboard'],
+  // node's operator does (the local_dashboard routes): its stand-down, the
+  // auto-join default, new cron jobs, its standing orders, its cross-harness
+  // spawn policy and saving it as a template there.
   'stand-down-force': ['feature:local_dashboard'],
-  'grant-owner': ['feature:local_dashboard'],
-  'revoke-owner': ['feature:local_dashboard'],
   'set-default-spawn-group': ['feature:local_dashboard'],
-  'set-group-permissions': ['feature:local_dashboard'],
-  'link-new': ['feature:local_dashboard'],
-  'link-edit': ['feature:local_dashboard'],
-  'link-delete': ['feature:local_dashboard'],
   'cron-new': ['feature:local_dashboard'],
   'standing-orders': ['feature:local_dashboard'],
   'template-from-group': ['feature:local_dashboard'],
-  'add-member': ['feature:local_dashboard'],
   // A subgroup, through the regular create dialog on the group's node.
   'create-subgroup': ['feature:groups.create'],
   // A pending spawn's 🗑, on the group it is pending in.
@@ -107,8 +115,10 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'queued-spawn-launch': ['feature:local_dashboard'],
   'queued-spawn-edit': ['feature:local_dashboard'],
   'queued-spawn-discard': ['feature:local_dashboard'],
-  // Its archive downloads from its node (dashboard_peer_downloads.go).
-  'export-group': ['feature:local_dashboard'],
+  // Its archive downloads from its node (dashboard_peer_downloads.go,
+  // peer_transfer.go); a group with an environment also takes
+  // groups.settings.environment, which the node names when it refuses.
+  'export-group': ['groups.export', 'sessions.files.read'],
   // Unrestricted trust messages a group with the regular dialog; a restricted
   // peer's messaging grant sends one agent at a time (PEER_ACTS).
   'message-new': ['feature:local_dashboard'],
@@ -119,8 +129,7 @@ export const GROUP_GRANT_ACTS = Object.freeze({
   'cleanup-worktrees-group': ['feature:local_dashboard'],
   // Not listed, so local to their own node: the links manager,
   // messages, the template manager, terminals and showing a
-  // window (hiding one is an agent control); and export, whose binary archive the JSON peer
-  // view does not carry.
+  // window (hiding one is an agent control).
 });
 
 // groupGrantHeld reports whether the peer lets a group control act on group
@@ -156,16 +165,28 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'edit-descr': ['groups.members.manage'],
   'edit-task': ['groups.members.manage'],
   'toggle-agent-notify': ['groups.members.manage'],
-  // Remote access, fast mode, the sandbox implementation, the debug export,
-  // reincarnation and permanent delete reach what no peer grant hands out:
-  // unrestricted trust only (a feature no restricted peer shares).
-  'toggle-remote-control': ['feature:agents.manage.full'],
-  'sandbox-impl': ['feature:agents.manage.full'],
-  'debug-export': ['feature:agents.manage.full'],
+  // Compaction, and a request that the agent reincarnate itself (a peer
+  // sends no follow-up, focus hint or forced mode).
+  'compact-agent': ['groups.members.compact'],
+  'reincarnate': ['groups.members.reincarnate'],
+  // Remote access, permanent delete (its worktree is unrestricted trust's:
+  // the dialog's worktree probe is refused, so it offers none) and the debug
+  // export (environment values redacted) under their own grants.
+  'toggle-remote-control': ['groups.members.remote-control'],
+  'debug-export': ['groups.members.debug-export'],
+  'delete-agent': ['groups.members.delete'],
+  // Its own permission overrides, held to the peer ceiling: the editor
+  // starts from the overrides the grant shows (peer_agent_permissions.go),
+  // and its save refuses what the peer could not grant itself.
+  'perm-edit': ['permissions.grant'],
+  // The sandbox implementation, under its own grant: the dialog reads it,
+  // and a save also takes groups.members.spawn.sandbox (or .all), which the
+  // refused save names; a restricted peer's move only adds confinement.
+  'sandbox-impl': ['agent.sandbox-impl'],
+  // Fast mode reaches what no peer grant hands out yet: unrestricted trust
+  // only (a feature no restricted peer shares).
   'fast-mode-set': ['feature:agents.manage.full'],
   'fast-mode-disable': ['feature:agents.manage.full'],
-  'reincarnate': ['feature:agents.manage.full'],
-  'delete-agent': ['feature:agents.manage.full'],
   // Its lifecycle, through the regular dialogs (peer_actions.go refuses
   // their local-only options). A restart stops the agent first.
   'restart': ['groups.members.stop', 'groups.members.resume'],
@@ -180,12 +201,12 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   'reinstate-agent': ['feature:local_dashboard'],
   'delete-generation': ['feature:local_dashboard'],
   'hide': ['feature:local_dashboard'],
-  'perm-edit': ['feature:local_dashboard'],
   'sudo-grant': ['feature:local_dashboard'],
   // Its node's snapshot library and PAF export; the file downloads from
   // there (dashboard_peer_downloads.go).
   'snapshot-agent': ['feature:local_dashboard'],
-  'export-paf': ['feature:local_dashboard'],
+  // Its export carries the transcript by default.
+  'export-paf': ['agent.bundle.export', 'sessions.files.read'],
 });
 
 // AGENT_GRANT_VARIANTS are agent controls whose grants depend on which way
@@ -539,11 +560,11 @@ export function limitPeerViewCommands(cmds, snap, remote = globalThis.__tclaudeR
 
 // tabLabel names a tab in hints; the visible label varies by theme skin.
 function tabLabel(tab) {
-  return tab === 'costs' || tab === 'usage' ? 'costs' : tab === 'activity' ? 'its audit log' : tab === 'messages' ? 'its mail' : `the ${tab} tab`;
+  return tab === 'costs' || tab === 'usage' ? 'costs' : tab === 'diagnostics' ? 'its audit log' : tab === 'messages' ? 'its mail' : `the ${tab} tab`;
 }
 
 function subtabLabel(subtab) {
-  return subtab === 'logs' ? 'The daemon log' : subtab === 'performance' ? 'Poll performance' : `The ${subtab} view`;
+  return subtab === 'logs' ? 'The daemon log' : subtab === 'performance' ? 'Poll performance' : subtab === 'doctor' ? 'The Doctor view' : `The ${subtab} view`;
 }
 
 // limitHint words why a peer view refuses something. needs names what the
@@ -606,8 +627,12 @@ export function shellControl(act, peerView, groupOf = (g) => g) {
     else if (SAFE_AGENT_ID.test(d.agent || '')) shell = { group, shell: SHELL_WHICH.has(d.which) ? d.which : 'current', agent: d.agent, label: d.label || d.agent };
   }
   if (!shell) return { el: act, state: 'local', what: 'This action' };
-  const held = unrestricted(peerView) || (peerView?.groups?.[group] || []).includes(SHELL_GRANT);
-  return held ? { el: act, state: 'shell', what: 'This terminal', shell } : { el: act, state: 'omitted', what: "this group's shells", needs: [SHELL_GRANT] };
+  return peerShellAllowed(peerView, group) ? { el: act, state: 'shell', what: 'This terminal', shell } : { el: act, state: 'omitted', what: "this group's shells", needs: [SHELL_GRANT] };
+}
+
+// peerShellAllowed reports whether a peer view opens the peer's shells in group.
+export function peerShellAllowed(peerView, group) {
+  return unrestricted(peerView) || (peerView?.groups?.[group] || []).includes(SHELL_GRANT);
 }
 
 // shellSelectors are the SHELL_ACTS controls a peer view runs: every one
@@ -756,8 +781,8 @@ export function blockedControl(target, peerView, event = null) {
   }
   const sub = target?.closest?.('.activity-subtab');
   if (sub) {
-    const state = subtabState('activity', sub.dataset.subtab, peerView);
-    return state === 'shared' ? null : { el: sub, state, what: subtabLabel(sub.dataset.subtab), needs: [subtabNeeds('activity', sub.dataset.subtab, peerView)] };
+    const state = subtabState('diagnostics', sub.dataset.subtab, peerView);
+    return state === 'shared' ? null : { el: sub, state, what: subtabLabel(sub.dataset.subtab), needs: [subtabNeeds('diagnostics', sub.dataset.subtab, peerView)] };
   }
   const managed = managedControl(target, peerView);
   if (managed) return managed.own || managed.state === 'shared' ? null : { el: managed.el, state: managed.state, what: managed.what, needs: managed.needs };
@@ -869,10 +894,10 @@ export function installPeerViewLimits({ doc = document, snapshot = dashboardStat
       else setReason(tab, limitHint(state, tabLabel(tab.dataset.tab), nodeName(), [tabNeeds(tab.dataset.tab, peerView)]), false);
     }
     for (const sub of doc.querySelectorAll('.activity-subtab')) {
-      const state = subtabState('activity', sub.dataset.subtab, peerView);
+      const state = subtabState('diagnostics', sub.dataset.subtab, peerView);
       sub.classList.toggle('pv-off', state !== 'shared');
       if (state === 'shared') clearReason(sub);
-      else setReason(sub, limitHint(state, subtabLabel(sub.dataset.subtab), nodeName(), [subtabNeeds('activity', sub.dataset.subtab, peerView)]), false);
+      else setReason(sub, limitHint(state, subtabLabel(sub.dataset.subtab), nodeName(), [subtabNeeds('diagnostics', sub.dataset.subtab, peerView)]), false);
     }
     // Controls hovered or focused before keep up with what the peer shares.
     sweep(reasonOf);

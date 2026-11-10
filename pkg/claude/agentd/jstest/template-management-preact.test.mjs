@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
 test('template model preserves the complete replace payload and stale references', async (t) => {
   const harness = await createPreactHarness(t);
@@ -38,6 +39,23 @@ test('template model preserves the complete replace payload and stale references
   assert.deepEqual(payload.process[0].roles, ['dev']);
   assert.equal(payload.wave_max_wait, 30);
   assert.deepEqual(model.moveItem(['a', 'b'], 1, -1), ['b', 'a']);
+});
+
+// Saving is a full replace, so a field the editor does not show still has to
+// go back as it came: a template's owner scopes (TCL-1071) survive an edit, and
+// a template without them sends none (tcl-cnua7d).
+test('template model sends back the owner scopes it was given, and none it was not', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/template-management-model.js');
+  const owner_scopes = { 'groups.members.spawn': { spawn_profile: ['p1'] } };
+  const scoped = { name: 'crew', agents: [{ name: 'lead' }], owner_scopes };
+  const draft = model.templateDraft(scoped);
+  draft.descr = 'edited';
+  const payload = model.templatePayload(draft);
+  assert.deepEqual(payload.owner_scopes, owner_scopes);
+  assert.notEqual(payload.owner_scopes, owner_scopes, 'a copy, not the snapshot\'s own object');
+  assert.equal('owner_scopes' in model.templatePayload(model.templateDraft({ name: 'plain', agents: [{ name: 'lead' }] })), false);
+  assert.equal('owner_scopes' in model.templatePayload(model.templateDraft()), false, 'a new template has none');
 });
 
 test('template actions keep starter requests ordered and preserve mutation payloads', async (t) => {
@@ -133,6 +151,9 @@ test('template manager and editor retain native markup, wizard variants, nested 
   state.openTemplateManager();
   let saved = null;
   let profileManagerOpened = false;
+  let discard = false;
+  let scribeResult = null;
+  const scribeAsked = [];
   const actions = {
     openTemplateEditor(seed = null, options = {}) {
       state.openTemplateDialog({ kind: 'template-editor', seed, options });
@@ -153,7 +174,7 @@ test('template manager and editor retain native markup, wizard variants, nested 
     async saveTemplate(value) {
       saved = value;
     },
-    editTemplateWithAgent() {},
+    editTemplateWithAgent(name) { scribeAsked.push(name); return scribeResult; },
   };
   const cleanups = [];
   const host = harness.document.createElement('div');
@@ -163,7 +184,7 @@ test('template manager and editor retain native markup, wizard variants, nested 
     state,
     actions,
     confirm: async () => true,
-    confirmDiscard: async () => false,
+    confirmDiscard: async () => discard,
     openProfilePermissions() {},
     registerCleanup(fn) {
       cleanups.push(fn);
@@ -188,8 +209,8 @@ test('template manager and editor retain native markup, wizard variants, nested 
     host.querySelector('#template-editor-name'),
     'the editor autofocuses its declared initial field',
   );
-  assert.equal(host.querySelector('.ta-role-ref').tagName, 'SELECT');
-  assert.equal(host.querySelector('.ta-profile-select').tagName, 'SELECT');
+  assert.ok(host.querySelector('.ta-role-ref').classList.contains('choice-combobox'));
+  assert.ok(host.querySelector('.ta-profile-select').classList.contains('choice-combobox'));
   assert.match(
     host.querySelector('.ta-role-inspect').textContent,
     /Review carefully/,
@@ -271,6 +292,18 @@ test('template manager and editor retain native markup, wizard variants, nested 
   await harness.act(() => Promise.resolve());
   assert.equal(saved.payload.name, 'force-2');
   assert.equal(saved.payload.agents.length, 2);
+  // Edit with agent keeps the editor until the scribe's window opened: a
+  // declined grant leaves it as it was.
+  discard = true;
+  const settle = async () => { for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve()); };
+  host.querySelector('#scribe-editor-open').click();
+  await settle();
+  assert.deepEqual(scribeAsked, ['force'], 'the stored circle the scribe edits');
+  assert.ok(host.querySelector('#template-editor-modal'), 'a declined summon keeps the editor');
+  scribeResult = { agentId: 'agt_circle', opened: 'chat' };
+  host.querySelector('#scribe-editor-open').click();
+  await settle();
+  assertAbsent(host.querySelector('#template-editor-modal'), 'the editor steps aside once the chat window opened');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -360,14 +393,8 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     host.querySelector('#template-deploy-mission'),
     'the deploy dialog honors mission autofocus instead of the first control',
   );
-  assert.equal(
-    host.querySelector('#template-deploy-template').tagName,
-    'SELECT',
-  );
-  assert.equal(
-    host.querySelector('#template-deploy-default-profile').tagName,
-    'SELECT',
-  );
+  assert.ok(host.querySelector('#template-deploy-template').classList.contains('choice-combobox'));
+  assert.ok(host.querySelector('#template-deploy-default-profile').classList.contains('choice-combobox'));
   assert.equal(
     host.querySelector('#template-deploy-wt-per-agent').type,
     'checkbox',
@@ -376,25 +403,14 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     host.querySelector('#template-deploy-preview').textContent,
     /force-dev|dev/,
   );
-  const profile = host.querySelector('#template-deploy-default-profile');
-  profile.querySelector('option[value="fast"]').selected = true;
-  profile.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await comboPick(harness, host.querySelector('#template-deploy-default-profile'), 'fast');
   await harness.act(() => Promise.resolve());
   assert.match(
     host.querySelector('#template-deploy-preview').textContent,
     /owner/,
   );
-  const mirrorSelect = host.querySelector('#template-deploy-source');
-  mirrorSelect.querySelector('option[value="team"]').selected = true;
-  mirrorSelect.dispatchEvent(
-    new harness.window.Event('change', { bubbles: true }),
-  );
-  await harness.act(() => Promise.resolve());
-  const templateSelect = host.querySelector('#template-deploy-template');
-  templateSelect.querySelector('option[value="review-force"]').selected = true;
-  templateSelect.dispatchEvent(
-    new harness.window.Event('change', { bubbles: true }),
-  );
+  await comboPick(harness, host.querySelector('#template-deploy-source'), 'team');
+  await comboPick(harness, host.querySelector('#template-deploy-template'), 'review-force');
   await harness.act(() => Promise.resolve());
   assert.equal(
     host.querySelector('#template-deploy-group').value,
@@ -437,16 +453,8 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     /group lore[\s\S]*template lore/,
   );
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  const worktree = host.querySelector('#template-deploy-worktree');
-  const createWorktree = worktree.querySelector('option[value="__new__"]');
-  assert.ok(createWorktree);
-  createWorktree.selected = true;
-  worktree.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
-  await harness.act(() => Promise.resolve());
-  const base = host.querySelector('#template-deploy-wt-base');
-  base.querySelector('option[value="release"]').selected = true;
-  base.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
-  await harness.act(() => Promise.resolve());
+  await comboPick(harness, host.querySelector('#template-deploy-worktree'), '__new__');
+  await comboPick(harness, host.querySelector('#template-deploy-wt-base'), 'release');
   const reinforce = host.querySelector(
     'input[name="template-deploy-mode"][value="reinforce"]',
   );
@@ -471,11 +479,7 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
   );
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(
-    Array.from(
-      host.querySelector('#template-deploy-wt-base').querySelectorAll('option'),
-    )
-      .find((option) => option.selected)
-      ?.getAttribute('value'),
+    host.querySelector('#template-deploy-wt-base').dataset.value,
     'release',
     'a reinforce round-trip preserves the manually selected base branch',
   );
@@ -485,14 +489,14 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
   await harness.act(() => Promise.resolve());
   const staleBase = host.querySelector('#template-deploy-wt-base');
   assert.equal(staleBase.closest('[hidden]') !== null, true);
-  assertAbsent(staleBase.querySelector('option[value="release"]'), 'changing repositories immediately removes stale branch choices');
+  assert.equal((await comboKeys(harness, staleBase)).includes('release'), false,
+    'changing repositories immediately removes stale branch choices');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   const reloadedBase = host.querySelector('#template-deploy-wt-base');
-  assert.ok(
-    reloadedBase.querySelector('option[value="main"]'),
-    'a changed repository loads its own default branch',
-  );
-  assertAbsent(reloadedBase.querySelector('option[value="release"]'), 'branches from the previous repository do not leak into the new picker');
+  const reloadedKeys = await comboKeys(harness, reloadedBase);
+  assert.ok(reloadedKeys.includes('main'), 'a changed repository loads its own default branch');
+  assert.equal(reloadedKeys.includes('release'), false,
+    'branches from the previous repository do not leak into the new picker');
   reinforce.checked = true;
   reinforce.dispatchEvent(
     new harness.window.Event('change', { bubbles: true }),
@@ -509,11 +513,11 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     dropGroup: 'stale-team',
   });
   await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#template-deploy-default-profile').dataset.value, '');
   assert.match(
-    host.querySelector('#template-deploy-default-profile option[value=""]')
-      .textContent,
+    host.querySelector('#template-deploy-default-profile-input').value,
     /none/,
-    'a deleted group default degrades to the visible none option',
+    'a deleted group default degrades to the visible none choice',
   );
   const staleReinforce = host.querySelector(
     'input[name="template-deploy-mode"][value="reinforce"]',

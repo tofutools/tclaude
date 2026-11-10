@@ -66,6 +66,10 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 		}
 	}
 	fail := func(err error) {
+		if errors.Is(err, errPeerViewNoAgents) {
+			writeError(w, http.StatusConflict, "peer_lacks_agent_views", "the peer does not serve agent peer views; its operator must upgrade it")
+			return
+		}
 		if errors.Is(err, errPeerViewBusy) {
 			writeError(w, 503, "peer_busy", "peer view concurrency limit reached")
 			return
@@ -84,24 +88,28 @@ func servePeerViewProxyWith(w http.ResponseWriter, r *http.Request, cached bool)
 		fail(errPeerViewOffline)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, fedPeerViewBodyLimit+1))
+	limit := peerProxyBodyLimit(r.PathValue("tail"))
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	if err != nil {
 		writeError(w, 400, "invalid_arg", "could not read request body")
 		return
 	}
-	if len(body) > fedPeerViewBodyLimit {
+	if len(body) > limit {
 		writeError(w, 413, "request_too_large", "peer request body exceeds limit")
 		return
 	}
-	body, err = prepareHarnessCredentialPush(r, body)
-	if err != nil {
-		writeError(w, 400, "invalid_arg", err.Error())
-		return
-	}
-	body, err = prepareClaudeSubscriptionPush(r, body, peer)
-	if err != nil {
-		writeError(w, 409, "claude_subscription", err.Error())
-		return
+	// An agent's view never carries this node's credentials.
+	if peerViewPrincipalFrom(r.Context()) == nil {
+		body, err = prepareHarnessCredentialPush(r, body)
+		if err != nil {
+			writeError(w, 400, "invalid_arg", err.Error())
+			return
+		}
+		body, err = prepareClaudeSubscriptionPush(r, body, peer)
+		if err != nil {
+			writeError(w, 409, "claude_subscription", err.Error())
+			return
+		}
 	}
 	auditNodeRunProxyRequest(r, peer.InstanceID, body)
 	auditPeerAccessProxy(r, peer.InstanceID, "requested", 202, nil)
@@ -236,11 +244,23 @@ func validPeerViewReply(reply fedPeerViewReply) bool {
 		(len(reply.Body) == 0 || (json.Valid(reply.Body) && reply.Status != http.StatusNoContent && reply.Status != http.StatusNotModified))
 }
 
-// peerProxyPath is the peer path a /api/peer/{node}/{tail...} request reaches:
-// /api/<tail>, or for a v1/process/ tail the process API at /v1/process/
-// (a fused view's Processes section). The peer's own view rules decide either.
+// peerProxyBodyLimit is the request body a peer view proxy to tail takes.
+// An upload chunk goes through peer_uploads, not the proxy: only an export's
+// pick may outgrow fedPeerViewBodyLimit (peerViewBodyLimit).
+func peerProxyBodyLimit(tail string) int {
+	if peerDrawingBoardExportPath(peerProxyPath(tail)) {
+		return drawingBoardExportBodyLimit
+	}
+	return fedPeerViewBodyLimit
+}
+
+// peerProxyPath is the peer path a /api/peer/{node}/{tail...} or
+// /v1/federation/peer/{node}/{tail...} request reaches: /api/<tail>, or for a
+// v1/ tail that /v1 route itself (the process API of a fused view's Processes
+// section, a group's task board, cron and triggers --remote). The peer's own
+// view rules decide either; a /v1 path no rule names is refused there.
 func peerProxyPath(tail string) string {
-	if strings.HasPrefix(tail, "v1/process/") {
+	if strings.HasPrefix(tail, "v1/") {
 		return "/" + tail
 	}
 	return "/api/" + tail

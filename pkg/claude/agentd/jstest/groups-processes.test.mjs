@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
+import { comboLabels, comboPick } from './combobox-helpers.mjs';
+import { mountNameHost, submitName, waitForNameDialog } from './resource-name-helpers.mjs';
 
 const FIXTURE = JSON.parse(readFileSync(new URL('./process-context-fixture.json', import.meta.url), 'utf8'));
 
@@ -24,6 +26,23 @@ function fakeSource(harness, { status = 'ready', context = FIXTURE, error = '' }
   return source;
 }
 
+// startFrom opens a group's start form the way the operator does: ＋,
+// then the process item for that scope.
+async function startFrom(harness, el, scope = 'group') {
+  await harness.act(() => harness.fireEvent(el.querySelector('[data-resource-add]'), 'click'));
+  await harness.act(() => harness.fireEvent(el.querySelector(scope === 'agent' ? '[data-resource-add-process-agent]' : '[data-resource-add-process]'), 'click'));
+}
+
+// waitForCondition polls, instead of a fixed number of ticks, for state that
+// several chained async loads produce.
+async function waitForCondition(harness, condition, message) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    if (condition()) return;
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+  }
+  assert.ok(condition(), message);
+}
+
 async function settle(harness) {
   for (let i = 0; i < 3; i++) await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
@@ -40,7 +59,7 @@ async function mountFocus(t, props = {}) {
   const source = props.source || fakeSource(harness, props.sourceOptions);
   const groups = props.groups || GROUPS;
   const allGroups = props.allGroups || groups;
-  const snapshot = { processes_enabled: true, groups: allGroups.filter((group) => !group.virtual) };
+  const snapshot = { groups: allGroups.filter((group) => !group.virtual) };
   const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
     <${mod.GroupsProcessesFocus} groups=${groups} allGroups=${allGroups} source=${source}
       filter=${props.filter || 'running'} api=${props.api} wizard=${props.wizard || false}
@@ -128,15 +147,14 @@ test('+ start process starts a run scoped to the group and refreshes', async (t)
   };
   const { harness, group, source } = await mountFocus(t, { api });
   const fe = group('frontend-squad');
-  await harness.act(() => harness.fireEvent(fe.querySelector('[data-process-start="frontend-squad"]'), 'click'));
+  await startFrom(harness, fe);
   await settle(harness);
   const form = fe.querySelector('form.gp-start-form');
   assert.equal(form.getAttribute('aria-label'), 'Start a process in frontend-squad');
   assert.match(form.textContent, /group scope · frontend-squad/);
-  const select = form.querySelector('select[aria-label="Template"]');
-  assert.deepEqual([...select.options].map((o) => o.textContent), ['Alpha', 'Beta']);
-  Object.defineProperty(select, 'value', { configurable: true, writable: true, value: 'tpl_b' });
-  await harness.act(() => harness.fireEvent(select, 'change'));
+  const select = form.querySelector('.gp-start-template');
+  assert.deepEqual(await comboLabels(harness, select), ['Alpha', 'Beta']);
+  await comboPick(harness, select, 'tpl_b');
 
   fail = true;
   await harness.act(() => harness.fireEvent(form, 'submit'));
@@ -250,8 +268,9 @@ test('the start form asks for params and explicit program authorization', async 
   };
   const { harness, group } = await mountFocus(t, { api });
   const fe = group('frontend-squad');
-  await harness.act(() => harness.fireEvent(fe.querySelector('[data-process-start="frontend-squad"]'), 'click'));
-  await settle(harness);
+  await startFrom(harness, fe);
+  // The form reads the templates, then the chosen one's requirements.
+  await waitForCondition(harness, () => fe.querySelector('form.gp-start-form [data-start-param="issue"]'), 'the start form lists the template params');
   const form = fe.querySelector('form.gp-start-form');
   const submit = form.querySelector('button[type="submit"]');
   assert.ok(submit.disabled, 'a required param blocks the start');
@@ -412,7 +431,7 @@ test('the group row mirrors the Agents row: agent process, group process, resume
     harness.importDashboardModule('js/groups-interactions.js'),
   ]);
   const source = fakeSource(harness, { context });
-  const snapshot = { processes_enabled: true, groups: GROUPS.filter((group) => !group.virtual) };
+  const snapshot = { groups: GROUPS.filter((group) => !group.virtual) };
   const { container } = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
     <${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${GROUPS} source=${source} filter="done" api=${api} runApi=${runApi}
       notify=${(message, isError) => notes.push([message, isError])} onFocusRun=${() => {}}>
@@ -437,14 +456,13 @@ test('the group row mirrors the Agents row: agent process, group process, resume
   await harness.act(async () => { fe.querySelector('[data-process-resume-all]').click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
   assert.deepEqual(calls.at(-1), ['resume', 'run_release']);
 
-  await harness.act(() => harness.fireEvent(fe.querySelector('[data-process-start-agent="frontend-squad"]'), 'click'));
+  await startFrom(harness, fe, 'agent');
   await settle(harness);
   const form = fe.querySelector('form.gp-start-form[data-start-scope="agent"]');
   assert.equal(form.getAttribute('aria-label'), 'Start a process for one agent in frontend-squad');
-  const agent = form.querySelector('select[data-start-agent]');
-  assert.deepEqual([...agent.options].map((o) => o.textContent), ['fe-lead', 'fe-dev-forms', 'fe-dev-charts']);
-  Object.defineProperty(agent, 'value', { configurable: true, writable: true, value: 'agt_fe_charts' });
-  await harness.act(() => harness.fireEvent(agent, 'change'));
+  const agent = form.querySelector('[data-start-agent]');
+  assert.deepEqual(await comboLabels(harness, agent), ['fe-lead', 'fe-dev-forms', 'fe-dev-charts']);
+  await comboPick(harness, agent, 'agt_fe_charts');
   await harness.act(() => harness.fireEvent(form, 'submit'));
   await settle(harness);
   assert.equal(started.length, 1);
@@ -465,11 +483,16 @@ test('Both shows each group\'s members and runs as sections, each with its contr
     assert.equal(head(fe, 'agents').querySelector(`[data-act="${act}"]`), null, `${act} left the open Agents line`);
   }
   assert.equal(section(fe, 'agents').querySelector('[data-act="create-subgroup"]'), null, 'create subgroup left the Agents section');
-  assert.ok(head(fe, 'subgroups').querySelector('[data-act="create-subgroup"]'), 'create subgroup heads the Subgroups line');
+  // Every section's add button rides its line folded and heads its content open.
+  const subgroups = section(fe, 'subgroups');
+  const subgroupsHome = subgroups.classList.contains('open') ? subgroups.querySelector(':scope > .gf-title-row') : head(fe, 'subgroups');
+  assert.ok(subgroupsHome.querySelector('[data-act="create-subgroup"]'), 'create subgroup sits where the section shows it');
+  assert.equal(subgroups.querySelectorAll('[data-act="create-subgroup"]').length, 1, 'one create subgroup button at a time');
   const titleRow = section(fe, 'processes').querySelector('[data-process-group] > .gf-title-row');
-  assert.ok(titleRow.querySelector('[data-process-start-agent="frontend-squad"]'), 'process controls head the open runs');
+  assert.ok(titleRow.querySelector('[data-resource-add="frontend-squad"]'), '＋ heads the open Resources');
+  assert.equal(section(fe, 'processes').querySelector('[data-process-start], [data-process-start-agent]'), null, 'the old start buttons are gone');
   assert.ok(titleRow.querySelector('[data-process-pause-all] [data-run-glyph="pause"]'), 'pause never wears the shutdown glyph');
-  assert.equal(head(fe, 'processes').querySelector('[data-process-start-agent]'), null, 'process controls left the open Processes line');
+  assert.equal(head(fe, 'processes').querySelector('[data-resource-add]'), null, '＋ left the open Resources line');
   assert.equal(fe.querySelector(':scope > .subtable > .group-header-actions'), null, 'no separate action row');
 
   assert.ok(section(fe, 'agents').querySelector('table'), 'the member table shows');
@@ -482,9 +505,10 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   const quiet = section(infra, 'processes');
   assert.equal(quiet.classList.contains('open'), false, 'a quiet group folds its runs to one line');
   assert.equal(quiet.querySelector('[data-process-group]'), null);
-  assert.ok(quiet.querySelector('.gf-section-actions [data-process-start="infra-crew"]'), 'a folded section keeps its controls');
+  assert.ok(quiet.querySelector('.gf-section-actions [data-resource-add="infra-crew"]'), 'a folded section keeps its controls');
   await harness.act(() => harness.fireEvent(quiet.querySelector('.gf-section-toggle'), 'click'));
-  assert.ok(section(infra, 'processes').querySelector('[data-quickstart-folded="infra-crew"]'), 'opened, Get started stays a line');
+  assert.equal(section(infra, 'processes').querySelector('[data-quickstart-folded]'), null, 'no Get started line: the ＋ menu does that');
+  assert.match(section(infra, 'processes').querySelector('[data-resources-empty="infra-crew"]').textContent, /^No resources yet\. The ＋ menu adds/);
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '1', 'the choice is remembered');
   await harness.act(() => harness.fireEvent(section(fe, 'agents').querySelector('.gf-section-fill'), 'click'));
@@ -505,9 +529,15 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.agents.frontend-squad'), '1');
   await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('.gf-section-toggle'), 'click'));
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '0', 'Processes folded again');
-  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('.gf-section-actions [data-process-start="infra-crew"]'), 'click'));
+  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('.gf-section-actions [data-resource-add="infra-crew"]'), 'click'));
   await settle(harness);
-  assert.ok(section(infra, 'processes').classList.contains('open'), 'a process control on the folded line unfolds Processes');
+  assert.ok(section(infra, 'processes').classList.contains('open'), '＋ on the folded line unfolds Resources');
+  // The menu survives the move to the title row.
+  assert.ok(section(infra, 'processes').querySelector('.gf-title-row [data-resource-add-process]'), 'the ＋ menu stays open on the title row');
+  assert.equal(document.activeElement, section(infra, 'processes').querySelector('.gf-title-row [data-resource-add]'), 'focus follows the button to the title row');
+  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('[data-resource-add-process-agent]'), 'click'));
+  await settle(harness);
+  assert.ok(section(infra, 'processes').querySelector('form.gp-start-form[data-start-scope="agent"]'), 'Process for one agent opens the agent-scoped start form');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '1');
 });
 
@@ -559,4 +589,298 @@ test('Both links an agent to its steps, a step to its performers, and a run card
   await wait(260);
   assert.equal(root.querySelector('.gf-links'), null, 'leaving the frame clears the links');
   assert.equal(fe.querySelectorAll('.gf-link-hot, .gf-link-dim').length, 0);
+});
+
+// tcl-dwzsq0: in Both, the group's section is Resources: its processes, then
+// the drawing boards and pages attached to it, a kind only when it has any, each with
+// the operator's agent lock chip; one ＋▾ adds a process or a drawing board.
+test('Both\'s Resources section lists the group\'s drawing boards and pages with lock chips, hiding empty kinds', async (t) => {
+  const context = structuredClone(FIXTURE);
+  const fe = context.groups.find((g) => g.group === 'frontend-squad');
+  fe.processes = [{ templateId: 'ship', name: 'Ship', ref: 'r1', listed: true, steps: 3, params: [], programProfiles: [], agentsLocked: true }];
+  fe.drawingBoards = [{ id: 'sprint', title: 'Sprint drawing board', editing: 2 }];
+  const infra = context.groups.find((g) => g.group === 'infra-crew');
+  infra.pages = [{ id: 'pg1', name: 'landing', title: 'Landing page', owner: 'agt_infra_lead', kind: 'port', agentsLocked: true },
+    { id: 'pg2', name: 'sketch', title: 'sketch', owner: '', kind: 'scratch', groupOwned: true }];
+  const calls = [];
+  const created = [];
+  const api = {
+    setResourceLock: async (...args) => { calls.push(args); return {}; },
+    drawingBoardIds: async () => ['frontend-squad-drawing-board'],
+    createGroupDrawingBoard: async (...args) => { created.push(args); return { id: args[2], title: args[1] }; },
+    createGroupPage: async (...args) => { created.push(['page', ...args]); return { id: 'pg_new', name: args[1], title: args[2] }; },
+  };
+  const { harness, details, source } = await mountFocus(t, { fused: true, api, sourceOptions: { context } });
+  await mountNameHost(harness);
+  const section = (el) => el.querySelector('[data-fused-section="processes"]');
+
+  const feSection = section(details('frontend-squad'));
+  assert.equal(feSection.querySelector('.gf-label').textContent, 'Resources');
+  assert.equal(feSection.querySelector('.gf-count').textContent, '2', 'the line counts the resources: a process and a drawing board');
+  assert.ok(feSection.querySelector('[data-resource-add="frontend-squad"]'), 'one ＋▾ add');
+  const feRes = feSection.querySelector('[data-group-resources="frontend-squad"]');
+  assert.ok(feRes.querySelector('[data-resource-kind="drawing_boards"]'));
+  assert.equal(feRes.querySelector('[data-resource-kind="pages"]'), null, 'a kind with nothing in it is hidden');
+  const drawingBoard = feRes.querySelector('[data-resource-drawing-board="sprint"]');
+  assert.match(drawingBoard.textContent, /Sprint drawing board/);
+  assert.match(drawingBoard.textContent, /2 editing/);
+  assert.equal(drawingBoard.querySelector('[data-resource-lock="drawing_board:sprint"]').textContent, '✎ agents can edit');
+  assert.equal(feSection.querySelector('[data-resource-lock="process:ship"]').textContent, '🔒 agents: read-only');
+  // One style per kind: a heading, then rows ending in the lock chip; the
+  // runs stay with the processes, above the other kinds.
+  const shipRow = feSection.querySelector('[data-saved-process="ship"]');
+  assert.equal(shipRow.querySelector('.gr-lockcell [data-resource-lock]').dataset.resourceLock, 'process:ship', 'a process row has the lock column');
+  assert.equal(drawingBoard.querySelector('.gr-lockcell [data-resource-lock]').dataset.resourceLock, 'drawing_board:sprint', 'and so does a drawing board row');
+  assert.equal(feSection.querySelectorAll('thead').length, 1, 'the processes\' table and the resources\' table share one header row');
+  assert.equal(shipRow.querySelector('.gr-kindcell').textContent, 'process', 'kind is a column, not a heading');
+  assert.deepEqual([...shipRow.children].map((td) => td.className.split(' ').find((c) => c.startsWith('gr-') || c.endsWith('namecell')) || ''),
+    ['gr-ctl', 'gq-saved-namecell', '', 'gr-timecell', 'gr-timecell', 'gr-kindcell', 'gr-lockcell', 'gr-meta'],
+    'a process row\'s cells follow the header: Last and Age right after State');
+  const lastRun = [...feSection.querySelectorAll('[data-process-run-card]')].pop();
+  assert.ok(lastRun.compareDocumentPosition(feRes) & 4 /* DOCUMENT_POSITION_FOLLOWING */, 'drawing boards follow the runs');
+
+  const infraSection = section(details('infra-crew'));
+  assert.ok(infraSection.classList.contains('open'), 'a group with a resource opens its section');
+  const page = section(details('infra-crew')).querySelector('[data-resource-page="pg1"]');
+  assert.ok(page, 'a group with only a page lists it');
+  assert.equal(section(details('infra-crew')).querySelector('[data-resource-kind="drawing_boards"]'), null);
+  assert.match(page.textContent, /live · infra-lead/, 'the page names its shower');
+
+  const before = source.refreshes;
+  await harness.act(() => harness.fireEvent(page.querySelector('[data-resource-lock="page:pg1"]'), 'click'));
+  await settle(harness);
+  assert.deepEqual(calls, [['page', 'pg1', false]], 'the chip unlocks a locked page');
+  assert.ok(source.refreshes > before, 'and reloads the context');
+
+  // ＋▾ › Drawing board asks for its name first, prefilled as before, and
+  // picks an id free among every drawing board, not only the group's.
+  await harness.act(() => harness.fireEvent(feSection.querySelector('[data-resource-add="frontend-squad"]'), 'click'));
+  await harness.act(() => harness.fireEvent(feSection.querySelector('[data-resource-add-drawing-board]'), 'click'));
+  const { input } = await waitForNameDialog(harness, 'the Groups ＋ asks for the drawing board\'s name');
+  assert.equal(input.value, 'frontend-squad drawing board');
+  assert.equal(created.length, 0, 'nothing is made before the name is given');
+  await submitName(harness);
+  assert.equal(created.length, 1);
+  assert.equal(created[0][0], 'frontend-squad');
+  assert.equal(created[0][1], 'frontend-squad drawing board');
+  assert.notEqual(created[0][2], 'frontend-squad-drawing-board', 'a taken id elsewhere on the node is not reused');
+
+  // ＋▾ › Page creates a blank page the group owns, named free in the group.
+  const infraNow = section(details('infra-crew'));
+  assert.match(infraNow.querySelector('[data-resource-page="pg2"]').textContent, /no member has taken it over/);
+  await harness.act(() => harness.fireEvent(infraNow.querySelector('[data-resource-add="infra-crew"]'), 'click'));
+  await harness.act(() => harness.fireEvent(infraNow.querySelector('[data-resource-add-page]'), 'click'));
+  const page2 = await waitForNameDialog(harness, 'the Groups ＋ asks for the page\'s name');
+  assert.equal(page2.input.value, 'sketch-2', 'prefilled with the free name: the group already has a sketch');
+  await submitName(harness, 'Landing mock');
+  assert.deepEqual(created[1], ['page', 'infra-crew', 'sketch-2', 'Landing mock'], 'the typed name is the page\'s title');
+});
+
+// tcl-i9elme: a peer's group lists its resources from that node; each lock
+// chip toggles only where that node grants this one groups.resources.lock,
+// says so otherwise, and a refusal is a toast, never silence.
+function peerFetch(resources, { lockStatus = 200, readStatus = 200 } = {}) {
+  const calls = [];
+  const fetchImpl = async (path, init = {}) => {
+    calls.push({ path, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
+    if (path === '/api/resource-locks') {
+      if (lockStatus !== 200) return { ok: false, status: lockStatus, json: async () => ({ code: 'permission', error: 'this node does not grant you groups.resources.lock for group:crew' }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    }
+    if (readStatus !== 200) return { ok: false, status: readStatus, json: async () => ({ error: `read failed ${readStatus}` }) };
+    return { ok: true, status: 200, json: async () => resources };
+  };
+  return { fetchImpl, calls };
+}
+
+const PEER_GROUP = { name: 'crew@bob', fleet_node: { id: 'inst_bob1234', name: 'bob', local: false }, members: [] };
+const PEER_RESOURCES = {
+  group: 'crew', canLock: true,
+  processes: [{ templateId: 'ship', name: 'Ship', agentsLocked: true }],
+  drawingBoards: [{ id: 'plan', title: 'Plan' }],
+  pages: [],
+};
+
+async function mountPeerResources(t, resources, options) {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const peer = peerFetch(resources, options);
+  const notes = [];
+  const mounted = await harness.mount(harness.html`<${mod.PeerGroupResources} group=${PEER_GROUP} fetchImpl=${peer.fetchImpl} pollMs=${0}
+    notify=${(text, error) => notes.push({ text, error: !!error })} />`);
+  await settle(harness);
+  return { harness, mod, root: mounted.container, peer, notes };
+}
+
+test('a peer group lists its resources by its own name and toggles a lock under the grant', async (t) => {
+  const { harness, mod, root, peer, notes } = await mountPeerResources(t, PEER_RESOURCES);
+  assert.equal(mod.peerGroupName(PEER_GROUP), 'crew');
+  assert.equal(peer.calls[0].path, '/api/groups/crew/resources', 'read from the node by the group\'s own name');
+  assert.deepEqual([...root.querySelectorAll('[data-resource-kind]')].map((k) => k.dataset.resourceKind), ['processes', 'drawing-boards'], 'an empty kind is hidden');
+  const drawingBoard = root.querySelector('[data-resource-lock="drawing_board:plan"]');
+  assert.equal(drawingBoard.disabled, false);
+  assert.equal(root.querySelector('[data-resource-lock="process:ship"]').textContent, '🔒 agents: read-only');
+  assert.equal(root.querySelector('[data-peer-resource="drawing_board:plan"] button.gr-name'), null, 'a peer drawing board is named, not opened here');
+  await harness.act(() => harness.fireEvent(drawingBoard, 'click'));
+  await settle(harness);
+  const lock = peer.calls.find((c) => c.path === '/api/resource-locks');
+  assert.deepEqual(lock.body, { kind: 'drawing_board', id: 'plan', locked: true });
+  assert.equal(lock.method, 'POST');
+  assert.ok(peer.calls.filter((c) => c.path === '/api/groups/crew/resources').length >= 2, 'the list is read again after a change');
+  assert.deepEqual(notes.map((n) => n.error), [false]);
+});
+
+test('without the grant a peer lock chip is disabled and says why', async (t) => {
+  const { root, peer } = await mountPeerResources(t, { ...PEER_RESOURCES, canLock: false });
+  const chip = root.querySelector('[data-resource-lock="drawing_board:plan"]');
+  assert.equal(chip.disabled, true);
+  assert.equal(chip.getAttribute('aria-disabled'), 'true');
+  assert.match(chip.title, /bob does not grant you groups\.resources\.lock/);
+  assert.equal(peer.calls.some((c) => c.path === '/api/resource-locks'), false);
+});
+
+// tcl-xrs9v5: a template pinned to several groups locks only where the node
+// grants the lock in each, so its chip follows its own canLock.
+const PER_TEMPLATE_RESOURCES = { ...PEER_RESOURCES, processes: [
+  { templateId: 'ship', name: 'Ship', agentsLocked: true, canLock: false },
+  { templateId: 'solo', name: 'Solo', canLock: true },
+  { templateId: 'old', name: 'Old' },
+] };
+
+test('a peer template lock chip follows the template, not its group', async (t) => {
+  const { root } = await mountPeerResources(t, PER_TEMPLATE_RESOURCES);
+  assert.equal(root.querySelector('[data-resource-lock="drawing_board:plan"]').disabled, false, 'the group grants its drawing boards');
+  const shared = root.querySelector('[data-resource-lock="process:ship"]');
+  assert.equal(shared.disabled, true, 'pinned where the node does not grant the lock');
+  assert.match(shared.title, /bob does not grant you groups\.resources\.lock/);
+  assert.equal(root.querySelector('[data-resource-lock="process:solo"]').disabled, false);
+  assert.equal(root.querySelector('[data-resource-lock="process:old"]').disabled, false, 'a node that does not say per template answers for the group');
+});
+
+test('a peer template its node lets this one lock stays lockable in a group that does not', async (t) => {
+  const { root: refused } = await mountPeerResources(t, { ...PER_TEMPLATE_RESOURCES, canLock: false });
+  assert.equal(refused.querySelector('[data-resource-lock="process:solo"]').disabled, false, 'its own answer wins over the group\'s');
+  assert.equal(refused.querySelector('[data-resource-lock="process:old"]').disabled, true);
+});
+
+test('a peer refusing a lock toggle is a toast, not silence', async (t) => {
+  const { harness, root, notes } = await mountPeerResources(t, PEER_RESOURCES, { lockStatus: 403 });
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-resource-lock="process:ship"]'), 'click'));
+  await settle(harness);
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].error, true);
+  assert.match(notes[0].text, /Could not change the lock on Ship: this node does not grant you groups\.resources\.lock/);
+});
+
+for (const status of [403, 404]) {
+  test(`a peer group read refused with ${status} shows no resources and no error`, async (t) => {
+    const { root } = await mountPeerResources(t, PEER_RESOURCES, { readStatus: status });
+    assert.equal(root.querySelector('[data-peer-resources]'), null);
+    assert.equal(root.querySelector('[data-peer-resources-error]'), null, 'not shown or not served: silent');
+  });
+}
+
+test('any other peer group read failure says so', async (t) => {
+  const { root } = await mountPeerResources(t, PEER_RESOURCES, { readStatus: 502 });
+  assert.match(root.querySelector('[data-peer-resources-error]').textContent, /Could not read the resources of crew on bob: read failed 502/);
+});
+
+test('a node\'s group cards read it one at a time', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  let inFlight = 0;
+  let most = 0;
+  const read = () => mod.queuePeerRead('inst_bob1234', async () => {
+    inFlight++;
+    most = Math.max(most, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    inFlight--;
+  });
+  const failing = mod.queuePeerRead('inst_bob1234', async () => { throw new Error('boom'); });
+  await Promise.all([read(), read(), read(), failing.catch(() => {}), read()]);
+  assert.equal(most, 1, 'one read in flight per node, a failed one included');
+});
+
+test('a peer group card reads again on the dashboard\'s snapshot tick once due, never on its own timer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const tick = harness.signals.signal(null);
+  const peer = peerFetch(PEER_RESOURCES);
+  const reads = () => peer.calls.filter((c) => c.path === '/api/groups/crew/resources').length;
+  await harness.mount(harness.html`<${mod.PeerGroupResources} group=${PEER_GROUP} fetchImpl=${peer.fetchImpl} pollMs=${1000} tick=${tick} />`);
+  await settle(harness);
+  assert.equal(reads(), 1, 'read once on mount');
+  await harness.act(() => { tick.value = Date.now(); });
+  await settle(harness);
+  assert.equal(reads(), 1, 'a tick before the card is due reads nothing');
+  const later = Date.now() + 5000;
+  await harness.act(() => { tick.value = later; });
+  await settle(harness);
+  assert.equal(reads(), 2, 'the first tick after it is due reads again');
+  await harness.act(() => { tick.value = later + 10; });
+  await settle(harness);
+  assert.equal(reads(), 2, 'and then waits a full period');
+  await harness.act(() => { tick.value = later + 1000; });
+  await settle(harness);
+  assert.equal(reads(), 3);
+});
+
+// withSnapshot sets the dashboard snapshot the mounted tree reads.
+async function withSnapshot(harness, value) {
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  await harness.act(() => { dashboardState.snapshot.value = value; });
+  await settle(harness);
+}
+
+test('Both lays Ungrouped out as a real group: Agents, then Resources listing the drawing boards in no group, which ⋯ moves into one', async (t) => {
+  const snap = {
+    groups: [{ id: 1, name: 'frontend-squad', members: [] }, { id: 2, name: 'infra-crew', members: [] }],
+    group_resources: [
+      { kind: 'drawing_board', id: 'sketch', group_id: 0, title: 'Sketch', state: 'closed', detail: '2 editing' },
+      { kind: 'drawing_board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' },
+    ],
+  };
+  const moved = [];
+  const api = { moveDrawingBoard: async (id, group) => { moved.push([id, group]); } };
+  const ungrouped = { name: 'Ungrouped', key: ' ungrouped-virtual', virtual: true, members: [{ conv_id: 'c9', agent_id: 'agt_doc', title: 'doc-bot', online: true }] };
+  const { harness, details } = await mountFocus(t, { fused: true, api, groups: [GROUPS[0], GROUPS[1], ungrouped], allGroups: [GROUPS[0], GROUPS[1]] });
+  await withSnapshot(harness, snap);
+  const el = details(' ungrouped-virtual');
+  const section = (name) => el.querySelector(`:scope > .subtable > [data-fused-section="${name}"]`);
+  assert.ok(section('agents').querySelector('table'), 'the member table sits in an Agents section');
+  assert.equal(section('agents').querySelector('.gf-count').textContent, '1');
+  const resources = section('processes');
+  assert.ok(resources.classList.contains('open'), 'Resources opens while it lists something');
+  assert.equal(resources.querySelector('.gf-label').textContent, 'Resources');
+  assert.equal(resources.querySelector('.gf-count').textContent, '1');
+  assert.deepEqual([...resources.querySelectorAll('[data-resource-drawing-board]')].map((row) => row.dataset.resourceDrawingBoard), ['sketch'], 'only the drawing board in no group');
+  assert.match(resources.querySelector('[data-resource-drawing-board="sketch"] .gr-meta').textContent, /2 editing/);
+  assert.equal(resources.querySelector('[data-resource-add]'), null, 'no ＋: what is made here belongs in a group');
+  await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-drawing-board="sketch"] .gr-cog'), 'click'));
+  await harness.act(() => harness.fireEvent(resources.querySelector('[data-resource-move="sketch"]'), 'click'));
+  assert.deepEqual([...resources.querySelectorAll('[data-move-to]')].map((item) => item.dataset.moveTo), ['frontend-squad', 'infra-crew'], 'every group is a target');
+  await harness.act(() => harness.fireEvent(resources.querySelector('[data-move-to="infra-crew"]'), 'click'));
+  await settle(harness);
+  assert.deepEqual(moved, [['sketch', 'infra-crew']]);
+});
+
+test('Both folds an empty Ungrouped Resources to its line and says where drawing boards come from', async (t) => {
+  const { harness, details } = await mountFocus(t, { fused: true });
+  await withSnapshot(harness, { groups: [], group_resources: [{ kind: 'drawing_board', id: 'plan', group_id: 1, title: 'Plan', state: 'closed' }] });
+  const resources = details('Ungrouped').querySelector(':scope > .subtable > [data-fused-section="processes"]');
+  assert.equal(resources.classList.contains('open'), false);
+  assert.equal(resources.querySelector('.gf-count').textContent, '0');
+  await harness.act(() => harness.fireEvent(resources.querySelector('.gf-section-toggle'), 'click'));
+  const opened = details('Ungrouped').querySelector(':scope > .subtable > [data-fused-section="processes"]');
+  assert.match(opened.querySelector('[data-resources-empty]').textContent, /^No resources outside groups\./);
+});
+
+test('another node\'s Ungrouped in Both lists none of this node\'s drawing boards, and claims none of its own', async (t) => {
+  const peer = { name: 'Ungrouped@lab-b', key: ' ungrouped-virtual@lab-b', virtual: true, fleet_node: { id: 'n2', name: 'lab-b', local: false }, members: [] };
+  const { harness, details } = await mountFocus(t, { fused: true, groups: [GROUPS[0], peer], allGroups: [GROUPS[0]] });
+  await withSnapshot(harness, { groups: [], group_resources: [{ kind: 'drawing_board', id: 'sketch', group_id: 0, title: 'Sketch', state: 'closed' }] });
+  const el = details(' ungrouped-virtual@lab-b');
+  assert.ok(el.querySelector(':scope > .subtable > [data-fused-section="agents"]'));
+  assert.equal(el.querySelector('[data-fused-section="processes"]'), null, 'no Resources section without runs');
+  assert.equal(el.querySelector('[data-resource-drawing-board]'), null);
 });

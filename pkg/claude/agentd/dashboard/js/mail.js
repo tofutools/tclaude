@@ -73,6 +73,7 @@
 // bulk bar as each batch lands, and mail.busy freezes the refresh +
 // handlers for the duration so nothing races the running op.
 
+import { openAccessPanel } from './companion-approval.js';
 import { $, $$, shortId, shortAgentId, idTooltip } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 import { initMailResize } from './mail-resize.js';
@@ -87,6 +88,7 @@ import { suppressNextMessagesAttention } from './mail-bridge.js';
 import { allRecipientLabel, counterparty, messageKind, msgPreview, senderLabel, wz } from './mail-labels.js';
 import { withPeerAttachments } from './human-attachments.js';
 import { remoteNodeID } from './fleet-model.js';
+import { onPeerPage } from './node-api.js';
 import { humanReadShared } from './peer-view-limits.js';
 import {
   createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
@@ -1352,7 +1354,7 @@ export function accessWho(r) {
   // A cross-node link request (tcl-2ksi0k) comes from a peer node, not an agent.
   if (r.purpose === 'group_link') return r.link?.source_peer_label || r.conv_title || r.origin_peer || 'peer';
   if (r.purpose === 'peer_proposal') return r.proposal?.peer_label || r.origin_peer || 'peer';
-  const id = shortAgentId(r.agent_id, r.conv_id) || wz('unknown agent', 'unknown familiar');
+  const id = shortAgentId(r.agent_id, r.conv_id) || wz('unknown agent', 'unknown hero');
   // Lead with the human-readable agent name whenever caller refresh found one.
   // The row and reader both carry the stable agent + conversation identifiers
   // in their hover title, so repeating the short id in visible text only makes
@@ -1518,8 +1520,8 @@ function renderAccessRequests(list, pending) {
   const label = $('#access-banner-text');
   if (label && n > 0) {
     label.textContent = n === 1
-      ? wz('An agent is requesting access', 'A familiar begs a boon')
-      : wz(`${n} agents are requesting access`, `${n} familiars beg boons`);
+      ? wz('An agent is requesting access', 'A hero begs a boon')
+      : wz(`${n} agents are requesting access`, `${n} heroes beg boons`);
   }
 }
 
@@ -1853,7 +1855,11 @@ function initMail() {
   const controller = new AbortController();
   const { signal } = controller;
   const disposeResize = initMailResize();
-  $('#access-banner-review')?.addEventListener('click', () => { void focusAccessRequest(); }, { signal });
+  // The quick panel answers it in place; a peer's page has none, so Messages.
+  $('#access-banner-review')?.addEventListener('click', (event) => {
+    if (onPeerPage()) void focusAccessRequest();
+    else openAccessPanel({ launcher: event.currentTarget });
+  }, { signal });
   document.addEventListener('tclaude:wizard', paintMail, { signal });
   // Every repaint brings the URL in line with the open folder and message.
   const stopUrlSync = effect(() => { void mailState.revision.value; syncMailUrl(); });

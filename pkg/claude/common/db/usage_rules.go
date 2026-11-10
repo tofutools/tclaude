@@ -109,20 +109,7 @@ func ListUsageProfiles() ([]*UsageProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(usageProfileSelect + ` ORDER BY name COLLATE NOCASE`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*UsageProfile
-	for rows.Next() {
-		p, err := scanUsageProfile(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return queryRows(d, scanUsageProfile, usageProfileSelect+` ORDER BY name COLLATE NOCASE`)
 }
 
 // GetUsageProfile returns the profile with id, or nil when absent.
@@ -221,20 +208,13 @@ func ListUsageProfileAssignments() ([]UsageProfileAssignment, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT scope, scope_id, profile_id, source FROM usage_profile_assignments ORDER BY scope, scope_id, profile_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []UsageProfileAssignment
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (UsageProfileAssignment, error) {
 		var a UsageProfileAssignment
 		if err := rows.Scan(&a.Scope, &a.ScopeID, &a.ProfileID, &a.Source); err != nil {
-			return nil, err
+			return UsageProfileAssignment{}, err
 		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
+		return a, nil
+	}, `SELECT scope, scope_id, profile_id, source FROM usage_profile_assignments ORDER BY scope, scope_id, profile_id`)
 }
 
 // UsageGroupScopeID is a group's assignment scope id.
@@ -282,9 +262,16 @@ func SetUsageProfileAssignments(scope, scopeID string, profileIDs []int64, sourc
 		return err
 	}
 	now := dbTime(time.Now())
+	insert := `INSERT OR IGNORE INTO usage_profile_assignments (scope, scope_id, profile_id, source, created_at) VALUES (?, ?, ?, ?, ?)`
+	if scope == UsageScopeAgent && !strings.HasPrefix(source, UsageLinkedSourcePrefix) {
+		// An agent's own choice takes over a row it already holds as a link,
+		// so a later change to the spawn profile's links (a re-apply) cannot
+		// remove a limit the operator chose for it.
+		insert = `INSERT INTO usage_profile_assignments (scope, scope_id, profile_id, source, created_at) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(scope, scope_id, profile_id) DO UPDATE SET source = excluded.source`
+	}
 	for _, id := range profileIDs {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_profile_assignments (scope, scope_id, profile_id, source, created_at) VALUES (?, ?, ?, ?, ?)`,
-			scope, scopeID, id, source, now); err != nil {
+		if _, err := tx.Exec(insert, scope, scopeID, id, source, now); err != nil {
 			return fmt.Errorf("assign usage profile %d: %w", id, err)
 		}
 	}
@@ -315,20 +302,7 @@ func ListUsageLimits() ([]*UsageLimit, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(usageLimitSelect + ` ORDER BY scope = 'group', group_id, id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*UsageLimit
-	for rows.Next() {
-		l, err := scanUsageLimit(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, l)
-	}
-	return out, rows.Err()
+	return queryRows(d, scanUsageLimit, usageLimitSelect+` ORDER BY scope = 'group', group_id, id`)
 }
 
 // GetUsageLimit returns the limit with id, or nil when absent.
@@ -467,22 +441,15 @@ func ListUsageRuleFiringsSince(since time.Time) ([]UsageRuleFiring, error) {
 		query += ` WHERE fired_at >= ?`
 		args = append(args, dbTimeBoundary(since))
 	}
-	rows, err := d.Query(query+` ORDER BY fired_at DESC`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []UsageRuleFiring
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (UsageRuleFiring, error) {
 		var f UsageRuleFiring
 		var at dbTimestamp
 		if err := rows.Scan(&f.RuleKey, &f.Subject, &f.PeriodKey, &f.StepKey, &f.Action, &f.RuleName, &f.Value, &f.Budget, &f.DryRun, &at); err != nil {
-			return nil, err
+			return UsageRuleFiring{}, err
 		}
 		f.FiredAt = at.time
-		out = append(out, f)
-	}
-	return out, rows.Err()
+		return f, nil
+	}, query+` ORDER BY fired_at DESC`, args...)
 }
 
 // UsageRuleFiringTimes returns when each step's base crossing fired for one
@@ -560,23 +527,16 @@ func ListUsageRuleFiringsForSubject(ruleKey, subject string) ([]UsageRuleFiring,
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT rule_key, subject, period_key, step_key, action, rule_name, value, budget, dry_run, fired_at
-		FROM usage_rule_firings WHERE rule_key = ? AND subject = ? ORDER BY fired_at DESC LIMIT 64`, ruleKey, subject)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []UsageRuleFiring
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (UsageRuleFiring, error) {
 		var f UsageRuleFiring
 		var at dbTimestamp
 		if err := rows.Scan(&f.RuleKey, &f.Subject, &f.PeriodKey, &f.StepKey, &f.Action, &f.RuleName, &f.Value, &f.Budget, &f.DryRun, &at); err != nil {
-			return nil, err
+			return UsageRuleFiring{}, err
 		}
 		f.FiredAt = at.time
-		out = append(out, f)
-	}
-	return out, rows.Err()
+		return f, nil
+	}, `SELECT rule_key, subject, period_key, step_key, action, rule_name, value, budget, dry_run, fired_at
+		FROM usage_rule_firings WHERE rule_key = ? AND subject = ? ORDER BY fired_at DESC LIMIT 64`, ruleKey, subject)
 }
 
 // UsageRuleFiringPeriods returns the period keys under which one step of a
@@ -586,22 +546,9 @@ func UsageRuleFiringPeriods(ruleKey, subject, stepKey string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT period_key FROM usage_rule_firings
+	return queryRows(d, scanString, `SELECT period_key FROM usage_rule_firings
 		WHERE rule_key = ? AND subject = ? AND step_key = ? AND dry_run = 0 ORDER BY fired_at DESC LIMIT 16`,
 		ruleKey, subject, stepKey)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, err
-		}
-		out = append(out, key)
-	}
-	return out, rows.Err()
 }
 
 // UsageAgentOverride is the operator's per-agent adjustment: exempt from
@@ -644,6 +591,10 @@ func ListUsageAgentOverrides() (map[string]*UsageAgentOverride, error) {
 		if snooze > 0 {
 			o.SnoozeUntil = time.Unix(0, snooze)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

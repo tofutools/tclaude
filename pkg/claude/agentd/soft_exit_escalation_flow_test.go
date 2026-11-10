@@ -1,10 +1,12 @@
 package agentd_test
 
 import (
+	"net/http"
 	"os"
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -125,6 +127,43 @@ func TestSoftExitEscalation_KillsPaneThatNeverExits(t *testing.T) {
 	require.NotNil(t, stored)
 	assert.Equal(t, "exited", stored.Status,
 		"the verified stop must win over a stale live PID and disappear from session listings")
+}
+
+// Scenario: a force stop from the CLI, which does not wait, meets a pane tmux
+// will not let go of. It must get the same SIGTERM and SIGKILL a soft stop's
+// ladder gives it, not stop at the kill.
+func TestForceStop_EscalatesToSignalsWithoutWaiting(t *testing.T) {
+	f := newFlow(t)
+	var (
+		signalMu  sync.Mutex
+		signalled []syscall.Signal
+	)
+	cleanupAfterBackgroundDrain(t, agentd.SetSoftExitEscalationProcessForTest(
+		func(int) bool { return true },
+		func(_ int, sig syscall.Signal) error {
+			signalMu.Lock()
+			defer signalMu.Unlock()
+			signalled = append(signalled, sig)
+			return nil
+		},
+	))
+
+	const conv = "escf-1111-2222-3333-4444"
+	const tmuxSes = "tmux-escf"
+	f.HaveConvWithTitle(conv, "wedged-worker")
+	f.HaveAliveSession(conv, "spwn-escf", tmuxSes, f.TestCwd("escf"))
+	f.World.Tmux.SetKillResistantForTest(tmuxSes, true)
+
+	cleanupAfterBackgroundDrain(t, agentd.SetSoftExitEscalationTimingForTest(time.Second, 10*time.Millisecond, time.Millisecond))
+
+	stop := f.AsHuman().Stop(conv, true)
+	require.Equal(t, http.StatusOK, stop.Code, "force stop; body=%s", stop.Raw)
+	assert.Equal(t, "killed", stop.Action)
+	agentd.WaitForBackgroundForTest()
+
+	signalMu.Lock()
+	defer signalMu.Unlock()
+	assert.Equal(t, []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}, signalled)
 }
 
 // Scenario: the injection itself failed (send-keys error), so there is no

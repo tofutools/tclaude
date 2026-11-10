@@ -52,7 +52,7 @@ test('shutdown renderer preserves distinct actions, initial focus, and exact foc
   const mounted = await openShutdown(t, async () => {});
   const { harness, host, opener } = mounted;
   assert.equal(host.querySelector('#shutdown-title .theme-copy-regular').textContent, 'Shut down agent?');
-  assert.equal(host.querySelector('#shutdown-title .theme-copy-wizard').textContent, 'Slumber this familiar?');
+  assert.equal(host.querySelector('#shutdown-title .theme-copy-wizard').textContent, 'Slumber this hero?');
   assert.equal(host.querySelector('#shutdown-meta').textContent, 'Stable target');
   assert.match(host.querySelector('#shutdown-modal').textContent,
     /Soft exit injects \/exit into tmux pane/);
@@ -62,8 +62,8 @@ test('shutdown renderer preserves distinct actions, initial focus, and exact foc
   assert.equal(host.querySelector('#shutdown-soft .theme-copy-wizard').textContent, '🌙 Slumber');
   assert.equal(host.querySelector('#shutdown-force .theme-copy-regular').textContent, 'Force kill');
   assert.equal(host.querySelector('#shutdown-force .theme-copy-wizard').textContent, 'Force slumber');
-  assert.equal(host.querySelector('#shutdown-force').classList.contains('confirm-danger'), true);
-  assert.equal(host.querySelector('#shutdown-soft').classList.contains('confirm-danger'), false);
+  assert.equal(host.querySelector('#shutdown-force').classList.contains('ui-btn-danger'), true);
+  assert.equal(host.querySelector('#shutdown-soft').classList.contains('ui-btn-danger'), false);
   assert.equal(harness.document.activeElement.id, 'shutdown-soft');
 
   // A release on the backdrop whose press began in the dialog is ignored.

@@ -17,8 +17,7 @@ import (
 // drives Claude Code's built-in Remote Access (the `/remote-control` slash)
 // on the calling agent's own pane via the daemon, gated on
 // `self.remote-control`. `--target <selector>` swaps the action to ANOTHER
-// agent (the manager pattern; requires `agent.remote-control` or owning a
-// group containing the target).
+// agent (the manager pattern; auth is CrossAgentAuth("remote-control")).
 //
 // `/remote-control` is a TOGGLE with no API-level readback, so tclaude tracks
 // its own best-known state (JOH-256) — but `status` (and the direction pick for
@@ -35,8 +34,8 @@ func remoteControlCmd() *cobra.Command {
 		Long: "Asks tclaude agentd to inject the harness's `/remote-control` toggle into a CC pane, " +
 			"exposing the session to claude.ai/code + the Claude mobile app. " +
 			"By default the target is the calling agent itself (requires `self.remote-control`). " +
-			"Use --target <selector> to act on ANOTHER agent — the manager pattern (requires " +
-			"`agent.remote-control`, or being an owner of a group containing the target).\n\n" +
+			"Use --target <selector> to act on ANOTHER agent — the manager pattern. " +
+			CrossAgentAuth("remote-control") + "\n\n" +
 			"Intent (positional, default `toggle`):\n" +
 			"  on      enable remote access (no-op if already on)\n" +
 			"  off     disable remote access (sends the confirm Enter CC prompts for)\n" +
@@ -55,14 +54,14 @@ func remoteControlCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *remoteControlParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRemoteControl(p, os.Stdout, os.Stderr))
+			os.Exit(runRemoteControl(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 type remoteControlParams struct {
 	Intent   string `pos:"true" optional:"true" help:"on | off | toggle | status (default: toggle)"`
-	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.remote-control permission, or being an owner of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 

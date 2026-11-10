@@ -9,7 +9,7 @@ function errorMessage(error) {
 
 export const PROFILE_DEFAULTS = Object.freeze({ seconds: 30, trace_seconds: 5, max_seconds: 600 });
 
-// Daemon profiling (Activity › Performance): the capture list served by
+// Daemon profiling (Diagnostics › Performance): the capture list served by
 // /api/profiles plus the "Profile daemon…" dialog draft.
 export function createProfilesState({ activeTab = dashboardState.activeTab, activitySubtab = currentActivitySubtab } = {}) {
   const response = signal(null);

@@ -212,6 +212,11 @@ func TestPathToProjectDir(t *testing.T) {
 	// Test basic path conversion
 	result := PathToProjectDir("/home/user/project")
 	assert.Equal(t, "-home-user-project", result, "PathToProjectDir()")
+
+	// Observed from Claude Code 2.1.312 for "my_pro ject+ö".
+	assert.Equal(t, "-home-u-my-pro-ject--", PathToProjectDir("/home/u/my_pro ject+ö"))
+	assert.Equal(t, "-home-u--config-a-b", PathToProjectDir("/home/u/.config/a.b"))
+	assert.Equal(t, "-home-u---", PathToProjectDir("/home/u/😀"))
 }
 
 func TestFindSessionByID(t *testing.T) {

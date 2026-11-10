@@ -12,7 +12,8 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { Button } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
 import { previewBundleImport } from './dock-library.js';
 
 const html = htm.bind(h);
@@ -20,7 +21,6 @@ const html = htm.bind(h);
 const message = (error) => error?.message || String(error);
 
 export function LibraryNameDialog({ descriptor, onClose, confirmDiscard }) {
-  const { requestClose, registerClose } = useGuardedOverlayClose();
   const initial = descriptor.initial || '';
   const [name, setName] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -43,9 +43,10 @@ export function LibraryNameDialog({ descriptor, onClose, confirmDiscard }) {
       setBusy(false);
     }
   };
-  return html`<${Overlay} id="library-name-modal" labelledby="library-name-title" onClose=${onClose}
-      dirty=${name !== initial} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-    <h3 id="library-name-title">${descriptor.title}</h3>
+  return html`<${Dialog} id="library-name-modal" title=${descriptor.title} onClose=${onClose}
+      dirty=${name !== initial} busy=${busy} confirmDiscard=${confirmDiscard}
+      error=${error} cancel="Cancel"
+      footer=${html`<${Button} variant="primary" id="library-name-submit" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : descriptor.okLabel || 'Save'}</${Button}>`}>
     ${descriptor.blurb && html`<div class="modal-meta">${descriptor.blurb}</div>`}
     <label class="cron-create-row">
       <span class="cron-create-label">${descriptor.label || 'New name'}</span>
@@ -57,13 +58,7 @@ export function LibraryNameDialog({ descriptor, onClose, confirmDiscard }) {
           void submit();
         }} />
     </label>
-    <div class="cron-create-error" id="library-name-error" role="alert">${error}</div>
-    <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
-      <span class="spacer"></span>
-      <button id="library-name-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : descriptor.okLabel || 'Save'}</button>
-    </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 const ACTION_LABELS = Object.freeze({ create: 'New', replace: 'Replaces existing', unchanged: 'Unchanged' });
@@ -76,7 +71,6 @@ function bundleItemLabel(item) {
 
 export function LibraryBundleImportDialog({ descriptor, onClose, confirmDiscard, fetchImpl }) {
   const { notify, onImported } = descriptor;
-  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [preview, setPreview] = useState(null);
   const [skip, setSkip] = useState([]);
   const [replace, setReplace] = useState(false);
@@ -126,12 +120,15 @@ export function LibraryBundleImportDialog({ descriptor, onClose, confirmDiscard,
       setBusy('');
     }
   };
-  return html`<${Overlay} id="library-bundle-import-modal" labelledby="library-bundle-import-title" onClose=${onClose}
-      dirty=${false} blocked=${busy === 'apply'} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-    <h3 id="library-bundle-import-title">Import ${descriptor.fileName || 'config bundle'}</h3>
+  return html`<${Dialog} id="library-bundle-import-modal" title=${`Import ${descriptor.fileName || 'config bundle'}`} onClose=${onClose}
+      dirty=${false} busy=${busy === 'apply'} confirmDiscard=${confirmDiscard}
+      error=${error} cancel="Cancel"
+      footer=${html`<${Button} variant="primary" id="library-bundle-import-submit" disabled=${blocked} onClick=${apply}>
+        ${busy === 'apply' ? 'Importing…' : `Import ${pending.length} item${pending.length === 1 ? '' : 's'}`}
+      </${Button}>`}>
     <div class="modal-meta">Nothing is written until you import. Untick an item to leave it out.</div>
     <div class="library-import-list" id="library-bundle-import-list">
-      ${!preview && !error && html`<div class="dock-empty">Reading the bundle…</div>`}
+      ${!preview && !error && html`<div class="dock-empty ui-empty">Reading the bundle…</div>`}
       ${rows.map((row) => {
         const label = bundleItemLabel(row.item);
         return html`<label key=${row.item} class=${`library-import-row${row.skipped ? ' is-skipped' : ''}`} data-library-import-item=${row.item}>
@@ -154,13 +151,5 @@ export function LibraryBundleImportDialog({ descriptor, onClose, confirmDiscard,
       </label>`)}
     </div>`}
     ${preview?.security_changes > 0 && html`<div class="modal-meta library-import-security">${preview.security_changes} item${preview.security_changes === 1 ? '' : 's'} can change what agents may do. Check them before importing.</div>`}
-    <div class="cron-create-error" role="alert">${error}</div>
-    <div class="modal-buttons">
-      <button type="button" disabled=${busy === 'apply'} onClick=${() => { void requestClose(); }}>Cancel</button>
-      <span class="spacer"></span>
-      <button id="library-bundle-import-submit" class="primary" type="button" disabled=${blocked} onClick=${apply}>
-        ${busy === 'apply' ? 'Importing…' : `Import ${pending.length} item${pending.length === 1 ? '' : 's'}`}
-      </button>
-    </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

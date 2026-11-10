@@ -2,10 +2,13 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { GatewayDialog } from './fleet-admin-model-gateway.js';
+import { Button } from './ui-components.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
+import { peerLabelFor } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 function num(n) {
   if (!n) return '—';
@@ -112,11 +115,11 @@ export function SubscriptionCard({ actions, confirm, toast }) {
   return html`<div class="fa-subscription" id="fleet-claude-subscription">
     <h4 class="fa-h">My Claude subscription <span class="muted">— run agents on your other nodes as yourself</span></h4>
     <p class="muted">Agents you spawn on another node can run Claude Code on your own subscription instead of that node's login: pick <b>Your Claude subscription</b> under Claude login in the spawn dialog. The token travels in the encrypted spawn request, stays in memory on that node, and reaches Claude Code through a pipe, never its disk or environment. Only you can use it, and only Claude Code; a model gateway cannot.</p>
-    ${!state ? html`<div class="empty">Loading…</div>` : html`<div class="fa-run-settings">
+    ${!state ? html`<div class="empty">Loading…</div>` : html`<div class="fa-run-settings ui-card ui-inset">
       <span class="fa-k">Token</span>
       <span class=${set ? '' : 'muted'} id="fleet-claude-subscription-state">${set ? `stored${state.set_at ? ` ${new Date(state.set_at).toLocaleDateString()}` : ''}` : 'not set up'}</span>
-      ${!editing && html`<button type="button" id="fleet-claude-subscription-edit" onClick=${() => { setEditing(true); setError(''); }}>${set ? 'Replace…' : 'Set up…'}</button>`}
-      ${set && !editing && html`<button type="button" class="fa-danger" id="fleet-claude-subscription-forget" onClick=${forget}>Forget…</button>`}
+      ${!editing && html`<${Button} size="sm" id="fleet-claude-subscription-edit" onClick=${() => { setEditing(true); setError(''); }}>${set ? 'Replace…' : 'Set up…'}<//>`}
+      ${set && !editing && html`<${Button} size="sm" variant="danger" id="fleet-claude-subscription-forget" onClick=${forget}>Forget…<//>`}
     </div>`}
     ${state?.error && html`<div class="fa-warn">${state.error}</div>`}
     ${editing && html`<div class="fa-subscription-form">
@@ -124,9 +127,9 @@ export function SubscriptionCard({ actions, confirm, toast }) {
       <input id="fleet-claude-subscription-token" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-oat…" aria-label="Claude subscription token"
         value=${token} disabled=${busy} onInput=${(e) => setToken(e.currentTarget.value)}
         onKeyDown=${(e) => { if (e.key === 'Enter') save(); }} />
-      <button type="button" id="fleet-claude-subscription-save" onClick=${save} disabled=${busy || !token.trim()}>${busy ? 'Saving…' : 'Save'}</button>
-      <button type="button" class="fa-link" disabled=${busy} onClick=${() => { setEditing(false); setToken(''); setError(''); }}>cancel</button>
-      ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+      <${Button} size="sm" id="fleet-claude-subscription-save" onClick=${save} disabled=${busy || !token.trim()}>${busy ? 'Saving…' : 'Save'}<//>
+      <${Button} size="sm" variant="link" class="fa-link" disabled=${busy} onClick=${() => { setEditing(false); setToken(''); setError(''); }}>cancel<//>
+      ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     </div>`}
   </div>`;
 }
@@ -140,7 +143,8 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
   const [tick, setTick] = useState(0);
   const [blocking, setBlocking] = useState({});
   const [dialog, setDialog] = useState(null);
-  const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
+  const label = (id) => peerLabelFor(view.trusted, id);
+  const cellLabel = (id) => peerLabelFor(view.trusted, id, { short: true });
   const reload = () => setTick((n) => n + 1);
 
   useEffect(() => {
@@ -218,60 +222,50 @@ export function ModelsPage({ view, actions, confirm, toast, now = Date.now() }) 
   const leaseList = Array.isArray(leases) ? [...leases].sort((a, b) => Number(a.revoked) - Number(b.revoked) || String(b.touched_at).localeCompare(String(a.touched_at))) : [];
   const used = Array.isArray(usage) ? usageRows(usage) : [];
   return html`<div class="fa-models">
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${!control && !error && html`<div class="empty">Loading…</div>`}
-    ${control && html`<div class="fa-run-settings" id="fleet-models-master">
+    ${control && html`<div class="fa-run-settings ui-card ui-inset" id="fleet-models-master">
       <span class="fa-k">Model gateways</span>
       <span class=${control.disabled ? 'fa-warn' : 'muted'}>${control.disabled ? 'all off: no peer model requests are served' : `on (${gws.filter(([, p]) => p.enabled).length} of ${gws.length} enabled)`}</span>
-      <button id="fleet-models-master-toggle" type="button" class=${control.disabled ? '' : 'fa-danger'} onClick=${master}>${control.disabled ? 'Turn on…' : 'Turn off all…'}</button>
-      <button id="fleet-models-add" type="button" onClick=${() => setDialog({ setup: null })}>Add gateway…</button>
-      <button type="button" class="fa-link" onClick=${reload}>refresh</button>
+      <${Button} size="sm" id="fleet-models-master-toggle" variant=${control.disabled ? '' : 'danger'} onClick=${master}>${control.disabled ? 'Turn on…' : 'Turn off all…'}<//>
+      <${Button} size="sm" id="fleet-models-add" onClick=${() => setDialog({ setup: null })}>Add gateway…<//>
+      <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//>
     </div>
     ${gws.length === 0 ? html`<div class="empty">No model gateways yet. Add one to let workers on your other nodes use this node's provider API key.</div>` : html`
-    <table class="fa-table" id="fleet-model-gateways">
-      <thead><tr><th>Gateway</th><th>State</th><th>Models</th><th>Daily: all · per peer · per session</th><th>Per request</th><th>Blocked peers</th><th></th></tr></thead>
-      <tbody>${gws.map(([name, p]) => html`<tr key=${name} data-gateway=${name}>
+    <${FaTable} id="fleet-model-gateways" head=${['Gateway', 'State', 'Models', 'Daily: all · per peer · per session', 'Per request', 'Blocked peers', '']}>${gws.map(([name, p]) => html`<tr key=${name} data-gateway=${name}>
         <td><code>${name}</code>${p.dialect ? html` <span class="muted">${p.dialect}</span>` : ''}</td>
         <td class=${p.enabled && !control.disabled && !gatewayGaps(p).length ? '' : 'fa-warn'} title=${gatewayGaps(p).length ? `Missing: ${gatewayGaps(p).join(', ')}` : ''}>${!p.enabled ? 'disabled' : control.disabled ? 'enabled (all off)' : gatewayGaps(p).length ? 'refuses requests: policy incomplete' : 'enabled'}</td>
         <td>${(p.models || []).length ? p.models.join(', ') : html`<span class="fa-warn">none</span>`}</td>
         <td>${limitText(p.daily_requests, p.daily_tokens)} · ${limitText(p.peer_daily_requests, p.peer_daily_tokens)} · ${limitText(p.session_daily_requests, p.session_daily_tokens)}</td>
         <td class="muted">${[p.max_input_tokens ? `≤${num(p.max_input_tokens)} in` : '', p.max_output_tokens ? `≤${num(p.max_output_tokens)} out` : '', p.max_concurrent ? `${p.max_concurrent} at once` : '', p.requests_per_minute ? `${p.requests_per_minute}/min` : '', `leases idle out after ${p.lease_idle_hours || 24}h`].filter(Boolean).join(' · ')}</td>
-        <td>${(p.blocked_peers || []).map((b) => html`<span class="fa-chip" key=${b}>${label(b)} <button type="button" class="fa-link" title=${`Unblock ${label(b)}`} data-fa="unblock" onClick=${() => unblock(name, b)}>×</button></span> `)}
-          ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).length > 0 && html`<select class="fa-model-block" aria-label=${`Block a peer on ${name}`} value=${blocking[name] || ''} onChange=${(e) => setBlocking({ ...blocking, [name]: e.currentTarget.value })}>
-            <option value="">block a peer…</option>
-            ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
-          </select>
-          ${blocking[name] && html`<button type="button" class="fa-danger" data-fa="block" onClick=${() => { const b = blocking[name]; setBlocking({ ...blocking, [name]: '' }); block(name, b); }}>Block…</button>`}`}</td>
-        <td class="fa-acts"><button type="button" data-fa="edit-gateway" onClick=${() => edit(name)}>Edit…</button>
-          <button type="button" class=${p.enabled ? 'fa-danger' : ''} data-fa="gateway" onClick=${() => gateway(name, p)}>${p.enabled ? 'Disable…' : 'Enable…'}</button>
-          <button type="button" class="fa-danger" data-fa="remove-gateway" onClick=${() => remove(name)}>Remove…</button></td>
-      </tr>`)}</tbody>
-    </table>`}`}
+        <td>${(p.blocked_peers || []).map((b) => html`<span class="fa-chip" key=${b}>${cellLabel(b)} <${Button} size="sm" variant="link" class="fa-link" title=${`Unblock ${label(b)}`} data-fa="unblock" onClick=${() => unblock(name, b)}>×<//></span> `)}
+          ${peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).length > 0 && html`<${PeerCombobox} className="fa-model-block" ariaLabel=${`Block a peer on ${name}`} value=${blocking[name] || ''} noneLabel="block a peer…" floating=${false}
+            items=${namedItems(peers.filter((r) => !(p.blocked_peers || []).includes(r.id)).map((r) => ({ name: r.id, label: r.label })))}
+            onChange=${(next) => setBlocking({ ...blocking, [name]: next })} />
+          ${blocking[name] && html`<${Button} size="sm" variant="ghost danger" data-fa="block" onClick=${() => { const b = blocking[name]; setBlocking({ ...blocking, [name]: '' }); block(name, b); }}>Block…<//>`}`}</td>
+        <td class="fa-acts"><${Button} size="sm" data-fa="edit-gateway" onClick=${() => edit(name)}>Edit…<//>
+          <${Button} size="sm" variant=${p.enabled ? 'ghost danger' : ''} data-fa="gateway" onClick=${() => gateway(name, p)}>${p.enabled ? 'Disable…' : 'Enable…'}<//>
+          <${Button} size="sm" variant="ghost danger" data-fa="remove-gateway" onClick=${() => remove(name)}>Remove…<//></td>
+      </tr>`)}<//>`}`}
     <${SubscriptionCard} actions=${actions} confirm=${confirm} toast=${toast} />
     <h4 class="fa-h">Leases <span class="muted">— requester-paid workers using a gateway</span></h4>
     ${leases?.error ? html`<div class="fa-danger">${leases.error}</div>` : !leases ? html`<div class="empty">Loading…</div>` : leaseList.length === 0 ? html`<div class="empty">No leases.</div>` : html`
-    <table class="fa-table" id="fleet-model-leases">
-      <thead><tr><th>Lease</th><th>Peer</th><th>Gateway</th><th>Worker</th><th>Last used</th><th></th></tr></thead>
-      <tbody>${leaseList.map((l) => html`<tr key=${l.id} data-lease=${l.id} class=${l.revoked ? 'muted' : ''}>
+    <${FaTable} id="fleet-model-leases" head=${['Lease', 'Peer', 'Gateway', 'Worker', 'Last used', '']}>${leaseList.map((l) => html`<tr key=${l.id} data-lease=${l.id} class=${l.revoked ? 'muted' : ''}>
         <td><code title=${l.id}>${l.id.slice(0, 12)}</code>${l.kind ? html` <span class="muted">${l.kind}</span>` : ''}</td>
-        <td>${label(l.peer)}</td>
+        <td>${cellLabel(l.peer)}</td>
         <td><code>${l.proxy}</code></td>
         <td>${l.worker ? html`<code title=${l.worker}>${l.worker.slice(0, 14)}</code>` : '—'}</td>
-        <td class="muted">${l.touched_at && !String(l.touched_at).startsWith('0001-') ? new Date(l.touched_at).toLocaleString() : ''}${l.idle_seconds ? ` · idles out after ${Math.round(l.idle_seconds / 3600)}h` : ''}</td>
-        <td class="fa-acts">${l.revoked ? 'revoked' : html`<button type="button" class="fa-danger" data-fa="revoke-lease" onClick=${() => revoke(l)}>Revoke…</button>`}</td>
-      </tr>`)}</tbody>
-    </table>`}
+        <td class="muted">${localStamp(l.touched_at, { empty: '' })}${l.idle_seconds ? ` · idles out after ${Math.round(l.idle_seconds / 3600)}h` : ''}</td>
+        <td class="fa-acts">${l.revoked ? 'revoked' : html`<${Button} size="sm" variant="ghost danger" data-fa="revoke-lease" onClick=${() => revoke(l)}>Revoke…<//>`}</td>
+      </tr>`)}<//>`}
     <h4 class="fa-h">Usage <input type="date" id="fleet-model-day" value=${day} max=${utcToday(now)} onChange=${(e) => e.currentTarget.value && setDay(e.currentTarget.value)} /> <span class="muted">UTC day</span></h4>
     ${usage?.error ? html`<div class="fa-danger">${usage.error}</div>` : !usage ? html`<div class="empty">Loading…</div>` : used.length === 0 ? html`<div class="empty">No model requests on ${day}.</div>` : html`
-    <table class="fa-table" id="fleet-model-usage">
-      <thead><tr><th>Gateway</th><th>Peer</th><th>Model</th><th>Requests</th><th>Charged tokens</th><th>In · out</th><th>Cost</th></tr></thead>
-      <tbody>${used.map((u) => html`<tr key=${`${u.proxy}/${u.peer}/${u.model}`}>
-        <td><code>${u.proxy}</code></td><td>${label(u.peer)}</td><td>${u.model || '—'}</td>
+    <${FaTable} id="fleet-model-usage" head=${['Gateway', 'Peer', 'Model', 'Requests', 'Charged tokens', 'In · out', 'Cost']}>${used.map((u) => html`<tr key=${`${u.proxy}/${u.peer}/${u.model}`}>
+        <td><code>${u.proxy}</code></td><td>${cellLabel(u.peer)}</td><td>${u.model || '—'}</td>
         <td>${u.requests}${u.running ? html` <span class="muted">(${u.running} in progress)</span>` : ''}${u.failed ? html` <span class="fa-danger">(${u.failed} failed)</span>` : ''}</td>
         <td>${num(u.charged)}</td><td class="muted">${num(u.input)} · ${num(u.output)}</td>
         <td data-cost=${u.microUSD}>${usdText(u.microUSD)}${u.unpriced ? html` <span class="muted" title="No price is known for this model; add one under model_policy.prices">(${u.unpriced} unpriced)</span>` : ''}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     ${dialog && html`<${GatewayDialog} setup=${dialog.setup} actions=${actions} confirm=${confirm} onClose=${() => setDialog(null)} onDone=${(msg) => { setDialog(null); toast(msg, false); reload(); }} />`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation models status|usage --day …|leases [--revoke ID]|disable|enable [--name GW] [--peer PEER]</code>. Grant peers access with <code>models.proxy</code> (or <code>models.proxy.leased</code>) on Peer grants. In-progress requests count their reservation until they finish. Cost is the provider's reported usage at the model's API price; a request the provider refused costs nothing.</div>
   </div>`;

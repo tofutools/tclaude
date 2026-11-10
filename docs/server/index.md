@@ -32,12 +32,12 @@ back with Resume in the dashboard, or `tclaude agent resume <agent>`.
 
 Paths that matter to a supervisor:
 
-- `~/.tclaude/config.json`: settings. The `agent.*` keys mirror the
+- `~/.tclaude/data/config.json`: settings. The `agent.*` keys mirror the
   `agentd serve` flags (`--help` names each one).
 - `~/.tclaude/data/`: SQLite database and private daemon state.
 - `~/.tclaude/api/agentd-socket/agentd.sock`: the socket agents and the CLI
   talk to.
-- `~/.tclaude/output.log`: the daemon log, rotated by `agentd` itself.
+- `~/.tclaude/data/output.log`: the daemon log, rotated by `agentd` itself.
 - `$TMUX_TMPDIR/tmux-<uid>/tclaude` (default `/tmp/tmux-<uid>/tclaude`): the
   tmux socket.
 

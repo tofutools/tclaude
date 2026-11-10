@@ -7,7 +7,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  STARTERS, groupRoles, groupRoster, whoFromValue, whoNow, whoOptions, whoValue,
+  STARTERS, fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, groupRoles, groupRoster, setStepFallback, stepFallbackValue,
+  whoFromValue, whoNow, whoOptions, whoValue,
 } from '../dashboard/js/process-quickstart.js';
 import { stepListToView, stepWho, viewToStepList } from '../dashboard/js/process-step-list.js';
 
@@ -89,4 +90,45 @@ test('who-now guesses the performer the way the resolver ranks them', () => {
   assert.equal(whoNow(step({ kind: 'agent', role: 'qa', spawn: 'allowed', prompt: 'x' }), roster, { fallback: { action: 'fail' } }).fails, undefined,
     'without a profile it waits, as the runtime does');
   assert.equal(whoNow(step({ kind: 'agent', anyone: true, prompt: 'x' }), roster).label, 'search');
+});
+
+test('a fallback picker value round-trips, and a named profile is distinct from the group default', () => {
+  for (const fallback of [{ action: 'wait' }, { action: 'fail' }, { action: 'spawn' }, { action: 'spawn', profile: 'opus-dev' }]) {
+    assert.deepEqual(fallbackFromValue(fallbackValue(fallback)), fallback);
+  }
+  assert.equal(fallbackValue(null), '');
+  assert.equal(fallbackFromValue(''), null);
+});
+
+test('a step override replaces the legacy spawn opt-in, which the validator refuses alongside it', () => {
+  const legacy = { id: 'a', node: { type: 'task', performer: { kind: 'agent', profile: 'dev', spawn: 'allowed' } } };
+  assert.equal(stepFallbackValue(legacy), 'spawn:dev');
+  const set = setStepFallback(legacy, { action: 'fail' });
+  assert.deepEqual(set.node.performer, { kind: 'agent', profile: 'dev', fallback: { action: 'fail' } });
+  assert.equal(legacy.node.performer.spawn, 'allowed', 'the original step is not touched');
+  const cleared = setStepFallback(set, null);
+  assert.deepEqual(cleared.node.performer, { kind: 'agent', profile: 'dev' });
+  assert.equal(stepFallbackValue(cleared), '');
+});
+
+test('fallback choices offer the default, the other profiles, and keep a value that is gone', () => {
+  const values = (options) => options.map((option) => option.value);
+  assert.deepEqual(values(fallbackChoices({ defaultSpawnProfile: 'dev', profiles: ['dev', 'opus'] })), ['wait', 'spawn', 'spawn:opus', 'fail']);
+  assert.deepEqual(values(fallbackChoices({ inherit: 'as the process', current: 'spawn:gone', profiles: [] })), ['', 'wait', 'spawn', 'spawn:gone', 'fail']);
+  for (const current of ['fail', 'wait', 'spawn']) {
+    const listed = fallbackChoices({ current, defaultSpawnProfile: 'dev' }).filter((option) => option.value === current);
+    assert.equal(listed.length, 1, `${current} is listed once, under its own label`);
+    assert.doesNotMatch(listed[0].label, /profile $/);
+  }
+  const noDefault = fallbackChoices({ profiles: ['opus'] });
+  assert.equal(noDefault.find((option) => option.value === 'spawn').disabled, true, 'no default to spawn');
+});
+
+test('a node carries its fallback unless it simply waits', () => {
+  const step = (performer) => ({ node: { performer } });
+  assert.equal(fallbackNote(step({ kind: 'agent', role: 'dev' })), '');
+  assert.equal(fallbackNote(step({ kind: 'agent', role: 'dev' }), { fallback: { action: 'spawn' }, defaultSpawnProfile: 'sonnet' }), '↯ spawn sonnet');
+  assert.equal(fallbackNote(step({ kind: 'agent', role: 'dev', fallback: { action: 'fail' } }), { fallback: { action: 'spawn' } }), '↯ fail');
+  assert.equal(fallbackNote(step({ kind: 'human' }), { fallback: { action: 'spawn' } }), '');
+  assert.equal(fallbackNote(step({ kind: 'agent', role: 'dev' }), { fallback: { action: 'spawn' } }), '', 'with no default profile a bare spawn waits');
 });

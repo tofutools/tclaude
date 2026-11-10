@@ -261,34 +261,51 @@ func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	if !requireGroupActive(w, toGroup) {
+	out, fail := addGroupLink(g, toGroup, body, auditedCaller(caller, PermGroupsLinkAdd))
+	if fail != nil {
+		writeSpawnFailure(w, fail)
 		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// groupLinkModeFailure refuses a mode db.ValidLinkMode does not know.
+func groupLinkModeFailure(mode string) *spawnFailure {
+	if db.ValidLinkMode(mode) {
+		return nil
+	}
+	return &spawnFailure{http.StatusBadRequest, "invalid_arg",
+		fmt.Sprintf("unknown mode %q (supported: %s, %s)",
+			mode, db.LinkModeMembersToMembers, db.LinkModeOwnersToMembers)}
+}
+
+// addGroupLink is the link-create policy shared by the socket
+// (handleGroupLinksAdd) and the dashboard (dashboardAddLink): both groups
+// must be active, the mode defaults to members->members, and bidir adds the
+// reverse edge without rolling back the forward one when that fails. The
+// caller has already authorised the request and resolved the TO group, and
+// writes the failure in its own wire format.
+func addGroupLink(from, to *db.AgentGroup, body linkAddBody, grantedBy string) (map[string]any, *spawnFailure) {
+	if from.IsArchived() || to.IsArchived() {
+		return nil, &spawnFailure{http.StatusConflict, "archived", errGroupArchived.Error()}
 	}
 	mode := strings.TrimSpace(body.Mode)
 	if mode == "" {
 		mode = db.LinkModeMembersToMembers
 	}
-	if !db.ValidLinkMode(mode) {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("unknown mode %q (supported: %s, %s)",
-				mode, db.LinkModeMembersToMembers, db.LinkModeOwnersToMembers))
-		return
+	if fail := groupLinkModeFailure(mode); fail != nil {
+		return nil, fail
 	}
-
-	id, err := db.InsertAgentGroupLink(g.ID, toGroup.ID, mode, auditedCaller(caller, PermGroupsLinkAdd))
+	id, err := db.InsertAgentGroupLink(from.ID, to.ID, mode, grantedBy)
 	if err != nil {
 		if errors.Is(err, db.ErrLinkExists) {
-			writeError(w, http.StatusConflict, "exists", err.Error())
-			return
+			return nil, &spawnFailure{http.StatusConflict, "exists", err.Error()}
 		}
-		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-		return
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", err.Error()}
 	}
-
-	out := map[string]any{"id": id, "from": g.Name, "to": toGroup.Name, "mode": mode}
-
+	out := map[string]any{"id": id, "from": from.Name, "to": to.Name, "mode": mode}
 	if body.Bidir {
-		revID, err := db.InsertAgentGroupLink(toGroup.ID, g.ID, mode, auditedCaller(caller, PermGroupsLinkAdd))
+		revID, err := db.InsertAgentGroupLink(to.ID, from.ID, mode, grantedBy)
 		switch {
 		case err == nil:
 			out["reverse_id"] = revID
@@ -298,8 +315,75 @@ func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 			out["reverse_error"] = err.Error()
 		}
 	}
+	return out, nil
+}
 
-	writeJSON(w, http.StatusOK, out)
+// loadScopedGroupLink parses a link id from the URL and loads the link,
+// refusing one that does not touch g (FROM or TO): an id is namespaced
+// under the group the request is scoped to. Shared by the socket and
+// dashboard update/remove handlers.
+func loadScopedGroupLink(g *db.AgentGroup, idStr string) (*db.AgentGroupLink, *spawnFailure) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", "link id must be integer"}
+	}
+	link, err := db.GetAgentGroupLinkByID(id)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if link == nil {
+		return nil, &spawnFailure{http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", id)}
+	}
+	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
+		return nil, &spawnFailure{http.StatusNotFound, "not_found",
+			fmt.Sprintf("link %d does not touch group %q", id, g.Name)}
+	}
+	return link, nil
+}
+
+// updateGroupLinkMode decodes the {mode} body and changes link's mode. A
+// mode equal to the current one reports changed=false without touching the
+// row. Shared by the socket and dashboard PATCH handlers, after the caller
+// has authorised the change.
+func updateGroupLinkMode(r *http.Request, link *db.AgentGroupLink) (map[string]any, *spawnFailure) {
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg", err.Error()}
+	}
+	mode := strings.TrimSpace(body.Mode)
+	if fail := groupLinkModeFailure(mode); fail != nil {
+		return nil, fail
+	}
+	if mode == link.Mode {
+		return map[string]any{"id": link.ID, "mode": mode, "changed": false}, nil
+	}
+	n, err := db.UpdateAgentGroupLinkMode(link.ID, mode)
+	if err != nil {
+		if errors.Is(err, db.ErrLinkExists) {
+			return nil, &spawnFailure{http.StatusConflict, "exists",
+				"another link with the same from/to/mode already exists"}
+		}
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if n == 0 {
+		return nil, &spawnFailure{http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", link.ID)}
+	}
+	return map[string]any{"id": link.ID, "mode": mode, "changed": true}, nil
+}
+
+// removeGroupLink deletes link. Shared by the socket and dashboard DELETE
+// handlers, after the caller has authorised the removal.
+func removeGroupLink(link *db.AgentGroupLink) *spawnFailure {
+	n, err := db.DeleteAgentGroupLink(link.ID)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	if n == 0 {
+		return &spawnFailure{http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", link.ID)}
+	}
+	return nil
 }
 
 // handleGroupLinksUpdate changes the mode of an existing link. From/to
@@ -310,24 +394,9 @@ func handleGroupLinksAdd(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 // side — the owner-bypass is outbound-only). 409 on collision with
 // another existing row.
 func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "link id must be integer")
-		return
-	}
-	link, err := db.GetAgentGroupLinkByID(id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if link == nil {
-		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", id))
-		return
-	}
-	// URL-scoping: the link must touch g (FROM or TO).
-	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
-		writeError(w, http.StatusNotFound, "not_found",
-			fmt.Sprintf("link %d does not touch group %q", id, g.Name))
+	link, fail := loadScopedGroupLink(g, idStr)
+	if fail != nil {
+		writeSpawnFailure(w, fail)
 		return
 	}
 	// Auth: now that we know which side of the link g is on, apply
@@ -335,40 +404,12 @@ func handleGroupLinksUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	if _, ok := requireScopedLinkAuthority(w, r, g, link, PermGroupsLinkAdd); !ok {
 		return
 	}
-	var body struct {
-		Mode string `json:"mode"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+	out, fail := updateGroupLinkMode(r, link)
+	if fail != nil {
+		writeSpawnFailure(w, fail)
 		return
 	}
-	mode := strings.TrimSpace(body.Mode)
-	if !db.ValidLinkMode(mode) {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("unknown mode %q (supported: %s, %s)",
-				mode, db.LinkModeMembersToMembers, db.LinkModeOwnersToMembers))
-		return
-	}
-	if mode == link.Mode {
-		// No-op; report success without touching the row.
-		writeJSON(w, http.StatusOK, map[string]any{"id": id, "mode": mode, "changed": false})
-		return
-	}
-	n, err := db.UpdateAgentGroupLinkMode(id, mode)
-	if err != nil {
-		if errors.Is(err, db.ErrLinkExists) {
-			writeError(w, http.StatusConflict, "exists",
-				"another link with the same from/to/mode already exists")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if n == 0 {
-		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", id))
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "mode": mode, "changed": true})
+	writeJSON(w, http.StatusOK, out)
 }
 
 func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
@@ -376,27 +417,9 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		handleRemoteGroupLinkRemove(w, r, g, idStr)
 		return
 	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "link id must be integer")
-		return
-	}
-	link, err := db.GetAgentGroupLinkByID(id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if link == nil {
-		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no link %d", id))
-		return
-	}
-	// URL-scoping: reject deletes scoped under a group that doesn't
-	// participate in the link. Keeps `/groups/{g}/links/{id}`
-	// meaningful — id is namespaced under the group the caller
-	// authenticated against.
-	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
-		writeError(w, http.StatusNotFound, "not_found",
-			fmt.Sprintf("link %d does not touch group %q", id, g.Name))
+	link, fail := loadScopedGroupLink(g, idStr)
+	if fail != nil {
+		writeSpawnFailure(w, fail)
 		return
 	}
 	// Auth: owner-bypass-only-when-g-is-FROM. Owners of the TO side
@@ -405,14 +428,8 @@ func handleGroupLinksRemove(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	if _, ok := requireScopedLinkAuthority(w, r, g, link, PermGroupsLinkRemove); !ok {
 		return
 	}
-	n, err := db.DeleteAgentGroupLink(id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
-	}
-	if n == 0 {
-		writeError(w, http.StatusNotFound, "not_found",
-			fmt.Sprintf("no link %d", id))
+	if fail := removeGroupLink(link); fail != nil {
+		writeSpawnFailure(w, fail)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

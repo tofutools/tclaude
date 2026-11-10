@@ -119,9 +119,9 @@ func TestGroupRetire_HumanRetiresEveryMember(t *testing.T) {
 	assert.False(t, f.World.Tmux.IsAlive("tmux-grbb"), "default shutdown must stop worker-b")
 
 	// Grants are revoked as part of the demotion.
-	hasPerm, err := db.HasAgentPermissionRow(convA, "self.rename")
+	granted, err := db.ListAgentPermissionsForConv(convA)
 	require.NoError(t, err)
-	assert.False(t, hasPerm, "retire must revoke permission grants")
+	assert.NotContains(t, granted, "self.rename", "retire must revoke permission grants")
 }
 
 // Scenario: an agent caller that does NOT hold groups.members.retire is refused

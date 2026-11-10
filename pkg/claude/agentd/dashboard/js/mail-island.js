@@ -13,9 +13,10 @@ import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import {
-  AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, MailFilters, MailFooterToggles, MailGutters,
+  AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, DecisionChoices, MailFilters, MailFooterToggles, MailGutters,
   MailPager, MailRow, MessageBody, MessageHeaders, Progress, SectionToggle, SelectAll,
 } from './mail-parts.js';
+import { MessageAction } from './message-action.js';
 import { featureState, humanReadShared } from './peer-view-limits.js';
 import { pageHumanRoute } from './mail-state.js';
 import { refreshPageNotifications } from './peer-notifications.js';
@@ -36,6 +37,10 @@ import { slugInfo } from './fleet-admin-model.js';
 import { RemoteInboxSection } from './remote-inbox.js';
 import { openFleetPage } from './fleet-move-drop.js';
 import { createFleetAdminActions } from './fleet-admin-actions.js';
+import { Button, Select } from './ui-components.js';
+import { GroupCombobox } from './group-picker.js';
+import { requestJSON } from './request-json.js';
+import { fmtExactUSD } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -99,9 +104,9 @@ function WipeBar({ current, controller }) {
   const count = current.selectedBoxes.size;
   return html`<div id="mail-wipe-bar" class="mail-bulk-bar" hidden=${count === 0}>
     ${count > 0 && html`<${Fragment}><span class="grow">${count} mailbox${count === 1 ? '' : 'es'} selected</span>
-      <button title="Clear selection" onClick=${controller.clearBoxSelection}>clear</button>
-      <button class="danger" title="Delete every message in the selected mailboxes"
-        onClick=${controller.wipeSelectedMailboxes}>🗑 wipe</button></${Fragment}>`}
+      <${Button} size="sm" title="Clear selection" onClick=${controller.clearBoxSelection}>clear<//>
+      <${Button} size="sm" variant="danger" title="Delete every message in the selected mailboxes"
+        onClick=${controller.wipeSelectedMailboxes}>🗑 wipe<//></${Fragment}>`}
   </div>`;
 }
 
@@ -109,7 +114,7 @@ function MailSidebar({ current, controller }) {
   const model = controller.mailboxView();
   const wizard = document.body.classList.contains('wizard');
   if (model.empty) {
-    return html`<aside class="mail-sidebar" id="mail-sidebar"><div class="empty">${model.hasRoster
+    return html`<aside class="mail-sidebar ui-card" id="mail-sidebar"><div class="empty">${model.hasRoster
       ? 'No mailboxes match the filter.' : 'No mailboxes.'}</div></aside>`;
   }
   // The flat agent list is server-paged, so its count and folded unread
@@ -128,7 +133,7 @@ function MailSidebar({ current, controller }) {
     })) return;
     moveRow(event);
   };
-  return html`<aside class="mail-sidebar" id="mail-sidebar" onKeyDown=${onKeyDown}>
+  return html`<aside class="mail-sidebar ui-card" id="mail-sidebar" onKeyDown=${onKeyDown}>
     ${model.pinned.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox} current=${current} controller=${controller} />`)}
     ${model.groups.length > 0 && html`<div class="mailbox-section">${wizard ? 'Parties' : 'Groups'}</div>`}
     ${model.groups.map(group => html`<${Fragment} key=${group.mailbox.id}>
@@ -136,7 +141,7 @@ function MailSidebar({ current, controller }) {
       ${group.expanded && (group.members.length > 0
         ? group.members.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox} nested=${true}
             prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)
-        : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty">no member folders shown</div></div>`)}
+        : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty ui-empty">no member folders shown</div></div>`)}
       ${group.expanded && group.membersTotal > group.members.length && html`<${LoadMore} nested=${true} shown=${group.members.length}
         total=${group.membersTotal} busy=${current.busy} what=${`${group.mailbox.title}'s member mailboxes`}
         onMore=${() => controller.loadMoreMembers(group.mailbox.title)} />`}
@@ -146,7 +151,7 @@ function MailSidebar({ current, controller }) {
       : html`<${SectionToggle} expanded=${model.agentsExpanded} unread=${agentUnread} onToggle=${controller.toggleAgentsExpand}
           label=${`${wizard ? 'The Rookery' : 'All agent mailboxes'} (${model.agentsTotal})`} />`)}
     ${model.agentsTotal > 0 && model.agentsExpanded && html`<${Fragment}>
-      ${operatorHere() && html`<div class="mailbox-section-help">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>`}
+      ${operatorHere() && html`<div class="mailbox-section-help ui-hint">Tick a mailbox to select it for bulk wipe; the 🗑 bar at the top of the sidebar then deletes every stored message in the ticked mailboxes.</div>`}
       ${model.agents.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox}
         prevGen=${model.prevGens.has(mailbox.id)} current=${current} controller=${controller} />`)}
       ${model.moreAgents > 0 && html`<${LoadMore} shown=${model.agents.length} total=${model.agentsTotal}
@@ -163,7 +168,7 @@ function AccessRow({ request, current, controller }) {
   const attention = controller.highlightedAccessRequest() === request.id;
   return html`<div class=${`mail-row-wrap access-row-wrap${handled ? ' handled' : ''}`}
     data-key=${request.id} data-kind="decree">
-    <button class=${`mail-row access-row-item${active ? ' active' : ''}${handled ? '' : ' unread'}${attention ? ' access-attn' : ''}`}
+    <button data-ui-exempt class=${`mail-row access-row-item${active ? ' active' : ''}${handled ? '' : ' unread'}${attention ? ' access-attn' : ''}`}
       data-id=${request.id} aria-current=${active ? 'true' : undefined}
       onClick=${(event) => { focusRow(event.currentTarget); controller.selectMessage(request.id, { navigate: true }); }}>
       <span class="mail-row-top">
@@ -198,9 +203,9 @@ function MessageList({ current, controller, model }) {
     controller.consumeAccessHighlight(id);
   });
   if (current.messageRequest?.phase === 'error') {
-    return html`<div class="mail-list" id="mail-list"><div class="island-error mail-error" role="alert">
+    return html`<div class="mail-list ui-card" id="mail-list"><div class="island-error mail-error ui-error-box" role="alert">
       Messages failed to load: ${current.messageRequest.error}
-      <button type="button" onClick=${controller.reloadMessagesPage}>Retry</button>
+      <${Button} size="sm" onClick=${controller.reloadMessagesPage}>Retry<//>
     </div></div>`;
   }
   const wizard = document.body.classList.contains('wizard');
@@ -218,10 +223,10 @@ function MessageList({ current, controller, model }) {
     moveRow(event);
   };
   if (model.access) {
-    if (model.allAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
-      ? 'No petitions await. When a familiar begs a boon beyond its station, it appears here for your judgement.'
+    if (model.allAccess.length === 0) return html`<div class="mail-list ui-card" id="mail-list"><div class="empty">${wizard
+      ? 'No petitions await. When a hero begs a boon beyond its station, it appears here for your judgement.'
       : 'No pending access requests. When an agent asks for access it can’t self-grant, it appears here for your decision.'}</div></div>`;
-    if (model.pendingAccess.length + model.handledAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
+    if (model.pendingAccess.length + model.handledAccess.length === 0) return html`<div class="mail-list ui-card" id="mail-list"><div class="empty">${wizard
       ? 'No petitions match your seeking.' : 'No access requests match the filter.'}</div></div>`;
     // Pending rows, the divider, and handled rows are ONE keyed child list, not
     // three interpolations. This folder regroups itself: a request decided
@@ -235,16 +240,16 @@ function MessageList({ current, controller, model }) {
     const accessRows = [
       ...model.pendingAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`),
       ...(model.handledAccess.length > 0
-        ? [html`<div key="__access_handled__" class="access-divider" data-key="__access_handled__">${wizard ? 'Judgements past' : 'Recently handled'}</div>`]
+        ? [html`<div key="__access_handled__" class="ui-eyebrow access-divider" data-key="__access_handled__">${wizard ? 'Judgements past' : 'Recently handled'}</div>`]
         : []),
       ...model.handledAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`),
     ];
-    return html`<div class="mail-list" id="mail-list" onKeyDown=${onKeyDown}>${accessRows}</div>`;
+    return html`<div class="mail-list ui-card" id="mail-list" onKeyDown=${onKeyDown}>${accessRows}</div>`;
   }
-  if (model.messages.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${current.totalUnfiltered
+  if (model.messages.length === 0) return html`<div class="mail-list ui-card" id="mail-list"><div class="empty">${current.totalUnfiltered
     ? (wizard ? 'No scrolls match your seeking.' : 'No messages match the filter.')
     : (wizard ? 'This roost holds no scrolls.' : 'This mailbox is empty.')}</div></div>`;
-  return html`<div class="mail-list" id="mail-list" onKeyDown=${onKeyDown}>${model.messages.map(message => html`
+  return html`<div class="mail-list ui-card" id="mail-list" onKeyDown=${onKeyDown}>${model.messages.map(message => html`
     <${MessageRow} key=${message.id} message=${message} current=${current} aggregate=${model.isAggregate} controller=${controller} />`)}</div>`;
 }
 
@@ -274,23 +279,23 @@ function FolderActions({ current, controller, solo = false }) {
     }).then((res) => { if (res) { shellToast(`Deleted read notifications on ${name}`); controller.reloadMail(); } },
       (e) => shellToast(`Delete failed: ${e?.message || e}`, true));
     return html`<span class=${solo ? 'mail-folder-actions solo' : 'mail-folder-actions'}>
-      <button id="mail-mark-all" disabled=${!canMark} onClick=${markAll}
-        title=${canMark ? `Mark every human notification on ${name} read` : undefined}>✓ mark all read</button><${LockReason} why=${canMark ? '' : `${name} shares its notifications for reading only: marking them read from here needs its node.messages.mark-read.`} />
-      <button id="mail-peer-compose" disabled title="Message a peer's operator from this node's own Messages">✉ peer</button>
-      <button class="danger" id="mail-clear-read" disabled=${!!clearLock} onClick=${clearRead}
-        title=${clearLock ? undefined : `Delete every human notification on ${name} that has been marked read`}>🗑 delete read</button><${LockReason} why=${clearLock} />
+      <${Button} size="sm" id="mail-mark-all" disabled=${!canMark} onClick=${markAll}
+        title=${canMark ? `Mark every human notification on ${name} read` : undefined}>✓ mark all read<//><${LockReason} why=${canMark ? '' : `${name} shares its notifications for reading only: marking them read from here needs its node.messages.mark-read.`} />
+      <${Button} size="sm" id="mail-peer-compose" disabled title="Message a peer's operator from this node's own Messages">✉ peer<//>
+      <${Button} size="sm" variant="danger" id="mail-clear-read" disabled=${!!clearLock} onClick=${clearRead}
+        title=${clearLock ? undefined : `Delete every human notification on ${name} that has been marked read`}>🗑 delete read<//><${LockReason} why=${clearLock} />
     </span>`;
   }
   return html`<span class=${solo ? 'mail-folder-actions solo' : 'mail-folder-actions'}>
-    <button id="mail-mark-all" data-act="msg-mark-all-read"
-      title="Mark every human notification read" hidden=${!human}>✓ mark all read</button>
-    <button id="mail-peer-compose" title="Message a peer's operator or agents on a peer (federation)"
-      hidden=${!human} onClick=${() => openPeerMail({})}>✉ peer</button>
-    <button class="danger" id="mail-clear-read" data-act="msg-clear"
-      title="Delete every human notification that has been marked read" hidden=${!human}>🗑 delete read</button>
-    <button id="mail-agent-mark-all" data-act=${remote ? undefined : 'mail-agent-mark-all'}
+    <${Button} size="sm" id="mail-mark-all" data-act="msg-mark-all-read"
+      title="Mark every human notification read" hidden=${!human}>✓ mark all read<//>
+    <${Button} size="sm" id="mail-peer-compose" title="Message a peer's operator or agents on a peer (federation)"
+      hidden=${!human} onClick=${() => openPeerMail({})}>✉ peer<//>
+    <${Button} size="sm" variant="danger" id="mail-clear-read" data-act="msg-clear"
+      title="Delete every human notification that has been marked read" hidden=${!human}>🗑 delete read<//>
+    <${Button} size="sm" id="mail-agent-mark-all" data-act=${remote ? undefined : 'mail-agent-mark-all'}
       title="Mark every message this agent has received as read (on its behalf)"
-      onClick=${controller.markAllAgentRead} hidden=${human}>✓ mark all read</button>
+      onClick=${controller.markAllAgentRead} hidden=${human}>✓ mark all read<//>
   </span>`;
 }
 
@@ -316,13 +321,13 @@ function MessageBulkBar({ current, controller, model }) {
   return html`<div id="mail-bulk-bar" class="mail-bulk-bar">
     <${SelectAll} checked=${allChecked} onChange=${controller.togglePageSelection} />
     <span class="grow">${count ? `${count} selected` : ''}</span>
-    ${current.selected !== 'human' && html`<${Fragment}><button disabled=${count === 0} title="Mark the selected messages read"
-      onClick=${() => controller.setMessagesRead([...current.selectedMsgs], true)}>✓ read</button>
-      <button disabled=${count === 0} title="Mark the selected messages unread"
-        onClick=${() => controller.setMessagesRead([...current.selectedMsgs], false)}>○ unread</button></${Fragment}>`}
-    <button class="danger" disabled=${count === 0 || !!deleteLock}
+    ${current.selected !== 'human' && html`<${Fragment}><${Button} size="sm" disabled=${count === 0} title="Mark the selected messages read"
+      onClick=${() => controller.setMessagesRead([...current.selectedMsgs], true)}>✓ read<//>
+      <${Button} size="sm" disabled=${count === 0} title="Mark the selected messages unread"
+        onClick=${() => controller.setMessagesRead([...current.selectedMsgs], false)}>○ unread<//></${Fragment}>`}
+    <${Button} size="sm" variant="danger" disabled=${count === 0 || !!deleteLock}
       title=${deleteLock ? undefined : 'Delete the selected messages'}
-      onClick=${controller.deleteSelectedMessages}>🗑 delete selected</button><${LockReason} why=${deleteLock} />
+      onClick=${controller.deleteSelectedMessages}>🗑 delete selected<//><${LockReason} why=${deleteLock} />
     ${folderActions && html`<${FolderActions} current=${current} controller=${controller} />`}
   </div>`;
 }
@@ -379,10 +384,10 @@ function GroupLinkReader({ request, controller }) {
       ${handled ? html`<${Fragment}><span class=${`access-outcome ${outcome.cls}`}>${outcome.txt}</span>${request.decided_at && html`<span class="access-decided-at">${relTime(request.decided_at)}</span>`}</${Fragment}>`
         : html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
           <span class="grow"></span>
-          ${into && html`<button class="access-btn always" title=${`Approve, and let ${peer} link to ${link.dest_group} in future without asking (each link still has to be acknowledged)`}
-            onClick=${() => controller.decideAccess(request.id, 'approve_future')}>Approve + allow future links into ${link.dest_group}</button>`}
-          <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
-          <button class="access-btn approve" onClick=${() => controller.decideAccess(request.id, 'approve')}>Approve</button></${Fragment}>`}
+          ${into && html`<${Button} class="access-btn always" title=${`Approve, and let ${peer} link to ${link.dest_group} in future without asking (each link still has to be acknowledged)`}
+            onClick=${() => controller.decideAccess(request.id, 'approve_future')}>Approve + allow future links into ${link.dest_group}<//>`}
+          <${Button} variant="danger" class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline<//>
+          <${Button} variant="success" class="access-btn approve" onClick=${() => controller.decideAccess(request.id, 'approve')}>Approve<//></${Fragment}>`}
     </div>
   </${Fragment}>`;
 }
@@ -433,21 +438,21 @@ function AccessReader({ request, controller }) {
         : request.origin_peer && request.perm === USAGE_PERM ? html`<${UsageAccessDecision} key=${request.id} request=${request} controller=${controller} />`
         : request.origin_peer ? html`<${PeerAccessDecision} request=${request} controller=${controller} />`
                 : html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
-          <span class="grow"></span><button class="access-btn extend" title="Push the auto-decline back 5 minutes"
-            onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m</button>
-          ${request.auto_grantable && request.scope_display && html`<button class="access-btn always scoped"
+          <span class="grow"></span><${Button} class="access-btn extend" title="Push the auto-decline back 5 minutes"
+            onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m<//>
+          ${request.auto_grantable && request.scope_display && html`<${Button} class="access-btn always scoped"
             title=${`Approve now AND remember this permission for this agent, but only for ${request.scope_display} — it will still ask for anything else`}
             onClick=${() => controller.decideAccess(request.id, 'always_scoped')}>${wizard
     ? `Grant ever after — ${request.scope_display}`
-    : `Always allow — ${request.scope_display}`}</button>`}
-          ${request.auto_grantable && html`<button class="access-btn always" title=${request.scope_display
+    : `Always allow — ${request.scope_display}`}<//>`}
+          ${request.auto_grantable && html`<${Button} class="access-btn always" title=${request.scope_display
     ? "Approve now AND remember this permission for this agent in EVERY context, not just this one"
     : "Approve now AND remember this permission for this agent, so it won't ask again"}
             onClick=${() => controller.decideAccess(request.id, 'always')}>${wizard
     ? 'Grant ever after'
-    : request.scope_display ? 'Always allow — any scope' : 'Always allow'}</button>`}
-          <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>${wizard ? 'Refuse' : 'Decline'}</button>
-          <button class="access-btn approve" onClick=${() => controller.decideAccess(request.id, 'approve')}>${wizard ? 'Grant' : 'Approve'}</button></${Fragment}>`}
+    : request.scope_display ? 'Always allow — any scope' : 'Always allow'}<//>`}
+          <${Button} variant="danger" class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>${wizard ? 'Refuse' : 'Decline'}<//>
+          <${Button} variant="success" class="access-btn approve" onClick=${() => controller.decideAccess(request.id, 'approve')}>${wizard ? 'Grant' : 'Approve'}<//></${Fragment}>`}
     </div>
   </${Fragment}>`;
 }
@@ -479,13 +484,14 @@ function PeerAccessDecision({ request, controller, loadLinks = defaultLinks }) {
   return html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
     <span class="access-peer-consequence">Approving lets ${peer} use <code>${request.perm}</code> (${info?.what || 'see the slug registry'}) ${where} ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.${info?.warning ? html` <b class="fa-danger">${info.warning}</b>` : ''}</span>
     <span class="grow"></span>
-    ${narrowable && groups.length > 0 && html`<select class="access-peer-group" title="Narrow to one shared group" value=${group} onChange=${(e) => setGroup(e.currentTarget.value)}>
-      <option value="">every group, including future ones</option>${groups.map((g) => html`<option key=${g.id} value=${String(g.id)}>${g.name}</option>`)}</select>`}
-    <select class="access-peer-ttl" title="How long the grant lasts" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
-      ${ttlChoices.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}</select>
-    <button class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m</button>
-    <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
-    <button class="access-btn approve" onClick=${approve}>Approve</button></${Fragment}>`;
+    ${narrowable && groups.length > 0 && html`<${GroupCombobox} id=${`access-peer-group-${request.id}`} className="access-peer-group" ariaLabel="Narrow to one shared group"
+      groups=${groups.map((g) => ({ value: String(g.id), label: g.name }))} value=${group} onChange=${setGroup}
+      noneLabel="every group, including future ones" />`}
+    <${Select} class="access-peer-ttl" title="How long the grant lasts" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
+      ${ttlChoices.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}<//>
+    <${Button} class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m<//>
+    <${Button} variant="danger" class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline<//>
+    <${Button} variant="success" class="access-btn approve" onClick=${approve}>Approve<//></${Fragment}>`;
 }
 
 // UsageAccessDecision decides a peer's usage request: billing its agents'
@@ -504,18 +510,18 @@ function UsageAccessDecision({ request, controller }) {
   const tooMuch = usd !== null && request.max_usd > 0 && (usd === 0 || usd > request.max_usd);
   const peer = request.conv_title || request.origin_peer;
   const approve = () => controller.decideAccess(request.id, 'approve', { grant_ttl_seconds: Number(ttl), http_proxy: gateway, max_usd: usd || 0 });
-  const what = `${usd > 0 ? `up to $${usd.toFixed(2)}` : 'with no cap'} through ${gateway || 'any of your model gateways'}`;
+  const what = `${usd > 0 ? `up to ${fmtExactUSD(usd)}` : 'with no cap'} through ${gateway || 'any of your model gateways'}`;
   return html`<${Fragment}><span class="access-countdown" title="If you don't decide, this request is automatically declined.">${controller.accessCountdown(request.deadline)}</span>
-    <span class="access-peer-consequence">Approving lets ${peer}'s agents bill their model calls to you, ${what}, ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.${gateways.length === 0 ? html` <b class="fa-danger">This node has no enabled model gateway.</b>` : ''}${tooMuch ? html` <b class="fa-danger">At most $${Number(request.max_usd).toFixed(2)} was asked for.</b>` : ''}</span>
+    <span class="access-peer-consequence">Approving lets ${peer}'s agents bill their model calls to you, ${what}, ${Number(ttl) ? `for ${ttlText(Number(ttl))}` : 'permanently'}.${gateways.length === 0 ? html` <b class="fa-danger">This node has no enabled model gateway.</b>` : ''}${tooMuch ? html` <b class="fa-danger">At most ${fmtExactUSD(Number(request.max_usd))} was asked for.</b>` : ''}</span>
     <span class="grow"></span>
-    ${request.http_proxy ? html`<span class="access-usage-gateway mono">${request.http_proxy}</span>` : html`<select class="access-usage-gateway" title="The model gateway it bills to" value=${gateway} onChange=${(e) => setGateway(e.currentTarget.value)}>
-      ${gateways.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<option value="">any gateway</option></select>`}
+    ${request.http_proxy ? html`<span class="access-usage-gateway mono">${request.http_proxy}</span>` : html`<${Select} class="access-usage-gateway" title="The model gateway it bills to" value=${gateway} onChange=${(e) => setGateway(e.currentTarget.value)}>
+      ${gateways.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<option value="">any gateway</option><//>`}
     <input class="access-usage-amount" title="Dollars it may spend (blank: no cap)" inputmode="decimal" placeholder="no cap" size="7" value=${amount} onInput=${(e) => setAmount(e.currentTarget.value)} />
-    <select class="access-peer-ttl" title="How long the share lasts" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
-      ${ttlChoices.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}</select>
-    <button class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m</button>
-    <button class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline</button>
-    <button class="access-btn approve" disabled=${usd === null || tooMuch || gateways.length === 0} onClick=${approve}>Share</button></${Fragment}>`;
+    <${Select} class="access-peer-ttl" title="How long the share lasts" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
+      ${ttlChoices.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}<//>
+    <${Button} class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m<//>
+    <${Button} variant="danger" class="access-btn deny" onClick=${() => controller.decideAccess(request.id, 'deny')}>Decline<//>
+    <${Button} variant="success" class="access-btn approve" disabled=${usd === null || tooMuch || gateways.length === 0} onClick=${approve}>Share<//></${Fragment}>`;
 }
 
 async function defaultLinks() {
@@ -549,12 +555,8 @@ function remoteNodeName(remote) {
   return document.documentElement.dataset.remoteNodeName || remote.slice(0, 13);
 }
 
-async function postPeerJSON(url, body) {
-  const res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  let data = null;
-  try { data = await res.json(); } catch (_) { data = null; }
-  if (!res.ok) { const e = new Error(data?.error || `HTTP ${res.status}`); e.status = res.status; throw e; }
-  return data;
+function postPeerJSON(url, body) {
+  return requestJSON(url, { method: 'POST', body });
 }
 
 // peerHumanActions answer a notification on the peer this page shows: the
@@ -596,22 +598,22 @@ function ReviewSpawnRequest({ id, instance, load = () => createFleetAdminActions
     }, () => {});
     return () => { live = false; };
   }, [id, instance]);
-  return open ? html`<button data-act="review-spawn-request" class="primary" title="Approve, change or deny it on ⚙ Fleet config → Spawn requests"
-    onClick=${() => openFleetPage('spawns')}>review request…</button>` : null;
+  return open ? html`<${Button} size="sm" variant="primary" data-act="review-spawn-request" title="Approve, change or deny it on ⚙ Fleet config → Spawn requests"
+    onClick=${() => openFleetPage('spawns')}>review request…<//>` : null;
 }
 
 function MessageReader({ current, controller, model }) {
   const wizard = document.body.classList.contains('wizard');
   if (model.access) {
-    if (model.allAccess.length === 0) return html`<div class="mail-reader" id="mail-reader"
+    if (model.allAccess.length === 0) return html`<div class="mail-reader ui-card" id="mail-reader"
       role="region" aria-label="Message reader" tabindex="0"><div class="empty">${wizard
       ? 'No petitions await judgement.' : 'No access requests to review.'}</div></div>`;
     const request = model.allAccess.find(item => item.id === String(current.selectedMsgId || ''));
-    return html`<div class="mail-reader" id="mail-reader" data-kind=${request ? 'decree' : undefined}
+    return html`<div class="mail-reader ui-card" id="mail-reader" data-kind=${request ? 'decree' : undefined}
       role="region" aria-label="Message reader" tabindex="0"><${AccessReader} request=${request} controller=${controller} /></div>`;
   }
   const message = model.messages.find(item => item.id === current.selectedMsgId);
-  if (!message) return html`<div class="mail-reader" id="mail-reader"
+  if (!message) return html`<div class="mail-reader ui-card" id="mail-reader"
     role="region" aria-label="Message reader" tabindex="0"><div class="empty">${wizard
     ? 'Unfurl a scroll to read it.' : 'Select a message to read.'}</div></div>`;
   const human = current.selected === 'human';
@@ -628,26 +630,28 @@ function MessageReader({ current, controller, model }) {
     const lead = !remote && html`<${Fragment}>
       ${spawnRequest && html`<${ReviewSpawnRequest} id=${spawnRequest[1]} instance=${String(message.group).slice('federation:'.length)} load=${controller.spawnRequests} />`}
       ${ticket && html`<${AwayAnswer} ticket=${ticket} peerLabel=${peerLabelOf(message)} confirm=${shellConfirm} toast=${shellToast} />`}
-      ${peer && html`<button data-act="peer-mail-reply" title="Reply to this peer's operator"
-        onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply</button>`}</${Fragment}>`;
+      ${peer && html`<${Button} size="sm" data-act="peer-mail-reply" title="Reply to this peer's operator"
+        onClick=${() => openPeerMail({ peer, subject: replySubject(message.subject) })}>reply<//>`}</${Fragment}>`;
     actions = html`<${HumanActions} message=${message} senderLive=${controller.senderOnline(message.from_agent, message.from_conv)}
       harness=${remote ? '' : senderHarness(message)} toast=${shellToast} onDone=${controller.reloadMail} before=${lead}
       peer=${remote ? peerHumanActions(remote, dashboardState.snapshot.value?.peer_view) : null} />`;
   } else {
     const deleteLock = trustLock('', 'deleting its messages');
     actions = html`<div class="mail-reader-actions">
-      <button onClick=${() => controller.setMessagesRead([message.id], !message.read)}
-        data-id=${message.id} title=${message.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}>${message.read ? 'mark unread' : 'mark read'}</button>
+      <${Button} size="sm" onClick=${() => controller.setMessagesRead([message.id], !message.read)}
+        data-id=${message.id} title=${message.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}>${message.read ? 'mark unread' : 'mark read'}<//>
       <span class="spacer"></span>
-      <button class="danger" data-id=${message.id} disabled=${!!deleteLock}
-        onClick=${() => controller.deleteOneMessage(message.id)} title=${deleteLock ? undefined : 'Permanently delete this message'}>delete</button><${LockReason} why=${deleteLock} />
+      <${Button} size="sm" variant="danger" data-id=${message.id} disabled=${!!deleteLock}
+        onClick=${() => controller.deleteOneMessage(message.id)} title=${deleteLock ? undefined : 'Permanently delete this message'}>delete<//><${LockReason} why=${deleteLock} />
     </div>`;
   }
-  return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}
+  return html`<div class="mail-reader ui-card" id="mail-reader" data-kind=${controller.msgKind(message)}
     role="region" aria-label="Message reader" tabindex="0">
     <${MessageHeaders} message=${message} />
     <${MessageBody} message=${message} agentMail=${!human} />
     ${human ? html`<${MessageAttachments} message=${message} />` : html`<${AgentMailAttachments} message=${message} />`}
+    ${human && html`<${DecisionChoices} message=${message} toast=${shellToast} onDone=${controller.reloadMail} remote=${!!remote} />`}
+    ${human && html`<${MessageAction} message=${message} toast=${shellToast} onDone=${controller.reloadMail} onRefused=${controller.reloadMail} remote=${!!remote} />`}
     ${actions}
   </div>`;
 }
@@ -683,7 +687,7 @@ export function MailApp({ controller }) {
   };
   return html`<div class="mail-client" onKeyDown=${(event) => !hasShownOverlay() && movePaneFocus(event, mailPanes(controller))}>
     <${PeerMailHost} toast=${shellToast} />
-    <${MailFilters} boxId="filter-mailboxes" boxPlaceholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
+    <${MailFilters} boxId="filter-mailboxes" boxPlaceholder=${wizard ? 'Seek a hero…' : 'Filter mailboxes (name / id)'}
       boxValue=${current.boxQuery} onBoxInput=${controller.setBoxQuery} onBoxKeyDown=${enterMailboxList}
       id="filter-messages" placeholder=${wizard ? 'Search the scrolls…' : 'Filter messages (sender / recipient / subject / body)'}
       value=${current.messageQuery} onInput=${controller.setMessageQuery} onKeyDown=${enterMessageList}
@@ -692,9 +696,9 @@ export function MailApp({ controller }) {
     <div class="mail-col mail-sidebar-col">
       <${RemoteInboxSection} />
       <${WipeBar} current=${current} controller=${controller} />
-      ${current.mailboxRequest?.phase === 'error' && html`<div class="island-error mail-error" role="alert">
+      ${current.mailboxRequest?.phase === 'error' && html`<div class="island-error mail-error ui-error-box" role="alert">
         Mailboxes failed to refresh: ${current.mailboxRequest.error}
-        <button type="button" onClick=${controller.reloadMail}>Retry</button>
+        <${Button} size="sm" onClick=${controller.reloadMail}>Retry<//>
       </div>`}
       <${MailSidebar} current=${current} controller=${controller} />
       <${MailFooterToggles} idPrefix="mail" busy=${current.busy}

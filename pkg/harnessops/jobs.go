@@ -98,6 +98,9 @@ type Hooks struct {
 	Busy     func(string) (bool, error)
 	Probe    func() nodeinfo.Availability
 	Finished func(Job)
+	// UpdateOverride returns the operator's own update command for a
+	// harness, or "" to use the default recipe.
+	UpdateOverride func(string) string
 }
 type Service struct {
 	ctx       context.Context
@@ -329,8 +332,11 @@ func (s *Service) perform(ctx context.Context, r Request, j *Job, name string, r
 	if err := s.phase(j, "planning:"+name); err != nil {
 		return err
 	}
-	command, err := s.plan(ctx, s.home, r.Action, name)
-	if err != nil {
+	var command Command
+	var err error
+	if custom := s.updateOverride(r.Action, name); custom != "" {
+		command = CustomUpdate(custom)
+	} else if command, err = s.plan(ctx, s.home, r.Action, name); err != nil {
 		return err
 	}
 	busy, err := s.hooks.Busy(name)
@@ -343,14 +349,14 @@ func (s *Service) perform(ctx context.Context, r Request, j *Job, name string, r
 	if !authorize(r.CopyCredentials) {
 		return fmt.Errorf("harness operation authority revoked")
 	}
-	if err := s.phase(j, "official_recipe:"+name); err != nil {
+	phase := "official_recipe:"
+	if command.Recipe == "custom" {
+		phase = "custom_update:"
+	}
+	if err := s.phase(j, phase+name); err != nil {
 		return err
 	}
-	recipeInfo, _ := recipe(name)
-	result.Recipe = "npm:" + recipeInfo.Package + "@latest"
-	if len(command.Args) == 1 {
-		result.Recipe = name + ":" + command.Args[0]
-	}
+	result.Recipe = command.Recipe
 	if err := s.execute(ctx, command); err != nil {
 		return err
 	}
@@ -371,6 +377,13 @@ func (s *Service) perform(ctx context.Context, r Request, j *Job, name string, r
 		}
 	}
 	return nil
+}
+
+func (s *Service) updateOverride(action, name string) string {
+	if action != "update" || s.hooks.UpdateOverride == nil {
+		return ""
+	}
+	return s.hooks.UpdateOverride(name)
 }
 
 func (s *Service) Close() { s.mu.Lock(); s.closed = true; s.cancel(); s.mu.Unlock(); s.wg.Wait() }

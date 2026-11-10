@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -217,6 +218,10 @@ func Open() (*sql.DB, error) {
 	if dbReady {
 		return globalDB, initErr
 	}
+	// Not memoized: the next test's HOME must still open normally.
+	if testTeardownHome != "" && strings.HasPrefix(filepath.Clean(DBPath()), testTeardownHome+string(filepath.Separator)) {
+		return nil, fmt.Errorf("database under %s was closed for test teardown", testTeardownHome)
+	}
 	// Mark ready up front: even on an init error we cache the failed result
 	// (globalDB stays nil, initErr set) rather than retrying the full chain
 	// on every call — same memoization the previous sync.Once gave.
@@ -374,4 +379,25 @@ func ResetForTest() {
 	// pays the full migration cost and caches the result; every later
 	// ResetForTest+Open reuses the snapshot. See migration_template.go.
 	enableMigrationTemplate()
+}
+
+// testTeardownHome is the HOME of the last test world torn down by
+// CloseForTestTeardown. Guarded by stateMu.
+var testTeardownHome string
+
+// CloseForTestTeardown is ResetForTest for the end of a test whose HOME is a
+// temp dir about to be removed. Open derives its path from HOME on every
+// fresh init, so a straggling goroutine that reached Open after the reset
+// used to recreate db.sqlite and its sidecars inside that dir while the
+// testing package was deleting it ("directory not empty"). From here on such
+// an Open fails instead. Must only be called from tests.
+func CloseForTestTeardown(home string) {
+	stateMu.Lock()
+	testTeardownHome = filepath.Clean(home)
+	stateMu.Unlock()
+	ResetForTest()
+	// ResetForTest closes the status reader before globalDB; a concurrent
+	// StatusSnapshotGeneration can reopen it in between. Later callers find
+	// Open refusing this HOME or globalDBPath cleared, so none reopens it.
+	closeStatusVersionReader()
 }

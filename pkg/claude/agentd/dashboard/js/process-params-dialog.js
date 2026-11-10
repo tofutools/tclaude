@@ -4,7 +4,9 @@
 import { h, render } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { Button } from './ui-components.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 
 const html = htm.bind(h);
 
@@ -120,29 +122,26 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
     redraw((value) => value + 1);
     queueMicrotask(() => list.current?.lastElementChild?.querySelector('.process-param-name')?.focus());
   };
-  return html`<${Overlay}
-    id="process-param-modal" dialogClass="modal process-param-dialog" overlayClass="process-param-modal"
-    labelledby="process-param-title" onClose=${complete} dirty=${isDirty} blocked=${false}
+  return html`<${Dialog}
+    id="process-param-modal" dialogClass="modal process-param-dialog" overlayClass="process-param-modal" onClose=${complete} dirty=${isDirty} blocked=${false}
     confirmDiscard=${confirmDiscard} onCloseError=${(closeError) => setError(`Discard confirmation failed: ${closeError?.message || String(closeError)}`)}
-    registerClose=${registerClose}
-  >
-    <h3 id="process-param-title">Template parameters</h3>
+    guard=${{ requestClose, registerClose }} title="Template parameters">
     <p class="muted">Declare values referenced as {{ params.name }}. Renamed or deleted references are reported by live validation.</p>
     <datalist id="process-param-types"><option value="string"></option><option value="number"></option><option value="boolean"></option></datalist>
-    <div ref=${list} class="process-param-list process-scroll-surface">
-      ${!rowsRef.current.length && html`<div class="process-param-empty">No parameters declared.</div>`}
+    <div ref=${list} class="process-param-list">
+      ${!rowsRef.current.length && html`<div class="process-param-empty ui-empty-block">No parameters declared.</div>`}
       ${rowsRef.current.map((row, index) => html`<div key=${row.key} class="process-param-row" data-process-param=${row.name}>
         <label><span>Name</span><input class="process-param-name" type="text" spellcheck="false" aria-label=${`Parameter ${index + 1} name`} value=${row.rawName} onInput=${(event) => update(index, { rawName: event.currentTarget.value, name: event.currentTarget.value.trim() })} /></label>
         <label><span>Type</span><input class="process-param-type" type="text" spellcheck="false" list="process-param-types" aria-label=${`Parameter ${row.name || index + 1} type`} value=${row.rawType} onInput=${(event) => update(index, { rawType: event.currentTarget.value, type: event.currentTarget.value.trim(), defaultChanged: true })} /></label>
         <label class="process-param-description-field"><span>Description</span><input class="process-param-description" type="text" spellcheck="true" placeholder="Description" aria-label=${`Parameter ${row.name || index + 1} description`} value=${row.description} onInput=${(event) => update(index, { description: event.currentTarget.value })} /></label>
         <label class="process-param-default-field"><span>Default</span><span class="process-param-default-control"><input class="process-param-default-enabled" type="checkbox" aria-label=${`Parameter ${row.name || index + 1} has default`} checked=${row.hasDefault} onChange=${(event) => update(index, { hasDefault: event.currentTarget.checked })} /><input class="process-param-default" type="text" spellcheck="false" placeholder="No default" aria-label=${`Parameter ${row.name || index + 1} default`} value=${row.defaultValue} disabled=${!row.hasDefault} onInput=${(event) => update(index, { defaultValue: event.currentTarget.value, defaultChanged: true })} /></span></label>
         <label class="process-param-check"><input class="process-param-required" type="checkbox" aria-label=${`Parameter ${row.name || index + 1} required`} checked=${row.required} onChange=${(event) => update(index, { required: event.currentTarget.checked, requiredChanged: true })} /><span>Required</span></label>
-        <button class="process-action process-action-danger" type="button" aria-label=${`Remove parameter ${row.name || index + 1}`} onClick=${() => remove(index)}>remove</button>
+        <${Button} size="sm" variant="ghost danger" class="process-action" aria-label=${`Remove parameter ${row.name || index + 1}`} onClick=${() => remove(index)}>remove<//>
       </div>`)}
     </div>
-    <div class="process-param-toolbar"><button ref=${addButton} class="process-action" type="button" onClick=${add}>+ add param</button><span class="spacer"></span><div class="process-param-error" role="alert">${error}</div></div>
-    <div class="modal-buttons"><button type="button" onClick=${requestClose}>Cancel</button><button class="primary" type="button" onClick=${apply}>Apply</button></div>
-  </${Overlay}>`;
+    <div class="process-param-toolbar"><${Button} size="sm" domRef=${addButton} class="process-action" onClick=${add}>+ add param<//><span class="spacer"></span><div class="process-param-error ui-error" role="alert">${error}</div></div>
+    <div class="modal-buttons"><${Button} onClick=${requestClose}>Cancel</${Button}><${Button} variant="primary" onClick=${apply}>Apply</${Button}></div>
+  </${Dialog}>`;
 }
 
 export function openProcessParamsDialog({ model, onMutated, onClosed, confirmDiscard = async () => false } = {}) {

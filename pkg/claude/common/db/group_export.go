@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/reflink"
 )
 
@@ -36,9 +37,10 @@ var ErrImportConversationCollision = errors.New("import conversation collision")
 // Tables carried (every table keyed to the group or to a member's
 // conv-id): agent_groups, agent_group_members, agent_group_owners,
 // agent_group_audit, agent_permissions, agents (as enrollments), agent_workdir,
-// agent_sudo_grants, agent_head_aliases, agent_conv_succession,
+// agent_head_aliases, agent_conv_succession,
 // agent_spawn_history, agent_clone_history, agent_cron_jobs,
-// agent_cron_runs, agent_messages. Deliberately NOT carried: conv_index
+// agent_cron_runs, agent_messages. Deliberately NOT carried: agent_sudo_grants
+// (sudo is temporary, so an export never holds it), conv_index
 // and conv_embeddings (rebuilt from the .jsonl on scan), sessions and
 // notify_state (live tmux runtime), usage_cache / git_cache (DB-global
 // caches), agent_group_links (cross-group — deferred to a future
@@ -77,15 +79,28 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 	// dropped (JOH-220), so a v2 export omits it. exp.Group.DefaultModel
 	// stays "" and is left out of the manifest (omitempty).
 	var environmentJSON, defaultPrompts string
+	var missionRow AgentGroup
 	if err := d.QueryRow(`
 		SELECT descr, default_context, environment_json, default_prompts, attachment_url, attachment_label,
-		       max_members, created_at, archived_at
+		       max_members, created_at, archived_at, mission, mission_header
 		FROM agent_groups WHERE id = ?`, g.ID).Scan(
 		&exp.Group.Descr, &exp.Group.DefaultContext,
 		&environmentJSON, &defaultPrompts,
 		&exp.Group.AttachmentURL, &exp.Group.AttachmentLabel,
-		&exp.Group.MaxMembers, &groupCreatedAt, &groupArchivedAt); err != nil {
+		&exp.Group.MaxMembers, &groupCreatedAt, &groupArchivedAt,
+		&missionRow.Mission, &missionRow.MissionHeader); err != nil {
 		return nil, fmt.Errorf("collect group row: %w", err)
+	}
+	// The export format predates the mission split and carries no mission:
+	// fold a split group's mission block back into the exported context, so
+	// an imported force is briefed with it exactly as before the split (it
+	// imports as a legacy group, mission inside its context).
+	if block := missionRow.MissionBlock(); block != "" {
+		if standing := strings.TrimSpace(exp.Group.DefaultContext); standing != "" {
+			exp.Group.DefaultContext = standing + "\n\n" + block
+		} else {
+			exp.Group.DefaultContext = block
+		}
 	}
 	exp.Group.Environment, err = unmarshalEnvironmentColumn(environmentJSON)
 	if err != nil {
@@ -141,9 +156,6 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 		return nil, err
 	}
 	if exp.Workdirs, err = collectWorkdirs(d, convIDs); err != nil {
-		return nil, err
-	}
-	if exp.SudoGrants, err = collectSudoGrants(d, convIDs); err != nil {
 		return nil, err
 	}
 	if exp.HeadAliases, err = collectHeadAliases(d, convIDs); err != nil {
@@ -301,7 +313,8 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 	// owner/target are agent-keyed (JOH-26 PR3a); resolve each back to its
 	// actor's CURRENT conv so the export stays conv-portable. LEFT JOIN +
 	// COALESCE keeps a group-target job (target_agent '') or an owner-less job
-	// rather than dropping it.
+	// rather than dropping it. A linked peer's jobs belong to the link, not the
+	// group: exported, they would come back as this node's own.
 	rows, err := d.Query(`
 		SELECT j.id, j.name, j.target_kind, COALESCE(ow.current_conv_id, ''), COALESCE(tg.current_conv_id, ''),
 		       j.interval_seconds, j.subject, j.body, j.action_kind,j.spawn_profile,j.spawn_role_refs_json,
@@ -311,7 +324,7 @@ func collectCronJobs(d *sql.DB, groupID int64) ([]groupexport.CronJob, []string,
 		FROM agent_cron_jobs j
 		LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 		LEFT JOIN agents tg ON tg.agent_id = j.target_agent
-		WHERE j.group_id = ? ORDER BY j.id`, groupID)
+		WHERE j.group_id = ? AND j.owner_peer = '' ORDER BY j.id`, groupID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("collect cron jobs: %w", err)
 	}
@@ -456,32 +469,6 @@ func collectWorkdirs(d *sql.DB, convIDs []string) ([]groupexport.Workdir, error)
 	return out, rows.Err()
 }
 
-func collectSudoGrants(d *sql.DB, convIDs []string) ([]groupexport.SudoGrant, error) {
-	clause, args := inClause(convIDs)
-	rows, err := d.Query(`
-		SELECT ag.current_conv_id, s.slug, s.scope_json, s.granted_at, s.expires_at, s.granted_by, s.reason, s.revoked_at
-		FROM agent_sudo_grants s JOIN agents ag ON ag.agent_id = s.agent_id
-		WHERE ag.current_conv_id `+clause+` ORDER BY s.id`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("collect sudo grants: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []groupexport.SudoGrant
-	for rows.Next() {
-		var s groupexport.SudoGrant
-		var grantedAt, expiresAt, revokedAt dbTimestamp
-		if err := rows.Scan(&s.ConvID, &s.Slug, &s.ScopeJSON, &grantedAt, &expiresAt,
-			&s.GrantedBy, &s.Reason, &revokedAt); err != nil {
-			return nil, fmt.Errorf("scan sudo grant: %w", err)
-		}
-		s.GrantedAt = exportTimestamp(grantedAt)
-		s.ExpiresAt = exportTimestamp(expiresAt)
-		s.RevokedAt = exportTimestamp(revokedAt)
-		out = append(out, s)
-	}
-	return out, rows.Err()
-}
-
 func collectHeadAliases(d *sql.DB, convIDs []string) ([]groupexport.HeadAlias, error) {
 	clause, args := inClause(convIDs)
 	rows, err := d.Query(`
@@ -620,11 +607,27 @@ type GroupImportPlan struct {
 	// import minted and indexed for this import, so their conv_index rows
 	// are this import's, not a collision.
 	InstalledConversations map[string]bool
-	ByConv                   string            // caller conv-id for the audit log ("" = human)
+	// MemberPostures is the launch posture each member takes on this node,
+	// keyed by final conv-id. Nothing in an archive supplies it: the daemon
+	// resolves it, and it commits with the members so that no imported member
+	// can exist with only the baseline to resume on.
+	MemberPostures map[string]GroupImportMemberPosture
+	ByConv         string // caller conv-id for the audit log ("" = human)
 	// CanonicalizePermissionScope is supplied by the daemon, which owns the
 	// permission registry. ImportGroup requires it for every non-empty archived
 	// scope so direct DB callers cannot bypass registry and selector validation.
 	CanonicalizePermissionScope func(slug, raw string) (string, error)
+}
+
+// GroupImportMemberPosture is one imported member's launch posture.
+type GroupImportMemberPosture struct {
+	// AgentID, when set, is the identity the member's actor takes, for state
+	// installed before this transaction. Empty mints one.
+	AgentID  string
+	Relaunch AgentRelaunchProfile
+	// Sandbox gets the new group as its resolution group here, because the
+	// group does not exist until this transaction creates it.
+	Sandbox sandboxpolicy.Snapshot
 }
 
 // GroupImportResult summarises a completed import.
@@ -736,7 +739,7 @@ func (c *importCtx) ensureActor(conv, via string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	agentID, err := ensureAgentForConvTx(c.tx, conv, via)
+	agentID, err := ensureAgentWithIDForConvTx(c.tx, conv, via, c.plan.MemberPostures[conv].AgentID)
 	if err != nil {
 		return "", err
 	}
@@ -790,11 +793,22 @@ func (c *importCtx) rc(id string) string {
 	return id
 }
 
-// rl remaps every conv-id occurrence inside a free-form string —
-// recipient lists (to_recipients / cc_recipients) and the like. conv-ids
-// are 36-char UUIDs, so a plain substring replace cannot mis-hit, and
-// this stays agnostic to the list's delimiter.
+// rl remaps the conv-ids in a recipient list (to_recipients /
+// cc_recipients). A JSON list is decoded, remapped id by id and encoded
+// again, so an id written with JSON escapes cannot slip past the remap and
+// decode, on insert, to a local conversation outside the file. Anything else
+// falls back to substring replacement: conv-ids are 36-char UUIDs, so a plain
+// replace cannot mis-hit.
 func (c *importCtx) rl(s string) string {
+	var ids []string
+	if strings.TrimSpace(s) != "" && json.Unmarshal([]byte(s), &ids) == nil {
+		for i, id := range ids {
+			ids[i] = c.rc(id)
+		}
+		if out, err := json.Marshal(ids); err == nil {
+			return string(out)
+		}
+	}
 	for old, fresh := range c.plan.ConvRemap {
 		if old != fresh && old != "" {
 			s = strings.ReplaceAll(s, old, fresh)
@@ -820,12 +834,43 @@ func (c *importCtx) run() error {
 	}
 	for _, step := range []func() error{
 		c.members, c.owners, c.audit, c.permissions, c.enrollments,
-		c.workdirs, c.sudoGrants, c.headAliases, c.successions,
+		c.workdirs, c.headAliases, c.successions,
 		c.spawnHist, c.cloneHist, c.cronJobsAndRuns, c.messages,
 		c.transferLog, c.backfillAgentCompanions, c.scrubRetiredActorAuthority,
+		c.memberPostures,
 	} {
 		if err := step(); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// memberPostures records each member's launch posture on its actor.
+func (c *importCtx) memberPostures() error {
+	for conv, posture := range c.plan.MemberPostures {
+		agentID, err := agentIDForConvTx(c.tx, conv)
+		if err != nil {
+			return fmt.Errorf("import: member posture actor: %w", err)
+		}
+		if agentID == "" {
+			// A conversation no member owns: nothing launches it as an agent.
+			continue
+		}
+		relaunch, err := encodeRelaunchProfile(posture.Relaunch)
+		if err != nil {
+			return fmt.Errorf("import: encode member posture: %w", err)
+		}
+		snapshot := posture.Sandbox
+		snapshot.ResolutionGroupID = c.newGroupID
+		sandbox, err := marshalEffectiveSandboxSnapshot(&snapshot)
+		if err != nil {
+			return fmt.Errorf("import: encode member sandbox: %w", err)
+		}
+		if _, err := c.tx.Exec(
+			`UPDATE agents SET relaunch_profile = ?, effective_sandbox_config = ? WHERE agent_id = ?`,
+			relaunch, sandbox, agentID); err != nil {
+			return fmt.Errorf("import: record member posture: %w", err)
 		}
 	}
 	return nil
@@ -853,6 +898,7 @@ func (c *importCtx) scrubRetiredActorAuthority() error {
 			{`DELETE FROM agent_group_owners WHERE agent_id = ?`, []any{agentID}},
 			{`DELETE FROM agent_group_members WHERE agent_id = ?`, []any{agentID}},
 			{`DELETE FROM agent_permissions WHERE agent_id = ?`, []any{agentID}},
+			{`DELETE FROM agent_retained_group_permissions WHERE agent_id = ?`, []any{agentID}},
 			{`UPDATE agent_sudo_grants SET revoked_at = ? WHERE agent_id = ? AND revoked_at IS NULL`, []any{now, agentID}},
 			{`UPDATE agent_cron_jobs SET enabled = 0, disabled_reason = ? WHERE owner_agent = ? AND enabled = 1`, []any{CronDisabledReasonAgentRetired, agentID}},
 			// Same scrub for standing orders: an import must not be able to
@@ -1151,29 +1197,6 @@ func (c *importCtx) workdirs() error {
 			VALUES (?, ?, ?, '', '')`,
 			c.rc(w.ConvID), c.plan.TargetCwd, requiredImportDBTime(w.UpdatedAt)); err != nil {
 			return fmt.Errorf("import: workdir %s: %w", w.ConvID, err)
-		}
-	}
-	return nil
-}
-
-func (c *importCtx) sudoGrants() error {
-	for _, s := range c.exp.SudoGrants {
-		scopeJSON, err := c.permissionScope(s.Slug, s.ScopeJSON)
-		if err != nil {
-			return fmt.Errorf("import: sudo grant %s/%s scope: %w", s.ConvID, s.Slug, err)
-		}
-		conv := c.rc(s.ConvID)
-		agentID, err := c.ensureActor(conv, "import")
-		if err != nil {
-			return fmt.Errorf("import: sudo grant %s/%s actor: %w", s.ConvID, s.Slug, err)
-		}
-		if _, err := c.tx.Exec(`
-			INSERT INTO agent_sudo_grants
-				(agent_id, slug, granted_at, expires_at, granted_by, reason, revoked_at, scope_json)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			agentID, s.Slug, requiredImportDBTime(s.GrantedAt), nullableDBTimeText(s.ExpiresAt), s.GrantedBy,
-			s.Reason, nullableDBTimeText(s.RevokedAt), scopeJSON); err != nil {
-			return fmt.Errorf("import: sudo grant %s/%s: %w", s.ConvID, s.Slug, err)
 		}
 	}
 	return nil

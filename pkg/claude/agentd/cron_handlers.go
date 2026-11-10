@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -72,6 +71,10 @@ type jobJSON struct {
 	RunImmediately             bool     `json:"run_immediately"`
 	QueueWhenOffline           bool     `json:"queue_when_offline"`
 	OperatorAuthored           bool     `json:"operator_authored,omitempty"`
+	// OwnerPeer is the linked node that scheduled the job here (S7b), and
+	// OwnerPeerAgent its agent that did, "" for its operator.
+	OwnerPeer      string `json:"owner_peer,omitempty"`
+	OwnerPeerAgent string `json:"owner_peer_agent,omitempty"`
 	// DisabledReason marks WHY a disabled job is disabled (schema v94): "" for
 	// a normal human enable/disable, or "group-retired" when a retire that
 	// emptied the target group auto-paused it. Surfaced so a reader can tell a
@@ -112,6 +115,8 @@ func toJobJSON(j *db.AgentCronJob) jobJSON {
 		RunImmediately:             j.RunImmediately,
 		QueueWhenOffline:           j.QueueWhenOffline,
 		OperatorAuthored:           j.OperatorAuthored,
+		OwnerPeer:                  j.OwnerPeer,
+		OwnerPeerAgent:             j.OwnerPeerAgent,
 		DisabledReason:             j.DisabledReason,
 		LastRunStatus:              j.LastRunStatus,
 	}
@@ -412,6 +417,31 @@ func jobVisibleTo(j *db.AgentCronJob, callerConv string) bool {
 	return ownerOfGroupContaining(callerConv, j.TargetConv)
 }
 
+// parseCronSchedule reads a job's schedule: exactly one of a cron
+// expression, validated through the same parser the scheduler fires with, or
+// an interval of at least the scheduler tick.
+func parseCronSchedule(cronExpr, interval string) (string, int64, error) {
+	cronSpec := strings.TrimSpace(cronExpr)
+	intervalSpec := strings.TrimSpace(interval)
+	switch {
+	case cronSpec != "" && intervalSpec != "":
+		return "", 0, errors.New("interval and cron_expr are mutually exclusive — pick one schedule mode")
+	case cronSpec != "":
+		if err := cronexpr.Validate(cronSpec); err != nil {
+			return "", 0, err
+		}
+		return cronSpec, 0, nil
+	}
+	d, err := time.ParseDuration(intervalSpec)
+	if err != nil {
+		return "", 0, errors.New("interval must be a Go duration like 10m / 1h / 30s; got: " + interval)
+	}
+	if d < 30*time.Second {
+		return "", 0, errors.New("interval must be >= 30s (the scheduler tick interval)")
+	}
+	return "", int64(d.Seconds()), nil
+}
+
 func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name                       string   `json:"name"`
@@ -460,10 +490,6 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if actionKind == db.CronActionSpawn {
-		if !triggerRoutesEnabled() {
-			writeError(w, http.StatusNotFound, triggerDisabledCode, config.TriggersDisabledMessage)
-			return
-		}
 		if strings.TrimSpace(body.SpawnProfile) == "" || strings.TrimSpace(body.SpawnInstructionTemplate) == "" {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "spawn_profile and spawn_instruction_template are required for spawn jobs")
 			return
@@ -504,34 +530,10 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	// Schedule: exactly one of interval / cron_expr. The expression path
-	// validates through the same parser the scheduler fires with.
-	cronSpec := strings.TrimSpace(body.CronExpr)
-	intervalSpec := strings.TrimSpace(body.Interval)
-	var intervalSeconds int64
-	switch {
-	case cronSpec != "" && intervalSpec != "":
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"interval and cron_expr are mutually exclusive — pick one schedule mode")
+	cronSpec, intervalSeconds, err := parseCronSchedule(body.CronExpr, body.Interval)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
-	case cronSpec != "":
-		if err := cronexpr.Validate(cronSpec); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return
-		}
-	default:
-		d, err := time.ParseDuration(intervalSpec)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_arg",
-				"interval must be a Go duration like 10m / 1h / 30s; got: "+body.Interval)
-			return
-		}
-		if d < 30*time.Second {
-			writeError(w, http.StatusBadRequest, "invalid_arg",
-				"interval must be >= 30s (the scheduler tick interval)")
-			return
-		}
-		intervalSeconds = int64(d.Seconds())
 	}
 
 	targetSelector, ok := expandCronSelfSelector(w, r, body.Target)
@@ -757,9 +759,12 @@ func cronSpawnPreflightWarning(r *http.Request, ownerConv string, g *db.AgentGro
 	authRequest := nonInteractiveCronAuthRequest(r)
 	ctx := ActionContext{Group: g.Name, SpawnProfile: profile,
 		SandboxProfile: ambientSandboxProfileName(g), structuralGroup: g.Name}
-	allowed, _, _, err := spawnPermissionAllowsAction(authRequest, ownerConv, ctx)
+	allowed, slug, _, err := spawnPermissionAllowsAction(authRequest, ownerConv, ctx)
 	if err != nil {
 		return "could not verify the owning agent's spawn permission; firing will reauthorize and may be denied"
+	}
+	if allowed && spawnAuthorityIsCounted(authRequest, ownerConv, slug, ctx) {
+		return "owning agent's spawn access is a use-limited sudo grant, which a schedule cannot spend; firing will be denied"
 	}
 	if !allowed {
 		return fmt.Sprintf("owning agent lacks %s or %s for group %s and spawn profile %s; firing will be denied until granted", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile)
@@ -1036,10 +1041,6 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	patch := decoded.patch
-	if job.ActionKind == db.CronActionSpawn && !triggerRoutesEnabled() {
-		writeError(w, http.StatusNotFound, triggerDisabledCode, config.TriggersDisabledMessage)
-		return
-	}
 	// Resolve user-facing selectors before taking cronAuthorityMu: the normal
 	// resolver may refresh the conversation index from project files. Errors are
 	// deliberately held until after the common locked boundary so an agent
@@ -1119,6 +1120,11 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		if _, ok := authCronJob(w, authRequest, job); !ok {
 			return
 		}
+		if job.IsPeerOwned() && !peerOwnedCronPatchAllowed(patch, decoded) {
+			writeError(w, http.StatusConflict, "peer_owned",
+				"a linked peer's job: this node may change its schedule, enable, disable or delete it, never its content, target, owner or action")
+			return
+		}
 		if targetResolveErr != nil {
 			writeCronProposedTargetResolutionError(w, r, targetResolveErr)
 			return
@@ -1176,10 +1182,6 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 			}
 		}
 		proposedJob := applyCronPatch(job, patch)
-		if proposedJob.ActionKind == db.CronActionSpawn && !triggerRoutesEnabled() {
-			writeError(w, http.StatusNotFound, triggerDisabledCode, config.TriggersDisabledMessage)
-			return
-		}
 		if proposedJob.ActionKind == db.CronActionSpawn {
 			profile, err := db.ResolveSpawnProfile(proposedJob.SpawnProfile)
 			if err != nil {
@@ -1735,9 +1737,10 @@ func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
 // authCronWrite gates create/delete. Caller passes if any of:
 //
 //   - the human operator (classHuman)
-//   - target == caller AND caller has self.schedule
-//   - caller has agent.schedule
-//   - caller owns a group containing the target
+//   - target is the caller (sameActor: any generation) AND caller has self.schedule
+//   - otherwise, requireCrossAgentPermission(agent.schedule): the global
+//     slug, or groups.members.schedule covering every current active
+//     group containing the target (ownership contributes it)
 //
 // Returns (callerConvID, ok); callerConvID is "" for the human.
 func authCronWrite(w http.ResponseWriter, r *http.Request, targetConv string) (string, bool) {
@@ -1798,4 +1801,15 @@ func authCronJob(w http.ResponseWriter, r *http.Request, job *db.AgentCronJob) (
 		return authCronWriteGroup(w, r, job.GroupID)
 	}
 	return authCronWrite(w, r, job.TargetConv)
+}
+
+// peerOwnedCronPatchAllowed reports whether a local patch to a linked peer's
+// job leaves what it delivers, and as whom, alone. What it sends is delivered
+// as the peer's mail, so this node changes only when and whether it runs.
+func peerOwnedCronPatchAllowed(p db.UpdateCronPatch, d decodedCronPatch) bool {
+	if d.targetSelector != nil || d.owner != nil {
+		return false
+	}
+	p.Enabled, p.IntervalSeconds, p.CronExpr, p.QueueWhenOffline, p.RunImmediately = nil, nil, nil, nil, nil
+	return p.Empty() && p.OperatorAuthored == nil
 }

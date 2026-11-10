@@ -1,4 +1,5 @@
 import { FleetAdminError } from './fleet-admin-actions.js';
+import { requestJSON } from './request-json.js';
 
 // Limits the daemon enforces on a script request (noderun.Request.Validate).
 export const SCRIPT_MAX_BYTES = 16 * 1024;
@@ -46,18 +47,7 @@ function decodeBase64(data) {
 // createRunActions wraps /api/node/run (and its peer-proxied form) plus the
 // local-only settings route. Errors are FleetAdminError with the daemon code.
 export function createRunActions({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
-  async function call(method, url, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    const res = await fetchImpl(url, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) throw new FleetAdminError(res.status, data);
-    return data;
-  }
+  const call = (method, url, body) => requestJSON(url, { method, body, fetchImpl, ErrorClass: FleetAdminError });
   return Object.freeze({
     // status is the node's receiving settings: whether it accepts remote
     // scripts and its limits. A granted peer can read it while closed.

@@ -107,7 +107,7 @@ func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 	seatbeltProxyFloorEchoRoundTrip(t, "tcp4", controlEndpoint, "host-second-loopback")
 	seatbeltProxyFloorEchoRoundTrip(t, "tcp", samePortListener.Addr().String(), "host-same-port")
 	seatbeltProxyFloorUDPRoundTrip(t, udpControlEndpoint, "host-udp")
-	require.NoError(t, seatbeltProxyFloorDialAndClose("tcp4", "1.1.1.1:443"),
+	require.NoError(t, seatbeltProxyFloorExternalControl(),
 		"runner must reach the exact external TCP target before Seatbelt denies it")
 	bindControl, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err,
@@ -316,6 +316,19 @@ func seatbeltProxyFloorSamePortMarker() string {
 		return "seatbelt-proxy-floor LIMITATION: same-port non-loopback service is directly reachable"
 	}
 	return "seatbelt-proxy-floor MITIGATED: same-port non-loopback service is refused with EPERM"
+}
+
+// seatbeltProxyFloorExternalControl retries the one control that crosses the
+// internet: a hosted runner's dropped SYN says nothing about Seatbelt, and the
+// test only needs the target to be reachable once.
+func seatbeltProxyFloorExternalControl() error {
+	var err error
+	for range 4 {
+		if err = seatbeltProxyFloorDialAndClose("tcp4", "1.1.1.1:443"); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 func seatbeltProxyFloorDialAndClose(network, endpoint string) error {

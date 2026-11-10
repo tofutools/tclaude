@@ -1,4 +1,5 @@
 import { batch, computed, effect, signal } from '@preact/signals';
+import { setShortcutOverrides } from './keybindings.js';
 
 function messageOf(error) {
   if (!error) return null;
@@ -177,14 +178,16 @@ export function createDashboardState({ now = () => Date.now() } = {}) {
 export const dashboardState = createDashboardState();
 
 // SNAPSHOT_STATIC_KEYS are the registries a snapshot leaves out when the
-// request's static_version still matches (dashboard.go snapshotStaticVersion).
-const SNAPSHOT_STATIC_KEYS = ['slugs', 'templates', 'profiles', 'roles', 'saved_prompts', 'plugins_catalog'];
+// request's static_version still matches (dashboard_snapshot.go snapshotStaticVersion).
+const SNAPSHOT_STATIC_KEYS = ['slugs', 'templates', 'profiles', 'roles', 'saved_prompts', 'plugins_catalog', 'harnesses', 'sandbox_impl'];
 
 // restoreUnchangedStatics fills next's omitted registries from prev, the
 // snapshot whose static_version the request sent. It changes next in place.
 export function restoreUnchangedStatics(next, prev) {
   if (!next?.static_unchanged || !prev || prev.static_version !== next.static_version) return next;
-  for (const key of SNAPSHOT_STATIC_KEYS) next[key] = prev[key];
+  // Only what this reply left out: a peer on an older build omits fewer keys.
+  for (const key of SNAPSHOT_STATIC_KEYS) next[key] = next[key] ?? prev[key];
+  if (next.permissions) next.permissions.scope_dim_options ??= prev.permissions?.scope_dim_options;
   return next;
 }
 
@@ -203,4 +206,13 @@ export function onFleetOverviewChange(cb, tab = dashboardState.activeTab) {
     const shown = OVERVIEW_TABS.has(tab.value);
     if (shown !== prev) { prev = shown; queueMicrotask(cb); }
   });
+}
+
+// bindShortcutOverrides applies dashboard.keybindings from each snapshot to the
+// shortcut registry, so a rebinding saved in Config takes effect on the next
+// poll. A peer's per-node page skips it: the peer's snapshot never carries
+// this node's bindings, so that page keeps the defaults.
+export function bindShortcutOverrides(state = dashboardState, global = globalThis) {
+  if (global.__tclaudeRemoteNode?.id) return () => {};
+  return effect(() => { setShortcutOverrides(state.snapshot.value?.keybindings); });
 }

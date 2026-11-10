@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
 function deferred() {
   let resolve;
@@ -100,7 +101,7 @@ test('group settings emits complete wizard copy and browses for its default dire
     '✦ bind rune');
   assert.match(host.querySelector('#group-settings-modal').textContent, /Sanctum/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Opening lore/);
-  assert.match(host.querySelector('#group-settings-modal').textContent, /Familiar pattern/);
+  assert.match(host.querySelector('#group-settings-modal').textContent, /Loadout/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Scrying policy/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Memory ward/);
   assert.equal(host.querySelector('#group-settings-default-cwd-browse .theme-copy-wizard').textContent, 'Scry…');
@@ -115,6 +116,27 @@ test('group settings emits complete wizard copy and browses for its default dire
   assert.equal(saves[0].group, 'alpha');
   assert.equal(saves[0].values.name, 'beta');
   assert.equal(saves[0].values.reinjectAfterCompact, 'identity');
+  await mounted.cleanup();
+});
+
+test('group settings remote policy round-trips inherit, a set policy and a clear back to inherit', async (t) => {
+  const saves = [];
+  const snapshot = { value: { groups: [{ name: 'alpha', remote_control_policy: 'deny' }], profiles: [], sandbox_profiles: [] } };
+  const mounted = await mountDialogs(t, 'group-settings', { group: 'alpha' }, {
+    saveGroupSettings: async (value) => { saves.push(value); },
+  }, async () => true, snapshot);
+  const { host, harness } = mounted;
+  const policy = host.querySelector('#group-settings-remote-policy');
+  assert.ok(policy.hasAttribute('data-optional-select'));
+  assert.deepEqual([...policy.options].map((option) => option.value), ['inherit', 'optin', 'deny']);
+  assert.equal(policy.getAttribute('value') ?? policy.value, 'deny', 'the saved policy reopens');
+  for (const option of policy.options) option.selected = option.value === 'inherit';
+  Object.defineProperty(policy, 'value', { configurable: true, writable: true, value: 'inherit' });
+  await harness.act(() => harness.fireEvent(policy, 'change'));
+  host.querySelector('#group-settings-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saves[0].values.remoteControlPolicy, 'inherit', 'clearing sends the inherit value the API expects');
+  assert.equal(saves[0].initial.remoteControlPolicy, 'deny');
   await mounted.cleanup();
 });
 
@@ -156,7 +178,7 @@ test('clone dialog owns worktree state, dirty discard, and exact submit payload'
   assert.equal(host.querySelector('#clone-agent-error').childNodes.length, 0,
     'the shared :empty rule must collapse an error banner before an error exists');
   const worktree = host.querySelector('#clone-agent-worktree');
-  assert.ok([...worktree.options].some((option) => option.value === 'wt:/repo-wt'));
+  assert.ok((await comboKeys(harness, worktree)).includes('wt:/repo-wt'));
 
   const followUp = host.querySelector('#clone-agent-followup');
   followUp.value = 'continue\ncarefully';
@@ -168,9 +190,7 @@ test('clone dialog owns worktree state, dirty discard, and exact submit payload'
   await harness.act(() => Promise.resolve());
   assert.ok(host.querySelector('#clone-agent-modal'), 'discard rejection keeps a dirty dialog open');
 
-  [...worktree.options].forEach((option) => option.removeAttribute('selected'));
-  worktree.querySelector('option[value="wt:/repo-wt"]').setAttribute('selected', '');
-  await harness.act(() => worktree.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+  await comboPick(harness, worktree, 'wt:/repo-wt');
   host.querySelector('#clone-agent-submit').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls[0], ['clone', {
@@ -376,7 +396,7 @@ test("another node's sandbox picker reads that node's posture and catalog and as
   const state = createActionDialogState();
   const requests = [];
   const replies = {
-    '/api/peer/inst_forge7/agents/c1/sandbox-impl': { sandbox_implementation: 'harness-builtin', harness: 'codex' },
+    '/api/peer/inst_forge7/agents/c1/sandbox': { sandbox_implementation: 'harness-builtin', harness: 'codex' },
     '/api/peer/inst_forge7/spawn-launch-catalog': {
       harnesses: [{ name: 'codex', display_name: 'Codex', can_sandbox: true, sandbox_modes: ['workspace-write'] }],
       sandbox_impl: { options: [{ value: 'harness-builtin', label: 'harness' }] },
@@ -398,8 +418,61 @@ test("another node's sandbox picker reads that node's posture and catalog and as
   assert.equal(actions.sandboxImplOptions('codex', posture.catalog).length, 1);
   state.openSandboxImpl({ conv: 'c1', node: 'inst_forge7' });
   await actions.assignSandboxImpl({ conv: 'c1', node: 'inst_forge7', implementation: 'tclaude-layer' }, state.dialog.value);
-  assert.deepEqual(requests.at(-1), ['/api/peer/inst_forge7/agents/c1/sandbox-impl', 'POST']);
+  assert.deepEqual(requests.at(-1), ['/api/peer/inst_forge7/agents/c1/sandbox', 'POST']);
   assert.equal(state.dialog.value, null);
+});
+
+test("another node older than the /sandbox route is read and assigned through /sandbox-impl", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const state = createActionDialogState();
+  const requests = [];
+  const actions = createActionDialogActions({
+    state,
+    getSnapshot: () => ({ harnesses: [], sandbox_impl: {} }),
+    fetchImpl: async (url, options = {}) => {
+      requests.push([url, options.method || 'GET']);
+      if (url.endsWith('/sandbox')) {
+        return new Response(JSON.stringify({ error: 'not shared', code: 'forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ sandbox_implementation: 'tclaude-layer' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    notify: () => {},
+    refresh: async () => {},
+  });
+  const posture = await actions.loadSandboxImpl('c1', { node: 'inst_old7' });
+  assert.equal(posture.sandbox_implementation, 'tclaude-layer');
+  state.openSandboxImpl({ conv: 'c1', node: 'inst_old7' });
+  await actions.assignSandboxImpl({ conv: 'c1', node: 'inst_old7', implementation: 'tclaude-layer' }, state.dialog.value);
+  assert.deepEqual(requests.slice(-2), [
+    ['/api/peer/inst_old7/agents/c1/sandbox', 'POST'],
+    ['/api/peer/inst_old7/agents/c1/sandbox-impl', 'POST'],
+  ]);
+});
+
+test("an older node's real refusal on /sandbox-impl reaches the dialog", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const actions = createActionDialogActions({
+    state: createActionDialogState(),
+    getSnapshot: () => ({ harnesses: [], sandbox_impl: {} }),
+    fetchImpl: async (url) => (url.endsWith('/sandbox')
+      ? new Response(JSON.stringify({ error: 'not shared', code: 'forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
+      : new Response(JSON.stringify({ error: 'moving out deletes state', code: 'opencode_move_out_confirm' }), { status: 409, headers: { 'Content-Type': 'application/json' } })),
+    notify: () => {},
+    refresh: async () => {},
+  });
+  await assert.rejects(
+    actions.assignSandboxImpl({ conv: 'c1', node: 'inst_old7', implementation: 'harness-builtin' }),
+    (cause) => cause.code === 'opencode_move_out_confirm' && cause.status === 409,
+    'the move-out confirm must survive the fallback',
+  );
 });
 
 test("another node's clone sends only what that node's route takes", async (t) => {
@@ -456,9 +529,9 @@ test('action mutations preserve endpoint payloads, notifications, and refresh bo
 
   state.openClone({ conv: 'source', label: 'worker' });
   const cloneOwner = state.dialog.value;
-  await actions.cloneAgent({ conv: 'source', label: 'worker', followUp: 'one\ntwo', copyConversation: false, cwd: '/wt', full: true, group: 'ops' }, cloneOwner);
+  await actions.cloneAgent({ conv: 'source', label: 'worker', followUp: 'one\ntwo', copyConversation: false, cwd: '/wt', full: true, group: 'ops', keepEnvironment: true }, cloneOwner);
   assert.equal(requests[0][0], '/api/agents/source/clone');
-  assert.deepEqual(JSON.parse(requests[0][1].body), { follow_up: 'one two', no_copy_conv: true, copy_ownership: false, cwd: '/wt', group: 'ops' });
+  assert.deepEqual(JSON.parse(requests[0][1].body), { follow_up: 'one two', no_copy_conv: true, copy_ownership: false, cwd: '/wt', group: 'ops', keep_sandbox: false, keep_environment: true });
   assert.deepEqual(notices[0], ['cloned worker → 12345678 (warning: late status)', true]);
   assert.equal(state.dialog.value, null);
 
@@ -480,7 +553,7 @@ test('action mutations preserve endpoint payloads, notifications, and refresh bo
 test('preset clone dialog submits controlled names and surfaces create errors', async (t) => {
   const source = { name: 'writer', aliases: ['scribe'], model: 'opus' };
   const mounted = await mountDialogs(t, 'preset-clone', {
-    presetKind: 'profile', kindWizard: 'pattern', source, create: async () => {},
+    presetKind: 'profile', kindWizard: 'loadout', source, create: async () => {},
   });
   const { harness, host, calls } = mounted;
   await harness.act(() => Promise.resolve());
@@ -509,7 +582,7 @@ test('preset clone dialog submits controlled names and surfaces create errors', 
 test('preset clone submit is single-flight within one turn and releases after errors', async (t) => {
   const requests = [];
   const mounted = await mountDialogs(t, 'preset-clone', {
-    presetKind: 'profile', kindWizard: 'pattern',
+    presetKind: 'profile', kindWizard: 'loadout',
     source: { name: 'writer' }, create: async () => {},
   }, {
     clonePreset: () => {
@@ -570,7 +643,7 @@ test('every action-dialog family refuses same-turn cross-family collisions and p
     ['reincarnate', (state) => state.openReincarnate({ conv: 'reincarnate', label: 'reincarnate' })],
     ['nest', (state) => state.openNest({ group: 'nested' })],
     ['task-link', (state) => state.openTaskLink({ conv: 'task', agentLabel: 'task' })],
-    ['preset', (state) => state.openPresetClone({ kind: 'profile', kindWizard: 'pattern', source: { name: 'source' }, create })],
+    ['preset', (state) => state.openPresetClone({ kind: 'profile', kindWizard: 'loadout', source: { name: 'source' }, create })],
     ['export', (state) => state.openExport({ conv: 'export', label: 'export' })],
     ['terminal-directory', (state) => state.openTerminalDirectory({ label: 'terminal' })],
   ];
@@ -709,7 +782,7 @@ test('export dialog owns submit/error/retry UI and cancels its watcher on close'
   callbacks.onFailed({});
   await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#export-agent-status-note').textContent, /agent did not deliver/);
-  assert.match(host.querySelector('#export-agent-status-note').textContent, /familiar did not deliver/);
+  assert.match(host.querySelector('#export-agent-status-note').textContent, /hero did not deliver/);
   host.querySelector('#export-agent-retry').click();
   await harness.act(() => Promise.resolve());
   assert.ok(host.querySelector('#export-agent-form'));
@@ -892,8 +965,190 @@ test('sandbox-impl dialog assigns the picked implementation and the optional mod
   assign.click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls, [['assign', {
-    conv: 'agent-conv', label: 'worker', implementation: 'resource-only', sandbox: '',
+    conv: 'agent-conv', label: 'worker', implementation: 'resource-only', sandbox: '', restart: false,
   }]], 'an unpinned mode is sent EMPTY so the server decides what to carry forward');
+  assert.equal(assign.textContent.trim(), 'Assign', 'a stopped agent is only assigned');
+});
+
+test('sandbox-impl dialog restarts a running agent instead of refusing it', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker', harness: 'claude' },
+    sandboxImplActions(calls, { loadSandboxImpl: async () => sandboxImplPosture({ online: true }) }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  assert.ok(host.querySelector('#sandbox-impl-restart'), 'the dialog says the agent will be restarted');
+  const resourceOnly = [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === 'resource-only');
+  await harness.act(() => resourceOnly.dispatchEvent(
+    new harness.window.Event('change', { bubbles: true })));
+  const assign = host.querySelector('#sandbox-impl-assign');
+  assert.equal(assign.textContent.trim(), 'Assign & restart');
+  assign.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].restart, true);
+});
+
+test('sandbox-impl dialog asks before moving an OpenCode agent out of private state', async (t) => {
+  const calls = [];
+  const facts = 'This moves 2 conversations out of this OpenCode agent\u2019s private state.';
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      assignSandboxImpl: async (value) => {
+        calls.push(['assign', value]);
+        if (!value.confirmMoveOut) throw Object.assign(new Error(facts), { code: 'opencode_move_out_confirm' });
+      },
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const pick = (value) => harness.act(() => [...host.querySelectorAll('#sandbox-impl-options input[type=radio]')]
+    .find((option) => option.value === value)
+    .dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+
+  await pick('resource-only');
+  assert.equal(host.querySelector('#sandbox-impl-move-out'), null, 'nothing asks before the server does');
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+
+  assert.ok(host.querySelector('#sandbox-impl-modal'), 'the dialog stays open to ask');
+  assert.match(host.querySelector('#sandbox-impl-move-out').textContent, /2 conversations/);
+  assert.equal(host.querySelector('#sandbox-impl-error').textContent, '', 'asking is not an error');
+  assert.match(host.querySelector('#sandbox-impl-assign').textContent, /Move conversations/);
+
+  // Another choice is another decision: what was shown does not confirm it.
+  await pick('harness-builtin');
+  assert.equal(host.querySelector('#sandbox-impl-move-out'), null);
+  await pick('resource-only');
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1][1].confirmMoveOut, undefined);
+
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls[2][1].confirmMoveOut, true);
+});
+
+test('sandbox-impl dialog changes only the sandbox profile when only it moves', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => sandboxImplPosture({
+        sandbox_profile: 'loose',
+        sandbox_profile_options: ['loose', 'strict'],
+        sandbox_profile_tiers: [{ scope: 'group', name: 'crew-base' }, { scope: 'explicit', name: 'loose' }],
+      }),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const select = host.querySelector('#sandbox-impl-profile');
+  assert.match(select.querySelector('option[value="loose"]').textContent, /current/,
+    'the server-reported profile is marked current');
+  assert.match(select.querySelector('option[value=""]').textContent, /default \(global \+ group profiles\)/,
+    'no explicit profile is the default, not a "none" that would read as omitting every tier');
+  assert.match(select.options[0].textContent, /keep current \(loose\)/,
+    'the first option, and the initial choice, keeps the current profile');
+  assert.match(host.querySelector('#sandbox-impl-profile-hint').textContent, /group “crew-base”/,
+    'the tiers the agent does not own are shown for context');
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
+
+  [...select.options].forEach((option) => option.removeAttribute('selected'));
+  select.querySelector('option[value="strict"]').setAttribute('selected', '');
+  await harness.act(() => select.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+  const assign = host.querySelector('#sandbox-impl-assign');
+  assert.equal(assign.disabled, false);
+  assign.click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls, [['assign', {
+    conv: 'agent-conv', label: 'worker', implementation: '', sandbox: '', sandboxProfile: 'strict', restart: false,
+  }]], 'an untouched implementation is sent empty, so only the profile changes');
+});
+
+test('sandbox-impl dialog sends the default as no explicit profile, and keep as no change', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => sandboxImplPosture({ sandbox_profile: 'loose', sandbox_profile_options: ['loose'] }),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const select = host.querySelector('#sandbox-impl-profile');
+  const choose = (value) => harness.act(() => {
+    [...select.options].forEach((option) => option.removeAttribute('selected'));
+    [...select.options].find((option) => option.value === value).setAttribute('selected', '');
+    select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  });
+  await choose('');
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].sandboxProfile, '', 'default clears the explicit profile');
+
+  // Back to keep: nothing to change, so nothing can be assigned.
+  await choose(select.options[0].value);
+  assert.equal(host.querySelector('#sandbox-impl-assign').disabled, true);
+});
+
+test('sandbox-impl dialog lets an agent that omits profiles take one back', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => sandboxImplPosture({
+        sandbox_profiles_omitted: true,
+        sandbox_profile_options: ['strict'],
+      }),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const select = host.querySelector('#sandbox-impl-profile');
+  assert.equal(select.disabled, false, 'an omission is changeable');
+  assert.match(select.options[0].textContent, /keep current \(none\)/);
+  assert.match(host.querySelector('#sandbox-impl-profile-hint').textContent, /omit every tclaude sandbox profile/);
+  const none = [...select.options].find((option) => /none \(omit all/.test(option.textContent));
+  assert.match(none.textContent, /current/);
+
+  [...select.options].forEach((option) => option.removeAttribute('selected'));
+  select.querySelector('option[value="strict"]').setAttribute('selected', '');
+  await harness.act(() => select.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].sandboxProfile, 'strict');
+  assert.equal(calls[0][1].omitSandboxProfiles, undefined);
+});
+
+test('sandbox-impl dialog sends none as omitting every profile', async (t) => {
+  const calls = [];
+  const { harness, host, cleanup } = await mountDialogs(
+    t, 'sandbox-impl', { conv: 'agent-conv', label: 'worker' },
+    sandboxImplActions(calls, {
+      loadSandboxImpl: async () => sandboxImplPosture({ sandbox_profile: 'loose', sandbox_profile_options: ['loose'] }),
+    }),
+  );
+  t.after(cleanup);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const select = host.querySelector('#sandbox-impl-profile');
+  const none = [...select.options].find((option) => /none \(omit all/.test(option.textContent));
+  [...select.options].forEach((option) => option.removeAttribute('selected'));
+  none.setAttribute('selected', '');
+  await harness.act(() => select.dispatchEvent(new harness.window.Event('change', { bubbles: true })));
+  host.querySelector('#sandbox-impl-assign').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].omitSandboxProfiles, true);
+  assert.equal(calls[0][1].sandboxProfile, undefined, 'none is not sent as a profile name');
 });
 
 test('sandbox-impl dialog surfaces a refusal instead of closing', async (t) => {
@@ -975,7 +1230,7 @@ test('sandbox-impl dialog pins a harness mode, and re-pinning alone is a real ch
   host.querySelector('#sandbox-impl-assign').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls, [['assign', {
-    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'on',
+    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'on', restart: false,
   }]]);
 });
 
@@ -1002,7 +1257,7 @@ test('sandbox-impl dialog treats a mode-only pin as assignable', async (t) => {
   host.querySelector('#sandbox-impl-assign').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls, [['assign', {
-    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'off',
+    conv: 'agent-conv', label: 'worker', implementation: 'harness-builtin', sandbox: 'off', restart: false,
   }]]);
 });
 
@@ -1112,4 +1367,19 @@ test('sandbox-impl dialog discloses a host that cannot run the selected implemen
     'the option stays selectable — the launch refusal is the authority — but the ' +
     'operator must not have to learn this from a failed POST');
   assert.equal(host.querySelector('#sandbox-impl-assign').disabled, false);
+});
+
+test('reincarnate dialog offers Clear context with nothing to fill in', async (t) => {
+  const mounted = await mountDialogs(t, 'reincarnate-agent', { conv: 'abcdefgh-1234', label: 'worker' });
+  const { harness, host, calls } = mounted;
+  const clear = host.querySelector('input[value="clear"]');
+  clear.checked = true;
+  clear.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#reincarnate-clear-fields'));
+  assertAbsent(host.querySelector('#reincarnate-agent-followup'));
+  const submit = host.querySelector('#reincarnate-agent-submit');
+  assert.equal(submit.disabled, false);
+  await harness.act(async () => { submit.click(); await Promise.resolve(); });
+  assert.equal(calls.find(([name]) => name === 'reincarnate')[1].mode, 'clear');
 });

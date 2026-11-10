@@ -43,7 +43,8 @@ Setting your own link is opt-in. The fastest path is
 `tclaude setup --install-default-agent-permissions`, which grants
 `self.task` (alongside the other self-lifecycle default slugs —
 `self.rename`, `self.compact`, `self.clone`,
-`self.schedule`, `self.remote-control`) in one shot. Manual alternatives:
+`self.schedule`, `self.remote-control`, `self.interrupt`, `self.pr`, `self.tags`,
+`self.dir-repair`, `self.process`) in one shot. Manual alternatives:
 
 ```bash
 tclaude agent permissions grant default self.task      # every agent
@@ -76,7 +77,7 @@ tclaude agent task clear    # remove it
 The URL must be **http(s)** — a `javascript:`/`data:`/other-scheme URL
 is rejected (`invalid_task_url`, HTTP 400), because it renders as a link
 in the dashboard. The link is stored on YOU (the agent), so it survives
-a reincarnate/clone and shows in every group you're in — you never pass
+a reincarnate (a clone starts without one) and shows in every group you're in — you never pass
 a group name.
 
 Good moment to set it: right after you pick up a task that maps to a
@@ -119,7 +120,9 @@ Auth model: the caller passes if EITHER
 
 - they hold the `agent.task` slug (granted via
   `tclaude agent permissions grant <caller> agent.task`), OR
-- they own at least one group that contains the target.
+- they hold the `groups.members.task` slug on every active group containing the
+  target; owning a group gives you that slug for that group, so owning one of
+  two groups is not enough.
 
 The response includes `caller_conv` so the audit trail records who set
 it. `--ask-human` is honored on the self path only; the cross-agent path
@@ -131,6 +134,6 @@ is opt-in via explicit grants or group ownership.
   is over the 2048-char cap. Fix the URL; don't retry the same one.
 - **`invalid_task_label` (400).** An explicit `--label` over 200 chars.
   Task labels are short by design (a ticket id) — shorten it.
-- **`caller is not granted "self.task"` / a 403 on `--target`.** A
+- **`caller is not granted permission "self.task"` / a 403 on `--target`.** A
   permission gap — see the prerequisite section (self) or the manager
   auth model (cross-agent) above.

@@ -78,12 +78,12 @@ flow::run() {
 
 # The cooperation arm launches every pinned plain-CLI harness — see
 # proxy_harness_cooperation_smoke_linux_test.go, which requires the pinned
-# `claude`, `codex` and `gemini` binaries by name and version before it
+# `claude`, `codex`, `gemini` and `pi` binaries by name and version before it
 # measures anything.
 # The tool-egress arm in the same flow needs curl, git and go, which are
 # prerequisites rather than harnesses (lib/prereqs.sh).
 flow::harnesses() {
-  echo claude codex gemini
+  echo claude codex gemini pi
 }
 
 flow::describe() {

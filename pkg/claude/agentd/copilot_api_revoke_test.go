@@ -43,10 +43,15 @@ var copilotAPIPostureWriters = []struct {
 	{"relaunch_carryover.go", "RecordLaunchPosture", "SetSessionCopilotAPI"},
 	// Enrollment composes and writes the agent profile. This is the primary
 	// posture write for every spawned agent.
-	{"lifecycle.go", "enrollSpawnedConv", "SetAgentRelaunchProfile"},
-	// Legacy backfill for a conversation whose resume profile went missing.
-	{"lifecycle.go", "recoverMissingConversationResumeProfile", "SetAgentRelaunchProfile"},
-	{"lifecycle.go", "recoverMissingConversationResumeProfile", "SetConversationResumeProfile"},
+	{"lifecycle_spawn_enroll.go", "enrollSpawnedConv", "SetAgentRelaunchProfile"},
+	// The baseline for a conversation with no recorded posture: legacy backfill
+	// when its resume profile went missing, and a group import's OpenCode
+	// landing, neither of which has a Copilot posture to demote.
+	{"lifecycle_resume.go", "recordBaselineResumeProfile", "SetAgentRelaunchProfile"},
+	{"lifecycle_resume.go", "recordBaselineResumeProfile", "SetConversationResumeProfile"},
+	// The first record of an OpenCode conversation an import just minted: there
+	// is no earlier profile to replace, and this harness has no Copilot drive.
+	{"agent_bundle.go", "recordOfflineResumeProfile", "SetConversationResumeProfile"},
 }
 
 // TestNoAutomaticRevokeOfTheCopilotAPIPosture is the mechanical statement that

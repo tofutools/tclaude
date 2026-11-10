@@ -230,7 +230,7 @@ func TestCopilotAPICompactGoesOverHistoryCompactThenSendsTheFollowUp(t *testing.
 // The token here is deliberately one that could plausibly arrive at this sink
 // later (a model switch) rather than /exit: soft exit does not come through
 // dispatchSlashCommand at all, so using it would suggest this test pins the
-// soft-exit routing decision, which lives in lifecycle.go and is pinned by a
+// soft-exit routing decision, which lives in lifecycle_stop.go and is pinned by a
 // live test instead.
 func TestCopilotAPIUnmappedLifecycleCommandFailsClosed(t *testing.T) {
 	fixture := newCopilotAPIDriveFixture(t)
@@ -950,14 +950,13 @@ func declaresChannelParam(fn *ast.FuncDecl) bool {
 var copilotAPIKeystrokeSinkFiles = map[string]string{
 	"pane_input_guard.go": "legacy spawn welcomes retry only human-input holds; every attempt refuses a selected managed drive",
 	// Converted: the lifecycle-command dispatch takes the Copilot branch first.
-	"handlers.go": "dispatchSlashCommand routes an API-driven conv to RPC before reaching send-keys",
+	"pane_inject.go": "dispatchSlashCommand routes an API-driven conv to RPC before reaching send-keys",
 	// Converted: inbox nudges.
 	"flush.go": "sendNudgeBracket routes an API-driven conv to session.send",
 	// Converted: the unread reminder, same family as the nudge.
 	"unread_reminder.go": "the reminder sweep routes an API-driven conv to session.send",
-	// Converted: the spawn welcome, which additionally waits for the bootstrap.
-	"lifecycle.go": "runSpawnPostInit routes an API-driven conv to session.send, and soft " +
-		"exit stays on keystrokes deliberately — no RPC ends the copilot process",
+	// Deliberate: soft exit stays on keystrokes.
+	"lifecycle_stop.go": "soft exit stays on keystrokes deliberately — no RPC ends the copilot process",
 	// Unreachable: remote control is gated on CanRemoteControl(), and Copilot's
 	// Lifecycle returns "" for RemoteControlCommand, so no Copilot agent — API
 	// or not — ever reaches this sink.
@@ -976,7 +975,7 @@ var copilotAPIKeystrokeSinks = []string{
 	"injectTextAndSubmitWithOptions",
 	"injectMenuToggle",
 	// Found by cold review: it delegates to injectTextAndSubmitWithOptions and
-	// lives in handlers.go, so it was a real sink in an already-watched file that
+	// lives in pane_inject.go, so it was a real sink in an already-watched file that
 	// this list simply did not name. A guard whose header promises that a NEW
 	// sink trips it has to actually enumerate the existing ones.
 	"injectSoftExitTextSerializedBy",
@@ -1008,7 +1007,7 @@ func TestEveryKeystrokeSinkIsAccountedForAgainstTheCopilotAPIDrive(t *testing.T)
 				return true
 			}
 			// The declarations themselves and their internal delegation live in
-			// handlers.go, which is on the list anyway.
+			// pane_inject.go, which is on the list anyway.
 			found[name] = true
 			return true
 		})

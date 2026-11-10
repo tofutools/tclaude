@@ -218,7 +218,8 @@ func proxyVisibilityForRequest(r *http.Request) proxyVisibility {
 		return false
 	}
 	if !vis.git {
-		vis.git = scoped(PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge)
+		vis.git = scoped(PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+			PermGitLabRead, PermGitLabWrite, PermGitLabMerge)
 	}
 	if !vis.linear {
 		vis.linear = scoped(PermLinearRead, PermLinearWrite)
@@ -680,6 +681,16 @@ func gitProxyHooksDir() (string, error) {
 // Read this list as a catalogue of the ways repo-local config can make git run
 // a program or reach somewhere unintended.
 func gitProxyConfigPins(hooksDir, sshCommand string, credentialHelpers []string) []string {
+	return gitProxyConfigPinsScoped(hooksDir, sshCommand, nil, credentialHelpers)
+}
+
+// gitProxyConfigPinsScoped is gitProxyConfigPins with URL-scoped credential
+// pins ("credential.<origin>.helper=…", see gitLabCredentialHelpers) placed
+// AFTER the operator's own helpers. Git collects every matching helper entry
+// in config order, and an empty value clears the list collected so far. A
+// scoped reset followed by a scoped helper therefore leaves that one origin
+// with only its scoped helper, and every other origin with the operator's.
+func gitProxyConfigPinsScoped(hooksDir, sshCommand string, scopedHelpers, credentialHelpers []string) []string {
 	pins := []string{
 		// Command execution vectors.
 		"core.hooksPath=" + hooksDir, // pre-push, reference-transaction, ...
@@ -728,6 +739,7 @@ func gitProxyConfigPins(hooksDir, sshCommand string, credentialHelpers []string)
 	for _, helper := range credentialHelpers {
 		pins = append(pins, "credential.helper="+helper)
 	}
+	pins = append(pins, scopedHelpers...)
 	out := make([]string, 0, len(pins)*2+1)
 	for _, p := range pins {
 		out = append(out, "-c", p)
@@ -795,6 +807,56 @@ func gitProxyEnv() []string {
 		}
 	}
 	return env
+}
+
+// gitLabCredentialHelpers answers git's credential request for every GitLab
+// instance the policy recognises with the operator's gitlab_token_file, so an
+// https push or fetch to the instance authenticates with the same token the
+// GitLab proxy spends, not with whatever the operator's own helper holds.
+//
+// Each instance gets two pins scoped to its exact origin (scheme, host and
+// port), a scope git itself enforces: an empty one that clears the helpers
+// collected so far for that origin, then the token helper. So the token is
+// the ONLY credential for the instance. The operator's own helpers are never
+// asked for it, and are never told to erase what they store for it when the
+// token is rejected (git erases through every helper on a 401). Another host,
+// or another port on the same host, never sees the token and keeps the
+// operator's helpers. The token never enters argv or the child's environment:
+// the helper reads the FILE when git asks, and only the path is on the
+// command line. An unreadable or empty file answers nothing, so git reports a
+// missing credential rather than falling back.
+//
+// SSH remotes never consult a credential helper, so they are untouched.
+func gitLabCredentialHelpers(policy config.GitProxyConfig) []string {
+	tokenPath := expandTilde(strings.TrimSpace(policy.GitLabTokenFile))
+	if tokenPath == "" {
+		return nil
+	}
+	helper := gitLabTokenCredentialHelper(tokenPath)
+	var out []string
+	for _, base := range policy.GitLabBases() {
+		u, err := url.Parse(base)
+		if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" || u.User != nil {
+			continue
+		}
+		key := "credential.https://" + strings.ToLower(u.Host) + ".helper="
+		out = append(out, key, key+helper)
+	}
+	return out
+}
+
+// gitLabTokenCredentialHelper is a git credential helper that answers `get`
+// with the token in tokenPath as the password. GitLab takes a personal,
+// project or group access token as the password for Git over HTTPS whatever
+// the username is; "oauth2" is the conventional one. The `api` scope covers
+// both the API and Git over HTTPS.
+//
+// stderr is redirected BEFORE the input file is opened, so a missing file is
+// silent rather than echoing this helper's source into the agent's output.
+func gitLabTokenCredentialHelper(tokenPath string) string {
+	return `!f() { test "$1" = get || exit 0; ` +
+		`t=$(tr -d '[:space:]' 2>/dev/null <` + shellSingleQuote(tokenPath) + `) || exit 0; ` +
+		`test -n "$t" || exit 0; printf 'username=oauth2\npassword=%s\n' "$t"; }; f`
 }
 
 // globalCredentialHelpers reads the operator's own credential helpers from
@@ -897,8 +959,8 @@ func newGitProxySessionBase(ctx context.Context, remoteScoped bool) (*gitProxySe
 	if err != nil {
 		return nil, faultf(500, "io", "%v", err)
 	}
-	pins := gitProxyConfigPins(hooksDir, gitProxySSHCommand(policy),
-		globalCredentialHelpers(ctx, gitPath))
+	pins := gitProxyConfigPinsScoped(hooksDir, gitProxySSHCommand(policy),
+		gitLabCredentialHelpers(policy), globalCredentialHelpers(ctx, gitPath))
 	return &gitProxySession{policy: policy, gitPath: gitPath, pins: pins}, nil
 }
 
@@ -1505,7 +1567,59 @@ func (r remoteRef) OwnerRepo() string {
 //   - A leading "-" would make the URL parse as a flag at the argv level.
 //   - Embedded userinfo with a password is a credential in the repo config,
 //     which we neither want to use nor to leak into an error message.
+//   - An explicit port, which the allow-list has no way to express. The one
+//     exception is parseRemoteURLFor's, below.
 func parseRemoteURL(raw string) (remoteRef, error) {
+	return parseRemoteURLAdmitting(raw, nil)
+}
+
+// parseRemoteURLFor is parseRemoteURL under the operator's policy. It admits
+// one port the plain parser refuses: an https remote whose scheme, host and
+// port are EXACTLY a configured GitLab instance's base (gitlab_hosts), as in
+// https://gitlab.example.com:8929/group/project.git against
+// {"gitlab.example.com": "https://gitlab.example.com:8929"}. The operator wrote
+// that destination down, so admitting it widens nothing. Any other port is
+// still refused, including another port on the same host, and the ref it
+// returns is the same host/path key an SSH remote for the project yields, so
+// the allow-list, the GitLab project and the Branch links read it unchanged.
+//
+// Every caller that holds the policy uses this; parseRemoteURL is for the
+// places that have none.
+func parseRemoteURLFor(raw string, policy config.GitProxyConfig) (remoteRef, error) {
+	return parseRemoteURLAdmitting(raw, func(scheme, host, port string) bool {
+		return gitLabBaseIsOrigin(policy.GitLabBase(host), scheme, host, port)
+	})
+}
+
+// gitLabBaseIsOrigin reports whether a configured GitLab base is exactly the
+// origin scheme://host:port, with no path. A base mounted under a path (a
+// relative-URL instance) is not admitted: its remotes carry the mount in their
+// path, which the project resolution here does not strip.
+func gitLabBaseIsOrigin(base, scheme, host, port string) bool {
+	if base == "" || scheme != "https" {
+		return false
+	}
+	u, err := url.Parse(base)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.User != nil ||
+		u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), host) && httpsPortKey(u.Port()) == httpsPortKey(port)
+}
+
+// httpsPortKey folds https's default port to its implicit form, so a remote
+// spelled with :443 matches a base written without a port.
+func httpsPortKey(port string) string {
+	if port == "443" {
+		return ""
+	}
+	return port
+}
+
+// parseRemoteURLAdmitting is the parser itself. admitPort, when non-nil, may
+// accept an explicit port on an https:// or ssh:// URL; it is given the
+// lower-cased scheme and host.
+func parseRemoteURLAdmitting(raw string, admitPort func(scheme, host, port string) bool) (remoteRef, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return remoteRef{}, errors.New("the remote has no URL configured")
@@ -1545,14 +1659,16 @@ func parseRemoteURL(raw string) (remoteRef, error) {
 				return remoteRef{}, errors.New("refusing a remote URL with an embedded password")
 			}
 		}
-		if u.Port() != "" {
+		if port := u.Port(); port != "" &&
+			(admitPort == nil || !admitPort(strings.ToLower(u.Scheme), strings.ToLower(u.Hostname()), port)) {
 			// The allow-list has no way to express a port, so accepting one
 			// would mean silently authorizing a destination the operator
-			// never wrote down. Refusing is the honest answer; if a forge on
-			// a non-default port is genuinely needed, that is a change to the
-			// allow-list grammar, not something to wave through here.
+			// never wrote down. The exception is a port the operator DID write
+			// down, as part of a GitLab instance's base: see parseRemoteURLFor.
 			return remoteRef{}, fmt.Errorf(
-				"refusing a remote URL with an explicit port (%q): the allow-list matches host/owner/repo only", u.Port())
+				"refusing a remote URL with an explicit port (%q): the allow-list matches host/owner/repo only; "+
+					"an https remote may name a port only when its scheme, host and port are exactly a GitLab "+
+					"instance's base in agent.git_proxy.gitlab_hosts", port)
 		}
 		scheme := "https"
 		if strings.EqualFold(u.Scheme, "ssh") {
@@ -1733,7 +1849,7 @@ func resolveProxyRemote(ctx context.Context, s *gitProxySession, name string) (r
 		{"push", pushURLs},
 	} {
 		for _, raw := range check.urls {
-			ref, err := parseRemoteURL(raw)
+			ref, err := parseRemoteURLFor(raw, s.policy)
 			if err != nil {
 				return resolvedRemote{}, faultf(403, "remote_refused",
 					"remote %q %s URL: %v", name, check.label, err)

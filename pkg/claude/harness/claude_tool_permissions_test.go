@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // A leaf deny with nothing reopened beneath it is the case the gap actually
@@ -169,5 +171,45 @@ func TestClaudeSettingsSandboxOffEmitsNoToolDeny(t *testing.T) {
 	})
 	if strings.Contains(settings, "permissions") {
 		t.Fatalf("sandbox off must emit no tool-permission rules: %s", settings)
+	}
+}
+
+// A writable Home is admitted by profile validation because appliers re-hide
+// the protected roots beneath it. Under Claude Code's own sandbox the `on` block
+// is the only other source of those denies, so the settings payload must carry
+// them whenever a grant covers a protected root — including an inherit launch.
+func TestClaudeSettingsRedeniesProtectedRootsUnderAncestorGrant(t *testing.T) {
+	home := testutil.CanonicalTempDir(t)
+	t.Setenv("HOME", home)
+	var settings struct {
+		Sandbox struct {
+			Filesystem map[string][]string `json:"filesystem"`
+		} `json:"sandbox"`
+		Permissions struct {
+			Deny []string `json:"deny"`
+		} `json:"permissions"`
+	}
+	raw := claudeSettingsJSON(SpawnSpec{SandboxWriteDirs: []string{home}})
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		t.Fatalf("decode %q: %v", raw, err)
+	}
+	for _, root := range []string{home + "/.claude/sessions", home + "/.tclaude/data"} {
+		for _, key := range []string{"denyRead", "denyWrite"} {
+			if !slices.Contains(settings.Sandbox.Filesystem[key], root) {
+				t.Errorf("%s = %v, want it to contain %s", key, settings.Sandbox.Filesystem[key], root)
+			}
+		}
+		for _, tool := range []string{"Read", "Edit"} {
+			rule := tool + "(/" + root + "/**)"
+			if !slices.Contains(settings.Permissions.Deny, rule) {
+				t.Errorf("permissions.deny = %v, want %s", settings.Permissions.Deny, rule)
+			}
+		}
+	}
+
+	// A narrower grant that covers no protected root adds nothing.
+	raw = claudeSettingsJSON(SpawnSpec{SandboxWriteDirs: []string{home + "/git"}})
+	if strings.Contains(raw, "denyRead") || strings.Contains(raw, "sessions") {
+		t.Errorf("unrelated grant must not emit protected denies: %s", raw)
 	}
 }

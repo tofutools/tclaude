@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -27,7 +28,7 @@ import (
 type inboxWatchParams struct {
 	Limit  int    `long:"limit" short:"n" help:"Max number of messages to show" default:"50"`
 	Unread bool   `long:"unread" help:"Only show messages without read_at"`
-	Target string `long:"target" optional:"true" help:"Watch another agent's inbox (title / prefix / conv-id). Read-only: reply / delete are disabled in operator view. Requires the agent.inbox-watch slug or group ownership."`
+	Target string `long:"target" optional:"true" help:"Watch another agent's inbox (title / prefix / conv-id). Read-only: reply / delete are disabled in operator view."`
 }
 
 func inboxWatchCmd() *cobra.Command {
@@ -38,6 +39,9 @@ func inboxWatchCmd() *cobra.Command {
 			"read a message (marks it read), Esc/q to return to the list or quit.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *inboxWatchParams, _ *cobra.Command, _ []string) {
+			// The raw terminal: the TUI draws with escape sequences of its own
+			// and cleans the sender's text where it renders it (table cells,
+			// loadMessageCmd).
 			os.Exit(runInboxWatch(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
@@ -64,8 +68,10 @@ func runInboxWatch(p *inboxWatchParams, stdout, stderr io.Writer) int {
 }
 
 func writeInboxWatchInlineNudge(w io.Writer, finalModel tea.Model) {
+	// The nudge carries the sender's subject and body, and w is the raw
+	// terminal the TUI was given.
 	if fm, ok := finalModel.(*inboxWatchModel); ok && fm.inlineNudge != "" {
-		fmt.Fprintln(w, fm.inlineNudge)
+		fmt.Fprintln(w, termtext.Clean(fm.inlineNudge))
 	}
 }
 
@@ -290,11 +296,13 @@ func (m *inboxWatchModel) loadMessageCmd(id int64) tea.Cmd {
 		if err := DaemonRequest("GET", path, nil, &msg, DaemonOpts{TargetConv: target}); err != nil {
 			return inboxMessageLoadedMsg{id: id, err: err}
 		}
-		body := msg.Body
+		// The TUI writes straight to the terminal, past cliStdout, so the
+		// sender's text is cleaned here.
+		body := termtext.Clean(msg.Body)
 		// Header line so the read pane carries enough context to
 		// understand the body without flipping back.
 		meta := fmt.Sprintf("From: %s · Subject: %s",
-			short(msg.From), strings.TrimSpace(msg.Subject))
+			termtext.Line(short(msg.From)), termtext.Line(strings.TrimSpace(msg.Subject)))
 		return inboxMessageLoadedMsg{id: id, body: meta + "\n\n" + body}
 	}
 }
@@ -319,7 +327,7 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case inboxLoadedMsg:
 		if msg.err != nil {
-			m.loadErr = msg.err.Error()
+			m.loadErr = termtext.Line(msg.err.Error())
 			return m, nil
 		}
 		m.loadErr = ""
@@ -329,7 +337,7 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case inboxMessageLoadedMsg:
 		if msg.err != nil {
-			m.statusMsg = "read failed: " + msg.err.Error()
+			m.statusMsg = "read failed: " + termtext.Line(msg.err.Error())
 			m.readingID = 0
 			return m, nil
 		}
@@ -340,7 +348,7 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case inboxReplySentMsg:
 		if msg.err != nil {
-			m.statusMsg = "reply failed: " + msg.err.Error()
+			m.statusMsg = "reply failed: " + termtext.Line(msg.err.Error())
 			// Keep the reply textarea open on failure so the user can
 			// retry / edit without re-typing.
 			return m, nil
@@ -355,7 +363,7 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// Restore the optimistically-removed entry by reloading;
 			// the next loadCmd brings it back if the daemon kept it.
-			m.statusMsg = fmt.Sprintf("delete #%d failed: %v", msg.id, msg.err)
+			m.statusMsg = fmt.Sprintf("delete #%d failed: %s", msg.id, termtext.Line(msg.err.Error()))
 			return m, m.loadCmd()
 		}
 		m.statusMsg = fmt.Sprintf("deleted #%d", msg.id)

@@ -22,10 +22,11 @@ import (
 	_ "github.com/tofutools/tclaude/pkg/claude/agentd/dashboard"
 )
 
-// nodeTestInputs makes every suite, harness module, and nested vendor runtime
-// part of the test binary's content-addressed build ID.
+// nodeTestInputs makes every suite, harness module, JSON fixture or baseline,
+// and nested vendor runtime part of the test binary's content-addressed build
+// ID, so a change to any of them alone still reruns the suites.
 //
-//go:embed *.mjs third_party
+//go:embed *.mjs *.json third_party
 var nodeTestInputs embed.FS
 
 // Dashboard pure-module and Preact component suites run with Node's
@@ -89,12 +90,45 @@ func TestDashboardJS(t *testing.T) {
 		concurrency = parsed
 	}
 	args := []string{"--test"}
-	if help, helpErr := exec.Command(node, "--help").Output(); helpErr == nil &&
-		bytes.Contains(help, []byte("--test-concurrency")) {
+	help, helpErr := exec.Command(node, "--help").Output()
+	if helpErr == nil && bytes.Contains(help, []byte("--test-concurrency")) {
 		args = append(args, fmt.Sprintf("--test-concurrency=%d", concurrency))
 	}
+	// A test that fails midway can skip its own cleanup and leave a handle (a
+	// timer, an open terminal) keeping its file's process alive. Without
+	// force-exit that file never ends, the run sits idle under the memory
+	// guard until go test's package timeout, and the buffered output that
+	// names the failure is lost. With it, the file exits once its tests are
+	// done and the failure is reported.
+	if helpErr == nil && bytes.Contains(help, []byte("--test-force-exit")) {
+		args = append(args, "--test-force-exit")
+	}
+	// CI's jstest shard asks for each suite file's wall time
+	// (file-timings-reporter.mjs) and prints the slowest. A passing go test
+	// keeps Node's output to itself, so the times go to a file the step
+	// reads, next to the usual spec output on stdout.
+	if timings := os.Getenv("TCLAUDE_JS_TEST_TIMINGS"); timings != "" {
+		args = append(args,
+			"--test-reporter=spec", "--test-reporter-destination=stdout",
+			"--test-reporter=./file-timings-reporter.mjs", "--test-reporter-destination="+timings)
+	}
 	args = append(args, files...)
-	out, err := exec.Command(node, args...).CombinedOutput()
+	// Read before the run starts: an invalid limit fails the test here, rather
+	// than leaving node --test running behind a t.Fatalf.
+	limitKB := suiteMemoryLimitKB(t)
+	var output bytes.Buffer
+	cmd := exec.Command(node, args...)
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err = cmd.Start()
+	if err == nil {
+		stopGuard := guardSuiteMemory(cmd.Process.Pid, limitKB)
+		err = cmd.Wait()
+		for _, suite := range stopGuard() {
+			t.Errorf("killed %s: it passed the per-suite memory limit (TCLAUDE_JS_TEST_SUITE_MAX_MB)", suite)
+		}
+	}
+	out := output.Bytes()
 	if err != nil {
 		// A non-zero Node exit means the suite ran and failed. Preserve its output
 		// so CI failures identify the actual assertion instead of looking like an
@@ -109,6 +143,22 @@ func TestDashboardJS(t *testing.T) {
 		t.Skip("unable to run node — skipping JS unit tests (install node to run them)", err)
 	}
 	t.Logf("node %v:\n%s", args, out)
+}
+
+// suiteMemoryLimitKB is the resident size past which a suite is killed. The
+// largest suites stay under 1 GB; one that allocates without bound would
+// otherwise take the whole machine.
+func suiteMemoryLimitKB(t *testing.T) int64 {
+	t.Helper()
+	mb := int64(3072)
+	if env := os.Getenv("TCLAUDE_JS_TEST_SUITE_MAX_MB"); env != "" {
+		parsed, err := strconv.ParseInt(env, 10, 64)
+		if err != nil || parsed < 1 {
+			t.Fatalf("invalid TCLAUDE_JS_TEST_SUITE_MAX_MB %q (want a positive integer)", env)
+		}
+		mb = parsed
+	}
+	return mb * 1024
 }
 
 // recordNodeInputs hashes the runtime input set for diagnostics. nodeTestInputs

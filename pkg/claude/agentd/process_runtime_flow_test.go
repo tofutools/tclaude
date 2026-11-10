@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/claude/process/executor"
@@ -770,18 +769,14 @@ func TestProcessRuntimeMalformedAndSemanticallyInvalidCheckpointRefusal(t *testi
 	assert.Zero(t, agentd.ProcessRunClaimCountForTest(), "failed cold reconstruction releases its claim")
 }
 
-func TestProcessRuntimeFeatureFlagAndPermissionBoundaries(t *testing.T) {
+// Processes are always on: a fresh config (no features block) serves the
+// runtime routes, and the permission slugs bound them.
+func TestProcessRuntimePermissionBoundaries(t *testing.T) {
 	f := newFlow(t)
 	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
-	off := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
-	assert.Equal(t, http.StatusNotFound, off.Code, off.Body.String())
-	// The disabled response is stable and machine-recognizable — the CLI keys
-	// on the code (not the 404 status) to render config.ProcessesDisabledMessage
-	// rather than a bare not-found. The daemon, not the client, is authoritative.
-	assert.Contains(t, off.Body.String(), `"code":"processes_disabled"`)
-	assert.Contains(t, off.Body.String(), config.ProcessesDisabledMessage)
+	on := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
+	assert.Equal(t, http.StatusOK, on.Code, on.Body.String())
 
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}))
 	const worker = "process-runtime-worker"
 	f.HaveEnrolledAgent(worker)
 	denied := agentReq(t, f, worker, http.MethodPost, "/v1/process/runs", map[string]any{})
@@ -801,80 +796,19 @@ func TestProcessRuntimeFeatureFlagAndPermissionBoundaries(t *testing.T) {
 	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessRunsManage))
 }
 
-// TestProcessRuntimeDisabledPrecedesPermissionAndApproval proves the ordering
-// invariant: while features.processes is off, EVERY daemon-owned runtime route
-// rejects with the stable processes_disabled response BEFORE permission
-// resolution and before any --ask-human access request can be created. A
-// disabled feature must never be approval-overridable. The agent caller holds
-// no process permission and supplies an --ask-human header; when the feature is
-// on the same POST would 403 on PermProcessRunsManage (see
-// TestProcessRuntimeFeatureFlagAndPermissionBoundaries), so a 404
-// processes_disabled here proves the gate runs first.
-func TestProcessRuntimeDisabledPrecedesPermissionAndApproval(t *testing.T) {
+// TestInfoReportsProcessesAndTriggers: /v1/info keeps reporting both
+// capabilities, always true, for older CLIs that still probe them.
+func TestInfoReportsProcessesAndTriggers(t *testing.T) {
 	f := newFlow(t)
-	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
-	const worker = "process-disabled-worker"
-	f.HaveEnrolledAgent(worker)
-
-	for _, route := range []struct {
-		method string
-		path   string
-		body   any
-	}{
-		{http.MethodGet, "/v1/process/runs", nil},
-		{http.MethodPost, "/v1/process/runs", map[string]any{"templateId": "demo"}},
-		{http.MethodGet, "/v1/process/runs/run_x", nil},
-		{http.MethodGet, "/v1/process/runs/run_x/events", nil},
-		{http.MethodPost, "/v1/process/runs/run_x/resume", map[string]any{}},
-		{http.MethodPost, "/v1/process/runs/run_x/reissue", map[string]any{}},
-		{http.MethodPost, "/v1/process/runs/run_x/record-outcome", map[string]any{"outcome": "succeeded"}},
-		{http.MethodPost, "/v1/process/runs/run_x/decide", map[string]any{"nodeId": "choose", "verdict": "approve"}},
-	} {
-		r := agentd.AsAgentPeer(testharness.JSONRequest(t, route.method, route.path, route.body), worker)
-		r.Header.Set("X-Tclaude-Ask-Human", "30s")
-		rec := testharness.Serve(f.Mux, r)
-		// A disabled route returns the stable processes_disabled 404 synchronously.
-		// Two things follow deterministically from the response alone:
-		//  - it is not a 403 carrying a process permission slug, so the gate ran
-		//    BEFORE permission resolution;
-		//  - it is not an approval outcome — had the --ask-human path been entered,
-		//    the handler would have created an access request and BLOCKED on the
-		//    human decision, never returning processes_disabled. So no approval
-		//    request can be created while the feature is off: it is not
-		//    approval-overridable.
-		assert.Equalf(t, http.StatusNotFound, rec.Code, "%s %s: %s", route.method, route.path, rec.Body.String())
-		assert.Containsf(t, rec.Body.String(), `"code":"processes_disabled"`, "%s %s", route.method, route.path)
-		assert.NotContainsf(t, rec.Body.String(), agentd.PermProcessRunsManage,
-			"%s %s must reject before permission resolution", route.method, route.path)
-		assert.NotContainsf(t, rec.Body.String(), agentd.PermProcessRunsRead,
-			"%s %s must reject before permission resolution", route.method, route.path)
-	}
-}
-
-// TestInfoProjectsProcessesFlag proves the daemon capability projection: the
-// open /v1/info endpoint reflects the current Processes flag as a single
-// boolean (never the private config contents), so a sandboxed CLI that cannot
-// read ~/.tclaude/data/config.json can still resolve enabled/disabled through
-// the daemon.
-func TestInfoProjectsProcessesFlag(t *testing.T) {
-	f := newFlow(t)
-
-	off := processRuntimeRequest(t, f, http.MethodGet, "/v1/info", nil)
-	require.Equal(t, http.StatusOK, off.Code, off.Body.String())
-	var offInfo struct {
+	rec := processRuntimeRequest(t, f, http.MethodGet, "/v1/info", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var info struct {
 		Processes bool `json:"processes"`
+		Triggers  bool `json:"triggers"`
 	}
-	testharness.DecodeJSON(t, off, &offInfo)
-	assert.False(t, offInfo.Processes, "flag defaults off")
-
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}))
-	on := processRuntimeRequest(t, f, http.MethodGet, "/v1/info", nil)
-	require.Equal(t, http.StatusOK, on.Code, on.Body.String())
-	var onInfo struct {
-		Processes bool `json:"processes"`
-	}
-	testharness.DecodeJSON(t, on, &onInfo)
-	assert.True(t, onInfo.Processes, "projection reflects the enabled flag")
+	testharness.DecodeJSON(t, rec, &info)
+	assert.True(t, info.Processes)
+	assert.True(t, info.Triggers)
 }
 
 func TestProcessRuntimeStartupAndFallbackScansOneBoundedPage(t *testing.T) {
@@ -990,10 +924,66 @@ type processRuntimeEventPage struct {
 	Next int64 `json:"next"`
 }
 
+func TestProcessRuntimeStartPinsTheReviewedVersion(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	older := putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reviewed", 1))
+	newer := putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reviewed", 2))
+	other := putProcessRuntimeTemplate(t, root, processRuntimeTemplate("other", 1))
+	start := func(body map[string]any) *httptest.ResponseRecorder {
+		body["templateId"] = "reviewed"
+		body["authorizeProgramProfiles"] = []string{"safe"}
+		body["params"] = map[string]string{"branch": "main"}
+		return processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", body)
+	}
+	runRef := func(created *httptest.ResponseRecorder) string {
+		require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+		var run struct {
+			TemplateRef string `json:"templateRef"`
+		}
+		testharness.DecodeJSON(t, created, &run)
+		return run.TemplateRef
+	}
+
+	moved := start(map[string]any{"expectedRef": older.Ref})
+	require.Equal(t, http.StatusConflict, moved.Code, moved.Body.String())
+	assert.Contains(t, moved.Body.String(), "process_run_template_moved")
+
+	assert.Equal(t, newer.Ref, runRef(start(map[string]any{"expectedRef": newer.Ref})), "the expected head starts")
+	assert.Equal(t, older.Ref, runRef(start(map[string]any{"templateRef": older.Ref})), "an operator's choice runs that version")
+	assert.Equal(t, newer.Ref, runRef(start(map[string]any{})), "an unpinned start still takes the head")
+
+	foreign := start(map[string]any{"templateRef": other.Ref})
+	require.Equal(t, http.StatusUnprocessableEntity, foreign.Code, foreign.Body.String())
+	both := start(map[string]any{"templateRef": older.Ref, "expectedRef": older.Ref})
+	require.Equal(t, http.StatusUnprocessableEntity, both.Code, both.Body.String())
+	missing := start(map[string]any{"templateRef": "reviewed@sha256:" + strings.Repeat("0", 64)})
+	require.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
+}
+
+func TestProcessRuntimeOnlyTheOperatorStartsAnOlderVersion(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	older := putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reviewed", 1))
+	newer := putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reviewed", 2))
+	const worker = "pinned-version-worker-0007"
+	f.HaveConvWithTitle(worker, "process worker")
+	f.HaveEnrolledAgent(worker)
+	grantScoped(t, f, worker, agentd.PermProcessRunsManage, map[string]any{"process_template": []string{"reviewed"}})
+	start := func(field, ref string) *httptest.ResponseRecorder {
+		return agentReq(t, f, worker, http.MethodPost, "/v1/process/runs", map[string]any{
+			"templateId": "reviewed", "authorizeProgramProfiles": []string{"safe"},
+			"params": map[string]string{"branch": "main"}, field: ref,
+		})
+	}
+	refused := start("templateRef", older.Ref)
+	require.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
+	assert.Contains(t, refused.Body.String(), "process_run_version")
+	created := start("expectedRef", newer.Ref)
+	require.Equal(t, http.StatusCreated, created.Code, "an agent can still pin the head: %s", created.Body.String())
+}
+
 func processRuntimeFlow(t *testing.T) (*testharness.Flow, string) {
 	t.Helper()
 	f := newFlow(t)
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}))
 	root := filepath.Join(f.World.HomeDir, ".tclaude", "process-runtime-authoring")
 	t.Cleanup(agentd.SetProcessStoreRootForTest(root))
 	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())

@@ -20,16 +20,24 @@ type Recipe struct {
 	Channel        string `json:"channel"`
 	InstallCommand string `json:"install_command"`
 	UpdateCommand  string `json:"update_command"`
-	Documentation  string `json:"documentation"`
+	// UpdateSource says what runs the update: "builtin" (the harness's own
+	// updater), "npm", or "custom" (the operator's updates.harnesses override).
+	UpdateSource  string `json:"update_source"`
+	Documentation string `json:"documentation"`
+	// builtin is the harness's own update subcommand. A harness updates
+	// itself through it when it has one: it knows how it was installed
+	// (native installer, npm, Homebrew, …) where tclaude can only guess.
+	builtin []string
 }
 
 var recipes = []Recipe{
-	{"claude", "@anthropic-ai/claude-code", "latest", "npm install -g @anthropic-ai/claude-code@latest", "claude update", "https://code.claude.com/docs/en/setup"},
-	{"codex", "@openai/codex", "latest", "npm install -g @openai/codex@latest", "npm install -g @openai/codex@latest", "https://developers.openai.com/codex/cli/"},
-	{"opencode", "opencode-ai", "latest", "npm install -g opencode-ai@latest", "opencode upgrade", "https://opencode.ai/docs/"},
-	{"copilot", "@github/copilot", "latest", "npm install -g @github/copilot@latest", "npm install -g @github/copilot@latest", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli"},
-	{"gemini", "@google/gemini-cli", "latest", "npm install -g @google/gemini-cli@latest", "npm install -g @google/gemini-cli@latest", "https://geminicli.com/docs/get-started/installation/"},
-	{"pi", "@earendil-works/pi-coding-agent", "latest", "npm install -g @earendil-works/pi-coding-agent@latest", "npm install -g @earendil-works/pi-coding-agent@latest", "https://github.com/earendil-works/pi"},
+	{"claude", "@anthropic-ai/claude-code", "latest", "npm install -g @anthropic-ai/claude-code@latest", "claude update", "builtin", "https://code.claude.com/docs/en/setup", []string{"update"}},
+	{"codex", "@openai/codex", "latest", "npm install -g @openai/codex@latest", "codex update", "builtin", "https://developers.openai.com/codex/cli/", []string{"update"}},
+	{"opencode", "opencode-ai", "latest", "npm install -g opencode-ai@latest", "opencode upgrade", "builtin", "https://opencode.ai/docs/", []string{"upgrade"}},
+	{"copilot", "@github/copilot", "latest", "npm install -g @github/copilot@latest", "copilot update", "builtin", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli", []string{"update"}},
+	// Gemini CLI has no update subcommand; it is updated through npm.
+	{"gemini", "@google/gemini-cli", "latest", "npm install -g @google/gemini-cli@latest", "npm install -g @google/gemini-cli@latest", "npm", "https://geminicli.com/docs/get-started/installation/", nil},
+	{"pi", "@earendil-works/pi-coding-agent", "latest", "npm install -g @earendil-works/pi-coding-agent@latest", "pi update --self", "builtin", "https://github.com/earendil-works/pi", []string{"update", "--self"}},
 }
 
 func Recipes() []Recipe { return append([]Recipe{}, recipes...) }
@@ -49,6 +57,8 @@ type Command struct {
 	Path string
 	Args []string
 	Env  []string
+	// Recipe names what runs, for the job result and audit.
+	Recipe string
 }
 type ManualRequired struct{ Command string }
 
@@ -60,6 +70,13 @@ func Plan(ctx context.Context, home, action, name string) (Command, error) {
 	}
 	if os.Geteuid() == 0 {
 		return Command{}, &ManualRequired{r.InstallCommand}
+	}
+	if action == "update" && len(r.builtin) > 0 {
+		installed, err := exec.LookPath(name)
+		if err != nil {
+			return Command{}, fmt.Errorf("harness is not installed")
+		}
+		return Command{Path: installed, Args: r.builtin, Env: os.Environ(), Recipe: r.UpdateCommand}, nil
 	}
 	npm, err := exec.LookPath("npm")
 	if err != nil {
@@ -87,17 +104,7 @@ func Plan(ctx context.Context, home, action, name string) (Command, error) {
 			if i >= 0 {
 				prefix = resolved[:i]
 			} else {
-				if !strings.HasPrefix(resolved, home+string(os.PathSeparator)) {
-					return Command{}, &ManualRequired{r.UpdateCommand}
-				}
-				switch name {
-				case "claude":
-					return Command{Path: installed, Args: []string{"update"}, Env: os.Environ()}, nil
-				case "opencode":
-					return Command{Path: installed, Args: []string{"upgrade"}, Env: os.Environ()}, nil
-				default:
-					return Command{}, &ManualRequired{r.UpdateCommand}
-				}
+				return Command{}, &ManualRequired{r.UpdateCommand}
 			}
 		}
 	}
@@ -117,8 +124,15 @@ func Plan(ctx context.Context, home, action, name string) (Command, error) {
 	if unix.Access(check, unix.W_OK) != nil {
 		return Command{}, &ManualRequired{r.InstallCommand}
 	}
-	return Command{Path: npm, Args: []string{"install", "--global", "--prefix", prefix, "--no-audit", "--no-fund", r.Package + "@latest"}, Env: os.Environ()}, nil
+	return Command{Path: npm, Args: []string{"install", "--global", "--prefix", prefix, "--no-audit", "--no-fund", r.Package + "@latest"}, Env: os.Environ(), Recipe: "npm:" + r.Package + "@latest"}, nil
 }
+
+// CustomUpdate is the operator's own update command for a harness, from this
+// node's updates.harnesses config; it runs with /bin/sh -c.
+func CustomUpdate(command string) Command {
+	return Command{Path: "/bin/sh", Args: []string{"-c", command}, Env: os.Environ(), Recipe: "custom"}
+}
+
 func Execute(ctx context.Context, c Command) error {
 	cmd := executil.CommandContextWithGrace(ctx, time.Second, c.Path, c.Args...)
 	cmd.Env = c.Env
@@ -126,6 +140,9 @@ func Execute(ctx context.Context, c Command) error {
 	// Vendor output may contain credential-bearing proxy URLs. Store only fixed
 	// phase messages and the exit status, never stdout/stderr or the environment.
 	if err := cmd.Run(); err != nil {
+		if c.Recipe == "custom" {
+			return fmt.Errorf("custom update command failed: %w", err)
+		}
 		return fmt.Errorf("official recipe failed: %w", err)
 	}
 	return nil

@@ -56,6 +56,11 @@ import (
 // downstream re-reads the directory to find out which repository it is — that
 // is the point.
 type branchLinkRepo struct {
+	// Forge is "github" or "gitlab"; it selects how the branch's pull or merge
+	// request is looked up and how its web links are spelled.
+	Forge string
+	// Base is the GitLab instance's web/API root, for a gitlab repository.
+	Base          string
 	Root          string // physical git work-tree root
 	RepoURL       string // https://github.com/owner/repo — the dashboard's web link base
 	OwnerRepo     string // owner/repo, passed to `gh --repo`
@@ -137,7 +142,7 @@ func resolveBranchLinkRepo(ctx context.Context, policy config.GitProxyConfig, di
 	// caller named — a subdirectory carries no config of its own, but a
 	// redirected one would have.
 	remote := probe(root, "remote", "get-url", "origin")
-	ref, err := parseRemoteURL(remote)
+	ref, err := parseRemoteURLFor(remote, policy)
 	if err != nil {
 		return branchLinkRepo{}, false
 	}
@@ -145,6 +150,30 @@ func resolveBranchLinkRepo(ctx context.Context, policy config.GitProxyConfig, di
 		slog.Debug("branchlinks: repository is not on agent.git_proxy.allowed_remotes",
 			"repo", ref.Key(), "module", "agentd")
 		return branchLinkRepo{}, false
+	}
+	// A configured GitLab instance first: its project is the FULL path the
+	// allow-list just admitted, so no slug is re-derived and the two-segment
+	// rule below does not apply. The web root comes from the configuration,
+	// never from the remote, which is what lets a self-hosted port be right.
+	if base := policy.GitLabBase(ref.Host); base != "" {
+		for _, seg := range ref.Path {
+			if !isGitLabPathSegment(seg) {
+				slog.Debug("branchlinks: refusing a remote that is not a valid gitlab project path",
+					"repo", ref.Key(), "module", "agentd")
+				return branchLinkRepo{}, false
+			}
+		}
+		project := strings.Join(ref.Path, "/")
+		return branchLinkRepo{
+			Root:      root,
+			Forge:     "gitlab",
+			Base:      base,
+			RepoURL:   base + "/" + project,
+			OwnerRepo: project,
+			DefaultBranch: gitDefaultBranchWith(func(args ...string) string {
+				return probe(root, args...)
+			}),
+		}, true
 	}
 	// EXACTLY two path segments, then a slug check on each — the same refusal
 	// githubproxy.go makes, for the same reason. matchRemotePattern admits a
@@ -183,6 +212,7 @@ func resolveBranchLinkRepo(ctx context.Context, policy config.GitProxyConfig, di
 	}
 	return branchLinkRepo{
 		Root:      root,
+		Forge:     "github",
 		RepoURL:   repoURL,
 		OwnerRepo: ownerRepo,
 		DefaultBranch: gitDefaultBranchWith(func(args ...string) string {

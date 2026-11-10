@@ -214,3 +214,40 @@ func TestReplacePathsBoundaries(t *testing.T) {
 	assert.Equal(t, "${PROJECT}/x ${HOME}/apples /home/alicex ${USER} malice", out)
 	assert.Equal(t, 3, n)
 }
+
+// A converted conversation's report outlives redaction even with no context
+// beside it, which is how a group PAF carries one: decoded into a new context
+// it moves into prior, and with nothing to decode it stays as it is.
+func TestRedactKeepsTheLossChainOfANativeOnlyAgent(t *testing.T) {
+	var buf bytes.Buffer
+	w := paf.NewWriter(&buf, paf.KindAgent, paf.Limits{})
+	native := paf.AgentPath("a", "native/claude-jsonl/history.jsonl")
+	require.NoError(t, w.WriteFile(native, "application/jsonl", []byte("{}\n")))
+	require.NoError(t, w.AddAgent("a", paf.Agent{Name: "a", Native: &paf.Native{Format: "claude-jsonl", Path: native, Harness: "claude", SourceConvID: "c1"}}, paf.Environment{Harness: paf.Harness{Name: "claude"}}))
+	require.NoError(t, w.WriteJSON(paf.AgentPath("a", "context/losses.json"), paf.Losses{
+		Source: "codex", Target: "claude", Items: []paf.LossItem{},
+		Prior: []paf.Losses{{Source: "gemini", Target: "codex", Items: []paf.LossItem{}}},
+	}))
+	_, err := w.Close(paf.Producer{Name: "test"})
+	require.NoError(t, err)
+	a, err := paf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Options{})
+	require.NoError(t, err)
+	decode := func(n paf.Native, _ io.Reader) (*transcript.Transcript, error) {
+		tr := transcript.New(transcript.Source{Harness: n.Harness, Format: n.Format, ConvID: n.SourceConvID})
+		tr.Entries = []transcript.Entry{{Role: transcript.RoleUser, Origin: transcript.OriginHuman, Blocks: []transcript.Block{transcript.Text("hello")}}}
+		return tr, nil
+	}
+
+	b, _, _ := redactAndOpen(t, a, RedactOptions{MaskFlagged: true, Native: decode})
+	l, ok := b.Losses("a")
+	require.True(t, ok)
+	require.Len(t, l.Prior, 2)
+	assert.Equal(t, "gemini", l.Prior[0].Source)
+	assert.Equal(t, "codex", l.Prior[1].Source)
+
+	b, _, _ = redactAndOpen(t, a, RedactOptions{MaskFlagged: true})
+	l, ok = b.Losses("a")
+	require.True(t, ok, "the report stays with no decoder too")
+	assert.Equal(t, "codex", l.Source)
+	assert.Len(t, l.Prior, 1)
+}

@@ -127,7 +127,7 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 		defer cleanupScript()
 		paneCommand = " " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)
 	}
-	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s%s",
+	cmd := fmt.Sprintf("tmux -u -L %s %s new-session -A -s %s -c %s%s%s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir), paneCommand, webShellMouseScrollback(name))
 	runPTYOverWS(w, r, cmd, name, "", nil, config.TerminalTabAgentTerminal)
 }
@@ -298,7 +298,7 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		paneCommand = " " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)
 	}
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
-	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s%s",
+	cmd := fmt.Sprintf("tmux -u -L %s %s new-session -A -s %s -c %s%s%s",
 		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir), paneCommand, webShellMouseScrollback(sessName))
 	runPTYOverWS(w, r, cmd, sessName, "", nil, config.TerminalTabGroupTerminal)
 }
@@ -372,15 +372,9 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	// gesture), and doing it atomically as part of the attach needs no separate
 	// detach/confirm round-trip. See openAttachCmdForce.
 	//
-	// Caveat — this is fully clean only when the displaced client is a NATIVE
-	// terminal (no runPTYOverWS behind it). If the displaced client is ANOTHER
-	// web window on this same session, `-d` detaches it and its runPTYOverWS
-	// exits, whose teardown then runs a whole-session detachTmuxSession (see its
-	// comment) that also drops the client we just attached — the new web window
-	// blanks moments after opening. Closing that residual needs the per-client
-	// (#{client_tty}) teardown detachTmuxSession already flags as future work;
-	// until then this is still strictly better than the pre-fix behaviour and
-	// correct for the common native-terminal case.
+	// When the displaced client is ANOTHER web window on this session, `-d`
+	// detaches it and its runPTYOverWS exits; that teardown detaches only its
+	// own client (detachOwnTmuxClient), so the window we just attached stays.
 	h, _ := harness.Get(sess.Harness)
 	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession, sess.TmuxSession, h, config.TerminalTabAgentWindow)
 }
@@ -388,9 +382,15 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
 // spawn endpoint hands back (as focus_ws) when auto-focus targets the browser
 // or could not pop a native window. Label-keyed, not conv-keyed — see
-// handleDashboardSpawnFocusWS.
-func spawnFocusWSPath(label string) string {
-	return "/api/spawn-focus-ws/" + url.PathEscape(label)
+// handleDashboardSpawnFocusWS — and bound to the spawned agent with ?agent=
+// whenever its id is known, so a later redial cannot land on a different
+// agent that reused the label.
+func spawnFocusWSPath(label, agentID string) string {
+	path := "/api/spawn-focus-ws/" + url.PathEscape(label)
+	if agentID != "" {
+		path += "?agent=" + url.QueryEscape(agentID)
+	}
+	return path
 }
 
 // handleDashboardSpawnFocusWS is the browser target/fallback for spawn
@@ -420,7 +420,16 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "expected /api/spawn-focus-ws/{label}", http.StatusNotFound)
 		return
 	}
-	sess := waitForDashboardSpawnFocusSession(r, label)
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	sess, reused := waitForDashboardSpawnFocusSession(r, label, agentID)
+	if reused {
+		// The tab outlived its agent and the label now names another one. The
+		// labels and tmux names are reused by design, so without this check
+		// a redial (Reconnect, or the restart watch) attached the stale tab
+		// to the new agent, and the two tabs then detached each other.
+		http.Error(w, "the agent this terminal was opened for no longer runs as "+label, http.StatusNotFound)
+		return
+	}
 	if sess == nil {
 		http.Error(w, "no tmux pane for "+label, http.StatusNotFound)
 		return
@@ -435,7 +444,12 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 // pending-spawn reservation, bounded beyond OpenCode's startup timeout plus
 // the short pane fork. Ordinary missing labels still fail immediately, and a
 // canceled/failed pending spawn stops waiting as soon as its reservation goes.
-func waitForDashboardSpawnFocusSession(r *http.Request, label string) *db.SessionRow {
+//
+// With agentID set, the pane must also belong to that agent: reused reports a
+// live pane owned by a different agent, and a pane whose owner is not known
+// yet (no conv-id and no pending reservation) is waited on within the same
+// bound rather than trusted.
+func waitForDashboardSpawnFocusSession(r *http.Request, label, agentID string) (sess *db.SessionRow, reused bool) {
 	const paneForkGrace = 3 * time.Second
 	deadline := time.NewTimer(openCodeStartupTimeout + paneForkGrace)
 	defer deadline.Stop()
@@ -444,22 +458,51 @@ func waitForDashboardSpawnFocusSession(r *http.Request, label string) *db.Sessio
 
 	for {
 		sess, err := db.LoadSession(label)
-		if err == nil && sess != nil && sess.TmuxSession != "" &&
-			session.IsTmuxSessionAlive(sess.TmuxSession) {
-			return sess
-		}
-		pending, pendingErr := db.GetPendingSpawn(label)
-		if pendingErr != nil || pending == nil {
-			return nil
+		alive := err == nil && sess != nil && sess.TmuxSession != "" &&
+			session.IsTmuxSessionAlive(sess.TmuxSession)
+		switch owner := ""; {
+		case alive && agentID == "":
+			return sess, false
+		case alive:
+			owner = spawnFocusSessionOwner(label, sess)
+			if owner == agentID {
+				return sess, false
+			}
+			if owner != "" {
+				return nil, true
+			}
+		default:
+			pending, pendingErr := db.GetPendingSpawn(label)
+			if pendingErr != nil || pending == nil {
+				return nil, false
+			}
+			if agentID != "" && pending.AgentID != "" && pending.AgentID != agentID {
+				return nil, true
+			}
 		}
 		select {
 		case <-r.Context().Done():
-			return nil
+			return nil, false
 		case <-deadline.C:
-			return nil
+			return nil, false
 		case <-ticker.C:
 		}
 	}
+}
+
+// spawnFocusSessionOwner is the agent a label's pane belongs to: the agent of
+// its conversation, or, before the conv-id has landed, the agent the pending
+// spawn reserved for the label. Empty means not known yet.
+func spawnFocusSessionOwner(label string, sess *db.SessionRow) string {
+	if sess.ConvID != "" {
+		if id, _ := db.AgentIDForConv(sess.ConvID); id != "" {
+			return id
+		}
+	}
+	if pending, err := db.GetPendingSpawn(label); err == nil && pending != nil {
+		return pending.AgentID
+	}
+	return ""
 }
 
 // termWSHook lets the env-gated real-browser terminal smoke observe and
@@ -547,10 +590,9 @@ var defaultPTYWinsize = pty.Winsize{Cols: 80, Rows: 24}
 // did not reliably tear down in the field (see hangupProcessGroup). Best-effort
 // — a missing session/server just makes tmux exit non-zero, which we ignore.
 //
-// This detaches ALL of the session's clients, so if the agent also has a native
-// terminal window attached, closing the web view detaches that too. That's an
-// accepted simplification for now; detaching only our own client (by its PTY
-// tty, which tmux exposes as #{client_tty}) is a deliberate future refinement.
+// This detaches ALL of the session's clients. A browser terminal's teardown
+// uses detachOwnTmuxClient instead and falls back to this only when it could
+// not learn its own client's tty.
 //
 // A remote viewer's renderer is the exception: it is a federation viewer, not
 // part of this browser terminal, so while one is attached only the other
@@ -565,6 +607,75 @@ func detachTmuxSession(tmuxSession string) {
 		return
 	}
 	_ = clcommon.TmuxCommand("detach-client", "-s", clcommon.ExactTarget(tmuxSession)).Run()
+}
+
+// detachOwnTmuxClient detaches only the tmux client running on clientTTY,
+// this browser terminal's own PTY, and only while that client is attached to
+// tmuxSession. Every other viewer stays: a native terminal, another web window
+// that took the session over with attach -d, or a remote federation viewer.
+//
+// Detaching the whole session here used to make two web windows on one
+// session evict each other: the displaced window's teardown dropped the
+// client that had just replaced it. A tab that outlived its agent and redialed
+// onto a new agent reusing the label did the same to that agent's real tab.
+//
+// The client may already be gone (it exited, or another attach displaced it);
+// then there is nothing to do. With no tty name, it falls back to the
+// whole-session detach, which is what a teardown did before it knew its tty.
+func detachOwnTmuxClient(tmuxSession, clientTTY string) {
+	if tmuxSession == "" {
+		return
+	}
+	if clientTTY == "" {
+		detachTmuxSession(tmuxSession)
+		return
+	}
+	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}").Output()
+	if err != nil {
+		return
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) == clientTTY {
+			_ = clcommon.TmuxCommand("detach-client", "-t", clientTTY).Run()
+			return
+		}
+	}
+}
+
+// startPTYWithTTYName is pty.StartWithSize that also reports the name of the
+// PTY's terminal side, which tmux reports as #{client_tty} for the client the
+// command attaches. detachOwnTmuxClient keys on it.
+func startPTYWithTTYName(cmd *exec.Cmd, size *pty.Winsize) (*os.File, string, error) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = tty.Close() }()
+	if size != nil {
+		if err := pty.Setsize(ptmx, size); err != nil {
+			_ = ptmx.Close()
+			return nil, "", err
+		}
+	}
+	if cmd.Stdout == nil {
+		cmd.Stdout = tty
+	}
+	if cmd.Stderr == nil {
+		cmd.Stderr = tty
+	}
+	if cmd.Stdin == nil {
+		cmd.Stdin = tty
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setsid = true
+	cmd.SysProcAttr.Setctty = true
+	if err := cmd.Start(); err != nil {
+		_ = ptmx.Close()
+		return nil, "", err
+	}
+	return ptmx, tty.Name(), nil
 }
 
 // hangupProcessGroup sends SIGHUP to the whole process group led by proc, not
@@ -657,9 +768,9 @@ func webShellMouseScrollback(sessionName string) string {
 // own environment on purpose. A browser terminal is an interactive shell the
 // operator runs things in, and anything started there — a daemon restart, say —
 // would inherit a process-wide copy and hand it to native terminal attaches it
-// later opens, re-enabling hyperlinks on the very terminals whose renderer we
-// know nothing about. Scoping it to the exec'd command keeps the claim attached
-// to the client it is true of. `VAR=value exec cmd` exports VAR to cmd.
+// later opens, overriding the TERM check that decides hyperlinks for those.
+// Scoping it to the exec'd command keeps the claim attached to the client it is
+// true of. `VAR=value exec cmd` exports VAR to cmd.
 func webTerminalAttachCmd(attachCommand string) string {
 	return clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature + " " +
 		session.WebTerminalAttachEnv + "=1 " + attachCommand
@@ -829,7 +940,7 @@ initialSize:
 	if initial != nil {
 		startSize = *initial
 	}
-	ptmx, err := pty.StartWithSize(cmd, &startSize)
+	ptmx, clientTTY, err := startPTYWithTTYName(cmd, &startSize)
 	if err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, fmt.Appendf(nil, "Error: %v\r\n", err))
 		return
@@ -860,10 +971,10 @@ initialSize:
 		hook.OnResize(int(startSize.Cols), int(startSize.Rows))
 	}
 	defer func() {
-		// Reliable detach first: tell the tmux server to drop the session's
-		// clients. Then tear down the PTY/process tree (the SIGHUP is a
+		// Reliable detach first: tell the tmux server to drop this terminal's
+		// own client. Then tear down the PTY/process tree (the SIGHUP is a
 		// backstop — see hangupProcessGroup).
-		detachTmuxSession(detachSession)
+		detachOwnTmuxClient(detachSession, clientTTY)
 		_ = ptmx.Close()
 		hangupProcessGroup(cmd.Process)
 		<-exited

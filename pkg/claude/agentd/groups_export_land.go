@@ -3,10 +3,14 @@ package agentd
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
@@ -32,6 +36,8 @@ type groupLandingOptions struct {
 	// MemberHarness and MemberModel are keyed by member: its title, its
 	// agent key in a group PAF, or its conversation id.
 	MemberHarness, MemberModel map[string]string
+	// ConfirmHistoryLoss accepts members' large history cuts.
+	ConfirmHistoryLoss bool
 }
 
 // parseGroupLandingOptions reads harness, model, and the repeatable
@@ -40,6 +46,7 @@ func parseGroupLandingOptions(q url.Values) (groupLandingOptions, error) {
 	o := groupLandingOptions{
 		Harness: strings.TrimSpace(q.Get("harness")), Model: strings.TrimSpace(q.Get("model")),
 		MemberHarness: map[string]string{}, MemberModel: map[string]string{},
+		ConfirmHistoryLoss: q.Get("confirm_history_loss") == "true",
 	}
 	for param, into := range map[string]map[string]string{"member_harness": o.MemberHarness, "member_model": o.MemberModel} {
 		for _, binding := range q[param] {
@@ -60,6 +67,8 @@ type groupMemberLanding struct {
 	Title  string `json:"title"`
 	*historyLanding
 	Warnings []string `json:"warnings,omitempty"`
+	// Posture is how the member launches here.
+	Posture *landingPosture `json:"posture,omitempty"`
 
 	// fileLanding is the Claude Code file path of the group import.
 	fileLanding bool
@@ -108,7 +117,11 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		c := &exp.Convs[i]
 		src := c.Harness
 		if src == "" {
+			// A zip names no harness; only OpenCode's ids say so themselves.
 			src = harness.DefaultName
+			if harness.ValidOpenCodeConvID(c.ConvID) {
+				src = harness.OpenCodeName
+			}
 		}
 		format := c.HistoryFormat
 		if format == "" && src == harness.DefaultName && c.Content != nil {
@@ -158,10 +171,12 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		}
 		l.dst, l.Harness = dst, dst.Name
 		if dst.Name == harness.OpenCodeName {
-			// OpenCode keeps history in per-agent state that only a spawn
-			// prepares; installing into the shared store would strand it.
-			l.Warnings = append(l.Warnings, "group import cannot install OpenCode history yet; importing config only")
-			continue
+			// The history installs through the opencode CLI, so unlike a
+			// file landing it needs the binary on this host.
+			if _, err := harness.OpenCodeExecutable(); err != nil {
+				l.Warnings = append(l.Warnings, "OpenCode is not installed here, so its history cannot be installed; importing config only")
+				continue
+			}
 		}
 		b := &agentbundle.Bundle{}
 		b.Manifest.Agent.Harness = src
@@ -177,8 +192,57 @@ func planGroupLandings(exp *groupexport.Export, a *paf.Archive, opts groupLandin
 		if dst.Name != src {
 			l.Warnings = append(l.Warnings, fmt.Sprintf("lands on %s instead of %s; receiver defaults apply at its next launch", dst.Name, src))
 		}
+		if l.needsCutConfirm() && !opts.ConfirmHistoryLoss {
+			l.Warnings = append(l.Warnings, fmt.Sprintf("cutting %d%% of the conversation needs confirmation: --confirm-history-loss", l.cutPercent()))
+		}
 	}
 	return out, nil
+}
+
+// needsCutConfirm says the member's landing cuts so much of its conversation
+// that the importer must accept it, as an agent import must.
+func (l *groupMemberLanding) needsCutConfirm() bool {
+	return l.history != nil && l.Losses != nil && l.Losses.NeedsSummary
+}
+
+// unconfirmedCuts refuses the landings when any needs a confirmation that was
+// not given. The refusal names each member and its cut.
+func unconfirmedCuts(ls []*groupMemberLanding, confirmed bool) error {
+	if confirmed {
+		return nil
+	}
+	var cuts []string
+	for _, l := range ls {
+		if l.needsCutConfirm() {
+			cuts = append(cuts, fmt.Sprintf("%s about %d%%", l.Title, l.cutPercent()))
+		}
+	}
+	if len(cuts) == 0 {
+		return nil
+	}
+	sort.Strings(cuts)
+	return &groupHistoryCutError{cuts}
+}
+
+// groupHistoryCutError is the import's refusal of unconfirmed history cuts.
+type groupHistoryCutError struct{ cuts []string }
+
+func (e *groupHistoryCutError) Error() string {
+	return "landing cuts the conversation of " + strings.Join(e.cuts, ", ") + ". Confirm with --confirm-history-loss (the full history stays in the file and is saved beside each agent), or choose a model with a larger context window."
+}
+
+// saveCutMemberHistories saves the whole conversation of every member whose
+// landing cut it, beside the agent, as an agent import does.
+func saveCutMemberHistories(ls []*groupMemberLanding, exp *groupexport.Export, convRemap map[string]string, group string) {
+	g, err := db.GetAgentGroupByName(group)
+	if err != nil {
+		slog.Warn("import: save full history", "group", group, "error", err)
+	}
+	for i, l := range ls {
+		if l.full != nil {
+			saveLandedHistory(agent.SpawnResponse{ConvID: convRemap[exp.Convs[i].ConvID]}, l.historyLanding, g)
+		}
+	}
 }
 
 // memberNeutralContext reads a group PAF member's neutral context, or is
@@ -194,8 +258,50 @@ func memberNeutralContext(a *paf.Archive, key string) func(paf.ReadOptions) (*tr
 
 // installGroupLanding installs a planned non-file landing through the
 // landing harness's history import, returning the minted conversation id.
+//
+// An OpenCode member installs into the store its landing posture's server
+// reads: per-agent private state under tclaude's sandbox, the ambient store
+// otherwise, where a server with no sandbox spec runs on the ambient XDG
+// directories and private state would strand the conversation.
 func installGroupLanding(l *groupMemberLanding, cwd string) (string, func(), error) {
+	if l.dst.Name == harness.OpenCodeName {
+		// The opencode CLI runs in the landing directory, which --into may
+		// only have named so far, and a resume launches in its physical path.
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			return "", nil, err
+		}
+		resolved, err := filepath.EvalSymlinks(cwd)
+		if err != nil {
+			return "", nil, err
+		}
+		cwd = resolved
+		if l.Posture.usesPrivateOpenCodeState() {
+			return installPrivateOpenCodeLanding(l, cwd)
+		}
+	}
 	return importBundleHistory(l.dst, l.history, cwd)
+}
+
+// recordOpenCodeLandings records the resume profile of every member whose
+// conversation landed on OpenCode. A resume cannot recover it from the harness
+// store as it does elsewhere: `opencode session list` shows only the project of
+// its working directory, so the daemon would not find a member landed in a
+// repository. It returns a warning for each member it could not record.
+func recordOpenCodeLandings(ls []*groupMemberLanding, exp *groupexport.Export, convRemap map[string]string, cwd string) []string {
+	var warnings []string
+	for i, l := range ls {
+		if l.history == nil || l.dst == nil || l.dst.Name != harness.OpenCodeName {
+			continue
+		}
+		physical, err := filepath.EvalSymlinks(cwd)
+		if err == nil {
+			_, err = recordBaselineResumeProfile(convRemap[exp.Convs[i].ConvID], harness.OpenCodeName, physical)
+		}
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: could not record its resume profile, so it may not resume: %v", l.Title, err))
+		}
+	}
+	return warnings
 }
 
 // landingWarnings flattens the plans' warnings, member by member.

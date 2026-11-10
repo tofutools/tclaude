@@ -28,11 +28,16 @@ type notifyHumanParams struct {
 	Body     string   `pos:"true" optional:"true" help:"Notification text (or use --file; optional when --subject accompanies --attach)."`
 	Subject  string   `long:"subject" short:"s" optional:"true" help:"One-line subject. Optional, except when sending --attach with no body."`
 	File     string   `long:"file" short:"f" optional:"true" help:"Read the body from this file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies."`
-	Attach   []string `long:"attach" short:"a" optional:"true" help:"Publish a file or directory for the human to download. Repeat for several paths; a few files arrive as separate downloads, a large set or a directory as one zip."`
+	Attach   []string `long:"attach" collection:"array" short:"a" optional:"true" help:"Publish a file or directory for the human to download. Repeat for several paths; a few files arrive as separate downloads, a large set or a directory as one zip."`
 	Name     string   `long:"name" optional:"true" help:"Download filename override. Implies --zip when several paths are attached."`
 	Zip      bool     `long:"zip" optional:"true" help:"Always package the attached paths as one zip."`
 	Separate bool     `long:"separate" optional:"true" help:"Always publish the attached files separately (fails on a directory or more than 20 files)."`
 	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+
+	Option    []string `long:"option" collection:"array" short:"o" optional:"true" help:"Put a decision to the human: one choice per flag, 2 to 6 of them. They answer with a button and the pick comes back to you as mail."`
+	Recommend int      `long:"recommend" optional:"true" help:"The --option you recommend, counting from 1."`
+
+	Action string `long:"action" optional:"true" help:"Put a button on the message from a fixed list: terminal (your own directory), drawing_board:<id>, pr:<url> (a GitHub PR you presented), tab:<name>. Nothing happens until the human clicks it."`
 }
 
 func notifyHumanCmd() *cobra.Command {
@@ -42,14 +47,18 @@ func notifyHumanCmd() *cobra.Command {
 		Long: "Sends a message to the human — it lands in the agentd dashboard's Messages tab, letting a coordinating agent reach the human off the busy terminal.\n\n" +
 			"Sending is gated: it passes for the human, for holders of the `human.notify` permission (which the human grants to a trusted coordinating agent such as the PO), and for any group owner (owning a group is a trusted coordinating role, so an owner may send slug or not). Agents with none of these are refused.\n\n" +
 			"Give the body inline or with --file (--file - reads stdin). Add --attach to publish a file or directory through agentd; the human gets a download button on the message. Repeat --attach for several files: up to 20 arrive as separate downloads (so an image stays viewable), while a directory or a larger set is packaged as one zip. --zip / --separate force either shape.\n\n" +
-			"The body may be omitted when the message is the attachment: --subject plus at least one --attach is a complete notification on its own. Either alone is not — a subject with nothing published, or a file with nothing naming it, is refused.",
+			"The body may be omitted when the message is the attachment: --subject plus at least one --attach is a complete notification on its own. Either alone is not — a subject with nothing published, or a file with nothing naming it, is refused.\n\n" +
+			"Repeat --option to put a decision to the human instead of only informing them: the message shows the choices as buttons (in the companion window and in Messages), with --recommend marking the one you suggest. Their pick comes back to your inbox as a message starting \"Decision: <option>\", even if you are offline by then. Use it for taste and direction calls — which design, which trade-off — and attach a rendered mock with --attach when the choice is visual. Do not wait idle for the answer when there is other work.\n\n" +
+			"Add --action to put one button on the message, chosen from a fixed list, never a free URL or command: terminal opens a shell in your own tracked directory, drawing_board:<id> opens a drawing board, pr:<url> opens a GitHub PR you presented with present-pr, and tab:<name> goes to a dashboard tab (groups, terminals, automations, processes, plugins, access, messages, usage, diagnostics, config). The daemon resolves the target and writes the button's text, including the directory and that the shell runs outside your sandbox. Nothing happens until the human clicks, and you get no output back. A message is a decision or an action, not both.\n\n" +
+			"When a decision you asked no longer matters, withdraw it with `notify-human dismiss <id>` (or --all for every open one of yours); the human can dismiss it from the dashboard too, and you then get an inbox message saying so. (A body that is only the word dismiss runs that subcommand; to send it as text, use --file, e.g. `echo dismiss | tclaude agent notify-human --file -`.)",
 		ParamEnrich: common.DefaultParamEnricher(),
+		SubCmds:     []*cobra.Command{notifyHumanDismissCmd()},
 		InitFuncCtx: func(ctx *boa.HookContext, p *notifyHumanParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *notifyHumanParams, _ *cobra.Command, _ []string) {
-			os.Exit(runNotifyHuman(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runNotifyHuman(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -74,9 +83,26 @@ func runNotifyHuman(p *notifyHumanParams, stdin io.Reader, stdout, stderr io.Wri
 		return rc
 	}
 
+	if n := len(p.Option); n == 1 || n > 6 {
+		fmt.Fprintf(stderr, "Error: a decision takes 2 to 6 --option flags, got %d\n", n)
+		return rcInvalidArg
+	}
+	if p.Recommend != 0 && (p.Recommend < 1 || p.Recommend > len(p.Option)) {
+		fmt.Fprintf(stderr, "Error: --recommend must name one of the %d --option choices (1-%d)\n", len(p.Option), len(p.Option))
+		return rcInvalidArg
+	}
 	payload := map[string]any{"body": body}
 	if s := strings.TrimSpace(p.Subject); s != "" {
 		payload["subject"] = s
+	}
+	if action := strings.TrimSpace(p.Action); action != "" {
+		payload["action"] = action
+	}
+	if len(p.Option) > 0 {
+		payload["options"] = p.Option
+		if p.Recommend > 0 {
+			payload["recommended"] = p.Recommend
+		}
 	}
 	var resp struct {
 		ID int64 `json:"id"`
@@ -89,6 +115,10 @@ func runNotifyHuman(p *notifyHumanParams, stdin io.Reader, stdout, stderr io.Wri
 		if err := DaemonRequest(http.MethodPost, "/v1/notify-human", payload, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return MapDaemonErrorToRC(err)
+		}
+		if len(p.Option) > 0 {
+			fmt.Fprintf(stdout, "Put the decision to the human (message #%d); their pick will arrive in your inbox.\n", resp.ID)
+			return rcOK
 		}
 		fmt.Fprintf(stdout, "Notified the human (message #%d) — it will show in the dashboard Messages tab.\n", resp.ID)
 		return rcOK
@@ -106,7 +136,8 @@ func runNotifyHuman(p *notifyHumanParams, stdin io.Reader, stdout, stderr io.Wri
 			humanBytes(len(data)), maxExportArtifactBytes>>20)
 		return rcInvalidArg
 	}
-	metadata, err := json.Marshal(map[string]string{"body": body, "subject": strings.TrimSpace(p.Subject), "name": name})
+	payload["name"] = name
+	metadata, err := json.Marshal(payload)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: encode attachment metadata: %v\n", err)
 		return rcIOFailure

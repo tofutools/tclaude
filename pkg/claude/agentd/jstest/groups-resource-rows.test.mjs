@@ -1,0 +1,314 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPreactHarness } from './preact-harness.mjs';
+
+const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// tcl-k6vici: a Groups-tab resource row reads one state (the pill), its
+// primary action follows it, the kind adds its own action, ⋯ holds Delete
+// behind a confirm, and the group's shell is a row of its own.
+test('resource rows: pill, primary action by state, per-kind action, delete behind confirm, shell row', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [mod, places] = await Promise.all([
+    harness.importDashboardModule('js/groups-resources.js'),
+    harness.importDashboardModule('js/resource-places.js'),
+  ]);
+  const group = { id: 7, name: 'crew', default_cwd: '/src/crew' };
+  const snapshot = { value: { group_resources: [
+    { kind: 'page', id: 'pg_live', group_id: 7, title: 'App', state: 'running' },
+    { kind: 'page', id: 'pg_shut', group_id: 7, title: 'Old', state: 'closed' },
+    { kind: 'drawing_board', id: 'plan', group_id: 7, title: 'Plan', state: 'closed' },
+    { kind: 'shell', id: 'crew', group_id: 7, title: 'Group shell', state: 'running', session: 'tclaude-groupterm-abc', detail: '/src/crew' },
+  ] } };
+  const calls = [];
+  const confirms = [];
+  const api = {
+    reloadGroupPage: async (id) => { calls.push(['reload', id]); },
+    deleteGroupPage: async (id) => { calls.push(['delete', id]); },
+    deleteDrawingBoard: async (id) => { calls.push(['deleteDrawingBoard', id]); },
+    reopenGroupPage: async (id) => { calls.push(['reopen', id]); },
+    setResourceLock: async () => ({}),
+  };
+  const confirm = async (opts) => { confirms.push(opts.title); return true; };
+  const notes = [];
+  const notify = (msg) => notes.push(msg);
+  await harness.act(() => { places.stripPaneKeys.value = ['drawing_board:plan']; });
+  const pages = [{ id: 'pg_live', name: 'app', title: 'App', owner: 'agt_x', kind: 'port', state: 'open' },
+    { id: 'pg_shut', name: 'old', title: 'Old', owner: 'agt_x', kind: 'port', state: 'closed', closedReason: 'the daemon restarted' }];
+  const drawingBoards = [{ id: 'plan', title: 'Plan' }];
+  const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group} drawingBoards=${drawingBoards} pages=${pages}
+    api=${api} notify=${notify} confirm=${confirm} snapshot=${snapshot} nameOf=${() => 'builder'} />`);
+  const row = (sel) => container.querySelector(sel);
+  const state = (el) => el.querySelector('[data-resource-state]').dataset.resourceState;
+  const primary = (el) => el.querySelector('.gr-primary').dataset.resourcePrimary;
+
+  const live = row('[data-resource-page="pg_live"]');
+  assert.equal(state(live), 'background', 'a live page open nowhere here runs in the background');
+  assert.equal(primary(live), 'Open');
+  assert.equal(live.querySelector('[data-resource-state]').textContent, 'live', 'a page says live, not background');
+  assert.equal(row('[data-resource-shell="crew"]').querySelector('[data-resource-state]').textContent, 'background');
+  const shut = row('[data-resource-page="pg_shut"]');
+  assert.equal(state(shut), 'closed');
+  assert.equal(primary(shut), 'Reopen');
+  assert.match(shut.textContent, /the daemon restarted/);
+  assert.equal(shut.querySelector('[data-page-reload]'), null, 'a closed page has nothing to reload');
+  const drawingBoard = row('[data-resource-drawing-board="plan"]');
+  assert.equal(state(drawingBoard), 'open-tab', 'a drawing board in the Collab strip is open here');
+  assert.equal(primary(drawingBoard), 'Focus');
+  assert.equal(drawingBoard.tagName, 'TR', 'a resource is a table row, like an agent');
+  const cells = (el) => [...el.children].map((td) => td.textContent.trim());
+  assert.deepEqual([...container.querySelectorAll('thead th')].map((th) => th.childNodes[0]?.textContent || ''), ['', 'Name', 'State', 'Last', 'Age', 'Kind', 'Lock', 'Detail'],
+    'Name, State, Last and Age, in the agents table\'s order');
+  assert.deepEqual([...container.querySelectorAll('thead th[data-sort-table="resources"]')].map((th) => th.dataset.sortCol), ['name', 'state', 'last', 'age', 'kind', 'lock', 'detail'],
+    'every titled header sorts, as an agent header does');
+  assert.equal(cells(drawingBoard)[1], '▦Plan');
+  assert.equal(cells(drawingBoard)[5], 'drawing board', 'a drawing board is a drawing board');
+  assert.equal(drawingBoard.children[6].querySelector('[data-resource-lock]').dataset.resourceLock, 'drawing_board:plan', 'the lock has its own column');
+  assert.ok(drawingBoard.firstElementChild.querySelector('.gr-light'), 'the light opens the row, like an agent\'s');
+  assert.deepEqual([...drawingBoard.querySelectorAll('.row-actions > *')].map((el) => el.matches('.gr-primary') ? 'eye' : el.matches('.gr-remove') ? 'trash' : el.querySelector('.gr-cog') ? 'cog' : '?'),
+    ['eye', 'trash', 'cog'], 'the same buttons in the same order on every row');
+  const shellRow = row('[data-resource-shell="crew"]');
+  assert.deepEqual([...shellRow.querySelectorAll('.row-actions > *')].map((el) => el.matches('.gr-primary') ? 'eye' : el.matches('.gr-remove') ? 'trash' : el.querySelector('.gr-cog') ? 'cog' : '?'),
+    ['eye', 'trash', 'cog'], 'a shell has the same buttons');
+  const shell = row('[data-resource-shell="crew"]');
+  assert.equal(state(shell), 'background');
+  assert.equal(primary(shell), 'Attach');
+
+  await harness.act(() => harness.fireEvent(live.querySelector('.gr-cog'), 'click'));
+  await harness.act(async () => { harness.fireEvent(live.querySelector('[data-page-reload]'), 'click'); await wait(); });
+  assert.deepEqual(calls.at(-1), ['reload', 'pg_live']);
+  await harness.act(async () => { harness.fireEvent(shut.querySelector('.gr-primary'), 'click'); await wait(); });
+  assert.deepEqual(calls.at(-1), ['reopen', 'pg_shut']);
+
+  await harness.act(async () => { harness.fireEvent(live.querySelector('[data-page-trash]'), 'click'); await wait(); await wait(); });
+  assert.deepEqual(confirms, ['Delete page App?']);
+  assert.deepEqual(calls.at(-1), ['delete', 'pg_live']);
+
+  // The state follows this browser: the drawing board leaves the strip.
+  await harness.act(() => { places.stripPaneKeys.value = []; });
+  assert.equal(state(row('[data-resource-drawing-board="plan"]')), 'closed');
+  assert.equal(primary(row('[data-resource-drawing-board="plan"]')), 'Open');
+
+  // A shell open here can still be killed: × ends its session, attached or not.
+  await harness.act(() => { places.stripPaneKeys.value = ['groupterm:crew']; });
+  assert.equal(state(row('[data-resource-shell="crew"]')), 'open-tab');
+  const posted = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { posted.push([url, JSON.parse(init.body)]); return { ok: true, json: async () => ({}) }; };
+  t.after(() => { globalThis.fetch = realFetch; });
+  await harness.act(async () => { harness.fireEvent(row('[data-shell-kill="crew"]'), 'click'); await wait(); await wait(); });
+  assert.equal(confirms.at(-1), 'Kill crew shell?');
+  assert.deepEqual(posted.find(([url]) => url === '/api/shells/kill'), ['/api/shells/kill', { tmux_session: 'tclaude-groupterm-abc' }]);
+});
+
+test('a process pill reads its own group\'s entry: one template pinned in two groups', async (t) => {
+  const harness = await createPreactHarness(t);
+  const pill = await harness.importDashboardModule('js/resource-pill.js');
+  const snap = { group_resources: [
+    { kind: 'process', id: 'deploy', group_id: 3, state: 'closed' },
+    { kind: 'process', id: 'deploy', group_id: 9, state: 'running' },
+  ] };
+  assert.equal(pill.resourceView(snap, 3, 'process', 'deploy'), 'closed');
+  assert.equal(pill.resourceView(snap, 9, 'process', 'deploy'), 'running');
+});
+
+test('＋ lists both process scopes, Board, Live page and Shell with a line each; Shell needs the group\'s directory', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const { container } = await harness.mount(harness.html`<div>
+    <${mod.AddResource} group=${{ id: 1, name: 'crew', default_cwd: '/src/crew' }} api=${{}} onAddProcess=${() => {}} />
+    <${mod.AddResource} group=${{ id: 2, name: 'bare', default_cwd: '' }} api=${{}} onAddProcess=${() => {}} />
+  </div>`);
+  const [withDir, bare] = container.querySelectorAll('.gr-add');
+  const trigger = withDir.querySelector('[data-resource-add]');
+  // Icon-only, like the Agents section's spawn buttons: no visible word, but
+  // an accessible name and tooltip that say what it adds.
+  assert.equal(trigger.textContent.replace(/\s+/g, ''), '＋▾');
+  assert.equal(trigger.getAttribute('aria-label'), 'Add a resource to crew: a process, drawing board, live page or shell');
+  assert.equal(trigger.getAttribute('title'), trigger.getAttribute('aria-label'));
+  await harness.act(() => harness.fireEvent(trigger, 'click'));
+  const names = [...withDir.querySelectorAll('.gr-new-name')].map((el) => el.textContent);
+  assert.deepEqual(names, ['Process for the group', 'Process for one agent', 'Drawing board', 'Live page', 'Shell']);
+  assert.match(withDir.querySelector('[data-resource-add-shell]').textContent, /A terminal in \/src\/crew/);
+  assert.equal(withDir.querySelector('[data-resource-add-shell]').disabled, false);
+  await harness.act(() => harness.fireEvent(bare.querySelector('[data-resource-add]'), 'click'));
+  assert.equal(bare.querySelector('[data-resource-add-shell]').disabled, true);
+});
+
+// tcl-kostyh: ⋯ renames a page or a drawing board in place, and moves it to another
+// group; an agent's page only to groups its agent is in.
+test('⋯ renames a row in place and moves it to another group', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const group = { id: 7, name: 'crew' };
+  const snapshot = { value: {
+    groups: [{ id: 7, name: 'crew', members: [{ agent_id: 'agt_x' }] }, { id: 8, name: 'ops', members: [{ agent_id: 'agt_x' }] },
+      { id: 9, name: 'design', members: [] }],
+    group_resources: [{ kind: 'page', id: 'pg_live', group_id: 7, title: 'App', state: 'running' }, { kind: 'drawing_board', id: 'plan', group_id: 7, title: 'Plan', state: 'closed' }],
+  } };
+  const calls = [];
+  const api = {
+    renameGroupPage: async (id, title) => { calls.push(['renamePage', id, title]); },
+    moveGroupPage: async (id, name) => { calls.push(['movePage', id, name]); },
+    renameDrawingBoard: async (id, title) => { calls.push(['renameDrawingBoard', id, title]); },
+    moveDrawingBoard: async (id, name) => { calls.push(['moveDrawingBoard', id, name]); },
+    setResourceLock: async () => ({}),
+  };
+  const notes = [];
+  const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group}
+    drawingBoards=${[{ id: 'plan', title: 'Plan' }]} pages=${[{ id: 'pg_live', name: 'app', title: 'App', owner: 'agt_x', kind: 'port', state: 'open' }]}
+    api=${api} notify=${(msg) => notes.push(msg)} confirm=${async () => true} snapshot=${snapshot} />`);
+  const menuOf = (row) => harness.act(async () => { harness.fireEvent(row.querySelector('.gr-cog'), 'click'); await wait(); });
+  const pick = (sel) => harness.act(async () => { harness.fireEvent(container.querySelector(sel), 'click'); await wait(); await wait(); });
+
+  const page = container.querySelector('[data-resource-page="pg_live"]');
+  await menuOf(page);
+  await pick('[data-resource-rename="pg_live"]');
+  const input = page.querySelector('[data-resource-rename-input]');
+  assert.ok(input, 'the name becomes a field');
+  input.value = 'Checkout';
+  await harness.act(async () => { harness.fireEvent(input, 'keydown', { key: 'Enter' }); await wait(); await wait(); });
+  assert.equal(page.querySelector('[data-resource-rename-input]'), null);
+
+  await menuOf(page);
+  await pick('[data-resource-move="pg_live"]');
+  assert.deepEqual([...container.querySelectorAll('[data-move-to]')].map((el) => el.dataset.moveTo), ['ops'], 'only the groups its agent is in');
+  await pick('[data-move-to="ops"]');
+
+  const drawingBoard = container.querySelector('[data-resource-drawing-board="plan"]');
+  await menuOf(drawingBoard);
+  await pick('[data-resource-move="plan"]');
+  assert.deepEqual([...container.querySelectorAll('[data-move-to]')].map((el) => el.dataset.moveTo), ['ops', 'design']);
+  await pick('[data-menu-back]');
+  await pick('[data-resource-rename="plan"]');
+  const field = drawingBoard.querySelector('[data-resource-rename-input]');
+  field.value = 'Plan';
+  await harness.act(async () => { harness.fireEvent(field, 'keydown', { key: 'Enter' }); await wait(); });
+  assert.deepEqual(calls, [['renamePage', 'pg_live', 'Checkout'], ['movePage', 'pg_live', 'ops']], 'an unchanged name is not sent');
+  assert.deepEqual(notes, ['Renamed App to Checkout', 'Moved App to ops']);
+});
+
+test('＋ hands each process item its scope, and processesOnly lists just those two', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const scopes = [];
+  const { container } = await harness.mount(harness.html`<${mod.AddResource} group=${{ id: 1, name: 'crew' }} api=${{}}
+    processesOnly=${true} onAddProcess=${(scope) => scopes.push(scope)} />`);
+  const open = () => harness.act(() => harness.fireEvent(container.querySelector('[data-resource-add]'), 'click'));
+  await open();
+  assert.deepEqual([...container.querySelectorAll('.gr-new-name')].map((el) => el.textContent), ['Process for the group', 'Process for one agent']);
+  await harness.act(() => harness.fireEvent(container.querySelector('[data-resource-add-process-agent]'), 'click'));
+  assert.equal(container.querySelector('.gr-new-menu'), null, 'picking closes the menu');
+  await open();
+  await harness.act(() => harness.fireEvent(container.querySelector('[data-resource-add-process]'), 'click'));
+  assert.deepEqual(scopes, ['agent', 'group']);
+});
+
+test('Resources sorts by its headers, across kinds', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [mod, sort] = await Promise.all([harness.importDashboardModule('js/groups-resources.js'), harness.importDashboardModule('js/sort.js')]);
+  const group = { id: 7, name: 'crew' };
+  const snapshot = { value: { group_resources: [
+    { kind: 'shell', id: 'crew', group_id: 7, title: 'Group shell', state: 'running', session: 's' },
+  ] } };
+  const drawingBoards = [{ id: 'zeta', title: 'Zeta' }, { id: 'alpha', title: 'Alpha' }];
+  const pages = [{ id: 'pg', name: 'mid', title: 'Middle', owner: 'agt_x', kind: 'port', state: 'open' }];
+  const names = (root) => [...root.querySelectorAll('tbody tr')].map((tr) => tr.querySelector('.gr-name').textContent.slice(1));
+  sort.cycleSort('resources', 'name');
+  t.after(() => { sort.cycleSort('resources', 'name'); sort.cycleSort('resources', 'name'); });
+  const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group} drawingBoards=${drawingBoards} pages=${pages}
+    api=${{ setResourceLock: async () => ({}) }} snapshot=${snapshot} nameOf=${() => ''} />`);
+  assert.deepEqual(names(container), ['Alpha', 'Group shell', 'Middle', 'Zeta'], 'sorted by name across every kind');
+  assert.ok(container.querySelector('th[data-sort-col="name"]').classList.contains('sort-active'));
+});
+
+test('a click on a drawing board\'s or page\'s name renames it, as an agent\'s does; 👁 opens it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const group = { id: 7, name: 'crew' };
+  const calls = [];
+  const api = {
+    renameGroupPage: async (id, title) => { calls.push(['renamePage', id, title]); },
+    renameDrawingBoard: async (id, title) => { calls.push(['renameDrawingBoard', id, title]); },
+    setResourceLock: async () => ({}),
+  };
+  const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group}
+    drawingBoards=${[{ id: 'plan', title: 'Plan' }]} pages=${[{ id: 'pg_live', name: 'app', title: 'App', owner: 'agt_x', kind: 'port', state: 'open' }]}
+    api=${api} notify=${() => {}} confirm=${async () => true} snapshot=${{ value: { group_resources: [] } }} />`);
+  for (const [sel, title, call] of [['[data-resource-drawing-board="plan"]', 'Roadmap', ['renameDrawingBoard', 'plan', 'Roadmap']],
+    ['[data-resource-page="pg_live"]', 'Checkout', ['renamePage', 'pg_live', 'Checkout']]]) {
+    const row = container.querySelector(sel);
+    const name = row.querySelector('[data-resource-name-rename]');
+    assert.match(name.getAttribute('title'), /Click to rename/);
+    assert.ok(row.querySelector('[data-resource-primary]'), '👁 still opens it');
+    await harness.act(async () => { harness.fireEvent(name, 'click'); await wait(); });
+    const input = row.querySelector('[data-resource-rename-input]');
+    assert.ok(input, 'the name becomes a field');
+    input.value = title;
+    await harness.act(async () => { harness.fireEvent(input, 'keydown', { key: 'Enter' }); await wait(); await wait(); });
+    assert.equal(row.querySelector('[data-resource-rename-input]'), null);
+    assert.deepEqual(calls.pop(), call);
+  }
+  // From the keyboard: Enter starts it, Escape keeps the name and focus.
+  const name = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-name-rename]');
+  await harness.act(async () => { harness.fireEvent(name, 'keydown', { key: 'Enter' }); await wait(); });
+  const input = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-rename-input]');
+  assert.ok(input, 'Enter on the name opens the field');
+  await harness.act(async () => { harness.fireEvent(input, 'keydown', { key: 'Escape' }); await wait(); });
+  assert.equal(calls.length, 0, 'Escape renames nothing');
+  const again = container.querySelector('[data-resource-drawing-board="plan"] [data-resource-name-rename]');
+  assert.equal(again.ownerDocument.activeElement, again, 'focus returns to the name');
+});
+
+// Last and Age come from the snapshot's group_resources (last_at,
+// created_at), render as the agents table's do, and sort as instants.
+test('Resources: Last and Age render from the snapshot and sort chronologically', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [mod, sort] = await Promise.all([harness.importDashboardModule('js/groups-resources.js'), harness.importDashboardModule('js/sort.js')]);
+  const group = { id: 7, name: 'crew' };
+  const ago = (ms) => new Date(Date.now() - ms).toISOString();
+  const old = ago(3 * 86400000);
+  // Written in +01:00, Mid's text reads later than Young's though it is
+  // older: it must sort by its instant, not its text.
+  const mid = new Date(Date.now() - 30 * 60000);
+  const midOffset = new Date(mid.getTime() + 3600000).toISOString().replace(/\.\d+Z$/, '+01:00');
+  const snapshot = { value: { group_resources: [
+    { kind: 'drawing_board', id: 'old', group_id: 7, title: 'Old', state: 'closed', created_at: old, last_at: ago(5 * 60000) },
+    { kind: 'drawing_board', id: 'young', group_id: 7, title: 'Young', state: 'closed', created_at: ago(30000), last_at: ago(30000) },
+    { kind: 'page', id: 'pg', group_id: 7, title: 'Mid', state: 'running', created_at: midOffset },
+    { kind: 'shell', id: 'crew', group_id: 7, title: 'Group shell', state: 'running', session: 's' },
+  ] } };
+  const drawingBoards = [{ id: 'young', title: 'Young' }, { id: 'old', title: 'Old' }];
+  const pages = [{ id: 'pg', name: 'mid', title: 'Mid', owner: 'agt_x', kind: 'port', state: 'open' }];
+  sort.cycleSort('resources', 'age');
+  t.after(() => { sort.cycleSort('resources', 'age'); sort.cycleSort('resources', 'age'); });
+  const { container } = await harness.mount(harness.html`<${mod.GroupResources} group=${group} drawingBoards=${drawingBoards} pages=${pages}
+    api=${{ setResourceLock: async () => ({}) }} snapshot=${snapshot} nameOf=${() => ''} />`);
+  const timeCells = (sel) => [...container.querySelector(sel).querySelectorAll('td.gr-timecell')];
+  const [last, age] = timeCells('[data-resource-drawing-board="old"]');
+  assert.equal(last.textContent.trim(), '5m ago');
+  assert.equal(age.textContent.trim(), '3d ago');
+  assert.equal(age.querySelector('.last-hook').title, old, 'Age carries the raw timestamp, as an agent\'s does');
+  assert.deepEqual(timeCells('[data-resource-page="pg"]').map((td) => td.textContent.trim()), ['', '30m ago'], 'no last: blank');
+  assert.deepEqual(timeCells('[data-resource-shell="crew"]').map((td) => td.textContent.trim()), ['', ''], 'no times: blank');
+  const names = () => [...container.querySelectorAll('tbody tr')].map((tr) => tr.querySelector('.gr-name').textContent.slice(1));
+  assert.deepEqual(names(), ['Old', 'Mid', 'Young', 'Group shell'], 'sorted by Age, oldest first, by instant not text; no age sorts last');
+});
+
+test('both Resources tables are bounded auto-width tables on the same tracks, whatever class a caller adds', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-resources.js');
+  const { container } = await harness.mount(harness.html`<div>
+    <${mod.ResourceTable} attrs=${{ class: 'gr-rtable gq-saved-row', 'data-x': '1' }}><tr><td></td></tr><//>
+    <${mod.ResourceTable} head=${false}><tr><td></td></tr><//>
+  </div>`);
+  const tables = [...container.querySelectorAll('table')];
+  assert.equal(tables.length, 2);
+  for (const table of tables) {
+    assert.ok(table.classList.contains('ui-table-auto') && table.classList.contains('gr-rtable'), table.className);
+    const cols = [...table.querySelectorAll('colgroup col')];
+    assert.deepEqual(cols.filter((c) => !c.classList.contains('ui-col-track')).map((c) => c.className), ['ui-col-rest gr-col-detail'], 'Detail alone takes the rest');
+  }
+  assert.ok(tables[0].classList.contains('gq-saved-row'), 'the caller\'s class is kept');
+  assert.equal(tables[0].getAttribute('data-x'), '1');
+});

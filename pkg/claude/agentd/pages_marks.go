@@ -1,0 +1,753 @@
+package agentd
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+)
+
+// Marks on live pages (tcl-2dwbad). The operator draws on top of a page in
+// the dashboard and sends the marks, with an optional note, to the agent that
+// showed it: POST /api/pages/{id}/marks stores the batch (in memory, as the
+// page itself is) and queues an inbox message. The agent reads the batches
+// with `tclaude agent page marks`, renders the page with them with `page
+// snapshot`, and reads the DOM under them with `page dom`.
+//
+// Everything in a batch but the note comes from the dashboard's probe
+// channel, which carries page content (element paths, text snippets): it is
+// size- and schema-checked here as in the dashboard, kept out of the
+// operator-authored inbox message, and handed to the agent as JSON data.
+//
+// DOM reads go through a dashboard view of the page: the daemon asks one of
+// the page's open live sockets (dashboard_page_live.go), the view asks the
+// probe in its frame, and the answer comes back on the same socket. With no
+// view open there is nothing to read from, and the agent is told so.
+
+const (
+	pageMarksMaxBody     = 1 << 20
+	pageMarksMaxBatches  = 50
+	pageMarksMax         = 100
+	pageMarkMaxPoints    = 2000
+	pageMarkMaxText      = 500
+	pageMarkMaxAnchors   = 50
+	pageAnchorMaxPath    = 300
+	pageAnchorMaxText    = 200
+	pageNoteMax          = 4000
+	pagePathMax          = 512
+	pageCoordMax         = 10_000_000
+	pageViewportMax      = 20_000
+	pageDOMSelectorMax   = 500
+	pageDOMMaxItems      = 10
+	pageDOMMaxValue      = 16 * 1024
+	pageDOMErrorMax      = 200
+	pageDOMTimeout       = 10 * time.Second
+	pageLiveReadLimit    = 512 << 10
+	pageViewQueueSize    = 16
+	pageDOMMaxConcurrent = 8
+)
+
+var pageMarkColor = regexp.MustCompile(`^#[0-9a-fA-F]{3,8}$`)
+
+var pageMarkKinds = map[string]bool{"pen": true, "arrow": true, "box": true, "text": true}
+
+type pageXY struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+}
+
+type pageWH struct {
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+// pageAnchor is an element the probe found under a mark.
+type pageAnchor struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
+	Hits int    `json:"hits"`
+}
+
+type pageMark struct {
+	Kind    string       `json:"kind"`
+	Color   string       `json:"color,omitempty"`
+	Points  [][2]int     `json:"points"`
+	Text    string       `json:"text,omitempty"`
+	Anchors []pageAnchor `json:"anchors"`
+}
+
+// pageMarkBatch is one Send: the marks in page pixels, the viewport and
+// scroll they were drawn at, and the frame's path then.
+type pageMarkBatch struct {
+	Seq      int64      `json:"seq"`
+	At       time.Time  `json:"at"`
+	Note     string     `json:"note,omitempty"`
+	Path     string     `json:"path,omitempty"`
+	Viewport pageWH     `json:"viewport"`
+	Scroll   pageXY     `json:"scroll"`
+	Marks    []pageMark `json:"marks"`
+}
+
+// pageViewReport is a dashboard view's last viewport and scroll.
+type pageViewReport struct {
+	VW   int    `json:"vw"`
+	VH   int    `json:"vh"`
+	X    int    `json:"x"`
+	Y    int    `json:"y"`
+	Path string `json:"path"`
+}
+
+type pageDOMRect struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+type pageDOMItem struct {
+	Path  string      `json:"path"`
+	Rect  pageDOMRect `json:"rect"`
+	Value string      `json:"value"`
+}
+
+type pageDOMResult struct {
+	Count int           `json:"count"`
+	Items []pageDOMItem `json:"items"`
+	// Truncated says the page left matches out to keep its answer small.
+	Truncated bool   `json:"truncated,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// pageViewConn is one open live socket of a page: out queues messages to
+// it, pending holds its unanswered requests (DOM reads, patches, evals), each
+// answered with the view's raw message.
+type pageViewConn struct {
+	out     chan []byte
+	pending map[string]chan []byte
+	viewAt  time.Time // when it last reported a viewport
+}
+
+// pageCollabState is a page's marks and open views, by page id. It outlives
+// a re-show of the page (same id) and goes when the page closes.
+type pageCollabState struct {
+	seq     int64
+	batches []pageMarkBatch
+	view    *pageViewReport
+	views   map[*pageViewConn]struct{}
+	domReqs int
+	// The live patch journal (pages_patches.go).
+	patchSeq   int64
+	patches    []pagePatch
+	patchBytes int
+}
+
+var pageCollab = struct {
+	mu   sync.Mutex
+	byID map[string]*pageCollabState
+	req  int64
+}{byID: map[string]*pageCollabState{}}
+
+// pageCollabLocked returns the page's state, making it. Caller holds pageCollab.mu.
+func pageCollabLocked(id string) *pageCollabState {
+	s := pageCollab.byID[id]
+	if s == nil {
+		s = &pageCollabState{views: map[*pageViewConn]struct{}{}}
+		pageCollab.byID[id] = s
+	}
+	return s
+}
+
+// forgetPageMarksLocked drops a page's mark batches, keeping its sequence, so a
+// reader's --since still works: for a page re-shown to another audience
+// (pages_share.go), what the operator typed before is not shown to it.
+//
+// Caller holds pageCollab.mu, taken under the registry lock: a page changing
+// group drops its marks before another group's members can read it.
+func forgetPageMarksLocked(id string) {
+	if s := pageCollab.byID[id]; s != nil {
+		s.batches = nil
+	}
+	clearSavedMarksLocked(id)
+}
+
+// forgetPageCollab drops a closed page's marks; its views end with its origin.
+// forgetPageCollabExceptMarks keeps only a page's mark batches: a takeover
+// (pages_group.go) hands the adopter what the operator drew, never the live
+// patches someone else made on the scratch page, nor the old view's report.
+// patchSeq stays, so a reader's --since still works.
+func forgetPageCollabExceptMarks(id string) {
+	pageCollab.mu.Lock()
+	if s := pageCollab.byID[id]; s != nil {
+		s.patches, s.patchBytes, s.view = nil, 0, nil
+		savePatchesLocked(id, s)
+	}
+	pageCollab.mu.Unlock()
+}
+
+func forgetPageCollab(id string) {
+	pageCollab.mu.Lock()
+	delete(pageCollab.byID, id)
+	pageCollab.mu.Unlock()
+}
+
+// ---- checks ----
+
+func pageTextOK(s string, max int, multiline bool) bool {
+	if len(s) > max*4 || utf8.RuneCountInString(s) > max || !utf8.ValidString(s) {
+		return false
+	}
+	return !strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) && (!multiline || (r != '\n' && r != '\t'))
+	})
+}
+
+func pageCoordOK(v int) bool { return v >= -pageCoordMax && v <= pageCoordMax }
+
+func pageViewportOK(w, h int) bool {
+	return w >= 0 && h >= 0 && w <= pageViewportMax && h <= pageViewportMax
+}
+
+func checkPageMark(m *pageMark) error {
+	if !pageMarkKinds[m.Kind] {
+		return errors.New("a mark is a pen, arrow, box or text")
+	}
+	if m.Color != "" && !pageMarkColor.MatchString(m.Color) {
+		return errors.New("a mark's colour is #rgb..#rrggbbaa")
+	}
+	if len(m.Points) == 0 || len(m.Points) > pageMarkMaxPoints {
+		return fmt.Errorf("a mark has 1 to %d points", pageMarkMaxPoints)
+	}
+	if m.Kind == "box" && len(m.Points) != 2 {
+		return errors.New("a box mark has two corners")
+	}
+	for _, p := range m.Points {
+		if !pageCoordOK(p[0]) || !pageCoordOK(p[1]) {
+			return errors.New("a mark's point is out of range")
+		}
+	}
+	if !pageTextOK(m.Text, pageMarkMaxText, false) || (m.Kind == "text") != (m.Text != "") {
+		return fmt.Errorf("a text mark has printable text of at most %d characters; other marks have none", pageMarkMaxText)
+	}
+	if len(m.Anchors) > pageMarkMaxAnchors {
+		return fmt.Errorf("a mark has at most %d anchors", pageMarkMaxAnchors)
+	}
+	for _, a := range m.Anchors {
+		if a.Path == "" || !pageTextOK(a.Path, pageAnchorMaxPath, false) || !pageTextOK(a.Text, pageAnchorMaxText, false) ||
+			a.Hits < 0 || a.Hits > pageMarkMaxPoints {
+			return errors.New("a mark's anchor is malformed")
+		}
+	}
+	if m.Anchors == nil {
+		m.Anchors = []pageAnchor{}
+	}
+	return nil
+}
+
+func checkPageViewReport(v *pageViewReport) bool {
+	return pageViewportOK(v.VW, v.VH) && pageCoordOK(v.X) && pageCoordOK(v.Y) && pageTextOK(v.Path, pagePathMax, false)
+}
+
+func checkPageDOMResult(r *pageDOMResult) bool {
+	if r.Count < 0 || r.Count > pageCoordMax || len(r.Items) > pageDOMMaxItems || !pageTextOK(r.Error, pageDOMErrorMax, false) {
+		return false
+	}
+	for _, it := range r.Items {
+		if !pageTextOK(it.Path, pageAnchorMaxPath, false) || len(it.Value) > pageDOMMaxValue*4 ||
+			utf8.RuneCountInString(it.Value) > pageDOMMaxValue || !utf8.ValidString(it.Value) {
+			return false
+		}
+		if !pageCoordOK(it.Rect.X) || !pageCoordOK(it.Rect.Y) || !pageCoordOK(it.Rect.W) || !pageCoordOK(it.Rect.H) {
+			return false
+		}
+	}
+	return true
+}
+
+// ---- the dashboard's Send ----
+
+type pageMarksRequest struct {
+	Note     string     `json:"note"`
+	Path     string     `json:"path"`
+	Viewport pageWH     `json:"viewport"`
+	Scroll   pageXY     `json:"scroll"`
+	Marks    []pageMark `json:"marks"`
+}
+
+// POST /api/pages/{id}/marks — the operator sent marks (and/or a note). The
+// batch is kept for `page marks`, and the agent is told through its inbox.
+func handleDashboardPageMarks(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, pageMarksMaxBody)
+	var req pageMarksRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid request: "+err.Error())
+		return
+	}
+	req.Note = strings.TrimSpace(req.Note)
+	switch {
+	case !pageTextOK(req.Note, pageNoteMax, true):
+		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("the note must be printable and at most %d characters", pageNoteMax))
+		return
+	case len(req.Marks) > pageMarksMax:
+		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("at most %d marks at a time", pageMarksMax))
+		return
+	case len(req.Marks) == 0 && req.Note == "":
+		writeError(w, http.StatusBadRequest, "invalid_arg", "nothing to send: no marks and no note")
+		return
+	case !pageTextOK(req.Path, pagePathMax, false) || !pageViewportOK(req.Viewport.W, req.Viewport.H) ||
+		!pageCoordOK(req.Scroll.X) || !pageCoordOK(req.Scroll.Y):
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid path, viewport or scroll")
+		return
+	}
+	for i := range req.Marks {
+		if err := checkPageMark(&req.Marks[i]); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("mark %d: %v", i+1, err))
+			return
+		}
+	}
+	if req.Marks == nil {
+		req.Marks = []pageMark{}
+	}
+
+	id := r.PathValue("id")
+	req.Path = pageLocalPath(id, req.Path)
+	// Whether the page's text may go to the agent is decided first, outside
+	// the registry lock (it can read the agent's session row).
+	livePages.mu.Lock()
+	var kind string
+	var stage *stagePage
+	if p := livePages.byID[id]; p != nil {
+		kind, stage = p.kind, p.stage
+	}
+	livePages.mu.Unlock()
+	if pageReadBackAllowed(kind, stage, true) != nil {
+		// The anchors are the page's text, and the path and scroll its
+		// script reports, which may come from files the agent cannot read
+		// (see pageReadBackAllowed).
+		pageMarksStripPage(&req)
+	}
+	// The page is looked up again and its state made under both locks (in
+	// the registry's order), so a page closing meanwhile cannot leave state
+	// behind.
+	livePages.mu.Lock()
+	p := livePages.byID[id]
+	if p == nil {
+		livePages.mu.Unlock()
+		writeError(w, http.StatusNotFound, "not_found", "no such page")
+		return
+	}
+	owner, name := p.owner, p.name
+	if p.stage != stage {
+		// Re-shown with another source meanwhile: decided for the old one.
+		pageMarksStripPage(&req)
+	}
+	pageCollab.mu.Lock()
+	livePages.mu.Unlock()
+	s := pageCollabLocked(id)
+	s.seq++
+	batch := pageMarkBatch{
+		Seq: s.seq, At: time.Now().UTC(), Note: req.Note, Path: req.Path,
+		Viewport: req.Viewport, Scroll: req.Scroll, Marks: req.Marks,
+	}
+	s.batches = append(s.batches, batch)
+	if len(s.batches) > pageMarksMaxBatches {
+		s.batches = append([]pageMarkBatch(nil), s.batches[len(s.batches)-pageMarksMaxBatches:]...)
+	}
+	saveMarkBatchLocked(id, batch)
+	pageCollab.mu.Unlock()
+	setAuditTargetLabel(r, "page "+name)
+
+	resp := map[string]any{"seq": batch.Seq, "told_agent": false}
+	if convID := humanActionLiveConv(owner); convID != "" {
+		subject, body := pageMarksMessage(name, batch)
+		if _, _, err := queueRegularAgentMessage(&db.AgentMessage{
+			ToConv: convID, Subject: subject, Body: body,
+			ToRecipients: []string{convID}, OperatorAuthored: true,
+		}); err != nil {
+			resp["error"] = "failed to queue message: " + err.Error()
+		} else {
+			resp["told_agent"] = true
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// pageMarksMessage is the inbox message for a batch. It is operator-authored,
+// so it quotes only what the operator wrote (the note) and the agent's own
+// page name; the element paths and snippets, which the page supplied, stay in
+// `page marks`.
+func pageMarksMessage(name string, b pageMarkBatch) (subject, body string) {
+	var sb strings.Builder
+	if len(b.Marks) == 0 {
+		fmt.Fprintf(&sb, "The operator sent a note about your live page %q:\n\n%s\n", name, b.Note)
+		return "[page " + name + "] note", sb.String()
+	}
+	anchors := 0
+	for _, m := range b.Marks {
+		anchors += len(m.Anchors)
+	}
+	noun := "marks"
+	if len(b.Marks) == 1 {
+		noun = "mark"
+	}
+	fmt.Fprintf(&sb, "The operator drew %d %s on your live page %q (batch %d, viewport %dx%d, scrolled to %d,%d; %d anchored elements).\n",
+		len(b.Marks), noun, name, b.Seq, b.Viewport.W, b.Viewport.H, b.Scroll.X, b.Scroll.Y, anchors)
+	if b.Note != "" {
+		fmt.Fprintf(&sb, "\nNote: %s\n", b.Note)
+	}
+	fmt.Fprintf(&sb, "\nRead the marks and the elements under them with `tclaude agent page marks %s --since %d`; "+
+		"`tclaude agent page snapshot %s` renders the page with them, and `tclaude agent page dom %s <selector>` reads the DOM.\n",
+		name, b.Seq-1, name, name)
+	return "[page " + name + "] marks", sb.String()
+}
+
+// pageLocalPath is a path a view reported, as the page's own source knows it.
+// A remote viewer's frame runs a static page under /p/<remote token>/
+// (remote_stage.go), which its source never sees: that prefix comes off, so
+// a snapshot renders the right file and the token is not kept. A dev server
+// keeps the prefix: it serves under it as its --base.
+func pageLocalPath(id, p string) string {
+	livePages.mu.Lock()
+	lp := livePages.byID[id]
+	var stage *stagePage
+	if lp != nil {
+		stage = lp.stage
+	}
+	livePages.mu.Unlock()
+	if stage == nil || !stage.static.Load() {
+		return p
+	}
+	prefix := remoteStagePrefix + stage.remoteToken
+	if rest, ok := strings.CutPrefix(p, prefix); ok && (rest == "" || rest[0] == '/' || rest[0] == '?') {
+		if rest == "" || rest[0] == '?' {
+			rest = "/" + rest
+		}
+		return rest
+	}
+	return p
+}
+
+// ---- views, over the live socket ----
+
+// registerPageView adds an open live socket to its page's views. A page that
+// closed meanwhile gets no state; its socket ends with its origin.
+func registerPageView(id string) (*pageViewConn, func()) {
+	c := &pageViewConn{out: make(chan []byte, pageViewQueueSize), pending: map[string]chan []byte{}}
+	livePages.mu.Lock()
+	open := livePages.byID[id] != nil
+	pageCollab.mu.Lock()
+	livePages.mu.Unlock()
+	if open {
+		s := pageCollabLocked(id)
+		s.views[c] = struct{}{}
+		// The view starts with the journal, so it replays the patches on
+		// its first load. The queue is empty: this always fits.
+		c.out <- pagePatchStateLocked(s, "")
+	}
+	pageCollab.mu.Unlock()
+	return c, func() {
+		pageCollab.mu.Lock()
+		if s := pageCollab.byID[id]; s != nil {
+			delete(s.views, c)
+		}
+		for _, ch := range c.pending {
+			close(ch)
+		}
+		c.pending = map[string]chan []byte{}
+		pageCollab.mu.Unlock()
+	}
+}
+
+// pageViewMessage takes one message a view sent on its live socket: a
+// viewport report, or the answer to a request (a DOM read, a patch, an eval),
+// which goes to its asker as sent, to be checked there. Anything else, or
+// anything malformed, is dropped.
+func pageViewMessage(id string, c *pageViewConn, data []byte) {
+	var head struct {
+		Type string `json:"type"`
+		Req  string `json:"req"`
+	}
+	if json.Unmarshal(data, &head) != nil {
+		return
+	}
+	switch head.Type {
+	case "view":
+		var v pageViewReport
+		if json.Unmarshal(data, &v) != nil || !checkPageViewReport(&v) || v.VW == 0 || v.VH == 0 {
+			return
+		}
+		v.Path = pageLocalPath(id, v.Path)
+		pageCollab.mu.Lock()
+		if s := pageCollab.byID[id]; s != nil {
+			s.view = &v
+			c.viewAt = time.Now()
+		}
+		pageCollab.mu.Unlock()
+	case "dom-result", "patch-result", "eval-result":
+		pageCollab.mu.Lock()
+		ch := c.pending[head.Type+":"+head.Req]
+		delete(c.pending, head.Type+":"+head.Req)
+		pageCollab.mu.Unlock()
+		if ch != nil {
+			ch <- data
+			close(ch)
+		}
+	}
+}
+
+var errPageNoView = errors.New("no dashboard view of this page is open, so there is no DOM to read; ask the operator to open the page")
+
+// bestPageViewLocked is the view a one-view request goes to: the one that
+// reported its viewport last. Caller holds pageCollab.mu.
+func bestPageViewLocked(s *pageCollabState) *pageViewConn {
+	var best *pageViewConn
+	if s != nil {
+		for c := range s.views {
+			if best == nil || c.viewAt.After(best.viewAt) {
+				best = c
+			}
+		}
+	}
+	return best
+}
+
+// pageViewAskLocked queues a request to one view and returns the channel its
+// answer comes on (closed unanswered when the view goes), or nil when the
+// view's queue is full. msg gets the request id as "req"; answer is the type
+// the view answers with. The caller holds pageCollab.mu and must call
+// pageViewForget when done waiting.
+func pageViewAskLocked(c *pageViewConn, answer string, msg map[string]any) (req string, ch chan []byte) {
+	pageCollab.req++
+	req = "q" + strconv.FormatInt(pageCollab.req, 36)
+	msg["req"] = req
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return req, nil
+	}
+	select {
+	case c.out <- data:
+	default:
+		return req, nil
+	}
+	ch = make(chan []byte, 1)
+	c.pending[answer+":"+req] = ch
+	return req, ch
+}
+
+func pageViewForget(c *pageViewConn, answer, req string) {
+	pageCollab.mu.Lock()
+	delete(c.pending, answer+":"+req)
+	pageCollab.mu.Unlock()
+}
+
+// pageViewWait waits for a view's answer. ok is false when the view went
+// first; err is set on a timeout or a cancelled request.
+func pageViewWait(ctx context.Context, ch chan []byte, timeout time.Duration) (data []byte, ok bool, err error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case data, ok = <-ch:
+		return data, ok, nil
+	case <-timer.C:
+		return nil, false, errors.New("the dashboard view did not answer in time")
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+}
+
+// pageDOMRead asks one open view of the page (the one that reported its
+// viewport last) to read the DOM.
+func pageDOMRead(ctx context.Context, id, selector, mode string) (pageDOMResult, error) {
+	pageCollab.mu.Lock()
+	s := pageCollab.byID[id]
+	best := bestPageViewLocked(s)
+	if best == nil {
+		pageCollab.mu.Unlock()
+		return pageDOMResult{}, errPageNoView
+	}
+	if s.domReqs >= pageDOMMaxConcurrent {
+		pageCollab.mu.Unlock()
+		return pageDOMResult{}, errors.New("too many DOM reads of this page at once")
+	}
+	req, ch := pageViewAskLocked(best, "dom-result", map[string]any{"type": "dom", "selector": selector, "mode": mode})
+	if ch == nil {
+		pageCollab.mu.Unlock()
+		return pageDOMResult{}, errors.New("the dashboard view is busy; try again")
+	}
+	s.domReqs++
+	pageCollab.mu.Unlock()
+	defer func() {
+		pageCollab.mu.Lock()
+		s.domReqs--
+		delete(best.pending, "dom-result:"+req)
+		pageCollab.mu.Unlock()
+	}()
+	data, ok, err := pageViewWait(ctx, ch, pageDOMTimeout)
+	if err != nil {
+		return pageDOMResult{}, err
+	}
+	if !ok {
+		return pageDOMResult{}, errPageNoView
+	}
+	var res pageDOMResult
+	if json.Unmarshal(data, &res) != nil || !checkPageDOMResult(&res) {
+		res = pageDOMResult{Error: "the page's answer was malformed"}
+	}
+	if res.Items == nil {
+		res.Items = []pageDOMItem{}
+	}
+	return res, nil
+}
+
+// ---- agent routes ----
+
+// pageReadBackAllowed says whether the agent may read a page back (its
+// rendering, its DOM, the text under marks). A static page is served only
+// through the agent's own view of the file system (pages_fsview.go); when
+// that view is unknown (a sandboxed launch that recorded no profile), the
+// page may hold files the agent cannot read, so it is not read back. A dev
+// server is the agent's own process, so it serves only what the agent can
+// read. Callers hold livePages.mu or have copied kind and stage under it.
+func pageReadBackAllowed(kind string, stage *stagePage, live bool) error {
+	if kind != pageKindStatic {
+		return nil
+	}
+	if stage != nil && stageStaticReadBack(stage.transport(), live) {
+		return nil
+	}
+	return errors.New("this static page cannot be read back: tclaude cannot serve it exactly as your sandbox shows its files " +
+		"(or it changed since the page last loaded). Serve it from a dev server on your own port to use snapshot and dom")
+}
+
+// GET /v1/pages/{name}/marks?since=<seq> — the batches the operator sent
+// after seq (all that are kept, without since).
+func handlePageMarks(w http.ResponseWriter, r *http.Request) {
+	p, ok := pageFor(w, r, PermGroupsPagesRead)
+	if !ok {
+		return
+	}
+	var since int64
+	if v := r.URL.Query().Get("since"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "since is a batch number")
+			return
+		}
+		since = n
+	}
+	pageCollab.mu.Lock()
+	out := []pageMarkBatch{}
+	var last int64
+	if s := pageCollab.byID[p.id]; s != nil {
+		last = s.seq
+		for _, b := range s.batches {
+			if b.Seq > since {
+				out = append(out, b)
+			}
+		}
+	}
+	pageCollab.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"page": p.name, "last_seq": last, "batches": out})
+}
+
+type pageDOMRequest struct {
+	Selector string `json:"selector"`
+	Mode     string `json:"mode"`
+}
+
+// POST /v1/pages/{name}/dom — a read-only DOM read through an open view.
+func handlePageDOM(w http.ResponseWriter, r *http.Request) {
+	p, ok := pageFor(w, r, PermGroupsPagesRead)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	var req pageDOMRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid request: "+err.Error())
+		return
+	}
+	req.Selector = strings.TrimSpace(req.Selector)
+	if req.Selector == "" || !pageTextOK(req.Selector, pageDOMSelectorMax, false) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", fmt.Sprintf("a selector is 1 to %d printable characters", pageDOMSelectorMax))
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = "text"
+	}
+	if req.Mode != "text" && req.Mode != "html" && req.Mode != "styles" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "mode is text, html or styles")
+		return
+	}
+	livePages.mu.Lock()
+	kind, stage := p.kind, p.stage
+	livePages.mu.Unlock()
+	if err := pageReadBackAllowed(kind, stage, true); err != nil {
+		writeError(w, http.StatusConflict, "static_source", err.Error())
+		return
+	}
+	res, err := pageDOMRead(r.Context(), p.id, req.Selector, req.Mode)
+	if err != nil {
+		status := http.StatusGatewayTimeout
+		if errors.Is(err, errPageNoView) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, "no_view", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// latestPageView is the viewport and scroll a snapshot renders at: the last
+// view report, else the last batch's, else none.
+func latestPageView(id string) (view pageViewReport, batch *pageMarkBatch) {
+	pageCollab.mu.Lock()
+	defer pageCollab.mu.Unlock()
+	s := pageCollab.byID[id]
+	if s == nil {
+		return pageViewReport{}, nil
+	}
+	if n := len(s.batches); n > 0 {
+		b := s.batches[n-1]
+		batch = &b
+	}
+	if s.view != nil {
+		return *s.view, batch
+	}
+	if batch != nil {
+		return pageViewReport{VW: batch.Viewport.W, VH: batch.Viewport.H, X: batch.Scroll.X, Y: batch.Scroll.Y, Path: batch.Path}, batch
+	}
+	return pageViewReport{}, nil
+}
+
+// pageMarksStripPage drops what a batch carries from the page itself for a
+// page that is not read back: the text under marks, and the path, scroll and
+// viewport its script reports. Mark points are kept in page coordinates
+// (the drawing plus the reported scroll), so they are moved back to where the
+// operator drew them in the frame. The marks and the note are the operator's.
+func pageMarksStripPage(req *pageMarksRequest) {
+	for i := range req.Marks {
+		req.Marks[i].Anchors = []pageAnchor{}
+		for j := range req.Marks[i].Points {
+			req.Marks[i].Points[j][0] -= req.Scroll.X
+			req.Marks[i].Points[j][1] -= req.Scroll.Y
+		}
+	}
+	req.Path = ""
+	req.Scroll = pageXY{}
+	req.Viewport = pageWH{}
+}

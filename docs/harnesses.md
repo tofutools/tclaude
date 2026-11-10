@@ -60,7 +60,10 @@ takes `--harness`. When the flag is omitted, resolution is:
 1. **Explicit flag** — always wins.
 2. **Global default spawn profile** — set from the dashboard or
    `tclaude agent profiles default set`; its harness/model/effort apply to
-   fresh terminal launches, each field overridable per launch.
+   fresh terminal launches, each field overridable per launch. A profile for
+   the launch's harness also supplies its launch posture (sandbox, sandbox
+   implementation, approval, and the other per-launch knobs; see
+   [Sessions](sessions.md)).
 3. **First installed harness** — Claude Code is checked first; otherwise the
    registry is walked in sorted order (codex, copilot, gemini, opencode, pi) and the first
    harness whose binary is on `PATH` wins. With nothing installed the launch
@@ -71,9 +74,9 @@ described in [Spawning and lifecycle](spawning-and-lifecycle.md).
 
 ```bash
 tclaude session new --harness codex
-tclaude agent spawn --group crew --name worker --harness opencode
+tclaude agent spawn crew --name worker --harness opencode
 tclaude session new --harness copilot --model gpt-5.4
-tclaude agent spawn --group crew --non-interactive --harness shell \
+tclaude agent spawn crew --non-interactive --harness shell \
   --initial-message 'go test ./...'
 ```
 
@@ -105,23 +108,24 @@ warning. Model and effort are remembered by the harness itself.
 | Clone with conversation copy | ✅ native copy | ✅ rollout JSONL; app-server forks the thread | ✅ native export/import | ✅ native event log | ✅ native chat JSONL | ✅ native session JSONL | ❌ |
 | [Cross-harness history translation](#cross-harness-history-translation) | ✅ | ✅ | ✅ | ✅ images by path | ✅ | ✅ | ❌ |
 | [Conversation](conversations.md) list & search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ send-keys only | ⚠️ durable inbox only; never injected into the shell |
+| Agent groups & messaging | ✅ | ✅ | ✅ | ⚠️ one launch topology only | ⚠️ send-keys only, not yet exercised against a live pane | ⚠️ send-keys; experimental `--pi-drive` | ⚠️ durable inbox only; never injected into the shell |
 | Automatic prompt-based name refinement | ✅ contained one-shot | ✅ read-only one-shot | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ❌ generated name retained; no tested unattended sandbox posture | ✅ read-only-tools ephemeral one-shot | ❌ no model |
-| Standing-order native hook selectors | ✅ inline or next-turn | ✅ inline or next-turn | ✅ observed events, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ installed baseline only, next-turn | ❌ not yet exercised | ❌ no hook source |
+| Standing-order native hook selectors | ✅ inline or next-turn | ✅ inline or next-turn | ✅ observed events, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ installed baseline only, next-turn | ⚠️ next-turn | ❌ no hook source |
 | Account quota spawn gate | ✅ cached quota windows | ✅ cached quota windows | ❌ no single account quota | ✅ cached quota windows | ❌ account quota is not captured in session logs | ❌ no single account quota | ❌ no model |
 | Rename | ✅ in-pane `/rename` | ✅ title store | ✅ server API | ✅ in-pane `/rename` | ✅ tclaude title overlay | ✅ in-pane `/name` | ❌ |
 | Compact / reincarnate | ✅ | ✅ | ✅ (server API, no keystrokes) | ✅ | ✅ in-pane `/compress` | ✅ in-pane `/compact`; pinned auto-compact window | ❌ |
+| [Startup-context re-injection](agents-and-groups.md) after compaction | ✅ hooks | ✅ hooks | ✅ server events | ✅ session event log | ❌ no post-compaction event | ✅ extension events | ❌ |
 | Séance (ask posture) replay | ✅ | ✅ | ❌ | ❌ | ✅ fork of a copy | ✅ continues a copy | ❌ |
 | [Remote control](remote.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ | ❌ | ⚠️ extension footer segment: tclaude's pinned-window context meter | ❌ |
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Native sandbox-profile path rules / reopen beneath deny | ✅ sandbox on; caveats | ✅ managed Linux profile + probe | ⚠️ soft tool permissions only | ❌ native command sandbox does not cover file tools; use tclaude-layer | ❌ fixed native sandbox profile; use tclaude-layer | ❌ no native sandbox | ❌ use tclaude-layer |
 | Global OS filesystem rules in profile editor | ✅ settings + managed baseline | ✅ managed baseline | ❌ native config is soft tool control | ❌ native policy only confines commands | ❌ tools.sandbox selects posture, not path rules | ❌ no native policy | ❌ no native policy |
-| Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ❌ no proxy carriage smoke; filtered launches use the packet gateway | ❌ no shell carriage smoke |
+| Activated proxy destination filtering | ✅ Linux/macOS | ✅ Linux/macOS | ✅ Linux/macOS | ❌ private routed posture does not enforce destination rules | ⚠️ Linux only; no Darwin carriage smoke | ⚠️ Linux only; no Darwin carriage smoke | ❌ no shell carriage smoke |
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off | ⚠️ macOS only (`seatbelt`) | ❌ | ❌ |
 | [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ | ✅ | ✅ the only boundary | ✅ |
-| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD | ✅ what-if cost | ✅ pi's catalog price; what-if under a subscription login | ❌ |
-| Bundled skills via `setup --install-agent-skills` | ✅ `~/.claude/skills` | ✅ shared `~/.agents/skills` + `$CODEX_HOME/skills` | ✅ shared roots; external skills must be enabled | ✅ shared `~/.agents/skills` | ✅ shared `~/.agents/skills` | ❌ | ❌ |
+| Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, derived virtual USD | ✅ what-if cost; real spend on API-key or Vertex | ✅ pi's catalog price; what-if under a subscription login | ❌ |
+| Bundled skills via `setup --install-agent-skills` | ✅ `~/.claude/skills` | ✅ shared `~/.agents/skills` + `$CODEX_HOME/skills` | ✅ shared roots; external skills must be enabled | ✅ shared `~/.agents/skills` | ✅ shared `~/.agents/skills` | ✅ shared `~/.agents/skills` | ❌ |
 | Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ | ✅ settings.json hooks | — per-launch extension, no setup | ❌ |
 | Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ | ✅ | ✅ | — |
 | Tool governance (`--tools`) | ❌ | ❌ | ✅ | ❌ | ❌ | ⚠️ approval posture picks the tool set | ❌ |
@@ -278,7 +282,7 @@ override with three modes:
 - `inherit` *(default)* — no override; the agent runs under whatever your
   `settings.json` configures.
 - `on` — forces the sandbox on for this session, with the agentd socket
-  reachable and `~/.tclaude` hidden.
+  reachable and `~/.tclaude/data` and `~/.claude/sessions` hidden.
 - `off` — forces Claude Code's own sandbox off. Under
   `--sandbox-impl tclaude-layer` this is what tclaude itself sets, because its
   own wall is enforcing — see [Sandboxing](sandboxing.md) for the two-axis
@@ -297,14 +301,24 @@ default; your own configuration rules.
 - **Auto memory is off by default.** tclaude launches Claude Code with
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a checkout do not
   cross-pollute the per-project memory store. Opt back in per launch with
-  `--auto-memory`. `CLAUDE.md` is unaffected. See
+  `--auto-memory` or a spawn profile's `auto_memory`. `CLAUDE.md` is
+  unaffected. See
   [memory-files](utilities.md#tclaude-memory-files) for inspecting the store.
+- **The agent view is off by default.** tclaude launches Claude Code with
+  `CLAUDE_CODE_DISABLE_AGENT_VIEW=1`, so left arrow in a managed pane is a plain
+  cursor key. The view forks a conversation into a background daemon outside
+  tmux, where tclaude cannot track it, deliver messages to it, or attach to it,
+  and quitting the view ends the pane. Opt back in per launch with
+  `--context-features agent-view=on` if you accept that. `tclaude task run`
+  and `tclaude agent spawn --non-interactive` have no opt-in; the flag is
+  rejected for the latter. `claude` run outside tclaude is unaffected.
 - **Cross-session messaging is off by default.** Claude Code ships its own
   agent-to-agent mesh (the `ListAgents` and `SendMessage` tools over a
   per-session socket). That is a second coordination channel with none of
   tclaude's group membership, permission slugs, or audit trail, so tclaude
   closes it and leaves `tclaude agent send` as the way agents coordinate. Opt
-  back in per launch with `--peer-messaging`. **In-harness subagents are
+  back in per launch with `--peer-messaging` or a spawn profile's
+  `peer_messaging`. **In-harness subagents are
   unaffected either way** — the deny names `ListAgents`, never `SendMessage`.
   See [Peer messaging](utilities.md#claude-code-peer-messaging).
 - **Startup-context trimming** (`--context-features`) removes bundled skills,
@@ -320,7 +334,10 @@ default; your own configuration rules.
   instead of stalling forever on a clarifying question.
 - **Remote control** (`--remote-control`, or toggled later) arms Claude Code's
   built-in Remote Access so the session is reachable from claude.ai/code and
-  the Claude mobile app. Claude Code only. See [Remote](remote.md).
+  the Claude mobile app. Claude Code only. See [Remote](remote.md). The
+  three profile toggles resolve the same way on every spawn path, trigger and
+  process workers included; see
+  [Default resolution](spawning-and-lifecycle.md#default-resolution).
 - **Background shells and monitors** are tracked per task, so an agent waiting
   on one shows `⚙+N` / `👁+N` instead of `idle` in the
   [dashboard](dashboard.md).
@@ -392,8 +409,8 @@ to `xhigh` for models without a max tier.
 - `tclaude-agent` *(daemon default)* — not a raw Codex mode but a
   tclaude-managed **permission profile** (`codex -p tclaude-agent-<launch>`),
   giving `workspace-write` containment plus an allow-listed agentd socket so
-  the sandboxed agent can still run `tclaude agent …`, while `~/.tclaude` is
-  denied entirely. When launched inside a Git repo it also grants the minimal
+  the sandboxed agent can still run `tclaude agent …`, while `~/.tclaude/data` is
+  denied. When launched inside a Git repo it also grants the minimal
   repository root needed to create and commit in sibling worktrees.
 - `workspace-write` / `read-only` — raw confined Codex modes, passed through.
   No agentd-socket grant, so agents under these cannot reach `tclaude agent`.
@@ -452,10 +469,44 @@ table and records the result as what-if cost.
 
 **Tool governance.** OpenCode gets an axis no other harness has:
 `--tools allow|ask|deny` applies one permission action uniformly to its
-built-in bash, glob, grep, LSP, task, and skill tools. `allow` (default) runs
+built-in bash, glob, grep, LSP, and skill tools. `allow` (default) runs
 them without prompting; `ask` prompts (and can stall a detached agent);
 `deny` blocks them. It is independent of the approval selector below and is
 preserved across clone, resume, and reincarnate.
+
+**Sub-agents are off, unless you pick `all`.** Under `allow`, `ask` and
+`deny`, OpenCode's task tool, which hands work to a sub-agent such as
+`explore` or `general`, is always denied, and OpenCode hides it, so the main
+agent reads and searches files itself. The reason: those policies are a
+per-session rule list that starts by denying everything and then allows what
+the launch may do. When OpenCode (1.18.6) creates a sub-agent session it copies
+only the parent's deny rules into it, so a sub-agent would get the deny-all and
+none of the allows and could not read a single file.
+
+**`--tools all`** allows every OpenCode tool, the ones tclaude has never
+audited included: MCP and plugin tools, tools a later OpenCode adds, the
+question tool, plan mode, and sub-agents. There is no deny-all baseline, so a
+sub-agent works and has what the agent has. What tclaude still applies is only
+what you chose, and each is an allow or a deny, which OpenCode does pass on to
+sub-agents:
+
+- the approval setting for edits and for leaving the worktree;
+- a closed network for the web tools (they are allowed otherwise);
+- the per-tool entries, written after `all`:
+
+| Entry | Default | Effect |
+| --- | --- | --- |
+| `question=deny` | allowed | OpenCode's question tool waits for your answer; a detached agent that asks shows as needing you. |
+| `plan=deny` | allowed | plan mode (`plan_enter`, `plan_exit`). |
+| `env=allow` | denied | reading `.env` files. Denied by default because the usual "ask" cannot reach a sub-agent, and OpenCode's explore sub-agent would otherwise read them without asking. |
+
+For example `--tools all,question=deny,plan=deny`. The spawn dialog and the
+spawn-profile editor show these as checkboxes under Tool governance when it
+is `all`, and profiles store the same value, so it echoes and relaunches like
+the others. `all` is refused with approval `ask` (a sub-agent cannot inherit an
+ask, so it would act without your OK) and with the `access-control` sandbox mode
+(its path rules depend on the deny-all baseline); use `--sandbox-impl
+tclaude-layer` or `off`, and approval `deny` or `allow-tools`.
 
 **Sandbox — read this caveat.** OpenCode's `access-control` mode (the
 `--sandbox` default) compiles tclaude's path and permission rules into
@@ -472,6 +523,32 @@ governance active.
 permission policy: `deny` *(default — edits and web tools denied)*, `ask`
 (a present human approves representable edits), `allow-tools`
 (auto-accepts scoped edits and explicitly enabled web tools).
+
+### OpenCode under a filtered network
+
+OpenCode reads its provider from its own config, and tclaude cannot read
+OpenCode's effective config for every provider. So, under a filtered network
+(an allow list, or default-allow with deny rules):
+
+- **tclaude checks the model endpoint only for one config shape**: a
+  `provider/model` launch model and a profile environment entry
+  `OPENCODE_CONFIG_CONTENT` that defines exactly that one
+  `@ai-sdk/openai-compatible` provider with a concrete `options.baseURL`,
+  `enabled_providers` set to it, and the model whitelisted. The endpoint must
+  then be covered by the network rules, or the launch is refused naming it.
+- **Any other provider launches unchecked.** That includes OpenCode's built-in
+  providers, a provider set in your own OpenCode config, and no launch model.
+  tclaude adds no model access. The launch notes say the endpoint was not
+  checked, and why resolution stopped. If OpenCode then cannot reach its model
+  (requests hang or fail inside OpenCode, not at launch), the network policy
+  is blocking it.
+- **The fix is in the network policy**: allow the provider's API host on port
+  443 in every tier that has an allow list (they intersect), remove the deny
+  rule that matches it, or use network open. Find the host in your OpenCode
+  provider config, or in OpenCode's documentation for a built-in provider.
+
+`tclaude agent sandbox-profiles plan -g <group> -f tclaude-layer/opencode`
+shows the composed network rules a launch in that group would get.
 
 **Other gaps, stated plainly:** no séance replay for `ask` threads, no
 directory-trust dialog (so nothing to pre-trust), no status line
@@ -538,9 +615,9 @@ never reaches its first turn. `--trust-dir` seeds the entry in
   group agents in exactly **one launch topology**:
   `--sandbox-impl tclaude-layer` with sandbox mode `off` — tclaude's wall
   enforcing, Copilot's own sandbox asserted down, so the launch has exactly
-  one claimed boundary. Every other spelling is refused as
-  `sandbox_restricted`. Interactive human sessions are not restricted this
-  way.
+  one claimed boundary. Agents spawning any other spelling are
+  refused with `sandbox_restricted`. Spawns started by a human are not
+  restricted this way.
 - **Usage in AI credits.** Cost is carried in the nano-AI-credit units
   Copilot emits; the dashboard derives a *virtual* USD value from the fixed
   1 credit = $0.01 gross subscription rate (labeled as derived, not billed).
@@ -615,7 +692,7 @@ records. Import remints session and message IDs, maps the receiver project, and 
 through Gemini’s own session store. Legacy JSON sessions are converted to JSONL.
 Settings, trust decisions, credentials and filesystem checkpoints do not travel.
 
-**Ask.** `tclaude ask --harness gemini` runs headless `gemini --prompt` and
+**Ask.** `tclaude ask`, with a Gemini `ask.profile`, runs headless `gemini --prompt` and
 returns the buffered answer. In headless mode Gemini denies any tool call
 that would need approval. Live streaming is not supported.
 
@@ -764,7 +841,7 @@ read, the same read-through pattern Copilot uses:
 
 Gemini records no price, so tclaude prices each model call itself at Gemini
 API pay-per-token rates. Whether that estimate counts as real spend or a
-**what-if cost** follows `cost.gemini_billing` (Config tab → Gemini billing):
+**what-if cost** follows `cost.gemini_billing` (Config › Usage & costs › Cost display › Gemini billing):
 under the default `auto`, a session whose Gemini settings select an API key
 (`security.auth.selectedType` `gemini-api-key`) or Vertex AI is shown as real
 API spend, while a Google sign-in, or no readable selection, stays a what-if
@@ -896,8 +973,8 @@ than guessing, as does an `httpProxy` in pi's settings. The launch also runs pi
 offline (`PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0`): no
 version check, catalog refresh, install telemetry or tool download. Outside a
 filtered network tclaude sets none of these and your pi settings decide.
-Filtered pi launches use the packet gateway; the proxy engine is not yet
-offered for pi.
+Filtered pi launches use the packet gateway by default; the proxy engine is
+activated on Linux only.
 
 **Conversations.** tclaude lists and searches pi's session files wherever pi
 keeps them (`~/.pi/agent/sessions`, or the `sessionDir` your settings name),
@@ -968,7 +1045,7 @@ registry inputs and ambient authentication cannot replace the launch bearer.
 
 Explicit `off` overrides profile defaults. Saved provider logins cannot replace
 the pinned gateway route; conflicting overrides refuse the launch. See
-[Model gateways](federation.md#model-gateways-claude-code) for permissions,
+[Model gateways](federation-models.md#model-gateways) for permissions,
 limits, usage and shutdown controls.
 
 OpenCode remains unsupported even though it supports custom provider URLs and
@@ -989,6 +1066,21 @@ that cannot fall back to saved Google OAuth, Vertex settings or `.env` inputs.
 See [Gemini configuration](https://geminicli.com/docs/reference/configuration/).
 Both harnesses refuse a gateway request with the reason before launching.
 Non-interactive one-shot runs also refuse a proxy choice.
+
+### Startup-context re-injection
+
+Every harness that reports a compaction gets the same queued message; see
+[Agents and groups](agents-and-groups.md). Copilot has no post-compaction hook,
+so the daemon reads compactions from `session.compaction_complete` and `/clear`
+from `session.context_cleared` in the session event log. It notices within a
+few seconds, and the message can take up to about 30 seconds more to arrive. A
+failed compaction, or a subagent's, queues nothing. What is already in a resumed
+conversation's log is not answered again.
+
+Gemini CLI is the gap: `PreCompress` is advisory and fires before the
+compression, and no event follows it, so tclaude cannot tell whether a
+compression happened and queues nothing. A Gemini agent keeps only what the
+compression summary kept.
 
 ### tclaude-managed instructions
 

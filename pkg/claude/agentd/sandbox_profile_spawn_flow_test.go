@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -227,10 +228,18 @@ func TestSandboxProfileResumeRefreshesComposedPolicyAndCanSpawnChild(t *testing.
 	}
 }
 
-func TestSandboxProfileResumeFailsBeforeLaunchWhenExplicitProfileDisappears(t *testing.T) {
+// A resume always works (docs/launch-resolution.md): when the explicit
+// sandbox profile an agent was launched with is gone, the resume falls back
+// to the policy stored at its last launch and says so (tcl-a2e791 slice 6a).
+func TestSandboxProfileResumeFallsBackWhenExplicitProfileDisappears(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	f := newFlow(t)
 	f.HaveGroup("crew")
-	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit-policy"})
+	stored := db.SandboxEnvironmentEntry{Name: "POLICY_VERSION", Value: "v1"}
+	// An agent-owned directory too: its binding is already materialized in
+	// the stored policy the fallback relaunches under.
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit-policy",
+		Environment: []db.SandboxEnvironmentEntry{stored}, AgentDirectories: []string{"GOCACHE"}})
 	require.NoError(t, err)
 	parent := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "parent", "sandbox_profile": "explicit-policy",
@@ -241,16 +250,93 @@ func TestSandboxProfileResumeFailsBeforeLaunchWhenExplicitProfileDisappears(t *t
 	f.MarkOffline(parent.TmuxSession)
 
 	resume := f.AsHuman().Resume(parent.ConvID)
-	assert.Equal(t, "error", resume.Action)
-	assert.Contains(t, resume.Detail, "sandbox_profile_changed")
-	assert.Contains(t, resume.Detail, "recreate it under that name")
+	f.AssertResumeSpawned(resume)
+	require.Len(t, resume.Warnings, 1, "%+v", resume)
+	assert.Contains(t, resume.Warnings[0], "recreate it under that name")
+	assert.Contains(t, resume.Warnings[0], "stored at its last launch")
+	launched, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
+	require.True(t, ok)
+	assert.Contains(t, launched.Effective.Environment, stored, "the stored contents still apply")
+	assertOneBinding(t, launched, "GOCACHE")
 
-	// The recovery action is real: recreating the named profile gives it a new
-	// stable ID, and the next controlled resume resolves and launches it.
-	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit-policy"})
+	// Recreating the profile under its name makes it the agent's profile
+	// again on the next resume, with its new contents and no warning.
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit-policy",
+		Environment: []db.SandboxEnvironmentEntry{{Name: "POLICY_VERSION", Value: "v2"}}})
 	require.NoError(t, err)
+	current, err := db.FindSessionByConvID(parent.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	f.MarkOffline(current.TmuxSession)
 	resume = f.AsHuman().Resume(parent.ConvID)
 	f.AssertResumeSpawned(resume)
+	assert.Empty(t, resume.Warnings)
+	launched, ok = f.World.SpawnSandboxPolicy(parent.ConvID)
+	require.True(t, ok)
+	assert.Contains(t, launched.Effective.Environment,
+		db.SandboxEnvironmentEntry{Name: "POLICY_VERSION", Value: "v2"})
+}
+
+func TestSandboxProfileReincarnateFallsBackWhenExplicitProfileDisappears(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	stored := db.SandboxEnvironmentEntry{Name: "POLICY_VERSION", Value: "v1"}
+	// An agent-owned directory too: its binding is already materialized in
+	// the stored policy the fallback relaunches under.
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit-policy",
+		Environment: []db.SandboxEnvironmentEntry{stored}, AgentDirectories: []string{"GOCACHE"}})
+	require.NoError(t, err)
+	target := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "sandbox_profile": "explicit-policy",
+	})
+	require.Equalf(t, http.StatusOK, target.Code, "spawn body=%s", target.Raw)
+	_, err = db.DeleteSandboxProfile("explicit-policy")
+	require.NoError(t, err)
+
+	rec := agentReq(t, f, target.ConvID, http.MethodPost, "/v1/whoami/reincarnate",
+		map[string]any{"follow_up": "carry on"})
+	require.Equalf(t, http.StatusOK, rec.Code, "reincarnate body=%s", rec.Body.String())
+	var response testharness.ReincarnateResp
+	testharness.DecodeJSON(t, rec, &response)
+	require.Len(t, response.Warnings, 1, "%s", rec.Body.String())
+	assert.Contains(t, response.Warnings[0], "stored at its last launch")
+	launched, ok := f.World.SpawnSandboxPolicy(response.NewConv)
+	require.True(t, ok)
+	assert.Contains(t, launched.Effective.Environment, stored)
+	assertOneBinding(t, launched, "GOCACHE")
+}
+
+// assertOneBinding checks an agent-owned directory is bound exactly once.
+func assertOneBinding(t *testing.T, snapshot *sandboxpolicy.Snapshot, name string) {
+	t.Helper()
+	n := 0
+	for _, entry := range snapshot.Effective.Environment {
+		if entry.Name == name {
+			n++
+		}
+	}
+	assert.Equalf(t, 1, n, "%s bindings in %+v", name, snapshot.Effective.Environment)
+}
+
+// Pinned: with nothing configured, a resume and a reincarnation carry no
+// fallback warning.
+func TestSandboxProfileRelaunchNothingConfiguredWarnsNothing(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "plain"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	f.MarkOffline(spawn.TmuxSession)
+	resume := f.AsHuman().Resume(spawn.ConvID)
+	f.AssertResumeSpawned(resume)
+	assert.Empty(t, resume.Warnings)
+
+	rec := agentReq(t, f, spawn.ConvID, http.MethodPost, "/v1/whoami/reincarnate",
+		map[string]any{"follow_up": "carry on"})
+	require.Equalf(t, http.StatusOK, rec.Code, "reincarnate body=%s", rec.Body.String())
+	var response testharness.ReincarnateResp
+	testharness.DecodeJSON(t, rec, &response)
+	assert.Empty(t, response.Warnings)
 }
 
 func TestSandboxProfileSpawnAcceptsMissingFilesystemRule(t *testing.T) {
@@ -391,7 +477,13 @@ func TestSandboxProfileAgentCanSpawnChildWithAdditionalAgentDirectories(t *testi
 	}
 }
 
-func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t *testing.T) {
+// An operator who widens the profiles a running parent resolves (its group's
+// or the global assignment) widens what that parent's next relaunch gets, so
+// its child, spawned into the parent's own group, inherits the widened
+// configuration: the widening is the operator's edit, not an escalation by
+// the parent (tcl-23i0pp, row 3). It used to be refused until the parent
+// relaunched.
+func TestSandboxProfileSpawnFollowsAnOperatorWideningAfterParentLaunch(t *testing.T) {
 	for _, scope := range []string{"global", "group"} {
 		t.Run(scope, func(t *testing.T) {
 			f := newFlow(t)
@@ -417,30 +509,88 @@ func TestSandboxProfileSpawnRejectsAmbientCapabilityWideningAfterParentLaunch(t 
 				require.NoError(t, err)
 			}
 
-			denied := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
+			child := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
 				"name": "child", "cwd": t.TempDir(), "approval": "default",
 			})
-			require.Equal(t, http.StatusForbidden, denied.Code)
-			assert.Contains(t, string(denied.Raw), "sandbox_profile_restricted")
-			assert.Contains(t, string(denied.Raw), writeRoot)
+			require.Equalf(t, http.StatusOK, child.Code, "spawn body=%s", child.Raw)
+			assertSnapshotGrants(t, child.ConvID, writeRoot, "write")
 		})
 	}
 }
 
+// A child spawned into another group takes that group's assignment, capped
+// by its parent's configuration resolved now (tcl-23i0pp, row 2, Q13): a
+// group assigning more than the parent has is still refused.
+func TestSandboxProfileSpawnIntoAnotherGroupIsCappedByTheParent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	f.HaveGroup("lab")
+	parent := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "parent", "approval": "bypassPermissions",
+	})
+	require.Equalf(t, http.StatusOK, parent.Code, "spawn body=%s", parent.Raw)
+	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
+	require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermAgentSpawn, "test"))
+
+	writeRoot := testutil.CanonicalTempDir(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "lab-write", Filesystem: []db.SandboxFilesystemGrant{{Path: writeRoot, Access: "write"}},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("lab", "lab-write")
+	require.NoError(t, err)
+
+	denied := f.AsAgent(parent.ConvID).SpawnWith("lab", map[string]any{
+		"name": "child", "cwd": t.TempDir(), "approval": "default",
+	})
+	require.Equal(t, http.StatusForbidden, denied.Code, "spawn body=%s", denied.Raw)
+	assert.Contains(t, string(denied.Raw), "sandbox_profile_restricted")
+	assert.Contains(t, string(denied.Raw), writeRoot)
+
+	// Once the parent's own group grants the same root, the parent has it
+	// now, and the child fits.
+	_, err = db.SetAgentGroupSandboxProfile("crew", "lab-write")
+	require.NoError(t, err)
+	child := f.AsAgent(parent.ConvID).SpawnWith("lab", map[string]any{
+		"name": "child", "cwd": t.TempDir(), "approval": "default",
+	})
+	require.Equalf(t, http.StatusOK, child.Code, "spawn body=%s", child.Raw)
+	assertSnapshotGrants(t, child.ConvID, writeRoot, "write")
+}
+
+// assertSnapshotGrants checks that conv's stored launch snapshot grants path
+// at access.
+func assertSnapshotGrants(t *testing.T, conv, path, access string) {
+	t.Helper()
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(conv)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Path == path {
+			assert.Equal(t, access, string(grant.Access), path)
+			return
+		}
+	}
+	t.Errorf("%s's snapshot has no grant for %s", conv, path)
+}
+
 func TestSandboxProfileSpawnRejectsExplicitInternetWidening(t *testing.T) {
-	makeInternetProfile := func(t *testing.T) {
+	makeInternetProfile := func(t *testing.T, group string) {
 		t.Helper()
 		_, err := db.CreateSandboxProfile(&db.SandboxProfile{
 			Name: "explicit-internet", NetworkAccess: sandboxpolicy.NetworkAccessInternet,
 		})
 		require.NoError(t, err)
-		_, err = db.SetAgentGroupSandboxProfile("crew", "explicit-internet")
+		_, err = db.SetAgentGroupSandboxProfile(group, "explicit-internet")
 		require.NoError(t, err)
 	}
 
-	t.Run("current parent with inherited network posture", func(t *testing.T) {
+	// The parent's own group gaining internet widens the parent too (row 3),
+	// so this is judged for a child spawned into another group (row 2).
+	t.Run("current parent, child into another group", func(t *testing.T) {
 		f := newFlow(t)
 		f.HaveGroup("crew")
+		f.HaveGroup("lab")
 		parent := f.AsHuman().SpawnWith("crew", map[string]any{
 			"name": "parent", "harness": "codex", "sandbox": harness.SandboxManagedProfile,
 		})
@@ -454,9 +604,10 @@ func TestSandboxProfileSpawnRejectsExplicitInternetWidening(t *testing.T) {
 		parentSession.HarnessBuiltinMode = harness.SandboxManagedProfile
 		require.NoError(t, db.SaveSession(parentSession))
 		require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermGroupsMembersSpawn, "test"))
-		makeInternetProfile(t)
+		require.NoError(t, db.GrantAgentPermission(parent.ConvID, agentd.PermAgentSpawn, "test"))
+		makeInternetProfile(t, "lab")
 
-		denied := f.AsAgent(parent.ConvID).SpawnWith("crew", map[string]any{
+		denied := f.AsAgent(parent.ConvID).SpawnWith("lab", map[string]any{
 			"name": "child", "harness": "codex", "sandbox": harness.SandboxManagedProfile,
 		})
 		require.Equal(t, http.StatusForbidden, denied.Code)
@@ -470,7 +621,7 @@ func TestSandboxProfileSpawnRejectsExplicitInternetWidening(t *testing.T) {
 		const parent = "legacy-1111-2222-3333-444444444444"
 		f.HaveMember("crew", parent)
 		require.NoError(t, db.GrantAgentPermission(parent, agentd.PermGroupsMembersSpawn, "test"))
-		makeInternetProfile(t)
+		makeInternetProfile(t, "crew")
 
 		denied := f.AsAgent(parent).SpawnWith("crew", map[string]any{
 			"name": "child", "harness": "codex", "sandbox": harness.SandboxManagedProfile,

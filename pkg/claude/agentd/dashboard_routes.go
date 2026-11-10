@@ -27,7 +27,8 @@ func SetRouteMapPlatformForTest(platform string) func() {
 // buildDashboardRouteMap projects the route authority into a safe operator
 // view. It resolves names from the already-built roster, compares the
 // generation-bound route rows with current group/member state, and intentionally
-// drops endpoints, targets, launch generations, and endpoint error details.
+// drops agent endpoints, targets, launch generations, and endpoint errors.
+// Operator host-loopback endpoints are disclosed for managing host leases.
 func buildDashboardRouteMap(
 	groups []*db.AgentGroup,
 	groupViews []dashboardGroup,
@@ -160,6 +161,12 @@ func buildDashboardRouteMap(
 					Boundary:         boundary,
 				})
 			}
+			for _, host := range hostRoutesForRoute(route.ID) {
+				view.Consumers = append(view.Consumers, dashboardRouteConsumer{
+					ID: host.ID, ConsumerAgentID: "operator-host", ConsumerKind: "host", ConsumerName: "Host (operator)",
+					State: "open", EndpointState: "ready", GenerationHealth: generationHealth, ConsumerHealth: "current", Boundary: "host", Endpoint: host.Endpoint, Mode: host.Mode,
+				})
+			}
 			result.Routes = append(result.Routes, view)
 		}
 	}
@@ -266,4 +273,32 @@ func safeRouteName(value string) string {
 		return "(unnamed agent)"
 	}
 	return value
+}
+
+// Host-only publications are operator-visible, independent of the group roster.
+func appendDashboardHostPublications(result *dashboardRouteMap) {
+	routes, err := db.ListHostAgentRoutes("")
+	if err != nil {
+		return
+	}
+	for _, route := range routes {
+		route = refreshRoutePublisher(route)
+		name := route.PublisherAgentID
+		if agent, err := db.GetAgent(route.PublisherAgentID); err == nil && agent != nil && agent.PendingName != "" {
+			name = agent.PendingName
+		}
+		health := "current"
+		if !routePublisherLive(route) || !hostPublishAllowed(route.PublisherConvID) {
+			health = "stale"
+		}
+		view := dashboardRoute{HostOnly: true, ID: route.ID, Name: route.Name, StableReference: stableRouteReferenceFor(route),
+			Transport: route.Transport, State: route.State, GenerationHealth: health, PublisherAgentID: route.PublisherAgentID,
+			PublisherName: name, PublisherHealth: health, PublisherBoundary: "host", Consumers: []dashboardRouteConsumer{}}
+		for _, host := range hostRoutesForRoute(route.ID) {
+			view.Consumers = append(view.Consumers, dashboardRouteConsumer{
+				ID: host.ID, ConsumerAgentID: "operator-host", ConsumerKind: "host", ConsumerName: "Host (operator)", State: "open", EndpointState: "ready", GenerationHealth: health, ConsumerHealth: "current", Boundary: "host", Endpoint: host.Endpoint, Mode: host.Mode,
+			})
+		}
+		result.Routes = append(result.Routes, view)
+	}
 }

@@ -33,7 +33,7 @@ native log means it can only ever continue in that vendor's tool.
 tclaude already moves running agents around: morph switches model or
 harness in place, clone forks a sibling, move and teleport send an agent to
 another node, and recall brings it home. Each of these grew its own
-carrier: the [agent bundle](federation.md#portable-local-agent-bundles)
+carrier: the [agent bundle](federation-moving.md#portable-local-agent-bundles)
 (native history only), the [group export](agents-and-groups.md) archive, the
 neutral transcript used by
 [cross-harness translation](harnesses.md#cross-harness-history-translation),
@@ -88,28 +88,129 @@ receiving side.
   recovery after host loss, which also prevents the old host from coming back
   as a second copy.
 - **Authority is advisory.** Groups, roles, permissions and ownerships in a PAF
-  are provenance. They never become grants on the receiver unless that
-  receiver's own policy approves them explicitly. Ownership never travels.
+  are provenance. They become grants on the receiver only when that receiver's
+  own policy approves them, or a human here keeps them from the import's confirm
+  list (see [Keeping what a file asks for](#keeping-what-a-file-asks-for)). A deny
+  stays, since it only takes away. Scheduled jobs land disabled unless kept.
+  Members and their roles stay. Sudo is temporary, so an export never holds it,
+  and an import always drops it from an older file with a warning, and never
+  offers it. An agent's own ownership never travels, since its source group means
+  nothing here; a group's owners are confirmed like the rest of the list.
 - **Posture is decided by the receiver.** The recorded sandbox and approval
   posture is shown at import, but the landing profile and the receiver's
-  policy decide how the new agent actually runs. A received history is
+  policy decide how the new agent actually runs. A file can make its sandbox
+  tighter than a spawn here would resolve, never wider, and no confirmation
+  changes that. Approval, tools and auto-review may tighten too; a wider value
+  is dropped unless a human keeps it, and the preview and the import result say
+  which. A directory trust, remote control or environment variables it asks
+  for are dropped the same way, unless a spawn here gives them, as are peer
+  messaging, auto memory, the Copilot API drive, a question timeout, a model
+  proxy, a context feature a tier here trims, and a trim of the repo's or
+  organization's instructions. Other trims add to the receiver's. The warning
+  names variables, not their values, and a group file's environment goes the
+  same way. The dashboard keeps the import dialog open on the result when an
+  import has warnings, so you can read them. A teleport or direct move keeps all of
+  this, so a moved agent does not stall on prompts, when it lands automatically
+  or when its peer holds `agents.teleport.receive` for the receiving group, and
+  no human accepts it by hand. A human accepting a teleport or move by hand gets
+  the [same list](#keeping-what-a-file-asks-for), with every item ticked when the
+  sending peer has unrestricted trust and unticked otherwise; a request with no
+  selection, such as `tclaude federation offers import` without `--keep`, takes
+  those ticks. Without that grant, and with no human, the offer's teleport or
+  move label counts for nothing and it lands as a file. A received
+  history is
   untrusted input: it may contain instructions written by anyone whose text
   reached the original agent.
+
+### Keeping what a file asks for
+
+A file import drops what it asks for beyond a spawn here. The preview lists those
+items, grouped by kind, each with what it gives, so a human can keep the ones they
+want. Items a spawn here would give anyway, or that only tighten, are not listed.
+
+| In the list | Starts |
+|---|---|
+| Group owners | ticked |
+| Permissions and per-conversation grants | ticked |
+| Wider approval, tools and auto-review | ticked |
+| `trust_dir`, `remote_control`, `model_proxy`, `peer_messaging` | ticked |
+| `auto_memory`, `copilot_api`, `ask_user_question_timeout` | ticked |
+| `context_features` trims of instructions or policy, and features a tier here trims | ticked |
+| Environment variables | unticked |
+| Enabled scheduled jobs | unticked |
+
+The sandbox and sudo are never in the list. Anything unticked is dropped with a
+warning, and the result lists what was kept and what was dropped. A kept scheduled
+job lands enabled, and it still lands without operator attribution until you set
+that. A grant that cannot land here, such as an unknown permission or a scope naming
+a specific agent, is not offered and only warns.
+
+The list names environment variables and never holds their values. Reveal value in
+the dashboard, or `tclaude paf reveal <file> <name>`, asks for one value in a request
+of its own. Keeping a variable means you could see its value.
+
+The server decides. The apply request names what was kept, with the digest of the
+file it was read from, and the server checks both: a different file is refused, and
+so is an item this file does not list. Only a human on this node can keep anything.
+An agent caller keeps nothing even if it names items, and it gets a warning. So does
+a request a federation peer forwards, including a peer with unrestricted trust.
+
+On the command line, the preview or `--dry-run` prints the list and the digest:
+
+```bash
+tclaude agent groups import team.paf --dry-run --into "$PWD"
+tclaude agent groups import team.paf --into "$PWD" --keep-defaults --keep-digest <digest>
+tclaude agent groups import team.paf --into "$PWD" --keep owner:<conv> --keep cron:nightly --keep-digest <digest>
+tclaude paf import --file scout.paf --group team --apply --keep-all --keep-digest <digest>
+```
+
+`--keep-defaults` keeps what the dashboard starts with ticked, `--keep <id>` names
+items, and `--keep-all` takes every listed item. `--keep-none` drops everything,
+owners included. An offer's environment values cannot be revealed, and its
+permissions stay under the carry policy rather than this list. A request that names no selection has confirmed nothing, so only a
+group's owners land, for a human caller. Snapshot spawns and board imports are such
+requests.
+
+A group file's archived mail and head aliases land only among the file's own
+agents. The import gives fresh ids only to the file's own conversations, so an
+archived message addressed to another conversation on this node (by `to`, a
+recipient list or its original recipient), or a head alias pointing at one,
+would reach that agent unchanged, under the sender the file names. A human
+import drops those entries, and the preview and the reply list them by archived
+message id and alias handle. A peer import refuses the file.
+
+Mail the file says came from a conversation on this node that the file does not
+carry lands from an unknown sender instead, on every import, so the imported
+agents never see a message from a trusted local agent that it did not send. Its
+id is replaced by a fresh one (one per sender, so a thread still reads as one),
+which no agent and no name resolves to, and the local agent's history gains
+nothing. A head alias the file says such a conversation created is credited the
+same way. Mail from a sender that is not on this node is kept as it is. The
+preview and the reply list the affected messages by archived id.
+
+Mail from the source's operator lands as this node's operator's only on an
+import by this node's human, or by a peer with unrestricted trust. On a
+restricted peer's import it lands from an unknown sender instead, because an
+agent reads operator mail as this node's human's word. The preview and the
+reply list it by archived id.
 
 ## How tclaude uses PAF
 
 | Operation | What PAF carries | Carrier in this release |
 |---|---|---|
-| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF by default, from [`tclaude paf export`](#exporting-and-importing-an-agent) or `agent bundle export`; [agent bundle v1](federation.md#portable-local-agent-bundles) with `--format v1` |
+| **Export / import** of an agent | One agent PAF file. Import previews first, then lands the agent on a harness you choose. | PAF by default, from [`tclaude paf export`](#exporting-and-importing-an-agent) or `agent bundle export`; [agent bundle v1](federation-moving.md#portable-local-agent-bundles) with `--format v1` |
 | **Group export / import** | A group PAF: group configuration plus every member. | A [group PAF](#exporting-and-importing-a-group) by default; group export v5 with `--format zip` |
 | **Snapshots** | A named PAF in a local library. Instantiate one or many agents from it, or share it. | PAF in the [snapshot library](#snapshots) |
 | **Morph** (model or harness change in place) | The neutral context, losses and full transcript the switch produced. The identity stays in place, so no new agent is created. | Morph artifact directory |
 | **Clone** | A local sibling. Clone copies native history directly and shares PAF's history model. | Native copy (no file) |
 | **Move, teleport, recall home** | The agent's state in transit to another node, with provenance hops. Peers that do not advertise PAF receive the legacy agent bundle. | PAF to peers that advertise it, otherwise agent bundle v1 |
-| **Sharing** with a peer or on a [Board](federation.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
+| **Sharing** with a peer or on a [Board](federation-boards.md#content-board-membership) | An encrypted PAF addressed to named recipients, published only by a human. | Unencrypted PAF to peers that advertise it, otherwise agent bundle v1; [snapshots on Boards](#sharing-a-snapshot-on-a-board) as an encrypted PAF |
 | **Publishing** | A redacted, pseudonymous, signed PAF file for public sharing. tclaude provides no hosting; you choose where the file goes. | PAF with [`tclaude paf publish` / `agent snapshot publish`](#publishing) |
 | **Resilience** | Opt-in periodic encrypted snapshots to another node or Board, from which an agent can be recovered if its host is lost. | Encrypted PAF to a [federation peer or a Board](#resilience-snapshots), [recovered](#recovering-an-agent) under its agent id |
 | **Archival** | Any PAF can be inspected, verified and rendered to readable text without the original harness or model. | [`tclaude paf`](#reading-a-paf) |
+
+Any of the file operations above can also carry workflows beside the agents;
+see [Carrying workflows](#carrying-workflows).
 
 The last column says what each operation uses in this release. tclaude keeps
 importing every legacy carrier after an operation switches to PAF; see
@@ -258,8 +359,8 @@ With only the `agents.receive` grant, the teleport arrives on `laptop` as an
 ordinary offer. Accept it with `federation offers import` as in step 3.
 Automatic landing needs extra setup on the receiver.
 
-See [Moving an agent](federation.md#moving-an-agent) and
-[Teleport yourself to another node](federation.md#teleport-yourself-to-another-node).
+See [Moving an agent](federation-moving.md#moving-an-agent) and
+[Teleport yourself to another node](federation-moving.md#teleport-yourself-to-another-node).
 
 !!! note "Sharing snapshots on a Board"
     `tclaude agent snapshot share` shares a snapshot, encrypted to named
@@ -312,6 +413,94 @@ landing harness and model explicitly (or a spawn profile). The preview shows
 the original environment next to the landing one, the expected losses and the
 security posture before anything starts.
 
+## Carrying workflows
+
+A PAF is also the shared envelope: one archive that holds agents and
+[PWF](pwf.md) workflows side by side, and can say which agents perform which
+workflows. There is no separate file type. A `.pwf` stays a workflow on its
+own. A `.paf` that carries workflows opens in `process-templates inspect` and
+`import`, and in the dashboard's *import workflow*. Dropping a file on the dock
+or on a group's processes still takes a `.pwf` only.
+
+Carrying is opt-in. Nothing below happens unless you ask for it.
+
+```bash
+# An agent, with the templates of its active runs or a named template.
+tclaude paf export reviewer --file reviewer.paf --workflows
+tclaude paf export reviewer --file reviewer.paf --workflow ship-feature
+
+# A group with its saved processes; a snapshot likewise.
+tclaude agent groups export team --out team.paf --workflows
+tclaude agent snapshot create reviewer --name before-release --workflow ship-feature
+
+# A workflow with an agent for one of its roles, pre-briefed.
+tclaude agent process-templates export ship-feature \
+  --performer reviewer=alice --performer-history
+```
+
+The last form writes `ship-feature.paf`, of the [kind `bundle`](#manifestjson):
+workflows and the agents that perform them, with no group.
+
+Each side keeps its own gates. Carrying a workflow needs
+`process.templates.read` and processes turned on. Shipping a performer needs
+`agent.bundle.export` on that agent, and is refused on suspected credentials
+in the conversation until you pass `--allow-flagged`. Without
+`--performer-history` a performer travels as its definition only.
+
+### Importing what a file carries
+
+Importing never takes both sides at once. The file is reviewed one thing at a
+time, with the review that thing always gets:
+
+- `paf import` and `agent groups import` land the agents, store no workflows,
+  and tell you what else the file holds. `--dry-run` and the preview list it.
+- `process-templates import` stores the workflow after the
+  [workflow review](pwf.md#sharing-a-workflow), and lands no agents. Its review
+  lists the performers the file ships. `--workflow <key>` picks one when the
+  file holds several.
+- A performer lands through the agent import, by its key:
+
+```bash
+tclaude paf import --file ship-feature.paf --agent reviewer --role reviewer \
+  --cwd "$PWD" --group team --apply
+```
+
+`--role` is the role you land it under. The file proposes a role and cannot
+assign one: an agent chosen with `--agent` lands with no role unless you give it
+one.
+
+In the dashboard, *import workflow* accepts a `.paf`. Its review lists the
+agents the file ships, each with *Land it…*, and the agent import dialog offers
+*Review workflows…* for a file that carries them. Both export dialogs offer
+*Carry its workflows*. Shipping performers is on the command line for now.
+
+### What sharing does to a carried workflow
+
+A carried workflow's templates are addressed by hash, so they cannot be edited
+in place. [Redaction](#redacting-a-paf) keeps or drops each workflow whole, and
+records a dropped one as `drop_unredactable`:
+
+| Redaction | Carried workflow |
+| --- | --- |
+| Conversation-only (`--stub-tool-results`, `--drop-reasoning`, `--keep-turns`, …) | Kept |
+| `mask_flagged` | Kept if its scan is clean, otherwise dropped |
+| Paths to placeholders, `strip_identity` (so every [published](#publishing) PAF) | Dropped |
+
+A `bundle` that loses all its workflows this way becomes an `agent` PAF if it
+has one agent; with several, the redaction is refused. `strip_identity` takes a
+PAF of one agent, so a `bundle` cannot be published as it is: export the agent on
+its own. The credential scan covers workflow entries like any other.
+
+A signature on a PAF covers the workflows it carries, and counts for
+[refusing unsigned files](pwf.md#refusing-unsigned-files). Redacting or
+consenting vouches for nothing, so a copy that keeps workflows is signed only by
+a key that already signed the original.
+
+Moves and other federation transfers do not carry workflows, and a bundle offered
+as a transfer is refused. A [snapshot shared on a Board](#sharing-a-snapshot-on-a-board)
+is the stored file, so a snapshot created with workflows keeps them, and a
+receiver needs a reader of PAF 0.2.
+
 ## Exporting and importing an agent
 
 ```bash
@@ -339,8 +528,12 @@ permissions and ownership are advisory only.
 instead: it joins the group with its conversation installed and its
 briefing queued, and `tclaude agent resume` starts it later on its landing
 harness. Landing offline needs a conversation that lands (not
-`--skip-history` or a configuration-only import) and is not yet available
-on OpenCode.
+`--skip-history` or a configuration-only import). On OpenCode the
+conversation goes in the store its landing posture reads, so a
+tclaude-sandboxed agent lands in private state, and its server starts at
+resume. OpenCode takes a model only from the launch prompt, so an offline
+landing with its conversation intact keeps the conversation's last model, even
+when the import names another; the import warns when it does.
 
 The agent lands on its own harness unless `--harness` names another. When
 the source harness is not available here, the import says so and asks for
@@ -365,8 +558,20 @@ the conversation takes:
   after trimming. The agent then imports as configuration only, with a
   warning; `tclaude paf render` still reads the whole conversation.
 
-On another harness the source's launch posture (approval, sandbox and the
-other profile settings) is not applied; the receiver's defaults and normal
+The receiving group's sandbox posture applies, and a file may tighten it but
+never widen it. An agent that ran under tclaude's sandbox keeps it, and the import
+is refused where this node cannot run it. The exception is a landing on Codex `read-only`
+or `workspace-write`, which replaces tclaude's sandbox because that sandbox would
+allow more. A harness's own mode stays only when it is
+stricter than the landing posture, such as Codex `read-only` landing on
+`workspace-write`; anything looser is dropped, as is `off`. A kept mode is refused
+like any other launch if it cannot enforce the receiver's sandbox profiles. A
+landing under tclaude's sandbox keeps tclaude's sandbox. This holds for moves and teleports too,
+so an agent does not land with wider access than it had. The preview states the
+result. Without `--group` it shows the posture with no group's settings.
+
+On another harness none of the source's launch posture applies, tclaude's sandbox
+included; the receiver's defaults and normal
 spawn checks apply, and the preview says so. Imports through federation
 offers, moves and teleports keep landing on the source harness.
 
@@ -401,11 +606,12 @@ tclaude paf import --file big.paf --cwd "$PWD" --model sonnet --group team --app
 
   `agent spawn --from-snapshot`, `snapshot board import` and `agent
   recover` take `--confirm-history-loss` too; the dashboard's import and
-  snapshot spawn have a checkbox for it. Group import shows the cut per
-  member in its dry run but neither asks for confirmation nor saves the full
-  history beside each member.
+  snapshot spawn have a checkbox for it. Group import takes the same flag and
+  its dry run shows the cut per member. The dashboard's group import has the
+  checkbox too, and without it the whole import is refused, naming each member
+  and its cut.
 - **Where the full history is.** It is never lost. It stays in the PAF,
-  which `tclaude paf render` reads whole. When an agent import cuts it, it
+  which `tclaude paf render` reads whole. When an agent or group import cuts it, it
   is also saved beside the landed agent as `transcript.md` and `transcript.jsonl` (a PAF context file), in
   its morph artifact directory, and the agent gets an inbox message naming
   both, so it can read what was cut instead of guessing.
@@ -518,7 +724,7 @@ tclaude agent snapshot board import --board BOARD --item ITEM --version VERSION 
 tclaude agent snapshot board rm --board BOARD --item ITEM --version VERSION [--local]
 ```
 
-A snapshot goes on a [Board](federation.md#content-board-membership) as an
+A snapshot goes on a [Board](federation-boards.md#content-board-membership) as an
 `agent-snapshot` item, encrypted to named members only.
 
 - **Recipients.** `--to` names board members by instance id or by the label
@@ -742,14 +948,43 @@ Each member of a group PAF lands like an
   and is translated otherwise, with the losses shown. A member whose
   conversation cannot land imports as configuration, with a warning. Its
   record still names its landing harness, so it resumes there.
-- **OpenCode:** a member landing on OpenCode imports as configuration for now.
+- **OpenCode:** a member landing on OpenCode installs its conversation into
+  this host's OpenCode store through the `opencode` CLI, which is where its
+  first resume reads it, which depends on its [landing posture](#landing-posture).
+  Without `opencode` installed it imports as configuration, with a warning.
 
 A Claude Code member landing on Claude Code takes the group import's own
 path, which rewrites embedded paths and keeps its conversation id unless it
 collides. Every other landing goes through the harness's own history import,
 which mints a new conversation id that the group's rows then follow. The
-dry run shows each member's landing harness, model and rung. Imported
+dry run shows each member's landing harness, model, rung and posture. Imported
 members land offline and resume on their landing harness.
+
+### Landing posture
+
+An imported member launches under the sandbox a spawn into the landing group
+would get: the spawn profile tiers, then the install default, composed with
+the group and global sandbox profiles. A group import always creates its
+group, so at import that means the global tiers and the install default.
+Nothing in the file sets it, so a source that ran without a sandbox cannot
+bring that here. A sandbox profile assigned to the group later binds the
+member's next launch, like any other member's; its sandbox implementation
+stays what the import resolved until `sandbox set` changes it.
+
+`--dry-run`, the import result and the dashboard preview state each member's
+implementation, sandbox profiles and the tiers that chose them. A posture this
+node cannot meet, such as tclaude's sandbox on a host without `bwrap`, is shown
+as refused by the dry run and refuses the whole import, with the same reason a
+spawn would give and nothing written. It never lands unconfined instead.
+
+An OpenCode member's conversation goes in the store its server reads. Under
+tclaude's sandbox that is the member's private per-agent state; under any other
+posture it is the shared store, shared with other unsandboxed OpenCode agents.
+
+Members imported by an earlier version are left as they are, running or not:
+they keep the baseline posture, with no tclaude sandbox. Move one with
+[`sandbox set`](sandboxing.md#reassigning-an-existing-agent). An OpenCode
+member moved onto tclaude's sandbox takes its conversation with it.
 
 `tclaude paf inspect`, `validate` and `render` also read group export zips,
 converting them on read.
@@ -1105,6 +1340,9 @@ must enforce these rules and refuse an archive that breaks them:
 manifest.json                         format, version, kind, entry hashes
 privacy.json                          scan, redactions, consent, retention   (optional)
 group.json                            group configuration                    (kind "group")
+workflows/<key>/workflow.json         a carried PWF workflow                 (optional)
+workflows/<key>/README.md             its readme                             (optional)
+workflows/<key>/templates/<id>/<hash> its templates, addressed by hash       (with workflow.json)
 signatures/<key-id>.json              detached signatures over manifest.json (optional)
 attachments/<sha256>                  content-addressed media and files      (optional)
 agents/<key>/agent.json               identity, definition, provenance, lineage
@@ -1118,8 +1356,10 @@ ext/<extension-id>/...                extension entries                      (op
 ```
 
 `<key>` names the agent inside the archive (`[a-z0-9-]{1,64}`). An agent PAF
-has exactly one agent; a group PAF has one per member. Attachments are shared
-by every agent in the archive.
+has exactly one agent; a group PAF has one per member; a bundle PAF has one per
+performer. Attachments are shared by every agent in the archive. A
+`workflows/<key>/` tree has the [PWF layout](pwf.md#layout) and passes the same
+checks and limits as a `.pwf`.
 
 A PAF without `context/` is a *definition-only* PAF: a configured agent with
 no history.
@@ -1147,8 +1387,19 @@ Schema: [`manifest.schema.json`](paf/schema/v0.1/manifest.schema.json).
 }
 ```
 
-- `kind` is `agent` or `group`.
+- `kind` is `agent`, `group` or `bundle` (workflows and the agents that perform
+  them, with no group). A reader that opens a `bundle` as one agent must be told
+  which.
 - `agents` lists the agent keys present, in order.
+- `workflows` lists each carried workflow as `{key, root, requires, digest}`:
+  its key under `workflows/`, its root template ref, what it requires, and a
+  digest over its entries.
+- `links` says how entries relate, as
+  `{type, workflow, agent, role?, digest}`. `performer` means the agent performs
+  that role of the workflow, and `carries` means the agent's file carries the
+  workflow. The links are flat manifest data rather than fields inside agents
+  and workflows, so that they cannot create a hash cycle. A reader skips a link
+  `type` it does not know.
 - `requires` lists [features](#versioning-and-compatibility) a reader must
   understand to resume or import faithfully.
 - `extensions_used` declares every [extension](#extensions) the file uses.
@@ -1316,8 +1567,26 @@ loss report of whatever produced the context. It records:
   oldest first, so successive morphs and imports add a report rather than
   overwrite the last one. Each item has the fields of `losses.json` itself,
   without its own `prior`. A writer that replaces a context with a new
-  translation moves the old report into `prior`; tclaude keeps `prior` when
-  it rewrites a PAF, for example when redacting.
+  translation moves the old report into `prior`.
+
+tclaude stores the report of the conversion that produced a conversation: a
+cross-harness morph, or an import that lands it. A clone with its history
+keeps the source's report, and so does a group clone. A federation offer, move
+or teleport carries the report in the PAF, with only harnesses, kinds,
+severities, landing labels and numbers: `detail`, `context_window_source` and
+extensions stay on the sending node, and the receiver drops them too. Snapshots
+are written the same way, since they can reach another node. A peer on bundle
+v1 has no `losses.json`, so the record stops there. The next morph,
+import landing or export then puts that report and its `prior` into the new
+report's `prior`, keeping the latest 32. A conversation that lands unchanged
+keeps the report it came with. An export with no neutral context, which
+includes every group PAF, still writes `losses.json` for a conversation with a
+stored report, as that report unchanged. tclaude also keeps `prior` when it
+rewrites a PAF, for example when redacting. `tclaude paf inspect` shows how many
+earlier reports a file carries.
+
+A clone does not take its source's report, and neither does a federation
+move, teleport or offer landing, which hands over a decoded bundle.
 
 Loss kinds include:
 
@@ -1594,6 +1863,7 @@ own state that other systems are not expected to share:
 | Where | Field | Meaning |
 |---|---|---|
 | `agent.json` | `spawn_profile` | `name` (informational) and `profile`: tclaude's inline spawn profile, including launch posture. Receivers never look a profile up by name. |
+| `agent.json` | `pi_drive` | `true` when a pi agent is driven through tclaude's pi extension instead of tmux send-keys (`spawn --pi-drive`). A per-launch spawn field, so the spawn profile cannot carry it; the receiver's landing asks for the drive again. |
 | `agent.json` | `permissions` | Permission rows (`slug`, `effect`, `scope`, `source`) as advisory provenance. They never become grants unless the receiver's own policy approves them. |
 | `agent.json` | `teleport` | The teleport chain id and hops (`from_instance`, `from_agent`, `to_instance`, `to_group`, `at`). |
 | `agent.json` | `transfer` | Continuation state for move and teleport: the stable federation `identity`, the sender's `carry_permissions` opt-in, the `trigger` and source `warnings`. |
@@ -1601,7 +1871,7 @@ own state that other systems are not expected to share:
 | `environment.json` placeholders | `item`, `field` | The configuration item and field a placeholder stands in. |
 | `environment.json` | `harness.<name>` | Settings only one harness has, such as `harness.claude.auto_compact_window`. |
 | `group.json` | `group` | Group settings: description, standing orders, environment, group permissions, member limit and similar. |
-| `group.json` members | `owner` | The member owned the group (advisory; ownership never travels). |
+| `group.json` members | `owner` | The member owned the group. A group import keeps it as member structure; elsewhere it is advisory. |
 | `ext/tclaude/mail-deliveries.json` | entry | The mail delivery ledger a continuation carries. |
 | `ext/tclaude/group-state.json` | entry | A group's tclaude state in the group export's shape: members, owners, permissions, enrollment, cron jobs, messages, audit trail and per-conversation metadata. Each conversation's harness and history live in its agent. |
 | `manifest.json` | `converted_from` | The legacy carrier a PAF was converted from: `format`, `format_version`, `tclaude_version`, `created_at`. |
@@ -1646,6 +1916,7 @@ is best effort rather than a guarantee, and any break is marked clearly.
 | Version | Breaking? | Changes |
 | --- | --- | --- |
 | 0.1 | (first version) | The initial format. |
+| 0.2 | Only for files that carry workflows | Adds the [envelope](#carrying-workflows): `workflows`, `links`, `workflows/` entries and the kind `bundle`. Such a file sets `min_reader_version` to 0.2, because an older reader would silently lose its workflows. A file with agents only is still written as 0.1. |
 
 - Readers **ignore unknown fields** and any listed entry they do not
   understand, wherever it sits. Writers must not rely on readers understanding
@@ -1662,7 +1933,7 @@ is best effort rather than a guarantee, and any break is marked clearly.
   value lists a feature in `requires`.
 - **Closed enumerations** change only in a major version, or in a minor
   version that sets `min_reader_version`: `format`, `kind`
-  (`agent`, `group`), entry `role` (`user`, `assistant`), and the
+  (`agent`, `group`, `bundle`), entry `role` (`user`, `assistant`), and the
   transcript `scope`.
 - **`requires`** names features without which the content would be
   misunderstood, not merely incomplete (for example, a context stored as a
@@ -1728,11 +1999,11 @@ agent bundle for peers that do not advertise PAF support.
 
 ## Related pages
 
-- [Federation: portable local agent bundles](federation.md#portable-local-agent-bundles)
-  and [sharing an agent with a peer](federation.md#sharing-an-agent-with-a-peer)
+- [Federation: portable local agent bundles](federation-moving.md#portable-local-agent-bundles)
+  and [sharing an agent with a peer](federation-moving.md#sharing-an-agent-with-a-peer)
 - [Harnesses: cross-harness history translation](harnesses.md#cross-harness-history-translation)
 - [Spawning and lifecycle: morph and clone](spawning-and-lifecycle.md#morph)
-- [Federation: content boards](federation.md#content-board-membership)
+- [Federation: content boards](federation-boards.md#content-board-membership)
 
 ### Managed instructions
 

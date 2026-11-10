@@ -28,8 +28,8 @@ type fileListParams struct {
 
 func fileCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "file", Short: "Download project files shared by remote terminal sessions"}
-	cmd.AddCommand(boa.CmdT[fileGetParams]{Use: "get", Short: "Save a remote file; requires sessions.files.read and terminal watch authority", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *fileGetParams, _ *cobra.Command, _ []string) { os.Exit(runFileGet(p, os.Stderr)) }}.ToCobra())
-	cmd.AddCommand(boa.CmdT[fileListParams]{Use: "ls", Short: "List a bounded project directory; same sharing guards as file get", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *fileListParams, _ *cobra.Command, _ []string) { os.Exit(runFileList(p, os.Stdout, os.Stderr)) }}.ToCobra())
+	cmd.AddCommand(boa.CmdT[fileGetParams]{Use: "get", Short: "Save a remote file; requires sessions.files.read and terminal watch authority", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *fileGetParams, _ *cobra.Command, _ []string) { os.Exit(runFileGet(p, cliStderr)) }}.ToCobra())
+	cmd.AddCommand(boa.CmdT[fileListParams]{Use: "ls", Short: "List a bounded project directory; same sharing guards as file get", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *fileListParams, _ *cobra.Command, _ []string) { os.Exit(runFileList(p, cliStdout, cliStderr)) }}.ToCobra())
 	return cmd
 }
 func runFileGet(p *fileGetParams, stderr io.Writer) int {

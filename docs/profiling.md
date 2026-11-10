@@ -6,7 +6,7 @@ capture, and both save to the same store, `~/.tclaude/data/profiles/`.
 
 ## From the dashboard
 
-Open **Activity › Performance** and click **⏱ Profile daemon…**. The dialog
+Open **Diagnostics › Performance** and click **⏱ Profile daemon…**. The dialog
 opens with sensible defaults (a 30-second CPU profile and a 5-second execution
 trace), so you can just press Enter. The daemon profiles itself while it keeps
 running normally. You don't need any startup flag, and this works anywhere the

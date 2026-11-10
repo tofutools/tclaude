@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -94,11 +95,16 @@ func (h openCodeHistory) command(cwd string, stdout io.Writer, args ...string) e
 	if err != nil {
 		return err
 	}
+	env, cleanup, err := openCodeCLIEnvironment(h.environment)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 72*time.Hour)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable, append(args, "--pure", "--log-level", "ERROR")...)
 	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), h.environment...)
+	cmd.Env = env
 	cmd.Stdout = stdout
 	// Native diagnostic output must not grow with the transcript.
 	var detail bytes.Buffer
@@ -220,19 +226,8 @@ func (h openCodeHistory) Open(id, cwd string) (io.ReadCloser, error) {
 	return &openCodeHistoryFile{wire}, nil
 }
 func (h openCodeHistory) Export(id, cwd string) ([]byte, error) {
-	r, err := h.Open(id, cwd)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-	raw, err := io.ReadAll(io.LimitReader(r, agentbundle.MaxBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(raw)) > agentbundle.MaxBytes {
-		return nil, errors.New("OpenCode history exceeds federation.agent_transfer_max_bytes")
-	}
-	return raw, h.Validate(raw, id)
+	return readHistoryExport(func() (io.ReadCloser, error) { return h.Open(id, cwd) }, agentbundle.MaxBytes,
+		"OpenCode history exceeds federation.agent_transfer_max_bytes", func(raw []byte) error { return h.Validate(raw, id) })
 }
 func (h openCodeHistory) Validate(raw []byte, id string) error {
 	return h.ValidateReader(bytes.NewReader(raw), id)
@@ -240,6 +235,10 @@ func (h openCodeHistory) Validate(raw []byte, id string) error {
 func (h openCodeHistory) ValidateReader(r io.Reader, id string) error {
 	return rewriteOpenCodeHistory(r, id, "", "", io.Discard)
 }
+
+// ValidOpenCodeConvID says whether id has the shape of an OpenCode session id.
+func ValidOpenCodeConvID(id string) bool { return validOpenCodeHistoryID(id, "ses_") }
+
 func validOpenCodeHistoryID(id, prefix string) bool {
 	if len(id) <= len(prefix) || len(id) > 160 || id[:len(prefix)] != prefix {
 		return false
@@ -422,6 +421,185 @@ func rewriteOpenCodeHistory(r io.Reader, source, newID, cwd string, out io.Write
 	_, err := io.WriteString(out, "]}")
 	return err
 }
+
+// sessionTree is id and its descendants, parents first. An export holds one
+// session, and deleting a session deletes its children.
+func (h openCodeHistory) sessionTree(id, cwd string) ([]string, error) {
+	return h.sessionIDs(cwd, "WITH RECURSIVE tree(id) AS (SELECT id FROM session WHERE id = '"+id+
+		"' UNION ALL SELECT session.id FROM session JOIN tree ON session.parent_id = tree.id) SELECT id FROM tree")
+}
+
+// sessionIDs is the session ids a read-only query of the store returns.
+func (h openCodeHistory) sessionIDs(cwd, query string) ([]string, error) {
+	var out bytes.Buffer
+	if err := h.command(cwd, &out, "db", query, "--format", "json"); err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		ID string `json:"id"`
+	}
+	if raw := bytes.TrimSpace(out.Bytes()); len(raw) > 0 {
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			return nil, fmt.Errorf("read OpenCode session tree: %w", err)
+		}
+	}
+	tree := make([]string, len(rows))
+	for i, row := range rows {
+		if !validOpenCodeHistoryID(row.ID, "ses_") {
+			return nil, errors.New("invalid OpenCode session identity")
+		}
+		tree[i] = row.ID
+	}
+	return tree, nil
+}
+
+// OpenCodeHoldsConversation says whether h's store has the session.
+func OpenCodeHoldsConversation(h HistoryTransfer, id, cwd string) (bool, error) {
+	history, ok := h.(openCodeHistory)
+	if !ok {
+		return false, errors.New("not an OpenCode history")
+	}
+	if !validOpenCodeHistoryID(id, "ses_") {
+		return false, errors.New("invalid OpenCode session identity")
+	}
+	tree, err := history.sessionTree(id, cwd)
+	return len(tree) > 0, err
+}
+
+// OpenCodeConversations lists a store's conversations, without subagent sessions.
+func OpenCodeConversations(h HistoryTransfer, cwd string) ([]string, error) {
+	history, ok := h.(openCodeHistory)
+	if !ok {
+		return nil, errors.New("not an OpenCode history")
+	}
+	return history.sessionIDs(cwd, "SELECT id FROM session WHERE parent_id IS NULL")
+}
+
+// exportFile is OpenCode's own export of id, unrewritten.
+func (h openCodeHistory) exportFile(id, cwd string) (string, error) {
+	file, err := os.CreateTemp("", "tclaude-opencode-move-*.json")
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	if err = h.command(cwd, file, "export", id); err != nil {
+		_ = os.Remove(file.Name())
+		return "", err
+	}
+	return file.Name(), nil
+}
+
+func sameOpenCodeExport(a, b string) (bool, error) {
+	var values [2]any
+	for i, path := range []string{a, b} {
+		file, err := os.Open(path)
+		if err != nil {
+			return false, err
+		}
+		decoder := json.NewDecoder(file)
+		decoder.UseNumber()
+		err = decoder.Decode(&values[i])
+		_ = file.Close()
+		if err != nil {
+			return false, err
+		}
+	}
+	return reflect.DeepEqual(values[0], values[1]), nil
+}
+
+// CopyOpenCodeConversation copies a session and its descendants between stores
+// with every id unchanged, and proves each copy reads back the same. Same ids
+// and recorded spend mean the same conversation, so it is not marked inherited
+// the way a fork is. from keeps its copy; DeleteOpenCodeConversation removes it.
+func CopyOpenCodeConversation(from, to HistoryTransfer, id, cwd string) error {
+	source, ok := from.(openCodeHistory)
+	target, ok2 := to.(openCodeHistory)
+	if !ok || !ok2 {
+		return errors.New("not an OpenCode history")
+	}
+	if !validOpenCodeHistoryID(id, "ses_") {
+		return errors.New("invalid OpenCode session identity")
+	}
+	tree, err := source.sessionTree(id, cwd)
+	if err != nil {
+		return err
+	}
+	if len(tree) == 0 || tree[0] != id {
+		return fmt.Errorf("OpenCode session %s is not in its store", id)
+	}
+	for _, session := range tree {
+		if err = copyOpenCodeSession(source, target, session, cwd); err != nil {
+			return fmt.Errorf("copy OpenCode session %s: %w", session, err)
+		}
+	}
+	return nil
+}
+
+// OpenCodeSameConversation reports whether a conversation and its subagent
+// sessions read the same in two stores. Neither store changes.
+func OpenCodeSameConversation(a, b HistoryTransfer, id, cwd string) (bool, error) {
+	first, ok := a.(openCodeHistory)
+	second, ok2 := b.(openCodeHistory)
+	if !ok || !ok2 {
+		return false, errors.New("not an OpenCode history")
+	}
+	if !validOpenCodeHistoryID(id, "ses_") {
+		return false, errors.New("invalid OpenCode session identity")
+	}
+	tree, err := first.sessionTree(id, cwd)
+	if err != nil {
+		return false, err
+	}
+	for _, session := range tree {
+		exports := [2]string{}
+		for i, history := range []openCodeHistory{first, second} {
+			if exports[i], err = history.exportFile(session, cwd); err != nil {
+				return false, err
+			}
+			defer func(path string) { _ = os.Remove(path) }(exports[i])
+		}
+		same, err := sameOpenCodeExport(exports[0], exports[1])
+		if err != nil || !same {
+			return false, err
+		}
+	}
+	return len(tree) > 0, nil
+}
+
+func copyOpenCodeSession(from, to openCodeHistory, id, cwd string) error {
+	exported, err := from.exportFile(id, cwd)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(exported) }()
+	if err = to.command(cwd, io.Discard, "import", exported); err != nil {
+		return err
+	}
+	copied, err := to.exportFile(id, cwd)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(copied) }()
+	same, err := sameOpenCodeExport(exported, copied)
+	if err != nil {
+		return err
+	}
+	if !same {
+		return fmt.Errorf("the copy does not read back the same; a conversation from another project than %s changes when copied from there", cwd)
+	}
+	return nil
+}
+
+// DeleteOpenCodeConversation removes a session and its descendants from h's
+// store.
+func DeleteOpenCodeConversation(h HistoryTransfer, id, cwd string) error {
+	history, ok := h.(openCodeHistory)
+	if !ok {
+		return errors.New("not an OpenCode history")
+	}
+	return history.command(cwd, io.Discard, "session", "delete", id)
+}
+
 func (h openCodeHistory) Import(raw []byte, source, cwd string) (string, func(), error) {
 	return h.ImportReader(bytes.NewReader(raw), source, cwd)
 }

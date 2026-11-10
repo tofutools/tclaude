@@ -7,13 +7,15 @@ import {
   isCommandPaletteShortcut,
 } from './command-registry.js';
 import { visiblePageSize } from './list-viewport.js';
+import { shortcutText, withShortcut } from './keybindings.js';
+import { Keys } from './shortcut-keys.js';
 
 const html = htm.bind(h);
 
 export const DEFAULT_PLACEHOLDER =
   'Type a command…  (hide all windows · focus an agent · go to a tab · spawn…)';
 export const WIZARD_PLACEHOLDER =
-  'Speak an incantation…  (banish a familiar · scry a tab · summon…)';
+  'Speak an incantation…  (banish a hero · scry a tab · summon…)';
 export const WIZARD_EMPTY = 'No such incantation in this tome';
 export const PROCESS_NODE_CHOOSER_SELECTOR = '.process-node-chooser';
 export const PALETTE_BLOCKING_OVERLAY_SELECTOR =
@@ -74,9 +76,9 @@ export function PaletteLauncher({ state, snapshot, documentRef = document }) {
   }, [documentRef, state, terminalShortcutEnabled]);
 
   return html`
-    <button id="command-palette-btn" type="button"
-      aria-label="Open the command palette (Ctrl/Cmd-K)" aria-haspopup="dialog"
-      title="Command palette — a keyboard launcher (Ctrl/Cmd-K) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run."
+    <button data-ui-exempt id="command-palette-btn" type="button"
+      aria-label=${withShortcut('Open the command palette', 'palette')} aria-haspopup="dialog"
+      title="Command palette — a keyboard launcher (${shortcutText('palette')}) to search and run dashboard actions: hide / focus all (or a group's, or one agent's) windows, jump to a tab, spawn an agent. Type to filter, ↑/↓ to pick, Enter to run."
       onClick=${state.show}>🔍</button>
   `;
 }
@@ -178,9 +180,10 @@ export function PaletteOverlay({
               <span class="palette-ico">${command.icon || '•'}</span>
               <span class="palette-label">${command.label}</span>
               ${command.recent ? html`<span class="palette-recent-tag" title="Recently run">recent</span>` : null}
+              ${command.shortcut ? html`<${Keys} id=${command.shortcut} />` : null}
               ${command.enabled === false || command.hint ? html`<span class="palette-hint">${command.enabled === false ? command.disabledReason || 'Unavailable' : command.hint}</span>` : null}
             </div>
-          `) : html`<div class="palette-empty">${wizard ? WIZARD_EMPTY : 'No matching commands'}</div>`}
+          `) : html`<div class="ui-empty-block">${wizard ? WIZARD_EMPTY : 'No matching commands'}</div>`}
         </div>
         <div class="palette-foot">
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>

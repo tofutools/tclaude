@@ -29,7 +29,8 @@
     "kind": {
       "enum": [
         "agent",
-        "group"
+        "group",
+        "bundle"
       ]
     },
     "created_at": {
@@ -64,6 +65,71 @@
       "uniqueItems": true,
       "items": {
         "$ref": "common.schema.json#/$defs/agentKey"
+      }
+    },
+    "workflows": {
+      "type": "array",
+      "description": "PAF 0.2: workflows carried beside the agents, each under workflows/<key>/ in PWF's layout.",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "root",
+          "requires",
+          "digest"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "common.schema.json#/$defs/agentKey"
+          },
+          "root": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "links": {
+      "type": "array",
+      "description": "PAF 0.2: references between agents and workflows, by key and by hash.",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "workflow",
+          "agent",
+          "digest"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workflow": {
+            "$ref": "common.schema.json#/$defs/agentKey"
+          },
+          "agent": {
+            "$ref": "common.schema.json#/$defs/agentKey"
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
       }
     },
     "entries": {

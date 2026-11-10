@@ -63,25 +63,20 @@ const (
 
 // fedRouteState is the runtime's route bookkeeping, guarded by fedRuntime.mu.
 type fedRouteState struct {
-	waiters  map[string]chan fedRouteAnswer // stream id → open waiter
-	proxies  map[string]*fedRouteEnd        // publisher side, peer+"|"+route id
-	starting map[string]chan struct{}       // proxies being attached
-	mirrors  map[string]*fedRouteEnd        // consumer side, mirror route id
-	opens    map[string][]time.Time         // per-peer route open limiter
+	waiters  map[string]fedAnswerWaiter[proto.RouteAnswerPayload] // stream id → open waiter
+	proxies  map[string]*fedRouteEnd                              // publisher side, peer+"|"+route id
+	starting map[string]chan struct{}                             // proxies being attached
+	mirrors  map[string]*fedRouteEnd                              // consumer side, mirror route id
+	opens    map[string][]time.Time                               // per-peer route open limiter
 	// stopped is set when the runtime stops; ends finishing their start
 	// afterwards are shut down instead of registered.
 	stopped bool
 }
 
-type fedRouteAnswer struct {
-	from string
-	ans  proto.RouteAnswerPayload
-}
-
 func (rt *fedRuntime) routesLocked() *fedRouteState {
 	if rt.routes == nil {
 		rt.routes = &fedRouteState{
-			waiters:  map[string]chan fedRouteAnswer{},
+			waiters:  map[string]fedAnswerWaiter[proto.RouteAnswerPayload]{},
 			proxies:  map[string]*fedRouteEnd{},
 			starting: map[string]chan struct{}{},
 			mirrors:  map[string]*fedRouteEnd{},
@@ -595,26 +590,34 @@ func (e *fedRouteEnd) openRemote(s *fedRouteStream, grant int) {
 }
 
 // askRouteOpen sends route_open to peer and waits for its answer.
+//
+// The answer is bound to this open: it must come from peer and reply to this
+// envelope (see fedAnswerWaiter). An open the hub did not deliver fails at
+// once rather than waiting out fedRouteOpenTimeout for an answer that cannot
+// come.
 func (rt *fedRuntime) askRouteOpen(ctx context.Context, peer string, p proto.RouteOpenPayload) (*proto.RouteAnswerPayload, error) {
-	ch := make(chan fedRouteAnswer, 1)
+	env, err := proto.NewEnvelope(rt.id, proto.KindRouteOpen, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: peer}, fedControlTTL, p)
+	if err != nil {
+		return nil, err
+	}
+	w := newFedAnswerWaiter[proto.RouteAnswerPayload](peer, env.ID)
 	rt.mu.Lock()
-	rt.routesLocked().waiters[p.Stream] = ch
+	rt.routesLocked().waiters[p.Stream] = w
 	rt.mu.Unlock()
 	defer func() {
 		rt.mu.Lock()
 		delete(rt.routesLocked().waiters, p.Stream)
 		rt.mu.Unlock()
 	}()
-	rt.sendControl(peer, proto.KindRouteOpen, "", p)
+	if !rt.sendControlEnvelope(peer, env) {
+		return nil, errors.New("peer did not receive the route open")
+	}
 	select {
-	case a := <-ch:
-		if a.from != peer {
-			return nil, errors.New("answer from the wrong instance")
+	case a := <-w.answer:
+		if !a.OK {
+			return nil, fmt.Errorf("refused: %s", proto.StripControls(a.Reason))
 		}
-		if !a.ans.OK {
-			return nil, fmt.Errorf("refused: %s", proto.StripControls(a.ans.Reason))
-		}
-		return &a.ans, nil
+		return &a, nil
 	case <-time.After(fedRouteOpenTimeout):
 		return nil, errors.New("peer did not answer")
 	case <-ctx.Done():
@@ -640,18 +643,13 @@ func (rt *fedRuntime) joinStream(ctx context.Context, peer, sid string, kp *stre
 // handleRouteAnswer hands a peer's answer to the waiting open.
 func (rt *fedRuntime) handleRouteAnswer(peer *db.FederationPeer, env *proto.Envelope) {
 	var a proto.RouteAnswerPayload
-	if err := env.DecodePayload(&a); err != nil {
+	if env.DecodePayload(&a) != nil || !proto.ValidStreamID(a.Stream) {
 		return
 	}
 	rt.mu.Lock()
-	ch := rt.routesLocked().waiters[a.Stream]
+	w := rt.routesLocked().waiters[a.Stream]
 	rt.mu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- fedRouteAnswer{from: peer.InstanceID, ans: a}:
-		default:
-		}
-	}
+	w.offer(peer.InstanceID, env.InReplyTo, a)
 }
 
 // attachEnd attaches e to the broker through attach and waits until the

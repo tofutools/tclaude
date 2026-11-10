@@ -86,7 +86,7 @@ chmod 600 "$HOME/.tclaude/data/codex-sb-cfg/config.toml" \
 ```
 
 Only run the file command for files that exist and begin with their
-`Managed by tclaude` marker. If an unmarked file exists, tclaude treats it as
+`Managed by tclaude` marker (`registry.lock` has none, so it needs no check). If an unmarked file exists, tclaude treats it as
 administrator configuration and refuses to overwrite it. Move or replace it
 only after the responsible administrator has explicitly decided how that
 policy should be handled.

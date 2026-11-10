@@ -15,10 +15,10 @@ func TestTerminalsCore_UnloadGuardTracksOpenPanes(t *testing.T) {
 		"const confirmUnload = (event) =>",
 		"event.preventDefault()",
 		"event.returnValue = true",
-		"if (!hasPanes) return undefined",
+		"if (!confirmsReload) return undefined",
 		"window.addEventListener('beforeunload', confirmUnload)",
 		"window.removeEventListener('beforeunload', confirmUnload)",
-		"window.addEventListener('tclaude:auth-expired', disarmForAuth)",
+		"window.addEventListener('tclaude:auth-expired', disarm)",
 	} {
 		if !strings.Contains(src, needle) {
 			t.Errorf("terminal-shell-island.js missing %q — open terminals must guard accidental page unloads", needle)

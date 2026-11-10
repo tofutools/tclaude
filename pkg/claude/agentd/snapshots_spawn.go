@@ -45,6 +45,21 @@ type snapshotSpawnResult struct {
 	Warnings []string              `json:"warnings,omitempty"`
 }
 
+// historyLossFacts is what confirming a landing's history cut accepts. How much
+// is cut is known only as each agent lands.
+const (
+	historyLossFacts         = "This accepts a landing that cuts 25% or more of the conversation, if the new agent's model needs it."
+	snapshotHistoryLossFacts = historyLossFacts + " The full history stays in the snapshot and is saved beside the agent."
+)
+
+func snapshotHistoryLossApprovalFacts(body []byte) string {
+	var req snapshotSpawnRequest
+	if !decodeLikeHandler(body, &req) || !req.ConfirmHistoryLoss {
+		return ""
+	}
+	return snapshotHistoryLossFacts
+}
+
 // handleSnapshotSpawn instantiates new agents from a snapshot.
 //
 //	POST /v1/snapshots/{name}/spawn {group, name?, count?, cwd?, worktree?, keep_paths?, harness?, model?, set?, skip_history?}
@@ -62,6 +77,7 @@ func handleSnapshotSpawn(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	r = withApprovalFacts(r, snapshotHistoryLossApprovalFacts)
 	if !requireSnapshotAccess(w, r, meta, "spawn from a snapshot") {
 		return
 	}

@@ -35,6 +35,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -459,6 +460,21 @@ func (rt *fedRuntime) sendControl(to, kind, inReplyTo string, payload any) bool 
 		return false
 	}
 	env.InReplyTo = inReplyTo
+	return rt.deliverControl(to, peer, env)
+}
+
+// sendControlEnvelope is sendControl for an envelope the caller built itself,
+// for a request whose answer must be bound to that envelope's ID.
+func (rt *fedRuntime) sendControlEnvelope(to string, env *proto.Envelope) bool {
+	peer, err := db.GetFederationPeer(to)
+	if err != nil || peer == nil {
+		return false
+	}
+	return rt.deliverControl(to, peer, env)
+}
+
+func (rt *fedRuntime) deliverControl(to string, peer *db.FederationPeer, env *proto.Envelope) bool {
+	kind := env.Kind
 	sealed, err := proto.Seal(rt.id, env, ed25519.PublicKey(peer.PubKey))
 	if err != nil {
 		slog.Warn("federation: seal failed", "kind", kind, "error", err)
@@ -552,7 +568,7 @@ func buildFederationCatalog(peer string, status ...*statusSnapshot) (*proto.Cata
 			delete(caps[group.ID], proto.CapAttachments)
 		}
 	}
-	cat := &proto.CatalogPayload{PeerProposals: true, AgentBundleChunks: true, RequesterPays: 1, ClaudeSubscription: 2, TeleportBackups: true, AgentTeleports: 1, ResilienceSnapshots: 2, AgentMoves: true, PAFVersions: paf.ReadVersions(), ManagedInstructions: 1, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
+	cat := &proto.CatalogPayload{PeerProposals: true, AgentBundleChunks: true, RequesterPays: 1, ClaudeSubscription: 2, TeleportBackups: true, AgentTeleports: 1, ResilienceSnapshots: 2, AgentMoves: true, PAFVersions: paf.ReadVersions(), ManagedInstructions: 1, StableAgentIdentity: true, HomeRoutedMail: true, DirectAgentMoves: true, JobOutput: true, PeerViewAgents: true, Groups: []proto.CatalogGroup{}, NodeAt: time.Now().UTC()}
 	if fedPeerReadsNode(peer) {
 		cat.Node = localNodeMetadata()
 	}
@@ -913,7 +929,14 @@ func (rt *fedRuntime) acceptMailWithOrigin(peer *db.FederationPeer, env *proto.E
 		senderName = proto.SafeName(origin.Sender.Name, false)
 		senderDisplay = origin.Sender.Instance
 	}
+	// undo restores a recorded question this mail consumed, when the mail
+	// is refused after all (taskboard_question_peer.go).
+	var undo func()
 	refuse := func(code, reason string) {
+		if undo != nil {
+			undo()
+			undo = nil
+		}
 		slog.Info("federation: refused inbound mail", "from", env.From.Instance, "to_agent", env.To.Agent, "code", code, "reason", reason)
 		recordFederationAudit("federation.mail.in", senderName+"@"+peerDisplay(peer), "", "", code+": "+reason, 403)
 		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckRefused, Code: code, Reason: reason})
@@ -977,6 +1000,11 @@ func (rt *fedRuntime) acceptMailWithOrigin(peer *db.FederationPeer, env *proto.E
 		return
 	}
 	groupID, ok := federationInboundAuthorized(peer.InstanceID, env, conv)
+	if !ok && origin == nil {
+		// The answer to a question this agent asked the peer's operator
+		// (taskboard_question_peer.go): let in once, as a reply.
+		ok, undo = taskboardAnswerMailAuthorized(peer.InstanceID, env, mp)
+	}
 	if !ok {
 		refuse(fedCodeNotExported, "recipient is not in a group exported to this instance with mail")
 		return
@@ -1125,6 +1153,14 @@ func (rt *fedRuntime) handleAck(env *proto.Envelope) {
 		if row.Kind == proto.KindGroupMail && ack.Delivered > 0 {
 			note = fmt.Sprintf("delivered to %d members", ack.Delivered)
 		}
+		if row.Kind == proto.KindSpawnReq && ack.Code == fedAckCodeQueued {
+			note = "queued at peer"
+			if pos, ok := strings.CutPrefix(ack.Reason, "position "); ok {
+				if n, err := strconv.Atoi(pos); err == nil && n > 0 {
+					note = fmt.Sprintf("queued at peer (#%d)", n)
+				}
+			}
+		}
 		_, _ = db.SettleFederationOutbox(row.EnvelopeID, db.FedOutboxAccepted, note)
 	case fedRetryableCode(ack.Code):
 		_ = db.UpdateFederationOutbox(row.EnvelopeID, db.FedOutboxQueued, time.Now().Add(fedBackoff(row.Attempts)), ack.Code+": "+ack.Reason, 0)
@@ -1164,10 +1200,14 @@ func (rt *fedRuntime) outboxLoop(ctx context.Context) {
 func (rt *fedRuntime) flushOutbox(ctx context.Context) {
 	rt.outboxMu.Lock()
 	defer rt.outboxMu.Unlock()
+	now := time.Now()
+	// Expiry needs no peer, so a hub outage must not hold it back.
+	if err := db.ExpireFederationProposals(now); err != nil {
+		slog.Warn("federation: proposal expiry failed", "error", err)
+	}
 	if rt.cl.Status().State != client.StateConnected {
 		return
 	}
-	now := time.Now()
 	rt.flushProposalEvents(now)
 	rt.flushHomeMail(now)
 	rows, err := db.DueFederationOutbox(now, 50)

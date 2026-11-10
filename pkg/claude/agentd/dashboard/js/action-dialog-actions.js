@@ -1,3 +1,5 @@
+import { openInCompanion } from './companion-facade.js';
+import { handOverSteward, handoverSummary } from './steward-roster.js';
 import { clonePayload } from './clone-payload.js';
 import { findSpawnHarness, sandboxImplOptionsFor } from './agent-spawn-model.js';
 import { pickDirectory as defaultPickDirectory } from './helpers.js';
@@ -14,16 +16,36 @@ async function responseError(response) {
   const text = await response.text();
   try {
     const payload = JSON.parse(text);
-    if (payload?.error) return String(payload.error);
+    if (payload?.error) return { message: String(payload.error), code: String(payload.code || '') };
   } catch (_) { /* retain plain-text response below */ }
-  return text || `HTTP ${response.status}`;
+  return { message: text || `HTTP ${response.status}`, code: '' };
+}
+
+// sandboxRequestJSON calls an agent's /sandbox route. Another node may be
+// older than it and serve only the deprecated /sandbox-impl spelling, which
+// refuses the unknown route (404, or a peer view's 403) before doing any work,
+// so that refusal is retried there once. The retry's own error is the one
+// reported: on an older node it is the handler's real answer (a move-out
+// confirm, a validation refusal), and a newer node serves both spellings with
+// the same handler and gates, so it answers there exactly as /sandbox did.
+// This page's own node serves both.
+async function sandboxRequestJSON(fetchImpl, conv, remote, options = {}) {
+  const base = `/api/agents/${encodeURIComponent(conv)}`;
+  try {
+    return await requestJSON(fetchImpl, `${base}/sandbox`, options);
+  } catch (cause) {
+    if (!remote || (cause?.status !== 404 && cause?.status !== 403)) throw cause;
+    return requestJSON(fetchImpl, `${base}/sandbox-impl`, options);
+  }
 }
 
 async function requestJSON(fetchImpl, url, options = {}) {
   const response = await fetchImpl(url, { credentials: 'same-origin', ...options });
   if (!response.ok) {
-    const error = new Error(await responseError(response));
+    const { message, code } = await responseError(response);
+    const error = new Error(message);
     error.status = response.status;
+    error.code = code;
     throw error;
   }
   try { return await response.json(); } catch (_) { return {}; }
@@ -102,6 +124,7 @@ export function createActionDialogActions({
     openExport: state.openExport,
     openSandboxImpl: state.openSandboxImpl,
     openLaunchTarget: state.openLaunchTarget,
+    openStewardHandover: state.openStewardHandover,
     openTerminalDirectory: state.openTerminalDirectory,
     openTerminalChooser: state.openTerminalChooser,
     finishChoice: state.finishChoice,
@@ -132,14 +155,17 @@ export function createActionDialogActions({
     // node names another node's agent (blank is the page's). full says the
     // node takes the whole clone (this node, or one trusting it
     // unrestricted); a peer's grant route takes the follow-up and the
-    // history choice only. group is a group the clone joins as well.
-    async cloneAgent({ conv, node = '', label, followUp, copyConversation, copyOwnership = false, cwd, full = false, group = '' }, owner) {
+    // history choice only. group is a group the clone joins as well;
+    // keepSandbox / keepEnvironment keep the source's sandbox or environment
+    // source group instead of that group's.
+    async cloneAgent({ conv, node = '', label, followUp, copyConversation, copyOwnership = false, cwd, full = false, group = '', keepSandbox = false, keepEnvironment = false }, owner) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), CLONE_TIMEOUT_MS);
       try {
         const body = { follow_up: normaliseFollowUp(followUp), no_copy_conv: !copyConversation };
         if (full) Object.assign(body, { copy_ownership: !!copyOwnership, cwd: cwd || '' });
         if (group) body.group = group;
+        if (group && full) Object.assign(body, { keep_sandbox: !!keepSandbox, keep_environment: !!keepEnvironment });
         const payload = await requestJSON(nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/clone`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -157,13 +183,13 @@ export function createActionDialogActions({
         return payload;
       } catch (error) {
         if (error?.name === 'AbortError') {
-          throw new Error(`clone timed out after ${CLONE_TIMEOUT_MS / 1000}s — the new agent may still come online; check ~/.tclaude/output.log and refresh in a moment.`);
+          throw new Error(`clone timed out after ${CLONE_TIMEOUT_MS / 1000}s — the new agent may still come online; check ~/.tclaude/data/output.log and refresh in a moment.`);
         }
         throw error;
       } finally { clearTimeout(timer); }
     },
     async reincarnateAgent({ conv, node = '', label, mode, focusHint, followUp }, owner) {
-      const body = mode === 'force'
+      const body = mode === 'clear' ? { mode: 'clear' } : mode === 'force'
         ? { mode: 'force', follow_up: normaliseFollowUp(followUp) }
         : { mode: 'self', ...(focusHint.trim() ? { focus_hint: focusHint.trim() } : {}) };
       if (mode === 'force' && !body.follow_up) throw new Error('follow-up is required for force reincarnate');
@@ -173,7 +199,8 @@ export function createActionDialogActions({
       });
       state.close(owner);
       announceNodeChanged(node);
-      if (mode === 'force') {
+      if (mode === 'clear') notify(`cleared ${label}'s context`);
+      else if (mode === 'force') {
         const suffix = payload.new_title ? ` → ${payload.new_title}`
           : payload.new_conv ? ` → ${String(payload.new_conv).slice(0, 8)}` : '';
         notify(`reincarnated ${label}${suffix}`);
@@ -272,6 +299,13 @@ export function createActionDialogActions({
 			announceNodeChanged(node);
 			await refresh();
 		},
+    async handOverSteward({ agent, then }, owner) {
+      const outcome = await handOverSteward(fetchImpl, agent, then);
+      state.close(owner);
+      notify(handoverSummary(outcome), !!outcome.warning);
+      await refresh();
+      openInCompanion(agent);
+    },
     async clonePreset({ source, create, name }, owner) {
       const cleanName = String(name || '').trim();
       if (!cleanName) throw new Error('name is required');
@@ -354,27 +388,46 @@ export function createActionDialogActions({
     // neither.
     async loadSandboxImpl(conv, { signal, node = '' } = {}) {
       const api = nodeFetch(node, { fetchImpl });
-      const posture = requestJSON(api, `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, { signal });
-      if (!node && !globalThis.__tclaudeRemoteNode?.id) return posture;
+      const remote = !!node || !!globalThis.__tclaudeRemoteNode?.id;
+      const posture = sandboxRequestJSON(api, conv, remote, { signal });
+      if (!remote) return posture;
       const [data, catalog] = await Promise.all([posture,
         // An older node without the catalog route still shows its posture.
         requestJSON(api, '/api/spawn-launch-catalog', { signal }).catch((cause) => { if (cause?.name === 'AbortError') throw cause; return null; })]);
       return { ...data, catalog: { harnesses: catalog?.harnesses || [], sandbox_impl: catalog?.sandbox_impl || {} } };
     },
-    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox }, owner) {
-      const payload = await requestJSON(
-        nodeFetch(node, { fetchImpl }), `/api/agents/${encodeURIComponent(conv)}/sandbox-impl`, {
+    // sandboxProfile, when given (a name, or '' for none), replaces the
+    // agent's explicit sandbox profile; an empty implementation leaves the
+    // implementation alone. omitSandboxProfiles instead makes the agent's
+    // launches omit every tclaude sandbox profile.
+    async assignSandboxImpl({ conv, node = '', label, implementation, sandbox, sandboxProfile, omitSandboxProfiles = false, restart = false, confirmMoveOut = false }, owner) {
+      const payload = await sandboxRequestJSON(
+        nodeFetch(node, { fetchImpl }), conv, !!node || !!globalThis.__tclaudeRemoteNode?.id, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ implementation, sandbox: sandbox || '' }),
+          body: JSON.stringify({
+            implementation: implementation || '', sandbox: sandbox || '',
+            ...(typeof sandboxProfile === 'string' ? { sandbox_profile: sandboxProfile } : {}),
+            ...(omitSandboxProfiles ? { omit_sandbox_profiles: true } : {}),
+            ...(restart ? { restart: true } : {}),
+            ...(confirmMoveOut ? { confirm_move_out: true } : {}),
+          }),
         },
       );
       state.close(owner);
       announceNodeChanged(node);
       const name = label || String(conv).slice(0, 8);
-      // Name the wake explicitly. The assignment changed nothing about the
-      // agent as it stands — it is recorded intent, and an operator who reads
-      // "assigned" as "applied" would believe a stopped agent is now bounded.
-      notify(`${name}: sandbox implementation → ${payload.sandbox_implementation} (applied when you wake it)`);
+      // Name the wake explicitly for a stopped agent. That assignment changed
+      // nothing about the agent as it stands — it is recorded intent, and an
+      // operator who reads "assigned" as "applied" would believe it is bounded.
+      const note = payload.note ? `; ${payload.note}` : '';
+      const changes = [];
+      if (implementation) changes.push(`sandbox implementation → ${payload.sandbox_implementation}`);
+      if (omitSandboxProfiles) changes.push('sandbox profiles → none (omitted)');
+      if (typeof sandboxProfile === 'string') changes.push(`sandbox profile → ${payload.sandbox_profile || 'default (global + group)'}`);
+      const what = changes.join(', ') || `sandbox implementation → ${payload.sandbox_implementation}`;
+      notify(payload.restart
+        ? `${name}: ${what} (restarted)${note}`
+        : `${name}: ${what} (applied when you wake it)${note}`);
       await refresh();
       return payload;
     },

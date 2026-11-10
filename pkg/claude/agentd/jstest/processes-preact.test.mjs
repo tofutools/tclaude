@@ -5,6 +5,15 @@ import { createHash } from 'node:crypto';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const prefs = () => { const values = new Map(); return { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) }; };
+// reply is a daemon answer as get-help's post() reads it: text first.
+const reply = (body, { ok = true, status = 200, statusText = 'OK' } = {}) => ({ ok, status, statusText, json: async () => body, text: async () => JSON.stringify(body) });
+// withCompanion registers a companion, so a helper opens in its chat window.
+async function withCompanion(t, harness) {
+  const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
+  const opened = [];
+  t.after(registerCompanionController({ open: (agentId, options) => { opened.push({ agentId, ...options }); return true; } }));
+  return opened;
+}
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 
 
@@ -16,6 +25,7 @@ test('process scribe actions send bounded structured scope, exact grants, and re
     harness.importDashboardModule('js/snapshot-store.js'),
   ]);
   dashboardState.snapshot.value = { groups: [] };
+  const opened = await withCompanion(t, harness);
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
   const requests = []; const notices = []; const confirmations = [];
   const actions = createProcessesActions({
@@ -23,7 +33,7 @@ test('process scribe actions send bounded structured scope, exact grants, and re
     confirm: async (options) => { confirmations.push(options); return true; },
     fetchImpl: async (path, options) => {
       requests.push({ path, options });
-      return { ok: true, json: async () => ({ name: 'process-scribe-12345678', conv_id: 'scribe-conv', reused: true, focus_mode: 'native' }) };
+      return reply({ name: 'process-scribe-12345678', agent_id: 'agt_scribe', conv_id: 'scribe-conv', reused: true });
     },
   });
   const hash = 'a'.repeat(64); const sourceHash = 'b'.repeat(64);
@@ -38,14 +48,15 @@ test('process scribe actions send bounded structured scope, exact grants, and re
       diagnostic: { identity: { code: 'missing_performer', scope: 'node', targetId: 'build' }, severity: 'error', message: 'performer required', nodeId: 'build' },
     },
   });
-  assert.equal(result.conv_id, 'scribe-conv');
+  assert.equal(result.convId, 'scribe-conv');
+  assert.deepEqual(opened, [{ agentId: 'agt_scribe', starting: false }], 'the scribe opens in its regular chat window');
   const request = requests[0]; const body = JSON.parse(request.options.body);
   assert.equal(request.path, '/api/scribe');
   assert.equal(request.options.credentials, 'same-origin');
   assert.deepEqual(body.scope, { kind: 'process-template', id: 'release-flow' });
   assert.deepEqual(body.slugs, ['process.templates.read', 'process.templates.manage']);
   assert.equal(body.exclusive, true, 'the two process-template grants are the complete effective capability set');
-  assert.equal(body.background, true, 'a docked editor\'s scribe starts in tmux only; the dock is its surface');
+  assert.equal(body.background, true, 'the scribe starts in tmux only; its chat window is its surface');
   assert.doesNotMatch(body.brief, /"background"/, 'the flag is not part of the brief');
   assert.deepEqual({ url: body.task_ref_url, label: body.task_ref_label }, {
     url: 'https://dashboard.example/automations/processes/templates', label: 'process: release-flow',
@@ -68,9 +79,7 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   const compatibilityFallback = createProcessesActions({
     state, dashboardOrigin: 'https://dashboard.example', notify() {},
     confirm: async (options) => { reusePrompt = options; return true; },
-    fetchImpl: async () => ({ ok: true, json: async () => ({
-      name: 'process-scribe-fresh', conv_id: 'fresh-conv', reused: false, focus_mode: 'native',
-    }) }),
+    fetchImpl: async () => reply({ name: 'process-scribe-fresh', agent_id: 'agt_fresh', conv_id: 'fresh-conv', reused: false }),
   });
   assert.equal((await compatibilityFallback.summonScribe({
     kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${hash}`, sourceHash, isNew: false,
@@ -92,15 +101,15 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   const failed = createProcessesActions({
     state, dashboardOrigin: 'https://dashboard.example', notify: (...args) => notices.push(args),
     confirm: async () => true,
-    fetchImpl: async () => ({ ok: false, status: 503, statusText: 'Unavailable', json: async () => ({ message: 'spawn binary missing' }) }),
+    fetchImpl: async () => reply({ message: 'spawn binary missing' }, { ok: false, status: 503, statusText: 'Unavailable' }),
   });
   const libraryRequests = [];
   const library = createProcessesActions({
     state, dashboardOrigin: 'https://dashboard.example', notify() {}, confirm: async () => true,
-    fetchImpl: async (path, options) => { libraryRequests.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ name: 'process-scribe-lib', conv_id: 'lib-conv' }) }; },
+    fetchImpl: async (path, options) => { libraryRequests.push(JSON.parse(options.body)); return reply({ name: 'process-scribe-lib', agent_id: 'agt_lib', conv_id: 'lib-conv' }); },
   });
   await library.summonScribe({ kind: 'library' });
-  assert.equal(libraryRequests[0].background, false, 'the library scribe has no dock, so it keeps its terminal');
+  assert.equal(libraryRequests[0].background, true, 'the library scribe opens in its chat window too');
   assert.equal(await failed.summonScribe({ kind: 'library' }), null);
   assert.match(state.notice.value, /Process scribe unavailable: spawn binary missing/);
   assert.match(notices.at(-1)[0], /Check the agent daemon and Ask & scribe defaults, then retry/);
@@ -153,7 +162,7 @@ test('process scribe freshness guard runs after approval and immediately before 
   const accepted = createProcessesActions({
     state, dashboardOrigin: 'https://dashboard.example',
     confirm: async () => { order.push('confirm'); return true; },
-    fetchImpl: async () => { order.push('post'); return { ok: true, json: async () => ({ focus_mode: 'native' }) }; },
+    fetchImpl: async () => { order.push('post'); return reply({ agent_id: 'agt_x' }); },
   });
   await accepted.summonScribe({ kind: 'library' }, {
     freshnessGuard: () => { order.push('freshness'); return true; },
@@ -166,6 +175,7 @@ test('process scribe lifecycle distinguishes stop, retire, and stale recovery', 
   const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
     harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
   ]);
+  const opened = await withCompanion(t, harness);
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
   const agentId = `agt_${'d'.repeat(32)}`;
   const scribe = { agentId, convId: 'scribe-conv', name: 'process-scribe-12345678', online: true, scopeLabel: 'template release-flow' };
@@ -176,18 +186,17 @@ test('process scribe lifecycle distinguishes stop, retire, and stale recovery', 
       requests.push({ path, options });
       if (path.endsWith('/stop')) return { ok: true, json: async () => ({ action: 'soft_stopped' }) };
       if (path.includes('/retire?')) return { ok: true, json: async () => ({ outcome: { retired: true }, shutdown: { action: 'soft_stopped' } }) };
-      if (path.startsWith('/api/open-window/')) return { ok: true, json: async () => ({ mode: 'native' }) };
       throw new Error(`unexpected ${path}`);
     },
   });
   assert.equal(await actions.openScribe(scribe), true);
   assert.equal(await actions.stopScribe(scribe), true);
   assert.equal(await actions.retireScribe(scribe), true);
-  assert.equal(requests[0].path, `/api/open-window/${agentId}`);
-  assert.deepEqual(JSON.parse(requests[1].options.body), { force: false });
+  assert.deepEqual(opened, [{ agentId, starting: false }], 'a scribe opens in its chat window, with no daemon call');
+  assert.deepEqual(JSON.parse(requests[0].options.body), { force: false });
   assert.match(prompts[0].body, /does not delete process templates.*conversation.*permissions.*local editor work/);
-  assert.match(requests[2].path, new RegExp(`/api/agents/${agentId}/retire\\?`));
-  const retireURL = new URL(requests[2].path, 'https://dashboard.example');
+  assert.match(requests[1].path, new RegExp(`/api/agents/${agentId}/retire\\?`));
+  const retireURL = new URL(requests[1].path, 'https://dashboard.example');
   assert.equal(retireURL.searchParams.get('delete_worktree'), '0');
   assert.equal(retireURL.searchParams.get('shutdown'), '1');
   assert.match(prompts[1].body, /revokes its permissions/);
@@ -269,15 +278,11 @@ test('process actor presentation renders only validated attribution and marks na
   assert.equal(processActorPresentation(snapshot, ''), null, 'unknown actor stays unattributed');
 
   dashboardState.snapshot.value = snapshot;
+  const opened = await withCompanion(t, harness);
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const requests = [];
-  const actions = createProcessesActions({ state, fetchImpl: async (path, options) => {
-    requests.push({ path, options });
-    return { ok: true, json: async () => ({ mode: 'native' }) };
-  } });
+  const actions = createProcessesActions({ state, fetchImpl: async () => { throw new Error('opening an actor calls no daemon API'); } });
   assert.equal(await actions.openActor(`agent:${agentId}`), true);
-  assert.equal(requests[0].path, `/api/open-window/${agentId}`);
-  assert.equal(requests[0].options.method, 'POST');
+  assert.deepEqual(opened, [{ agentId, starting: false }]);
   assert.equal(await actions.openActor(`agent:${'b'.repeat(32)}`), false, 'an unattributed/offline actor is not presented as a live navigation target');
 });
 
@@ -501,21 +506,6 @@ test('imperative editor boundary mounts once, survives parent updates, updates b
   await mounted.unmount(); assert.equal(destroys, 2);
 });
 
-test('imperative editor boundary asks the opened editor for a handed-off scribe request', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { ProcessEditorBoundary }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const requested = [];
-  const openEditor = async () => ({ model: { dirty: false }, requestScribe: async (...args) => { requested.push(args); return true; }, destroy() {} });
-  const spec = { id: 'tmpl_1', name: 'draft', blank: false, key: 'tmpl_1:1', scribe: { prompt: 'Draft the steps.' } };
-  const mounted = await harness.mount(harness.html`<${ProcessEditorBoundary} spec=${spec} state=${state} actions=${{}} confirmDiscard=${async () => true} openEditor=${openEditor} />`);
-  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  assert.deepEqual(requested, [['template', { prompt: 'Draft the steps.' }]]);
-  await mounted.unmount();
-});
-
 test('process template library renders both-skin scribe entry and sends library scope', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
@@ -631,7 +621,7 @@ test('renaming a template round-trips the head edit view and changes only the di
 
   input.value = 'New name';
   await harness.act(() => harness.fireEvent(input, 'input'));
-  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog'), 'submit'));
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog form'), 'submit'));
   for (let i = 0; i < 10 && state.rename.value; i++) await harness.act(() => Promise.resolve());
 
   const post = requests.find((request) => request.options.method === 'POST');
@@ -1179,7 +1169,7 @@ test('creating a template persists the named scaffold and prepopulates the edito
 
   input.value = 'Release train';
   await harness.act(() => harness.fireEvent(input, 'input'));
-  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog'), 'submit'));
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog form'), 'submit'));
   for (let i = 0; i < 10 && !state.canvas.value; i++) await harness.act(() => Promise.resolve());
 
   assert.equal(state.canvas.value?.kind, 'editor');
@@ -1492,6 +1482,42 @@ test('process scribe browser fallback opens a revealed terminal pane with live i
   await Promise.resolve();
   assert.equal(opened.length, 1);
   assert.equal(opened[0].seed.agent, agentId);
+  assert.equal(opened[0].seed.key, `window:${agentId}`);
   assert.equal(opened[0].seed.hideConv, agentId);
   assert.deepEqual(opened[0].options, { reveal: true });
+});
+
+test('asking an existing agent for process help names the standing grant and refuses a stale editor', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const opened = await withCompanion(t, harness);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const anchor = { kind: 'template', id: 'release-flow', currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64), isNew: false };
+  const helper = { id: 'agt_b', convId: 'conv-b', label: 'builder', effective: ['process.templates.read'] };
+  const requests = []; const prompts = [];
+  let fresh = true;
+  const actions = createProcessesActions({
+    state, notify() {}, confirm: async (options) => { prompts.push(options); return true; },
+    fetchImpl: async (path, options) => { requests.push({ path, body: JSON.parse(options.body) }); return reply({}); },
+  });
+  const guard = () => fresh;
+
+  fresh = true;
+  const pending = actions.askAgent(helper, anchor, { prompt: 'Tidy the release flow.', freshnessGuard: guard });
+  assert.ok(await pending);
+  assert.match(prompts[0].body, /builder is granted process\.templates\.manage.*standing grant.*every process template.*keeps its other permissions/s);
+  assert.deepEqual(requests.map((request) => request.path), ['/api/permissions', '/api/operator-message']);
+  assert.deepEqual(requests[0].body.overrides, { 'process.templates.manage': 'grant' }, 'only the missing slug');
+  assert.deepEqual(opened.at(-1), { agentId: 'agt_b', starting: false });
+
+  requests.length = 0;
+  const stale = createProcessesActions({
+    state, notify() {}, confirm: async () => { fresh = false; return true; },
+    fetchImpl: async (path) => { requests.push(path); return reply({}); },
+  });
+  assert.equal(await stale.askAgent(helper, anchor, { prompt: 'Tidy.', freshnessGuard: guard }), null);
+  assert.deepEqual(requests, [], 'an editor that moved on during the grant prompt grants and sends nothing');
+  assert.match(state.notice.value, /context changed during approval; nothing was granted or sent/);
 });

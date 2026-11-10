@@ -55,11 +55,6 @@ tclaude remote-access status             # config + issued devices
 
 Material lives as 0600 files under `~/.tclaude/data/remote-access/`.
 
-!!! note
-    Some CLI help strings still print the legacy `~/.tclaude/remote-access/`
-    path, which is only read as a fallback. The real location is
-    `~/.tclaude/data/remote-access/`.
-
 Client private keys exist only inside the one-time `.p12` you install on the
 device — the host keeps no copy.
 
@@ -74,7 +69,7 @@ dashboard and could capture the passphrase.
 You get the full desktop dashboard — it is desktop-first, with no PWA or Web
 Push on a self-signed LAN setup.
 
-The Config tab's Remote access panel mirrors the CLI: enable toggle, listen
+The Config › Daemon & network › Remote access mirrors the CLI: enable toggle, listen
 interface, HTTPS port, first-time setup and regenerate, add device (with CA
 download), and non-destructive addition of host SANs. The panel works over
 the remote listener itself (same privilege tier), and admin actions are
@@ -89,6 +84,20 @@ The same hardened build fits three deployment shapes:
   a real certificate.
 - **Public tunnel** — bind loopback and let the tunnel terminate its own TLS;
   mTLS and the passphrase still apply underneath.
+
+### Live pages from another machine
+
+Pages agents show in the dashboard work from another machine too: over the
+remote-access listener, over a plain dashboard bind, and behind `tailscale
+serve` or another TLS-terminating proxy. Each page is served under
+`/p/<remote token>/` on the host you reached the dashboard at. No new ports
+or settings are needed. On the regular dashboard listener a page's link is a
+capability URL: anyone who can reach the listener and holds it sees the page
+until it closes. On the remote-access listener the client certificate is also
+required. Pages there share the dashboard's origin, so their isolation rests
+on CSP path matching and on the dashboard API's Origin and cookie checks. A
+dev server needs `--base /p/<remote token>/`, which `tclaude agent show`
+prints. See [Live pages](live-page.md#viewing-pages-from-another-machine).
 
 ### What is and isn't exposed
 
@@ -105,6 +114,16 @@ port stays `agent.dashboard_port`) or `tclaude agentd serve
 it strictly behind your own reverse proxy, SSO, VPN, or IAP — `agentd` warns
 loudly on a non-loopback bind. The localhost listener is kept alongside, and
 this is also the supported network path for the standalone TUI dashboard.
+
+Plain HTTP this way is supported, including agent capture (`guide capture`) and
+the copy buttons. A copy that has to fetch its text first, such as Copy Markdown
+on a message, can be refused by the browser there, and says so. A drawing board's Ctrl V works there;
+its right-click Paste can't read the system clipboard, and says so. Browser notifications cannot work there: browsers allow them
+only over HTTPS or on localhost, and the dashboard says so where you would turn
+them on. [Dictation](companion.md#voice-and-dictation) is the same: browsers
+refuse the microphone there, and the mic is disabled and its tooltip says why. To
+dictate, use `localhost` on the host, or on a tailnet put `tailscale serve` in
+front of the bind and open the HTTPS address it gives you.
 
 ## Claude Code Remote Control
 
@@ -151,9 +170,8 @@ or tick "Start with remote control" in the dashboard's spawn dialog. The
 default is resolved once at spawn: explicit per-spawn value, then group
 policy, then spawn-profile default, then off. Group policy is set with
 `tclaude agent groups set-remote-control <group> optin|deny|inherit` (omit to
-clear; gated on `groups.settings.remote-control-policy` or `groups.admin`,
-human-only by default), and the dashboard shows a click-to-cycle policy chip
-per group. These are defaults, not locks — the agent's toggle still works
+clear; gated on `groups.settings.remote-control-policy` or `groups.admin`; a group owner
+has it for owned groups), or use `📱 remote policy` in the group's ⚙ menu. These are defaults, not locks — the agent's toggle still works
 afterwards.
 
 ### Tracking

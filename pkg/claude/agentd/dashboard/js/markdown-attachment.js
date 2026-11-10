@@ -20,7 +20,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preac
 import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
 import { isTopmostOverlay } from './overlay-stack.js';
-import { attachmentHrefByID, attachmentSize } from './human-attachments.js';
+import { attachmentSize } from './human-attachments.js';
+import { messageFileSource } from './attachment-source.js';
 import { MarkdownDocument } from './markdown-document.js';
 import { DialogResizer, useDialogResize } from './dialog-resize.js';
 import {
@@ -66,17 +67,65 @@ function LoadState({ state }) {
 export function MarkdownAttachment({ messageID, attachment, siblings, surface = 'attachment' }) {
   const [loadState, setLoadState] = useState('idle');
   const [source, setSource] = useState('');
-  // null while closed; otherwise the mode the viewer is showing.
-  const [viewMode, setViewMode] = useState(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const renderable = Boolean(attachment?.markdown);
+  const files = messageFileSource(messageID);
+  const href = attachment ? files.href(attachment) : '';
+  const filename = attachment?.filename || 'document.md';
+
+  // Fetched when the message is shown rather than on demand: the document is
+  // the thing the operator came to read, so it must already be there. One GET
+  // both fetches it and distinguishes a file the cleanup already removed.
+  useEffect(() => {
+    if (!renderable) return undefined;
+    let active = true;
+    setLoadState('loading');
+    files.text(attachment).then((out) => {
+      if (!active) return;
+      setSource(out.text);
+      setLoadState(out.state);
+    });
+    return () => { active = false; };
+  }, [href, renderable]);
+
+  if (!renderable) return null;
+
+  return html`<${Fragment}>
+    <button data-ui-exempt type="button" class="human-attachment-markdown-trigger"
+      disabled=${loadState !== 'ready'}
+      onClick=${() => setViewerOpen(true)} aria-label=${`View ${filename} in the document viewer`}>
+      <span class="human-attachment-markdown-icon" aria-hidden="true">⤢</span>
+      <span class="human-attachment-markdown-label">View</span>
+    </button>
+    <div class="markdown-attachment-document">
+      <${LoadState} state=${loadState} />
+      ${loadState === 'ready' && html`<${MarkdownDocument} source=${source} attachments=${siblings} />`}
+    </div>
+    ${viewerOpen && html`<${MarkdownViewer} files=${files} attachment=${attachment} siblings=${siblings}
+      surface=${surface} text=${source} onClose=${() => setViewerOpen(false)} />`}
+  </${Fragment}>`;
+}
+
+// MarkdownViewer is the attachment viewer for a Markdown document: the
+// dialog itself, open while it is mounted, on the rendered document with a
+// Rendered/Source toggle. `files` (attachment-source.js) says where the file
+// is read from; `text`, when the caller already holds the document (the
+// Messages card renders it inline), saves reading it again. onClose runs on
+// ×, Escape or a backdrop click.
+export function MarkdownViewer({ files, attachment, siblings, surface = 'attachment', text = null, downloadTitle = 'Download this agent-published file', onClose }) {
+  const [loaded, setLoaded] = useState(() => (text === null ? { state: 'loading', text: '' } : { state: 'ready', text }));
+  const source = text === null ? loaded.text : text;
+  const loadState = text === null ? loaded.state : 'ready';
+  // The mode the viewer is showing.
+  const [viewMode, setViewMode] = useState('rendered');
   const overlayRef = useRef(null);
   const closeRef = useRef(null);
-  const renderable = Boolean(attachment?.markdown);
-  const href = attachment ? attachmentHrefByID(messageID, attachment) : '';
+  const href = attachment ? files.href(attachment) : '';
   const filename = attachment?.filename || 'document.md';
   // Several documents can share a message, so the attachment id keeps the
   // dialog's labelling ids unique.
-  const titleID = `markdown-source-title-${surface}-${safeIDPart(messageID)}-${safeIDPart(attachment?.id ?? 0)}`;
-  const viewerOpen = viewMode !== null;
+  const titleID = `markdown-source-title-${surface}-${safeIDPart(files.key)}-${safeIDPart(attachment?.id ?? 0)}`;
+  const viewerOpen = true;
   const [textZoom, setTextZoom] = useState(1);
   const textZoomRef = useRef(1);
   textZoomRef.current = textZoom;
@@ -84,7 +133,9 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
   // The stage point a pending zoom must keep still, restored after layout.
   const anchorRef = useRef(null);
 
-  const close = useCallback(() => setViewMode(null), []);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const close = useCallback(() => onCloseRef.current?.(), []);
   const { dialogRef } = useDialogFocus({
     open: viewerOpen,
     initialFocusRef: closeRef,
@@ -137,43 +188,15 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
     },
   });
 
-  // Fetched when the message is shown rather than on demand: the document is
-  // the thing the operator came to read, so it must already be there. One GET
-  // both fetches it and distinguishes a file the cleanup already removed.
+  // A document the caller did not hand over is read when the viewer opens.
   useEffect(() => {
-    if (!renderable) return undefined;
+    if (text !== null) return undefined;
     let active = true;
-    setLoadState('loading');
-    fetch(href, { credentials: 'same-origin' })
-      .then(async (response) => {
-        if (!active) return;
-        if (response.status === 410) { setLoadState('gone'); return; }
-        if (!response.ok) { setLoadState('error'); return; }
-        const text = await response.text();
-        if (!active) return;
-        setSource(text);
-        setLoadState('ready');
-      })
-      .catch(() => {
-        if (active) setLoadState('error');
-      });
+    files.text(attachment).then((out) => { if (active) setLoaded(out); });
     return () => { active = false; };
-  }, [href, renderable]);
+  }, [files.key, attachment?.id, text === null]);
 
-  if (!renderable) return null;
-
-  return html`<${Fragment}>
-    <button type="button" class="human-attachment-markdown-trigger"
-      disabled=${loadState !== 'ready'}
-      onClick=${() => setViewMode('rendered')} aria-label=${`View ${filename} in the document viewer`}>
-      <span class="human-attachment-markdown-icon" aria-hidden="true">⤢</span>
-      <span class="human-attachment-markdown-label">View</span>
-    </button>
-    <div class="markdown-attachment-document">
-      <${LoadState} state=${loadState} />
-      ${loadState === 'ready' && html`<${MarkdownDocument} source=${source} attachments=${siblings} />`}
-    </div>
-    ${viewerOpen && html`<div ref=${overlayRef} class="modal-overlay show markdown-preview-overlay"
+  return html`<div ref=${overlayRef} class="modal-overlay show markdown-preview-overlay"
       onMouseDown=${(event) => {
         if (event.target === event.currentTarget && isTopmostOverlay(overlayRef.current)) {
           event.preventDefault();
@@ -189,27 +212,28 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
           </div>
           <div class="markdown-preview-header-actions">
             <div class="markdown-preview-modes" role="group" aria-label="Document view mode">
-              <button type="button" class="markdown-preview-mode"
+              <button data-ui-exempt type="button" class="markdown-preview-mode"
                 aria-pressed=${viewMode === 'rendered'}
                 onClick=${() => setViewMode('rendered')}>Rendered</button>
-              <button type="button" class="markdown-preview-mode"
+              <button data-ui-exempt type="button" class="markdown-preview-mode"
                 aria-pressed=${viewMode === 'source'}
                 onClick=${() => setViewMode('source')}>Source</button>
             </div>
-            ${textZoom !== 1 && html`<button type="button" class="markdown-preview-zoom-reset"
+            ${textZoom !== 1 && html`<button data-ui-exempt type="button" class="markdown-preview-zoom-reset"
               onClick=${() => zoomText(() => 1)} aria-label=${`Text size ${Math.round(textZoom * 100)}%; reset to 100%`}
               title="Reset text size (0)">${Math.round(textZoom * 100)}%</button>`}
-            <a class="markdown-preview-download" href=${href} download=${filename}
-              title="Download this agent-published file">Download</a>
+            ${href && loadState !== 'gone' && html`<a class="markdown-preview-download" href=${href} download=${filename}
+              title=${downloadTitle}>Download</a>`}
             <${ViewerDisplayButtons} ...${view} />
-            <button ref=${closeRef} type="button" class="markdown-preview-close"
+            <button data-ui-exempt ref=${closeRef} type="button" class="markdown-preview-close"
               onClick=${close} aria-label="Close the document viewer" title="Close (Esc)">×</button>
           </div>
         </header>
         <div ref=${stageRef} class="markdown-preview-stage" tabIndex="0" role="region"
           aria-label=${viewMode === 'source' ? `${filename} source` : filename}>
           <div class="markdown-preview-zoom" style=${textZoom !== 1 ? { zoom: textZoom } : undefined}>
-            ${viewMode === 'source'
+            <${LoadState} state=${loadState} />
+            ${loadState !== 'ready' ? null : viewMode === 'source'
               ? html`<pre class="markdown-preview-source">${source}</pre>`
               : html`<${MarkdownDocument} source=${source} attachments=${siblings}
                   className="markdown-document markdown-preview-document" />`}
@@ -217,6 +241,5 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
         </div>
         <${DialogResizer} ...${resizerProps} label="Resize the document viewer" />
       </div>
-    </div>`}
-  </${Fragment}>`;
+    </div>`;
 }

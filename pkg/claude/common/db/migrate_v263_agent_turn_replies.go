@@ -7,6 +7,8 @@ import "database/sql"
 // process scribes only (RecordScribeTurnReply). It is the read side of the
 // process editor's docked scribe chat: the human's half is the operator
 // message trail, the scribe's half is this table. Rows cascade with the agent.
+// Since the scribe chats moved to regular chat windows (tcl-j4hyp5) nothing
+// writes or reads it, and v302 drops it (tcl-t1ghd7).
 func migrateV262toV263(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {

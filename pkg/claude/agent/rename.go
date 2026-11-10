@@ -10,6 +10,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/renametitle"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -19,8 +20,7 @@ import (
 // own CC pane via tmux send-keys.
 //
 // `--target <selector>` swaps the action to ANOTHER agent — the
-// manager pattern. Cross-agent calls require `agent.rename`, OR the
-// caller being an owner of a group containing the target.
+// manager pattern; its auth is CrossAgentAuth("rename").
 //
 // Permissions live in ~/.tclaude/config.json under `agent.default_permissions`
 // or in SQLite via `tclaude agent permissions grant`. The human controls
@@ -29,7 +29,7 @@ func renameCmd() *cobra.Command {
 	return boa.CmdT[renameParams]{
 		Use:         "rename",
 		Short:       "Rename a conversation (self by default, or another with --target)",
-		Long:        "Asks tclaude agentd to inject `/rename <title>` into a CC pane. By default the target is the calling agent itself (requires `self.rename`). Use --target <selector> to rename ANOTHER agent — the manager pattern (requires `agent.rename`, or being an owner of a group containing the target).",
+		Long:        "Asks tclaude agentd to inject `/rename <title>` into a CC pane. By default the target is the calling agent itself (requires `self.rename`). Use --target <selector> to rename ANOTHER agent — the manager pattern. " + CrossAgentAuth("rename"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *renameParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeConvSelectors)
@@ -37,43 +37,21 @@ func renameCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *renameParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRename(p, os.Stdout, os.Stderr))
+			os.Exit(runRename(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 type renameParams struct {
 	Title    string `pos:"true" optional:"true" help:"New conversation title (1-64 chars, [A-Za-z0-9_\\-\\[\\]{}() ] only; single spaces OK, no doubles). Omit when --auto is set."`
-	Target   string `long:"target" optional:"true" help:"Rename ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.rename permission, or being an owner of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Rename ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 	Auto     bool   `long:"auto" help:"Ask the agent to choose its own title — queues an inbox instruction prompting it to call 'tclaude agent rename' with a 3-4-word kebab-case slug. Mutually exclusive with the positional title."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
-// isValidRenameTitle mirrors the daemon-side check in handlers.go.
-// Kept in sync deliberately: the daemon is the actual security boundary,
-// but we want a fast local error before sending a doomed request.
-func isValidRenameTitle(t string) bool {
-	if t == "" || len(t) > 64 {
-		return false
-	}
-	if strings.Contains(t, "  ") {
-		return false
-	}
-	for _, r := range t {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_':
-		case r == '[' || r == ']' || r == '{' || r == '}':
-		case r == '(' || r == ')':
-		case r == ' ':
-		default:
-			return false
-		}
-	}
-	return true
-}
+// isValidRenameTitle is a fast local error before sending a doomed request.
+// The daemon is the security boundary; both call the same gate (renametitle).
+func isValidRenameTitle(t string) bool { return renametitle.Valid(t) }
 
 func runRename(p *renameParams, stdout, stderr io.Writer) int {
 	title := strings.TrimSpace(p.Title)
@@ -109,6 +87,7 @@ func runRename(p *renameParams, stdout, stderr io.Writer) int {
 		Title         string `json:"title"`
 		Auto          bool   `json:"auto,omitempty"`
 		Note          string `json:"note,omitempty"`
+		remoteReply
 	}
 	if ask > 0 {
 		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
@@ -127,6 +106,8 @@ func runRename(p *renameParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	if resp.Auto {
 		if resp.CallerConv != "" {
 			fmt.Fprintf(stdout, "Auto-rename nudge sent to %s (by %s); the agent will pick its own title.\n",

@@ -1,4 +1,4 @@
-// groups-fused-links.js -- the Both lens's hover links: dashed lines between
+// groups-fused-links.js -- the group cards' hover links: dashed lines between
 // an agent's row in a group's Agents section and the process steps it
 // performs in the same group's Processes section.
 //
@@ -271,7 +271,7 @@ export function FusedLinks({ frame }) {
         <circle class="gf-link-end" cx=${line.x2} cy=${line.y2} r="2.5" />
       </g>`)}
     </svg>
-    ${drawn.tags.map((tag) => html`<button type="button" key=${`${tag.dir}${tag.text}${tag.x}`} class="gf-link-tag" tabindex="-1"
+    ${drawn.tags.map((tag) => html`<button data-ui-exempt type="button" key=${`${tag.dir}${tag.text}${tag.x}`} class="gf-link-tag" tabindex="-1"
       aria-label=${`Scroll to ${tag.text}`}
       style=${`left:${tag.x}px;top:${tag.y}px`} onClick=${() => tag.el.scrollIntoView?.({ block: 'center', behavior: 'smooth' })}
     >${tag.dir} ${tag.text}</button>`)}

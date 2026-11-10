@@ -25,6 +25,7 @@ var (
 	ClaudeProjectsDir            = convops.ClaudeProjectsDir
 	PathToProjectDir             = convops.PathToProjectDir
 	GetClaudeProjectPath         = convops.GetClaudeProjectPath
+	FindSessionInProjects        = convops.FindSessionInProjects
 	RemoveSessionsIndexEntry     = convops.RemoveSessionsIndexEntry
 	UpsertSessionsIndexEntry     = convops.UpsertSessionsIndexEntry
 	FindSessionByID              = convops.FindSessionByID
@@ -68,7 +69,7 @@ func Cmd() *cobra.Command {
 		RunFunc: func(params *ConvParams, _ *cobra.Command, _ []string) {
 			// Default to interactive watch mode (same as conv ls -w)
 			if err := RunConvWatchMode(params.Global, "", ""); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},

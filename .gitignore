@@ -85,3 +85,14 @@ excalidraw.log
 # Claude Code runtime write-journal (a real directory, created in-repo
 # by sandboxed sessions; empty today but never a project file).
 /.claude/.cc-writes/
+
+# Output of scripts/docs/drift.sh.
+/docs-drift-out/
+
+# GoReleaser output. Untracked here, it marks every release build as modified.
+/dist/
+
+docshots-out/
+
+# scripts/sandbox/ui.sh state and Playwright results
+sandbox-out/

@@ -26,7 +26,7 @@ import (
 // share the same conservative contract (atomic, idempotent, fail-safe, refusing
 // a shape they cannot edit rather than corrupting it). This file holds the two
 // harness-agnostic entry points every caller should use: ResolveTrustDir to
-// gate the opt-in, and EnsureDirTrusted to apply it.
+// gate the opt-in, and EnsureDirTrustedForLaunch to apply it.
 //
 // Neither is ever a default. Pre-trusting edits a config file tclaude does not
 // own, so it happens only on an explicit opt-in — a dashboard checkbox, a spawn
@@ -57,11 +57,11 @@ func ResolveTrustDir(h *Harness, requested bool) (bool, error) {
 	return true, nil
 }
 
-// DirTrustStore names the config file EnsureDirTrusted would edit for h, in
+// DirTrustStore names the config file EnsureDirTrustedForLaunch would edit for h, in
 // the ~-relative spelling a human recognises. "" for a harness with no dir
 // trust. It exists so UI copy ("edits ~/.claude.json") is derived from the
 // harness rather than hardcoded per call site, and it deliberately shares
-// EnsureDirTrusted's switch shape so adding a harness to one without the other
+// EnsureDirTrustedForLaunch's switch shape so adding a harness to one without the other
 // is visible in a single file.
 func DirTrustStore(h *Harness) string {
 	if !h.SupportsDirTrust() {
@@ -71,7 +71,7 @@ func DirTrustStore(h *Harness) string {
 	case CodexName:
 		return "~/.codex/config.toml"
 	case DefaultName:
-		return "~/.claude.json"
+		return "~/.claude/.claude.json"
 	case CopilotName:
 		// Named relative to COPILOT_HOME rather than as ~/.copilot/config.json,
 		// because a launch that relocates COPILOT_HOME really does move the
@@ -87,11 +87,14 @@ func DirTrustStore(h *Harness) string {
 	}
 }
 
-// EnsureDirTrusted pre-trusts projectDir for h by seeding that harness's own
-// trust record, so a detached pane never stops on the trust dialog. projectDir
-// must be the ABSOLUTE launch cwd — the path the harness keys its record on —
-// or the entry won't match. Idempotent (already-trusted → no write) and atomic
-// (temp + rename) for both harnesses.
+// EnsureDirTrustedForLaunch pre-trusts projectDir for h by seeding that
+// harness's own trust record, in the trust store the LAUNCH's environment
+// selects, so a detached pane never stops on the trust dialog. projectDir must
+// be the ABSOLUTE launch cwd — the path the harness keys its record on — or
+// the entry won't match. Idempotent (already-trusted → no write) and atomic.
+// It trusts both the canonical cwd and its recorded spelling, since harnesses
+// can resolve symlinks before looking up folder trust. Unresolvable paths
+// retain the recorded-path behavior.
 //
 // Callers must have cleared ResolveTrustDir first; a harness without dir trust
 // is a no-op here rather than an error, so a caller that skipped the gate
@@ -101,25 +104,14 @@ func DirTrustStore(h *Harness) string {
 // optimisation over the dashboard focus button (a human can still clear the
 // dialog on the pending pane), so a refusal degrades to one manual click
 // instead of failing the spawn.
-func EnsureDirTrusted(h *Harness, projectDir string) error {
-	return EnsureDirTrustedForLaunch(h, projectDir, nil, "")
-}
-
-// EnsureDirTrustedForLaunch is EnsureDirTrusted with the LAUNCH's environment
-// supplied, for the harnesses whose trust store can move with it. It trusts
-// both the canonical cwd and its recorded spelling, since harnesses can
-// resolve symlinks before looking up folder trust. Unresolvable paths retain
-// the recorded-path behavior.
 //
 // Codex keys its trust record on a fixed path under the operator's home, so
 // its editor ignores both arguments. Copilot's store lives under COPILOT_HOME,
-// which a spawn profile can relocate, and Claude Code's lives under
-// CLAUDE_CONFIG_DIR when that variable is set — tclaude's constructed-root
-// sandbox launches set it (see session.ApplyClaudeConfigDirEnv). Seeding the
-// ambient location for a launch that reads another one writes a file the
-// agent never opens, leaving the pane parked on the modal it was supposed to
-// clear. getenv nil (and home "") means "the ambient environment", which is
-// what every caller outside the profile-aware launch path wants.
+// which a spawn profile can relocate. Claude Code's is
+// $CLAUDE_CONFIG_DIR/.claude.json, which every tclaude Claude launch pins to
+// its state root (session.ApplyClaudeConfigDirEnv); a getenv that does not
+// carry it is refused, never resolved to the top-level ~/.claude.json. For the
+// other harnesses, getenv nil (and home "") means "the ambient environment".
 func EnsureDirTrustedForLaunch(
 	h *Harness,
 	projectDir string,
@@ -146,9 +138,6 @@ func ensureDirTrustedForLaunchPath(h *Harness, projectDir string, getenv func(st
 	case CodexName:
 		return EnsureCodexDirTrusted(projectDir)
 	case DefaultName:
-		if getenv == nil {
-			return EnsureClaudeDirTrusted(projectDir)
-		}
 		return EnsureClaudeDirTrustedForLaunch(getenv, projectDir)
 	case CopilotName:
 		if getenv == nil && strings.TrimSpace(home) == "" {

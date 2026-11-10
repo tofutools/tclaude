@@ -1,21 +1,14 @@
 import { FleetAdminError } from './fleet-admin-actions.js';
 import { nodeBase } from './fleet-harness-model.js';
+import { requestJSON } from './request-json.js';
 
 // createHarnessActions wraps a node's harness routes. Every call names the
 // node; a peer's go through the local peer proxy, which enforces its grants
 // and, for credential pushes, captures this operator's own login files.
 export function createHarnessActions({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
-  async function call(node, method, path, body) {
-    const init = { method, credentials: 'same-origin', cache: 'no-store', headers: {} };
-    if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    const res = await fetchImpl(`${nodeBase(node)}/harnesses/${path}`, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) throw new FleetAdminError(res.status, data);
-    return data;
+  async function call(node, method, path, body) { return callAt(node, method, `harnesses/${path}`, body); }
+  function callAt(node, method, path, body) {
+    return requestJSON(`${nodeBase(node)}/${path}`, { method, body, cache: 'no-store', fetchImpl, ErrorClass: FleetAdminError });
   }
   return Object.freeze({
     availability: (node, { refresh = false } = {}) => call(node, 'GET', `availability${refresh ? '?refresh=1' : ''}`),
@@ -29,5 +22,9 @@ export function createHarnessActions({ fetchImpl = (...a) => globalThis.fetch(..
     // Only a peer can receive a push; confirm_share records the operator's
     // consent that agents there act as them.
     push: (node, harness) => call(node, 'POST', 'credentials/push', { harness, confirm_share: true }),
+    // The node's own update scripts (config updates.scripts), under node.update.
+    updateScripts: (node) => callAt(node, 'GET', 'node/update-scripts'),
+    checkUpdateScripts: (node, name = '') => callAt(node, 'POST', 'node/update-scripts', name ? { action: 'check', name } : { action: 'check' }),
+    runUpdateScript: (node, name) => callAt(node, 'POST', 'node/update-scripts', { action: 'update', name }),
   });
 }

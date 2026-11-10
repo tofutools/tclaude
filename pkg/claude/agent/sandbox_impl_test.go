@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func TestRunSandboxImplSet_PostsTheSelectorAndBody(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
 		assert.Equal(t, http.MethodPost, method)
-		assert.Equal(t, "/v1/agent/legacy-worker/sandbox-impl", path)
+		assert.Equal(t, "/v1/agent/legacy-worker/sandbox", path)
 		return 200, "", sandboxImplAssignedBody
 	})
 
@@ -44,6 +45,52 @@ func TestRunSandboxImplSet_PostsTheSelectorAndBody(t *testing.T) {
 		"the operator needs to see what the assignment replaced")
 	assert.Contains(t, out, "per-agent cgroup: yes")
 	assert.Contains(t, out, "wake the agent")
+}
+
+func TestRunSandboxImplSet_MoveOutIsRefusedWithoutYes(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(_, _ string) (int, string, string) {
+		if len(calls) == 1 {
+			return http.StatusConflict, sandboxMoveOutConfirmCode, ""
+		}
+		return http.StatusOK, "", sandboxImplAssignedBody
+	})
+	params := &sandboxImplSetParams{Agent: "legacy-worker", Implementation: "harness-builtin"}
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(params, &stdout, &stderr)
+	assert.NotEqual(t, rcOK, rc)
+	assert.Contains(t, stderr.String(), "stub error", "the daemon's facts are printed")
+	assert.Contains(t, stderr.String(), "--yes")
+	assert.NotContains(t, calls[0].body, "confirm_move_out")
+
+	params.Yes = true
+	stdout.Reset()
+	stderr.Reset()
+	require.Equal(t, rcOK, runSandboxImplSet(params, &stdout, &stderr), "stderr=%s", stderr.String())
+	require.Len(t, calls, 2)
+	assert.Equal(t, true, calls[1].body.(map[string]any)["confirm_move_out"])
+}
+
+func TestRunSandboxImplSet_RestartIsSentAndReported(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"conv_id":"conv-legacy","sandbox_implementation":"resource-only",
+		"previous_sandbox_implementation":"harness-builtin","online":true,"restart":"resumed"}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{
+		Agent: "legacy-worker", Implementation: "resource-only", Restart: true,
+	}, &stdout, &stderr)
+
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, calls, 1)
+	body, ok := calls[0].body.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, body["restart"])
+	out := stdout.String()
+	assert.Contains(t, out, "restarted")
+	assert.NotContains(t, out, "applies to its next launch",
+		"a restarted agent already runs under the new posture")
 }
 
 func TestRunSandboxImplSet_PinsAnExplicitMode(t *testing.T) {
@@ -96,7 +143,7 @@ func TestRunSandboxImplShow_GetsAndRenders(t *testing.T) {
 	var calls []capturedReq
 	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
 		assert.Equal(t, http.MethodGet, method)
-		assert.Equal(t, "/v1/agent/some%20agent/sandbox-impl", path)
+		assert.Equal(t, "/v1/agent/some%20agent/sandbox", path)
 		return 200, "", `{
 			"conv_id":"5f8c1e2a-1111-2222-3333-444455556666",
 			"sandbox_implementation":"harness-builtin",
@@ -127,4 +174,88 @@ func TestRunSandboxImplShow_JSONEmitsTheWireShape(t *testing.T) {
 	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(stdout.String()), "{"))
 	assert.Contains(t, stdout.String(), `"sandbox_implementation": "resource-only"`)
+}
+
+func TestRunSandboxImplSet_ProfileOnlyChangeOmitsTheImplementation(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"conv_id":"conv-legacy","sandbox_implementation":"harness-builtin",
+		"sandbox_profile":"strict","sandbox_profile_pending":true,"previous_sandbox_profile":"loose","online":false}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{Agent: "legacy-worker", SandboxProfile: "strict"}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, calls, 1)
+	body := calls[0].body.(map[string]any)
+	assert.Equal(t, "", body["implementation"], "no implementation change is asked for")
+	assert.Equal(t, "strict", body["sandbox_profile"])
+	assert.Contains(t, stdout.String(), "explicit sandbox profile: loose → strict")
+	assert.Contains(t, stdout.String(), "wake the agent")
+}
+
+func TestRunSandboxImplSet_NoProfileSendsAnEmptyProfile(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"conv_id":"conv-legacy","sandbox_implementation":"harness-builtin","sandbox_profile":""}`))
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{Agent: "legacy-worker", NoProfile: true}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	require.Len(t, calls, 1)
+	profile, present := calls[0].body.(map[string]any)["sandbox_profile"]
+	assert.True(t, present)
+	assert.Equal(t, "", profile)
+}
+
+func TestRunSandboxImplSet_RequiresSomethingToChange(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{Agent: "legacy-worker"}, &stdout, &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "--sandbox-profile")
+}
+
+// A daemon older than the /sandbox route refuses it as an unknown verb; the
+// CLI then retries the deprecated /sandbox-impl spelling it does serve.
+func TestRunSandboxImplSet_FallsBackToTheLegacyRouteOnAnOlderDaemon(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	var paths []string
+	DaemonRequestImpl = func(_, path string, _, out any, _ DaemonOpts) error {
+		paths = append(paths, path)
+		if strings.HasSuffix(path, "/sandbox") {
+			return &DaemonError{Status: http.StatusNotFound, Code: "not_found",
+				Msg: "unknown verb sandbox for /v1/agent/{selector}/..."}
+		}
+		return json.Unmarshal([]byte(sandboxImplAssignedBody), out)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplSet(&sandboxImplSetParams{
+		Agent: "legacy-worker", Implementation: "resource-only",
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	assert.Equal(t, []string{"/v1/agent/legacy-worker/sandbox", "/v1/agent/legacy-worker/sandbox-impl"}, paths)
+}
+
+// A selector that does not resolve is a 404 too, but not an unknown verb: it
+// is reported, not retried.
+func TestRunSandboxImplShow_DoesNotRetryAnUnresolvedAgent(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(_, _ string) (int, string, string) {
+		return http.StatusNotFound, "not_found", ""
+	})
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxImplShow(&sandboxImplShowParams{Agent: "nobody"}, &stdout, &stderr)
+	assert.NotEqual(t, rcOK, rc)
+	assert.Len(t, calls, 1)
+}
+
+func TestSandboxImplLegacyCmd_IsDeprecatedAndHidden(t *testing.T) {
+	cmd := sandboxImplLegacyCmd()
+	assert.Equal(t, "sandbox-impl", cmd.Name())
+	assert.True(t, cmd.Hidden)
+	assert.Contains(t, cmd.Deprecated, "tclaude agent sandbox")
+	set, _, err := cmd.Find([]string{"set"})
+	require.NoError(t, err)
+	assert.Contains(t, set.Deprecated, "tclaude agent sandbox set")
+	assert.Equal(t, "sandbox", sandboxCmd().Name())
 }

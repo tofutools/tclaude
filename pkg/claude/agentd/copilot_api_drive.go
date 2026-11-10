@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/copilotapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -589,12 +590,35 @@ func runCopilotAPICompaction(convID, followUp string) {
 // sessionID is for the log line only and is empty when no handle was proved; the
 // delivery deliberately does not take one, because the follow-up must not ride a
 // handle this function was handed.
+//
+// A failed send is not the end of the follow-up. The caller was already told the
+// compaction (with its follow-up) was accepted, and nothing re-asks, so the text
+// is queued as an inbox row to the agent instead (tcl-gpzct5). The nudge pipeline
+// delivers that over session.send once the drive answers, and holds it rather
+// than typing it while the drive is down. A send whose acceptance was uncertain
+// may then arrive twice; delivery is at-least-once, as nudges are.
 func deliverCopilotAPICompactionFollowUp(convID, sessionID, followUp string) {
 	if followUp == "" {
 		return
 	}
-	if err := sendCopilotAPIMessage(convID, followUp); err != nil {
-		slog.Warn("copilot API: compaction follow-up failed",
-			"conv_id", convID, "session_id", sessionID, "error", err)
+	err := sendCopilotAPIMessage(convID, followUp)
+	if err == nil {
+		return
+	}
+	slog.Warn("copilot API: compaction follow-up failed; queueing it in the agent's inbox",
+		"conv_id", convID, "session_id", sessionID, "error", err)
+	var groupID int64
+	if groups, groupErr := db.ListGroupsForConv(convID); groupErr == nil && len(groups) > 0 {
+		groupID = groups[0].ID
+	}
+	if _, queueErr := queueAgentMessage(&db.AgentMessage{
+		GroupID: groupID, ToConv: convID, Subject: compactionFollowUpSubject, Body: followUp,
+	}); queueErr != nil {
+		slog.Error("copilot API: queueing the undelivered compaction follow-up failed; it is lost",
+			"conv_id", convID, "error", queueErr)
 	}
 }
+
+// compactionFollowUpSubject heads the inbox copy of a compaction follow-up that
+// could not be sent right after the compaction.
+const compactionFollowUpSubject = "Compaction follow-up"

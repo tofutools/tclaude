@@ -33,7 +33,7 @@ type actionParams struct {
 }
 
 func actionCmd() *cobra.Command {
-	return boa.CmdT[actionParams]{Use: "action", Short: "Run a grant-authorized action on a remote node (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *actionParams, _ *cobra.Command, _ []string) { os.Exit(runAction(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[actionParams]{Use: "action", Short: "Run a grant-authorized action on a remote node (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *actionParams, _ *cobra.Command, _ []string) { os.Exit(runAction(p, cliStdout, cliStderr)) }}.ToCobra()
 }
 func runAction(p *actionParams, stdout, stderr io.Writer) int {
 	if p.Node == "" {

@@ -16,6 +16,8 @@
 
 import { signal } from '@preact/signals';
 import { idempotentRequestHeaders } from './request-idempotency.js';
+import { randomUUID } from './insecure-origin.js';
+import { lockChanged } from './resource-lock.js';
 
 export const PROCESS_CONTEXT_PATH = '/v1/process/context';
 
@@ -195,16 +197,6 @@ export function formatRunDuration(fromISO, now = Date.now()) {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
-function newAttemptKey() {
-  if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 // saveMeta is a template save's library and group metadata: sent only when
 // set.
 function saveMeta(listed, pinGroup) {
@@ -219,6 +211,7 @@ async function processRequest(path, init, fetchImpl) {
     // names the version it did store ({id, ref}).
     const error = new Error(body.message || body.error || `${response.status} ${response.statusText || ''}`.trim());
     error.body = body;
+    error.status = response.status;
     throw error;
   }
   return body;
@@ -283,7 +276,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     // `pinGroup` are sent only when given, so a daemon without library
     // listing still accepts a plain create. Both are request metadata, never
     // template content.
-    async createTemplate({ template, edges, layout }, { listed, pinGroup = '', attemptKey = newAttemptKey() } = {}) {
+    async createTemplate({ template, edges, layout }, { listed, pinGroup = '', attemptKey = randomUUID() } = {}) {
       const path = '/v1/process/templates';
       const { id: _id, ...rest } = template;
       const body = JSON.stringify({ template: rest, edges, layout, ...saveMeta(listed, pinGroup) });
@@ -296,9 +289,14 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     getTemplate(templateId) {
       return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}`, {}, fetchImpl);
     },
+    // getTemplateHead reads the same view of the current version with who
+    // saved it and when (authoredAt), which the full read leaves out.
+    getTemplateHead(templateId) {
+      return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}?authorship=omit`, {}, fetchImpl);
+    },
     // saveTemplate saves a new version of a stored template against the
     // sourceHash it was opened at; a 409 means someone saved in between.
-    async saveTemplate(templateId, { template, edges, layout }, { sourceHash = '', listed, pinGroup = '', attemptKey = newAttemptKey() } = {}) {
+    async saveTemplate(templateId, { template, edges, layout }, { sourceHash = '', listed, pinGroup = '', attemptKey = randomUUID() } = {}) {
       const path = `/v1/process/templates/${encodeURIComponent(templateId)}`;
       const body = JSON.stringify({ template: { ...template, id: templateId }, edges, layout, sourceHash, ...saveMeta(listed, pinGroup) });
       return processRequest(path, {
@@ -306,7 +304,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       }, fetchImpl);
     },
     // publishTemplate lists a template in the library.
-    async publishTemplate(templateId, attemptKey = newAttemptKey()) {
+    async publishTemplate(templateId, attemptKey = randomUUID()) {
       const path = `/v1/process/templates/${encodeURIComponent(templateId)}/listing`;
       const body = JSON.stringify({ listed: true });
       return processRequest(path, {
@@ -315,7 +313,7 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     },
     // pinProcess saves an existing template to a group's processes;
     // unpinProcess removes it from them (the template itself stays).
-    async pinProcess(group, templateId, attemptKey = newAttemptKey()) {
+    async pinProcess(group, templateId, attemptKey = randomUUID()) {
       const path = `/v1/process/groups/${encodeURIComponent(group)}/processes`;
       const body = JSON.stringify({ templateId });
       return processRequest(path, {
@@ -325,6 +323,117 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     async unpinProcess(group, templateId) {
       return processRequest(`/v1/process/groups/${encodeURIComponent(group)}/processes/${encodeURIComponent(templateId)}`, {
         method: 'DELETE',
+      }, fetchImpl);
+    },
+    // setResourceLock locks or unlocks a group resource against agent
+    // changes (POST /api/resource-locks, the operator's route): kind is
+    // process (a template id), drawing board (a drawing board id) or page (a page id).
+    async setResourceLock(kind, id, locked) {
+      const body = await processRequest('/api/resource-locks', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, id, locked }),
+      }, fetchImpl);
+      void lockChanged(kind, id, locked);
+      return body;
+    },
+    // createGroupPage creates a blank page the group owns (POST /api/pages):
+    // name is its handle in the group, title what it is shown as (name when
+    // none is given).
+    async createGroupPage(group, name, title = name) {
+      return processRequest('/api/pages', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group, name, title }),
+      }, fetchImpl);
+    },
+    // reopenGroupPage reopens a closed page saved with its group.
+    async reopenGroupPage(id) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/reopen`, { method: 'POST' }, fetchImpl);
+    },
+    // reloadGroupPage reloads a live page in every view of it.
+    async reloadGroupPage(id) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/reload`, { method: 'POST' }, fetchImpl);
+    },
+    // deleteDrawingBoard deletes a drawing board and what is drawn on it.
+    async deleteDrawingBoard(id) {
+      return processRequest(`/api/drawing-boards/${encodeURIComponent(id)}`, { method: 'DELETE' }, fetchImpl);
+    },
+    // renameGroupPage sets a page's title, open or saved closed.
+    async renameGroupPage(id, title) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/title`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
+      }, fetchImpl);
+    },
+    // moveGroupPage moves a page to another group its agent is in.
+    async moveGroupPage(id, group) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/group`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group }),
+      }, fetchImpl);
+    },
+    // renameDrawingBoard sets a drawing board's title.
+    async renameDrawingBoard(id, title) {
+      return processRequest(`/api/drawing-boards/${encodeURIComponent(id)}/title`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
+      }, fetchImpl);
+    },
+    // moveDrawingBoard links a drawing board to another group.
+    async moveDrawingBoard(id, group) {
+      return processRequest(`/api/drawing-boards/${encodeURIComponent(id)}/group`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group }),
+      }, fetchImpl);
+    },
+    // copyDrawingBoard copies a drawing board into group as a new drawing board (id, title).
+    async copyDrawingBoard(id, group, title, newId) {
+      return processRequest(`/api/drawing-boards/${encodeURIComponent(id)}/copy`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group, title, id: newId }),
+      }, fetchImpl);
+    },
+    // deleteGroupPage closes a page if open and removes it from its group.
+    async deleteGroupPage(id) {
+      return processRequest(`/api/pages/${encodeURIComponent(id)}/delete`, { method: 'POST' }, fetchImpl);
+    },
+    // drawingBoardIds lists every drawing board's id: drawing board ids are node-wide.
+    async drawingBoardIds() {
+      const body = await processRequest('/api/drawing-boards', {}, fetchImpl);
+      return (Array.isArray(body.drawingBoards) ? body.drawingBoards : []).map((drawingBoard) => String(drawingBoard?.id || '')).filter(Boolean);
+    },
+    // createGroupDrawingBoard creates a drawing board and links it to a group. A drawing board the
+    // link fails for is deleted again rather than left behind unlinked.
+    async createGroupDrawingBoard(group, title, id) {
+      const json = { 'Content-Type': 'application/json' };
+      const drawingBoard = await processRequest('/api/drawing-boards', { method: 'POST', headers: json, body: JSON.stringify({ title, id: id || undefined }) }, fetchImpl);
+      const path = `/api/drawing-boards/${encodeURIComponent(drawingBoard.id)}`;
+      try {
+        await processRequest(`${path}/group`, { method: 'POST', headers: json, body: JSON.stringify({ group }) }, fetchImpl);
+      } catch (cause) {
+        await processRequest(path, { method: 'DELETE' }, fetchImpl).catch(() => {});
+        throw cause;
+      }
+      return drawingBoard;
+    },
+    // deleteTemplate removes a template with its history, pins and listing.
+    async deleteTemplate(templateId) {
+      return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}`, { method: 'DELETE' }, fetchImpl);
+    },
+    // spawnProfileNames lists the node's spawn profiles for a fallback picker.
+    async spawnProfileNames() {
+      const body = await processRequest('/api/spawn-profiles', {}, fetchImpl);
+      return (Array.isArray(body) ? body : []).map((profile) => String(profile?.name || '')).filter(Boolean);
+    },
+    // summonScribe starts a process scribe (POST /api/scribe). The caller holds
+    // the operator's approval of body.slugs; see draftWithScribe.
+    async summonScribe(body) {
+      return processRequest('/api/scribe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      }, fetchImpl);
+    },
+    // sendScribeMessage is the operator's mail to a scribe.
+    async sendScribeMessage(convId, { subject, body }) {
+      return processRequest('/api/operator-message', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: convId, subject, body }),
+      }, fetchImpl);
+    },
+    // stopAgent soft-stops a scribe; its templates and conversation stay.
+    async stopAgent(agentId) {
+      return processRequest(`/api/agents/${encodeURIComponent(agentId)}/stop`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: false }),
       }, fetchImpl);
     },
     // resolvePreview asks who would take each agent step of an unsaved view
@@ -345,13 +454,16 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       return body.diagnostics || [];
     },
     // startGroupRun starts a run scoped to a group, or to one agent when
-    // agent is given instead.
-    async startGroupRun({ templateId, group, agent, params = {}, authorizeProgramProfiles = [], attemptKey = newAttemptKey() }) {
+    // agent is given instead. `expectedRef` refuses the start with
+    // process_run_template_moved if the head is no longer that version;
+    // `templateRef` runs that version even though a newer one exists.
+    async startGroupRun({ templateId, group, agent, params = {}, authorizeProgramProfiles = [], expectedRef = '', templateRef = '', attemptKey = randomUUID() }) {
       const path = '/v1/process/runs';
       const filled = Object.fromEntries(Object.entries(params).filter(([, value]) => String(value ?? '') !== ''));
       const body = JSON.stringify({
         templateId, ...(agent ? { agent } : { group }), ...(Object.keys(filled).length ? { params: filled } : {}),
         authorizeProgramProfiles: [...authorizeProgramProfiles],
+        ...(expectedRef ? { expectedRef } : {}), ...(templateRef ? { templateRef } : {}),
       });
       return processRequest(path, {
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
@@ -393,7 +505,7 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
     // decide records a human gate's verdict against the awaited window
     // (attempt) the inspector read, so a stale click is refused, not replayed.
     // Without an attempt the daemon takes the decision's current window.
-    async decide(runId, { nodeId, verdict, evidence = '', attempt, attemptKey = newAttemptKey() }) {
+    async decide(runId, { nodeId, verdict, evidence = '', attempt, attemptKey = randomUUID() }) {
       const path = `${runPath(runId)}/decide`;
       const request = { nodeId, verdict };
       if (evidence) request.evidence = evidence;
@@ -405,7 +517,7 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
     },
     // assign hands a node's outstanding agent attempt to another performer.
     // nodeId is the executable id the attempt runs under (dispatch.nodeId).
-    async assign(runId, { nodeId, agent, attemptKey = newAttemptKey() }) {
+    async assign(runId, { nodeId, agent, attemptKey = randomUUID() }) {
       const path = `${runPath(runId)}/nodes/${encodeURIComponent(nodeId)}/assign`;
       const body = JSON.stringify({ agent });
       return processRequest(path, {
@@ -414,7 +526,7 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
     },
     // pause holds the run: work in flight finishes, nothing new is
     // dispatched until resume releases it. Both are idempotent server-side.
-    pause: (runId, { attemptKey = newAttemptKey() } = {}) => postEmpty(`${runPath(runId)}/pause`, attemptKey),
+    pause: (runId, { attemptKey = randomUUID() } = {}) => postEmpty(`${runPath(runId)}/pause`, attemptKey),
     // listLiveRuns walks every page of the run list for each filter ({group}
     // or {agent}) and returns the running runs once each. The context read
     // model caps how many runs a group or agent lists; acting on all of them
@@ -434,7 +546,7 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
       }
       return [...found.values()];
     },
-    resume: (runId, { attemptKey = newAttemptKey() } = {}) => postEmpty(`${runPath(runId)}/resume`, attemptKey),
+    resume: (runId, { attemptKey = randomUUID() } = {}) => postEmpty(`${runPath(runId)}/resume`, attemptKey),
   };
 }
 

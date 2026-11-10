@@ -62,6 +62,10 @@ func handleFederationSpawnRequestSend(w http.ResponseWriter, r *http.Request) {
 	if isHuman {
 		fromConv = ""
 	}
+	if db.IsExternalStewardConv(fromConv) {
+		writeError(w, http.StatusForbidden, externalStewardCeilingCode, "an external steward can start workers only on this instance")
+		return
+	}
 	var req fedSpawnSendReq
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -226,10 +230,12 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 	if strings.TrimSpace(sp.Role) != "" {
 		req.Role = proto.SafeName(sp.Role, false)
 	}
-	id, err := insertFederationSpawnWithCapacity(req)
+	// An automatically placed request is refused rather than queued when the
+	// node is full, so placement goes on to the next candidate.
+	id, position, err := insertFederationSpawnWithCapacity(req, sp.PlacementVersion == 0)
 	switch {
 	case errors.Is(err, db.ErrFederationDuplicate):
-		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, fedSpawnAckFor(peer.InstanceID, env.ID))
 		return
 	case errors.Is(err, errNodeBusy):
 		refuse(fedCodeNodeBusy, err.Error())
@@ -244,6 +250,15 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 		return
 	}
 	req.ID = id
+	if position > 0 {
+		// Accepted, so an older requester sees an accepted request as before;
+		// the code tells a newer one it waits at this node. The queue later
+		// hands it to the same automatic or operator decision as below.
+		recordFederationAudit("federation.spawn.in", fedSpawnRequesterLabel(req), "", req.GroupName,
+			fmt.Sprintf("#%d queued for capacity at position %d: %s", req.ID, position, preview(req.Brief)), 202)
+		rt.sendControl(env.From.Instance, proto.KindAck, env.ID, fedSpawnQueuedAck(position))
+		return
+	}
 	if fedPeerAllows(peer.InstanceID, g.ID, PermGroupsMembersSpawn) {
 		// A stored request is acknowledged once; automatic failure returns it to
 		// pending for a human, never for an automatic retry.
@@ -253,6 +268,25 @@ func (rt *fedRuntime) acceptSpawnRequest(peer *db.FederationPeer, env *proto.Env
 	}
 	notifyFederationSpawnRequest(peer, req, senderName)
 	rt.sendControl(env.From.Instance, proto.KindAck, env.ID, proto.AckPayload{Status: proto.AckAccepted})
+}
+
+// fedAckCodeQueued marks an accepted spawn request that waits in the
+// receiver's capacity queue. Old requesters ignore the code of an accepted ack.
+const fedAckCodeQueued = "queued"
+
+func fedSpawnQueuedAck(position int) proto.AckPayload {
+	return proto.AckPayload{Status: proto.AckAccepted, Code: fedAckCodeQueued, Reason: fmt.Sprintf("position %d", position)}
+}
+
+// fedSpawnAckFor answers a resent spawn request already stored: queued with
+// its current place while it still waits, else plainly accepted.
+func fedSpawnAckFor(fromInstance, envelopeID string) proto.AckPayload {
+	if prior, err := db.FederationSpawnRequestByEnvelope(fromInstance, envelopeID); err == nil && prior != nil && prior.Status == db.FedSpawnQueued {
+		if e, err := db.ActiveSpawnQueueEntryForFederationRequest(prior.ID); err == nil && e != nil && e.Position > 0 {
+			return fedSpawnQueuedAck(e.Position)
+		}
+	}
+	return proto.AckPayload{Status: proto.AckAccepted}
 }
 
 // notifyFederationSpawnRequest puts a stored request that needs an operator
@@ -384,6 +418,8 @@ type fedSpawnRequestJSON struct {
 	// the operator's own values change. A pointer so "nothing allowed" ([])
 	// stays distinct from an older daemon that sends no field.
 	OverridesAllowed *[]string `json:"overrides_allowed,omitempty"`
+	// Position is a queued request's place in the capacity spawn queue.
+	Position int `json:"position,omitempty"`
 }
 
 func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawnRequestJSON {
@@ -400,6 +436,11 @@ func fedSpawnRequestView(req *db.FederationSpawnRequest, now time.Time) fedSpawn
 		ID: req.ID, From: req.FromName + "@" + proto.SafeName(peer, true), Instance: req.FromInstance, Group: req.GroupName,
 		Name: req.Name, Role: req.Role, Brief: req.Brief, Status: status, ResultAgent: req.ResultAgent, Reason: req.Reason,
 		CreatedAt: req.CreatedAt, ExpiresAt: req.ExpiresAt,
+	}
+	if status == db.FedSpawnQueued {
+		if e, err := db.ActiveSpawnQueueEntryForFederationRequest(req.ID); err == nil && e != nil {
+			out.Position = e.Position
+		}
 	}
 	if !req.Overrides.Empty() {
 		o := req.Overrides
@@ -432,6 +473,13 @@ func handleFederationSpawnRequestList(w http.ResponseWriter, r *http.Request) {
 }
 
 func fedSpawnRequestFromPath(w http.ResponseWriter, r *http.Request) (*db.FederationSpawnRequest, *db.FederationPeer, bool) {
+	return fedSpawnRequestFromPathIn(w, r, false)
+}
+
+// fedSpawnRequestFromPathIn is fedSpawnRequestFromPath that, with queued,
+// also accepts a request still waiting in the capacity queue (deny only:
+// approving one would pass the queue).
+func fedSpawnRequestFromPathIn(w http.ResponseWriter, r *http.Request, queued bool) (*db.FederationSpawnRequest, *db.FederationPeer, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "bad request id")
@@ -446,7 +494,12 @@ func fedSpawnRequestFromPath(w http.ResponseWriter, r *http.Request) (*db.Federa
 		writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no spawn request #%d", id))
 		return nil, nil, false
 	}
-	if req.Status != db.FedSpawnPending || req.Expired(time.Now()) {
+	if req.Status == db.FedSpawnQueued && !queued && !req.Expired(time.Now()) {
+		writeError(w, http.StatusConflict, "queued", fmt.Sprintf("spawn request #%d still waits in the capacity queue; it can be approved once the queue hands it on", id))
+		return nil, nil, false
+	}
+	decidable := req.Status == db.FedSpawnPending || (queued && req.Status == db.FedSpawnQueued)
+	if !decidable || req.Expired(time.Now()) {
 		writeError(w, http.StatusConflict, "decided", fmt.Sprintf("spawn request #%d is %s", id, fedSpawnRequestView(req, time.Now()).Status))
 		return nil, nil, false
 	}
@@ -524,31 +577,31 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	var dropped []string
 	// emit relays a recorded error response, adding the requested settings
 	// an approval dropped so the operator learns them on failure too.
-	emit := func(rec *httptest.ResponseRecorder) {
-		for k, v := range rec.Header() {
+	emit := func(res internalSpawnResult) {
+		for k, v := range res.Header {
 			w.Header()[k] = v
 		}
 		if len(dropped) > 0 {
 			var body map[string]any
-			if json.Unmarshal(rec.Body.Bytes(), &body) == nil && body != nil {
+			if json.Unmarshal(res.Body, &body) == nil && body != nil {
 				body["dropped_overrides"] = dropped
 				w.Header().Del("Content-Length")
-				writeJSON(w, rec.Code, body)
+				writeJSON(w, res.Status, body)
 				return
 			}
 		}
-		w.WriteHeader(rec.Code)
-		_, _ = w.Write(rec.Body.Bytes())
+		w.WriteHeader(res.Status)
+		_, _ = w.Write(res.Body)
 	}
 	fail := func(status int, code, msg string) {
 		rec := httptest.NewRecorder()
 		writeError(rec, status, code, msg)
-		emit(rec)
+		emit(recordedSpawnResult(rec))
 	}
 	failErr := func(err error) {
 		rec := httptest.NewRecorder()
 		writeFedErr(rec, err)
-		emit(rec)
+		emit(recordedSpawnResult(rec))
 	}
 	if automatic {
 		if err := checkFedSpawnOverrides(peer.InstanceID, g.ID, req.Overrides); err != nil {
@@ -656,6 +709,8 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 		return
 	}
 	inner := r.Clone(context.WithValue(r.Context(), reservedAgentIDContextKey{}, reservedID))
+	// The stored request has held this worker's capacity since it was admitted.
+	inner = inner.WithContext(context.WithValue(inner.Context(), capacityPreAdmittedKey{}, true))
 	if subscription.token != "" {
 		inner = inner.WithContext(withClaudeSubscription(inner.Context(), subscription))
 	}
@@ -670,28 +725,22 @@ func executeFederationSpawn(w http.ResponseWriter, r *http.Request, req *db.Fede
 	inner.Method = http.MethodPost
 	inner.Body = io.NopCloser(bytes.NewReader(raw))
 	inner.ContentLength = int64(len(raw))
-	rec := httptest.NewRecorder()
-	handleGroupSpawn(rec, inner, g)
-	if rec.Code != http.StatusOK {
-		var failure struct {
-			Code  string `json:"code"`
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(rec.Body.Bytes(), &failure)
+	res := serveInternalGroupSpawn(inner, g)
+	if res.Status != http.StatusOK {
+		_, failure := res.Refusal()
 		current, _ := db.GetFederationSpawnRequest(req.ID)
 		if current != nil && current.Status == db.FedSpawnLaunching && current.ResultAgent == reservedID {
 			if current.LaunchLabel != "" {
-				markFederationSpawnUnconfirmed(reservedID, failure.Error)
+				markFederationSpawnUnconfirmed(reservedID, failure)
 			} else {
-				_, _ = returnFederationSpawnFailure(req, reservedID, failure.Error)
+				_, _ = returnFederationSpawnFailure(req, reservedID, failure)
 			}
 		}
 		reconcileFederationSpawns()
-		emit(rec)
+		emit(res)
 		return
 	}
-	var sr agent.SpawnResponse
-	_ = json.Unmarshal(rec.Body.Bytes(), &sr)
+	sr, _ := res.Response()
 	// HTTP 200 can mean pending startup. Keep durable launching state until
 	// exact reserved identity, membership and pane readiness prove completion.
 	reconcileFederationSpawns()
@@ -719,7 +768,7 @@ func handleFederationSpawnRequestDeny(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	req, peer, ok := fedSpawnRequestFromPath(w, r)
+	req, peer, ok := fedSpawnRequestFromPathIn(w, r, true)
 	if !ok {
 		return
 	}
@@ -727,7 +776,7 @@ func handleFederationSpawnRequestDeny(w http.ResponseWriter, r *http.Request) {
 	if len(reason) > 300 {
 		reason = reason[:300]
 	}
-	won, err := db.DecideFederationSpawnRequest(req.ID, db.FedSpawnPending, db.FedSpawnDenied, "", reason)
+	won, err := db.DecideFederationSpawnRequest(req.ID, req.Status, db.FedSpawnDenied, "", reason)
 	if err != nil {
 		writeFedErr(w, err)
 		return
@@ -735,6 +784,12 @@ func handleFederationSpawnRequestDeny(w http.ResponseWriter, r *http.Request) {
 	if !won {
 		writeError(w, http.StatusConflict, "decided", "request was decided concurrently")
 		return
+	}
+	if req.Status == db.FedSpawnQueued {
+		if e, err := db.ActiveSpawnQueueEntryForFederationRequest(req.ID); err == nil && e != nil {
+			_, _ = db.CancelSpawnQueueEntry(e.ID)
+			kickSpawnQueue()
+		}
 	}
 	// A denied request never launches: forget its Claude subscription token now.
 	takeRequestClaudeSubscription(req.ID)

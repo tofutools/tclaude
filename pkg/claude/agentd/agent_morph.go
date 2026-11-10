@@ -647,7 +647,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		var fail *spawnFailure
 		cm, fail = planCrossHarnessMorph(targetConv, dst, target, caller)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
 			return
 		}
 		target = cm.target
@@ -744,6 +744,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 	}
 
 	if req.DryRun {
+		giveBackSudoUses(r)
 		resp.Result = "dry_run"
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -851,7 +852,7 @@ func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMo
 		if _, err := durableRelaunchConfigForConvWith(convID, pending.Target.ApplyTo); err != nil {
 			return fail(http.StatusConflict, "relaunch_profile", "the new form cannot be launched: "+err.Error())
 		}
-		previous, err := db.ApplyAgentMorphForConv(convID, pending.Target)
+		previous, err := db.ApplyAgentMorphForConv(convID, pending.Target, pending.Back)
 		if err != nil {
 			return fail(http.StatusInternalServerError, "io", err.Error())
 		}
@@ -883,7 +884,7 @@ func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMo
 	}
 	// Written after the stop so a late hook from the old process cannot
 	// project the old model back over the new form.
-	previous, err := db.ApplyAgentMorphForConv(convID, pending.Target)
+	previous, err := db.ApplyAgentMorphForConv(convID, pending.Target, pending.Back)
 	if err != nil {
 		return fail(http.StatusInternalServerError, "io",
 			"the agent stopped, but its new form could not be recorded: "+err.Error()+"; use the normal wake action to resume it")

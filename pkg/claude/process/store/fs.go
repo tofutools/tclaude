@@ -481,25 +481,35 @@ func syncTemplateSaveFile(path string) error {
 	return maybeSync(f)
 }
 
-// ListTemplateAuthorship returns authoring events in append order. Legacy
-// versions have no authorship sidecar and therefore return an empty slice.
-func (s *FS) ListTemplateAuthorship(ctx context.Context, ref string) ([]TemplateAuthorship, error) {
+// readRecoveredTemplate is the prologue of a read of one template version:
+// the context, the ref, the per-template lock (held over read), and recovery
+// of an interrupted attributed save, so read never sees a half-written one.
+func readRecoveredTemplate[T any](ctx context.Context, s *FS, ref string, read func(id, hash string) (T, error)) (T, error) {
+	var none T
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return none, err
 	}
 	id, hash, err := parseTemplateRef(ref)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	unlock, err := s.lockTemplate(ctx, id)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	defer unlock()
 	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
-		return nil, err
+		return none, err
 	}
-	return s.listTemplateAuthorshipUnlocked(id, hash, ref)
+	return read(id, hash)
+}
+
+// ListTemplateAuthorship returns authoring events in append order. Legacy
+// versions have no authorship sidecar and therefore return an empty slice.
+func (s *FS) ListTemplateAuthorship(ctx context.Context, ref string) ([]TemplateAuthorship, error) {
+	return readRecoveredTemplate(ctx, s, ref, func(id, hash string) ([]TemplateAuthorship, error) {
+		return s.listTemplateAuthorshipUnlocked(id, hash, ref)
+	})
 }
 
 func (s *FS) listTemplateAuthorshipUnlocked(id, hash, ref string) ([]TemplateAuthorship, error) {
@@ -966,22 +976,9 @@ func sourceHash(source []byte) string {
 }
 
 func (s *FS) GetTemplate(ctx context.Context, ref string) (*model.Template, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	id, hash, err := parseTemplateRef(ref)
-	if err != nil {
-		return nil, err
-	}
-	unlock, err := s.lockTemplate(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
-		return nil, err
-	}
-	return s.getTemplateUnlocked(ctx, id, hash, ref)
+	return readRecoveredTemplate(ctx, s, ref, func(id, hash string) (*model.Template, error) {
+		return s.getTemplateUnlocked(ctx, id, hash, ref)
+	})
 }
 
 func (s *FS) getTemplateUnlocked(ctx context.Context, id, hash, ref string) (*model.Template, error) {
@@ -1020,22 +1017,9 @@ func (s *FS) getTemplateUnlocked(ctx context.Context, id, hash, ref string) (*mo
 // template.json; synthesizing canonical YAML for those records keeps them
 // readable without mutating an already-addressed version.
 func (s *FS) GetTemplateSource(ctx context.Context, ref string) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	id, hash, err := parseTemplateRef(ref)
-	if err != nil {
-		return nil, err
-	}
-	unlock, err := s.lockTemplate(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
-		return nil, err
-	}
-	return s.getTemplateSourceUnlocked(ctx, id, hash, ref)
+	return readRecoveredTemplate(ctx, s, ref, func(id, hash string) ([]byte, error) {
+		return s.getTemplateSourceUnlocked(ctx, id, hash, ref)
+	})
 }
 
 // GetTemplateAuthoringSnapshot returns source and provenance from one recovered
@@ -1043,33 +1027,20 @@ func (s *FS) GetTemplateSource(ctx context.Context, ref string) ([]byte, error) 
 // composing GetTemplateSource and ListTemplateAuthorship, which would permit a
 // layout-only save to land between the two reads.
 func (s *FS) GetTemplateAuthoringSnapshot(ctx context.Context, ref string) (TemplateAuthoringSnapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return TemplateAuthoringSnapshot{}, err
-	}
-	id, hash, err := parseTemplateRef(ref)
-	if err != nil {
-		return TemplateAuthoringSnapshot{}, err
-	}
-	unlock, err := s.lockTemplate(ctx, id)
-	if err != nil {
-		return TemplateAuthoringSnapshot{}, err
-	}
-	defer unlock()
-	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
-		return TemplateAuthoringSnapshot{}, err
-	}
-	source, err := s.getTemplateSourceUnlocked(ctx, id, hash, ref)
-	if err != nil {
-		return TemplateAuthoringSnapshot{}, err
-	}
-	if s.templateAuthoringSnapshotHook != nil {
-		s.templateAuthoringSnapshotHook()
-	}
-	authorship, err := s.listTemplateAuthorshipUnlocked(id, hash, ref)
-	if err != nil {
-		return TemplateAuthoringSnapshot{}, err
-	}
-	return TemplateAuthoringSnapshot{Source: source, Authorship: authorship}, nil
+	return readRecoveredTemplate(ctx, s, ref, func(id, hash string) (TemplateAuthoringSnapshot, error) {
+		source, err := s.getTemplateSourceUnlocked(ctx, id, hash, ref)
+		if err != nil {
+			return TemplateAuthoringSnapshot{}, err
+		}
+		if s.templateAuthoringSnapshotHook != nil {
+			s.templateAuthoringSnapshotHook()
+		}
+		authorship, err := s.listTemplateAuthorshipUnlocked(id, hash, ref)
+		if err != nil {
+			return TemplateAuthoringSnapshot{}, err
+		}
+		return TemplateAuthoringSnapshot{Source: source, Authorship: authorship}, nil
+	})
 }
 
 func (s *FS) getTemplateSourceUnlocked(ctx context.Context, id, hash, ref string) ([]byte, error) {

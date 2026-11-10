@@ -23,7 +23,7 @@ import (
 //   - before the handler runs, the peer must hold the rule's grant for the
 //     target group (so a handler without gates of its own is still covered);
 //   - inside it, every requirePermission gate passes only for the local slugs
-//     the peer's grants cover for that one group (peerGrantFamilies), so a
+//     the peer's grants cover for that one group (peerGrantGates), so a
 //     PATCH that also touches member permissions is refused field by field,
 //     exactly like an agent caller's.
 //
@@ -39,26 +39,11 @@ const (
 	PermGroupsSettings = "groups.settings"
 )
 
-// peerGrantFamilies maps each peer grant to the local gate slugs it
-// satisfies within its group. A grant names what an operator decides as one
-// unit, so a peer is not handed one slug per control. The environment stays
-// its own grant: its values reach every spawned agent's process. Settings
-// that every spawn into the group inherits need the peer's say over that
-// part of a spawn as well (peerGrantGates, handleGroupUpdate).
-var peerGrantFamilies = map[string][]string{
-	PermGroupsSettings: {
-		PermGroupsSettingsDescription, PermGroupsSettingsDefaultDir, PermGroupsSettingsDefaultContext,
-		PermGroupsSettingsDefaultProfile, PermGroupsSettingsMaxMembers, PermGroupsSettingsNotifications,
-		PermGroupsSettingsRemoteControlPolicy, PermGroupsAttachment, PermGroupsRename, PermGroupsNest,
-	},
-	PermGroupsSettingsEnvironment: {PermGroupsSettingsEnvironment},
-}
-
 // peerInvokeSpec marks a dashboard route a peer's operator may call.
 type peerInvokeSpec struct {
 	// param is the path wildcard naming the target group.
 	param string
-	// extra adds gate slugs this route needs beyond the families, once the
+	// extra adds gate slugs this route needs beyond what the grants answer, once the
 	// peer holds what it takes (nil: none).
 	extra func(peer string, g *db.AgentGroup) []string
 }
@@ -72,6 +57,12 @@ type peerGrantAuthority struct {
 	peer  string
 	group *db.AgentGroup
 	gates map[string]bool
+	// author names who acts (peerFollowUpAuthor), for what the route
+	// records or tells this node's agents.
+	author string
+	// principal is who acts by stable ids (peerPrincipal), for what keys on
+	// authorship, such as a task comment's.
+	principal string
 }
 
 func peerGrantFromRequest(r *http.Request) *peerGrantAuthority {
@@ -81,8 +72,14 @@ func peerGrantFromRequest(r *http.Request) *peerGrantAuthority {
 
 // peerGrantGates lists the local gate slugs peer's grants cover in group.
 func peerGrantGates(peer string, groupID int64) map[string]bool {
+	// A grant answers the group-local gates whose federation reach goes via
+	// it (peerGroupGateGrants): groups.settings the ordinary settings,
+	// groups.members.manage the member settings, the environment grant its
+	// own gate. Settings that every spawn into the
+	// group inherits need the peer's say over that part of a spawn as well
+	// (handleGroupUpdate).
 	gates := map[string]bool{}
-	for grant, slugs := range peerGrantFamilies {
+	for grant, slugs := range peerGroupGateGrants {
 		if !fedPeerAllows(peer, groupID, grant) {
 			continue
 		}
@@ -112,6 +109,9 @@ func (a *peerGrantAuthority) allowsDefaultProfile(name string) error {
 	if name == "" {
 		return nil
 	}
+	if a.group == nil {
+		return fmt.Errorf("a group's default profile takes a group grant")
+	}
 	return checkSelectableProfile(a.peer, a.group.ID, name)
 }
 
@@ -119,7 +119,7 @@ func (a *peerGrantAuthority) allowsDefaultProfile(name string) error {
 // saved prompts, which open every spawn's brief there: only with the grant
 // to choose a spawn's saved prompts.
 func (a *peerGrantAuthority) allowsDefaultPrompts() bool {
-	return peerSpawnFieldHeld(a.peer, a.group.ID, PermGroupsMembersSpawnPrompts)
+	return a.group != nil && peerSpawnFieldHeld(a.peer, a.group.ID, PermGroupsMembersSpawnPrompts)
 }
 
 // allowsParent reports whether a peer may nest the group under parent: one
@@ -136,6 +136,16 @@ func (a *peerGrantAuthority) allowsParent(parent string) bool {
 // one the peer's grants cover, and a gate naming a group must name the
 // route's own.
 func (a *peerGrantAuthority) gate(w http.ResponseWriter, r *http.Request, perm string, actx ActionContext) (string, bool) {
+	if a.group == nil {
+		// A library route's authority (peer_library.go) is node-wide: it
+		// answers no gate that names a group.
+		if !a.gates[perm] || actx.Group != "" || actx.structuralGroup != "" {
+			writeError(w, http.StatusForbidden, "permission", "this node does not grant you "+perm)
+			return "", false
+		}
+		recordAuthorizedPermission(r, perm, 0)
+		return "", true
+	}
 	other := func(name string) bool { return name != "" && name != a.group.Name }
 	if !a.gates[perm] || other(actx.Group) || other(actx.structuralGroup) {
 		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("this node does not grant you %s for group:%s", perm, a.group.Name))
@@ -179,28 +189,41 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 	}
 	v.groupName = g.Name
 	if !v.allows(rule, g.ID) {
-		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf("requires %s for group:%s", rule.requires, g.Name))
+		// Whoever on the calling node asked, what is missing is this node's
+		// grant to that node: say so, and how this node's operator gives it.
+		writeError(w, http.StatusForbidden, "permission", fmt.Sprintf(
+			"requires %s for group:%s, a peer grant the node you called has not given your node (that node's operator: tclaude federation grant <your node> %s --scope group=%s)",
+			rule.requires, g.Name, rule.requires, g.Name))
 		return
 	}
 	// Unrestricted trust acts as this node's operator does, every option of
 	// the route included, rather than within the peer grants' bounds.
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v.unrestricted() {
 		peerDashboardMux().ServeHTTP(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
 		return
 	}
-	a := &peerGrantAuthority{peer: v.peer.InstanceID, group: g, gates: peerGrantGates(v.peer.InstanceID, g.ID)}
+	a := &peerGrantAuthority{peer: v.peer.InstanceID, group: g, gates: peerGrantGates(v.peer.InstanceID, g.ID),
+		author: peerFollowUpAuthor(v, v.peer.InstanceID)}
 	if rule.invoke.extra != nil {
 		for _, slug := range rule.invoke.extra(v.peer.InstanceID, g) {
 			a.gates[slug] = true
 		}
 	}
 	ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerGrantKey{}, a)
+	if strings.HasPrefix(rule.feature, "groups.taskboard") {
+		// Mirrored questions are the human inbox's to show (taskboard_mirror_peer.go).
+		rw := newRedactMirroredWriter(w)
+		peerDashboardMux().ServeHTTP(rw, r.Clone(ctx))
+		rw.finish()
+		return
+	}
 	peerDashboardMux().ServeHTTP(w, r.Clone(ctx))
 }
 
 // peerGroupControlGrants are the grants behind a group's peer-invoked
 // controls, which peer_view.groups names per group.
-var peerGroupControlGrants = []string{PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersManage, PermGroupsMembersClone, PermSessionsShell}
+var peerGroupControlGrants = []string{PermGroupsMembersAdd, PermGroupsMembersRemove, PermGroupsLinkAdd, PermGroupsLinkRemove, PermGroupsArchive, PermGroupsDelete, PermGroupsExport, PermSessionsFilesRead, PermGroupsClone, PermTemplatesUse, PermGroupsSettings, PermGroupsSettingsEnvironment, PermGroupsResourcesLock, PermGroupsResourcesRead, PermGroupsResourcesWrite, PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersManage, PermGroupsMembersClone, PermSessionsShell, PermProcessAdvance, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage, PermTaskboardColumns, PermTaskboardTransfer,
+	PermGroupsOwnersManage, PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes}
 
 // peerGroupGrants names, per group, the peer grants of
 // peerGroupControlGrants (and the spawn grant, plus the spawn directory,
@@ -218,12 +241,7 @@ func peerGroupGrants(peer string, groups []*db.AgentGroup) map[string][]string {
 		return nil
 	}
 	holds := func(groupID int64, slug string) bool {
-		for _, g := range grants {
-			if g.Slug == slug && (g.Scope == "" || g.Scope == db.FederationGroupScope(groupID)) {
-				return true
-			}
-		}
-		return false
+		return fedExplicitGroupGrant(grants, groupID, slug) != nil
 	}
 	out := map[string][]string{}
 	resolver := newFedGrantResolver().seedGroups(groups)
@@ -299,8 +317,13 @@ func addPeerGroupSettingsRules(rules map[string]peerViewRule) {
 	settings := func(param string, extra func(string, *db.AgentGroup) []string) peerViewRule {
 		return peerViewRule{feature: "groups.settings", requires: PermGroupsSettings, group: true, invoke: &peerInvokeSpec{param: param, extra: extra}}
 	}
+	// The PATCH carries the environment and the permission fields too, each
+	// under its own grant (groupUpdate.authorize gates every field), so any
+	// of those grants opens it.
+	patch := settings("name", nil)
+	patch.orGrants = []string{PermGroupsSettingsEnvironment, PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes}
+	rules["PATCH /api/groups/{name}"] = withPeerInvoke("PATCH /api/groups/{name}", patch)
 	for _, pattern := range []string{
-		"PATCH /api/groups/{name}",
 		"POST /api/groups/{name}/rename",
 		"GET /api/groups/{name}/attachment",
 		"POST /api/groups/{name}/attachment",

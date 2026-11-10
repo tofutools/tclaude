@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
+	"github.com/tofutools/tclaude/pkg/pwf"
 )
 
 // Archive formats an agent transfer can be written in.
@@ -43,6 +44,18 @@ func decodeAgentArchive(f *os.File) (*agentbundle.Bundle, error) {
 	return b, err
 }
 
+// decodeAgentOffer is decodeAgentArchive for an archive from a peer. It also
+// returns the loss report the archive carries, cut to what may cross a node
+// whatever the sender wrote.
+func decodeAgentOffer(f *os.File) (*agentbundle.Bundle, *paf.Losses, error) {
+	b, info, err := legacy.DecodeBundleFile(f, legacy.DecodeLimits{MaxBytes: agentTransferLimit(), MaxRecordBytes: pafContextRecordLimit()}, "")
+	if err != nil || info.Losses == nil {
+		return b, nil, err
+	}
+	l := paf.CountsOnly(*info.Losses)
+	return b, &l, nil
+}
+
 func decodeAgentArchiveBytes(raw []byte) (*agentbundle.Bundle, error) {
 	b, _, err := legacy.DecodeBundleBytes(raw, legacy.DecodeLimits{MaxBytes: agentTransferLimit(), MaxRecordBytes: pafContextRecordLimit()}, "")
 	return b, err
@@ -68,9 +81,10 @@ func archiveAgentTransfer(b *agentbundle.Bundle, format string, sign bool) (*os.
 
 // archiveAgentPAF writes b as a PAF. When the bundle carries native history
 // in a harness with a transcript codec, the neutral context travels beside
-// it so a receiver without that harness can still land the agent.
+// it so a receiver without that harness can still land the agent. A signed
+// transfer is leaving for a peer.
 func archiveAgentPAF(b *agentbundle.Bundle, sign bool) (*os.File, error) {
-	return archiveAgentPAFWith(b, sign, pafHistoryParts{})
+	return archiveAgentPAFWith(b, sign, pafHistoryParts{LossCountsOnly: sign})
 }
 
 // pafHistoryParts selects which forms of the conversation a PAF export
@@ -89,12 +103,25 @@ type pafHistoryParts struct {
 	Lineage  []paf.LineageStep
 	// Handoff is the agent's own summary of its earlier work.
 	Handoff string
+	// LossCountsOnly keeps free text out of the loss report, for a PAF
+	// leaving this node.
+	LossCountsOnly bool
+	// Workflows are carried beside the agent, linked to it.
+	Workflows []pwf.Bundle
 }
 
 func archiveAgentPAFWith(b *agentbundle.Bundle, sign bool, parts pafHistoryParts) (*os.File, error) {
-	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxRecordBytes: pafContextRecordLimit(), AllowedFindings: parts.AllowedFindings, Snapshot: parts.Snapshot, Lineage: parts.Lineage, Handoff: parts.Handoff}
+	opts := legacy.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, MaxRecordBytes: pafContextRecordLimit(), AllowedFindings: parts.AllowedFindings, Snapshot: parts.Snapshot, Lineage: parts.Lineage, Handoff: parts.Handoff, LossCountsOnly: parts.LossCountsOnly}
 	if !parts.NoContext {
 		opts.Context = neutralContext(b)
+	}
+	if len(parts.Workflows) > 0 {
+		opts.AddContent = func(w *paf.Writer, agents []string) error {
+			return writeCarriedWorkflows(w, parts.Workflows, agents, true)
+		}
+	}
+	if b.Manifest.History != nil {
+		opts.EarlierLosses = storedConvLosses(b.Manifest.History.SourceConvID)
 	}
 	if parts.NoNative && b.Manifest.History != nil {
 		if opts.Context == nil {

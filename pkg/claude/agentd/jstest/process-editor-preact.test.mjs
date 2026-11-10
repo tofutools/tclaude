@@ -67,6 +67,9 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   const graphHost = host.querySelector('.process-editor-canvas-host');
   const graphRoot = host.querySelector('.process-graph');
   assert.ok(graphHost && graphRoot);
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-editor-menu="file"]'), 'click'); });
+  assert.equal(host.querySelector('[data-editor-menu-item="export"]').disabled, true, 'an unsaved template has nothing to share');
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-editor-menu="file"]'), 'click'); });
   assert.deepEqual([...host.querySelectorAll('.process-node')].map((node) => node.dataset.nodeId), ['start']);
   assertAbsent(host.querySelector('.process-node[data-node-id="end"]'), 'the production blank controller/Preact path does not recreate an End node');
   assert.equal(host.querySelectorAll('.process-edge').length, 0);
@@ -181,6 +184,9 @@ test('loaded templates retain their existing End node and exact editor payload',
     template: loaded.template, edges: loaded.edges, layout: loaded.layout, sourceHash: loaded.sourceHash,
   });
   assert.deepEqual([...host.querySelectorAll('.process-node')].map((node) => node.dataset.nodeId).sort(), ['begin', 'done']);
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-editor-menu="file"]'), 'click'); });
+  assert.equal(host.querySelector('[data-editor-menu-item="export"]').disabled, false, 'a saved template can be shared');
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-editor-menu="file"]'), 'click'); });
   assert.ok(host.querySelector('.process-node[data-node-id="done"]'));
   assert.equal(editor.model.node('done').type, 'end');
   assert.equal(editor.model.dirty, false);
@@ -385,13 +391,13 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
   assert.equal(nameInput.getAttribute('placeholder'), 'e.g. Release review');
   assert.equal(nameInput.getAttribute('autocomplete'), 'off');
   assertSameNode(harness.document.activeElement, nameInput, 'snippet name remains the dialog initial focus');
-  assert.equal(host.querySelector('#process-snippet-name-modal .primary').disabled, true,
+  assert.equal(host.querySelector('#process-snippet-name-modal .ui-btn-primary').disabled, true,
     'blank name keeps submission disabled without disabling or skipping the input');
   await harness.act(() => {
     nameInput.value = '🚀'.repeat(41);
     harness.fireEvent(nameInput, 'input');
   });
-  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .ui-btn-primary').click());
   assert.ok(host.querySelector('#process-snippet-name-modal'), 'invalid UTF-8 byte length keeps the dialog open');
   assert.match(host.querySelector('#process-snippet-name-error').textContent, /160 UTF-8 bytes/);
   assert.equal(nameInput.getAttribute('aria-invalid'), 'true');
@@ -400,7 +406,7 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
     harness.fireEvent(nameInput, 'input');
   });
   assert.equal(host.querySelector('#process-snippet-name-error').textContent, '', 'editing clears the inline error');
-  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .ui-btn-primary').click());
   await savePromise;
   await harness.act(async () => { await Promise.resolve(); });
   assert.equal(savedEnvelope.nodes[0].id, 'start');
@@ -421,14 +427,14 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
     renameInput.value = 'Approval gate';
     harness.fireEvent(renameInput, 'input');
   });
-  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .ui-btn-primary').click());
   await renamePromise;
   await harness.act(async () => { await Promise.resolve(); });
   assert.match(host.querySelector(`.process-palette-card[data-palette-item*="${id}"]`).textContent, /Approval gate/);
 
   const deletePromise = editor.deleteCustomSnippet(id);
   await harness.act(async () => { await Promise.resolve(); });
-  await harness.act(() => host.querySelector('#process-editor-choice-modal .confirm-danger').click());
+  await harness.act(() => host.querySelector('#process-editor-choice-modal .ui-btn-danger').click());
   await deletePromise;
   await harness.act(async () => { await Promise.resolve(); });
   assert.equal(deleted, true);
@@ -513,7 +519,7 @@ test('custom-snippet mutation generation gaps reload the authoritative collectio
   await harness.act(async () => { await Promise.resolve(); });
   const input = host.querySelector('#process-snippet-name-input');
   await harness.act(() => { input.value = 'New local'; harness.fireEvent(input, 'input'); });
-  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .ui-btn-primary').click());
   await save;
   await harness.act(async () => { await Promise.resolve(); });
 
@@ -1071,7 +1077,7 @@ test('external review summaries render bounded identity and truncation details t
 
 test('production scribe modal owns focus, inertness, and every close path inside the editor island', async (t) => {
   const { harness, host, editor } = await openBlank(t);
-  const invoker = host.querySelector('.process-scribe-action');
+  const invoker = host.querySelector('.process-editor .get-help-toggle');
   const editorRoot = host.querySelector('.process-editor');
   const open = async (overrides = {}) => {
     invoker.focus();
@@ -1090,7 +1096,7 @@ test('production scribe modal owns focus, inertness, and every close path inside
 
   let opened = await open();
   let textarea = opened.overlay.querySelector('textarea');
-  const send = opened.overlay.querySelector('button.primary');
+  const send = opened.overlay.querySelector('button.ui-btn-primary');
   assertSameNode(harness.document.activeElement, textarea);
   assert.match(opened.overlay.querySelector('pre').textContent, /"start"/);
   assert.match(opened.overlay.querySelector('.process-scribe-context-end').textContent, /visibly truncated/);
@@ -1124,7 +1130,7 @@ test('production scribe modal owns focus, inertness, and every close path inside
   textarea = opened.overlay.querySelector('textarea');
   textarea.value = 'Preserve unrelated stages.';
   await harness.act(() => harness.fireEvent(textarea, 'input'));
-  await harness.act(() => harness.fireEvent(opened.overlay.querySelector('button.primary'), 'click'));
+  await harness.act(() => harness.fireEvent(opened.overlay.querySelector('button.ui-btn-primary'), 'click'));
   assert.equal(await opened.pending, 'Preserve unrelated stages.');
   assert.equal(editorRoot.hasAttribute('inert'), false);
   assertSameNode(harness.document.activeElement, invoker, 'Send restores the production invoker');
@@ -1182,7 +1188,7 @@ test('scribe preview backdrop cancels without sending and restores editor intera
   editor.model.currentRef = `scribe-preview@sha256:${'a'.repeat(64)}`;
   editor.model.markSaved({ sourceHash: 'b'.repeat(64) });
   editor.blank = false;
-  const invoker = host.querySelector('.process-scribe-action');
+  const invoker = host.querySelector('.process-editor .get-help-toggle');
   const editorRoot = host.querySelector('.process-editor');
   let sends = 0;
   editor.options.onScribe = async () => {
@@ -1214,9 +1220,57 @@ test('scribe preview backdrop cancels without sending and restores editor intera
   editor.destroy();
 });
 
+test('Get help brings in a scoped helper, and a context action reaches it as a message', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  editor.model.template.id = 'help-flow';
+  editor.model.currentRef = `help-flow@sha256:${'a'.repeat(64)}`;
+  editor.model.markSaved({ sourceHash: 'b'.repeat(64) });
+  editor.blank = false;
+  const summons = []; const messages = [];
+  let live = true;
+  editor.options.onScribe = async (anchor, handoff) => {
+    summons.push({ anchor, prompt: handoff.prompt });
+    return { agentId: 'agt_help', convId: 'conv-help', name: 'process-scribe-1' };
+  };
+  editor.options.helperLive = () => live;
+  editor.options.onMessageHelper = async (helper, message) => { messages.push({ helper, message }); return true; };
+  const menu = () => harness.act(async () => { harness.fireEvent(host.querySelector('.process-editor .get-help-toggle'), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  const pick = (key) => harness.act(async () => { harness.fireEvent(host.querySelector(`.get-help-menu [data-get-help="${key}"]`), 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  const send = () => harness.act(async () => { harness.fireEvent(host.querySelector('.process-scribe-preview-overlay button.ui-btn-primary'), 'click'); await new Promise((r) => setTimeout(r, 10)); });
+
+  await menu();
+  assert.deepEqual([...host.querySelectorAll('.get-help-menu [data-get-help]')].map((item) => item.textContent),
+    ['New helper', 'Ask an existing agent…', 'Ask about selection', 'Explain this node', 'Fix this issue', 'Draft from description']);
+  await pick('new');
+  assert.ok(host.querySelector('.process-scribe-preview-overlay'), 'a new helper is briefed through the preview first');
+  await send();
+  assert.equal(summons.length, 1);
+  assert.equal(summons[0].anchor.id, 'help-flow');
+  assert.deepEqual(editor.helper, { id: 'agt_help', convId: 'conv-help', label: 'process-scribe-1' });
+
+  await menu();
+  await pick('draft');
+  assert.match(host.querySelector('.process-scribe-preview-overlay textarea').value, /^Draft a process that /);
+  await send();
+  assert.equal(summons.length, 1, 'a running helper is messaged, not summoned again');
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].helper.id, 'agt_help');
+  assert.match(messages[0].message.body, /^Draft a process that\b.*BEGIN BOUNDED EDITOR CONTEXT/s);
+
+  // Once that helper stops, the same action starts a new one with the ask.
+  live = false;
+  await menu();
+  await pick('draft');
+  await send();
+  assert.equal(summons.length, 2);
+  assert.match(summons[1].prompt, /^Draft a process that/);
+  assert.equal(messages.length, 1);
+  editor.destroy();
+});
+
 test('forced scribe modal disposal removes its listener, inert boundary, and focus ownership', async (t) => {
   const { harness, host, editor } = await openBlank(t);
-  const invoker = host.querySelector('.process-scribe-action');
+  const invoker = host.querySelector('.process-editor .get-help-toggle');
   const editorRoot = host.querySelector('.process-editor');
   const keydownListeners = new Set();
   const addEventListener = harness.document.addEventListener;
@@ -1258,7 +1312,7 @@ test('stacked scribe preview alone owns Tab and Escape, then returns focus to th
   const { harness, host, editor } = await openBlank(t);
   const { ManagementOverlay } = await harness.importDashboardModule('js/management-overlay.js');
   const { useRef, useState } = harness.hooks;
-  const editorInvoker = host.querySelector('.process-scribe-action');
+  const editorInvoker = host.querySelector('.process-editor .get-help-toggle');
   let lowerCloses = 0;
 
   function LowerOverlay() {

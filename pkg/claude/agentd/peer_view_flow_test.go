@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -148,15 +147,15 @@ func TestPeerViewInstanceGrantsAndUnrestricted(t *testing.T) {
 	// A route with no peer grant of its own works for unrestricted trust as
 	// for the local operator: the snapshot advertises triggers and their
 	// route answers.
-	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Triggers: true}}))
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/snapshot", nil))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"triggers_enabled":true`)
 	rec = testharness.Serve(h, testharness.JSONRequest(t, "GET", "/api/triggers", nil))
 	require.Equal(t, 200, rec.Code, rec.Body.String())
-	// This node's configuration, its federation administration, the peer
-	// proxy and unmapped routes stay local even for unrestricted trust.
-	for _, path := range []string{"/api/config", "/api/new-endpoint", "/api/federation/grants", "/api/peer/inst_abcd/snapshot", "/api/node/run/settings"} {
+	// This node's federation administration, the peer proxy and unmapped
+	// routes stay local even for unrestricted trust. (Its Config tab is
+	// served under its own rules: config_remote_flow_test.go.)
+	for _, path := range []string{"/api/new-endpoint", "/api/federation/grants", "/api/peer/inst_abcd/snapshot", "/api/node/run/settings"} {
 		rec = testharness.Serve(h, testharness.JSONRequest(t, "POST", path, nil))
 		require.Equal(t, 403, rec.Code, path)
 	}

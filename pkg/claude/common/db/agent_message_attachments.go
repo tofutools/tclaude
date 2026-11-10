@@ -6,15 +6,15 @@ import (
 )
 
 // AgentMessageAttachment is daemon-owned metadata for a file accompanying an
-// inbox message. StoragePath is an absolute, agent-readable path.
+// inbox message. StoragePath is absolute and daemon-private: agents fetch the bytes through the daemon, which checks they may read the message.
 type AgentMessageAttachment struct {
-	ID          int64  `json:"-"`
+	ID          int64  `json:"id"`
 	MessageID   int64  `json:"-"`
 	Ordinal     int    `json:"-"`
 	Filename    string `json:"name"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size"`
-	StoragePath string `json:"path"`
+	StoragePath string `json:"-"`
 }
 
 // InsertAgentMessageWithAttachments atomically persists the inbox row and all
@@ -293,4 +293,14 @@ func BriefingMessagesBatch(messageIDs []int64) (map[int64]bool, error) {
 		}
 	}
 	return out, nil
+}
+
+// UpdateAgentMessageAttachmentPath repoints an attachment at its moved file.
+func UpdateAgentMessageAttachmentPath(id int64, path string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE agent_message_attachments SET storage_path = ? WHERE id = ?`, path, id)
+	return err
 }

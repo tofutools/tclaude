@@ -446,16 +446,12 @@ func runDarwinSeatbeltSmokeHelper(
 	if networkIsolated {
 		socketPaths = append(socketPaths, allowedPolicySocket)
 	}
-	command, err := tclaudeLayerCommand(
-		binary,
-		phase0WriteDirs,
-		nil,
-		nil,
-		nil,
-		socketPaths,
-		plan,
-		helperCommand,
-	)
+	command, err := tclaudeLayerCommand(tclaudeLayerRenderInput{
+		Binary:          binary,
+		Phase0WriteDirs: phase0WriteDirs,
+		SocketPaths:     socketPaths,
+		Plan:            plan,
+	}, tclaudeLayerLaunchOpts{}, helperCommand)
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()

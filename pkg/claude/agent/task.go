@@ -20,8 +20,7 @@ import (
 //
 // By default the target is the calling agent itself (requires
 // `self.task`). `--target <selector>` acts on ANOTHER agent — the
-// manager pattern (requires `agent.task`, or being an owner of a group
-// containing the target). This mirrors `tclaude agent rename`.
+// manager pattern (auth: CrossAgentAuth("task")). This mirrors `tclaude agent rename`.
 func taskCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "task",
@@ -29,8 +28,7 @@ func taskCmd() *cobra.Command {
 		Long: "Set, clear, or show an agent's task-reference link — an http(s) URL " +
 			"(a Linear issue, GitHub issue/PR, ticket, …) rendered as a clickable label in the " +
 			"dashboard's Task column. By default operates on the calling agent (requires `self.task`); " +
-			"use --target <selector> to act on ANOTHER agent — requires `agent.task`, or being an owner " +
-			"of a group containing the target.",
+			"use --target <selector> to act on ANOTHER agent. " + CrossAgentAuth("task"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			taskSetCmd(),
@@ -45,7 +43,7 @@ func taskCmd() *cobra.Command {
 type taskSetParams struct {
 	URL      string `pos:"true" help:"Task URL (http(s) only) — e.g. a Linear issue or GitHub issue/PR link"`
 	Label    string `long:"label" short:"l" optional:"true" help:"Optional display label overriding the auto-derived one (Linear/AWB->issue id, GitHub->repo/#nnn, else host)"`
-	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -60,7 +58,7 @@ func taskSetCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskSet(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -78,7 +76,7 @@ func runTaskSet(p *taskSetParams, stdout, stderr io.Writer) int {
 // --- task clear ---
 
 type taskClearParams struct {
-	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -93,7 +91,7 @@ func taskClearCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskClearParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskClear(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskClear(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -113,13 +111,9 @@ func taskWrite(target, askHuman string, body map[string]any, stdout, stderr io.W
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(askHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	path := "/v1/whoami/task"
 	if target != "" {
@@ -137,7 +131,7 @@ func taskWrite(target, askHuman string, body map[string]any, stdout, stderr io.W
 // --- task show ---
 
 type taskShowParams struct {
-	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's link instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning a group containing the target."`
+	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's link instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 }
 
 func taskShowCmd() *cobra.Command {
@@ -150,7 +144,7 @@ func taskShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -185,9 +179,12 @@ type taskRefResp struct {
 	Cleared       bool   `json:"cleared,omitempty"`
 	CallerConv    string `json:"caller_conv,omitempty"`
 	CallerAgentID string `json:"caller_agent_id,omitempty"`
+	remoteReply
 }
 
 func printTaskResult(stdout io.Writer, resp *taskRefResp) {
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	by := ""
 	if resp.CallerConv != "" {
 		by = " (by " + shortAgentID(resp.CallerAgentID, resp.CallerConv) + ")"

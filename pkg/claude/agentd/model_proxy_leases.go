@@ -38,7 +38,7 @@ func fedPeerLeasedModelAllows(peer, name string) bool {
 		return false
 	}
 	for _, g := range grants {
-		if (g.Slug == PermModelsProxyLeased || g.Slug == PermModelsProxy) && (g.Scope == "" || g.Scope == "http_proxy="+name) {
+		if (g.Slug == PermModelsProxyLeased || g.Slug == PermModelsProxy) && grantCoversProxy(g, name) {
 			return true
 		}
 	}

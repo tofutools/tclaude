@@ -532,3 +532,33 @@ test('no document can produce a tag or attribute outside the allowlists', async 
   assert.ok(seenImg, 'the corpus never built an <img>, so its src rule went unchecked');
   assert.ok(seenRemote, 'the corpus never held an image back, so its src rule went unchecked');
 });
+
+test('a task list item renders a disabled checkbox the source cannot forge', async (t) => {
+  const { markdownToTree, parser } = await loadModel(t);
+  const nodes = markdownToTree(parser, '- [x] shipped\n- [ ] next\n- [] not a task\n\n<input type="checkbox">');
+  const boxes = findAll(nodes, 'input');
+  assert.equal(boxes.length, 2, 'only the two task markers make checkboxes; raw HTML stays text');
+  assert.deepEqual(boxes.map((box) => [box.attrs.checked, box.attrs.disabled]), [[true, true], [false, true]]);
+  const items = findAll(nodes, 'li');
+  assert.equal(text(items[0]).trim(), 'shipped', 'the marker itself is gone');
+  assert.equal(items[0].attrs.class, 'markdown-task-item');
+  assert.equal(text(items[2]), '[] not a task');
+});
+
+test('an image may name a file read into a blob by this page, never another origin\'s', async (t) => {
+  const { markdownToTree, parser } = await loadModel(t);
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', { value: { origin: 'http://127.0.0.1:7777' }, configurable: true });
+  t.after(() => {
+    if (saved) Object.defineProperty(globalThis, 'location', saved);
+    else delete globalThis.location;
+  });
+  const attachments = [
+    { filename: 'shot.png', url: 'blob:http://127.0.0.1:7777/1b2c', previewable: true },
+    { filename: 'evil.png', url: 'blob:http://evil.example/9f', previewable: true },
+  ];
+  const nodes = markdownToTree(parser, '![a](shot.png) ![b](evil.png)', { attachments });
+  const images = findAll(nodes, 'img');
+  assert.deepEqual(images.map((img) => img.attrs.src), ['blob:http://127.0.0.1:7777/1b2c']);
+  assert.match(text(nodes[0]), /b/, 'the refused one keeps its alt text');
+});

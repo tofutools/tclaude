@@ -106,41 +106,39 @@ func resolveSpawnGuardrailConfig(cfg *config.Config) string {
 // checkSpawnGuardrails runs guardrails 1 and 2 for a request into group g
 // by caller spawnerConvID ("" for the human). allowAnyGroup is reserved for
 // the global agent.spawn capability; max-members still binds that path, while
-// the group-membership restriction does not. On a rejection it writes the
-// HTTP error and returns false; the caller (handleGroupSpawn) just returns.
+// the group-membership restriction does not. On a rejection it returns the
+// refusal; an HTTP caller writes it, a daemon caller records it.
 // The rate limit (guardrail 3) is claimed separately via claimSpawnRateSlot
 // once the request has fully validated — in particular AFTER the dir
 // write-proof gate, so the proof challenge round-trip (one 403 + one retry
 // per spawn) costs one slot, not two.
-func checkSpawnGuardrails(w http.ResponseWriter, g *db.AgentGroup, spawnerConvID string, allowAnyGroup bool) bool {
+func checkSpawnGuardrails(g *db.AgentGroup, spawnerConvID string, allowAnyGroup bool) *spawnFailure {
 	// 1. Max group size. A hard property of the group — binds every
 	//    caller, the human included.
 	if g.MaxMembers > 0 {
 		members, err := db.ListAgentGroupMembers(g.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io",
-				"spawn guardrail: count members: "+err.Error())
-			return false
+			return &spawnFailure{http.StatusInternalServerError, "io",
+				"spawn guardrail: count members: " + err.Error()}
 		}
 		if len(members) >= g.MaxMembers {
-			writeError(w, http.StatusConflict, "group_full",
+			return &spawnFailure{http.StatusConflict, "group_full",
 				fmt.Sprintf("group %q is at its member cap (%d/%d); a human must raise "+
 					"max_members (`tclaude agent groups set-max-members %s <n>`) before "+
-					"more agents can be spawned in", g.Name, len(members), g.MaxMembers, g.Name))
-			return false
+					"more agents can be spawned in", g.Name, len(members), g.MaxMembers, g.Name)}
 		}
 	}
 
 	// 2 & 3 are agent-only. The human bypasses them.
 	if spawnerConvID == "" {
-		return true
+		return nil
 	}
 	if allowAnyGroup {
-		return true
+		return nil
 	}
 
 	// 2. Group restriction.
-	return checkSpawnGroupRestriction(w, g, spawnerConvID)
+	return checkSpawnGroupRestriction(g, spawnerConvID)
 }
 
 // claimSpawnRateSlot enforces guardrail 3 for an agent caller ("" — the
@@ -150,37 +148,33 @@ func checkSpawnGuardrails(w http.ResponseWriter, g *db.AgentGroup, spawnerConvID
 // intended runaway-prevention behaviour). Called after every validation
 // gate, so a request refused earlier (bad cwd, missing write-proof, …)
 // costs no slot.
-func claimSpawnRateSlot(w http.ResponseWriter, spawnerConvID string) bool {
+func claimSpawnRateSlot(spawnerConvID string) *spawnFailure {
 	if spawnerConvID == "" {
-		return true
+		return nil
 	}
 	if err := db.ClaimSpawnSlot(spawnerConvID, SpawnMaxPerWindow, SpawnRateWindow, time.Now().UTC()); err != nil {
 		if errors.Is(err, db.ErrSpawnRateLimited) {
-			writeError(w, http.StatusTooManyRequests, "rate_limited",
+			return &spawnFailure{http.StatusTooManyRequests, "rate_limited",
 				fmt.Sprintf("spawn rate limit reached for agent %s: at most %d spawns per %s. "+
-					"A human can raise it via agent.spawn_max_per_hour in ~/.tclaude/config.json.",
-					short8(spawnerConvID), SpawnMaxPerWindow, SpawnRateWindow))
-			return false
+					"A human can raise it via agent.spawn_max_per_hour in ~/.tclaude/data/config.json.",
+					short8(spawnerConvID), SpawnMaxPerWindow, SpawnRateWindow)}
 		}
-		writeError(w, http.StatusInternalServerError, "io",
-			"spawn rate-limit check: "+err.Error())
-		return false
+		return &spawnFailure{http.StatusInternalServerError, "io",
+			"spawn rate-limit check: " + err.Error()}
 	}
-	return true
+	return nil
 }
 
-func claimDaemonSpawnRateSlot(w http.ResponseWriter, principal string) bool {
+func claimDaemonSpawnRateSlot(principal string) *spawnFailure {
 	if err := db.ClaimDaemonSpawnSlot(principal, SpawnMaxPerWindow, SpawnRateWindow, time.Now().UTC()); err != nil {
 		if errors.Is(err, db.ErrSpawnRateLimited) {
-			writeError(w, http.StatusTooManyRequests, "rate_limited",
+			return &spawnFailure{http.StatusTooManyRequests, "rate_limited",
 				fmt.Sprintf("spawn rate limit reached for daemon principal %s: at most %d spawns per %s",
-					principal, SpawnMaxPerWindow, SpawnRateWindow))
-			return false
+					principal, SpawnMaxPerWindow, SpawnRateWindow)}
 		}
-		writeError(w, http.StatusInternalServerError, "io", "spawn rate-limit check: "+err.Error())
-		return false
+		return &spawnFailure{http.StatusInternalServerError, "io", "spawn rate-limit check: " + err.Error()}
 	}
-	return true
+	return nil
 }
 
 // checkSpawnGroupRestriction enforces guardrail 2: an agent caller may
@@ -190,40 +184,37 @@ func claimDaemonSpawnRateSlot(w http.ResponseWriter, principal string) bool {
 // power over the group's members elsewhere in the daemon (cross-agent
 // lifecycle) — and a coordinator agent that grows a team is typically
 // an owner rather than a member.
-func checkSpawnGroupRestriction(w http.ResponseWriter, g *db.AgentGroup, spawnerConvID string) bool {
+func checkSpawnGroupRestriction(g *db.AgentGroup, spawnerConvID string) *spawnFailure {
 	if !SpawnGroupRestriction {
-		return true
+		return nil
 	}
 	for _, name := range SpawnAllowedGroups {
 		if name == g.Name {
-			return true
+			return nil
 		}
 	}
 	member, err := db.FindMemberInGroup(g.ID, spawnerConvID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"spawn guardrail: membership check: "+err.Error())
-		return false
+		return &spawnFailure{http.StatusInternalServerError, "io",
+			"spawn guardrail: membership check: " + err.Error()}
 	}
 	if member != nil {
-		return true
+		return nil
 	}
 	owner, err := db.IsAgentGroupOwner(g.ID, spawnerConvID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"spawn guardrail: ownership check: "+err.Error())
-		return false
+		return &spawnFailure{http.StatusInternalServerError, "io",
+			"spawn guardrail: ownership check: " + err.Error()}
 	}
 	if owner {
-		return true
+		return nil
 	}
-	writeError(w, http.StatusForbidden, "group_restricted",
+	return &spawnFailure{http.StatusForbidden, "group_restricted",
 		fmt.Sprintf("agent %s may only spawn into a group it is a member or owner of, "+
 			"and it is neither for group %q. A human can widen this with "+
 			"agent.spawn_allowed_groups, or disable it with "+
-			"agent.spawn_group_restriction, in ~/.tclaude/config.json.",
-			short8(spawnerConvID), g.Name))
-	return false
+			"agent.spawn_group_restriction, in ~/.tclaude/data/config.json.",
+			short8(spawnerConvID), g.Name)}
 }
 
 // spawnHarnessPolicyFailure enforces the operator's directed cross-harness

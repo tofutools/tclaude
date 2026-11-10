@@ -34,7 +34,7 @@ type snapshotShareParams struct {
 }
 
 func snapshotShareCmd() *cobra.Command {
-	return boa.CmdT[snapshotShareParams]{Use: "share [<name>]", Short: "Share a snapshot on a Board with named members (human only)",
+	return boa.CmdT[snapshotShareParams]{Use: "share", Short: "Share a snapshot on a Board with named members (human only)",
 		Long: "Publish a snapshot to a Board, encrypted to the named members only (and this node). Other members see that\n" +
 			"it exists but cannot open it. The Board hub deletes it at expiry: 7 days by default, at most 30. Members who\n" +
 			"fetched it keep their copy.\n\n" +
@@ -43,7 +43,7 @@ func snapshotShareCmd() *cobra.Command {
 			"is refused: export it, run tclaude paf redact, and share the file with --file.\n\n" +
 			"  tclaude agent snapshot share before-refactor --board BOARD --to lab --expires 3d",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotShareParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSnapshotShare(p, os.Stdin, os.Stdout, os.Stderr, term.IsTerminal(int(os.Stdin.Fd()))))
+			os.Exit(runSnapshotShare(p, os.Stdin, cliStdout, cliStderr, term.IsTerminal(int(os.Stdin.Fd()))))
 		}}.ToCobra()
 }
 
@@ -139,14 +139,14 @@ type snapshotBoardParams struct {
 }
 
 func snapshotBoardCmd() *cobra.Command {
-	return boa.CmdT[snapshotBoardParams]{Use: "board <ls|fetch|preview|import|rm>", Short: "Receive or remove snapshots shared on a Board (human only)",
+	return boa.CmdT[snapshotBoardParams]{Use: "board", Short: "Receive or remove snapshots shared on a Board (human only)",
 		Long: "ls lists a board's snapshots and which are addressed to this node. fetch downloads, decrypts, validates and\n" +
 			"rescans one; it never imports. preview shows the agent it would create and prints a preview token; import\n" +
 			"needs that token with the same options and creates a new agent, briefed that the received history is\n" +
 			"untrusted. rm deletes a snapshot from the board (its publisher or a board owner) and this node's fetched\n" +
 			"copy; rm --local removes only the fetched copy. Fetched copies are also removed when the snapshot expires.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotBoardParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSnapshotBoard(p, os.Stdout, os.Stderr))
+			os.Exit(runSnapshotBoard(p, cliStdout, cliStderr))
 		}}.ToCobra()
 }
 

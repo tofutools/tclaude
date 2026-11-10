@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -227,7 +228,8 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	root, status, err := spawnWorktreeRepoRoot(body.Repo)
+	launchDir := blankSpawnLaunchDir(body.Group, body.CallerCwd)
+	root, status, err := spawnWorktreeRepoRoot(cmp.Or(strings.TrimSpace(body.Repo), launchDir))
 	if err != nil {
 		writeError(w, status, "invalid_worktree", err.Error())
 		return
@@ -255,7 +257,7 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, wt := range wts {
 		if wt.Branch == branch {
-			writeJSON(w, http.StatusOK, agent.WorktreePrepareResponse{Path: wt.Path, Branch: branch})
+			writeJSON(w, http.StatusOK, agent.WorktreePrepareResponse{Path: wt.Path, Branch: branch, LaunchDir: launchDir})
 			return
 		}
 	}
@@ -329,7 +331,7 @@ func handleWorktreePrepare(w http.ResponseWriter, r *http.Request) {
 		caller: caller, group: strings.TrimSpace(body.Group), path: path, branch: branch, branchCreated: !branchExisted,
 	})
 	writeJSON(w, http.StatusOK, agent.WorktreePrepareResponse{
-		Path: path, Branch: branch, Created: true, DiscardToken: token,
+		Path: path, Branch: branch, Created: true, DiscardToken: token, LaunchDir: launchDir,
 	})
 }
 
@@ -379,6 +381,15 @@ func handleWorktreeDiscard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, agent.WorktreeDiscardResponse{Removed: removed, BranchDeleted: branchDeleted})
+}
+
+// blankSpawnLaunchDir is where a spawn with a blank cwd lands, the group's
+// default before the caller's cwd, and so where a prepare naming no repo is cut.
+func blankSpawnLaunchDir(group, callerCwd string) string {
+	if g, err := db.GetAgentGroupByName(strings.TrimSpace(group)); err == nil && g != nil && g.DefaultCwd != "" {
+		return g.DefaultCwd
+	}
+	return strings.TrimSpace(callerCwd)
 }
 
 // spawnWorktreeRepoRoot resolves any path inside the target repo up to

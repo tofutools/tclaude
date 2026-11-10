@@ -44,6 +44,8 @@ func TestIdempotencyBulkReadRoutesAreNotPersisted(t *testing.T) {
 	for path, exempt := range map[string]bool{
 		"/v1/github/run/log-failed": true,
 		"/v1/github/pr/comments":    true,
+		// An image of the operator's screen must never reach the database.
+		"/v1/dashboard/capture": true,
 		// A neighbouring proxy verb that DOES mutate must keep its durable
 		// boundary — opening the same pull request twice is the failure the
 		// whole mechanism exists to prevent.

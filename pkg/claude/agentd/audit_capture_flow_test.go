@@ -91,6 +91,39 @@ func TestAudit_SpawnSnapshotIncludesResolutionAndFailureResponse(t *testing.T) {
 	assert.NotContains(t, row.Detail, "private failed briefing")
 }
 
+// A spawn row says which environment variables were set and never what to, on a
+// spawn that landed and on one the daemon refused.
+func TestAudit_SpawnSnapshotKeepsEnvironmentNamesOnly(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	const secret = "s3cret-environment-value"
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":        "worker",
+		"environment": []map[string]string{{"name": "API_TOKEN", "value": secret}},
+	})
+	require.Equal(t, http.StatusOK, spawn.Code, "spawn should succeed; body=%s", spawn.Raw)
+	row := auditRowByVerb(t, "spawn")
+	assert.NotContains(t, row.Detail, secret)
+	assert.Contains(t, row.Detail, `{"name":"API_TOKEN","value":"[redacted]"}`)
+
+	refused := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":        "worker",
+		"environment": []map[string]string{{"name": "API_TOKEN", "value": secret}, {"name": "API_TOKEN", "value": secret + "-conflict"}},
+	})
+	require.Equal(t, http.StatusBadRequest, refused.Code, "spawn should be refused; body=%s", refused.Raw)
+	row = auditRowByVerb(t, "spawn")
+	assert.Equal(t, http.StatusBadRequest, row.Status)
+	assert.NotContains(t, row.Detail, secret)
+
+	misplaced := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":        "worker",
+		"environment": []map[string]string{{"name": "API_TOKEN=" + secret, "value": "x"}},
+	})
+	require.Equal(t, http.StatusBadRequest, misplaced.Code, "spawn should be refused; body=%s", misplaced.Raw)
+	assert.Contains(t, string(misplaced.Raw), "environment[0].name is invalid")
+	assert.NotContains(t, auditRowByVerb(t, "spawn").Detail, secret, "a value typed as a name")
+}
+
 func TestAudit_ForceStopCorrelatesSystemExitObservation(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -330,6 +363,39 @@ func TestAudit_SelfReincarnateWithoutSlugIsRecorded(t *testing.T) {
 	assert.Equal(t, worker.ConvID, row.ActorConv)
 	assert.Equal(t, http.StatusOK, row.Status)
 	assert.Equal(t, db.AuditSourceCLI, row.Source)
+}
+
+// Scenario: the operator grants, denies and revokes a permission. Each row must
+// say whose permission changed, and a change to the defaults must name no agent.
+func TestAudit_PermissionChangesNameTheirTarget(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	worker := f.AsHuman().Spawn("crew", "worker")
+	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
+	f.AssertGroupMember("crew", worker.ConvID, "worker", 10*time.Second)
+
+	change := func(path, target string) {
+		t.Helper()
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, path,
+			map[string]any{"target": target, "slug": agentd.PermUsageRead})))
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	}
+	for verb, path := range map[string]string{
+		"permissions.grant":  "/v1/permissions/grant",
+		"permissions.deny":   "/v1/permissions/deny",
+		"permissions.revoke": "/v1/permissions/revoke",
+	} {
+		change(path, worker.ConvID)
+		row := auditRowByVerb(t, verb)
+		assert.Equal(t, worker.ConvID, row.TargetConv, verb)
+		assert.Equal(t, "worker", row.TargetLabel, verb)
+		assert.Equal(t, agentd.PermUsageRead, row.Detail, verb)
+	}
+
+	change("/v1/permissions/revoke", "default")
+	row := auditRowByVerb(t, "permissions.revoke")
+	assert.Empty(t, row.TargetConv)
+	assert.Equal(t, "default", row.TargetLabel)
 }
 
 // Scenario: an agent deletes a message from its inbox (DELETE

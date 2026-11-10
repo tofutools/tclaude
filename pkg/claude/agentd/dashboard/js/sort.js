@@ -1,12 +1,12 @@
 // sort.js — clickable column sorting for the dashboard tables.
 //
 // The active sort ({col, dir} per table) lives here, persisted to
-// localStorage; cycleSort advances it through asc/desc/off, sortHead
-// renders the <thead>, applySort orders rows. Also holds the per-table
+// localStorage; cycleSort advances it through asc/desc/off and
+// applySort orders rows (headers render through SortTh in
+// ui-components.js). Also holds the per-table
 // column specs and value accessors. Extracted from dashboard.js as
 // part of the Stage 2 module split.
 
-import { esc } from './helpers.js';
 import { dashPrefs } from './prefs.js';
 
 // --- column sorting --------------------------------------------------
@@ -49,45 +49,24 @@ function persistTableSort(tableKey, value) {
   catch (_) { /* write-through is best-effort */ }
 }
 
+// nextSort is the dashboard tables' header cycle: a new column sorts
+// ascending, the sorted one flips to descending, and a third click drops the
+// sort (null) back to the server's order.
+function nextSort(cur, col) {
+  if (!cur || cur.col !== col) return { col, dir: 'asc' };
+  return cur.dir === 'asc' ? { col, dir: 'desc' } : null;
+}
+
 // cycleSort advances one table's sort through the three-state cycle
 // and persists the result.
 function cycleSort(tableKey, col) {
   // Pull in island writes made since boot before changing a legacy table.
   try { sortState = JSON.parse(dashPrefs.getItem(SORT_LS_KEY)) || {}; }
   catch (_) { /* keep the usable in-memory state if persistence is malformed */ }
-  const cur = sortState[tableKey];
-  if (!cur || cur.col !== col) {
-    sortState[tableKey] = { col, dir: 'asc' };
-  } else if (cur.dir === 'asc') {
-    sortState[tableKey] = { col, dir: 'desc' };
-  } else {
-    delete sortState[tableKey];
-  }
+  const next = nextSort(sortState[tableKey], col);
+  if (next) sortState[tableKey] = next;
+  else delete sortState[tableKey];
   persistTableSort(tableKey, sortState[tableKey] || null);
-}
-
-// sortHead builds a table's <thead> from a column spec. Each spec
-// entry is {label, col}; entries without a `col` (the online-dot and
-// row-action columns) render as plain, non-clickable headers. The
-// active column shows a solid ▲/▼; the rest carry a faint arrow that
-// surfaces on hover, hinting they're clickable.
-function sortHead(tableKey, cols, wizard = false) {
-  const active = sortState[tableKey];
-  const cells = cols.map(c => {
-    const label = c.wizardLabel
-      ? `<span class="theme-copy-regular">${esc(c.label)}</span>`
-        + `<span class="theme-copy-wizard">${esc(c.wizardLabel)}</span>`
-      : esc(c.label || '');
-    if (!c.col) return `<th>${label}</th>`;
-    const on = active && active.col === c.col;
-    const arrow = on ? (active.dir === 'asc' ? '▲' : '▼') : '▾';
-    const cls = on ? 'sortable sort-active' : 'sortable';
-    const titleLabel = wizard && c.wizardLabel ? c.wizardLabel : c.label;
-    return `<th class="${cls}" data-sort-table="${esc(tableKey)}" `
-         + `data-sort-col="${esc(c.col)}" title="Sort by ${esc(titleLabel)}">`
-         + `${label}<span class="sort-arrow">${arrow}</span></th>`;
-  });
-  return `<thead><tr>${cells.join('')}</tr></thead>`;
 }
 
 // cmpSortValues orders two non-empty accessor outputs: booleans, numbers and
@@ -178,7 +157,7 @@ function applySortState(rows, accessors, st) {
 }
 
 // Column specs + value accessors for each sortable table. The `col`
-// strings are opaque keys shared between the header (sortHead) and
+// strings are opaque keys shared between the header (SortHead in groups-list.js) and
 // the sorter (applySort); they need not match the data field name.
 // MEMBER_COLS [0] is the combined controls column — the status dot
 // plus the per-row action cluster (focus/hide + ⚙ cog) share one
@@ -188,7 +167,7 @@ function applySortState(rows, accessors, st) {
 // MEMBER_COLS is the single source of truth for the members table's
 // columns. Every entry carries a stable `key`; the member-columns.js
 // show/hide store and memberRowHTML's cell map are both keyed on it, so
-// the header (sortHead) and the body stay aligned by construction and a
+// the header (SortHead in groups-list.js) and the body stay aligned by construction and a
 // NEW column plugs in by adding one entry here (+ its cell + accessor).
 // `hideable: true` marks the columns the "▾ view" popover offers to hide;
 // `defaultHidden: true` makes a hideable column start hidden until opted in.
@@ -199,7 +178,7 @@ const MEMBER_COLS = [
   { key: 'id',     label: 'ID',          col: 'id',     hideable: true, defaultHidden: true },
   { key: 'title',  label: 'Name',        col: 'title' },
   { key: 'state',  label: 'State',       col: 'state',  hideable: true },
-  // Process badges (G1): only offered while features.processes is on, and
+  // Process badges (G1): offered where processes are available, and
   // opt-in: the table is already wide, and Both shows the runs beside it.
   { key: 'process', label: 'Process',    wizardLabel: 'Rite', hideable: true, defaultHidden: true, processes: true },
   { key: 'last',   label: 'Last',        col: 'last',   hideable: true },
@@ -388,7 +367,7 @@ const PENDING_ACCESSORS = {
 };
 
 export {
-  cycleSort, sortHead, applySort, applySortState, tableSortState, loadSortState, timestampSortValue,
+  nextSort, cycleSort, applySort, applySortState, tableSortState, loadSortState, timestampSortValue,
   persistedTableSort, persistTableSort,
   MEMBER_COLS, MEMBER_ACCESSORS, JOBS_COLS, JOBS_ACCESSORS,
   LINK_COLS, LINK_ACCESSORS,

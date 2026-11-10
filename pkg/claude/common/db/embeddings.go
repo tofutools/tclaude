@@ -80,30 +80,6 @@ func DeleteEmbeddingsForConv(convID string) error {
 	return err
 }
 
-// CountEmbeddings returns the total number of embedding rows.
-func CountEmbeddings() (int, error) {
-	db, err := Open()
-	if err != nil {
-		return 0, err
-	}
-
-	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM conv_embeddings`).Scan(&count)
-	return count, err
-}
-
-// CountEmbeddedConversations returns the number of distinct conversations with embeddings.
-func CountEmbeddedConversations() (int, error) {
-	db, err := Open()
-	if err != nil {
-		return 0, err
-	}
-
-	var count int
-	err = db.QueryRow(`SELECT COUNT(DISTINCT conv_id) FROM conv_embeddings`).Scan(&count)
-	return count, err
-}
-
 // ListEmbeddedConvIDs returns all conversation IDs that have embeddings.
 func ListEmbeddedConvIDs() (map[string]time.Time, error) {
 	db, err := Open()

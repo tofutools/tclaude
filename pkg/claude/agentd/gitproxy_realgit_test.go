@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // gitproxy_realgit_test.go runs REAL git against a throwaway repository.
@@ -231,6 +232,111 @@ func TestRealGit_CredentialHelperResetDropsRepoLocalHelper(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "the repo-local helper must be dropped")
 	_, err = os.Stat(operatorEvidence)
 	assert.NoError(t, err, "the operator's own helper must still run")
+}
+
+// TestRealGit_GitLabTokenHelperAnswersOnlyItsInstance runs real `git credential
+// fill` and `reject` with the daemon's pins. The GitLab token must be the ONLY
+// credential for the configured instance's exact origin: the operator's own
+// helper is neither asked for it nor told to erase on it. Every other origin
+// (another port, another host) keeps the operator's helper. A missing token
+// file fails instead of falling back, and silently.
+//
+// Nothing here may reach a prompt. The environment is built from scratch
+// (realGitEnv: a temp HOME, no global or system config, no terminal prompts),
+// and GIT_ASKPASS and SSH_ASKPASS name a guard that only records it ran; the
+// test fails if it ever does.
+func TestRealGit_GitLabTokenHelperAnswersOnlyItsInstance(t *testing.T) {
+	gitPath := gitAvailable(t)
+	work, _ := realGitRepo(t, gitPath)
+	home := filepath.Dir(work)
+
+	askpassRan := filepath.Join(home, "askpass-ran")
+	askpass := filepath.Join(home, "askpass-guard")
+	require.NoError(t, os.WriteFile(askpass, []byte("#!/bin/sh\necho \"$*\" >> '"+askpassRan+"'\nexit 1\n"), 0o700))
+	env := append(realGitEnv(home), "GIT_ASKPASS="+askpass, "SSH_ASKPASS="+askpass)
+
+	// A path with a space and a quote, to prove the shell quoting.
+	tokenPath := filepath.Join(home, "gitlab tok'en")
+	require.NoError(t, os.WriteFile(tokenPath, []byte("glpat-real-git-test\n"), 0o600))
+	policy := config.GitProxyConfig{
+		GitLabHosts: map[string]string{
+			"gitlab.example.test": "https://gitlab.example.test:8929",
+			"plain.example.test":  "https://plain.example.test",
+		},
+		GitLabTokenFile: tokenPath,
+	}
+	hooksDir := filepath.Join(home, "no-hooks")
+	require.NoError(t, os.MkdirAll(hooksDir, 0o700))
+	operatorCalls := filepath.Join(home, "operator-calls")
+	operatorHelper := `!f() { echo "$1" >> '` + operatorCalls + `'; test "$1" = get || exit 0; echo username=op; echo password=op-secret; }; f`
+	pins := gitProxyConfigPinsScoped(hooksDir, "ssh -o BatchMode=yes",
+		gitLabCredentialHelpers(policy), []string{operatorHelper})
+
+	gitCredentialEnv := func(env []string, action, input string) (string, error) {
+		args := append(append([]string{}, pins...), "credential", action)
+		c := exec.Command(gitPath, args...)
+		c.Dir = work
+		c.Env = env
+		c.Stdin = strings.NewReader(input)
+		var stdout, stderr strings.Builder
+		c.Stdout, c.Stderr = &stdout, &stderr
+		err := c.Run()
+		return stdout.String() + stderr.String(), err
+	}
+	gitCredential := func(action, input string) (string, error) { return gitCredentialEnv(env, action, input) }
+	operator := func() string {
+		data, _ := os.ReadFile(operatorCalls)
+		_ = os.Remove(operatorCalls)
+		return strings.TrimSpace(string(data))
+	}
+	fill := func(host string) string {
+		out, err := gitCredential("fill", "protocol=https\nhost="+host+"\n\n")
+		require.NoError(t, err, out)
+		return out
+	}
+	t.Cleanup(func() {
+		_, err := os.Stat(askpassRan)
+		assert.True(t, os.IsNotExist(err), "git reached an askpass prompt; a test must never prompt")
+	})
+
+	out := fill("gitlab.example.test:8929")
+	assert.Contains(t, out, "username=oauth2\npassword=glpat-real-git-test\n", "the instance's origin gets the token")
+	assert.Empty(t, operator(), "the operator's helper is not asked for the instance")
+
+	out = fill("plain.example.test:443")
+	assert.Contains(t, out, "password=glpat-real-git-test\n", ":443 is the same origin as a portless base, to git as to the proxy")
+	assert.Empty(t, operator())
+
+	for _, host := range []string{"gitlab.example.test", "gitlab.example.test:9999", "evil.example.test:8929"} {
+		out := fill(host)
+		assert.Contains(t, out, "password=op-secret\n", "%s keeps the operator's helper", host)
+		assert.NotContains(t, out, "glpat-real-git-test", "%s must never see the token", host)
+		assert.Equal(t, "get", operator())
+	}
+
+	t.Run("a rejected token is not erased from the operator's helper", func(t *testing.T) {
+		_, err := gitCredential("reject", "protocol=https\nhost=gitlab.example.test:8929\nusername=oauth2\npassword=glpat-real-git-test\n\n")
+		require.NoError(t, err)
+		assert.Empty(t, operator(), "erase never reaches the operator's helper for the instance")
+		_, err = gitCredential("reject", "protocol=https\nhost=other.example.test\nusername=op\npassword=op-secret\n\n")
+		require.NoError(t, err)
+		assert.Equal(t, "erase", operator(), "control: elsewhere the operator's helper still gets erase")
+	})
+
+	t.Run("a missing token file fails, silently, without falling back", func(t *testing.T) {
+		require.NoError(t, os.Remove(tokenPath))
+		// With no helper answering, git falls back to an askpass if one is
+		// configured. The daemon's git environment configures none: no
+		// GIT_ASKPASS or SSH_ASKPASS is forwarded, and core.askPass is pinned
+		// empty. So this case runs with exactly that, and must end at git's
+		// "terminal prompts disabled" rather than at any prompt.
+		out, err := gitCredentialEnv(realGitEnv(home), "fill", "protocol=https\nhost=gitlab.example.test:8929\n\n")
+		require.Error(t, err, "no credential for the instance: %s", out)
+		assert.Contains(t, out, "terminal prompts disabled", "git stops instead of prompting")
+		assert.NotContains(t, out, "op-secret")
+		assert.NotContains(t, out, "tok'en", "a missing file is silent, not the helper's source")
+		assert.Empty(t, operator())
+	})
 }
 
 // TestRealGit_UploadPackPinIsIneffectiveButTheFlagWorks is a REGRESSION LOCK on

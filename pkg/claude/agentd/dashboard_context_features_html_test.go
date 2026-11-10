@@ -121,7 +121,8 @@ func dashboardCSSRules(t *testing.T) []cssRule {
 // TestDashboardContextFeaturesButtonsStyled guards the two CSS halves of the same
 // regression. On the spawn dialog the Role-row Context… button shipped with no
 // rule at all, so it fell back to the browser's default white chrome next to its
-// dark Permissions… twin. In the profile editor it had a rule but rendered
+// dark Permissions… twin; both are standard buttons now, so the row only keeps
+// the pair from stretching. In the profile editor it had a rule but rendered
 // taller than its twin, because `.cron-create-row > button.tool` stretches a
 // button to its row and only "Startup context" wraps to two lines.
 //
@@ -145,11 +146,10 @@ func TestDashboardContextFeaturesButtonsStyled(t *testing.T) {
 		t.Errorf("%s: no rule found selecting %s and declaring %s", what, owner, marker)
 	}
 
-	// Spawn dialog: the dark inline-button chrome, and its hover.
-	pairs("spawn dialog Context… button renders with the browser's default (white) chrome",
-		".spawn-role-row #agent-spawn-perms", "background:", "#agent-spawn-context-features")
-	pairs("spawn dialog Context… button does not react to hover like its twin",
-		".spawn-role-row #agent-spawn-perms:hover", "background:", "#agent-spawn-context-features:hover")
+	// Spawn dialog: both are standard small buttons (their chrome comes from
+	// ui.css), and the row keeps both from stretching.
+	pairs("spawn dialog Context… button stretches unlike its twin",
+		".spawn-role-row #agent-spawn-perms", "align-self: flex-start", "#agent-spawn-context-features")
 
 	// Profile editor: the opt-out from the .tool stretch. Without it the wrapped
 	// "Startup context" label inflates the button past its Permissions… twin.
@@ -166,7 +166,7 @@ func TestDashboardContextFeaturesButtonsStyled(t *testing.T) {
 func TestDashboardContextFeaturesEditorStacksAboveProfileEditor(t *testing.T) {
 	zIndexOf := func(selector string) int {
 		t.Helper()
-		re := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*z-index:\s*(\d+)`)
+		re := regexp.MustCompile(regexp.QuoteMeta(selector) + `\s*\{[^}]*z-index:\s*calc\(var\(--z-dialog\) \+ (\d+)\)`)
 		m := re.FindStringSubmatch(dashboardAssets)
 		if m == nil {
 			t.Fatalf("no z-index rule found for %s", selector)

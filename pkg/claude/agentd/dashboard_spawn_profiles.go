@@ -35,6 +35,8 @@ func registerDashboardSpawnProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/spawn-profiles/import/inspect", dashboardSpawnProfilesRoute(handleSpawnProfilesImportInspect))
 	mux.HandleFunc("POST /api/spawn-profiles/import", dashboardSpawnProfilesRoute(handleSpawnProfilesImport))
 	mux.HandleFunc("/api/spawn-profiles/{name}", dashboardSpawnProfilesRoute(handleSpawnProfileByName))
+	mux.HandleFunc("GET /api/spawn-profiles/{name}/running-agents", dashboardSpawnProfilesRoute(handleSpawnProfileRunningAgents))
+	mux.HandleFunc("POST /api/spawn-profiles/{name}/reapply", dashboardSpawnProfilesRoute(handleSpawnProfileReapply))
 }
 
 // dashboardSpawnProfilesRoute adapts a shared /v1 spawn-profile handler into a

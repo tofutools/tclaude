@@ -93,7 +93,14 @@ up)
 	done
 	sleep 3
 	"$0" status
-	echo "hub admin claim token: $(grep -o 'tchac_[0-9a-f]*' "$BASE/logs/hub.log" | head -1 || true) (see logs/hub.log)"
+	# The hub keeps its claim token out of redirected output on purpose, so
+	# name the private file rather than copy the token into anything captured.
+	claim=$BASE/hub/data/admin-claim.token
+	if [[ -f $claim ]]; then
+		echo "hub admin claim token is in: $claim"
+	else
+		echo "hub admin claim file not found: the hub is down or already claimed (see logs/hub.log)"
+	fi
 	;;
 pair)
 	for n in a b; do

@@ -156,7 +156,7 @@ func ListProcessGroupPins(groupID int64) ([]string, error) {
 	return out, rows.Err()
 }
 
-// ForgetProcessTemplate removes a deleted template's listing and pins.
+// ForgetProcessTemplate removes a deleted template's listing, pins and lock.
 func ForgetProcessTemplate(templateID string) error {
 	d, err := Open()
 	if err != nil {
@@ -165,7 +165,12 @@ func ForgetProcessTemplate(templateID string) error {
 	if _, err := d.Exec(`DELETE FROM process_group_pins WHERE template_id = ?`, templateID); err != nil {
 		return err
 	}
-	_, err = d.Exec(`DELETE FROM process_template_listing WHERE template_id = ?`, templateID)
+	if _, err := d.Exec(`DELETE FROM process_template_listing WHERE template_id = ?`, templateID); err != nil {
+		return err
+	}
+	// Its lock goes too: a template imported later under the id starts
+	// unlocked.
+	_, err = d.Exec(`DELETE FROM group_resource_locks WHERE kind = ? AND resource_id = ?`, GroupResourceProcess, templateID)
 	return err
 }
 
@@ -189,6 +194,59 @@ func ProcessTemplatePinnedGroups() (map[string][]string, error) {
 			return nil, err
 		}
 		out[id] = append(out[id], group)
+	}
+	return out, rows.Err()
+}
+
+// ListAllProcessGroupPins maps each group id to its pinned template ids, in
+// pin order: one query for every group.
+func ListAllProcessGroupPins() (map[int64][]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT group_id, template_id FROM process_group_pins ORDER BY group_id, position, template_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64][]string{}
+	for rows.Next() {
+		var groupID int64
+		var id string
+		if err := rows.Scan(&groupID, &id); err != nil {
+			return nil, err
+		}
+		out[groupID] = append(out[groupID], id)
+	}
+	return out, rows.Err()
+}
+
+// ListAllProcessGroupPinTimes returns when each pin was made, by group id and
+// template id: the dashboard's Resources table shows it as a pinned
+// process's Age.
+func ListAllProcessGroupPinTimes() (map[int64]map[string]time.Time, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT group_id, template_id, pinned_at FROM process_group_pins`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64]map[string]time.Time{}
+	for rows.Next() {
+		var groupID int64
+		var id string
+		var at dbTimestamp
+		if err := rows.Scan(&groupID, &id, &at); err != nil {
+			return nil, err
+		}
+		if out[groupID] == nil {
+			out[groupID] = map[string]time.Time{}
+		}
+		out[groupID][id] = at.Time()
 	}
 	return out, rows.Err()
 }

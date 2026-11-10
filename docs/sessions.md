@@ -35,7 +35,13 @@ tclaude -d
 and `shell`.
 When unset, the harness (and model/effort) come from the global default spawn
 profile (dashboard, or `tclaude agent profiles default set`); explicit
-`--harness`, `--model`, or `--effort` flags win per field. Without a global
+`--harness`, `--model`, or `--effort` flags win per field. When the profile
+targets the launch's harness, its launch posture applies too: sandbox mode,
+sandbox implementation, approval, AskUserQuestion timeout, auto-compact
+window, context-window cap, auto-review, trust-dir, remote control, auto
+memory, peer messaging, context features and fast mode. Every field yields to
+an explicit flag. The Copilot API and Codex app-server drives exist only under
+agentd and are not taken from the profile. Without a global
 profile, tclaude picks an installed harness from `PATH`, preferring Claude
 Code. Per-harness knobs — models, effort, sandbox and approval flags — are
 covered in [Harnesses](harnesses.md).
@@ -46,7 +52,7 @@ flags beyond the basics:
 - `-d/--detached` starts the session without attaching.
 - `--trust-dir` pre-trusts the launch directory so a detached pane doesn't
   freeze on the harness's trust-folder dialog. It edits that harness's own
-  config (Claude Code's `~/.claude.json`, Codex's `~/.codex/config.toml`,
+  config (Claude Code's `~/.claude/.claude.json`, Codex's `~/.codex/config.toml`,
   Copilot's trusted-folders list, Gemini's `~/.gemini/trustedFolders.json`,
   pi's `~/.pi/agent/trust.json`), so it is opt-in. Applies to Claude Code,
   Codex, Copilot, Gemini CLI, and pi.
@@ -54,7 +60,16 @@ flags beyond the basics:
   windows to reset before starting — handy for queueing a session to launch
   when quota returns.
 - `-r/--resume <conv-id>` relaunches an existing conversation (see
-  [resume posture](#a-resume-keeps-its-recorded-posture) below).
+  [resume posture](#a-resume-keeps-its-recorded-posture) below). It also takes
+  the name or agent ID from `tclaude agent ls`.
+- `--resume-last` relaunches the newest conversation in the current directory,
+  skipping retired and archived ones. Claude Code only. `tclaude -- --continue`
+  does the same, and `tclaude -- --resume <id>` is the same as `-r <id>`. A bare
+  `tclaude -- --resume` opens Claude Code's own picker. These launches stay out
+  of automatic group joins.
+- Resuming a retired conversation by name reinstates it, also from the picker.
+  Its old groups and permissions don't come back. It refuses when the directory
+  is gone, or when an agent runs it. `--resume-last` never picks one.
 - `-l/--label` names the tmux session; `-n/--name` sets the display name
   (for Claude Code it becomes the conversation title).
 
@@ -75,7 +90,8 @@ tclaude          # joins the project's group automatically
 Controls:
 
 - `--auto-join-group` — the directory matching described above. Default on;
-  config key `session.auto_join_group`.
+  config key `session.auto_join_group` (`tclaude config get` shows it,
+  `tclaude config set session.auto_join_group false` turns it off).
 - `--auto-join-or-create-group` — additionally creates a group when nothing
   matches, named after the directory basename (`repo`, then `repo-2`, …).
   Default off.
@@ -90,6 +106,32 @@ Controls:
   get an offer to continue solo instead).
 
 Resume, managed daemon launches, and `--shell` never do directory discovery.
+
+Some launch flags have no counterpart on a group spawn and keep a launch
+solo: `-l/--label`, `--session-id`, `--permission-profile`,
+`-w/--wait-for-rate-limit`, `-g/--global`, `--send-keys`. When the directory
+has a group, tclaude says so instead of skipping it quietly:
+
+```text
+--label keeps this session solo, so it won't join group "myrepo". To join with a custom name, use -n NAME instead of --label; to stay solo, pass --auto-join-group=false.
+```
+
+A group spawn has no tmux label of its own (agentd picks it), so `-n NAME`
+is the way to name a joined agent; with config `agent.spawn_label_from_name`
+on, the name also becomes its tmux session name.
+
+A flag is never dropped without a word. A group-only flag (`-i`, `--file`,
+`--sandbox-profile`, `--profile`, `--worktree`, `--role`, …) on a launch that
+ends up solo is refused, with an error naming what kept it solo (that
+includes `--resume` and `--shell`, which never join). A solo-only flag with
+`-j/--join-group` is refused the same way. An explicit `--auto-join-group`
+(or `--auto-join-or-create-group`) next to a solo-only flag is refused as a
+contradiction.
+
+`--initial-prompt` works on both kinds of launch. Solo, it is the harness's
+own first-turn prompt. When the launch joins a group it becomes the agent's
+startup brief, delivered with its welcome, exactly like `-i` and the
+dashboard spawn dialog's initial message; pass only one of the two.
 
 ## A resume keeps its recorded posture
 
@@ -115,6 +157,17 @@ A recorded value the relaunch cannot honour — a Claude-only posture on a
 Codex resume, for example — is dropped rather than failing the resume. When
 the drop leaves the launch *less* confined than the record (`--sandbox`,
 `--ask-for-approval`), it is warned about on stderr rather than only logged.
+
+A posture field the conversation never recorded (a conversation started
+outside tclaude, or before that field was recorded) falls back to the global
+default spawn profile, as on a fresh launch — explicit flag, then recorded
+posture, then profile. A field recorded as "nothing pinned" is still the
+conversation's own decision and is not refilled; very old conversations whose
+posture lives only in the legacy session row cannot tell "nothing pinned" from
+unknown, so their blank fields take the profile. Sandbox mode, sandbox
+implementation and `--permission-profile` count as one decision: if any of
+them is passed or recorded, the profile supplies none of them. The profile's
+harness, model and effort never apply to a resume.
 
 Model and effort are not on the carried list: the harness itself remembers
 which model a conversation runs on.
@@ -191,12 +244,14 @@ opens the same viewer) is an interactive table of sessions:
   to toggle direction).
 - `n` opens a new-session prompt; its harness field cycles through the
   coding harnesses and `shell`.
+- `d` detaches clients, `c` chooses columns, `r` refreshes, and `q` quits.
 - `h`/`?` shows help.
 
 ## Labels and names
 
 The tmux session name is the first 8 characters of the session id, or your
-`--label` verbatim. Setting `session.tmux_name_style` to `"dir"` in
+`--label` verbatim (up to 32 characters from a restricted set; anything else is
+rejected, not cleaned up). Setting `session.tmux_name_style` to `"dir"` in
 `~/.tclaude/data/config.json` names unlabelled sessions after the working
 directory's basename instead (sanitized, capped at 32 characters,
 disambiguated with `-2`, `-3`, … suffixes).
@@ -243,3 +298,13 @@ For scrollback, either enable tmux mouse mode (`set -g mouse on`) or disable
 the alternate screen to keep your terminal's native scrollbar
 (`set -ga terminal-overrides ',*256color*:smcup@:rmcup@'`) — one or the
 other, not both.
+
+## Labelled links
+
+Attaching from a terminal makes the labelled links a harness prints (visible
+text with a hidden address, OSC 8) open with the terminal's own link gesture,
+usually Ctrl-click. tclaude asks tmux for this per client on tmux 3.4 or newer
+when `TERM` matches `xterm*`, `alacritty*`, `foot*`, `wezterm*`, `ghostty*`,
+`tmux*`, or `screen*`. A client that is already attached keeps what it had, so
+detach and attach again after upgrading. A plain `tmux -L tclaude attach` does
+not go through tclaude; add `-T hyperlinks` before `attach` to get the same.

@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -238,34 +239,51 @@ func TestTUIRemoteAttachUsesANonDisplacingTmuxClient(t *testing.T) {
 
 // Unlike the dashboard's browser terminals, this stream lands on the operator's
 // REAL terminal — the remote TUI writes the bytes to its own raw-mode stdout —
-// so tmux must not be told the far end renders OSC 8. Nothing here knows what
-// emulator the operator is running, and the browser terminals' opt-in must not
-// drift into this shared PTY path.
-func TestTUIRemoteAttachDoesNotForceHyperlinksOnANativeTerminal(t *testing.T) {
-	f := newFlow(t)
-	f.HaveGroup("dev")
-	spawned := f.Spawn("dev", "worker")
+// so the hyperlink decision follows the TERM the far end reports, exactly like a
+// local native attach, and the browser terminals' opt-in must not drift into this
+// shared PTY path.
+func TestTUIRemoteAttachDecidesHyperlinksFromTheReportedTerm(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		query     string
+		wantLinks bool
+	}{
+		{name: "xterm client", query: "?term=xterm-256color", wantLinks: true},
+		{name: "unlisted terminal", query: "?term=linux"},
+		{name: "older client reporting nothing", query: ""},
+		{name: "hostile value stays out of the command", query: "?term=" + url.QueryEscape("xterm'; rm -rf /")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("dev")
+			spawned := f.Spawn("dev", "worker")
 
-	var command string
-	t.Cleanup(agentd.SetTermWSHookForTest(&agentd.TermWSHook{
-		RewriteCommand: func(gotCommand, gotSession string) (string, string) {
-			command = gotCommand
-			return gotCommand, gotSession
-		},
-	}))
-	t.Cleanup(agentd.SetPopupBaseURLForTest("http://agent-host:8321"))
+			var command string
+			t.Cleanup(agentd.SetTermWSHookForTest(&agentd.TermWSHook{
+				RewriteCommand: func(gotCommand, gotSession string) (string, string) {
+					command = gotCommand
+					return gotCommand, gotSession
+				},
+			}))
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://agent-host:8321"))
 
-	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), httptest.NewRequest(
-		http.MethodGet,
-		"http://agent-host:8321/api/tui/attach-ws/"+spawned.ConvID,
-		nil,
-	))
-	require.NotEmpty(t, command, "status=%d body=%s", rec.Code, rec.Body.String())
+			rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), httptest.NewRequest(
+				http.MethodGet,
+				"http://agent-host:8321/api/tui/attach-ws/"+spawned.ConvID+tc.query,
+				nil,
+			))
+			require.NotEmpty(t, command, "status=%d body=%s", rec.Code, rec.Body.String())
 
-	assert.NotContains(t, command, "-T hyperlinks",
-		"a native terminal must keep tmux's own capability detection: %q", command)
-	assert.NotContains(t, command, clcommon.TmuxClientFeaturesEnv,
-		"the browser terminals' feature opt-in must not reach this path: %q", command)
+			if tc.wantLinks {
+				assert.Contains(t, command, "-T hyperlinks attach-session", "flag must precede the command word")
+			} else {
+				assert.NotContains(t, command, "-T hyperlinks")
+			}
+			assert.NotContains(t, command, "rm -rf")
+			assert.NotContains(t, command, clcommon.TmuxClientFeaturesEnv,
+				"the browser terminals' feature opt-in must not reach this path: %q", command)
+		})
+	}
 }
 
 // Enter on an offline agent is the console's "turn this back on": it goes

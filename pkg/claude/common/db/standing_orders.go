@@ -32,6 +32,8 @@ const (
 	StandingDisabledReasonNone         = CronDisabledReasonNone
 	StandingDisabledReasonAgentRetired = CronDisabledReasonAgentRetired
 	StandingDisabledReasonGroupRetired = CronDisabledReasonGroupRetired
+
+	StandingDisabledReasonStewardStandby = CronDisabledReasonStewardStandby
 )
 
 // Trigger events are normalized across harnesses before evaluation.

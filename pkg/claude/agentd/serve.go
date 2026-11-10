@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -30,6 +31,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/harnessops"
+	"github.com/tofutools/tclaude/pkg/launcher"
 )
 
 type serveParams struct {
@@ -48,7 +50,7 @@ type serveParams struct {
 	PrintHumanToken              string `long:"print-human-token" default:"auto" help:"Operator token and TUI sign-in link output: auto (only when stdout and stderr are terminals), always (including logs), or never."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Alias for --print-human-token=never; conflicts with always. The token is still minted and honored."`
 	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output other than schema migrations goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down. Pass --own-tmux-server to tie the tclaude tmux server's lifetime to this daemon as well."`
-	Pprof                        bool   `long:"pprof" help:"Serve Go pprof profiling endpoints plus tclaude counters on a private 0600 Unix socket (~/.tclaude/data/agentd-pprof.sock) for 'tclaude agentd profile'. Off by default. The dashboard's Activity › Performance captures work without it."`
+	Pprof                        bool   `long:"pprof" help:"Serve Go pprof profiling endpoints plus tclaude counters on a private 0600 Unix socket (~/.tclaude/data/agentd-pprof.sock) for 'tclaude agentd profile'. Off by default. The dashboard's Diagnostics › Performance captures work without it."`
 	PprofAddr                    string `long:"pprof-addr" optional:"true" help:"Also serve the profiling endpoints on this loopback TCP address (e.g. 127.0.0.1:6060) so 'go tool pprof http://127.0.0.1:6060/debug/pprof/profile' can attach directly. Must name a loopback host."`
 	OwnTmuxServer                bool   `long:"own-tmux-server" help:"With --tui, own the tclaude tmux server for this daemon's lifetime WHEN IT STARTS ONE: with no server running it starts an empty one (with exit-empty off, so it stays up with no agents on it) and kills it on exit IF IT IS STILL EMPTY, reporting on exit whether it was shut down or left running with sessions on it. A server that was already running — from an earlier daemon, a session started outside it, or an external resource-delegation unit — is left alone in both directions. Default: off, leaving the tmux server to come and go as tmux itself decides, and leaving agent panes running for the next daemon to pick up. Has no effect without --tui."`
 }
@@ -59,8 +61,19 @@ func serveCmd() *cobra.Command {
 		Short:       "Run the agent daemon in the foreground",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *serveParams, _ *cobra.Command, _ []string) {
+			// Returns only when no re-exec happened. It must stay here,
+			// before runServe: an exec after systray.Run (Cocoa), the
+			// singleton lock, the sockets or the DB would carry them into
+			// the new image broken (a re-exec after Cocoa init loses the
+			// tray icon). Only the root pre-run (config read, log setup)
+			// precedes it, and Go opens those files close-on-exec.
+			// TestLaunchdLoginEnvReExecsBeforeServeStarts pins this.
+			adoptLaunchdLoginEnv(productionLoginEnvDeps())
 			if err := runServe(p); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				if errors.Is(err, errAgentdAlreadyRunning) {
+					os.Exit(launcher.AlreadyRunningExitCode(os.Getenv("XPC_SERVICE_NAME")))
+				}
 				os.Exit(1)
 			}
 			if err := performSelfUpdateRestart(); err != nil {
@@ -91,11 +104,17 @@ func acquireAgentdSingletonLock() (func(), error) {
 		return nil, fmt.Errorf("lock agentd data directory: %w", err)
 	}
 	if !locked {
-		return nil, fmt.Errorf("another agentd already owns %s", dataDir)
+		return nil, fmt.Errorf("%w: another agentd already owns %s", errAgentdAlreadyRunning, dataDir)
 	}
 	var once sync.Once
 	return func() { once.Do(func() { _ = lock.Unlock() }) }, nil
 }
+
+// errAgentdAlreadyRunning: another agentd holds the singleton lock. serve
+// exits with launcher.AlreadyRunningExitCode for it, which the autostart
+// unit treats as final, so a unit that starts next to a running agentd stops
+// instead of restart-looping.
+var errAgentdAlreadyRunning = errors.New("agentd already running")
 
 // errSocketInUse marks a path a live daemon is already serving. It stays fatal
 // even for a best-effort legacy endpoint: two daemons sharing an endpoint would
@@ -327,6 +346,10 @@ func tokenBannerInTUI(p *serveParams) bool {
 }
 
 func runServe(p *serveParams) error {
+	// First, so every child (tmux, harnesses, hooks) gets it. See
+	// serve_locale.go.
+	ensureUTF8Locale(productionLocaleDeps())
+	syncTmuxServerLocale(os.Environ(), tmuxOutputWithTimeout)
 	if _, err := humanTokenOutputMode(p); err != nil {
 		return err
 	}
@@ -348,6 +371,7 @@ func runServe(p *serveParams) error {
 		return err
 	}
 	defer releaseSingleton()
+	warnTmuxMissing(out, exec.LookPath)
 	// Log each dropped alias as it happens, but hold the operator-facing line
 	// until the listening banner: these fire before the SQLite migration
 	// narration, which can run for minutes, and an indented sub-bullet stranded
@@ -411,6 +435,7 @@ func runServe(p *serveParams) error {
 	// attaches its exact-slot listeners through this supervised instance;
 	// close both on every daemon exit so no route channel survives shutdown.
 	defer func() {
+		shutdownHostRoutes()
 		routeAdapterCloseAll()
 		if err := GroupRouteBroker().Close(); err != nil {
 			slog.Warn("group-route broker: shutdown incomplete", "error", err)
@@ -428,6 +453,11 @@ func runServe(p *serveParams) error {
 		// grace store cannot be read.
 		slog.Warn("dashboard session: could not restore restart grace cookies", "error", err)
 	}
+
+	// Config drives the dashboard-port resolution below, the auto-launch
+	// decision, the clone cooldown, and the spawn guardrails. Load it once
+	// up front so every startup knob reads the same snapshot.
+	cfg, _ := config.Load()
 
 	listeners, createdSocketPaths, err := listenUnixSockets(sockPath, optionalSockPaths, skipOptionalSocket)
 	if err != nil {
@@ -468,10 +498,6 @@ func runServe(p *serveParams) error {
 		},
 	}
 
-	// Config drives the dashboard-port resolution below, the auto-launch
-	// decision, the clone cooldown, and the spawn guardrails. Load it once
-	// up front so every startup knob reads the same snapshot.
-	cfg, _ := config.Load()
 	resourceDelegationDir, resourceDelegationSource := resolveResourceDelegationDir(
 		p.ResourceDelegationDir, cfg)
 	if resourceDelegationDir != "" {
@@ -570,6 +596,7 @@ func runServe(p *serveParams) error {
 			"the terminal UI is the only operator surface")
 	} else {
 		dashPort, dashPortSrc := resolveDashboardPort(p.DashboardPort, cfg)
+		dashboardFixedPort.Store(int64(dashPort))
 		dashBind, dashBindSrc := resolveDashboardBind(p.DashboardBind, cfg)
 		dashboardBindHost = dashBind
 		srv, popupURL, err := startPopupServer(dashBind, dashPort)
@@ -600,6 +627,7 @@ func runServe(p *serveParams) error {
 	persist, useKeychain := resolveOperatorTokenPersistence(
 		p.PersistOperatorToken, p.PersistOperatorTokenKeychain, cfg)
 	operatorTok, tokenSrc := resolveOperatorToken(persist, useKeychain)
+	operatorTokenStore.Store(string(tokenSrc.kind))
 	slog.Info("operator token", "source", tokenSrc.kind, "persisted", tokenSrc.kind != tokenSourceEphemeral)
 
 	// Auto-launch the dashboard in the browser when the human opted in
@@ -705,6 +733,11 @@ func runServe(p *serveParams) error {
 	// Shares the same stop channel — both sweeps shut down together
 	// when the daemon quits.
 	startSudoGrantsCleanup(cronStop)
+	// The last run's --ask-human prompts died with it: their board questions
+	// close (taskboard_mirror.go).
+	sweepMirroredApprovals()
+	migrateStewardDefaultPermissions(cfg)
+	reconcileStewardAccess(cfg)
 	startOneShotDirectoryCleanup(cronStop)
 
 	// audit_log retention sweep (JOH-268). Hard-deletes audit rows older
@@ -712,6 +745,10 @@ func runServe(p *serveParams) error {
 	// trail stays bounded. Shares the daemon-wide stop channel. See
 	// audit_cleanup.go.
 	startAuditLogCleanup(cronStop)
+
+	// Pages saved with a group that the last run left open have no stage
+	// now: they show as closed and reopen on request (pages_saved.go).
+	closeSavedPagesAtStart()
 
 	// Subscription usage history retention. The current-value caches stay
 	// untouched; only 15-minute graph samples older than the default 90-day
@@ -757,6 +794,11 @@ func runServe(p *serveParams) error {
 	// stop channel.
 	startPendingSpawnSweeper(cronStop)
 
+	// Group task board housekeeping: archives and purges done and dropped
+	// tasks, hourly. Does nothing while features.taskboard is off.
+	startTaskboardSweep(cronStop)
+	startTaskboardIdleSweep(cronStop)
+
 	// Size-based rotation of ~/.tclaude/output.log. agentd holds the
 	// log fd for its whole life, so rotation renames the file and
 	// reopens a fresh one in-process. Shares the daemon-wide stop
@@ -769,11 +811,22 @@ func runServe(p *serveParams) error {
 	// spawning a subprocess. Shares the daemon-wide stop channel.
 	startPluginChecker(cronStop)
 
+	// Tells the operator when an external steward's credential runs out with its
+	// workers still running. Shares the daemon-wide stop channel.
+	startExternalStewardExpiryWatch(cronStop)
+
+	// Says in Messages when agentd started without the login shell's
+	// environment (serve_login_env.go).
+	reportLoginEnvFailure()
+
 	// One cross-repository PR poll feeds the footer and every Groups PR badge.
 	// The GraphQL response carries open/recent state plus CI rollups into the
 	// canonical per-PR caches; the 2s snapshot only reads those shared caches.
 	startAuthoredOpenPRPoller(cronStop)
 	startTrackedPRAuthorsPoller(cronStop)
+	// The GitLab counterpart for the footer's Open MRs indicator: one GraphQL
+	// query per configured instance, every 30 seconds (openmrs.go).
+	startAuthoredOpenMRPoller(cronStop)
 
 	// Subscription-usage poller. Disabled by default; when
 	// usage.poll_anthropic_api is enabled it keeps the SQLite usage_cache
@@ -781,8 +834,11 @@ func runServe(p *serveParams) error {
 	// statusbar is running to populate it. Shares the daemon-wide stop
 	// channel.
 	startUsagePoller(cronStop)
+	startCostOpeningRefresher(cronStop)
 	startUsageFleetPoller(cronStop)
 	startHostMetricsPoller(cronStop)
+	// Launches capacity-queued spawns, in order, as capacity frees.
+	startSpawnQueue(cronStop)
 
 	// Codex subscription-usage poller. Codex has no usage API wired into
 	// tclaude, so this lifts the 5h/weekly rate limits off Codex's local
@@ -903,11 +959,18 @@ func runServe(p *serveParams) error {
 
 	quit := newQuitter()
 	configureSelfUpdateRestart(quit.signal)
+	// After the restart hook: update_on_start may apply and restart.
+	startSelfUpdateScheduler()
+	defer stopSelfUpdateScheduler()
+	// A self-update or a moved binary leaves a managed app launcher naming
+	// the old one; rewrite it now that this binary runs.
+	go refreshStaleAppLauncher(context.Background())
 	// Fleet release metadata polling belongs to the federation runtime
 	// (fleet_metadata.go): a standalone daemon adds no network traffic, and
 	// explicit local update/install requests still work.
 	defer stopHarnessOperations()
 	defer stopNodeRuns()
+	defer stopNodeUpdateScripts()
 	if home, err := canonicalOperatorHome(); err == nil {
 		if err := harnessops.EnableUserPath(home); err != nil {
 			return err
@@ -947,6 +1010,8 @@ func runServe(p *serveParams) error {
 			trayDisabled = true
 		}
 	}
+	// A restart on macOS must not exec in place once the tray has run.
+	trayShown.Store(!trayDisabled)
 
 	// Terminal UI (--tui): the simplified in-terminal dashboard. It runs on
 	// its own goroutine — the main goroutine still belongs to the tray loop —
@@ -1020,6 +1085,7 @@ func runServe(p *serveParams) error {
 	if err := processRuns.shutdown(ctx); err != nil {
 		slog.Warn("process runtime: shutdown did not drain", "error", err)
 	}
+	shutdownHostRoutes()
 	routeAdapterCloseAll()
 	if err := GroupRouteBroker().Close(); err != nil {
 		slog.Warn("group-route broker: shutdown incomplete", "error", err)
@@ -1339,6 +1405,51 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/usage", handleUsage)
 	mux.HandleFunc("GET /v1/usage/summary", handleAccountUsage)
 	mux.HandleFunc("GET /v1/host/status", handleHostStatus)
+	mux.HandleFunc("GET /v1/steward", handleStewardRoster)
+	mux.HandleFunc("GET /v1/steward/handover", handleStewardHandoverPreview)
+	mux.HandleFunc("POST /v1/steward/handover", handleStewardHandover)
+	mux.HandleFunc("POST /v1/steward/step-down", handleStewardStepDown)
+	mux.HandleFunc("POST /v1/steward/roster/remove", handleStewardRosterRemove)
+	mux.HandleFunc("GET /v1/external-stewards", handleExternalStewardsList)
+	mux.HandleFunc("POST /v1/external-stewards", handleExternalStewardCreate)
+	mux.HandleFunc("POST /v1/external-stewards/{name}/renew", handleExternalStewardRenew)
+	mux.HandleFunc("POST /v1/external-stewards/{name}/revoke", handleExternalStewardRevoke)
+	mux.HandleFunc("POST /v1/external-stewards/{name}/spawn", handleExternalStewardSpawnPin)
+	mux.HandleFunc("GET /v1/dashboard/view", handleDashboardViewRead)
+	mux.HandleFunc("POST /v1/dashboard/cue", handleDashboardCue)
+	mux.HandleFunc("POST /v1/dashboard/capture", handleDashboardCapture)
+	mux.HandleFunc("POST /v1/dashboard/fill", handleDashboardFill)
+	mux.HandleFunc("GET /v1/dashboard/captures", handleDashboardCaptureList)
+	mux.HandleFunc("GET /v1/dashboard/captures/{id}", handleDashboardCaptureRead)
+	mux.HandleFunc("POST /v1/dashboard/marks", handleDashboardMarkCreate)
+	mux.HandleFunc("GET /v1/dashboard/marks", handleDashboardMarkList)
+	mux.HandleFunc("DELETE /v1/dashboard/marks", handleDashboardMarkClearAll)
+	mux.HandleFunc("DELETE /v1/dashboard/marks/{id}", handleDashboardMarkClear)
+	mux.HandleFunc("GET /v1/fleet", handleFleet)
+	mux.HandleFunc("GET /v1/knowledge/status", handleKnowledgeStatus)
+	mux.HandleFunc("GET /v1/knowledge/ls", handleKnowledgeList)
+	mux.HandleFunc("GET /v1/knowledge/read", handleKnowledgeRead)
+	mux.HandleFunc("GET /v1/knowledge/search", handleKnowledgeSearch)
+	mux.HandleFunc("GET /v1/drawing-boards", handleDrawingBoardList)
+	mux.HandleFunc("POST /v1/drawing-boards", handleDrawingBoardCreate)
+	mux.HandleFunc("GET /v1/drawing-boards/{id}", handleDrawingBoardRead)
+	mux.HandleFunc("PATCH /v1/drawing-boards/{id}", handleDrawingBoardPatch)
+	mux.HandleFunc("GET /v1/drawing-boards/{id}/snapshot", handleDrawingBoardSnapshot)
+	mux.HandleFunc("POST /v1/drawing-boards/{id}/export", handleDrawingBoardExport)
+	mux.HandleFunc("POST /v1/drawing-boards/{id}/session", handleDrawingBoardSessionOpen)
+	mux.HandleFunc("DELETE /v1/drawing-boards/{id}/session", handleDrawingBoardSessionClose)
+	mux.HandleFunc("POST /v1/resource-locks", handleAgentResourceLock)
+	mux.HandleFunc("GET /v1/groups/{name}/resources", handleAgentGroupResources)
+	mux.HandleFunc("GET /v1/pages", handlePageList)
+	mux.HandleFunc("POST /v1/pages", handlePageShow)
+	mux.HandleFunc("DELETE /v1/pages/{name}", handlePageClose)
+	mux.HandleFunc("GET /v1/pages/{name}/marks", handlePageMarks)
+	mux.HandleFunc("POST /v1/pages/{name}/dom", handlePageDOM)
+	mux.HandleFunc("POST /v1/pages/{name}/snapshot", handlePageSnapshot)
+	mux.HandleFunc("GET /v1/pages/{name}/patches", handlePagePatches)
+	mux.HandleFunc("POST /v1/pages/{name}/patches", handlePagePatch)
+	mux.HandleFunc("DELETE /v1/pages/{name}/patches", handlePagePatchesReset)
+	mux.HandleFunc("POST /v1/pages/{name}/eval", handlePageEval)
 	mux.HandleFunc("GET /v1/costs", handleAccountCosts)
 	registerUsageRuleRoutes(mux)
 	mux.HandleFunc("/v1/peers", handlePeers)
@@ -1381,6 +1492,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/groups/import/inspect", handleGroupImportInspect)
 	mux.HandleFunc("GET /v1/groups/transfers", handleGroupTransfers)
 	registerV1GroupRoutes(mux)
+	registerTaskboardRoutes(mux)
 	registerManagedInstructionRoutes(mux)
 	// Per-agent export (JOH-265). The agent half: `tclaude agent export
 	// show` reads the brief, `… submit` uploads the artifact. Self-scoped —
@@ -1400,6 +1512,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/templates/{name}/export", handleTemplateExport)
 	mux.HandleFunc("GET /v1/agent-bundle/export", handleAgentBundleExport)
 	mux.HandleFunc("POST /v1/agent-bundle/import", handleAgentBundleImport)
+	mux.HandleFunc("POST /v1/import/reveal", handleImportReveal)
 	mux.HandleFunc("POST /v1/agent-bundle/summary", handleExportSummaryRequest)
 	mux.HandleFunc("GET /v1/agent-bundle/summary/{id}", handleExportSummaryStatus)
 	mux.HandleFunc("POST /v1/snapshots", handleSnapshotCreate)
@@ -1434,12 +1547,19 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/spawn-profiles/import/inspect", handleSpawnProfilesImportInspect)
 	mux.HandleFunc("POST /v1/spawn-profiles/import", handleSpawnProfilesImport)
 	mux.HandleFunc("/v1/spawn-profiles/{name}", handleSpawnProfileByName)
+	mux.HandleFunc("GET /v1/spawn-profiles/{name}/running-agents", handleSpawnProfileRunningAgents)
+	mux.HandleFunc("POST /v1/spawn-profiles/{name}/reapply", handleSpawnProfileReapply)
 	// Sandbox profiles are additive host capability policy, separate from spawn
 	// profiles. Payload reads and mutations use sandbox-profiles.manage because
 	// an operator can accidentally place sensitive environment data in one.
 	mux.HandleFunc("/v1/sandbox-profiles", handleSandboxProfiles)
+	mux.HandleFunc("/v1/harness-config-repairs", handleHarnessConfigRepairs)
+	mux.HandleFunc("/v1/relaunch-policy", serveRelaunchPolicy)
+	mux.HandleFunc("/v1/relaunch-sandbox/prepare", handleStandaloneRelaunchPrepare)
+	mux.HandleFunc("/v1/relaunch-sandbox/settle", handleStandaloneRelaunchSettle)
 	mux.HandleFunc("/v1/sandbox-profile-read-exclusions", handleSandboxCommonRuleCatalog)
 	mux.HandleFunc("/v1/sandbox-profile-default", handleGlobalSandboxProfile)
+	mux.HandleFunc("/v1/sandbox-impl-default", handleSandboxDefaultImplementation)
 	mux.HandleFunc("GET /v1/sandbox-profiles/export", handleSandboxProfilesExport)
 	mux.HandleFunc("POST /v1/sandbox-profiles/import", handleSandboxProfilesImport)
 	mux.HandleFunc("POST /v1/sandbox-profiles/import/inspect", handleSandboxProfilesImportInspect)
@@ -1466,8 +1586,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/permissions/peer-reach", handlePermissionsPeerReach)
 	mux.HandleFunc("/v1/cron", handleCron)
 	mux.HandleFunc("/v1/cron/", handleCronByID)
-	mux.HandleFunc("/v1/triggers", triggerRoute(handleTriggers))
-	mux.HandleFunc("/v1/triggers/", triggerRoute(handleTriggerRead))
+	mux.HandleFunc("/v1/triggers", handleTriggers)
+	mux.HandleFunc("/v1/triggers/", handleTriggerRead)
 	// Sudo: most-specific path goes first so the trailing-slash form
 	// catches /v1/sudo/{id} and the bare form catches POST/GET/DELETE
 	// against the collection.
@@ -1475,6 +1595,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
 	mux.HandleFunc("/v1/notify-human/attachment", handleNotifyHumanAttachment)
+	mux.HandleFunc("/v1/notify-human/dismiss", handleNotifyHumanDismiss)
 	mux.HandleFunc("/v1/clipboard", handleClipboard)
 	// Operator-only status and reset surface for the AWB ready pollers
 	// (`tclaude pickup`). Human-token gated; no agent path. Deliberately
@@ -1508,6 +1629,26 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/github/issue/list", handleGHProxyIssueList)
 	mux.HandleFunc("POST /v1/github/issue/view", handleGHProxyIssueView)
 	mux.HandleFunc("POST /v1/github/issue/comment", handleGHProxyIssueComment)
+	// GitLab proxy: the same contract against a GitLab instance the operator
+	// configured (agent.git_proxy.gitlab_hosts, or gitlab.com). Merge
+	// requests, issues, pipelines and jobs; every read is a POST for the same
+	// audit reason as above.
+	mux.HandleFunc("POST /v1/gitlab/mr/create", handleGLProxyMRCreate)
+	mux.HandleFunc("POST /v1/gitlab/mr/list", handleGLProxyMRList)
+	mux.HandleFunc("POST /v1/gitlab/mr/view", handleGLProxyMRView)
+	mux.HandleFunc("POST /v1/gitlab/mr/checks", handleGLProxyMRChecks)
+	mux.HandleFunc("POST /v1/gitlab/mr/comments", handleGLProxyMRComments)
+	mux.HandleFunc("POST /v1/gitlab/mr/comment", handleGLProxyMRComment)
+	mux.HandleFunc("POST /v1/gitlab/mr/edit", handleGLProxyMREdit)
+	mux.HandleFunc("POST /v1/gitlab/mr/ready", handleGLProxyMRReady)
+	mux.HandleFunc("POST /v1/gitlab/mr/merge", handleGLProxyMRMerge)
+	mux.HandleFunc("POST /v1/gitlab/issue/list", handleGLProxyIssueList)
+	mux.HandleFunc("POST /v1/gitlab/issue/view", handleGLProxyIssueView)
+	mux.HandleFunc("POST /v1/gitlab/issue/comment", handleGLProxyIssueComment)
+	mux.HandleFunc("POST /v1/gitlab/pipeline/list", handleGLProxyPipelineList)
+	mux.HandleFunc("POST /v1/gitlab/job/log-failed", handleGLProxyJobLogFailed)
+	mux.HandleFunc("POST /v1/gitlab/job/artifacts", handleGLProxyJobArtifacts)
+	mux.HandleFunc("POST /v1/gitlab/job/download", handleGLProxyJobDownload)
 	mux.HandleFunc("POST /v1/http/request", handleHTTPProxyRequest)
 	mux.HandleFunc("/v1/http/proxy/{name}/{path...}", handleHTTPProxyGateway)
 	mux.HandleFunc("GET /v1/http/environment", handleHTTPProxyEnvironment)
@@ -1564,41 +1705,38 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/awb/attach/show", handleAWBProxyAttachShow)
 	mux.HandleFunc("POST /v1/awb/attach/get", handleAWBProxyAttachGet)
 	mux.HandleFunc("POST /v1/awb/attach/delete", handleAWBProxyAttachDelete)
-	// Experimental template-authoring surfaces remain registered so off means a
-	// stable 404 rather than a different mux shape. processRoute reloads the
-	// feature flag per request.
-	mux.HandleFunc("GET /v1/process/templates", processRoute(handleProcessTemplates))
-	mux.HandleFunc("GET /v1/process/template-heads", processRoute(handleProcessTemplateHeads))
-	mux.HandleFunc("POST /v1/process/templates", processRoute(handleProcessTemplateCreate))
-	mux.HandleFunc("GET /v1/process/templates/{id}", processRoute(handleProcessTemplate))
-	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
-	mux.HandleFunc("DELETE /v1/process/templates/{id}", processRoute(handleProcessTemplate))
-	mux.HandleFunc("POST /v1/process/templates/{id}/listing", processRoute(handleProcessTemplateListing))
-	mux.HandleFunc("POST /v1/process/groups/{group}/processes", processRoute(handleProcessGroupPin))
-	mux.HandleFunc("DELETE /v1/process/groups/{group}/processes/{templateId}", processRoute(handleProcessGroupUnpin))
-	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
-	mux.HandleFunc("POST /v1/process/resolve-preview", processRoute(handleProcessResolvePreview))
+	mux.HandleFunc("GET /v1/process/templates", handleProcessTemplates)
+	mux.HandleFunc("GET /v1/process/template-heads", handleProcessTemplateHeads)
+	mux.HandleFunc("POST /v1/process/templates", handleProcessTemplateCreate)
+	mux.HandleFunc("GET /v1/process/templates/{id}", handleProcessTemplate)
+	mux.HandleFunc("POST /v1/process/templates/{id}", handleProcessTemplate)
+	mux.HandleFunc("DELETE /v1/process/templates/{id}", handleProcessTemplate)
+	mux.HandleFunc("POST /v1/process/templates/{id}/listing", handleProcessTemplateListing)
+	mux.HandleFunc("POST /v1/process/groups/{group}/processes", handleProcessGroupPin)
+	mux.HandleFunc("DELETE /v1/process/groups/{group}/processes/{templateId}", handleProcessGroupUnpin)
+	mux.HandleFunc("POST /v1/process/validate", handleProcessValidate)
+	mux.HandleFunc("POST /v1/process/resolve-preview", handleProcessResolvePreview)
 	// Workflow sharing (.pwf): export a template with its references; preview
 	// or apply an import. Neither starts a run.
-	mux.HandleFunc("GET /v1/process/templates/{id}/export", processRoute(handleProcessTemplateExport))
-	mux.HandleFunc("POST /v1/process/import", processRoute(handleProcessImport))
+	mux.HandleFunc("GET /v1/process/templates/{id}/export", handleProcessTemplateExport)
+	mux.HandleFunc("POST /v1/process/import", handleProcessImport)
 	// Runtime mutations stay behind the same hot-reloaded feature flag, but are
 	// daemon-owned and SQLite-backed rather than part of filesystem authoring.
-	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
-	mux.HandleFunc("POST /v1/process/runs", processRoute(handleProcessRuns))
-	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
-	mux.HandleFunc("GET /v1/process/runs/{id}/events", processRoute(handleProcessRunEvents))
-	mux.HandleFunc("POST /v1/process/runs/{id}/resume", processRoute(handleProcessRunResume))
-	mux.HandleFunc("POST /v1/process/runs/{id}/pause", processRoute(handleProcessRunPause))
-	mux.HandleFunc("POST /v1/process/runs/{id}/reissue", processRoute(handleProcessRunReissue))
-	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", processRoute(handleProcessRunRecordOutcome))
-	mux.HandleFunc("POST /v1/process/runs/{id}/decide", processRoute(handleProcessRunDecide))
-	mux.HandleFunc("POST /v1/process/runs/{id}/resolve-blocked", processRoute(handleProcessRunResolveBlocked))
-	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/assign", processRoute(handleProcessRunAssign))
-	mux.HandleFunc("POST /v1/process/report", processRoute(handleProcessReport))
-	mux.HandleFunc("POST /v1/process/runs/{id}/rescope", processRoute(handleProcessRunRescope))
-	mux.HandleFunc("GET /v1/process/context", processRoute(handleProcessContext))
-	return idempotencyRequests(logRequest(auditRequests(dispatchHTTPProxyGateway(mux))))
+	mux.HandleFunc("GET /v1/process/runs", handleProcessRuns)
+	mux.HandleFunc("POST /v1/process/runs", handleProcessRuns)
+	mux.HandleFunc("GET /v1/process/runs/{id}", handleProcessRun)
+	mux.HandleFunc("GET /v1/process/runs/{id}/events", handleProcessRunEvents)
+	mux.HandleFunc("POST /v1/process/runs/{id}/resume", handleProcessRunResume)
+	mux.HandleFunc("POST /v1/process/runs/{id}/pause", handleProcessRunPause)
+	mux.HandleFunc("POST /v1/process/runs/{id}/reissue", handleProcessRunReissue)
+	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", handleProcessRunRecordOutcome)
+	mux.HandleFunc("POST /v1/process/runs/{id}/decide", handleProcessRunDecide)
+	mux.HandleFunc("POST /v1/process/runs/{id}/resolve-blocked", handleProcessRunResolveBlocked)
+	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/assign", handleProcessRunAssign)
+	mux.HandleFunc("POST /v1/process/report", handleProcessReport)
+	mux.HandleFunc("POST /v1/process/runs/{id}/rescope", handleProcessRunRescope)
+	mux.HandleFunc("GET /v1/process/context", handleProcessContext)
+	return idempotencyRequests(logRequest(auditRequests(countSudoUses(dispatchHTTPProxyGateway(mux)))))
 }
 
 func logRequest(h http.Handler) http.Handler {
@@ -1685,4 +1823,18 @@ func (r *statusRec) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, errors.New("statusRec: underlying ResponseWriter does not implement http.Hijacker")
 	}
 	return h.Hijack()
+}
+
+// warnTmuxMissing says loudly when tmux is not on agentd's PATH. Every
+// agent lives in tclaude's tmux server, so without it no agent can be
+// started or reached and all of them show offline; a daemon started with a
+// bare environment (an app launcher installed from one) used to show that
+// with no word of why.
+func warnTmuxMissing(out io.Writer, lookPath func(string) (string, error)) {
+	if _, err := lookPath("tmux"); err == nil {
+		return
+	}
+	path := os.Getenv("PATH")
+	slog.Error("agentd: tmux is not on PATH; agents cannot be started or reached, and all show offline", "PATH", path)
+	fmt.Fprintf(out, "WARNING: tmux is not on agentd's PATH (%s): agents cannot be started or reached, and all show offline.\n", path)
 }

@@ -152,6 +152,15 @@ func Unmarshal(data []byte) (*Export, error) {
 		return nil, fmt.Errorf("malformed %s: %w", manifestName, err)
 	}
 
+	// An agent bundle is a zip with a versioned manifest too, and would otherwise
+	// read as an empty group. A group export's manifest has no format field.
+	var kind struct {
+		Format string `json:"format"`
+	}
+	if err := json.Unmarshal(manifestBytes, &kind); err == nil && kind.Format != "" {
+		return nil, fmt.Errorf("not a group-export archive: its manifest says %q", kind.Format)
+	}
+
 	if exp.FormatVersion <= 0 {
 		return nil, fmt.Errorf("malformed %s: missing or invalid format_version", manifestName)
 	}

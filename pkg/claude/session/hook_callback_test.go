@@ -1695,3 +1695,46 @@ func TestMigrateClearedIdentityRestoresTitleStore(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "carried-title", row.CustomTitle)
 }
+
+func TestRunHookCallback_PickerResumeReinstatesRetiredConv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	seed := func(t *testing.T, sessionID, convID, boundConv string) {
+		t.Helper()
+		_, err := db.AllocateAgent(convID, "test")
+		require.NoError(t, err)
+		_, err = db.RetireAgent(convID, "test", "test")
+		require.NoError(t, err)
+		require.NoError(t, SaveSessionState(&SessionState{ID: sessionID, ConvID: boundConv, Status: StatusIdle, Created: time.Now()}))
+	}
+	stateOf := func(t *testing.T, convID string) string {
+		t.Helper()
+		state, err := db.AgentState(convID)
+		require.NoError(t, err)
+		return state
+	}
+
+	seed(t, "picker-sess", "conv-picked", "")
+	feedHook(t, "picker-sess", map[string]any{
+		"session_id":      "conv-picked",
+		"hook_event_name": "SessionStart",
+		"source":          "resume",
+		"cwd":             dir,
+	})
+	assert.Equal(t, db.AgentStateActive, stateOf(t, "conv-picked"),
+		"a conversation chosen in the picker can't be refused, so it must come back")
+
+	// A resumed child running inside another conversation's pane reports the
+	// same event, but the pane stays bound to its own conversation.
+	seed(t, "busy-sess", "conv-child", "conv-host")
+	feedHook(t, "busy-sess", map[string]any{
+		"session_id":      "conv-child",
+		"hook_event_name": "SessionStart",
+		"source":          "resume",
+		"cwd":             dir,
+	})
+	assert.Equal(t, db.AgentStateRetired, stateOf(t, "conv-child"))
+}

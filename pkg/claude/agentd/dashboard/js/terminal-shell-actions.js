@@ -1,8 +1,17 @@
 import { setArcanePaletteEnabled } from './terminal-theme.js';
 import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { shellToast } from './shell-state.js';
-import { detachWindowFeatures } from './terminal-drag-out.js';
+import { detachWindowFeatures, elementScreenPoint } from './terminal-drag-out.js';
 import { terminalAttachConfig } from './terminal-attach-config.js';
+import { drawingBoardWindowId, openDrawingBoardOverlay } from './drawing-board-overlay-state.js';
+import { chatWindowId } from './chat-window-model.js';
+import { moveOverlayTab, openOverlayWindow, overlayTabs, overlayWindows } from './overlay-instances.js';
+import { snapOverlayWindowAt } from './overlay-window.js';
+import { windowHolding } from './overlay-tab-model.js';
+import { agentSessionSeed, overlayablePane, terminalWindowOf } from './terminal-window-model.js';
+import { companionAvailable, floatInCompanion } from './companion-facade.js';
+import { confirmProcessTabClose, floatProcessTab, floatingProcessEditor, processTabToWindow } from './process-editor-place.js';
+import { closeLivePage, notePageWindow, openPageOverlay, pageWindowId } from './page-place.js';
 
 export function createTerminalShellActions({
   state,
@@ -11,10 +20,12 @@ export function createTerminalShellActions({
   documentRef = globalThis.document,
   notify = shellToast,
   onReattachPane = null,
+  onPaneDisconnected = null,
 } = {}) {
   if (!state) throw new TypeError('terminal shell actions require state');
   const widgets = new Map();
   let disposed = false;
+  let floatingAgents = 0;
 
   function registerWidget(id, widget) {
     if (disposed) {
@@ -58,6 +69,8 @@ export function createTerminalShellActions({
     return new Promise((resolve) => {
       const poll = () => {
         const pane = state.panes.value.find((candidate) => candidate.key === key);
+        // A drawing board, a process or a page has no attach to wait for.
+        if (pane?.seed.drawingBoard || pane?.seed.process || pane?.seed.page) { resolve(true); return; }
         const widget = pane && widgets.get(pane.id);
         const remaining = timeoutMs - (Date.now() - started);
         if (widget?.settled) {
@@ -71,15 +84,18 @@ export function createTerminalShellActions({
     });
   }
 
-  async function receiveHandoffPane(seed) {
+  // overlay says the page that sent it back may float it here. A terminal that
+  // cannot float after all lands in a tab, so a handoff never loses it.
+  async function receiveHandoffPane({ overlay: _overlay, ...seed }, { overlay = false } = {}) {
     if (disposed) return null;
     const key = seed?.key || seed?.ws;
     if (state.panes.value.some((pane) => pane.key === key)) {
       // The same terminal may have been reopened in the dashboard while its
       // pop-out was alive. Replace that widget after the pop-out's detach has
       // landed so reattach never acknowledges a stale/disconnected instance.
-      await closePane(key, { skipDetach: true });
+      await closePane(key, { skipDetach: true, moving: !!seed.page });
     }
+    if (overlay && await floatPane({ key, label: seed.label, seed })) return true;
     return openPane(seed);
   }
 
@@ -144,11 +160,24 @@ export function createTerminalShellActions({
     return closePanes(state.groupMembers(id).map((pane) => pane.key));
   }
 
-  async function closePanes(keys, { skipDetach = false } = {}) {
+  // moving says the panes' contents went somewhere else, so a process tab's
+  // unsaved edits went with them; otherwise a close asks before dropping them,
+  // and a tab whose edits the operator keeps stays. A live page's tab closed
+  // (not moved) closes the page, and its agent is told.
+  async function closePanes(keys, { skipDetach = false, moving = false } = {}) {
     if (disposed) return;
     const wanted = new Set(keys || []);
-    const panes = state.panes.value.filter((candidate) => wanted.has(candidate.key));
+    let panes = state.panes.value.filter((candidate) => wanted.has(candidate.key));
+    if (!moving && panes.some((pane) => pane.seed.process)) {
+      const kept = new Set();
+      for (const pane of panes) {
+        if (pane.seed.process && !(await confirmProcessTabClose(pane.seed.process))) kept.add(pane.key);
+      }
+      if (disposed) return;
+      panes = state.panes.value.filter((candidate) => wanted.has(candidate.key) && !kept.has(candidate.key));
+    }
     if (!panes.length) return;
+    if (!moving) for (const pane of panes) if (pane.seed.page) void closeLivePage(pane.seed.page, { fetchImpl, notify });
     for (const pane of panes) widgetFor(pane.id)?.dispose();
     state.removePanes(panes.map((pane) => pane.key));
     if (!skipDetach) await Promise.all(panes.map((pane) => hideSeed(pane.seed)));
@@ -190,17 +219,32 @@ export function createTerminalShellActions({
     return key ? state.activatePane(key, options) : false;
   }
 
-  // `detachTo` decides tab vs. window. Browsers open a tab when a window is
-  // asked for with no features and a separate window when any are given, so the
-  // drag gesture passes the pane size and release point it measured and gets a
-  // window; the ⧉ tab button and the tab context menu pass nothing and keep
-  // getting an ordinary tab. The caller measures the DOM, this owns the window.
-  async function popOutPane(key, { detachTo = null } = {}) {
+  function hasAgentPane(selectors) {
+    const wanted = new Set(selectors || []);
+    return state.panes.value.some((pane) => wanted.has(pane.seed.agent) && agentSessionSeed(pane.seed));
+  }
+
+  // Browsers open a tab when a window is asked for with no features and a
+  // separate window when any are given, so this always gives them: the size of
+  // the panes, and where they are or where `detachTo` says a drag ended. `floats`
+  // says the page the pane lands on may offer to send it to an overlay window.
+  async function popOutPane(key, { detachTo = null, floats = false } = {}) {
     const pane = state.panes.value.find((candidate) => candidate.key === key);
     if (!pane) return false;
-    const features = detachTo
-      ? detachWindowFeatures({ ...detachTo, screen: windowRef.screen })
-      : '';
+    const rect = documentRef.querySelector?.('.mux-panes')?.getBoundingClientRect?.();
+    // A process editor goes to a browser window of its own as the Processes
+    // tab sends it, its draft handed over.
+    if (pane.seed.process) {
+      if (floatingProcessEditor(pane.seed.process)) return processTabToWindow(pane.seed.process, pane.label, { rect, win: windowRef, notify });
+      // A tab never looked at has no editor to hand over yet: show it, and say so.
+      state.activatePane(key);
+      notify('The editor is opening here first: move it to a separate window once it has loaded.', true);
+      return false;
+    }
+    const features = detachWindowFeatures({
+      ...(detachTo || { size: rect, at: elementScreenPoint(windowRef, rect) }),
+      screen: windowRef.screen,
+    });
     let target = null;
     try { target = windowRef.open('about:blank', '_blank', features || undefined); }
     catch (_) { target = null; }
@@ -212,27 +256,88 @@ export function createTerminalShellActions({
       return false;
     }
     const seed = {
-      ws: pane.seed.ws,
+      ...(pane.seed.drawingBoard ? { drawingBoard: pane.seed.drawingBoard } : pane.seed.page ? { page: pane.seed.page } : { ws: pane.seed.ws }),
       label: pane.label,
       key: pane.seed.key,
       hideConv: pane.seed.hideConv,
       agent: pane.seed.agent,
       harness: pane.seed.harness,
       remote: pane.seed.remote || undefined,
+      floats: floats || undefined,
       initialRetry: true,
       wizard: documentRef.body.classList.contains('wizard'),
       terminalAttach: terminalAttachConfig(),
     };
-    await closePane(key);
+    // Held there before the tab goes, so the page watcher never sees it placeless.
+    if (pane.seed.page) notePageWindow(pane.seed.page, target);
+    await closePane(key, { moving: true });
     try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); }
     catch (_) { /* target closed while detach was landing */ }
     return true;
   }
 
-  function reattachPane(key) {
+  // openPaneInOverlay moves a drawing board, a shell or an agent from its tab into a
+  // floating window. A drawing board's editor saves what it holds as it goes, and a
+  // shell's tmux session outlives the tab's view of it. An agent goes to its chat
+  // window, which attaches only after this tab let go: the tab's own detach
+  // would drop a chat that got there first. at places a window dragged out,
+  // into ({ windowId, index, groupId }) is a window's strip it was dropped on,
+  // and snapAt is a pointer the window then drops at, as a drag of it would.
+  async function openPaneInOverlay(key, { at = null, into = null, snapAt = null } = {}) {
+    const pane = state.panes.value.find((candidate) => candidate.key === key);
+    if (disposed || !pane) return false;
+    const floated = await floatPane(pane, at);
+    if (into && floated && overlayTabs.peek().some((tab) => tab.id === floated)) moveOverlayTab(floated, into.windowId, into.index, into.groupId);
+    const holder = !into && snapAt && floated ? windowHolding(overlayWindows.peek(), floated) : null;
+    if (holder) snapOverlayWindowAt(holder.id, snapAt);
+    return !!floated;
+  }
+
+  // floatPane answers the id of the overlay tab that now holds the pane, or ''.
+  async function floatPane(pane, at = null) {
+    const { key } = pane;
+    if (pane.seed.drawingBoard) {
+      await closePane(key);
+      openDrawingBoardOverlay(pane.seed.drawingBoard, pane.label, at);
+      return drawingBoardWindowId(pane.seed.drawingBoard);
+    }
+    if (pane.seed.process) return floatProcessTab(pane.seed.process, pane.label, at);
+    if (pane.seed.page) {
+      openPageOverlay(pane.seed.page, pane.label, at);
+      await closePane(key, { moving: true });
+      return pageWindowId(pane.seed.page);
+    }
+    if (overlayablePane(pane)) {
+      await closePane(key, { skipDetach: true });
+      const tab = terminalWindowOf(pane);
+      openOverlayWindow({ ...tab, at });
+      return tab.id;
+    }
+    if (!pane.seed.agent || !companionAvailable()) return '';
+    floatingAgents += 1;
+    try {
+      await closePane(key);
+      if (floatInCompanion(pane.seed.agent, at)) return chatWindowId(pane.seed.agent);
+      openPane(pane.seed);
+      return '';
+    } finally {
+      floatingAgents -= 1;
+    }
+  }
+
+  // An agent on its way to its chat window: the tab has gone, the window hasn't
+  // come yet.
+  const floatingAgent = () => floatingAgents > 0;
+
+  function paneDisconnected(key) {
+    const pane = state.panes.value.find((candidate) => candidate.key === key);
+    if (pane) onPaneDisconnected?.(pane);
+  }
+
+  function reattachPane(key, options) {
     if (disposed || typeof onReattachPane !== 'function') return Promise.resolve(false);
     const pane = state.panes.value.find((candidate) => candidate.key === key);
-    return pane ? Promise.resolve(onReattachPane(pane)) : Promise.resolve(false);
+    return pane ? Promise.resolve(onReattachPane(pane, options)) : Promise.resolve(false);
   }
 
   function dispose() {
@@ -245,9 +350,11 @@ export function createTerminalShellActions({
 
   return Object.freeze({
     registerWidget,
+    paneDisconnected,
     waitForPaneSettled,
     widgetFor,
     openPane,
+    setPaneLabel: (key, label) => !disposed && state.setPaneLabel(key, label),
     receiveHandoffPane,
     activatePane,
     reorderPane,
@@ -270,6 +377,9 @@ export function createTerminalShellActions({
     closeForAgents,
     focusForSelectors,
     popOutPane,
+    openPaneInOverlay,
+    hasAgentPane,
+    floatingAgent,
     reattachPane,
     setArcanePaletteEnabled,
     dispose,

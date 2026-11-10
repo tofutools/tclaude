@@ -62,7 +62,6 @@ func validateRouteAuthorityMetadata(binding tclaudeLayerRelayOptions, proxyActiv
 	}
 	if strings.TrimSpace(binding.RouteSocketPath) == "" ||
 		strings.TrimSpace(binding.RouteAgentID) == "" ||
-		strings.TrimSpace(binding.RouteConvID) == "" ||
 		strings.TrimSpace(binding.RouteLaunchGeneration) == "" || len(binding.RouteGroupIDs) == 0 {
 		return fmt.Errorf("route authority metadata is incomplete")
 	}
@@ -87,7 +86,7 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 
 			code, err := runTclaudeLayerWinchRelay(args, winch, binding)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "tclaude: terminal resize relay: %v\n", err)
+				fmt.Fprintf(cliStderr, "tclaude: terminal resize relay: %v\n", err)
 				os.Exit(125)
 			}
 			os.Exit(code)
@@ -180,16 +179,15 @@ func runTclaudeLayerWinchRelay(
 	if err := validateRouteAuthorityMetadata(binding, proxy.Active()); err != nil {
 		return 125, err
 	}
-	if proxy.Active() && routeAuthorityMetadataPresent(binding) {
+	authorityConfig := proxyConsumerAuthorityConfig(proxyRouteAuthorityConfig{
+		SocketPath: binding.RouteSocketPath, AgentID: binding.RouteAgentID, ConvID: binding.RouteConvID, LaunchGeneration: binding.RouteLaunchGeneration, GroupIDs: binding.RouteGroupIDs,
+	})
+	if proxy.Active() && routeAuthorityMetadataPresent(binding) && authorityConfig != nil {
 		credential, credentialErr := readRouteHelperCredentialFD(3)
 		if credentialErr != nil {
 			return 125, credentialErr
 		}
-		proxy.RouteAuthority = newProxyRouteAuthority(proxyRouteAuthorityConfig{
-			SocketPath: binding.RouteSocketPath, AgentID: binding.RouteAgentID,
-			ConvID: binding.RouteConvID, LaunchGeneration: binding.RouteLaunchGeneration,
-			GroupIDs: append([]int64(nil), binding.RouteGroupIDs...),
-		}, credential)
+		proxy.RouteAuthority = newProxyRouteAuthority(*authorityConfig, credential)
 	}
 	preservedFiles := make([]*os.File, 0, binding.PreserveFDs)
 	for index := 0; index < binding.PreserveFDs; index++ {

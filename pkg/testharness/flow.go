@@ -148,6 +148,11 @@ func saveSessionWithResumeProvenance(row *db.SessionRow) error {
 // Gated on the Claude Code harness the same way the production writes are, so a
 // Codex/OpenCode spawn records nothing.
 func recordLaunchPosture(label string, args clcommon.SpawnArgs) error {
+	if args.RouteHelperLaunchGeneration != "" {
+		if err := db.SetSessionExitLaunchGeneration(label, args.RouteHelperLaunchGeneration); err != nil {
+			return err
+		}
+	}
 	if args.Harness != "" && args.Harness != harness.DefaultName {
 		// As session.RecordLaunchPosture: the pinned window is recorded for
 		// every harness that honours one.
@@ -247,6 +252,9 @@ func launchHarnessBuiltinMode(harnessName, harnessBuiltinMode, implementation st
 // behaviour change for Claude Code.
 func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	if err := checkSpawnDirProofMarker(args); err != nil {
+		return err
+	}
+	if err := checkOpenCodeManagedLaunch(args); err != nil {
 		return err
 	}
 	if args.Harness == codexHarnessName {
@@ -517,6 +525,24 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	return nil
 }
 
+// checkOpenCodeManagedLaunch refuses an OpenCode launch the way the real
+// `tclaude session new` does: OpenCode attaches only to an agentd-managed
+// server, and a preset conversation id must be the ses_ id that server
+// minted. Without it a launch path that skips the managed-server start (the
+// tcl-yt3lyh reincarnate bug) would pass every flow test.
+func checkOpenCodeManagedLaunch(args clcommon.SpawnArgs) error {
+	if args.Harness != harness.OpenCodeName {
+		return nil
+	}
+	if args.OpenCodeServerURL == "" || args.OpenCodeServerPassword == "" {
+		return fmt.Errorf("OpenCode requires an authenticated agentd-managed server; launch it through `tclaude agent spawn`")
+	}
+	if args.SessionID != "" && !strings.HasPrefix(args.SessionID, "ses_") {
+		return fmt.Errorf("--session-id for OpenCode is an internal agentd-minted ses_ id")
+	}
+	return nil
+}
+
 func checkSpawnDirProofMarker(args clcommon.SpawnArgs) error {
 	proof := args.CwdWriteProof
 	if proof == "" {
@@ -603,6 +629,11 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnGitWorktreeWriteDirs(cx.ConvID, args.GitWorktreeWriteDirs)
 	s.w.RecordSpawnCodexGitCommonDir(cx.ConvID, args.CodexGitCommonDir)
 	s.w.RecordSpawnCodexGitCommonDirPinned(cx.ConvID, args.CodexGitCommonDirPinned)
+	s.w.RecordSpawnRouteHelper(cx.ConvID, RouteHelperLaunch{
+		AgentID: args.RouteHelperAgentID, ConvID: args.RouteHelperConvID,
+		LaunchGeneration: args.RouteHelperLaunchGeneration, Credential: args.RouteHelperCredential,
+		GroupIDs: args.RouteHelperGroupIDs,
+	})
 	// A daemon-spawned Codex pane carries a positional first-turn seed (its
 	// conv-id seed, which now also delivers the [system: ...] welcome). Capture
 	// it keyed by conv-id so a flow test can assert what the launch prompt
@@ -630,6 +661,9 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 		HarnessBuiltinMode:    launchHarnessBuiltinMode(codexHarnessName, args.Sandbox, args.SandboxImplementation),
 		SandboxImplementation: args.SandboxImplementation,
 	}); err != nil {
+		return err
+	}
+	if err := recordLaunchPosture(label, args); err != nil {
 		return err
 	}
 	s.w.Tmux.Register(label, cx.Cwd, cx)
@@ -1089,11 +1123,13 @@ func (f *Flow) SpawnWith(group string, body map[string]any) SpawnResp {
 
 // ResumeResp parses POST /v1/agent/{conv}/resume.
 type ResumeResp struct {
-	ConvID string `json:"conv_id"`
-	Action string `json:"action"`
-	Detail string `json:"detail,omitempty"`
-	Code   int    `json:"-"`
-	Raw    []byte `json:"-"`
+	ConvID   string   `json:"conv_id"`
+	Action   string   `json:"action"`
+	Detail   string   `json:"detail,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+	Changes  []string `json:"changes,omitempty"`
+	Code     int      `json:"-"`
+	Raw      []byte   `json:"-"`
 }
 
 // Resume drives POST /v1/agent/{conv}/resume.
@@ -1212,13 +1248,15 @@ func (f *Flow) Clear(label string) ClearResp {
 
 // ReincarnateResp parses POST /v1/agent/{conv}/reincarnate.
 type ReincarnateResp struct {
-	OldConv     string `json:"old_conv"`
-	NewConv     string `json:"new_conv"`
-	NewTitle    string `json:"new_title"`
-	Label       string `json:"label"`
-	TmuxSession string `json:"tmux_session"`
-	Code        int    `json:"-"`
-	Raw         []byte `json:"-"`
+	OldConv     string   `json:"old_conv"`
+	NewConv     string   `json:"new_conv"`
+	NewTitle    string   `json:"new_title"`
+	Label       string   `json:"label"`
+	TmuxSession string   `json:"tmux_session"`
+	Warnings    []string `json:"warnings,omitempty"`
+	Changes     []string `json:"changes,omitempty"`
+	Code        int      `json:"-"`
+	Raw         []byte   `json:"-"`
 }
 
 // TmuxTarget mirrors SpawnResp.TmuxTarget.

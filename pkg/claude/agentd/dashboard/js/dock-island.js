@@ -3,6 +3,7 @@ import {
   useCallback, useEffect, useId, useLayoutEffect, useRef, useState,
 } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { wizWord } from './slop.js';
 import { DockProcesses } from './dock-processes.js';
 import { dashPrefs } from './prefs.js';
@@ -14,6 +15,9 @@ import {
 } from './dock-nodes.js';
 import { LockReason } from './lock-reason.js';
 import { NodeSelect } from './node-select.js';
+import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
+import { clipboardFailure, writeClipboard } from './insecure-origin.js';
+import { processesAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -37,12 +41,8 @@ function DockChips({ chips = [], full = false }) {
 
 // copyName puts a name on the clipboard for a CLI flag or a config file.
 export async function copyName(name, notify) {
-  try {
-    await navigator.clipboard.writeText(name);
-    notify?.(`copied ${name}`);
-  } catch {
-    notify?.('copy failed: the clipboard is not available here', true);
-  }
+  if (await writeClipboard(name)) notify?.(`copied ${name}`);
+  else notify?.(`copy failed: ${clipboardFailure()}`, true);
 }
 
 // DockMenuItem is one row of a card or section menu.
@@ -50,7 +50,7 @@ export function DockMenuItem({ act, kind, name, danger = false, onRun, setOpenMe
   return html`<button
     type="button"
     role="menuitem"
-    class=${`dock-card-menu-item${danger ? ' danger' : ''}`}
+    class=${`ui-menu-item dock-card-menu-item${danger ? ' ui-btn-danger danger' : ''}`}
     data-dock-act=${act}
     data-dock-kind=${kind}
     data-dock-name=${name}
@@ -84,7 +84,7 @@ function DockWhere({ entry, nodes, pick, onPick, copyOf, onCopy }) {
           return html`<span key=${node.id} class="dock-where-pill is-missing is-locked" style=${style}
             title=${WHERE_TITLES.missing(node)} data-dock-node=${node.id}>${node.name}<${LockReason} why=${route.why} /></span>`;
         }
-        return html`<button
+        return html`<button data-ui-exempt
           key=${node.id}
           type="button"
           class="dock-where-pill is-missing"
@@ -96,6 +96,7 @@ function DockWhere({ entry, nodes, pick, onPick, copyOf, onCopy }) {
         >+ ${node.name}</button>`;
       }
       return html`<button
+        data-ui-exempt
         key=${node.id}
         type="button"
         class=${`dock-where-pill is-${state}${pick === node.id ? ' is-picked' : ''}`}
@@ -202,14 +203,17 @@ function DockCard({
     };
   }, [clipHost, detailsOpen, positionDetails]);
 
+  const closeDetails = () => setDetailsOpen(false);
+  const leaveGrace = useLeaveGrace(() => {
+    if (!cardRef.current?.contains(document.activeElement)) setDetailsOpen(false);
+  });
+  useExclusivePopover(cardRef, detailsOpen, closeDetails);
+
   const showDetails = () => {
+    leaveGrace.cancel();
     if (dragging) return;
     positionDetails();
     setDetailsOpen(true);
-  };
-
-  const hideHoveredDetails = () => {
-    if (!cardRef.current?.contains(document.activeElement)) setDetailsOpen(false);
   };
 
   const enterCard = () => {
@@ -219,7 +223,7 @@ function DockCard({
 
   const leaveCard = () => {
     hoveringRef.current = false;
-    hideHoveredDetails();
+    leaveGrace.schedule();
   };
 
   // Every kind's menu, in one order; a kind without a hook leaves its row out.
@@ -280,7 +284,7 @@ function DockCard({
   return html`
     <div
       ref=${cardRef}
-      class=${`dock-card${hasDetails ? ' dock-card-has-details' : ''}`}
+      class=${`dock-card ui-card${hasDetails ? ' dock-card-has-details' : ''}`}
       draggable=${draggable}
       data-key=${name}
       data-dock-kind=${section.key}
@@ -293,6 +297,7 @@ function DockCard({
         if (!event.currentTarget.contains(event.relatedTarget)) setDetailsOpen(false);
       } : null}
       onDragStart=${canDrag ? () => {
+        leaveGrace.cancel();
         setDragging(true);
         setDetailsOpen(false);
       } : null}
@@ -323,9 +328,8 @@ function DockCard({
         ${entry ? html`<${DockWhere} entry=${entry} nodes=${fused.nodes} pick=${pick} onPick=${setPicked} copyOf=${copyOf} onCopy=${runCopy} />` : null}
       </span>
       <span class="dock-card-actions">
-        <button
-          ref=${cogRef}
-          type="button"
+        <${Button} size="sm" variant="ghost"
+          domRef=${cogRef}
           class="dock-card-manage"
           data-dock-act="card-menu"
           data-dock-kind=${section.key}
@@ -339,7 +343,7 @@ function DockCard({
             event.preventDefault();
             setOpenMenu(menuOpen ? null : menuKey);
           }}
-        >⚙</button>
+        >⚙<//>
         <div
           ref=${menuRef}
           class=${`dock-card-menu${menuOpen ? ' open' : ''}${placement.up ? ' opens-up' : ''}`}
@@ -531,17 +535,15 @@ function DockSection({
         </span>
         ${fused ? html`<${DockWithheld} nodes=${fused.nodes} withheld=${many.withheld} />` : null}
         <span class="dock-section-tools">
-          ${section.onNew ? html`<button
-            type="button"
+          ${section.onNew ? html`<${Button} size="sm" variant="ghost"
             class="dock-section-manage"
             data-dock-act="new-item"
             data-dock-kind=${section.key}
             title=${`New ${section.title().toLowerCase().replace(/s$/, '')}`}
             aria-label=${`New in ${section.title()}`}
             onClick=${(event) => { event.preventDefault(); section.onNew(); }}
-          >＋</button>` : null}
-          <button
-            type="button"
+          >＋<//>` : null}
+          <${Button} size="sm" variant="ghost"
             class="dock-section-manage"
             data-dock-act="manage-all"
             data-dock-kind=${section.key}
@@ -550,10 +552,9 @@ function DockSection({
               event.preventDefault();
               section.onManageAll();
             }}
-          >⧉</button>
+          >⧉<//>
           ${section.onExportAll || section.onImportFile ? html`<span class="dock-card-actions">
-            <button
-              type="button"
+            <${Button} size="sm" variant="ghost"
               class="dock-section-manage"
               data-dock-act="section-menu"
               data-dock-kind=${section.key}
@@ -562,7 +563,7 @@ function DockSection({
               aria-label=${`More for ${section.title()}`}
               title="Import or export"
               onClick=${(event) => { event.preventDefault(); setOpenMenu(sectionMenuOpen ? null : sectionMenuKey); }}
-            >⋯</button>
+            >⋯<//>
             <div class=${`dock-card-menu${sectionMenuOpen ? ' open' : ''}`} role="menu" aria-label=${`${section.title()} actions`}>
               ${section.onImportFile ? html`<${DockMenuItem} act="import" kind=${section.key} setOpenMenu=${setOpenMenu}
                 onRun=${() => fileRef.current?.click()}>Import…</${DockMenuItem}>` : null}
@@ -575,8 +576,8 @@ function DockSection({
         </span>
       </summary>
       <div class="dock-section-items">
-        ${error ? html`<div class="dock-empty island-error" role="alert">${error}</div>` : null}
-        ${all === null && !error ? html`<div class="dock-empty">Loading…</div>` : null}
+        ${error ? html`<div class="dock-empty ui-empty island-error" role="alert">${error}</div>` : null}
+        ${all === null && !error ? html`<div class="dock-empty ui-empty">Loading…</div>` : null}
         ${all !== null && (items.length ? items.map((value) => html`
           <${DockCard}
             key=${nameOf(value)}
@@ -594,7 +595,7 @@ function DockSection({
             onTogglePin=${(name) => { togglePin(prefs, section.key, name); setPinsVersion(pinsVersion + 1); }}
             notify=${notify}
           />
-        `) : html`<div class="dock-empty">(${section.empty()})</div>`)}
+        `) : html`<div class="dock-empty ui-empty">(${section.empty()})</div>`)}
       </div>
     </details>
   `;
@@ -639,30 +640,13 @@ export function Dock({
     setMatches((current) => (current[key] === count ? current : { ...current, [key]: count }));
   }, []);
 
-  useEffect(() => {
-    const close = (restoreFocus = false) => {
-      const menu = host.querySelector('.dock-card-menu.open');
-      if (!menu) return;
-      const focusInside = menu.contains(document.activeElement);
-      const cog = menu.parentElement?.querySelector('.dock-card-manage, .dock-section-manage[data-dock-act="section-menu"]');
-      setOpenMenu(null);
-      if (restoreFocus && focusInside) queueMicrotask(() => cog?.focus());
-    };
-    const onClick = (event) => {
-      if (!event.target.closest('.dock-card-actions')) close(true);
-    };
-    const onKeyDown = (event) => {
-      if (event.key !== 'Escape' || !host.querySelector('.dock-card-menu.open')) return;
-      event.preventDefault();
-      close(true);
-    };
-    document.addEventListener('click', onClick);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('click', onClick);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [host]);
+  useDismissablePopover(() => host.querySelector('.dock-card-menu.open')?.closest('.dock-card-actions'), openMenu, () => {
+    const menu = host.querySelector('.dock-card-menu.open');
+    const focusInside = menu?.contains(document.activeElement);
+    const cog = menu?.parentElement?.querySelector('.dock-card-manage, .dock-section-manage[data-dock-act="section-menu"]');
+    setOpenMenu(null);
+    if (focusInside) queueMicrotask(() => cog?.focus());
+  });
 
   // The process library follows the snapshot sections (only while Processes
   // is enabled); a section marked afterProcesses comes after it.
@@ -686,7 +670,7 @@ export function Dock({
   `;
   // Local groups only: pin and start go to this daemon's routes by name.
   const groups = (snapshot?.groups || []).filter((group) => !group.fleet_node).map((group) => group.name).filter(Boolean);
-  const processes = !!snapshot?.processes_enabled;
+  const processes = processesAvailable(snapshot);
   const shown = [...sections.map((section) => section.key), ...(processes ? ['processes'] : [])];
   const nothing = terms.length > 0 && shown.every((key) => matches[key] === 0);
   return [
@@ -703,7 +687,7 @@ export function Dock({
     </div>`,
     fusedValue ? html`<${DockNodeFilter} key="nodes" nodes=${fusedValue.nodes} hidden=${hidden}
       onHide=${(ids) => { hiddenState.value = ids; }} />` : null,
-    nothing ? html`<div key="no-match" class="dock-empty dock-search-empty">No matches for “${query.trim()}”.</div>` : null,
+    nothing ? html`<div key="no-match" class="dock-empty ui-empty dock-search-empty">No matches for “${query.trim()}”.</div>` : null,
     ...sections.filter((section) => !section.afterProcesses).map(renderSection),
     processes ? html`<${DockProcesses} key="processes" groups=${groups}
       isSectionOpen=${isSectionOpen} setSectionOpen=${setSectionOpen} openMenu=${openMenu} setOpenMenu=${setOpenMenu} clipHost=${host}

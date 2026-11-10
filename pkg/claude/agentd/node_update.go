@@ -1,22 +1,28 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/launcher"
 	"github.com/tofutools/tclaude/pkg/selfupdate"
 )
 
 const PermNodeUpdate = "node.update"
+
+// PermNodeUpdateSettings lets a peer change this node's self-update settings
+// (method, schedule, post-update setup). Instance-wide, default off.
+const PermNodeUpdateSettings = "node.update.settings"
 
 var nodeUpdates struct {
 	sync.Mutex
@@ -39,17 +45,61 @@ func localUpdateService() (*selfupdate.Service, error) {
 			status = 500
 		}
 		recordFederationAudit("federation.node.update", job.Actor, "", "", job.Action+" "+job.Version+" job="+job.ID+" "+job.State, status)
+		selfUpdateJobFinished(job)
 	}})
 	if err != nil {
 		return nil, err
 	}
 	nodeUpdates.service = svc
+	// A job finished by this process's restart verification may still owe
+	// its post-update setup and notification.
+	go finishRestartedUpdate(context.Background(), svc)
 	return svc, nil
 }
 func registerNodeUpdateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/node/update", handleDashboardNodeUpdate)
 	mux.HandleFunc("POST /api/node/update", handleDashboardNodeUpdate)
 	mux.HandleFunc("GET /api/node/update/jobs/{id}", handleDashboardNodeUpdate)
+	mux.HandleFunc("GET /api/node/update/preflight", handleDashboardNodeUpdatePreflight)
+	registerNodeUpdateSettingsRoutes(mux)
+}
+
+// GET <base>/preflight is a dry run of Update now under the node's saved
+// update settings: whether the method may run here, what it would run, and
+// the local preconditions checked without installing (selfupdate.Plan).
+func handleDashboardNodeUpdatePreflight(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	serveNodeUpdatePreflight(w, r, false)
+}
+func handleLocalNodeUpdatePreflight(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "test the tclaude update method") {
+		return
+	}
+	serveNodeUpdatePreflight(w, r, false)
+}
+
+// servePeerNodeUpdatePreflight serves a peer holding node.update, as the
+// update status read is. The custom command is the operator's free text: only
+// an unrestricted peer sees it, as with the settings view.
+func servePeerNodeUpdatePreflight(w http.ResponseWriter, r *http.Request, v *peerView, rule peerViewRule) {
+	if !peerNodeUpdateAllowed(v, rule) {
+		writeError(w, 403, "permission_denied", "node.update is not shared")
+		return
+	}
+	serveNodeUpdatePreflight(w, r, !v.unrestricted())
+}
+
+func serveNodeUpdatePreflight(w http.ResponseWriter, r *http.Request, redact bool) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	service, err := localUpdateService()
+	if err != nil {
+		writeError(w, 503, "update_unavailable", err.Error())
+		return
+	}
+	plan := service.Plan(r.Context(), selfUpdateApplyOptions(loadSelfUpdateSettings()), selfupdate.PlanOptions{RedactCommand: redact})
+	writeJSON(w, 200, plan)
 }
 func handleDashboardNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
@@ -101,13 +151,32 @@ func serveNodeUpdate(w http.ResponseWriter, r *http.Request, actor string, autho
 		return
 	}
 	if r.Method == http.MethodPost {
-		job, err := service.Start(req, actor, authorize)
+		var opts selfupdate.ApplyOptions
+		if req.Action != "rollback" {
+			// A check needs the method too: a source checkout that follows a
+			// branch checks for new commits, not a newer release.
+			opts = selfUpdateApplyOptions(loadSelfUpdateSettings())
+			// The operator asked for this update: a custom command runs
+			// even at the latest release (automatic runs do not).
+			opts.RunWhenCurrent = true
+		}
+		if req.Action != "check" {
+			opts.Launch = selfUpdateLaunchPlan()
+		}
+		job, err := service.StartWith(req, actor, authorize, opts)
 		if err != nil {
 			status := 500
 			code := "update_failed"
-			if errors.Is(err, selfupdate.ErrBusy) {
-				status = 409
-				code = "update_busy"
+			var managed *selfupdate.PackageManagedError
+			switch {
+			case errors.Is(err, selfupdate.ErrBusy):
+				status, code = 409, "update_busy"
+			case errors.Is(err, selfupdate.ErrNotifyOnly):
+				status, code = 409, "update_method_notify_only"
+			case errors.As(err, &managed) && managed.NeedsAck:
+				status, code = 409, "update_package_manager_ack_required"
+			case errors.As(err, &managed):
+				status, code = 409, "update_method_package_managed"
 			}
 			writeError(w, status, code, err.Error())
 			return
@@ -126,6 +195,8 @@ func serveNodeUpdate(w http.ResponseWriter, r *http.Request, actor string, autho
 		return
 	}
 	status := service.Status()
+	status.ChosenMethod = loadSelfUpdateSettings().Method
+	status.DetectedMethod = selfupdate.Detect(status.Binaries).Method
 	if rt := currentFederation(); rt != nil {
 		for _, p := range rt.cl.Directory() {
 			if p.Version != "" && p.Version != status.CurrentVersion {
@@ -141,7 +212,27 @@ var updateRestartState struct {
 	stop      func()
 	path      string
 	requested bool
+	plan      restartPlan
 }
+
+// restartPlan is how performSelfUpdateRestart restarts; the zero value
+// re-executes in place.
+type restartPlan struct {
+	// exit: end the process with exitCode instead of re-executing, for the
+	// supervisor's Restart= to start it again (launcher.RestartExit).
+	exit     bool
+	exitCode int
+	// relaunch: start agentd in a fresh process through the relaunch helper
+	// (launcher.RestartRelaunch); detach starts it detached.
+	relaunch, detach bool
+}
+
+// trayShown: this serve shows a tray icon, so on macOS a restart must start
+// a fresh process rather than exec in place (launcher.RestartRelaunch).
+var trayShown atomic.Bool
+
+// restartExit ends the process for an exit restart; tests swap it.
+var restartExit = os.Exit
 
 func configureSelfUpdateRestart(stop func()) {
 	path, _ := os.Executable()
@@ -152,26 +243,66 @@ func configureSelfUpdateRestart(stop func()) {
 	updateRestartState.requested = false
 	updateRestartState.Unlock()
 }
+
+// requestSelfUpdateRestart is the self-updater's restart hook. It restarts
+// through the launcher (see RequestDaemonRestart), so a systemd or launchd
+// service keeps its own arguments.
 func requestSelfUpdateRestart() error {
+	// An update may have moved the daemon's binary (an install next to a
+	// package-managed copy, a new Homebrew Cellar version); an in-place
+	// re-exec must start the new location.
 	updateRestartState.Lock()
-	defer updateRestartState.Unlock()
-	if updateRestartState.stop == nil || updateRestartState.path == "" {
-		return fmt.Errorf("restart hook unavailable; restart agentd manually")
+	nodeUpdates.Lock()
+	relocated := false
+	if svc := nodeUpdates.service; svc != nil && updateRestartState.path != "" {
+		moved := svc.RestartPath(updateRestartState.path)
+		relocated = moved != updateRestartState.path
+		updateRestartState.path = moved
 	}
-	updateRestartState.requested = true
-	time.AfterFunc(500*time.Millisecond, updateRestartState.stop)
-	return nil
+	nodeUpdates.Unlock()
+	updateRestartState.Unlock()
+	// A supervisor restart or an exit would start the unit's own ExecStart,
+	// the old location; only the re-exec starts the moved binary.
+	_, err := requestDaemonRestart("self-update", relocated)
+	return err
 }
 func performSelfUpdateRestart() error {
 	updateRestartState.Lock()
-	requested, path := updateRestartState.requested, updateRestartState.path
+	requested, path, plan := updateRestartState.requested, updateRestartState.path, updateRestartState.plan
+	exit, exitCode := plan.exit, plan.exitCode
 	updateRestartState.stop = nil
 	updateRestartState.Unlock()
 	if !requested {
 		return nil
 	}
+	if exit && currentLauncher(true).RestartMethod != launcher.RestartExit {
+		// Something started inside the unit since the restart was asked
+		// for (tmux, an agent runtime): an exit would stop it with us.
+		exit = false
+		slog.Warn("agentd restart: exiting is no longer safe; re-executing in place")
+	}
 	db.Close()
-	err := execSelfUpdate(path, os.Args, os.Environ())
+	if exit {
+		// The supervisor starts agentd again (Restart=), through the unit's
+		// own ExecStart.
+		restartExit(exitCode)
+		return nil
+	}
+	// The environment this process started with, not os.Environ(): what
+	// startup exported into it is derived again from the same flags.
+	argv := os.Args
+	if plan.relaunch {
+		helper, ok := relaunchHelperArgv(path, os.Args, plan.detach)
+		switch {
+		case !ok:
+			slog.Warn("agentd restart: cannot relaunch from this command line; re-executing in place")
+		case !relaunchAvailable(path, helper):
+			slog.Warn("agentd restart: the binary has no relaunch helper; re-executing in place", "path", path)
+		default:
+			argv = helper
+		}
+	}
+	err := execSelfUpdate(path, argv, launchEnviron)
 	if err != nil {
 		nodeUpdates.Lock()
 		service := nodeUpdates.service

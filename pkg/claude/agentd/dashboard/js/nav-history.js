@@ -16,6 +16,8 @@
 import { $, $$, isModifiedClick } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
 import { clickNavExactly } from './automations-nav.js';
+import { onPeerPage } from './node-api.js';
+import { peerDrawingBoardsShared } from './peer-drawing-boards.js';
 import { peerViewSubtabUsable, peerViewTabUsable } from './peer-view-limits.js';
 import { activitySubtab, DEFAULT_ACTIVITY_SUBTAB, setActivitySubtab } from './activity-state.js';
 import { configLocation, setConfigPanel } from './config-panel.js';
@@ -25,7 +27,7 @@ import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.
 import { withCostsPeriod } from './usage-hub-state.js';
 import {
   DEFAULT_TAB, OVERLAY_PARAMS, normalizeLocation, initialState, current, locEquals,
-  push, replaceCurrent, toPath, toQuery, fromPath, resolvePopstate,
+  push, replaceCurrent, toPath, toQuery, fromPath, isKnownPath, resolvePopstate,
   serializeStack, reviveState,
 } from './nav-history-core.js';
 
@@ -39,8 +41,8 @@ import {
 // path has its own handler) — see KNOWN_TABS in nav-history-core.js for the full
 // set ordering.
 const ROUTABLE_TABS = new Set([
-  'groups', 'terminals', 'jobs', 'processes', 'plugins', 'access',
-  'messages', 'usage', 'activity', 'config', 'map', 'fleet-admin',
+  'groups', 'terminals', 'drawing-boards', 'collab-processes', 'jobs', 'processes', 'plugins', 'access',
+  'messages', 'usage', 'diagnostics', 'config', 'map', 'fleet-admin',
 ]);
 
 // The virtual stack (see nav-history-core.js). Replaced wholesale on every
@@ -60,16 +62,21 @@ let ready = false;
 
 // tabAvailable reports whether a routable tab is actually reachable right now —
 // its nav button exists and isn't CSS-hidden (offsetParent === null means a
-// display:none up the chain, exactly how the Terminals tab drops out with no
-// live terminals, or a disabled Costs/Plugins tab). A restored URL pointing at
+// display:none up the chain, exactly how a disabled Costs/Plugins tab drops
+// out). A restored URL pointing at
 // an unavailable tab is a stale target (AC #5): the caller falls back to the
 // default rather than stranding on a blank hidden section.
 //
 // Processes is the exception: it is reached through the Automations sub-nav, so
-// its nav button is permanently CSS-hidden and only the feature flag decides
-// whether it is reachable.
+// its nav button is permanently CSS-hidden and only body.hide-processes (a
+// peer that does not offer Processes) decides whether it is reachable.
 function tabAvailable(tab) {
   if (tab === 'processes') return !document.body.classList.contains('hide-processes');
+  // Drawing boards has no nav anchor: a drawing board is a tab of the Terminals section.
+  // A peer's page has them only when the peer shares its drawing boards (tcl-ug8bb8).
+  if (tab === 'drawing-boards') return !onPeerPage() || peerDrawingBoardsShared();
+  // Nor has a process template's Collab tab, which needs Processes too.
+  if (tab === 'collab-processes') return !onPeerPage() && !document.body.classList.contains('hide-processes');
   const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
   return !!(btn && btn.offsetParent !== null);
 }
@@ -97,25 +104,13 @@ function usageSubtabAvailable(subtab) {
 // back to the default tab.
 function staleFallback(loc) {
   if (loc.tab === 'usage' && tabAvailable('usage')) return normalizeLocation({ tab: 'usage' });
-  return defaultGroupsLocation();
-}
-
-// defaultGroupsLocation is bare Groups in its remembered lens: a fallback or
-// fresh load that lands on Groups says /groups/agents or /groups/processes
-// when that is what shows, so neither the URL nor a later Back disagrees with
-// the screen. Bare /groups is the default Both lens.
-function defaultGroupsLocation() {
-  const focus = featureState('groups')?.focus?.value;
-  if ((focus === 'processes' || focus === 'agents') && groupsProcessesFocusAvailable()) {
-    return normalizeLocation({ tab: 'groups', subtab: focus });
-  }
   return normalizeLocation({ tab: DEFAULT_TAB });
 }
 
-// The Groups lenses (/groups/agents, /groups/processes) and the single-run
-// focus (/groups/runs/...) exist only while the
-// processes feature is on; processes.js mirrors that onto body.hide-processes.
-// Without it there is one lens, and it lives at bare /groups.
+// The single-run focus (/groups/runs/...) exists wherever processes are
+// available (always on this node); processes.js mirrors a peer without them
+// onto body.hide-processes. The retired lens links (/groups/agents,
+// /groups/processes) are not known subtabs, so they parse as bare /groups.
 function groupsProcessesFocusAvailable() {
   return !document.body.classList.contains('hide-processes');
 }
@@ -123,7 +118,7 @@ function groupsProcessesFocusAvailable() {
 function locationAvailable(loc) {
   return tabAvailable(loc.tab)
     && !(loc.tab === 'groups' && loc.subtab === 'routes' && !groupsRouteMapAvailable())
-    && !(loc.tab === 'groups' && ['processes', 'agents', 'runs'].includes(loc.subtab) && !groupsProcessesFocusAvailable())
+    && !(loc.tab === 'groups' && loc.subtab === 'runs' && !groupsProcessesFocusAvailable())
     && !(loc.tab === 'usage' && loc.subtab && !usageSubtabAvailable(loc.subtab));
 }
 
@@ -161,19 +156,16 @@ function activeLocationFromDOM() {
       loc.subtab = 'routes';
       if (island.routeSelection?.value) loc.selection = island.routeSelection.value;
       loc.params = { group: island.routeGroup?.value, view: island.routeView?.value === 'list' ? 'list' : '' };
-    } else if (island?.focusedRun?.value && island.focus?.value !== 'agents' && groupsProcessesFocusAvailable()) {
-      // The single-run focus shows in Both and Processes alike, so the lens
-      // stays out of its URL (groups-focus.js groupsRunLocation).
+    } else if (island?.focusedRun?.value && groupsProcessesFocusAvailable()) {
+      // groups-focus.js groupsRunLocation.
       loc.subtab = 'runs';
       loc.selection = island.focusedRun.value.group;
       loc.item = island.focusedRun.value.runId;
-    } else if ((island?.focus?.value === 'processes' || island?.focus?.value === 'agents') && groupsProcessesFocusAvailable()) {
-      loc.subtab = island.focus.value;
     }
   } else if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.subtab;
-  } else if (tab === 'activity') {
+  } else if (tab === 'diagnostics') {
     loc.subtab = activitySubtab.value;
   } else if (tab === 'config') {
     return normalizeLocation(configLocation());
@@ -199,7 +191,8 @@ function activeLocationFromDOM() {
     // Which terminal is being viewed is island state the DOM never spells out
     // (the active pane's agent selector), so ask the island — same reasoning as
     // Processes below. Absent island (asset failed to load, no pane ever
-    // opened) degrades to the bare /terminals.
+    // opened) degrades to the bare /terminals. A drawing board tab answers with its
+    // own /drawing-boards/<id> location.
     const island = featureState('terminals');
     if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'processes') {
@@ -232,6 +225,12 @@ function requestTerminalsLocation(loc) {
   }));
 }
 
+function requestDrawingBoardsLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
+}
+
 function requestJobsLocation(loc) {
   document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
     detail: { location: normalizeLocation(loc) },
@@ -254,17 +253,17 @@ function requestGroupsLocation(loc) {
 // under the `applying` guard so the resulting clicks don't re-enter the
 // observer. Going through the real nav button's .click() (rather than poking
 // classes) reuses every lazy-loader hung on that button — the same reasoning as
-// cycleTab() in refresh.js — so a restored /costs or /activity/logs actually loads its
+// cycleTab() in refresh.js — so a restored /costs or /diagnostics/logs actually loads its
 // data. A non-routable or unknown tab is left as-is.
 function activate(loc, { traversal = false } = {}) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   // A peer view routes a tab the peer does not offer (a pasted /costs?node=,
   // Back across a revoked grant) to Groups, and says so in the URL.
-  if (!peerViewTabUsable(loc.tab)) { loc = defaultGroupsLocation(); correct(loc); }
-  // Activity is usable on a peer view for its audit log only; a Logs or
+  if (!peerViewTabUsable(loc.tab)) { loc = normalizeLocation({ tab: DEFAULT_TAB }); correct(loc); }
+  // Diagnostics is usable on a peer view for its audit log only; a Logs or
   // Performance location there lands on Audit instead.
-  if (loc.tab === 'activity' && loc.subtab && !peerViewSubtabUsable(loc.tab, loc.subtab)) {
-    loc = { tab: 'activity', subtab: DEFAULT_ACTIVITY_SUBTAB };
+  if (loc.tab === 'diagnostics' && loc.subtab && !peerViewSubtabUsable(loc.tab, loc.subtab)) {
+    loc = { tab: 'diagnostics', subtab: DEFAULT_ACTIVITY_SUBTAB };
     correct(loc);
   }
   applying = true;
@@ -276,7 +275,10 @@ function activate(loc, { traversal = false } = {}) {
       setFleetAdminPage(loc.subtab || '');
       if (loc.subtab === 'grants') setFleetGrantTarget(loc.selection || '');
     }
-    const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === loc.tab);
+    // /drawing-boards and /collab/processes routes show in the Terminals section, as a
+    // tab of its strip.
+    const navTab = loc.tab === 'drawing-boards' || loc.tab === 'collab-processes' ? 'terminals' : loc.tab;
+    const navBtn = $$('nav [data-tab]').find(b => b.dataset.tab === navTab);
     // A plain Messages click jumps to waiting operator work; a location that
     // names a folder must land there instead.
     if (loc.tab === 'messages' && loc.selection) suppressNextMessagesAttention();
@@ -289,8 +291,12 @@ function activate(loc, { traversal = false } = {}) {
       // than a click, and the island answers only to CORRECT the URL when the
       // agent can no longer be attached.
       requestTerminalsLocation(loc);
-    } else if (loc.tab === 'activity') {
-      // A bare /activity (hand-typed, or Back onto one) shows the default
+    } else if (loc.tab === 'drawing-boards' || loc.tab === 'collab-processes') {
+      // Always sent, bare /drawing-boards included: the terminal shell opens the
+      // drawing board's tab, or offers the drawing board list.
+      requestDrawingBoardsLocation(loc);
+    } else if (loc.tab === 'diagnostics') {
+      // A bare /diagnostics (hand-typed, or Back onto one) shows the default
       // view, so a later subtab never strands an entry on another one.
       setActivitySubtab(loc.subtab || DEFAULT_ACTIVITY_SUBTAB);
     } else if (loc.tab === 'config') {
@@ -316,14 +322,11 @@ function activate(loc, { traversal = false } = {}) {
       // example /terminals with no panes), which would look like a user
       // navigation to observers. A bare Groups pop from Route map still has
       // to return the island to Members; explicit route locations always do.
-      // The same holds for a Back/Forward onto bare Groups (Both) from the
-      // Agents or Processes focus — but only a traversal: a boot or stale
-      // fallback must not turn the remembered lens into Both.
+      // Back/Forward from an open run onto bare Groups must close the run
+      // -- only a traversal: a boot or stale fallback leaves it alone.
       const groups = featureState('groups');
-      const singleLens = groups?.focus?.value === 'processes' || groups?.focus?.value === 'agents';
-      // Back from an open run onto bare Groups (Both) must close the run.
       if (loc.subtab || loc.selection || groups?.subview?.value === 'routes'
-        || (traversal && (singleLens || groups?.focusedRun?.value) && groupsProcessesFocusAvailable())) {
+        || (traversal && groups?.focusedRun?.value && groupsProcessesFocusAvailable())) {
         requestGroupsLocation(
           loc.subtab === 'routes' && !groupsRouteMapAvailable() ? { tab: 'groups' } : loc,
         );
@@ -544,6 +547,34 @@ function onPopstate(e) {
   history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
 }
 
+// navigateToPath moves the dashboard to a same-origin path the way a user
+// navigation would: it activates the location and pushes a history entry, so
+// Back returns to where the operator was. Companion guidance cues use it
+// (companion-guide.js). Returns false, changing nothing, for a path that is
+// not a routable, currently available dashboard location.
+export function navigateToPath(path) {
+  if (!ready || typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return false;
+  let url;
+  try {
+    url = new URL(path, window.location.origin);
+  } catch {
+    return false;
+  }
+  // Only a path that resolves to itself: dot segments would make the checks
+  // made on the path as written (a cue's, say) say nothing about the result.
+  if (url.origin !== window.location.origin || url.pathname !== path.split(/[?#]/, 1)[0]) return false;
+  // fromPath turns an unknown tab into the default one, which would pass below.
+  if (!isKnownPath(url.pathname)) return false;
+  const loc = normalizeLocation(fromPath(url.pathname, url.search));
+  if (!ROUTABLE_TABS.has(loc.tab) || !locationAvailable(loc)) return false;
+  // Push first so the stack points at the new entry before activate() runs:
+  // any in-place correction it makes (a bare /config, a peer-view fallback)
+  // then rewrites the new entry, never the one the operator came from.
+  record(loc);
+  activate(loc);
+  return true;
+}
+
 // initNavHistory boots the router. Call it LATE in dashboard.js boot — after
 // every tab binder/island (bindTabs, the Costs and Audit islands, …) is installed
 // AND after the bounded first snapshot attempt. Restoring a deep-link URL clicks
@@ -577,9 +608,6 @@ export function initNavHistory() {
       const legacyLoc = legacyTab ? normalizeLocation({ tab: legacyTab }) : null;
       if (legacyLoc && legacyLoc.tab !== DEFAULT_TAB && ROUTABLE_TABS.has(legacyLoc.tab)) loc = legacyLoc;
     }
-    // A fresh bare Groups load shows the remembered focus, so the URL says
-    // so too: otherwise a later Back onto this entry would restore Agents.
-    if (loc.tab === DEFAULT_TAB && !loc.subtab && !loc.selection) loc = defaultGroupsLocation();
     stack = initialState(loc);
   }
 

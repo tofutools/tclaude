@@ -9,14 +9,18 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/claude/startupctx"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // Mutating endpoints for the dashboard. These live on the loopback
@@ -62,7 +66,23 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/term/", handleDashboardTermAPI)
 	mux.HandleFunc("/api/open-window/", handleDashboardOpenWindowAPI)
 	mux.HandleFunc("/api/scribe", handleDashboardScribeAPI)
-	mux.HandleFunc("GET /api/scribe/{agent}/chat", processRoute(handleDashboardScribeChat))
+	mux.HandleFunc("GET /api/companion/{agent}/peek", handleDashboardCompanionPeek)
+	mux.HandleFunc("GET /api/companion/{agent}/speech", handleDashboardCompanionSpeech)
+	mux.HandleFunc("GET /api/steward/handover", asDashboardHuman(handleStewardHandoverPreview))
+	mux.HandleFunc("POST /api/steward/handover", asDashboardHuman(handleStewardHandover))
+	mux.HandleFunc("POST /api/steward/step-down", asDashboardHuman(handleStewardStepDown))
+	mux.HandleFunc("POST /api/steward/roster/remove", asDashboardHuman(handleStewardRosterRemove))
+	mux.HandleFunc("GET /api/steward/default-permissions", asDashboardHuman(handleStewardDefaultPermissionsGet))
+	mux.HandleFunc("PUT /api/steward/default-permissions", asDashboardHuman(handleStewardDefaultPermissionsPut))
+	mux.HandleFunc("POST /api/companion/view", handleDashboardCompanionView)
+	mux.HandleFunc("POST /api/companion/presence", handleDashboardCompanionPresence)
+	mux.HandleFunc("GET /api/knowledge/source", handleDashboardKnowledgeSourceGet)
+	mux.HandleFunc("POST /api/knowledge/source", handleDashboardKnowledgeSourcePost)
+	mux.HandleFunc("POST /api/companion/capture/{id}", handleDashboardCompanionCapture)
+	mux.HandleFunc("POST /api/companion/marks/dismiss", handleDashboardMarksDismissAll)
+	mux.HandleFunc("POST /api/companion/marks/{id}/dismiss", handleDashboardMarkEnd(db.MarkStateDismissed))
+	mux.HandleFunc("POST /api/companion/marks/{id}/acknowledge", handleDashboardMarkEnd(db.MarkStateAcknowledged))
+	mux.HandleFunc("POST /api/companion/marks/{id}/reply", handleDashboardMarkReply)
 	mux.HandleFunc("/api/term-ws/", handleDashboardTermWS)
 	mux.HandleFunc("/api/group-term-ws/", handleDashboardGroupTermWS)
 	mux.HandleFunc("/api/open-window-ws/", handleDashboardOpenWindowWS)
@@ -77,6 +97,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sudo", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/sudo/", handleDashboardSudoAPI)
 	mux.HandleFunc("/api/permissions", handleDashboardPermissionsAPI)
+	mux.HandleFunc("GET /api/permissions/scope-values", handleDashboardPermissionScopeValues)
 	mux.HandleFunc("/api/config", handleDashboardConfigAPI)
 	mux.HandleFunc("/api/cost-factor", handleDashboardCostFactorAPI)
 	mux.HandleFunc("/api/notifications", handleDashboardNotificationsAPI)
@@ -96,20 +117,25 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-windows", handleAgentWindows)
 	mux.HandleFunc("/api/background-terminals", handleDashboardBackgroundTerminals)
 	mux.HandleFunc("/api/background-terminals/kill", handleDashboardBackgroundTerminalKill)
+	mux.HandleFunc("/api/shells/kill", handleDashboardShellKill)
 	mux.HandleFunc("/api/export-jobs/", handleDashboardExportJobsAPI)
 	mux.HandleFunc("/api/human-messages/read", handleDashboardHumanMessagesRead)
 	mux.HandleFunc("/api/human-messages/clear", handleDashboardHumanMessagesClear)
 	mux.HandleFunc("/api/human-messages/delete", handleDashboardHumanMessagesDelete)
 	mux.HandleFunc("/api/human-messages/reply", handleDashboardHumanMessagesReply)
+	mux.HandleFunc("/api/human-messages/dismiss", handleDashboardHumanMessagesDismiss)
+	mux.HandleFunc("/api/human-messages/action", handleDashboardHumanMessageAction)
 	mux.HandleFunc("/api/human-messages/", handleDashboardHumanMessageAttachment)
 	mux.HandleFunc("/api/pr-checks", handleDashboardPRChecks)
 	mux.HandleFunc("/api/pr-details", handleDashboardPRDetails)
 	mux.HandleFunc("/api/open-prs/tracked-authors", handleDashboardTrackedPRAuthors)
 	registerDashboardCronRoutes(mux)
+	registerDashboardExternalStewardRoutes(mux)
 	registerDashboardStandingOrderRoutes(mux)
 	registerDashboardTriggerRoutes(mux)
 	registerDashboardMessageRoutes(mux)
 	registerDashboardOperatorMessageRoutes(mux)
+	registerDashboardDrawingBoardRoutes(mux)
 	registerDashboardMailboxRoutes(mux)
 	registerDashboardAccessRequestRoutes(mux)
 	mux.HandleFunc("POST /api/broker-refusals/dismiss", handleDashboardBrokerRefusalsDismiss)
@@ -117,6 +143,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	registerDashboardTemplateRoutes(mux)
 	registerDashboardSpawnProfileRoutes(mux)
 	registerDashboardSandboxProfileRoutes(mux)
+	mux.HandleFunc("/api/relaunch-policy", dashboardSpawnProfilesRoute(serveRelaunchPolicy))
 	registerDashboardUsageRuleRoutes(mux)
 	registerDashboardRoleRoutes(mux)
 	mux.HandleFunc("/api/saved-prompts", dashboardRolesRoute(handleSavedPrompts))
@@ -128,6 +155,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/config-bundle/import", dashboardRolesRoute(handleConfigBundleImport))
 	registerDashboardSpawnAttachmentRoutes(mux)
 	registerDashboardQueuedSpawnRoutes(mux)
+	registerDashboardSpawnQueueRoutes(mux)
 	registerDashboardPluginRoutes(mux)
 	registerRemoteAccessAdminRoutes(mux)
 }
@@ -288,6 +316,97 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, hideAgentResp{ConvID: res.ConvID, Detached: n})
 }
 
+// dashboardAgentVerb is one /api/agents/{conv}/{verb} action. methods, when
+// set, is checked before serve and answers anything else with 405 and
+// "<METHOD> only" ("GET or POST only" for two); an empty list leaves the
+// method to the handler.
+type dashboardAgentVerb struct {
+	methods []string
+	serve   func(w http.ResponseWriter, r *http.Request, convSelector, verb string)
+}
+
+// dashboardAgentTwin adapts a handler of a resolved agent: it resolves the
+// selector, answering 404 "resolve agent: ..." when that fails.
+func dashboardAgentTwin(h func(w http.ResponseWriter, r *http.Request, convID string)) func(http.ResponseWriter, *http.Request, string, string) {
+	return func(w http.ResponseWriter, r *http.Request, convSelector, _ string) {
+		res, _, err := agent.ResolveSelector(convSelector)
+		if err != nil {
+			http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+			return
+		}
+		h(w, r, res.ConvID)
+	}
+}
+
+// bySelector adapts a handler that resolves the selector itself.
+func bySelector(h func(w http.ResponseWriter, r *http.Request, convSelector string)) func(http.ResponseWriter, *http.Request, string, string) {
+	return func(w http.ResponseWriter, r *http.Request, convSelector, _ string) { h(w, r, convSelector) }
+}
+
+var (
+	getOnly  = []string{http.MethodGet}
+	postOnly = []string{http.MethodPost}
+)
+
+// dashboardAgentVerbs are the dashboard's per-agent actions. Most are the
+// cookie-auth twins of a /v1/agent/{conv}/... route.
+var dashboardAgentVerbs = map[string]dashboardAgentVerb{
+	"status": {getOnly, func(w http.ResponseWriter, _ *http.Request, sel, _ string) {
+		writeDashboardTerminalAgentStatus(w, sel)
+	}},
+	"debug-export": {getOnly, dashboardAgentTwin(func(w http.ResponseWriter, _ *http.Request, convID string) {
+		writeAgentDebugExport(w, convID, true)
+	})},
+	"stop":            {postOnly, bySelector(dashboardStopAgent)},
+	"resume":          {postOnly, dashboardAgentTwin(dashboardResumeAgent)},
+	"restart":         {postOnly, bySelector(dashboardRestartAgent)},
+	"sandbox-restart": {postOnly, bySelector(dashboardSandboxRestartAgent)},
+	"fast-mode/enable": {postOnly, func(w http.ResponseWriter, r *http.Request, sel, _ string) {
+		dashboardSetCodexFastModeAgent(w, r, sel, true)
+	}},
+	"fast-mode/disable": {postOnly, func(w http.ResponseWriter, r *http.Request, sel, _ string) {
+		dashboardSetCodexFastModeAgent(w, r, sel, false)
+	}},
+	"sandbox": {[]string{http.MethodGet, http.MethodPost}, bySelector(dashboardSandboxImplementationAgent)},
+	// Deprecated spelling of "sandbox"; an older dashboard reaching this
+	// node over federation still calls it.
+	"sandbox-impl": {[]string{http.MethodGet, http.MethodPost}, bySelector(dashboardSandboxImplementationAgent)},
+	"clone":        {postOnly, dashboardAgentTwin(dashboardCloneAgent)},
+	// The operator's morph: the same handler and body as
+	// POST /v1/agent/{sel}/morph, with the dashboard human as actor.
+	"morph": {nil, func(w http.ResponseWriter, r *http.Request, sel, _ string) {
+		res, _, err := agent.ResolveSelector(sel)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
+			return
+		}
+		handleAgentMorph(w, asDashboardHumanPeer(r), res.ConvID)
+	}},
+	"claude-subscription": {nil, bySelector(dashboardAgentClaudeSubscription)},
+	"reincarnate":         {postOnly, dashboardAgentTwin(dashboardReincarnateAgent)},
+	"compact":             {postOnly, dashboardAgentTwin(dashboardCompactAgent)},
+	"interrupt":           {postOnly, dashboardAgentTwin(dashboardInterruptAgent)},
+	"context-info":        {getOnly, dashboardAgentTwin(dashboardAgentContextInfo)},
+	"prs":                 {[]string{http.MethodGet, http.MethodPost}, dashboardAgentTwin(dashboardAgentPRs)},
+	"rename":              {postOnly, dashboardAgentTwin(dashboardRenameAgent)},
+	"worktree":            {getOnly, bySelector(dashboardAgentWorktree)},
+	"promote":             {nil, dashboardEnrollmentVerb},
+	"retire":              {nil, dashboardEnrollmentVerb},
+	"reinstate":           {nil, dashboardEnrollmentVerb},
+	"notify":              {postOnly, dashboardAgentTwin(dashboardSetAgentNotify)},
+	"tags":                {postOnly, dashboardAgentTwin(dashboardSetAgentTags)},
+	"task":                {postOnly, dashboardAgentTwin(dashboardSetAgentTask)},
+	"remote-control":      {postOnly, dashboardAgentTwin(dashboardRemoteControlAgent)},
+	"export":              {postOnly, bySelector(dashboardCreateExport)},
+	"exports": {[]string{http.MethodGet, http.MethodDelete}, func(w http.ResponseWriter, r *http.Request, sel, _ string) {
+		if r.Method == http.MethodGet {
+			dashboardListExports(w, sel)
+			return
+		}
+		dashboardClearExports(w, sel)
+	}},
+}
+
 // handleDashboardAgentsAPI dispatches:
 //
 //	DELETE /api/agents/{conv}              → wipe the conversation + orphan-clean
@@ -296,6 +415,7 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 //	POST   /api/agents/{conv}/restart      → stop + resume the same conversation
 //	POST   /api/agents/{conv}/clone        → fork a sibling (cookie-auth twin)
 //	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
+//	POST   /api/agents/{conv}/compact      → the harness's compact, as POST /v1/agent/{conv}/compact
 //	POST   /api/agents/{conv}/task         → set/clear task-reference link
 //	GET    /api/agents/{conv}/status       → compact standalone-terminal status
 //	GET    /api/agents/{conv}/debug-export → download recorded launch configuration
@@ -329,164 +449,18 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	if u, err := url.PathUnescape(convSelector); err == nil {
 		convSelector = u
 	}
-	// Sub-verbs: stop / resume — thin pass-throughs to the per-conv
-	// helpers shared with the bulk groups.{stop,resume} paths.
 	if len(parts) > 1 && parts[1] != "" {
-		switch parts[1] {
-		case "status":
-			if r.Method != http.MethodGet {
-				http.Error(w, "GET only", http.StatusMethodNotAllowed)
-				return
-			}
-			writeDashboardTerminalAgentStatus(w, convSelector)
-			return
-		case "debug-export":
-			if r.Method != http.MethodGet {
-				http.Error(w, "GET only", http.StatusMethodNotAllowed)
-				return
-			}
-			res, _, err := agent.ResolveSelector(convSelector)
-			if err != nil {
-				http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-				return
-			}
-			writeAgentDebugExport(w, res.ConvID, true)
-			return
-		case "stop":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardStopAgent(w, r, convSelector)
-			return
-		case "resume":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardResumeAgent(w, r, convSelector)
-			return
-		case "restart":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardRestartAgent(w, r, convSelector)
-			return
-		case "sandbox-restart":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSandboxRestartAgent(w, r, convSelector)
-			return
-		case "fast-mode/enable", "fast-mode/disable":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSetCodexFastModeAgent(w, r, convSelector, parts[1] == "fast-mode/enable")
-			return
-		case "sandbox-impl":
-			if r.Method != http.MethodGet && r.Method != http.MethodPost {
-				http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSandboxImplementationAgent(w, r, convSelector)
-			return
-		case "clone":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardCloneAgent(w, r, convSelector)
-			return
-		case "morph":
-			// The operator's morph: the same handler and body as
-			// POST /v1/agent/{sel}/morph, with the dashboard human as actor.
-			res, _, err := agent.ResolveSelector(convSelector)
-			if err != nil {
-				writeError(w, http.StatusNotFound, "not_found", "resolve agent: "+err.Error())
-				return
-			}
-			handleAgentMorph(w, asDashboardHumanPeer(r), res.ConvID)
-			return
-		case "claude-subscription":
-			dashboardAgentClaudeSubscription(w, r, convSelector)
-			return
-		case "reincarnate":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardReincarnateAgent(w, r, convSelector)
-			return
-		case "rename":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardRenameAgent(w, r, convSelector)
-			return
-		case "worktree":
-			if r.Method != http.MethodGet {
-				http.Error(w, "GET only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardAgentWorktree(w, r, convSelector)
-			return
-		case "promote", "retire", "reinstate":
-			dashboardEnrollmentVerb(w, r, convSelector, parts[1])
-			return
-		case "notify":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSetAgentNotify(w, r, convSelector)
-			return
-		case "tags":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSetAgentTags(w, r, convSelector)
-			return
-		case "task":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardSetAgentTask(w, r, convSelector)
-			return
-		case "remote-control":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardRemoteControlAgent(w, r, convSelector)
-			return
-		case "export":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			dashboardCreateExport(w, r, convSelector)
-			return
-		case "exports":
-			switch r.Method {
-			case http.MethodGet:
-				dashboardListExports(w, convSelector)
-			case http.MethodDelete:
-				dashboardClearExports(w, convSelector)
-			default:
-				http.Error(w, "GET or DELETE only", http.StatusMethodNotAllowed)
-			}
-			return
-		default:
+		v, ok := dashboardAgentVerbs[parts[1]]
+		if !ok {
 			http.Error(w, "unknown subpath /api/agents/{conv}/"+parts[1], http.StatusNotFound)
 			return
 		}
+		if len(v.methods) > 0 && !slices.Contains(v.methods, r.Method) {
+			http.Error(w, strings.Join(v.methods, " or ")+" only", http.StatusMethodNotAllowed)
+			return
+		}
+		v.serve(w, r, convSelector, parts[1])
+		return
 	}
 	if r.Method != http.MethodDelete {
 		http.Error(w, "DELETE only", http.StatusMethodNotAllowed)
@@ -585,6 +559,9 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 	// session-env + sync tombstone. Actor-aware (JOH-26 PR3d): deleting an
 	// agent's head generation also sweeps its predecessor generations'
 	// rows + .jsonl, so a multi-generation actor leaves nothing orphaned.
+	// Pages close, and saved ones go, while the agent ID still resolves
+	// (before the purge).
+	deletePagesForConv(convID)
 	if _, err := removeAgentDirectoriesForConv(convID); err != nil {
 		http.Error(w, "delete agent-owned directories: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -727,6 +704,7 @@ func looksLikeConvID(s string) bool {
 //	POST   /api/groups/{name}/members           → add member (body: {conv, role?, descr?})
 //	DELETE /api/groups/{name}/members/{conv}    → remove from group
 //	PATCH  /api/groups/{name}/members/{conv}    → update role/descr
+//	POST   /api/groups/{name}/members/{conv}/move → move to another group (body: {to, keep_sandbox?, keep_environment?})
 //	POST   /api/groups/{name}/owners            → grant owner (body: {conv})
 //	DELETE /api/groups/{name}/owners/{conv}     → revoke owner
 //	POST   /api/groups/{name}/links             → add link (body: {to, mode?, bidir?})
@@ -779,8 +757,17 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 		handleGroupParent(w, asDashboardHumanPeer(r), g)
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/retire", groupRoute(dashboardGroupRetire))
+	// Archive and unarchive: the shared, permission-checked /v1 handlers,
+	// with the dashboard caller as this node's human.
+	mux.HandleFunc("POST /api/groups/{name}/archive", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupArchive(w, asDashboardHumanPeer(r), g)
+	}))
+	mux.HandleFunc("POST /api/groups/{name}/unarchive", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupUnarchive(w, asDashboardHumanPeer(r), g)
+	}))
 	mux.HandleFunc("GET /api/groups/{name}/worktrees", groupRoute(dashboardGroupWorktrees))
 	mux.HandleFunc("POST /api/groups/{name}/spawn", groupRoute(dashboardSpawnInGroup))
+	mux.HandleFunc("POST /api/groups/{name}/spawn-preview", groupRoute(dashboardSpawnPreview))
 	mux.HandleFunc("/api/groups/{name}/spawn-harness-policy", groupRoute(handleDashboardGroupSpawnHarnessPolicy))
 	mux.HandleFunc("POST /api/groups/{name}/members", groupRoute(dashboardAddMember))
 	mux.HandleFunc("DELETE /api/groups/{name}/members/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
@@ -788,6 +775,9 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("PATCH /api/groups/{name}/members/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardUpdateMember(w, r, g, r.PathValue("conv"))
+	}))
+	mux.HandleFunc("POST /api/groups/{name}/members/{conv}/move", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupMembersMove(w, asDashboardHumanPeer(r), g, r.PathValue("conv"))
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/owners", groupRoute(dashboardAddOwner))
 	mux.HandleFunc("DELETE /api/groups/{name}/owners/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
@@ -869,9 +859,10 @@ func groupRoute(fn func(http.ResponseWriter, *http.Request, *db.AgentGroup)) htt
 	}
 }
 
-// dashboardAddLink mirrors handleGroupLinksAdd on the daemon socket
-// side, but trusts the cookie-auth caller (the dashboard is human-only)
-// and writes through the DB helpers directly. Body: {to, mode?, bidir?}.
+// dashboardAddLink is the cookie-auth twin of handleGroupLinksAdd: it
+// trusts the cookie-auth caller (the dashboard is human-only), resolves
+// `to` by group name, and runs the same addGroupLink policy, answering
+// failures as plain text for links-actions.js. Body: {to, mode?, bidir?}.
 func dashboardAddLink(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	var body linkAddBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -896,120 +887,40 @@ func dashboardAddLink(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		http.Error(w, "no such target group "+body.To, http.StatusNotFound)
 		return
 	}
-	mode := strings.TrimSpace(body.Mode)
-	if mode == "" {
-		mode = db.LinkModeMembersToMembers
-	}
-	if !db.ValidLinkMode(mode) {
-		http.Error(w, "unknown link mode "+mode, http.StatusBadRequest)
+	out, fail := addGroupLink(g, to, body, dashboardGranter)
+	if fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
 		return
-	}
-	id, err := db.InsertAgentGroupLink(g.ID, to.ID, mode, dashboardGranter)
-	if err != nil {
-		if errors.Is(err, db.ErrLinkExists) {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
-		http.Error(w, "add link: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	out := map[string]any{"id": id, "from": g.Name, "to": to.Name, "mode": mode}
-	if body.Bidir {
-		revID, err := db.InsertAgentGroupLink(to.ID, g.ID, mode, dashboardGranter)
-		switch {
-		case err == nil:
-			out["reverse_id"] = revID
-		case errors.Is(err, db.ErrLinkExists):
-			out["reverse_id"] = "already-exists"
-		default:
-			out["reverse_error"] = err.Error()
-		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 // dashboardUpdateLink: PATCH /api/groups/{name}/links/{id} body {mode}.
+// The cookie-auth twin of handleGroupLinksUpdate; same core, plain-text
+// errors.
 func dashboardUpdateLink(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, idStr string) {
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "link id must be integer", http.StatusBadRequest)
-		return
-	}
-	link, err := db.GetAgentGroupLinkByID(id)
-	if err != nil {
-		http.Error(w, "lookup link: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if link == nil {
-		http.Error(w, "no such link", http.StatusNotFound)
-		return
-	}
-	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
-		http.Error(w, "link does not touch this group", http.StatusNotFound)
-		return
-	}
-	var body struct {
-		Mode string `json:"mode"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	mode := strings.TrimSpace(body.Mode)
-	if !db.ValidLinkMode(mode) {
-		http.Error(w, "unknown link mode "+mode, http.StatusBadRequest)
-		return
-	}
-	if mode == link.Mode {
-		writeJSON(w, http.StatusOK, map[string]any{"id": id, "mode": mode, "changed": false})
-		return
-	}
-	n, err := db.UpdateAgentGroupLinkMode(id, mode)
-	if err != nil {
-		if errors.Is(err, db.ErrLinkExists) {
-			http.Error(w, "another link with the same from/to/mode already exists", http.StatusConflict)
+	link, fail := loadScopedGroupLink(g, idStr)
+	if fail == nil {
+		var out map[string]any
+		if out, fail = updateGroupLinkMode(r, link); fail == nil {
+			writeJSON(w, http.StatusOK, out)
 			return
 		}
-		http.Error(w, "update link: "+err.Error(), http.StatusInternalServerError)
-		return
 	}
-	if n == 0 {
-		http.Error(w, "no such link", http.StatusNotFound)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "mode": mode, "changed": true})
+	http.Error(w, fail.Msg, fail.Status)
 }
 
-// dashboardRemoveLink: DELETE /api/groups/{name}/links/{id}.
+// dashboardRemoveLink: DELETE /api/groups/{name}/links/{id}. The
+// cookie-auth twin of handleGroupLinksRemove; same core, plain-text errors.
 func dashboardRemoveLink(w http.ResponseWriter, g *db.AgentGroup, idStr string) {
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "link id must be integer", http.StatusBadRequest)
-		return
+	link, fail := loadScopedGroupLink(g, idStr)
+	if fail == nil {
+		if fail = removeGroupLink(link); fail == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 	}
-	link, err := db.GetAgentGroupLinkByID(id)
-	if err != nil {
-		http.Error(w, "lookup link: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if link == nil {
-		http.Error(w, "no such link", http.StatusNotFound)
-		return
-	}
-	if link.FromGroupID != g.ID && link.ToGroupID != g.ID {
-		http.Error(w, "link does not touch this group", http.StatusNotFound)
-		return
-	}
-	n, err := db.DeleteAgentGroupLink(id)
-	if err != nil {
-		http.Error(w, "delete link: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if n == 0 {
-		http.Error(w, "no such link", http.StatusNotFound)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	http.Error(w, fail.Msg, fail.Status)
 }
 
 func dashboardDeleteGroup(w http.ResponseWriter, group *db.AgentGroup) {
@@ -1018,6 +929,7 @@ func dashboardDeleteGroup(w http.ResponseWriter, group *db.AgentGroup) {
 		http.Error(w, "delete group: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	closeGroupPages(group.ID)
 	if warning := reconcileStandingOrderHookHarnesses(hookHarnesses); warning != "" {
 		w.Header().Set("X-Tclaude-Hook-Warning", warning)
 		slog.Warn("dashboard group delete: standing-order hook reconciliation failed",
@@ -1046,6 +958,12 @@ func dashboardRenameGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 	if err := validateGroupName(body.NewName); err != nil {
 		http.Error(w, "rename: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	if peerGrantFromRequest(r) != nil {
+		if err := peerRenameRebindsFailure(g.Name, body.NewName); err != nil {
+			writeError(w, http.StatusForbidden, "permission", err.Error())
+			return
+		}
 	}
 	renamed, err := db.RenameAgentGroup(g.Name, body.NewName, "")
 	if errors.Is(err, db.ErrGroupNameTaken) {
@@ -1186,37 +1104,15 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 // present (non-nil) in the request body are touched, matching the
 // /v1 contract — pass `null` (or omit) to leave a field unchanged.
 func dashboardUpdateMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, convSelector string) {
-	if u, err := url.PathUnescape(convSelector); err == nil {
-		convSelector = u
+	fail := groupActiveFailure(g)
+	if fail == nil {
+		var convID string
+		if convID, fail = updateGroupMember(r, g, convSelector); fail == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
+			return
+		}
 	}
-	var body struct {
-		Role  *string `json:"role,omitempty"`
-		Descr *string `json:"descr,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if body.Role == nil && body.Descr == nil {
-		http.Error(w, "at least one of role/descr is required", http.StatusBadRequest)
-		return
-	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	n, err := db.UpdateAgentGroupMember(g.ID, res.ConvID, body.Role, body.Descr)
-	if err != nil {
-		http.Error(w, "update member: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if n == 0 {
-		http.Error(w, "no such member in group", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"conv_id": res.ConvID})
+	http.Error(w, fail.Msg, fail.Status)
 }
 
 // dashboardStopAgent is the cookie-auth twin of POST
@@ -1294,20 +1190,15 @@ func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector str
 // The dashboard's Ctrl-drag handler uses this to clone a member into
 // a target group, naming the drop group as `group` so the clone and its
 // new membership land in one request.
-func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convID string) {
 	body, ok := decodeCloneBody(w, r)
 	if !ok {
 		return
 	}
-	runCloneOrchestration(w, r, res.ConvID, dashboardGranter, "", nil, body)
+	runCloneOrchestration(w, r, convID, dashboardGranter, "", nil, body)
 }
 
-// reincarnateMode* are the two modes the dashboard reincarnate button
+// reincarnateMode* are the modes the dashboard reincarnate button
 // offers, selected by the POST body's `mode` field.
 //
 //   - "self" is the DEFAULT. The daemon does NOT reincarnate the
@@ -1322,6 +1213,9 @@ func dashboardCloneAgent(w http.ResponseWriter, r *http.Request, convSelector st
 const (
 	reincarnateModeSelf  = "self"
 	reincarnateModeForce = "force"
+	// reincarnateModeClear is Clear context: a force reincarnate whose handoff
+	// the daemon writes, because there is nothing to hand over on purpose.
+	reincarnateModeClear = "clear"
 )
 
 // dashboardReincarnateAgent handles POST /api/agents/{conv}/reincarnate.
@@ -1334,19 +1228,15 @@ const (
 //   - "force": the cookie-auth twin of POST /v1/agent/{conv}/reincarnate.
 //     Spawns a fresh CC instance that inherits the target's identity
 //     (groups / perms / ownerships migrate onto the new conv-id),
-//     renames it `<prev>-r-<N>`, and soft-exits the original pane.
+//     keeps its name, archives the original as `<prev>-x`, and
+//     soft-exits the original pane.
 //     Body: `{follow_up}` — REQUIRED.
 //
 // Cookie auth ≈ human (checkDashboardAuth is the consent layer), so the
 // force path's requireCrossAgentPermission sees a classHuman caller
 // (asDashboardHumanPeer sets DashboardHuman) and the audit trail records
 // the dashboard granter.
-func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convID string) {
 	// Peek at `mode` without consuming the body for the force path:
 	// handleAgentReincarnate re-decodes r.Body itself, so we buffer the
 	// raw bytes and hand them back verbatim. force-mode stays the
@@ -1374,18 +1264,76 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 	if mode == "" {
 		mode = reincarnateModeSelf
 	}
+	if a := peerActionFromRequest(r); a != nil {
+		// A peer only asks the agent to reincarnate itself, in this node's
+		// own words: no peer text reaches the agent, and nothing is forced.
+		if mode != reincarnateModeSelf || strings.TrimSpace(body.FocusHint) != "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"a peer may only ask the agent to reincarnate itself (mode self, no focus hint)")
+			return
+		}
+		if _, ok := peerActionGate(w, r, a, PermAgentReincarnate, convID, ActionContext{}); !ok {
+			return
+		}
+		dashboardAskSelfReincarnate(w, convID, "", peerRequesterLabel(a.peer))
+		return
+	}
 	switch mode {
 	case reincarnateModeSelf:
-		dashboardAskSelfReincarnate(w, res.ConvID, body.FocusHint)
+		dashboardAskSelfReincarnate(w, convID, body.FocusHint, "")
 	case reincarnateModeForce:
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		r.ContentLength = int64(len(raw))
-		handleAgentReincarnate(w, asDashboardHumanPeer(r), res.ConvID)
+		handleAgentReincarnate(w, asDashboardHumanPeer(r), convID)
+	case reincarnateModeClear:
+		followUp, err := json.Marshal(map[string]string{"follow_up": clearContextBrief(convID)})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(followUp))
+		r.ContentLength = int64(len(followUp))
+		handleAgentReincarnate(w, asDashboardHumanPeer(r), convID)
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("unknown reincarnate mode %q (want %q or %q)",
-				mode, reincarnateModeSelf, reincarnateModeForce))
+			fmt.Sprintf("unknown reincarnate mode %q (want %q, %q or %q)",
+				mode, reincarnateModeSelf, reincarnateModeForce, reincarnateModeClear))
 	}
+}
+
+// clearContextBrief is what an agent comes back to after Clear context. A
+// reincarnate carries no brief of its own, so a Steward gets its role again and
+// any other agent its durable startup context. Reincarnation needs a follow-up,
+// and whatever cannot be composed or would not fit falls back to a plain note.
+func clearContextBrief(conv string) string {
+	const note = "The operator cleared your context, so this is a new conversation. Your identity, groups and permissions are unchanged. " +
+		"Use `tclaude agent` commands to get your bearings, then wait for instructions."
+	if slices.Contains(stewardConvs(), conv) {
+		cfg, err := config.LoadShared()
+		if err != nil {
+			slog.Warn("clear context: read config failed", "error", err)
+			return note
+		}
+		const lead = "The operator cleared your context, so this is a new conversation. You are still their Steward. Wait for them.\n\n"
+		if brief := stewardBrief(lead+stewardRoleBrief(), cfg); isValidInitialMessage(brief) {
+			return brief
+		}
+		return note
+	}
+	agentID, err := db.AgentIDForConv(conv)
+	if err != nil {
+		slog.Warn("clear context: resolve agent failed", "conv", short8(conv), "error", err)
+		return note
+	}
+	reinjection, err := startupctx.ComposeReinjection(agentID, startupctx.BoundaryReset)
+	if err != nil {
+		slog.Warn("clear context: compose startup context failed", "conv", short8(conv), "error", err)
+		return note
+	}
+	if reinjection.Body == "" || !isValidInitialMessage(reinjection.Body) {
+		return note
+	}
+	return reinjection.Body
 }
 
 // dashboardAskSelfReincarnate is the "self" reincarnate mode — the
@@ -1414,12 +1362,15 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 // capability (the cookie-auth human could equally send it via
 // /api/message). Self-reincarnation itself is intrinsic to every active agent;
 // cross-agent reincarnation remains gated on agent.reincarnate or ownership.
-func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string) {
+//
+// requester names a linked node whose peer access asked: "" is this node's
+// operator. A peer's request is not operator-authored, and says who asked.
+func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint, requester string) {
 	if pickAliveSession(target) == nil {
 		writeReincarnateOfflineError(w, target)
 		return
 	}
-	subject, instruction := buildSelfReincarnateInstruction(focusHint)
+	subject, instruction := buildSelfReincarnateInstruction(focusHint, requester)
 	// The instruction rides the inbox like any agent_messages row, so it
 	// must clear the same charset/length rule. A blank focus hint always
 	// passes; this only ever fires on a hint carrying control characters
@@ -1442,7 +1393,7 @@ func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string
 		Subject:          subject,
 		Body:             instruction,
 		ToRecipients:     []string{target},
-		OperatorAuthored: true,
+		OperatorAuthored: requester == "",
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
@@ -1470,10 +1421,15 @@ func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string
 // No backticks: the body is read by the agent and may be echoed into
 // shells / forwarded messages downstream, where backticks would be
 // eaten by shell command substitution. Plain text keeps it paste-safe.
-func buildSelfReincarnateInstruction(focusHint string) (subject, body string) {
+func buildSelfReincarnateInstruction(focusHint, requester string) (subject, body string) {
 	subject = "Please reincarnate yourself (dashboard request)"
 	var b strings.Builder
-	b.WriteString("The human has asked you, from the dashboard, to reincarnate yourself.\n\n")
+	if requester != "" {
+		subject = "Please reincarnate yourself (request from " + requester + ")"
+		b.WriteString("The operator of " + requester + " has asked you, through that node's peer access, to reincarnate yourself. It is not this node's operator.\n\n")
+	} else {
+		b.WriteString("The human has asked you, from the dashboard, to reincarnate yourself.\n\n")
+	}
 	b.WriteString("Reincarnation replaces you with a fresh Claude Code instance that inherits your ")
 	b.WriteString("identity (group memberships, permissions, ownerships) but starts with a clean ")
 	b.WriteString("context window. Doing it yourself — rather than having the daemon force it — lets ")
@@ -1505,13 +1461,105 @@ func buildSelfReincarnateInstruction(focusHint string) (subject, body string) {
 // via the agent-rename skill / CLI. Cookie auth ≈ human, so
 // requireCrossAgentPermission sees a classHuman caller
 // (asDashboardHumanPeer sets DashboardHuman).
-func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	handleAgentRename(w, asDashboardHumanPeer(r), convID)
+}
+
+// dashboardCompactAgent is the cookie-auth twin of POST
+// /v1/agent/{conv}/compact: the same handler, so the same harness gate and
+// dispatch, with the dashboard human as caller.
+func dashboardCompactAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	if peerActionFromRequest(r) != nil && !refusePeerFollowUp(w, r) {
 		return
 	}
-	handleAgentRename(w, asDashboardHumanPeer(r), res.ConvID)
+	handleAgentCompact(w, asDashboardHumanPeer(r), convID)
+}
+
+// refusePeerFollowUp refuses a peer's follow-up: it would be typed into this
+// node's pane as the agent's next prompt. It reports whether the request may
+// go on, with its body intact.
+func refusePeerFollowUp(w http.ResponseWriter, r *http.Request) bool {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "read body: "+err.Error())
+		return false
+	}
+	var body struct {
+		FollowUp string `json:"follow_up"`
+	}
+	if len(bytes.TrimSpace(raw)) > 0 && json.Unmarshal(raw, &body) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
+		return false
+	}
+	if strings.TrimSpace(body.FollowUp) != "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a peer may not send a follow-up: it would be typed into this node's pane")
+		return false
+	}
+	r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(raw)), int64(len(raw))
+	return true
+}
+
+// peerRequesterLabel names a linked node in text this node writes to one of
+// its agents.
+func peerRequesterLabel(instanceID string) string {
+	p, err := db.GetFederationPeer(instanceID)
+	if err != nil || p == nil {
+		return "a linked node"
+	}
+	return "linked node " + proto.SafeName(peerDisplay(p), false)
+}
+
+// dashboardInterruptAgent, dashboardAgentContextInfo and dashboardAgentPRs
+// are the cookie-auth twins of POST /v1/agent/{conv}/interrupt, GET
+// /v1/agent/{conv}/context and GET|POST /v1/agent/{conv}/prs.
+func dashboardInterruptAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	handleAgentInterrupt(w, asDashboardHumanPeer(r), convID)
+}
+
+func dashboardAgentContextInfo(w http.ResponseWriter, r *http.Request, convID string) {
+	if peerActionFromRequest(r) != nil && r.URL.RawQuery != "" {
+		// A fresh read spends the agent's own budget: a peer reads the
+		// cached figures.
+		r = r.Clone(r.Context())
+		r.URL.RawQuery = ""
+	}
+	handleAgentContext(w, asDashboardHumanPeer(r), convID)
+}
+
+func dashboardAgentPRs(w http.ResponseWriter, r *http.Request, convID string) {
+	if peerActionFromRequest(r) != nil && r.Method == http.MethodPost {
+		// A peer presents a pull request link and its state, nothing else:
+		// a repository directory names a path on this node, and a summary
+		// would reach this node's operator and Steward as the agent's own
+		// words. The handler gets this re-encoded body, never the peer's.
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "read body: "+err.Error())
+			return
+		}
+		var body struct {
+			URL     string `json:"url"`
+			Summary string `json:"summary"`
+			State   string `json:"state"`
+			Handled bool   `json:"handled"`
+			RepoDir string `json:"repo_dir"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "invalid JSON body")
+			return
+		}
+		if body.RepoDir != "" || strings.TrimSpace(body.Summary) != "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "a peer presents a PR link and state only: no repository directory or summary")
+			return
+		}
+		if err := validateAgentPRURL(body.URL, true); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_pr_url", err.Error())
+			return
+		}
+		clean, _ := json.Marshal(map[string]any{"url": strings.TrimSpace(body.URL), "state": body.State, "handled": body.Handled})
+		r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(clean)), int64(len(clean))
+	}
+	handleAgentPRs(w, asDashboardHumanPeer(r), convID)
 }
 
 // dashboardRemoteControlAgent is the cookie-auth twin of POST
@@ -1526,13 +1574,8 @@ func dashboardRenameAgent(w http.ResponseWriter, r *http.Request, convSelector s
 // owns the toggle direction + the disable confirm-Enter, the UI only sends
 // intent. Codex (no Remote Access) is rejected by the handler's
 // CanRemoteControl gate; the UI also hides the control for it.
-func dashboardRemoteControlAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	handleAgentRemoteControl(w, asDashboardHumanPeer(r), res.ConvID)
+func dashboardRemoteControlAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	handleAgentRemoteControl(w, asDashboardHumanPeer(r), convID)
 }
 
 // dashboardResumeAgent is the cookie-auth twin of POST
@@ -1543,27 +1586,17 @@ func dashboardRemoteControlAgent(w http.ResponseWriter, r *http.Request, convSel
 // relaunch. Without it, a resume whose recorded cwd was deleted comes back
 // as `error:missing_cwd` (Detail = the path); the wake button then pops a
 // confirm and retries with ?recreate=1 so the agent can start.
-func dashboardResumeAgent(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardResumeAgent(w http.ResponseWriter, r *http.Request, convID string) {
 	// Route through the shared handler under a synthetic human peer so the
 	// dashboard receives the same resume behavior as the CLI.
-	handleAgentResume(w, asDashboardHumanPeer(r), res.ConvID)
+	handleAgentResume(w, asDashboardHumanPeer(r), convID)
 }
 
 // dashboardSetAgentNotify sets (or clears) the per-agent OS-notification
 // override: POST /api/agents/{conv}/notify, body {mode}, where mode is
 // "on" (notify even when a containing group is muted), "off" (always
 // silent) or "inherit" (drop the override — follow group/global).
-func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convID string) {
 	var body struct {
 		Mode string `json:"mode"`
 	}
@@ -1583,11 +1616,11 @@ func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelecto
 		http.Error(w, "invalid notify mode "+mode+" (want on, off or inherit)", http.StatusBadRequest)
 		return
 	}
-	if err := db.SetConvNotifyPref(res.ConvID, mode); err != nil {
+	if err := db.SetConvNotifyPref(convID, mode); err != nil {
 		http.Error(w, "set notify pref: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "mode": mode})
+	writeJSON(w, http.StatusOK, map[string]any{"conv": convID, "mode": mode})
 }
 
 // dashboardSetAgentTags replaces an agent's tag set from the dashboard's
@@ -1597,12 +1630,7 @@ func dashboardSetAgentNotify(w http.ResponseWriter, r *http.Request, convSelecto
 // level (keyed on the stable agent_id), so they follow the actor across
 // groups; the write is a replace-set, validated + de-duped + count-capped
 // by db.ReplaceAgentTags. A bad tag is a 400 while a DB failure is a 500.
-func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
+func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convID string) {
 	var body struct {
 		Tags []string `json:"tags"`
 	}
@@ -1610,7 +1638,7 @@ func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector 
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	agentID, err := db.AgentIDForConv(res.ConvID)
+	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {
 		http.Error(w, "resolve agent id: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1632,7 +1660,7 @@ func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector 
 		http.Error(w, "read tags: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"conv": res.ConvID, "tags": tags})
+	writeJSON(w, http.StatusOK, map[string]any{"conv": convID, "tags": tags})
 }
 
 // dashboardSetAgentTask is the cookie-authenticated human twin of POST
@@ -1643,13 +1671,8 @@ func dashboardSetAgentTags(w http.ResponseWriter, r *http.Request, convSelector 
 // persistence, and response shape shared with the CLI/API path. The dashboard
 // cookie is the operator-consent layer, so the synthetic peer is classified as
 // human and does not depend on the target agent's self.task permission.
-func dashboardSetAgentTask(w http.ResponseWriter, r *http.Request, convSelector string) {
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	handleAgentTask(w, asDashboardHumanPeer(r), res.ConvID)
+func dashboardSetAgentTask(w http.ResponseWriter, r *http.Request, convID string) {
+	handleAgentTask(w, asDashboardHumanPeer(r), convID)
 }
 
 // notificationsStateJSON is the shared GET/POST response shape for the
@@ -1765,6 +1788,9 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 			for ty, on := range body.Types {
 				n.SetNotifyType(ty, on)
 			}
+			if len(body.Types) > 0 {
+				n.MarkNotifyTypesKnown()
+			}
 			if body.HumanMessages != nil {
 				if *body.HumanMessages {
 					// Absence is the default-on state — keep the config
@@ -1829,38 +1855,19 @@ var errNotifConfigMalformed = errors.New("notifications config.json is malformed
 // `conv` accepts a title / prefix / full conv-id selector and is
 // resolved through agent.ResolveSelector — same rules as the CLI.
 func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	if fail := groupActiveFailure(g); fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
+		return
+	}
 	if !routeMembershipMutationAllowed(w, g) {
 		return
 	}
-	var body struct {
-		Conv  string `json:"conv"`
-		Role  string `json:"role,omitempty"`
-		Descr string `json:"descr,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+	convID, fail := addGroupMember(r, g)
+	if fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
 		return
 	}
-	body.Conv = strings.TrimSpace(body.Conv)
-	if body.Conv == "" {
-		http.Error(w, "missing conv", http.StatusBadRequest)
-		return
-	}
-	res, _, err := agent.ResolveSelector(body.Conv)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	if err := db.AddAgentGroupMember(&db.AgentGroupMember{
-		GroupID: g.ID,
-		ConvID:  res.ConvID,
-		Role:    body.Role,
-		Descr:   body.Descr,
-	}); err != nil {
-		http.Error(w, "add member: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+	writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
 }
 
 // dashboardSpawnInGroup is the cookie-auth twin of POST
@@ -1870,72 +1877,45 @@ func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 // name). Delegates to handleGroupSpawn with a synthetic human peer so
 // the inner requirePermission passes.
 func dashboardSpawnInGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	handleGroupSpawn(w, asDashboardSpawnPeer(r), g)
+	handleGroupSpawn(w, withSpawnQueueOrigin(asDashboardSpawnPeer(r), "dashboard"), g)
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {
+	if fail := groupActiveFailure(g); fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
+		return
+	}
 	if !routeMembershipMutationAllowed(w, g) {
 		return
 	}
-	if u, err := url.PathUnescape(convSelector); err == nil {
-		convSelector = u
-	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	if err := db.RemoveAgentGroupMember(g.ID, res.ConvID); err != nil {
-		http.Error(w, "remove member: "+err.Error(), http.StatusInternalServerError)
+	if fail := removeGroupMember(g, convSelector); fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func dashboardAddOwner(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	var body struct {
-		Conv string `json:"conv"`
+	fail := groupActiveFailure(g)
+	if fail == nil {
+		var convID string
+		if convID, fail = addGroupOwner(r, g, dashboardGranter); fail == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"conv_id": convID})
+			return
+		}
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	body.Conv = strings.TrimSpace(body.Conv)
-	if body.Conv == "" {
-		http.Error(w, "missing conv", http.StatusBadRequest)
-		return
-	}
-	res, _, err := agent.ResolveSelector(body.Conv)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	if err := db.AddAgentGroupOwner(g.ID, res.ConvID, dashboardGranter); err != nil {
-		http.Error(w, "add owner: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"conv_id": res.ConvID})
+	http.Error(w, fail.Msg, fail.Status)
 }
 
 func dashboardRemoveOwner(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {
-	if u, err := url.PathUnescape(convSelector); err == nil {
-		convSelector = u
+	fail := groupActiveFailure(g)
+	if fail == nil {
+		if fail = removeGroupOwner(g, convSelector); fail == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 	}
-	res, _, err := agent.ResolveSelector(convSelector)
-	if err != nil {
-		http.Error(w, "resolve target: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	n, err := db.RemoveAgentGroupOwner(g.ID, res.ConvID)
-	if err != nil {
-		http.Error(w, "remove owner: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if n == 0 {
-		http.Error(w, "not an owner of this group", http.StatusNotFound)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	http.Error(w, fail.Msg, fail.Status)
 }
 
 // handleDashboardSudoAPI is the cookie-auth twin of the daemon's
@@ -1946,18 +1926,28 @@ func dashboardRemoveOwner(w http.ResponseWriter, g *db.AgentGroup, convSelector 
 //
 //	POST   /api/sudo                 → proactive grant (no popup —
 //	                                   the cookie IS the human consent)
+//	POST   /api/sudo/{id}/extend     → push one grant's expiry out
+//	GET    /api/sudo/policy?agent_id=<id> → the limits for that agent
 //	DELETE /api/sudo/{id}            → revoke one
 //	DELETE /api/sudo?agent_id=<id>   → revoke all for one agent
 //	DELETE /api/sudo?all=1           → revoke every active grant
 //
-// Read paths (list / per-conv view) are not surfaced separately —
+// Grant reads (list / per-conv view) are not surfaced separately —
 // the snapshot already exposes per-agent active sudo state, so the
 // dashboard renders off that single round-trip.
 func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/api/sudo/policy" {
+		handleDashboardSudoPolicy(w, r)
+		return
+	}
 	if r.Method == http.MethodPost {
+		if id, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/api/sudo/"), "/extend"); ok {
+			handleDashboardSudoExtend(w, r, id)
+			return
+		}
 		handleDashboardSudoGrant(w, r)
 		return
 	}
@@ -2022,6 +2012,90 @@ func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": n, "agent_id": actor.AgentID})
 }
 
+// sudoPolicyForAgent resolves the policy for an active agent, or answers the
+// request and returns ok=false.
+func sudoPolicyForAgent(w http.ResponseWriter, agentID string) (*db.Agent, string, resolvedSudo, bool) {
+	actor, err := db.GetAgent(strings.TrimSpace(agentID))
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusInternalServerError)
+		return nil, "", resolvedSudo{}, false
+	}
+	if actor == nil || !actor.Active() {
+		http.Error(w, "active agent not found", http.StatusNotFound)
+		return nil, "", resolvedSudo{}, false
+	}
+	title := ""
+	if row := agent.FreshConvRowResolved(actor.CurrentConvID); row != nil {
+		title = agent.DisplayTitle(row)
+	}
+	cfg, _ := config.Load()
+	return actor, title, resolveSudoConfig(cfg, actor.CurrentConvID, actor.AgentID, title), true
+}
+
+// handleDashboardSudoPolicy tells the sudo editor the limits for one agent.
+func handleDashboardSudoPolicy(w http.ResponseWriter, r *http.Request) {
+	_, _, policy, ok := sudoPolicyForAgent(w, r.URL.Query().Get("agent_id"))
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, sudoPolicyWire(policy))
+}
+
+// handleDashboardSudoExtend adds time to one active grant. A slug put on the
+// blocklist since the grant was made is refused, like a fresh grant.
+func handleDashboardSudoExtend(w http.ResponseWriter, r *http.Request, rawID string) {
+	id, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil {
+		http.Error(w, "id must be a positive integer", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Duration string `json:"duration"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	by, err := time.ParseDuration(strings.TrimSpace(body.Duration))
+	if err != nil || by <= 0 {
+		http.Error(w, "duration must be a positive duration such as 15m", http.StatusBadRequest)
+		return
+	}
+	grant, err := db.GetSudoGrant(id)
+	if err != nil {
+		http.Error(w, "read grant: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	if !grant.IsActive(now) {
+		http.Error(w, "no active grant with that id", http.StatusNotFound)
+		return
+	}
+	_, _, policy, ok := sudoPolicyForAgent(w, grant.AgentID)
+	if !ok {
+		return
+	}
+	if blocked := blockedSlugs([]string{grant.Slug}, policy.Blocklist); len(blocked) > 0 {
+		http.Error(w, "slug blocklisted from sudo: "+grant.Slug, http.StatusForbidden)
+		return
+	}
+	expires, refusal := extendedSudoExpiry(grant.ExpiresAt, now, by, policy)
+	if refusal != "" {
+		http.Error(w, refusal, http.StatusBadRequest)
+		return
+	}
+	n, err := db.ExtendSudoGrant(id, expires)
+	if err != nil {
+		http.Error(w, "extend: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		http.Error(w, "no active grant with that id", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "expires_at": expires.Format(time.RFC3339Nano)})
+}
+
 // handleDashboardSudoGrant is the cookie-auth front for proactive
 // sudo grants. The dashboard cookie + Origin pinning is the human-
 // consent layer here; an agent reaching this endpoint would have
@@ -2029,7 +2103,7 @@ func handleDashboardSudoAPI(w http.ResponseWriter, r *http.Request) {
 // every other dashboard mutate.
 //
 // Body shape and validation logic are shared with the daemon's
-// /v1/sudo POST path via insertSudoBundle / blockedSlugs /
+// /v1/sudo POST path via proactiveSudoGrantFailure / insertSudoBundle /
 // resolveSudoDuration. The granter label is
 // "<human-dashboard>:proactive" so audit can distinguish dashboard
 // grants from CLI grants and from agent-requested ones.
@@ -2043,6 +2117,15 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 		Slugs    []string `json:"slugs"`
 		Duration string   `json:"duration"`
 		Reason   string   `json:"reason"`
+		// Scopes narrows individual slugs, in the permissions editor's wire
+		// shape. A slug it does not name is granted unscoped.
+		Scopes map[string]json.RawMessage `json:"scopes"`
+		// Carry names the slugs also stored for all future Stewards, with
+		// this grant's expiry. Only a live Steward may name any.
+		Carry []string `json:"carry"`
+		// Uses limits individual slugs to that many uses. It ends the grant at
+		// whichever limit comes first, this or the duration.
+		Uses map[string]int64 `json:"uses"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -2060,36 +2143,71 @@ func handleDashboardSudoGrant(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	actor, err := db.GetAgent(body.AgentID)
-	if err != nil {
-		http.Error(w, "resolve agent: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if actor == nil || !actor.Active() {
-		http.Error(w, "active agent not found", http.StatusNotFound)
+	actor, title, policy, ok := sudoPolicyForAgent(w, body.AgentID)
+	if !ok {
 		return
 	}
 	convID := actor.CurrentConvID
-	title := ""
-	if row := agent.FreshConvRowResolved(convID); row != nil {
-		title = agent.DisplayTitle(row)
-	}
-	cfg, _ := config.Load()
-	policy := resolveSudoConfig(cfg, convID, actor.AgentID, title)
-
-	if blocked := blockedSlugs(body.Slugs, policy.Blocklist); len(blocked) > 0 {
-		http.Error(w,
-			"slug(s) blocklisted from sudo (would enable permanent escalation): "+
-				strings.Join(blocked, ", "),
-			http.StatusForbidden)
+	if fail := proactiveSudoGrantFailure(convID, body.Slugs, policy); fail != nil {
+		http.Error(w, fail.Msg, fail.Status)
 		return
+	}
+	if len(body.Carry) > 0 && !isLiveSteward(convID) {
+		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
+		return
+	}
+	for _, slug := range body.Carry {
+		if !slices.Contains(body.Slugs, slug) {
+			http.Error(w, "carry names slug "+slug+" which the grant does not include", http.StatusBadRequest)
+			return
+		}
+	}
+
+	scopes := map[string]string{}
+	for slug, raw := range body.Scopes {
+		if !slices.Contains(body.Slugs, slug) {
+			http.Error(w, "scope given for slug "+slug+" which the grant does not include", http.StatusBadRequest)
+			return
+		}
+		canonical, err := canonicalPermissionScopeForSlug(slug, string(raw))
+		if err != nil {
+			http.Error(w, "invalid scope for slug "+slug+": "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		scopes[slug] = canonical
+	}
+	for slug, uses := range body.Uses {
+		if !slices.Contains(body.Slugs, slug) {
+			http.Error(w, "uses given for slug "+slug+" which the grant does not include", http.StatusBadRequest)
+			return
+		}
+		if !slices.Contains(countableSudoSlugs, slug) {
+			http.Error(w, slug+" takes no use limit. "+sudoUseLimitRefusal(slug), http.StatusBadRequest)
+			return
+		}
+		if uses < 1 || uses > maxSudoUses {
+			http.Error(w, fmt.Sprintf("uses for %s must be between 1 and %d", slug, maxSudoUses), http.StatusBadRequest)
+			return
+		}
+		if scope, err := permissionScopeForEval(scopes[slug]); err != nil || len(scope[ScopeDimPeer]) != 0 {
+			http.Error(w, "a use limit covers local actions only, so "+slug+" cannot have one with a peer scope", http.StatusBadRequest)
+			return
+		}
 	}
 	dur, ok := resolveSudoDuration(w, body.Duration, policy)
 	if !ok {
 		return
 	}
-	out, status := insertSudoBundle(actor.AgentID, convID, title, body.Slugs, dur,
+	out, status := insertSudoBundle(actor.AgentID, convID, title, body.Slugs, scopes, body.Uses, dur,
 		strings.TrimSpace(body.Reason), dashboardSudoGranter)
+	for _, grant := range out.Grants {
+		if grant.ID > 0 && slices.Contains(body.Carry, grant.Slug) {
+			if err := db.CarrySudoGrant(grant.ID); err != nil {
+				http.Error(w, "save for future Stewards: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
 	writeJSON(w, status, out)
 }
 
@@ -2152,6 +2270,10 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		// empty object is written unscoped, which is how the editor clears a
 		// scope; a slug absent from this map keeps whatever scope is stored.
 		Scopes map[string]json.RawMessage `json:"scopes"`
+		// Carry is the Steward editor's per-grant choice: true stores the slug
+		// for all future Stewards, false stops doing so. Only a live Steward
+		// may name it.
+		Carry map[string]bool `json:"carry"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -2208,6 +2330,47 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "resolve conv: "+err.Error(), http.StatusNotFound)
 		return
 	}
+	for slug, effect := range body.Overrides {
+		if effect != db.PermEffectGrant {
+			continue
+		}
+		if refusal := refuseExternalStewardGrant(res.ConvID, slug); refusal != "" {
+			http.Error(w, refusal, http.StatusConflict)
+			return
+		}
+		scope, err := permissionScopeForEval(scopeJSON[slug])
+		if err != nil {
+			http.Error(w, "invalid scope for slug "+slug+": "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if refusal := refuseExternalStewardSpawnGrant(res.ConvID, slug, scope); refusal != "" {
+			http.Error(w, refusal, http.StatusConflict)
+			return
+		}
+	}
+	steward := isLiveSteward(res.ConvID)
+	var overridesBefore map[string]db.PermissionOverride
+	if steward {
+		var err error
+		if overridesBefore, err = agentPermissionOverrides(res.ConvID); err != nil {
+			http.Error(w, "read overrides: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	if len(body.Carry) > 0 && !steward {
+		http.Error(w, "only a live Steward's grants can be kept for future Stewards", http.StatusForbidden)
+		return
+	}
+	for slug, carry := range body.Carry {
+		if !carry {
+			continue
+		}
+		effect, ok := body.Overrides[slug]
+		if !ok || effect == "default" {
+			http.Error(w, "carry names slug "+slug+" which the batch does not grant or deny", http.StatusBadRequest)
+			return
+		}
+	}
 	currentOverrides, err := agentPermissionOverrides(res.ConvID)
 	if err != nil {
 		http.Error(w, "load current overrides: "+err.Error(), http.StatusInternalServerError)
@@ -2231,6 +2394,12 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 				http.StatusConflict)
 			return
 		}
+	}
+	// A peer's write is recorded as the peer's: a group= scope it wrote
+	// then pins the group's name (peerNameBindsAGrant).
+	granter := dashboardGranter
+	if a := peerGrantFromRequest(r); a != nil {
+		granter = "peer:" + a.peer
 	}
 	changed := 0
 	for slug, effect := range body.Overrides {
@@ -2264,11 +2433,23 @@ func handleDashboardPermissionsAPI(w http.ResponseWriter, r *http.Request) {
 		if held && stored.Effect == effect && stored.Scope == desired {
 			continue // already at the requested grant/deny with the same scope
 		}
-		if err := db.SetAgentPermissionOverrideWithScope(res.ConvID, slug, effect, desired, dashboardGranter); err != nil {
+		if err := db.SetAgentPermissionOverrideWithScope(res.ConvID, slug, effect, desired, granter); err != nil {
 			http.Error(w, "set "+slug+": "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		changed++
+	}
+	if steward {
+		if err := saveStewardCarry(res.ConvID, overridesBefore, body.Overrides, body.Carry); err != nil {
+			http.Error(w, "save for future Stewards: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	// A peer reads the agent's overrides from its own projection, which
+	// leaves out what it may not see; the editor reloads from it.
+	if peerGrantFromRequest(r) != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"conv_id": res.ConvID, "changed": changed})
+		return
 	}
 	overrides, _ := db.ListAgentPermissionOverridesForConv(res.ConvID)
 	effective, _ := db.ListAgentPermissionsForConv(res.ConvID)

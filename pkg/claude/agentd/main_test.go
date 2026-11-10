@@ -70,8 +70,11 @@ func TestMain(m *testing.M) {
 	tmuxSocketPath := filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), clcommon.TmuxSocketName)
 
 	agentd.InstallBrokerProcTableTestDefaults()
+	agentd.InstallLauncherTestDefaults()
 	agentd.DisableBrokerPaneCacheForTest()
 	agentd.DisableFleetMetadataForTest()
+	// The test process is every socket peer here, and is not an agent the daemon runs.
+	agentd.SetExternalDaemonPIDForTest(-1)
 	agentd.SetOpenTerminalForTest(func(string) error {
 		return errors.New("agentd tests: terminal spawn suppressed by default (TCL-584); swap agentd.SetOpenTerminalForTest to observe the open path")
 	})
@@ -135,10 +138,16 @@ func TestMain(m *testing.M) {
 		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
 			return json.RawMessage(`{"config":{},"origins":{}}`), nil
 		})
+	// And the managed-requirements read a no-sandbox Codex launch makes.
+	restoreCodexRequirements := session.SetCodexRequirementsProbeForTest(
+		func(string, []sandboxpolicy.EnvironmentEntry) (json.RawMessage, error) {
+			return json.RawMessage(`{"requirements":null}`), nil
+		})
 	restoreCodexNativeRegistry := agentd.SetCodexNativeRegistryReadinessForTest(func() error { return nil })
 	code := m.Run()
 	restoreCodexNativeRegistry()
 	restoreCodexProbe()
+	restoreCodexRequirements()
 	restoreCopilotReconnect()
 	restoreCopilotPostInitWait()
 	restoreCopilotBootstrap()

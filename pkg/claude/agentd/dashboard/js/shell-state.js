@@ -16,19 +16,26 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
     status.value = { text: String(text || ''), error: !!error };
   }
 
-  function notify(message, error = false) {
+  // action, { label, run }, puts one button in the toast (a live page's
+  // "Open"), which stays up longer so there is time to reach it.
+  function notify(message, error = false, { action = null } = {}) {
     if (toastTimer !== null) clearTimer(toastTimer);
     const next = {
       id: toast.value.id + 1,
       message: String(message || ''),
       error: !!error,
       visible: true,
+      ...(action && typeof action.run === 'function' && { action: { label: String(action.label || 'Open'), run: action.run } }),
     };
     toast.value = next;
     toastTimer = setTimer(() => {
       toastTimer = null;
       if (toast.value.id === next.id) toast.value = { ...toast.value, visible: false };
-    }, 3000);
+    }, next.action ? 8000 : 3000);
+  }
+
+  function dismissToast(id) {
+    if (toast.value.id === id) toast.value = { ...toast.value, visible: false };
   }
 
   // confirm is the shared confirmation modal, and it is BLOCKING when given an
@@ -46,6 +53,7 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
   // With an action the returned promise resolves to the action's value; without
   // one it resolves true/false exactly as before, so every existing caller is
   // unaffected.
+  let confirmSeq = 0;
   function confirm(options = {}) {
     if (confirmationResolve) resolveConfirmation(false);
     return new Promise((resolve, reject) => {
@@ -53,6 +61,9 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
       confirmationReject = reject;
       confirmationAction = typeof options.action === 'function' ? options.action : null;
       confirmation.value = {
+        // seq identifies this dialog: toggling a checkbox replaces the model
+        // object, and must not re-run the open-time focus.
+        seq: ++confirmSeq,
         title: String(options.title || ''),
         body: String(options.body || ''),
         meta: String(options.meta || ''),
@@ -61,6 +72,10 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
         busyLabel: String(options.busyLabel || 'Working…'),
         informational: !!options.informational,
         preformatted: !!options.preformatted,
+        // checks are optional checkboxes ({label, checked, hint?}). The modal
+        // toggles each item's `checked` in place, so the caller reads its own
+        // objects once the confirm resolves.
+        checks: Array.isArray(options.checks) ? options.checks : [],
         busy: false,
       };
     });
@@ -126,6 +141,7 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
     confirmation,
     showStatus,
     notify,
+    dismissToast,
     confirm,
     resolveConfirmation,
     dispose,
@@ -138,8 +154,8 @@ export function showShellStatus(text, error) {
   shellState.showStatus(text, error);
 }
 
-export function shellToast(message, error) {
-  shellState.notify(message, error);
+export function shellToast(message, error, options) {
+  shellState.notify(message, error, options);
 }
 
 export function shellConfirm(options) {

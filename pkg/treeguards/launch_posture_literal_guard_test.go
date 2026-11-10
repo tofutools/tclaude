@@ -169,7 +169,8 @@ func TestEveryLaunchPostureLiteralNamesEveryField(t *testing.T) {
 		files = append(files, lit.file)
 	}
 	for _, expected := range []string{
-		filepath.Join("pkg", "claude", "session", "new.go"),
+		// runNew records its posture through its after-launch step.
+		filepath.Join("pkg", "claude", "session", "new_launched_pane.go"),
 		filepath.Join("pkg", "claude", "conv", "watch.go"),
 	} {
 		assert.Containsf(t, files, expected,

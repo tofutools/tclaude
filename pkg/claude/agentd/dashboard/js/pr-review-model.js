@@ -1,7 +1,9 @@
 // Pure helpers for the PR review pill (see pr-review-badge.js) and the Open
 // PRs footer filters. The snapshot's `reviews` object comes from prreviews.go:
 // GitHub's reviewDecision plus counts over each reviewer's latest opinionated
-// review (human reviewers only; bots are listed but never counted).
+// review (human reviewers only; bots are listed but never counted). A GitLab
+// merge request fills the same shape (prreviews_gitlab.go): its approvals and
+// reviewers' change requests, with the decision from its merge status.
 
 // prReviewState collapses a summary into what the pill shows:
 //   changes  — someone requested changes (blocks the merge)
@@ -39,12 +41,16 @@ export function prReviewLabel(reviews) {
   }
 }
 
-export function prReviewDecisionText(decision) {
+// prReviewDecisionText names the forge's own verdict. GitLab's comes from the
+// merge request's detailed merge status: its approval rules still want
+// approvals, or a reviewer's change request blocks it.
+export function prReviewDecisionText(decision, gitlab = false) {
+  const forge = gitlab ? 'GitLab' : 'GitHub';
   switch (decision) {
-    case 'approved': return 'GitHub: approved';
-    case 'changes_requested': return 'GitHub: changes requested';
-    case 'review_required': return 'GitHub: review required';
-    default: return 'no required reviews';
+    case 'approved': return `${forge}: approved`;
+    case 'changes_requested': return `${forge}: changes requested`;
+    case 'review_required': return gitlab ? 'GitLab: approvals required' : 'GitHub: review required';
+    default: return gitlab ? 'no required approvals' : 'no required reviews';
   }
 }
 
@@ -58,9 +64,12 @@ export function prReviewSummaryLine(reviews) {
   return reviews?.reviewers_known ? 'No reviews yet' : 'Reviewer list not fetched yet';
 }
 
-// readyToMerge: an open, non-draft PR that is approved with green CI.
+// readyToMerge: an open, non-draft PR that is approved with green CI. A merge
+// request that conflicts with its target is not, however green: its pipeline
+// may have passed before the target moved (GitHub rows never set conflicts).
 export function readyToMerge(pr) {
-  return !pr?.draft && pr?.checks?.state === 'passing' && prReviewState(pr?.reviews) === 'approved';
+  return !pr?.draft && !pr?.conflicts && pr?.checks?.state === 'passing'
+    && prReviewState(pr?.reviews) === 'approved';
 }
 
 export function prReviewStateText(state) {
@@ -82,4 +91,35 @@ export function relativeAge(iso, now = Date.now()) {
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+// memberPRs lists every PR a group member carries — its startup branch's, its
+// current branch's and the ones it presented — once each, in that order. The
+// branch fields are flattened into the presented-PR shape so callers render
+// and filter all three sources alike.
+export function memberPRs(member) {
+  const out = [];
+  const seen = new Set();
+  const add = (pr) => {
+    const url = String(pr.url || '').trim();
+    if (!url || seen.has(url) || !/^https?:\/\//i.test(url)) return;
+    seen.add(url);
+    out.push({ ...pr, url });
+  };
+  if (member?.startup_pr_number) {
+    add({ url: member.startup_pr_url, number: member.startup_pr_number, state: member.startup_pr_state || '',
+      title: member.startup_pr_title || '', checks: member.startup_checks, reviews: member.startup_reviews });
+  }
+  if (member?.branch_pr_number) {
+    add({ url: member.branch_pr_url, number: member.branch_pr_number, state: member.branch_pr_state || '',
+      title: member.branch_pr_title || '', checks: member.branch_checks, reviews: member.branch_reviews });
+  }
+  for (const pr of member?.presented_prs || []) add(pr);
+  return out;
+}
+
+// openMemberPRs keeps the PRs still in flight: a merged or closed PR is
+// history, so it neither counts as "has a PR" nor feeds the CI/review picks.
+export function openMemberPRs(member) {
+  return memberPRs(member).filter((pr) => pr.state !== 'merged' && pr.state !== 'closed');
 }

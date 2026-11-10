@@ -12,7 +12,7 @@ function widgetFakes(document) {
     dispose() {}
   }
   class FakeTerminal {
-    constructor() { this.cols = 80; this.rows = 24; }
+    constructor(options) { this.options = options; this.cols = 80; this.rows = 24; }
     loadAddon() {}
     open(host) { host.append(document.createElement('textarea')); }
     onData() { return { dispose() {} }; }

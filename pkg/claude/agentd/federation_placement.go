@@ -60,6 +60,9 @@ func placementSpawnAllowed(r *http.Request, caller, peer, group string) bool {
 	if caller == "" {
 		return true
 	}
+	if db.IsExternalStewardConv(caller) {
+		return false
+	}
 	actx := ActionContext{RemotePeer: peer, RemoteGroup: group}
 	for _, slug := range []string{PermAgentSpawn, PermGroupsMembersSpawn} {
 		allowed, _, err := permissionAllowsAction(r, caller, slug, actx)
@@ -129,6 +132,11 @@ func placementCandidateWithAuthority(r *http.Request, p db.FederationPeer, req f
 		if n.Resources.Agents.LiveAgents >= n.MaxLiveAgents {
 			return reject("advertised capacity busy")
 		}
+	}
+	// A request to a node whose capacity queue is not empty would wait behind
+	// it (or be refused); a node with free capacity is always the better pick.
+	if a := n.Resources.Agents; a != nil && a.QueuedSpawns > 0 {
+		return reject(fmt.Sprintf("advertised capacity busy: %d spawn(s) queued", a.QueuedSpawns))
 	}
 	switch req.Prefer {
 	case "least-loaded":

@@ -63,9 +63,15 @@ func makeRouteEligibleCloneSource(t *testing.T, f *testharness.Flow, convID, gro
 	require.NoError(t, db.SaveSession(row))
 	agentID, err := db.AgentIDForConv(convID)
 	require.NoError(t, err)
-	effective := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
-	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
-	snapshot.ResolutionGroupID = group.ID
+	// The group's own profile confines the network, so a clone that launches
+	// under its group's chain keeps the private namespace routes need.
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: groupName + "-offline", NetworkAccess: sandboxpolicy.NetworkAccessNone})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile(groupName, groupName+"-offline")
+	require.NoError(t, err)
+	snapshot, err := db.ResolveEffectiveSandboxSnapshot(group.ID, "")
+	require.NoError(t, err)
+	require.Equal(t, sandboxpolicy.NetworkAccessNone, snapshot.Effective.NetworkAccess)
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 	return group
 }

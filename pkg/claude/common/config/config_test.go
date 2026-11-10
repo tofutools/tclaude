@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,9 +87,9 @@ func TestSetNotifyType_PreservesAdvancedRules(t *testing.T) {
 	assert.False(t, n.NotifyTypeEnabled("idle"))
 }
 
-// MergeDefaultTypes is additive: it fills in only the missing canonical
-// categories, leaves advanced + already-present rules untouched, returns
-// what it added in NotifyTypes order, and is idempotent on a full block.
+// MergeDefaultTypes is additive: it fills in only the categories the block
+// has not been offered yet, leaves advanced + already-present rules
+// untouched, returns what it added in NotifyTypes order, and is idempotent.
 func TestMergeDefaultTypes(t *testing.T) {
 	// nil receiver is safe and adds nothing.
 	assert.Nil(t, (*NotificationConfig)(nil).MergeDefaultTypes())
@@ -97,14 +98,18 @@ func TestMergeDefaultTypes(t *testing.T) {
 	full := DefaultConfig().Notifications
 	assert.Nil(t, full.MergeDefaultTypes(), "default block is already complete")
 
-	// An older/partial block: missing "error" + "exited", plus an advanced
-	// rule that must round-trip and must not light a canonical checkbox.
-	n := &NotificationConfig{Transitions: []TransitionRule{
-		{From: "*", To: "idle"},
-		{From: "*", To: "awaiting_permission"},
-		{From: "*", To: "awaiting_input"},
-		{From: "working", To: "idle"}, // advanced
-	}}
+	// A block that only knows the first three categories: "error" +
+	// "exited" are new to it, plus an advanced rule that must round-trip
+	// and must not light a canonical checkbox.
+	n := &NotificationConfig{
+		Transitions: []TransitionRule{
+			{From: "*", To: "idle"},
+			{From: "*", To: "awaiting_permission"},
+			{From: "*", To: "awaiting_input"},
+			{From: "working", To: "idle"}, // advanced
+		},
+		KnownTypes: []string{"idle", "awaiting_permission", "awaiting_input"},
+	}
 	added := n.MergeDefaultTypes()
 	assert.Equal(t, []string{"error", "exited"}, added, "added in NotifyTypes order")
 	for _, ty := range NotifyTypes {
@@ -112,9 +117,28 @@ func TestMergeDefaultTypes(t *testing.T) {
 	}
 	assert.Contains(t, n.Transitions, TransitionRule{From: "working", To: "idle"},
 		"advanced rule preserved")
+	assert.Equal(t, NotifyTypes, n.KnownTypes, "every category marked known")
 
 	// Idempotent: a second merge finds nothing to add.
 	assert.Nil(t, n.MergeDefaultTypes(), "second merge is a no-op")
+}
+
+// A category the human switched off must stay off across `tclaude setup`,
+// both for a block written before known_types existed and for one that
+// records it.
+func TestMergeDefaultTypes_RespectsUncheckedTypes(t *testing.T) {
+	legacy := &NotificationConfig{Transitions: []TransitionRule{{From: "*", To: "awaiting_permission"}}}
+	assert.Nil(t, legacy.MergeDefaultTypes(), "pre-tracking block: unchecked types stay off")
+	assert.Equal(t, []TransitionRule{{From: "*", To: "awaiting_permission"}}, legacy.Transitions)
+
+	tracked := &NotificationConfig{KnownTypes: slices.Clone(NotifyTypes)}
+	assert.Nil(t, tracked.MergeDefaultTypes(), "all types known and unchecked: nothing re-added")
+	assert.Empty(t, tracked.Transitions)
+
+	// A category known from a newer tclaude survives marking by this one.
+	newer := &NotificationConfig{KnownTypes: append(slices.Clone(NotifyTypes), "future")}
+	newer.MarkNotifyTypesKnown()
+	assert.Contains(t, newer.KnownTypes, "future")
 }
 
 // HumanMessagesIntent is the checkbox state (default-on, off only on an
@@ -1145,6 +1169,24 @@ func TestFusedToolbarFixedNode(t *testing.T) {
 	assert.NotContains(t, string(clean), "fused_toolbar_fixed_node")
 }
 
+func TestUsageCollapseSubviews(t *testing.T) {
+	assert.False(t, (*Config)(nil).UsageCollapseSubviews(), "nil → all views")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{}}).UsageCollapseSubviews(), "absent key → all views")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{UsageCollapseSubviews: true}}).UsageCollapseSubviews(), "explicit true → collapse")
+
+	clean, err := json.Marshal(&Config{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "usage_collapse_subviews")
+}
+
+func TestSidePanelEdgeReveal(t *testing.T) {
+	off := false
+	assert.True(t, (*Config)(nil).SidePanelEdgeReveal(), "nil → on")
+	assert.True(t, (&Config{}).SidePanelEdgeReveal(), "no block → on")
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{}}).SidePanelEdgeReveal(), "absent key → on")
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{SidePanelEdgeReveal: &off}}).SidePanelEdgeReveal(), "explicit false → off")
+}
+
 func TestShowGroupDescription(t *testing.T) {
 	// Default is false (chip hidden) for every "unset" shape.
 	assert.False(t, (*Config)(nil).ShowGroupDescription(), "nil → hidden")
@@ -1229,23 +1271,36 @@ func TestMatchSudoOverride_Keying(t *testing.T) {
 	})
 }
 
-// ProcessesEnabled must be nil-safe and default to FALSE: a nil Config, an
-// absent features block, and an unset flag all keep the in-development
-// Processes feature dark; only an explicit features.processes:true enables it.
-func TestProcessesEnabled(t *testing.T) {
-	var nilCfg *Config
-	assert.False(t, nilCfg.ProcessesEnabled(), "nil config → false")
-	assert.False(t, (&Config{}).ProcessesEnabled(), "no features block → false")
-	assert.False(t, (&Config{Features: &FeaturesConfig{}}).ProcessesEnabled(), "features block, flag unset → false")
-	assert.True(t, (&Config{Features: &FeaturesConfig{Processes: true}}).ProcessesEnabled(), "explicit true → true")
-}
+// Processes and Triggers graduated and lost their features.processes /
+// features.triggers flags. A config that still carries either key, true or
+// false, loads and validates cleanly, is not reported as unknown, and drops
+// the keys on its next save while keeping the flags that remain.
+func TestFeaturesConfig_GraduatedFlagsLoadAndDrop(t *testing.T) {
+	for _, legacy := range []string{
+		`{"features": {"processes": true, "triggers": true, "groups_route_map": true}}`,
+		`{"features": {"processes": false, "triggers": false, "groups_route_map": true}}`,
+	} {
+		t.Run(legacy, func(t *testing.T) {
+			isolateConfigHome(t)
+			require.NoError(t, os.MkdirAll(DataDir(), 0o700))
+			require.NoError(t, os.WriteFile(ConfigPath(), []byte(legacy), 0o644))
 
-func TestTriggersEnabled(t *testing.T) {
-	var nilCfg *Config
-	assert.False(t, nilCfg.TriggersEnabled(), "nil config → false")
-	assert.False(t, (&Config{}).TriggersEnabled(), "no features block → false")
-	assert.False(t, (&Config{Features: &FeaturesConfig{}}).TriggersEnabled(), "features block, flag unset → false")
-	assert.True(t, (&Config{Features: &FeaturesConfig{Triggers: true}}).TriggersEnabled(), "explicit true → true")
+			cfg, err := Load()
+			require.NoError(t, err)
+			assert.Empty(t, Validate(cfg))
+			assert.True(t, cfg.GroupsRouteMapEnabled())
+			preserved, dropped := UnknownConfigKeys([]byte(legacy))
+			assert.Empty(t, preserved)
+			assert.Empty(t, dropped)
+
+			require.NoError(t, Save(cfg))
+			data, err := os.ReadFile(ConfigPath())
+			require.NoError(t, err)
+			assert.NotContains(t, string(data), `"processes"`)
+			assert.NotContains(t, string(data), `"triggers"`)
+			assert.Contains(t, string(data), `"groups_route_map": true`)
+		})
+	}
 }
 
 func TestGroupsRouteMapEnabled(t *testing.T) {
@@ -1300,8 +1355,6 @@ func TestRecordedSandboxDetailsEnabled(t *testing.T) {
 func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	in := &Config{Features: &FeaturesConfig{
 		GroupsRouteMap:                 true,
-		Processes:                      true,
-		Triggers:                       true,
 		GroupAttachments:               GroupAttachmentsFixed,
 		TerminalCommandPaletteShortcut: true,
 		RecordedSandboxDetails:         true,
@@ -1309,12 +1362,10 @@ func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
 	assert.Contains(t, string(data),
-		`"features":{"groups_route_map":true,"processes":true,"triggers":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
+		`"features":{"groups_route_map":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
 
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
-	assert.True(t, out.ProcessesEnabled())
-	assert.True(t, out.TriggersEnabled())
 	assert.True(t, out.GroupsRouteMapEnabled())
 	assert.Equal(t, GroupAttachmentsFixed, out.GroupAttachmentsMode())
 	assert.True(t, out.TerminalCommandPaletteShortcutEnabled())
@@ -1358,6 +1409,26 @@ func TestAgentDirsMountParentEnabled(t *testing.T) {
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.False(t, out.AgentDirsMountParentEnabled(), "explicit false survives round-trip")
+}
+
+// TestStewardsEnabled: stewards are on unless steward.disabled opts out, which
+// also overrides external_enabled. A features.collab left by an older build
+// still loads and means nothing.
+func TestStewardsEnabled(t *testing.T) {
+	assert.True(t, (*Config)(nil).StewardsEnabled(), "nil config → on")
+	assert.True(t, (&Config{}).StewardsEnabled(), "no steward block → on")
+	off := &Config{Steward: &StewardConfig{Disabled: true, ExternalEnabled: true}}
+	assert.False(t, off.StewardsEnabled())
+	assert.False(t, off.ExternalStewardsEnabled(), "the opt-out turns external stewards off too")
+	assert.True(t, (&Config{Steward: &StewardConfig{ExternalEnabled: true}}).ExternalStewardsEnabled())
+
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Dir(ConfigPath()), 0o700))
+	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"features":{"collab":false,"groups_route_map":true}}`), 0o600))
+	loaded, err := Load()
+	require.NoError(t, err, "a retired features.collab must not break loading")
+	assert.True(t, loaded.Features.GroupsRouteMap)
+	assert.True(t, loaded.StewardsEnabled(), "features.collab=false is ignored, not read as the steward opt-out")
 }
 
 // TestAlwaysShowOpenPRs covers the dashboard.always_show_open_prs resolver:
@@ -1584,4 +1655,217 @@ func TestCloseTerminalTab(t *testing.T) {
 	assert.True(t, cfg.CloseTerminalTab(TerminalTabSessionEnded, TerminalTabAgentWindow), "explicit opt-in")
 	assert.True(t, cfg.CloseTerminalTab(TerminalTabDetached, TerminalTabAgentTerminal))
 	assert.False(t, cfg.CloseTerminalTab(TerminalTabDetached, TerminalTabGroupTerminal))
+}
+
+func TestStewardAccessDefaultsAndValidates(t *testing.T) {
+	var none *Config
+	assert.Equal(t, StewardReadsOperator, none.StewardReads(), "operator-level reads by default")
+	assert.Equal(t, StewardWritesMessaging, none.StewardWrites(), "messaging by default")
+
+	c := &Config{Steward: &StewardConfig{Reads: StewardReadsFleet, Writes: StewardWritesWorkers}}
+	assert.Equal(t, StewardReadsFleet, c.StewardReads())
+	assert.Equal(t, StewardWritesWorkers, c.StewardWrites())
+	assert.Empty(t, Validate(c))
+
+	errs := strings.Join(Validate(&Config{Steward: &StewardConfig{Reads: "root", Writes: "all"}}), "\n")
+	assert.Contains(t, errs, "steward.reads")
+	assert.Contains(t, errs, "steward.writes")
+
+	assert.Empty(t, none.StewardName())
+	assert.Empty(t, (&Config{Steward: &StewardConfig{Name: "group:all"}}).StewardName(), "a hand edit cannot alias a group")
+	assert.Empty(t, Validate(&Config{Steward: &StewardConfig{Name: "Mr Jeeves"}}))
+	for _, name := range []string{"group:all", "a/b", "a  b", "x@y", strings.Repeat("x", MaxStewardNameLen+1)} {
+		assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{Name: name}}), "\n"), "steward.name", name)
+	}
+
+	assert.Empty(t, none.StewardStartupPrompt())
+	c = &Config{Steward: &StewardConfig{StartupPrompt: " Reply in Swedish.\n"}}
+	assert.Equal(t, "Reply in Swedish.", c.StewardStartupPrompt())
+	assert.Empty(t, Validate(c))
+	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: strings.Repeat("x", MaxStewardStartupPromptLen+1)}}), "\n"), "steward.startup_prompt")
+	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: "a\x1bb"}}), "\n"), "steward.startup_prompt")
+	assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{StartupPrompt: "a\r\nb"}}), "\n"), "steward.startup_prompt", "a summon refuses \\r")
+
+	assert.Empty(t, none.StewardDir())
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, "code", "repo"), (&Config{Steward: &StewardConfig{Dir: " ~/code/repo/ "}}).StewardDir())
+	assert.Equal(t, "/srv/work", (&Config{Steward: &StewardConfig{Dir: "/srv//work"}}).StewardDir())
+	assert.Empty(t, Validate(&Config{Steward: &StewardConfig{Dir: "~/code"}}))
+	for _, dir := range []string{"relative/dir", "~other/dir", "/a\x07b"} {
+		assert.Contains(t, strings.Join(Validate(&Config{Steward: &StewardConfig{Dir: dir}}), "\n"), "steward.dir", dir)
+	}
+	assert.Empty(t, (&Config{Steward: &StewardConfig{Dir: "relative"}}).StewardDir(), "an unusable path falls back to the default")
+
+	assert.Empty(t, none.StewardDefaultPermissions())
+	c = &Config{Steward: &StewardConfig{DefaultPermissions: []string{" agent.spawn ", ""}}}
+	assert.Equal(t, []string{"agent.spawn"}, c.StewardDefaultPermissions())
+
+	// A legacy slug is upgraded here too, with no agent block present.
+	c = &Config{Steward: &StewardConfig{DefaultPermissions: []string{"groups.own"}}}
+	assert.True(t, canonicalizePermissionNames(c))
+	assert.Equal(t, []string{"groups.owners.manage"}, c.Steward.DefaultPermissions)
+}
+
+func TestSnapAssist(t *testing.T) {
+	assert.True(t, (*Config)(nil).SnapAssist())
+	assert.True(t, (&Config{}).SnapAssist())
+	assert.False(t, (&Config{Dashboard: &DashboardConfig{NoSnapAssist: true}}).SnapAssist())
+}
+
+func TestWindowControls(t *testing.T) {
+	var unset *Config
+	assert.Equal(t, "auto", unset.WindowControls())
+	for _, tc := range []struct{ in, want string }{
+		{"", "auto"}, {"auto", "auto"}, {"beos", "auto"}, {"macos", "macos"},
+		{"windows", "windows"}, {"linux", "linux"}, {"classic", "classic"},
+		{"standard", "standard"}, {"os", "os"},
+	} {
+		c := &Config{Dashboard: &DashboardConfig{WindowControls: tc.in}}
+		assert.Equal(t, tc.want, c.WindowControls(), tc.in)
+	}
+}
+
+func TestOverlayBackdrop(t *testing.T) {
+	var unset *Config
+	assert.Equal(t, "dim", unset.OverlayBackdrop())
+	for _, tc := range []struct{ in, want string }{{"", "dim"}, {"dim", "dim"}, {"blur", "blur"}, {"both", "both"}, {"none", "none"}, {"bogus", "dim"}} {
+		c := &Config{Dashboard: &DashboardConfig{OverlayBackdrop: tc.in}}
+		assert.Equal(t, tc.want, c.OverlayBackdrop(), tc.in)
+	}
+}
+
+// TestDictationSendPhrase covers the default, the explicit off and the
+// cleanup of a hand-edited phrase.
+func TestDictationSendPhrase(t *testing.T) {
+	var nilConfig *Config
+	assert.Equal(t, DictationSendPhraseDefault, nilConfig.DictationSendPhrase())
+	assert.Equal(t, DictationSendPhraseDefault, (&Config{Dashboard: &DashboardConfig{}}).DictationSendPhrase())
+	phrase := func(value string) string {
+		return (&Config{Dashboard: &DashboardConfig{DictationSendPhrase: &value}}).DictationSendPhrase()
+	}
+	assert.Equal(t, "", phrase(""))
+	assert.Equal(t, "", phrase("   "))
+	assert.Equal(t, "skicka nu", phrase("  skicka \t nu "))
+	assert.Len(t, []rune(phrase(strings.Repeat("å", 100))), DictationSendPhraseMaxRunes)
+}
+
+// TestVoice covers opt-in staying off, the phrase list and the guards.
+func TestVoice(t *testing.T) {
+	var nilConfig *Config
+	off := nilConfig.Voice()
+	assert.False(t, off.WakeEnabled)
+	assert.Zero(t, off.SilenceSendSeconds)
+	assert.True(t, *off.MarkDictated, "dictated messages are marked by default")
+	assert.Equal(t, []VoicePhrase{{Action: VoiceActionSend, Phrase: "send now"}, {Action: VoiceActionWake}, {Action: VoiceActionSteward}, {Action: VoiceActionStop, Phrase: "stop listening"}}, off.Phrases,
+		"the send and stop phrases are on by default and the wake phrases off")
+	assert.False(t, off.ContinuousEnabled, "continuous mode is off by default")
+	assert.Equal(t, ContinuousIdleSecondsDefault, off.ContinuousIdleSeconds)
+
+	voice := func(v VoiceConfig) VoiceConfig { return (&Config{Dashboard: &DashboardConfig{Voice: &v}}).Voice() }
+	phrase := func(v VoiceConfig, action string) string {
+		for _, p := range v.Phrases {
+			if p.Action == action {
+				return p.Phrase
+			}
+		}
+		return "missing"
+	}
+	assert.False(t, *voice(VoiceConfig{MarkDictated: new(false)}).MarkDictated)
+
+	assert.Equal(t, ContinuousIdleSecondsMin, voice(VoiceConfig{ContinuousIdleSeconds: 1}).ContinuousIdleSeconds)
+	assert.Equal(t, ContinuousIdleSecondsMax, voice(VoiceConfig{ContinuousIdleSeconds: 90000}).ContinuousIdleSeconds)
+
+	assert.Zero(t, off.CommaPauseSeconds, "pause punctuation is off by default")
+	assert.Zero(t, off.PeriodPauseSeconds)
+	pauses := voice(VoiceConfig{CommaPauseSeconds: 0.7, PeriodPauseSeconds: 99})
+	assert.Equal(t, 0.7, pauses.CommaPauseSeconds)
+	assert.Equal(t, VoicePauseSecondsMax, pauses.PeriodPauseSeconds)
+	assert.Equal(t, VoicePauseSecondsMin, voice(VoiceConfig{CommaPauseSeconds: 0.01}).CommaPauseSeconds)
+
+	wakeOn := VoicePhrase{Action: VoiceActionWake, Phrase: "hey tofu", Enabled: new(true)}
+	on := voice(VoiceConfig{WakeEnabled: true, SilenceSendSeconds: 1, Phrases: []VoicePhrase{wakeOn}})
+	assert.True(t, on.WakeEnabled)
+	assert.Equal(t, "hey tofu", phrase(on, VoiceActionWake))
+	assert.Equal(t, SilenceSendSecondsMin, on.SilenceSendSeconds)
+	assert.Equal(t, SilenceSendSecondsMax, voice(VoiceConfig{SilenceSendSeconds: 900}).SilenceSendSeconds)
+
+	wakeSaying := func(words string) VoicePhrase {
+		return VoicePhrase{Action: VoiceActionWake, Phrase: words, Enabled: new(true)}
+	}
+	same := voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{wakeSaying("Send  Now")}})
+	assert.False(t, same.WakeEnabled, "a wake phrase equal to the send phrase is off")
+	assert.Equal(t, "", phrase(same, VoiceActionWake))
+	assert.False(t, voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{wakeSaying("")}}).WakeEnabled)
+
+	listenerOnly := voice(VoiceConfig{WakeEnabled: true})
+	assert.False(t, listenerOnly.WakeEnabled, "the listener needs an active wake phrase")
+	phraseOnly := voice(VoiceConfig{Phrases: []VoicePhrase{wakeOn}})
+	assert.False(t, phraseOnly.WakeEnabled, "an active wake phrase needs the listener")
+	assert.Equal(t, "hey tofu", phrase(phraseOnly, VoiceActionWake))
+
+	stopAs := func(words string) VoicePhrase { return VoicePhrase{Action: VoiceActionStop, Phrase: words} }
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{stopAs("Send Now")}}), VoiceActionStop), "a stop phrase equal to the send phrase is off")
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{wakeOn, stopAs("hey tofu")}}), VoiceActionStop), "a stop phrase equal to the wake phrase is off")
+
+	stewardOn := func(words string) VoicePhrase {
+		return VoicePhrase{Action: VoiceActionSteward, Phrase: words, Enabled: new(true)}
+	}
+	stewardOnly := voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{stewardOn("hey stewie")}})
+	assert.True(t, stewardOnly.WakeEnabled, "either wake phrase gives the listener something to hear")
+	assert.Equal(t, "hey stewie", phrase(stewardOnly, VoiceActionSteward))
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{{Action: VoiceActionSteward, Phrase: "hey stewie"}}}), VoiceActionSteward), "the Steward phrase is off by default")
+	assert.Equal(t, "", phrase(voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{wakeOn, stewardOn("Hey  Tofu")}}), VoiceActionSteward), "the two wake phrases must differ")
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{stewardOn("stop listening")}}), VoiceActionStop), "a stop phrase equal to the Steward phrase is off")
+
+	sendOff := VoicePhrase{Action: VoiceActionSend, Phrase: "over", Enabled: new(false)}
+	assert.Equal(t, "", phrase(voice(VoiceConfig{Phrases: []VoicePhrase{sendOff}}), VoiceActionSend), "an off phrase matches nothing")
+	freed := voice(VoiceConfig{WakeEnabled: true, Phrases: []VoicePhrase{sendOff, wakeSaying("over")}})
+	assert.True(t, freed.WakeEnabled, "an off send phrase doesn't clash with the wake phrase")
+	assert.Equal(t, "over", phrase(freed, VoiceActionWake))
+	unset := voice(VoiceConfig{Phrases: []VoicePhrase{{Action: VoiceActionSend, Phrase: "over"}, {Action: VoiceActionWake, Phrase: "yo"}}})
+	assert.Equal(t, "over", phrase(unset, VoiceActionSend), "no Enabled keeps the default on")
+	assert.Equal(t, "", phrase(unset, VoiceActionWake), "no Enabled keeps the default off")
+
+	legacy := ""
+	cfg := &Config{Dashboard: &DashboardConfig{DictationSendPhrase: &legacy}}
+	assert.Equal(t, "", phrase(cfg.Voice(), VoiceActionSend), "the earlier key still counts")
+	cfg.Dashboard.Voice = &VoiceConfig{Phrases: []VoicePhrase{{Action: VoiceActionSend, Phrase: "over"}, {Action: "unknown", Phrase: "x"}}}
+	assert.Equal(t, "over", phrase(cfg.Voice(), VoiceActionSend), "the list wins")
+	assert.Len(t, cfg.Voice().Phrases, len(VoicePhraseDefaults))
+}
+
+func TestSidePanelTuning(t *testing.T) {
+	def := (*Config)(nil).SidePanelTuning()
+	assert.Equal(t, SidePanelTuning{
+		PredictivePeek: true, GrowingPeek: false, EdgeZonePx: 32, RetractMs: 500,
+		PredictMinSpeed: 1200, PredictSpeedDistancePx: 600, PredictMinSpeedFloor: 600,
+		PredictMinReadings: 4, MinTravelPx: 80, BrakePercent: 70, PeekMinPx: 48,
+	}, def, "nil → today's defaults")
+	assert.Equal(t, def, (&Config{Dashboard: &DashboardConfig{}}).SidePanelTuning(), "absent keys → defaults")
+	off, big, neg, slow := false, 100000, -5, 300
+	got := (&Config{Dashboard: &DashboardConfig{
+		SidePanelPredictivePeek: &off, SidePanelGrowingPeek: &off,
+		SidePanelEdgeZonePx: &big, SidePanelRetractMs: &neg, SidePanelBrakePercent: &big,
+		SidePanelPredictMinSpeed: &slow,
+	}}).SidePanelTuning()
+	assert.False(t, got.PredictivePeek)
+	assert.False(t, got.GrowingPeek)
+	on := true
+	assert.True(t, (&Config{Dashboard: &DashboardConfig{SidePanelGrowingPeek: &on}}).SidePanelTuning().GrowingPeek,
+		"the growing peek is off by default, on when set (tcl-bg5qm1)")
+	assert.Equal(t, 200, got.EdgeZonePx, "clamped to the max")
+	assert.Equal(t, SidePanelTuningLimits["retract_ms"].Min, got.RetractMs, "clamped to the min")
+	assert.Equal(t, 100, got.BrakePercent)
+	assert.Equal(t, 300, got.PredictMinSpeedFloor, "the floor never exceeds the minimum speed")
+}
+
+// The task board defaults on; an explicit false turns it off. Nil-safe.
+func TestTaskboardEnabledDefaultsOn(t *testing.T) {
+	var nilCfg *Config
+	assert.True(t, nilCfg.TaskboardEnabled())
+	assert.True(t, (&Config{}).TaskboardEnabled())
+	assert.True(t, (&Config{Features: &FeaturesConfig{}}).TaskboardEnabled())
+	assert.True(t, (&Config{Features: &FeaturesConfig{Taskboard: new(true)}}).TaskboardEnabled())
+	assert.False(t, (&Config{Features: &FeaturesConfig{Taskboard: new(false)}}).TaskboardEnabled())
 }

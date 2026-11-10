@@ -73,6 +73,7 @@ func refreshFleetMetadata(ctx context.Context) {
 	fleetMetadataAttempt = time.Now()
 	fleetMetadataMu.Unlock()
 	harnessops.RefreshLatestAsyncContext(ctx)
+	refreshUpdateScriptStatus()
 	service, err := localUpdateService()
 	if err != nil {
 		slog.Debug("self-update metadata unavailable", "error", err)

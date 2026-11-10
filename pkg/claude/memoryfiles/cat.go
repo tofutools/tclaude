@@ -44,23 +44,9 @@ func CatCmd() *cobra.Command {
 
 // RunCat is the testable core of `memory-files cat`.
 func RunCat(params *CatParams, stdout, stderr *os.File) int {
-	targetDir, err := resolveTargetDir(params.Dir)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
-		return 1
-	}
-
-	res, err := resolveProjectDirs(targetDir, scanModeFrom(params.NoSiblings, params.Prefix))
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return 1
-	}
-	if res.note != "" {
-		fmt.Fprintf(stderr, "Note: %s\n", res.note)
-	}
-	if len(res.dirs) == 0 {
-		fmt.Fprintf(stdout, "No Claude project directories found for %s (encoded: %s).\n", targetDir, res.encoded)
-		return 0
+	res, code, done := scanProjectDirs(params.Dir, params.NoSiblings, params.Prefix, stdout, stderr)
+	if done {
+		return code
 	}
 
 	files := listMemoryMD(res.dirs)

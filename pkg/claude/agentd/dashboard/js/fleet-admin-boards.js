@@ -1,8 +1,12 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { BoardItems } from './fleet-admin-board-items.js';
+import { BoardItems, short } from './fleet-admin-board-items.js';
 import { ContentBrowser } from './fleet-admin-board-browser.js';
+import { Button, Select } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
+import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -24,9 +28,6 @@ const INVITE_TTLS = Object.freeze([
   { s: 86400, label: '1 day' },
   { s: 7 * 86400, label: '7 days' },
 ]);
-
-function errText(error) { return error?.message || String(error); }
-const short = (v) => String(v || '').slice(0, 10);
 
 // inviteHub reads the hub URL out of a pasted invite (board1_ + base64url
 // JSON), for the "wrong hub" message only; the daemon does the real check.
@@ -149,35 +150,31 @@ function BoardDetail({ board, boards = [], view, actions, confirm, toast, copy, 
   return html`<div class="fa-board-detail" id="fleet-board-detail" data-board=${board.id}>
     <${BoardItems} board=${board} boards=${boards} name=${(id) => memberName(id, view)} actions=${actions} confirm=${confirm} toast=${toast} onChanged=${onChanged} />
     <div class="fa-row"><b>Members</b></div>
-    ${members?.error ? html`<div class="fa-danger">${members.error}</div>` : !members ? html`<div class="muted">Loading members…</div>` : html`<table class="fa-table" id="fleet-board-members">
-      <thead><tr><th>Member</th><th>Role</th><th></th></tr></thead>
-      <tbody>${members.map((m) => html`<tr key=${m.instance} data-member=${m.instance}>
+    ${members?.error ? html`<div class="fa-danger">${members.error}</div>` : !members ? html`<div class="muted">Loading members…</div>` : html`<${FaTable} id="fleet-board-members" head=${['Member', 'Role', '']}>${members.map((m) => html`<tr key=${m.instance} data-member=${m.instance}>
         <td>${memberName(m.instance, view) ? html`${memberName(m.instance, view)} ` : ''}<code>${m.instance}</code></td>
-        <td>${owner ? html`<select data-board="role" value=${m.role} onChange=${(e) => setRole(m, e.currentTarget.value)}>
-            ${Object.entries(ROLES).map(([v, l]) => html`<option key=${v} value=${v} selected=${m.role === v}>${l}</option>`)}</select>` : roleText(m.role)}</td>
-        <td class="fa-acts">${owner && m.instance !== view.self?.id && html`<button type="button" data-board="remove" onClick=${() => remove(m)}>Remove…</button>`}</td>
-      </tr>`)}</tbody></table>`}
+        <td>${owner ? html`<${Select} size="sm" data-board="role" value=${m.role} onChange=${(e) => setRole(m, e.currentTarget.value)}>
+            ${Object.entries(ROLES).map(([v, l]) => html`<option key=${v} value=${v} selected=${m.role === v}>${l}</option>`)}<//>` : roleText(m.role)}</td>
+        <td class="fa-acts">${owner && m.instance !== view.self?.id && html`<${Button} size="sm" variant="ghost danger" data-board="remove" onClick=${() => remove(m)}>Remove…<//>`}</td>
+      </tr>`)}<//>`}
     ${owner && html`<div class="fa-row" id="fleet-board-invite">
-      Invite someone who <select id="fleet-board-invite-role" value=${invite.role} onChange=${(e) => setInvite({ ...invite, role: e.currentTarget.value })}>
-        <option value="reader" selected=${invite.role === 'reader'}>can read</option><option value="publisher" selected=${invite.role === 'publisher'}>can post</option></select>
-      valid for <select id="fleet-board-invite-ttl" value=${String(invite.ttl)} onChange=${(e) => setInvite({ ...invite, ttl: Number(e.currentTarget.value) })}>
-        ${INVITE_TTLS.map((t) => html`<option key=${t.s} value=${String(t.s)} selected=${invite.ttl === t.s}>${t.label}</option>`)}</select>
-      <button type="button" class="primary" id="fleet-board-invite-create" disabled=${!!board.frozen} title=${board.frozen ? 'The hub froze this board: no one can join until it is unfrozen' : ''} onClick=${createInvite}>Create invite…</button>
+      Invite someone who <${Select} size="sm" id="fleet-board-invite-role" value=${invite.role} onChange=${(e) => setInvite({ ...invite, role: e.currentTarget.value })}>
+        <option value="reader" selected=${invite.role === 'reader'}>can read</option><option value="publisher" selected=${invite.role === 'publisher'}>can post</option><//>
+      valid for <${Select} size="sm" id="fleet-board-invite-ttl" value=${String(invite.ttl)} onChange=${(e) => setInvite({ ...invite, ttl: Number(e.currentTarget.value) })}>
+        ${INVITE_TTLS.map((t) => html`<option key=${t.s} value=${String(t.s)} selected=${invite.ttl === t.s}>${t.label}</option>`)}<//>
+      <${Button} size="sm" variant="primary" id="fleet-board-invite-create" disabled=${!!board.frozen} title=${board.frozen ? 'The hub froze this board: no one can join until it is unfrozen' : ''} onClick=${createInvite}>Create invite…<//>
       <span class="spacer"></span>
-      <button type="button" id="fleet-board-rotate" onClick=${rotate}>Change key…</button>
+      <${Button} size="sm" id="fleet-board-rotate" onClick=${rotate}>Change key…<//>
     </div>`}
-    ${token?.token && html`<div class="fa-hub-token" id="fleet-board-new-invite">Invite, shown once (expires ${new Date(token.expires_at).toLocaleString()}): <code>${token.token}</code>
-      <button type="button" class="fa-link" onClick=${() => copy(token.token).then(() => toast('Invite copied', false)).catch(() => toast('Copy it from the page', true))}>copy</button>
-      <button type="button" class="fa-link" id="fleet-board-invite-cancel" onClick=${() => cancelInvite(token.token_id)}>cancel invite…</button>
-      <button type="button" class="fa-link" onClick=${() => setToken(null)}>hide</button></div>`}
+    ${token?.token && html`<div class="fa-hub-token" id="fleet-board-new-invite">Invite, shown once (expires ${new Date(token.expires_at).toLocaleString()}): <code data-capture-mask>${token.token}</code>
+      <${Button} size="sm" variant="link" class="fa-link" onClick=${() => copy(token.token).then(() => toast('Invite copied', false)).catch(() => toast('Copy it from the page', true))}>copy<//>
+      <${Button} size="sm" variant="link" class="fa-link" id="fleet-board-invite-cancel" onClick=${() => cancelInvite(token.token_id)}>cancel invite…<//>
+      <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setToken(null)}>hide<//></div>`}
     ${owner && invites?.error && html`<div class="fa-danger" id="fleet-board-invites-error">Could not list invites: ${invites.error}</div>`}
-    ${owner && open.length > 0 && html`<table class="fa-table" id="fleet-board-invites">
-      <thead><tr><th>Open invites</th><th>Expires</th><th></th></tr></thead>
-      <tbody>${open.map((i) => html`<tr key=${i.token_id} data-invite=${i.token_id}>
+    ${owner && open.length > 0 && html`<${FaTable} id="fleet-board-invites" head=${['Open invites', 'Expires', '']}>${open.map((i) => html`<tr key=${i.token_id} data-invite=${i.token_id}>
         <td>${roleText(i.role)}</td>
-        <td>${new Date(i.expires_at).toLocaleString()}</td>
-        <td class="fa-acts"><button type="button" data-board="cancel-invite" onClick=${() => cancelInvite(i.token_id)}>Cancel…</button></td>
-      </tr>`)}</tbody></table>`}
+        <td>${localStamp(i.expires_at)}</td>
+        <td class="fa-acts"><${Button} size="sm" variant="ghost danger" data-board="cancel-invite" onClick=${() => cancelInvite(i.token_id)}>Cancel…<//></td>
+      </tr>`)}<//>`}
     ${owner && used.length > 0 && html`<div class="muted" id="fleet-board-invites-used">Recently used invites: ${used.map((i, n) => html`${n ? ', ' : ''}${memberName(i.used_by, view) || html`<code>${i.used_by}</code>`} (${roleText(i.role)})`)}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards members --board ${board.id}</code>${owner ? html`, <code>invite --board ${board.id} --role reader --ttl 1h</code>` : ''}</div>
   </div>`;
@@ -202,16 +199,16 @@ function BoardUpdates({ updates, actions, toast, loadUpdates, onOpen }) {
       .catch((e) => toast(`Saving failed: ${errText(e)}`, true)).finally(() => setBusy(false));
   };
   return html`<div class="fa-board-updates" id="fleet-board-updates">
-    ${list.length > 0 && html`<h4>Newer versions of items you keep <span class="fa-badge">${list.length}</span></h4>
-      <table class="fa-table" id="fleet-board-updates-list"><tbody>${list.map((u) => html`<tr key=${`${u.board}/${u.item}`} data-board-update=${u.item}>
+    ${list.length > 0 && html`<h4>Newer versions of items you keep <span class="ui-tag ui-tag-accent fa-badge">${list.length}</span></h4>
+      <table class="fa-table ui-compact" id="fleet-board-updates-list"><tbody>${list.map((u) => html`<tr key=${`${u.board}/${u.item}`} data-board-update=${u.item}>
         <td>${u.name}</td><td class="muted">on ${u.board_name || u.board}</td>
         <td class="muted">you keep <code title=${u.pinned_version}>${short(u.pinned_version)}</code> · latest <code title=${u.latest_version}>${short(u.latest_version)}</code></td>
-        <td class="fa-acts"><button type="button" data-board-update-open=${u.board} onClick=${() => onOpen(u.board)}>Open board</button></td>
+        <td class="fa-acts"><${Button} size="sm" data-board-update-open=${u.board} onClick=${() => onOpen(u.board)}>Open board<//></td>
       </tr>`)}</tbody></table>`}
     <div class="fa-row muted">
       <label><input type="checkbox" id="fleet-board-update-notify" checked=${!!updates.notify} disabled=${busy} onChange=${(e) => notify(e.currentTarget.checked)} />
         Also leave a note in Messages when an item I keep gets a newer version</label>
-      <button type="button" id="fleet-board-update-check" disabled=${busy} onClick=${check}>Check now</button>
+      <${Button} size="sm" id="fleet-board-update-check" disabled=${busy} onClick=${check}>Check now<//>
       ${updates.checked_at && html`<span>checked ${new Date(updates.checked_at).toLocaleTimeString()}</span>`}
       ${updates.error && html`<span class="fa-danger">last check failed: ${updates.error}</span>`}
     </div>
@@ -273,30 +270,28 @@ export function BoardsPage({ view, actions, confirm, toast, copy, updates = null
   // With no boards there is nothing to browse: joining or creating comes first.
   const browsing = mode === 'browse' && list.length > 0;
   return html`<div class="fa-boards" id="fleet-boards">
-    ${list.length > 0 && html`<div class="fa-subtabs" role="tablist" id="fleet-boards-mode">${[['browse', 'Browse content'], ['manage', 'Manage boards']].map(([id, label]) => html`<button type="button" role="tab" key=${id} data-boards-mode=${id}
-      aria-selected=${(browsing ? 'browse' : 'manage') === id ? 'true' : 'false'} class=${`fa-subtab${(browsing ? 'browse' : 'manage') === id ? ' on' : ''}`} onClick=${() => setMode(id)}>${label}</button>`)}</div>`}
+    ${list.length > 0 && html`<${Tabs} class="fa-subnav" id="fleet-boards-mode" label="Boards views" value=${browsing ? 'browse' : 'manage'} onSelect=${setMode}
+      items=${[['browse', 'Browse content'], ['manage', 'Manage boards']].map(([id, label]) => ({ key: id, label, class: 'fa-subtab', attrs: { 'data-boards-mode': id } }))} />`}
     ${browsing ? html`${updates?.updates?.length > 0 && html`<${BoardUpdates} updates=${updates} actions=${actions} toast=${toast} loadUpdates=${loadUpdates} onOpen=${(id) => { setOpen(id); setMode('manage'); }} />`}<${ContentBrowser} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} onOpenBoard=${(id) => { setOpen(id); setMode('manage'); }} />` : html`
     <div class="muted fa-wrap">Boards share content with other nodes through the hub, without linking the nodes or giving anyone access to this machine. ${HUB_TRUST}</div>
     <div class="fa-row" id="fleet-board-join">
-      <input id="fleet-board-token" class="fa-grow" placeholder="Paste an invite to join a board" autocomplete="off" spellcheck="false" value=${token}
+      <input data-capture-mask id="fleet-board-token" class="fa-grow" placeholder="Paste an invite to join a board" autocomplete="off" spellcheck="false" value=${token}
         onInput=${(e) => { setToken(e.currentTarget.value); setJoinFail(''); }} onKeyDown=${(e) => { if (e.key === 'Enter') join(); }} />
-      <button type="button" class="primary" id="fleet-board-join-btn" disabled=${busy || !token.trim()} onClick=${join}>Join</button>
+      <${Button} size="sm" variant="primary" id="fleet-board-join-btn" disabled=${busy || !token.trim()} onClick=${join}>Join<//>
       <input id="fleet-board-name" placeholder="New board name" value=${name} onInput=${(e) => setName(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter') create(); }} />
-      <button type="button" id="fleet-board-create" disabled=${busy || !name.trim()} onClick=${create}>Create</button>
+      <${Button} size="sm" id="fleet-board-create" disabled=${busy || !name.trim()} onClick=${create}>Create<//>
     </div>
     ${joinFail && html`<div class="fa-danger" id="fleet-board-join-error" role="alert">${joinFail}</div>`}
     <${BoardUpdates} updates=${updates} actions=${actions} toast=${toast} loadUpdates=${loadUpdates} onOpen=${setOpen} />
-    ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-boards-empty">No boards yet. Paste an invite above, or create one.</div>` : html`<table class="fa-table" id="fleet-boards-list">
-      <thead><tr><th>Board</th><th>You</th><th>Limits</th><th></th></tr></thead>
-      <tbody>${list.flatMap((b) => [html`<tr key=${b.id} data-board-id=${b.id} class=${open === b.id ? 'on' : ''}>
-        <td><button type="button" class="fa-link" data-board="open" onClick=${() => setOpen(open === b.id ? '' : b.id)}>${b.name || b.id}</button>${b.frozen ? html` <span class="fa-warn-chip" title="The hub froze this board: no posting or joining until it is unfrozen">frozen</span>` : ''}</td>
+    ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted" id="fleet-boards-empty">No boards yet. Paste an invite above, or create one.</div>` : html`<${FaTable} id="fleet-boards-list" head=${['Board', 'You', 'Limits', '']}>${list.flatMap((b) => [html`<tr key=${b.id} data-board-id=${b.id} class=${open === b.id ? 'on' : ''}>
+        <td><${Button} size="sm" variant="link" class="fa-link" data-board="open" onClick=${() => setOpen(open === b.id ? '' : b.id)}>${b.name || b.id}<//>${b.frozen ? html` <span class="ui-tag ui-tag-warn fa-warn-chip" title="The hub froze this board: no posting or joining until it is unfrozen">frozen</span>` : ''}</td>
         <td>${roleText(b.role)}</td>
         <td class="muted">${limits(b)}</td>
-        <td class="fa-acts"><button type="button" data-board="leave" onClick=${() => leave(b)}>Leave…</button>${b.role === 'owner' && html` <button type="button" data-board="delete" onClick=${() => remove(b)}>Delete…</button>`}</td>
+        <td class="fa-acts"><${Button} size="sm" data-board="leave" onClick=${() => leave(b)}>Leave…<//>${b.role === 'owner' && html` <${Button} size="sm" variant="ghost danger" data-board="delete" onClick=${() => remove(b)}>Delete…<//>`}</td>
       </tr>`,
       // The open board's details sit directly under its own row.
       open === b.id && html`<tr key=${`${b.id}:detail`} class="fa-board-detail-row"><td colspan="4">
-        <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reloadAll} /></td></tr>`])}</tbody></table>`}
+        <${BoardDetail} key=${open} board=${b} boards=${list} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} onChanged=${reloadAll} /></td></tr>`])}<//>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation boards list</code>, <code>join --token …</code>, <code>create --name …</code>, <code>delete --board …</code>, <code>updates [--notify on|off]</code></div>`}
   </div>`;
 }
@@ -341,20 +336,18 @@ export function HubBoards({ actions, confirm, toast }) {
   };
   const list = Array.isArray(boards) ? boards : [];
   return html`<div class="fa-hub-boards" id="fleet-hub-boards">
-    ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted">No boards.</div>` : html`<table class="fa-table">
-      <thead><tr><th>Board</th><th>ID</th><th>Limits</th><th></th></tr></thead>
-      <tbody>${list.map((b) => html`<tr key=${b.id} data-hub-board=${b.id}>
-        <td>${b.name || '—'}${b.frozen ? html` <span class="fa-warn-chip">frozen</span>` : ''}</td><td><code>${b.id}</code></td>
+    ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted">No boards.</div>` : html`<${FaTable} head=${['Board', 'ID', 'Limits', '']}>${list.map((b) => html`<tr key=${b.id} data-hub-board=${b.id}>
+        <td>${b.name || '—'}${b.frozen ? html` <span class="ui-tag ui-tag-warn fa-warn-chip">frozen</span>` : ''}</td><td><code>${b.id}</code></td>
         <td>${edit?.board.id === b.id ? html`<span class="fa-row">
             <input class="fa-num" aria-label="members" value=${edit.members} onInput=${(e) => setEdit({ ...edit, members: e.currentTarget.value })} /> members
             <input class="fa-num" aria-label="MiB" value=${edit.mib} onInput=${(e) => setEdit({ ...edit, mib: e.currentTarget.value })} /> MiB
             <input class="fa-num" aria-label="versions" value=${edit.versions} onInput=${(e) => setEdit({ ...edit, versions: e.currentTarget.value })} /> versions</span>` : limits(b)}</td>
         <td class="fa-acts">${edit?.board.id === b.id
-          ? html`<button type="button" class="primary" data-hub-board-act="save" onClick=${save}>Save…</button> <button type="button" onClick=${() => setEdit(null)}>Cancel</button>`
-          : html`<button type="button" data-hub-board-act="limits" onClick=${() => setEdit({ board: b, members: String(b.max_members || ''), mib: String(Math.round((b.quota_bytes || 0) / (1 << 20)) || ''), versions: String(b.max_versions || '') })}>Limits…</button>
-            <button type="button" data-hub-board-act="freeze" onClick=${() => freeze(b)}>${b.frozen ? 'Unfreeze…' : 'Freeze…'}</button>
-            <button type="button" data-hub-board-act="delete" onClick=${() => remove(b)}>Delete…</button>`}</td>
-      </tr>`)}</tbody></table>`}
+          ? html`<${Button} size="sm" variant="primary" data-hub-board-act="save" onClick=${save}>Save…<//> <${Button} size="sm" onClick=${() => setEdit(null)}>Cancel<//>`
+          : html`<${Button} size="sm" data-hub-board-act="limits" onClick=${() => setEdit({ board: b, members: String(b.max_members || ''), mib: String(Math.round((b.quota_bytes || 0) / (1 << 20)) || ''), versions: String(b.max_versions || '') })}>Limits…<//>
+            <${Button} size="sm" data-hub-board-act="freeze" onClick=${() => freeze(b)}>${b.frozen ? 'Unfreeze…' : 'Freeze…'}<//>
+            <${Button} size="sm" variant="ghost danger" data-hub-board-act="delete" onClick=${() => remove(b)}>Delete…<//>`}</td>
+      </tr>`)}<//>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation hub boards list|set|delete --board ID</code></div>
   </div>`;
 }

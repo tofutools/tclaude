@@ -138,31 +138,6 @@ func AgentRecoveryForConv(convID string) (*AgentRecovery, error) {
 	return r, err
 }
 
-func DueAgentRecoveries(now time.Time) ([]AgentRecovery, error) {
-	d, err := Open()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := d.Query(agentRecoverySelect+` WHERE
-		(status IN (?, ?) AND next_attempt_at IS NOT NULL AND next_attempt_at <= ?)
-		OR (status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
-		ORDER BY next_attempt_at, agent_id`, AgentRecoveryStatusCrashed,
-		AgentRecoveryStatusBackoff, recoveryTime(now), AgentRecoveryStatusRestarting, recoveryTime(now))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []AgentRecovery
-	for rows.Next() {
-		r, err := scanAgentRecovery(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *r)
-	}
-	return out, rows.Err()
-}
-
 func ActiveAgentRecoveries() ([]AgentRecovery, error) {
 	d, err := Open()
 	if err != nil {

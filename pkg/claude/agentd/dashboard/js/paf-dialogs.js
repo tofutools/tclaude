@@ -1,12 +1,20 @@
 import { h } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
+import { ModelCombobox } from './registry-picker.js';
 import { dashboardState } from './snapshot-store.js';
+import { WorkflowImportButton } from './process-workflow-share.js';
 import {
-  downloadBlob, findingsText, lossSummary, modelsFor, provenanceRows, redactionText, rungBadge,
+  confirmGroups, findingsText, lossSummary, modelsFor, provenanceRows, redactionText, rungBadge,
   safeFilename, spawnableHarnesses,
 } from './paf-model.js';
+import { downloadBlob } from './download.js';
+import { shortId } from './helpers.js';
+import { processesAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -14,7 +22,7 @@ function message(error) { return error?.message || String(error); }
 
 function Check({ id, checked, disabled, onChange, children, hint }) {
   return html`<label class="paf-check"><input id=${id} type="checkbox" checked=${checked} disabled=${disabled}
-    onChange=${(event) => onChange(event.currentTarget.checked)} /><span>${children}${hint && html`<span class="paf-hint">${hint}</span>`}</span></label>`;
+    onChange=${(event) => onChange(event.currentTarget.checked)} /><span>${children}${hint && html`<span class="paf-hint ui-hint">${hint}</span>`}</span></label>`;
 }
 
 // FindingsPanel shows a credential scan. Counts, kinds and locations only.
@@ -48,14 +56,14 @@ function RedactPanel({ actions, source, filename, onDone }) {
       else { downloadBlob(out, filename); onDone?.(); }
     } catch (e) { setError(message(e)); } finally { setBusy(''); }
   };
-  return html`<div class="paf-redact" id="paf-redact">
-    <div class="paf-sec">Redact before sharing</div>
+  return html`<div class="paf-redact ui-card ui-inset" id="paf-redact">
+    <div class="ui-eyebrow paf-sec">Redact before sharing</div>
     <${Check} id="paf-redact-mask" checked=${opts.mask_flagged} onChange=${set('mask_flagged')}>Mask suspected credentials</${Check}>
     <${Check} id="paf-redact-paths" checked=${opts.paths_to_placeholders} onChange=${set('paths_to_placeholders')}>Replace home, working dir and user name with placeholders</${Check}>
     <${Check} id="paf-redact-stub" checked=${opts.stub_tool_results} onChange=${set('stub_tool_results')}>Stub tool results older than the last 3 turns</${Check}>
     <${Check} id="paf-redact-reasoning" checked=${opts.drop_reasoning} onChange=${set('drop_reasoning')}>Drop reasoning</${Check}>
     <${Check} id="paf-redact-media" checked=${opts.drop_media} onChange=${set('drop_media')}>Drop images and documents</${Check}>
-    <div class="paf-hint">Redacting always drops the native history; the conversation travels in neutral form.</div>
+    <div class="paf-hint ui-hint">Redacting always drops the native history; the conversation travels in neutral form.</div>
     ${report && html`<div class="paf-report" id="paf-redact-report">
       ${redactionText(report).map((line) => html`<div key=${line}>✓ ${line}</div>`)}
       ${(report.findings || []).length
@@ -63,14 +71,16 @@ function RedactPanel({ actions, source, filename, onDone }) {
           <${Check} id="paf-redact-ack" checked=${ack} onChange=${setAck}>Download anyway; I have checked the remaining findings</${Check}>`
         : html`<div class="paf-ok">✓ No suspected credentials remain.</div>`}
     </div>`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="paf-row-buttons">
-      <button type="button" id="paf-redact-preview" disabled=${!!busy} onClick=${() => run(true)}>${busy === 'preview' ? 'Previewing…' : 'Preview redaction'}</button>
-      <button type="button" id="paf-redact-download" class="primary" disabled=${!!busy || !report || (stillFlagged && !ack)} title=${report ? '' : 'Preview the redaction first'}
-        onClick=${() => run(false)}>${busy === 'download' ? 'Redacting…' : '⤓ Download redacted .paf'}</button>
+      <${Button} id="paf-redact-preview" disabled=${!!busy} onClick=${() => run(true)}>${busy === 'preview' ? 'Previewing…' : 'Preview redaction'}<//>
+      <${Button} variant="primary" id="paf-redact-download" disabled=${!!busy || !report || (stillFlagged && !ack)} title=${report ? '' : 'Preview the redaction first'}
+        onClick=${() => run(false)}>${busy === 'download' ? 'Redacting…' : '⤓ Download redacted .paf'}<//>
     </div>
   </div>`;
 }
+
+function processesOn() { return processesAvailable(dashboardState.snapshot.value); }
 
 // AgentExportDialog exports one agent as a PAF (agent ⚙ → export (PAF)…).
 // An export the credential scan flags is refused until the human either
@@ -80,6 +90,7 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
   const [history, setHistory] = useState(true);
   const [native, setNative] = useState(true);
   const [neutral, setNeutral] = useState(true);
+  const [workflows, setWorkflows] = useState(false);
   const [findings, setFindings] = useState(null);
   const [ack, setAck] = useState(false);
   const [redacting, setRedacting] = useState(false);
@@ -88,7 +99,7 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
   const flaggedBlob = useRef(null);
   const label = descriptor.label || descriptor.agent;
   const filename = safeFilename(label, '.paf');
-  const choices = (allowFlagged) => ({ agent: descriptor.agent, history, native, neutral, allowFlagged });
+  const choices = (allowFlagged) => ({ agent: descriptor.agent, history, native, neutral, allowFlagged, workflows });
   const reset = (fn) => (value) => { fn(value); setFindings(null); setAck(false); setRedacting(false); flaggedBlob.current = null; };
   const download = async () => {
     if (busy) return;
@@ -108,9 +119,8 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
     if (!flaggedBlob.current) flaggedBlob.current = await actions.exportAgentPAF(choices(true));
     return flaggedBlob.current;
   };
-  return html`<${Overlay} id="paf-export-modal" labelledby="paf-export-title" onClose=${state.closeDialog}
-    dirty=${false} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-    <h3 id="paf-export-title">Export ${label} as PAF</h3>
+  return html`<${Dialog} id="paf-export-modal" onClose=${state.closeDialog}
+    dirty=${false} blocked=${busy} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} title=${html`Export ${label} as PAF`}>
     <div class="modal-meta">A portable file you can import anywhere or read with <code>tclaude paf render</code>. It is a fork point: importing it creates a new agent.</div>
     <${Check} id="paf-export-history" checked=${history} disabled=${busy} onChange=${reset(setHistory)}
       hint="Without it only the definition and environment travel.">Conversation history</${Check}>
@@ -120,22 +130,24 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
       <${Check} id="paf-export-neutral" checked=${neutral} disabled=${busy || !history} onChange=${reset(setNeutral)}
         hint="Lets other harnesses and readers land it.">Harness-neutral context</${Check}>
     </div>
-    ${history && !native && !neutral && html`<div class="cron-create-error">Keep at least one copy of the conversation, or untick Conversation history.</div>`}
+    ${processesOn() && html`<${Check} id="paf-export-workflows" checked=${workflows} disabled=${busy} onChange=${reset(setWorkflows)}
+      hint="The templates of its active runs. An older tclaude cannot import a file that carries workflows.">Carry its workflows</${Check}>`}
+    ${history && !native && !neutral && html`<div class="cron-create-error ui-error-box">Keep at least one copy of the conversation, or untick Conversation history.</div>`}
     ${findings && html`<${FindingsPanel} findings=${findings} />
       ${!redacting && html`<div class="paf-flagged-actions">
         <${Check} id="paf-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>
-        <button type="button" id="paf-export-redact" onClick=${() => setRedacting(true)}>Redact…</button>
+        <${Button} id="paf-export-redact" onClick=${() => setRedacting(true)}>Redact…<//>
       </div>`}
       ${redacting && html`<${RedactPanel} actions=${actions} source=${unredacted} filename=${safeFilename(label, '.redacted.paf')} onDone=${state.closeDialog} />`}`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" id="paf-export-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} id="paf-export-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button type="button" id="paf-export-download" class="primary"
+      <${Button} variant="primary" id="paf-export-download"
         disabled=${busy || (history && !native && !neutral) || (!!findings && !ack)} onClick=${download}>
-        ${busy ? 'Exporting…' : '⤓ Download .paf'}</button>
+        ${busy ? 'Exporting…' : '⤓ Download .paf'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // GroupExportDialog picks the group archive format: a group PAF, the
@@ -143,6 +155,7 @@ export function AgentExportDialog({ descriptor, state, actions, confirmDiscard }
 export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [format, setFormat] = useState('paf');
+  const [workflows, setWorkflows] = useState(false);
   const [findings, setFindings] = useState(null);
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -152,7 +165,7 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
     setBusy(true);
     setError('');
     try {
-      const { blob, filename } = await actions.exportGroupArchive(descriptor.group, format, !!findings && ack);
+      const { blob, filename } = await actions.exportGroupArchive(descriptor.group, format, !!findings && ack, '', format === 'paf' && workflows);
       downloadBlob(blob, filename);
       state.closeDialog();
     } catch (e) {
@@ -161,24 +174,35 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
     } finally { setBusy(false); }
   };
   const pick = (value) => { setFormat(value); setFindings(null); setAck(false); };
-  return html`<${Overlay} id="group-export-modal" labelledby="group-export-title" onClose=${state.closeDialog}
-    dirty=${false} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-    <h3 id="group-export-title">Export group ${descriptor.group}</h3>
+  return html`<${Dialog} id="group-export-modal" onClose=${state.closeDialog}
+    dirty=${false} blocked=${busy} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} title=${html`Export group ${descriptor.group}`}>
     <div class="modal-meta">Members, roles, permissions, messages and every conversation, in one file.</div>
     <label class="paf-check"><input type="radio" name="group-export-format" id="group-export-paf" checked=${format === 'paf'} onChange=${() => pick('paf')} />
-      <span>.paf<span class="paf-hint">Group PAF: every member with its own harness's history; other tools can read it.</span></span></label>
+      <span>.paf<span class="paf-hint ui-hint">Group PAF: every member with its own harness's history; other tools can read it.</span></span></label>
     <label class="paf-check"><input type="radio" name="group-export-format" id="group-export-zip" checked=${format === 'zip'} onChange=${() => pick('zip')} />
-      <span>.zip (legacy)<span class="paf-hint">For importing into an older tclaude. Conversations on harnesses other than Claude Code export without history.</span></span></label>
+      <span>.zip (legacy)<span class="paf-hint ui-hint">For importing into an older tclaude. Conversations on harnesses other than Claude Code export without history.</span></span></label>
+    ${format === 'paf' && processesOn() && html`<${Check} id="group-export-workflows" checked=${workflows} disabled=${busy} onChange=${(value) => { setWorkflows(value); setFindings(null); setAck(false); }}
+      hint="Its saved processes. An older tclaude cannot import a file that carries workflows.">Carry its workflows</${Check}>`}
     ${findings && html`<${FindingsPanel} findings=${findings} />
       <${Check} id="group-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button type="button" id="group-export-download" class="primary" disabled=${busy || (!!findings && !ack)} onClick=${download}>
-        ${busy ? 'Exporting…' : `⤓ Download .${format}`}</button>
+      <${Button} variant="primary" id="group-export-download" disabled=${busy || (!!findings && !ack)} onClick=${download}>
+        ${busy ? 'Exporting…' : `⤓ Download .${format}`}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
+}
+
+// LandingPosture says how a landed agent launches. A refused posture blocks the
+// import, so it reads as the warning it is.
+function LandingPosture({ posture }) {
+  if (!posture) return null;
+  if (posture.refused) return html`<div class="gi-warn">⚠ ${posture.refused}</div>`;
+  const profiles = posture.sandbox_profiles?.length ? ` · ${posture.sandbox_profiles.join(', ')}` : '';
+  return html`<span title=${posture.resolved_by || ''}>${posture.sandbox_implementation}${profiles}</span>
+    ${posture.opencode_state && html`<div class="paf-hint ui-hint">OpenCode state: ${posture.opencode_state}</div>`}`;
 }
 
 // LandingSelects picks a landing harness and model. A new harness clears the
@@ -188,14 +212,12 @@ function LandingSelects({ harness, model, onChange, idPrefix, sameLabel = '(own 
   const harnesses = spawnableHarnesses(snapshot);
   const models = harness ? modelsFor(snapshot, harness) : [];
   return html`<span class="paf-landing-selects">
-    <select id=${`${idPrefix}-harness`} value=${harness} onChange=${(event) => onChange({ harness: event.currentTarget.value, model: '' })}>
+    <${Select} id=${`${idPrefix}-harness`} value=${harness} onChange=${(event) => onChange({ harness: event.currentTarget.value, model: '' })}>
       <option value="">${sameLabel}</option>
       ${harnesses.map((item) => html`<option key=${item.name} value=${item.name}>${item.display_name || item.name}</option>`)}
-    </select>
-    <select id=${`${idPrefix}-model`} value=${model} onChange=${(event) => onChange({ harness, model: event.currentTarget.value })}>
-      <option value="">(model: default)</option>
-      ${models.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-    </select>
+    <//>
+    <${ModelCombobox} id=${`${idPrefix}-model`} value=${model} onChange=${(next) => onChange({ harness, model: next })} entries=${models}
+      noneLabel="(model: default)" />
   </span>`;
 }
 
@@ -204,10 +226,58 @@ function HistoryLanding({ landing }) {
   const badge = rungBadge(landing.rung);
   const from = [landing.source_harness, landing.source_model].filter(Boolean).join(' · ');
   const to = [landing.harness, landing.model].filter(Boolean).join(' · ');
-  return html`<div class="paf-box" id="paf-history-landing">
-    <div><b>History:</b> <span class=${`paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span> ${from}${to && to !== from ? ` → ${to}` : ''}</div>
-    ${landing.losses && html`<div class="paf-hint">${lossSummary(landing.losses)}</div>`}
-    ${landing.rung !== 'native' && html`<div class="paf-hint">The full transcript stays readable with <code>tclaude paf render</code>.</div>`}
+  return html`<div class="paf-box ui-card ui-inset" id="paf-history-landing">
+    <div><b>History:</b> <span class=${`ui-tag paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span> ${from}${to && to !== from ? ` → ${to}` : ''}</div>
+    ${landing.losses && html`<div class="paf-hint ui-hint">${lossSummary(landing.losses)}</div>`}
+    ${landing.rung !== 'native' && html`<div class="paf-hint ui-hint">The full transcript stays readable with <code>tclaude paf render</code>.</div>`}
+  </div>`;
+}
+
+// ImportWarnings lists what an import warned of, on its preview and its result.
+export function ImportWarnings({ id, title, warnings }) {
+  if (!warnings?.length) return null;
+  return html`<div class="paf-preview paf-box ui-card ui-inset" id=${id}><b>${title}</b>
+    ${warnings.map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</div>`;
+}
+
+// ImportConfirmList is the list of what a file asks for beyond a spawn here:
+// each row keeps or drops one item, and the server checks the choice again. A
+// value is not in the preview: Reveal asks for that one, for that click.
+export function ImportConfirmList({ confirm, overrides, setOverrides, reveal }) {
+  const [shown, setShown] = useState({});
+  useEffect(() => setShown({}), [confirm?.digest]);
+  if (!confirm?.items?.length) return null;
+  const canKeep = !!confirm.can_keep;
+  const show = async (item) => {
+    try {
+      const { value } = await reveal(item.id);
+      setShown((current) => ({ ...current, [item.id]: { value } }));
+    } catch (err) {
+      setShown((current) => ({ ...current, [item.id]: { error: message(err) } }));
+    }
+  };
+  return html`<div class="paf-preview paf-box ui-card ui-inset" id="import-confirm">
+    <b>Elevated items in this file</b>
+    <div class="paf-hint ui-hint">${canKeep ? 'Untick what this import should not keep. Anything unticked is dropped.' : 'Only a human on this node can keep these, so all of them are dropped.'}</div>
+    ${confirmGroups(confirm.items).map((group) => html`<div key=${group.heading} class="import-confirm-group">
+      <div class="gi-head">${group.heading}</div>
+      ${group.items.map((item) => html`<div key=${item.id} class="import-confirm-item" data-item=${item.id}>
+        <${Check} id=${`import-keep-${item.id}`} checked=${canKeep && (overrides[item.id] ?? !!item.default)} disabled=${!canKeep}
+          onChange=${(value) => setOverrides({ ...overrides, [item.id]: value })} hint=${item.gives}>${item.label}</${Check}>
+        ${item.revealable && canKeep && shown[item.id]?.value === undefined && html`<button data-ui-exempt type="button" class="import-confirm-reveal" onClick=${() => show(item)}>Reveal value</button>`}
+        ${shown[item.id]?.value !== undefined && html`<code data-capture-mask class="import-confirm-value">${shown[item.id].value}</code>`}
+        ${shown[item.id]?.error && html`<div class="gi-warn">⚠ ${shown[item.id].error}</div>`}
+      </div>`)}
+    </div>`)}
+  </div>`;
+}
+
+// ImportOutcome lists what became of a file's elevated items.
+export function ImportOutcome({ kept, dropped }) {
+  if (!kept?.length && !dropped?.length) return null;
+  return html`<div class="paf-preview paf-box ui-card ui-inset" id="import-outcome">
+    ${kept?.length > 0 && html`<div id="import-outcome-kept"><b>Kept</b> ${kept.join(', ')}</div>`}
+    ${dropped?.length > 0 && html`<div id="import-outcome-dropped"><b>Dropped</b> ${dropped.join(', ')}</div>`}
   </div>`;
 }
 
@@ -215,37 +285,49 @@ function HistoryLanding({ landing }) {
 // preview for an agent PAF or legacy agent bundle, with where and how the
 // agent lands. "Import (offline)" lands it without starting; "Import &
 // start" also starts it.
-export function AgentImportPreview({ preview, choices, setChoices }) {
+// CarriedWorkflows says what else an agent or group file holds. Importing it
+// stores none of these: each goes through the workflow review, on the same file.
+export function CarriedWorkflows({ workflows, file }) {
+  if (!workflows?.length) return null;
+  const names = workflows.map((w) => w.root.split('@')[0]);
+  return html`<div class="paf-box ui-card ui-inset" id="paf-carried-workflows"><b>Also carries ${names.length === 1 ? 'a workflow' : `${names.length} workflows`}</b>
+    <div>${names.join(', ')}. This import stores none of them.</div>
+    ${processesOn() && html`<${WorkflowImportButton} from=${file} id="" label="Review workflows…" className="" />`}</div>`;
+}
+
+export function AgentImportPreview({ preview, choices, setChoices, overrides, setOverrides, reveal }) {
   const snapshot = dashboardState.snapshot.value;
   const groups = (snapshot?.groups || []).map((group) => group.name);
   const agent = preview.agent || {};
   const set = (key) => (value) => setChoices({ ...choices, [key]: value });
   const rows = provenanceRows(agent);
   const unresolved = preview.unresolved || [];
+  const warnings = (preview.confirm?.can_keep && preview.confirm.items?.length ? preview.confirm.warnings : preview.warnings) || [];
   return html`<div class="paf-preview" id="agent-import-preview">
     <div class="gi-head">Agent “${agent.name || '(unnamed)'}”${agent.role ? ` · ${agent.role}` : ''}</div>
-    ${rows.length > 0 && html`<div class="paf-box"><b>Provenance</b>${rows.map(([key, value]) => html`<div key=${key} class="gi-row"><span class="gi-k">${key}</span><span class="gi-v">${value}</span></div>`)}</div>`}
+    ${rows.length > 0 && html`<div class="paf-box ui-card ui-inset"><b>Provenance</b>${rows.map(([key, value]) => html`<div key=${key} class="gi-row"><span class="gi-k">${key}</span><span class="gi-v">${value}</span></div>`)}</div>`}
     <label class="cron-create-row"><span class="cron-create-label">Name</span>
       <input id="agent-import-name" value=${choices.name} placeholder=${agent.name || ''} onInput=${(event) => set('name')(event.currentTarget.value)} /></label>
     <label class="cron-create-row"><span class="cron-create-label">Group</span>
-      <select id="agent-import-group" value=${choices.group} onChange=${(event) => set('group')(event.currentTarget.value)}>
-        <option value="">(pick a group)</option>
-        ${groups.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-      </select></label>
+      <${GroupCombobox} id="agent-import-group" groups=${groups} value=${choices.group} onChange=${set('group')} noneLabel="(pick a group)" /></label>
     <label class="cron-create-row"><span class="cron-create-label">Working dir</span>
       <input id="agent-import-cwd" value=${choices.cwd} placeholder=${agent.paths?.cwd || 'absolute path on this machine'} disabled=${choices.keepPaths}
         onInput=${(event) => set('cwd')(event.currentTarget.value)} /></label>
     <${Check} id="agent-import-keep-paths" checked=${choices.keepPaths} onChange=${set('keepPaths')}>Keep the recorded paths</${Check}>
+    ${choices.agent && html`<label class="cron-create-row"><span class="cron-create-label">Role</span>
+      <input id="agent-import-role" value=${choices.role} onInput=${(event) => set('role')(event.currentTarget.value)} /></label>`}
     <div class="cron-create-row"><span class="cron-create-label">Land on</span>
       <${LandingSelects} idPrefix="agent-import" harness=${choices.harness} model=${choices.model}
         onChange=${(patch) => setChoices({ ...choices, ...patch })} sameLabel=${`${agent.harness || 'own harness'} (as exported)`} /></div>
     <${HistoryLanding} landing=${preview.history_landing} />
+    ${preview.posture && html`<div class="paf-box ui-card ui-inset" id="paf-landing-posture"><b>Sandbox</b> <${LandingPosture} posture=${preview.posture} /></div>`}
     ${historyCutNeedsConfirm(preview) && html`<${Check} id="agent-import-confirm-loss" checked=${!!choices.confirmHistoryLoss} onChange=${set('confirmHistoryLoss')}
       hint="The full history stays in the file and is saved beside the agent, which is told where. A model with a larger window keeps more.">Accept cutting about ${preview.history_landing.losses.dropped_percent}% of the conversation to fit the landing model</${Check}>`}
     ${(preview.findings || []).length > 0 && html`<${FindingsPanel} findings=${preview.findings} title="This node's scan" />`}
     ${unresolved.length > 0 && html`<div class="gi-warn" id="agent-import-unresolved">⚠ ${unresolved.length} recorded path${unresolved.length === 1 ? '' : 's'} need a value here: set a working dir or keep the recorded paths.</div>`}
-    <div class="paf-box"><b>Security posture</b><div>${preview.security}</div>
-      ${(preview.warnings || []).map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</div>
+    <${ImportConfirmList} confirm=${preview.confirm} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />
+    <div class="paf-box ui-card ui-inset"><b>Security posture</b><div>${preview.security}</div>
+      ${warnings.map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</div>
   </div>`;
 }
 
@@ -257,6 +339,7 @@ export function agentImportParams(choices, apply = false, start = true) {
     cwd: choices.keepPaths ? '' : choices.cwd.trim(), keep_paths: choices.keepPaths,
     start: apply && !start ? 'false' : '',
     confirm_history_loss: apply && choices.confirmHistoryLoss ? 'true' : '',
+    agent: choices.agent || '', role: choices.agent ? (choices.role || '').trim() : '',
   };
 }
 
@@ -268,43 +351,52 @@ export function historyCutNeedsConfirm(preview) {
 }
 
 // offlineImportBlocker says why an agent cannot land offline, or '' when it
-// can: offline needs a conversation that lands (resume starts it), and
-// OpenCode cannot take one yet. The route refuses the same cases (no_start).
-export function offlineImportBlocker(preview, choices) {
+// can: offline needs a conversation that lands (resume starts it). The route
+// refuses the same case (no_start).
+export function offlineImportBlocker(preview) {
   if (!preview) return '';
   if (!preview.history) return 'No conversation lands, so there is nothing to resume: import and start it instead';
-  const harness = choices?.harness || preview.history_landing?.harness || preview.agent?.harness;
-  if (harness === 'opencode') return 'An OpenCode agent cannot land offline yet: import and start it instead';
   return '';
+}
+
+// memberCutsToConfirm lists the members whose landing cuts so much of their
+// conversation that the group import needs the importer's confirmation, as
+// the route does (history_confirmation_required).
+export function memberCutsToConfirm(landings) {
+  return (landings || []).filter((row) => row.rung === 'translated' && row.losses?.needs_summary);
 }
 
 // MemberLandings is the group preview's per-member landing table: each
 // member's harness and model (defaulting to the all-members choice) and the
 // rung its history takes, with the losses a translation would cause.
-export function MemberLandings({ landings, landing, setLanding }) {
+export function MemberLandings({ landings, landing, setLanding, confirmCut, setConfirmCut }) {
   if (!landings?.length) return null;
+  const cuts = memberCutsToConfirm(landings);
   const member = (key) => landing.members?.[key] || { harness: '', model: '' };
   const setMember = (key, patch) => setLanding({ ...landing, members: { ...landing.members, [key]: { ...member(key), ...patch } } });
   return html`<div class="paf-members" id="group-import-landings">
     <div class="cron-create-row"><span class="cron-create-label">All members</span>
       <${LandingSelects} idPrefix="group-import-all" harness=${landing.harness} model=${landing.model}
         onChange=${(patch) => setLanding({ ...landing, ...patch })} sameLabel="keep own harness" /></div>
-    <table class="paf-member-table"><thead><tr><th>Member</th><th>From</th><th>Land on</th><th>History</th></tr></thead><tbody>
+    <table class="paf-member-table ui-compact"><thead><tr><th>Member</th><th>From</th><th>Land on</th><th>History</th><th>Sandbox</th></tr></thead><tbody>
       ${landings.map((row) => {
         // Keyed by conv id: always unique, and safe in a member=value binding.
         const key = row.conv_id;
         const badge = rungBadge(row.rung);
         const choice = member(key);
         return html`<tr key=${row.conv_id} data-member=${row.title || key}>
-          <td>${row.title || row.conv_id.slice(0, 8)}</td>
+          <td>${row.title || shortId(row.conv_id)}</td>
           <td>${[row.source_harness, row.source_model].filter(Boolean).join(' · ')}</td>
           <td><${LandingSelects} idPrefix=${`group-import-member-${row.conv_id}`} harness=${choice.harness} model=${choice.model}
             onChange=${(patch) => setMember(key, patch)} sameLabel="(as above)" /></td>
-          <td><span class=${`paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span>
-            ${row.losses && html`<div class="paf-hint">${lossSummary(row.losses)}</div>`}
+          <td><span class=${`ui-tag paf-rung ${badge.cls}`} title=${badge.title}>${badge.text}</span>
+            ${row.losses && html`<div class="paf-hint ui-hint">${lossSummary(row.losses)}</div>`}
             ${(row.warnings || []).map((warning) => html`<div key=${warning} class="gi-warn">⚠ ${warning}</div>`)}</td>
+          <td><${LandingPosture} posture=${row.posture} /></td>
         </tr>`;
       })}
     </tbody></table>
+    ${cuts.length > 0 && html`<${Check} id="group-import-confirm-loss" checked=${!!confirmCut} onChange=${setConfirmCut}
+      hint="The full history stays in the file and is saved beside each agent, which is told where. A model with a larger window keeps more.">Accept cutting the conversation of ${cuts.map((row) => `${row.title || row.conv_id.slice(0, 8)} (about ${row.losses.dropped_percent}%)`).join(', ')} to fit the landing model</${Check}>`}
   </div>`;
 }

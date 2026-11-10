@@ -1,8 +1,14 @@
 package agentd
 
 import (
+	"context"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestDashboardJS_ExportModalWired guards the end-to-end wiring of the per-agent
@@ -75,3 +81,91 @@ func TestSanitizeExportFilename(t *testing.T) {
 		t.Errorf("expected truncation to <=200, got len %d", len(got))
 	}
 }
+
+// ResolveCurrentSandboxChainForConvForTest exposes the chain a relaunch would
+// compose, which is otherwise only visible by launching.
+func ResolveCurrentSandboxChainForConvForTest(convID string) (*sandboxpolicy.Snapshot, *sandboxpolicy.Snapshot, error) {
+	return resolveCurrentSandboxChainForConv(convID)
+}
+
+// AllocatePrivateOpenCodeStateForTest allocates an agent's private state, as a
+// move does before it copies anything.
+func AllocatePrivateOpenCodeStateForTest(agentID string) (*db.OpenCodeAgentStateAllocation, error) {
+	return allocatePrivateOpenCodeState(agentID)
+}
+
+// AsAcceptedMove marks r as the import of a teleport or move offer the receiver
+// accepted.
+func AsAcceptedMove(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), acceptedMoveContextKey{}, true))
+}
+
+// OfferKeepsItsPostureForTest exposes offerKeepsItsPosture.
+func OfferKeepsItsPostureForTest(o *db.FederationBundleOffer, groupID int64) bool {
+	return offerKeepsItsPosture(o, groupID)
+}
+
+// ClaimPrivateOpenCodeStateForTest exposes claimPrivateOpenCodeState.
+var ClaimPrivateOpenCodeStateForTest = claimPrivateOpenCodeState
+
+// MarkDeferredSpawnRunningForTest stands in for a deferred launch in progress.
+func MarkDeferredSpawnRunningForTest(label string) func() {
+	deferredSpawnsRunning.Store(label, struct{}{})
+	return func() { deferredSpawnsRunning.Delete(label) }
+}
+
+// ServePeerMailboxForTest serves a mailbox read as a peer gets it.
+func ServePeerMailboxForTest(r *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	servePeerMailbox(rec, r, nil, peerViewRule{})
+	return rec
+}
+
+// RelaunchOverridesNoteForTest is the resume echo of an agent's overridden
+// relaunch rows ("" when it follows the global table throughout).
+func RelaunchOverridesNoteForTest(convID string) string { return relaunchOverridesNote(convID) }
+
+// AddPendingApprovalForTest registers a pending ask-human request as a gate
+// site would, and returns a function that reports the decision it received
+// ("" while none) and removes it.
+func AddPendingApprovalForTest(id, perm, agentID, convID, scopeJSON string) func() string {
+	req := &approvalRequest{id: id, perm: perm, agentID: agentID, convID: convID, scopeJSON: scopeJSON,
+		createdAt: time.Now(), timeout: time.Minute, decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1)}
+	approvals.mu.Lock()
+	approvals.pending[id] = req
+	approvals.mu.Unlock()
+	return func() string {
+		approvals.mu.Lock()
+		delete(approvals.pending, id)
+		approvals.mu.Unlock()
+		select {
+		case o := <-req.decision:
+			if o == outcomeApprove {
+				return "approve"
+			}
+			return "deny"
+		default:
+			return ""
+		}
+	}
+}
+
+// RaiseApprovalForTest raises an agent's ask-human request as a gate site
+// does and waits on it in the background, as the gate site's request does;
+// the channel gets whether it was approved.
+func RaiseApprovalForTest(id, perm, agentID, convID, title, targetGroup string, timeout time.Duration) <-chan bool {
+	req := &approvalRequest{id: id, perm: perm, agentID: agentID, convID: convID, convTitle: title, targetGroup: targetGroup,
+		method: http.MethodPost, path: "/v1/test", createdAt: time.Now(), timeout: timeout,
+		decision: make(chan approvalOutcome, 1), extend: make(chan time.Duration, 1)}
+	done := make(chan bool, 1)
+	go func() { done <- realRequestHumanApproval(req, "") }()
+	return done
+}
+
+// SweepMirroredApprovalsForTest runs the daemon start's sweep of the board
+// questions of the last run's ask-human requests.
+var SweepMirroredApprovalsForTest = sweepMirroredApprovals
+
+// RedactMirroredForTest redacts a decoded taskboard response as a linked
+// node with restricted trust gets it.
+var RedactMirroredForTest = redactMirrored

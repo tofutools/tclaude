@@ -157,7 +157,7 @@ test('delete-group renderer preserves detach defaults, explicit selection, and r
   assert.equal(host.querySelector('#delete-group-count .theme-copy-regular').textContent,
     '3 agents: 1 to retire, 2 detach');
   assert.equal(host.querySelector('#delete-group-count .theme-copy-wizard').textContent,
-    '3 familiars: 1 to banish, 2 detach');
+    '3 heroes: 1 to banish, 2 detach');
   assert.match(rows[1].closest('.cleanup-row').textContent, /detach only/);
   assert.match(rows[1].closest('.cleanup-row').textContent, /root, other-root/);
   assert.equal(harness.document.activeElement.id, 'delete-group-submit');

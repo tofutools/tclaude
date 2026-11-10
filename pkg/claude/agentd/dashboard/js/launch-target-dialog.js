@@ -8,7 +8,11 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
+import { GroupCombobox } from './group-picker.js';
+import { ProfileCombobox } from './profile-picker.js';
+import { Dialog } from './ui-dialog.js';
 import { MovePanel, dropPlan, moveProgress, MOVE_POLL_MS, openFleetPage } from './fleet-move-drop.js';
 import { shellToast } from './shell-state.js';
 import { missingPullGrants, needsSuffix } from './peer-view-limits.js';
@@ -16,6 +20,7 @@ import { nodeFetch } from './node-api.js';
 import { unrestrictedOn } from './node-trust.js';
 import { markInTransit } from './drop-landing.js';
 import { modelAccessOptions, ownGateways } from './teleport-model-access.js';
+import { requestJSON } from './request-json.js';
 
 const html = htm.bind(h);
 
@@ -113,12 +118,14 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
       ['✓', 'History', 'the full conversation history goes with it'],
       ['↻', 'Identity', `it arrives on ${node} as an agent there`],
       ['✗', 'Permissions', `not carried; ${node}'s group defaults apply`],
+      ['✗', 'Sandbox', `not carried; ${node}'s group sandbox profile and environment apply`],
       ['✗', 'Here', 'retired once its copy runs there'],
     ];
     case 'teleport': return [
       ['✓', 'History', 'the full conversation history goes with it'],
       ['↻', 'Identity', `a visiting identity on ${node}; its home stays ${home} for Recall home`],
       ['✗', 'Permissions', `not carried; ${node}'s group defaults apply`],
+      ['✗', 'Sandbox', `not carried; ${node}'s group sandbox profile and environment apply`],
       ['✓', 'Here', 'a placeholder row stays in its groups'],
     ];
     case 'clone': return local ? [
@@ -128,6 +135,7 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
     ] : [
       ['✓', 'History', 'the full conversation history is copied'],
       ['↻', 'Identity', `an independent agent on ${node}`],
+      ['✗', 'Sandbox', `not carried; ${node}'s group sandbox profile and environment apply`],
       ['✓', 'Here', 'the original keeps running'],
     ];
     case 'morph': {
@@ -167,19 +175,7 @@ function nodeApi(node) { return createLaunchTargetApi({ fetchImpl: nodeFetch(nod
 // createLaunchTargetApi is the dialog's I/O. Errors carry status, code and
 // the parsed body, as the federation actions' errors do.
 export function createLaunchTargetApi({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
-  async function call(method, url, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
-    const res = await fetchImpl(url, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) {
-      const e = new Error(data?.error || `${res.status}`);
-      e.status = res.status; e.code = data?.code || ''; e.body = data;
-      throw e;
-    }
-    return data;
-  }
+  const call = (method, url, body) => requestJSON(url, { method, body, fetchImpl });
   const agent = (id, tail) => `/api/agents/${encodeURIComponent(id)}/${tail}`;
   return Object.freeze({
     status: () => call('GET', '/api/federation/status'),
@@ -204,8 +200,8 @@ export function createLaunchTargetApi({ fetchImpl = (...a) => globalThis.fetch(.
 
 function Carries({ rows, title }) {
   if (!rows.length) return null;
-  return html`<div class="lt-carries" data-lt-carries="">
-    <div class="lt-carries-title">${title}</div>
+  return html`<div class="lt-carries ui-card ui-inset" data-lt-carries="">
+    <div class="ui-eyebrow lt-carries-title">${title}</div>
     ${rows.map(([mark, label, text]) => html`<div key=${label} class="lt-carry"><span class=${`lt-mark lt-mark-${mark === '✓' ? 'ok' : mark === '✗' ? 'no' : 'chg'}`}>${mark}</span><span class="lt-carry-k">${label}</span><span class="lt-carry-v">${text}</span></div>`)}
   </div>`;
 }
@@ -214,22 +210,24 @@ function Carries({ rows, title }) {
 // the reason beside them.
 function NodePicker({ targets, value, onPick, locked }) {
   return html`<div class="lt-nodes" role="radiogroup" aria-label="Target node">
-    ${targets.map((n) => html`<button key=${n.id} type="button" role="radio" aria-checked=${n.id === value ? 'true' : 'false'}
+    ${targets.map((n) => html`<button data-ui-exempt key=${n.id} type="button" role="radio" aria-checked=${n.id === value ? 'true' : 'false'}
       class=${`lt-node${n.id === value ? ' sel' : ''}`} disabled=${!n.ok || locked} data-lt-node=${n.id}
       title=${n.ok ? `Send it to ${n.plain}` : n.why} onClick=${() => onPick(n.id)}>
       <i style=${n.color ? `--nc:${n.color}` : undefined}></i><span class="lt-node-name">${n.name}</span><span class="lt-node-why">${n.ok ? '' : n.why}</span></button>`)}
   </div>`;
 }
 
+const OTHER_GROUP = { value: '\u0000other', label: 'another group (type its name)…', keywords: 'other type name' };
+
 function GroupPicker({ groups, value, onChange, idPrefix, disabled }) {
   const [typed, setTyped] = useState(false);
   // A dropped group the catalog does not list stays as typed text, so what
   // is shown is what is sent.
   if (groups.length && !typed && (!value || groups.includes(value))) {
-    return html`<select id=${`${idPrefix}-group`} value=${value} disabled=${disabled} onChange=${(e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); onChange(''); } else onChange(e.currentTarget.value); }}>
-      <option value="">pick a receiving group…</option>
-      ${groups.map((g) => html`<option key=${g} value=${g} selected=${value === g}>${g}</option>`)}
-      <option value=${'\u0000other'}>another group (type its name)…</option></select>`;
+    // The last row, OTHER_GROUP, swaps the choice for the text field.
+    return html`<${GroupCombobox} id=${`${idPrefix}-group`} groups=${[...groups, OTHER_GROUP]} value=${value} disabled=${disabled}
+      noneLabel="pick a receiving group…" ariaLabel="Receiving group"
+      onChange=${(key) => { if (key === OTHER_GROUP.value) { setTyped(true); onChange(''); } else onChange(key); }} />`;
   }
   return html`<input id=${`${idPrefix}-group`} value=${value} disabled=${disabled} placeholder="receiving group there (it must grant agents.receive)" autocomplete="off" onInput=${(e) => onChange(e.currentTarget.value)} />`;
 }
@@ -316,18 +314,18 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     // Close on success so the operator sees the agent (and, from Terminals,
     // its new terminal); the toast keeps the result.
     toast(`${done?.result === 'pending'
-      ? `${agent.name} morphs to ${profile} when it next goes idle (within 30 minutes, or the request lapses). Its row shows the pending morph.`
+      ? `${agent.name} morphs to ${profile} when it next goes idle (within 30 minutes, or the request lapses).${agent.node ? '' : ' Its row shows the pending morph.'}`
       : `${agent.name} is now ${profile}. It got a short inbox note saying what changed.`}${done?.detail ? ` ${done.detail}` : ''}`);
     onClose();
   };
   return html`
-    ${waiting && html`<div role="status" data-lt-state="waiting-summary">Waiting for ${agent.name}'s history summary · ${Math.floor(remaining/60)}m ${remaining%60}s left. Timeout leaves it unchanged.<button type="button" onClick=${cancelPending} disabled=${busy}>Cancel pending morph</button><button type="button" onClick=${onClose}>Close</button></div>`}
+    ${waiting && html`<div role="status" data-lt-state="waiting-summary">Waiting for ${agent.name}'s history summary · ${Math.floor(remaining/60)}m ${remaining%60}s left. Timeout leaves it unchanged.<${Button} size="sm" onClick=${cancelPending} disabled=${busy}>Cancel pending morph<//><${Button} size="sm" onClick=${onClose}>Close<//></div>`}
     ${(waiting || preview?.history?.needs_summary || preview?.history?.needs_handoff) && html`<label key="loss-fallback" class="lt-check"><input id="lt-proceed-without-summary" type="checkbox" checked=${proceedWithoutSummary} onChange=${(e) => setProceedWithoutSummary(e.currentTarget.checked)} /> Source cannot answer (for example, provider outage): continue with readable history and the full-transcript pointer. Earlier context may be lost.</label>`}
-    ${waiting && html`<button type="button" id="lt-proceed-loss" disabled=${!proceedWithoutSummary || busy || !(profile || waiting.target?.profile)} onClick=${continueWithoutSummary}>Continue now without a summary</button>`}
+    ${waiting && html`<${Button} size="sm" id="lt-proceed-loss" disabled=${!proceedWithoutSummary || busy || !(profile || waiting.target?.profile)} onClick=${continueWithoutSummary}>Continue now without a summary<//>`}
     <label class="lt-row"><span class="lt-k">Stays on</span><span class="muted">this node · ${agent.group || 'its groups'}</span></label>
-    <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<select id="lt-morph-profile" value=${profile} disabled=${busy || !!waiting} onChange=${(e) => { setConfirmCut(false); setProceedWithoutSummary(false); setProfile(e.currentTarget.value); }}>
-      <option value="">pick a spawn profile…</option>
-      ${profiles.map((p) => html`<option key=${p.name} value=${p.name}>${p.name}${p.harness || p.model ? ` — ${[p.harness, p.model, p.effort && `effort ${p.effort}`].filter(Boolean).join(' · ')}` : ''}</option>`)}</select>`}</label>
+    <label class="lt-row"><span class="lt-k">Profile</span>${profiles === null ? html`<span class="muted">loading…</span>` : html`<${ProfileCombobox} id="lt-morph-profile" value=${profile} profiles=${profiles} disabled=${busy || !!waiting}
+      placeholder="Type to find a spawn profile…" ariaLabel="Spawn profile"
+      onChange=${(name) => { setConfirmCut(false); setProceedWithoutSummary(false); setProfile(name); }} />`}</label>
     ${preview && html`<div class="lt-morph-preview"><div><span class="lt-k">was</span> ${formLine(preview.before)}</div><div><span class="lt-k">now</span> ${formLine(preview.after)}</div></div>`}
     ${preview?.history?.needs_handoff && html`<div role="status">Compaction summary unreadable. Ask ${agent.name} for a handoff, carried beside its readable tail. If the source cannot answer, explicitly confirm readable-history-only continuation below.</div>`}
     ${preview?.history?.budget_warning && html`<div role="status">${preview.history.kept_percent}% kept · ${preview.history.dropped_percent}% dropped from inline history. ${preview.history.selection_reason}</div>`}
@@ -335,8 +333,8 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     <label class="lt-check"><input id="lt-morph-now" type="checkbox" checked=${now} disabled=${!!waiting || preview?.history?.needs_summary || preview?.history?.needs_handoff} onChange=${(e) => setNow(e.currentTarget.checked)} /> now: stop it even if it is busy, and resume it from its last saved history</label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
-      <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${!preview || busy || !!waiting || (preview?.history?.needs_summary && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_handoff ? 'Request handoff and morph' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</button></div>`;
+      <${Button} id="lt-cancel" onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" domRef=${okRef} id="lt-ok" disabled=${!preview || busy || !!waiting || (preview?.history?.needs_summary && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_handoff ? 'Request handoff and morph' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</${Button}></div>`;
 }
 
 export function formLine(v) {
@@ -457,12 +455,12 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
     : p.phase === 'waiting' ? { text: `⏸ ${agent.name} waits for ${dest} to accept it; it keeps running here until then.` }
     : p.phase === 'failed' ? { text: `${verb} ${p.state}${p.error ? `: ${p.error}` : ''}. ${agent.name} is still here.`, error: true }
     : p.phase === 'returning' ? { text: `${agent.name} is returning to its paused copy on ${home || 'its home'}; its home row shows it back when it runs.` }
-    : p.phase === 'offered' && pullActions ? { text: `${agent.nodeName} offered ${agent.name}'s copy to this node: it starts here once this node takes it in (⚙ Fleet → Offers).` }
-    : p.phase === 'offered' ? { text: `Offered to ${dest}: the copy starts there once ${dest} takes it in (${dest}'s ⚙ Fleet → Offers).` }
-    : p.phase === 'sent' && pullActions ? { text: `${verb}: requested from ${agent.nodeName}. ${agent.name} shows up in ${target.group} here once its copy runs; if it waits for acceptance, see ⚙ Fleet → Offers.` }
+    : p.phase === 'offered' && pullActions ? { text: `${agent.nodeName} offered ${agent.name}'s copy to this node: it starts here once this node takes it in (⚙ Fleet config → Offers).` }
+    : p.phase === 'offered' ? { text: `Offered to ${dest}: the copy starts there once ${dest} takes it in (${dest}'s ⚙ Fleet config → Offers).` }
+    : p.phase === 'sent' && pullActions ? { text: `${verb}: requested from ${agent.nodeName}. ${agent.name} shows up in ${target.group} here once its copy runs; if it waits for acceptance, see ⚙ Fleet config → Offers.` }
     : p.phase === 'sent' ? { text: `${verb}: requested. Its row here turns back into ${agent.name} when it arrives.` }
     : p.phase === 'checking' ? null
-    : { text: `${verb} is still in progress; follow it in ⚙ Fleet → Moves.` };
+    : { text: `${verb} is still in progress; follow it in ⚙ Fleet config → Moves.` };
   const dest = mode === 'home' ? home : pullActions ? 'this node' : target.name;
   const from = pullActions ? `on ${agent.nodeName}` : 'here';
   const verb = mode === 'home' ? (viaPeer ? 'Recall home' : 'Send home') : mode === 'clone' ? `Clone to ${target.name}` : `Teleport to ${target.name}`;
@@ -473,14 +471,14 @@ function TeleportPanel({ mode, agent, target, home, api, actions, timers, now, o
         ? `Sends a copy of ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${dest}. The original keeps running ${from}.`
         : `Sends ${agent.name} with its full conversation history (it may hold code or pasted secrets) to ${target.group} on ${dest}. It leaves at once: it keeps running ${from} until its copy runs ${pullActions ? 'here' : 'there'}, then stops ${pullActions ? 'there' : 'here'}; its groups keep a placeholder row.`}</p>
       ${accessOptions && html`<label class="lt-row" title="Whose provider account the agent's model calls use where it lands: that node's own login, or a model gateway. Your own gateway is paid by you through a lease."><span class="lt-k">Model access</span>
-        <select id="lt-model-access" value=${accessPick} disabled=${phase !== 'confirm'} onChange=${(e) => setAccess(e.currentTarget.value)}>
+        <${Select} size="sm" id="lt-model-access" value=${accessPick} disabled=${phase !== 'confirm'} onChange=${(e) => setAccess(e.currentTarget.value)}>
           ${accessOptions.map((o) => html`<option key=${o.value} value=${o.value} disabled=${!!o.reason} title=${o.reason}>${o.label}${o.reason ? ` — ${o.reason}` : ''}</option>`)}
-        </select></label>`}
+        <//></label>`}
       ${viaPeer ? '' : html`<label class="lt-row"><span class="lt-k">Note</span><textarea id="lt-note" rows="2" placeholder="Optional: told to the agent on arrival" value=${note} onInput=${(e) => setNote(e.currentTarget.value)}></textarea></label>`}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
-      <button type="button" ref=${okRef} class="primary" id="lt-ok" disabled=${phase === 'sending' || (mode !== 'home' && (!target?.node || !target?.group))} onClick=${send}>${phase === 'sending' ? 'Sending…' : verb}</button>
+      <${Button} id="lt-cancel" onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" domRef=${okRef} id="lt-ok" disabled=${phase === 'sending' || (mode !== 'home' && (!target?.node || !target?.group))} onClick=${send}>${phase === 'sending' ? 'Sending…' : verb}</${Button}>
     </div>`;
 }
 
@@ -539,22 +537,19 @@ export function LaunchTargetDialog({
   if (mode === 'morph') body = html`<${MorphPanel} key="morph" agent=${agent} api=${acting ? morphApi.current : api} toast=${toast} onClose=${onClose} setCarry=${setCarry} okRef=${okRef} onPhase=${onPhase} />`;
   else if (mode === 'home') body = html`<${TeleportPanel} key="home" mode="home" agent=${agent} home=${agent.homeName || 'its home'} viaPeer=${!local || agent.presence === 'away'} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if (cloneHere) body = html`<p class="lt-consequence">A sibling of ${agent.name} starts on this node. The next step picks its working directory or worktree, its first message, and whether it copies the conversation.</p>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" id="lt-cancel" onClick=${onClose}>Cancel</button>
-      <button type="button" ref=${okRef} class="primary" id="lt-ok" onClick=${() => onLocalClone?.()}>Clone here…</button></div>`;
+    <div class="modal-buttons"><span class="spacer"></span><${Button} id="lt-cancel" onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" domRef=${okRef} id="lt-ok" onClick=${() => onLocalClone?.()}>Clone here…</${Button}></div>`;
   else if (mode === 'move' && plan && (plan.kind === 'push' || plan.kind === 'pull' || (plan.kind === 'third' && relay))) body = html`<${MovePanel} key=${`${targetRef.node}/${targetRef.group}`} drop=${{ agent: { id: agent.id, name: agent.name }, source, target: targetRef }} plan=${plan} actions=${actions} peerActions=${peerActions} timers=${timers} now=${now} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase} />`;
   else if ((mode === 'teleport' || mode === 'clone') && targetRef?.group) body = html`<${TeleportPanel} key=${`${mode}/${targetRef.node}/${targetRef.group}`} mode=${mode} agent=${agent} target=${targetRef} api=${api} actions=${actions} timers=${timers} now=${now} toast=${toast} onClose=${onClose} openPage=${openPage} okRef=${okRef} onPhase=${onPhase}
     pullActions=${local ? null : peerActions(source.node)} acting=${acting} />`;
   else body = html`<div class="muted lt-hint">${picked ? 'Pick the receiving group there.' : 'Pick the node to send it to.'}</div>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" ref=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</button></div>`;
+    <div class="modal-buttons"><span class="spacer"></span><${Button} domRef=${okRef} id="lt-cancel" onClick=${onClose}>Cancel</${Button}></div>`;
 
   const enter = () => { const b = okRef.current; if (b && !b.disabled) b.click(); };
-  return html`<${Overlay} id="launch-target" labelledby="launch-target-title" onClose=${onClose} initialFocusRef=${okRef} onSubmitEnter=${enter}>
-    <h3 id="launch-target-title">${title}</h3>
-    <div class="lt-modes" role="tablist" aria-label="What to do">
-      ${MODES.map((m) => { const st = modeState(m.key, ctx); return html`<button key=${m.key} type="button" role="tab" aria-selected=${m.key === mode ? 'true' : 'false'}
-        class=${`lt-mode${m.key === mode ? ' sel' : ''}`} disabled=${!st.ok || (locked && m.key !== mode)} title=${st.ok ? m.hint : st.why} data-lt-mode=${m.key} onClick=${() => switchMode(m.key)}>${m.label}</button>`; })}
-    </div>
-    <div class="muted lt-mode-hint" data-lt-hint="">${MODES.find((m) => m.key === mode)?.hint}</div>
+  return html`<${Dialog} id="launch-target" onClose=${onClose} initialFocusRef=${okRef} onSubmitEnter=${enter} title=${title}>
+    <${Tabs} variant="seg" class="lt-modes" label="What to do" value=${mode} onSelect=${switchMode}
+      items=${MODES.map((m) => { const st = modeState(m.key, ctx); return { key: m.key, label: m.label, disabled: !st.ok || (locked && m.key !== mode), title: st.ok ? m.hint : st.why, attrs: { 'data-lt-mode': m.key } }; })} />
+    <div class="lt-mode-hint ui-hint" data-lt-hint="">${MODES.find((m) => m.key === mode)?.hint}</div>
     ${fromDrop && html`<div class="muted lt-drop-note">↓ Opened by dragging ${agent.name} onto ${initialTarget?.group}@${initialTarget?.name}: node and group are pre-filled; pick another mode above to teleport or clone it instead.</div>`}
     <div class="lt-body">
       <div class="lt-fields">
@@ -565,7 +560,7 @@ export function LaunchTargetDialog({
       <${Carries} title=${`What carries over${picked ? ` to ${picked.plain}` : ''}`} rows=${carries(mode, { node: picked?.plain, home: agent.homeName, morph: carry, local: cloneHere || mode !== 'clone' })} />
     </div>
     <div class="muted fa-cli-note">Enter confirms · Esc cancels · CLI: <code>${cliHint(mode)}</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function cliHint(mode) {

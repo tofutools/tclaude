@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/launchspec"
 )
 
 // Spawn profiles — named, reusable bundles of the spawn-agent dialog
@@ -44,108 +46,9 @@ import (
 // harness's ModelCatalog, not the Claude-only clcommon.ValidateModel — which is
 // what makes a profile harness-correct and fixes CodeRabbit #343.
 
-// spawnProfileJSON is the wire shape for a spawn profile. The five toggles are
-// *bool so an absent/null field round-trips as unset (nil), distinct from an
-// explicit false. CreatedAt / UpdatedAt are response-only (ignored on input).
-type spawnProfileJSON struct {
-	Name    string   `json:"name"`
-	Aliases []string `json:"aliases,omitempty"`
-	// Disabled is the authoritative spawn gate. DisabledReason is remembered
-	// independently so enabling does not discard the operator's explanation.
-	Disabled       *bool  `json:"disabled,omitempty"`
-	DisabledReason string `json:"disabled_reason,omitempty"`
-	// OperatorOnly permits human/operator launches but rejects an agent caller
-	// that resolves this profile at any launch tier.
-	OperatorOnly bool `json:"operator_only,omitempty"`
-
-	// Launch fields — overlap clcommon.SpawnArgs.
-	Harness    string `json:"harness,omitempty"`
-	Model      string `json:"model,omitempty"`
-	ModelProxy string `json:"model_proxy,omitempty"`
-	Effort     string `json:"effort,omitempty"`
-	Sandbox    string `json:"sandbox,omitempty"`
-	// SandboxImplementation pins who owns OS-level confinement:
-	// "harness-builtin" (the legacy default) or the
-	// "tclaude-layer" OS wrapper. "" = unset, which falls through to the next
-	// precedence tier at spawn — distinct from an explicit "harness-builtin",
-	// which pins the legacy implementation against a lower tier and is valid
-	// only for a harness that owns a real built-in OS sandbox. A tclaude-layer
-	// value on a profile whose harness cannot host the layer is a 400 at save.
-	// Host capability is NOT checked at save:
-	// pinning it before bwrap is installed is legitimate authoring, and the
-	// launch refuses loudly if the host still cannot run it. See TCL-769.
-	SandboxImplementation string `json:"sandbox_implementation,omitempty"`
-	Approval              string `json:"approval,omitempty"`
-	ToolGovernance        string `json:"tools,omitempty"`
-	// AskUserQuestionTimeout is the profile's Claude Code AskUserQuestion
-	// idle-timeout default (inherit|never|60s|5m|10m; "" = unset), delivered
-	// per-spawn via `--settings`. Claude-Code-only — a value on a Codex profile
-	// is a 400 (buildProfileFromJSON gates it on the profile's harness).
-	AskUserQuestionTimeout string `json:"ask_user_question_timeout,omitempty"`
-	// AutoCompactWindow is the profile's auto-compaction context capacity in
-	// tokens ("450000"; "" = unset, the model's own threshold decides). Accepts
-	// "450k" / "0.5M" on the way in and normalizes to plain digits. Claude-Code-only
-	// — a value on a Codex profile is a 400 (buildProfileFromJSON gates it on the
-	// profile's harness).
-	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
-	// ContextWindowMax is a Copilot-only configured context cap. Zero
-	// leaves the cap unset so the observed-model default may speak.
-	ContextWindowMax int64 `json:"context_window_max,omitempty"`
-	// CopilotAPI is the profile's Copilot-only API-backed-drive default —
-	// tri-state (null = unset, false = tmux send-keys, true = the embedded
-	// JSON-RPC API). Unset resolves to send-keys at spawn. A value on a
-	// non-Copilot profile is a 400 (buildProfileFromJSON gates it on the
-	// profile's harness).
-	CopilotAPI     *bool `json:"copilot_api,omitempty"`
-	CodexAppServer *bool `json:"codex_app_server,omitempty"`
-	FastMode       *bool `json:"fast_mode,omitempty"`
-	AutoReview     *bool `json:"auto_review,omitempty"`
-	TrustDir       *bool `json:"trust_dir,omitempty"`
-	AutoMemory     *bool `json:"auto_memory,omitempty"`
-	PeerMessaging  *bool `json:"peer_messaging,omitempty"`
-	SSHWorkaround  *bool `json:"ssh_workaround,omitempty"`
-	// RemoteControl is the profile's "start with Claude Code Remote Access on"
-	// default — tri-state (null = unset, false = off, true = on). A group's
-	// remote-control policy overrides it at spawn (JOH-262).
-	RemoteControl *bool `json:"remote_control,omitempty"`
-
-	// Identity / enrollment fields (dialog-side).
-	AgentName string   `json:"agent_name,omitempty"`
-	Role      string   `json:"role,omitempty"`
-	RoleRef   string   `json:"role_ref,omitempty"`
-	RoleRefs  []string `json:"role_refs,omitempty"`
-	// PromptRefs names saved prompts, in order, whose bodies compose the
-	// spawned agent's initial message ahead of any typed brief.
-	PromptRefs     []string `json:"prompt_refs,omitempty"`
-	Descr          string   `json:"descr,omitempty"`
-	InitialMessage string   `json:"initial_message,omitempty"`
-	// StartupContext is profile-owned guidance injected into every resolved
-	// spawn's briefing. It is deliberately separate from InitialMessage, which
-	// is only a replaceable task default in the spawn dialog.
-	StartupContext string                           `json:"startup_context,omitempty"`
-	Environment    []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
-
-	// Dialog toggles.
-	SyncWorktree               *bool `json:"sync_worktree,omitempty"`
-	FetchLatestWorktree        *bool `json:"fetch_latest_worktree,omitempty"`
-	AutoFocus                  *bool `json:"auto_focus,omitempty"`
-	IncludeGroupDefaultContext *bool `json:"include_group_default_context,omitempty"`
-
-	// Birth-time access controls the profile pre-fills. IsOwner is
-	// tri-state (null = unset). PermissionOverrides maps slug → "grant" | "deny"
-	// (absent = no overrides); validated against the slug registry at save.
-	IsOwner             *bool                            `json:"is_owner,omitempty"`
-	PermissionOverrides map[string]db.PermissionOverride `json:"permission_overrides,omitempty"`
-
-	// ContextFeatures is the profile's per-agent startup-context trim map (slug →
-	// "on" | "off"; absent = trims nothing), validated against the catalog AND
-	// the profile's own harness at save. Claude-Code-only, so a non-empty map on
-	// a Codex profile is a 400. See harness/context_features.go and TCL-597.
-	ContextFeatures map[string]string `json:"context_features,omitempty"`
-
-	CreatedAt string `json:"created_at,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
-}
+// spawnProfileJSON is the wire shape for a spawn profile; the one definition
+// lives in the agent package so the CLI and the daemon cannot drift.
+type spawnProfileJSON = agent.SpawnProfileJSON
 
 // profileToJSON projects a db.SpawnProfile onto the wire shape.
 func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
@@ -192,6 +95,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		IsOwner:                    p.IsOwner,
 		PermissionOverrides:        p.PermissionOverrides,
 		ContextFeatures:            p.ContextFeatures,
+		RelaunchPolicy:             maps.Clone(p.RelaunchPolicy),
 	}
 	if !p.CreatedAt.IsZero() {
 		out.CreatedAt = p.CreatedAt.Format(time.RFC3339)
@@ -450,6 +354,15 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_context_features", err.Error()}
 	}
+	// Per-agent relaunch rows: registry fields and modes only ("inherit" is a
+	// spawn's word for leaving a profile's row out; a profile just omits it).
+	if err := launchspec.ValidateOverrides(body.RelaunchPolicy, false); err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_relaunch_policy", err.Error()}
+	}
+	relaunchPolicy := maps.Clone(body.RelaunchPolicy)
+	if len(relaunchPolicy) == 0 {
+		relaunchPolicy = nil
+	}
 	environment, err := sandboxpolicy.NormalizeEnvironment(body.Environment)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_environment", err.Error()}
@@ -527,6 +440,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		IsOwner:                    body.IsOwner,
 		PermissionOverrides:        permOverrides,
 		ContextFeatures:            contextFeatures,
+		RelaunchPolicy:             relaunchPolicy,
 	}, nil
 }
 
@@ -543,8 +457,8 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return &spawnFailure{http.StatusBadRequest, "invalid_arg", fmt.Sprintf(
 			"profile_inline: %q is not supported on a template-local profile — identity fields "+
 				"(agent_name/role/descr/initial_message) belong on the template agent itself, and the "+
-				"spawn-dialog toggles (sync_worktree/fetch_latest_worktree/auto_focus/include_group_default_context) do not "+
-				"apply to a template deploy", field)}
+				"spawn-dialog toggles (sync_worktree/fetch_latest_worktree/auto_focus) do not apply to a template "+
+				"deploy; include_group_default_context is honoured from a referenced or default profile only", field)}
 	}
 	if strings.TrimSpace(body.Name) != "" {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
@@ -577,6 +491,11 @@ func buildInlineProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawn
 		return nil, reject("auto_focus")
 	case body.IncludeGroupDefaultContext != nil:
 		return nil, reject("include_group_default_context")
+	case len(body.RelaunchPolicy) != 0:
+		// Honoured from a saved spawn profile only (launch slice 11); a
+		// template-local profile is not one of the spawn's profile tiers.
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_arg",
+			"profile_inline: relaunch_policy is only valid on a saved spawn profile"}
 	}
 	// A placeholder name satisfies buildProfileFromJSON's name rule; the stored
 	// inline profile is name-less by definition.
@@ -648,7 +567,8 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
-		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+		caller, ok := requirePermission(w, r, PermProfilesManage)
+		if !ok {
 			return
 		}
 		var body spawnProfileJSON
@@ -658,7 +578,11 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		p, fail := buildProfileFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
+			return
+		}
+		if fail := profileConferralFailure(r, caller, nil, p, "", libraryProfileReach); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		id, err := db.CreateSpawnProfile(p)
@@ -682,6 +606,11 @@ func handleSpawnProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// libraryProfileReach is why a profile write is checked for the access it
+// confers: since default profiles reach every spawn path, unattended workers
+// included, a library profile reaches spawns its writer never launches.
+const libraryProfileReach = "a library profile can be any group's default, or the global one, and reach every spawn there, automations included"
+
 // handleGlobalDefaultSpawnProfile exposes the single server-persisted default
 // profile used after a group's own default. The dashboard edits the same value
 // through its DB-backed preferences API; this endpoint gives the CLI an
@@ -696,7 +625,8 @@ func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"name": name})
 	case http.MethodPut:
-		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+		caller, ok := requirePermission(w, r, PermProfilesManage)
+		if !ok {
 			return
 		}
 		var body struct {
@@ -718,6 +648,11 @@ func handleGlobalDefaultSpawnProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		if prof == nil {
 			writeError(w, http.StatusBadRequest, "not_found", "no such profile")
+			return
+		}
+		if fail := profileConferralFailure(r, caller, nil, prof, "",
+			"the global default profile applies to every spawn no group default or named profile overrides, automations included"); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		if err := db.SetDashboardProfileRef(dashboardDefaultProfilePrefKey, dashboardDefaultProfileIDPrefKey, prof.Name, prof.ID); err != nil {
@@ -1117,6 +1052,7 @@ func handleSpawnProfilesImportInspect(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
 		return
 	}
+	giveBackSudoUses(r)
 	var env profileExportEnvelope
 	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid spawn-profile JSON: "+err.Error())
@@ -1124,7 +1060,7 @@ func handleSpawnProfilesImportInspect(w http.ResponseWriter, r *http.Request) {
 	}
 	res, fail := inspectProfileEnvelope(env)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -1139,7 +1075,8 @@ func handleSpawnProfilesImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
 		return
 	}
-	if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+	caller, ok := requirePermission(w, r, PermProfilesManage)
+	if !ok {
 		return
 	}
 	var req profileImportRequest
@@ -1147,15 +1084,15 @@ func handleSpawnProfilesImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "not valid spawn-profile JSON: "+err.Error())
 		return
 	}
-	res, fail := importProfiles(profileImportRequestEnvelope(req), req.Decisions)
+	res, fail := importProfiles(caller, profileImportRequestEnvelope(req), req.Decisions)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
 }
 
-func importProfiles(env profileExportEnvelope, decisions []profileImportDecision) (profileImportResult, *spawnFailure) {
+func importProfiles(caller string, env profileExportEnvelope, decisions []profileImportDecision) (profileImportResult, *spawnFailure) {
 	if fail := validateProfileEnvelope(env); fail != nil {
 		return profileImportResult{}, fail
 	}
@@ -1266,6 +1203,14 @@ func importProfiles(env profileExportEnvelope, decisions []profileImportDecision
 			return profileImportResult{}, &spawnFailure{http.StatusInternalServerError, "io", conflictErr.Error()}
 		} else if conflict != "" {
 			return profileImportResult{}, &spawnFailure{http.StatusConflict, "exists", conflict}
+		}
+		// An overwrite is judged against the profile it replaces.
+		var before *db.SpawnProfile
+		if plan.action == "overwrite" {
+			before = existing
+		}
+		if fail := profileConferralFailure(nil, caller, before, built, "", libraryProfileReach); fail != nil {
+			return profileImportResult{}, fail
 		}
 	}
 
@@ -1391,6 +1336,20 @@ func seedProfileFromConv(convID string) (spawnProfileJSON, error) {
 			seed.PermissionOverrides = overrides
 		}
 	}
+	// The agent's per-agent relaunch rows ride along (launch slice 11), so a
+	// profile saved from it relaunches its spawns the same way. "inherit"
+	// rows are left out: a profile follows the global table by omission.
+	if layers, err := db.AgentLaunchLayersForConv(convID); err == nil && layers != nil {
+		for _, o := range layers.RelaunchOverrides {
+			if o.Mode == string(launchspec.ModeInherit) {
+				continue
+			}
+			if seed.RelaunchPolicy == nil {
+				seed.RelaunchPolicy = map[string]string{}
+			}
+			seed.RelaunchPolicy[o.Field] = o.Mode
+		}
+	}
 	return seed, nil
 }
 
@@ -1421,7 +1380,8 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, profileToJSON(p))
 	case http.MethodPatch:
-		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
+		caller, ok := requirePermission(w, r, PermProfilesManage)
+		if !ok {
 			return
 		}
 		existing, err := db.ResolveSpawnProfile(name)
@@ -1440,7 +1400,15 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		p, fail := buildProfileFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
+			return
+		}
+		if fail := profileConferralFailure(r, caller, existing, p, "", libraryProfileReach); fail != nil {
+			writeSpawnFailure(w, fail)
+			return
+		}
+		if fail := peerProfileEditFailure(r, existing, p); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		p.ID = existing.ID
@@ -1456,6 +1424,9 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 			"name":                       p.Name,
 			"supports_explicit_disabled": true,
 			"profile":                    profileToJSON(p),
+			// The edit reaches new spawns only: these active agents keep
+			// the copy they were spawned with (see profile_reapply.go).
+			"running_agents_with_copy": runningAgentsWithCopy(p.ID),
 		})
 	case http.MethodDelete:
 		if _, ok := requirePermission(w, r, PermProfilesManage); !ok {
@@ -1468,6 +1439,10 @@ func handleSpawnProfileByName(w http.ResponseWriter, r *http.Request) {
 		}
 		if existing == nil {
 			writeError(w, http.StatusNotFound, "not_found", "no such profile")
+			return
+		}
+		if fail := peerProfileEditFailure(r, existing, nil); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		n, err := db.DeleteSpawnProfile(existing.Name)

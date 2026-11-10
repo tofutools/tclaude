@@ -234,6 +234,13 @@ func updatePeerReach(w http.ResponseWriter, r *http.Request) {
 	if groupID != 0 && !req.Remove {
 		warnings = shadowedGroupMembers(groupID, req.Group, slugs)
 	}
+	if !req.Remove {
+		for _, slug := range slugs {
+			if agentPeerViewDestructive(slug) {
+				warnings = append(warnings, agentPeerViewDestructiveWarning(slug, req.Peer))
+			}
+		}
+	}
 	listPeerReachWith(w, r, warnings)
 }
 

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // Flow coverage for the deferred OpenCode spawn path: the managed
@@ -161,7 +164,8 @@ func TestOpenCodeAgent_SlowBootPreservesWebAutoFocus(t *testing.T) {
 	require.Equal(t, 200, resp.Code, "raw=%s", resp.Raw)
 	require.Empty(t, resp.ConvID, "cold launch should return Pending")
 	assert.Equal(t, "browser", resp.FocusMode)
-	assert.Equal(t, "/api/spawn-focus-ws/"+resp.Label, resp.FocusWS)
+	require.NotEmpty(t, resp.AgentID, "a pending spawn reserves its agent id")
+	assert.Equal(t, "/api/spawn-focus-ws/"+resp.Label+"?agent="+resp.AgentID, resp.FocusWS)
 	assert.False(t, openedNative)
 
 	// Start the web-terminal request while no pane exists. Hold the runtime
@@ -291,6 +295,89 @@ func TestOpenCodeAgent_BackgroundBootFailureClearsPendingAndNotifies(t *testing.
 		}
 	}
 	assert.True(t, found, "the operator gets a Messages-tab notice for the failed spawn; have %+v", msgs)
+}
+
+// A deferred launch that fails hands nothing on: the private state its first
+// pass allocated goes with it.
+func TestOpenCodeAgent_BackgroundBootFailureLeavesNoPrivateState(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+	setSandboxImplDefault(t, f, "tclaude-layer")
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	blockedOpenCodeRuntime(t, release, errors.New("port already in use"))
+
+	f.HaveGroup("oc-crew")
+	resp := f.AsHuman().SpawnWith("oc-crew", map[string]any{"name": "doomed-worker", "harness": "opencode"})
+	require.Equal(t, 200, resp.Code, "the failure lands after the pending response (raw=%s)", resp.Raw)
+	roots, rows := privateOpenCodeStateLeft(t)
+	require.Len(t, roots, 1, "the launch is still running")
+	require.Equal(t, 1, rows)
+
+	releaseOnce.Do(func() { close(release) })
+	agentd.WaitForBackgroundForTest()
+
+	roots, rows = privateOpenCodeStateLeft(t)
+	assert.Empty(t, roots)
+	assert.Zero(t, rows)
+}
+
+// A daemon restart loses the in-memory discard of a deferred launch, so the
+// sweeper removes the state, but only where no agent can be reading it.
+func TestPendingSpawnSweeper_OrphanDropRemovesPrivateState(t *testing.T) {
+	cases := []struct {
+		name string
+		live func(t *testing.T, f *testharness.Flow, agentID, label string)
+		kept bool
+	}{
+		{name: "no agent and no session", kept: false},
+		{name: "a deferred launch still running", kept: true,
+			live: func(t *testing.T, _ *testharness.Flow, _, label string) {
+				t.Cleanup(agentd.MarkDeferredSpawnRunningForTest(label))
+			}},
+		{name: "an agent owns it", kept: true,
+			live: func(t *testing.T, _ *testharness.Flow, agentID, _ string) {
+				_, _, err := db.EnsureAgentForConvWithID("ses_0123456789abcdefghijklmnop", agentID, "spawn")
+				require.NoError(t, err)
+			}},
+		{name: "its session row exists", kept: true,
+			live: func(t *testing.T, _ *testharness.Flow, _, label string) {
+				require.NoError(t, db.SaveSession(&db.SessionRow{ID: label, Harness: "opencode", Status: "running", CreatedAt: time.Now()}))
+			}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			g := f.HaveGroup("oc-crew")
+			agentID := db.NewAgentID()
+			const label = "spwn-private"
+			root := filepath.Join(testutil.CanonicalTempDir(t), "state")
+			require.NoError(t, os.MkdirAll(root, 0o700))
+			inserted, err := db.InsertOpenCodeAgentStateAllocation(db.OpenCodeAgentStateAllocation{
+				AgentID: agentID, Mode: db.OpenCodeStatePrivate, StateRoot: root})
+			require.NoError(t, err)
+			require.True(t, inserted)
+			require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{Label: label, AgentID: agentID, GroupID: g.ID, Name: "lost-worker"}))
+			if tc.live != nil {
+				tc.live(t, f, agentID, label)
+			}
+
+			agentd.RunPendingSpawnSweepForTest()
+
+			allocation, err := db.GetOpenCodeAgentStateAllocation(agentID)
+			require.NoError(t, err)
+			_, statErr := os.Stat(root)
+			if tc.kept {
+				assert.NotNil(t, allocation)
+				assert.NoError(t, statErr)
+			} else {
+				assert.Nil(t, allocation)
+				assert.ErrorIs(t, statErr, os.ErrNotExist)
+			}
+		})
+	}
 }
 
 // Scenario (cold-review follow-up, PR #1496 finding 2): a reservation whose

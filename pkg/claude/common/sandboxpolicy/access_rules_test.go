@@ -445,6 +445,7 @@ func TestNetworkPackMaterializationMatchesManualRules(t *testing.T) {
 		Allow: []NetworkAllowEntry{
 			{Loopback: true},
 			{Domain: "api.anthropic.com", Ports: []int{443}},
+			{Domain: "platform.claude.com", Ports: []int{443}},
 			{Domain: "api.openai.com", Ports: []int{443}},
 		},
 	})

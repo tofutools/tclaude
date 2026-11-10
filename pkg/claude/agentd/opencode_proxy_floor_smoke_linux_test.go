@@ -189,6 +189,11 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	}
 	cwd := filepath.Join(home, "workspace")
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	// Write the debug config BEFORE agentd starts, so the launcher reads it from
+	// the first launch; otherwise it logs at info and every debug-level proxy
+	// decision is silently dropped.
+	writeOpenCodeFloorDebugConfig(t, home)
+
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
 	agentSocket := agentipc.CanonicalSocketPath()
@@ -226,8 +231,8 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	// entire audit trail. Network filtering does not replace the harness HOME;
 	// the launcher execs the supervisor with this test's frozen HOME, so its
 	// config and decision log live there too.
+	// The config was written into this home before agentd started, above.
 	supervisorHome := home
-	writeOpenCodeFloorDebugConfig(t, supervisorHome)
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return

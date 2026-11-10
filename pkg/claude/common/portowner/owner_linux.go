@@ -47,6 +47,40 @@ func ProcessOwnsLoopbackPort(rootPID, port int) bool {
 	return false
 }
 
+// ProcessOwnsAllLoopbackListeners is the strict form: EVERY socket listening
+// on 127.0.0.1:port must be held by the subtree, not just one. With
+// SO_REUSEPORT several sockets can share the port and the kernel spreads
+// connections across them, so "one of them is ours" does not say where a dial
+// will land. A caller that proxies arbitrary traffic to the port needs this.
+func ProcessOwnsAllLoopbackListeners(rootPID, port int) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
+	inodes := listeningSocketInodes(hexPort(port))
+	if len(inodes) == 0 {
+		return false
+	}
+	owned := map[string]struct{}{}
+	for _, pid := range ProcessSubtree(rootPID) {
+		entries, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "fd"))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			target, err := os.Readlink(filepath.Join(
+				"/proc", strconv.Itoa(pid), "fd", entry.Name()))
+			if err != nil || !strings.HasPrefix(target, "socket:[") || !strings.HasSuffix(target, "]") {
+				continue
+			}
+			inode := strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")
+			if _, found := inodes[inode]; found {
+				owned[inode] = struct{}{}
+			}
+		}
+	}
+	return len(owned) == len(inodes)
+}
+
 // HasLoopbackListener reports whether ANY process is listening on
 // 127.0.0.1:port.
 //
@@ -74,24 +108,19 @@ func ProcessInSubtree(rootPID, candidatePID int) bool {
 // ProcessSubtree returns rootPID followed by its descendants, breadth-first.
 // The walk is bounded so a pathological or adversarial process tree cannot turn
 // an ownership check into an unbounded scan.
+//
+// A process's children are read from every one of its threads: the kernel
+// lists a child under the thread that forked it (/proc/<pid>/task/<tid>/
+// children), and a multithreaded parent such as a Go program forks from
+// whichever thread the call happens to run on, not only its main one.
 func ProcessSubtree(rootPID int) []int {
 	if rootPID <= 1 {
 		return nil
 	}
 	result := []int{rootPID}
 	seen := map[int]struct{}{rootPID: {}}
-	for cursor := 0; cursor < len(result) && len(result) < 256; cursor++ {
-		pid := result[cursor]
-		data, err := os.ReadFile(filepath.Join(
-			"/proc", strconv.Itoa(pid), "task", strconv.Itoa(pid), "children"))
-		if err != nil {
-			continue
-		}
-		for rawChild := range strings.FieldsSeq(string(data)) {
-			child, err := strconv.Atoi(rawChild)
-			if err != nil || child <= 1 {
-				continue
-			}
+	for cursor := 0; cursor < len(result) && len(result) < maxSubtree; cursor++ {
+		for _, child := range processChildren(result[cursor]) {
 			if _, exists := seen[child]; exists {
 				continue
 			}
@@ -100,6 +129,33 @@ func ProcessSubtree(rootPID int) []int {
 		}
 	}
 	return result
+}
+
+// maxSubtree bounds ProcessSubtree's walk.
+const maxSubtree = 256
+
+// processChildren are pid's children, from all of its threads.
+func processChildren(pid int) []int {
+	taskDir := filepath.Join("/proc", strconv.Itoa(pid), "task")
+	threads, err := os.ReadDir(taskDir)
+	if err != nil {
+		return nil
+	}
+	var children []int
+	for _, thread := range threads {
+		data, err := os.ReadFile(filepath.Join(taskDir, thread.Name(), "children"))
+		if err != nil {
+			continue
+		}
+		for rawChild := range strings.FieldsSeq(string(data)) {
+			child, err := strconv.Atoi(rawChild)
+			if err != nil || child <= 1 {
+				continue
+			}
+			children = append(children, child)
+		}
+	}
+	return children
 }
 
 // hexPort renders a port the way /proc/net/tcp spells it: uppercase hex.

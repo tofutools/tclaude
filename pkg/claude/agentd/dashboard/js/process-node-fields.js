@@ -44,7 +44,7 @@ export function NodeField({
   const Tag = multiline ? 'textarea' : 'input';
   return html`<label class="field process-node-field" title=${hint || undefined}>
     <span class="process-node-field-label">${label}</span>
-    <${Tag} ref=${input} class=${multiline ? 'process-node-textarea process-scroll-surface' : 'process-node-input'}
+    <${Tag} ref=${input} class=${multiline ? 'process-node-textarea' : 'process-node-input'}
       type=${multiline ? undefined : 'text'} rows=${multiline ? 3 : undefined}
       spellcheck="false" placeholder=${placeholder} disabled=${readOnly} autofocus=${autofocus}
       value=${raw} aria-invalid=${invalid ? 'true' : undefined} data-node-field=${fieldKey}
@@ -54,10 +54,12 @@ export function NodeField({
   </label>`;
 }
 
+// The select stays native under data-ui-exempt: process-node-* fields share
+// the process editor's own palette with their input/textarea siblings.
 export function NodeSelect({ fieldKey, label, options, value, apply, readOnly, blankLabel = null, invalid = false }) {
   const selected = options.includes(value) ? value : (blankLabel !== null ? '' : options[0]);
   return html`<label class="field process-node-field"><span class="process-node-field-label">${label}</span>
-    <select class="process-node-select" aria-label=${label} disabled=${readOnly} data-node-field=${fieldKey}
+    <select data-ui-exempt class="process-node-select" aria-label=${label} disabled=${readOnly} data-node-field=${fieldKey}
       value=${selected} aria-invalid=${invalid ? 'true' : undefined}
       onChange=${(event) => apply?.(fieldKey, event.currentTarget.value)}>
       ${blankLabel !== null && html`<option value="">${blankLabel}</option>`}
@@ -86,7 +88,7 @@ export function PerformerEditor({
     ${showKind && html`<${NodeSelect} fieldKey=${`${path}.kind`} label="kind"
       options=${known ? PERFORMER_KINDS : [...PERFORMER_KINDS, kind]} value=${kind} readOnly=${readOnly}
       apply=${(key, value) => mutate('kind', value, setPerformerKind)} />`}
-    ${showKind && !known && html`<p class="process-node-empty">Unknown performer kind ${kind}: validation rejects it — pick a supported kind.</p>`}
+    ${showKind && !known && html`<p class="process-node-empty ui-empty">Unknown performer kind ${kind}: validation rejects it — pick a supported kind.</p>`}
     ${fields.map((field) => {
       if (field.outcomeMap) {
         if (!choiceRouting || !(performer?.choices || []).length) return null;

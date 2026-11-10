@@ -2,6 +2,8 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ActivityNodeSwitch, activityTarget } from './activity-node.js';
+import { Button } from './ui-components.js';
+import { tableState } from './table-kit.js';
 
 const html = htm.bind(h);
 export const DEBUG_POLL_MS = 10_000;
@@ -78,7 +80,7 @@ function PhaseBreakdown({ phases }) {
         </span>`)}
       </div>
     </${Fragment}>`}
-    <table class="debug-table">
+    <table class="debug-table ui-compact">
       <thead><tr><th scope="col">Phase</th><th scope="col">latest</th><th scope="col">p50</th><th scope="col">p90</th><th scope="col">p99</th><th scope="col">max</th></tr></thead>
       <tbody>
         <${PhaseRows} phases=${phases} expanded=${expanded} toggle=${toggle} />
@@ -97,7 +99,7 @@ function PhaseRows({ phases, expanded, toggle, depth = 0, parentPath = '', paren
     const row = html`<tr key=${path} data-key=${`phase-${path}`} data-depth=${depth} class=${depth ? 'debug-phase-child' : ''}>
       <td style=${{ paddingLeft: `${8 + depth * 20}px` }}>
         ${hasChildren
-          ? html`<button type="button" class="debug-phase-toggle" aria-expanded=${open}
+          ? html`<button data-ui-exempt type="button" class="debug-phase-toggle" aria-expanded=${open}
               aria-label=${`${open ? 'Collapse' : 'Expand'} ${phase.name} phase breakdown`}
               onClick=${() => toggle(path)}>${open ? '▾' : '▸'}</button>`
           : html`<span class="debug-phase-toggle-placeholder" aria-hidden="true"></span>`}
@@ -122,7 +124,7 @@ function EndpointCard({ endpoint }) {
   const samples = Array.isArray(endpoint.samples) ? endpoint.samples : [];
   const phases = Array.isArray(endpoint.phases) ? endpoint.phases : [];
   const latest = samples.length ? samples[samples.length - 1].total_ms : NaN;
-  return html`<div class="debug-card" data-key=${`debug-${endpoint.endpoint}`}>
+  return html`<div class="debug-card ui-card" data-key=${`debug-${endpoint.endpoint}`}>
     <div class="debug-card-head">
       <span class="rowname">${endpoint.endpoint}</span>
       <span class="muted">${endpoint.count} sample${endpoint.count === 1 ? '' : 's'}</span>
@@ -145,16 +147,13 @@ function updatedLabel(response) {
 }
 
 function DebugContents({ current }) {
-  if (current.request.phase === 'loading') {
-    return html`<div class="empty">Loading poll timings…</div>`;
-  }
-  if (current.request.phase === 'error') {
-    const operation = current.request.operation === 'reset' ? 'reset' : 'load';
-    return html`<div class="island-error" role="alert">Failed to ${operation} poll timings: ${current.request.error}</div>`;
-  }
-  if (!current.endpoints.length) {
-    return html`<div class="empty">No poll samples recorded yet — the recorder fills as the dashboard polls (open the Groups tab for a few seconds, then return here).</div>`;
-  }
+  const operation = current.request.operation === 'reset' ? 'reset' : 'load';
+  const placeholder = tableState({
+    loading: current.request.phase === 'loading' && 'Loading poll timings…',
+    error: current.request.phase === 'error' && html`Failed to ${operation} poll timings: ${current.request.error}`,
+    empty: !current.endpoints.length && 'No poll samples recorded yet — the recorder fills as the dashboard polls (open the Groups tab for a few seconds, then return here).',
+  });
+  if (placeholder) return placeholder;
   return current.endpoints.map((endpoint) =>
     html`<${EndpointCard} key=${endpoint.endpoint} endpoint=${endpoint} />`);
 }
@@ -193,12 +192,12 @@ export function DebugApp({
       <${ActivityNodeSwitch} />
       <span class="spacer"></span>
       <span id="debug-updated" class="muted" aria-live="polite">${updatedLabel(current.response)}</span>
-      <button class="tool" id="debug-reset" disabled=${current.resetting}
+      <${Button} id="debug-reset" disabled=${current.resetting}
         title="Discard every recorded sample and start a fresh distribution — useful after changing what's being measured (agent count, config)"
         onClick=${actions.reset}>
         <span class="theme-copy-regular">${current.resetting ? '… resetting' : '↺ reset stats'}</span>
         <span class="theme-copy-wizard">${current.resetting ? '… clearing' : '⚗ clear readings'}</span>
-      </button>
+      <//>
     </div>
     <div id="debug-list" aria-busy=${busy}><${DebugContents} current=${current} /></div>
   </${Fragment}>`;

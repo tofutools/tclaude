@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -125,6 +126,7 @@ func TestHTTPProxyRawGatewayAndEnvironment(t *testing.T) {
 		calls++
 		assert.Equal(t, "Bearer secret", r.Header.Get("Authorization"))
 		assert.Empty(t, r.Header.Get("X-Tclaude-Session-Id"))
+		assert.Empty(t, r.Header.Get(agentipc.ExternalStewardCredentialHeader))
 		assert.Equal(t, "/api/items", r.URL.Path)
 		assert.Equal(t, "key=one", r.URL.RawQuery)
 		data, err := io.ReadAll(r.Body)
@@ -154,6 +156,7 @@ func TestHTTPProxyRawGatewayAndEnvironment(t *testing.T) {
 	req.Header.Set("Connection", "X-Hop")
 	req.Header.Set("X-Hop", "incoming")
 	req.Header.Set("X-Tclaude-Session-Id", "forged")
+	req.Header.Set(agentipc.ExternalStewardCredentialHeader, "tcls_forged")
 	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(req, conv))
 	require.Equal(t, 422, rec.Code, rec.Body.String())
 	assert.Equal(t, []byte{0, 255, 10}, rec.Body.Bytes())

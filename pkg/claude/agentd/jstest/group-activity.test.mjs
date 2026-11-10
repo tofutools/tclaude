@@ -95,19 +95,19 @@ test('variantLabel: plain nouns by default, arcane verbs in the wizard theme', (
   assert.equal(variantLabel('working', 2), '2 working');
   assert.equal(variantLabel('idle', 1, ''), '1 idle');
   assert.equal(variantLabel('working', 3, 'slop'), '3 working'); // slop keeps honest nouns
-  // Wizard → "N familiar(s) <verb>", pluralised on the count.
-  assert.equal(variantLabel('working', 2, 'wizard'), '2 familiars channeling');
-  assert.equal(variantLabel('idle', 1, 'wizard'), '1 familiar meditating');
-  assert.equal(variantLabel('asking', 1, 'wizard'), '1 familiar awaiting a decree');
-  assert.equal(variantLabel('crashed', 1, 'wizard'), '1 familiar slain by a grue');
-  assert.equal(variantLabel('offline', 3, 'wizard'), '3 familiars departed');
+  // Wizard → "N hero(s) <verb>", pluralised on the count.
+  assert.equal(variantLabel('working', 2, 'wizard'), '2 heroes channeling');
+  assert.equal(variantLabel('idle', 1, 'wizard'), '1 hero meditating');
+  assert.equal(variantLabel('asking', 1, 'wizard'), '1 hero awaiting a decree');
+  assert.equal(variantLabel('crashed', 1, 'wizard'), '1 hero slain by a grue');
+  assert.equal(variantLabel('offline', 3, 'wizard'), '3 heroes departed');
 });
 
 test('themedSummaryText re-flavours the breakdown for wizard, plain otherwise', () => {
   const s = activitySummary([on('working'), on('working'), on('idle')]);
   assert.equal(themedSummaryText(s), '2 working · 1 idle');           // default = regular
   assert.equal(themedSummaryText(s, ''), '2 working · 1 idle');       // blank = regular
-  assert.equal(themedSummaryText(s, 'wizard'), '2 familiars channeling · 1 familiar meditating');
+  assert.equal(themedSummaryText(s, 'wizard'), '2 heroes channeling · 1 hero meditating');
   assert.equal(themedSummaryText(activitySummary([]), 'wizard'), ''); // nothing present
 });
 
@@ -118,7 +118,7 @@ test('activity mode models preserve exact classes, keys, counts and themed title
   assert.deepEqual(modes.map((mode) => mode.className), ['ga-regular', 'ga-slop', 'ga-wizard']);
   assert.ok(modes.every((mode) => mode.level === 'working'));
   assert.equal(modes[0].title, '2 working · 1 idle');
-  assert.equal(modes[2].title, '2 familiars channeling · 1 familiar meditating');
+  assert.equal(modes[2].title, '2 heroes channeling · 1 hero meditating');
   assert.deepEqual(modes[0].bots.map((bot) => bot.key), ['working', 'idle']);
   assert.equal(modes[0].bots[0].count, 2);
   assert.equal(modes[0].bots[1].count, 1);
@@ -141,13 +141,13 @@ test('activity bot models preserve emoji tags, sprite poses and wizard vocabular
 
   const wizard = activityBotView('working', 2, 'emoji', true);
   assert.equal(wizard.face, '🧙');
-  assert.equal(wizard.title, '2 familiars channeling');
+  assert.equal(wizard.title, '2 heroes channeling');
   assert.equal(wizard.tag, '');
 
   const wizardSprite = activityBotView('asking', 1, 'sprites', true);
   assert.match(wizardSprite.className, /actbot-sprite actbot-wiz actbot-asking/);
   assert.equal(wizardSprite.faceClassName, 'actbot-spr spr-wiz-ask');
-  assert.equal(wizardSprite.title, '1 familiar awaiting a decree');
+  assert.equal(wizardSprite.title, '1 hero awaiting a decree');
 });
 
 test('activity mode models omit disabled modes and never carry status detail strings', () => {

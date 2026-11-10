@@ -34,19 +34,6 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// CSS: the box + the keyboard-selection highlight.
 	must(".palette-box {", "the palette box has a CSS rule")
 	must(".palette-item.selected", "the keyboard-selected command is highlighted")
-	for _, scrollbarRule := range []struct{ needle, why string }{
-		{"#command-palette-modal .palette-list {\n    scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;\n  }", "Firefox gets the regular dashboard scrollbar colors"},
-		{"body.wizard #command-palette-modal .palette-list {\n    scrollbar-color: #7a5db0 #140f28;\n  }", "Firefox gets the wizard scrollbar colors"},
-		{"#command-palette-modal .palette-list::-webkit-scrollbar { width: 10px; height: 10px; }", "the results list has explicit WebKit scrollbar geometry"},
-		{"#command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }", "the regular scrollbar has the standard hover color"},
-		{"#command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }", "the regular scrollbar has the standard active color"},
-		{"body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }", "the wizard scrollbar has the standard hover color"},
-		{"body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }", "the wizard scrollbar has the standard active color"},
-		{"#command-palette-modal .palette-list {\n    scrollbar-width: auto;\n    scrollbar-color: auto;\n    forced-color-adjust: auto;\n  }", "high-contrast mode restores native Firefox geometry and colors"},
-		{"#command-palette-modal .palette-list::-webkit-scrollbar-thumb {\n    background: ButtonText; border: 1px solid Canvas;\n  }", "high-contrast mode uses system thumb colors"},
-	} {
-		must(scrollbarRule.needle, scrollbarRule.why)
-	}
 
 	// JS: command construction stays plain while Preact owns both markup roots
 	// and exposes one lifecycle-aware mount boundary.
@@ -56,8 +43,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 
 	// The Ctrl/Cmd-K trigger: a modifier + the "k" key, claimed with
 	// preventDefault. Pressing it again toggles closed.
-	must(`(event.key || '').toLowerCase() === 'k'`, "the trigger is the K key")
-	must("event.ctrlKey || event.metaKey", "the trigger requires Ctrl or Cmd")
+	must("S('palette', 'global', 'Mod+KeyK'", "the registry pins the trigger to Ctrl/Cmd and the K key position")
+	must("matchesShortcut(event, 'palette')", "the trigger matches through the shortcut registry")
 	must("isCommandPaletteShortcutTarget(event.target)",
 		"the global trigger yields to inputs and embedded editors")
 	must("requestPalette = requestCommandPalette",
@@ -104,7 +91,7 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		"the plain spawn reads the last-interacted group")
 	must("openAgentSpawnModal(lastGroupLive ? { defaultGroup: lastGroup } : {})",
 		"the plain spawn defaults the picker to the last group (still changeable)")
-	must("label: wiz(`Spawn agent in ${g.name}…`, `Summon a familiar into ${g.name}…`)",
+	must("label: wiz(`Spawn agent in ${g.name}…`, `Summon a hero into ${g.name}…`)",
 		"the palette offers a pinned spawn per group (plain label + arcane wizard label)")
 	must("openAgentSpawnModal({ groupName: g.name })",
 		"each per-group spawn pins its group")
@@ -124,10 +111,10 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// openProfilesManageModal (exported from modal-profiles.js just for this).
 	// The command adds only a keyboard entry point, no new behaviour. The
 	// presented label is a wiz(plain, arcane) pair — "Manage spawn profiles…"
-	// plainly, "Manage familiar patterns…" under body.wizard (profiles re-letter to
+	// plainly, "Manage loadouts…" under body.wizard (profiles re-letter to
 	// patterns) — pinned in one needle so dropping either copy fails CI.
 	must("./modal-profiles.js", "the palette imports the profiles manage overlay")
-	must("wiz('Manage spawn profiles…', 'Manage familiar patterns…')",
+	must("wiz('Manage spawn profiles…', 'Manage loadouts…')",
 		"the palette offers the spawn-profiles manager (plain + arcane label)")
 	must("run: () => openProfilesManageModal(),",
 		"the profiles command reuses the existing manage overlay")
@@ -196,11 +183,11 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 
 	// Consistent presentation: every detach command reads "Hide", every
 	// raise command reads "Focus" (no stray "Unfocus" in a label). In 🧙 mode
-	// the presented label re-skins to "Veil all familiars" via the wiz() helper
+	// the presented label re-skins to "Veil all heroes" via the wiz() helper
 	// — both copies are pinned in the one needle. The plain word stays the
 	// keyword vocabulary, so old search terms keep working (TestDashboardHTML_
 	// WizardCommandPaletteSynonyms covers the arcane→plain synonym bridge).
-	must("wiz('Hide all windows', 'Veil all familiars')", "the bulk detach command reads Hide (plain) / Veil (wizard), not Unfocus")
+	must("wiz('Hide all windows', 'Veil all heroes')", "the bulk detach command reads Hide (plain) / Veil (wizard), not Unfocus")
 
 	// Power control: stop / start agent PROCESSES (distinct from the
 	// window ops, which only detach/raise terminals). Each tier delegates
@@ -219,11 +206,11 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// pinned in one needle so dropping either copy fails CI. The plain verbs
 	// stay in the keywords so old search terms keep working.
 	// Global all-agents.
-	must("wiz('Shut down all agents', 'Slumber all familiars')", "the palette offers a global shutdown (plain + arcane label)")
+	must("wiz('Shut down all agents', 'Slumber all heroes')", "the palette offers a global shutdown (plain + arcane label)")
 	must("shutdownScope('all', null)", "global shutdown reuses shutdownScope")
-	must("wiz('Power on all agents', 'Awaken all familiars')", "the palette offers a global power-on (plain + arcane label)")
+	must("wiz('Power on all agents', 'Awaken all heroes')", "the palette offers a global power-on (plain + arcane label)")
 	must("powerOnScope('all', null)", "global power-on reuses powerOnScope")
-	must("wiz('Announce to all live agents…', 'Proclaim to all channeling familiars…')",
+	must("wiz('Announce to all live agents…', 'Proclaim to all channeling heroes…')",
 		"the palette offers a dashboard-wide live-agent announcement")
 	must("openOperatorMessageDialog({",
 		"the announcement command reuses the guarded human-to-agent composer")
@@ -235,10 +222,10 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("wiz(`Power on group: ${g.name}`, `Awaken party: ${g.name}`)", "the palette offers a per-group power-on (plain + arcane label)")
 	must("powerOnScope('group', g.name)", "per-group power-on reuses powerOnScope")
 	// Per-agent, state-gated.
-	must("wiz(`Stop agent: ${label}`, `Slumber familiar: ${label}`)", "the palette offers a per-agent stop (plain + arcane label)")
+	must("wiz(`Stop agent: ${label}`, `Slumber hero: ${label}`)", "the palette offers a per-agent stop (plain + arcane label)")
 	must("openShutdownAgentDialog(sel, label)",
 		"per-agent stop opens the frozen Preact shutdown transaction")
-	must("wiz(`Resume agent: ${label}`, `Awaken familiar: ${label}`)", "the palette offers a per-agent resume (plain + arcane label)")
+	must("wiz(`Resume agent: ${label}`, `Awaken hero: ${label}`)", "the palette offers a per-agent resume (plain + arcane label)")
 	must("resumeAgentReq(sel, label)", "per-agent resume reuses resumeAgentReq")
 
 	// Retire: the palette can demote agents back to plain conversations.
@@ -250,22 +237,22 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// list to /api/groups/{name}/retire — so the BE retires exactly what
 	// the human previewed, not a cohort it re-derived. Listed only when a
 	// live match count is non-zero so the palette never offers a no-op.
-	must("wiz(`Retire agent: ${label}`, `Banish familiar: ${label}`)", "the palette offers a per-agent retire (plain + arcane Banish label)")
+	must("wiz(`Retire agent: ${label}`, `Banish hero: ${label}`)", "the palette offers a per-agent retire (plain + arcane Banish label)")
 	must("openRetireAgentDialog(a.conv_id, label)",
 		"per-agent retire reuses the keyed transaction flow")
 	must("for (const status of ['idle', 'offline'])",
 		"the bulk retire offers the idle and offline cohorts")
-	must("wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} familiars in ${g.name}`)",
+	must("wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} heroes in ${g.name}`)",
 		"the palette offers a per-group bulk retire by status (plain + arcane Banish label)")
 	must("member.online && member.state?.status === status",
 		"the bulk retire command is gated directly from the injected snapshot (no no-op)")
 	must("openRetirePreview(g.name, status)",
 		"per-group bulk retire opens the preview modal")
-	must("wiz(`Retire ${status} agents in Ungrouped`, `Banish ${status} familiars in Unbound`)",
+	must("wiz(`Retire ${status} agents in Ungrouped`, `Banish ${status} heroes in Unbound`)",
 		"the virtual Ungrouped group gets status-filtered bulk retire commands with wizard vocabulary")
 	must("openRetireUngroupedPreview(status)",
 		"the virtual Ungrouped status command opens the cleanup-backed preview")
-	must("wiz(`Retire ${status} agents across all groups`, `Banish ${status} familiars across all parties`)",
+	must("wiz(`Retire ${status} agents across all groups`, `Banish ${status} heroes across all parties`)",
 		"the palette offers a separate global status-filtered retire command")
 	must("openRetireAllPreview(status)",
 		"the global status command opens the all-agent preview")
@@ -311,10 +298,10 @@ func TestDashboardHTML_GlobalMenuCommandsHavePaletteActions(t *testing.T) {
 		run    string
 	}{
 		{"group-import-open", "wiz('Import an agent or group…', 'Unseal a party archive…')", "run: () => openGroupImport()"},
-		{"snapshots-open", "wiz('Snapshots…', 'Captured familiars…')", "run: () => openSnapshots()"},
-		{"cleanup-all-open", "wiz('Clean up agents and conversations…', 'Tidy familiars and scrolls…')", "run: () => openCleanupModal({ mode: 'agents' })"},
-		{"delete-retired-open", "wiz('Delete retired agents…', 'Dispel banished familiars…')", "run: () => openDeleteRetiredPreview()"},
-		{"profiles-manage-open", "wiz('Manage spawn profiles…', 'Manage familiar patterns…')", "run: () => openProfilesManageModal()"},
+		{"snapshots-open", "wiz('Snapshots…', 'Captured heroes…')", "run: () => openSnapshots()"},
+		{"cleanup-all-open", "wiz('Clean up agents and conversations…', 'Tidy heroes and scrolls…')", "run: () => openCleanupModal({ mode: 'agents' })"},
+		{"delete-retired-open", "wiz('Delete retired agents…', 'Dispel banished heroes…')", "run: () => openDeleteRetiredPreview()"},
+		{"profiles-manage-open", "wiz('Manage spawn profiles…', 'Manage loadouts…')", "run: () => openProfilesManageModal()"},
 		{"templates-manage-open", "wiz('Manage group templates…', 'Manage summoning circles…')", "run: () => openTemplatesManageModal()"},
 		{"roles-manage-open", "wiz('Manage role library…', 'Manage class library…')", "run: () => openRolesManageModal()"},
 		{"sandbox-profiles-manage-open", "wiz('Manage sandbox profiles…', 'Manage wards…')", "run: () => openSandboxProfilesManageModal()"},

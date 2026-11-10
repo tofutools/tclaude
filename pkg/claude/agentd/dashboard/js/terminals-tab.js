@@ -2,7 +2,13 @@
 // launcher outside the Preact Terminal Shell feature. Callers keep stable
 // functions while the mounted feature owns descriptors, chrome and lifecycle.
 
+import { revealInCompanion } from './companion-facade.js';
+import { agentSessionSeed } from './terminal-window-model.js';
 import { createAgentRosterReconciler, normalizeSeed } from './terminals-core.js';
+import { terminalAttachConfig } from './terminal-attach-config.js';
+import { detachWindowFeatures } from './terminal-drag-out.js';
+import { encodeTerminalOpenHash } from './terminal-handoff.js';
+import { isWizardActive } from './slop.js';
 
 let controller = null;
 let prepareRuntime = null;
@@ -19,6 +25,27 @@ export function registerTerminalShellController(next, runtimeLoader = null) {
   };
 }
 
+// The overlay windows answer for a terminal floating in one, which this facade
+// leaves to them to stay free of Preact.
+let floatingTerminals = () => false;
+export function setFloatingTerminals(lookup) {
+  floatingTerminals = lookup;
+}
+
+// An agent is in one place at a time, and every way of showing it comes through
+// here. A window holds it first. A live pane in this tab beats a companion tab
+// that was left pinned: that pane is what has the session.
+function revealAgentPlace(selector) {
+  if (revealInCompanion(selector, { tabs: false })) return true;
+  return !controller?.hasAgentPane?.([selector]) && revealInCompanion(selector);
+}
+
+// revealHeldSeed shows a terminal somewhere other than a tab here, and reports
+// whether it was: a floating window, or a place that holds the agent.
+export function revealHeldSeed(seed) {
+  return floatingTerminals(seed.key || seed.ws) || (agentSessionSeed(seed) && revealAgentPlace(seed.agent));
+}
+
 export function openTerminalPane(seedOrPromise, { reveal = true, activate = true } = {}) {
   // activate rides along only when a caller opts out, so every ordinary open
   // keeps the plain { reveal } contract.
@@ -27,9 +54,12 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     const normalized = normalizeSeed(rawSeed);
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
+    const key = seed.key || seed.ws;
+    if (revealHeldSeed(seed)) return { key, floating: true };
     const current = controller;
     if (!current) return null;
-    if (!prepareRuntime) return current.openPane(seed, paneOptions);
+    // A drawing board, process or page pane has no xterm to load.
+    if (!prepareRuntime || seed.drawingBoard || seed.process || seed.page) return current.openPane(seed, paneOptions);
     return prepareRuntime().then(
       () => controller === current ? current.openPane(seed, paneOptions) : null,
       (error) => {
@@ -38,6 +68,11 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
       },
     );
   });
+}
+
+// placeTerminalPane moves an open pane beside another, taking that one's group.
+export function placeTerminalPane(key, beside, options) {
+  return controller?.reorderPane?.(key, beside, options) || null;
 }
 
 // Returns openTerminalPane's promise (the opened pane, or null). Every existing
@@ -53,6 +88,26 @@ export function openWebWindowPane(agent, label, options) {
     agent,
     harness,
   }, paneOptions);
+}
+
+// detachSeedWindow opens a seed in a browser window of its own, the page a
+// detached Terminals tab lands on. It returns the window, or null when pop-ups
+// are blocked.
+export function detachSeedWindow(seed, { size = null, at = null } = {}) {
+  const features = size ? detachWindowFeatures({ size, at, screen: globalThis.screen }) : '';
+  let target = null;
+  try { target = globalThis.open('about:blank', '_blank', features || undefined); } catch { target = null; }
+  if (!target) return null;
+  const solo = { ...seed, initialRetry: true, wizard: isWizardActive(), terminalAttach: terminalAttachConfig() };
+  try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(solo)}`); } catch { return null; }
+  return target;
+}
+
+// detachWebWindow opens an agent's terminal in a browser window of its own.
+export function detachWebWindow(agent, label, { harness = '', size = null, at = null } = {}) {
+  return detachSeedWindow({
+    ws: `/api/open-window-ws/${encodeURIComponent(agent)}`, label, key: `window:${agent}`, hideConv: agent, agent, harness, floats: true,
+  }, { size, at });
 }
 
 export function openWebTermPane(agent, label, whichOrPromise, { group = '', ...paneOptions } = {}) {
@@ -77,6 +132,15 @@ export function openGroupWebTermPane(group, label, options) {
   }, options);
 }
 
+// openShellResource opens a shell resource's terminal: an agent's shell in
+// the directory it was opened in (its id is the pane key
+// term:<agent>:<which>:<group>), or the group's own shell.
+export function openShellResource(shell, label) {
+  if (!shell.agent) return openGroupWebTermPane(shell.id, label);
+  const group = String(shell.id).split(':').slice(3).join(':');
+  return openWebTermPane(shell.agent, label, shell.which || 'current', { group });
+}
+
 // waitForTerminalSettled resolves once the terminal opened under key has
 // attached and drawn its first screen (true), or false on timeout / when no
 // terminal shell is mounted.
@@ -84,7 +148,10 @@ export function waitForTerminalSettled(key, options) {
   return controller?.waitForPaneSettled?.(key, options) || Promise.resolve(false);
 }
 
+// focusTerminalForConv shows an agent wherever it already is, and reports whether
+// it was anywhere: a caller opens a place for it only when not.
 export function focusTerminalForConv(selectors, options) {
+  if ((selectors || []).some(revealAgentPlace)) return true;
   return controller?.focusForSelectors(selectors, options) || false;
 }
 

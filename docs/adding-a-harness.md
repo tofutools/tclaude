@@ -1,19 +1,19 @@
 # Adding a harness
 
 This page is for contributors who want to teach tclaude to drive another
-coding CLI (Gemini CLI, Aider, an in-house tool, …). The harness seam was
+coding CLI (Aider, an in-house tool, …). The harness seam was
 built so this is a recipe, not a rewrite: you implement a handful of small,
 focused contracts and register a descriptor. Everything tclaude owns — tmux
 sessions, the conversation index, agent coordination, the
-[dashboard](dashboard.md) — then works for your harness unchanged. Five
-harnesses are registered today: Claude Code, Codex CLI, OpenCode, Copilot
-CLI, and Gemini CLI. Between them they cover every contract below at least
+[dashboard](dashboard.md) — then works for your harness unchanged. Six
+coding harnesses are registered today: Claude Code, Codex CLI, OpenCode, Copilot
+CLI, Gemini CLI and pi. Between them they cover every contract below at least
 once, so for each one there is a concrete implementation to copy.
 
 !!! note
-    `--harness shell` (`session/shell.go`) starts a plain, conversation-less
-    interactive shell and is deliberately handled outside this registry — see
-    [Sessions](sessions.md). It is not a template for adding a real
+    `--harness shell` is a registered descriptor too (`harness/shell.go`), for a
+    plain, conversation-less shell. A standalone `session new` goes through
+    `session/shell.go` — see [Sessions](sessions.md). It is not a template for adding a real
     coding-harness integration.
 
 ## The shape of the seam
@@ -233,8 +233,7 @@ additionally implements the streaming refinements.
 #### Optional streaming refinements
 
 A buffered `Asker` is enough. Three optional interfaces let a human watching
-a TTY see the answer build up live (Claude Code is the only implementor
-today):
+a TTY see the answer build up live (Claude Code and pi implement them):
 
 - **`StreamAsker`** (`Asker` + `StreamFilter(w, smooth, status) io.Writer`) —
   for a harness whose print mode can emit a machine-readable event stream.
@@ -433,7 +432,7 @@ dashboard's catalog builder calls `Modes()` then `ModeHelp(m)` for each value.
 Keep the help copy beside the values it describes.
 
 Leave any of the three `nil` if your harness configures that axis out of band
-(Claude Code's sandbox lives in `settings.json`; Codex has no AskUserQuestion
+(Codex has no AskUserQuestion
 dialog, so it leaves `AskTimeout` nil); the spawn path then passes no flag
 and rejects an explicit value. See the capability matrix on
 [Harnesses](harnesses.md).

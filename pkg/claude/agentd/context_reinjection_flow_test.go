@@ -159,3 +159,90 @@ func TestContextReinjection_InvalidSettingWritesNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, "changed", g.Descr)
 }
+
+// Scenario: a Copilot agent's context is compacted. Copilot has no
+// post-compaction hook; the only record is session.compaction_complete in its
+// event log. Nobody has the dashboard open.
+//
+// Expected:
+//   - A compaction that failed queues nothing, and neither does a subagent's.
+//   - The daemon's poller alone finds a real compaction and queues one
+//     re-injection, which is not repeated on later ticks.
+//   - A later /clear, also known only from the log, queues the identity.
+func TestContextReinjection_CopilotCompactionFromEventLog(t *testing.T) {
+	f := newCopilotFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.SetAgentGroupDefaultContext("alpha", "Use git worktrees and PRs.")
+	require.NoError(t, err)
+	resp, sim := spawnCopilot(t, f, "alpha", map[string]any{
+		"trust_dir": true,
+		"name":      "copilot-worker",
+	})
+	inbox := func() []*db.AgentMessage { return reinjectedInbox(t, resp.ConvID, resp.AgentID) }
+	sweep := func() {
+		time.Sleep(2100 * time.Millisecond) // past the per-session refresh throttle
+		agentd.SweepCopilotUsageForTest()
+	}
+	agentd.SweepCopilotUsageForTest()
+
+	require.NoError(t, sim.AppendEvent(map[string]any{
+		"type": "session.compaction_complete",
+		"data": map[string]any{"success": false},
+	}))
+	require.NoError(t, sim.AppendEvent(map[string]any{
+		"type":    "session.compaction_complete",
+		"agentId": "sub-1",
+		"data":    map[string]any{"success": true},
+	}))
+	sweep()
+	assert.Empty(t, inbox(), "a failed or subagent compaction leaves the briefing in place")
+
+	require.NoError(t, sim.AppendEvent(map[string]any{
+		"type": "session.compaction_complete",
+		"data": map[string]any{"success": true, "postCompactionTokens": 12000, "tokenLimit": 128000},
+	}))
+	sweep()
+	got := inbox()
+	require.Len(t, got, 1, "the poller should queue one re-injection")
+	assert.Contains(t, got[0].Body, "Your context was compacted")
+	assert.Contains(t, got[0].Body, "Use git worktrees and PRs.")
+
+	sweep()
+	assert.Len(t, inbox(), 1, "one compaction is answered once")
+
+	require.NoError(t, sim.AppendEvent(map[string]any{
+		"type": "session.context_cleared",
+		"data": map[string]any{"messagesCleared": 3},
+	}))
+	sweep()
+	got = inbox()
+	require.Len(t, got, 2, "a /clear in the log queues its own re-injection")
+	assert.Contains(t, got[0].Body+got[1].Body, "Your conversation was cleared")
+}
+
+// Scenario: a Copilot conversation with compactions from an earlier lifetime
+// is followed for the first time, as after a resume with no checkpoint.
+//
+// Expected: only a compaction after that first look queues a re-injection.
+func TestContextReinjection_CopilotIgnoresEarlierCompactions(t *testing.T) {
+	f := newCopilotFlow(t)
+	f.HaveGroup("alpha")
+	_, err := db.SetAgentGroupDefaultContext("alpha", "Use git worktrees and PRs.")
+	require.NoError(t, err)
+	resp, sim := spawnCopilot(t, f, "alpha", map[string]any{
+		"trust_dir": true,
+		"name":      "copilot-worker",
+	})
+	compaction := map[string]any{
+		"type": "session.compaction_complete",
+		"data": map[string]any{"success": true},
+	}
+	require.NoError(t, sim.AppendEvent(compaction))
+	agentd.SweepCopilotUsageForTest()
+	assert.Empty(t, reinjectedInbox(t, resp.ConvID, resp.AgentID))
+
+	require.NoError(t, sim.AppendEvent(compaction))
+	time.Sleep(2100 * time.Millisecond) // past the per-session refresh throttle
+	agentd.SweepCopilotUsageForTest()
+	assert.Len(t, reinjectedInbox(t, resp.ConvID, resp.AgentID), 1)
+}

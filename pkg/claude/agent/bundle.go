@@ -12,7 +12,6 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentbundle"
-	"github.com/tofutools/tclaude/pkg/claude/common/configbundle"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
 )
@@ -29,6 +28,23 @@ type bundleExportParams struct {
 	NoContext               bool   `long:"no-context" help:"PAF only: leave the harness-neutral copy of the conversation out."`
 	WithSummary             bool   `long:"with-summary" help:"PAF only: first ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
 	SummaryWait             string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
+	CarriedWorkflowParams
+}
+
+// CarriedWorkflowParams choose the workflows an export carries (docs/paf.md,
+// "The envelope"). Carrying one needs process.templates.read.
+type CarriedWorkflowParams struct {
+	Workflow  []string `long:"workflow" optional:"true" help:"Carry this process template and everything it references (repeatable). Needs process.templates.read."`
+	Workflows bool     `long:"workflows" help:"Carry the workflows this has: an agent's active runs, or a group's saved processes. Needs process.templates.read."`
+}
+
+func (p CarriedWorkflowParams) addTo(q url.Values) {
+	for _, id := range p.Workflow {
+		q.Add("workflow", id)
+	}
+	if p.Workflows {
+		q.Set("workflows", "own")
+	}
 }
 
 // pafExportParams are bundleExportParams for `tclaude paf export`, which
@@ -43,16 +59,17 @@ type pafExportParams struct {
 	AllowFlagged            bool   `long:"allow-flagged" help:"Explicitly allow credential-shaped text; inspect before sharing."`
 	WithSummary             bool   `long:"with-summary" help:"First ask the agent to write a summary of its earlier work and carry it, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
 	SummaryWait             string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
+	CarriedWorkflowParams
 }
 
 // PAFExportCmd is `tclaude paf export`: agent bundle export writing PAF.
 func PAFExportCmd() *cobra.Command {
-	return boa.CmdT[pafExportParams]{Use: "export <agent>", Short: "Export an agent as a PAF file",
+	return boa.CmdT[pafExportParams]{Use: "export", Short: "Export an agent as a PAF file",
 		Long: "Export an agent's definition, environment and, with --history, its conversation as a Portable Agent Format file. " +
 			"The conversation travels as the native history plus a harness-neutral copy, so it can land on any harness. " +
 			"Credential-shaped text refuses the export unless --allow-flagged. Needs agent.bundle.export.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBundleExport(&bundleExportParams{OmitManagedInstructions: p.OmitManagedInstructions, Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait}, os.Stderr))
+			os.Exit(runBundleExport(&bundleExportParams{OmitManagedInstructions: p.OmitManagedInstructions, Agent: p.Agent, File: p.File, History: p.History, AllowFlagged: p.AllowFlagged, Format: "paf", NoNative: p.NoNative, NoContext: p.NoContext, WithSummary: p.WithSummary, SummaryWait: p.SummaryWait, CarriedWorkflowParams: p.CarriedWorkflowParams}, cliStderr))
 		}}.ToCobra()
 }
 
@@ -63,9 +80,11 @@ func PAFImportCmd() *cobra.Command {
 		Long: "Preview by default: the agent, the landing harness and model, how its conversation lands (native, translated or not at all) " +
 			"with the expected losses, and the security posture. --apply creates a fresh agent in --group through normal spawn checks. " +
 			"--harness and --model land it somewhere other than where it came from; the conversation is then translated within the " +
-			"landing model's context budget. Needs agent.bundle.import.",
+			"landing model's context budget. What the file asks for beyond a spawn here is listed and dropped unless a human keeps it " +
+			"with --keep-defaults, --keep or --keep-all and the digest the preview prints; the sandbox and sudo are never kept. " +
+			"Needs agent.bundle.import.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runBundleImport(p, os.Stdin, cliStdout, cliStderr))
 		}}.ToCobra()
 }
 
@@ -87,14 +106,17 @@ type bundleImportParams struct {
 	ConfirmHistoryLoss        bool     `long:"confirm-history-loss" help:"Accept a landing that cuts 25% or more of the conversation to fit the landing model; the full history stays in the file and is saved beside the agent."`
 	Harness                   string   `long:"harness" optional:"true" help:"Land on this harness instead of the source one; the conversation is translated."`
 	Model                     string   `long:"model" optional:"true" help:"Landing model; the conversation is budgeted to its context window."`
-	JSON                      bool     `long:"json" help:"Print the full machine-readable preview or result."`
+	Agent                     string   `long:"agent" optional:"true" help:"Which agent to land from a .paf that ships several for a workflow."`
+	Role                      string   `long:"role" optional:"true" help:"Land under this role instead of the one the file records, such as the role a workflow asks for."`
+	ImportKeepParams
+	JSON bool `long:"json" help:"Print the full machine-readable preview or result."`
 }
 
 func bundleCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "bundle", Short: "Transfer portable agent configuration and optional history", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
-		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable .paf file (or a legacy v1 ZIP with --format v1)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, os.Stderr)) }}.ToCobra(),
-		boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview an agent bundle, or spawn it with --apply", Long: "Preview by default. --apply creates a fresh agent in --group through normal spawn checks. Permission carry requires --carry-permissions on export and import, and receiver authorization. Ownership and source memberships never travel. Native history support depends on the harness.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runBundleImport(p, os.Stdin, os.Stdout, os.Stderr))
+		boa.CmdT[bundleExportParams]{Use: "export", Short: "Export an agent to a portable .paf file (or a legacy v1 ZIP with --format v1)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleExportParams, _ *cobra.Command, _ []string) { os.Exit(runBundleExport(p, cliStderr)) }}.ToCobra(),
+		boa.CmdT[bundleImportParams]{Use: "import", Short: "Preview an agent bundle, or spawn it with --apply", Long: "Preview by default. --apply creates a fresh agent in --group through normal spawn checks. Permission carry requires --carry-permissions on export and import, and receiver authorization. What a file asks for beyond a spawn here is dropped unless a human keeps it (--keep-defaults, --keep, --keep-all). Ownership and source memberships never travel. Native history support depends on the harness.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *bundleImportParams, _ *cobra.Command, _ []string) {
+			os.Exit(runBundleImport(p, os.Stdin, cliStdout, cliStderr))
 		}}.ToCobra(),
 	}}.ToCobra()
 }
@@ -157,6 +179,7 @@ func runBundleExport(p *bundleExportParams, stderr io.Writer) int {
 	if p.NoContext {
 		q.Set("no_context", "true")
 	}
+	p.addTo(q)
 	archive, err := os.CreateTemp("", ".agent-cli-export-")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -227,7 +250,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 		fmt.Fprintf(stderr, "archive exceeds or cannot be read within federation.agent_transfer_max_bytes=%d\n", limit)
 		return rcInvalidArg
 	}
-	b, _, err := legacy.DecodeBundleFile(archive, legacy.DecodeLimits{MaxBytes: limit}, "")
+	b, _, err := legacy.DecodeBundleFile(archive, legacy.DecodeLimits{MaxBytes: limit, AgentKey: p.Agent}, "")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return rcInvalidArg
@@ -243,7 +266,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	if p.AllowSensitivePermissions {
 		q.Set("allow_sensitive_permissions", "true")
 	}
-	for key, value := range map[string]string{"group": p.Group, "name": p.Name, "cwd": p.Cwd, "worktree": p.Worktree, "harness": p.Harness, "model": p.Model} {
+	for key, value := range map[string]string{"group": p.Group, "name": p.Name, "cwd": p.Cwd, "worktree": p.Worktree, "harness": p.Harness, "model": p.Model, "agent": p.Agent, "role": p.Role} {
 		if value != "" {
 			q.Set(key, value)
 		}
@@ -276,6 +299,7 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	if p.ApproveManagedScripts != "" {
 		q.Set("approve_managed_scripts", p.ApproveManagedScripts)
 	}
+	p.addTo(q)
 	var result json.RawMessage
 	if err := uploadAgentArchive("/v1/agent-bundle/import?"+q.Encode(), archive, &result); err != nil {
 		printBundleError(stderr, err)
@@ -283,22 +307,10 @@ func runBundleImport(p *bundleImportParams, stdin io.Reader, out, stderr io.Writ
 	}
 	// The complete resolved definition is reviewable in both modes, including
 	// launch authority fields and advisory permission provenance.
-	var formatted strings.Builder
 	if p.JSON {
 		fmt.Fprintln(out, string(result))
 	} else {
-		var value any
-		_ = json.Unmarshal(result, &value)
-		pretty, _ := json.MarshalIndent(value, "", "  ")
-		formatted.Write(pretty)
-		fmt.Fprintln(out, formatted.String())
-		var preview struct {
-			Unresolved []configbundle.Placeholder `json:"unresolved"`
-		}
-		_ = json.Unmarshal(result, &preview)
-		for _, p := range preview.Unresolved {
-			fmt.Fprintf(out, "Unresolved %s %s (original: %q): --set %s=value or --keep-paths\n", p.Item, p.Field, p.Original, p.Name)
-		}
+		renderAgentImport(out, result, p.Apply)
 		if !p.Apply {
 			fmt.Fprintln(out, "Preview only. Use --apply --group NAME to create an agent.")
 		}

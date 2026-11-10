@@ -10,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -342,4 +343,17 @@ func restoreAfterBackgroundDrain(restore func()) {
 func cleanupAfterBackgroundDrain(t *testing.T, restore func()) {
 	t.Helper()
 	t.Cleanup(func() { restoreAfterBackgroundDrain(restore) })
+}
+
+// setStewardsDisabled sets the steward opt-out (steward.disabled), keeping the
+// rest of the test's config.
+func setStewardsDisabled(t *testing.T, off bool) {
+	t.Helper()
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	if cfg.Steward == nil {
+		cfg.Steward = &config.StewardConfig{}
+	}
+	cfg.Steward.Disabled = off
+	require.NoError(t, config.Save(cfg))
 }

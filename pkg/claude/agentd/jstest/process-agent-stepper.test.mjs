@@ -1,5 +1,6 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 // An agent-scoped run as GET /v1/process/context projects it (mock T3):
 // snapshot (program) → backfill (agent, this conversation, on its 4th loop)
@@ -118,17 +119,16 @@ test('an agent-scoped run opens as the stepper, toggles to the graph, and promot
   const root = mounted.container;
   assert.ok(root.querySelector('[data-process-stepper]'), 'the stepper replaces the graph');
   assert.ok(!root.querySelector('.pk-mini-graph'));
-  assert.match(root.querySelector('[data-process-bounds]').textContent, /webshop-search-index-v2.*dev-net.*2 grants.*\$ 1\.23 spent.*survives reincarnate/s);
+  assert.match(root.querySelector('[data-process-bounds]').textContent, /webshop-search-index-v2.*dev-net.*2 grants.*\$1\.23 spent.*survives reincarnate/s);
   assert.match(root.querySelector('[data-process-step="backfill"]').textContent, /← this conversation/);
   assert.ok(root.querySelector('[data-process-step="swap"] .pk-stepper-step-warning'));
   assert.equal(root.querySelector('[data-process-step="verify"] .pk-stepper-step-warning'), null);
 
   const button = (pattern) => [...root.querySelectorAll('.pk-run-popover-actions button')].find((b) => pattern.test(b.textContent));
   assert.equal(button(/pause/).disabled, true, 'no pause action wired');
-  const select = root.querySelector('.pk-stepper-group');
+  const select = root.querySelector('[data-process-promote-group]');
   assert.ok(select, 'two groups offer a choice');
-  for (const option of select.querySelectorAll('option')) option.selected = option.value === 'search';
-  await harness.act(() => harness.fireEvent(select, 'change'));
+  await comboPick(harness, select, 'search');
   await harness.act(async () => { harness.fireEvent(button(/promote/), 'click'); });
   assert.deepEqual(promoted, [['run_reindex', 'search']]);
 

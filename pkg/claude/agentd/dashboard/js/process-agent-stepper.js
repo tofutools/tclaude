@@ -13,9 +13,12 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
+import { GroupCombobox } from './group-picker.js';
 import {
   ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip, programBounds, runIconView, runName, runSteps,
 } from './process-kit.js';
+import { fmtUSD } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -145,17 +148,17 @@ export function stepperRows(run, agentId, now = Date.now()) {
 
 function BoundsStrip({ bounds }) {
   if (!bounds) {
-    return html`<div class="pk-bounds" data-process-bounds><span class="pk-bounds-chip pk-bounds-unknown">bounds unavailable: the agent is not in the snapshot</span></div>`;
+    return html`<div class="pk-bounds" data-process-bounds><span class="pk-bounds-chip ui-tag pk-bounds-unknown">bounds unavailable: the agent is not in the snapshot</span></div>`;
   }
   const grants = bounds.grants.length
     ? `${bounds.grants.length} grant${bounds.grants.length === 1 ? '' : 's'}`
     : 'defaults only';
   return html`<div class="pk-bounds" data-process-bounds>
-    <span class="pk-bounds-chip" title=${bounds.cwd || 'working directory unknown'}>📁 ${bounds.dir || 'unknown dir'}</span>
-    <span class="pk-bounds-chip" title="Sandbox the agent was launched with">🛡 sandbox: ${bounds.sandbox || 'none'}</span>
-    <span class="pk-bounds-chip" title=${bounds.grants.length ? bounds.grants.join('\n') : 'No per-agent grants beyond the defaults'}>🔑 perms: ${grants}</span>
-    <span class="pk-bounds-chip" title="Spend so far; runs have no budget cap">$ ${bounds.costUSD.toFixed(2)} spent · no cap</span>
-    <span class="pk-bounds-chip" title="The run is bound to the agent's stable id, so it follows the agent across new conversations">⟲ survives reincarnate</span>
+    <span class="pk-bounds-chip ui-tag" title=${bounds.cwd || 'working directory unknown'}>📁 ${bounds.dir || 'unknown dir'}</span>
+    <span class="pk-bounds-chip ui-tag" title="Sandbox the agent was launched with">🛡 sandbox: ${bounds.sandbox || 'none'}</span>
+    <span class="pk-bounds-chip ui-tag" title=${bounds.grants.length ? bounds.grants.join('\n') : 'No per-agent grants beyond the defaults'}>🔑 perms: ${grants}</span>
+    <span class="pk-bounds-chip ui-tag" title="Spend so far; runs have no budget cap">${fmtUSD(bounds.costUSD)} spent · no cap</span>
+    <span class="pk-bounds-chip ui-tag" title="The run is bound to the agent's stable id, so it follows the agent across new conversations">⟲ survives reincarnate</span>
   </div>`;
 }
 
@@ -176,6 +179,7 @@ function StepRow({ row }) {
 
 // ProcessAgentStepper is mock T3. actions: { promote(run, groupName),
 // pause(run), resume(run) } — each optional; onGraph switches the popover to its graph view.
+// The group to promote to is a GroupCombobox: an agent can sit in many groups.
 export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {}, onGraph = null, onClose = null }) {
   const view = runIconView(run, agentId);
   const rows = stepperRows(run, agentId);
@@ -204,19 +208,18 @@ export function ProcessAgentStepper({ run, agentId, bounds = null, actions = {},
         <${ProcessScopeChip} scope=${namedScope(run.scope, agentId, bounds?.name)} />
         <${ProcessStateChip} state=${view.state} label=${String(run.status || view.state)} />
         <${ProcessPausedChip} run=${run} />
-        ${onClose ? html`<button type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>` : null}
+        ${onClose ? html`<button data-ui-exempt type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>` : null}
       </div>
       <${BoundsStrip} bounds=${bounds} />
       <div class="pk-stepper-list" role="list">${rows.map((row) => html`<${StepRow} key=${row.id} row=${row} />`)}</div>
       <div class="pk-run-popover-actions">
         <${ProcessPauseControl} run=${run} actions=${actions} />
-        <button type="button" class="mux-btn" disabled=${!onGraph} onClick=${() => onGraph?.()}>⧉ graph view</button>
-        ${groups.length > 1 ? html`<select class="pk-stepper-group" aria-label="Group to promote the run to"
-          value=${group} onChange=${(event) => setTarget(event.currentTarget.value)}>
-          ${groups.map((entry) => html`<option key=${entry.id} value=${entry.name}>${entry.name}</option>`)}</select>` : null}
-        <button type="button" class="mux-btn" disabled=${busy || !actions.promote || !groups.length}
-          title=${promoteTitle} onClick=${() => void promote()}>⇪ promote to group run</button>
-        ${error ? html`<span class="pk-run-popover-error" role="alert">${error}</span>` : null}
+        <${Button} size="sm" disabled=${!onGraph} onClick=${() => onGraph?.()}>⧉ graph view<//>
+        ${groups.length > 1 ? html`<${GroupCombobox} floating=${false} attrs=${{ 'data-process-promote-group': '' }} ariaLabel="Group to promote the run to"
+          groups=${groups.map((entry) => entry.name)} value=${group} onChange=${setTarget} />` : null}
+        <${Button} size="sm" disabled=${busy || !actions.promote || !groups.length}
+          title=${promoteTitle} onClick=${() => void promote()}>⇪ promote to group run<//>
+        ${error ? html`<span class="pk-run-popover-error ui-error" role="alert">${error}</span>` : null}
       </div>
     </div>
   `;

@@ -98,6 +98,12 @@ func handleFederationShareAgent(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireCrossAgentPermission(w, r, PermAgentRetire, source); !ok {
 			return
 		}
+		// The source is retired after the peer confirms, with no request left
+		// to count against, so the move would stop halfway.
+		if spentSudoUse(r) {
+			writeError(w, http.StatusForbidden, "sudo_uses_uncounted", "a move cannot use a use-limited sudo grant")
+			return
+		}
 	}
 	if in.CarryPermissions && !human {
 		if _, ok := requirePermission(w, r, PermSelfTeleportPermissions, ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: in.Group}); !ok {
@@ -334,6 +340,11 @@ type fedBundleImportRequest struct {
 	OmitManagedInstructions bool     `json:"omit_managed_instructions"`
 	Landing                 string   `json:"landing"`
 	Set                     []string `json:"set"`
+	// Keep, KeepNone and KeepDigest are a human's confirm list selection for a
+	// teleport or move accepted by hand.
+	Keep       []string `json:"keep,omitempty"`
+	KeepNone   bool     `json:"keep_none,omitempty"`
+	KeepDigest string   `json:"keep_digest,omitempty"`
 }
 
 func federationOfferProvenance(o *db.FederationBundleOffer) map[string]any {
@@ -343,6 +354,14 @@ func federationOfferProvenance(o *db.FederationBundleOffer) map[string]any {
 // Caller holds fedBundleMu across validation, reservation and the normal
 // bundle importer. A durable reserved identity prevents an interrupted apply
 // from silently spawning another agent when the operator retries.
+// offerKeepsItsPosture says whether an accepted offer lands as a move rather than
+// a file. Its teleport or move label comes from the sender, so the label counts
+// only from a peer this receiver trusts with moves into that group.
+func offerKeepsItsPosture(o *db.FederationBundleOffer, groupID int64) bool {
+	return (o.Descriptor.Teleport != nil || o.Descriptor.Move != nil) &&
+		fedPeerAllows(o.Peer, groupID, PermAgentsTeleportReceive)
+}
+
 func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.FederationBundleOffer, in *fedBundleImportRequest) {
 	subscriptionOffer := false
 	if o.Descriptor.Teleport != nil {
@@ -421,7 +440,7 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 			return
 		}
 	}
-	bundle, err := decodeAgentArchive(archive)
+	bundle, losses, err := decodeAgentOffer(archive)
 	if err != nil {
 		writeError(w, 400, "bundle", err.Error())
 		return
@@ -482,8 +501,15 @@ func importFederationAgentOffer(w http.ResponseWriter, r *http.Request, o *db.Fe
 		if o.Descriptor.Teleport != nil {
 			inner = inner.WithContext(context.WithValue(inner.Context(), teleportOfferContextKey{}, o))
 		}
+		if offerKeepsItsPosture(o, g.ID) {
+			inner = inner.WithContext(context.WithValue(inner.Context(), acceptedMoveContextKey{}, true))
+		}
+		if confirmation := newOfferConfirmation(r, o, in); confirmation != nil {
+			inner = inner.WithContext(context.WithValue(inner.Context(), offerConfirmKey{}, confirmation))
+		}
 		inner.URL = &url.URL{Path: "/v1/agent-bundle/import", RawQuery: query.Encode()}
 		inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleDataContextKey{}, bundle))
+		inner = inner.WithContext(context.WithValue(inner.Context(), agentBundleLossesContextKey{}, losses))
 		inner.Body = http.NoBody
 		inner.ContentLength = 0
 		if identity != nil && apply {

@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // backgroundTerminal is one tclaude tmux session that is still running with no
@@ -50,6 +51,17 @@ type backgroundTerminal struct {
 	Killable     bool  `json:"killable,omitempty"`
 	LastActivity int64 `json:"last_activity,omitempty"`
 	Created      int64 `json:"created,omitempty"`
+	// Drawing board and Agents are a drawing board row's (kind drawing board): one row per drawing board with
+	// at least one drawing board session. It has no tmux session. Key is its pane key,
+	// and DELETE /api/drawing-boards/{id}/sessions is what ends it.
+	DrawingBoard string                        `json:"drawingBoard,omitempty"`
+	Agents       []backgroundDrawingBoardAgent `json:"agents,omitempty"`
+}
+
+// backgroundDrawingBoardAgent is one agent with a session on a drawing board row's drawing board.
+type backgroundDrawingBoardAgent struct {
+	AgentID string `json:"agent_id"`
+	Title   string `json:"title"`
 }
 
 type backgroundTerminalsResponse struct {
@@ -83,7 +95,39 @@ func handleDashboardBackgroundTerminals(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusServiceUnavailable, "tmux", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, backgroundTerminalsResponse{Terminals: classifyBackgroundTerminals(sessions)})
+	rows := append(classifyBackgroundTerminals(sessions), backgroundDrawingBoardRows()...)
+	writeJSON(w, http.StatusOK, backgroundTerminalsResponse{Terminals: rows})
+}
+
+// backgroundDrawingBoardRows lists the drawing boards with at least one drawing board session, longest
+// idle first like the terminals. Drawing boards stay with their own node, so this is
+// only for the node's own dashboard. A read error costs the rows, not the
+// terminals around them.
+func backgroundDrawingBoardRows() []backgroundTerminal {
+	sessions, err := db.ListCollabDrawingBoardSessions()
+	if err != nil {
+		slog.Warn("background terminals: list drawing board sessions failed", "error", err)
+		return nil
+	}
+	var out []backgroundTerminal
+	index := map[string]int{}
+	for _, s := range sessions {
+		i, seen := index[s.DrawingBoardID]
+		if !seen {
+			i = len(out)
+			index[s.DrawingBoardID] = i
+			out = append(out, backgroundTerminal{
+				Kind: "drawing_board", DrawingBoard: s.DrawingBoardID, Key: "drawing_board:" + s.DrawingBoardID, Label: s.DrawingBoardTitle, Killable: true,
+				Created: s.StartedAt.Unix(),
+			})
+		}
+		row := &out[i]
+		row.Agents = append(row.Agents, backgroundDrawingBoardAgent{AgentID: s.AgentID, Title: backgroundConvTitle(s.ConvID)})
+		row.LastActivity = max(row.LastActivity, s.LastActiveAt.Unix())
+		row.Created = min(row.Created, s.StartedAt.Unix())
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].LastActivity < out[j].LastActivity })
+	return out
 }
 
 // listBackgroundTmuxSessions returns the sessions no client is attached to. A
@@ -360,6 +404,62 @@ func handleDashboardBackgroundTerminalKill(w http.ResponseWriter, r *http.Reques
 	}
 	slog.Info("background terminal killed from dashboard", "tmux_session", row.TmuxSession, "kind", row.Kind)
 	writeJSON(w, http.StatusOK, map[string]string{"tmux_session": row.TmuxSession})
+}
+
+// handleDashboardShellKill ends one tclaude shell, whether or not a client is
+// attached: a group's shell or one in an agent's directory, the shells the
+// Groups tab's Resources lists while they run. Unlike the background-terminal
+// kill it takes an attached shell too, since a shell has no lifecycle of its
+// own to stop it by. The name must be one of those shells, alive now; an
+// agent's or a plain conversation's session is never killed here.
+//
+//	POST /api/shells/kill {"tmux_session": "<name>"}
+func handleDashboardShellKill(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		TmuxSession string `json:"tmux_session"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.TmuxSession) == "" {
+		writeError(w, http.StatusBadRequest, "body", `expected {"tmux_session": "<name>"}`)
+		return
+	}
+	name := body.TmuxSession
+	var shells, groupShells []backgroundTmuxSession
+	switch {
+	case strings.HasPrefix(name, "tclaude-groupterm-"):
+		groupShells = []backgroundTmuxSession{{name: name}}
+	case strings.HasPrefix(name, "tclaude-term-"):
+		shells = []backgroundTmuxSession{{name: name}}
+	default:
+		writeError(w, http.StatusBadRequest, "not_shell", name+" is not a tclaude shell")
+		return
+	}
+	if !session.IsTmuxSessionAlive(name) {
+		writeError(w, http.StatusNotFound, "not_running", "no running shell "+name)
+		return
+	}
+	convs, convErr := db.ListAgentConvIDs()
+	groupNames, groupErr := listAgentGroupNames()
+	if err := errors.Join(convErr, groupErr); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "db", err.Error())
+		return
+	}
+	if t := classifyShells(shells, groupShells, convs, groupNames); len(t) != 1 || t[0].Kind == "other" {
+		writeError(w, http.StatusNotFound, "not_shell", name+" is no known agent's or group's shell")
+		return
+	}
+	if _, err := tmuxOutputWithTimeout("kill-session", "-t", clcommon.ExactTarget(name)); err != nil {
+		writeError(w, http.StatusInternalServerError, "tmux", "kill-session: "+err.Error())
+		return
+	}
+	slog.Info("shell killed from dashboard", "tmux_session", name)
+	writeJSON(w, http.StatusOK, map[string]string{"tmux_session": name})
 }
 
 // reapOrphanedTerminalShells kills dashboard web shells (tclaude-term-* and

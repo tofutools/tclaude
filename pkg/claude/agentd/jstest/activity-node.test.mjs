@@ -33,7 +33,7 @@ test('the chosen peer is read through its peer routes; a refusal names the trust
   const calls = [];
   const fetchFor = (id) => async (url) => { calls.push([id, url]); return { ok: false, status: 403, text: async () => 'forbidden' }; };
   const target = { id: 'inst_forge', name: 'forge' };
-  const state = createLogsState({ activeTab: harness.signals.signal('activity'), activitySubtab: harness.signals.signal('logs') });
+  const state = createLogsState({ activeTab: harness.signals.signal('diagnostics'), activitySubtab: harness.signals.signal('logs') });
   const actions = createLogsActions({ state, fetchImpl: local, now: () => 10000, route: (f) => activityFetch(f, { target, fetchFor }) });
   assert.equal(await actions.load(), false);
   assert.equal(calls[0][0], 'inst_forge');

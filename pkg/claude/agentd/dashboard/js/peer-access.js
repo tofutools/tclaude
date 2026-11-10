@@ -1,8 +1,13 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { Dialog, DialogClose } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { slugInfo } from './fleet-admin-model.js';
+import { requestJSON } from './request-json.js';
+import { errText } from './cell-format.js';
+import { fmtExactUSD } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -37,26 +42,13 @@ export function requestScope(perm) {
   return slugInfo(perm)?.kind || 'node';
 }
 
-function errText(error) { return error?.message || String(error); }
-
 // createPeerAccessActions sends the requester side. On a peer view
 // remote-node.js forwards /api/* to /api/peer/{id}/*, so these reach the
 // peer's /api/peer-access-requests routes.
 // base is the API root: '/api' on a peer view, or /api/peer/{id} from this
 // node's own dashboard (the local peer proxy).
 export function createPeerAccessActions({ fetchImpl = (...a) => globalThis.fetch(...a), base = '/api' } = {}) {
-  async function call(method, url, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    const res = await fetchImpl(url, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) { const e = new Error(data?.error || `HTTP ${res.status}`); e.status = res.status; e.code = data?.code || ''; throw e; }
-    return data;
-  }
+  const call = (method, url, body) => requestJSON(url, { method, body, fetchImpl });
   return Object.freeze({
     request: ({ permission, groupID = 0, reason = '', ttl = 3600, proxy = '', maxUSD = 0 }) => call('POST', `${base}/peer-access-requests`, {
       permission, ...(groupID ? { group_id: groupID } : {}), ...(reason ? { reason } : {}), grant_ttl_seconds: ttl,
@@ -81,7 +73,7 @@ export function parseUSD(text) {
 
 // usageGrantText says what an approved usage request granted.
 export function usageGrantText(r) {
-  const amount = r?.grant_max_usd > 0 ? `$${Number(r.grant_max_usd).toFixed(2)}` : 'usage with no cap';
+  const amount = r?.grant_max_usd > 0 ? fmtExactUSD(Number(r.grant_max_usd)) : 'usage with no cap';
   return `${amount} on ${r?.grant_http_proxy || 'any gateway'}`;
 }
 
@@ -124,8 +116,11 @@ export function RequestAccessDialog({ node, perm, groups = [], gateway = '', onC
       .finally(() => setBusy(false));
   };
   const group = groups.find((g) => String(g.id) === String(groupID));
-  return html`<${Overlay} id="peer-access-modal" labelledby="peer-access-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="peer-access-title">${usage ? html`Ask ${node} for usage` : html`Request <code>${perm}</code> from ${node}`}</h3>
+  return html`<${Dialog} id="peer-access-modal" title=${usage ? html`Ask ${node} for usage` : html`Request <code>${perm}</code> from ${node}`}
+    onClose=${onClose} blocked=${busy}
+    footer=${html`<${DialogClose} disabled=${busy}>${request ? 'Close' : 'Cancel'}<//>
+      ${!request && html`<${Button} variant="primary" id="peer-access-submit" disabled=${busy || (scope === 'scoped' && !groupID) || maxUSD === null} onClick=${send}>Send request</${Button}>`}`}
+    after=${html`<div class="muted fa-cli-note">CLI: <code>tclaude federation access request --node … --permission ${perm}${scope !== 'node' ? ' [--group-id …]' : ''}${usage ? ' --max-usd … [--http-proxy …]' : ''}</code></div>`}>
     ${request ? html`<div id="peer-access-status" class=${request.status === 'approved' ? '' : request.status === 'pending' ? 'muted' : 'fa-danger'}>
         Request ${request.id}: <b>${request.status}</b>
         ${request.status === 'pending' && (misses >= MAX_MISSES
@@ -140,24 +135,17 @@ export function RequestAccessDialog({ node, perm, groups = [], gateway = '', onC
       <label class="peer-access-opt">Gateway
         <input id="peer-access-gateway" placeholder=${`any (${node} picks)`} value=${proxy} onInput=${(e) => setProxy(e.currentTarget.value)} /></label>`}
       ${scope !== 'node' && groups.length > 0 && html`<label class="peer-access-opt">Group
-        <select id="peer-access-group" value=${groupID} onChange=${(e) => setGroupID(e.currentTarget.value)}>
-          ${scope === 'group' && html`<option value="">every group on ${node}, including future ones (it may narrow to one)</option>`}
-          ${groups.map((g) => html`<option key=${g.id} value=${String(g.id)}>${g.name}</option>`)}
-        </select></label>`}
+        <${GroupCombobox} id="peer-access-group" value=${groupID} onChange=${setGroupID}
+          noneLabel=${scope === 'group' ? `every group on ${node}, including future ones (it may narrow to one)` : ''}
+          groups=${groups.map((g) => ({ value: String(g.id), label: g.name }))} /></label>`}
       <label class="peer-access-opt">For
-        <select id="peer-access-ttl" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
+        <${Select} id="peer-access-ttl" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
           ${TTL_CHOICES.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}
-        </select></label>
+        <//></label>
       <label class="peer-access-opt peer-access-reason">Reason <textarea id="peer-access-reason" rows="3" maxlength=${REASON_MAX} value=${reason} onInput=${(e) => setReason(e.currentTarget.value)}></textarea></label>
       ${scope === 'group' && !groupID && html`<div class="muted">Without a group this asks for <code>${perm}</code> in every group on ${node}, including ones created later; its operator may narrow it to one group.</div>`}
       ${usage && maxUSD === null && html`<div class="fa-danger" role="alert">Amount is a dollar amount, or blank for no cap.</div>`}
       <div class="muted">${node}'s operator sees the ${usage ? 'amount' : 'permission'}${group ? `, group ${group.name}` : ''}, how long, and your reason, and may approve it for less. Requests time out after 5 minutes without a decision.</div>
       ${error && html`<div class="fa-danger" role="alert">${error}</div>`}`}
-    <div class="modal-buttons">
-      <span class="spacer"></span>
-      <button type="button" onClick=${onClose}>${request ? 'Close' : 'Cancel'}</button>
-      ${!request && html`<button id="peer-access-submit" type="button" class="primary" disabled=${busy || (scope === 'scoped' && !groupID) || maxUSD === null} onClick=${send}>Send request</button>`}
-    </div>
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation access request --node … --permission ${perm}${scope !== 'node' ? ' [--group-id …]' : ''}${usage ? ' --max-usd … [--http-proxy …]' : ''}</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

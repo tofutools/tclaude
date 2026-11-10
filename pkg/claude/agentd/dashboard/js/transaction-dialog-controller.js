@@ -339,7 +339,7 @@ export function buildCleanupDescriptor(
   if (mode === 'group') {
     const entry = (snapshot?.groups || []).find((candidate) => candidate?.name === group);
     for (const member of (entry?.members || [])) {
-      if (member?.online) continue;
+      if (member?.online || member?.external_steward) continue;
       candidates.push({
         agent_id: member?.agent_id,
         conv_id: member?.conv_id,
@@ -353,6 +353,9 @@ export function buildCleanupDescriptor(
     }
   } else {
     for (const agent of (snapshot?.agents || [])) {
+      // Always "offline" because it runs elsewhere, so a tidy-up would end its
+      // credential. Retiring one stays a deliberate act on its own row.
+      if (agent?.external_steward) continue;
       candidates.push({
         agent_id: agent?.agent_id,
         conv_id: agent?.conv_id,

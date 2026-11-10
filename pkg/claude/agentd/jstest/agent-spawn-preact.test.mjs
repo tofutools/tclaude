@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys, comboPick, comboChoose } from './combobox-helpers.mjs';
 
 const groups = [{
   name: 'alpha',
@@ -66,8 +67,8 @@ const harnesses = [{
   sandbox_mode_help: { off: '⚠ No tclaude OS containment' },
   can_approval: false, approval_modes: [], default_approval: '',
   approval_mode_help: {},
-  can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow',
-  tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' },
+  can_tools: true, tools_modes: ['all', 'allow', 'ask', 'deny'], default_tools: 'allow',
+  tools_mode_help: { all: 'all tools', allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' },
   can_auto_review: false,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true,
@@ -118,6 +119,17 @@ async function flush(harness, turns = 8) {
   });
 }
 
+// settleUntil lets the dialog's async loads land until cond holds, failing
+// with what was awaited after a time limit rather than trusting one sleep.
+async function settleUntil(harness, cond, what, limitMs = 3000) {
+  const deadline = Date.now() + limitMs;
+  while (!cond()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+    await flush(harness);
+  }
+}
+
 async function settleWorktrees(harness) {
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   await flush(harness);
@@ -128,6 +140,7 @@ function setValue(element, value) {
 }
 
 function selectedValue(select) {
+  if (select.classList?.contains('choice-combobox')) return select.dataset.value || '';
   return select.getAttribute('value')
     ?? Array.from(select.options).find((option) => option.selected)?.getAttribute('value')
     ?? '';
@@ -341,6 +354,45 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   );
   assert.equal(localToLocal.name, '', 'The previous profile\'s pre-fill does not ride onto one without its own');
   assert.equal(localToLocal.initialMessage, '');
+});
+
+test('agent-spawn model sends a pre-filled toggle only when the operator set it or the daemon differs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+  const field = (value, source = 'x') => ({ value: String(value), source });
+  // beta's policy is opt-in, so the form pre-fills remote control on.
+  const draft = { ...model.createSpawnDraft({ groups, harnesses, groupName: 'beta' }), name: 'worker' };
+  assert.equal(draft.remoteControl, true);
+
+  // The request to preview leaves every untouched toggle to the daemon.
+  const probe = model.buildSpawnRequest(draft, context, null, [], { operatorSet: new Set(), resolved: null });
+  for (const key of Object.values(model.PREFILLED_TOGGLES)) {
+    assert.equal(key in probe.body, false, `${key} is left out of the preview request`);
+  }
+  assert.equal(model.spawnPreviewURL(probe.url), '/api/groups/beta/spawn-preview');
+
+  // The daemon resolves the same values: nothing is sent.
+  const same = { remote_control: field(true), auto_memory: field(!!draft.autoMemory), peer_messaging: field(!!draft.peerMessaging) };
+  const untouched = model.buildSpawnRequest(draft, context, null, [], { operatorSet: new Set(), resolved: same }).body;
+  for (const key of Object.values(model.PREFILLED_TOGGLES)) {
+    assert.equal(key in untouched, false, `${key} is left to the daemon, which resolves it the same way`);
+  }
+  // The daemon would land elsewhere (a tier the pre-fill did not read): the
+  // shown value is sent, and so is one the echo does not carry.
+  const differs = model.buildSpawnRequest(draft, context, null, [],
+    { operatorSet: new Set(), resolved: { ...same, remote_control: field(false) } }).body;
+  assert.equal(differs.remote_control, true, 'the shown on is sent where the daemon would resolve off');
+  const older = model.buildSpawnRequest(draft, context, null, [], { operatorSet: new Set(), resolved: {} }).body;
+  assert.equal(older.remote_control, true, 'an echo without the field sends what is shown');
+
+  const set = model.buildSpawnRequest({ ...draft, remoteControl: false, autoMemory: true }, context, null, [],
+    { operatorSet: new Set(['remoteControl', 'autoMemory']), resolved: same }).body;
+  assert.equal(set.remote_control, false, 'an operator choice is sent, and recorded as explicit');
+  assert.equal(set.auto_memory, true);
+  assert.equal('peer_messaging' in set, false);
+  assert.equal(model.buildSpawnRequest(draft, context, null, []).body.remote_control, true,
+    'without omission every shown toggle is sent');
 });
 
 test('agent-spawn model normalizes names and builds exact launch bodies', async (t) => {
@@ -767,20 +819,19 @@ test('spawn role chips compose multiple roles, inspect details, and feed the per
     'Roles remains a normal row directly above display identity');
 
   let add = host.querySelector('#agent-spawn-role-add');
-  assert.equal(add.options[0].textContent, '＋ Add role…');
+  assert.equal(add.querySelector('input').getAttribute('placeholder'), '＋ Add role…');
   harness.document.body.classList.add('wizard');
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: true } }));
   await flush(harness);
   add = host.querySelector('#agent-spawn-role-add');
-  assert.equal(add.options[0].textContent, '＋ Add class…');
-  assert.equal(add.getAttribute('aria-label'), 'Add class');
+  assert.equal(add.querySelector('input').getAttribute('placeholder'), '＋ Add class…');
+  assert.equal(add.querySelector('input').getAttribute('aria-label'), 'Add class');
   harness.document.body.classList.remove('wizard');
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: false } }));
   await flush(harness);
-  add = host.querySelector('#agent-spawn-role-add');
   for (const role of ['reviewer', 'go-maintainer']) {
-    setValue(add, role);
-    await harness.act(() => harness.fireEvent(add, 'change'));
+    await comboPick(harness, host.querySelector('#agent-spawn-role-add'), role);
+    await flush(harness);
   }
   assert.deepEqual([...host.querySelectorAll('.agent-spawn-role-chip .role-chip-inspect')]
     .map((button) => button.textContent), ['reviewer', 'go-maintainer']);
@@ -1008,7 +1059,7 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.equal(host.querySelector('#agent-spawn-sandbox-profile-row').hidden, false);
   const openCodeTools = host.querySelector('#agent-spawn-tools');
   assert.equal(openCodeTools.closest('.cron-create-row').hidden, false);
-  assert.deepEqual([...openCodeTools.options].map((option) => option.value), ['allow', 'ask', 'deny']);
+  assert.deepEqual([...openCodeTools.options].map((option) => option.value), ['all', 'allow', 'ask', 'deny']);
   assert.equal(selectedValue(openCodeTools), 'allow');
   setValue(harnessSelect, 'claude');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
@@ -1039,9 +1090,8 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
   const { harness, host, state } = mounted;
   try {
     state.open({ groupName: 'alpha' });
-    await flush(harness);
-    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
-    await flush(harness);
+    await settleUntil(harness, () => host.querySelector('#agent-spawn-sandbox')?.closest('.cron-create-row')?.hidden === false,
+      'the resolved Claude launch defaults');
     const claudeMode = host.querySelector('#agent-spawn-sandbox');
     assert.equal(selectedValue(host.querySelector('#agent-spawn-sandbox-impl')), '',
       'the initial Claude implementation row is untouched');
@@ -1052,7 +1102,9 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
     const harnessSelect = host.querySelector('#agent-spawn-harness');
     setValue(harnessSelect, 'codex');
     await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
-    await flush(harness);
+    await settleUntil(harness, () => /Codex CLI built-in/.test(host.querySelector('#agent-spawn-sandbox-impl')?.options[0]?.textContent || '')
+      && /Codex sandbox mode/.test(host.querySelector('#agent-spawn-sandbox')?.closest('.cron-create-row')?.textContent || ''),
+      'the resolved Codex launch defaults');
 
     assert.equal(selectedValue(host.querySelector('#agent-spawn-sandbox-impl')), '',
       'the row is untouched — this is the resolved-default path, not an explicit pick');
@@ -1100,8 +1152,10 @@ test('the primary Sandbox off choice keeps a visible forced-none sandbox-profile
     const forcedNone = host.querySelector('#agent-spawn-sandbox-profile');
     assert.equal(forcedNone.closest('.cron-create-row').hidden, false,
       'the forced omission is explained instead of hiding the field');
-    assert.equal(forcedNone.disabled, true);
-    assert.match(forcedNone.options[0].textContent, /none.*required/i);
+    assert.ok(forcedNone.classList.contains('disabled'));
+    assert.equal(host.querySelector('#agent-spawn-sandbox-profile-input').disabled, true);
+    assert.equal(forcedNone.dataset.value, '/omit-all-tclaude-sandbox-profiles');
+    assert.match(host.querySelector('#agent-spawn-sandbox-profile-input').value, /none.*required/i);
 
     setValue(codexSandbox, 'harness-builtin');
     await harness.act(() => harness.fireEvent(codexSandbox, 'change'));
@@ -1152,9 +1206,13 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
     setValue(role, 'manual-role');
     await harness.act(() => harness.fireEvent(role, 'input'));
 
-    const worktree = host.querySelector('#agent-spawn-worktree');
-    setValue(worktree, '__new__');
-    await harness.act(() => harness.fireEvent(worktree, 'change'));
+    // The new-worktree choice is offered once the worktrees have loaded.
+    for (let attempt = 0; !host.querySelector('#agent-spawn-worktree [data-key="__new__"]'); attempt += 1) {
+      if (attempt > 300) assert.fail('timed out waiting for the worktrees to load');
+      await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+      await comboKeys(harness, host.querySelector('#agent-spawn-worktree'));
+    }
+    await comboPick(harness, host.querySelector('#agent-spawn-worktree'), '__new__');
     const branch = host.querySelector('#agent-spawn-wt-branch');
     setValue(branch, 'manual-branch');
     await harness.act(() => harness.fireEvent(branch, 'input'));
@@ -1162,8 +1220,7 @@ test('Preact agent-spawn replaces sparse profile fields but keeps manual overrid
     assert.equal(host.querySelector('#agent-spawn-wt-branch').value, 'manual-branch');
 
     const picker = host.querySelector('#agent-spawn-load-profile');
-    setValue(picker, 'codex-profile');
-    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await comboChoose(harness, picker, 'codex-profile');
     await flush(harness);
 
     assert.equal(host.querySelector('#agent-spawn-owner').hasAttribute('checked'), false,
@@ -1207,8 +1264,7 @@ test('Preact agent-spawn profile clear keeps user text and the operator\'s workt
     await harness.act(() => harness.fireEvent(branch, 'input'));
 
     const picker = host.querySelector('#agent-spawn-load-profile');
-    setValue(picker, '');
-    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await comboChoose(harness, picker, '');
     await flush(harness);
 
     assert.equal(host.querySelector('#agent-spawn-name').value, 'bar');
@@ -1237,9 +1293,7 @@ test('Preact agent-spawn does not apply a stale group default after an early gro
   try {
     state.open({ defaultGroup: 'alpha' });
     await flush(harness);
-    const group = host.querySelector('#agent-spawn-group');
-    setValue(group, 'beta');
-    await harness.act(() => harness.fireEvent(group, 'change'));
+    await comboPick(harness, host.querySelector('#agent-spawn-group'), 'beta');
     pending.resolve(profiles);
     await flush(harness);
     assert.equal(host.querySelector('#agent-spawn-cwd').value, '/beta');
@@ -1281,9 +1335,8 @@ test('Preact agent-spawn preserves direct worktree edits across a delayed profil
     await flush(harness);
     await settleWorktrees(harness);
     const worktree = host.querySelector('#agent-spawn-worktree');
-    assert.match(worktree.textContent, /create new worktree/);
-    setValue(worktree, '__new__');
-    await harness.act(() => harness.fireEvent(worktree, 'change'));
+    assert.ok((await comboKeys(harness, worktree)).includes('__new__'), 'the new-worktree choice is offered');
+    await comboPick(harness, worktree, '__new__');
     assert.equal(host.querySelector('#agent-spawn-wt-new-row').hidden, false);
     const branch = host.querySelector('#agent-spawn-wt-branch');
     setValue(branch, 'feature/manual');
@@ -1323,7 +1376,7 @@ test('Preact agent-spawn waits for worktree metadata before applying name sync',
       worktrees: [], branches: ['main'], defaultBranch: 'main', subRepos: [],
     });
     await settleWorktrees(harness);
-    assert.equal(selectedValue(host.querySelector('#agent-spawn-worktree')), '__new__');
+    assert.equal(host.querySelector('#agent-spawn-worktree').dataset.value, '__new__');
     host.querySelector('#agent-spawn-submit').click();
     await flush(harness);
     assert.equal(spawnCalls, 1);
@@ -1371,7 +1424,7 @@ test('Preact agent-spawn claims duplicate submit synchronously and retries faile
   assert.equal(drop.defaultPrevented, true, 'busy file drops still suppress browser navigation');
   assert.equal(button.disabled, true);
   assert.equal(host.querySelector('#agent-spawn-sandbox').disabled, true);
-  assert.equal(host.querySelector('#agent-spawn-sandbox-profile').disabled, true);
+  assert.equal(host.querySelector('#agent-spawn-sandbox-profile-input').disabled, true);
   pending.resolve({ conv_id: '1234567890' });
   await flush(harness);
   assert.equal(state.dialog.value, null);
@@ -1447,6 +1500,39 @@ test('Preact agent-spawn owns attachment input, retry caching, removal, and obje
   mounted.cleanup();
 });
 
+test('agent-spawn asks the daemon preview which pre-filled toggles to send (tcl-ezvrww)', async (t) => {
+  const previews = [];
+  const sent = [];
+  let remote = 'true';
+  const mounted = await mountSpawn(t, {
+    previewSpawn: async (request) => {
+      previews.push(request);
+      return { remote_control: { value: remote, source: 'group remote-control policy' } };
+    },
+    spawn: async (request) => { sent.push(request.body); return { conv_id: '1234567890' }; },
+  });
+  const { harness, host, state } = mounted;
+  const submit = async () => {
+    state.open({ groupName: 'beta' });
+    await flush(harness);
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+  };
+  await submit();
+  assert.equal(previews.length, 1);
+  assert.equal('remote_control' in previews[0].body, false, 'the preview is asked without the untouched toggle');
+  assert.equal('remote_control' in sent[0], false, 'the daemon resolves the shown on itself, so it is left out');
+
+  remote = 'false';
+  await submit();
+  assert.equal(sent[1].remote_control, true, 'the daemon would resolve off: the shown on is sent');
+  mounted.cleanup();
+});
+
 test('Preact agent-spawn preserves failed drafts, permission handoff, IME-safe hotkey, and busy dismissal', async (t) => {
   let attempts = 0;
   const mounted = await mountSpawn(t, {
@@ -1511,7 +1597,7 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
     const row = host.querySelector(`#${id}-row`);
     assert.ok(row, `${id} renders a row`);
     assert.ok(row.querySelector('.spawn-field-help-trigger'), `${id} exposes a [?] trigger`);
-    assert.equal(row.querySelector(`#${id}`).getAttribute('aria-describedby'), descriptionID);
+    assert.equal((row.querySelector(`#${id}-input`) || row.querySelector(`#${id}`)).getAttribute('aria-describedby'), descriptionID);
     assert.match(row.querySelector(`#${descriptionID}`).getAttribute('class'), /spawn-field-description/,
       `${id} help is a collapsed description, not a paragraph`);
 
@@ -1521,7 +1607,7 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
     assert.deepEqual([...row.querySelector('.cron-create-target').children].map((node) => node.className),
       ['spawn-field-with-help'], `${id} renders nothing beside the control group`);
     assert.deepEqual([...row.querySelector('.spawn-field-with-help').children].map((node) => node.tagName),
-      ['SELECT', 'BUTTON', 'SPAN'], `${id} renders only the select, its [?], and the collapsed help`);
+      [id === 'agent-spawn-sandbox-profile' ? 'DIV' : 'SELECT', 'BUTTON', 'SPAN'], `${id} renders only its control (a select, or the profile's choice box), its [?], and the collapsed help`);
   }
 
   // Only persistent, field-specific hints survive; mode explanations remain
@@ -1755,9 +1841,7 @@ test('Preact agent-spawn blocks submit until the resolved sandbox policy matches
 
     loads[0].pending.resolve({ profiles: [{ name: 'strict' }], selected: '', preview: 'no profiles applied' });
     await flush(harness);
-    const picker = host.querySelector('#agent-spawn-sandbox-profile');
-    setValue(picker, 'strict');
-    await harness.act(() => harness.fireEvent(picker, 'change'));
+    await comboPick(harness, host.querySelector('#agent-spawn-sandbox-profile'), 'strict');
     assert.equal(loads.length, 2, 'a selection change starts a fresh policy load');
 
     host.querySelector('#agent-spawn-submit').click();
@@ -2009,9 +2093,7 @@ test('spawn saved prompts are chips sent as prompt_refs, separate from the typed
     setValue(name, 'worker');
     await harness.act(() => harness.fireEvent(name, 'input'));
     await harness.input(host.querySelector('#agent-spawn-init-msg'), 'Task: ship it');
-    const add = host.querySelector('#agent-spawn-prompt-refs [aria-label="Add saved prompt"]');
-    setValue(add, 'brief');
-    await harness.act(() => harness.fireEvent(add, 'change'));
+    await comboPick(harness, host.querySelector('#agent-spawn-prompt-refs .saved-prompt-chip-add'), 'brief');
     await flush(harness);
     assert.match(host.querySelector('#agent-spawn-prompt-refs').textContent, /brief/);
     assert.equal(host.querySelector('#agent-spawn-init-msg').value, 'Task: ship it', 'adding a prompt leaves the brief alone');
@@ -2264,7 +2346,7 @@ test('Preact agent-spawn offers a usage profile before any exists', async (t) =>
     assert.ok(select, 'the Usage profile field shows with no usage profiles yet');
     const values = [...select.querySelectorAll('option')].map((o) => o.value);
     assert.deepEqual(values, ['', '/new-usage-profile']);
-    assert.equal(select.closest('.cron-create-row').previousElementSibling.id, 'agent-spawn-allow-unenforced-sandbox-row',
+    assert.equal(select.closest('.cron-create-row').previousElementSibling.id, 'agent-spawn-sandbox-deny-row',
       'it follows the sandbox rows rather than splitting them');
 
     // A profile made meanwhile ("new usage profile…") is pickable at once.
@@ -2277,5 +2359,252 @@ test('Preact agent-spawn offers a usage profile before any exists', async (t) =>
       ['', 'lean', '/new-usage-profile']);
   } finally {
     await mounted.cleanup();
+  }
+});
+
+test('undoing an agent\'s fill gives the fields back to the group: cwd follows a group switch again (tcl-klehjn)', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  // linkedom lays nothing out: show every field, as an open dialog does.
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ defaultGroup: 'alpha' });
+    await flush(harness);
+    const cwd = () => host.querySelector('#agent-spawn-cwd').value;
+    assert.equal(cwd(), '/repo', 'the group fills the directory');
+    const tick = () => flush(harness);
+    const result = await fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field: 'agent-spawn-cwd', value: '/elsewhere' }] } });
+    assert.equal(result.fields[0].status, 'filled');
+    assert.equal(cwd(), '/elsewhere');
+    await fills.undoFill('spawn', { win: harness.window, tick });
+    await flush(harness);
+    assert.equal(cwd(), '/repo', 'undo puts the value back');
+    await comboPick(harness, host.querySelector('#agent-spawn-group'), 'beta');
+    await flush(harness);
+    assert.equal(cwd(), '/beta', 'and the directory follows the group again, as before the fill');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+test('a worktree picked from the box is the operator\'s: a fill that would reset it is refused', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    for (let attempt = 0; !(await comboKeys(harness, host.querySelector('#agent-spawn-worktree'))).includes('__new__'); attempt += 1) {
+      if (attempt > 300) assert.fail('timed out waiting for the worktrees to load');
+      await harness.act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+    }
+    const worktree = host.querySelector('#agent-spawn-worktree');
+    await comboPick(harness, worktree, '__new__');
+    assert.equal(worktree.dataset.value, '__new__');
+    const tick = () => flush(harness);
+    const fill = (field, value) => fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field, value }] } });
+    assert.equal((await fill('agent-spawn-cwd', '/elsewhere')).fields[0].status, 'operator_edited',
+      'a CWD fill would clear the picked worktree');
+    assert.equal(host.querySelector('#agent-spawn-worktree').dataset.value, '__new__');
+    assert.equal((await fill('agent-spawn-worktree', '')).fields[0].status, 'operator_edited',
+      'the picked box itself is the operator\'s');
+    assert.equal(host.querySelector('#agent-spawn-worktree').dataset.value, '__new__');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// tcl-alhauf: a type-to-filter choice is a fill target as a <select> is. A
+// fill sets it through its own handler (the group moves the directory, as a
+// pick does), by its key, its label or its box's id; an operator's pick then
+// holds it against the next fill.
+test('an agent fills the group box, and the operator\'s later pick holds against the next fill', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    const group = () => host.querySelector('#agent-spawn-group');
+    const tick = () => flush(harness);
+    const fill = (field, value) => fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field, value }] } });
+    assert.equal((await fill('agent-spawn-group', 'no-such-group')).fields[0].status, 'not_an_option');
+    const filled = (await fill('agent-spawn-group-input', 'beta')).fields[0];
+    assert.equal(filled.field, 'agent-spawn-group', 'a fill of the box answers for its choice');
+    assert.equal(filled.status, 'filled');
+    assert.equal(filled.widens, 'group, directory', 'the group moves the directory, and the warning says so');
+    assert.ok(filled.moved.includes('agent-spawn-cwd'));
+    assert.equal(group().dataset.value, 'beta');
+    assert.equal(host.querySelector('#agent-spawn-group-input').value, 'beta', 'the box shows the filled choice');
+    assert.ok(fills.filledIn('spawn').some((field) => field.id === 'agent-spawn-group' && field.before === 'alpha'), 'the fill is listed, for its undo');
+    await fills.undoFill('spawn', { win: harness.window, tick });
+    assert.equal(group().dataset.value, 'alpha', 'undo puts the group back');
+    await comboPick(harness, group(), 'beta');
+    await flush(harness);
+    assert.equal((await fill('agent-spawn-group', 'alpha')).fields[0].status, 'operator_edited', 'the operator\'s pick holds');
+    assert.equal(group().dataset.value, 'beta');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+test('spawn provenance restores the record, but not for a field the operator holds', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const sets = { touched: new Set(['cwd', 'harness', 'fetchLatestWorktree']), operatorSet: new Set(['cwd']), profileOverrides: new Set(['harness']) };
+  const before = model.spawnProvenance({ touched: new Set(), operatorSet: new Set(), profileOverrides: new Set() }, { cwdOrigin: 'group', wtRepoEdited: false });
+  const after = model.spawnProvenance(sets, { cwdOrigin: 'user', wtRepoEdited: true });
+  const entries = Object.fromEntries(Object.keys(after).filter((key) => after[key] !== before[key]).map((key) => [key, before[key]]));
+  const patch = model.restoreSpawnProvenance(sets, entries, new Set(['agent-spawn-wt-repo', 'agent-spawn-wt-fetch']));
+  assert.deepEqual([...sets.touched], ['fetchLatestWorktree'], 'a field named by an alias stays the operator\'s');
+  assert.deepEqual([...sets.operatorSet], []);
+  assert.deepEqual([...sets.profileOverrides], []);
+  assert.deepEqual(patch, { cwdOrigin: 'group' }, 'the directory follows its group again; the repo the operator holds stays edited');
+});
+
+test('after an agent\'s harness fill is undone, a profile picked later applies its harness again (tcl-klehjn)', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ defaultGroup: 'beta' });
+    await flush(harness);
+    // linkedom's select value can't be set; the form renders it back each time.
+    setValue(host.querySelector('#agent-spawn-harness'), selectedValue(host.querySelector('#agent-spawn-harness')));
+    const harnessOf = () => host.querySelector('#agent-spawn-harness').value;
+    assert.equal(harnessOf(), 'claude');
+    const tick = () => flush(harness);
+    const result = await fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field: 'agent-spawn-harness', value: 'codex' }] } });
+    assert.equal(result.fields[0].status, 'filled');
+    await fills.undoFill('spawn', { win: harness.window, tick });
+    await flush(harness);
+    assert.equal(harnessOf(), 'claude');
+    const profile = host.querySelector('#agent-spawn-load-profile');
+    await comboChoose(harness, profile, 'codex-profile');
+    await flush(harness);
+    assert.equal(harnessOf(), 'codex', 'the profile\'s harness applies, as it would have before the fill');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+test('a field the operator holds keeps every key its handler marks', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const kept = (id, keys) => {
+    const sets = { touched: new Set(keys), operatorSet: new Set(), profileOverrides: new Set(keys) };
+    const entries = Object.fromEntries(keys.flatMap((key) => [[`touched:${key}`, undefined], [`profileOverrides:${key}`, undefined]]));
+    model.restoreSpawnProvenance(sets, entries, new Set([`agent-spawn-${id}`]));
+    return [...sets.profileOverrides].sort();
+  };
+  assert.deepEqual(kept('trust-dir', ['trustDir', 'trustDirSpecified']), ['trustDir', 'trustDirSpecified']);
+  assert.deepEqual(kept('model', ['model', 'customModel', 'effort']), ['customModel', 'effort', 'model']);
+  assert.deepEqual(kept('wt-branch', ['worktreeBranch', 'syncWorktree']), ['syncWorktree', 'worktreeBranch']);
+  assert.deepEqual(kept('harness', ['sandbox', 'approval']), ['approval', 'sandbox']);
+  assert.deepEqual(kept('name', ['sandbox']), [], 'a field holds only its own');
+});
+
+test('OpenCode --tools all shows per-tool choices that compose the spawn value', async (t) => {
+  let sent = null;
+  const mounted = await mountSpawn(t, { spawn: async (request) => { sent = request.body; return { conv_id: 'abcdef1234' }; } });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    await settleWorktrees(harness);
+    const harnessSelect = host.querySelector('#agent-spawn-harness');
+    setValue(harnessSelect, 'opencode');
+    await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+    assertAbsent(host.querySelector('#agent-spawn-tools-entries'), 'per-tool choices belong to all only');
+
+    const tools = host.querySelector('#agent-spawn-tools');
+    setValue(tools, 'all');
+    await harness.act(() => harness.fireEvent(tools, 'change'));
+    const entries = host.querySelector('#agent-spawn-tools-entries');
+    assert.ok(entries, 'all shows its per-tool choices');
+    const question = host.querySelector('#agent-spawn-tools-entries-question');
+    const env = host.querySelector('#agent-spawn-tools-entries-env');
+    assert.equal(question.hasAttribute('checked'), false, 'question is allowed by default');
+    assert.equal(env.hasAttribute('checked'), false, '.env reads are denied by default');
+    assert.equal(question.closest('label').className, 'ui-check');
+
+    Object.defineProperty(question, 'checked', { configurable: true, writable: true, value: true });
+    await harness.act(() => harness.fireEvent(question, 'change'));
+
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await harness.act(() => host.querySelector('#agent-spawn-submit').click());
+    await flush(harness);
+    assert.equal(sent?.tools, 'all,question=deny');
+
+    setValue(tools, 'deny');
+    await harness.act(() => harness.fireEvent(tools, 'change'));
+    assertAbsent(host.querySelector('#agent-spawn-tools-entries'));
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// tcl-alhauf: the model and Sandbox profile are type-to-filter choices that an
+// agent's fill still sets, by key or label, and an operator's pick holds.
+test('an agent fills the model and sandbox profile boxes; the operator\'s pick holds against the next fill', async (t) => {
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: async (_group, selected) => ({ profiles: [{ name: 'strict' }, { name: 'loose' }], selected, preview: 'no profiles applied' }),
+  });
+  const { harness, host, state } = mounted;
+  const fills = await harness.importDashboardModule('js/form-fill.js');
+  const proto = harness.window.Element.prototype;
+  const rects = Object.getOwnPropertyDescriptor(proto, 'getClientRects');
+  proto.getClientRects = () => [{}];
+  t.after(() => { if (rects) Object.defineProperty(proto, 'getClientRects', rects); else delete proto.getClientRects; });
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    const tick = () => flush(harness);
+    const fill = async (field, value) => (await fills.applyFill({ win: harness.window, tick, request: { form: 'spawn', agent: 'Stewie', fields: [{ field, value }] } })).fields[0];
+    const model = () => host.querySelector('#agent-spawn-model');
+    const profile = () => host.querySelector('#agent-spawn-sandbox-profile');
+
+    const other = model().dataset.value === 'opus' ? 'sonnet' : 'opus';
+    assert.equal((await fill('agent-spawn-model', other)).status, 'filled');
+    assert.equal(model().dataset.value, other);
+    assert.equal((await fill('agent-spawn-model', 'Custom model id…')).status, 'filled', 'the custom row is a choice by its label');
+    assert.ok(!host.querySelector('#agent-spawn-model-custom-row').hidden, 'and opens the custom field as a pick does');
+    assert.equal((await fill('agent-spawn-model', 'gpt-nonexistent')).status, 'not_an_option');
+
+    assert.equal((await fill('agent-spawn-sandbox-profile', 'strict')).status, 'filled');
+    assert.equal(profile().dataset.value, 'strict');
+    const cleared = await fill('agent-spawn-sandbox-profile', '');
+    assert.equal(cleared.status, 'filled', 'none (the composed profiles) can be filled where × would clear');
+    assert.equal(cleared.widens, 'sandbox');
+    assert.equal(profile().dataset.value, '');
+
+    await comboPick(harness, profile(), 'loose');
+    await flush(harness);
+    assert.equal((await fill('agent-spawn-sandbox-profile', 'strict')).status, 'operator_edited');
+    assert.equal(profile().dataset.value, 'loose');
+    await comboPick(harness, model(), other);
+    await flush(harness);
+    assert.equal((await fill('agent-spawn-model', other === 'opus' ? 'sonnet' : 'opus')).status, 'operator_edited');
+    assert.equal(model().dataset.value, other);
+  } finally {
+    mounted.cleanup();
   }
 });

@@ -138,8 +138,8 @@ func nonAgentConvQ(q string) (string, []any) {
 
 // ListNonAgentConvIndexPage returns one newest-modified-first page of the
 // promotion-candidate conversations (non-agent conv_index rows), filtered by q
-// and windowed by offset/limit (limit <= 0 == no LIMIT). Reuses the
-// ListRecentConvIndex column list + scanConvIndexRows.
+// and windowed by offset/limit (limit <= 0 == no LIMIT). It selects the
+// conv_index columns scanConvIndexRows reads.
 func ListNonAgentConvIndexPage(q string, offset, limit int) ([]*ConvIndexRow, error) {
 	d, err := Open()
 	if err != nil {
@@ -182,6 +182,27 @@ func CountNonAgentConvIndex(q string) (total, totalUnfiltered int, err error) {
 		return 0, 0, err
 	}
 	return total, totalUnfiltered, nil
+}
+
+// ListSearchableConvIndex returns the live conversations a dashboard content
+// search covers, agents' included, newest modified first.
+func ListSearchableConvIndex() ([]*ConvIndexRow, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT conv_id, project_dir, full_path, file_mtime, file_size,
+		first_prompt, summary, custom_title, message_count,
+		created, modified, git_branch, project_path, is_sidechain, indexed_at,
+		archived_at, git_branch_startup, harness
+		FROM conv_index
+		WHERE is_sidechain = 0 AND archived_at IS NULL
+		ORDER BY file_mtime DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanConvIndexRows(rows)
 }
 
 // --- Replaced generations (GET /api/replaced) -----------------------------

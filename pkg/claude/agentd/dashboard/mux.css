@@ -21,12 +21,14 @@
 .mux-tabs {
   display: flex; flex-wrap: wrap; flex: none; gap: 4px;
   padding: 5px 6px 0; overflow: hidden auto; max-height: 40vh;
-  scrollbar-width: thin; scrollbar-color: #3d4451 transparent;
+  /* One tab row even with no tabs: the strip is where an overlay window's tab
+     is dropped, so it must not collapse to its padding. A row is the strip's
+     top padding and bottom border (6px) plus a tab: its top border and
+     vertical padding (11px) and one line of its text (1lh; the strip and its
+     tabs share a font). Keep it in step with .mux-tab below. */
+  min-height: calc(17px + 1lh);
   background: #161b22; border-bottom: 1px solid #2a3340;
 }
-.mux-tabs::-webkit-scrollbar { width: 8px; }
-.mux-tabs::-webkit-scrollbar-track { background: transparent; }
-.mux-tabs::-webkit-scrollbar-thumb { background: #3d4451; border-radius: 4px; }
 .mux-tab {
   position: relative; display: flex; align-items: center; gap: 6px;
   padding: 5px 8px; border: 1px solid #2a3340; border-bottom: none;
@@ -79,6 +81,16 @@
 .mux-tab-status-working::before { animation: mux-tab-status-pulse 1.8s ease-in-out infinite; }
 .mux-tab-status-waking::before,
 .mux-tab-status-restarting::before { animation: mux-tab-status-pulse 1.2s ease-in-out infinite; }
+.mux-tab-status-drawing-board { color: #58a6ff; --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path d='M2.5 12.5l.8-3 6.6-6.6 2.2 2.2-6.6 6.6z' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/></svg>"); }
+/* A live page tab: a window with its left half filled, the ◧ glyph. */
+.mux-tab-status-page { color: #3fb950; --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><rect x='2' y='2.5' width='11' height='10' rx='1.2' fill='none' stroke='black' stroke-width='1.4'/><rect x='2' y='2.5' width='5.5' height='10' fill='black'/></svg>"); }
+/* A page shown or shown again since it was last looked at. */
+.mux-tab-unseen {
+  flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: #d29922; box-shadow: 0 0 0 2px rgba(210, 153, 34, 0.25);
+}
+/* A process tab: a small graph, two nodes and an edge. */
+.mux-tab-status-process { color: #a371f7; --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><circle cx='4' cy='4' r='2.2' fill='none' stroke='black' stroke-width='1.4'/><circle cx='11' cy='11' r='2.2' fill='none' stroke='black' stroke-width='1.4'/><path d='M5.6 5.6l3.8 3.8' stroke='black' stroke-width='1.4'/></svg>"); }
 .mux-tab.active .mux-tab-status-working { color: #56d364; }
 .mux-pane-agent-status { margin-left: 2px; }
 @keyframes mux-tab-status-pulse {
@@ -93,6 +105,13 @@
 .mux-tab-label {
   overflow: hidden; text-overflow: ellipsis; max-width: 200px;
   user-select: none;
+}
+/* A drawing board's or a page's name, retyped in its tab (double-click or F2,
+   tab-resource-rename.js). The Collab strip and an overlay's title bar share it. */
+.mux-tab-rename {
+  width: 150px; min-width: 0; padding: 1px 6px;
+  font: inherit; font-size: 12px; border-radius: 4px;
+  border: 1px solid var(--ui-focus, #58a6ff); background: #0d1117; color: #f0f6fc;
 }
 /* Match the Groups row's real/WHAT-IF badges. Keep figures intact while
    long terminal names truncate. The toggle flows after the last tab, so a
@@ -113,6 +132,8 @@ body.hide-costs .mux-cost-toggle { display: none; }
 }
 .mux-tab.drop-before::before { left: -3px; }
 .mux-tab.drop-after::after { right: -3px; }
+/* Overlay tabs about to land on this strip. */
+.mux-tabs.overlay-landing { background: #1f6feb1f; box-shadow: inset 0 0 0 1px #58a6ff; }
 /* Centre-drop: releasing here combines the two tabs into a group, so the whole
    target tab lights up rather than showing an insertion line — a different
    outcome deserves a different signal. */
@@ -212,11 +233,8 @@ body.hide-costs .mux-cost-toggle { display: none; }
 .mux-group-pill:focus-visible { outline: 2px solid var(--mux-group-accent); outline-offset: 1px; }
 .mux-group-caret { font-size: 10px; opacity: 0.85; }
 .mux-group-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
-.mux-group-count {
-  min-width: 15px; padding: 0 4px; border-radius: 8px; text-align: center;
-  font-size: 10px; line-height: 15px;
-  background: color-mix(in srgb, var(--mux-group-accent) 45%, #0d1117); color: #f0f6fc;
-}
+/* .ui-badge draws the pill; the stack's count keeps its group-accent tint. */
+.mux-group-count.ui-badge { background: color-mix(in srgb, var(--mux-group-accent) 45%, #0d1117); color: #f0f6fc; }
 .mux-group-rename {
   flex: none; margin-bottom: 3px; padding: 4px 7px; width: 150px;
   font: inherit; font-size: 12px; border-radius: 11px;
@@ -269,27 +287,14 @@ body.hide-costs .mux-cost-toggle { display: none; }
 }
 
 .mux-tab-menu {
-  position: fixed; z-index: 1000; display: flex; flex-direction: column;
+  position: fixed; z-index: var(--z-popover); display: flex; flex-direction: column;
   min-width: 170px; padding: 4px;
   border: 1px solid #3d4451; border-radius: 6px;
   background: #161b22; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
-.mux-tab-menu-item {
-  border: 1px solid transparent; border-radius: 4px; padding: 6px 9px;
-  background: transparent; color: #c9d1d9; cursor: pointer; text-align: left;
-  font: inherit;
-}
-.mux-tab-menu-item:hover,
-.mux-tab-menu-item:focus-visible {
-  outline: none; border-color: #58a6ff; background: #1f2935; color: #f0f6fc;
-}
+/* The rows are standard .ui-menu-items (ui.css), Close/Delete the danger row. */
 .mux-tab-menu-separator {
   height: 1px; margin: 4px 5px; background: #30363d;
-}
-.mux-tab-menu-item.danger { color: #f0a3a0; }
-.mux-tab-menu-item.danger:hover,
-.mux-tab-menu-item.danger:focus-visible {
-  border-color: #f85149; background: #2b1516; color: #ff7b72;
 }
 
 /* Pane area — every terminal is absolutely positioned and stacked; only the
@@ -312,9 +317,7 @@ body.hide-costs .mux-cost-toggle { display: none; }
   font-size: 11px; color: #7d8590; flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.terminal-interaction-hint {
-  color: #7d8590; font-size: 11px; white-space: nowrap;
-}
+.terminal-interaction-hint { white-space: nowrap; }
 
 @media (max-width: 850px) {
   .terminal-interaction-hint { display: none; }
@@ -324,7 +327,11 @@ body.hide-costs .mux-cost-toggle { display: none; }
   background: #21262d; border: 1px solid #2a3340; color: #c9d1d9;
   border-radius: 5px; padding: 3px 8px; font-size: 12px; cursor: pointer;
 }
-.mux-btn:hover { background: #2d333b; border-color: #3d4451; }
+.mux-btn:hover { background: #2d333b; }
+/* A terminal's zoom, in its floating tools. */
+.term-zoom { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.term-zoom .companion-tool { color: #e6edf3; }
+.term-zoom-size { min-width: 26px; text-align: center; font-size: 11px; color: #8b949e; font-variant-numeric: tabular-nums; }
 .mux-btn[data-has-selection="false"] { opacity: 0.65; }
 
 .mux-palette-toggle {
@@ -373,19 +380,14 @@ body.hide-costs .mux-cost-toggle { display: none; }
   display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
   max-width: calc(100% - 20px);
 }
-.transfer-tray { position: fixed; top: 16px; right: 16px; z-index: 10100; }
-.transfer-card {
-  width: 280px; max-width: 100%;
-  background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
-  color: #c9d1d9; font-size: 12px;
-}
+.transfer-tray { position: fixed; top: 16px; right: 16px; z-index: var(--z-toast); }
+/* .ui-popover paints the floating surface. */
+.transfer-card { width: 280px; max-width: 100%; font-size: 12px; }
 .transfer-top {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 10px; border-bottom: 1px solid #30363d; font-weight: 600;
 }
 .transfer-title { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.transfer-cancel { padding: 2px 8px; font-size: 11px; }
 .transfer-min {
   border: none; background: none; color: #8b949e; cursor: pointer;
   font-size: 12px; padding: 0 3px; line-height: 1;
@@ -419,8 +421,6 @@ body.hide-costs .mux-cost-toggle { display: none; }
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
   background: rgba(13, 17, 23, 0.78);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
 }
 .mux-terminal-disconnect-card {
   width: min(440px, calc(100% - 48px));
@@ -447,14 +447,11 @@ body.hide-costs .mux-cost-toggle { display: none; }
 .mux-terminal-disconnect-status { margin: 0; font-size: 13px; color: #7d8590; }
 /* The header Reconnect is small and far from the curtain's focal point; this
    is the same action placed where the eye already is. */
-.mux-terminal-disconnect-reconnect {
+.mux-terminal-disconnect-reconnect, .ui-btn.mux-terminal-disconnect-reconnect {
   display: inline-flex; align-items: center; gap: 8px;
   margin: 4px 0 14px; padding: 9px 22px;
   font: inherit; font-size: 15px; font-weight: 600;
-  color: #fff; background: #238636; border: 1px solid #2ea043; border-radius: 6px;
-  cursor: pointer;
 }
-.mux-terminal-disconnect-reconnect:hover { background: #2ea043; border-color: #3fb950; }
 .mux-terminal-disconnect-reconnect:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .mux-terminal-disconnect-card { animation: none; }
@@ -475,16 +472,16 @@ body.wizard .mux-tab {
 body.wizard .mux-tab:hover { color: #f3e6c0; border-color: #7a5db0; }
 body.wizard .mux-tab.active {
   background: linear-gradient(180deg, #34234f 0%, #24183c 100%);
-  color: #f3e6c0; border-color: #d9b45a;
+  color: #f3e6c0; border-color: var(--ui-wizard-gold);
   box-shadow: 0 -2px 8px rgba(169, 123, 214, 0.28);
 }
 body.wizard .mux-tab.drop-before::before,
 body.wizard .mux-tab.drop-after::after {
-  background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+  background: var(--ui-wizard-gold); box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
 }
 body.wizard .mux-tab.drop-group {
-  background: #34234f; border-color: #d9b45a;
-  box-shadow: inset 0 0 0 1px #d9b45a, 0 0 8px rgba(217, 180, 90, 0.55);
+  background: #34234f; border-color: var(--ui-wizard-gold);
+  box-shadow: inset 0 0 0 1px var(--ui-wizard-gold), 0 0 8px rgba(217, 180, 90, 0.55);
 }
 body.wizard .mux-tab-close:hover { color: #f0a868; }
 /* Group accents keep their hue in the portal frame but are mixed against the
@@ -502,31 +499,22 @@ body.wizard .mux-group-pill:hover {
   background: color-mix(in srgb, var(--mux-group-accent) 34%, #171024);
 }
 body.wizard .mux-group-rename { background: #171024; color: #f3e6c0; }
+body.wizard .mux-tab-rename { background: #171024; color: #f3e6c0; border-color: var(--ui-wizard-gold); }
 body.wizard .mux-strip-gap.armed {
-  background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+  background: var(--ui-wizard-gold); box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
 }
 /* The trailing end-zone keeps its left-edge insertion bar in wizard chrome too,
    rather than flooding the grown margin with the gap's fill colour. */
 body.wizard .mux-strip-gap.grow.armed { background: none; box-shadow: none; }
 body.wizard .mux-strip-gap.grow.armed::before {
-  background: #d9b45a; box-shadow: 0 0 7px rgba(217, 180, 90, 0.78);
+  background: var(--ui-wizard-gold); box-shadow: 0 0 7px rgba(217, 180, 90, 0.78);
 }
 body.wizard .mux-tab-menu {
   border-color: #7a5db0;
   background: linear-gradient(180deg, #2a1c43 0%, #171024 100%);
   box-shadow: 0 8px 28px rgba(8, 3, 18, 0.72), inset 0 0 0 1px rgba(217, 180, 90, 0.12);
 }
-body.wizard .mux-tab-menu-item { color: #e7d9f5; }
-body.wizard .mux-tab-menu-item:hover,
-body.wizard .mux-tab-menu-item:focus-visible {
-  border-color: #d9b45a; background: #3a2a63; color: #f3e6c0;
-}
 body.wizard .mux-tab-menu-separator { background: rgba(217, 180, 90, 0.38); }
-body.wizard .mux-tab-menu-item.danger { color: #e6a3ad; }
-body.wizard .mux-tab-menu-item.danger:hover,
-body.wizard .mux-tab-menu-item.danger:focus-visible {
-  border-color: #f0a868; background: #4a2433; color: #ffd09a;
-}
 body.wizard .mux-pane-header {
   background: linear-gradient(180deg, #211832 0%, #171024 100%);
   border-bottom-color: #4a3a6b;
@@ -537,17 +525,16 @@ body.wizard .mux-pane-title {
   text-shadow: 0 0 7px rgba(169, 123, 214, 0.45);
 }
 body.wizard .mux-tabs.drag-out-armed,
-body.wizard .mux-pane-header.drag-out-armed { outline-color: #d9b45a; }
+body.wizard .mux-pane-header.drag-out-armed { outline-color: var(--ui-wizard-gold); }
 body.wizard .mux-drag-out-hint {
   color: #f0a868; background: #171024; border-bottom-color: #4a3a6b;
 }
-body.wizard .mux-pane-status,
-body.wizard .terminal-interaction-hint { color: #a997ca; }
-body.wizard .mux-btn {
+body.wizard .mux-pane-status { color: #a997ca; }
+body.wizard .mux-btn:where(:not(.ui-btn)) {
   background: #2a1c43; border-color: #7a5db0; color: #e7d9f5;
 }
-body.wizard .mux-btn:hover {
-  background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
+body.wizard .mux-btn:where(:not(.ui-btn)):hover {
+  background: #3a2a63; color: #f3e6c0;
 }
 body.wizard .mux-palette-toggle { color: #d8ccea; }
 body.wizard .mux-palette-toggle:hover { color: #f3e6c0; }
@@ -565,15 +552,17 @@ body.wizard .mux-pane-xterm {
   background: color-mix(in srgb, var(--nc) 22%, #0d1117); border: 1px solid color-mix(in srgb, var(--nc) 60%, #0d1117);
 }
 .mux-node-pill.compact { justify-content: center; min-width: 16px; padding: 0 3px; box-sizing: border-box; }
-.mux-scope-empty { padding: 24px; color: #8b949e; }
+.mux-scope-empty { padding: 24px; }
 /* A tab's ⚙ (tcl-xy5wkp): the Groups row menu, pinned to the viewport
    because .mux-tabs clips its overflow and would clip it. TabGear places it. */
 /* The wrapper also carries .row-actions, so the menu shares the Groups row
    menu's rules; undo that cluster's hover-to-reveal dimming here. The cog is
    placed like the status light beside it (see .mux-tab-status): a 15px box on
    the title's x-height centre, so the two share a centre line by construction. */
+/* Selectors carry .ui-btn(.ui-btn-icon) to outrank the standard small icon
+   button (ui.css loads last) that ActionMenu renders. */
 .mux-tab-gear.row-actions { flex: none; display: inline-block; opacity: 1; }
-.mux-tab-gear .cog-btn {
+.mux-tab-gear .ui-btn.ui-btn-icon.cog-btn {
   display: inline-grid; place-items: center; box-sizing: border-box; vertical-align: middle;
   width: 15px; height: 15px; margin: -4px 0; padding: 0; font-size: 0; line-height: 1;
   background: none; border: 1px solid transparent; border-radius: 3px;
@@ -588,8 +577,9 @@ body.wizard .mux-pane-xterm {
   mask: var(--mux-gear-icon) center / 100% 100% no-repeat;
   --mux-gear-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path fill-rule='evenodd' transform='translate(7.5 7.5) scale(0.87) translate(-7.5 -7.5)' d='M12.18 6.05L14 6.38V8.62L12.18 8.95L11.83 9.79L12.89 11.31L11.31 12.89L9.79 11.83L8.95 12.18L8.62 14H6.38L6.05 12.18L5.21 11.83L3.69 12.89L2.11 11.31L3.17 9.79L2.82 8.95L1 8.62V6.38L2.82 6.05L3.17 5.21L2.11 3.69L3.69 2.11L5.21 3.17L6.05 2.82L6.38 1H8.62L8.95 2.82L9.79 3.17L11.31 2.11L12.89 3.69L11.83 5.21ZM9.7 7.5A2.2 2.2 0 1 0 5.3 7.5A2.2 2.2 0 1 0 9.7 7.5Z'/></svg>");
 }
-.mux-tab-gear .cog-btn:hover, .mux-tab-gear .cog-btn[aria-expanded="true"] { color: #ffb52e; border-color: #6b4f1d; }
-.mux-tab-gear .action-menu { position: fixed; margin-top: 0; z-index: 1000; overflow-y: auto; }
+.mux-tab-gear .ui-btn.cog-btn[aria-expanded="true"] { background: none; color: #ffb52e; border-color: #6b4f1d; }
+.mux-tab-gear .ui-btn.cog-btn:hover:not(:disabled) { background: none; color: #ffb52e; }
+.mux-tab-gear .action-menu { position: fixed; margin-top: 0; z-index: var(--z-popover); overflow-y: auto; }
 .mux-tab-gear .action-menu.opens-up { top: auto; bottom: auto; }
 
 /* Background terminals: tclaude tmux sessions still running with no terminal
@@ -599,70 +589,189 @@ body.wizard .mux-pane-xterm {
    reminder, not an alert. */
 .mux-tabbar { display: flex; flex: none; min-width: 0; }
 .mux-tabbar > .mux-tabs { flex: 1 1 auto; min-width: 0; }
-.mux-bg-slot {
-  position: relative; flex: none; display: flex; align-items: flex-end;
-  padding: 5px 6px 3px; background: #161b22; border-bottom: 1px solid #2a3340;
+/* A list step of the Collab panel's ＋ New (collab-new-menu.js): the drawing boards
+   or the processes, the strip's old ＋ menu. */
+.mux-drawing-board-menu {
+  position: absolute; right: 4px; top: calc(100% + 4px); z-index: var(--z-popover);
+  border: 1px solid #30363d; border-radius: 8px; background: #161b22; box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
 }
-.mux-bg { position: relative; }
-.mux-bg-trigger {
-  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
-  border: 1px solid #3d4451; border-radius: 11px; background: #0d1117;
-  color: #aeb9c6; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+/* A drawing board pane brings its own header: none of the terminal chrome. */
+.mux-pane-drawing-board { background: #0d1117; }
+/* A live page (page-view.js): who showed it and under which rules, then the
+   sandboxed frame, in a strip tab, an overlay tab or a separate window. */
+.mux-pane-page { background: #0d1117; }
+.page-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.page-head {
+  flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 8px; min-width: 0;
+  border-bottom: 1px solid var(--ui-line); background: #161b22; color: var(--ui-text); font-size: 12px;
 }
-.mux-bg-trigger:hover, .mux-bg.open .mux-bg-trigger { background: #1b222b; color: #e6edf3; border-color: #58a6ff; }
-.mux-bg-trigger:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
-.mux-bg-icon { flex: none; }
-.mux-bg-count {
-  min-width: 18px; padding: 0 5px; border-radius: 9px; background: #21262d;
-  color: #c9d1d9; font-size: 11px; font-weight: 600; text-align: center;
+.page-head-glyph { color: #3fb950; }
+.page-head-title { min-width: 0; max-width: 32ch; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ui-text-strong); font-weight: 600; }
+.page-head-from { flex: none; color: var(--ui-muted-text); white-space: nowrap; }
+.page-head-from .page-head-sender { padding: 0 2px; }
+.page-head-target, .page-head-worktree {
+  min-width: 0; max-width: 24ch; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ui-muted-text);
 }
-.mux-bg-pop {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
-  width: min(440px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow-y: auto;
-  background: #161b22; border: 1px solid #3d4451; border-radius: 8px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6); font-size: 12px; color: #c9d1d9;
+.page-head-worktree::before { content: '⎇ '; }
+.page-sandbox-chip { flex: none; cursor: help; }
+/* Live patches (tcl-14z3fq): the page differs from its source. */
+.page-patch-chip { flex: none; white-space: nowrap; cursor: help; color: var(--ui-muted-text); }
+.page-patch-chip.live { color: var(--warning-text, #d99a2b); border-color: currentColor; }
+.page-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; background: #fff; }
+.page-frame { flex: 1 1 auto; width: 100%; height: 100%; border: 0; background: #fff; }
+.page-unreachable {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  padding: 24px; text-align: center; background: rgba(13, 17, 23, 0.94); color: var(--ui-text);
 }
-.mux-bg-pop-head { padding: 9px 12px; border-bottom: 1px solid #2a3340; color: #8b949e; }
-.mux-bg-pop-head b { color: #e6edf3; font-size: 13px; }
-.mux-bg-sec { padding: 6px 0; border-bottom: 1px solid #21262d; }
-.mux-bg-sec:last-of-type { border-bottom: none; }
-.mux-bg-sec-head {
-  padding: 3px 12px; color: #8b949e; font-size: 11px;
-  text-transform: uppercase; letter-spacing: 0.04em;
+.page-unreachable p { margin: 0; }
+.page-view-closed .page-head-title { font-weight: 400; color: var(--ui-muted-text); }
+/* Drawing on top (page-draw.js, tcl-2dwbad): the layer is the dashboard's,
+   over the frame; it takes the pointer only in Draw mode. */
+.page-mode { display: inline-flex; gap: 2px; }
+.page-draw { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.page-draw-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.page-draw.on { pointer-events: auto; cursor: crosshair; }
+.page-draw.on .page-draw-svg { touch-action: none; }
+.page-draw-text { position: absolute; min-width: 16ch; }
+.page-draw-bar { padding: 4px 8px; border-bottom: 1px solid var(--drawing-board-line); background: var(--drawing-board-bar); }
+.page-draw-note { flex: 1 1 18ch; min-width: 12ch; max-width: 48ch; margin-left: 6px; }
+body.wizard .page-head { background: #1d1530; border-bottom-color: #4a3a6e; }
+body.wizard .page-head-glyph { color: var(--ui-wizard-gold); }
+/* A process pane (process-pane.js): a slim bar of where the editor can go, and
+   the editor, which brings its own toolbar. */
+.mux-pane-process { background: #0d1117; }
+.mux-process-head {
+  flex: none; display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+  border-bottom: 1px solid #2a3340; background: #161b22;
 }
-.mux-bg-sec-head .mux-node-pill { text-transform: none; letter-spacing: 0; }
-.mux-bg-row { display: flex; align-items: center; gap: 8px; padding: 4px 12px; }
-.mux-bg-row:hover { background: #1b222b; }
-.mux-bg-row .mux-tab-status-shell {
-  color: #6e7681;
-  --mux-status-icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 15 15'><path d='M3.5 5L6.5 7.5L3.5 10' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/><rect x='7.5' y='9.6' width='4.5' height='1.4' rx='0.7'/></svg>");
-}
-.mux-bg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mux-bg-name-attach {
-  padding: 0; border: none; background: none; color: inherit; font: inherit;
-  text-align: left; cursor: pointer;
-}
-.mux-bg-name-attach:hover { color: #58a6ff; text-decoration: underline; }
-.mux-bg-idle { color: #6e7681; font-size: 11px; white-space: nowrap; }
-.mux-bg-idle.stale { color: #d29922; }
-.mux-bg-attach { padding: 2px 10px; font-size: 11px; }
-.mux-bg-kill { padding: 2px 8px; font-size: 11px; color: #8b949e; }
-.mux-bg-kill.armed { color: #fff; background: #b62324; border-color: #f85149; }
-.mux-bg-noattach { color: #6e7681; font-size: 11px; font-style: italic; white-space: nowrap; }
-.mux-bg-foot { display: flex; justify-content: flex-end; padding: 8px 12px; border-top: 1px solid #2a3340; }
+.mux-process-head .mux-process-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #c9d1d9; }
+.mux-process-head .spacer { flex: 1 1 auto; }
 .mux-bg-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   flex: 1 1 auto; gap: 8px; padding: 48px 24px; color: #8b949e; text-align: center;
 }
 .mux-bg-empty .mux-empty-title { color: #c9d1d9; font-size: 15px; }
-body.wizard .mux-bg-slot {
-  background: linear-gradient(180deg, #211832 0%, #171024 100%);
-  border-bottom-color: #7a5db0;
-  box-shadow: inset 0 -1px 0 rgba(217, 180, 90, 0.18);
+
+:root[data-overlay-backdrop="blur"] .mux-terminal-disconnect-overlay,
+:root[data-overlay-backdrop="both"] .mux-terminal-disconnect-overlay {
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
 }
-body.wizard .mux-bg-trigger { background: #171024; border-color: #4a3a6b; color: #a997ca; }
-body.wizard .mux-bg-pop { background: #1b1329; border-color: #4a3a6b; }
-/* A 🔒 reason in the popover (a peer shell's locked Attach) sits near the
-   row's right edge of a scrolling box: open it leftward and upward so it
-   stays inside the popover instead of widening or scrolling it. */
-.mux-bg-pop .lock-why::after { left: auto; right: -6px; top: auto; bottom: calc(100% + 6px); max-width: 240px; }
+
+/* The Collab panel (collab-rail.js): the live agents and resources, by group,
+   in the shared right side panel (#dock-collab-body, side-panel.js). One quiet
+   line per item; a group header folds its group. */
+#dock-collab-body { padding: 8px 6px 10px; }
+/* The handle folds the Collab panel; its body needs no Hide row. */
+body[data-dock-panel="collab"] #agent-dock .dock-head { display: none; }
+.collab-rail { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.collab-rail .cr-head { display: flex; gap: 6px; align-items: center; }
+.collab-rail .cr-search { flex: 1 1 auto; min-width: 0; box-sizing: border-box; font-size: 12px; padding: 4px 8px; border: 1px solid #30363d; border-radius: 6px;
+  background: #010409; color: var(--ui-body-text); }
+/* The Filter dropdown (view-menu.js) opens leftward: the panel is at the
+   screen's right edge. */
+.collab-rail .view-popover-wrap { position: relative; display: inline-flex; flex: none; }
+.collab-rail .view-menu { left: auto; right: 0; }
+.collab-rail .view-badge { margin-left: 5px; }
+.view-menu .view-menu-reset { align-self: flex-start; margin: 2px 8px; padding: 0; background: none; border: 0; cursor: pointer;
+  color: #58a6ff; font-size: 12px; }
+.view-menu .view-menu-reset:disabled { color: var(--ui-muted-text); cursor: default; }
+.collab-rail .view-menu label.filter-toggle { cursor: pointer; color: var(--ui-body-text); user-select: none; }
+/* The Filter menu's two order dropdowns (tcl-zeawf9): a label above its
+   select, so the menu stays as narrow as the panel's edge allows. */
+.collab-rail .view-menu label.cr-order { display: flex; flex-direction: column; align-items: stretch; gap: 3px;
+  padding: 3px 8px; font-size: 12px; color: var(--ui-body-text); }
+.collab-rail .view-menu .cr-order-select { width: 100%; }
+.collab-rail .cr-count { color: var(--ui-muted-text); font-size: 11px; font-variant-numeric: tabular-nums; }
+.collab-rail .cr-list { display: flex; flex-direction: column; gap: 6px; }
+.collab-rail .cr-section-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 2px 4px; cursor: pointer; text-align: left; }
+.collab-rail .cr-section-head:hover { color: var(--ui-strong-text); }
+.collab-rail .cr-chevron { width: 10px; flex: none; }
+.collab-rail .cr-section-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collab-rail .cr-item { display: flex; align-items: center; gap: 4px; border-radius: 6px; padding: 0 4px; min-height: 24px; }
+.collab-rail .cr-item:hover, .collab-rail .cr-item.cr-open { background: #161b22; }
+.collab-rail .cr-item[draggable="true"] { cursor: grab; }
+.collab-rail .cr-name { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--ui-body-text);
+  cursor: pointer; font-size: 13px; padding: 3px 2px; }
+.collab-rail .cr-glyph { flex: none; width: 14px; text-align: center; color: var(--ui-muted-text); }
+.collab-rail .cr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collab-rail .cr-closed .cr-title { color: var(--ui-muted-text); }
+.collab-rail .cr-open .cr-glyph { color: #58a6ff; }
+.collab-rail .cr-state { flex: none; font-size: 11px; color: var(--ui-muted-text); }
+.collab-rail .cr-needs-you { background: rgba(31, 111, 235, .12); }
+.collab-rail .cr-needs-you .cr-state { color: #58a6ff; font-weight: 600; }
+.collab-rail .cr-tools { display: none; gap: 2px; }
+.collab-rail .cr-item:hover .cr-tools, .collab-rail .cr-item:focus-within .cr-tools { display: inline-flex; }
+.collab-rail .cr-item:hover .cr-state, .collab-rail .cr-item:focus-within .cr-state { display: none; }
+.collab-rail .cr-tool { background: none; border: 0; color: var(--ui-muted-text); cursor: pointer; padding: 0 3px; font-size: 12px; }
+.collab-rail .cr-tool:hover { color: var(--ui-strong-text); }
+.collab-rail .cr-quiet { margin: 4px 6px; }
+/* A row's ⋯ menu (collab-rail-menu.js) stays while it is open, though the
+   pointer has left the row for it. */
+/* Keyed on the menu buttons (and an open ⚙ menu): the ⚙'s hidden menu holds
+   a filter field that always says aria-expanded. */
+.collab-rail .cr-tools:has([aria-haspopup="menu"][aria-expanded="true"], .action-menu.open) { display: inline-flex; }
+.collab-rail .cr-menu, .collab-rail .cr-new-slot { position: relative; display: inline-flex; flex: none; }
+.collab-rail .cr-row-menu { position: absolute; right: 0; top: calc(100% + 2px); z-index: var(--z-popover); min-width: min(180px, calc(var(--dock-w, 264px) - 24px)); }
+/* A row's ⚙ (collab-rail-gear.js) is the Groups tab's own menu: an agent's
+   row-actions menu, a resource's Rename/Move/Delete. The panel sits at the
+   page's right edge, so both open leftward from the button. */
+.collab-rail .cr-gear { position: relative; display: inline-flex; flex: none; }
+.collab-rail .cr-gear .action-menu, .collab-rail .cr-gear .gr-add-menu { left: auto; right: 0; }
+/* The agent's menu is long; in the panel it scrolls rather than runs off the page. */
+.collab-rail .cr-gear .action-menu { max-height: min(70vh, 560px); overflow-y: auto; }
+.collab-rail .cr-gear .cog-btn { padding: 0 2px; }
+/* .row-actions dims until its table row is hovered; the panel has no rows. */
+.collab-rail .cr-gear.row-actions { opacity: 1; }
+.collab-rail .cr-stale .cr-state { color: #d29922; }
+/* ＋ New (collab-new-menu.js) in the header, and a group header's ＋. */
+.collab-rail .cr-new { flex: none; font-size: 12px; padding: 3px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  border: 1px solid rgba(56, 139, 253, .5); background: rgba(31, 111, 235, .18); color: #79c0ff; }
+.collab-rail .cr-new:hover, .collab-rail .cr-new[aria-expanded="true"] { background: rgba(31, 111, 235, .3); color: #cae3ff; }
+.collab-rail .cr-section-row { display: flex; align-items: center; gap: 2px; }
+/* An agent, drawing board or page dragged over another group's section moves there
+   (collab-rail-actions.js): the section is outlined as the Groups tab's box is. */
+.collab-rail .cr-section.cr-drop-over { outline: 2px dashed var(--ui-focus, #58a6ff); outline-offset: -2px; border-radius: 4px; background: rgba(31, 49, 72, 0.4); }
+.collab-rail .cr-section-row .cr-section-head { flex: 1 1 auto; min-width: 0; }
+.collab-rail .cr-section-add { color: #58a6ff; font-size: 13px; }
+.collab-rail .cr-new-menu, .collab-rail .cr-new-list { position: absolute; right: 0; left: auto; top: calc(100% + 2px); z-index: var(--z-popover);
+  box-sizing: border-box; width: calc(var(--dock-w, 264px) - 16px); }
+/* The panel scrolls, so what overflows its left edge is lost: the drawing board and
+   process lists fit its width. */
+.collab-rail .cr-new-list .drawing-board-list.compact { width: auto; max-width: 100%; }
+.collab-rail .cr-new-back { display: block; margin: 6px 8px 0; padding: 0; background: none; border: 0; color: #58a6ff; font-size: 12px; cursor: pointer; }
+/* The Filter button's background count (the strip's old counter) and the
+   Attach all set apart at the bottom of its menu. */
+.collab-rail .cr-bg-count { margin-left: 5px; }
+.view-menu .cr-attach-all { margin-top: 0; }
+/* The folded Collab panel's handle carries the same count; another tab's
+   panel, or an unfolded one, shows none. */
+.dock-toggle .dock-toggle-count { position: absolute; top: -7px; left: -6px; }
+body:not([data-dock-panel="collab"]) .dock-toggle .dock-toggle-count, body.dock-open .dock-toggle .dock-toggle-count { display: none; }
+/* A resource row's lock toggle (resource-lock.js RailLock): amber and always
+   shown while locked, a dim open lock on row hover or focus while unlocked. */
+.collab-rail .cr-lock { flex: none; display: none; align-items: center; justify-content: center; width: 20px; height: 20px;
+  padding: 0; background: none; border: 1px solid transparent; border-radius: 4px; color: var(--ui-muted-text); opacity: .7; cursor: pointer; }
+.collab-rail .cr-lock.is-locked { display: inline-flex; color: #d29922; opacity: 1; }
+.collab-rail .cr-item:hover .cr-lock, .collab-rail .cr-item:focus-within .cr-lock { display: inline-flex; }
+.collab-rail .cr-lock:hover, .collab-rail .cr-lock:focus-visible { opacity: 1; background: rgba(56, 139, 253, .15); border-color: rgba(56, 139, 253, .5); }
+.collab-rail .cr-lock:not(.is-locked):hover, .collab-rail .cr-lock:not(.is-locked):focus-visible { color: #79c0ff; }
+.collab-rail .cr-lock.is-denied { cursor: not-allowed; }
+.collab-rail .cr-lock.is-denied:hover { background: none; border-color: transparent; }
+
+/* An agent's light, in the tab strip's colours. */
+.collab-rail .cr-status-working .cr-glyph { color: #3fb950; }
+.collab-rail :is(.cr-status-idle, .cr-status-waking, .cr-status-restarting) .cr-glyph { color: #d29922; }
+.collab-rail .cr-status-awaiting .cr-glyph { color: #58a6ff; }
+.collab-rail :is(.cr-status-error, .cr-status-crashed) .cr-glyph { color: #f85149; }
+
+/* The Collab home (collab-home.js): the empty strip's plain empty state. */
+.collab-home { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; padding: 24px; text-align: center; }
+.collab-home .ch-title { margin: 0; font-size: 15px; color: var(--ui-body-text); }
+.collab-home .ch-quiet { margin: 0; }
+.collab-home .ch-waiting { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.collab-home .ch-agent { display: inline-flex; align-items: center; gap: 8px; border-color: #1f6feb; background: rgba(31, 111, 235, .12); color: var(--ui-strong-text); }
+.collab-home .ch-agent .ch-glyph { color: #58a6ff; }
+.collab-home .ch-agent .ch-state { font-size: 11px; color: #58a6ff; font-weight: 600; }
+/* A frame would take a rail drag passing over it; while one lasts, frames let it through. */
+body.rail-dragging iframe { pointer-events: none; }

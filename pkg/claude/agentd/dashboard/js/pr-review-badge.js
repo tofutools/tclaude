@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useId, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { safeCheckURL, useHoverPopover, usePanelPlacement } from './pr-checks-hover.js';
+import { isGitLabMRURL, safeCheckURL, useHoverPopover, usePanelPlacement } from './pr-checks-hover.js';
 import {
   prReviewDecisionText, prReviewLabel, prReviewState, prReviewStateText,
   prReviewSummaryLine, relativeAge,
@@ -14,8 +14,12 @@ const html = htm.bind(h);
 // (and its .ci-panel styling) so both popovers behave the same.
 //
 // Unlike the CI panel this one never fetches: the reviewer list is small and
-// already rides the snapshot, and is refreshed by GitHub reads the daemon
-// makes anyway (prreviews.go). Hovering costs no GitHub request.
+// already rides the snapshot, and is refreshed by forge reads the daemon makes
+// anyway (prreviews.go, prreviews_gitlab.go). Hovering costs no request.
+//
+// A GitLab merge request reads as one: !N, GitLab's verdict, and its Overview
+// and Changes tabs. GitLab keeps no time on an approval, so its rows have no
+// age.
 
 function reviewerGlyph(state) {
   switch (state) {
@@ -53,6 +57,8 @@ function ReviewerRow({ reviewer, prURL, now }) {
 
 function PRReviewPanel({ prURL, prNumber, reviews, panelID, headingID, panelRef, placement }) {
   const now = Date.now();
+  const mr = isGitLabMRURL(prURL);
+  const ref = prNumber ? `${mr ? '!' : '#'}${prNumber}` : '';
   const reviewers = reviews.reviewers || [];
   const style = placement && !placement.hidden
     ? `top:${placement.top}px;left:${placement.left}px;max-height:${placement.maxHeight}px;` +
@@ -60,28 +66,28 @@ function PRReviewPanel({ prURL, prNumber, reviews, panelID, headingID, panelRef,
     : 'visibility:hidden';
   const updated = relativeAge(reviews.reviewers_fetched_at, now);
   return html`
-    <div ref=${panelRef} class="ci-panel rv-panel" style=${style}
+    <div ref=${panelRef} class="ci-panel rv-panel ui-popover" style=${style}
       id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="ci-panel-heading" id=${headingID}>
         <a href=${prURL} target="_blank" rel="noopener noreferrer">
-          <span class="theme-copy-regular">${prNumber ? `#${prNumber} · reviews` : 'Pull request reviews'}</span>
-          <span class="theme-copy-wizard">${prNumber ? `#${prNumber} · judgement of the council` : 'Judgement of the council'}</span>
+          <span class="theme-copy-regular">${ref ? `${ref} · reviews` : `${mr ? 'Merge' : 'Pull'} request reviews`}</span>
+          <span class="theme-copy-wizard">${ref ? `${ref} · judgement of the council` : 'Judgement of the council'}</span>
         </a>
       </div>
-      <div class="ci-panel-summary">${prReviewSummaryLine(reviews)} · ${prReviewDecisionText(reviews.decision)}</div>
+      <div class="ci-panel-summary">${prReviewSummaryLine(reviews)} · ${prReviewDecisionText(reviews.decision, mr)}</div>
       ${reviewers.length ? html`
         <ul class="ci-checks">
           ${reviewers.map((reviewer) => html`
             <${ReviewerRow} key=${reviewer.login} reviewer=${reviewer} prURL=${prURL} now=${now} />
           `)}
         </ul>
-      ` : html`<p class="ci-panel-empty">${reviews.reviewers_known
+      ` : html`<p class="ci-panel-empty ui-empty">${reviews.reviewers_known
         ? 'Nobody has approved or requested changes yet.'
-        : 'The reviewer list arrives with the next GitHub poll.'}</p>`}
+        : `The reviewer list arrives with the next ${mr ? 'GitLab' : 'GitHub'} poll.`}</p>`}
       <p class="ci-panel-note">
-        <a href=${prURL} target="_blank" rel="noopener noreferrer">Conversation ↗</a>
+        <a href=${prURL} target="_blank" rel="noopener noreferrer">${mr ? 'Overview' : 'Conversation'} ↗</a>
         <span class="rv-note-sep"> · </span>
-        <a href=${`${prURL}/files`} target="_blank" rel="noopener noreferrer">Files changed ↗</a>
+        <a href=${`${prURL}/${mr ? 'diffs' : 'files'}`} target="_blank" rel="noopener noreferrer">${mr ? 'Changes' : 'Files changed'} ↗</a>
         ${updated ? html`<span class="rv-note-age">reviewers updated ${updated}</span>` : null}
       </p>
     </div>
@@ -104,7 +110,7 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
   const rootRef = useRef(null);
   const panelRef = useRef(null);
   const instanceID = useId();
-  const { open, close, rootProps, onTriggerClick } = useHoverPopover(rootRef);
+  const { open, rootProps, onTriggerClick, onTriggerKeyDown } = useHoverPopover(rootRef);
   const { placement } = usePanelPlacement(rootRef, panelRef, open);
 
   const prURL = safeCheckURL(url).replace(/\/+$/, '');
@@ -113,7 +119,8 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
   const panelID = `rv-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
   const label = prReviewLabel(reviews);
-  const who = prNumber ? `#${prNumber}` : 'this pull request';
+  const mr = isGitLabMRURL(prURL);
+  const who = prNumber ? `${mr ? '!' : '#'}${prNumber}` : `this ${mr ? 'merge' : 'pull'} request`;
 
   return html`
     <span
@@ -129,14 +136,10 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
         draggable=${false}
         aria-expanded=${open ? 'true' : 'false'}
         aria-controls=${panelID}
-        aria-label=${`Reviews for ${who} — ${prReviewSummaryLine(reviews)}, ${prReviewDecisionText(reviews.decision)}. Opens the pull request on GitHub.`}
+        aria-label=${`Reviews for ${who} — ${prReviewSummaryLine(reviews)}, ${prReviewDecisionText(reviews.decision, mr)}. ` +
+          `Opens the ${mr ? 'merge request on GitLab' : 'pull request on GitHub'}.`}
         onClick=${onTriggerClick}
-        onKeyDown=${(event) => {
-          if (event.key !== 'Escape') return;
-          event.preventDefault();
-          event.stopPropagation();
-          close();
-        }}
+        onKeyDown=${onTriggerKeyDown}
       >
         <${PersonIcon} />
         ${label ? html`<span class="ci-count">${label}</span>` : null}

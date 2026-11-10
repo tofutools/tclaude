@@ -5,13 +5,17 @@ import { GROUP_VIEW_OPTIONS } from './groups-state.js';
 import { GroupsNativeList } from './groups-list.js';
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
+import { ConversationSearchPanel } from './conversation-search.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
 import {
-  GroupsFocusSwitch, effectiveGroupsFocus, focusRun, useGroupsFocusRestore,
+  RunKindFilter, focusRun, groupsShowRuns, useGroupsFocusRestore,
 } from './groups-focus.js';
 import { GroupsProcessesFocus } from './groups-processes.js';
 import { processContext } from './process-context.js';
+import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
+import { Button, Input } from './ui-components.js';
+import { processesAvailable, triggersAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -32,21 +36,15 @@ export function useWizardTheme() {
 }
 
 function ViewOption({ option, state, queueRefresh, wizard }) {
-  const checked = state.visibility.value[option.key];
-  return html`
-    <label class="filter-toggle" title=${wizard ? (option.wizardTitle || option.title) : option.title}>
-      <input
-        id=${`filter-groups-${option.key}`}
-        type="checkbox"
-        checked=${checked}
-        onChange=${(event) => {
-          state.setVisible(option.key, event.currentTarget.checked);
-          queueRefresh();
-        }}
-      />
-      <span><span class="theme-copy-regular">${option.label}</span><span class="theme-copy-wizard">${option.wizardLabel || option.label}</span></span>
-    </label>
-  `;
+  return html`<${ViewToggle}
+    id=${`filter-groups-${option.key}`}
+    checked=${state.visibility.value[option.key]}
+    title=${wizard ? (option.wizardTitle || option.title) : option.title}
+    onChange=${(checked) => {
+      state.setVisible(option.key, checked);
+      queueRefresh();
+    }}
+  ><span class="theme-copy-regular">${option.label}</span><span class="theme-copy-wizard">${option.wizardLabel || option.label}</span><//>`;
 }
 
 function ColumnLabel({ column }) {
@@ -60,8 +58,6 @@ function ColumnLabel({ column }) {
 export function GroupsControls({ state, actions }) {
   const inputRef = useRef(null);
   const refreshTimer = useRef(null);
-  const menuRef = useRef(null);
-  const buttonRef = useRef(null);
   // While the fused Groups view is on screen these controls drive it, and
   // count what it lists.
   const listed = state.listed.value;
@@ -76,28 +72,7 @@ export function GroupsControls({ state, actions }) {
     refreshTimer.current = setTimeout(() => void actions.refresh(), 250);
   };
 
-  useEffect(() => {
-    const close = (focusButton = false) => {
-      if (!state.viewOpen.value) return;
-      state.viewOpen.value = false;
-      if (focusButton) buttonRef.current?.focus();
-    };
-    const onClick = (event) => {
-      if (!menuRef.current?.parentElement?.contains(event.target)) close();
-    };
-    const onKeyDown = (event) => {
-      if (event.key !== 'Escape' || !state.viewOpen.value) return;
-      event.preventDefault();
-      close(true);
-    };
-    document.addEventListener('click', onClick);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      clearTimeout(refreshTimer.current);
-      document.removeEventListener('click', onClick);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, []);
+  useEffect(() => () => clearTimeout(refreshTimer.current), []);
 
   // The match count and × live inside the search box, shown only while
   // filtering. The count's live region stays mounted (hidden, empty) so the
@@ -107,14 +82,13 @@ export function GroupsControls({ state, actions }) {
   return html`
     <span class=${`groups-search${filtering ? ' filtering' : ''}`}>
       <span class="groups-search-icon" aria-hidden="true">🔍</span>
-      <input
-        ref=${inputRef}
+      <${Input}
+        domRef=${inputRef}
         id="filter-groups"
-        type="text"
         aria-label=${wizard ? 'Filter parties' : 'Filter groups'}
-        placeholder=${wizard ? 'Filter parties & familiars' : 'Filter groups & members'}
+        placeholder=${wizard ? 'Filter parties & heroes' : 'Filter groups & members'}
         title=${wizard
-          ? 'Matches party name + familiar title/class/lore/grove/branch'
+          ? 'Matches party name + hero title/class/lore/grove/branch'
           : 'Matches group name + member title/role/descr/cwd/branch'}
         autocomplete="off"
         spellcheck=${false}
@@ -128,7 +102,7 @@ export function GroupsControls({ state, actions }) {
         title=${wizard ? 'Parties shown / all parties' : 'Groups shown / all groups'}
       >${filtering ? `${current.shownReal} / ${current.total}` : ''}</span>
       ${filtering && html`
-        <button
+        <button data-ui-exempt
           class="clear-filter"
           id="filter-groups-clear"
           type="button"
@@ -142,66 +116,60 @@ export function GroupsControls({ state, actions }) {
         >×</button>
       `}
     </span>
-    <${GroupsFocusSwitch} state=${state} groups=${current.groups} wizard=${wizard} />
-    <div class="view-popover-wrap">
-      <button
-        ref=${buttonRef}
-        id="filter-groups-view-btn"
-        class="view-btn"
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded=${state.viewOpen.value ? 'true' : 'false'}
-        aria-controls="filter-groups-view-menu"
-        title=${wizard
-          ? 'Choose which familiars and ethereal parties to show on this tab'
-          : 'Choose which members and virtual groups to show on this tab'}
-        onClick=${() => { state.viewOpen.value = !state.viewOpen.value; }}
-      >
-        ▾ view
-        <span id="filter-groups-view-badge" class="view-badge" hidden=${badge === 0}>${badge || ''}</span>
-      </button>
-      <div
-        ref=${menuRef}
-        id="filter-groups-view-menu"
-        class=${`view-menu${state.viewOpen.value ? ' open' : ''}`}
-        role="menu"
-      >
-        ${GROUP_VIEW_OPTIONS.map((option) => html`
-          <${ViewOption}
-            key=${option.key}
-            option=${option}
-            state=${state}
-            queueRefresh=${queueRefresh}
-            wizard=${wizard}
-          />
+    ${conversationSearchAvailable() && html`
+      ${/* Ghost by operator exception: this toolbar toggle stays quiet. */ ''}
+      <${Button} size="sm" variant="ghost" id="conversation-search-toggle" class="view-btn"
+        aria-expanded=${state.contentSearchOpen.value ? 'true' : 'false'}
+        title=${wizard ? 'Search the words inside past scrolls' : 'Search the text of past conversations'}
+        onClick=${() => { state.contentSearchOpen.value = !state.contentSearchOpen.value; }}
+      >${wizard ? '📜 search scrolls' : '📜 search conversations'}<//>
+    `}
+    ${/* Ghost by operator exception: the view trigger stays quiet. */ ''}
+    <${ViewMenu}
+      open=${state.viewOpen.value}
+      onOpenChange=${(open) => { state.viewOpen.value = open; }}
+      label="▾ view"
+      badge=${badge}
+      variant="ghost"
+      ids=${{ button: 'filter-groups-view-btn', menu: 'filter-groups-view-menu', badge: 'filter-groups-view-badge' }}
+      title=${wizard
+        ? 'Choose which heroes and ethereal parties to show on this tab'
+        : 'Choose which members and virtual groups to show on this tab'}
+    >
+      ${GROUP_VIEW_OPTIONS.map((option) => html`
+        <${ViewOption}
+          key=${option.key}
+          option=${option}
+          state=${state}
+          queueRefresh=${queueRefresh}
+          wizard=${wizard}
+        />
+      `)}
+      <${ViewMenuSep} />
+      <${ViewMenuHeading}
+        title="Show or hide individual columns in the member tables. The Name and controls columns always stay. Hiding the ID column moves its agent-id / conv-id hover onto the Name."
+      >Columns<//>
+      <div id="filter-groups-cols" class="view-cols">
+        ${columns.map((column) => html`
+          <${ViewToggle}
+            key=${column.key}
+            id=${`filter-groups-col-${column.key}`}
+            checked=${column.shown}
+            title=${`Show the "${wizard && column.wizardLabel ? column.wizardLabel : column.label}" column`}
+            onChange=${(checked) => state.setColumnShown(column.key, checked)}
+          ><${ColumnLabel} column=${column} /><//>
         `)}
-        <div class="view-menu-sep" role="separator"></div>
-        <div
-          class="view-menu-heading"
-          title="Show or hide individual columns in the member tables. The Name and controls columns always stay. Hiding the ID column moves its agent-id / conv-id hover onto the Name."
-        >Columns</div>
-        <div id="filter-groups-cols" class="view-cols">
-          ${columns.map((column) => html`
-            <label
-              class="filter-toggle"
-              title=${`Show the "${wizard && column.wizardLabel ? column.wizardLabel : column.label}" column`}
-              key=${column.key}
-            >
-              <input
-                id=${`filter-groups-col-${column.key}`}
-                type="checkbox"
-                checked=${column.shown}
-                onChange=${(event) => state.setColumnShown(
-                  column.key, event.currentTarget.checked,
-                )}
-              />
-              <span><${ColumnLabel} column=${column} /></span>
-            </label>
-          `)}
-        </div>
       </div>
-    </div>
+      <${RunKindFilter} state=${state} wizard=${wizard} />
+    <//>
   `;
+}
+
+// The search reads this node's own transcripts, so a page showing another node
+// or the fused view has nothing to offer: the daemon keeps the route local.
+function conversationSearchAvailable() {
+  const root = document.documentElement.classList;
+  return !root.contains('remote-node') && !root.contains('scope-fused');
 }
 
 // useGroupsTableControls wires the member tables' sort headers and the
@@ -269,32 +237,29 @@ export function useGroupsHover(host, groups) {
   return hoveredGroupKey;
 }
 
-// GroupsLensList is the Groups listing through the chosen lens: the one
-// groups tree, framed by the Processes or Both lens when one is chosen. One
-// node's Groups view and the fused Groups view both render it, from their
-// own groups, snapshot and actions; `rosters` are the groups as the run
-// context names them (see groups-process-scope.js).
+// GroupsLensList is the Groups listing: the one groups tree, framed so each
+// group card shows its sections (Agents, Processes, ...) wherever processes
+// are available, else the bare tree of member tables. One node's Groups view
+// and the fused Groups view both render it, from their own groups, snapshot
+// and actions; `rosters` are the groups as the run context names them (see
+// groups-process-scope.js).
 export function GroupsLensList({
   state, groups, rosters, snapshot, actions, triggers = [], hoveredGroupKey = null, processSource = undefined, wizard,
-  focus = effectiveGroupsFocus(state),
+  showRuns = groupsShowRuns(state),
 }) {
-  // Every lens renders the same groups tree; Processes frames it and swaps
-  // each group's member details for its runs, Both frames it and shows the
-  // two as sections of each group.
   const tree = html`<${GroupsNativeList} groups=${groups} snapshot=${snapshot} actions=${actions}
     triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} />`;
-  if (focus === 'agents') return tree;
+  if (!showRuns) return tree;
   return html`<${GroupsProcessesFocus} groups=${groups} allGroups=${rosters} wizard=${wizard}
-    filter=${state.processFilter.value} source=${processSource} fused=${focus === 'both'}
+    filter=${state.processFilter.value} source=${processSource} fused
     focusedRun=${state.focusedRun.value} onFocusRun=${(run, options) => focusRun(state, run, options)}>${tree}<//>`;
 }
 
 export function GroupsList({ host, state, actions, processSource = undefined }) {
   const wizard = useWizardTheme();
-  const focus = effectiveGroupsFocus(state);
   const [triggers, setTriggers] = useState([]);
   const current = state.view.value;
-  const triggersEnabled = state.snapshot.value?.triggers_enabled === true;
+  const triggersEnabled = triggersAvailable(state.snapshot.value);
 
   useEffect(() => {
     syncBotAnimations();
@@ -316,9 +281,9 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
   useGroupsTableControls(host, state, actions);
   const hoveredGroupKey = useGroupsHover(host, current.groups);
 
-  // Both lenses read the process context: Processes for its cards, Agents for
-  // the G1 header chips and row badges. One fetch per snapshot poll.
-  const processesEnabled = state.snapshot.value?.processes_enabled === true;
+  // The process context feeds the Processes sections and the G1 header chips
+  // and row badges. One fetch per snapshot poll.
+  const processesEnabled = processesAvailable(state.snapshot.value);
   useEffect(() => {
     if (!processesEnabled) return undefined;
     const source = processSource || processContext;
@@ -327,9 +292,9 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     document.addEventListener('tclaude:snapshot', poll);
     return () => document.removeEventListener('tclaude:snapshot', poll);
   }, [processesEnabled, processSource]);
-  // The Process member column is available only while processes are on
+  // The Process member column is available only where processes are
   // (body.hide-processes, which signals cannot track), so the column menu's
-  // cached options recompute when the feature flips.
+  // cached options recompute when that flips, as on a switch to a peer.
   const processesSeen = useRef(processesEnabled);
   useEffect(() => {
     if (processesSeen.current === processesEnabled) return;
@@ -337,21 +302,18 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
     state.rerender();
   }, [processesEnabled]);
 
-  // The drag-and-drop hints and member-table chrome belong to the Agents lens.
-  useEffect(() => {
-    document.body.classList.toggle('groups-focus-processes', focus === 'processes');
-    return () => document.body.classList.remove('groups-focus-processes');
-  }, [focus]);
-
   // While fused this list is hidden and the fused Groups view
   // (fleet-merged-island.js) shows the standing-orders dialog and the runs:
   // one copy only, so a process start handed to a group (takeProcessStart)
   // opens where it is seen.
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
+    ${state.contentSearchOpen.value && conversationSearchAvailable() && html`
+      <${ConversationSearchPanel} wizard=${wizard} onClose=${() => { state.contentSearchOpen.value = false; }} />
+    `}
     <${GroupsLensList} state=${state} groups=${current.groups} rosters=${state.snapshot.value?.groups} snapshot=${state.snapshot.value}
       actions=${actions} triggers=${triggers} hoveredGroupKey=${hoveredGroupKey} processSource=${processSource} wizard=${wizard}
-      focus=${state.listed.value ? 'agents' : focus} />
+      showRuns=${!state.listed.value && groupsShowRuns(state)} />
     ${state.standingOrdersDialog.value && !state.standingOrdersDialog.value.node && !document.documentElement.classList.contains('scope-fused') && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}
@@ -425,7 +387,7 @@ export function BrokerRefusalNotice({ snapshot }) {
   return html`<div class="broker-refusal-notice" role="status" title=${title}>
     <span class="broker-refusal-notice-glyph" aria-hidden="true">🚫</span>
     <span>agentd refused ${total} brokered callback${plural}${detail} in the last 15 minutes — telemetry for at least one agent is being lost. Look for a 🚫 on an agent row; if there is none, the affected row is hidden or unplaceable, and the daemon log has the caller pid.</span>
-    <button type="button" class="broker-refusal-notice-dismiss" aria-label="Dismiss this warning"
+    <button data-ui-exempt type="button" class="broker-refusal-notice-dismiss" aria-label="Dismiss this warning"
       title="Dismiss this warning. It comes back if agentd refuses another callback." onClick=${dismiss}>×</button>
   </div>`;
 }

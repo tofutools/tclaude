@@ -19,13 +19,19 @@ const (
 	// Major is the PAF major version this package reads and writes.
 	Major = 0
 	// Minor is the highest minor version of Major this package knows.
-	// While Major is 0 a minor version may break, so only this one is read.
-	Minor = 1
-	// Version is the version this package stamps on files it writes.
+	Minor = 2
+	// Version is the version this package stamps on files that hold agents
+	// only: writers stamp the lowest version that expresses the content.
 	Version = "0.1"
+	// EnvelopeVersion is the version stamped on a file that also carries
+	// workflows, and the newest version this package reads.
+	EnvelopeVersion = "0.2"
 
 	KindAgent = "agent"
 	KindGroup = "group"
+	// KindBundle holds workflows with the agents that perform them, and no
+	// group.
+	KindBundle = "bundle"
 
 	// MediaType is the media type of a .paf file.
 	MediaType = "application/vnd.tclaude.paf+zip"
@@ -38,12 +44,18 @@ const (
 	AttachmentsDir = "attachments/"
 	ExtDir         = "ext/"
 	AgentsDir      = "agents/"
+	WorkflowsDir   = "workflows/"
 
 	ScopeEffective = "effective"
 	ScopeFull      = "full"
 
 	// ExtTclaude is the id of the extension tclaude documents in the spec.
 	ExtTclaude = "tclaude"
+
+	// LinkPerformer says a workflow ships an agent for one of its roles.
+	LinkPerformer = "performer"
+	// LinkCarries says an agent carries a workflow it owns or runs.
+	LinkCarries = "carries"
 )
 
 // Extensions is extension data keyed by extension id.
@@ -61,10 +73,39 @@ type Manifest struct {
 	ExtensionsRequired []string                 `json:"extensions_required,omitempty"`
 	// MinReaderVersion marks a deliberate break: the oldest PAF version
 	// whose reader can import the file. Writers leave it out otherwise.
-	MinReaderVersion string     `json:"min_reader_version,omitempty"`
-	Agents           []string   `json:"agents"`
-	Entries          []Entry    `json:"entries"`
-	Extensions       Extensions `json:"extensions,omitempty"`
+	MinReaderVersion string   `json:"min_reader_version,omitempty"`
+	Agents           []string `json:"agents"`
+	// Workflows and Links are the envelope: workflows side by side with the
+	// agents, and how the two refer to each other.
+	Workflows  []WorkflowItem `json:"workflows,omitempty"`
+	Links      []Link         `json:"links,omitempty"`
+	Entries    []Entry        `json:"entries"`
+	Extensions Extensions     `json:"extensions,omitempty"`
+}
+
+// WorkflowItem is one workflow in the envelope. Its entries live under
+// workflows/<key>/ in PWF's layout; Digest is SectionDigest over them, and
+// pkg/pwf reads and checks them.
+type WorkflowItem struct {
+	Key  string `json:"key"`
+	Root string `json:"root"`
+	// Requires are the PWF features the workflow uses.
+	Requires []string `json:"requires"`
+	Digest   string   `json:"digest"`
+}
+
+// Link is a reference between an agent and a workflow, by key and by hash.
+// Links sit in the manifest rather than in either side, so neither side's
+// hash depends on the other and references cannot form a hash cycle. Digest
+// is the SectionDigest of what the link points at: the agent of a performer
+// link, the workflow of a carries link.
+type Link struct {
+	Type     string `json:"type"`
+	Workflow string `json:"workflow"`
+	Agent    string `json:"agent"`
+	// Role is the workflow role a performer link fills.
+	Role   string `json:"role,omitempty"`
+	Digest string `json:"digest"`
 }
 
 // Producer names the software that wrote the file.

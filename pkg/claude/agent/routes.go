@@ -32,6 +32,12 @@ var (
 )
 
 type routeCLI struct {
+	HostOnly   bool `json:"host_only,omitempty"`
+	HostLeases []struct {
+		ID           string `json:"id"`
+		Endpoint     string `json:"endpoint"`
+		ConsumerKind string `json:"consumer_kind"`
+	} `json:"host_leases,omitempty"`
 	APIVersion                string `json:"api_version"`
 	ID                        string `json:"id"`
 	GroupID                   int64  `json:"group_id"`
@@ -101,7 +107,8 @@ func routesCmd() *cobra.Command {
 
 type routesPublishParams struct {
 	Name      string `pos:"true" help:"Route name (1-128 bytes; slash and control characters are not allowed)"`
-	Group     string `long:"group" short:"g" help:"Explicit target group name or numeric ID"`
+	Host      bool   `long:"host" help:"Publish to the operator host only (requires routes.publish-host); mutually exclusive with --group"`
+	Group     string `long:"group" short:"g" optional:"true" help:"Explicit target group name or numeric ID"`
 	Target    string `long:"target" help:"Publisher-local TCP endpoint (for example tcp://127.0.0.1:43127)"`
 	Transport string `long:"transport" optional:"true" help:"Route transport (currently tcp)"`
 	JSON      bool   `long:"json" help:"Output stable JSON"`
@@ -109,15 +116,15 @@ type routesPublishParams struct {
 
 func routesPublishCmd() *cobra.Command {
 	return boa.CmdT[routesPublishParams]{
-		Use:         "publish <name>",
-		Short:       "Publish a named endpoint to a group",
+		Use:         "publish",
+		Short:       "Publish a named endpoint to a group or the host",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *routesPublishParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
 			return nil
 		},
 		RunFunc: func(p *routesPublishParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRoutesPublish(p, os.Stdout, os.Stderr))
+			os.Exit(runRoutesPublish(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -130,7 +137,12 @@ func runRoutesPublish(p *routesPublishParams, stdout, stderr io.Writer) int {
 	if rc = RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	payload := map[string]any{"name": name, "group": group, "target": target}
+	payload := map[string]any{"name": name, "target": target}
+	if p.Host {
+		payload["host"] = true
+	} else {
+		payload["group"] = group
+	}
 	if transport := strings.TrimSpace(p.Transport); transport != "" {
 		payload["transport"] = transport
 	}
@@ -146,7 +158,11 @@ func runRoutesPublish(p *routesPublishParams, stdout, stderr io.Writer) int {
 	if ref == "" {
 		ref = route.Name
 	}
-	fmt.Fprintf(stdout, "Published route %s (id %s) in group %s.\n", ref, route.ID, route.Group)
+	if p.Host {
+		fmt.Fprintf(stdout, "Published host-only route %s (id %s).\n", ref, route.ID)
+	} else {
+		fmt.Fprintf(stdout, "Published route %s (id %s) in group %s.\n", ref, route.ID, route.Group)
+	}
 	return rcOK
 }
 
@@ -162,7 +178,15 @@ func validateRoutePublishCLI(p *routesPublishParams, stderr io.Writer) (name, gr
 		fmt.Fprintln(stderr, "Error: route name must not contain '/'")
 		return "", "", "", rcInvalidArg
 	}
-	if err := validateRouteCLIText(group, "group", maxRouteCLIGroupBytes, false); err != nil {
+	if p.Host && group != "" {
+		fmt.Fprintln(stderr, "Error: --host and --group are mutually exclusive")
+		return "", "", "", rcInvalidArg
+	}
+	if !p.Host && group == "" {
+		fmt.Fprintln(stderr, "Error: either --host or --group is required")
+		return "", "", "", rcInvalidArg
+	}
+	if err := validateRouteCLIText(group, "group", maxRouteCLIGroupBytes, p.Host); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return "", "", "", rcInvalidArg
 	}
@@ -181,7 +205,7 @@ type routesOpenParams struct {
 
 func routesOpenCmd() *cobra.Command {
 	return boa.CmdT[routesOpenParams]{
-		Use:         "open <route>",
+		Use:         "open",
 		Short:       "Open a route and receive a consumer-local endpoint",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *routesOpenParams, _ *cobra.Command) error {
@@ -189,7 +213,7 @@ func routesOpenCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *routesOpenParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRoutesOpen(p, os.Stdout, os.Stderr))
+			os.Exit(runRoutesOpen(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -373,6 +397,7 @@ func waitForRouteEndpoint(initial routeLeaseCLI, group string) (routeLeaseCLI, e
 }
 
 type routesLsParams struct {
+	Host  bool   `long:"host" help:"List the caller’s host-only publications"`
 	Group string `long:"group" short:"g" optional:"true" help:"List routes for this explicit group; omit only when the caller has one unambiguous group"`
 	JSON  bool   `long:"json" help:"Output stable JSON"`
 }
@@ -388,12 +413,16 @@ func routesLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *routesLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRoutesLs(p, os.Stdout, os.Stderr))
+			os.Exit(runRoutesLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 func runRoutesLs(p *routesLsParams, stdout, stderr io.Writer) int {
+	if p.Host && strings.TrimSpace(p.Group) != "" {
+		fmt.Fprintln(stderr, "Error: --host and --group are mutually exclusive")
+		return rcInvalidArg
+	}
 	group := strings.TrimSpace(p.Group)
 	if err := validateRouteCLIText(group, "group", maxRouteCLIGroupBytes, true); err != nil && group != "" {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -403,7 +432,11 @@ func runRoutesLs(p *routesLsParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	var resp routeListCLI
-	if err := DaemonRequest(http.MethodGet, routeListPath(group), nil, &resp, DaemonOpts{}); err != nil {
+	path := routeListPath(group)
+	if p.Host {
+		path = "/v1/routes?host=true"
+	}
+	if err := DaemonRequest(http.MethodGet, path, nil, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -435,7 +468,14 @@ func printRouteRows(stdout io.Writer, group string, routes []routeCLI) {
 		if ref == "" {
 			ref = route.ID
 		}
-		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", ref, route.State, route.Transport, route.Group)
+		audience := route.Group
+		if route.HostOnly {
+			audience = "host only"
+		}
+		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", ref, route.State, route.Transport, audience)
+		for _, lease := range route.HostLeases {
+			fmt.Fprintf(stdout, "  %s\thost\t%s\n", lease.ID, lease.Endpoint)
+		}
 	}
 }
 
@@ -447,7 +487,7 @@ type routesCloseParams struct {
 
 func routesCloseCmd() *cobra.Command {
 	return boa.CmdT[routesCloseParams]{
-		Use:         "close <route>",
+		Use:         "close",
 		Short:       "Close a published route or consumer lease",
 		Long:        "Closes the caller's own route or consumer lease. Pass the lease ID printed by routes open, or a route reference together with --group. The daemon decides whether the caller owns the published route or an open consumer lease.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -456,7 +496,7 @@ func routesCloseCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *routesCloseParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRoutesClose(p, os.Stdout, os.Stderr))
+			os.Exit(runRoutesClose(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -468,7 +508,7 @@ func runRoutesClose(p *routesCloseParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
-	if err := validateRouteCLIText(group, "group", maxRouteCLIGroupBytes, false); err != nil {
+	if err := validateRouteCLIText(group, "group", maxRouteCLIGroupBytes, strings.HasPrefix(ref, "rte_") || strings.HasPrefix(ref, "rlease_")); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}

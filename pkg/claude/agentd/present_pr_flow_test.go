@@ -408,7 +408,7 @@ func TestPresentPR_RaisesNotification(t *testing.T) {
 
 	got := presentedPRBanners(t)
 	require.Len(t, got, 1, "one presentation raises exactly one notification")
-	assert.Equal(t, "Claude: pull request", got[0].Title)
+	assert.Equal(t, "tclaude: pull request", got[0].Title)
 	assert.Contains(t, got[0].Body, prURL, "the PR URL is what the human acts on")
 	assert.Contains(t, got[0].Body, "notify on present-pr", "the summary rides along")
 	assert.Contains(t, got[0].Body, "worker")

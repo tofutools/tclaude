@@ -321,9 +321,12 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// so it can ride the launch argv when the clone is launch-enrolled.
 		newTitle := uniqueCloneTitle(agent.FreshTitle(m.ConvID))
 		spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
-			ManagedGroups:       []*db.AgentGroup{newGroup},
-			Arrival:             true,
-			ArrivalGroup:        newName,
+			ManagedGroups: []*db.AgentGroup{newGroup},
+			Arrival:       true,
+			ArrivalGroup:  newName,
+			// The clone runs with the new group's sandbox from its first
+			// launch, the provenance persisted below.
+			SandboxGroupID:      newGroupID,
 			HandoffFrom:         caller,
 			HandoffGroupID:      newGroupID,
 			SourceConv:          m.ConvID,
@@ -340,6 +343,9 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 				Error:   "spawn: " + spawnErr.Msg,
 			})
 			continue
+		}
+		if !body.NoCopyConv {
+			recordConvLosses(spawned.NewConv, storedConvLosses(m.ConvID), nil)
 		}
 		// Each clone's launch claim is held until this handler returns, by
 		// which time every member has been enrolled — see
@@ -374,6 +380,10 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		}
 		if err := inheritEffectiveSandboxSnapshotForGroup(m.ConvID, newConv, newGroupID); err != nil {
 			results = append(results, memberResult{SrcConv: m.ConvID, NewConv: newConv, Title: newTitle, Label: label, Error: "persist sandbox snapshot: " + err.Error()})
+			continue
+		}
+		if err := inheritLaunchRecord(m.ConvID, newConv, newGroupID, 0); err != nil {
+			results = append(results, memberResult{SrcConv: m.ConvID, NewConv: newConv, Title: newTitle, Label: label, Error: "persist launch record: " + err.Error()})
 			continue
 		}
 		// Rename the clone to its computed title, materialising the

@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -207,6 +208,7 @@ func installFakeSweep(t *testing.T, f *fakeSweep) {
 	t.Cleanup(agentd.SetRetireWorktreeFnForTest(f.removeBranch))
 	t.Cleanup(agentd.SetRegisteredWorktreeFnForTest(f.removeRegistered))
 	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(f.list, f.repoRoot, f.dirtyFn))
+	t.Cleanup(agentd.SetSweepBranchRiskFnForTest(func(_, _, _, _ string) string { return "" }))
 }
 
 // repoFixture builds the canonical one-repo / five-worktree fixture and
@@ -874,6 +876,78 @@ func TestWorktreeSweep_CleanupKeepsBranchWhenOff(t *testing.T) {
 	assert.Equal(t, 1, out.Removed)
 	assert.Equal(t, 0, out.Branches, "branch kept when delete_branches is off")
 	assert.True(t, fs.wasRemoved("/repo-wt-orphan"))
+}
+
+// Scenario: the default-on branch option deletes a branch whose commits survive
+// elsewhere, keeps one holding the only copy of its commits, and force-deletes
+// that one only while it is the branch and tip the human confirmed. Real git,
+// real worktrees.
+func TestWorktreeSweep_UnpublishedBranchNeedsNamedConfirmation(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	root := testutil.CanonicalTempDir(t)
+	repo := filepath.Join(root, "repo")
+	require.NoError(t, os.Mkdir(repo, 0755))
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", out)
+		return strings.TrimSpace(string(out))
+	}
+	git(repo, "init", "-b", "main")
+	git(repo, "config", "user.name", "Test")
+	git(repo, "config", "user.email", "test@example.com")
+	git(repo, "commit", "--allow-empty", "-m", "base")
+	paths := map[string]string{}
+	for _, branch := range []string{"merged", "precious", "doomed", "moved", "switched"} {
+		paths[branch] = filepath.Join(root, branch)
+		git(repo, "worktree", "add", "-b", branch, paths[branch])
+		if branch != "merged" {
+			git(paths[branch], "commit", "--allow-empty", "-m", branch)
+		}
+	}
+	f.HaveGroup("sweep")
+	_, err := db.SetAgentGroupDefaultCwd("sweep", repo)
+	require.NoError(t, err)
+	confirm := func(branch string) map[string]string {
+		return map[string]string{"path": paths[branch], "branch": branch, "tip": git(repo, "rev-parse", branch)}
+	}
+	confirmed := []map[string]string{confirm("doomed"), confirm("moved"), confirm("switched")}
+	// Both drift after the confirmation: new work lands on one worktree, and
+	// the other moves to a branch the human never saw.
+	git(paths["moved"], "commit", "--allow-empty", "-m", "after the confirmation")
+	git(paths["switched"], "switch", "-c", "unseen")
+	git(paths["switched"], "commit", "--allow-empty", "-m", "unseen work")
+	body, err := json.Marshal(map[string]any{
+		"paths":           []string{paths["merged"], paths["precious"], paths["doomed"], paths["moved"], paths["switched"]},
+		"delete_branches": true,
+		"force_branches":  confirmed,
+	})
+	require.NoError(t, err)
+	r, err := http.NewRequest(http.MethodPost, "/api/worktrees/cleanup", bytes.NewReader(body))
+	require.NoError(t, err)
+	r.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var out struct {
+		sweepCleanupWire
+		BranchesKept int `json:"branches_kept"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, 5, out.Removed, "every selected worktree directory goes")
+	assert.Equal(t, 2, out.Branches)
+	assert.Equal(t, 3, out.BranchesKept)
+	details := map[string]string{}
+	for _, o := range out.Outcomes {
+		details[o.Path] = o.Detail
+	}
+	assert.Contains(t, details[paths["precious"]], "branch precious kept: 1 unpublished commits")
+	assert.Contains(t, details[paths["moved"]], "branch moved kept: it changed")
+	assert.Contains(t, details[paths["switched"]], "branch unseen kept: 2 unpublished commits")
+	assert.Equal(t, "main\nmoved\nprecious\nswitched\nunseen", git(repo, "branch", "--format=%(refname:short)"))
 }
 
 // Regression: Git remains the authority after a worktree directory is deleted

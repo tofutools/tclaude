@@ -51,10 +51,6 @@ instead of mutating twice.
 Daemon-side configuration lives under `agent.*` keys in
 `~/.tclaude/data/config.json`.
 
-!!! note
-    Some CLI help text still points at `~/.tclaude/config.json`. The real
-    path is `~/.tclaude/data/config.json`.
-
 For the full architectural model — what state lives where and how the
 pieces relate — see [Architecture](architecture.md).
 
@@ -63,7 +59,8 @@ pieces relate — see [Architecture](architecture.md).
 The daemon authenticates every request without tokens for agents. It reads
 the connecting process's PID from the kernel (Unix socket peer
 credentials), then walks the host process tree looking for a recognized
-harness runtime — `claude`, `codex`, `copilot`, or Claude Code's `node`.
+harness runtime — any registered harness binary (`claude`, `codex`, `opencode`,
+`copilot`, `gemini`, `pi`) or Claude Code's `node`.
 Recognition uses the process name or the kernel-reported executable path
 (`/proc/<pid>/exe`), because `argv[0]` and the comm name are spoofable.
 
@@ -110,6 +107,25 @@ Wherever a command takes an agent selector, you can pass the `agt_` id
 8+-character conversation-id prefix, a global head alias, or the display
 title.
 
+### Exit codes
+
+`tclaude agent` commands that talk to the daemon exit with a code a script
+can branch on:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success. |
+| 1 | Not found: no agent, group, message or other target matched. |
+| 2 | Ambiguous: a selector matched more than one target. |
+| 3 | Invalid argument. |
+| 4 | I/O failure: the daemon is unreachable, or it failed for another reason. |
+| 5 | Refused: an identity failure, a permission denial, or any other HTTP 403 from the daemon whose code does not map to 1–3 above. |
+
+A permission denial exits 5. Earlier versions exited 4, the same as an
+I/O failure, so a script could not tell "you may not do this" from "the
+daemon is down". A script that retried on 4 should not retry on 5: a retry
+will not grant a permission.
+
 ## Becoming an agent
 
 There are two paths into agenthood:
@@ -141,13 +157,21 @@ tclaude agent groups members myteam
 
 `create` can bootstrap members inline
 (`--member name=..,role=..,descr=..,cwd=..`). Beyond the roster verbs
-(`add`, `remove`, `update-member`, `rename`, `rm`), groups carry a family
+(`add`, `remove`, `move`, `update-member`, `rename`, `rm`), groups carry a family
 of settings verbs — `set-context`, `set-default-dir`,
 `set-default-profile`, `set-environment`, `set-descr`, `set-max-members`,
 `set-notifications`, `set-owner-scopes`, `set-remote-control` — plus
 `archive`/`unarchive`, `clone`, bulk `stop`/`resume`/`retire`, `rebrief`,
-`export`/`import` (human-only), persistent `attachment` reference links,
+`export`/`import` (human-only by default; `groups.export` and `groups.import`), persistent `attachment` reference links,
 and `nest` (dashboard tree cosmetics only — nesting inherits nothing).
+A group's default spawn profile applies to every spawn into the group,
+including the workers of its triggers, schedules and processes. An agent may
+only set a default profile whose grants it could confer itself: one that sets
+permission overrides, or names roles with grants, takes `permissions.grant`
+and grants no wider than the agent's own. A profile that makes its spawns
+owners takes `groups.owners.manage` for the group. Owning the group is not
+enough for either. Editing what a profile or role confers takes the same
+authority; see [spawn profiles and roles](spawning-and-lifecycle.md#spawn-profiles-and-roles).
 Membership transfers are recorded in the [audit
 trail](permissions-and-audit.md).
 
@@ -197,6 +221,22 @@ default, as above), `identity` (identity only after a compaction too), or
 tclaude agent groups set-reinject myteam identity
 ```
 
+Only the agent's own compaction counts, not one by an in-harness subagent.
+Claude Code's compaction hooks look the same for both, so while a subagent is
+running tclaude holds the message until the agent's next turn event and sends
+it only if the main transcript recorded a compaction. If the transcript can't
+be read it sends the message anyway.
+
+Claude Code, Codex, OpenCode, pi and Copilot all report compactions. Gemini CLI
+does not, so a Gemini agent gets nothing after one; see
+[Startup-context re-injection](harnesses.md#startup-context-re-injection).
+
+The rest of tclaude waits for the same answer. A compaction that might be a
+subagent's skips the pre-compact guard and the "compacting" status. The agent's
+context figures and nudge state are reset only once the compaction is proven to
+be the agent's own, and at that point any standing orders triggered by the
+compaction are delivered as messages rather than hook context.
+
 ### Group spawn environment
 
 The dashboard's consolidated **Group settings** dialog edits the default
@@ -216,10 +256,50 @@ modified in place. The group's web terminal also inherits these values when its
 persistent tmux session is first created; an existing terminal keeps its
 original environment.
 
+### Moving an agent between groups
+
+```bash
+tclaude agent groups move old-team <selector> new-team \
+  [--keep-permissions] [--keep-sandbox] [--keep-environment]
+```
+
+Dragging a member onto another group's box in the dashboard does the same.
+The confirm dialog has one checkbox per group-sourced setting, all ticked by
+default, each reading "Switch to new-team's …"; unticking one keeps that
+setting on the group the agent leaves. The agent keeps its role and
+description, and its per-agent permissions, explicit sandbox profile and
+per-agent environment overrides are kept either way.
+
+- **Permissions** apply immediately: new-team's group permissions apply now,
+  and old-team's stop. `--keep-permissions` (unticking the box) keeps
+  old-team's group permissions too, still bound to old-team (a grant that
+  only acts on old-team's members keeps acting only there) and following its
+  later edits. It is operator-only. The agent sees kept groups in
+  `tclaude agent whoami`, and `tclaude agent groups members old-team` lists
+  who still holds old-team's permissions this way.
+  `tclaude agent groups drop-kept-permissions old-team <selector>` ends them,
+  as do deleting the group, retiring the agent, or the agent rejoining and
+  leaving it again.
+- **Sandbox profile and environment** apply from the agent's next resume or
+  restart; the running process is not changed in place. `--keep-sandbox`
+  and `--keep-environment` leave either on the group it left, still
+  following that group's later edits, until that group is deleted.
+
+The agent receives a message describing the move. A move between groups on
+another node works the same when that node trusts this one unrestricted;
+otherwise (or on an older node) the dashboard falls back to adding and
+removing the membership, which switches everything to the new group, and
+refuses a move with an unticked box.
+
+The move is gated like the remove and add it replaces:
+`groups.members.remove` on the source group and `groups.members.add` on the
+target.
+
 ### Default directory and auto-join
 
 `groups set-default-dir` pre-fills the spawn form, is substituted
-server-side when a spawn leaves the working directory blank, and powers
+server-side when a spawn leaves the working directory blank (so `agent spawn`
+without `--cwd` lands there rather than in your current directory), and powers
 **directory auto-join**: a bare `tclaude` launched in a directory that
 exactly matches an active group's default dir (after absolute/clean/symlink
 resolution) spawns into that group through the same daemon spawn
@@ -233,7 +313,11 @@ tclaude            # joins that group as a new member
 Per launch, `--auto-join-group=false` disables it and
 `--auto-join-or-create-group` creates a group named after the directory
 basename; the config keys are `session.auto_join_group` and
-`session.auto_join_or_create_group`. When several groups share a default
+`session.auto_join_or_create_group` (`tclaude config get|set` shows and
+changes them). Solo-only flags such as `--label` keep a launch solo, with a
+notice; see [Sessions](sessions.md#group-auto-join-on-launch).
+`groups ls --json` includes each group's `default_cwd` (to a human caller).
+When several groups share a default
 dir, the tie is broken by a default group marked in the
 [dashboard](dashboard.md)'s group settings menu (there is no CLI verb for
 that mark).
@@ -342,11 +426,29 @@ tclaude agent notify-human "PR is ready for review" \
   --attach out.png --attach report.md
 ```
 
-`--attach` (repeatable, files or directories) is unique to notify-human —
-agent-to-agent messages carry text only. Up to 20 files arrive as separate
+`--attach` (repeatable, files or directories) works on notify-human. `agent message`
+and `agent reply` take `--attach` too, for files you can read: at most 4 files and
+512 KiB in all, images, text, data and PDF, to a local agent or a remote `member@peer`,
+not to a group. The recipient gets its own copy, stored where no sandboxed agent can
+reach it. The message names the file, and `tclaude agent inbox attachment <id>` saves it
+(`-o` picks the path), for the recipient or the sender only. On notify-human, up to 20 files arrive as separate
 downloads; more than 20, or a directory, become a single zip (`--zip`,
 `--separate`, and `--name` control the shape). The body may be omitted
 when `--subject` and `--attach` are both present.
+
+Repeat `--option` to put a decision to the human instead of only telling
+them something:
+
+```bash
+tclaude agent notify-human -s "Which layout?" "Mock attached." \
+  --option Tabs --option Sidebar --recommend 2 --attach mock.png
+```
+
+A decision takes 2 to 6 single-line options, and `--recommend` marks the
+one the agent suggests. The human answers with a button in the companion
+window or the Messages reader, and the agent gets the pick as an inbox
+message starting `Decision: <option>`, queued for it if it is offline. Only
+the first answer counts.
 
 ## What a spawned agent receives
 
@@ -430,7 +532,9 @@ and carried skills override same-named library skills for that agent only.
 Cloning creates an independent overlay, and reincarnation refreshes the next
 launch without deleting the predecessor's files before it stops. A harness that
 cannot bind a no-copy clone's identity refuses that operation with managed items;
-use a history-copy clone. One-shot runs with managed items refuse explicitly;
+use a history-copy clone. Claude Code and OpenCode can (OpenCode's clone takes the
+id its managed server mints). On OpenCode the standing guidance arrives over the
+managed server, as the agent's first turn of the launch, on resume and clone too. One-shot runs with managed items refuse explicitly;
 use an ordinary worker.
 
 Older receivers are refused only when managed items actually travel. A human can

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -858,20 +859,6 @@ func SessionExists(id string) (bool, error) {
 	var count int
 	err = db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, id).Scan(&count)
 	return count > 0, err
-}
-
-// CleanupOldExited deletes exited sessions older than maxAge and returns the count deleted.
-func CleanupOldExited(maxAge time.Duration) (int64, error) {
-	db, err := Open()
-	if err != nil {
-		return 0, err
-	}
-	cutoff := dbTime(time.Now().Add(-maxAge))
-	result, err := db.Exec(`DELETE FROM sessions WHERE status = 'exited' AND updated_at < ?`, cutoff)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 // MaxUpdatedAt returns the most recent updated_at across all sessions.
@@ -2180,6 +2167,40 @@ func SessionHarnesses() (map[string]string, error) {
 	return out, rows.Err()
 }
 
+// SessionHarnessesByIDs is SessionHarnesses for the given sessions only: the
+// rare cost rows with no denormalised harness, without scanning every session.
+func SessionHarnessesByIDs(sessionIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(sessionIDs))
+	if len(sessionIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkStrings(sessionIDs, batchChunkSize) {
+		clause, args := inClause(chunk)
+		rows, err := d.Query(`SELECT id, COALESCE(NULLIF(harness, ''), 'claude') FROM sessions WHERE id `+clause, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, harness string
+			if err := rows.Scan(&id, &harness); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[id] = harness
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // UpdateSessionEffort stores the reasoning-effort level ("low", "medium",
 // "high", "xhigh", "max") the session is currently running on. Claude
 // Code's statusline carries it as effort.level on every render (when the
@@ -2300,8 +2321,11 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// UPDATE above no-ops too) must not mint an orphan, attributionless
 	// daily row. MAX keeps the row monotonic within the day (cumulative
 	// cost never decreases inside a session, but a stale render must
-	// never lower a recorded value), and the CASE keeps a previously
-	// recorded conv_id when the sessions row has since lost its own.
+	// never lower a recorded value). The row is keyed per conversation
+	// (costDailyConvID): total_cost_usd keeps climbing across a /clear or
+	// rename, so the old conversation's row stops at its pre-switch
+	// cumulative and the new one opens its own, and the delta walk carries
+	// the counter across (see AnnotateCostCarry).
 	// conv_id and model are denormalised in at write time — the daily
 	// history must survive the sessions row being deleted later (session
 	// kill, agent delete), and model is what the Costs tab's per-agent
@@ -2327,25 +2351,28 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 	// conv via agent_conversations — the persisted column survives a /clear or
 	// clone that moves the conv's actor mapping, which the live conv lookup alone
 	// would miss.
+	day := now.Format(costDayFormat)
+	convID, err = costDailyConvID(tx, sessionID, day)
+	if err != nil {
+		return err
+	}
 	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd, updated_at, model, agent_id, harness)
-		SELECT id, ?, conv_id, ?, ?, model,
+		SELECT id, ?, ?, ?, ?, model,
 		       COALESCE(NULLIF(sessions.agent_id, ''),
 		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
 		       COALESCE(NULLIF(harness, ''), 'claude')
 		FROM sessions WHERE id = ?
-		ON CONFLICT(session_id, day) DO UPDATE SET
+		ON CONFLICT(session_id, conv_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.cost_usd > session_cost_daily.cost_usd
 			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
 			cost_usd = MAX(session_cost_daily.cost_usd, excluded.cost_usd),
-			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
-			                ELSE session_cost_daily.conv_id END,
 			model    = CASE WHEN excluded.model <> '' THEN excluded.model
 			                ELSE session_cost_daily.model END,
 			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
 			                ELSE session_cost_daily.agent_id END,
 			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 			                ELSE session_cost_daily.harness END`,
-		now.Format(costDayFormat), costUSD, dbTime(now), sessionID)
+		day, convID, costUSD, dbTime(now), sessionID)
 	if err != nil {
 		return err
 	}
@@ -2409,25 +2436,28 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 		return err
 	}
 	now := time.Now()
+	day := now.Format(costDayFormat)
+	convID, err := costDailyConvID(tx, sessionID, day)
+	if err != nil {
+		return err
+	}
 	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
-		SELECT id, ?, conv_id, ?, ?, model,
+		SELECT id, ?, ?, ?, ?, model,
 		       COALESCE(NULLIF(sessions.agent_id, ''),
 		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
 		       COALESCE(NULLIF(harness, ''), 'claude')
 		FROM sessions WHERE id = ?
-		ON CONFLICT(session_id, day) DO UPDATE SET
+		ON CONFLICT(session_id, conv_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.virtual_cost_usd > session_cost_daily.virtual_cost_usd
 			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
 			virtual_cost_usd = MAX(session_cost_daily.virtual_cost_usd, excluded.virtual_cost_usd),
-			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
-			                ELSE session_cost_daily.conv_id END,
 			model    = CASE WHEN excluded.model <> '' THEN excluded.model
 			                ELSE session_cost_daily.model END,
 			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
 			                ELSE session_cost_daily.agent_id END,
 			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 			                ELSE session_cost_daily.harness END`,
-		now.Format(costDayFormat), costUSD, dbTime(now), sessionID)
+		day, convID, costUSD, dbTime(now), sessionID)
 	if err != nil {
 		return err
 	}
@@ -2472,25 +2502,28 @@ func UpdateSessionVirtualCostForGeneration(
 		return false, err
 	}
 	now := time.Now()
+	day := now.Format(costDayFormat)
+	convID, err = costDailyConvID(tx, sessionID, day)
+	if err != nil {
+		return false, err
+	}
 	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
-		SELECT id, ?, conv_id, ?, ?, model,
+		SELECT id, ?, ?, ?, ?, model,
 		       COALESCE(NULLIF(sessions.agent_id, ''),
 		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
 		       COALESCE(NULLIF(harness, ''), 'claude')
 		FROM sessions WHERE id = ?
-		ON CONFLICT(session_id, day) DO UPDATE SET
+		ON CONFLICT(session_id, conv_id, day) DO UPDATE SET
 			updated_at = CASE WHEN excluded.virtual_cost_usd > session_cost_daily.virtual_cost_usd
 			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
 			virtual_cost_usd = MAX(session_cost_daily.virtual_cost_usd, excluded.virtual_cost_usd),
-			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
-			                ELSE session_cost_daily.conv_id END,
 			model    = CASE WHEN excluded.model <> '' THEN excluded.model
 			                ELSE session_cost_daily.model END,
 			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
 			                ELSE session_cost_daily.agent_id END,
 			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 			                ELSE session_cost_daily.harness END`,
-		now.Format(costDayFormat), costUSD, dbTime(now), sessionID)
+		day, convID, costUSD, dbTime(now), sessionID)
 	if err != nil {
 		return false, err
 	}
@@ -2560,6 +2593,10 @@ func ReplaceSessionVirtualCostHistory(
 	if affected == 0 {
 		return nil
 	}
+	guard, err := guardCostOpening(tx, convID, sessionID)
+	if err != nil {
+		return err
+	}
 	if convID != "" {
 		if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = 0
 			WHERE conv_id = ? AND id <> ?`, convID, sessionID); err != nil {
@@ -2578,27 +2615,32 @@ func ReplaceSessionVirtualCostHistory(
 		if updatedAt.IsZero() {
 			updatedAt = time.Now()
 		}
+		dayConvID, err := costDailyConvID(tx, sessionID, snapshot.Day)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(`INSERT INTO session_cost_daily
 			(session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
-			SELECT id, ?, conv_id, ?, ?, ?,
+			SELECT id, ?, ?, ?, ?, ?,
 			       COALESCE(NULLIF(sessions.agent_id, ''),
 			                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
 			       COALESCE(NULLIF(harness, ''), 'claude')
 			FROM sessions WHERE id = ?
-			ON CONFLICT(session_id, day) DO UPDATE SET
+			ON CONFLICT(session_id, conv_id, day) DO UPDATE SET
 				virtual_cost_usd = excluded.virtual_cost_usd,
 				updated_at = excluded.updated_at,
-				conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
-				                ELSE session_cost_daily.conv_id END,
 				model    = CASE WHEN excluded.model <> '' THEN excluded.model
 				                ELSE session_cost_daily.model END,
 				agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
 				                ELSE session_cost_daily.agent_id END,
 				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 				                ELSE session_cost_daily.harness END`,
-			snapshot.Day, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
+			snapshot.Day, dayConvID, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
 			return err
 		}
+	}
+	if err := guard.settle(tx, convID, sessionID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -2704,6 +2746,10 @@ func replaceSessionCostHistoryForGeneration(
 	if err != nil {
 		return false, err
 	}
+	guard, err := guardCostOpening(tx, convID, sessionID)
+	if err != nil {
+		return false, err
+	}
 	if convID != "" {
 		if _, err := tx.Exec(`UPDATE sessions SET `+zero+`
 			WHERE conv_id = ? AND id <> ?`, convID, sessionID); err != nil {
@@ -2722,27 +2768,32 @@ func replaceSessionCostHistoryForGeneration(
 		if updatedAt.IsZero() {
 			updatedAt = time.Now()
 		}
+		dayConvID, err := costDailyConvID(tx, sessionID, snapshot.Day)
+		if err != nil {
+			return false, err
+		}
 		if _, err := tx.Exec(`INSERT INTO session_cost_daily
 			(session_id, day, conv_id, `+column+`, updated_at, model, agent_id, harness)
-			SELECT id, ?, conv_id, ?, ?, ?,
+			SELECT id, ?, ?, ?, ?, ?,
 			       COALESCE(NULLIF(sessions.agent_id, ''),
 			                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
 			       COALESCE(NULLIF(harness, ''), 'claude')
 			FROM sessions WHERE id = ?
-			ON CONFLICT(session_id, day) DO UPDATE SET
+			ON CONFLICT(session_id, conv_id, day) DO UPDATE SET
 				`+column+` = excluded.`+column+`,
 				updated_at = excluded.updated_at,
-				conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
-				                ELSE session_cost_daily.conv_id END,
 				model    = CASE WHEN excluded.model <> '' THEN excluded.model
 				                ELSE session_cost_daily.model END,
 				agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
 				                ELSE session_cost_daily.agent_id END,
 				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 				                ELSE session_cost_daily.harness END`,
-			snapshot.Day, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
+			snapshot.Day, dayConvID, snapshot.CostUSD, dbTime(updatedAt), snapshot.Model, sessionID); err != nil {
 			return false, err
 		}
+	}
+	if err := guard.settle(tx, convID, sessionID); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err
@@ -2780,6 +2831,86 @@ type CostDailyRow struct {
 	// already-deleted session, or a session that never reported a model.
 	Model   string
 	Harness string
+	// CarriedCostUSD / CarriedVirtualUSD are the part of this row's
+	// cumulative that the same session already reached under another
+	// conversation (set by AnnotateCostCarry). The walk starts this
+	// conversation's baseline there instead of at zero.
+	CarriedCostUSD    float64 `json:"-"`
+	CarriedVirtualUSD float64 `json:"-"`
+	// Opening is where the walk stands on this row's conversation just before
+	// the rows it was read with, when older rows were left out (see
+	// CostLedgerWindow). nil means the walk starts here.
+	Opening *CostOpening `json:"-"`
+}
+
+// AnnotateCostCarry sets each row's Carried* fields. Claude Code's
+// total_cost_usd belongs to the running process, not the conversation: a
+// /clear or rename switches the session to a new conv_id while the counter
+// keeps climbing. Baselined per conversation alone, the new conversation's
+// first row would count everything the process spent before the switch a
+// second time. So for a Claude row, the carry is the cumulative of the SAME
+// session's immediately preceding row (by day, then last-spend time) when
+// that row belongs to a different conversation and does not exceed this
+// row's value. Only the immediate predecessor counts: a resume reuses the
+// session id (it equals the conv id) with a fresh counter, so an older peak
+// may belong to a process that has since exited.
+//
+// Other harnesses are left alone: their writers record per-conversation
+// counters (authoritative history replays, per-thread telemetry) that start
+// from zero in a new conversation, so carrying would swallow real spend.
+// Rows without a conversation never carry.
+//
+// AllCostDailyRows annotates its result. It runs over the full row set
+// before any per-conversation filtering (the Costs tab's ignored split), so
+// a counted conversation keeps its carry even when its predecessor is
+// ignored.
+func AnnotateCostCarry(rows []CostDailyRow) {
+	annotateCostCarry(rows, nil)
+}
+
+// annotateCostCarry is AnnotateCostCarry for rows that continue from older
+// ones: opening holds where each session's counter stood. It returns where the
+// counters stand after rows.
+func annotateCostCarry(rows []CostDailyRow, opening map[string]CostSessionOpening) map[string]CostSessionOpening {
+	bySession := map[string][]int{}
+	for i := range rows {
+		r := &rows[i]
+		r.CarriedCostUSD, r.CarriedVirtualUSD = 0, 0
+		if r.ConvID == "" || (r.Harness != "" && r.Harness != DefaultHarness) {
+			continue
+		}
+		bySession[r.SessionID] = append(bySession[r.SessionID], i)
+	}
+	closing := make(map[string]CostSessionOpening, len(bySession))
+	for sessionID, idx := range bySession {
+		sort.SliceStable(idx, func(a, b int) bool {
+			ra, rb := rows[idx[a]], rows[idx[b]]
+			if ra.Day != rb.Day {
+				return ra.Day < rb.Day
+			}
+			return CompareCostInstants(ra.UpdatedAtNS, rb.UpdatedAtNS) < 0
+		})
+		// Track the predecessor per column: a row carrying nothing in a
+		// column (the other billing mode) holds no counter state for it.
+		last := opening[sessionID]
+		for _, i := range idx {
+			r := &rows[i]
+			if r.CostUSD > 0 {
+				if last.RealConv != "" && last.RealConv != r.ConvID && last.RealUSD <= r.CostUSD {
+					r.CarriedCostUSD = last.RealUSD
+				}
+				last.RealConv, last.RealUSD = r.ConvID, r.CostUSD
+			}
+			if r.VirtualCostUSD > 0 {
+				if last.VirtualConv != "" && last.VirtualConv != r.ConvID && last.VirtualUSD <= r.VirtualCostUSD {
+					r.CarriedVirtualUSD = last.VirtualUSD
+				}
+				last.VirtualConv, last.VirtualUSD = r.ConvID, r.VirtualCostUSD
+			}
+		}
+		closing[sessionID] = last
+	}
+	return closing
 }
 
 // CostDelta is one recovered slice of actual spend: on this local day,
@@ -2848,50 +2979,21 @@ type CostDelta struct {
 // scratch. The reset is gated on the session change — a dip WITHIN a
 // session is still a stale render and stays clamped, never a reset.
 //
+// The baseline a conversation starts from is not always zero: a Claude
+// session's counter carries over a /clear or rename into the next
+// conversation, so the row's Carried* amount (AnnotateCostCarry) is where its
+// baseline starts and where a session-boundary reset lands.
+//
 // whatif selects which cumulative column the walk reads: false → cost_usd
 // (real pay-per-token spend), true → virtual_cost_usd (the subscription
 // WHAT-IF estimate). The delta logic is identical — virtual cost is the
 // same cumulative total_cost_usd, just captured on the subscription path.
 func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
-	var out []CostDelta
-	prevKey := ""
-	prevSession := ""
-	baseline := 0.0
-	for _, r := range rows {
-		val := r.CostUSD
-		if whatif {
-			val = r.VirtualCostUSD
-		}
-		if val <= 0 {
-			// A row with nothing in this column (a resumed conversation's
-			// superseded session, zeroed by a history replace) carries no
-			// counter state, so it must not reset the baseline the way a
-			// fresh session's lower counter does; see MixedCostDeltas.
-			continue
-		}
-		key := r.ConvID
-		if key == "" {
-			key = r.SessionID
-		}
-		switch {
-		case key != prevKey:
-			// New conversation — restart the baseline.
-			baseline = 0
-		case r.SessionID != prevSession && val < baseline:
-			// Same conv, new session, cumulative below the running peak: a
-			// fresh per-session counter (resume-after-exit), not a
-			// carry-forward. Count it from scratch rather than clamping its
-			// whole spend away.
-			baseline = 0
-		}
-		prevKey = key
-		prevSession = r.SessionID
-		if d := val - baseline; d > 0 {
-			out = append(out, CostDelta{Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d, UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness})
-			baseline = val
-		}
+	walk := costWalkReal
+	if whatif {
+		walk = costWalkVirtual
 	}
-	return out
+	return costDeltasOf(rows, walk)
 }
 
 // MixedCostDeltas recovers the display cost for each session independently:
@@ -2900,43 +3002,104 @@ func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
 // estimates without selecting one database column globally or double-counting
 // a row that happens to carry both.
 func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
+	return costDeltasOf(rows, costWalkMixed)
+}
+
+func costDeltasOf(rows []CostDailyRow, walk costWalk) []CostDelta {
 	var out []CostDelta
+	walkCostRows(rows, walk, func(r *CostDailyRow, kind string, rise, _ float64) {
+		if rise > 0 {
+			out = append(out, CostDelta{
+				Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: rise,
+				UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness, Kind: kind,
+			})
+		}
+	})
+	return out
+}
+
+// costWalk selects the cumulative a delta walk reads from each row.
+type costWalk int
+
+const (
+	costWalkReal    costWalk = iota // cost_usd
+	costWalkVirtual                 // virtual_cost_usd
+	costWalkMixed                   // cost_usd where present, else virtual_cost_usd
+)
+
+// costWalks lists every walk the cost surfaces can run.
+var costWalks = []costWalk{costWalkReal, costWalkVirtual, costWalkMixed}
+
+func (w costWalk) read(r *CostDailyRow) (val, carry float64, kind string) {
+	switch w {
+	case costWalkVirtual:
+		return r.VirtualCostUSD, r.CarriedVirtualUSD, ""
+	case costWalkMixed:
+		if r.CostUSD > 0 {
+			return r.CostUSD, r.CarriedCostUSD, "real"
+		}
+		return r.VirtualCostUSD, r.CarriedVirtualUSD, "what_if"
+	default:
+		return r.CostUSD, r.CarriedCostUSD, ""
+	}
+}
+
+// costRowKey is the Go twin of costConvKey.
+func costRowKey(r *CostDailyRow) string {
+	if r.ConvID != "" {
+		return r.ConvID
+	}
+	return r.SessionID
+}
+
+// walkCostRows is the one delta walk, see CostDeltas. step sees every row with
+// a value in walk's column: the amount it rose above the baseline, which may be
+// zero or negative, and the baseline it leaves behind.
+func walkCostRows(rows []CostDailyRow, walk costWalk, step func(r *CostDailyRow, kind string, rise, baseline float64)) {
 	prevKey := ""
 	prevSession := ""
 	baseline := 0.0
-	for _, r := range rows {
-		val, kind := r.CostUSD, "real"
+	for i := range rows {
+		r := &rows[i]
+		val, carry, kind := walk.read(r)
 		if val <= 0 {
-			val, kind = r.VirtualCostUSD, "what_if"
-		}
-		if val <= 0 {
-			// Superseded conversation rows are retained for any real-cost
-			// attribution but their virtual prefix is zeroed. They carry no
-			// counter state and must not reset the baseline merely because
-			// their old local session ID differs from the resumed one.
+			// A row with nothing in this column (a resumed conversation's
+			// superseded session, zeroed by a history replace) carries no
+			// counter state, so it must not reset the baseline the way a
+			// fresh session's lower counter does.
 			continue
 		}
-		key := r.ConvID
-		if key == "" {
-			key = r.SessionID
+		key := costRowKey(r)
+		if key != prevKey && r.Opening != nil {
+			// The conversation's older rows were not read: continue from
+			// where they left the walk.
+			position := r.Opening.Walks[walk]
+			prevKey, prevSession, baseline = key, position.Session, position.Baseline
 		}
 		switch {
 		case key != prevKey:
-			baseline = 0
+			// New conversation — restart the baseline, from the session's
+			// counter carried over a /clear or rename (AnnotateCostCarry).
+			baseline = carry
 		case r.SessionID != prevSession && val < baseline:
-			// A changed session whose counter drops starts fresh.
-			baseline = 0
+			// Same conv, new session, cumulative below the running peak: a
+			// fresh per-session counter (resume-after-exit), not a
+			// carry-forward. Count it from scratch rather than clamping its
+			// whole spend away.
+			baseline = carry
+		case r.SessionID != prevSession && carry > baseline:
+			// A session joining this conv mid-walk whose counter already
+			// carries spend recorded under another conversation.
+			baseline = carry
 		}
-		prevKey, prevSession = key, r.SessionID
-		if d := val - baseline; d > 0 {
-			out = append(out, CostDelta{
-				Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d,
-				UpdatedAtNS: r.UpdatedAtNS, Model: r.Model, Harness: r.Harness, Kind: kind,
-			})
+		prevKey = key
+		prevSession = r.SessionID
+		rise := val - baseline
+		if rise > 0 {
 			baseline = val
 		}
+		step(r, kind, rise, baseline)
 	}
-	return out
 }
 
 // SumCostSinceDay totals the actual spend recorded on or after fromDay
@@ -2985,32 +3148,101 @@ func SumCostSinceDay(fromDay string) (float64, error) {
 // so this hot read walks rows in canonical order without building a temporary
 // SQLite B-tree on every dashboard poll.
 func AllCostDailyRows() ([]CostDailyRow, error) {
-	db, err := Open()
-	if err != nil {
-		return nil, err
-	}
 	// v181 makes this ORDER BY load-bearing again: updated_at is INTEGER Unix
 	// nanoseconds, so SQLite's order is exact and the walk no longer needs a Go
 	// repair sort over variable-width/multi-zone text spellings.
-	rows, err := db.Query(`SELECT session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness
-		FROM session_cost_daily
-		ORDER BY COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id`)
+	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	var out []CostDailyRow
-	for rows.Next() {
+	return queryCostDailyRows(d, allCostDailyRowsQuery)
+}
+
+const (
+	costDailyColumns = `session_id, day, conv_id, cost_usd, virtual_cost_usd, updated_at, model, harness`
+	costConvKey      = `COALESCE(NULLIF(conv_id, ''), session_id)`
+	costWalkOrder    = costConvKey + `, day, updated_at, session_id`
+
+	allCostDailyRowsQuery = `SELECT ` + costDailyColumns + ` FROM session_cost_daily ORDER BY ` + costWalkOrder
+)
+
+// costDailyRowsForWalk is the exact read when no stored opening balance can
+// stand in for the older rows: everything a delta walk needs to produce the
+// deltas AllCostDailyRows would for days in [fromDay, toDay]; toDay "" is
+// open-ended. The walk is path-dependent, so a day window alone would be wrong:
+// a conversation's baseline comes from its whole history, and a row's carry
+// comes from every earlier row of its session. So this loads the history up to
+// toDay of each session that ran in a conversation with a row in the window,
+// which covers those conversations' own histories.
+//
+// That last step can pull in rows of a conversation with nothing in the window.
+// Their deltas are computed from a partial history and all fall before fromDay,
+// so callers must ignore deltas outside the window, as day-keyed totals do.
+//
+// withIgnored also loads every ignored conversation: the Costs view names them
+// from their history even when they spent nothing in the span.
+func costDailyRowsForWalk(fromDay, toDay string, withIgnored bool) ([]CostDailyRow, error) {
+	inWindow := `SELECT ` + costConvKey + ` AS conv FROM session_cost_daily WHERE day >= ?`
+	args := []any{fromDay}
+	upTo := ``
+	if toDay != "" {
+		inWindow += ` AND day <= ?`
+		args = append(args, toDay)
+		upTo = ` AND ` + costRowsUpTo(withIgnored)
+	}
+	if withIgnored {
+		inWindow += ` UNION SELECT conv_id FROM cost_ignored_convs`
+	}
+	if toDay != "" {
+		args = append(args, toDay)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return queryCostDailyRows(d, `WITH convs AS MATERIALIZED (`+inWindow+`),
+		walked AS MATERIALIZED (SELECT DISTINCT session_id FROM session_cost_daily
+			WHERE `+costConvKey+` IN (SELECT conv FROM convs))
+		SELECT `+costDailyColumns+` FROM session_cost_daily
+		WHERE session_id IN (SELECT session_id FROM walked)`+upTo+`
+		ORDER BY `+costWalkOrder, args...)
+}
+
+// costRowsUpTo bounds a read at toDay: no row after it can change a delta up to
+// it. An ignored conversation is named by its latest delta wherever that falls,
+// so withIgnored keeps its later rows.
+func costRowsUpTo(withIgnored bool) string {
+	if withIgnored {
+		return `(day <= ? OR conv_id IN (SELECT conv_id FROM cost_ignored_convs))`
+	}
+	return `day <= ?`
+}
+
+// scanCostDailyRows returns the rows of query, without their carry.
+func scanCostDailyRows(q rowQuerier, query string, args ...any) ([]CostDailyRow, error) {
+	return queryRows(q, func(rows rowScanner) (CostDailyRow, error) {
 		var r CostDailyRow
 		var updatedAt dbTimestamp
 		if err := rows.Scan(&r.SessionID, &r.Day, &r.ConvID, &r.CostUSD, &r.VirtualCostUSD, &updatedAt, &r.Model, &r.Harness); err != nil {
-			return nil, err
+			return CostDailyRow{}, err
 		}
 		r.UpdatedAtNS = updatedAt.UnixNano()
-		out = append(out, r)
-	}
-	return out, rows.Err()
+		return r, nil
+	}, query, args...)
 }
+
+func queryCostDailyRows(q rowQuerier, query string, args ...any) ([]CostDailyRow, error) {
+	out, err := scanCostDailyRows(q, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	AnnotateCostCarry(out)
+	return out, nil
+}
+
+// costNotIgnored mirrors the counted split: a row with no conversation cannot
+// be ignored.
+const costNotIgnored = `(conv_id = '' OR conv_id NOT IN (SELECT conv_id FROM cost_ignored_convs))`
 
 // CompareCostInstants orders two internal Unix-nanosecond instants. Zero is
 // the in-memory representation of SQL NULL: it ranks below every known instant
@@ -3230,4 +3462,36 @@ func ObservedModelContextWindow(harnessName, modelID string) (int64, error) {
 		return 0, nil
 	}
 	return window, err
+}
+
+// costDailyConvID resolves the conv_id a session_cost_daily write for
+// (sessionID, day) lands on. The row key includes conv_id, so a session whose
+// conversation changes (/clear, rename) starts a fresh row and the previous
+// conversation's row keeps its pre-switch cumulative. Two cases keep the old
+// one-row-per-day shape: a session that has lost its conv_id keeps writing to
+// the day's most recently attributed row, and a session that has just learnt
+// its conv_id adopts the day's unattributed (”) row rather than leaving its
+// early spend behind under a second walk key.
+func costDailyConvID(tx *sql.Tx, sessionID, day string) (string, error) {
+	var convID string
+	if err := tx.QueryRow(`SELECT conv_id FROM sessions WHERE id = ?`, sessionID).Scan(&convID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if convID == "" {
+		err := tx.QueryRow(`SELECT conv_id FROM session_cost_daily WHERE session_id = ? AND day = ?
+			ORDER BY updated_at DESC LIMIT 1`, sessionID, day).Scan(&convID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+		return convID, nil
+	}
+	_, err := tx.Exec(`UPDATE session_cost_daily SET conv_id = ?
+		WHERE session_id = ? AND day = ? AND conv_id = ''
+		  AND NOT EXISTS (SELECT 1 FROM session_cost_daily c
+		                  WHERE c.session_id = ? AND c.day = ? AND c.conv_id = ?)`,
+		convID, sessionID, day, sessionID, day, convID)
+	return convID, err
 }

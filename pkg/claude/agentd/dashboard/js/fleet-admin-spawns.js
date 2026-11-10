@@ -1,18 +1,18 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
 import { remoteLaunchFields } from './agent-spawn-remote.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
 const BRIEF_MAX = 4096;
 
-function errText(error) { return error?.message || String(error); }
-
-function when(t) {
-  return t && !String(t).startsWith('0001-') ? new Date(t).toLocaleString() : '';
-}
+const when = (t) => localStamp(t, { empty: '' });
 
 // paidBy says whose model account a requested worker uses. Only a request
 // that carries a model lease is requester-paid; a proxy selector naming some
@@ -33,7 +33,7 @@ function payTag(r) {
 // the CLI's placement readout.
 function PlacementList({ placement }) {
   if (!placement?.candidates?.length) return null;
-  return html`<table class="fa-table" id="fleet-spawn-placement"><tbody>${placement.candidates.map((c) => html`<tr key=${c.instance}>
+  return html`<table class="fa-table ui-compact" id="fleet-spawn-placement"><tbody>${placement.candidates.map((c) => html`<tr key=${c.instance}>
     <td>${c.peer || c.instance}</td><td>${c.group || ''}</td>
     <td class=${c.instance === placement.selected ? '' : c.eligible ? 'muted' : 'fa-danger'}>${c.instance === placement.selected ? 'selected' : c.eligible ? 'eligible' : 'skipped'}${c.reason ? ` — ${c.reason}` : ''}${c.attempt ? ` (${c.attempt})` : ''}</td>
   </tr>`)}</tbody></table>`;
@@ -97,9 +97,11 @@ const launchValue = (value) => {
 function launchSettings(asked, dropped, otherHarness = false) {
   return remoteLaunchFields(asked.launch).map(({ field, label, keys }) => {
     const value = keys.map((k) => `${k} ${launchValue(asked.launch[k])}${otherHarness && HARNESS_LAUNCH_KEYS.has(k) ? ` (${OTHER_HARNESS}, dropped)` : ''}`).join(', ');
-    if (dropped(field)) return { key: `launch:${field}`, label, value, dropped: true, reason: NOT_ALLOWED };
-    if (otherHarness && keys.every((k) => HARNESS_LAUNCH_KEYS.has(k))) return { key: `launch:${field}`, label, value, dropped: true, reason: OTHER_HARNESS };
-    return { key: `launch:${field}`, label, value };
+    // The operator reads an environment value to approve it. A capture must not.
+    const secret = keys.includes('environment') || undefined;
+    if (dropped(field)) return { key: `launch:${field}`, label, value, secret, dropped: true, reason: NOT_ALLOWED };
+    if (otherHarness && keys.every((k) => HARNESS_LAUNCH_KEYS.has(k))) return { key: `launch:${field}`, label, value, secret, dropped: true, reason: OTHER_HARNESS };
+    return { key: `launch:${field}`, label, value, secret };
   });
 }
 
@@ -132,21 +134,20 @@ function ApproveDialog({ req, actions, confirm, toast, onClose, onDone }) {
     }).then((r) => { if (r) { toast(`Started ${r.label || r.agent_id} in ${r.group}${droppedNote(r.dropped_overrides)}`, false); onDone(); } })
       .catch((e) => toast(`Approve failed: ${errText(e)}${droppedNote(e?.body?.dropped_overrides)}`, true));
   };
-  return html`<${Overlay} id="fleet-spawn-approve" labelledby="fleet-spawn-approve-title" onClose=${onClose}>
-    <h3 id="fleet-spawn-approve-title">Approve spawn request #${req.id}</h3>
+  return html`<${Dialog} id="fleet-spawn-approve" onClose=${onClose} title=${html`Approve spawn request #${req.id}`}>
     <div class="fa-spawn-brief">${req.brief}</div>
     <div class="muted">From ${req.from} into group ${req.group}${req.role ? `, role ${req.role}` : ''}. Leave a field empty to keep what was requested or the group's default.</div>
     ${requested.length > 0 && html`<div id="fleet-spawn-requested">Requested launch settings:
-      <ul>${requested.map((x) => html`<li key=${x.key} data-setting=${x.key} class=${x.dropped || x.replaced ? 'muted' : ''}>${x.label} <code>${x.value}</code>${x.dropped ? ` — dropped on approval: ${x.reason}` : x.replaced ? ' — replaced by your value' : ''}</li>`)}</ul>
+      <ul>${requested.map((x) => html`<li key=${x.key} data-setting=${x.key} class=${x.dropped || x.replaced ? 'muted' : ''}>${x.label} <code data-capture-mask=${x.secret}>${x.value}</code>${x.dropped ? ` — dropped on approval: ${x.reason}` : x.replaced ? ' — replaced by your value' : ''}</li>`)}</ul>
       ${requested.some((x) => x.key === 'cwd' && !x.dropped && !x.replaced) && html`<div class="muted">The requested directory is a path on this machine; the worker can write there.</div>`}</div>`}
     ${['name', 'profile', 'cwd', 'harness', 'model', 'effort'].map((k) => html`<label class="fa-spawn-opt" key=${k}>${k}
       <input id=${`fleet-spawn-${k}`} value=${o[k]} onInput=${set(k)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); go(); } }} placeholder=${placeholder(k)} /></label>`)}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${onClose}>Cancel</button>
-      <button id="fleet-spawn-approve-go" type="button" class="primary" onClick=${go}>Approve…</button>
+      <${Button} onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" id="fleet-spawn-approve-go" onClick=${go}>Approve…</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation requests approve ${req.id} [--name …] [--profile …] [--cwd …] [--harness …] [--model …] [--effort …]</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // DenyDialog declines a request with an optional reason sent back.
@@ -158,16 +159,15 @@ function DenyDialog({ req, actions, confirm, toast, onClose, onDone }) {
     okLabel: 'Deny', busyLabel: 'Denying…',
     action: () => actions.denySpawn(req.id, reason.trim()),
   }).then((x) => { if (x) { toast(`Denied #${req.id}`, false); onDone(); } }).catch((e) => toast(`Deny failed: ${errText(e)}`, true));
-  return html`<${Overlay} id="fleet-spawn-deny" labelledby="fleet-spawn-deny-title" onClose=${onClose}>
-    <h3 id="fleet-spawn-deny-title">Deny spawn request #${req.id}</h3>
+  return html`<${Dialog} id="fleet-spawn-deny" onClose=${onClose} title=${html`Deny spawn request #${req.id}`}>
     <div class="fa-spawn-brief">${req.brief}</div>
     <label class="fa-spawn-opt fa-spawn-top">Reason <textarea id="fleet-spawn-deny-reason" rows="2" maxlength="300" value=${reason} onInput=${(e) => setReason(e.currentTarget.value)} placeholder="optional, sent to the requester"></textarea></label>
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${onClose}>Cancel</button>
-      <button id="fleet-spawn-deny-go" type="button" class="fa-danger" onClick=${go}>Deny…</button>
+      <${Button} onClick=${onClose}>Cancel</${Button}>
+      <${Button} class="fa-danger" id="fleet-spawn-deny-go" onClick=${go}>Deny…</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation requests deny ${req.id} [--reason …]</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // SendDialog asks a peer (or automatic placement) for a worker in one of its
@@ -198,14 +198,13 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
       if (r.placement || refused) setResult(r); else onDone();
     }).catch((e) => { toast(`Spawn request failed: ${errText(e)}`, true); if (e?.body?.placement) setResult({ error: errText(e), placement: e.body.placement }); });
   };
-  return html`<${Overlay} id="fleet-spawn-send" labelledby="fleet-spawn-send-title" onClose=${onClose}>
-    <h3 id="fleet-spawn-send-title">Request a worker on a peer</h3>
+  return html`<${Dialog} id="fleet-spawn-send" onClose=${onClose} title="Request a worker on a peer">
     <label class="fa-spawn-opt">Node
-      <select id="fleet-spawn-target" value=${target} onChange=${(e) => setTarget(e.currentTarget.value)}>
-        ${peers.map((p) => html`<option key=${p.id} value=${`peer:${p.id}`}>${p.label}</option>`)}
-        <option value="auto">auto: best-placed trusted node</option>
-        ${(pools || []).map((p) => html`<option key=${p.name} value=${`group:${p.name}`}>auto within pool ${p.name}</option>`)}
-      </select></label>
+      <${PeerCombobox} id="fleet-spawn-target" value=${target} ariaLabel="Node" placeholder="Type to find a node or pool…"
+        items=${namedItems([...peers.map((p) => ({ name: `peer:${p.id}`, label: p.label })),
+          { name: 'auto', label: 'auto: best-placed trusted node' },
+          ...(pools || []).map((p) => ({ name: `group:${p.name}`, label: `auto within pool ${p.name}` }))])}
+        onChange=${setTarget} /></label>
     <label class="fa-spawn-opt">Group <input id="fleet-spawn-group" value=${f.group} onInput=${set('group')} placeholder=${auto ? 'optional with one authorized group' : 'a group the peer exports'} /></label>
     <label class="fa-spawn-opt fa-spawn-top">Brief <textarea id="fleet-spawn-brief" rows="4" maxlength=${BRIEF_MAX} value=${f.brief} onInput=${set('brief')}></textarea></label>
     <label class="fa-spawn-opt">Name <input value=${f.name} onInput=${set('name')} /></label>
@@ -213,17 +212,17 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
     <label class="fa-spawn-opt">Profile <input value=${f.profile} onInput=${set('profile')} placeholder="its default" /></label>
     <label class="fa-spawn-opt">Credentials <input value=${f.credentials} onInput=${set('credentials')} placeholder="local, or proxy:<gateway>@self (requester-paid)" /></label>
     ${auto && html`<label class="fa-spawn-opt">Require <input value=${f.require} onInput=${set('require')} placeholder="os=linux,harness=claude,label=gpu" /></label>
-      <label class="fa-spawn-opt">Prefer <select value=${f.prefer} onChange=${set('prefer')}><option value="">least-loaded</option><option value="most-free-ram">most-free-ram</option></select></label>`}
+      <label class="fa-spawn-opt">Prefer <${Select} size="sm" value=${f.prefer} onChange=${set('prefer')}><option value="">least-loaded</option><option value="most-free-ram">most-free-ram</option><//></label>`}
     ${result && html`<div id="fleet-spawn-result">
       ${result.error ? html`<div class="fa-danger" role="alert">${result.error}</div>`
         : html`<div class=${result.state === 'refused' ? 'fa-danger' : ''}>Sent to ${result.to}: <b>${result.state}</b>${result.state === 'refused' ? ' — placement never retries elsewhere after a refusal' : result.state === 'sent' ? ' — not yet acknowledged; check the outbox' : ''}</div>`}
       <${PlacementList} placement=${result.placement} /></div>`}
     <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${result && !result.error ? onDone : onClose}>${result ? 'Close' : 'Cancel'}</button>
-      <button id="fleet-spawn-send-go" type="button" class="primary" disabled=${!f.brief.trim() || (!auto && !f.group.trim())} onClick=${go}>Send…</button>
+      <${Button} onClick=${result && !result.error ? onDone : onClose}>${result ? 'Close' : 'Cancel'}</${Button}>
+      <${Button} variant="primary" id="fleet-spawn-send-go" disabled=${!f.brief.trim() || (!auto && !f.group.trim())} onClick=${go}>Send…</${Button}>
     </div>
     <div class="muted fa-cli-note">CLI: <code>tclaude federation spawn-request ${'<group>@<peer>'} --brief …</code> or <code>--node ${'auto|group:<pool>'}</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // SpawnRequestsPage lists the spawn requests peers sent to this node's
@@ -254,42 +253,36 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
   const list = Array.isArray(rows) ? rows.filter((r) => all || r.status === 'pending' || r.status === 'launching') : [];
   const hidden = Array.isArray(rows) ? rows.length - list.length : 0;
   return html`<div class="fa-spawns">
-    <div class="fa-run-settings">
+    <div class="fa-run-settings ui-card ui-inset">
       <span class="fa-k">Incoming</span>
       <span class="muted">${Array.isArray(rows) ? `${rows.filter((r) => r.status === 'pending').length} pending` : ''}</span>
       <label class="muted"><input type="checkbox" checked=${all} onChange=${(e) => setAll(e.currentTarget.checked)} /> show decided${hidden && !all ? ` (${hidden})` : ''}</label>
-      <button type="button" class="fa-link" onClick=${reload}>refresh</button>
+      <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//>
       <span class="grow"></span>
-      <button id="fleet-spawn-new" type="button" onClick=${() => setDialog({ kind: 'send' })}>Request a worker on a peer…</button>
+      <${Button} size="sm" id="fleet-spawn-new" onClick=${() => setDialog({ kind: 'send' })}>Request a worker on a peer…<//>
     </div>
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${!rows && !error ? html`<div class="empty">Loading…</div>` : list.length === 0 && !error ? html`<div class="empty">No ${all ? '' : 'open '}spawn requests from peers.</div>` : html`
-    <table class="fa-table" id="fleet-spawn-requests">
-      <thead><tr><th>#</th><th>From</th><th>Group</th><th>Worker</th><th>Brief</th><th>State</th><th>Expires</th><th></th></tr></thead>
-      <tbody>${list.map((r) => html`<tr key=${r.id} data-spawn=${r.id}>
+    <${FaTable} id="fleet-spawn-requests" head=${['#', 'From', 'Group', 'Worker', 'Brief', 'State', 'Expires', '']}>${list.map((r) => html`<tr key=${r.id} data-spawn=${r.id}>
         <td>${r.id}</td>
         <td title=${r.instance}>${r.from}</td>
         <td>${r.group}</td>
         <td>${[r.name, r.role && `role ${r.role}`, r.profile && `profile ${r.profile}`].filter(Boolean).join(' · ') || html`<span class="muted">defaults</span>`}
           ${payTag(r) && html`<div class="muted">${payTag(r)}</div>`}
-          ${requestedSettings(r).length > 0 && html`<div class="muted" data-requested>${requestedSettings(r).map((x) => `${x.label} ${x.value}${x.dropped ? ' (dropped)' : ''}`).join(' · ')}</div>`}</td>
+          ${requestedSettings(r).length > 0 && html`<div class="muted" data-requested data-capture-mask=${requestedSettings(r).some((x) => x.secret) || undefined}>${requestedSettings(r).map((x) => `${x.label} ${x.value}${x.dropped ? ' (dropped)' : ''}`).join(' · ')}</div>`}</td>
         <td class="fa-spawn-brief-cell" title=${r.brief}>${r.brief}</td>
         <td class=${r.status === 'denied' || r.status === 'expired' ? 'fa-danger' : r.status === 'launching' ? 'fa-warn' : ''} title=${r.reason || ''}>${r.status}${r.result_agent ? html` <code title=${r.result_agent}>${r.result_agent.slice(0, 14)}</code>` : ''}${r.reason ? html` <span class="muted">— ${r.reason}</span>` : ''}</td>
         <td class="muted">${r.status === 'pending' ? (Date.parse(r.expires_at) < now ? 'expired' : when(r.expires_at)) : ''}</td>
-        <td class="fa-acts">${r.status === 'pending' ? html`<button type="button" data-fa="approve" onClick=${() => setDialog({ kind: 'approve', req: r })}>Approve…</button> <button type="button" class="fa-danger" data-fa="deny" onClick=${() => setDialog({ kind: 'deny', req: r })}>Deny…</button>`
-          : r.status === 'launching' ? html`<button type="button" class="fa-danger" data-fa="abandon" onClick=${() => abandon(r)}>Abandon launch…</button>` : ''}</td>
-      </tr>`)}</tbody>
-    </table>`}
+        <td class="fa-acts">${r.status === 'pending' ? html`<${Button} size="sm" data-fa="approve" onClick=${() => setDialog({ kind: 'approve', req: r })}>Approve…<//> <${Button} size="sm" variant="ghost danger" data-fa="deny" onClick=${() => setDialog({ kind: 'deny', req: r })}>Deny…<//>`
+          : r.status === 'launching' ? html`<${Button} size="sm" variant="ghost danger" data-fa="abandon" onClick=${() => abandon(r)}>Abandon launch…<//>` : ''}</td>
+      </tr>`)}<//>`}
     <h4 class="fa-h">Outbox <span class="muted">— delivery of spawn requests and operator mail this node sent; decisions arrive in Messages</span></h4>
     ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="empty">Loading…</div>` : outbox.length === 0 ? html`<div class="empty">Nothing sent yet.</div>` : html`
-    <table class="fa-table" id="fleet-outbox">
-      <thead><tr><th>To</th><th>From</th><th>Subject</th><th>State</th><th>Attempts</th><th>Updated</th></tr></thead>
-      <tbody>${outbox.map((o) => html`<tr key=${o.envelope_id} data-envelope=${o.envelope_id}>
+    <${FaTable} id="fleet-outbox" head=${['To', 'From', 'Subject', 'State', 'Attempts', 'Updated']}>${outbox.map((o) => html`<tr key=${o.envelope_id} data-envelope=${o.envelope_id}>
         <td>${o.to}</td><td>${o.from}</td><td title=${o.preview || ''}>${o.subject || o.preview}</td>
         <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}${o.last_error ? html` <span class="muted">— ${o.last_error}</span>` : ''}</td>
         <td>${o.attempts}</td><td class="muted">${when(o.updated_at)}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation requests [--all]</code>, <code>requests approve|deny|abandon ID</code>, <code>tclaude federation outbox</code>.</div>
     ${dialog?.kind === 'approve' && html`<${ApproveDialog} req=${dialog.req} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setDialog(null)} onDone=${() => { setDialog(null); reload(); }} />`}
     ${dialog?.kind === 'deny' && html`<${DenyDialog} req=${dialog.req} actions=${actions} confirm=${confirm} toast=${toast} onClose=${() => setDialog(null)} onDone=${() => { setDialog(null); reload(); }} />`}

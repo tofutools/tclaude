@@ -31,7 +31,7 @@ jobs:
       - name: Set up Node for OpenCode smoke
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       # The passt source archive is fetched from passt.top, which intermittently
       # answers 502/504. Restoring it from the Actions cache means only a cache
@@ -113,10 +113,9 @@ jobs:
           npm install --global @github/copilot@1.0.77
           copilot --version
 
+      # scripts/ci/pi pins pi and its whole dependency tree.
       - name: Install pinned pi smoke binary
-        run: |
-          npm install --global @earendil-works/pi-coding-agent@1.1.0
-          pi --version
+        run: scripts/ci/install-pi.sh
 
       # The pinned evidence tests below (filtered model endpoint, Codex
       # effective-config seam, Codex system-config layer) require exactly
@@ -244,6 +243,48 @@ jobs:
               echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::TestBubblewrapAssumptions did not report an explicit pass"
+            exit 1
+          fi
+
+      # The live-page stage dials into an agent's private network namespace
+      # through nsenter + a probehelper mode (pkg/claude/common/netnsdial).
+      # Elsewhere the round trip skips, because unprivileged user namespaces
+      # are blocked; this job has unlocked them above, so here it must pass.
+      - name: Run live-page netns dial round trip
+        env:
+          TCLAUDE_REQUIRE_USERNS: "1"
+        run: |
+          netns_log="$RUNNER_TEMP/netnsdial.log"
+          go test ./pkg/claude/common/netnsdial -run '^TestDialReachesThePortInsideTheNamespaceOnly$' -count=1 -v -timeout=120s |
+            tee "$netns_log"
+          if ! grep -q '^--- PASS: TestDialReachesThePortInsideTheNamespaceOnly ' "$netns_log"; then
+            {
+              echo "### Live-page netns dial round trip did not pass"
+              echo
+              echo "The nsenter + SCM_RIGHTS dial into a private network namespace did not report an explicit pass."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestDialReachesThePortInsideTheNamespaceOnly did not report an explicit pass"
+            exit 1
+          fi
+
+      # Static live pages of a tclaude-layer agent are served through the
+      # sandbox's own mount view (/proc/<pid>/root, pkg/claude/common/nsroot).
+      # Here it must pass: a detached bwrap sandbox renames a directory whose
+      # child is hidden by a tmpfs, and the view must still hide it.
+      - name: Run live-page sandbox root view
+        env:
+          TCLAUDE_REQUIRE_USERNS: "1"
+        run: |
+          nsroot_log="$RUNNER_TEMP/nsroot.log"
+          go test ./pkg/claude/common/nsroot -run '^TestRootShowsTheSandboxsOwnViewAfterARename$' -count=1 -v -timeout=120s |
+            tee "$nsroot_log"
+          if ! grep -q '^--- PASS: TestRootShowsTheSandboxsOwnViewAfterARename ' "$nsroot_log"; then
+            {
+              echo "### Live-page sandbox root view did not pass"
+              echo
+              echo "Opening a bubblewrap sandbox's own mount view through /proc/<pid>/root did not report an explicit pass."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestRootShowsTheSandboxsOwnViewAfterARename did not report an explicit pass"
             exit 1
           fi
 

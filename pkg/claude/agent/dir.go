@@ -53,7 +53,7 @@ func dirCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *dirParams, _ *cobra.Command, _ []string) {
-			os.Exit(runDir(p, os.Stdout, os.Stderr))
+			os.Exit(runDir(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

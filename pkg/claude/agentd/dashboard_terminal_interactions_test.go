@@ -61,7 +61,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"activeTmuxClipboardCopy = token",
 		"term.modes.mouseTrackingMode",
 		"Ignore unsolicited OSC 52 completely",
-		"navigator.clipboard.writeText(",
+		"writeClipboard(",
 		"new globalThis.WebLinksAddon.WebLinksAddon(",
 		"term.registerLinkProvider(",
 		"visibleLocalFileLinkProvider(term, linkHandler)",
@@ -103,9 +103,9 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		t.Error("terminal Copy action must expose guidance accessibly without a native title tooltip")
 	}
 	for _, needle := range []string{
-		"class=\"terminal-interaction-hint\"",
-		"Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C",
-		">✉ Message</button>",
+		"class=\"terminal-interaction-hint ui-hint\"",
+		"Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: ${shortcutText('terminal-copy')}",
+		">✉ Message<//>",
 		"onComposeMessage=${composeMessage}",
 	} {
 		if !strings.Contains(shell, needle) {

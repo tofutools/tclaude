@@ -19,6 +19,11 @@ import { dashboardState } from './snapshot-store.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
+import { Button, Input } from './ui-components.js';
+import { triggersAvailable } from './feature-availability.js';
+import { groupScopeLabel, localStamp } from './cell-format.js';
+import { TableHead } from './table-kit.js';
+import { NodePill } from './cell-parts.js';
 
 const html = htm.bind(h);
 
@@ -40,7 +45,7 @@ function ExportStepper({ status }) {
 
 function CronTarget({ job }) {
   if (job.target_kind === 'group') {
-    return html`<span class="tag">group:${job.group_name || ('#' + job.group_id)}</span>`;
+    return html`<span class="tag">${groupScopeLabel(job.group_name, job.group_id)}</span>`;
   }
   if (job.target_conv) {
     return html`<${Fragment}>
@@ -68,7 +73,7 @@ function CronSchedule({ job }) {
 
 function CronStatus({ status }) {
   if (!status) return html`<span class="state-pill state-offline" title="never run">never run</span>`;
-  const failed = /denied|failed|error|deadline|feature_disabled/.test(status);
+  const failed = /denied|failed|error|deadline|feature_disabled|profile_disabled|profile_operator_only/.test(status);
   const cls = cronRunSucceeded(status)
     ? 'state-working'
     : failed ? 'state-error' : 'state-awaiting';
@@ -76,11 +81,11 @@ function CronStatus({ status }) {
 }
 
 function CronActionSummary({ job }) {
-  if (job.action_kind !== 'spawn') return html`<span class="cron-action-kind message">✉ message</span>`;
+  if (job.action_kind !== 'spawn') return html`<span class="ui-tag cron-action-kind message">✉ message</span>`;
   const roles = (job.spawn_roles || []).join(', ');
   const policy = job.spawn_concurrency_policy || 'Forbid';
   return html`<${Fragment}>
-    <span class="cron-action-kind spawn">⚡ spawn</span>
+    <span class="ui-tag cron-action-kind spawn">⚡ spawn</span>
     <div class="muted cron-spawn-summary">${job.spawn_profile || 'profile missing'}
       ${roles ? ` · roles ${roles}` : ''} · ${policy}
       ${policy === 'Allow' ? ` up to ${job.spawn_max_live_workers || 1}` : ''}
@@ -92,12 +97,12 @@ function CronRunInspector({ id, runs, loading, error, onRefresh }) {
   return html`<div class="cron-run-inspector" id=${id}>
     <div class="cron-run-inspector-head"><strong>Recent runs</strong>
       <span class="muted">Recorded scheduler outcomes; worker identity appears when a spawn reached a managed worker.</span>
-      <button type="button" onClick=${onRefresh} disabled=${loading}>refresh</button></div>
-    ${error && html`<div class="jobs-error" role="alert">${error}<button type="button" onClick=${onRefresh}>retry</button></div>`}
+      <${Button} size="sm" onClick=${onRefresh} disabled=${loading}>refresh<//></div>
+    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<${Button} size="sm" onClick=${onRefresh}>retry<//></div>`}
     ${loading ? html`<div class="muted">Loading run history…</div>` : !error && runs.length === 0
       ? html`<div class="muted">No runs recorded.</div>`
       : html`<div class="cron-runs">${runs.map((run) => html`<div class="cron-run" key=${run.id}>
-          <span>${run.fired_at ? new Date(run.fired_at).toLocaleString() : 'unknown time'}</span>
+          <span>${localStamp(run.fired_at, { empty: 'unknown time' })}</span>
           <${CronStatus} status=${run.status || 'unknown'} />
           <span class="muted cron-run-detail" title=${run.error_msg || ''}>${run.error_msg || ''}</span>
           <span class="cron-run-worker">${run.worker_agent
@@ -139,7 +144,7 @@ function CronRow({ job, actions, triggersEnabled }) {
       <div class="rowname">${job.name}</div>
       ${job.subject && html`<div class="muted">${job.subject}</div>`}
       <${CronActionSummary} job=${job} />
-      ${editBlocked && html`<div class="cron-feature-note">features.triggers is off · editing unavailable</div>`}
+      ${editBlocked && html`<div class="cron-feature-note">Triggers are off on this node · editing unavailable</div>`}
     </td>
     <td>
       <${CronTarget} job=${job} />
@@ -151,21 +156,21 @@ function CronRow({ job, actions, triggersEnabled }) {
     <td><span class="last-hook">${relTime(job.last_run_at) || '—'}</span></td>
     <td><${CronSchedule} job=${job} /></td>
     <td><div class="row-actions">
-      <button onClick=${() => actions.runCron(job)} title="Fire this job immediately (also stamps last_run_at)">run now</button>
-      <button onClick=${toggleRuns} aria-expanded=${expanded ? 'true' : 'false'} aria-controls=${`cron-run-inspector-${job.id}`}
-        title="Show recorded run outcomes">${expanded ? 'hide logs' : 'logs'}</button>
-      <button disabled=${editBlocked} onClick=${() => actions.openCronEdit(job)}
-        title=${editBlocked ? 'Enable features.triggers to edit this spawn job' : 'Edit this cron job'}>edit</button>
-      <button disabled=${editBlocked} onClick=${() => actions.openCronDuplicate(job)}
-        title=${editBlocked ? 'Enable features.triggers to duplicate this spawn job' : 'Duplicate this cron job'}>duplicate</button>
-      <button class=${job.enabled ? 'warn' : ''} onClick=${() => actions.toggleCron(job)}
+      <${Button} size="sm" onClick=${() => actions.runCron(job)} title="Fire this job immediately (also stamps last_run_at)">run now<//>
+      <${Button} size="sm" onClick=${toggleRuns} aria-expanded=${expanded ? 'true' : 'false'} aria-controls=${`cron-run-inspector-${job.id}`}
+        title="Show recorded run outcomes">${expanded ? 'hide logs' : 'logs'}<//>
+      <${Button} size="sm" disabled=${editBlocked} onClick=${() => actions.openCronEdit(job)}
+        title=${editBlocked ? 'This node has Triggers off, so its spawn jobs cannot be edited' : 'Edit this cron job'}>edit<//>
+      <${Button} size="sm" disabled=${editBlocked} onClick=${() => actions.openCronDuplicate(job)}
+        title=${editBlocked ? 'This node has Triggers off, so its spawn jobs cannot be duplicated' : 'Duplicate this cron job'}>duplicate<//>
+      <${Button} size="sm" class=${job.enabled ? 'warn' : ''} onClick=${() => actions.toggleCron(job)}
         title=${job.enabled ? 'Pause this cron job' : 'Re-enable this cron job'}>
         ${job.enabled ? 'disable' : 'enable'}
-      </button>
-      <button class="danger" onClick=${() => actions.deleteCron(job)} title="Delete this cron job">delete</button>
+      <//>
+      <${Button} size="sm" variant="ghost danger" onClick=${() => actions.deleteCron(job)} title="Delete this cron job">delete<//>
     </div></td>
   </tr>
-  ${expanded && html`<tr class="cron-run-inspector-row"><td colspan="9">
+  ${expanded && html`<tr class="cron-run-inspector-row"><td colspan=${JOBS_COLS.length}>
     <${CronRunInspector} id=${`cron-run-inspector-${job.id}`} runs=${runs || []} loading=${loading} error=${error} onRefresh=${loadRuns} />
   </td></tr>`}
   </${Fragment}>`;
@@ -177,16 +182,16 @@ function StandingOrderTarget({ order }) {
     return html`<${Fragment}>
       <span class="tag">global</span>
       ${(order.additional_groups || []).map((group) => html`
-        <div class="muted" key=${group.group_id}>also group:${group.group_name || ('#' + group.group_id)}</div>
+        <div class="muted" key=${group.group_id}>also ${groupScopeLabel(group.group_name, group.group_id)}</div>
       `)}
     </${Fragment}>`;
   }
   if (target.kind === 'group') {
     return html`<${Fragment}>
-      <span class="tag">group:${target.group_name || ('#' + target.group_id)}</span>
+      <span class="tag">${groupScopeLabel(target.group_name, target.group_id)}</span>
       ${target.role && html`<div class="muted">role:${target.role}</div>`}
       ${(order.additional_groups || []).map((group) => html`
-        <div class="muted" key=${group.group_id}>also group:${group.group_name || ('#' + group.group_id)}</div>
+        <div class="muted" key=${group.group_id}>also ${groupScopeLabel(group.group_name, group.group_id)}</div>
       `)}
     </${Fragment}>`;
   }
@@ -196,7 +201,7 @@ function StandingOrderTarget({ order }) {
         ${shortAgentId(target.agent, target.conv)}
       </span>
       ${(order.additional_groups || []).map((group) => html`
-        <div class="muted" key=${group.group_id}>also group:${group.group_name || ('#' + group.group_id)}</div>
+        <div class="muted" key=${group.group_id}>also ${groupScopeLabel(group.group_name, group.group_id)}</div>
       `)}
     </${Fragment}>`;
   }
@@ -264,18 +269,18 @@ function StandingOrderRow({ order, actions }) {
       <${StandingOrderCapability} capability=${order.capability} />
     </td>
     <td><div class="row-actions">
-      <button onClick=${() => actions.openStandingOrderEdit(order)}
-        title="Edit this standing order">edit</button>
-      <button class=${order.enabled ? 'warn' : ''} onClick=${() => actions.toggleStandingOrder(order)}
+      <${Button} size="sm" onClick=${() => actions.openStandingOrderEdit(order)}
+        title="Edit this standing order">edit<//>
+      <${Button} size="sm" class=${order.enabled ? 'warn' : ''} onClick=${() => actions.toggleStandingOrder(order)}
         title=${order.enabled
           ? 'Disable this standing order'
           : order.disabled_reason
             ? `Re-enable and clear automatic marker: ${order.disabled_reason}`
             : 'Re-enable this standing order'}>
         ${order.enabled ? 'disable' : 'enable'}
-      </button>
-      <button class="danger" onClick=${() => actions.deleteStandingOrder(order)}
-        title="Delete this standing order and its evaluation history">delete</button>
+      <//>
+      <${Button} size="sm" variant="ghost danger" onClick=${() => actions.deleteStandingOrder(order)}
+        title="Delete this standing order and its evaluation history">delete<//>
     </div></td>
   </tr>`;
 }
@@ -294,7 +299,7 @@ function ExportStatus({ job }) {
   if (job.status === 'failed') {
     return html`<${Fragment}>
       <span class="ej-status failed">✗ failed</span>
-      ${job.error && html`<div class="ej-error" title=${job.error}>${job.error}</div>`}
+      ${job.error && html`<div class="ej-error ui-hint" title=${job.error}>${job.error}</div>`}
     </${Fragment}>`;
   }
   return html`<${ExportStepper} status=${job.status} />`;
@@ -316,30 +321,15 @@ function ExportRow({ job, actions }) {
     <td><span class="last-hook">${relTime(job.created_at) || '—'}</span></td>
     <td>${job.artifact_size ? fmtBytes(job.artifact_size) : html`<span class="muted">—</span>`}</td>
     <td><div class="row-actions">
-      ${job.ready && html`<button onClick=${() => actions.downloadExport(job)} title="Download this export">⤓ download</button>`}
-      <button class="danger" onClick=${() => actions.dismissExport(job)}
-        title="Dismiss — removes this export job from the list and deletes its file (if one was delivered)">dismiss</button>
+      ${job.ready && html`<${Button} size="sm" onClick=${() => actions.downloadExport(job)} title="Download this export">⤓ download<//>`}
+      <${Button} size="sm" variant="ghost danger" onClick=${() => actions.dismissExport(job)}
+        title="Dismiss — removes this export job from the list and deletes its file (if one was delivered)">dismiss<//>
     </div></td>
   </tr>`;
 }
 
 function SortHead({ active, onSort }) {
-  const activate = (event, col) => {
-    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    onSort(col);
-  };
-  return html`<thead><tr>${JOBS_COLS.map((column) => {
-    if (!column.col) return html`<th>${column.label || ''}</th>`;
-    const selected = active?.col === column.col;
-    const arrow = selected ? (active.dir === 'asc' ? '▲' : '▼') : '▾';
-    return html`<th class=${selected ? 'sortable sort-active' : 'sortable'}
-      tabIndex="0" aria-sort=${selected ? (active.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-      title=${`Sort by ${column.label}`} onClick=${(event) => activate(event, column.col)}
-      onKeyDown=${(event) => activate(event, column.col)}>
-      ${column.label}<span class="sort-arrow">${arrow}</span>
-    </th>`;
-  })}</tr></thead>`;
+  return html`<${TableHead} cols=${JOBS_COLS} activeCol=${active?.col} dir=${active?.dir} onSort=${onSort} />`;
 }
 
 function JobsPager({ state, paging, refresh, disabled = false }) {
@@ -361,11 +351,11 @@ function EmptyJobs({ kind }) {
   }
   if (kind === 'export') {
     return html`<div class="empty">No export jobs yet. Start one from an agent row's ⚙ menu →
-      <strong>📋 summary…</strong>.
+      <strong>summary…</strong>.
     </div>`;
   }
   return html`<div class="empty">No exports, cron jobs, or standing orders yet. Agent exports appear here
-    when started (an agent row's ⚙ menu → <strong>📋 summary…</strong>); create a cron job with the <strong>
+    when started (an agent row's ⚙ menu → <strong>summary…</strong>); create a cron job with the <strong>
     <span class="cron-open-label-regular">+ new cron job</span>
     <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong> button above.
   </div>`;
@@ -394,7 +384,7 @@ function FusedPeerJobs({ state, fleet, active, triggersEnabled, confirm, notify,
   return peers.map((node) => {
     const entry = byNode[node.id];
     return html`<tbody key=${node.id} class="fused-jobs-node" style=${`--nc:${node.color}`}>
-      <tr class="fused-jobs-head"><td colspan="9"><span class="scope-pill" style=${`--nc:${node.color}`}>${node.name}</span>
+      <tr class="fused-jobs-head"><td colspan=${JOBS_COLS.length}><${NodePill} node=${node} />
         ${!entry ? html` <span class="muted">loading…</span>`
           : entry.why ? html` <span class="muted">not shared</span> <${LockReason} why=${entry.why} />`
           : html` <span class="muted">${entry.rows.length} ${entry.rows.length === 1 ? 'automation' : 'automations'}</span>`}</td></tr>
@@ -408,7 +398,7 @@ function FusedPeerJobs({ state, fleet, active, triggersEnabled, confirm, notify,
 export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashboardState.activeTab, confirm = shellConfirm, notify = shellToast, fetchFor = undefined }) {
   const current = state.view.value;
   const triggersKnown = current.dashboard != null;
-  const triggersEnabled = current.dashboard?.triggers_enabled === true;
+  const triggersEnabled = triggersAvailable(current.dashboard);
   const subnavEntries = automationsSubnavEntries(current.dashboard);
   const displayKind = triggersKnown && !triggersEnabled && current.kind === 'trigger' ? 'all' : current.kind;
   // A fused view lists the other ticked nodes' automations after this node's.
@@ -456,28 +446,28 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
   return html`<div class="jobs-island">
     <${AutomationsSubnav} entries=${subnavEntries} active=${displayKind} onSelect=${selectEntry} />
     ${displayKind !== 'trigger' && html`<div class="filter-bar">
-      <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter automations"
+      <${Input} domRef=${inputRef} id="filter-jobs" aria-label="Filter automations"
         placeholder="Filter this view (name + agent/owner/target + subject + body + status)"
         autocomplete="off" spellcheck=${false} value=${current.query}
         onInput=${(event) => onQuery(event.currentTarget.value)} />
       <span class="filter-count" id="filter-jobs-count" aria-live="polite">${count}</span>
-      <button class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear automation filter"
+      <button data-ui-exempt class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear automation filter"
         onClick=${() => { onQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
       ${(displayKind === 'all' || displayKind === 'cron') && html`
-        <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job"
+        <${Button} id="cron-create-open" variant="primary" title="Schedule a new recurring cron job"
           onClick=${() => actions.openCronCreate({})}>
           <span class="cron-open-label-regular">+ new cron job</span>
           <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>
-        </button>`}
+        <//>`}
       ${(displayKind === 'all' || displayKind === 'standing-order') && html`
-        <button id="standing-order-create-open" class="primary"
+        <${Button} id="standing-order-create-open" variant="primary"
           title="Create a standing instruction triggered at session boundaries"
-          onClick=${() => actions.openStandingOrderCreate({})}>+ new standing order</button>`}
+          onClick=${() => actions.openStandingOrderCreate({})}>+ new standing order<//>`}
     </div>`}
     ${displayKind === 'trigger' ? html`<${TriggerWorkspace} state=${state} actions=${actions} />` : html`<${Fragment}>
     <${AsyncLoadState} label="Automations" request=${current.request}
-      retry=${() => void actions.refresh()} errorClass="jobs-error" />
+      retry=${() => void actions.refresh()} errorClass="jobs-error ui-error-box" />
     <div id="jobs-list" aria-busy=${current.request.phase === 'loading' ? 'true' : 'false'}>
       ${!current.request.hasLoaded
         ? null
@@ -506,7 +496,7 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
 
 export function JobsBadge({ state }) {
   const count = state.view.value.activeExports;
-  return html`<span id="jobs-badge" class="tab-badge count" hidden=${count === 0}>${count}</span>`;
+  return html`<span id="jobs-badge" class="tab-badge ui-badge" hidden=${count === 0}>${count}</span>`;
 }
 
 export function mountJobsIsland({

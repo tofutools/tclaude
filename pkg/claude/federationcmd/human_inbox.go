@@ -13,12 +13,14 @@ import (
 )
 
 // The human inbox of another of your own nodes: its agents' notifications and
-// pending ask-human requests. The peer serves these only to a node it trusts
-// unrestricted (human.inbox.read / human.inbox.answer), and only through this
-// operator-only proxy; decisions are one-shot.
+// pending ask-human requests. The peer serves them all to a node it trusts
+// unrestricted, and those of the granted groups to one holding
+// human.inbox.read / human.inbox.answer (each request then says whether it
+// may be approved, and why not), only through this operator-only proxy;
+// decisions are one-shot.
 
 type humanInboxParams struct {
-	Peer string `pos:"true" help:"Your own node (trusted unrestricted): label or stable ID"`
+	Peer string `pos:"true" help:"The node (trusting this one unrestricted, or granting human.inbox.read): label or stable ID"`
 }
 
 type humanInboxReplyParams struct {
@@ -35,11 +37,17 @@ type humanInboxDecideParams struct {
 
 func humanInboxCmd() *cobra.Command {
 	cmd := boa.CmdT[humanInboxParams]{Use: "human-inbox", Short: "List another own node's human notifications and pending access requests (operator only)", ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *humanInboxParams, _ *cobra.Command, _ []string) { os.Exit(runHumanInbox(p, os.Stdout, os.Stderr)) }}.ToCobra()
+		RunFunc: func(p *humanInboxParams, _ *cobra.Command, _ []string) {
+			os.Exit(runHumanInbox(p, cliStdout, cliStderr))
+		}}.ToCobra()
 	cmd.AddCommand(boa.CmdT[humanInboxReplyParams]{Use: "reply", Short: "Reply to an agent's notification on another own node", ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *humanInboxReplyParams, _ *cobra.Command, _ []string) { os.Exit(runHumanInboxReply(p, os.Stdout, os.Stderr)) }}.ToCobra())
+		RunFunc: func(p *humanInboxReplyParams, _ *cobra.Command, _ []string) {
+			os.Exit(runHumanInboxReply(p, cliStdout, cliStderr))
+		}}.ToCobra())
 	cmd.AddCommand(boa.CmdT[humanInboxDecideParams]{Use: "decide", Short: "Approve or deny one pending access request on another own node, once", ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *humanInboxDecideParams, _ *cobra.Command, _ []string) { os.Exit(runHumanInboxDecide(p, os.Stdout, os.Stderr)) }}.ToCobra())
+		RunFunc: func(p *humanInboxDecideParams, _ *cobra.Command, _ []string) {
+			os.Exit(runHumanInboxDecide(p, cliStdout, cliStderr))
+		}}.ToCobra())
 	return cmd
 }
 

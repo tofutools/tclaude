@@ -16,6 +16,7 @@ const shellDescriptor = createIslandDescriptor({
     creditsLeaderboardHost: '#vegas-leaderboard',
     messagesBadgeHost: '#shell-messages-badge-root',
     metaHost: '#shell-meta-root',
+    openMRsHost: '#shell-open-mrs-root',
     openPRsHost: '#shell-open-prs-root',
     disconnectHost: '#shell-disconnect-root',
     confirmHost: '#shell-confirm-root',
@@ -277,6 +278,145 @@ export function mountDockFeature(dependencies = {}) {
   return mountIslandDescriptor(dockDescriptor, dependencies);
 }
 
+// The companion (tcl-6i0283): a floating window over every view that hosts
+// agents' native terminals, with the Steward as its default helper.
+const companionDescriptor = createIslandDescriptor({
+  name: 'companion',
+  label: 'Companion',
+  hosts: { host: '#companion-root' },
+  failureClass: 'companion-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./companion-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const prefsModule = import('./prefs.js');
+    const terminalsCoreModule = import('./terminals-core.js');
+    const xtermLoaderModule = import('./xterm-loader.js');
+    const terminalsTabModule = import('./terminals-tab.js');
+    const [
+      { mountCompanionIsland }, { dashboardState }, { dashPrefs },
+      { mountTerminalWidget }, { loadXtermRuntime }, { closeTerminalsForConvs, detachWebWindow, openWebWindowPane },
+    ] = await Promise.all([
+      islandModule, snapshotStoreModule, prefsModule,
+      terminalsCoreModule, xtermLoaderModule, terminalsTabModule,
+    ]);
+    return {
+      mount: (registerCleanup) => mountCompanionIsland({
+        host, registerCleanup,
+        snapshot: dashboardState.snapshot, activeTab: dashboardState.activeTab, prefs: dashPrefs,
+        notify: dependencies.notify, widgetFactory: mountTerminalWidget, loadRuntime: loadXtermRuntime,
+        closeTerminalPanes: closeTerminalsForConvs, onComposeMessage: dependencies.onComposeMessage,
+        openPermissions: dependencies.openPermissions, openSudo: dependencies.openSudo,
+        detachWindow: (agent, label, options) => detachWebWindow(agent, label, options),
+        openStewardHandover: async (agent, label) => {
+          const { openStewardHandoverDialog } = await import('./action-dialog-controller.js');
+          return openStewardHandoverDialog({ agent, label });
+        },
+        openMorph: async (agent) => {
+          const controllerModule = import('./action-dialog-controller.js');
+          const launchModule = import('./launch-target-dialog.js');
+          const fleetModule = import('./fleet-state.js');
+          const modelModule = import('./companion-model.js');
+          const [{ openLaunchTargetDialog }, { launchAgent }, { fleetState }, { companionLaunchData }] = await Promise.all([
+            controllerModule, launchModule, fleetModule, modelModule,
+          ]);
+          const fleet = fleetState.fleet.value;
+          const node = fleet?.self || { id: 'local', name: 'this node' };
+          return openLaunchTargetDialog({ mode: 'morph', agent: launchAgent(companionLaunchData(agent, fleet), node) });
+        },
+        openTerminalsPane: (agent, label, harness) => openWebWindowPane(agent, label, { harness }),
+        navigate: async (path) => {
+          const { navigateToPath } = await import('./nav-history.js');
+          return navigateToPath(path);
+        },
+      }),
+    };
+  },
+});
+
+// The quick permissions panel: its own island, because a companion pill, a
+// Terminals tab and the access banner all raise it.
+const accessPanelDescriptor = createIslandDescriptor({
+  name: 'access-panel',
+  label: 'Permission requests',
+  hosts: { host: '#access-panel-root' },
+  failureClass: 'access-panel-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./access-panel-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const [{ mountAccessPanelIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotStoreModule]);
+    return {
+      mount: (registerCleanup) => mountAccessPanelIsland({
+        host, registerCleanup, snapshot: dashboardState.snapshot,
+        fetchImpl: (...args) => globalThis.fetch(...args), notify: dependencies.notify,
+        openInMessages: async (id) => {
+          const { focusAccessRequest } = await import('./mail-bridge.js');
+          return focusAccessRequest(id);
+        },
+      }),
+    };
+  },
+});
+
+// The question and progress for the knowledge base's source download.
+const knowledgeSourceDescriptor = createIslandDescriptor({
+  name: 'knowledge-source',
+  label: 'Source download',
+  hosts: { host: '#knowledge-source-root' },
+  failureClass: 'knowledge-source-error ui-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./knowledge-source-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const [{ mountKnowledgeSourceIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotStoreModule]);
+    return {
+      mount: (registerCleanup) => mountKnowledgeSourceIsland({
+        host, registerCleanup, snapshot: dashboardState.snapshot,
+        fetchImpl: (...args) => globalThis.fetch(...args), notify: dependencies.notify,
+      }),
+    };
+  },
+});
+
+export function mountKnowledgeSourceFeature(dependencies = {}) {
+  return mountIslandDescriptor(knowledgeSourceDescriptor, dependencies);
+}
+
+export function mountAccessPanelFeature(dependencies = {}) {
+  return mountIslandDescriptor(accessPanelDescriptor, dependencies);
+}
+
+// A process editor's browser window of its own (process-editor-window.js, named
+// tclaude-process:<token>) shows the editor alone. It gets a copy of this tab's
+// session storage, so the companion and the overlay windows would come back in
+// it, hidden, with their terminals. They stay out of it.
+const processSoloWindow = () => String(globalThis.window?.name || '').startsWith('tclaude-process:');
+
+export function mountCompanionFeature(dependencies = {}) {
+  if (processSoloWindow()) return Promise.resolve(null);
+  return mountIslandDescriptor(companionDescriptor, dependencies);
+}
+
+// A drawing board in its own floating window (tcl-h4y60w). The drawing boards themselves are
+// tabs of the terminal shell.
+const drawingBoardOverlayDescriptor = createIslandDescriptor({
+  name: 'drawing-board-overlay',
+  label: 'Drawing board overlay',
+  hosts: { host: '#drawing-board-overlay-root' },
+  failureClass: 'drawing-board-overlay-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./drawing-board-overlay.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const [{ mountDrawingBoardOverlayIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotStoreModule]);
+    return {
+      mount: (registerCleanup) => mountDrawingBoardOverlayIsland({ host, registerCleanup, snapshot: dashboardState.snapshot }),
+    };
+  },
+});
+
+export function mountDrawingBoardOverlayFeature(dependencies = {}) {
+  if (processSoloWindow()) return Promise.resolve(null);
+  return mountIslandDescriptor(drawingBoardOverlayDescriptor, dependencies);
+}
+
 // Terminal chrome and open state are one ownership unit across the nav badge,
 // dashboard pane stack. xterm itself remains behind
 // the opaque host adapter loaded by terminal-shell-island.js.
@@ -330,7 +470,7 @@ const jobsDescriptor = createIslandDescriptor({
     hosts: {
       host: '#jobs-root', badgeHost: '#jobs-badge-root', dialogHost: '#jobs-cron-dialog-root',
     },
-    failureClass: 'jobs-error',
+    failureClass: 'jobs-error ui-error-box',
     load: async ({ hosts: { host, badgeHost, dialogHost }, dependencies: actionDependencies }) => {
       // Keep import() behind named promises: the repository's intentionally
       // small module-graph scanner recognizes dynamic imports in expressions,
@@ -433,7 +573,7 @@ export async function mountUsageHistoryFeature(actionDependencies = {}) {
   const host = document.querySelector('#usage-root');
   if (!host) return null;
   return mountFeatureIsland({
-    name: 'usage', label: 'Usage', hosts: [host], failureClass: 'usage-history-error',
+    name: 'usage', label: 'Usage', hosts: [host], failureClass: 'usage-history-error ui-error',
     load: async () => {
       const islandModule = import('./usage-history-island.js');
       const stateModule = import('./usage-history-state.js');
@@ -473,13 +613,34 @@ export async function mountAccessFeature(actionDependencies) {
   });
 }
 
+const voiceWakeDescriptor = createIslandDescriptor({
+  name: 'voice-wake',
+  label: 'Wake listener',
+  hosts: { host: '#voice-wake-root' },
+  failureClass: 'voice-wake-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./voice-wake-island.js');
+    const snapshotModule = import('./snapshot-store.js');
+    const [{ mountVoiceWakeIsland }, { dashboardState }] = await Promise.all([islandModule, snapshotModule]);
+    return {
+      state: null,
+      mount: (registerCleanup) => registerCleanup(mountVoiceWakeIsland({ host, snapshot: dependencies.snapshot || dashboardState.snapshot })),
+    };
+  },
+});
+
+// mountVoiceWakeFeature runs on the dashboard and in detached terminal windows.
+export function mountVoiceWakeFeature(dependencies = {}) {
+  return mountIslandDescriptor(voiceWakeDescriptor, dependencies);
+}
+
 const messageAccessDialogsDescriptor = createIslandDescriptor({
   name: 'message-access-dialogs',
   label: 'Message and access dialogs',
   hosts: {
     dialogHost: '#message-access-dialog-root',
   },
-  failureClass: 'message-access-dialog-error',
+  failureClass: 'message-access-dialog-error ui-error-box',
   load: async ({ hosts, dependencies }) => {
     const islandModule = import('./message-access-dialog-island.js');
     const stateModule = import('./message-access-dialog-state.js');
@@ -562,7 +723,7 @@ export function mountToolbarProfilePickerFeature(dependencies = {}) {
 }
 
 const messagesDescriptor = createIslandDescriptor({
-  name: 'messages', label: 'Messages', hosts: { host: '#messages-root' }, failureClass: 'messages-error',
+  name: 'messages', label: 'Messages', hosts: { host: '#messages-root' }, failureClass: 'messages-error ui-error-box',
   load: async ({ hosts: { host } }) => {
     const islandModule = import('./mail-island.js');
     const legacyModule = import('./mail.js');
@@ -768,6 +929,28 @@ export async function mountConfigFeature(dependencies = {}) {
   });
 }
 
+// The Diagnostics › Doctor view and its two badges (on the Diagnostics nav tab
+// and on the Doctor subtab) form one ownership unit.
+export async function mountDoctorFeature(dependencies = {}) {
+  const host = document.querySelector('#doctor-root');
+  if (!host) return null;
+  const badgeHosts = [...document.querySelectorAll('#doctor-badge-root, #doctor-subtab-badge-root')];
+  return mountFeatureIsland({
+    name: 'doctor', label: 'Doctor', hosts: [host], failureClass: 'doctor-error ui-error-box',
+    load: async () => {
+      const islandModule = import('./doctor-island.js');
+      const stateModule = import('./doctor-state.js');
+      const [{ mountDoctorIsland }, { doctorState }] = await Promise.all([islandModule, stateModule]);
+      return {
+        state: doctorState,
+        mount: (registerCleanup) => mountDoctorIsland({
+          host, badgeHosts, state: doctorState, notify: dependencies.notify, registerCleanup,
+        }),
+      };
+    },
+  });
+}
+
 const processesDescriptor = createIslandDescriptor({
   name: 'processes', label: 'Processes', hosts: { host: '#processes-root' }, failureClass: 'processes-error',
   load: async ({ hosts: { host }, dependencies }) => {
@@ -968,7 +1151,7 @@ const directoryPickerDescriptor = createIslandDescriptor({
   label: 'Directory picker',
   hosts: { root: '#directory-picker-root' },
   primaryHost: 'root',
-  failureClass: 'directory-picker-error',
+  failureClass: 'directory-picker-error ui-error',
   load: async ({ hosts, dependencies }) => {
     const islandModule = import('./directory-picker-island.js');
     const stateModule = import('./directory-picker-state.js');
@@ -995,7 +1178,7 @@ export function mountDirectoryPickerFeature(dependencies = {}) {
 const gitRepositoriesDescriptor = createIslandDescriptor({
   name: 'git-repositories', label: 'Git repositories',
   hosts: { root: '#git-repositories-root' }, primaryHost: 'root',
-  failureClass: 'git-repos-error',
+  failureClass: 'git-repos-error ui-error',
   load: async ({ hosts, dependencies }) => {
     const islandModule = import('./git-repositories-island.js');
     const stateModule = import('./git-repositories-state.js');

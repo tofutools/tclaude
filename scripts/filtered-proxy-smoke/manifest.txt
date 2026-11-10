@@ -21,6 +21,10 @@
 
 10-floor-policy TestTclaudeLayerProxyFloorSmoke
 10-floor-policy TestTclaudeLayerProxyPolicySmoke
+# A Claude sign-in refresh inside the sandbox writes the rotated token back to
+# ~/.claude/.credentials.json on the host. Rides on this flow for its launch
+# construction; the network policy plays no part.
+10-floor-policy TestTclaudeLayerClaudeCredentialWriteBackSmoke
 
 20-harness-egress TestPinnedProxyHarnessCooperation
 20-harness-egress TestPinnedProxyToolEgress

@@ -25,7 +25,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// Exit codes for lookup-shaped commands.
+// Exit codes of the agent commands (MapDaemonErrorToRC maps a daemon error
+// onto them):
+//
+//	0  success
+//	1  not found
+//	2  ambiguous selector
+//	3  invalid argument
+//	4  I/O failure: the daemon is unreachable, or failed the request
+//	5  refused: a permission denial, or any 403 whose code is not one of
+//	   the above (a 403 "route_group" mismatch stays 3). Before tcl-cezwhu
+//	   a permission denial exited 4
 const (
 	rcOK         = 0
 	rcNotFound   = 1
@@ -357,6 +367,43 @@ func ResolveSelectorCached(selector string) (*Resolved, []*Resolved, error) {
 	}
 	r, matches, err := tryResolve(selector)
 	return stampAgentID(redirectResolvedToLatest(r)), stampAgentIDs(matches), err
+}
+
+// resolveAgentForResume implements session.AgentResumeResolver. Only a name or
+// agent id counts. A conversation id or prefix stays subject to the project
+// scope of --resume and names that exact conversation, so it's never a match
+// here, and neither is the title of an old generation: forwarding either to the
+// agent's latest generation would resume something the operator didn't name.
+func resolveAgentForResume(selector string) (string, error) {
+	if !strings.HasPrefix(selector, db.AgentIDPrefix) {
+		if row, err := db.GetConvIndex(selector); err == nil && row != nil {
+			return "", nil
+		}
+		if row, err := db.FindConvIndexByPrefix(selector); err == nil && row != nil {
+			return "", nil
+		}
+	}
+	res, matches, err := tryResolve(selector)
+	switch {
+	case errors.Is(err, errNoAgentMatch):
+		return "", err
+	case errors.Is(err, errAmbiguous):
+		for _, m := range matches {
+			if isAgentHead(m.ConvID) {
+				return "", fmt.Errorf("%q matches more than one agent or conversation; use the agent ID from `tclaude agent ls`", selector)
+			}
+		}
+		return "", nil
+	case err != nil || res == nil || !isAgentHead(res.ConvID):
+		return "", nil
+	}
+	return res.ConvID, nil
+}
+
+// isAgentHead reports whether convID is the current generation of an agent.
+func isAgentHead(convID string) bool {
+	agentID, err := db.AgentIDForConv(convID)
+	return err == nil && agentID != "" && db.ResolveLatestConv(convID) == convID
 }
 
 // CurrentConvID returns the conv-id of the conversation invoking the
@@ -757,7 +804,7 @@ func whoamiCmd() *cobra.Command {
 		Short:       "Print the current conversation's ID and display name",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *whoamiParams, _ *cobra.Command, _ []string) {
-			os.Exit(runWhoami(os.Stdout, os.Stderr))
+			os.Exit(runWhoami(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -783,6 +830,7 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 		Title        string                 `json:"title"`
 		Phases       []string               `json:"phases"`
 		PendingMorph *db.AgentPendingMorph  `json:"pending_morph,omitempty"`
+		KeptGroups   []string               `json:"kept_permission_groups,omitempty"`
 	}
 	if err := DaemonGet("/v1/whoami", &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -813,6 +861,9 @@ func runWhoamiDaemon(stdout, stderr io.Writer) int {
 	}
 	if resp.PendingMorph != nil {
 		fmt.Fprintf(stdout, "  %s\n", pendingMorphLine(resp.PendingMorph))
+	}
+	if len(resp.KeptGroups) > 0 {
+		fmt.Fprintf(stdout, "  Kept group permissions (no longer a member): %s\n", strings.Join(resp.KeptGroups, ", "))
 	}
 	return rcOK
 }
@@ -862,7 +913,7 @@ func lookupCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *lookupParams, _ *cobra.Command, _ []string) {
-			os.Exit(runLookup(p, os.Stdout, os.Stderr))
+			os.Exit(runLookup(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -942,7 +993,7 @@ func lsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *lsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runLs(p, os.Stdout, os.Stderr))
+			os.Exit(runLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1026,7 +1077,11 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 		peers = filtered
 	}
 	if !p.Remote {
-		return renderPeers(p, peers, stdout)
+		rc := renderPeers(p, peers, stdout)
+		if rc == rcOK && !p.JSON {
+			renderQueuedSpawnsSection(stdout)
+		}
+		return rc
 	}
 	rpath := "/v1/federation/reachable"
 	if g := strings.TrimSpace(p.Group); g != "" {
@@ -1058,6 +1113,7 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	renderRemotePeers(remote, stdout, table.GetTerminalWidth())
+	renderQueuedSpawnsSection(stdout)
 	return rcOK
 }
 

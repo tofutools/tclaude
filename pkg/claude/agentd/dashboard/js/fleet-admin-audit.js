@@ -2,13 +2,15 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { AUDIT_WINDOWS, auditSince, shortID } from './fleet-admin-model.js';
+import { Button, Select } from './ui-components.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
 const PAGE = 200;
 const MAX = 1000;
-
-function errText(error) { return error?.message || String(error); }
 
 // FAILED_STATES mark a row as an error for sources that carry a state but
 // no HTTP status (outbox mail, spawn requests, jobs, offers, teleports).
@@ -18,10 +20,7 @@ function failed(r) {
   return r.status >= 400 || FAILED_STATES.has(String(r.state || '').toLowerCase());
 }
 
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) ? t.toLocaleString() : '—';
-}
+const when = (iso) => localStamp(iso);
 
 // AuditPage reads this node's federation activity log (metadata only: who,
 // which peer, what kind, outcome), newest first, filtered by peer and time.
@@ -54,21 +53,18 @@ export function AuditPage({ view, actions, now }) {
   const list = rows || [];
   return html`<div class="fa-audit">
     <div class="fa-grant-form">
-      <label><span class="fa-k">Peer</span><select id="fleet-audit-peer" value=${peer} onChange=${(e) => { setPeer(e.currentTarget.value); setLimit(PAGE); }}>
-        <option value="">all peers</option>
-        ${options.map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
-      </select></label>
-      <label><span class="fa-k">When</span><select id="fleet-audit-window" value=${String(windowMs)} onChange=${(e) => { setWindowMs(Number(e.currentTarget.value)); setLimit(PAGE); }}>
+      <label><span class="fa-k">Peer</span><${PeerCombobox} id="fleet-audit-peer" value=${peer} noneLabel="all peers"
+        items=${namedItems(options.map((r) => ({ name: r.id, label: r.label, descr: shortID(r.id) })))}
+        onChange=${(next) => { setPeer(next); setLimit(PAGE); }} /></label>
+      <label><span class="fa-k">When</span><${Select} size="sm" id="fleet-audit-window" value=${String(windowMs)} onChange=${(e) => { setWindowMs(Number(e.currentTarget.value)); setLimit(PAGE); }}>
         ${AUDIT_WINDOWS.map((w) => html`<option key=${w.ms} value=${String(w.ms)}>${w.label}</option>`)}
-      </select></label>
-      <button id="fleet-audit-refresh" type="button" onClick=${() => setTick((n) => n + 1)}>Refresh</button>
+      <//></label>
+      <${Button} size="sm" id="fleet-audit-refresh" onClick=${() => setTick((n) => n + 1)}>Refresh<//>
       <span class="muted">Metadata of remote activity only. ${peer ? 'Operator audit rows that cannot be tied to one peer show only under all peers. ' : ''}CLI: <code>tclaude federation audit</code></span>
     </div>
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${rows == null ? (error ? '' : html`<div class="empty">Loading…</div>`) : list.length === 0 ? html`<div class="empty">No federation activity in this window.</div>` : html`
-    <table class="fa-table" id="fleet-audit">
-      <thead><tr><th>When</th><th></th><th>Peer</th><th>Kind</th><th>Actor</th><th>Target</th><th>Group</th><th>Outcome</th></tr></thead>
-      <tbody>${list.map((r) => html`<tr key=${r.id} data-kind=${r.kind}>
+    <${FaTable} id="fleet-audit" head=${['When', '', 'Peer', 'Kind', 'Actor', 'Target', 'Group', 'Outcome']}>${list.map((r) => html`<tr key=${r.id} data-kind=${r.kind}>
         <td class="fa-nowrap">${when(r.at)}</td>
         <td title=${r.direction === 'in' ? 'incoming: the peer acted on this node' : r.direction === 'out' ? 'outgoing: this node acted on the peer' : r.direction}>${r.direction === 'in' ? '⇠' : r.direction === 'out' ? '⇢' : '·'}</td>
         <td>${label(r.peer)}</td>
@@ -77,9 +73,8 @@ export function AuditPage({ view, actions, now }) {
         <td class="fa-wrap">${r.target || ''}</td>
         <td>${r.group || ''}</td>
         <td class=${failed(r) ? 'fa-danger' : ''}>${[r.state, r.status || ''].filter(Boolean).join(' ') || '—'}</td>
-      </tr>`)}</tbody>
-    </table>
-    ${list.length >= limit && limit < MAX && html`<div class="fa-grant-form"><button id="fleet-audit-more" type="button" onClick=${() => setLimit(Math.min(MAX, limit + PAGE))}>Show more</button></div>`}
+      </tr>`)}<//>
+    ${list.length >= limit && limit < MAX && html`<div class="fa-grant-form"><${Button} size="sm" id="fleet-audit-more" onClick=${() => setLimit(Math.min(MAX, limit + PAGE))}>Show more<//></div>`}
     ${list.length >= MAX && html`<div class="muted">Showing the newest ${MAX}; narrow by peer or time for older rows.</div>`}`}
   </div>`;
 }

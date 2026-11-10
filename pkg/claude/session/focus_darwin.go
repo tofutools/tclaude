@@ -29,13 +29,13 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 	debug := os.Getenv("TCLAUDE_DEBUG") != ""
 
 	if debug {
-		fmt.Printf("[debug] FocusTmuxSession: tmuxSession=%s sessionID=%s\n", tmuxSession, sessionID)
+		fmt.Fprintf(cliStdout, "[debug] FocusTmuxSession: tmuxSession=%s sessionID=%s\n", tmuxSession, sessionID)
 	}
 
 	// Get the client tty for the target session
 	tty := getTmuxClientTTY(tmuxSession)
 	if debug {
-		fmt.Printf("[debug] Target tty: %s\n", tty)
+		fmt.Fprintf(cliStdout, "[debug] Target tty: %s\n", tty)
 	}
 
 	raiseOnly := focusRaiseOnlyFn()
@@ -58,7 +58,7 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 	// exists to suppress). Mirrors the Linux focusLinuxNoClients arm.
 	if raiseOnly && tty == "" {
 		if debug {
-			fmt.Println("[debug] raise_only and no attached client; nothing to raise")
+			fmt.Fprintln(cliStdout, "[debug] raise_only and no attached client; nothing to raise")
 		}
 		return false
 	}
@@ -69,19 +69,19 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 		termApp = terminalFromTTY(tty)
 	}
 	if debug {
-		fmt.Printf("[debug] Terminal app: %q\n", termApp)
+		fmt.Fprintf(cliStdout, "[debug] Terminal app: %q\n", termApp)
 	}
 
 	if termApp == "" {
 		termApp = detectAnyRunningTerminal()
 		if debug {
-			fmt.Printf("[debug] Fallback terminal: %q\n", termApp)
+			fmt.Fprintf(cliStdout, "[debug] Fallback terminal: %q\n", termApp)
 		}
 	}
 
 	if termApp == "" {
 		if debug {
-			fmt.Println("[debug] No terminal app found")
+			fmt.Fprintln(cliStdout, "[debug] No terminal app found")
 		}
 		return false
 	}
@@ -103,7 +103,7 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 	// Fallback: just activate the app
 	script := `tell application "` + termApp + `" to activate`
 	if debug {
-		fmt.Printf("[debug] Fallback: activating app\n")
+		fmt.Fprintf(cliStdout, "[debug] Fallback: activating app\n")
 	}
 	cmd := exec.Command("osascript", "-e", script)
 	return cmd.Run() == nil
@@ -145,13 +145,13 @@ end tell
 `, tty)
 
 	if debug {
-		fmt.Printf("[debug] Running iTerm2 AppleScript for tty %s\n", tty)
+		fmt.Fprintf(cliStdout, "[debug] Running iTerm2 AppleScript for tty %s\n", tty)
 	}
 
 	cmd := exec.Command("osascript", "-e", script)
 	output, err := cmd.CombinedOutput()
 	if debug {
-		fmt.Printf("[debug] AppleScript output: %s, err: %v\n", strings.TrimSpace(string(output)), err)
+		fmt.Fprintf(cliStdout, "[debug] AppleScript output: %s, err: %v\n", strings.TrimSpace(string(output)), err)
 	}
 	return err == nil && strings.TrimSpace(string(output)) == "true"
 }
@@ -176,89 +176,15 @@ end tell
 `, tty)
 
 	if debug {
-		fmt.Printf("[debug] Running Terminal.app AppleScript for tty %s\n", tty)
+		fmt.Fprintf(cliStdout, "[debug] Running Terminal.app AppleScript for tty %s\n", tty)
 	}
 
 	cmd := exec.Command("osascript", "-e", script)
 	output, err := cmd.CombinedOutput()
 	if debug {
-		fmt.Printf("[debug] AppleScript output: %s, err: %v\n", strings.TrimSpace(string(output)), err)
+		fmt.Fprintf(cliStdout, "[debug] AppleScript output: %s, err: %v\n", strings.TrimSpace(string(output)), err)
 	}
 	return err == nil && strings.TrimSpace(string(output)) == "true"
-}
-
-// FocusOwnWindow attempts to focus the current process's terminal window.
-// Uses AppleScript to activate the detected terminal application.
-func FocusOwnWindow() bool {
-	termApp := detectTerminalApp()
-	if termApp == "" {
-		return false
-	}
-
-	// Use AppleScript to activate the terminal
-	script := `tell application "` + termApp + `" to activate`
-	cmd := exec.Command("osascript", "-e", script)
-	return cmd.Run() == nil
-}
-
-// GetOwnWindowTitle returns the title of the current terminal window.
-func GetOwnWindowTitle() string {
-	// Not easily available on macOS without terminal-specific APIs
-	return ""
-}
-
-// detectTerminalApp tries to determine which terminal application we're running in.
-func detectTerminalApp() string {
-	// Check TERM_PROGRAM environment variable (set by most macOS terminals)
-	termProgram := os.Getenv("TERM_PROGRAM")
-	switch termProgram {
-	case "Apple_Terminal":
-		return "Terminal"
-	case "iTerm.app":
-		return "iTerm2"
-	case "vscode":
-		return "Visual Studio Code"
-	case "Hyper":
-		return "Hyper"
-	case "Alacritty":
-		return "Alacritty"
-	case "kitty":
-		return "kitty"
-	case "WarpTerminal":
-		return "Warp"
-	}
-
-	// Check if running inside tmux - look at parent processes
-	if os.Getenv("TMUX") != "" {
-		// We're in tmux, try to find the terminal from tmux client
-		return detectTerminalFromTmux()
-	}
-
-	// Fallback: try common terminals
-	terminals := []string{"iTerm2", "Terminal", "Alacritty", "kitty"}
-	for _, term := range terminals {
-		if isAppRunning(term) {
-			return term
-		}
-	}
-
-	return ""
-}
-
-// detectTerminalFromTmux tries to find which terminal is running the current tmux client.
-func detectTerminalFromTmux() string {
-	// Get the tmux client tty
-	cmd := clcommon.TmuxCommand("display-message", "-p", "#{client_tty}")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	tty := strings.TrimSpace(string(output))
-	if tty == "" {
-		return ""
-	}
-
-	return terminalFromTTY(tty)
 }
 
 // terminalFromTTY finds the terminal app owning a TTY.
@@ -295,20 +221,20 @@ func findTerminalFromPID(pid string) string {
 		output, err := cmd.Output()
 		if err != nil {
 			if debug {
-				fmt.Printf("[debug] ps comm= error for pid %s: %v\n", pid, err)
+				fmt.Fprintf(cliStdout, "[debug] ps comm= error for pid %s: %v\n", pid, err)
 			}
 			return ""
 		}
 		procName := strings.TrimSpace(string(output))
 
 		if debug {
-			fmt.Printf("[debug] PID %s -> %s\n", pid, procName)
+			fmt.Fprintf(cliStdout, "[debug] PID %s -> %s\n", pid, procName)
 		}
 
 		term := terminalFromProcName(procName)
 		if term != "" {
 			if debug {
-				fmt.Printf("[debug] Found terminal: %s\n", term)
+				fmt.Fprintf(cliStdout, "[debug] Found terminal: %s\n", term)
 			}
 			return term
 		}

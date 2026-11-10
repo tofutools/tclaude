@@ -270,7 +270,7 @@ func Cmd() *cobra.Command {
 		RunFunc: func(_ *boa.NoParams, cmd *cobra.Command, args []string) {
 			// Default to interactive watch mode
 			if err := RunWatchMode(false, table.SortState{}, nil, nil); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -396,12 +396,6 @@ func ListSessionStates() ([]*SessionState, error) {
 		states[i] = fromRow(r)
 	}
 	return states, nil
-}
-
-// CleanupOldExitedSessions removes exited session states older than maxAge.
-func CleanupOldExitedSessions(maxAge time.Duration) error {
-	_, err := db.CleanupOldExited(maxAge)
-	return err
 }
 
 // FindSessionByConvID finds a session by Claude conversation ID using an indexed lookup.
@@ -760,30 +754,6 @@ func RefreshSessionStatus(state *SessionState) {
 
 	// No tmux session and no PID - mark as exited
 	MarkStateExited(state)
-}
-
-// ShortID returns the first 8 characters of an ID for display
-func ShortID(id string) string {
-	if len(id) <= 8 {
-		return id
-	}
-	return id[:8]
-}
-
-// ShortenPath shortens a path for display
-func ShortenPath(path string, maxLen int) string {
-	if len(path) <= maxLen {
-		return path
-	}
-	// Show last part of path
-	parts := filepath.SplitList(path)
-	if len(parts) > 0 {
-		last := parts[len(parts)-1]
-		if len(last) <= maxLen-3 {
-			return "…" + string(filepath.Separator) + last
-		}
-	}
-	return "…" + path[len(path)-maxLen+1:]
 }
 
 // ParsePIDFromTmux gets the PID of the main process in a tmux session

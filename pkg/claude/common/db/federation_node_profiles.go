@@ -693,6 +693,10 @@ func deleteUnwantedSpawnFieldGrants(tx *sql.Tx, peer, scope string, desired map[
 			drop = append(drop, slug)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
 	if err := rows.Close(); err != nil {
 		return err
 	}

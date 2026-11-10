@@ -12,8 +12,8 @@ func TestPermissionRegistryScopeDeclarations(t *testing.T) {
 	want := map[string][]ScopeDim{
 		PermAgentSpawn:         {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
 		PermGroupsMembersSpawn: {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile, ScopeDimPeer},
-		PermProcessRunsManage:  {ScopeDimProcessTemplate},
-		PermAgentRetire:        {ScopeDimGroup, ScopeDimTargetAgent},
+		PermProcessRunsManage:  {ScopeDimProcessTemplate, ScopeDimPeer},
+		PermAgentRetire:        {ScopeDimGroup, ScopeDimTargetAgent, ScopeDimPeer},
 		PermAgentStanddown:     {ScopeDimGroup, ScopeDimTargetAgent},
 		PermRoutesPublish:      {ScopeDimGroup},
 		PermRoutesConsume:      {ScopeDimGroup, ScopeDimPeer},
@@ -124,9 +124,6 @@ func TestCanonicalizeImportedPermissionScopesCoversAllGrantTables(t *testing.T) 
 		Permissions: []groupexport.Permission{{
 			ConvID: "conv", Slug: PermGroupsMembersSpawn, Effect: "grant", ScopeJSON: raw,
 		}},
-		SudoGrants: []groupexport.SudoGrant{{
-			ConvID: "conv", Slug: PermGroupsMembersSpawn, ScopeJSON: raw,
-		}},
 	}
 	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
 		t.Fatalf("canonicalizeImportedPermissionScopes: %v", err)
@@ -136,9 +133,6 @@ func TestCanonicalizeImportedPermissionScopesCoversAllGrantTables(t *testing.T) 
 	}
 	if got := exp.Permissions[0].ScopeJSON; got != want {
 		t.Errorf("permanent permission scope = %s, want %s", got, want)
-	}
-	if got := exp.SudoGrants[0].ScopeJSON; got != want {
-		t.Errorf("sudo grant scope = %s, want %s", got, want)
 	}
 }
 

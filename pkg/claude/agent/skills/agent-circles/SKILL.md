@@ -38,7 +38,8 @@ grant, so discovery always works. Mutations are gated:
 | You want to… | Verb(s) | Slug required |
 |---|---|---|
 | Create / edit / delete a template, snapshot a group, import one | `create` `edit` `rm` `from-group` `import` | `templates.manage` |
-| Spawn a whole team from a template | `instantiate` `deploy` | `templates.instantiate` |
+| Change or remove an existing template's `owner_scopes` (or delete a template that has them) | `edit` `import --update` `from-group --update` `rm` | also `groups.settings.owner-scopes`, `permissions.grant`, `permissions.revoke` |
+| Spawn a whole team from a template | `instantiate`, or `tclaude agent task-force deploy` | `templates.instantiate` |
 | Also create/edit roles the template references | `roles create/edit/rm` | `roles.manage` |
 | Also create/edit spawn profiles the template references | `profiles create/edit/rm` | `profiles.manage` |
 
@@ -203,7 +204,8 @@ The human may speak wizard; the system never does. Translate before acting:
 |---|---|
 | summoning circle | template |
 | hero party / party (deployed) | group / task force |
-| familiar | agent |
+| hero | agent |
+| loadout | spawn profile |
 | rite of command | work pattern |
 | quest plan (chapters) | process (phases) |
 | drumbeats | rhythms |

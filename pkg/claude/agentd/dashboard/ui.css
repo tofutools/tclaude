@@ -1,0 +1,613 @@
+/* Standard dashboard controls (tcl-32qwip). New UI uses these classes so it is
+   styled by default instead of needing a per-container style pass:
+
+     buttons  .ui-btn [+ .ui-btn-primary | -success | -danger | -ghost | -link]
+              (-ghost or -link with -danger: the quiet red-text form)
+              [+ .ui-sm] [+ .ui-btn-icon]; group with .ui-seg
+     fields   .ui-input  .ui-select  .ui-textarea  [+ .ui-sm]
+     checks   label.ui-check > input[type=checkbox|radio];  input.ui-switch
+     menus    .ui-menu [+ .ui-sm] > .ui-menu-item [+ .ui-btn-danger | .ui-menu-warn]
+              | .ui-menu-sep | .ui-menu-heading
+
+   Blue primary is the one main action; green success is approve / run / start.
+   State lives in attributes: :disabled, aria-pressed="true", aria-busy="true",
+   aria-invalid="true".
+
+   Colours are --ui-* variables, so a skin restyles every control by overriding
+   them on its body class rather than with per-container selectors. The sheet
+   loads after every other stylesheet; an older container rule that still
+   targets bare elements (`.modal-buttons button`) can outrank these, and a
+   migration removes such rules as it moves an area onto ui-* classes.
+   jstest/ui-controls.test.mjs holds new <button>/<select> markup to this set. */
+
+/* Layers. Every z-index in the dashboard is one of these, or calc() of one
+   plus a small step for order inside the layer; jstest/ui-layers.test.mjs
+   holds the sheets to it. Low to high:
+
+     content   the page itself. Raw 0-9 orders the parts of one component
+               (a sticky head over its rows) and never reaches past it.
+     window    overlay windows, their split lines, snap guides. A window's own
+               level is --overlay-level, set by js/overlay-window.js inside
+               this band; raising a window never leaves it.
+     chrome    the footer, the minimized-window dock, the companion's chips
+               and the marks an agent draws over the page.
+     panel     side panels: the agent dock, the notification drawer.
+     dialog    forms and editor dialogs, modal or not. A dialog opened from
+               another sits a step above it.
+     popover   menus, popovers, tooltips, hover cards, the command palette.
+     confirm   confirmations and permission prompts; nothing covers them.
+     toast     toasts and transfer progress.
+     system    out of band, above the scale: the boot bar, the disconnect
+               screen, and pointer-transparent skin effects.
+
+   Opening anything from panel up never moves or minimizes a window: the
+   window stays where it is, and the panel, dialog or popover paints over it. */
+:root {
+  --z-content: 0;
+  --z-window: 1000;
+  --z-chrome: 2000;
+  --z-panel: 3000;
+  --z-dialog: 4000;
+  --z-popover: 5000;
+  --z-confirm: 6000;
+  --z-toast: 7000;
+  --z-system: 9000;
+}
+
+:root {
+  /* The wizard skin's gold: button and primary borders, note edges and the
+     active scrollbar thumb. One token so the gilt is tuned in one place. */
+  --ui-wizard-gold: #d9b45a;
+  --ui-bg: #21262d;
+  --ui-bg-hover: #2d333b;
+  --ui-danger-hover: #6b2424;
+  --ui-line: #2a3340;
+  --ui-btn-line: #2a3340;
+  --ui-text: #c9d1d9;
+  --ui-text-strong: #e6edf3;
+  --ui-muted: #7d8590;
+  --ui-muted-text: #7d8590;
+  --ui-body-text: #c9d1d9;
+  --ui-strong-text: #e6edf3;
+  --ui-placeholder: #6e7681;
+  --ui-focus: #58a6ff;
+  --ui-pressed-bg: #30363d;
+  --ui-field-bg: #0d1117;
+  --ui-menu-bg: #0d1117;
+  --ui-menu-hover: #1f6feb33;
+  --ui-primary: #1f6feb;
+  --ui-primary-line: #1f6feb;
+  --ui-primary-hover: #388bfd;
+  --ui-primary-text: #fff;
+  --ui-success: #238636;
+  --ui-success-line: #2ea043;
+  --ui-danger: #f85149;
+  --ui-danger-text: #ffa198;
+  --ui-warn-text: #e3b341;
+  --ui-danger-bg: #4d1d1d;
+  --ui-switch-off: #30363d;
+  --ui-radius: 4px;
+  --ui-badge-bg: #21262d;
+  --ui-badge-text: #8b949e;
+  --ui-badge-accent: #1f6feb;
+  --ui-badge-accent-text: #fff;
+  --ui-badge-warn: #9e6a03;
+  --ui-dialog-bg: #161b22;
+  --ui-dialog-line: #2a3340;
+  --ui-dialog-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --ui-dialog-text: #c9d1d9;
+  --ui-dialog-title: #d4d4d4;
+  --ui-dialog-title-font: inherit;
+  --ui-dialog-title-spacing: normal;
+  --ui-dialog-title-shadow: none;
+  --ui-card-bg: #161b22;
+  --ui-card-inset-bg: #0d1117;
+  --ui-card-line: #2a3340;
+  /* Dialog meta lines (.modal-meta): the boxed one's text, and the left
+     edge of the note one in .cron-create-modal dialogs. */
+  --ui-meta-text: #c9d1d9;
+  --ui-note-edge: #2a3340;
+}
+body.wizard {
+  --ui-bg: #241b3d;
+  --ui-bg-hover: #3a2a63;
+  --ui-line: rgba(122, 93, 176, 0.58);
+  --ui-btn-line: var(--ui-wizard-gold);
+  --ui-text: #e7d9f5;
+  --ui-text-strong: #f3e6c0;
+  --ui-muted: #b39ddb;
+  --ui-muted-text: #b39ddb;
+  --ui-body-text: #e7d9f5;
+  --ui-strong-text: #f3e6c0;
+  --ui-focus: #a97bd6;
+  --ui-pressed-bg: #3b2a63;
+  --ui-field-bg: #100c17;
+  --ui-menu-bg: #100c17;
+  --ui-menu-hover: rgba(169, 123, 214, 0.25);
+  --ui-primary: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  --ui-primary-line: var(--ui-wizard-gold);
+  --ui-primary-hover: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  --ui-primary-text: #f3e6c0;
+  --ui-switch-off: #2f2350;
+  --ui-badge-bg: #2a2140;
+  --ui-badge-text: #b39ddb;
+  --ui-badge-accent: #a97bd6;
+  --ui-badge-accent-text: #14102a;
+  --ui-dialog-bg: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  --ui-dialog-line: #7a5db0;
+  --ui-dialog-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  --ui-dialog-text: #e7d9f5;
+  --ui-dialog-title: #f3e6c0;
+  --ui-dialog-title-font: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  --ui-dialog-title-spacing: 1px;
+  --ui-dialog-title-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+  --ui-card-bg: #140f28;
+  --ui-card-inset-bg: #140f28;
+  --ui-card-line: rgba(122, 93, 176, 0.5);
+  --ui-meta-text: #f3e6c0;
+  --ui-note-edge: var(--ui-wizard-gold);
+}
+/* The wizard dialogs' house primary: a gilded, glowing gradient. */
+body.wizard .ui-btn-primary { text-shadow: 0 0 6px rgba(169, 123, 214, 0.6); box-shadow: 0 0 10px rgba(122, 93, 176, 0.4); }
+body.wizard .ui-btn-primary:hover:not(:disabled) { box-shadow: 0 0 16px rgba(169, 123, 214, 0.7); }
+/* A wizard dialog's footer submit is a lever: a thicker gold rim on a drop
+   shadow that presses in on click, crimson when the submit destroys (only the
+   <dialog>-submit button: a danger secondary such as Discard or Force stays
+   flat beside it). Toolbar and inline primaries stay flat. */
+body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"]) {
+  border-width: 2px; border-radius: 6px; padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+}
+body.wizard .modal-buttons .ui-btn-primary:hover:not(:disabled) { box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8); }
+body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"] {
+  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%); border-color: #f0883e; color: var(--ui-text-strong);
+  box-shadow: 0 4px 0 #1e1640, 0 0 10px rgba(240, 136, 62, 0.5);
+}
+body.wizard .modal-buttons .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"]:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%); color: var(--ui-text-strong);
+  box-shadow: 0 4px 0 #1e1640, 0 0 16px rgba(240, 136, 62, 0.8);
+}
+body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger:not(.ui-btn-ghost)[id$="-submit"]):active:not(:disabled) {
+  transform: translateY(2px); box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+/* A busy lever keeps its wizard copy ("🕯 Sealing…") legible. */
+body.wizard .modal-buttons :is(.ui-btn-primary, .ui-btn-danger[id$="-submit"]):disabled { opacity: .7; box-shadow: none; transform: none; }
+body.slop {
+  --ui-bg: #2a0a0a;
+  --ui-bg-hover: #4a1414;
+  --ui-line: #8b0000;
+  --ui-btn-line: #8b0000;
+  --ui-text: #f0dcc0;
+  --ui-text-strong: #ffe88c;
+  --ui-muted: #c0a080;
+  --ui-muted-text: #c0a080;
+  --ui-body-text: #f0dcc0;
+  --ui-strong-text: #ffe88c;
+  --ui-focus: #ffd700;
+  --ui-pressed-bg: rgba(255, 215, 0, 0.18);
+  --ui-field-bg: #1a0505;
+  --ui-menu-bg: #1a0505;
+  --ui-menu-hover: rgba(255, 215, 0, 0.18);
+  --ui-primary: #4a0a0a;
+  --ui-primary-line: #ffd700;
+  --ui-primary-hover: #6a1010;
+  --ui-primary-text: #ffe88c;
+  --ui-switch-off: #4a1a1a;
+  --ui-badge-bg: #2a0a0a;
+  --ui-badge-text: #c0a080;
+}
+
+/* Buttons. One hover for every variant: the background brightens a step and
+   the border stays as it is; danger and warn brighten within their own
+   colour. Keyboard focus is the outline ring, not a hover look. */
+.ui-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  margin: 0; padding: 5px 12px;
+  border: 1px solid var(--ui-btn-line); border-radius: var(--ui-radius);
+  background: var(--ui-bg); color: var(--ui-text);
+  font: inherit; font-size: 13px; line-height: 18px; white-space: nowrap;
+  text-decoration: none; cursor: pointer;
+}
+.ui-btn:hover:not(:disabled) { background: var(--ui-bg-hover); color: var(--ui-text-strong); }
+.ui-btn:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
+.ui-btn:disabled { opacity: .45; cursor: not-allowed; }
+.ui-btn[aria-pressed="true"],
+.ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--ui-pressed-bg); color: var(--ui-text-strong); }
+.ui-btn[aria-busy="true"] { opacity: .7; cursor: progress; }
+
+.ui-btn-primary { background: var(--ui-primary); border-color: var(--ui-primary-line); color: var(--ui-primary-text); }
+.ui-btn-primary:hover:not(:disabled) { background: var(--ui-primary-hover); color: var(--ui-primary-text); }
+.ui-btn-success { background: var(--ui-success); border-color: var(--ui-success-line); color: #fff; }
+.ui-btn-success:hover:not(:disabled) { background: var(--ui-success-line); color: #fff; }
+/* Danger is the confirm-a-destructive-action button; with -ghost it is the
+   quiet form for row and toolbar actions, red only in its text. */
+.ui-btn-danger { background: var(--ui-danger-bg); border-color: var(--ui-danger); color: var(--ui-danger); }
+.ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger-hover); color: var(--ui-danger-text); }
+.ui-btn-ghost { background: transparent; border-color: transparent; color: var(--ui-muted); }
+.ui-btn-ghost:hover:not(:disabled) { background: var(--ui-bg-hover); }
+.ui-btn-ghost.ui-btn-danger { background: transparent; border-color: transparent; color: var(--ui-danger-text); }
+.ui-btn-ghost.ui-btn-danger:hover:not(:disabled) { background: var(--ui-danger-bg); color: var(--ui-danger-text); }
+.ui-btn-link { padding: 0; border: 0; background: none; color: var(--ui-focus); }
+.ui-btn-link:hover:not(:disabled) { background: none; color: var(--ui-focus); text-decoration: underline; }
+.ui-btn-link.ui-btn-danger,
+.ui-btn-link.ui-btn-danger:hover:not(:disabled) { background: none; color: var(--ui-danger); }
+
+.ui-btn.ui-sm { padding: 2px 8px; font-size: 11.5px; line-height: 16px; }
+.ui-btn.ui-btn-link.ui-sm { padding: 0; }
+.ui-btn.ui-btn-icon { width: 28px; height: 28px; padding: 0; }
+.ui-btn.ui-btn-icon.ui-sm { width: 22px; height: 22px; }
+
+/* Inside a dialog every text button is one size: the standard .ui-btn box.
+   Compact .ui-sm actions, buttons stretched to a neighbouring field's height
+   and the footer's buttons used to sit side by side in up to five heights
+   (tcl-cg7tdi). Variants differ only in colour and weight; a skin may change
+   the rim but not the box (border-box). A link-style action in running text
+   an icon-only button and a segmented group's options (.ui-seg, a toggle
+   group rather than an action) keep their own size. */
+.ui-dialog .ui-btn:not(.ui-btn-link, .ui-btn-icon, .ui-seg > *) {
+  box-sizing: border-box; height: var(--ui-dialog-btn-h, 30px);
+  padding-top: 0; padding-bottom: 0; font-size: 13px; line-height: 18px;
+  border-radius: var(--ui-radius);
+}
+.ui-dialog .ui-btn.ui-sm:not(.ui-btn-link, .ui-btn-icon, .ui-seg > *) { padding-left: 12px; padding-right: 12px; }
+/* A button that used to stretch to the field beside it (Browse… next to a
+   path, a tool button next to a select) now centres on that row instead. */
+.ui-dialog :is(.cron-create-row .dir-browse-btn, .cron-create-row > button.tool, .directory-picker-entry-action) { align-self: center; }
+
+/* Segmented: one quiet framed group of borderless options, the pre-migration
+   look the operator asked to keep. Options read muted; hover lifts them a
+   little; aria-pressed marks the choice with a subtle fill, no outline box.
+   Keyboard focus keeps .ui-btn's ring. */
+.ui-seg {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border: 1px solid var(--ui-line); border-radius: var(--ui-radius); background: var(--ui-field-bg);
+}
+.ui-seg > .ui-btn {
+  margin: 0; border-color: transparent; border-radius: calc(var(--ui-radius) - 1px);
+  background: transparent; color: var(--ui-muted); font-weight: normal;
+}
+.ui-seg > .ui-btn:hover:not(:disabled) { background: var(--ui-bg); color: var(--ui-text); }
+.ui-seg > .ui-btn[aria-pressed="true"],
+.ui-seg > .ui-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--ui-pressed-bg); border-color: transparent; color: var(--ui-text-strong); }
+.ui-seg > .ui-btn:focus-visible { position: relative; }
+
+/* Compact tables: the dense density for tables inside dialogs, panels and
+   dense views (fleet admin, logs, debug, queues); the global table rule in
+   dashboard.css is the roomy default. */
+table.ui-compact :is(th, td) { padding: 4px 8px; }
+
+/* Bounded auto-width tables (CONTRIBUTING.md, "Table columns"): the columns
+   pack to the left. Each is as wide as its content, between a minimum and a
+   maximum, and text wraps past the maximum; the spare width goes to one
+   trailing column (or a filler), never to a content column.
+   - table.ui-table-auto: the layout.
+   - col.ui-col-fit: a content column, as wide as its content.
+   - col.ui-col-rest: the one trailing column that takes the spare width.
+   - col.ui-col-track: a fixed track (--ui-track), only for tables that must
+     line up with each other (one list drawn as two tables).
+   - .ui-fit: a cell's content, sized to it between --ui-fit-min and
+     --ui-fit-max; it wraps past the maximum. It is a block, whatever the
+     element, so its bounds apply to a <span> too. */
+table.ui-table-auto { table-layout: auto; width: 100%; }
+table.ui-table-auto > colgroup > col.ui-col-fit { width: 1%; }
+table.ui-table-auto > colgroup > col.ui-col-track { width: var(--ui-track); }
+.ui-fit { display: block; width: max-content; min-width: var(--ui-fit-min, 0); max-width: var(--ui-fit-max, 30em); white-space: normal; overflow-wrap: anywhere; }
+
+/* Tabs (js/ui-tabs.js): a section's sub-navigation is one framed bar of pill
+   tabs under the top nav (operator pick C: pills for section sub-nav, the
+   joined bar for a mode inside a dialog, underline only for the top nav).
+   The selected tab carries aria-selected (or .active, from static markup)
+   and a subtle fill. */
+.ui-tabs {
+  display: inline-flex; flex-wrap: wrap; gap: 2px; margin: 0 0 12px; padding: 2px;
+  background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 6px;
+}
+.ui-tab {
+  background: none; border: 0; border-radius: 4px; color: var(--ui-muted-text); cursor: pointer;
+  font-family: inherit; font-size: 13px; padding: 6px 14px; text-decoration: none; white-space: nowrap;
+}
+.ui-tab:hover { color: #d4d4d4; }
+.ui-tab:is(.active, [aria-selected="true"]) { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.ui-tab:disabled { cursor: not-allowed; opacity: .5; }
+body.wizard .ui-tab:hover { color: #f3e6c0; }
+body.wizard .ui-tab:is(.active, [aria-selected="true"]) {
+  background: #3a2a63; color: #f3e6c0; text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
+}
+/* .ui-tabs-seg: a mode switch inside a dialog or panel, one joined bar with
+   dividers; the chosen mode takes an accent fill. */
+.ui-tabs.ui-tabs-seg { gap: 0; padding: 0; margin: 0; overflow: hidden; background: var(--ui-card-inset-bg); border-color: var(--ui-line); }
+.ui-tabs-seg > .ui-tab { border-radius: 0; padding: 5px 12px; font-size: 12px; color: var(--ui-muted); }
+.ui-tabs-seg > .ui-tab + .ui-tab { border-left: 1px solid var(--ui-line); }
+.ui-tabs-seg > .ui-tab:is(.active, [aria-selected="true"], [aria-checked="true"]) { background: rgba(31, 111, 235, 0.2); color: var(--ui-text-strong); font-weight: normal; }
+body.wizard .ui-tabs-seg > .ui-tab:is(.active, [aria-selected="true"], [aria-checked="true"]) { background: #3a2a63; color: #f3e6c0; text-shadow: none; }
+
+/* Tags: an outlined label chip (operator pick B: one round pill, coloured by
+   variant). An area class keeps placement; a state modifier on it may still
+   set color / border-color.
+     .ui-tag          neutral label (kind, scope, state)
+     .ui-tag-accent   informational (fleet counts, enabled)
+     .ui-tag-warn     needs attention
+     .ui-tag-own      ownership / authority */
+.ui-tag {
+  display: inline-block; padding: 0 7px; border: 1px solid #30363d; border-radius: 999px;
+  background: transparent; color: #8b949e; font-size: 11px; font-weight: normal; line-height: 16px;
+  white-space: nowrap;
+}
+.ui-tag-accent { border-color: #1f6feb; color: #58a6ff; }
+.ui-tag-warn { border-color: #9e6a03; color: #d29922; }
+.ui-tag-own { border-color: #4d3a1d; background: #1d2a3a; color: #d29922; }
+body.wizard :where(.ui-tag) { border-color: rgba(122, 93, 176, 0.5); color: #b39ddb; }
+body.wizard :where(.ui-tag-accent) { border-color: #a97bd6; color: #d2b8ff; }
+body.wizard :where(.ui-tag-warn) { border-color: #9e6a03; color: #d9b45a; }
+body.wizard :where(.ui-tag-own) { border-color: #d9b45a; background: #241b3d; color: #f3e6c0; }
+
+/* Eyebrows: the small uppercase label over a group of fields, a list
+   section or a popover (operator pick C). -section marks a settings / section
+   head in the accent. The area class keeps placement only. The wizard paint
+   sits in :where() so an area state colour still wins. */
+.ui-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8b949e; }
+.ui-eyebrow-section { color: #58a6ff; }
+/* A control inside a head (Add agent, Save selection…) stays a control. */
+.ui-eyebrow :is(.ui-btn, button) { font-weight: normal; letter-spacing: normal; text-transform: none; }
+body.wizard :where(.ui-eyebrow) { color: #b39ddb; }
+body.wizard :where(.ui-eyebrow-section) { color: var(--ui-wizard-gold); }
+
+/* Fields */
+.ui-input, .ui-select, .ui-textarea {
+  min-width: 0; margin: 0; padding: 6px 10px;
+  border: 1px solid var(--ui-line); border-radius: var(--ui-radius);
+  background: var(--ui-field-bg); color: var(--ui-text); color-scheme: dark;
+  font: inherit; font-size: 13px;
+}
+.ui-input::placeholder, .ui-textarea::placeholder { color: var(--ui-placeholder); }
+.ui-input:focus, .ui-select:focus, .ui-textarea:focus {
+  outline: none; border-color: var(--ui-focus); box-shadow: 0 0 0 1px var(--ui-focus);
+}
+.ui-input:disabled, .ui-select:disabled, .ui-textarea:disabled { opacity: .45; cursor: not-allowed; }
+.ui-input[aria-invalid="true"], .ui-select[aria-invalid="true"], .ui-textarea[aria-invalid="true"] { border-color: var(--ui-danger); }
+.ui-select { text-overflow: ellipsis; cursor: pointer; }
+.ui-select option { background: var(--ui-field-bg); color: var(--ui-text); }
+.ui-textarea { resize: vertical; }
+/* Raw fields inside a wizard dialog, filter bar or config form (markup not
+   yet .ui-input/.ui-select/.ui-textarea) take the wizard field paint here,
+   once, instead of a per-dialog or per-area copy. A dialog that needs a
+   different field look still wins with its own id-scoped rule. The process
+   editors, process params and git repositories dialogs keep their own field
+   palette and states, so they are left out here, as is the Groups toolbar
+   node chip, an unboxed choice box inside its node-coloured pill. */
+body.wizard :is(.ui-dialog, .filter-bar, .cfg-field, .cfg-row-ctl) :is(input:not([type]), input[type=text], input[type=url], input[type=search], input[type=number], input[type=password], input[type=email], select, textarea):where(:not(.ui-input, .ui-select, .ui-textarea, .process-editor-modal *, .process-param-row *, .git-repositories-modal *, .toolbar-node-select *)) {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard :is(.ui-dialog, .filter-bar, .cfg-field, .cfg-row-ctl) :is(input:not([type]), input[type=text], input[type=url], input[type=search], input[type=number], input[type=password], input[type=email], select, textarea):where(:not(.ui-input, .ui-select, .ui-textarea, .process-editor-modal *, .process-param-row *, .git-repositories-modal *, .toolbar-node-select *)):focus {
+  border-color: #a97bd6;
+}
+.ui-input.ui-sm, .ui-select.ui-sm, .ui-textarea.ui-sm { padding: 3px 8px; font-size: 12px; }
+
+/* Checkbox / radio with its label, and the on/off switch. */
+.ui-check { display: inline-flex; align-items: center; gap: 6px; color: var(--ui-text); font-size: 13px; cursor: pointer; }
+.ui-check > input { margin: 0; accent-color: var(--ui-focus); cursor: inherit; }
+.ui-check:has(> input:disabled) { opacity: .45; cursor: not-allowed; }
+.ui-switch {
+  appearance: none; position: relative; flex: none;
+  width: 32px; height: 18px; margin: 0;
+  border-radius: 9px; background: var(--ui-switch-off); cursor: pointer;
+}
+.ui-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%; background: #8b949e;
+  transition: left .12s;
+}
+.ui-switch:checked { background: var(--ui-success); }
+.ui-switch:checked::after { left: 16px; background: #fff; }
+.ui-switch:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 2px; }
+.ui-switch:disabled { opacity: .45; cursor: not-allowed; }
+
+/* A resource editor's header (resource-editor-header.js): identity, a menu
+   bar (File · Edit · View · Share), and the people at the right. */
+.reh { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.reh-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.reh-spacer { flex: 1 1 0; }
+.reh-menubar { display: flex; align-items: center; gap: 1px; }
+.reh-menubar-slot { position: relative; }
+.reh-menubar-label { border: 0; border-radius: 4px; padding: 3px 8px; background: none; color: var(--ui-text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.reh-menubar-label:hover, .reh-menubar-label.open { background: var(--ui-menu-hover); color: var(--ui-text-strong); }
+.reh-menubar-label:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+.reh-menu { position: absolute; left: 0; top: calc(100% + 4px); z-index: var(--z-popover); min-width: 240px; max-height: 70vh; overflow: auto; }
+.reh-menu .reh-menu-label { flex: 1 1 auto; }
+.reh-menu .reh-menu-key { color: var(--ui-muted-text); font-size: 11px; margin-left: 16px; }
+.reh-menu-heading { padding: 4px 10px 2px; color: var(--ui-muted-text); font-size: 10.5px; }
+.reh-menu-node { padding: 4px 6px; }
+.reh-people, .reh-actions { display: flex; align-items: center; gap: 6px; }
+.reh-stack { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--ui-line); border-radius: 14px; padding: 2px 8px 2px 3px;
+  background: none; color: var(--ui-text); font: inherit; font-size: 12px; cursor: pointer; }
+.reh-stack:hover { border-color: var(--ui-focus); }
+.reh-stack:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 1px; }
+.reh-avatars { display: inline-flex; }
+.reh-avatar { display: inline-grid; place-items: center; width: 20px; height: 20px; margin-left: -5px; border-radius: 50%;
+  border: 2px solid var(--ui-menu-bg); background: #388bfd; color: #fff; font-size: 10px; font-weight: 600; }
+.reh-avatar:first-child { margin-left: 0; }
+.reh-avatar.offline { opacity: .5; }
+.reh-avatar.drawing { box-shadow: 0 0 0 2px #a371f7; }
+.reh-stack-count { color: var(--ui-muted-text); }
+
+/* Menus: the panel only. Positioning and open/close stay with the owner. */
+.ui-menu {
+  display: flex; flex-direction: column; gap: 1px; min-width: 160px; padding: 4px;
+  border: 1px solid var(--ui-line); border-radius: 6px;
+  background: var(--ui-menu-bg); box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85);
+}
+.ui-menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; margin: 0; padding: 5px 10px;
+  border: 0; border-radius: 4px; background: none; color: var(--ui-text);
+  font: inherit; font-size: 12.5px; text-align: left; text-decoration: none; cursor: pointer;
+}
+.ui-menu-item:is(:hover, [data-menu-active]):not(:disabled) { background: var(--ui-menu-hover); color: var(--ui-text-strong); }
+.ui-menu-item:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+.ui-menu-item:disabled { opacity: .45; cursor: not-allowed; }
+.ui-menu-item.ui-btn-danger { color: var(--ui-danger-text); }
+/* Warn: reversible but disruptive (retire, revoke owner, restart without the
+   sandbox). Danger stays for what cannot be undone. */
+.ui-menu-item.ui-menu-warn { color: var(--ui-warn-text); }
+.ui-menu-item.ui-menu-warn:is(:hover, [data-menu-active]):not(:disabled) { background: rgba(210, 153, 34, 0.15); color: var(--ui-warn-text); }
+.ui-menu-item.ui-btn-danger:is(:hover, [data-menu-active]):not(:disabled) { background: rgba(248, 81, 73, 0.15); color: var(--ui-danger); }
+.ui-menu-item > input { margin: 0; accent-color: var(--ui-focus); }
+.ui-menu-sep { flex: none; height: 1px; margin: 3px 2px; border: 0; background: var(--ui-line); }
+.ui-menu-heading {
+  padding: 4px 10px 2px; color: var(--ui-muted);
+  font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+}
+.ui-menu > .ui-input { margin-bottom: 3px; }
+/* A long action menu (the ⚙ cogs) packs its rows tighter. */
+.ui-menu.ui-sm { gap: 0; }
+.ui-menu.ui-sm .ui-menu-item { padding: 3px 8px; font-size: 12px; line-height: 17px; }
+.ui-menu.ui-sm .ui-menu-sep { margin: 2px; }
+
+/* Disabled controls say so on hover, everywhere: the operator's rule. Old
+   per-surface skins set cursor: default on :disabled at every specificity,
+   so this is the one place !important earns its keep. A control that is
+   busy (aria-busy) shows progress instead; it is disabled only while its
+   request runs. Guarded by jstest/ui-disabled-cursor.test.mjs. */
+:is(button, select, input, textarea, [role="button"], [role="menuitem"], [role="tab"], [role="option"]):is(:disabled, [aria-disabled="true"]),
+label:has(> input:disabled) { cursor: not-allowed !important; }
+:is(button, [role="button"])[aria-busy="true"]:disabled { cursor: progress !important; }
+
+/* Scrollbars. One house scrollbar for every scroller on the page, the page
+   itself included: thin, a quiet thumb on a transparent track (so it sits on
+   whatever pane it scrolls), brightening on hover and while dragged (in
+   Chromium; Firefox cannot target the thumb). Each state keeps 3:1 contrast
+   on the skin's lighter scrolling panes (WCAG non-text). Skins
+   set the --ui-scroll-* tokens on the root, so the page scrollbar follows the
+   skin too. Firefox reads the standardized properties; Chromium reads the
+   ::-webkit-scrollbar rules, kept apart because a non-auto scrollbar-color
+   switches Chromium to the standardized path and loses the hover state.
+   A surface that must hide its bar (an xterm viewport whose scrolling tmux
+   owns) sets scrollbar-width: none and ::-webkit-scrollbar { display: none }.
+   No other sheet styles scrollbars; jstest/ui-scrollbars.test.mjs holds that. */
+:root {
+  --ui-scroll-thumb: #6e7681;
+  --ui-scroll-thumb-hover: #8b949e;
+  --ui-scroll-thumb-active: #b1bac4;
+}
+:root:has(> body.wizard) {
+  --ui-scroll-thumb: #7a5db0;
+  --ui-scroll-thumb-hover: #a97bd6;
+  --ui-scroll-thumb-active: var(--ui-wizard-gold);
+}
+:root:has(> body.slop) {
+  --ui-scroll-thumb: #9e7a00;
+  --ui-scroll-thumb-hover: #d4a017;
+  --ui-scroll-thumb-active: #ffd700;
+}
+/* Firefox has no *:hover variant: :hover matches every ancestor of the
+   pointer, so it would light every enclosing scroller at once. */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--ui-scroll-thumb) transparent; }
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  min-height: 24px; min-width: 24px;
+  border: 2px solid transparent; border-radius: 6px;
+  background: var(--ui-scroll-thumb) padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--ui-scroll-thumb-hover); }
+::-webkit-scrollbar-thumb:active { background-color: var(--ui-scroll-thumb-active); }
+/* High contrast returns to the native bar in system colours. */
+@media (forced-colors: active) {
+  * { scrollbar-width: auto; scrollbar-color: auto; }
+  ::-webkit-scrollbar { width: auto; height: auto; }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner { background: Canvas; }
+  ::-webkit-scrollbar-thumb { background: ButtonText; border: 1px solid Canvas; }
+  ::-webkit-scrollbar-thumb:hover,
+  ::-webkit-scrollbar-thumb:active { background: Highlight; }
+}
+
+/* Empty states: the muted line a list, panel or popover shows when it has
+   nothing to show ("No matches", "Nothing to do.", "Loading…").
+     .ui-empty        inline, inside a row or a sentence
+     .ui-empty-block  the whole content of a list or panel: padded, centred
+   An area keeps its own class only for placement (a margin, a grid column),
+   never for the text's colour, size or style; skins recolour --ui-muted. */
+/* Box metrics are :where() (no specificity), so an area's placement class
+   (a margin, a grid column) wins although this sheet loads last. */
+:where(.ui-empty, .ui-empty-block) { margin: 0; }
+:where(.ui-empty-block) { display: block; padding: 14px 12px; }
+.ui-empty, .ui-empty-block { color: var(--ui-muted); font-size: 12px; font-style: italic; }
+.ui-empty-block { text-align: center; }
+/* The older table-row placeholder .empty (some 200 uses) takes the same muted
+   italic; its size and padding stay with its row (dashboard.css). */
+.empty { color: var(--ui-muted); font-style: italic; }
+
+/* Help and error text around fields and dialogs.
+     .ui-hint       the muted help line under or beside a field or option
+     .ui-error      an inline error message
+     .ui-error-box  an error banner: red edge, faint red wash
+   Text style only (the box adds its edge and wash); an area class keeps
+   placement and spacing, and a stronger state (a .warn variant) may still
+   recolour. Skins recolour --ui-muted; --ui-danger-text is shared. */
+.ui-hint { color: var(--ui-muted); font-size: 11px; line-height: 1.4; }
+.ui-error { color: var(--ui-danger-text); font-size: 12px; line-height: 1.4; }
+.ui-error-box {
+  border-left: 3px solid var(--ui-danger); background: rgba(248, 81, 73, .08);
+  color: var(--ui-danger-text); font-size: 12px; line-height: 1.4;
+}
+
+/* Count badges: the small number beside a tab, button or list entry.
+     .ui-badge          a quiet neutral count (open panes, tabs, members)
+     .ui-badge-accent   something new for you (unread, attention)
+     .ui-badge-danger   an alert (unread messages, blocking problems)
+     .ui-badge-warn     needs attention soon (pending plugins, queued spawns)
+     .ui-badge-corner   the smaller bubble pinned to an icon button's corner;
+                        the area sets position and offsets
+   An area class keeps placement (margins, position); size, shape and tone
+   come from here. Domain chips (CI, review, sandbox, owner) are not counts. */
+.ui-badge {
+  display: inline-block; box-sizing: border-box; min-width: 16px; padding: 0 5px;
+  border-radius: 8px; background: var(--ui-badge-bg); color: var(--ui-badge-text);
+  font-size: 10px; font-weight: 600; line-height: 16px; text-align: center;
+  font-variant-numeric: tabular-nums; vertical-align: middle;
+}
+.ui-badge-corner {
+  position: absolute; min-width: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--ui-pressed-bg); color: var(--ui-text-strong);
+  font-size: 9px; font-weight: 700; line-height: 13px;
+  box-shadow: 0 0 0 1px var(--ui-field-bg);
+}
+.ui-badge-accent { background: var(--ui-badge-accent); color: var(--ui-badge-accent-text); }
+.ui-badge-danger { background: var(--ui-danger); color: #fff; }
+.ui-badge-warn { background: var(--ui-badge-warn); color: #fff; }
+
+/* Dialog box: the panel a modal dialog sits in. ManagementOverlay puts it on
+   every dialog it renders; a dialog built without it adds the class itself.
+   The box paint (background, edge, corners, shadow, text colour) comes from
+   here and the skin tokens; an area class keeps size, padding and layout. */
+.ui-dialog {
+  background: var(--ui-dialog-bg); border: 1px solid var(--ui-dialog-line);
+  border-radius: 6px; box-shadow: var(--ui-dialog-shadow); color: var(--ui-dialog-text);
+}
+/* Dialog headings take the skin's title face (the wizard's gilded serif).
+   Zero specificity: an area heading with its own colour or face keeps it;
+   size and margins stay with the area. */
+:where(.ui-dialog) h3 {
+  color: var(--ui-dialog-title); font-family: var(--ui-dialog-title-font);
+  letter-spacing: var(--ui-dialog-title-spacing); text-shadow: var(--ui-dialog-title-shadow);
+}
+/* Card: a bordered surface inside a page or dialog (a list entry, a choice
+   tile, a framed note). .ui-card is the raised surface; add .ui-inset for the
+   darker, recessed one. The paint (background, edge, corners) comes from the
+   --ui-card-* tokens; an area class keeps size, padding, layout and its own
+   state edges (selected, hover, danger). */
+.ui-card {
+  background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 6px;
+}
+.ui-card.ui-inset { background: var(--ui-card-inset-bg); }
+/* Popover: a floating panel anchored to a control (a node picker, the open-PRs
+   list, filter and settings panels). Same paint as a dialog box from the
+   --ui-dialog-* tokens, with a slightly rounder corner; the area keeps
+   position, size and layout. Menus of actions use .ui-menu instead. */
+.ui-popover {
+  background: var(--ui-dialog-bg); border: 1px solid var(--ui-dialog-line);
+  border-radius: 8px; box-shadow: var(--ui-dialog-shadow); color: var(--ui-dialog-text);
+}

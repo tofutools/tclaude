@@ -20,6 +20,7 @@
 // data-pager="size".
 import { Fragment, h } from 'preact';
 import htm from 'htm';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -61,19 +62,20 @@ export function Pager({
   };
   const button = ([action, glyph, fallback], atBoundary) => {
     const title = titles[action] || fallback;
-    return html`<button key=${action} type="button" class=${range ? `${prefix}-btn` : undefined}
+    return html`<${Button} key=${action} size="sm" icon=${true} class=${range ? `${prefix}-btn` : undefined}
       data-pager=${delegated ? action : undefined} ...${data} disabled=${disabled || atBoundary}
-      title=${title} aria-label=${range ? title : undefined} onClick=${delegated ? undefined : () => act(action)}>${glyph}</button>`;
+      title=${title} aria-label=${range ? title : undefined} onClick=${delegated ? undefined : () => act(action)}>${glyph}<//>`;
   };
   const position = range
     ? html`<span class=${`${prefix}-count`}>${total ? offset + 1 : 0}–${Math.min(offset + limit, total)} of ${total}</span>`
     : html`<span class=${`${prefix}-pos`}>Page ${page} / ${pages}${stepping > page && page < pages ? html` <span class="muted">→ ${stepping}…</span>` : ''}</span>`;
   const nav = (range || pages > 1) && html`<${Fragment}>${button(NAV[0], atStart)}${button(NAV[1], atStart)}${position}${button(NAV[2], atEnd)}${button(NAV[3], atEnd)}</${Fragment}>`;
-  const select = html`<select id=${sizeId} class=${range ? `${prefix}-size` : sizeClass} data-pager=${delegated ? 'size' : undefined} ...${data}
+  const select = html`<${Select} size="sm" id=${sizeId} class=${range ? `${prefix}-size` : sizeClass} data-pager=${delegated ? 'size' : undefined} ...${data}
     title=${range ? sizeTitle : undefined} aria-label=${range ? sizeTitle : undefined} disabled=${disabled} value=${String(range ? limit : pageSize)}
     onChange=${delegated ? undefined : (event) => onPageSize?.(Number(event.currentTarget.value))}>
-    ${sizes.map((size) => html`<option key=${size} value=${size}>${sizeOption(size)}</option>`)}</select>`;
-  if (range) return html`<div class=${prefix} ...${data}>${nav}${select}</div>`;
+    ${sizes.map((size) => html`<option key=${size} value=${size}>${sizeOption(size)}</option>`)}<//>`;
+  // A capture's text says how much of the list this page holds.
+  if (range) return html`<div class=${prefix} data-capture-note=${`showing ${Math.max(0, Math.min(offset + limit, total) - offset)} of ${total} rows`} ...${data}>${nav}${select}</div>`;
   return html`<div id=${id} class=${prefix}>${nav}${note && html`<span class=${`${prefix}-note muted`}>${note}</span>`}
     <span class="grow"></span><label class=${`${prefix}-size`} title=${sizeTitle}>${select} / page</label></div>`;
 }

@@ -1,12 +1,19 @@
 package agentd
 
 import (
+	"github.com/tofutools/tclaude/pkg/hostmetrics"
 	"context"
 	"encoding/json"
 	"errors"
+	clconfig "github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/federation/client"
+	"net"
+	"path/filepath"
 	"net/http"
+	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -83,6 +90,55 @@ func SetOpenCodeRuntimeForTest(start func(sessionID, cwd, title, resumeID string
 		startOpenCodeRuntimeForSpawn = previousStart
 		sendOpenCodePromptForSpawn = previousSend
 	}
+}
+
+// OpenCodePromptRecorder collects the prompts the daemon sends through a
+// managed OpenCode server's prompt API, keyed by the conversation they target.
+type OpenCodePromptRecorder struct {
+	mu      sync.Mutex
+	prompts map[string][]string
+}
+
+// RecordOpenCodePromptsForTest records every prompt sent to a managed OpenCode
+// server after a launch. Call it after SetOpenCodeRuntimeForTest (newFlow does).
+func RecordOpenCodePromptsForTest(t *testing.T) *OpenCodePromptRecorder {
+	t.Helper()
+	rec := &OpenCodePromptRecorder{prompts: map[string][]string{}}
+	previous := sendOpenCodePromptForSpawn
+	sendOpenCodePromptForSpawn = func(launch *openCodeLaunch, _, prompt, _, _ string) error {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		rec.prompts[launch.ConvID] = append(rec.prompts[launch.ConvID], prompt)
+		return nil
+	}
+	t.Cleanup(func() { sendOpenCodePromptForSpawn = previous })
+	return rec
+}
+
+// WaitFor returns the first prompt sent to convID, failing after timeout.
+func (r *OpenCodePromptRecorder) WaitFor(t *testing.T, convID string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		r.mu.Lock()
+		got := r.prompts[convID]
+		r.mu.Unlock()
+		if len(got) > 0 {
+			return got[0]
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no OpenCode prompt was sent to %s within %s", convID, timeout)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// SetOpenCodePromptErrorForTest fails the first prompt, which a spawn sends after
+// its pane forked. Call it after SetOpenCodeRuntimeForTest.
+func SetOpenCodePromptErrorForTest(err error) func() {
+	previous := sendOpenCodePromptForSpawn
+	sendOpenCodePromptForSpawn = func(*openCodeLaunch, string, string, string, string) error { return err }
+	return func() { sendOpenCodePromptForSpawn = previous }
 }
 
 // ResetProcessRunRuntimeForTest replaces the daemon-lifetime run manager with
@@ -1599,6 +1655,13 @@ func SetSweepWorktreeFnsForTest(
 	}
 }
 
+// SetSweepBranchRiskFnForTest swaps the execute-time unpublished-commit check.
+func SetSweepBranchRiskFnForTest(risk func(root, path, branch, commit string) string) func() {
+	prev := sweepBranchRiskFn
+	sweepBranchRiskFn = risk
+	return func() { sweepBranchRiskFn = prev }
+}
+
 // SetPruneWorktreeFnsForTest swaps the prune dry-run and mutation seams used
 // by repo-wide stale-record cleanup. The mutation seam returns stderr even on
 // a nil error because real Git may report per-entry failures while exiting 0.
@@ -1765,6 +1828,21 @@ func ResetBrokerLimiterForTest() func() {
 		defaultBrokerLimiter.buckets = map[string]*brokerBucket{}
 		defaultBrokerLimiter.mu.Unlock()
 		resetBrokerEnforcementForTest()
+	}
+}
+
+// FreezeBrokerLimiterClockForTest stops the broker rate limiter's clock, so
+// every request a test makes falls in the same one-second window and a
+// ceiling is reached by count, not by how fast the test runs.
+func FreezeBrokerLimiterClockForTest() func() {
+	frozen := time.Now()
+	defaultBrokerLimiter.mu.Lock()
+	defaultBrokerLimiter.now = func() time.Time { return frozen }
+	defaultBrokerLimiter.mu.Unlock()
+	return func() {
+		defaultBrokerLimiter.mu.Lock()
+		defaultBrokerLimiter.now = nil
+		defaultBrokerLimiter.mu.Unlock()
 	}
 }
 
@@ -2120,6 +2198,45 @@ func FederationCatalogForStatusTest(peer string) (*proto.CatalogPayload, error) 
 	return buildFederationCatalog(peer)
 }
 
+// AuthoredOpenPRForTest is one fake pull request for SeedAuthoredOpenPRsForTest.
+type AuthoredOpenPRForTest struct {
+	Number                  int
+	Title                   string
+	Draft                   bool
+	Passed, Pending, Failed int
+}
+
+// SeedAuthoredOpenPRsForTest runs one footer "Open PRs" poll against a canned
+// GitHub answer, so the dashboard's open-PR indicator and popover render from
+// the same cache production fills. The returned closure clears the active
+// login the poll published (a package global).
+func SeedAuthoredOpenPRsForTest(login, repoURL string, prs []AuthoredOpenPRForTest) (func(), error) {
+	items := make([]dashboardAuthoredOpenPR, 0, len(prs))
+	repo := strings.TrimPrefix(repoURL, "https://github.com/")
+	for _, pr := range prs {
+		sum := prChecksSummary{
+			Total: pr.Passed + pr.Pending + pr.Failed, Passed: pr.Passed, Pending: pr.Pending, Failed: pr.Failed,
+			State: "passing",
+		}
+		switch {
+		case pr.Failed > 0:
+			sum.State = "failing"
+		case pr.Pending > 0:
+			sum.State = "pending"
+		}
+		items = append(items, dashboardAuthoredOpenPR{
+			Number: pr.Number, URL: repoURL + "/pull/" + strconv.Itoa(pr.Number), Title: pr.Title,
+			Repository: repo, Draft: pr.Draft, Checks: &sum,
+		})
+	}
+	prev := authoredOpenPRResolver
+	authoredOpenPRResolver = func() (dashboardAuthoredOpenPRs, error) {
+		return dashboardAuthoredOpenPRs{Login: login, Total: len(items), Items: items}, nil
+	}
+	defer func() { authoredOpenPRResolver = prev }()
+	return func() { setAuthoredOpenPRActiveLogin("") }, pollAuthoredOpenPRs()
+}
+
 // SetTrackedPRSourcesForTest swaps every GitHub seam behind the footer's
 // colleague tabs: the active gh identity, the add-time user lookup, and the
 // per-author GraphQL search, which receives the real argv and returns a canned
@@ -2183,7 +2300,7 @@ func RefreshFederationCatalogsForTest() {
 	}
 }
 
-// ResetBoardUpdatesForTest gives the test a fresh board-update state
+// ResetBoardUpdatesForTest gives the test a fresh drawing-board-update state
 // (nothing checked, nothing announced) and restores the previous one.
 func ResetBoardUpdatesForTest(notesPath string) func() {
 	prev, prevPath := boardUpdates, boardUpdateNotesPath
@@ -2196,7 +2313,7 @@ func ResetBoardUpdatesForTest(notesPath string) func() {
 // restart does, keeping the notes file.
 func RestartBoardUpdatesForTest() { boardUpdates = &boardUpdateState{} }
 
-// ExpireBoardUpdatesForTest makes the next board-update read scan again.
+// ExpireBoardUpdatesForTest makes the next drawing-board-update read scan again.
 func ExpireBoardUpdatesForTest() { boardUpdates.expire() }
 
 // Source fixture uses the real managed-server launch on its seeded native ID;
@@ -2269,6 +2386,12 @@ func SetProfileStoreDirForTest(dir string) func() {
 	return func() { profileStoreDir = prev }
 }
 
+// TermSessionNameForGroupForTest exposes termSessionNameForGroup: an agent's
+// shell opened from a group's roster.
+func TermSessionNameForGroupForTest(convID, which, group string) string {
+	return termSessionNameForGroup(convID, which, group)
+}
+
 // TermSessionNameForTest exposes the per-agent web shell's tmux session name.
 func TermSessionNameForTest(convID, which string) string {
 	return termSessionName(convID, which)
@@ -2315,4 +2438,404 @@ func SetUsageRulesLiveSessionsForTest(fn func() (map[string]struct{}, error)) fu
 	prev := usageRulesLiveSessions
 	usageRulesLiveSessions = fn
 	return func() { usageRulesLiveSessions = prev }
+}
+
+// HoldsPermissionForTest is the context-free check triggers and listings use.
+func HoldsPermissionForTest(convID, slug string) bool { return holdsPermission(convID, slug) }
+
+// HoldsGroupBoundPermissionForTest is the group-bound verdict a route gate
+// reads: whether convID holds slug through groupID itself, not through any
+// other group it belongs to.
+func HoldsGroupBoundPermissionForTest(convID, slug string, groupID int64) (bool, error) {
+	r, err := http.NewRequest(http.MethodGet, "/", nil)
+	if err != nil {
+		return false, err
+	}
+	verdict, err := resolveGroupBoundPermissionVerdictForRequest(r, convID, slug, groupID)
+	return verdict.Resolution == permAllow, err
+}
+
+// SudoCountabilityForTest maps every registered slug to why it takes no use limit.
+func SudoCountabilityForTest() map[string]string {
+	out := map[string]string{}
+	for _, slug := range knownSlugs() {
+		out[slug] = sudoUseLimitRefusal(slug)
+	}
+	return out
+}
+
+// IsCountableForTest reports what the registry tells the editor.
+func IsCountableForTest(slug string) bool {
+	for _, p := range permissionRegistry {
+		if p.Slug == slug {
+			return p.Countable
+		}
+	}
+	return false
+}
+
+// SweepCopilotUsageForTest runs one tick of the daemon's Copilot poller.
+func SweepCopilotUsageForTest() { sweepCopilotUsage(context.Background()) }
+
+// ReconcileStewardAccessForTest runs what a daemon start runs.
+func ReconcileStewardAccessForTest() {
+	cfg, _ := clconfig.Load()
+	reconcileStewardAccess(cfg)
+	knowledgeStartup.Wait()
+}
+
+// MigrateStewardDefaultPermissionsForTest runs the daemon start's migration.
+func MigrateStewardDefaultPermissionsForTest() {
+	cfg, _ := clconfig.Load()
+	migrateStewardDefaultPermissions(cfg)
+}
+
+// AddStewardBaseSlugForTest stands in for a release adding a slug to the base set.
+func AddStewardBaseSlugForTest(slug string) func() {
+	before := stewardBaseSlugs
+	stewardBaseSlugs = append(slices.Clone(before), slug)
+	return func() { stewardBaseSlugs = before }
+}
+
+// SetOperatorMessageAttachmentsBaseForTest repoints durable message attachments
+// and returns the restore.
+func SetOperatorMessageAttachmentsBaseForTest(dir string) func() {
+	previous := operatorMessageAttachmentsBase
+	operatorMessageAttachmentsBase = dir
+	return func() { operatorMessageAttachmentsBase = previous }
+}
+
+// SetLegacyMessageAttachmentsBaseForTest repoints the old attachment tree and
+// returns the restore.
+func SetLegacyMessageAttachmentsBaseForTest(dir string) func() {
+	previous := legacyMessageAttachmentsBase
+	legacyMessageAttachmentsBase = dir
+	return func() { legacyMessageAttachmentsBase = previous }
+}
+
+func MigrateLegacyMessageAttachmentsForTest() { migrateLegacyMessageAttachments() }
+
+func MessageAttachmentsBaseForTest() string { return operatorMessageAttachmentsBase }
+
+// CapturedApproval is what a stubbed popup showed the human.
+type CapturedApproval struct{ Label, Body string }
+
+// StubCapturingApprovalForTest answers popups with decision and records what
+// each one showed. Returns the records and a restore function.
+func StubCapturingApprovalForTest(decision bool) (*[]CapturedApproval, func()) {
+	prev := RequestHumanApprovalImpl
+	captured := &[]CapturedApproval{}
+	RequestHumanApprovalImpl = func(req *approvalRequest, _ string) bool {
+		*captured = append(*captured, CapturedApproval{Label: req.bodyLabel, Body: req.bodyPreview})
+		return decision
+	}
+	return captured, func() { RequestHumanApprovalImpl = prev }
+}
+
+// StubWaitingApprovalForTest makes each ask-human request wait until the
+// returned answer func is called, as a real popup waits for the human. raised
+// receives one value per request that reached the popup.
+func StubWaitingApprovalForTest() (raised <-chan struct{}, answer func(), restore func()) {
+	prev := RequestHumanApprovalImpl
+	reached := make(chan struct{}, maxPendingApprovals*2)
+	answered := make(chan struct{})
+	RequestHumanApprovalImpl = func(*approvalRequest, string) bool {
+		reached <- struct{}{}
+		<-answered
+		return true
+	}
+	return reached, func() { close(answered) }, func() { RequestHumanApprovalImpl = prev }
+}
+
+// SetApprovalHeldBytesForTest lowers the limits on bytes held for waiting
+// requests to n, with no free allowance.
+func SetApprovalHeldBytesForTest(n int64) (restore func()) {
+	total, perCaller, free := maxApprovalHeldBytes, maxApprovalHeldBytesPerCaller, approvalBodyFreeBytes
+	maxApprovalHeldBytes, maxApprovalHeldBytesPerCaller, approvalBodyFreeBytes = n, n, 0
+	return func() {
+		maxApprovalHeldBytes, maxApprovalHeldBytesPerCaller, approvalBodyFreeBytes = total, perCaller, free
+	}
+}
+
+// AsExternalStewardPeer attaches the peer a verified external steward
+// credential produces.
+func AsExternalStewardPeer(r *http.Request, convID string) *http.Request {
+	p := &peer{PID: 1, HasClaudeAncestor: true, ConvID: convID, ExternalSteward: true}
+	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
+}
+
+// FleetIdleLongerForTest is the fleet brief's attention kind for a long idle.
+const FleetIdleLongerForTest = fleetIdleLonger
+
+// ExternalStewardRefusesForTest reports whether slug is on the never-list.
+func ExternalStewardRefusesForTest(slug string) bool { return externalStewardRefuses(slug) }
+
+// SetExternalDaemonPIDForTest changes which pid counts as the daemon in the
+// external steward's managed check, returning the restore function.
+func SetExternalDaemonPIDForTest(pid int) func() {
+	prev := externalDaemonPID
+	externalDaemonPID = func() int { return pid }
+	return func() { externalDaemonPID = prev }
+}
+
+// SetExternalCallerManagedForTest says whether the socket peer counts as a
+// tclaude-managed agent.
+func SetExternalCallerManagedForTest(managed bool) (restore func()) {
+	old := externalCallerManaged
+	externalCallerManaged = func(int, string) bool { return managed }
+	return func() { externalCallerManaged = old }
+}
+
+// ExternalCallerManagedForTest runs the production managed-caller check.
+func ExternalCallerManagedForTest(pid int, claimedID string) bool {
+	return externalCallerManaged(pid, claimedID)
+}
+
+// ExternalStewardNeverForTest lists the slugs the ceiling refuses.
+func ExternalStewardNeverForTest() []string { return slices.Clone(externalStewardNever) }
+
+// RegularAgentMessageQueueLimitForTest is the regular-message backlog cap.
+const RegularAgentMessageQueueLimitForTest = regularAgentMessageQueueLimit
+
+// DaemonSocketClientForTest serves the production identity middleware and mux
+// on a real Unix socket in the test's temp dir, and returns a client for it. It
+// never touches the operator's daemon.
+func DaemonSocketClientForTest(t *testing.T) *http.Client {
+	t.Helper()
+	return identitySocketClientForTest(t, buildMux())
+}
+
+// CapturingSocketClientForTest is DaemonSocketClientForTest with h behind the
+// identity middleware instead of the mux, to see what a handler is given.
+func CapturingSocketClientForTest(t *testing.T, h http.Handler) *http.Client {
+	t.Helper()
+	return identitySocketClientForTest(t, h)
+}
+
+func identitySocketClientForTest(t *testing.T, h http.Handler) *http.Client {
+	t.Helper()
+	// Not t.TempDir: its path holds the test name and can outgrow sun_path.
+	dir, err := os.MkdirTemp("", "es")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "d.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{
+		Handler: withIdentity(h), ReadHeaderTimeout: time.Second,
+		ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
+			if unixConn, ok := conn.(*net.UnixConn); ok {
+				return context.WithValue(ctx, unixConnKey{}, unixConn)
+			}
+			return ctx
+		},
+	}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	return &http.Client{Transport: &http.Transport{
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		},
+	}}
+}
+
+// ExternalStewardChildDeniesForTest is what a principal's child is denied at birth.
+func ExternalStewardChildDeniesForTest() []string { return externalStewardChildDenies() }
+
+// ExecuteSpawnAsForTest runs executeSpawn without handleGroupSpawn's gate, the way
+// any other caller of it would, and returns the refusal's kind.
+func ExecuteSpawnAsForTest(group, spawnedByConv string) string {
+	g, err := db.GetAgentGroupByName(group)
+	if err != nil || g == nil {
+		return "no group"
+	}
+	if _, failure := executeSpawn(g, spawnParams{SpawnedByConv: spawnedByConv}); failure != nil {
+		return failure.Kind
+	}
+	return ""
+}
+
+// HoldExternalStewardSpawnForTest stands in for a spawn on its way, which no
+// conversation or pending row shows yet. The returned function ends it.
+func HoldExternalStewardSpawnForTest(agentID string) func() {
+	externalStewardSpawning.Lock()
+	defer externalStewardSpawning.Unlock()
+	externalStewardSpawning.active[agentID]++
+	return func() {
+		externalStewardSpawning.Lock()
+		defer externalStewardSpawning.Unlock()
+		delete(externalStewardSpawning.active, agentID)
+	}
+}
+
+// ExternalStewardSpawningForTest counts the holds left under the cap.
+func ExternalStewardSpawningForTest(agentID string) int {
+	externalStewardSpawning.Lock()
+	defer externalStewardSpawning.Unlock()
+	return externalStewardSpawning.active[agentID]
+}
+
+// PlacementSpawnAllowedForTest reports whether conv may place a spawn at a peer.
+func PlacementSpawnAllowedForTest(r *http.Request, conv, peer, group string) bool {
+	return placementSpawnAllowed(r, conv, peer, group)
+}
+
+// NotifyExternalStewardExpiriesForTest runs one pass of the expiry watch.
+func NotifyExternalStewardExpiriesForTest(now time.Time) {
+	notifyExternalStewardExpiries(now)
+}
+
+// RunSpawnQueueForTest runs one capacity-queue pass, as the daemon's ticker would.
+func RunSpawnQueueForTest() { runSpawnQueue() }
+
+// ReconcileSpawnQueueForTest settles launching entries, as daemon start does.
+func ReconcileSpawnQueueForTest() { reconcileSpawnQueue() }
+
+// SetCapacityResourcesForTest replaces the free RAM/disk probe: ramMB of free
+// RAM (negative: reading unavailable) and diskMB free on every directory.
+func SetCapacityResourcesForTest(ramMB, diskMB int64) func() {
+	return SetCapacityDiskForTest(ramMB, func(string) int64 { return diskMB })
+}
+
+// SetCapacityDiskForTest is SetCapacityResourcesForTest with the free disk
+// chosen per probed directory.
+func SetCapacityDiskForTest(ramMB int64, diskMB func(dir string) int64) func() {
+	prev := capacityProbe
+	capacityProbe = func(dirs []string) capacityResources {
+		out := capacityResources{RAMError: "RAM: unavailable in test"}
+		if ramMB >= 0 {
+			v := uint64(ramMB) << 20
+			out.RAMAvailable = &v
+		}
+		for _, d := range dirs {
+			out.Disks = append(out.Disks, hostmetrics.Disk{Path: hostmetrics.Path{Kind: "capacity", Path: d},
+				TotalBytes: 1 << 40, AvailableBytes: uint64(diskMB(d)) << 20})
+		}
+		return out
+	}
+	return func() { capacityProbe = prev }
+}
+
+// PollAuthoredOpenMRsForTest runs one Open MRs poll synchronously, against
+// whatever GitLab transport the test installed.
+func PollAuthoredOpenMRsForTest() (time.Duration, error) {
+	return pollAuthoredOpenMRs(context.Background())
+}
+
+// ResetAuthoredOpenMRsForTest forgets the Open MRs poller's last result.
+func ResetAuthoredOpenMRsForTest() { resetAuthoredOpenMRs("") }
+
+// ResetGitLabReviewStatesForTest forgets which GitLab instances lack reviewer
+// states, the recently closed query's fields or the diffstat, so one test's
+// old instance does not carry into the next.
+func ResetGitLabReviewStatesForTest() {
+	glReviewStatesMissing.Clear()
+	glRecentMRsMissing.Clear()
+	glDiffStatsMissing.Clear()
+}
+
+// SetCreatedPRRecorderForTest swaps how `pr create` and `mr create` record a
+// created pull or merge request for the dashboard, so a test can make that
+// record fail.
+func SetCreatedPRRecorderForTest(fn func(agentID, prURL, summary, state, branch string, draft bool, repoRoot string) (db.AgentPR, error)) func() {
+	prev := recordCreatedPR
+	recordCreatedPR = fn
+	return func() { recordCreatedPR = prev }
+}
+
+// ApprovalPopupFields is the set-once part of an approval popup request, as a
+// gate site built it.
+type ApprovalPopupFields struct {
+	Perm, ConvID, ConvTitle, Method, Path, RawQuery string
+	BodyPreview, BodyLabel                          string
+	TargetGroup, TargetConvID, TargetConvTitle      string
+	AutoGrantable                                   bool
+	ScopeJSON, ScopeDisplay                         string
+	Timeout                                         time.Duration
+	HasChannels                                     bool
+}
+
+// CaptureApprovalPopupForTest swaps the popup for a stub that records each request
+// it is shown and answers decision.
+func CaptureApprovalPopupForTest(decision bool) (func() []ApprovalPopupFields, func()) {
+	var mu sync.Mutex
+	var got []ApprovalPopupFields
+	prev := RequestHumanApprovalImpl
+	RequestHumanApprovalImpl = func(req *approvalRequest, _ string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, ApprovalPopupFields{
+			Perm: req.perm, ConvID: req.convID, ConvTitle: req.convTitle, Method: req.method,
+			Path: req.path, RawQuery: req.rawQuery, BodyPreview: req.bodyPreview, BodyLabel: req.bodyLabel,
+			TargetGroup: req.targetGroup, TargetConvID: req.targetConvID, TargetConvTitle: req.targetConvTitle,
+			AutoGrantable: req.autoGrantable, ScopeJSON: req.scopeJSON, ScopeDisplay: req.scopeDisplay,
+			Timeout:     req.timeout,
+			HasChannels: req.decision != nil && cap(req.decision) == 1 && req.extend != nil && cap(req.extend) == 1 && !req.createdAt.IsZero() && req.id != "",
+		})
+		return decision
+	}
+	return func() []ApprovalPopupFields {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]ApprovalPopupFields(nil), got...)
+		}, func() {
+			RequestHumanApprovalImpl = prev
+		}
+}
+
+// ResetAgentPeerViewLimitsForTest forgets every agent's peer view attempts.
+func ResetAgentPeerViewLimitsForTest() {
+	agentPeerViewLimits.mu.Lock()
+	defer agentPeerViewLimits.mu.Unlock()
+	agentPeerViewLimits.attempts, agentPeerViewLimits.inFlight = map[string][]time.Time{}, map[string]int{}
+}
+
+// SetAgentPeerViewClockForTest replaces the agent peer view limiter's clock.
+func SetAgentPeerViewClockForTest(now func() time.Time) func() {
+	prev := agentPeerViewNow
+	agentPeerViewNow = now
+	return func() { agentPeerViewNow = prev }
+}
+
+// PeerCeilingCoversForTest is peerCeilingCovers with a scope given by
+// dimension name.
+func PeerCeilingCoversForTest(peer, slug string, scope map[string][]string) error {
+	s := PermissionScope{}
+	for dim, values := range scope {
+		s[ScopeDim(dim)] = values
+	}
+	return peerCeilingCovers(peer, slug, s)
+}
+
+// PeerCeilingSlugsForTest lists the slugs a peer may confer.
+func PeerCeilingSlugsForTest() []string {
+	var out []string
+	for slug := range peerCeilingSlugs {
+		out = append(out, slug)
+	}
+	return out
+}
+
+// SeedPRCachesForTest writes what the agent rows' forge reads would have
+// cached for a pull request: its state and title, a CI summary of passed of
+// total checks, and its review decision.
+func SeedPRCachesForTest(rawURL, state, title string, passed, total int, decision string) {
+	now := time.Now()
+	savePresentedPRCache(presentedPRCacheKey(rawURL), rawURL, presentedPRInfo{URL: rawURL, State: state, Title: title,
+		FetchedAt: now, TitleCheckedAt: now}, now)
+	checks := make([]prCheckRun, 0, total)
+	for i := range total {
+		bucket := "pass"
+		if i >= passed {
+			bucket = "fail"
+		}
+		checks = append(checks, prCheckRun{Name: "check-" + strconv.Itoa(i), Bucket: bucket})
+	}
+	savePRChecks(rawURL, prChecksInfo{PRState: state, Checks: checks, FetchedAt: now, Summary: summarizePRChecks(checks, now)})
+	savePRReviewObservation(rawURL, prReviewObservation{Decision: decision}, now)
 }

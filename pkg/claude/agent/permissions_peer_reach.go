@@ -58,7 +58,7 @@ func peerReachLsCmd() *cobra.Command {
 		Short:       "List agents' and groups' peer-scoped grants",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *peerReachLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPeerReachLs(p, os.Stdout, os.Stderr))
+			os.Exit(runPeerReachLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -135,7 +135,7 @@ func peerReachEditCmd(verb string, remove bool) *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *peerReachEditParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPeerReachEdit(p, remove, os.Stdout, os.Stderr))
+			os.Exit(runPeerReachEdit(p, remove, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

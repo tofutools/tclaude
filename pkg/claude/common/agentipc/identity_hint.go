@@ -24,6 +24,10 @@ const (
 	// accepts it only when Unix peer credentials, the live tmux pane, and the
 	// daemon-owned launch generation independently prove the claimed row.
 	SessionClaimHeader = "X-Tclaude-Session-ID"
+	// ExternalStewardCredentialHeader carries an external steward's credential
+	// on every daemon request it makes. The value is a secret: it goes in this
+	// header and nowhere else, and it is never logged or audited.
+	ExternalStewardCredentialHeader = "X-Tclaude-External-Steward-Credential"
 
 	// CodexPermissionProfileEnv names the Codex CLI's active permission profile,
 	// and ManagedCodexProfileName is the value a tclaude-managed Codex session

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -78,7 +79,11 @@ var resolveOpenCodeExecutable = OpenCodeExecutable
 var runOpenCodeModels = func(path string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), openCodeModelsExecTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "models", "--verbose")
+	cmd := exec.CommandContext(ctx, path, "models", "--verbose", "--pure")
+	// The caller's directory may be a project an agent can write, and this needs
+	// only the operator's provider config.
+	cmd.Dir = os.TempDir()
+	cmd.Env = append(os.Environ(), "OPENCODE_DISABLE_PROJECT_CONFIG=1", "OPENCODE_DISABLE_AUTOUPDATE=1")
 	// WaitDelay is load-bearing, not a nicety. Output() reads until the stdout
 	// pipe hits EOF, and cancelling the context only kills `opencode` itself —
 	// an inherited grandchild holding that pipe open keeps Output() parked long

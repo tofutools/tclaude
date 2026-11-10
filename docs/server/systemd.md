@@ -1,8 +1,81 @@
 # systemd
 
-These units are examples to copy and adapt. tclaude does not install them.
 Read [Running tclaude on a server](index.md) first for what has to keep
 running and how you reach the dashboard.
+
+## Let tclaude write the unit
+
+`tclaude service install` writes the user unit below as
+`~/.config/systemd/user/tclaude-agentd.service`, with your current `PATH` in a
+0600 `~/.config/tclaude/agentd.env`. If the running `agentd` is itself a
+service, the environment its unit sets goes there too. Variables you only
+exported in a shell do not: add the ones your harnesses need to that file. Then it enables the unit. By default the unit
+runs the `serve` flags the running `agentd` was started with. Pass others after
+`--`, for example `tclaude service install -- --no-tray --dashboard-port 7878`,
+and they are checked against `agentd serve`'s own flags. The Config tab's
+Service panel does the same.
+
+It does not start the unit next to an `agentd` that is already running. It
+takes effect at the next login or boot. Starting at boot needs lingering,
+which needs root, so tclaude prints the `sudo loginctl enable-linger` command
+instead of running it. `tclaude service status` shows the unit, whether it is
+enabled, and whether lingering is on. `tclaude service uninstall` disables and
+removes it. tclaude rewrites or removes only a unit it wrote: one that carries
+its `Managed by tclaude` comment.
+
+### Launch profile
+
+To choose the unit's flags and environment yourself instead of keeping the
+observed launch, set a launch profile (`service.launch` in `config.json`).
+`tclaude service launch use-running` (or **Use what's running now** in the
+Config tab's Service panel) fills it from the running `agentd`. You can then
+edit it with `tclaude service launch set --flag ... --env KEY=VALUE --inherit
+KEY`, or row by row in the panel. `tclaude service launch show` prints it
+together with how the running daemon compares with it.
+
+- **Flags** are `agentd serve` flags, one `--name` or `--name=value` each,
+  checked against `serve`'s own flags (and `--log-level`). A flag whose value
+  is a secret would be refused, so pass secrets through an inherited
+  variable. No `serve` flag takes a secret today:
+  `--persist-operator-token` and `--print-human-token` only say where the
+  token goes.
+- **Explicit variables** (`env`) hold a value in `config.json`, so they must
+  not look secret.
+- **Inherited variables** (`inherit_env`) are stored by name only. When the
+  unit is written, their value comes from the running `agentd`'s environment
+  and goes into the 0600 `agentd.env`. The unit file itself never carries a
+  value. API keys and `PATH` are suggested this way. `PATH` is always
+  captured.
+
+With a profile set, `tclaude service install` writes the unit from it and
+refuses `--no-args`, `--no-keep-env` and flags after `--`; edit the profile
+instead. The profile describes the unit started at boot. The running daemon
+is compared with it only when it runs under the unit tclaude wrote. Started
+by hand (a shell, a tmux pane), it reports `not_applied`. When agentd runs under a unit tclaude did not write (an
+Ansible-managed system unit, say), the profile is only information:
+tclaude never rewrites that unit. Its comparison is then with that unit's own
+`ExecStart` and environment, which is what a restart uses.
+
+After a self-update restart, the update job also records how the restarted
+daemon compares with the profile (or with that unit) as `launch.expected`,
+by name only. See "Flags and environment" in the
+[federation admin guide](../federation-admin.md#how-tclaude-updates-itself).
+
+The API is `GET`/`PUT /api/node/service/launch` (CLI `/v1/node/service/launch`;
+a peer's through `/api/peer/{instance_id}/node/service/launch`). `GET` returns
+the `profile`, its `version`, the `suggested` flags and variables (secrets
+redacted, marked `secret`), the `missing` inherited names, `owned`, and the
+`comparison` with its `baseline` (`profile`, `unit` or `none`) and `state`
+(`identical`, `differs`, `not_applied`, `unavailable` when the command line
+is not `agentd serve`, or `unconfigured`). `PUT` takes
+`{"profile": {...} | null, "version": "..."}`. A stale `version` is refused
+with HTTP 409 `launch_profile_conflict`. An invalid profile is refused with
+HTTP 400 and an `errors` list naming each field (`profile.env[2].key`). A peer
+with `node.read` sees variable names, never values. With
+`node.update.settings` it may change only which variables an existing
+profile inherits. An unrestricted peer acts as the node's operator.
+
+The rest of this page is for writing the unit yourself.
 
 ## A user unit with lingering
 
@@ -80,8 +153,39 @@ running depends on the unit's cgroup:
   expected here.
 
 For the policy, `Restart=on-failure` with a short `RestartSec` is the right
-default. `tclaude update --apply` re-executes `agentd` in place (same PID), so
-an update does not look like an exit to systemd.
+default.
+
+`tclaude service status` shows what the running `agentd` was started by: the
+unit, its `ExecStart` arguments, its environment (secret-looking values
+redacted), `KillMode`, and how a restart will be carried out. A restart, by
+`tclaude service restart` or after `tclaude update --apply`, goes through
+systemd (`systemctl --user --no-block restart <unit>`), so the unit's own
+arguments and environment apply to the new process. A wrapper script in
+`ExecStart` runs again, so arguments it works out at start (an interface
+address, say) are worked out afresh.
+
+A unit restart is avoided only when it would stop the agents. tclaude checks
+where the tmux server really runs. If the server is inside agentd's own unit,
+and `KillMode` is `control-group` or `mixed`, tclaude restarts in place
+instead: same PID, same arguments and environment. A tmux server in a unit of
+its own (an external resource-delegation unit, for example) is safe, whatever
+agentd's `KillMode` is.
+
+A system unit can be restarted through systemd only by root. When `agentd` is
+not root, it exits instead and lets the unit's `Restart=` start it again:
+with status 0 for `Restart=always`, or with a failure status for
+`Restart=on-failure`. Any other `Restart=` setting gets the in-place restart.
+`tclaude service status` shows the method it will use and why.
+
+Under launchd on macOS, the restart is `launchctl kickstart -k`.
+
+A linked node can do the same through `--node <peer>` on `tclaude service
+status|restart|install|uninstall`. Reading takes the node's `node.read` grant.
+Restarting and autostart also take `node.update.settings`. A peer under
+restricted trust sees variable names but not their values, and installs
+autostart with the serve flags this node runs with: choosing other flags takes
+this node's own operator or unrestricted trust. See
+[the grant table](../federation-peers.md).
 
 If the tmux server itself dies, or the machine reboots, the agents are gone.
 They show as offline. Resume them from the dashboard or with
@@ -91,7 +195,7 @@ They show as offline. Resume them from the dashboard or with
 
 The unit's stdout and stderr go to the journal
 (`journalctl --user -u tclaude-agentd`). `agentd` keeps its own rotated log
-in `~/.tclaude/output.log` as well, and the dashboard's Activity › Logs view reads that.
+in `~/.tclaude/data/output.log` as well, and the dashboard's Diagnostics › Logs view reads that.
 
 Without a terminal, the startup banner leaves the operator token out
 (`--print-human-token` defaults to `auto`). Do not set

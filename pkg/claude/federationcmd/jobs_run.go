@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -37,19 +36,19 @@ type jobSummary struct {
 }
 
 func runFederationJobs(p *jobRunParams) int {
-	if rc := agent.RequireDaemonOrExit(os.Stderr); rc != 0 {
+	if rc := agent.RequireDaemonOrExit(cliStderr); rc != 0 {
 		return rc
 	}
 	if len(p.Node) == 0 {
-		fmt.Fprintln(os.Stderr, "select --node <peer>, --node auto, or --node group:<pool>")
+		fmt.Fprintln(cliStderr, "select --node <peer>, --node auto, or --node group:<pool>")
 		return 1
 	}
 	if p.Follow && p.JSON {
-		fmt.Fprintln(os.Stderr, "--follow and --json cannot be combined")
+		fmt.Fprintln(cliStderr, "--follow and --json cannot be combined")
 		return 1
 	}
 	if len(p.Node) > 1 && !jobrepo.FullCommit(p.Ref) {
-		fmt.Fprintln(os.Stderr, "multi-node jobs require --ref with a full commit SHA; resolve a branch with e.g. git rev-parse origin/<branch>")
+		fmt.Fprintln(cliStderr, "multi-node jobs require --ref with a full commit SHA; resolve a branch with e.g. git rev-parse origin/<branch>")
 		return 1
 	}
 	body := map[string]any{"repo": p.Repo, "ref": p.Ref, "group": p.Group, "harness": p.Harness, "command": p.Command, "timeout_seconds": p.Timeout, "require": p.Require, "prefer": p.Prefer}
@@ -68,7 +67,7 @@ func runFederationJobs(p *jobRunParams) int {
 		body["nodes"] = p.Node
 	}
 	if e := agent.DaemonRequest(http.MethodPost, "/v1/federation/jobs", body, &submitted, agent.DaemonOpts{}); e != nil {
-		return fail(os.Stderr, e)
+		return fail(cliStderr, e)
 	}
 	summaries := make([]jobSummary, max(1, len(submitted.Results)))
 	var wg sync.WaitGroup
@@ -97,13 +96,13 @@ func runFederationJobs(p *jobRunParams) int {
 	}
 	if p.JSON {
 		if len(summaries) == 1 {
-			_ = printJSON(os.Stdout, summaries[0])
+			_ = printJSON(cliStdout, summaries[0])
 		} else {
-			_ = printJSON(os.Stdout, map[string]any{"nodes": summaries})
+			_ = printJSON(cliStdout, map[string]any{"nodes": summaries})
 		}
 	}
 	if !p.JSON {
-		printJobSummaries(os.Stderr, summaries)
+		printJobSummaries(cliStderr, summaries)
 	}
 
 	if len(summaries) == 1 {
@@ -114,13 +113,13 @@ func runFederationJobs(p *jobRunParams) int {
 func waitFederationJob(p *jobRunParams, initial db.FederationJob, mu *sync.Mutex, multi bool) jobSummary {
 	result := jobSummary{ID: initial.ID, Peer: initial.Peer, Code: 1}
 	mu.Lock()
-	fmt.Fprintln(os.Stderr, "Job", initial.ID, "node", initial.Peer)
+	fmt.Fprintln(cliStderr, "Job", initial.ID, "node", initial.Peer)
 	mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.Timeout)*time.Second+6*time.Minute)
 	defer cancel()
 	cursor := jobstream.Cursor{}
-	stdout := &safeJobWriter{out: os.Stdout, mu: mu}
-	stderr := &safeJobWriter{out: os.Stderr, mu: mu}
+	stdout := &safeJobWriter{out: cliStdout, mu: mu}
+	stderr := &safeJobWriter{out: cliStderr, mu: mu}
 	if multi {
 		stdout.prefix = "[" + initial.Peer + " stdout] "
 		stderr.prefix = "[" + initial.Peer + " stderr] "

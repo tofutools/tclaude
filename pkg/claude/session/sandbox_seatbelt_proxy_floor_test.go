@@ -155,6 +155,14 @@ func TestRenderSeatbeltProxyFloorGolden(t *testing.T) {
     (require-all
       (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
     )))
+
+; Protected-root ancestors cannot be renamed or removed.
+(deny file-write-unlink
+  (require-any
+    (literal (param "PROTECTED_ANCESTOR_0"))
+    (literal (param "PROTECTED_ANCESTOR_1"))
+    (literal (param "PROTECTED_ANCESTOR_2"))
+  ))
 `
 	if got != want {
 		t.Fatalf("Seatbelt proxy-floor golden mismatch\nparams: %#v\nprofile:\n%s",

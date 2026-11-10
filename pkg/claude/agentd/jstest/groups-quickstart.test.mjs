@@ -46,8 +46,11 @@ function fakeApi({ createError = null, createErrorBody = null, startErrors = [],
   };
 }
 
-async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT } = {}) {
+async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = undefined, extraGroups = [], prefs = {} } = {}) {
   const harness = await createPreactHarness(t);
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  for (const [key, value] of Object.entries(prefs)) dashPrefs.setItem(key, value);
+  t.after(() => { for (const key of Object.keys(prefs)) dashPrefs.removeItem(key); });
   const [mod, list, interactions, handoff] = await Promise.all([
     harness.importDashboardModule('js/groups-processes.js'),
     harness.importDashboardModule('js/groups-list.js'),
@@ -57,9 +60,12 @@ async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT } = {}) {
   const source = { context: harness.signals.signal(context), status: harness.signals.signal('ready'), error: harness.signals.signal(''), refreshes: 0 };
   source.refresh = () => { source.refreshes++; return Promise.resolve(); };
   const notes = [];
-  const snapshot = { processes_enabled: true, groups: GROUPS };
+  const { registerCompanionController } = await harness.importDashboardModule('js/companion-facade.js');
+  const opened = [];
+  t.after(registerCompanionController({ open: (agentId, options) => { opened.push({ agentId, ...options }); return true; } }));
+  const snapshot = { groups: GROUPS };
   const mounted = await harness.mount(harness.html`<${interactions.GroupsInteractionProvider}>
-    <${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${GROUPS} source=${source} filter="running" api=${api}
+    <${mod.GroupsProcessesFocus} groups=${GROUPS} allGroups=${[...GROUPS, ...extraGroups]} source=${source} filter="running" api=${api} confirm=${confirm}
       notify=${(message, error) => notes.push({ message, error: !!error })}>
       <${list.GroupsNativeList} groups=${GROUPS} snapshot=${snapshot} actions=${{}} />
     <//>
@@ -75,7 +81,7 @@ async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT } = {}) {
     await settle();
   };
   await settle();
-  return { harness, root, api, source, notes, handoff, click, setValue, settle };
+  return { harness, root, api, source, notes, handoff, opened, click, setValue, settle };
 }
 
 const steps = (root) => [...root.querySelectorAll('[data-step]')];
@@ -93,23 +99,177 @@ test('an empty group offers Get started: starters, the library, a blank list and
   assert.ok(panel.querySelector('[data-quickstart-draft] button[type="submit"]').disabled, 'an empty description cannot be sent');
 });
 
-test('describing the flow saves a draft pinned to the group and hands it to the editor with a scribe request', async (t) => {
-  const { harness, root, api, handoff, setValue, settle } = await mount(t);
-  const form = root.querySelector('[data-quickstart-draft]');
-  await setValue(form.querySelector('.gq-ask-in'), '  Build it,\n then review   and ship  ');
-  assert.equal(form.querySelector('button[type="submit"]').disabled, false);
-  await harness.act(() => harness.fireEvent(form, 'submit'));
-  await settle();
-  assert.equal(api.calls.create.length, 1);
+const SCRIBE = { agent_id: `agt_${'a'.repeat(32)}`, conv_id: 'conv-scribe', name: 'process-scribe-k3' };
+const T1 = '2026-11-01T06:01:00Z';
+const SAVED_DRAFT = {
+  sourceHash: 'b'.repeat(64),
+  authoredAt: T1,
+  template: { id: 'tmpl_1', name: 'Build it', start: 'start', nodes: {
+    start: { type: 'start' },
+    build: { type: 'task', name: 'Build', performer: { kind: 'agent', role: 'dev', prompt: 'Build it' } },
+    done: { type: 'end', result: 'success' },
+  } },
+  edges: [{ from: 'start', outcome: 'next', to: 'build' }, { from: 'build', outcome: 'pass', to: 'done' }],
+  layout: {},
+};
+
+function scribeApi({ stored = null, summonError = null, sendError = null } = {}) {
+  const api = fakeApi();
+  Object.assign(api.calls, { summon: [], send: [], stop: [] });
+  api.createTemplate = async (view, options) => {
+    api.calls.create.push({ view, options });
+    return { id: 'tmpl_1', ref: `tmpl_1@sha256:${'1'.repeat(64)}`, sourceHash: 'a'.repeat(64) };
+  };
+  api.summonScribe = async (body) => { api.calls.summon.push(body); if (summonError) throw new Error(summonError); return SCRIBE; };
+  api.sendScribeMessage = async (conv, message) => { api.calls.send.push({ conv, ...message }); if (sendError) throw new Error(sendError); return {}; };
+  api.stopAgent = async (id) => { api.calls.stop.push(id); return { action: 'soft_stopped' }; };
+  api.calls.remove = [];
+  api.deleteTemplate = async (id) => { api.calls.remove.push(id); return { deleted: id }; };
+  api.getTemplate = async (id) => { api.calls.get.push(id); return stored?.() || { sourceHash: 'a'.repeat(64), template: { id, nodes: {} }, edges: [] }; };
+  api.getTemplateHead = api.getTemplate;
+  return api;
+}
+
+// The scribe's task reference is built from the dashboard's origin.
+function withOrigin(t) {
+  const before = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: { origin: 'http://127.0.0.1:8080' } });
+  t.after(() => { if (before) Object.defineProperty(globalThis, 'location', before); else delete globalThis.location; });
+}
+
+async function describe(view, text = 'Build it,\n then review   and ship') {
+  const form = view.root.querySelector('[data-quickstart-draft]');
+  await view.setValue(form.querySelector('.gq-ask-in'), text);
+  await view.harness.act(() => view.harness.fireEvent(form, 'submit'));
+  await view.settle();
+}
+
+test('Draft steps needs the operator: a declined grant stores and starts nothing', async (t) => {
+  const asked = [];
+  const api = scribeApi();
+  const view = await mount(t, { api, confirm: async (request) => { asked.push(request); return false; } });
+  assert.equal(api.calls.summon.length, 0, 'nothing starts by itself');
+  await describe(view);
+  assert.equal(asked.length, 1);
+  assert.match(asked[0].meta, /process\.templates\.read \+ process\.templates\.manage/);
+  assert.match(asked[0].body, /Every other registered capability is explicitly denied/);
+  assert.equal(api.calls.create.length, 0, 'no template before the grant');
+  assert.equal(api.calls.summon.length, 0);
+  assert.deepEqual(view.opened, []);
+  assert.ok(view.root.querySelector('[data-quickstart]'), 'Get started stays');
+});
+
+test('an approved draft runs a background scribe in its chat window, with the same grant as any process scribe', async (t) => {
+  const api = scribeApi();
+  withOrigin(t);
+  const view = await mount(t, { api, confirm: async () => true });
+  await describe(view);
   assert.deepEqual(api.calls.create[0].options, { listed: false, pinGroup: 'webshop' }, 'the draft is saved to the group, not the library');
-  assert.equal(api.calls.create[0].view.template.name, 'Build it,');
-  const draft = handoff.takeProcessDraft();
-  assert.equal(draft.id, 'tmpl_1');
-  assert.equal(draft.view.template.id, 'tmpl_1');
-  assert.match(draft.scribe.prompt, /^Build it,\n then review   and ship/);
-  assert.match(draft.scribe.prompt, /agent group "webshop"/);
-  assert.match(draft.scribe.prompt, /- review-bot \(role: reviewer\)/);
-  assert.match(draft.scribe.prompt, /do not start it/);
+  const [summon] = api.calls.summon;
+  assert.deepEqual(summon.slugs, ['process.templates.read', 'process.templates.manage']);
+  assert.equal(summon.exclusive, true, 'every other capability is denied');
+  assert.equal(summon.background, true, 'no terminal');
+  assert.deepEqual(summon.scope, { kind: 'process-template', id: 'tmpl_1' });
+  const [sent] = api.calls.send;
+  assert.equal(sent.conv, 'conv-scribe');
+  assert.match(sent.body, /^Build it,\n then review   and ship/);
+  assert.match(sent.body, /agent group "webshop"/);
+  assert.match(sent.body, /- review-bot \(role: reviewer\)/);
+  assert.match(sent.body, /do not start it/);
+  assert.deepEqual(view.opened, [{ agentId: SCRIBE.agent_id, starting: true }], 'the conversation is the scribe\'s regular chat window');
+  const panel = view.root.querySelector('[data-scribe-draft="tmpl_1"]');
+  assert.ok(panel, 'the draft stays in the group body');
+  assert.equal(view.handoff.takeProcessDraft(), null, 'nothing leaves for the graph editor');
+  assert.match(panel.querySelector('[data-scribe-request]').textContent, /Build it/);
+  assert.equal(panel.querySelector('[data-scribe-status]').dataset.scribeStatus, 'working');
+  assert.equal(panel.querySelector('[data-scribe-reply]'), null, 'no reply box: the chat window is where it is answered');
+  assert.equal(panel.querySelector('[data-scribe-review]').disabled, true, 'nothing to review yet');
+  await view.click(panel.querySelector('[data-scribe-chat]'));
+  assert.deepEqual(view.opened.at(-1), { agentId: SCRIBE.agent_id, starting: false }, 'the panel brings the chat window back');
+  assert.equal(api.calls.start.length, 0);
+});
+
+test('a finished draft waits for the operator in the step list, and nothing runs', async (t) => {
+  const api = scribeApi({ stored: () => SAVED_DRAFT });
+  withOrigin(t);
+  const view = await mount(t, { api, confirm: async () => true, extraGroups: [scribeGroup({ status: 'idle' })] });
+  await describe(view);
+  await view.settle();
+  const panel = view.root.querySelector('[data-scribe-draft]');
+  assert.ok(panel, 'it does not open over the scribe');
+  assert.match(panel.querySelector('[data-scribe-ready]').textContent, /Draft saved: 1 step\./);
+  assert.equal(panel.querySelector('[data-scribe-status]'), null);
+  await view.click(panel.querySelector('[data-scribe-review]'));
+  await view.settle();
+  assert.ok(view.root.querySelector('[data-step-editor="webshop"]'), 'the draft opens for review');
+  assert.deepEqual(steps(view.root).map((el) => el.dataset.step), ['build']);
+  assert.equal(api.calls.start.length, 0, 'nothing runs until Start');
+});
+
+test('a draft saved mid-turn cannot be reviewed until the scribe is stopped', async (t) => {
+  const api = scribeApi({ stored: () => SAVED_DRAFT });
+  withOrigin(t);
+  const view = await mount(t, { api, confirm: async () => true, extraGroups: [scribeGroup({ status: 'working' })] });
+  await describe(view);
+  const panel = view.root.querySelector('[data-scribe-draft]');
+  assert.match(panel.querySelector('[data-scribe-ready]').textContent, /1 step saved so far/);
+  assert.equal(panel.querySelector('[data-scribe-review]').disabled, true, 'Start runs the head, which it may still change');
+  await view.click(panel.querySelector('[data-scribe-stop]'));
+  await view.settle();
+  assert.deepEqual(api.calls.stop, [SCRIBE.agent_id]);
+  assert.ok(view.root.querySelector('[data-step-editor="webshop"]'), 'what it saved opens once it is stopped');
+});
+
+test('a draft is finished only once saved and idle', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { scribeFinished } = await harness.importDashboardModule('js/groups-scribe-draft.js');
+  assert.equal(scribeFinished({ ready: SAVED_DRAFT, status: 'idle' }), true);
+  assert.equal(scribeFinished({ ready: SAVED_DRAFT, status: 'working' }), false, 'a turn is open');
+  assert.equal(scribeFinished({ ready: SAVED_DRAFT, status: '' }), false, 'an unknown or stopped scribe is not finished');
+  assert.equal(scribeFinished({ ready: null, status: 'idle' }), false, 'nothing saved');
+});
+
+test('an idle scribe with nothing saved is waiting for the operator', async (t) => {
+  const api = scribeApi();
+  withOrigin(t);
+  const view = await mount(t, { api, confirm: async () => true, extraGroups: [scribeGroup({ status: 'idle' })] });
+  await describe(view);
+  const status = view.root.querySelector('[data-scribe-status]');
+  assert.equal(status.dataset.scribeStatus, 'waiting');
+  assert.match(status.textContent, /waiting for you in its chat window/);
+});
+
+test('a failed start still leaves the group when the draft cannot be deleted', async (t) => {
+  withOrigin(t);
+  const api = scribeApi({ sendError: 'mail refused' });
+  api.deleteTemplate = async () => { throw new Error('store busy'); };
+  const view = await mount(t, { api, confirm: async () => true });
+  await describe(view);
+  assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_1' }]);
+});
+
+test('a failed start takes the empty draft out of the group', async (t) => {
+  const api = scribeApi({ sendError: 'mail refused' });
+  withOrigin(t);
+  const view = await mount(t, { api, confirm: async () => true });
+  await describe(view);
+  assert.deepEqual(api.calls.stop, [SCRIBE.agent_id], 'a scribe with no request does not stay up');
+  assert.deepEqual(api.calls.remove, ['tmpl_1'], 'the empty draft is deleted, not left unlisted');
+  assert.deepEqual(api.calls.unpin, []);
+  assert.deepEqual(view.opened, [], 'no chat window for a scribe that was stopped');
+  assert.ok(view.notes.some((note) => note.error && /mail refused/.test(note.message)));
+  assert.equal(view.root.querySelector('[data-scribe-draft]'), null);
+});
+
+test('stopping the scribe keeps the draft in the group', async (t) => {
+  const api = scribeApi();
+  withOrigin(t);
+  const view = await mount(t, { api, confirm: async () => true });
+  await describe(view);
+  await view.click(view.root.querySelector('[data-scribe-stop]'));
+  assert.deepEqual(api.calls.stop, [SCRIBE.agent_id]);
+  assert.equal(api.calls.unpin.length, 0, 'the draft stays in the group');
+  assert.equal(view.root.querySelector('[data-scribe-draft]'), null);
 });
 
 test('the scribe draft request and name are bounded', async (t) => {
@@ -353,7 +513,8 @@ test('a group with runs builds a new process from the start form instead of Get 
   const { root, click } = await mount(t, { context });
   assert.equal(root.querySelector('[data-quickstart]'), null);
   assert.equal(root.querySelector('[data-process-new]'), null, 'no separate new-process button');
-  await click(root.querySelector('[data-process-start="webshop"]'));
+  await click(root.querySelector('[data-resource-add="webshop"]'));
+  await click(root.querySelector('[data-resource-add-process]'));
   await click(root.querySelector('[data-process-new="webshop"]'));
   assert.ok(root.querySelector('[data-quickstart="webshop"]'));
   assert.equal(root.querySelector('.gp-start-form'), null, 'building replaces the start form');
@@ -475,7 +636,7 @@ test('saved processes show as chips; ▶ asks for the inputs and consent, then s
   assert.equal(root.querySelector('[data-quickstart-folded]'), null);
   const saved = root.querySelector('[data-saved-processes="webshop"]');
   assert.deepEqual([...saved.querySelectorAll('[data-saved-process]')].map((el) => el.dataset.savedProcess), ['tmpl_ship', 'tmpl_nightly']);
-  assert.match(saved.querySelector('[data-saved-process="tmpl_nightly"]').textContent, /nightly-check\s*3 steps/);
+  assert.match(saved.querySelector('[data-saved-process="tmpl_nightly"]').textContent, /nightly-check.*3 steps/);
   assert.equal(saved.querySelector('[data-saved-new]'), null, 'new processes are built from the group process buttons');
   await click(saved.querySelector('[data-saved-run="tmpl_ship"]'));
   const strip = root.querySelector('[data-saved-strip="tmpl_ship"]');
@@ -500,6 +661,7 @@ test('saved processes show as chips; ▶ asks for the inputs and consent, then s
 test('a saved process publishes to the library and is removed from the group after a confirm', async (t) => {
   const { root, api, click } = await mount(t, { context: SAVED_CONTEXT });
   await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  assert.equal(root.querySelector('[data-saved-strip] [data-process-action="export"], .gq-strip [data-process-action="export"]').dataset.id, 'tmpl_ship');
   await click(root.querySelector('[data-saved-publish]'));
   assert.deepEqual(api.calls.publish, ['tmpl_ship']);
   await click(root.querySelector('[data-saved-remove]'));
@@ -613,6 +775,32 @@ test('a save whose pin failed keeps the stored template, so a retry only pins it
   await click(editor.querySelector('[data-step-save-group]'));
   assert.equal(api.calls.create.length, 1, 'no second template');
   assert.deepEqual(api.calls.pin, [{ group: 'webshop', id: 'tmpl_x' }]);
+});
+
+test('the fallback names a spawn profile, for the process and per step, and the preview shows it', async (t) => {
+  const api = fakeApi({ preview: () => ({}) });
+  api.spawnProfileNames = async () => ['sonnet-dev', 'opus-lead'];
+  const context = { ...EMPTY_CONTEXT, groups: [{ ...EMPTY_CONTEXT.groups[0], defaultSpawnProfile: 'sonnet-dev', roles: [{ role: 'qa', count: 0 }] }] };
+  const { root, click, setValue, settle } = await mount(t, { api, context });
+  await click(root.querySelector('[data-quickstart-blank]'));
+  const editor = root.querySelector('[data-step-editor]');
+  await setValue(editor.querySelector('.gq-name'), 'triage');
+  await click(editor.querySelector('[data-add-step="agent"]'));
+  await settle();
+  await setValue(steps(root)[0].querySelector('.gq-who-select'), 'role:qa', 'change');
+  await setValue(editor.querySelector('[data-process-fallback] select'), 'spawn:opus-lead', 'change');
+  const own = () => steps(root)[0].querySelector('[data-step-fallback] select');
+  assert.match(own().querySelector('option[value=""]').textContent, /as the process: spawn opus-lead/);
+  await setValue(own(), 'fail', 'change');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  await settle();
+  const last = api.calls.preview.at(-1);
+  assert.deepEqual(last.view.template.fallback, { action: 'spawn', profile: 'opus-lead' });
+  assert.deepEqual(last.view.template.nodes[steps(root)[0].dataset.step].performer.fallback, { action: 'fail' });
+  assert.match(editor.querySelector('[data-process-fallback]').textContent, /1 step sets its own/);
+  assert.match(editor.querySelector('[data-step-flow]').textContent, /↯ fail/);
+  await setValue(own(), '', 'change');
+  assert.equal(own().dataset.fallbackValue, '', 'back to following the process');
 });
 
 test('who-now reads the server\'s resolve-preview; the process fallback and anyone free are pickable', async (t) => {
@@ -793,4 +981,397 @@ test('◈ Graph after the step list saved a version continues from that version'
   await click(card.querySelector('.gm-menu [data-mini-menu="duplicate"]'));
   await click(card.querySelector('[data-mini-save]'));
   assert.deepEqual(api.calls.save[1].options, { sourceHash: 'h2' }, 'saved against the version the step list wrote');
+});
+
+function stubImportFetch(t, { calls = [] } = {}) {
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    return { ok: true, status: 200, json: async () => ({ title: 'Ship', root: 'ship@sha256:aa', rootId: 'ship', params: [], roles: [], programs: [], assignees: [], humans: [], signatures: [],
+      templates: [{ ref: 'ship@sha256:aa', id: 'ship', head: true, status: 'new' }], updates: 0, roleMap: [], reviewDigest: 'd1' }) };
+  };
+  t.after(() => { globalThis.fetch = previous; });
+  return calls;
+}
+
+const pwfFile = (name) => ({ name, size: 3, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer });
+
+async function dropFile(harness, target, file) {
+  const event = new globalThis.Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files: [file] } });
+  await harness.act(() => { target.dispatchEvent(event); });
+  return event;
+}
+
+test('Get started imports a .pwf into the group, through the shared review', async (t) => {
+  const fetched = stubImportFetch(t);
+  const imports = () => fetched.filter((url) => url.startsWith('/v1/process/import'));
+  const { root, click, settle, harness } = await mount(t);
+  let picked = 0;
+  const input = root.querySelector('[data-process-group="webshop"] [data-pwf-file]');
+  input.addEventListener('click', () => { picked += 1; });
+  await click(root.querySelector('[data-quickstart-import]'));
+  assert.equal(picked, 1, 'the panel opens the group\'s file picker');
+  Object.defineProperty(input, 'files', { configurable: true, value: [pwfFile('ship.pwf')] });
+  await harness.act(() => harness.fireEvent(input, 'change'));
+  await settle();
+  assert.equal(imports().length, 1);
+  assert.ok(imports()[0].includes('group=webshop'), imports()[0]);
+  assert.equal(imports().some((url) => url.includes('apply=1')), false, 'nothing is stored before the review');
+  assert.ok(harness.document.querySelector('[data-pwf-group]') || root.querySelector('[data-pwf-group]'), 'the review opens');
+});
+
+test('dropping a .pwf on a group reviews it for that group; other files fall through', async (t) => {
+  const fetched = stubImportFetch(t);
+  const imports = () => fetched.filter((url) => url.startsWith('/v1/process/import'));
+  const { root, settle, harness } = await mount(t);
+  // The page always holds hidden dialogs; they must not stop a drop.
+  const idle = harness.document.body.appendChild(harness.document.createElement('div'));
+  idle.setAttribute('role', 'dialog');
+  idle.setAttribute('aria-modal', 'true');
+  t.after(() => idle.remove());
+  const group = root.querySelector('[data-process-group="webshop"]');
+  const other = await dropFile(harness, group, pwfFile('agent.paf'));
+  await settle();
+  assert.equal(other.defaultPrevented, false, 'a .paf stays with the page drop');
+  assert.equal(imports().length, 0);
+  const dropped = await dropFile(harness, group, pwfFile('ship.pwf'));
+  await settle();
+  assert.equal(dropped.defaultPrevented, true);
+  assert.equal(imports().length, 1);
+  assert.ok(imports()[0].includes('group=webshop'), imports()[0]);
+});
+
+// A reload: the group has the pinned draft, the snapshot has its live scribe,
+// and the panel's own state is gone.
+const DRAFT_CONTEXT = { ...EMPTY_CONTEXT, groups: [{ ...EMPTY_CONTEXT.groups[0], processes: [
+  { templateId: 'tmpl_1', name: 'Build it', listed: false, steps: 1 },
+] }] };
+
+function scribeGroup({ online = true, label = 'draft: tmpl_1', status = 'idle', scope = 'tmpl_1' } = {}) {
+  return { name: 'process-scribe', scribe: true, members: [{
+    agent_id: SCRIBE.agent_id, conv_id: SCRIBE.conv_id, title: SCRIBE.name, online, state: { status },
+    descr: `Reusable scribe scope: process-template/${scope}`,
+    task_ref_url: 'http://127.0.0.1:8080/automations/processes/templates', task_ref_label: label,
+  }] };
+}
+
+
+test('after a reload the draft panel comes back from the snapshot, with the saved draft', async (t) => {
+  const api = scribeApi({ stored: () => SAVED_DRAFT });
+  const { root, click, opened } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+  const panel = root.querySelector('[data-scribe-draft="tmpl_1"]');
+  assert.ok(panel, 'the panel is back with no click');
+  assert.deepEqual(opened, [], 'a reload does not open chat windows by itself');
+  assert.match(panel.querySelector('[data-scribe-ready]').textContent, /Draft saved: 1 step/);
+  assert.equal(panel.querySelector('[data-scribe-review]').disabled, false);
+  assert.equal(api.calls.summon.length, 0, 'it re-attaches to the running scribe and starts nothing');
+  await click(panel.querySelector('[data-scribe-review]'));
+  assert.ok(root.querySelector('[data-step-editor-saved="tmpl_1"]'), 'review opens the step list');
+});
+
+test('a re-attached panel does not take the empty draft for saved work', async (t) => {
+  const api = scribeApi();
+  const { root } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+  assert.equal(root.querySelector('[data-scribe-ready]'), null);
+  assert.ok(root.querySelector('[data-scribe-review]').disabled);
+});
+
+test('a re-attached panel sees saved work that has no performer steps', async (t) => {
+  const graphOnly = { ...SAVED_DRAFT, template: { ...SAVED_DRAFT.template, nodes: {
+    start: { type: 'start' }, nested: { type: 'subprocess' }, done: { type: 'end', result: 'success' },
+  } } };
+  const api = scribeApi({ stored: () => graphOnly });
+  const { root } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+  assert.ok(root.querySelector('[data-scribe-ready]'));
+});
+
+test('hiding the panel leaves the scribe working and the panel gone', async (t) => {
+  const api = scribeApi();
+  const { root, click, settle } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup()] });
+  await click(root.querySelector('[data-scribe-hide]'));
+  await settle();
+  assert.equal(root.querySelector('[data-scribe-draft]'), null, 'it does not come straight back');
+  assert.equal(api.calls.stop.length, 0);
+  await click(root.querySelector('[data-saved-run="tmpl_1"]'));
+  await click(root.querySelector('[data-saved-scribe]'));
+  assert.ok(root.querySelector('[data-scribe-draft="tmpl_1"]'), 'the process brings it back');
+});
+
+test('a draft left before the reload does not come back by itself', async (t) => {
+  const { root } = await mount(t, { api: scribeApi(), context: DRAFT_CONTEXT, extraGroups: [scribeGroup()],
+    prefs: { 'tclaude.dash.groupsProcesses.leftScribeDrafts': '["tmpl_1"]' } });
+  assert.equal(root.querySelector('[data-scribe-draft]'), null);
+});
+
+for (const [name, group] of [['a stopped scribe', scribeGroup({ online: false })], ['a scribe from the graph editor', scribeGroup({ label: 'process: tmpl_1' })]]) {
+  test(`${name} does not re-attach`, async (t) => {
+    const { root, click } = await mount(t, { api: scribeApi(), context: DRAFT_CONTEXT, extraGroups: [group] });
+    assert.equal(root.querySelector('[data-scribe-draft]'), null);
+    await click(root.querySelector('[data-saved-run="tmpl_1"]'));
+    assert.equal(root.querySelector('[data-saved-scribe]'), null);
+  });
+}
+
+const REF_A = `tmpl_ship@sha256:${'a'.repeat(64)}`;
+const REF_B = `tmpl_ship@sha256:${'b'.repeat(64)}`;
+
+async function openReviewed(t, moved = true) {
+  const api = fakeApi({ stored: { tmpl_ship: { ...SAVED_VIEW, currentRef: REF_A } } });
+  const start = api.startGroupRun;
+  api.startGroupRun = async (request) => {
+    if (moved && request.expectedRef === REF_A) {
+      api.calls.start.push(request);
+      throw Object.assign(new Error('process template has a newer version'), { body: { code: 'process_run_template_moved' } });
+    }
+    return start(request);
+  };
+  const mounted = await mount(t, { api, context: SAVED_CONTEXT });
+  await mounted.click(mounted.root.querySelector('[data-saved-run="tmpl_ship"]'));
+  await mounted.click(mounted.root.querySelector('[data-saved-edit]'));
+  const inputs = () => mounted.setValue(mounted.root.querySelector('[data-start-param="issue"]'), 'A-1');
+  await inputs();
+  return { ...mounted, api, inputs };
+}
+
+test('Start names the version on screen, and starts as ever while that is the head', async (t) => {
+  const { root, api, click } = await openReviewed(t, false);
+  await click(root.querySelector('[data-step-start]'));
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].expectedRef, REF_A);
+  assert.equal(root.querySelector('[data-step-newer]'), null);
+});
+
+test('a newer version stops an unchanged Start, and the operator can still run what they reviewed', async (t) => {
+  const { root, api, click, notes } = await openReviewed(t);
+  await click(root.querySelector('[data-step-start]'));
+  assert.match(root.querySelector('[data-step-newer]').textContent, /newer version/);
+  assert.ok(root.querySelector('[data-step-start]').disabled, 'Start waits for the choice');
+  assert.equal(notes.length, 0, 'nothing started');
+  await click(root.querySelector('[data-step-newer-start]'));
+  assert.equal(api.calls.start.at(-1).templateRef, REF_A);
+  assert.equal(api.calls.start.at(-1).expectedRef, undefined);
+  assert.ok(notes.some((note) => /Started/.test(note.message)));
+});
+
+test('the operator can review the newer version instead, and Start then pins that one', async (t) => {
+  const { root, api, click, inputs } = await openReviewed(t);
+  await click(root.querySelector('[data-step-start]'));
+  const stored = await api.getTemplate('tmpl_ship');
+  api.getTemplate = async () => ({ ...stored, currentRef: REF_B });
+  await click(root.querySelector('[data-step-newer-review]'));
+  assert.equal(root.querySelector('[data-step-newer]'), null);
+  await inputs();
+  await click(root.querySelector('[data-step-start]'));
+  assert.equal(api.calls.start.at(-1).expectedRef, REF_B);
+});
+
+test('editing after the refusal leaves the choice: those steps are no longer the reviewed version', async (t) => {
+  const { root, click, setValue } = await openReviewed(t);
+  await click(root.querySelector('[data-step-start]'));
+  await setValue(root.querySelector('.gq-name'), 'renamed');
+  assert.equal(root.querySelector('[data-step-newer]'), null);
+});
+
+test('switching to the graph and back keeps the reviewed version', async (t) => {
+  const { root, api, click, inputs } = await openReviewed(t, false);
+  await click(root.querySelector('[data-mini-graph]'));
+  const card = root.querySelector('[data-mini-editor="tmpl_ship"]');
+  assert.ok(card, 'the graph view opens');
+  await click([...card.querySelectorAll('button')].find((el) => /Steps/.test(el.textContent)));
+  await inputs();
+  await click(root.querySelector('[data-step-start]'));
+  assert.equal(api.calls.start.at(-1).expectedRef, REF_A, 'switching without a save keeps the version it came from');
+});
+
+// The group ▶ strip's Start asks only while a scribe is at work on the process.
+const DRAFT_REF = `tmpl_1@sha256:${'2'.repeat(64)}`;
+const REVIEWED_DRAFTS = 'tclaude.dash.groupsProcesses.reviewedScribeDrafts';
+
+function stripStart(t, { actor = `agent:${SCRIBE.agent_id}`, reviewed = '[]', online = true, status = 'idle', scope = 'tmpl_1' } = {}) {
+  const api = scribeApi({ stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
+  return mount(t, {
+    api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online, status, scope })], prefs: { [REVIEWED_DRAFTS]: reviewed },
+  }).then(async (view) => {
+    await view.click(view.root.querySelector('[data-saved-run="tmpl_1"]'));
+    await view.harness.act(() => view.harness.fireEvent(view.root.querySelector('[data-saved-strip="tmpl_1"]'), 'submit'));
+    await view.settle();
+    return { ...view, api };
+  });
+}
+
+for (const [name, options] of [
+  ['the operator\'s own save', { actor: 'human:operator' }],
+  ['a version the operator opened', { reviewed: JSON.stringify([['tmpl_1', DRAFT_REF]]) }],
+  ['a stopped scribe', { online: false }],
+  ['an idle scribe on another process', { actor: 'human:operator', scope: 'tmpl_other' }],
+]) {
+  test(`the ▶ strip stays one click with ${name}`, async (t) => {
+    const { root, api } = await stripStart(t, options);
+    assert.equal(root.querySelector('[data-start-draft-warning]'), null);
+    assert.equal(api.calls.start.length, 1);
+    assert.equal(api.calls.start[0].expectedRef, undefined, 'a rerun runs the head, as before');
+  });
+}
+
+// The group body's start form asks the same question.
+async function formStart(t, options = {}) {
+  const { actor = `agent:${SCRIBE.agent_id}`, online = true, moved = 0, opener = '[data-resource-add-process]' } = options;
+  const api = scribeApi({ stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
+  api.listTemplates = async () => [{ id: 'tmpl_1', name: 'Ship it' }];
+  let refusals = moved;
+  const startRun = api.startGroupRun;
+  api.startGroupRun = async (request) => {
+    if (refusals-- > 0) throw Object.assign(new Error('moved'), { body: { code: 'process_run_template_moved' } });
+    return startRun(request);
+  };
+  const view = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online, status: 'idle', scope: 'tmpl_1' })] });
+  await view.click(view.root.querySelector('[data-resource-add]'));
+  await view.click(view.root.querySelector(opener));
+  await view.settle();
+  const form = view.root.querySelector('.gp-start-form');
+  await view.harness.act(() => view.harness.fireEvent(form, 'submit'));
+  await view.settle();
+  return { ...view, api };
+}
+
+test('the start form asks about a version the scribe saved, and starting anyway pins it', async (t) => {
+  const { root, api, click, settle } = await formStart(t);
+  assert.equal(api.calls.start.length, 0, 'nothing runs before the answer');
+  assert.match(root.querySelector('.gp-start-form [data-start-draft-warning]').textContent, /saved a version/);
+  assert.equal(root.querySelector('.gp-start-form button[type="submit"]').disabled, true);
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].expectedRef, DRAFT_REF);
+  assert.equal(root.querySelector('.gp-start-form'), null);
+});
+
+test('the start form stays one click with no scribe at work', async (t) => {
+  const { root, api } = await formStart(t, { online: false });
+  assert.equal(root.querySelector('[data-start-draft-warning]'), null);
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].expectedRef, undefined);
+});
+
+test('the start form opens the draft it asks about', async (t) => {
+  const { root, api, click, settle } = await formStart(t);
+  await click(root.querySelector('[data-start-draft-open]'));
+  await settle();
+  assert.equal(root.querySelector('.gp-start-form'), null, 'the review replaces the form');
+  assert.equal(api.calls.start.length, 0, 'opening it starts nothing');
+  assert.ok(root.querySelector('[data-mini-editor="tmpl_1"], [data-step-start]'), 'the draft is open');
+});
+
+test('opening the draft from an agent-scoped form still starts it for that agent', async (t) => {
+  const { root, api, click, settle, harness } = await formStart(t, { opener: '[data-resource-add-process-agent]' });
+  const agent = root.querySelector('[data-start-agent]').dataset.value;
+  assert.ok(agent);
+  await click(root.querySelector('[data-start-draft-open]'));
+  await settle();
+  const start = root.querySelector('[data-step-start]');
+  assert.ok(start, 'the steps open');
+  for (const box of root.querySelectorAll('[data-start-profile]')) await harness.act(() => box.click());
+  await click(start);
+  await settle();
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].agent, agent);
+  assert.equal(api.calls.start[0].group, undefined, 'a review does not widen it to the group');
+});
+
+test('the start form asks again when the version moved under the question', async (t) => {
+  const { root, api, click, settle } = await formStart(t, { moved: 1 });
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(api.calls.start.length, 0);
+  assert.ok(root.querySelector('.gp-start-form [data-start-draft-warning]'), 'the question stands');
+});
+
+test('the ▶ strip asks about a version the scribe saved, and starting anyway pins it', async (t) => {
+  const { root, api, click, settle } = await stripStart(t);
+  assert.equal(api.calls.start.length, 0, 'nothing runs before the answer');
+  assert.match(root.querySelector('[data-start-draft-warning]').textContent, /This draft isn't reviewed: open it, or start anyway\?/);
+  assert.match(root.querySelector('[data-start-draft-warning]').textContent, /saved a version/);
+  assert.equal(root.querySelector('[data-saved-start]').disabled, true);
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(api.calls.start.length, 1);
+  assert.equal(api.calls.start[0].expectedRef, DRAFT_REF);
+});
+
+for (const status of ['working', 'awaiting_permission']) {
+  test(`the ▶ strip asks while the scribe is ${status}, even with nothing saved`, async (t) => {
+    const { root, api } = await stripStart(t, { actor: 'human:operator', status });
+    assert.match(root.querySelector('[data-start-draft-warning]').textContent, /still working/);
+    assert.equal(api.calls.start.length, 0);
+  });
+}
+
+test('the ▶ strip asks about a save by a scribe scoped elsewhere', async (t) => {
+  const { root, api } = await stripStart(t, { scope: 'tmpl_other' });
+  assert.match(root.querySelector('[data-start-draft-warning]').textContent, /saved a version/);
+  assert.equal(api.calls.start.length, 0, 'a scribe can save any template, so scope does not clear it');
+});
+
+test('the ▶ strip asks about another agent\'s save while the process\'s scribe is up', async (t) => {
+  const { root } = await stripStart(t, { actor: 'agent:agt_replaced' });
+  assert.ok(root.querySelector('[data-start-draft-warning]'));
+});
+
+test('the ▶ strip asks when it cannot read the current version', async (t) => {
+  const api = scribeApi({ stored: () => SAVED_DRAFT });
+  api.getTemplateHead = async () => { throw new Error('no head'); };
+  const { root, click, harness, settle } = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '' })] });
+  await click(root.querySelector('[data-saved-run="tmpl_1"]'));
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-saved-strip="tmpl_1"]'), 'submit'));
+  await settle();
+  assert.match(root.querySelector('[data-start-draft-warning]').textContent, /Could not check/);
+  assert.equal(api.calls.start.length, 0);
+});
+
+test('opening the draft from the question records that version as seen', async (t) => {
+  const { root, click, settle, harness } = await stripStart(t);
+  await click(root.querySelector('[data-start-draft-open]'));
+  await settle();
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  assert.deepEqual(JSON.parse(dashPrefs.getItem(REVIEWED_DRAFTS)), [['tmpl_1', DRAFT_REF]]);
+  assert.equal(root.querySelector('[data-saved-strip]'), null, 'the draft opens in place of the strip');
+});
+
+test('a scribe save after the question asks again rather than running it', async (t) => {
+  const { root, api, click, settle } = await stripStart(t);
+  const start = api.startGroupRun;
+  let moved = true;
+  api.startGroupRun = async (request) => {
+    if (moved) {
+      moved = false;
+      const error = new Error('moved');
+      error.body = { code: 'process_run_template_moved' };
+      throw error;
+    }
+    return start(request);
+  };
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(api.calls.start.length, 0, 'the version nobody was asked about did not run');
+  assert.ok(root.querySelector('[data-start-draft-warning]'), 'the question stands');
+  assert.equal(root.querySelector('.gq-error'), null, 'being asked again is not a failure');
+});
+
+test('a version that moved to a clean head clears the question instead of wedging it', async (t) => {
+  const { root, api, click, settle } = await stripStart(t);
+  const start = api.startGroupRun;
+  api.startGroupRun = async () => {
+    api.getTemplateHead = async () => ({ ...SAVED_DRAFT, currentRef: `tmpl_1@sha256:${'3'.repeat(64)}`, actor: 'human:operator' });
+    api.startGroupRun = start;
+    const error = new Error('moved');
+    error.body = { code: 'process_run_template_moved' };
+    throw error;
+  };
+  await click(root.querySelector('[data-start-draft-anyway]'));
+  await settle();
+  assert.equal(root.querySelector('[data-start-draft-warning]'), null);
+  assert.equal(root.querySelector('[data-saved-start]').disabled, false, 'Start works again');
+  assert.match(root.querySelector('.gq-error').textContent, /changed since you were asked/);
+  assert.equal(api.calls.start.length, 0);
 });

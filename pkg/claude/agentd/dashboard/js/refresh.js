@@ -46,6 +46,8 @@ import { setStayOnTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { setToolbarFixedNode } from './toolbar-node.js';
 import { peerViewTabUsable } from './peer-view-limits.js';
 import { automationsNavTarget, noteAutomationsSection } from './automations-nav.js';
+import { matchesShortcut } from './keybindings.js';
+import { setEdgeRevealEnabled, setSidePanelTuning } from './side-panel-reveal.js';
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
@@ -152,7 +154,7 @@ export async function refresh(options) {
     if (inboxPeers.length) void readRemoteInboxes(inboxPeers);
     const [snapR, retiredR, convR, replacedR, jobsR, viewersR] = await Promise.all([
       fetch('/api/snapshot' + (staticVersion
-        ? '?static_version=' + encodeURIComponent(staticVersion)
+        ? '?static_version=' + encodeURIComponent(staticVersion) + '&static_catalogs=1'
         : ''), { credentials: 'same-origin', cache: 'no-store', signal: abort.signal }),
       retiredRequest,
       convRequest,
@@ -299,6 +301,11 @@ export async function refresh(options) {
     // the 📝 chip in each group header is hidden unless body.show-group-description
     // is present, brought back only by an explicit opt-in. Plain class toggle.
     document.body.classList.toggle('show-group-description', !!data.show_group_description);
+    // A folded side panel floating in at the right edge (config
+    // dashboard.side_panel_edge_reveal, default on; side-panel-reveal.js).
+    setEdgeRevealEnabled(data.side_panel_edge_reveal !== false);
+    setSidePanelTuning(data.side_panel_tuning);
+    document.documentElement.dataset.overlayBackdrop = data.overlay_backdrop || 'dim';
     // CI pill on merged/closed PRs (config dashboard.show_final_pr_checks,
     // default off). PRChecksBadge tags a terminal PR's non-failing pill
     // .ci-final; CSS hides it unless body.show-final-pr-checks is present.
@@ -545,12 +552,11 @@ let tabHotkeysCleanup = null;
 function bindTabHotkeys() {
   if (tabHotkeysCleanup) return tabHotkeysCleanup;
   const onKeyDown = e => {
-    // Leave every modifier chord to the browser / app — plain keys only.
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-    // ←/→ while focus is on the tab bar (ARIA tablist idiom). preventDefault
-    // so the arrow doesn't also scroll, and move focus onto the new tab.
-    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+    // ←/→ while focus is on the tab bar (ARIA tablist idiom), plain keys
+    // only. preventDefault so the arrow doesn't also scroll, and move focus
+    // onto the new tab.
+    const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+    if (plain && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
         document.activeElement && document.activeElement.closest('nav')) {
       e.preventDefault();
       const moved = cycleTab(e.key === 'ArrowRight' ? 1 : -1);
@@ -560,11 +566,13 @@ function bindTabHotkeys() {
 
     // Bare [ / ] anywhere on the page — except while typing or with a modal
     // open (a modal traps interaction; cycling tabs behind it is surprising).
-    // Compared against e.key (not e.code) so it follows the user's layout.
-    if ((e.key === '[' || e.key === ']') && !isEditableTarget(e.target) &&
+    // Matched by key position through the registry (tab-next / tab-prev);
+    // the Config list labels it with what the key types on this layout.
+    const step = matchesShortcut(e, 'tab-next') ? 1 : matchesShortcut(e, 'tab-prev') ? -1 : 0;
+    if (step && !isEditableTarget(e.target) &&
         !document.querySelector('.modal-overlay.show, .manage-overlay.show')) {
       e.preventDefault();
-      cycleTab(e.key === ']' ? 1 : -1);
+      cycleTab(step);
     }
   };
   document.addEventListener('keydown', onKeyDown);

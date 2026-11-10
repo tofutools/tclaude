@@ -55,7 +55,7 @@ func peerHasAccess(peer string) bool {
 	for _, g := range grants {
 		// Public node summaries, obsolete slugs, and grants on deleted groups do
 		// not constitute access that may be used to solicit more authority.
-		if !slices.Contains(meaningful, g.Slug) {
+		if !slices.Contains(meaningful, g.Slug) || fedPeerGrantInert(g) != "" {
 			continue
 		}
 		if g.Scope == "" || (g.Slug == PermModelsProxy || g.Slug == PermModelsProxyLeased) && strings.HasPrefix(g.Scope, "http_proxy=") {
@@ -351,7 +351,7 @@ func peerAccessCatalog() (meaningful, groupSlugs []string) {
 			meaningful = append(meaningful, rule.requires)
 		}
 	}
-	meaningful = append(meaningful, "config.offer", PermSnapshotsReceive, PermApprovalsAnswer, PermModelsProxy, PermModelsProxyLeased)
+	meaningful = append(meaningful, PermConfigOffer, PermSnapshotsReceive, PermApprovalsAnswer, PermModelsProxy, PermModelsProxyLeased)
 	return meaningful, groupSlugs
 }
 

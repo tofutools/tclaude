@@ -176,14 +176,14 @@ func TestIsValidSpawnName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isValidSpawnName(tt.in), "isValidSpawnName(%q)", tt.in)
+			assert.Equal(t, tt.want, IsValidSpawnName(tt.in), "IsValidSpawnName(%q)", tt.in)
 		})
 	}
 }
 
 // TestNormalizeSpawnName covers the auto-normalization the spawn surfaces
 // apply when config.agent.spawn_name_normalize is on (the default): any
-// typed name is coerced into the [A-Za-z0-9_-] charset isValidSpawnName
+// typed name is coerced into the [A-Za-z0-9_-] charset IsValidSpawnName
 // accepts, so "code reviewer!" "just works" rather than 400ing. The two
 // invariants every case must hold — the output is always valid, and
 // normalization is idempotent — are asserted in the loop below the table.
@@ -225,7 +225,7 @@ func TestNormalizeSpawnName(t *testing.T) {
 			assert.Equalf(t, tt.want, got, "NormalizeSpawnName(%q)", tt.in)
 			// Invariant 1: the result always clears the spawn-name gate, so a
 			// caller can normalize-then-spawn with no second rejection.
-			assert.Truef(t, isValidSpawnName(got),
+			assert.Truef(t, IsValidSpawnName(got),
 				"NormalizeSpawnName(%q) = %q is not a valid spawn name", tt.in, got)
 			// Invariant 2: idempotent — normalizing the output is a no-op.
 			assert.Equalf(t, got, NormalizeSpawnName(got),

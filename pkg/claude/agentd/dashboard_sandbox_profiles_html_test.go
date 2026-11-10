@@ -32,7 +32,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`.sbx-tmpfs-size`:                                                              "size field keeps its own narrower structured styling",
 		`.sbx-cap-tmpfs`:                                                               "profile cards tag a temporary filesystem distinctly from a grant",
 		`id="sandbox-profile-editor-submit"`:                                           "stable submit hook for plain and wizard skins",
-		`class="tool sandbox-profile-clone"`:                                           "clone action in each sandbox-profile card",
+		`class="sandbox-profile-clone"`:                                                "clone action in each sandbox-profile card",
 		`actions.openSandboxClone(item)`:                                               "clone action opens the guarded sandbox editor",
 		`options: { editExisting: false, cloneSourceName: source.name }`:               "clone editor retains create semantics and source context",
 		`options.editExisting === false`:                                               "clone save cannot patch its source profile",
@@ -43,7 +43,6 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`.sbx-section input:not([type])`:                                               "Preact structured inputs retain dark modal styling",
 		`.sbx-section select`:                                                          "Preact structured selects retain dark modal styling",
 		`.sbx-row button`:                                                              "Preact structured row buttons retain dark modal styling",
-		`.sbx-row button:last-child:hover`:                                             "Preact remove buttons retain destructive hover styling",
 		`#sandbox-profile-editor-submit:disabled::before`:                              "wizard saving state suppresses the decorative submit label",
 		`/api/sandbox-profile-directories/inspect`:                                     "missing-directory inspection",
 		`/api/sandbox-profile-directories/create`:                                      "explicit missing-directory creation",
@@ -171,9 +170,6 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		if !strings.Contains(dashboardAssets, disclosure) {
 			t.Errorf("dashboard missing filtered-network disclosure %q", disclosure)
 		}
-	}
-	if !strings.Contains(dashboardAssets, `body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type])`) {
-		t.Error("wizard structured sandbox inputs lost the arcane skin")
 	}
 
 	// TCL-791 removed break-glass. Nothing on any dashboard surface may still

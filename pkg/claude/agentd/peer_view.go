@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 // Optional observation at the receiver's production dispatch boundary. Tests
@@ -25,6 +27,17 @@ var peerViewObserver atomic.Pointer[func() func()]
 // browser-selected identity. No route falls through to the local dashboard.
 // Trust and grants are rechecked on every request, including existing handlers.
 func PeerViewHandler(instanceID string) http.Handler {
+	return peerViewHandlerFor(instanceID, nil)
+}
+
+// peerViewHandlerFor is PeerViewHandler for a view principal: nil for the
+// peer's operator, or one of the peer's agents (peer_view_agents.go), which
+// reaches only agentPeerViewRoutes and never a local-operator path.
+func peerViewHandlerFor(instanceID string, principal *proto.PeerViewAgent) http.Handler {
+	actor := "operator@" + instanceID
+	if principal != nil {
+		actor = "agent:" + principal.Name + "/" + principal.ID + "@" + instanceID
+	}
 	mux := http.NewServeMux()
 	for pattern, rule := range peerViewRules() {
 		if strings.HasPrefix(pattern, "feature:") {
@@ -40,8 +53,15 @@ func PeerViewHandler(instanceID string) http.Handler {
 				return
 			}
 			out := &peerViewResponse{header: make(http.Header)}
-			view := &peerView{peer: p}
-			if rule.write != nil && peerViewJobRoute(pattern, r) && view.allows(rule, 0) {
+			view := &peerView{peer: p, agent: principal}
+			if principal != nil {
+				if status, code, msg := agentPeerViewRefusal(instanceID, pattern, r, principal); status != 0 {
+					writeError(w, status, code, msg)
+					recordFederationAudit("federation.peer_view", actor, "", "", r.Method+" "+pattern+" (agent refused: "+code+")", status)
+					return
+				}
+			}
+			if principal == nil && rule.write != nil && peerViewJobRoute(pattern, r) && view.allows(rule, 0) {
 				// Its work outlasts one exchange: it runs as a job, audited
 				// when it is done (peer_view_jobs.go).
 				id, ok := startPeerViewJob(instanceID, r, func(job *peerViewResponse, req *http.Request) {
@@ -51,7 +71,7 @@ func PeerViewHandler(instanceID string) http.Handler {
 					if jobView.auditDetail != "" {
 						label += " " + jobView.auditDetail
 					}
-					recordFederationAudit("federation.peer_view", "operator@"+instanceID, jobView.targetConv, jobView.groupName, label, job.statusCode())
+					recordFederationAudit("federation.peer_view", actor, jobView.targetConv, jobView.groupName, label, job.statusCode())
 				})
 				if !ok {
 					writeError(w, http.StatusServiceUnavailable, "peer_busy", "this peer already runs its maximum of long operations here")
@@ -59,7 +79,7 @@ func PeerViewHandler(instanceID string) http.Handler {
 				}
 				// Audited when it starts too: work a restart cuts short
 				// still leaves its trail.
-				recordFederationAudit("federation.peer_view", "operator@"+instanceID, "", "", r.Method+" "+pattern+" (started)", http.StatusAccepted)
+				recordFederationAudit("federation.peer_view", actor, "", "", r.Method+" "+pattern+" (started)", http.StatusAccepted)
 				writeJSON(w, http.StatusAccepted, map[string]string{"peer_job": id})
 				return
 			}
@@ -72,13 +92,15 @@ func PeerViewHandler(instanceID string) http.Handler {
 			} else {
 				rule.serve(out, r, view, rule)
 			}
-			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			// An agent's reads are audited too: the receiving operator sees
+			// which remote agent looked at what.
+			if principal != nil || r.Method != http.MethodGet && r.Method != http.MethodHead {
 				// Do not audit untrusted input (body, target selector, query) as a label.
 				label := r.Method + " " + pattern
 				if view.auditDetail != "" {
 					label += " " + view.auditDetail
 				}
-				recordFederationAudit("federation.peer_view", "operator@"+instanceID, view.targetConv, view.groupName, label, out.statusCode())
+				recordFederationAudit("federation.peer_view", actor, view.targetConv, view.groupName, label, out.statusCode())
 			}
 			if out.statusCode() >= 200 && out.statusCode() < 300 && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 				out.addMetadata(view.metadata())
@@ -118,8 +140,12 @@ type peerViewRule struct {
 	// the peer's grants (peer_grant_routes.go); serve or write is
 	// servePeerInvoke.
 	invoke *peerInvokeSpec
-	serve  func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
-	write  func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	// orGrants also open a group rule: a route whose fields each answer
+	// their own grant (the group PATCH) opens to any of them, and the
+	// handler's per-field gates decide what each may change.
+	orGrants []string
+	serve    func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
+	write    func(http.ResponseWriter, *http.Request, *peerView, peerViewRule)
 }
 
 // This single mapping drives endpoint dispatch, refusals and omitted features.
@@ -178,6 +204,25 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}
 	rules["GET /api/node/update/jobs/{id}"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdate}
 	rules["POST /api/node/update"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, write: servePeerNodeUpdate}
+	rules["GET /api/node/update/preflight"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdatePreflight}
+	rules["GET /api/node/update/settings"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdateSettings}
+	rules["PUT /api/node/update/settings"] = peerViewRule{feature: "node.update.settings", requires: PermNodeUpdateSettings, write: servePeerNodeUpdateSettings}
+	rules["GET /api/node/update-scripts"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdateScripts}
+	rules["GET /api/node/update-scripts/jobs/{id}"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, serve: servePeerNodeUpdateScripts}
+	rules["POST /api/node/update-scripts"] = peerViewRule{feature: "node.update", requires: PermNodeUpdate, write: servePeerNodeUpdateScripts}
+	rules["GET /api/node/service"] = peerViewRule{feature: "node.service", requires: PermNodeRead, serve: servePeerNodeService}
+	rules["POST /api/node/service/restart"] = peerViewRule{feature: "node.service.manage", requires: PermNodeUpdateSettings, write: servePeerNodeService}
+	rules["POST /api/node/service/autostart"] = peerViewRule{feature: "node.service.manage", requires: PermNodeUpdateSettings, write: servePeerNodeService}
+	rules["GET /api/node/service/launch"] = peerViewRule{feature: "node.service", requires: PermNodeRead, serve: servePeerNodeService}
+	rules["PUT /api/node/service/launch"] = peerViewRule{feature: "node.service.manage", requires: PermNodeUpdateSettings, write: servePeerNodeService}
+	rules["GET /api/node/launcher"] = peerViewRule{feature: "node.service", requires: PermNodeRead, serve: servePeerNodeService}
+	rules["POST /api/node/launcher/install"] = peerViewRule{feature: "node.service.manage", requires: PermNodeUpdateSettings, write: servePeerNodeService}
+	rules["POST /api/node/launcher/uninstall"] = peerViewRule{feature: "node.service.manage", requires: PermNodeUpdateSettings, write: servePeerNodeService}
+	// The Config tab (config_remote.go): read under node.config.read, and
+	// each changed key under its class's grant, checked in the handler.
+	rules["GET /api/config"] = peerViewRule{feature: "node.config", requires: PermNodeConfigRead, serve: servePeerConfig}
+	rules["POST /api/config"] = peerViewRule{feature: "node.config", requires: PermNodeConfigRead, write: servePeerConfig}
+	rules["PATCH /api/config"] = peerViewRule{feature: "node.config", requires: PermNodeConfigRead, write: servePeerConfig}
 	rules["GET /api/harnesses/availability"] = peerViewRule{feature: "node.harnesses", requires: PermNodeHarnessesRead, serve: servePeerHarnessAvailability}
 	rules["GET /api/node-summary"] = peerViewRule{feature: "node.summary", publicRead: true, summary: true, serve: servePeerSummary}
 	// Usage sharing: any trusted peer may ask which gateways it may use here;
@@ -189,6 +234,43 @@ func peerViewRules() map[string]peerViewRule {
 	// The sender of a teleport onto its own Claude subscription sends the
 	// token for that offer; only the offer's own sender's token is held.
 	rules["POST /api/teleport-subscription"] = peerViewRule{feature: "agents.teleport.credentials", publicRead: true, write: servePeerTeleportSubscription}
+	// The fleet brief, under an instance grant (fleet.go).
+	rules["GET /api/fleet"] = peerViewRule{feature: "fleet", requires: PermFleetRead, serve: servePeerFleet}
+	// Process runs (process_peer_runs.go): reads under the instance grant,
+	// redacted; a start under its group or member grant, owned by the peer.
+	rules["GET /v1/process/runs"] = peerViewRule{feature: "process.runs", requires: PermProcessRunsRead, serve: servePeerProcessRuns}
+	rules["POST /v1/process/runs"] = peerViewRule{feature: "process.runs.start", requires: PermProcessRunsStart, group: true, write: servePeerProcessRuns}
+	rules["GET /v1/process/runs/{id}"] = peerViewRule{feature: "process.runs", requires: PermProcessRunsRead, serve: servePeerProcessRunRead}
+	rules["GET /v1/process/runs/{id}/events"] = peerViewRule{feature: "process.runs", requires: PermProcessRunsRead, serve: servePeerProcessRunRead}
+	// Run manage verbs (process_peer_manage.go): on program-free runs only,
+	// pause excepted, with the peer recorded as the actor.
+	for _, pattern := range []string{
+		"POST /v1/process/runs/{id}/pause",
+		"POST /v1/process/runs/{id}/resume",
+		"POST /v1/process/runs/{id}/decide",
+		"POST /v1/process/runs/{id}/resolve-blocked",
+		"POST /v1/process/runs/{id}/nodes/{node}/assign",
+	} {
+		rules[pattern] = peerViewRule{feature: "process.runs.manage", requires: PermProcessRunsManage, write: servePeerProcessRunManage}
+	}
+	// Cron jobs and trigger rules (peer_schedule.go): read, and a job
+	// disabled, in the peer's reach; never authored or fired.
+	rules["GET /v1/cron"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, serve: servePeerCronList}
+	rules["GET /v1/cron/{id}/logs"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, serve: servePeerCronLogs}
+	rules["POST /v1/cron/{id}/disable"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronDisable}
+	// The peer's own jobs (peer_cron_jobs.go): messages only, rechecked at
+	// every fire.
+	rules["POST /v1/cron"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronCreate}
+	rules["PATCH /v1/cron/{id}"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronPatch}
+	rules["DELETE /v1/cron/{id}"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronDelete}
+	rules["POST /v1/cron/{id}/enable"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronEnable}
+	rules["POST /v1/cron/{id}/run-now"] = peerViewRule{feature: "groups.messages.schedule", requires: PermGroupsMessagesSchedule, group: true, write: servePeerCronRunNow}
+	rules["GET /v1/triggers"] = peerViewRule{feature: "groups.triggers", requires: PermGroupsTriggersRead, group: true, serve: servePeerTriggers}
+	rules["GET /v1/triggers/{id}"] = peerViewRule{feature: "groups.triggers", requires: PermGroupsTriggersRead, group: true, serve: servePeerTrigger}
+	// A group's advisory process: read by any peer that sees the group,
+	// advanced under process.advance there.
+	rules["GET /api/groups/{name}/process"] = withPeerInvoke("GET /api/groups/{name}/process", peerViewRule{feature: "groups.process", requires: PermGroupsVisibilityRead, group: true, visible: true, invoke: &peerInvokeSpec{param: "name"}})
+	rules["POST /api/groups/{name}/process/advance"] = withPeerInvoke("POST /api/groups/{name}/process/advance", peerViewRule{feature: "groups.process.advance", requires: PermProcessAdvance, group: true, invoke: &peerInvokeSpec{param: "name"}})
 	rules["GET /api/instance"] = peerViewRule{feature: "health", requires: PermNodeRead, serve: servePeerNode}
 	rules["GET /api/costs"] = peerViewRule{feature: "costs", requires: PermCostsRead, serve: servePeerGlobalRead(handleDashboardCosts)}
 	// The Usage tab's Quota view reads the node's own subscription quota
@@ -221,23 +303,37 @@ func peerViewRules() map[string]peerViewRule {
 	// so the hover cards behind them are held the same way.
 	rules["GET /api/pr-checks"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRChecks)}
 	rules["GET /api/pr-details"] = peerViewRule{feature: "agents.pr", requires: PermAgentsStatusRead, unrestrictedOnly: true, serve: servePeerUnrestrictedRead(handleDashboardPRDetails)}
+	// The operator's lock on a group resource, under the peer's grants
+	// (peer_resource_locks.go); a peer's group card lists the resources under
+	// its own grant (groups.resources.read).
+	rules["POST /api/resource-locks"] = peerViewRule{feature: "groups.resources.lock", requires: PermGroupsResourcesLock, group: true, write: servePeerResourceLock}
+	rules["GET /api/groups/{name}/resources"] = peerViewRule{feature: "groups.resources", requires: PermGroupsResourcesRead, group: true, serve: servePeerGroupResources}
 	addPeerGroupSettingsRules(rules)
 	addPeerMemberRules(rules)
 	addPeerSpawnCatalogRules(rules)
 	addPeerNodeManageRules(rules)
+	addPeerSandboxProfileRules(rules)
+	addPeerLibraryRules(rules)
+	addPeerGroupLaunchRules(rules)
+	addPeerTransferRules(rules)
+	addPeerImportRules(rules)
+	addPeerGroupStructureRules(rules)
 	addPeerSpawnWorktreeRules(rules)
 	addPeerHumanInboxRules(rules)
+	addPeerDrawingBoardRules(rules)
+	addPeerTaskboardRules(rules)
+	addPeerHostRules(rules)
 	addPeerMailboxRules(rules)
 	addPeerUsageRules(rules)
 	rules["feature:roster"] = peerViewRule{feature: "groups.roster", requires: PermGroupsRosterRead, group: true, serve: servePeerGroups}
 	rules["feature:presence"] = peerViewRule{feature: "groups.presence", requires: PermGroupsPresenceRead, group: true, serve: servePeerGroups}
-	// A long operation's job, read by the peer that started it.
-	rules["GET /api/peer-view-jobs/{id}"] = peerViewRule{feature: "local_dashboard", requires: "local_only", unrestrictedOnly: true, serve: servePeerViewJob}
 	return rules
 }
 
 type peerView struct {
-	peer       *db.FederationPeer
+	peer *db.FederationPeer
+	// agent is the view's agent principal, nil for the peer's operator.
+	agent      *proto.PeerViewAgent
 	targetConv string
 	groupName  string
 	// auditDetail is a validated closed value (never request text) that
@@ -265,9 +361,14 @@ type peerViewMetadata struct {
 	// Level is the trust this node grants the reading peer ("restricted" or
 	// "unrestricted"), so the peer's map can show that direction of the link
 	// next to its own trust in this node.
-	Level    string             `json:"level"`
-	Included []string           `json:"included"`
-	Omitted  []peerViewOmission `json:"omitted"`
+	Level string `json:"level"`
+	// Principal is "agent" for a view one of the peer's agents opened: it
+	// lists only the features and grants agent peer views reach, and an
+	// unrestricted Level means every grant on them, never local-operator
+	// equivalence.
+	Principal string             `json:"principal,omitempty"`
+	Included  []string           `json:"included"`
+	Omitted   []peerViewOmission `json:"omitted"`
 	// Groups names, per visible group, the group-scoped grants behind the
 	// controls a peer-granted route serves (peerGroupGrants).
 	Groups map[string][]string `json:"groups,omitempty"`
@@ -276,9 +377,15 @@ type peerViewMetadata struct {
 	Agents map[string][]string `json:"agents,omitempty"`
 }
 
+// unrestricted reports a view that acts as this node's operator: the
+// operator of a peer this node trusts unrestricted, never one of its agents.
+func (v *peerView) unrestricted() bool {
+	return v != nil && v.agent == nil && db.FederationPeerUnrestricted(v.peer.InstanceID)
+}
+
 func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
 	if rule.unrestrictedOnly {
-		return v != nil && db.FederationPeerUnrestricted(v.peer.InstanceID)
+		return v.unrestricted()
 	}
 	if v != nil && rule.accessRequest {
 		return peerHasAccess(v.peer.InstanceID)
@@ -293,26 +400,20 @@ func (v *peerView) allows(rule peerViewRule, groupID int64) bool {
 		return fedPeerGroupVisible(v.peer.InstanceID, groupID)
 	}
 	if rule.group {
-		return fedPeerAllows(v.peer.InstanceID, groupID, rule.requires)
+		return fedPeerAllows(v.peer.InstanceID, groupID, rule.requires) ||
+			slices.ContainsFunc(rule.orGrants, func(slug string) bool { return fedPeerAllows(v.peer.InstanceID, groupID, slug) })
 	}
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
-		return true
-	}
-	grants, err := db.ListEffectiveFederationPeerGrants(v.peer.InstanceID)
-	if err != nil {
-		return false
-	}
-	for _, g := range grants {
-		if g.Slug == rule.requires && g.Scope == "" {
-			return true
-		}
-	}
-	return false
+	return fedPeerHoldsUnscoped(v.peer.InstanceID, rule.requires)
 }
 func (v *peerView) metadata() peerViewMetadata {
 	out := peerViewMetadata{Peer: peerDisplay(v.peer), Level: db.FederationTrustRestricted, Included: []string{}, Omitted: []peerViewOmission{}}
 	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
 		out.Level = db.FederationTrustUnrestricted
+	}
+	var agentFeatures, agentSlugs map[string]bool
+	if v.agent != nil {
+		out.Principal = "agent"
+		agentFeatures, agentSlugs = agentPeerViewMetadataScope()
 	}
 	groups, _ := db.ListAgentGroups()
 	hasAccess := peerHasAccess(v.peer.InstanceID)
@@ -321,6 +422,9 @@ func (v *peerView) metadata() peerViewMetadata {
 		features[rule.feature] = rule
 	}
 	for _, rule := range features {
+		if agentFeatures != nil && !agentFeatures[rule.feature] {
+			continue
+		}
 		allowed := v.allows(rule, 0)
 		if rule.group {
 			for _, g := range groups {
@@ -345,6 +449,10 @@ func (v *peerView) metadata() peerViewMetadata {
 	}
 	out.Groups = peerGroupGrants(v.peer.InstanceID, groups)
 	out.Agents = v.agentGrants(groups)
+	if agentSlugs != nil {
+		out.Groups, out.Agents = filterGrantLists(out.Groups, agentSlugs), filterGrantLists(out.Agents, agentSlugs)
+		out.Groups, out.Agents = footprintGrantLists(v.agent, groups, out.Groups, out.Agents)
+	}
 	sort.Strings(out.Included)
 	sort.Slice(out.Omitted, func(i, j int) bool { return out.Omitted[i].Feature < out.Omitted[j].Feature })
 	return out
@@ -443,11 +551,11 @@ func servePeerAsLocal(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 		writeError(w, 403, "peer_view_local_only", "endpoint is local-only")
 		return
 	}
-	peerDashboardMux().ServeHTTP(w, r.Clone(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)))
+	peerDashboardMux().ServeHTTP(w, r.Clone(context.WithValue(withImportForwarded(r.Context()), remoteAuthedCtxKey{}, true)))
 }
 
 func servePeerSnapshot(w http.ResponseWriter, r *http.Request, v *peerView, _ peerViewRule) {
-	if db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v.unrestricted() {
 		// Unrestricted trust grants complete collection visibility, while route
 		// classification still limits the available actions.
 		ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerSnapshotCtxKey{}, true)
@@ -515,7 +623,7 @@ func servePeerMessage(w http.ResponseWriter, r *http.Request, v *peerView, rule 
 	var announce struct {
 		AllLive bool `json:"all_live"`
 	}
-	if json.Unmarshal(raw, &announce) == nil && announce.AllLive && db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if json.Unmarshal(raw, &announce) == nil && announce.AllLive && v.unrestricted() {
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		servePeerAsLocal(w, r, v, peerViewRule{feature: "local_dashboard", requires: "local_only", unrestrictedOnly: true})
 		return

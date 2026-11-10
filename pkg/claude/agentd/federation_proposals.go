@@ -76,7 +76,6 @@ func proposalEvent(p proto.PeerProposalPayload, peer, kind string, payload any) 
 // A crash between queue insertion and marking is safe: the intent's fixed
 // envelope ID makes insertion/delivery idempotent.
 func (rt *fedRuntime) flushProposalEvents(now time.Time) {
-	_ = db.ExpireFederationProposals(now)
 	events, err := db.PendingFederationProposalEvents(now)
 	if err != nil {
 		return
@@ -1138,8 +1137,7 @@ func proposalAccessRequests() []dashboardAccessRequest {
 	if err != nil {
 		return out
 	}
-	_ = db.ExpireFederationProposals(time.Now())
-	rows, err := db.ListFederationProposals()
+	rows, err := db.ListActionableFederationProposals(time.Now(), maxResolvedApprovals)
 	if err != nil {
 		return out
 	}

@@ -62,7 +62,8 @@ func TestDashboardAppPaths_SPAFallback(t *testing.T) {
 		"/jobs", // historical alias remains reload-safe
 		"/processes", "/access", "/access/sudo",
 		"/processes/runs/run-42", "/automations/processes", "/automations/processes/templates/release-train",
-		"/usage", "/costs", "/activity", "/activity/logs", "/activity/performance",
+		"/usage", "/costs", "/diagnostics", "/diagnostics/logs", "/diagnostics/performance",
+		"/activity", "/activity/logs", // the tab's former name remains reload-safe
 		"/audit", "/logs", "/debug", // retired tabs remain reload-safe (healed client-side)
 		"/plugins", "/messages", "/config",
 	} {

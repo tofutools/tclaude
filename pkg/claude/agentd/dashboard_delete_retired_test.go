@@ -37,7 +37,7 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 		`id="delete-retired-select-all"`, `id="delete-retired-select-none"`,
 		`id="delete-retired-wt"`, `id="delete-retired-list"`,
 		`submitID="delete-retired-submit"`,
-		`primaryClass=${result ? 'primary' : 'primary danger'}`,
+		`primaryVariant=${result ? 'primary' : 'danger'}`,
 		"visibleCandidates.filter(",
 		"selected.has(candidate.conv_id)",
 		"candidate.agent_id || candidate.conv_id",
@@ -115,7 +115,7 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 	for _, required := range []string{
 		"const retiredCount = snap.retired_total || 0",
 		"if (retiredCount) {",
-		"icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished familiars…')",
+		"icon: wiz('🗑', '🔥'), label: wiz('Delete retired agents…', 'Dispel banished heroes…')",
 		"keywords: 'delete purge retired cleanup remove wipe agents'",
 	} {
 		if !strings.Contains(palette, required) {

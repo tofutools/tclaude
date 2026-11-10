@@ -109,6 +109,30 @@ type TclaudeLayerReadOnlyBind struct {
 	Target string `json:"target"`
 }
 
+// tclaudeLayerRenderInput is what a launch spec renders an outer-layer
+// boundary from: the platform's sandbox binary and the spec's cleaned paths
+// and plan (tclaudeLayerSpecRenderInput). Named rather than positional: three
+// of these are []string, and a swapped pair would still compile.
+type tclaudeLayerRenderInput struct {
+	Binary           string
+	Phase0WriteDirs  []string
+	PrivateWriteDirs []TclaudeLayerPrivateWriteDir
+	FinalHideDirs    []string
+	ReadOnlyBinds    []TclaudeLayerReadOnlyBind
+	SocketPaths      []string
+	Plan             sandboxpolicy.MountPlan
+}
+
+// tclaudeLayerLaunchOpts are a pane launch's optional authorities, each the
+// platform renderer's to honour or refuse: one loopback listener, a Darwin
+// route-slot pool (with its pre-reservation), and a group-route helper.
+type tclaudeLayerLaunchOpts struct {
+	LoopbackBindPort int
+	RouteSlots       []int
+	RouteReservation *DarwinRouteSlotReservation
+	RouteHelper      *TclaudeLayerRouteHelper
+}
+
 // TclaudeLayerLaunchSpec is the complete, versioned input to the outer-layer
 // renderer. It is deliberately independent of NewParams and daemon launch
 // types so pane-authoritative harnesses and agentd-owned executors can render
@@ -173,7 +197,7 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 	if helper.BinaryPath != "" && !filepath.IsAbs(filepath.Clean(helper.BinaryPath)) {
 		return fmt.Errorf("route helper binary path must be absolute")
 	}
-	if strings.TrimSpace(helper.AgentID) == "" || strings.TrimSpace(helper.ConvID) == "" || strings.TrimSpace(helper.LaunchGeneration) == "" || strings.TrimSpace(helper.HandoffSocketPath) == "" || !filepath.IsAbs(filepath.Clean(helper.HandoffSocketPath)) {
+	if strings.TrimSpace(helper.AgentID) == "" || (helper.ProxyOnly && strings.TrimSpace(helper.ConvID) == "") || strings.TrimSpace(helper.LaunchGeneration) == "" || strings.TrimSpace(helper.HandoffSocketPath) == "" || !filepath.IsAbs(filepath.Clean(helper.HandoffSocketPath)) {
 		return fmt.Errorf("route helper launch identity is incomplete")
 	}
 	if len(helper.GroupIDs) == 0 {
@@ -181,8 +205,8 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 	}
 	seen := make(map[int64]struct{}, len(helper.GroupIDs))
 	for _, groupID := range helper.GroupIDs {
-		if groupID <= 0 {
-			return fmt.Errorf("route helper group id must be positive")
+		if groupID < 0 {
+			return fmt.Errorf("route helper selector must be a positive group id or zero for host-only discovery")
 		}
 		if _, exists := seen[groupID]; exists {
 			return fmt.Errorf("route helper group id %d is duplicated", groupID)
@@ -278,7 +302,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	if input.DarwinRouteReservation != nil && !sameDarwinRouteSlots(input.DarwinRouteSlots, input.DarwinRouteReservation.Slots()) {
 		return TclaudeLayerLaunchSpec{}, fmt.Errorf("darwin route reservation does not match launch slots")
 	}
-	cwd := canonicalSandboxPath(input.Cwd)
+	cwd := CanonicalSandboxPath(input.Cwd)
 	if cwd == "" {
 		return TclaudeLayerLaunchSpec{}, fmt.Errorf("tclaude’s sandbox launch cwd %q is not an absolute canonical path", input.Cwd)
 	}
@@ -301,7 +325,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		effective, append([]string{cwd}, gitWriteDirs...)...)
 	launchWriteDirs := append(gitWriteDirs,
 		sandboxDirsForEffective(effective, sandboxpolicy.AccessWrite)...)
-	launchWriteDirs = appendUniqueDir(launchWriteDirs, cwd)
+	launchWriteDirs = AppendUniqueDir(launchWriteDirs, cwd)
 	launchReadDirs := append(
 		sandboxDirsForEffective(effective, sandboxpolicy.AccessRead),
 		launchContractReadDirs...,
@@ -344,7 +368,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	contractWriteDirs = append(contractWriteDirs, buckets.ContractWriteDirs...)
 	launchReadDirs = append(launchReadDirs, buckets.LaunchReadDirs...)
 	for _, dir := range buckets.LaunchWriteDirs {
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, dir)
+		launchWriteDirs = AppendUniqueDir(launchWriteDirs, dir)
 	}
 	// The harness-config floor rides in as ordinary read grants so the same
 	// most-specific-wins ordering, constructed-root renderer, and Seatbelt
@@ -370,6 +394,14 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	// carried around it and re-attached: they occupy their own sandbox paths, so
 	// they never fold with a contract dir, and dropping them here would silently
 	// launch without the mount the operator authored.
+	// The launch's own reopens, harness state included, may not fall under the
+	// spawn-time deny overlay: it covers each path's whole subtree.
+	if input.Snapshot != nil {
+		if err := sandboxpolicy.ValidateDenyOverlayHeld(input.Snapshot.DenyOverlay,
+			launchReadDirs, launchWriteDirs, contractWriteDirs, stateDirs, readOnlyStateDirs); err != nil {
+			return TclaudeLayerLaunchSpec{}, err
+		}
+	}
 	effective.Filesystem = append(
 		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs),
 		remappedGrants...)
@@ -1036,6 +1068,36 @@ func TclaudeLayerLaunchRootPosture(
 		posture, sockets, effective.FilesystemRoot), nil
 }
 
+// openCodeUnresolvedModelNotice says, at launch, what the silent pass-through
+// above used to leave unsaid: tclaude did not check the OpenCode model
+// endpoint against the filtered network, so a model that cannot be reached is
+// the network policy doing its job, and the fix is in the policy. It adds no
+// access.
+func openCodeUnresolvedModelNotice(
+	mode sandboxpolicy.AccessMode,
+	resolved harness.ResolvedModelTransport,
+) sandboxpolicy.AccessNotice {
+	fix := "allow the provider's API host in every layer that has a network allow list"
+	if mode == sandboxpolicy.AccessModeOpen {
+		fix = "remove or narrow the deny rule that matches the provider's API host"
+	}
+	what := "tclaude could not resolve this OpenCode model's provider endpoint"
+	if strings.TrimSpace(resolved.Model) == "" {
+		what = "no launch model was selected, so OpenCode picks its own default model and provider"
+	}
+	detail := "Filtered network: " + what + "; tclaude did not check that endpoint against the network rules and added no model access. If OpenCode cannot reach its model, " + fix + ", or use network open. tclaude resolves only an explicit openai-compatible provider with options.baseURL in OPENCODE_CONFIG_CONTENT; see docs/harnesses.md#opencode-under-a-filtered-network."
+	if reason := strings.TrimSpace(resolved.UnresolvedReason); reason != "" {
+		detail += " Resolution stopped at: " + reason
+	}
+	return sandboxpolicy.AccessNotice{
+		Class:  sandboxpolicy.AccessNoticeClassDegradation,
+		Axis:   "network",
+		Reason: sandboxpolicy.AccessNoticeReasonFilteredModelTraffic,
+		Effect: sandboxpolicy.AccessNoticeEffectPreviewIncomplete,
+		Detail: detail,
+	}
+}
+
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
 // both the harness descriptor and the operator's resolved profile assert a
 // model transport that functions across the selected platform's boundary
@@ -1078,7 +1140,7 @@ func ValidateTclaudeLayerNetwork(
 		// may be unreachable.
 		if h != nil && h.Name == harness.OpenCodeName &&
 			!resolvedModel.ProviderResolved {
-			return nil, nil
+			return []sandboxpolicy.AccessNotice{openCodeUnresolvedModelNotice(axes.Network.Mode, resolvedModel)}, nil
 		}
 		if resolvedModel.SessionGateway && h != nil && h.SupportsModelProxy() {
 			return []sandboxpolicy.AccessNotice{{Class: sandboxpolicy.AccessNoticeClassDegradation, Axis: "network", Reason: sandboxpolicy.AccessNoticeReasonFilteredModelTraffic, Effect: sandboxpolicy.AccessNoticeEffectLaunchGated, Detail: "Model traffic uses the launch-bound loopback gateway and authenticated daemon socket, authorized separately by models.proxy. The authored IP network rules still govern tool traffic; no upstream model IP access is added."}}, nil
@@ -1092,8 +1154,8 @@ func ValidateTclaudeLayerNetwork(
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
-		if coverageErr := harness.ValidateModelTransportCoverage(
-			h, axes.Network, requirement); coverageErr != nil {
+		if coverageErr := harness.ValidateModelTransportCoverageWithNotices(
+			h, axes.Network, requirement, effective.AccessNotices); coverageErr != nil {
 			return nil, coverageErr
 		}
 		detail := describeModelTransportRequirementForPlatform(
@@ -1114,13 +1176,22 @@ func ValidateTclaudeLayerNetwork(
 		if h.Name == harness.OpenCodeName {
 			detail += " This OpenCode route was resolved from an explicit-provider config: the launch model and OPENCODE_CONFIG_CONTENT name one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The isolated server retains OpenCode's required config, install, auth, and runtime-state projections; tclaude’s sandbox packet boundary remains authoritative if those inputs select a different route at runtime. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude’s sandbox nft boundary is the packet-enforced floor."
 		}
-		return []sandboxpolicy.AccessNotice{{
+		notices := []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,
 			Axis:   "network",
 			Reason: sandboxpolicy.AccessNoticeReasonFilteredModelTraffic,
 			Effect: sandboxpolicy.AccessNoticeEffectLaunchGated,
 			Detail: detail,
-		}}, nil
+		}}
+		// A subscription login refreshes its token at a host besides the model
+		// endpoint. Missing it breaks the launch hours later, not now, so it is
+		// a warning rather than a coverage refusal.
+		if h.Name == harness.DefaultName {
+			if notice, ok := harness.ClaudeLoginRefreshNotice(axes.Network, resolvedModel); ok {
+				notices = append(notices, notice)
+			}
+		}
+		return notices, nil
 	case sandboxpolicy.AccessModeClosed:
 		if h != nil && h.UsesCommandInput() {
 			return nil, nil
@@ -1184,47 +1255,20 @@ func WrapTclaudeLayerSpecWithLoopbackBind(
 	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
 		return "", err
 	}
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
-		tclaudeLayerSpecRenderInput(spec)
+	in, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
 	}
+	in.Binary = binary
+	opts := tclaudeLayerLaunchOpts{LoopbackBindPort: loopbackBindPort, RouteHelper: spec.Contract.RouteHelper}
 	if len(spec.Contract.DarwinRouteSlots) > 0 {
 		if runtime.GOOS != "darwin" {
 			return "", fmt.Errorf("darwin route slots are unsupported on %s", runtime.GOOS)
 		}
-		return tclaudeLayerCommandWithRouteSlotsAndLoopbackBind(
-			binary,
-			phase0WriteDirs,
-			privateWriteDirs,
-			finalHideDirs,
-			readOnlyBinds,
-			socketPaths,
-			plan,
-			spec.Contract.DarwinRouteSlots,
-			spec.Contract.DarwinRouteReservation,
-			spec.Contract.RouteHelper,
-			loopbackBindPort,
-			harnessCommand,
-		)
+		opts.RouteSlots = spec.Contract.DarwinRouteSlots
+		opts.RouteReservation = spec.Contract.DarwinRouteReservation
 	}
-	if spec.Contract.RouteHelper != nil {
-		return tclaudeLayerCommandWithRouteHelper(
-			binary, phase0WriteDirs, privateWriteDirs, finalHideDirs,
-			readOnlyBinds, socketPaths, plan, *spec.Contract.RouteHelper,
-			harnessCommand)
-	}
-	return tclaudeLayerCommandWithLoopbackBind(
-		binary,
-		phase0WriteDirs,
-		privateWriteDirs,
-		finalHideDirs,
-		readOnlyBinds,
-		socketPaths,
-		plan,
-		loopbackBindPort,
-		harnessCommand,
-	)
+	return tclaudeLayerCommand(in, opts, harnessCommand)
 }
 
 func cleanTclaudeLayerPrivateWriteDirs(
@@ -1341,11 +1385,11 @@ func WrapTclaudeLayerServerSpecWithLoopbackBind(
 	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
 		return "", err
 	}
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
-		tclaudeLayerSpecRenderInput(spec)
+	in, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
 	}
+	in.Binary = binary
 	if spec.Contract.RouteHelper != nil {
 		wrapped, helperErr := wrapTclaudeLayerRouteHelper(binary, *spec.Contract.RouteHelper, serverCommand)
 		if helperErr != nil {
@@ -1353,17 +1397,7 @@ func WrapTclaudeLayerServerSpecWithLoopbackBind(
 		}
 		serverCommand = wrapped
 	}
-	return tclaudeLayerServerCommandWithLoopbackBind(
-		binary,
-		phase0WriteDirs,
-		privateWriteDirs,
-		finalHideDirs,
-		readOnlyBinds,
-		socketPaths,
-		plan,
-		loopbackBindPort,
-		serverCommand,
-	)
+	return tclaudeLayerServerCommand(in, loopbackBindPort, serverCommand)
 }
 
 // TclaudeLayerUnixRelayServerExecArgs renders the v4 server boundary as argv
@@ -1385,8 +1419,7 @@ func TclaudeLayerUnixRelayServerExecArgs(
 	if spec.Contract.RouteHelper != nil {
 		return nil, fmt.Errorf("linux group-route helper requires a shell-wrapped pane launch; unix-relay server argv cannot supervise it")
 	}
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
-		tclaudeLayerSpecRenderInput(spec)
+	in, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return nil, err
 	}
@@ -1399,8 +1432,8 @@ func TclaudeLayerUnixRelayServerExecArgs(
 		opaqueStateDirs = spec.Contract.StateDirs
 	}
 	args, err := bwrapArgsWithDaemonFinal(
-		phase0WriteDirs, plan, privateWriteDirs, finalHideDirs, readOnlyBinds,
-		socketPaths, opaqueStateRoot, opaqueStateDirs)
+		in.Phase0WriteDirs, in.Plan, in.PrivateWriteDirs, in.FinalHideDirs, in.ReadOnlyBinds,
+		in.SocketPaths, opaqueStateRoot, opaqueStateDirs)
 	if err != nil {
 		return nil, err
 	}
@@ -1472,11 +1505,11 @@ func tclaudeLayerRelayEngineDescriptors(
 func TclaudeLayerUnixRelayServerFDs(
 	spec TclaudeLayerLaunchSpec,
 ) (listenerFD, executableFD int, err error) {
-	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(spec)
+	rendered, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return 0, 0, err
 	}
-	engineDescriptors, relayed := tclaudeLayerRelayEngineDescriptors(plan)
+	engineDescriptors, relayed := tclaudeLayerRelayEngineDescriptors(rendered.Plan)
 	if !relayed {
 		return 3, 4, nil
 	}
@@ -1484,65 +1517,55 @@ func TclaudeLayerUnixRelayServerFDs(
 	return base, base + 1, nil
 }
 
-func tclaudeLayerSpecRenderInput(
-	spec TclaudeLayerLaunchSpec,
-) (
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	error,
-) {
+func tclaudeLayerSpecRenderInput(spec TclaudeLayerLaunchSpec) (tclaudeLayerRenderInput, error) {
 	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+		return tclaudeLayerRenderInput{},
 			fmt.Errorf("unsupported tclaude sandbox launch spec version %d", spec.Version)
 	}
 	if err := validateTclaudeLayerOpenCodeControl(spec); err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	plan, err := sandboxpolicy.RenderMountPlanWithEngine(
 		spec.Effective, spec.Contract.NetworkEngine)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+		return tclaudeLayerRenderInput{},
 			fmt.Errorf("render mount plan: %w", err)
 	}
 	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	if err := validateTclaudeLayerHarnessStateRules(
 		tclaudeLayerHarnessStateRules(spec.Contract, phase0WriteDirs[0]),
 		spec.Contract.ProfileFilesystem,
 	); err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(
 		spec.Contract.PrivateWriteDirs,
 	)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	finalHideDirs, err := cleanTclaudeLayerAbsoluteDirs(
 		"daemon-final hide", spec.Contract.FinalHideDirs)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	readOnlyBinds, err := cleanTclaudeLayerReadOnlyBinds(spec.Contract.ReadOnlyBinds)
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return tclaudeLayerRenderInput{}, err
 	}
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
-		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+		return tclaudeLayerRenderInput{},
 			fmt.Errorf("resolve protected paths for daemon-final read-only binds: %w", err)
 	}
 	for _, bind := range readOnlyBinds {
 		for _, path := range []string{bind.Source, bind.Target} {
 			for _, protected := range protectedRoots {
 				if sandboxpolicy.GuardContainsOrEqual(protected, path) {
-					return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+					return tclaudeLayerRenderInput{},
 						fmt.Errorf(
 							"daemon-final read-only bind path %q is at or below protected root %q",
 							path, protected)
@@ -1558,7 +1581,7 @@ func tclaudeLayerSpecRenderInput(
 			authoredSockets = *spec.Contract.MaterializedUnixSocketPaths
 			if socketErr := sandboxpolicy.ValidateMaterializedUnixSocketPaths(
 				*spec.Effective.UnixSockets, authoredSockets); socketErr != nil {
-				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+				return tclaudeLayerRenderInput{},
 					fmt.Errorf("validate tclaude’s sandbox unix socket allowlist: %w", socketErr)
 			}
 		} else {
@@ -1566,15 +1589,22 @@ func tclaudeLayerSpecRenderInput(
 			authoredSockets, socketErr = sandboxpolicy.MaterializeUnixSocketPaths(
 				*spec.Effective.UnixSockets)
 			if socketErr != nil {
-				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+				return tclaudeLayerRenderInput{},
 					fmt.Errorf("materialize tclaude’s sandbox unix socket allowlist: %w", socketErr)
 			}
 		}
 		for _, socket := range authoredSockets {
-			socketPaths = appendUniqueDir(socketPaths, socket)
+			socketPaths = AppendUniqueDir(socketPaths, socket)
 		}
 	}
-	return phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, nil
+	return tclaudeLayerRenderInput{
+		Phase0WriteDirs:  phase0WriteDirs,
+		PrivateWriteDirs: privateWriteDirs,
+		FinalHideDirs:    finalHideDirs,
+		ReadOnlyBinds:    readOnlyBinds,
+		SocketPaths:      socketPaths,
+		Plan:             plan,
+	}, nil
 }
 
 func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
@@ -1665,7 +1695,7 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 // ValidateTclaudeLayerLaunchSpec applies the renderer's complete structural
 // validation without producing a platform command.
 func ValidateTclaudeLayerLaunchSpec(spec TclaudeLayerLaunchSpec) error {
-	_, _, _, _, _, _, err := tclaudeLayerSpecRenderInput(spec)
+	_, err := tclaudeLayerSpecRenderInput(spec)
 	return err
 }
 
@@ -1845,7 +1875,7 @@ func cleanTclaudeLayerAbsoluteDirs(label string, paths []string) ([]string, erro
 		if path == "." || !filepath.IsAbs(path) {
 			return nil, fmt.Errorf("%s entry %d has non-absolute path %q", label, i, path)
 		}
-		out = appendUniqueDir(out, path)
+		out = AppendUniqueDir(out, path)
 	}
 	return out, nil
 }
@@ -2122,6 +2152,10 @@ func bwrapArgsWithDaemonFinal(
 			// trigger the contract repair that preserves class-1 authority.
 			if !planWriteDirs[path] {
 				args = append(args, "--bind", path, path)
+				args, err = appendTclaudeLayerProtectedAncestorPins(args, path, &hideRemounts, false)
+				if err != nil {
+					return nil, err
+				}
 			}
 			existingPhase0WriteDirs = append(existingPhase0WriteDirs, path)
 		}
@@ -2129,11 +2163,12 @@ func bwrapArgsWithDaemonFinal(
 	// Class 3 baseline: protected state is hidden after the harness root is
 	// writable. EffectiveProfile deliberately excludes this baseline because
 	// ordinary rules may never name these paths at all: normalizeFilesystem
-	// refuses any read/write rule intersecting a protected root, and TCL-791
+	// refuses any read/write rule at or below a protected root, and TCL-791
 	// removed break-glass, the one former exception. No policy input can
 	// therefore reopen a protected root: a plan entry on an ordinary ancestor
-	// still lands, and appendTclaudeLayerProtectedRehides restores the hides on
-	// top of it.
+	// still lands, appendTclaudeLayerProtectedAncestorPins pins the directories
+	// between it and the protected root, and appendTclaudeLayerProtectedRehides
+	// restores the hides on top of it.
 	//
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
@@ -2277,6 +2312,12 @@ func bwrapArgsWithDaemonFinal(
 				}
 			}
 			args = append(args, flag, source, path)
+			if entry.Mode == sandboxpolicy.MountRW && !entry.IsRemapped() {
+				args, err = appendTclaudeLayerProtectedAncestorPins(args, path, &hideRemounts, true)
+				if err != nil {
+					return nil, err
+				}
+			}
 			args = appendTclaudeLayerProtectedRehides(
 				args,
 				path,
@@ -3047,6 +3088,126 @@ func appendTclaudeLayerProtectedRehides(
 	return args
 }
 
+// appendTclaudeLayerProtectedAncestorPins self-binds every directory strictly
+// between a writable same-path bind and a protected root beneath it.
+// The protected re-hide is a mount on the protected root's dentry, and a
+// mount moves with its parent: under a writable `~`, `mv ~/.tclaude ~/x`
+// would succeed and leave a symlink-able hole at the protected path for the
+// host daemon's next write. A directory that is itself a mount point cannot
+// be renamed or removed (EBUSY), so pinning the chain closes that. The pin
+// binds the same host directory the writable bind just exposed at the same
+// path, so it changes nothing about what is visible or writable — new entries
+// created under `~` or inside a pinned directory stay live. It must be emitted
+// right after the writable bind and before the protected re-hides, which
+// re-establish the protected roots on top of it.
+//
+// A missing chain directory is created first: the protected re-hide would
+// create it anyway, after the pins, leaving it unpinned. A chain directory
+// that is a SYMLINK (a dotfile-managed ~/.claude) cannot be pinned at all —
+// a mount lands on the target, not the link — so the agent could replace the
+// link and capture the host's next write. strict refuses that launch; the
+// launch-contract callers pass false, keeping their pre-existing behavior.
+func appendTclaudeLayerProtectedAncestorPins(
+	args []string,
+	mountedPath string,
+	hideRemounts *tclaudeLayerHideRemounts,
+	strict bool,
+) ([]string, error) {
+	pins, err := tclaudeLayerProtectedAncestorPins(mountedPath, strict)
+	if err != nil {
+		return nil, err
+	}
+	for _, pin := range pins {
+		hideRemounts.noteReplacement(pin.path)
+		if pin.create {
+			args = append(args, "--perms", "0700", "--dir", pin.path)
+		}
+		args = append(args, "--bind", pin.path, pin.path)
+	}
+	return args, nil
+}
+
+// appendTclaudeLayerProtectedAncestorPinsBestEffort is the repair-path form:
+// the repairs run inside helpers that cannot fail, and a pin source that
+// cannot be inspected is simply not pinned there — the same directory was
+// already pinned when its writable bind was first emitted.
+func appendTclaudeLayerProtectedAncestorPinsBestEffort(
+	args []string,
+	mountedPath string,
+	hideRemounts *tclaudeLayerHideRemounts,
+) []string {
+	pinned, err := appendTclaudeLayerProtectedAncestorPins(args, mountedPath, hideRemounts, false)
+	if err != nil {
+		return args
+	}
+	return pinned
+}
+
+type tclaudeLayerAncestorPin struct {
+	path   string
+	create bool
+}
+
+func tclaudeLayerProtectedAncestorPins(mountedPath string, strict bool) ([]tclaudeLayerAncestorPin, error) {
+	resolved, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)
+	}
+	lexical, err := sandboxpolicy.LexicalProtectedPaths()
+	if err != nil {
+		return nil, err
+	}
+	mountedPath = filepath.Clean(mountedPath)
+	seen := map[string]bool{}
+	var pins []tclaudeLayerAncestorPin
+	for _, protected := range append(resolved, lexical...) {
+		if protected == mountedPath || !sandboxpolicy.PathContainsOrEqual(mountedPath, protected) {
+			continue
+		}
+		// Walk up from the protected root's parent to just below the bind.
+		var chain []string
+		for dir := filepath.Dir(protected); dir != mountedPath; dir = filepath.Dir(dir) {
+			if dir == filepath.Dir(dir) {
+				chain = nil
+				break
+			}
+			chain = append(chain, dir)
+		}
+		// Outermost first, so each pin lands on the view the previous one set.
+		for i := len(chain) - 1; i >= 0; i-- {
+			dir := chain[i]
+			if seen[dir] {
+				continue
+			}
+			info, err := os.Lstat(dir)
+			switch {
+			case os.IsNotExist(err):
+				seen[dir] = true
+				pins = append(pins, tclaudeLayerAncestorPin{path: dir, create: true})
+				continue
+			case err != nil:
+				return nil, fmt.Errorf("protected-root ancestor %q: %w", dir, err)
+			case info.Mode()&os.ModeSymlink != 0:
+				if strict {
+					return nil, fmt.Errorf(
+						"tclaude’s sandbox cannot keep protected directory %q sealed under the writable rule for %q: %q is a symlink, which a mount cannot pin against replacement; grant narrower directories instead of %q",
+						protected, mountedPath, dir, mountedPath)
+				}
+				// Nothing beneath a symlink is on this lexical chain.
+				i = -1
+				continue
+			case !info.IsDir():
+				// Not a directory: the protected root cannot exist beneath it.
+				i = -1
+				continue
+			}
+			seen[dir] = true
+			pins = append(pins, tclaudeLayerAncestorPin{path: dir})
+		}
+	}
+	return pins, nil
+}
+
 func appendTclaudeLayerContractRepairs(
 	args []string,
 	hide string,
@@ -3066,6 +3227,7 @@ func appendTclaudeLayerContractRepairs(
 		if hide != writeDir && sandboxpolicy.PathContainsOrEqual(hide, writeDir) {
 			hideRemounts.noteReplacement(writeDir)
 			args = append(args, "--bind", writeDir, writeDir)
+			args = appendTclaudeLayerProtectedAncestorPinsBestEffort(args, writeDir, hideRemounts)
 			repaired = append(repaired, writeDir)
 		}
 	}
@@ -3414,7 +3576,7 @@ func validateRemappedGuestPathsAgainstContract(
 	for _, grant := range remapped {
 		guest := grant.GuestPath()
 		for _, dir := range contractDirs {
-			dir = canonicalSandboxPath(dir)
+			dir = CanonicalSandboxPath(dir)
 			if dir == "" {
 				continue
 			}
@@ -3449,12 +3611,12 @@ func validateTmpfsPathsAgainstContract(
 ) error {
 	for _, mount := range mounts {
 		spellings := []string{mount.Path}
-		if canonical := canonicalSandboxPath(mount.Path); canonical != "" &&
+		if canonical := CanonicalSandboxPath(mount.Path); canonical != "" &&
 			canonical != mount.Path {
 			spellings = append(spellings, canonical)
 		}
 		for _, dir := range contractDirs {
-			dir = canonicalSandboxPath(dir)
+			dir = CanonicalSandboxPath(dir)
 			if dir == "" {
 				continue
 			}
@@ -3479,7 +3641,7 @@ func sandboxDenyCoversEffectivePath(
 	effective sandboxpolicy.EffectiveProfile,
 	path string,
 ) bool {
-	path = canonicalSandboxPath(path)
+	path = CanonicalSandboxPath(path)
 	if path == "" {
 		return false
 	}
@@ -3511,11 +3673,11 @@ func sandboxLaunchContractReadDirsForEffective(
 	}
 	var out []string
 	for _, candidate := range all {
-		candidate = canonicalSandboxPath(candidate)
+		candidate = CanonicalSandboxPath(candidate)
 		if candidate == "" || !sandboxDenyCoversEffectivePath(effective, candidate) {
 			continue
 		}
-		out = appendUniqueDir(out, candidate)
+		out = AppendUniqueDir(out, candidate)
 	}
 	sort.Strings(out)
 	return out

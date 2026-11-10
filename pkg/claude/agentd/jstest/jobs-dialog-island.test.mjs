@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 function deferred() {
   let resolve;
@@ -21,7 +22,6 @@ function choose(select, value) {
 function snapshot(revision = 1) {
   return {
     revision,
-    triggers_enabled: true,
     profiles: [{ name: 'reviewer', aliases: ['review-kit'] }],
     agents: [
       { agent_id: 'agt_one', conv_id: 'conv-one', title: 'One', online: true },
@@ -214,9 +214,7 @@ test('cron action picker gates spawn and submits the full scheduled-worker paylo
     'spawn selection atomically moves the draft to a group target');
   assert.equal(mounted.container.querySelector('#cron-create-body'), null);
   assert.equal(mounted.container.querySelector('#cron-create-queue-when-offline'), null);
-  const group = mounted.container.querySelector('#cron-create-group');
-  choose(group, 'alpha');
-  await harness.act(() => harness.fireEvent(group, 'change'));
+  await comboPick(harness, mounted.container.querySelector('#cron-create-group'), 'alpha');
   await harness.input(mounted.container.querySelector('#cron-create-spawn-profile'), 'reviewer');
   await harness.input(mounted.container.querySelector('#cron-create-spawn-roles'), 'reviewer, read-only');
   await harness.input(mounted.container.querySelector('#cron-create-spawn-name-template'), 'night-{{fire_time}}');
@@ -238,7 +236,7 @@ test('cron action picker gates spawn and submits the full scheduled-worker paylo
   });
   await mounted.unmount();
 
-  const disabledSnapshot = { ...snapshot(), triggers_enabled: false };
+  const disabledSnapshot = { ...snapshot(), peer_view: { level: 'restricted' } };
   const gated = await harness.mount(harness.html`<${CronDialog} descriptor=${createDescriptor({ launchID: 2 })}
     snapshot=${disabledSnapshot} actions=${actions} confirmDiscard=${async () => true} />`);
   assert.deepEqual([...gated.container.querySelector('#cron-create-action-kind').options].map((option) => option.value), ['message']);
@@ -283,7 +281,7 @@ test('cron explainer rejects stale responses while stacked pickers and live snap
   await harness.input(mounted.container.querySelector('#cron-create-body'), 'typed draft survives');
   await mounted.rerender(vnode(snapshot(2)));
   assert.equal(mounted.container.querySelector('#cron-create-body').value, 'typed draft survives');
-  assert.equal(mounted.container.querySelector('#cron-create-group').disabled, true, 'scoped group cannot be retargeted');
+  assert.equal(mounted.container.querySelector('#cron-create-group-input').disabled, true, 'scoped group cannot be retargeted');
 
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('#cron-create-owner-pick'), 'click'));
   assert.equal(mounted.container.querySelectorAll('.modal-overlay.show').length, 2, 'picker stacks over the cron draft');
@@ -293,7 +291,7 @@ test('cron explainer rejects stale responses while stacked pickers and live snap
   assert.ok(mounted.container.querySelector('#cron-create-modal'));
 
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('#cron-create-owner-pick'), 'click'));
-  const option = mounted.container.querySelector('#cron-pick-target-option-1');
+  const option = mounted.container.querySelector('#cron-pick-target-list-option-1');
   await harness.act(() => harness.fireEvent(option, 'mousedown'));
   assert.equal(mounted.container.querySelector('#cron-create-owner').value, 'agt_two');
   await mounted.unmount();

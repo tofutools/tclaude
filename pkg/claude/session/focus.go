@@ -16,7 +16,7 @@ type FocusParams struct {
 
 func FocusCmd() *cobra.Command {
 	return boa.CmdT[FocusParams]{
-		Use:         "focus <id>",
+		Use:         "focus",
 		Short:       "Focus a coding session's terminal window",
 		Long:        "Attempts to focus the terminal window for a session. If not found, opens a new window and attaches.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -28,7 +28,7 @@ func FocusCmd() *cobra.Command {
 		},
 		RunFunc: func(params *FocusParams, cmd *cobra.Command, args []string) {
 			if err := runFocus(params); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -57,7 +57,7 @@ func runFocus(params *FocusParams) error {
 	}
 
 	// Try to focus the window
-	fmt.Printf("Focusing session %s...\n", sessionHandle(state))
+	fmt.Fprintf(cliStdout, "Focusing session %s...\n", sessionHandle(state))
 
 	// Set the session ID for other functions that may need it
 	_ = os.Setenv("TCLAUDE_SESSION_ID", state.ID)

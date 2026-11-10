@@ -367,3 +367,142 @@ func TestUsageRules_AgentAdjustments(t *testing.T) {
 	pollUsageRules(time.Now())
 	require.Contains(t, f.agentSubjects("conv-b"), `Usage budget reached: please wrap up ("budget")`)
 }
+
+// A day, week or month rule reads inside the limit and gets the full ledger's
+// figure from it. A lifetime rule is the one period that needs the older rows.
+func TestUsageRules_SpendReadStaysInsideTheLimitUnlessLifetime(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 10)
+	d, err := db.Open()
+	require.NoError(t, err)
+	now := time.Now()
+	old := now.AddDate(0, -3, 0).Format(costDayKey)
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd) VALUES ('old-sess', ?, 'old-conv', 7), ('long-sess', ?, 'long-conv', 20), ('long-sess', ?, 'long-conv', 23)`,
+		old, old, now.Format(costDayKey))
+	require.NoError(t, err)
+	require.NoError(t, db.RefreshCostOpening(now))
+
+	spent := func(period usagerules.Period) float64 {
+		st := &usageRulesState{now: now, limits: []*db.UsageLimit{{Rule: usagerules.Rule{Metric: usagerules.MetricTotalUSD, Period: period}}}}
+		rows, _, err := st.spendRows()
+		require.NoError(t, err)
+		return sumUsageSlices(newUsageSpend(mixedCostDeltasFromRows(rows), nil).all, usagerules.MetricTotalUSD, usagerules.PeriodStartDay(period, now))
+	}
+	full, _, _, err := countedCostDailyRows()
+	require.NoError(t, err)
+	wantMonth := sumUsageSlices(newUsageSpend(mixedCostDeltasFromRows(full), nil).all, usagerules.MetricTotalUSD, usagerules.PeriodStartDay(usagerules.PeriodMonth, now))
+	require.InDelta(t, wantMonth, spent(usagerules.PeriodMonth), 1e-9)
+	lifetime := spent(usagerules.PeriodLifetime)
+
+	for _, trigger := range []string{"insert", "delete", "update"} {
+		_, err = d.Exec(`DROP TRIGGER cost_opening_stale_` + trigger)
+		require.NoError(t, err)
+	}
+	_, err = d.Exec(`UPDATE session_cost_daily SET cost_usd = 9999 WHERE day = ?`, old)
+	require.NoError(t, err)
+	require.InDelta(t, wantMonth, spent(usagerules.PeriodMonth), 1e-9, "a month rule reads no older row")
+	require.Greater(t, spent(usagerules.PeriodLifetime), lifetime, "a lifetime rule does")
+}
+
+// An agent that last spent before the rows read keeps its reading at zero, with
+// the stored opening and on the full read that replaces it.
+func TestUsageRules_IdleAgentKeepsItsReading(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 0)
+	rule := ladderRule()
+	rule.Period = usagerules.PeriodMonth
+	p := profileWith(t, "default", rule)
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{p.ID}, ""))
+	d, err := db.Open()
+	require.NoError(t, err)
+	now := time.Now()
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd) VALUES ('s-conv-a', ?, 'conv-a', 6)`, now.AddDate(0, -3, 0).Format(costDayKey))
+	require.NoError(t, err)
+
+	readings := func() []usageRuleStatus {
+		pollUsageRules(now)
+		statuses, _ := latestUsageRuleStatus()
+		return statuses
+	}
+	full := readings()
+	require.Len(t, full, 1, "the full read reports the agent")
+	require.Zero(t, full[0].Value)
+
+	require.NoError(t, db.RefreshCostOpening(now))
+	require.Equal(t, full, readings(), "from the stored opening")
+
+	_, err = d.Exec(`UPDATE cost_opening_meta SET stale = 1`)
+	require.NoError(t, err)
+	require.Equal(t, full, readings(), "while it is stale")
+}
+
+// Only assigned profiles count: an unassigned lifetime rule measures nothing,
+// so it must not send every tick through the whole ledger.
+func TestUsageRules_UnassignedLifetimeRuleKeepsTheWindow(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 1)
+	lifetime := profileWith(t, "lifetime", ladderRule())
+	month := ladderRule()
+	month.Period = usagerules.PeriodMonth
+	assigned := profileWith(t, "month", month)
+	require.NoError(t, db.RefreshCostOpening(time.Now()))
+
+	st := &usageRulesState{now: time.Now(),
+		profiles:    map[int64]*db.UsageProfile{lifetime.ID: lifetime, assigned.ID: assigned},
+		assignments: []db.UsageProfileAssignment{{Scope: db.UsageScopeGlobal, ProfileID: assigned.ID}},
+	}
+	db.TakeCostReadCounts()
+	_, _, err := st.spendRows()
+	require.NoError(t, err)
+	require.Equal(t, db.CostReadCounts{FromOpening: 1}, db.TakeCostReadCounts())
+
+	st.assignments = append(st.assignments,
+		db.UsageProfileAssignment{Scope: db.UsageScopeSpawnProfile, ScopeID: "linked", ProfileID: lifetime.ID},
+		db.UsageProfileAssignment{Scope: db.UsageScopeAgent, ScopeID: "agt_retired", ProfileID: lifetime.ID})
+	_, _, err = st.spendRows()
+	require.NoError(t, err)
+	require.Equal(t, db.CostReadCounts{FromOpening: 1}, db.TakeCostReadCounts(), "a link or a retired agent evaluates nothing")
+
+	st.assignments = append(st.assignments, db.UsageProfileAssignment{Scope: db.UsageScopeGroup, ScopeID: "1", ProfileID: lifetime.ID})
+	_, _, err = st.spendRows()
+	require.NoError(t, err)
+	require.Equal(t, db.CostReadCounts{LifetimeRule: 1}, db.TakeCostReadCounts(), "an assigned lifetime rule reads the whole ledger, and it shows")
+}
+
+// An opening that cannot serve the rule read costs one full read, not a window
+// read that is thrown away.
+func TestUsageRules_UnusableOpeningReadsOnce(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 1)
+	st := &usageRulesState{now: time.Now(), limits: []*db.UsageLimit{{Rule: usagerules.Rule{Metric: usagerules.MetricTotalUSD, Period: usagerules.PeriodMonth}}}}
+	db.TakeCostReadCounts()
+	_, _, err := st.spendRows()
+	require.NoError(t, err)
+	require.Equal(t, db.CostReadCounts{FullHistory: 1}, db.TakeCostReadCounts())
+}
+
+// Ignored old spend does not count as having spent: an agent whose only older
+// spend is ignored reports the same with the opening as on the full read.
+func TestUsageRules_IgnoredOldSpendGivesNoReading(t *testing.T) {
+	f := newUsageRulesFixture(t)
+	f.agent("conv-a", 0)
+	rule := ladderRule()
+	rule.Period = usagerules.PeriodMonth
+	p := profileWith(t, "default", rule)
+	require.NoError(t, db.SetUsageProfileAssignments(db.UsageScopeGlobal, "", []int64{p.ID}, ""))
+	d, err := db.Open()
+	require.NoError(t, err)
+	now := time.Now()
+	_, err = d.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, cost_usd) VALUES ('s-conv-a', ?, 'conv-a', 6)`, now.AddDate(0, -3, 0).Format(costDayKey))
+	require.NoError(t, err)
+	require.NoError(t, db.SetCostConvIgnored("conv-a", true))
+
+	readings := func() []usageRuleStatus {
+		pollUsageRules(now)
+		statuses, _ := latestUsageRuleStatus()
+		return statuses
+	}
+	require.Empty(t, readings(), "the full read has no counted spend")
+	require.NoError(t, db.RefreshCostOpening(now))
+	require.Empty(t, readings(), "nor does the opening")
+}

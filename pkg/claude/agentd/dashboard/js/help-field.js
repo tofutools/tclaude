@@ -1,5 +1,8 @@
 import { h, Fragment } from 'preact';
+import { useRef } from 'preact/hooks';
 import htm from 'htm';
+import { useDismissablePopover } from './hover-popover.js';
+import { Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -22,7 +25,7 @@ export function helpCaveat(help) {
 }
 
 /* The [?] trigger and its popover on their own, for controls that are not the
-   labelled <select> HelpField wraps — checkbox rows, section legends. The two
+   labelled Select HelpField wraps — checkbox rows, section legends. The two
    nodes stay DOM siblings because the open state is expressed purely in CSS as
    `trigger[aria-expanded="true"] + description`.
 
@@ -39,6 +42,9 @@ export function helpCaveat(help) {
 export function HelpDisclosure({
   id, descriptionID = `${id}-hint`, label, help, content = null, open, setOpen, warn = false,
 }) {
+  const triggerRef = useRef(null);
+  const descriptionRef = useRef(null);
+  useDismissablePopover([triggerRef, descriptionRef], open, () => setOpen(''), { escape: false });
   if (!help && !content) return null;
   /* Focus alone is passive form traversal, not a request to cover the dialog
      with help. Once explicitly opened, however, the trigger and description
@@ -66,23 +72,25 @@ export function HelpDisclosure({
      has a caveat" cue the colour gives a sighted one. */
   const name = warn ? `Show ${label} warning` : `Show ${label} help`;
   return html`<${Fragment}>
-    <button type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
+    <button data-ui-exempt ref=${triggerRef} type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
       aria-label=${name}
-      aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${name}
+      data-capture-text="none" aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${name}
       onClick=${() => setOpen(open ? '' : id)}
       onBlur=${closeAfterTrigger} onKeyDown=${closeOnEscape}>${warn ? '!' : '?'}</button>
-    <span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex=${open ? '0' : '-1'}
+    <span ref=${descriptionRef} id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex=${open ? '0' : '-1'}
       aria-live="polite" onBlur=${closeAfterDescription} onKeyDown=${closeOnEscape}>${content || help}</span>
   <//>`;
 }
 
-/* A labelled <select> whose help copy is reachable three ways: the native title
+/* A labelled Select whose help copy is reachable three ways: the native title
    tooltip on hover, the [?] button for keyboard and touch, and — only when the
    help carries a ⚠ — a persistent caveat line under the control.
 
    `open`/`setOpen` are lifted so only one field's disclosure shows at a time;
    the caller keys them by field id. onChange receives the raw event, matching
-   the plain <select> rows these replaced.
+   the plain select rows these replaced. `control`, when given, stands in for
+   the Select (a type-to-filter choice whose box is `${id}-input`); the label
+   then names that box.
 
    The caveat renders as a sibling of .spawn-field-with-help rather than inside
    it: that element is the containing block for the absolutely-positioned
@@ -98,21 +106,21 @@ export function HelpDisclosure({
    select does not resize when the help lands. */
 export function HelpField({
   id, descriptionID = `${id}-hint`, label, title, value, options,
-  onChange, help, open, setOpen, disabled = false, busy = false, showCaveat = true,
+  onChange, help, open, setOpen, disabled = false, busy = false, showCaveat = true, control = null,
 }) {
   const caveat = showCaveat ? helpCaveat(help) : '';
   return html`<div class="cron-create-row" id=${`${id}-row`} title=${title} hidden=${disabled}>
-    <label class="cron-create-label" for=${id}>${label}</label>
+    <label class="cron-create-label" for=${control ? `${id}-input` : id}>${label}</label>
     <div class="cron-create-target spawn-field-help-column">
       <div class="spawn-field-with-help">
-        <select id=${id} value=${value} title=${help} aria-describedby=${help ? descriptionID : null} disabled=${busy}
+        ${control || html`<${Select} id=${id} value=${value} title=${help} aria-describedby=${help ? descriptionID : null} disabled=${busy}
           onChange=${onChange}>
-          ${options.map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
-        </select>
+          ${options.map((option) => html`<option key=${option.value} value=${option.value} data-no-fill=${option.noFill}>${option.label}</option>`)}
+        <//>`}
         <${HelpDisclosure} id=${id} descriptionID=${descriptionID} label=${label} help=${help}
           open=${open} setOpen=${setOpen} />
       </div>
-      ${caveat && html`<div class="spawn-field-hint warn spawn-field-caveat" id=${`${id}-caveat`}
+      ${caveat && html`<div class="spawn-field-hint ui-hint warn spawn-field-caveat" id=${`${id}-caveat`}
         aria-hidden="true">${caveat}</div>`}
     </div>
   </div>`;

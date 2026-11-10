@@ -1,0 +1,253 @@
+package agentd
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+)
+
+// childSandboxInput is what a spawned child's sandbox is decided from.
+type childSandboxInput struct {
+	group               *db.AgentGroup
+	harnessName         string
+	harnessBuiltinMode  string
+	implementation      string
+	sandboxProfile      string // the explicit --sandbox-profile, or ""
+	omitSandboxProfiles bool
+	harnessConfig       string
+	spawnerConvID       string // the spawning agent, or "" for a human
+	externalSpawn       bool   // the spawner is an external steward (a principal)
+	// sandboxScopePinned says the grant that admitted the spawn is scoped to
+	// a sandbox profile. It was judged against the target group's assignment
+	// (resolvedSandboxProfileNameForScope), so such a child gets that
+	// assignment rather than inheriting a profile the grant never named.
+	sandboxScopePinned bool
+	// denies is the spawn request's deny overlay (sandbox_deny). The child's
+	// overlay is its parent's plus these.
+	denies []string
+}
+
+// resolveChildSandbox is the rule a spawned child's sandbox comes from
+// (tcl-pi13z9, tcl-23i0pp). It is the one place that rule lives, so changing
+// how a child inherits its parent's sandbox changes this function only.
+//
+//   - An agent's child naming no profile, spawned into the group its parent
+//     resolves its own sandbox from, inherits the parent's selected profiles,
+//     resolved the way the parent's own next relaunch would resolve them
+//     (its sandbox_profile_contents row): the same configuration.
+//   - Any other child resolves fresh: the explicit profile, otherwise the
+//     target group's or the global assignment, with their current contents.
+//
+// Then the requested harness-config posture is applied, then the deny overlay
+// (the parent's plus the request's, see sandboxpolicy.ApplyDenyOverlay), and
+// an agent spawner's child must fit inside the spawner's configuration
+// resolved now (parentSandboxBound), whether it inherited, named a profile of
+// its own or followed another group's assignment. An operator's edit to the
+// parent's profiles therefore does not refuse its children: the edit is the
+// operator's, not an escalation by the parent.
+//
+// A spawner from before snapshots may not hand down custom capabilities. A
+// human, a peer and an external steward have no parent sandbox here.
+func resolveChildSandbox(in childSandboxInput) (sandboxpolicy.Snapshot, *spawnFailure) {
+	var parent *childSandboxParent
+	// A principal has no sandbox to contain the child. Its pinned profile is the
+	// bound, and checkSandboxLineage (sandboxScopePinned) refused a launch that
+	// would not enforce it.
+	if in.spawnerConvID != "" && !in.externalSpawn {
+		var fail *spawnFailure
+		if parent, fail = loadChildSandboxParent(in.spawnerConvID); fail != nil {
+			return sandboxpolicy.Snapshot{}, fail
+		}
+	}
+	// An omission the caller asked for is kept by every relaunch; one the
+	// launch mode forces is re-judged when the mode changes (derived).
+	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
+	if !in.omitSandboxProfiles {
+		effectiveSandbox = sandboxpolicy.DerivedOmittedProfilesSnapshot()
+	}
+	if !sandboxProfilesDisabled(in.harnessName, in.harnessBuiltinMode, in.implementation) &&
+		!in.omitSandboxProfiles {
+		inherited, ok := sandboxpolicy.Snapshot{}, false
+		if parent != nil && in.sandboxProfile == "" && !in.sandboxScopePinned {
+			inherited, ok = parent.inheritedProfiles(in.group.ID)
+		}
+		if ok {
+			effectiveSandbox = inherited
+		} else {
+			var policyErr error
+			effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(in.group.ID, in.sandboxProfile)
+			if errors.Is(policyErr, db.ErrSandboxProfileNotFound) {
+				return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile",
+					fmt.Sprintf("sandbox profile %q does not exist", in.sandboxProfile)}
+			}
+			if policyErr != nil {
+				return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error()}
+			}
+		}
+	}
+	if applied, fail := applySpawnHarnessConfig(effectiveSandbox, in.harnessConfig); fail != nil {
+		return sandboxpolicy.Snapshot{}, fail
+	} else {
+		effectiveSandbox = applied
+	}
+	return parent.contain(effectiveSandbox, in.denies, "spawn the child")
+}
+
+// childSandboxParent is the spawning agent's sandbox as its child is decided
+// from: its stored launch snapshot (nil for a parent from before snapshots).
+type childSandboxParent struct {
+	conv   string
+	stored *sandboxpolicy.Snapshot
+}
+
+// loadChildSandboxParent loads conv's stored launch snapshot as the parent
+// of what conv launches.
+func loadChildSandboxParent(conv string) (*childSandboxParent, *spawnFailure) {
+	stored, err := db.AgentEffectiveSandboxConfigForConv(conv)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", "load parent sandbox snapshot: " + err.Error()}
+	}
+	return &childSandboxParent{conv: conv, stored: stored}, nil
+}
+
+// contain is the cap on anything an agent launches: a spawned child, the
+// members of a template it deploys, a worker a trigger or process run it
+// owns starts. Every one of those surfaces admits and refuses through here
+// (tcl-w0rr5d), so none of them can launch wider than another would.
+//
+// launch is the configuration the surface resolved for the launch. The deny
+// overlay is laid on last, over it: the parent's overlay, which everything
+// the parent launches keeps, plus denies (a spawn request's own). It only
+// removes, so it is applied before the cap and the cap still holds. Then the
+// launch must fit inside the parent's configuration resolved now
+// (parentSandboxBound). A parent from before snapshots may launch nothing
+// with custom capabilities; humanAsk names, for its refusal, what to ask the
+// human to do instead. A nil parent (a human, a peer, an external steward,
+// the daemon) has no sandbox to contain the launch: only the overlay applies.
+func (p *childSandboxParent) contain(launch sandboxpolicy.Snapshot, denies []string, humanAsk string) (sandboxpolicy.Snapshot, *spawnFailure) {
+	denies = append([]string(nil), denies...)
+	if p != nil && p.stored != nil {
+		denies = append(denies, p.stored.DenyOverlay...)
+	}
+	overlaid, err := sandboxpolicy.ApplyDenyOverlay(launch, denies)
+	if err != nil {
+		if errors.Is(err, sandboxpolicy.ErrDenyOverlayUnenforced) {
+			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
+		}
+		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox_deny", err.Error()}
+	}
+	if p == nil {
+		return overlaid, nil
+	}
+	if p.stored == nil {
+		if sandboxpolicy.HasCapabilities(overlaid) {
+			return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted",
+				"this parent predates effective sandbox snapshots and may not inherit custom capabilities; relaunch it under current policy or ask the human to " + humanAsk}
+		}
+		return overlaid, nil
+	}
+	bound, fail := parentSandboxBound(p.conv, p.stored)
+	if fail != nil {
+		return sandboxpolicy.Snapshot{}, fail
+	}
+	if err := sandboxpolicy.RequireContained(bound, overlaid); err != nil {
+		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusForbidden, "sandbox_profile_restricted", err.Error()}
+	}
+	return overlaid, nil
+}
+
+// inheritedProfiles is the parent's own profile chain for a child spawned
+// into groupID, and ok false when the child does not inherit it: the parent
+// resolves its sandbox from another group, keeps a setting on a group it left
+// (GroupBinding), omits its profiles, or its chain cannot be read now. Such a
+// child resolves the target group's assignment instead, capped by the parent.
+//
+// The chain is what the parent's next relaunch would resolve, by its
+// sandbox_profile_contents row: the current contents of its selected profiles
+// (re-resolve, the default), or the contents stored at its last launch
+// (reuse). It carries the profiles only: none of the parent's launch-time
+// access notices (an operator's override for that one launch must not become
+// the child's authority), and not the parent's own explicit
+// harness-config posture (the child's request decides its own). The launch
+// environment and group are set for the child by the spawn.
+func (p *childSandboxParent) inheritedProfiles(groupID int64) (sandboxpolicy.Snapshot, bool) {
+	s := p.stored
+	if s == nil || s.ProfilesOmitted || s.GroupBinding != nil || s.ResolutionGroupID == 0 || s.ResolutionGroupID != groupID {
+		return sandboxpolicy.Snapshot{}, false
+	}
+	chain, err := resolveSandboxChainFrom(p.conv, s)
+	if err != nil || chain == nil {
+		return sandboxpolicy.Snapshot{}, false
+	}
+	inherited := *chain
+	policy, _ := relaunchPolicyFor(p.conv)
+	if relaunchReuses(policy, sandboxProfileContentsField) {
+		if reuse, _ := reuseStoredProfileContents(p.conv, s); reuse {
+			// The stored contents, with the posture the chain composes in
+			// place of one the parent's own launch asked for explicitly.
+			inherited = unmaterializedAgentDirectories(*s)
+			if explicitHarnessConfig(s) != "" {
+				inherited.Effective.HarnessConfig = chain.Effective.HarnessConfig
+				inherited.Effective.Provenance.HarnessConfig = nil
+				if source := chain.Effective.Provenance.HarnessConfig; source != nil {
+					copied := *source
+					inherited.Effective.Provenance.HarnessConfig = &copied
+				}
+			}
+		}
+	}
+	inherited.Effective.AccessNotices = sandboxpolicy.ReplaceAccessLaunchNotices(
+		sandboxpolicy.ReplaceAccessDegradationNotices(inherited.Effective.AccessNotices))
+	inherited.GroupBinding = nil
+	inherited.LaunchEnvironment = nil
+	inherited.LaunchEnvironmentOverrides = nil
+	inherited.UnixSocketMaterialization = nil
+	return inherited, true
+}
+
+// parentSandboxBound is the configuration anything an agent launches (a
+// spawned child, a template's members, a launch on its behalf) must fit
+// inside: the agent's configuration resolved now (parentSandboxNow), or its
+// stored launch snapshot when its chain cannot be used now, as its own
+// relaunch would fall back. Agent-owned directories stay declarations in
+// both: the bound is judged, not launched, so nothing is created or probed
+// on disk for it. Any other failure refuses: it says nothing about which
+// policy is the parent's.
+func parentSandboxBound(conv string, stored *sandboxpolicy.Snapshot) (sandboxpolicy.Snapshot, *spawnFailure) {
+	now, err := parentSandboxNow(conv, stored)
+	if err == nil {
+		return now, nil
+	}
+	if !isRelaunchChainUnusable(err) {
+		return sandboxpolicy.Snapshot{}, &spawnFailure{http.StatusInternalServerError, "io", "resolve the parent's sandbox: " + err.Error()}
+	}
+	return unmaterializedAgentDirectories(*stored), nil
+}
+
+// parentSandboxNow is the configuration conv's own next relaunch would resolve
+// from its stored snapshot, without creating anything: its profile chain under
+// the sandbox_profile_contents row, composed with the group environment and
+// its explicit harness-config posture as a relaunch composes them. Agent-owned
+// directories stay declarations: they are not inherited authority, and
+// containment does not read them.
+func parentSandboxNow(conv string, stored *sandboxpolicy.Snapshot) (sandboxpolicy.Snapshot, error) {
+	policy, _ := relaunchPolicyFor(conv)
+	useStored := false
+	if relaunchReuses(policy, sandboxProfileContentsField) {
+		useStored, _ = reuseStoredProfileContents(conv, stored)
+	}
+	var chain sandboxpolicy.Snapshot
+	if useStored {
+		chain = unmaterializedAgentDirectories(*stored)
+	} else {
+		resolved, err := resolveSandboxChainFrom(conv, stored)
+		if err != nil {
+			return sandboxpolicy.Snapshot{}, err
+		}
+		chain = *resolved
+	}
+	return composeRelaunchSandbox(conv, chain, stored, useStored, relaunchReuses(policy, groupEnvField))
+}

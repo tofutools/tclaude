@@ -31,6 +31,8 @@ import {
   createSandboxDirectories,
   sandboxVia,
 } from './sandbox-profiles-data.js';
+import { downloadJSON, downloadURL } from './download.js';
+import { savedProfileNotice } from './profile-reapply.js';
 
 const MAX_SANDBOX_PROFILE_NAME_BYTES = 200;
 
@@ -56,20 +58,6 @@ function cloneName(sourceName, existingNames, maxBytes = Infinity) {
     const candidate = prefix + tail;
     if (!names.has(candidate)) return candidate;
   }
-}
-
-function downloadJSON(name, value) {
-  const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], {
-    type: 'application/json',
-  });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
 }
 
 export function createManagementActions(deps) {
@@ -283,12 +271,12 @@ export function createManagementActions(deps) {
         throw new Error(body?.error || `HTTP ${response.status}`);
       return body;
     },
-    async importGroup(file, into, as = '', landing = {}) {
+    async importGroup(file, into, as = '', landing = {}, keep = {}) {
       const form = new FormData();
       form.append('archive', file);
       form.append('into', into);
       if (as) form.append('as', as);
-      const response = await fetch(`/api/groups/import${queryString(landingParams(landing))}`, {
+      const response = await fetch(`/api/groups/import${queryString({ ...landingParams(landing), ...keep })}`, {
         method: 'POST',
         credentials: 'same-origin',
         body: form,
@@ -501,12 +489,7 @@ export function createManagementActions(deps) {
   }
   function exportTemplate(name) {
     if (refuseOnRestrictedPeer('Template export', '', notify)) return;
-    const anchor = document.createElement('a');
-    anchor.href = nodeDownloadPath('', `/api/templates/${encodeURIComponent(name)}/export`);
-    anchor.download = `${name}.task-force.json`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+    downloadURL(nodeDownloadPath('', `/api/templates/${encodeURIComponent(name)}/export`), { filename: `${name}.task-force.json` });
   }
   function openTemplateFromGroup(presetGroup = '', node = '') {
     // Another node's group snapshots into that node's templates.
@@ -635,8 +618,9 @@ export function createManagementActions(deps) {
   // openGroupImport opens the one ⤒ import… dialog; file preloads a
   // dropped .paf or .zip.
   let importKey = 0;
-  function openGroupImport(file = null) {
-    state.openDialog({ kind: 'group-import', file, key: ++importKey });
+  // landing names one agent of the file and the role it lands under.
+  function openGroupImport(file = null, landing = null) {
+    state.openDialog({ kind: 'group-import', file, landing, key: ++importKey });
   }
   // node names another node's group (the fused Groups view): its snapshot
   // holds the context, and the save goes to it.
@@ -654,21 +638,34 @@ export function createManagementActions(deps) {
   async function inspectGroupImport(file, as, landing) {
     return groups.inspectImport(file, as, landing);
   }
-  async function importGroup(file, into, as, landing) {
-    const result = await groups.importGroup(file, into, as, landing);
-    state.closeDialog();
+  async function importGroup(file, into, as, landing, keep) {
+    const result = await groups.importGroup(file, into, as, landing, keep);
     let summary = `Imported group "${result.group}" — ${result.agent_count} agent(s), ${result.message_count} message(s)`;
     const remaps = Object.keys(result.conv_remaps || {}).length;
     if (remaps) summary += ` (${remaps} conv-id(s) remapped to fresh copies)`;
-    notify(
-      result.file_warnings?.length
-        ? `${summary} — ${result.file_warnings.length} file warning(s); see the daemon log`
-        : summary,
-      !!result.file_warnings?.length,
-    );
+    const warnings = [...(result.file_warnings || []), ...(result.prompt_warnings || [])];
+    if (!warnings.length) {
+      state.closeDialog();
+      notify(summary);
+    }
     onGroupImported(result.group);
     await refresh();
-    return result;
+    return warnings.length || result.kept?.length || result.dropped?.length
+      ? { summary, warnings, kept: result.kept, dropped: result.dropped } : null;
+  }
+  // revealImportValue fetches one environment value from the picked file, for
+  // the click that asked. It is shown in that row and kept nowhere else.
+  async function revealImportValue(file, item) {
+    const form = new FormData();
+    form.append('archive', file);
+    const response = await nodeFetch('')(`/api/import/reveal${queryString({ item })}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: form,
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+    return body;
   }
   // PAF export / redact / agent import (tcl-jkmitn). Each goes through the
   // dashboard's /api twin of the human-only /v1 route.
@@ -689,8 +686,8 @@ export function createManagementActions(deps) {
     if (!response.ok) throw await pafError(response);
     return response.blob();
   }
-  async function exportGroupArchive(group, format, allowFlagged = false, node = '') {
-    const response = await nodeDownload(node, `/api/groups/${encodeURIComponent(group)}/export${queryString({ format, allow_flagged: allowFlagged })}`);
+  async function exportGroupArchive(group, format, allowFlagged = false, node = '', workflows = false) {
+    const response = await nodeDownload(node, `/api/groups/${encodeURIComponent(group)}/export${queryString({ format, allow_flagged: allowFlagged, workflows: workflows ? 'own' : '' })}`);
     if (!response.ok) throw await pafError(response);
     return { blob: await response.blob(), filename: response.headers.get('X-Tclaude-Export-Filename') || dispositionName(response) || `group-${group}.${format}` };
   }
@@ -702,7 +699,8 @@ export function createManagementActions(deps) {
     return preview ? response.json() : response.blob();
   }
   // importAgentPAF previews (apply false) or lands the agent, started or
-  // offline (start=false).
+  // offline (start=false). A landing with warnings resolves to them for the
+  // dialog to show, as importGroup does: too much to read in a passing toast.
   async function importAgentPAF(file, params) {
     const response = await fetch(`/api/agent-bundle/import${queryString(params)}`, {
       method: 'POST', credentials: 'same-origin', body: file,
@@ -710,9 +708,15 @@ export function createManagementActions(deps) {
     if (!response.ok) throw await pafError(response);
     const result = await response.json();
     if (params.apply) {
-      state.closeDialog();
-      notify(`Imported agent "${result.agent?.name || params.name || 'agent'}" into ${params.group}${result.offline ? ' offline; wake it to start' : ' and started it'}`);
+      const summary = `Imported agent "${result.agent?.name || params.name || 'agent'}" into ${params.group}${result.offline ? ' offline; wake it to start' : ' and started it'}`;
+      const warnings = result.warnings || [];
+      const outcome = warnings.length || result.kept?.length || result.dropped?.length;
+      if (!outcome) {
+        state.closeDialog();
+        notify(summary);
+      }
       await refresh();
+      return outcome ? { summary, warnings, kept: result.kept, dropped: result.dropped } : null;
     }
     return result;
   }
@@ -843,7 +847,7 @@ export function createManagementActions(deps) {
         ...controller,
         snapshots: snapshotsOn(node),
         exportAgentPAF: (choices) => exportAgentPAF(choices, node),
-        exportGroupArchive: (group, format, allowFlagged = false) => exportGroupArchive(group, format, allowFlagged, node),
+        exportGroupArchive: (group, format, allowFlagged = false, _node = '', workflows = false) => exportGroupArchive(group, format, allowFlagged, node, workflows),
       }));
     }
     return nodeActions.get(node);
@@ -943,14 +947,17 @@ export function createManagementActions(deps) {
     await refresh();
     return result;
   }
+  // A circle scribe opens in its chat window (or a terminal tab). Both sit
+  // below the manager's dialog layer, so the manager steps aside once one
+  // has opened; a declined or failed summon keeps it.
   async function editTemplatesWithAgent() {
     const result = await summonTemplateScribe({ scope: 'library' });
-    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeTemplateManager();
+    if (result?.opened) state.closeTemplateManager();
     return result;
   }
   async function editTemplateWithAgent(name) {
     const result = await summonTemplateScribe({ scope: 'template', name });
-    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeTemplateManager();
+    if (result?.opened) state.closeTemplateManager();
     return result;
   }
 
@@ -962,8 +969,8 @@ export function createManagementActions(deps) {
         options.local.onSave?.(payload);
         options.onSaved?.(draft.name.trim());
       } else if (original && options?.editExisting !== false) {
-        await profiles.updateProfile(original.name, payload);
-        notify(`profile updated: ${draft.name.trim()}`);
+        const response = await profiles.updateProfile(original.name, payload);
+        notify(savedProfileNotice(draft.name.trim(), response));
       } else if (options?.node && !isPageNode(options.node)) {
         // The spawn dialog's "Save on" another node (profile-save-nodes.js).
         const response = await nodeFetch(options.node)('/api/spawn-profiles', {
@@ -1214,7 +1221,9 @@ export function createManagementActions(deps) {
       options.onCreate || null,
       { editExisting, cloneSourceName: options.cloneSourceName || '' },
     );
-    if (result?.focus_mode === 'browser' && result.focus_ws) state.closeManager();
+    // Its chat window sits below the manager's dialog layer: the manager
+    // steps aside once it opened, and stays on a declined or failed summon.
+    if (result?.opened) state.closeManager();
     return result;
   }
   function inspectDirectories(filesystem) {
@@ -1286,6 +1295,7 @@ export function createManagementActions(deps) {
     openGroupImport,
     inspectGroupImport,
     importGroup,
+    revealImportValue,
     exportAgentPAF,
     exportGroupArchive,
     redactPAF,
@@ -1336,5 +1346,3 @@ function dispositionName(response) {
   const match = /filename="?([^";]+)"?/.exec(response.headers.get('Content-Disposition') || '');
   return match ? match[1] : '';
 }
-
-// dashboard-imperative-boundary: browser-io

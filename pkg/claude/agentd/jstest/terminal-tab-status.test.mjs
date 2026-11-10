@@ -118,7 +118,7 @@ test('rendered terminal tabs expose status markers and update from the roster si
       harness.importDashboardModule('js/terminal-shell-actions.js'),
       harness.importDashboardModule('js/terminal-shell-island.js'),
     ]);
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   const actions = createTerminalShellActions({
     state, fetchImpl: async () => ({ ok: true }),
     windowRef: harness.window, documentRef: harness.document,

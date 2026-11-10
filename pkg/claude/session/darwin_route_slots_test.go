@@ -1,9 +1,11 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +91,50 @@ func TestReserveDarwinRouteSlotsUsesBoundedConfiguredPool(t *testing.T) {
 	}
 	if _, err := DarwinRouteSlotCount(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// closeFailListener is a reservation listener whose Close fails, the only
+// way DarwinRouteSlotReservation.Release can fail.
+type closeFailListener struct{ net.Listener }
+
+func (closeFailListener) Close() error { return errors.New("close failed") }
+
+func TestHandOffDarwinRouteAtLaunchKillsThePaneOnEveryFailure(t *testing.T) {
+	cases := []struct {
+		name        string
+		activateErr error
+		listener    net.Listener
+		wantErr     string
+		wantKilled  bool
+	}{
+		{name: "activate fails", activateErr: errors.New("db down"),
+			wantErr: "activate Darwin route launch contract", wantKilled: true},
+		// The drift this pins: the release arm used to return without
+		// killing the pane, stranding it under a rolled-back launch.
+		{name: "release fails", listener: closeFailListener{},
+			wantErr: "release Darwin route launch reservation", wantKilled: true},
+		{name: "both succeed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &DarwinRouteSlotReservation{}
+			if tc.listener != nil {
+				r.listeners = []net.Listener{tc.listener}
+			}
+			killed := false
+			err := handOffDarwinRouteAtLaunch(r,
+				func() error { return tc.activateErr },
+				func() { killed = true })
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("error = %v, want one containing %q", err, tc.wantErr)
+			}
+			if killed != tc.wantKilled {
+				t.Fatalf("pane killed = %v, want %v", killed, tc.wantKilled)
+			}
+		})
 	}
 }

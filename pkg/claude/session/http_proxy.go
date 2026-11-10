@@ -261,12 +261,12 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 	}
 	cancel()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: HTTP proxy URLs unavailable; continuing without them")
+		fmt.Fprintln(cliStderr, "Warning: HTTP proxy URLs unavailable; continuing without them")
 		names = nil
 	}
 	handler, entries, err := newHTTPProxyBridge(client, sessionID, names, aliases)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: HTTP proxy URLs unavailable; continuing without them")
+		fmt.Fprintln(cliStderr, "Warning: HTTP proxy URLs unavailable; continuing without them")
 		handler = http.NotFoundHandler()
 		entries = nil
 	}
@@ -339,7 +339,7 @@ func runHTTPProxyExecWithOptions(sessionID, command string, runtime bool, marker
 			if modelBridge != nil {
 				return 0, errors.New("model gateway loopback listener unavailable; launch refused")
 			}
-			fmt.Fprintln(os.Stderr, "Warning: HTTP proxy loopback listener unavailable; continuing without URLs")
+			fmt.Fprintln(cliStderr, "Warning: HTTP proxy loopback listener unavailable; continuing without URLs")
 		}
 	}
 	if listener != nil {
@@ -620,11 +620,11 @@ func HTTPProxyCLIForLayerSpec(spec *TclaudeLayerLaunchSpec) (string, error) {
 	if spec == nil || runtime.GOOS != "linux" || loadErr != nil || !cfg.HTTPProxyConfigured() {
 		return clcommon.SelfTclaudePath(), nil
 	}
-	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(*spec)
+	rendered, err := tclaudeLayerSpecRenderInput(*spec)
 	if err != nil {
 		return "", err
 	}
-	return httpProxyCLIForPlan(plan), nil
+	return httpProxyCLIForPlan(rendered.Plan), nil
 }
 
 func httpProxyCLIForPlan(plan sandboxpolicy.MountPlan) string {

@@ -7,13 +7,14 @@ test('feature and tab states follow the peer_view metadata', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
   assert.equal(mod.tabState('groups', pv), 'shared');
-  assert.equal(mod.tabState('activity', pv), 'shared', 'Activity is offered for its audit log');
-  assert.equal(mod.subtabState('activity', 'audit', pv), 'shared');
-  assert.equal(mod.subtabState('activity', 'logs', pv), 'local', 'the daemon log has no peer route');
-  assert.equal(mod.subtabState('activity', 'performance', pv), 'local');
-  assert.equal(mod.subtabState('activity', 'audit', { ...pv, included: ['agents.status'] }), 'omitted');
+  assert.equal(mod.tabState('diagnostics', pv), 'shared', 'Diagnostics is offered for its audit log');
+  assert.equal(mod.subtabState('diagnostics', 'audit', pv), 'shared');
+  assert.equal(mod.subtabState('diagnostics', 'logs', pv), 'local', 'the daemon log has no peer route');
+  assert.equal(mod.subtabState('diagnostics', 'performance', pv), 'local');
+  assert.equal(mod.subtabState('diagnostics', 'audit', { ...pv, included: ['agents.status'] }), 'omitted');
   assert.equal(mod.tabState('costs', pv), 'omitted');
-  assert.equal(mod.tabState('config', pv), 'local');
+  assert.equal(mod.tabState('config', pv), 'omitted', 'the Config tab takes node.config.read');
+  assert.equal(mod.tabState('config', { ...pv, included: [...pv.included, 'node.config'] }), 'shared');
   assert.equal(mod.tabState('map', pv), 'shared', 'the map is this operator\'s own fleet view');
   assert.equal(mod.tabState('terminals', pv), 'shared', 'a peer\'s agent opens in this browser\'s Terminals tab');
   assert.equal(mod.tabState('groups', null), 'shared', 'before the first answer the snapshot view is assumed');
@@ -23,7 +24,7 @@ test('feature and tab states follow the peer_view metadata', async (t) => {
   assert.equal(mod.limitHint('omitted', 'costs', 'forge', ['costs.read']), 'forge does not share costs with you (needs costs.read)');
   assert.equal(mod.limitHint('local', 'The daemon log', 'forge', ['unrestricted trust']), 'forge does not share the daemon log with you (needs unrestricted trust)');
   // The hint names the grant the peer requires, as its omission says.
-  const noStatus = { ...pv, included: ['groups'], omitted: [{ feature: 'agents.status', requires: 'agents.status.read' }, { feature: 'agents.manage.full', requires: 'groups.members.delete', unrestricted_only: true }] };
+  const noStatus = { ...pv, included: ['groups'], omitted: [{ feature: 'agents.status', requires: 'agents.status.read' }, { feature: 'agents.manage.full', requires: 'agent.sandbox-impl', unrestricted_only: true }] };
   assert.equal(mod.featureNeeds('agents.status', noStatus), 'agents.status.read');
   assert.equal(mod.tabState('groups', noStatus), 'shared', 'a roster or presence grant alone shows the Groups tab, without agent status');
   const nothing = { ...pv, included: [], omitted: [{ feature: 'groups', requires: 'groups.roster.read' }] };
@@ -71,14 +72,14 @@ test('on a peer view, Activity subtabs without a peer route are greyed and refus
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/peer-view-limits.js');
   const doc = harness.document;
-  doc.body.innerHTML = `<nav><a data-tab="activity">Activity</a></nav><section id="tab-activity">
+  doc.body.innerHTML = `<nav><a data-tab="diagnostics">Diagnostics</a></nav><section id="tab-diagnostics">
     <a class="activity-subtab" data-subtab="audit" title="Audit log">Audit</a><a class="activity-subtab" data-subtab="logs">Logs</a>
     <a class="activity-subtab" data-subtab="performance">Performance</a></section>`;
   const toasts = [];
   doc.documentElement.dataset.remoteNodeName = 'forge';
   const dispose = mod.installPeerViewLimits({ doc, snapshot: harness.signals.signal({ peer_view: pv }), toast: (m) => toasts.push(m), remote: { id: 'inst_forge7' } });
   const sub = (name) => doc.querySelector(`[data-subtab="${name}"]`);
-  assert.equal(doc.querySelector('[data-tab="activity"]').classList.contains('pv-off'), false);
+  assert.equal(doc.querySelector('[data-tab="diagnostics"]').classList.contains('pv-off'), false);
   assert.equal(sub('audit').classList.contains('pv-off'), false);
   assert.equal(sub('audit').getAttribute('title'), 'Audit log');
   assert.equal(sub('logs').classList.contains('pv-off'), true);
@@ -145,13 +146,13 @@ test('palette commands and tab routing respect what the peer offers', async (t) 
   assert.deepEqual(granted.slice(5).map((c) => c.enabled !== false), [false, true, false, true], 'stop is granted, retire is not');
   assert.match(granted[7].disabledReason, /does not share this agent's lifecycle with you \(needs groups\.members\.retire\)/);
   assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: pv }), false);
-  assert.equal(mod.peerViewTabUsable('activity', { remote, peerView: pv }), true);
-  assert.equal(mod.peerViewSubtabUsable('activity', 'audit', { remote, peerView: pv }), true);
-  assert.equal(mod.peerViewSubtabUsable('activity', 'logs', { remote, peerView: pv }), false);
-  assert.equal(mod.peerViewSubtabUsable('activity', 'performance', { remote, peerView: null }), true, 'unrestricted trust may serve it: a deep link waits');
-  assert.equal(mod.peerViewSubtabUsable('activity', 'audit', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
-  assert.equal(mod.peerViewSubtabUsable('activity', 'logs', { remote: undefined }), true);
-  assert.equal(mod.peerViewTabUsable('config', { remote, peerView: null }), false, 'no peer route at all');
+  assert.equal(mod.peerViewTabUsable('diagnostics', { remote, peerView: pv }), true);
+  assert.equal(mod.peerViewSubtabUsable('diagnostics', 'audit', { remote, peerView: pv }), true);
+  assert.equal(mod.peerViewSubtabUsable('diagnostics', 'logs', { remote, peerView: pv }), false);
+  assert.equal(mod.peerViewSubtabUsable('diagnostics', 'performance', { remote, peerView: null }), true, 'unrestricted trust may serve it: a deep link waits');
+  assert.equal(mod.peerViewSubtabUsable('diagnostics', 'audit', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
+  assert.equal(mod.peerViewSubtabUsable('diagnostics', 'logs', { remote: undefined }), true);
+  assert.equal(mod.peerViewTabUsable('config', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
   assert.equal(mod.peerViewTabUsable('costs', { remote, peerView: null }), true, 'a deep link waits for the peer to answer');
   assert.equal(mod.peerViewTabUsable('config', { remote: undefined }), true);
   assert.equal(mod.peerViewTabUsable('terminals', { remote, peerView: pv }), true);
@@ -252,7 +253,9 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   assert.equal(mod.groupGrantHeld('set-group-dir', 'build', restricted), false, 'another group holds nothing');
   assert.equal(mod.groupGrantHeld('retire-agent', 'ops', restricted), false, 'only group controls are grant-gated');
   assert.equal(mod.groupGrantHeld('set-group-dir', 'anything', { level: 'unrestricted' }), true);
-  assert.equal(mod.groupGrantHeld('advance-phase', 'ops', restricted), false, 'what no peer grant covers takes unrestricted trust');
+  assert.equal(mod.groupGrantHeld('stand-down-force', 'ops', restricted), false, 'what no peer grant covers takes unrestricted trust');
+  assert.equal(mod.groupGrantHeld('advance-phase', 'ops', restricted), false, 'advancing the process takes process.advance');
+  assert.equal(mod.groupGrantHeld('advance-phase', 'ops', { ...restricted, groups: { ops: ['process.advance'] } }), true);
   assert.equal(mod.groupGrantHeld('stand-down-force', 'anything', { level: 'unrestricted' }), true);
   assert.equal(mod.groupGrantHeld('group-settings', 'ops', restricted), true, "the ⚙ menu's settings items ride on groups.settings");
   assert.equal(mod.groupGrantHeld('nest-group', 'build', restricted), false);
@@ -274,10 +277,16 @@ test('group controls follow the grants the peer names per group; unrestricted tr
   assert.equal(mod.grantHeld(doc.getElementById('solo-notify'), agents), true);
   assert.ok(mod.grantSelectors(agents).includes('[data-act="toggle-agent-notify"][data-agent="agt_solo"]'));
   assert.ok(!mod.grantSelectors(agents).some((sel) => sel.includes('agt_shared')));
-  for (const act of ['toggle-remote-control', 'fast-mode-set', 'reincarnate', 'delete-agent']) {
-    assert.equal(mod.agentGrantHeld(act, 'agt_solo', agents), false, `${act} takes unrestricted trust whatever the agent's grants`);
+  for (const act of ['toggle-remote-control', 'fast-mode-set', 'compact-agent', 'reincarnate', 'delete-agent', 'debug-export']) {
+    assert.equal(mod.agentGrantHeld(act, 'agt_solo', agents), false, `${act} takes more than the settings grant`);
     assert.equal(mod.agentGrantHeld(act, 'agt_solo', { level: 'unrestricted' }), true);
   }
+  const lifecycle = { ...restricted, agents: { agt_solo: ['groups.members.delete', 'groups.members.debug-export', 'groups.members.remote-control'] } };
+  for (const act of ['delete-agent', 'debug-export', 'toggle-remote-control']) {
+    assert.equal(mod.agentGrantHeld(act, 'agt_solo', lifecycle), true, `${act} runs under its own grant`);
+  }
+  assert.equal(mod.agentGrantHeld('fast-mode-set', 'agt_solo', lifecycle), false, 'fast mode takes unrestricted trust');
+  assert.equal(mod.agentGrantHeld('sandbox-impl', 'agt_solo', lifecycle), false, 'so does the sandbox implementation');
   assert.equal(mod.groupGrantHeld('remove-member', 'ops', restricted), false);
   assert.equal(mod.groupGrantHeld('remove-member', 'ops', { level: 'unrestricted' }), true);
 
@@ -340,7 +349,7 @@ test('under unrestricted trust a peer page runs every control as the node itself
   harness.fireEvent(doc.getElementById('attach'), 'click');
   assert.equal(opened.length, 2, 'an agent terminal still opens through the attach');
   assert.equal(mod.tabState('jobs', pv), 'shared');
-  assert.equal(mod.tabState('config', pv), 'local');
+  assert.equal(mod.tabState('config', { ...pv, included: [...(pv.included || []), 'node.config'] }), 'shared', 'unrestricted trust reads the Config tab');
   const sel = doc.getElementById('peer-view-limits-style').textContent.replace(/ \{[^}]*\}$/, '');
   doc.documentElement.classList.add('remote-node');
   assert.equal(doc.getElementById('links').matches(sel), false);

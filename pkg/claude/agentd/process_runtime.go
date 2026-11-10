@@ -375,6 +375,14 @@ type processRunCreateRequest struct {
 	// unscoped. Both accept the selectors the agent CLI uses elsewhere.
 	Group string `json:"group,omitempty"`
 	Agent string `json:"agent,omitempty"`
+	// ExpectedRef and TemplateRef (at most one) pin a start to the version the
+	// caller reviewed. With neither the run takes the template's head.
+	// ExpectedRef refuses the start with process_run_template_moved when the
+	// head is no longer that version; TemplateRef runs that stored version of
+	// templateId even though a newer one exists, and only the operator may ask
+	// for that.
+	ExpectedRef string `json:"expectedRef,omitempty"`
+	TemplateRef string `json:"templateRef,omitempty"`
 }
 
 type processRunOutcomeRequest struct {
@@ -945,9 +953,6 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 // the periodic fallback never materializes aggregate snapshots/checkpoints or
 // repeatedly prepares definitions awaiting human reconciliation.
 func sweepProcessRuns() {
-	if !processRoutesEnabled() {
-		return
-	}
 	if count, err := db.OrphanProcessRunsWithMissingScope(); err != nil {
 		slog.Warn("process runtime: scope orphan sweep failed", "error", err)
 	} else if count > 0 {
@@ -983,24 +988,21 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// requireProcessRunReadPermission gates the read-only run surfaces (list,
-// show, events). The caller passes if it is the human, holds
-// process.runs.read (default / group grant / per-conv grant / sudo), clears
-// an --ask-human popup, or owns at least one group — a group owner is the
-// coordinating role that drives process validation, so it reads run status
-// and evidence without a per-read approval.
-//
-// The owner default is a structural bypass at the permUndecided level (via
-// requirePermissionEx), so the universal precedence holds: an explicit deny
-// override is authoritative and suppresses it too. Ownership confers reads
-// only; every mutating run verb keeps its plain requirePermission gate on
-// process.runs.manage.
-func requireProcessRunReadPermission(w http.ResponseWriter, r *http.Request) (string, bool) {
-	return requirePermission(w, r, PermProcessRunsRead)
-}
-
 func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireProcessRunReadPermission(w, r); !ok {
+	// A member lists its group's runs (?group=) under groups.resources.read.
+	// Authorize before the filters resolve, so a miss tells an unauthorized
+	// caller nothing about which groups or agents exist.
+	group := ""
+	if ref := strings.TrimSpace(r.URL.Query().Get("group")); ref != "" {
+		if g, err := resolveGroupToken(ref); err == nil && g != nil && !g.IsArchived() {
+			group = g.Name
+		}
+	}
+	if _, ok := requireGroupResourceAccess(w, r, PermProcessRunsRead, group, "", false); !ok {
+		return
+	}
+	filter, ok := processRunListFilter(w, r)
+	if !ok {
 		return
 	}
 	limit := processRunListDefault
@@ -1013,10 +1015,6 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	after := strings.TrimSpace(r.URL.Query().Get("after"))
-	filter, ok := processRunListFilter(w, r)
-	if !ok {
-		return
-	}
 	runs, err := db.ListProcessRunSummaries(after, limit, filter)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
@@ -1054,14 +1052,26 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A grant to start a template covers what its editors made current. Going
+	// back to an older version is the operator's call, not an agent's.
+	if caller != "" && strings.TrimSpace(request.TemplateRef) != "" {
+		writeError(w, http.StatusForbidden, "process_run_version", "only the operator can start an older version of a template")
+		return
+	}
 	setAuditDetail(r, processRunCreateAuditDetail(request))
 	actor, err := processTemplateAuthor(caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
 	}
-	scope.Owner = string(actor)
-	run, err := createProcessRun(r.Context(), request, string(actor), scope)
+	startProcessRunAs(w, r, request, string(actor), scope)
+}
+
+// startProcessRunAs creates and starts an authorized run that actor owns, and
+// writes the created run's view.
+func startProcessRunAs(w http.ResponseWriter, r *http.Request, request processRunCreateRequest, actor string, scope db.ProcessRunScope) {
+	scope.Owner = actor
+	run, err := createProcessRun(r.Context(), request, actor, scope)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -1090,11 +1100,14 @@ func processRunCreateAuditDetail(request processRunCreateRequest) string {
 	if bound := strings.TrimSpace(request.Agent); bound != "" {
 		detail += ", agent: " + stripControl(bound)
 	}
+	if pinned := strings.TrimSpace(request.TemplateRef); pinned != "" {
+		detail += ", version: " + stripControl(pinned)
+	}
 	return detail
 }
 
 func handleProcessRun(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireProcessRunReadPermission(w, r); !ok {
+	if _, ok := requireProcessRunRead(w, r, r.PathValue("id")); !ok {
 		return
 	}
 	view, err := loadProcessRunView(r.PathValue("id"))
@@ -1106,7 +1119,7 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleProcessRunEvents(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requireProcessRunReadPermission(w, r); !ok {
+	if _, ok := requireProcessRunRead(w, r, r.PathValue("id")); !ok {
 		return
 	}
 	after := int64(0)
@@ -1173,7 +1186,7 @@ func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
@@ -1208,7 +1221,7 @@ func handleProcessRunReissue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
@@ -1249,7 +1262,7 @@ func handleProcessRunRecordOutcome(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "process_run_outcome", "error or note exceeds its bounded UTF-8 limit")
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
@@ -1304,7 +1317,7 @@ func handleProcessRunDecide(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
@@ -1355,7 +1368,7 @@ func handleProcessRunResolveBlocked(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
-	actor, err := processTemplateAuthor(caller)
+	actor, err := processRequestActor(r, caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
@@ -1393,6 +1406,31 @@ func stripControl(value string) string {
 	}, value)
 }
 
+// errProcessRunTemplateMoved refuses a start pinned with expectedRef once the
+// template has a newer version, so the caller can choose between the two.
+var errProcessRunTemplateMoved = errors.New("process template has a newer version")
+
+// processRunTemplateRef is the version a start runs: the head, unless the
+// request pinned one. The start's permission is scoped by templateId, so a
+// pinned version has to be one of that template's own.
+func processRunTemplateRef(request processRunCreateRequest, templateID, headRef string) (string, error) {
+	expected := strings.TrimSpace(request.ExpectedRef)
+	pinned := strings.TrimSpace(request.TemplateRef)
+	if expected != "" && pinned != "" {
+		return "", fmt.Errorf("%w: expectedRef and templateRef are mutually exclusive", db.ErrProcessRunInvalid)
+	}
+	if expected != "" && expected != headRef {
+		return "", fmt.Errorf("%w: head is %s, not %s", errProcessRunTemplateMoved, headRef, expected)
+	}
+	if pinned == "" {
+		return headRef, nil
+	}
+	if id, _, ok := strings.Cut(pinned, "@sha256:"); !ok || id != templateID {
+		return "", fmt.Errorf("%w: templateRef is not a version of %s", db.ErrProcessRunInvalid, templateID)
+	}
+	return pinned, nil
+}
+
 func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string, scope db.ProcessRunScope) (*executor.Run, error) {
 	templateID := strings.TrimSpace(request.TemplateID)
 	if templateID == "" {
@@ -1406,7 +1444,11 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	if err != nil {
 		return nil, err
 	}
-	stored, err := fs.GetTemplate(ctx, head.Ref)
+	templateRef, err := processRunTemplateRef(request, templateID, head.Ref)
+	if err != nil {
+		return nil, err
+	}
+	stored, err := fs.GetTemplate(ctx, templateRef)
 	if err != nil {
 		return nil, err
 	}
@@ -1462,13 +1504,13 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 		ScopeKind             string   `json:"scopeKind"`
 		ScopeGroupID          int64    `json:"scopeGroupId,omitempty"`
 		ScopeAgentID          string   `json:"scopeAgentId,omitempty"`
-	}{TemplateRef: head.Ref, ProgramAuthorizations: authorizations,
+	}{TemplateRef: templateRef, ProgramAuthorizations: authorizations,
 		ScopeKind: scope.Kind, ScopeGroupID: scope.GroupID, ScopeAgentID: scope.AgentID})
 	if err != nil {
 		return nil, err
 	}
 	record := &db.ProcessRun{
-		ID: runID, TemplateRef: head.Ref, TemplateSnapshotJSON: snapshot,
+		ID: runID, TemplateRef: templateRef, TemplateSnapshotJSON: snapshot,
 		ParamsJSON: paramsJSON, ProgramAuthorizationsJSON: authorizationsJSON,
 		Status: string(checkpoint.Status), StateVersion: db.InitialProcessRunStateVersion,
 		CheckpointJSON: checkpointJSON, Scope: scope,
@@ -1831,6 +1873,8 @@ func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "process_run_orphaned", err.Error())
 	case errors.Is(err, errProcessRunPaused):
 		writeError(w, http.StatusConflict, "process_run_paused", err.Error())
+	case errors.Is(err, errProcessRunTemplateMoved):
+		writeError(w, http.StatusConflict, "process_run_template_moved", err.Error())
 	case errors.Is(err, db.ErrProcessRunPause):
 		writeError(w, http.StatusConflict, "process_run_pause", err.Error())
 	case errors.Is(err, db.ErrProcessRunRescope):

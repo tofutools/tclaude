@@ -47,30 +47,47 @@ pretending. See the
 ## Install
 
 Linux and macOS (WSL counts as Linux). You also need tmux and at least one
-harness CLI.
+harness CLI. On Linux, Claude Code's sandbox also needs `bubblewrap` and
+`socat` (tclaude's own sandbox needs `bubblewrap`); `tclaude setup` checks for
+them.
 
-```bash
-brew install tofutools/tap/tclaude                 # Homebrew, or:
-go install github.com/tofutools/tclaude@latest     # Go 1.27+
-```
+| Install | How | Updates |
+|---|---|---|
+| From source | `go install github.com/tofutools/tclaude@latest` (Go 1.27+), or `go install . ./cmd/...` in a checkout | tclaude's own updater, once you opt in (`go_install` or `source_checkout`) |
+| Release binary | an archive from the [Releases page](https://github.com/tofutools/tclaude/releases) | tclaude's own updater, once you opt in (`release`, checksum-verified) |
+| Homebrew | `brew install tofutools/tap/tclaude` | `brew upgrade`, run by you; tclaude can tell you when a release is out |
 
-Prebuilt archives are on the
-[Releases page](https://github.com/tofutools/tclaude/releases). Then run setup
-once, which installs the hooks tclaude needs:
+Other package managers (Nix, mise, apt, dnf) work like Homebrew: the package
+manager updates tclaude.
+
+Then run setup once, which installs the hooks tclaude needs:
 
 ```bash
 tclaude setup --install-agent-skills --install-default-agent-permissions
 ```
 
 [Installation](https://tofutools.github.io/tclaude/#installation) covers
-every option, including the standalone `tclaude-agentd` daemon.
+every option, the operator token, and keeping tclaude updated.
 
 ## Quick start
 
 ```bash
-tclaude agentd serve          # start the daemon; keep it running
-                              # (copy the TCLAUDE_HUMAN_TOKEN export it prints)
-tclaude agent dashboard       # open the dashboard in your browser
+tclaude agentd serve --persist-operator-token   # start the daemon; keep it running
+tclaude agent dashboard                          # open the dashboard in your browser
+```
+
+`--persist-operator-token` keeps the operator token, which proves a command
+comes from you rather than an agent, in a private file the CLI reads itself.
+Without it, copy the `export TCLAUDE_HUMAN_TOKEN=…` line the daemon prints
+into the shell you work in.
+
+To make it permanent, open **Config › Installation** in the dashboard. It
+starts agentd when you log in and sets up updates. The CLI equivalents:
+
+```bash
+tclaude service install                  # start agentd at login
+tclaude service launcher install         # add tclaude to your app menu
+tclaude update config show               # how this install updates; opt in with `set`
 ```
 
 In the dashboard, **+ new group** sets a working directory, and the group's
@@ -88,7 +105,7 @@ short hands-on tutorials from installing to running your first agent team.
 - [Learn](https://tofutools.github.io/tclaude/learn/): tutorials for new users.
 - [Architecture](https://tofutools.github.io/tclaude/architecture/): how
   sessions, conversations, agents and the daemon fit together.
-- [Harnesses](https://tofutools.github.io/tclaude/harnesses/): the five
+- [Harnesses](https://tofutools.github.io/tclaude/harnesses/): the six
   harnesses and what each supports.
 - [Full documentation](https://tofutools.github.io/tclaude/): everything else,
   from fleet operations to sandboxing and federation.

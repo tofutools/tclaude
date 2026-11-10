@@ -17,7 +17,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -2171,36 +2170,35 @@ func RunConvWatchMode(global bool, since, before string) error {
 		}
 
 		if result.FocusOnly {
-			_ = os.Setenv("TCLAUDE_SESSION_ID", result.FocusSessionID)
-			session.TryFocusAttachedSession(result.TmuxSession)
+			session.TryFocusAttachedSessionWithID(result.TmuxSession, result.FocusSessionID)
 			continue
 		}
 
 		if result.CreateWorktree {
 			if err := createWorktreeForConv(result.Conv, result.WorktreeBranch); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating worktree: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error creating worktree: %v\n", err)
 			}
 			return nil
 		}
 
 		if result.ShouldCreate {
 			if err := createSessionForConv(result.Conv); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error creating session: %v\n", err)
 				continue
 			}
 		} else {
 			sessState := findSessionForConv(result.Conv.SessionID)
 			if sessState == nil {
-				fmt.Fprintf(os.Stderr, "Session not found, creating new...\n")
+				fmt.Fprintf(cliStderr, "Session not found, creating new...\n")
 				if err := createSessionForConv(result.Conv); err != nil {
-					fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
+					fmt.Fprintf(cliStderr, "Error creating session: %v\n", err)
 					continue
 				}
 			} else {
 				if result.ForceAttach {
-					fmt.Printf("Attaching to %s (detaching others)... (Ctrl+B D to detach)\n", sessState.ID)
+					fmt.Fprintf(cliStdout, "Attaching to %s (detaching others)... (Ctrl+B D to detach)\n", sessState.ID)
 				} else {
-					fmt.Printf("Attaching to %s... (Ctrl+B D to detach)\n", sessState.ID)
+					fmt.Fprintf(cliStdout, "Attaching to %s... (Ctrl+B D to detach)\n", sessState.ID)
 				}
 				if err := session.AttachToSession(sessState.ID, sessState.TmuxSession, result.ForceAttach); err != nil {
 					continue
@@ -2272,16 +2270,23 @@ func resumeLaunchCmd(
 	extraArgs []string,
 ) (string, string, *harness.Harness, error) {
 	return resumeLaunchCmdWithEffectiveSandbox(
-		harnessName, sessionID, convID, extraArgs, nil)
+		harnessName, sessionID, convID, extraArgs, nil, nil)
 }
+
+// resolveResumeTclaudeLayer is the bubblewrap capability probe and binary
+// resolution for a resume behind tclaude's sandbox. A variable so tests on
+// hosts without unprivileged user namespaces can pin the command it builds.
+var resolveResumeTclaudeLayer = session.ResolveTclaudeLayerForEngineWithIdentity
 
 // resumeLaunchCmdWithEffectiveSandbox is resumeLaunchCmd that also hands back
 // the effective sandbox snapshot the launch was rendered from, so a caller can
-// disclose its access notices.
+// disclose its access notices, and launches with what agentd prepared for the
+// relaunch (relaunch, nil when nothing was prepared).
 func resumeLaunchCmdWithEffectiveSandbox(
 	harnessName, sessionID, convID string,
 	extraArgs []string,
 	effectiveSandboxOut **sandboxpolicy.Snapshot,
+	relaunch *standaloneRelaunch,
 ) (string, string, *harness.Harness, error) {
 	h, err := harness.ResolveSpawnable(harnessName)
 	if err != nil {
@@ -2330,8 +2335,8 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	// exclusions from an earlier launch. Deny-row clamping remains an agentd
 	// lifecycle responsibility.
 	var launchGrants []sandboxpolicy.FilesystemGrant
+	var tmpfsDirs []string
 	var agentDirPaths []string
-	networkAccess := sandboxpolicy.NetworkAccessInherit
 	if effectiveSandbox != nil {
 		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
 		if err != nil {
@@ -2386,7 +2391,6 @@ func resumeLaunchCmdWithEffectiveSandbox(
 				agentDirPaths = append(agentDirPaths, path)
 			}
 		}
-		networkAccess = validated.Effective.NetworkAccess
 		launchFilesystem, err := sandboxpolicy.FilesystemForLaunch(validated.Effective)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
@@ -2397,6 +2401,11 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		// implementation cannot enforce, rather than resuming with the host path
 		// exposed and the authored sandbox path empty.
 		if err := sandboxpolicy.ValidateMountPathSupport(
+			launchFilesystem, implementation, runtime.GOOS,
+		); err != nil {
+			return "", "", nil, err
+		}
+		if err := sandboxpolicy.ValidateProtectedAncestorWriteSupport(
 			launchFilesystem, implementation, runtime.GOOS,
 		); err != nil {
 			return "", "", nil, err
@@ -2444,220 +2453,74 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		if sandboxpolicy.SupportsTmpfsMounts(implementation, runtime.GOOS) {
 			for _, mount := range validated.Effective.Tmpfs {
 				writeDirs = append(writeDirs, mount.Path)
+				tmpfsDirs = append(tmpfsDirs, mount.Path)
 			}
 		}
 	}
 	if outerLayer {
-		// Mirror the spawn seam: hook callbacks go through agentd for a
-		// launch whose namespace hides the database (TCL-754). Applied after
-		// the recorded profile environment so a stale or hostile profile
-		// cannot unset the marker on resume.
-		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
-		posture, err := session.TclaudeLayerNetworkPosture(effectiveProfile)
+		shellEnvironment, err = applyResumeLayerAgentEnv(h, effectiveProfile, resumeEnv, shellEnvironment)
 		if err != nil {
 			return "", "", nil, err
-		}
-		rootPosture, err := session.TclaudeLayerRootPosture(posture, effectiveProfile)
-		if err != nil {
-			return "", "", nil, err
-		}
-		if err := session.ApplyAgentSocketEnv(
-			h.Name,
-			"",
-			"",
-			rootPosture == sandboxpolicy.RootConstructed,
-			resumeEnv,
-		); err != nil {
-			return "", "", nil, err
-		}
-		if selected := resumeEnv[agentipc.SocketEnv]; selected != "" &&
-			rootPosture == sandboxpolicy.RootConstructed {
-			if shellEnvironment == nil {
-				shellEnvironment = map[string]string{}
-			}
-			shellEnvironment[agentipc.SocketEnv] = selected
 		}
 	}
-	// Mirror the spawn seam: every tclaude-launched Claude pane reads its
-	// config from the state root, so the resumed pane must do the same or it
-	// would come back on the legacy top-level file — invisible under a
-	// constructed root, and forked state everywhere else. See
-	// session.ApplyClaudeConfigDirEnv.
-	if err := session.ApplyClaudeConfigDirEnv(h.Name, resumeEnv); err != nil {
+	// Rebuild the launch-posture environment the spawn path applied, from the
+	// conversation's own record rather than today's defaults: a session that
+	// opted INTO auto memory, a deliberately lean (context-trimmed) agent and
+	// an agent pinned to compact early must all come back the same. A conv
+	// with nothing recorded reads the zero posture, which is what such a
+	// session originally ran with. Peer messaging rides the --settings payload
+	// built below, not the env. See session.ApplyLaunchPostureEnv.
+	autoMemory, peerMessaging, contextFeatures, autoCompactWindow, err := resumeContextPosture(convID)
+	if err != nil {
 		return "", "", nil, err
 	}
-	// Mirror the spawn path: keep Claude Code's "Resume from summary" chooser
-	// from interrupting this resume. No-op for non-Claude harnesses. See
-	// session.ApplyClaudeResumeEnv.
-	session.ApplyClaudeResumeEnv(h, resumeEnv)
-	// Mirror the spawn path's auto-memory posture. Reading it back off the
-	// session row (rather than re-defaulting) keeps a session that explicitly
-	// opted INTO Claude Code's auto memory from silently losing it on resume;
-	// a conv with no recorded posture reads false, which is tclaude's
-	// recommended default anyway. No-op for non-Claude harnesses.
-	autoMemory, err := db.AutoMemoryForConv(convID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("load auto-memory posture for conversation %s: %w", convID, err)
+	if err := session.ApplyLaunchPostureEnv(h, session.LaunchPostureEnv{
+		AutoMemory: autoMemory, ContextFeatures: contextFeatures, AutoCompactWindow: autoCompactWindow,
+	}, resumeEnv); err != nil {
+		return "", "", nil, err
 	}
-	session.ApplyAutoMemoryEnv(h, autoMemory, resumeEnv)
-	// Mirror the spawn path's peer-messaging posture for the same reason, though
-	// this one rides the `--settings` payload the spec builds rather than the
-	// env: a session that explicitly opted INTO Claude Code's own messaging mesh
-	// must not silently lose it on resume, and a conv with nothing recorded
-	// reads false — tclaude's default, and the posture such a session already
-	// ran with.
-	peerMessaging, err := db.PeerMessagingForConv(convID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("load peer-messaging posture for conversation %s: %w", convID, err)
-	}
-	// Likewise for the startup-context trims: a deliberately lean agent must come
-	// back lean. Reading the recorded map back (rather than re-resolving from a
-	// profile that may since have changed) is what makes the resumed pane the same
-	// agent. A conv with nothing recorded reads nil and injects nothing — the
-	// untrimmed posture such a session originally ran with.
-	contextFeatures, err := db.ContextFeaturesForConv(convID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("load startup-context trims for conversation %s: %w", convID, err)
-	}
-	session.ApplyContextFeaturesEnv(h, contextFeatures, resumeEnv)
-	// Likewise for the auto-compaction window: an agent pinned to compact early
-	// must come back pinned, or the resumed pane silently runs to the model's
-	// full window. A conv with nothing recorded reads "" and injects nothing.
-	autoCompactWindow, err := db.AutoCompactWindowForConv(convID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("load auto-compaction window for conversation %s: %w", convID, err)
-	}
-	session.ApplyAutoCompactWindowEnv(h, autoCompactWindow, resumeEnv)
 	harnessBuiltinMode, resumeCwd := resumeSandboxState(convID)
-	// An implementation that confines nothing has nothing to reassert. The block
-	// below plans enforcement, and PlanAccessEnforcement correctly refuses a
-	// closed network that no mechanism can hold — which is the right answer for
-	// every caller that expected a wall, and the wrong question for one that
-	// declared it has none. Without this, resuming a resource-only conversation
-	// whose chain carries a modern deny-baseline `network:` block fails with
-	// sandbox_profile_changed, on both `tclaude conv resume` and watch's
-	// auto-resume, even though the same chain spawns fine.
-	//
-	// The rules are still disclosed, in the same words a fresh launch uses, so
-	// a resumed pane does not look quieter than the one it replaced.
-	if effectiveSandbox != nil && unconfined {
-		if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
-			implementation, effectiveProfile,
-		); ok {
-			effectiveProfile.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
-				effectiveProfile.AccessNotices, notice,
-			)
-			effectiveSandbox.Effective.AccessNotices = append(
-				[]sandboxpolicy.AccessNotice(nil), effectiveProfile.AccessNotices...)
-		}
-	}
-	if effectiveSandbox != nil && !outerLayer && !unconfined &&
-		(effectiveProfile.Network != nil || effectiveProfile.UnixSockets != nil) {
-		// Standalone conversation/watch resume does not pass through agentd's
-		// lifecycle planner. Reassert the persisted access intent here with no
-		// fresh-spawn authorization: a degradation notice records what the
-		// predecessor ran under, but is never itself permission to widen the
-		// successor's network boundary.
-		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(effectiveProfile)
-		if axesErr != nil {
-			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", axesErr)
-		}
-		launchOSSandbox := harness.ResolveLaunchOSSandbox(
-			h, harnessBuiltinMode, resumeSandboxChosenBy(convID), resumeCwd)
-		caps, capsErr := harness.ResolveAccessEnforcement(
-			h, implementation, axes, launchOSSandbox, harnessBuiltinMode)
-		if capsErr != nil {
-			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", capsErr)
-		}
-		_, notices, planErr := harness.PlanAccessEnforcement(axes, caps)
-		if planErr != nil {
-			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", planErr)
-		}
-		effectiveProfile.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
-			effectiveProfile.AccessNotices, notices...,
-		)
-		effectiveSandbox.Effective.AccessNotices = append(
-			[]sandboxpolicy.AccessNotice(nil), effectiveProfile.AccessNotices...)
+	if err := reassertResumeAccessNotices(h, implementation, harnessBuiltinMode, convID, resumeCwd,
+		outerLayer, unconfined, effectiveSandbox, &effectiveProfile); err != nil {
+		return "", "", nil, err
 	}
 	networkFiltered := false
 	if outerLayer {
-		resolvedModel := harness.ResolvedModelTransport{}
-		plannedAxes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(
-			effectiveProfile)
-		if axesErr != nil {
-			return "", "", nil, axesErr
+		networkFiltered, err = gateResumeLayerNetwork(h, effectiveProfile, convID, resumeCwd, extraArgs)
+		if err != nil {
+			return "", "", nil, err
 		}
-		plannedNetworkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
-			plannedAxes.Network)
-		if postureErr != nil {
-			return "", "", nil, postureErr
-		}
-		// As in `session new`: private routed open is default-accept, so it
-		// has no route to resolve; resolving it here refused resumes of
-		// launches the spawn admitted.
-		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
-			!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) {
-			networkFiltered = true
-			// pi resumes with the model its session records, so that is
-			// the route to resolve; the others resolve from config alone.
-			resumeModel := ""
-			if h.Name == harness.PiName {
-				resumeModel = harness.PiSessionModel(convID, resumeCwd)
-			}
-			resolvedModel, err = session.ResolveTclaudeLayerModelTransport(
-				h,
-				session.ModelTransportLaunchContext{
-					Model:       resumeModel,
-					Cwd:         resumeCwd,
-					Environment: effectiveProfile.Environment,
-					ExtraArgs:   extraArgs,
-				},
-			)
-			if err != nil {
-				return "", "", nil,
-					session.AnnotateDenyDrivenFilteredModelTransport(
-						plannedAxes.Network, err)
-			}
-		}
-		if _, err := session.ValidateTclaudeLayerNetwork(
-			h, effectiveProfile, resolvedModel,
-		); err != nil {
-			return "", "", nil,
-				session.AnnotateDenyDrivenFilteredModelTransport(
-					plannedAxes.Network, err)
-		}
+	}
+	// The posture gate every tclaude-layer launch boundary runs: a harness
+	// whose own sandbox the launch cannot turn off has it verified off, and a
+	// pass-through argument that would turn it back on is refused.
+	if err := session.GateTclaudeLayerHarnessPosture(h, outerLayer, effectiveSandbox, extraArgs); err != nil {
+		return "", "", nil, err
 	}
 	approvalState, err := resumeApprovalState(h, convID)
 	if err != nil {
 		return "", "", nil, err
 	}
 	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
-	// The resume-side twins of the session-new capability gates, and they need
-	// the same answer: each asks whether the harness's own sandbox can REPRESENT
-	// a rule, which is not the question for an implementation that stood every
-	// access boundary down on purpose. Leaving them un-gated is what made a
-	// resource-only conversation spawnable but not resumable.
-	if !outerLayer && !unconfined {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, launchGrants); err != nil {
-			return "", "", nil, err
-		}
+	// The session-new capability gates, shared rather than twinned: each asks
+	// whether the harness's own sandbox can REPRESENT a rule, so a resume admits
+	// exactly the postures a spawn does. An implementation that stood every
+	// access boundary down on purpose is not asked, which is what keeps a
+	// resource-only conversation resumable.
+	//
+	// Over the launch view of the snapshot, as `session new` gates it: a rule
+	// whose path does not exist yet is filtered out there and must not refuse
+	// the resume here.
+	gateSandbox, err := session.SandboxSnapshotForLaunch(effectiveSandbox)
+	if err != nil {
+		return "", "", nil, err
 	}
-	if !outerLayer && !unconfined && h.Name == harness.GeminiName && len(denyDirs)+len(readDirs)+len(writeDirs) > 0 {
-		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Gemini CLI's own sandbox cannot represent sandbox-profile filesystem rules; use --sandbox-impl tclaude-layer")
-	}
-	if !outerLayer && !unconfined && h.Name == harness.DefaultName && len(denyDirs) > 0 && harnessBuiltinMode != harness.ClaudeSandboxOn {
-		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
-	}
-	if !outerLayer && !unconfined && networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
-		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
-	}
-	if !outerLayer && !unconfined && networkAccess != sandboxpolicy.NetworkAccessInherit && harnessBuiltinMode != harness.SandboxManagedProfile {
-		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
-	}
-	if !outerLayer && !unconfined && networkAccess != sandboxpolicy.NetworkAccessInherit {
-		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
-			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
-		}
+	if err := session.ValidateHarnessSandboxRepresentation(
+		h, harnessBuiltinMode,
+		h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile,
+		gateSandbox, outerLayer, unconfined,
+	); err != nil {
+		return "", "", nil, err
 	}
 	harnessBuiltinMode, err = resumeHarnessBuiltinModeForImplementation(
 		h, harnessBuiltinMode, implementation,
@@ -2670,89 +2533,30 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		// inside a profile that makes the database read-only.
 		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
 	}
-	if h.Name == harness.GeminiName && harnessBuiltinMode == harness.GeminiSandboxSeatbelt {
-		// The spawn seam's Seatbelt checks (session/new.go), against the
-		// trust the spawn already recorded.
-		getenv := func(name string) string {
-			if value, ok := resumeEnv[name]; ok {
-				return value
-			}
-			return os.Getenv(name)
-		}
-		if err := harness.ValidateGeminiSeatbeltLaunch(getenv, resumeCwd); err != nil {
-			return "", "", nil, err
-		}
-		trustEnv, err := harness.GeminiSeatbeltLaunchEnv(getenv, resumeCwd, false)
-		if err != nil {
-			slog.Warn("gemini seatbelt: cannot read the trust store; the sandboxed pane may ask for folder trust",
-				"cwd", resumeCwd, "err", err)
-		}
-		for name, value := range trustEnv {
-			resumeEnv[name] = value
-		}
-	}
-	// A deny covering the workspace narrows the Git grants the same way the
-	// spawn path does: the historical repository container would reopen every
-	// sibling repo beneath the deny.
-	workspaceDenied := resumeDenyCoversPath(launchGrants, resumeCwd)
-	var tclaudeLayerContractWriteDirs []string
-	if outerLayer ||
-		(h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile) ||
-		(h.Name == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOff) {
-		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd, workspaceDenied)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
-		}
-		writeDirs = append(gitWriteDirs, writeDirs...)
-		if outerLayer {
-			tclaudeLayerContractWriteDirs = append(tclaudeLayerContractWriteDirs, gitWriteDirs...)
-		}
-	}
-	if outerLayer {
-		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
-			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
-			tclaudeLayerContractWriteDirs = appendUniqueResumeDir(tclaudeLayerContractWriteDirs, workspace)
-		}
-	}
-	if workspaceDenied {
-		// A deny covering the workspace masks the harness's ordinary cwd grant,
-		// and resumeGitWorktreeWriteDirs yields nothing outside a Git repository.
-		// The workspace is an invariant launch requirement, so reopen it for
-		// WRITE on every harness — not just Codex — or a resumed agent in a plain
-		// directory silently loses write access it had at spawn.
-		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
-			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
-		}
-	}
-	// Launch contract: pair explicit read reopens for everything tclaude
-	// requires the resumed agent to reach when a deny covers it. Mirrors the
-	// spawn path — see session.sandboxLaunchContractReadDirs.
-	readDirs = append(readDirs, resumeLaunchContractReadDirs(launchGrants, agentDirPaths, append([]string{resumeCwd}, writeDirs...))...)
-	// Re-gate on the rules that will actually be emitted: the launch contract
-	// above can introduce a reopen beneath a deny that the authored profile did
-	// not contain. Mirrors the spawn path.
-	renderedGrants := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)
-	if !outerLayer && !unconfined {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, harnessBuiltinMode, renderedGrants); err != nil {
-			return "", "", nil, err
-		}
-	}
-	// The mirror-image shape for Copilot's negative-form-less path grants.
-	// Mirrors the spawn path.
-	// Resolved from the revalidated effective profile's environment — the same
-	// entries that build resumeEnv and shellEnvironment, so the directory the
-	// gate inspects is the one the resumed pane is actually granted. A profile
-	// that relocates TMPDIR moves it.
-	if err := harness.ValidateCopilotAddDirGrants(
-		h.Name, resumeCwd, session.CopilotLaunchTempDir(resumeEnv),
-		readDirs, writeDirs, denyDirs, outerLayer); err != nil {
+	// The spawn seam's Seatbelt checks, against the trust the spawn already
+	// recorded (no new trust is granted on resume).
+	if err := session.ApplyGeminiSeatbeltLaunchEnv(
+		h, harnessBuiltinMode, effectiveSandbox, resumeCwd, false, resumeEnv,
+	); err != nil {
 		return "", "", nil, err
 	}
+	dirs, err := planResumeDirs(resumeDirsInput{
+		h: h, harnessBuiltinMode: harnessBuiltinMode, resumeCwd: resumeCwd,
+		outerLayer: outerLayer, unconfined: unconfined,
+		launchGrants: launchGrants, agentDirPaths: agentDirPaths, tmpfsDirs: tmpfsDirs,
+		readDirs: readDirs, writeDirs: writeDirs, denyDirs: denyDirs, resumeEnv: resumeEnv,
+		denyOverlay: resumeDenyOverlay(effectiveSandbox),
+	})
+	if err != nil {
+		return "", "", nil, err
+	}
+	readDirs, writeDirs = dirs.read, dirs.write
+	tclaudeLayerContractWriteDirs := dirs.tclaudeLayerContractWrite
 	askTimeout, err := resumeAskTimeout(h, convID)
 	if err != nil {
 		return "", "", nil, err
 	}
-	remoteControl, err := resumeRemoteControl(h, convID)
+	remoteControl, err := relaunch.remoteControl(h, convID)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -2797,56 +2601,61 @@ func resumeLaunchCmdWithEffectiveSandbox(
 		// pi runs offline under a filtered network, as `session new` launched it.
 		NetworkFiltered: networkFiltered,
 	}
-	if outerLayer && h.Name == harness.PiName {
-		// As in `session new`: a walled pi runs against tclaude's walled
-		// agent directory, rebuilt from the operator's for this launch.
-		walled, err := harness.PreparePiWalledAgentDir(convID)
+	// Post-ladder, deliberately: see applyResumeLayerAgentEnv.
+	var layerPosture sandboxpolicy.NetworkPosture
+	var layerRoot sandboxpolicy.RootPosture
+	if outerLayer {
+		layerPosture, err = session.TclaudeLayerNetworkPosture(effectiveProfile)
 		if err != nil {
 			return "", "", nil, err
 		}
-		spec.HarnessStateDir = walled
-	}
-	// The status extension is a launch flag, not installed config: a resume
-	// that dropped it would leave the agent without live status.
-	statusExtensionDir := ""
-	if h.StatusExtension != nil {
-		if path, extErr := h.StatusExtension(); extErr != nil && h.Name == harness.PiName && approvalPolicy == harness.PiApprovalAsk {
-			// ask's gate is the permission extension written beside it.
-			return "", "", nil, fmt.Errorf("pi's ask posture needs tclaude's permission extension: %w", extErr)
-		} else if extErr != nil {
-			slog.Warn("status extension unavailable on resume", "harness", h.Name, "error", extErr, "module", "conv")
-		} else {
-			spec.StatusExtensionPath = path
-			statusExtensionDir = filepath.Dir(path)
+		layerRoot, err = session.TclaudeLayerRootPosture(layerPosture, effectiveProfile)
+		if err != nil {
+			return "", "", nil, err
 		}
+	}
+	// As in `session new`: a walled pi runs against tclaude's walled agent
+	// directory, and the status extension, a launch flag rather than
+	// installed config, is kept. No managed-instructions root, as below.
+	extensionReadPaths, err := session.FinishHarnessSpawnSpec(
+		h, &spec, "", outerLayer, layerRoot, approvalPolicy, nil)
+	if err != nil {
+		return "", "", nil, err
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if !outerLayer && h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
-		resumeWriteDirs := writeDirs
-		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(renderedGrants)
-		if requireSplitPolicy {
-			verified, runtimeErr := harness.VerifyCodexHomeSplitPolicy()
-			if runtimeErr != nil {
-				return "", "", nil, runtimeErr
-			}
-			splitCapability = &verified
-			if verified.RequiresExecutableReopen {
-				readDirs = append(readDirs, verified.ExecutablePath)
-			}
-		}
-		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
-			ReadDirs:    readDirs,
-			WriteDirs:   resumeWriteDirs,
-			DenyDirs:    denyDirs,
-			UnixSockets: effectiveProfile.UnixSockets,
-			MaterializedUnixSocketPaths: resumeMaterializedUnixSocketPaths(
-				effectiveSandbox),
-			RequireSplitPolicy: requireSplitPolicy,
-		}, networkAccess, session.GenerateSessionID())
+		// The step `session new` takes. It runs the reopen-under-deny gate on
+		// these rendered rules itself, so an unconfined implementation (off,
+		// resource-only), whose gate planResumeDirs skips, is still refused a
+		// shape Codex cannot enforce, as `session new` refuses it.
+		profileLaunchID := session.GenerateSessionID()
+		profileName, profilePath, capability, err := session.EnsureCodexManagedLaunchProfile(
+			session.CodexManagedProfileRules{ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs},
+			effectiveSandbox, profileLaunchID)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
+			return "", "", nil, err
 		}
+		// From here a failure, here or before the pane starts, leaves the
+		// file to the relaunch's settle(false); nil (tests) leaves it to the
+		// caller.
+		if relaunch != nil {
+			relaunch.profilePath = profilePath
+		}
+		// And, as `session new` does, join an installed native registry, so
+		// Codex's requirements allow the profile the pane is started with
+		// rather than falling back to another one. The relaunch carries the
+		// generation to activation or removal; without one (tests) nothing is
+		// registered.
+		if relaunch != nil {
+			generation, err := session.RegisterCodexLaunchNativeProfile(
+				profileLaunchID, profileName, profilePath, convID, sessionID)
+			if err != nil {
+				return "", "", nil, err
+			}
+			relaunch.nativeGeneration = generation
+		}
+		splitCapability = capability
 		spec.HarnessBuiltinMode = ""
 		spec.PermissionProfile = profileName
 		if splitCapability != nil {
@@ -2864,14 +2673,6 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	var layerSpec session.TclaudeLayerLaunchSpec
 	binary := ""
 	if outerLayer {
-		posture, postureErr := session.TclaudeLayerNetworkPosture(effectiveProfile)
-		if postureErr != nil {
-			return "", "", nil, postureErr
-		}
-		root, rootErr := session.TclaudeLayerRootPosture(posture, effectiveProfile)
-		if rootErr != nil {
-			return "", "", nil, rootErr
-		}
 		// The engine is part of the question, not a decoration on the answer:
 		// it maps a filtered posture onto the proxy floor, which needs strictly
 		// less than the packet gateway. Resolving without it would refuse a
@@ -2883,54 +2684,54 @@ func resumeLaunchCmdWithEffectiveSandbox(
 			return "", "", nil, engineErr
 		}
 		var resolveErr error
-		binary, _, resolveErr = session.ResolveTclaudeLayerForEngineWithIdentity(
-			posture, root, engine,
-			posture == sandboxpolicy.NetworkFiltered &&
+		binary, _, resolveErr = resolveResumeTclaudeLayer(
+			layerPosture, layerRoot, engine,
+			layerPosture == sandboxpolicy.NetworkFiltered &&
 				engine == sandboxpolicy.NetworkEnginePacket)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
+		// The same pinning `session new` performs, so a resumed pane starts the
+		// binary a new one would: a constructed root cannot see a harness
+		// installed under the home directory.
+		pinned, pinnedExecutable, pinErr := session.ResolveTclaudeLayerExecutable(h.Name, layerRoot)
+		if pinErr != nil {
+			return "", "", nil, pinErr
+		}
 		var harnessReadPaths []string
-		if h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
-			root == sandboxpolicy.RootConstructed {
-			// The same resolution `session new` performs: a constructed root
-			// cannot see a Gemini or Node installed under the home directory.
-			resolved, resolveErr := harness.ResolveGeminiLaunchExecutable()
-			if resolveErr != nil {
-				return "", "", nil, fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
-			}
-			spec.ExecutablePath = resolved.Path
-			spec.ExecutableInterpreter = resolved.Interpreter
-			harnessReadPaths = resolved.ReadPaths
+		if pinnedExecutable {
+			spec.ExecutablePath = pinned.Path
+			spec.ExecutableInterpreter = pinned.Interpreter
+			harnessReadPaths = pinned.ReadPaths
 		}
-		if h.Name == harness.PiName && runtime.GOOS == "linux" &&
-			root == sandboxpolicy.RootConstructed {
-			resolved, resolveErr := harness.ResolvePiLaunchExecutable()
-			if resolveErr != nil {
-				return "", "", nil, fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", resolveErr)
-			}
-			spec.ExecutablePath = resolved.Path
-			spec.ExecutableInterpreter = resolved.Interpreter
-			harnessReadPaths = resolved.ReadPaths
+		harnessReadPaths = append(harnessReadPaths, extensionReadPaths...)
+		// The agent's own attachment and morph directories, as `session new`
+		// grants them: the wall hides their daemon-owned parents from every
+		// launch and reopens only these. An attachment directory created here
+		// is left in place if a later step fails, unlike a fresh launch's
+		// undo: it is empty and keyed to this session row, and the attachment
+		// sweep removes it once stale.
+		//
+		// No managed-instructions read path, deliberately: that root is a
+		// per-launch directory agentd creates for `session new
+		// --managed-instructions-root`, and this resume never has one.
+		privateWriteDirs, _, privateErr := session.TclaudeLayerAgentPrivateWriteDirs(sessionID, convID)
+		if privateErr != nil {
+			return "", "", nil, privateErr
 		}
-		if statusExtensionDir != "" {
-			// As in `session new`: mounted read-only, and reaching tclaude
-			// where the sandbox puts it.
-			harnessReadPaths = append(harnessReadPaths, statusExtensionDir)
-			if root == sandboxpolicy.RootConstructed {
-				spec.TclaudeExecutable = session.TclaudeLayerConstructedRootTclaudePath
-			}
-		}
-		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
+		// The step `session new` takes, so the harness state and protected
+		// mountpoints the spec hides exist before bwrap starts.
+		launchSpec, specErr := session.PrepareTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
 			StateRoot:        spec.HarnessStateDir,
 			Cwd:              resumeCwd,
 			GitWriteDirs:     tclaudeLayerContractWriteDirs,
 			Snapshot:         effectiveSandbox,
+			PrivateWriteDirs: privateWriteDirs,
 			HarnessReadPaths: harnessReadPaths,
 		})
 		if specErr != nil {
-			return "", "", nil, fmt.Errorf("build resumed tclaude’s sandbox launch spec: %w", specErr)
+			return "", "", nil, specErr
 		}
 		layerSpec = launchSpec
 	}
@@ -2938,22 +2739,21 @@ func resumeLaunchCmdWithEffectiveSandbox(
 	if err != nil {
 		return "", "", nil, fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
 	}
-	gatewayCLIPath := clcommon.SelfTclaudePath()
+	// The step `session new` takes, with no loopback bind port: this resume
+	// renders no Codex app-server (resumeLaunchPosture records CodexAppServer as nil).
+	paneCommand := session.HarnessPaneCommandInput{SessionID: sessionID, Harness: h, Spec: spec}
 	if outerLayer {
-		gatewayCLIPath, err = session.HTTPProxyCLIForLayerSpec(&layerSpec)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("resolve HTTP proxy resume CLI: %w", err)
-		}
+		paneCommand.LayerBinary = binary
+		paneCommand.LayerSpec = &layerSpec
 	}
-	cmd := session.HTTPProxySpawnCommand(sessionID, h, spec, gatewayCLIPath)
+	cmd, err := session.HarnessPaneCommand(paneCommand)
+	if err != nil {
+		return "", "", nil, err
+	}
+	// Only a managed Codex profile outside tclaude's sandbox has a file to
+	// remove, so the cleanup never lands inside the sandbox's wrap.
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
-	}
-	if outerLayer {
-		cmd, err = session.WrapTclaudeLayerSpec(binary, layerSpec, cmd)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude’s sandbox: %w", err)
-		}
 	}
 	if effectiveSandboxOut != nil {
 		*effectiveSandboxOut = effectiveSandbox
@@ -2992,7 +2792,7 @@ func canonicalResumeWorkspace(cwd string) string {
 // reached through a symlinked ancestor must be resolved before comparison or a
 // covering deny goes undetected and the workspace is never reopened.
 func resumeDenyCoversPath(grants []sandboxpolicy.FilesystemGrant, path string) bool {
-	path = canonicalResumeSandboxPath(path)
+	path = session.CanonicalSandboxPath(path)
 	if path == "" {
 		return false
 	}
@@ -3005,6 +2805,33 @@ func resumeDenyCoversPath(grants []sandboxpolicy.FilesystemGrant, path string) b
 		}
 	}
 	return false
+}
+
+// resumeContractReadCandidates is the host-path candidate list for
+// resumeLaunchContractReadDirs: the workspace plus the write dirs, minus the
+// sandbox-side path of every remapped write grant and every tmpfs mount. Each
+// candidate is resolved against the HOST, so a sandbox-side spelling would
+// mint a read reopen for whatever sits at that spelling on the host; and
+// neither needs a reopen, because its mount is applied after the deny that
+// would have masked it. Same candidates as session.sandboxLaunchContractReadDirs,
+// which never sees tmpfs mounts or remapped guests.
+func resumeContractReadCandidates(cwd string, writeDirs []string, grants []sandboxpolicy.FilesystemGrant, tmpfsDirs []string) []string {
+	mounted := make(map[string]bool, len(tmpfsDirs))
+	for _, dir := range tmpfsDirs {
+		mounted[dir] = true
+	}
+	for _, grant := range grants {
+		if grant.Access == sandboxpolicy.AccessWrite && grant.IsRemapped() {
+			mounted[grant.GuestPath()] = true
+		}
+	}
+	candidates := []string{cwd}
+	for _, dir := range writeDirs {
+		if !mounted[dir] {
+			candidates = append(candidates, dir)
+		}
+	}
+	return candidates
 }
 
 // resumeLaunchContractReadDirs mirrors session.sandboxLaunchContractReadDirs on
@@ -3025,36 +2852,14 @@ func resumeLaunchContractReadDirs(grants []sandboxpolicy.FilesystemGrant, agentD
 	for _, candidate := range all {
 		// Emit the canonical form: the rule must name the path the sandbox will
 		// actually see, and must be comparable to the canonical deny above.
-		candidate = canonicalResumeSandboxPath(candidate)
+		candidate = session.CanonicalSandboxPath(candidate)
 		if candidate == "" || !resumeDenyCoversPath(grants, candidate) {
 			continue
 		}
-		out = appendUniqueResumeDir(out, candidate)
+		out = session.AppendUniqueDir(out, candidate)
 	}
 	sort.Strings(out)
 	return out
-}
-
-// canonicalResumeSandboxPath mirrors session.canonicalSandboxPath: resolve when
-// possible, fall back to the lexical form otherwise.
-func canonicalResumeSandboxPath(path string) string {
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "." || !filepath.IsAbs(path) {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return filepath.Clean(resolved)
-	}
-	return path
-}
-
-func appendUniqueResumeDir(dirs []string, dir string) []string {
-	for _, existing := range dirs {
-		if existing == dir {
-			return dirs
-		}
-	}
-	return append(dirs, dir)
 }
 
 func resumeSandboxState(convID string) (mode, cwd string) {
@@ -3328,14 +3133,14 @@ func resumeGitWorktreeWriteDirs(cwd string, strictHome bool) ([]string, error) {
 	// Git common/admin descendants only.
 	var narrow []string
 	if workspace := canonicalResumeWorkspace(cwd); workspace != "" {
-		narrow = appendUniqueResumeDir(narrow, workspace)
+		narrow = session.AppendUniqueDir(narrow, workspace)
 	}
 	commonDir = filepath.Clean(commonDir)
-	narrow = appendUniqueResumeDir(narrow, commonDir)
+	narrow = session.AppendUniqueDir(narrow, commonDir)
 	for _, dir := range dirs {
 		dir = filepath.Clean(dir)
 		if sandboxpolicy.PathContainsOrEqual(commonDir, dir) {
-			narrow = appendUniqueResumeDir(narrow, dir)
+			narrow = session.AppendUniqueDir(narrow, dir)
 		}
 	}
 	return narrow, nil
@@ -3349,16 +3154,6 @@ func resumeEffectiveSandboxForState(convID string) *sandboxpolicy.Snapshot {
 	return snapshot
 }
 
-func resumeMaterializedUnixSocketPaths(
-	snapshot *sandboxpolicy.Snapshot,
-) *[]string {
-	if snapshot == nil || snapshot.UnixSocketMaterialization == nil {
-		return nil
-	}
-	paths := append([]string(nil), snapshot.UnixSocketMaterialization.Paths...)
-	return &paths
-}
-
 func resumeCommandWithFileCleanup(cmd, path string) string {
 	const statusVar = "tclaude_resume_status"
 	return cmd + "; " + statusVar + "=$?; " + session.CodexProfileCleanupShell(path) +
@@ -3370,7 +3165,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		return err
 	}
 
-	session.EnsureHooksInstalled(false, os.Stdout, os.Stderr)
+	session.EnsureHooksInstalled(false, cliStdout, cliStderr)
 
 	// Sync the configured Claude Code transcript-retention override
 	// (claude_cleanup_period_days) into ~/.claude/settings.json. No-op unless
@@ -3402,8 +3197,19 @@ func createSessionForConv(conv *SessionEntry) error {
 		return reject
 	}
 	defer release()
+	if err := session.ReinstateRetiredForResume(sessionID, cwd); err != nil {
+		return err
+	}
 
 	tmuxSession := session.UniqueTmuxSessionName(session.TmuxNameBase(sessionID, "", cwd))
+
+	// The agent's sandbox, prepared as an ordinary resume prepares it.
+	relaunch, err := prepareStandaloneRelaunch(sessionID, cliStderr)
+	if err != nil {
+		return err
+	}
+	launched := false
+	defer func() { relaunch.settle(launched) }()
 
 	// Resume through the conv's recorded harness, not a hardcoded
 	// `claude --resume`: a Codex conv selected in the watch view must be
@@ -3417,13 +3223,14 @@ func createSessionForConv(conv *SessionEntry) error {
 		conv.SessionID,
 		clcommon.ExtractClaudeExtraArgs(),
 		&launchEffectiveSandbox,
+		relaunch,
 	)
 	if err != nil {
 		return err
 	}
 	if launchEffectiveSandbox != nil {
 		for _, notice := range launchEffectiveSandbox.Effective.AccessNotices {
-			fmt.Printf("Warning: %s\n", notice.Detail)
+			fmt.Fprintf(cliStdout, "Warning: %s\n", notice.Detail)
 		}
 	}
 	// The same gate `tclaude conv resume` applies, for the same reason: this
@@ -3437,7 +3244,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		return err
 	}
 	if driveNotice != "" {
-		fmt.Println(driveNotice)
+		fmt.Fprintln(cliStdout, driveNotice)
 	}
 	approvalState, err := resumeApprovalState(h, conv.SessionID)
 	if err != nil {
@@ -3445,7 +3252,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	}
 	approvalPolicy, autoReview := approvalState.Policy, approvalState.AutoReview
 	if notice := describeResumedApproval(h, approvalState); notice != "" {
-		fmt.Println(notice)
+		fmt.Fprintln(cliStdout, notice)
 	}
 	// Read the postures this resume must reproduce BEFORE it creates any row of
 	// its own — including the row the resumed pane's own SessionStart hook may
@@ -3456,7 +3263,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	if err != nil {
 		return err
 	}
-	remoteControl, err := resumeRemoteControl(h, conv.SessionID)
+	remoteControl, err := relaunch.remoteControl(h, conv.SessionID)
 	if err != nil {
 		return err
 	}
@@ -3470,52 +3277,68 @@ func createSessionForConv(conv *SessionEntry) error {
 	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
 	// ps-visible-credentials exposure the spawn path already fixed.
 	launchStarted := time.Now()
-	if err := session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd, h.Name,
-		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
-		return err
+	// A no-sandbox Codex launch's managed requirements (codex_requirements.go),
+	// read before the pane starts, with the environment it launches with.
+	var codexEnvironment []sandboxpolicy.EnvironmentEntry
+	if launchEffectiveSandbox != nil {
+		codexEnvironment = sandboxpolicy.EnvironmentForLaunch(launchEffectiveSandbox)
 	}
+	codexImplementation, _ := resumeSandboxImplementation(conv.SessionID)
+	codexVerdict, codexChecked := session.VerifyCodexSandboxOff(h, codexImplementation,
+		resumeHarnessBuiltinMode(conv.SessionID), cwd, codexEnvironment)
+	launched, err = commitResumeLaunch(relaunch, func() error {
+		return session.LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, launchCmd, h.Name,
+			session.CodexProfileMarkerArgs(profilePath)...)
+	}, func() error {
+		pid := session.ParsePIDFromTmux(tmuxSession)
+		// Carry the resolved harness onto the saved row so a non-claude tag is not
+		// coalesced back to "claude" — closes the inline TODO(JOH-155) for the
+		// watch-resume path now that codex resume lands here.
+		// A resume is a fresh launch: re-resolve whether the OS sandbox actually
+		// confines it rather than carrying the predecessor's verdict, because the
+		// operator may have changed settings.json since (TCL-729).
+		resumeMode := resumeHarnessBuiltinMode(conv.SessionID)
+		resumeChosenBy := resumeSandboxChosenBy(conv.SessionID)
+		resumeImplementation, err := resumeSandboxImplementation(conv.SessionID)
+		if err != nil {
+			return err
+		}
+		launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
+		if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
+			launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(conv.SessionID)
+		}
+		if codexChecked {
+			launchOSSandbox = codexVerdict
+		}
+		state := &session.SessionState{
+			ID:                       sessionID,
+			TmuxSession:              tmuxSession,
+			PID:                      pid,
+			Cwd:                      cwd,
+			ConvID:                   conv.SessionID,
+			Status:                   session.StatusIdle,
+			Harness:                  h.Name,
+			HarnessBuiltinMode:       resumeMode,
+			SandboxImplementation:    string(resumeImplementation),
+			HarnessBuiltinModeSource: resumeChosenBy,
+			OSSandboxState:           launchOSSandbox.State,
+			OSSandboxSource:          launchOSSandbox.Source,
+			OSSandboxUnverified:      launchOSSandbox.Unverified,
+			EffectiveSandbox:         launchEffectiveSandbox,
+			ApprovalPolicy:           approvalPolicy,
+			ApprovalAutoReview:       autoReview,
+			AskUserQuestionTimeout:   askTimeout,
+			Created:                  launchStarted,
+			Updated:                  time.Now(),
+		}
 
-	pid := session.ParsePIDFromTmux(tmuxSession)
-	// Carry the resolved harness onto the saved row so a non-claude tag is not
-	// coalesced back to "claude" — closes the inline TODO(JOH-155) for the
-	// watch-resume path now that codex resume lands here.
-	// A resume is a fresh launch: re-resolve whether the OS sandbox actually
-	// confines it rather than carrying the predecessor's verdict, because the
-	// operator may have changed settings.json since (TCL-729).
-	resumeMode := resumeHarnessBuiltinMode(conv.SessionID)
-	resumeChosenBy := resumeSandboxChosenBy(conv.SessionID)
-	resumeImplementation, err := resumeSandboxImplementation(conv.SessionID)
+		if err := session.SaveSessionStateAfterLaunch(state); err != nil {
+			return fmt.Errorf("failed to save session state: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
-	}
-	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
-	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
-		launchOSSandbox = resumeTclaudeLayerLaunchOSSandbox(conv.SessionID)
-	}
-	state := &session.SessionState{
-		ID:                       sessionID,
-		TmuxSession:              tmuxSession,
-		PID:                      pid,
-		Cwd:                      cwd,
-		ConvID:                   conv.SessionID,
-		Status:                   session.StatusIdle,
-		Harness:                  h.Name,
-		HarnessBuiltinMode:       resumeMode,
-		SandboxImplementation:    string(resumeImplementation),
-		HarnessBuiltinModeSource: resumeChosenBy,
-		OSSandboxState:           launchOSSandbox.State,
-		OSSandboxSource:          launchOSSandbox.Source,
-		OSSandboxUnverified:      launchOSSandbox.Unverified,
-		EffectiveSandbox:         launchEffectiveSandbox,
-		ApprovalPolicy:           approvalPolicy,
-		ApprovalAutoReview:       autoReview,
-		AskUserQuestionTimeout:   askTimeout,
-		Created:                  launchStarted,
-		Updated:                  time.Now(),
-	}
-
-	if err := session.SaveSessionStateAfterLaunch(state); err != nil {
-		return fmt.Errorf("failed to save session state: %w", err)
 	}
 	// resumeLaunchCmd already applied these to the pane's environment; this
 	// write is what keeps them alive for the NEXT resume, since the fresh row
@@ -3524,8 +3347,8 @@ func createSessionForConv(conv *SessionEntry) error {
 	session.RecordLaunchPosture(sessionID, h,
 		resumeLaunchPosture(autoMemory, peerMessaging, contextFeatures, autoCompactWindow, remoteControl))
 
-	fmt.Printf("Created session %s\n", tmuxSession)
-	fmt.Println("Attaching... (Ctrl+B D to detach)")
+	fmt.Fprintf(cliStdout, "Created session %s\n", tmuxSession)
+	fmt.Fprintln(cliStdout, "Attaching... (Ctrl+B D to detach)")
 
 	return session.AttachToSession(sessionID, tmuxSession, false)
 }

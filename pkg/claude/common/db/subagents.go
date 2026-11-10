@@ -33,7 +33,9 @@ import (
 //     being seen ages out after SubagentTTL;
 //   - known-zero boundaries (main-thread SessionStart, session exit,
 //     the .jsonl interrupt marker) clear the ledger outright, since
-//     sub-agents live inside the harness process.
+//     sub-agents live inside the harness process. Claude Code's
+//     SessionStart(compact) is not one: a subagent's compaction fires it
+//     too, and no compaction ends a sub-agent.
 //
 // Entries whose agent_id is unknown (a SubagentStart payload without
 // one) get a synthetic "anon-…" key so legacy counting still works;

@@ -1,15 +1,18 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { Button, Input, Select } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { registerLinksController } from './links-controller.js';
 import { nodeSnapshot } from './node-api.js';
 import { relTime } from './helpers.js';
 import { LINK_COLS } from './sort.js';
 import { LINK_MODES, composeItems, composerSummary, modeText } from './proposals-model.js';
+import { GroupCombobox } from './group-picker.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
+import { TableHead } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -20,23 +23,8 @@ function Words({ plain, wizard }) {
 function errorMessage(error) { return error?.message || String(error); }
 
 function ErrorBanner({ error }) {
-  if (!error) return html`<div class="cron-create-error" id="link-modal-error" role="alert"></div>`;
-  return html`<div class="cron-create-error" id="link-modal-error" role="alert">${error}</div>`;
-}
-
-function SortHeader({ column, state }) {
-  if (!column.col) return html`<th>${column.label || ''}</th>`;
-  const current = state.sort.value;
-  const active = current?.col === column.col;
-  const arrow = active ? (current.dir === 'asc' ? '▲' : '▼') : '▾';
-  return html`
-    <th class=${active ? 'sortable sort-active' : 'sortable'}
-      data-sort-table="links" data-sort-col=${column.col}
-      title=${`Sort by ${column.label}`}
-      onClick=${() => state.cycleSort(column.col)}>
-      ${column.label}<span class="sort-arrow">${arrow}</span>
-    </th>
-  `;
+  if (!error) return html`<div class="cron-create-error ui-error-box" id="link-modal-error" role="alert"></div>`;
+  return html`<div class="cron-create-error ui-error-box" id="link-modal-error" role="alert">${error}</div>`;
 }
 
 export function LinksControls({ state, actions }) {
@@ -49,7 +37,7 @@ export function LinksControls({ state, actions }) {
     ? `${current.filtered} / ${current.total}`
     : `${current.total} channel${current.total === 1 ? '' : 's'}`;
   return html`
-    <input ref=${inputRef} id="filter-links" type="text"
+    <${Input} domRef=${inputRef} id="filter-links"
       aria-label="Filter inter-group links" placeholder="Filter (from / to / mode)"
       autocomplete="off" spellcheck=${false} value=${current.query}
       onInput=${(event) => state.setQuery(event.currentTarget.value)} />
@@ -57,17 +45,17 @@ export function LinksControls({ state, actions }) {
       <span class="theme-copy-regular">${regularCount}</span>
       <span class="theme-copy-wizard">${wizardCount}</span>
     </span>
-    <button class="clear-filter" id="filter-links-clear" title="Clear filter"
+    <button data-ui-exempt class="clear-filter" id="filter-links-clear" title="Clear filter"
       aria-label="Clear link filter" onClick=${() => {
         state.setQuery('');
         inputRef.current?.focus();
       }}>×</button>
     <span class="spacer"></span>
-    <button id="link-new-open" class="primary"
+    <${Button} id="link-new-open" variant="primary"
       onClick=${() => actions.openCreate()}
       title="Add a new inter-group communication link">
       <${Words} plain="+ new link" wizard="+ weave channel" />
-    </button>
+    <//>
   `;
 }
 
@@ -91,7 +79,7 @@ function leftIn(deadline) {
 }
 
 function statePill(text, cls, title = '') {
-  return html`<span class=${`link-state ${cls}`} title=${title}>${text}</span>`;
+  return html`<span class=${`ui-tag link-state ${cls}`} title=${title}>${text}</span>`;
 }
 
 function localState(link) {
@@ -138,9 +126,8 @@ export function LinksList({ state, actions }) {
   const columns = cross ? [...LINK_COLS.slice(0, 5), ...CROSS_COLS, ...LINK_COLS.slice(5)] : LINK_COLS;
   return html`
     <table aria-busy=${!!deleting}>
-      <thead><tr>${columns.map((column, index) => html`
-        <${SortHeader} key=${column.col || `plain-${index}`} column=${column} state=${state} />
-      `)}</tr></thead>
+      <${TableHead} cols=${columns} activeCol=${state.sort.value?.col} dir=${state.sort.value?.dir}
+        sortTable="links" onSort=${(col) => state.cycleSort(col)} />
       <tbody>${current.rows.map((link) => {
         const rowBusy = deleting === String(link.id);
         const remote = !!link.peer;
@@ -157,14 +144,14 @@ export function LinksList({ state, actions }) {
             ${cross && html`<td>${remote ? peerState(link) : null}</td>`}
             <td><span class="muted">${relTime(link.created_at) || ''}</span></td>
             <td><div class="row-actions">
-              ${!remote && html`<button type="button" disabled=${!!deleting}
+              ${!remote && html`<${Button} size="sm" type="button" disabled=${!!deleting}
                 onClick=${() => actions.openEdit({ id: link.id, from: link.from || '', to: link.to || '', mode: link.mode || '' })}
-                title="Change this link's mode"><${Words} plain="edit" wizard="rebind" /></button>`}
-              <button type="button" class="danger" disabled=${!!deleting}
+                title="Change this link's mode"><${Words} plain="edit" wizard="rebind" /><//>`}
+              <${Button} size="sm" type="button" variant="ghost danger" disabled=${!!deleting}
                 onClick=${() => remove(link)}
                 title=${pendingOut ? 'Withdraw this link request' : 'Remove this link'}>${pendingOut
     ? (rowBusy ? 'cancelling…' : 'cancel request')
-    : html`<${Words} plain=${rowBusy ? 'deleting…' : 'delete'} wizard=${rowBusy ? 'severing…' : 'sever'} />`}</button>
+    : html`<${Words} plain=${rowBusy ? 'deleting…' : 'delete'} wizard=${rowBusy ? 'severing…' : 'sever'} />`}<//>
             </div></td>
           </tr>
         `;
@@ -175,25 +162,22 @@ export function LinksList({ state, actions }) {
 
 function LinksManager({ state, actions, confirmDiscard }) {
   return html`
-    <${Overlay}
+    <${Dialog}
       id="links-manage-modal"
       manage=${true}
-      labelledby="links-manage-title"
       onClose=${actions.closeManager}
-      confirmDiscard=${confirmDiscard}
-    >
-      <h3 id="links-manage-title"><${Words} plain="Inter-group links" wizard="Arcane channels between parties" /></h3>
+      confirmDiscard=${confirmDiscard} title=${html`<${Words} plain="Inter-group links" wizard="Arcane channels between parties" />`}>
       <p class="manage-intro"><${Words}
         plain="Communication edges between groups: members of FROM may message members of TO. Direction matters — add a reverse edge for two-way reach."
-        wizard="Missive channels between parties: familiars of FROM may whisper to familiars of TO. Direction matters — weave a reverse channel for two-way reach."
+        wizard="Missive channels between parties: heroes of FROM may whisper to heroes of TO. Direction matters — weave a reverse channel for two-way reach."
       /></p>
       <div class="filter-bar" id="links-filter-root"><${LinksControls} state=${state} actions=${actions} /></div>
       <div id="links-list"><${LinksList} state=${state} actions=${actions} /></div>
       <div class="modal-buttons">
         <span class="spacer"></span>
-        <button id="links-manage-close" type="button" onClick=${actions.closeManager}><${Words} plain="Close" wizard="Dispel" /></button>
+        <${Button} id="links-manage-close" onClick=${actions.closeManager}><${Words} plain="Close" wizard="Dispel" /></${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -276,6 +260,7 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
   const submitGuard = useRef(false);
   const dirty = from !== initial.from || to !== initial.to || mode !== initial.mode || bidir || target !== 'local';
   const groupOptions = optionsFor(groups, from, to);
+  const peerGroupChoices = peerGroups.map((group) => ({ value: group.id, label: group.name }));
 
   const submit = async () => {
     if (submitGuard.current) return;
@@ -313,74 +298,61 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay}
+    <${Dialog}
       id="link-modal"
-      labelledby="link-modal-title"
       onClose=${actions.closeEditor}
       onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
-      registerClose=${registerClose}
-    >
-      <h3 id="link-modal-title"><${Words}
+      guard=${{ requestClose, registerClose }} titleId="link-modal-title" title=${html`<${Words}
         plain=${edit ? 'Edit link mode' : 'Add inter-group link'}
         wizard=${edit ? 'Rebind an arcane channel' : 'Weave an arcane channel'}
-      /></h3>
+      />`}>
       ${edit && html`<div class="modal-meta" id="link-modal-meta">#${descriptor.id} · ${from} → ${to}</div>`}
       <label class="cron-create-row">
         <span class="cron-create-label">From</span>
-        <select id="link-modal-from" value=${from} disabled=${busy || edit || !!descriptor.preset?.from}
-          onChange=${(event) => setFrom(event.currentTarget.value)}>
-          ${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-        </select>
+        <${GroupCombobox} id="link-modal-from" groups=${groupOptions} value=${from} ariaLabel="From group"
+          disabled=${busy || edit || !!descriptor.preset?.from} onChange=${setFrom} />
       </label>
       ${!edit && targets && html`
         <div class="cron-create-row" id="link-modal-target-row">
           <span class="cron-create-label">To</span>
-          <span class="link-target-seg" role="radiogroup" aria-label="Link target">
-            <button type="button" role="radio" aria-checked=${target === 'local'} id="link-modal-target-local"
-              class=${target === 'local' ? 'on' : ''} disabled=${busy} onClick=${() => setTarget('local')}>This node</button>
-            <button type="button" role="radio" aria-checked=${target === 'peer'} id="link-modal-target-peer"
-              class=${target === 'peer' ? 'on' : ''} disabled=${busy || !connected}
-              title=${connected ? 'Link to a group a peer node shares with you' : (targets.reason || 'Not connected to the hub')}
-              onClick=${() => setTarget('peer')}>Peer node 🌐</button>
-          </span>
+          <${Tabs} variant="seg" kind="radio" label="Link target" value=${target} onSelect=${setTarget} items=${[
+            { key: 'local', label: 'This node', disabled: busy, attrs: { id: 'link-modal-target-local' } },
+            { key: 'peer', label: 'Peer node 🌐', disabled: busy || !connected, attrs: { id: 'link-modal-target-peer' },
+              title: connected ? 'Link to a group a peer node shares with you' : (targets.reason || 'Not connected to the hub') },
+          ]} />
         </div>`}
       ${remote ? html`
         <label class="cron-create-row">
           <span class="cron-create-label">Peer node</span>
-          <select id="link-modal-peer" value=${peer?.peer || ''} disabled=${busy}
-            onChange=${(event) => { setPeerID(event.currentTarget.value); setPeerGroupID(''); }}>
-            ${peers.map((candidate) => html`<option key=${candidate.peer} value=${candidate.peer} disabled=${!candidate.link_capable}>
-              ${candidate.label || candidate.peer} · ${candidate.trust}${candidate.link_capable ? '' : ' · group links unsupported'}</option>`)}
-          </select>
+          <${PeerCombobox} id="link-modal-peer" value=${peer?.peer || ''} disabled=${busy} ariaLabel="Peer node"
+            items=${namedItems(peers.map((candidate) => ({ name: candidate.peer, label: candidate.label || candidate.peer, descr: candidate.trust,
+              unpickable: candidate.link_capable ? '' : 'group links unsupported' })))}
+            onChange=${(next) => { setPeerID(next); setPeerGroupID(''); }} />
         </label>
         <label class="cron-create-row">
           <span class="cron-create-label">Peer group</span>
-          <select id="link-modal-peer-group" value=${peerGroup?.id || ''} disabled=${busy || !peerGroups.length}
-            onChange=${(event) => setPeerGroupID(event.currentTarget.value)}>
-            ${peerGroups.map((group) => html`<option key=${group.id} value=${group.id}>${group.name}</option>`)}
-          </select>
+          <${GroupCombobox} id="link-modal-peer-group" groups=${peerGroupChoices} value=${peerGroup?.id || ''} ariaLabel="Peer group"
+            disabled=${busy || !peerGroups.length} onChange=${setPeerGroupID} />
         </label>` : html`
         <label class="cron-create-row">
           <span class="cron-create-label">${!edit && targets ? '' : 'To'}</span>
-          <select id="link-modal-to" value=${to} disabled=${busy || edit}
-            onChange=${(event) => setTo(event.currentTarget.value)}>
-            ${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}</option>`)}
-          </select>
+          <${GroupCombobox} id="link-modal-to" groups=${groupOptions} value=${to} ariaLabel="To group"
+            disabled=${busy || edit} onChange=${setTo} />
         </label>`}
       ${!edit && targets && (target === 'peer' || !connected) && html`<${PeerOutcome} peer=${peer} group=${peerGroup} connected=${connected} reason=${targets.reason} />`}
-      ${remote && peer?.link_capable && typeof actions.openPropose === 'function' && html`<div class="proposal-hint">Want to share groups or link several at once?
-        <button type="button" class="fa-link" id="link-modal-propose" disabled=${busy}
-          onClick=${() => actions.openPropose({ peer: peer.peer, replace: true })}>Propose several items…</button></div>`}
+      ${remote && peer?.link_capable && typeof actions.openPropose === 'function' && html`<div class="proposal-hint ui-hint">Want to share groups or link several at once?
+        <${Button} size="sm" variant="link" class="fa-link" id="link-modal-propose" disabled=${busy}
+          onClick=${() => actions.openPropose({ peer: peer.peer, replace: true })}>Propose several items…<//></div>`}
       <label class="cron-create-row">
         <span class="cron-create-label">Mode</span>
-        <select id="link-modal-mode" value=${mode} disabled=${busy}
+        <${Select} id="link-modal-mode" value=${mode} disabled=${busy}
           onChange=${(event) => setMode(event.currentTarget.value)}>
           <option value="members->members">members → members (any member of FROM may message any member of TO)</option>
           <option value="owners->members">owners → members (only owners of FROM may message members of TO)</option>
-        </select>
+        <//>
       </label>
       ${!edit && html`
         <label class="cron-create-enabled" id="link-modal-bidir-row" title="Also create the reverse link (TO → FROM) with the same mode in one call.">
@@ -393,16 +365,16 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
       `}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">
-        <button id="link-modal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></button>
+        <${Button} id="link-modal-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel" /></${Button}>
         <span class="spacer"></span>
-        <button id="link-modal-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
+        <${Button} variant="primary" id="link-modal-submit" disabled=${busy} onClick=${submit}>
           <${Words}
             plain=${busy ? (edit ? 'Saving…' : 'Creating…') : (edit ? 'Save changes' : remote && peerGroup && !peerGroup.auto ? 'Send link request' : 'Create link')}
             wizard=${busy ? (edit ? 'Rebinding…' : 'Weaving…') : (edit ? 'Rebind channel' : remote && peerGroup && !peerGroup.auto ? 'Send link petition' : 'Weave channel')}
           />
-        </button>
+        </${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -436,6 +408,8 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
   const setPair = (index, patch) => setPairs(pairs.map((pair, at) => at === index ? { ...pair, ...patch } : pair));
   const addPair = () => setPairs([...pairs, { ours: groups[0]?.name || '', theirs: peerGroups[0]?.id || '', dir: 'both', mode: 'members->members' }]);
   const peerGroupName = (id) => peerGroups.find((group) => group.id === id)?.name || id;
+  const groupNames = groups.map((group) => group.name);
+  const peerGroupChoices = peerGroups.map((group) => ({ value: group.id, label: `${label}:${group.name}` }));
   const summary = composerSummary({ peer: label, shares, pairs, peerGroupName });
   const submitGuard = useRef(false);
 
@@ -453,9 +427,8 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
   };
 
   return html`
-    <${Overlay} id="proposal-modal" labelledby="proposal-modal-title" onClose=${actions.closeEditor}
-      onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
-      <h3 id="proposal-modal-title">Propose to ${peer ? label : 'a peer node'} 🌐</h3>
+    <${Dialog} id="proposal-modal" onClose=${actions.closeEditor}
+      onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} guard=${{ requestClose, registerClose }} titleId="proposal-modal-title" title=${html`Propose to ${peer ? label : 'a peer node'} 🌐`}>
       <div class="modal-meta">Nothing changes on either node until ${label}'s operator accepts. You can withdraw it until then.</div>
       ${targets === undefined ? html`<div class="empty">Loading peers…</div>`
         : !connected ? html`<div class="link-peer-note off" id="proposal-offline">🌐 Proposals need a hub connection.${targets?.reason ? ` ${targets.reason}` : ''}</div>`
@@ -464,12 +437,11 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
         : html`
         <label class="cron-create-row">
           <span class="cron-create-label">Peer node</span>
-          <select id="proposal-peer" value=${peer?.peer || ''} disabled=${busy}
-            onChange=${(event) => { setPeerID(event.currentTarget.value); setPairs([]); }}>
-            ${peers.map((candidate) => html`<option key=${candidate.peer} value=${candidate.peer}>${candidate.label || candidate.peer} · ${candidate.trust}</option>`)}
-          </select>
+          <${PeerCombobox} id="proposal-peer" value=${peer?.peer || ''} disabled=${busy} ariaLabel="Peer node"
+            items=${namedItems(peers.map((candidate) => ({ name: candidate.peer, label: candidate.label || candidate.peer, descr: candidate.trust })))}
+            onChange=${(next) => { setPeerID(next); setPairs([]); }} />
         </label>
-        <div class="proposal-sec"><span>Groups to share with ${label}</span><span>name, description and member count</span></div>
+        <div class="ui-eyebrow proposal-sec"><span>Groups to share with ${label}</span><span>name, description and member count</span></div>
         ${groups.map((group) => html`<div key=${group.name} class=${`proposal-item${shared(group.name) ? '' : ' off'}`} data-group=${group.name}>
           <label class="grow"><input type="checkbox" class="proposal-share" checked=${!!shared(group.name)} disabled=${busy}
             onChange=${(event) => toggleShare(group.name, event.currentTarget.checked)} /> <b>${group.name}</b> · ${group.members} member${group.members === 1 ? '' : 's'}</label>
@@ -477,39 +449,39 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
             <input type="checkbox" class="proposal-share-members" checked=${shared(group.name).includeMembers} disabled=${busy}
               onChange=${(event) => setMembers(group.name, event.currentTarget.checked)} /> include member list</label>`}
         </div>`)}
-        <div class="proposal-sec"><span>Links</span><span>each direction is a separate edge</span></div>
-        ${!peerGroups.length && html`<div class="proposal-hint">${label} has not shared a group with you yet, so there is nothing to link to. Share yours and ${label} can propose links back.</div>`}
+        <div class="ui-eyebrow proposal-sec"><span>Links</span><span>each direction is a separate edge</span></div>
+        ${!peerGroups.length && html`<div class="proposal-hint ui-hint">${label} has not shared a group with you yet, so there is nothing to link to. Share yours and ${label} can propose links back.</div>`}
         ${pairs.map((pair, index) => html`<div key=${index} class="proposal-item proposal-pair">
-          <select class="proposal-pair-ours" value=${pair.ours} disabled=${busy} onChange=${(event) => setPair(index, { ours: event.currentTarget.value })}>
-            ${groups.map((group) => html`<option key=${group.name} value=${group.name}>${group.name}</option>`)}</select>
-          <select class="proposal-pair-dir" value=${pair.dir} disabled=${busy} onChange=${(event) => setPair(index, { dir: event.currentTarget.value })}>
-            <option value="both">⇄ both ways</option><option value="out">→ to ${label}</option><option value="in">← from ${label}</option></select>
-          <select class="proposal-pair-theirs" value=${pair.theirs} disabled=${busy} onChange=${(event) => setPair(index, { theirs: event.currentTarget.value })}>
-            ${peerGroups.map((group) => html`<option key=${group.id} value=${group.id}>${label}:${group.name}</option>`)}</select>
-          <select class="proposal-pair-mode" value=${pair.mode} disabled=${busy} onChange=${(event) => setPair(index, { mode: event.currentTarget.value })}>
-            ${LINK_MODES.map((mode) => html`<option key=${mode} value=${mode}>${modeText(mode)}</option>`)}</select>
-          <button type="button" class="fa-link proposal-pair-remove" title="Remove this link" disabled=${busy}
-            onClick=${() => setPairs(pairs.filter((_, at) => at !== index))}>✕</button>
+          <${GroupCombobox} id=${`proposal-pair-${index}-ours`} attrs=${{ 'data-pair-side': 'ours' }} groups=${groupNames} value=${pair.ours}
+            ariaLabel="Our group" disabled=${busy} onChange=${(key) => setPair(index, { ours: key })} />
+          <${Select} size="sm" class="proposal-pair-dir" value=${pair.dir} disabled=${busy} onChange=${(event) => setPair(index, { dir: event.currentTarget.value })}>
+            <option value="both">⇄ both ways</option><option value="out">→ to ${label}</option><option value="in">← from ${label}</option><//>
+          <${GroupCombobox} id=${`proposal-pair-${index}-theirs`} attrs=${{ 'data-pair-side': 'theirs' }} groups=${peerGroupChoices} value=${pair.theirs}
+            ariaLabel=${`${label}'s group`} disabled=${busy} onChange=${(key) => setPair(index, { theirs: key })} />
+          <${Select} size="sm" class="proposal-pair-mode" value=${pair.mode} disabled=${busy} onChange=${(event) => setPair(index, { mode: event.currentTarget.value })}>
+            ${LINK_MODES.map((mode) => html`<option key=${mode} value=${mode}>${modeText(mode)}</option>`)}<//>
+          <${Button} size="sm" variant="ghost danger" class="proposal-pair-remove" title="Remove this link" disabled=${busy}
+            onClick=${() => setPairs(pairs.filter((_, at) => at !== index))}>✕<//>
         </div>`)}
-        ${peerGroups.length > 0 && groups.length > 0 && html`<button type="button" class="fa-link" id="proposal-add-pair" disabled=${busy} onClick=${addPair}>+ add a link</button>`}
+        ${peerGroups.length > 0 && groups.length > 0 && html`<${Button} size="sm" variant="link" class="fa-link" id="proposal-add-pair" disabled=${busy} onClick=${addPair}>+ add a link<//>`}
         <label class="cron-create-row">
           <span class="cron-create-label">Note</span>
           <textarea id="proposal-note" rows="2" maxlength="4096" value=${note} disabled=${busy}
             placeholder=${`Optional, shown to ${label}'s operator`} onInput=${(event) => setNote(event.currentTarget.value)}></textarea>
         </label>
         ${summary.length > 0 && html`<div class="proposal-preview" id="proposal-preview">
-          <div class="proposal-sec"><span>What you're proposing</span></div>
+          <div class="ui-eyebrow proposal-sec"><span>What you're proposing</span></div>
           <ul>${summary.map((line, index) => html`<li key=${index}>${line}</li>`)}</ul>
-          <div class="proposal-hint">No other permission changes; nothing reaches further than these items.</div>
+          <div class="proposal-hint ui-hint">No other permission changes; nothing reaches further than these items.</div>
         </div>`}`}
       <${ErrorBanner} error=${error} />
       <div class="modal-buttons">
-        <button id="proposal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
+        <${Button} id="proposal-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>
         <span class="spacer"></span>
-        <button id="proposal-submit" class="primary" type="button" disabled=${busy || !peer || !connected || !items.length} onClick=${submit}>
-          ${busy ? 'Sending…' : 'Send proposal'}</button>
+        <${Button} variant="primary" id="proposal-submit" disabled=${busy || !peer || !connected || !items.length} onClick=${submit}>
+          ${busy ? 'Sending…' : 'Send proposal'}</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 

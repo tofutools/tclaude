@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -33,22 +34,7 @@ import (
 // `self.clear` was removed from the slug registry entirely (along with
 // `tclaude agent clear`) because /clear rotates CC's conv ID and
 // orphans agent identity. Reincarnate replaces that path.
-var defaultPermsForBundledSkills = []string{
-	"self.rename",
-	"self.compact",
-	"self.interrupt",
-	"self.clone",
-	"self.schedule",
-	"self.remote-control",
-	"self.task",
-	"self.pr",
-	"self.tags",
-	"self.dir-repair",
-	"self.process",
-	"process.templates.read",
-	"usage.read",
-	"costs.read",
-}
+var defaultPermsForBundledSkills = config.BundledSkillDefaultPermissions
 
 // Protocol version - bump this when the handler needs to be re-registered
 const protocolVersion = "3"
@@ -71,12 +57,12 @@ type Params struct {
 	// The --install-* flags add optional extras on top of the baseline
 	// setup (which always runs). They do not replace or gate the baseline.
 	InstallAll               bool `long:"install-all" help:"Install all standard extras on top of the baseline setup. Proxy skills remain opt-in via --install-proxy-skills."`
-	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, and process-templates) for all coding harnesses into ~/.claude/skills, shared ~/.agents/skills, and CODEX_HOME/skills. Idempotent; overwrites existing if present."`
+	InstallAgentSkills       bool `long:"install-agent-skills" help:"Also install (or refresh) the bundled coordination skills (agent-*, human-*, process-templates, process-runs, present-pr-to-operator, reincarnate, tclaude-setup and tclaude-fleet) for all coding harnesses into ~/.claude/skills, shared ~/.agents/skills, and CODEX_HOME/skills. Idempotent; overwrites existing if present."`
 	InstallProxySkills       bool `long:"install-proxy-skills" help:"Also install (or refresh) skills for configured credential proxies for all coding harnesses into ~/.claude/skills, shared ~/.agents/skills, and CODEX_HOME/skills. Not included by --install-all."`
 	InstallUtilitySkills     bool `long:"install-utility-skills" help:"Also install (or refresh) optional utility skills (e.g. demo-recording: record and send a demo video of a feature built end to end) for all coding harnesses through Claude Code, shared ~/.agents/skills, and Codex home directories. Not included by --install-all."`
-	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the low-risk permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/config.json. Idempotent; only adds missing slugs."`
+	InstallDefaultAgentPerms bool `long:"install-default-agent-permissions" help:"Also grant the low-risk permission slugs the bundled agent-* skills exercise as agent defaults in ~/.tclaude/data/config.json. Idempotent; only adds missing slugs."`
 	InstallSandboxHardening  bool `long:"install-sandbox-hardening" help:"Also add the agent-sandbox hardening entries (sandbox.* and permissions.deny) to ~/.claude/settings.json, as described in docs/sandboxing.md. Append-only and idempotent; never removes or overwrites existing values."`
-	InstallResumeThreshold   bool `long:"install-resume-threshold-override" help:"Also write a claude_resume.threshold_minutes override to ~/.tclaude/config.json that suppresses Claude Code's interactive 'Resume from summary' prompt for tclaude-spawned panes (it breaks scripted resume). Idempotent; skips if a value is already configured, never overwrites it."`
+	InstallResumeThreshold   bool `long:"install-resume-threshold-override" help:"Also write a claude_resume.threshold_minutes override to ~/.tclaude/data/config.json that suppresses Claude Code's interactive 'Resume from summary' prompt for tclaude-spawned panes (it breaks scripted resume). Idempotent; skips if a value is already configured, never overwrites it."`
 
 	// Harness selects which coding harness's hooks to install/check
 	// (default "claude" → ~/.claude/settings.json; "codex" →
@@ -144,6 +130,12 @@ func runSetup(params *Params) error {
 	// tmux and re-runs `tclaude setup`, which then applies the baseline
 	// plus any extras idempotently.
 	fmt.Println("=== Prerequisites ===")
+	// Report the advisory sandbox tools before the tmux check, whose
+	// missing-tmux branches return early: a first-run user then gets every
+	// install hint in one pass.
+	if runtime.GOOS == "linux" {
+		reportLinuxSandboxTools()
+	}
 	if isTmuxInstalled() {
 		fmt.Println("✓ tmux installed")
 	} else {
@@ -379,6 +371,11 @@ func runSetup(params *Params) error {
 		return err
 	}
 
+	// 4a'. New installs confine agents in tclaude's own sandbox. Existing
+	// installs are left undecided and asked on the dashboard's Diagnostics › Doctor view.
+	fmt.Println("\n=== Default Agent Sandbox ===")
+	installDefaultSandboxImplementation()
+
 	// 4b. Neutralize the OS-sandbox phantom ".git" in the worktree container.
 	// A sandbox that denies writes to ".git" inside a writable root creates a
 	// bogus ".git" directory in the sibling-worktree container (e.g. ~/git),
@@ -450,7 +447,7 @@ func installExtras(params *Params) error {
 }
 
 // installResumeThresholdOverride writes a claude_resume.threshold_minutes
-// override to ~/.tclaude/config.json that suppresses Claude Code's interactive
+// override to ~/.tclaude/data/config.json that suppresses Claude Code's interactive
 // "Resume from summary" chooser — the multiple-choice prompt CC pops when
 // resuming an old, large session, which hangs tclaude's scripted resume (a
 // detached tmux pane can't answer a TUI it didn't expect). tclaude injects the
@@ -470,7 +467,7 @@ func installResumeThresholdOverride() error {
 		// so skip with a warning rather than clobber it. (A simply-absent file is
 		// not an error: Load returns the default config with a nil error, and we
 		// proceed to write it.)
-		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/config.json (%v). Fix it and re-run.\n", err)
+		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/data/config.json (%v). Fix it and re-run.\n", err)
 		return nil
 	}
 	if cfg.ClaudeResume != nil && cfg.ClaudeResume.ThresholdMinutes != nil {
@@ -491,7 +488,7 @@ func installResumeThresholdOverride() error {
 }
 
 // installDefaultMusicVolume writes slop.music_volume=50 to
-// ~/.tclaude/config.json so a fresh install starts the Vegas/slop and
+// ~/.tclaude/data/config.json so a fresh install starts the Vegas/slop and
 // wizard-mode soundtrack at half volume — full volume startled users on first
 // entry. The value matches config.DefaultMusicVolume, the same default readers
 // fall back to when the key is absent (see ResolvedSlopVolumes); writing it
@@ -510,7 +507,7 @@ func installDefaultMusicVolume() error {
 		// so skip with a warning rather than clobber it. (A simply-absent file is
 		// not an error: Load returns the default config with a nil error, and we
 		// proceed to write it.)
-		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/config.json (%v). Fix it and re-run.\n", err)
+		fmt.Printf("  ⚠ Skipping: could not read ~/.tclaude/data/config.json (%v). Fix it and re-run.\n", err)
 		return nil
 	}
 	if cfg.Slop != nil && cfg.Slop.MusicVolume != nil {
@@ -527,6 +524,42 @@ func installDefaultMusicVolume() error {
 	}
 	fmt.Printf("✓ Set slop.music_volume=%d%% (Vegas/slop + wizard-mode soundtrack starts at half volume)\n", v)
 	return nil
+}
+
+// installDefaultSandboxImplementation makes tclaude's own sandbox the default
+// for agents spawned on a fresh install (see db.SeedFreshInstallSandboxDefault
+// for what "fresh" means). It never changes a decision already recorded, and it
+// never decides for an install that has history: that operator is asked on the
+// dashboard's Diagnostics › Doctor view instead, so an upgrade does not quietly change how the
+// next agent is confined.
+//
+// A host missing the sandbox tooling still gets the default — refusing the
+// launch with an actionable error beats silently running unconfined — but the
+// operator is told now rather than at their first spawn.
+func installDefaultSandboxImplementation() {
+	seeded, err := db.SeedFreshInstallSandboxDefault()
+	if err != nil {
+		fmt.Printf("  ⚠ Skipping: could not read the tclaude database (%v)\n", err)
+		return
+	}
+	value, decided, _ := db.GetSandboxDefaultImplementation()
+	switch {
+	case seeded:
+		fmt.Println("✓ New agents default to tclaude's own sandbox")
+	case !decided:
+		fmt.Println("  Agents still use each harness's own sandbox. tclaude's sandbox is the default for new installs;")
+		fmt.Println("  choose on the dashboard's Diagnostics › Doctor view, or run `tclaude agent sandbox default set tclaude-layer`.")
+		return
+	case value == db.SandboxDefaultHarness:
+		fmt.Println("✓ New agents use each harness's own sandbox (your choice) — leaving it unchanged")
+		return
+	default:
+		fmt.Println("✓ New agents default to tclaude's own sandbox — leaving it unchanged")
+	}
+	if err := session.TclaudeLayerHostToolingPresence(); err != nil {
+		fmt.Printf("  ⚠ tclaude's sandbox cannot run on this host yet: %v\n", err)
+		fmt.Println("    Agent spawns will be refused until it is fixed; the dashboard's Diagnostics › Doctor view shows how.")
+	}
 }
 
 // hookInstallTargets returns the selected harness first, followed by other
@@ -781,7 +814,7 @@ func installProxySkills() error {
 
 // installDefaultAgentPermissions adds the low-risk permission
 // slugs the bundled agent-* skills exercise (defaultPermsForBundledSkills)
-// to agent.default_permissions in ~/.tclaude/config.json, creating the
+// to agent.default_permissions in ~/.tclaude/data/config.json, creating the
 // section if missing. Idempotent — slugs already present are silently
 // skipped. The user explicitly opted in by passing the flag (or
 // --install-all); we don't prompt further.
@@ -880,7 +913,7 @@ func configureNotifications(params *Params) {
 		save = len(added) > 0
 	default:
 		// First run: no notifications block on disk yet. Offer to enable.
-		if askYesNo("Enable desktop notifications when Claude needs attention?", true, params.Yes) {
+		if askYesNo("Enable desktop notifications when an agent needs attention?", true, params.Yes) {
 			cfg.Notifications.Enabled = true
 			save = true
 			fmt.Println("✓ Notifications enabled")
@@ -959,6 +992,9 @@ func checkStatus(harnessName string) error {
 		fmt.Println("✓ tmux installed")
 	} else {
 		fmt.Println("✗ tmux not found (required)")
+	}
+	if runtime.GOOS == "linux" {
+		reportLinuxSandboxTools()
 	}
 
 	// Check hooks. Naming a harness scopes the check to it; with no harness

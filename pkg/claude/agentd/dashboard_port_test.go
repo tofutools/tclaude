@@ -4,7 +4,11 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"strconv"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,6 +64,49 @@ func TestStartPopupServer_RandomPort(t *testing.T) {
 	require.NotNil(t, srv)
 	t.Cleanup(func() { _ = srv.Close() })
 	assert.Regexp(t, `^http://127\.0\.0\.1:\d+$`, url)
+}
+
+// The dashboard's port is the daemon's own only while the listener is open:
+// once it closes the kernel may hand the port to an agent's dev server, which
+// a page must then be able to show.
+func TestStartPopupServer_ReleasesDaemonPortOnClose(t *testing.T) {
+	srv, base, err := startPopupServer(defaultDashboardBind, 0)
+	require.NoError(t, err)
+	u, err := url.Parse(base)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(u.Port())
+	require.NoError(t, err)
+	assert.True(t, isStageDaemonPort(port), "the dashboard port is the daemon's while open")
+	require.NoError(t, srv.Close())
+	// Serve closes a listener it had not started tracking yet on its own
+	// goroutine, so the release can trail srv.Close.
+	require.Eventually(t, func() bool { return !isStageDaemonPort(port) }, 5*time.Second, 10*time.Millisecond,
+		"a closed listener's port is no longer the daemon's")
+}
+
+// Two daemon listeners on one port (the dashboard's loopback listener beside a
+// non-loopback bind) keep it the daemon's until the last of them closes, and a
+// listener that never bound leaves nothing behind.
+func TestStageDaemonListener_PortHeldUntilLastClose(t *testing.T) {
+	first, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := first.Addr().(*net.TCPAddr).Port
+	second, err := net.Listen("tcp", "[::1]:"+strconv.Itoa(port))
+	if err != nil {
+		_ = first.Close()
+		t.Skipf("no IPv6 loopback for a second listener on port %d: %v", port, err)
+	}
+	a, b := registerStageDaemonListener(first), registerStageDaemonListener(second)
+	assert.True(t, isStageDaemonPort(port))
+	require.NoError(t, a.Close())
+	_ = a.Close() // a second close releases nothing more
+	assert.True(t, isStageDaemonPort(port), "the other listener still holds the port")
+	require.NoError(t, b.Close())
+	assert.False(t, isStageDaemonPort(port), "released once the last listener closed")
+
+	_, _, err = startPopupServer(defaultDashboardBind, 70000)
+	require.Error(t, err)
+	assert.False(t, isStageDaemonPort(70000), "a failed bind registers nothing")
 }
 
 // A fixed port that is free binds to exactly that port — the stable URL
@@ -131,4 +178,52 @@ func TestStartPopupServer_OutOfRangeIsFatal(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, srv)
 	assert.Empty(t, url)
+}
+
+// A random port on a concrete non-loopback bind is free on that address only;
+// loopback may already hold it. The pair is tried again on a fresh port
+// rather than failing startup (tcl-yfch9s), and a fixed port still fails at
+// once: it is the operator's choice.
+func TestBindDashboardListeners_RetriesALoopbackClashOnARandomPort(t *testing.T) {
+	// A fake non-loopback listener: its address says 192.0.2.1, a test-net
+	// address no host has, so the pair logic needs its loopback twin.
+	clashes := 0
+	prev := dashboardListen
+	t.Cleanup(func() { dashboardListen = prev })
+	dashboardListen = func(network, address string) (net.Listener, error) {
+		host, _, err := net.SplitHostPort(address)
+		require.NoError(t, err)
+		if host == defaultDashboardBind {
+			if clashes < 2 {
+				clashes++
+				return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
+			}
+			return net.Listen(network, "127.0.0.1:0")
+		}
+		ln, err := net.Listen(network, "127.0.0.1:0")
+		require.NoError(t, err)
+		return fakeNonLoopback{Listener: ln}, nil
+	}
+
+	listeners, addr, err := bindDashboardListeners("192.0.2.1:0", true)
+	require.NoError(t, err, "a loopback clash on a random port is retried")
+	require.Len(t, listeners, 2)
+	assert.Equal(t, 2, clashes, "both clashes were retried")
+	assert.Equal(t, "192.0.2.1", addr.IP.String())
+	for _, ln := range listeners {
+		require.NoError(t, ln.Close())
+	}
+
+	clashes = 0
+	_, _, err = bindDashboardListeners("192.0.2.1:4000", false)
+	require.Error(t, err, "a fixed port clash is fatal")
+	assert.Contains(t, err.Error(), "bind mandatory loopback dashboard listener")
+	assert.Equal(t, 1, clashes, "and not retried")
+}
+
+// fakeNonLoopback reports a non-loopback address for a real listener.
+type fakeNonLoopback struct{ net.Listener }
+
+func (l fakeNonLoopback) Addr() net.Addr {
+	return &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: l.Listener.Addr().(*net.TCPAddr).Port}
 }

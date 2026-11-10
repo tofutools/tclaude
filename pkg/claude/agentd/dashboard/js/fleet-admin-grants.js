@@ -4,10 +4,12 @@ import htm from 'htm';
 import { extraPolicy, grantExpiryText, grantRows } from './fleet-admin-model.js';
 import { AddGrantDialog } from './fleet-admin-grant-dialog.js';
 import { ALL_TARGETS } from './fleet-admin-page.js';
+import { Button } from './ui-components.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 // grantTargets lists who can hold grants: trusted peers, then node pools
 // (group:<name>, whose grants apply to every member node).
@@ -20,6 +22,7 @@ export function grantTargets(view, pools) {
 
 function where(row) {
   if (row.deletedGroup) return html`<span class="muted">deleted group${row.groupID != null ? ` #${row.groupID}` : ''}</span>`;
+  if (row.inert) return html`<span class="fa-warn" title=${`Authorizes nothing: ${row.inert}`}>inert: needs a group</span>`;
   if (row.gateway) return html`gateway <b>${row.gateway}</b>`;
   if (row.group) return html`group <b>${row.group}</b>`;
   if (row.allGroups) return html`<span class="fa-warn" title="Covers every current group and every group created later">all groups, incl. future</span>`;
@@ -27,7 +30,7 @@ function where(row) {
 }
 
 function whereText(row) {
-  return row.deletedGroup ? 'in a deleted group (it applies nowhere)' : row.gateway ? `on gateway ${row.gateway}` : row.group ? `in group ${row.group}` : row.allGroups ? 'in every group' : 'node-wide';
+  return row.deletedGroup ? 'in a deleted group (it applies nowhere)' : row.inert ? 'with no group (it applies nowhere)' : row.gateway ? `on gateway ${row.gateway}` : row.group ? `in group ${row.group}` : row.allGroups ? 'in every group' : 'node-wide';
 }
 
 export { ALL_TARGETS };
@@ -49,7 +52,7 @@ function grantCells(r, onRevoke) {
     <td class="fa-acts">${r.pool
       ? html`<span class="muted" title="Revoke it on the pool">via pool ${r.pool}</span>`
       : !r.revocable ? html`<span class="muted" title="Its group was deleted; the grant no longer applies to any group">group deleted</span>`
-      : html`<button type="button" class="fa-danger" data-fa="revoke" onClick=${onRevoke}>Revoke…</button>`}</td>`;
+      : html`<${Button} size="sm" variant="ghost danger" data-fa="revoke" onClick=${onRevoke}>Revoke…<//>`}</td>`;
 }
 
 // GrantsPage lists peer grants: every peer's and pool's together
@@ -137,47 +140,41 @@ export function GrantsPage({ view, pools, groups, actions, confirm, toast, targe
     const visible = sections.filter((x) => !q || x.shown.length);
     if (allGrants) count = q ? `${shownN} of ${total} grants` : `${total} grant${total === 1 ? '' : 's'} across ${allGrants.length} peer${allGrants.length === 1 ? '' : 's'} and pool${allGrants.length === 1 ? '' : 's'}`;
     body = !allGrants ? html`<div class="empty">Loading…</div>` : visible.length === 0 ? html`<div class="empty">No grants match.</div>` : html`
-      <table class="fa-table" id="fleet-grants">
-        <thead><tr><th>Peer / pool</th><th>Permission</th><th>Where</th><th>Allows</th><th></th></tr></thead>
-        <tbody>${visible.map(({ t, err, full, rows, shown }) => html`
+      <${FaTable} id="fleet-grants" head=${['Peer / pool', 'Permission', 'Where', 'Allows', '']}>${visible.map(({ t, err, full, rows, shown }) => html`
           <tr key=${`h|${t.id}`} class="fa-grant-peer" data-peer=${t.id}>
-            <td colspan="4"><button type="button" class="fa-link" data-fa="open-target" title="Show only these grants" onClick=${() => setTarget(t.id)}><b>${t.label}</b></button>
-              ${!t.pool && html` <code class="muted">${t.id.slice(0, 12)}${t.id.length > 12 ? '…' : ''}</code>`}
+            <td colspan="4"><${Button} size="sm" variant="link" class="fa-link" data-fa="open-target" title="Show only these grants" onClick=${() => setTarget(t.id)}><b>${t.label}</b><//>
+              ${!t.pool && html` <code class="muted" title=${t.id}>${t.id.slice(0, 12)}${t.id.length > 12 ? '…' : ''}</code>`}
               <span class="muted"> · </span>${t.level === 'unrestricted' ? html`<span class="fa-level unrestricted">unrestricted</span>` : html`<span class="muted">${t.pool ? 'pool' : 'restricted'}</span>`}
               <span class="muted"> · ${err ? '' : rows.length ? `${rows.length} grant${rows.length === 1 ? '' : 's'}` : 'no grants'}</span>${err && html`<span class="fa-danger">${err}</span>`}</td>
-            <td class="fa-acts"><button type="button" data-fa="add-grant" onClick=${() => setAdding(t.id)}>+ Add</button>${directRows(rows).length > 0 && html`<button type="button" class="fa-danger" data-fa="revoke-all" onClick=${() => revokeAll(t, full)}>Revoke all…</button>`}</td>
+            <td class="fa-acts"><${Button} size="sm" data-fa="add-grant" onClick=${() => setAdding(t.id)}>+ Add<//>${directRows(rows).length > 0 && html`<${Button} size="sm" variant="ghost danger" data-fa="revoke-all" onClick=${() => revokeAll(t, full)}>Revoke all…<//>`}</td>
           </tr>
           ${shown.map((r) => html`<tr key=${`${t.id}|${r.key}`} data-peer=${t.id} data-slug=${r.slug}>
-            <td class="muted">${t.label}</td>${grantCells(r, () => revoke(t, r))}</tr>`)}`)}</tbody>
-      </table>`;
+            <td class="muted">${t.label}</td>${grantCells(r, () => revoke(t, r))}</tr>`)}`)}<//>`;
   } else {
     const rows = grants ? targetRows(current, grants) : [];
     const shown = rows.filter((r) => matches(current, r, q));
     if (grants && q) count = `${shown.length} of ${rows.length} grants`;
     body = html`
-      ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+      ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
       ${!grants && !error ? html`<div class="empty">Loading…</div>` : rows.length === 0 ? html`<div class="empty">No grants: ${current.label} can do nothing on this node beyond being trusted.</div>` : shown.length === 0 ? html`<div class="empty">No grants match.</div>` : html`
-      <table class="fa-table" id="fleet-grants">
-        <thead><tr><th>Permission</th><th>Where</th><th>Allows</th><th></th></tr></thead>
-        <tbody>${shown.map((r) => html`<tr key=${r.key} data-slug=${r.slug}>${grantCells(r, () => revoke(current, r))}</tr>`)}</tbody>
-      </table>`}
+      <${FaTable} id="fleet-grants" head=${['Permission', 'Where', 'Allows', '']}>${shown.map((r) => html`<tr key=${r.key} data-slug=${r.slug}>${grantCells(r, () => revoke(current, r))}</tr>`)}<//>`}
       <div class="fa-grants-foot">
         ${current.level === 'unrestricted' && html`<span class="fa-warn">Unrestricted: ${current.label} already holds every group permission on all groups; the grants above matter once it is restricted.</span>`}
         ${current.pool && html`<span class="muted">A pool's grants apply to every member node.</span>`}
-        ${grants && directRows(rows).length > 0 && html`<button type="button" class="fa-danger fa-grants-revoke-all" data-fa="revoke-all" onClick=${() => revokeAll(current, rows)}>Revoke all ${directRows(rows).length} from ${current.label}…</button>`}
+        ${grants && directRows(rows).length > 0 && html`<${Button} size="sm" variant="danger" class="fa-grants-revoke-all" data-fa="revoke-all" onClick=${() => revokeAll(current, rows)}>Revoke all ${directRows(rows).length} from ${current.label}…<//>`}
       </div>`;
   }
 
   return html`<div class="fa-grants">
     <div class="fa-grants-head">
       <label><span class="fa-k">Grants of</span>
-        <select id="fleet-grant-target" value=${all ? ALL_TARGETS : current.id} onChange=${(e) => setTarget(e.currentTarget.value)}>
-          <option value=${ALL_TARGETS}>All peers & pools</option>
-          ${targets.map((t) => html`<option key=${t.id} value=${t.id}>${t.label}${t.level === 'unrestricted' ? ' (unrestricted)' : ''}</option>`)}
-        </select></label>
+        <${PeerCombobox} id="fleet-grant-target" value=${all ? ALL_TARGETS : current.id} ariaLabel="Grants of" placeholder="Type to find a peer or pool…"
+          items=${namedItems([{ name: ALL_TARGETS, label: 'All peers & pools' },
+            ...targets.map((t) => ({ name: t.id, label: t.label, descr: t.level === 'unrestricted' ? 'unrestricted' : '' }))])}
+          onChange=${setTarget} /></label>
       <input id="fleet-grant-filter" class="fa-grants-filter" type="search" placeholder="Filter: peer, permission, group, description…" value=${filter} autocomplete="off" spellcheck="false" onInput=${(e) => setFilter(e.currentTarget.value)} />
       ${count && html`<span class="muted">${count}</span>`}
-      <button id="fleet-grant-add" type="button" class="primary fa-grants-add" onClick=${() => setAdding(current ? current.id : '')}>+ Add grant…</button>
+      <${Button} size="sm" variant="primary" id="fleet-grant-add" class="fa-grants-add" onClick=${() => setAdding(current ? current.id : '')}>+ Add grant…<//>
     </div>
     ${body}
     ${adding !== null && html`<${AddGrantDialog} targets=${targets} initialTarget=${adding} groups=${groups} actions=${actions} confirm=${confirm} toast=${toast}

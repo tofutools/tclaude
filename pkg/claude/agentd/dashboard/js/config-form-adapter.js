@@ -1,10 +1,18 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
+import { SIDE_PANEL_TOGGLES, SIDE_PANEL_TUNING_FIELDS, sidePanelTuningId } from './side-panel-tuning-fields.js';
+import { COMMA_PAUSE_DEFAULT, CONTINUOUS_IDLE_DEFAULT, CONTINUOUS_IDLE_MAX, CONTINUOUS_IDLE_MIN, PERIOD_PAUSE_DEFAULT, SILENCE_SEND_DEFAULT, SILENCE_SEND_MAX, SILENCE_SEND_MIN, VOICE_ACTIONS, VOICE_PAUSE_MAX, VOICE_PAUSE_MIN, storedVoicePhrases, voiceClashProblem, voiceFormPhrase, voicePausesProblem } from './voice-config.js';
+import { syncVoiceSection } from './voice-config-section.js';
 import { $, $$ } from './helpers.js';
 import { lineDiff as configLineDiff } from './line-diff.js';
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS, closeTabsChecked, closeTabsStored } from './terminal-close-tabs.js';
 import { dashboardState } from './snapshot-store.js';
+import { KEYBINDINGS_LIST, validOverride } from './keybindings.js';
 import { loadProfiles, findProfileByHandle, profileChoices } from './profiles.js';
 import { loadSandboxProfiles } from './sandbox-profiles-data.js';
+import { shellConfirm } from './shell-state.js';
+import { clearedSecrets, configNodeLabel, configPeerTarget, setConfigAccess, withholdUnreplaced } from './config-access.js';
+import { nodeFetch } from './node-api.js';
+import { CUSTOM_TIMEOUT_DEFAULT, SCHEDULE_DEFAULTS, invalidateSelfUpdateMeta, loadSelfUpdateMeta, managerName, methodInfo, needsPackageManagerAck, selfUpdateDeps, selfUpdateDraft, selfUpdateLoads, selfUpdateMeta } from './config-self-update.js';
 
 let configLifecycle = {};
 const fallbackLists = new Map();
@@ -13,14 +21,28 @@ let configDependencies = {
   isCyclingTabs: () => false,
   fetchImpl: (...args) => globalThis.fetch(...args),
   confirmDiff: async () => false,
+  confirm: (options) => shellConfirm(options),
   lists: {
     get: id => fallbackLists.get(id) || [],
     set: (id, values) => fallbackLists.set(id, values),
   },
 };
 export function configureConfigLifecycle(callbacks = {}) { configLifecycle = callbacks; }
-export function configureConfigAdapter(dependencies = {}) { configDependencies = { ...configDependencies, ...dependencies }; }
+export function configureConfigAdapter(dependencies = {}) {
+  configDependencies = { ...configDependencies, ...dependencies };
+  selfUpdateDeps.fetchImpl = configDependencies.fetchImpl;
+}
 const latestSnapshot = () => dashboardState.snapshot.value || {};
+
+// configFetch reaches the node the tab edits: a fused view's picked peer
+// through this node's proxy (config-access.js), else the page's own node.
+function configFetch() {
+  const peer = configPeerTarget();
+  return peer ? nodeFetch(peer.id, { fetchImpl: configDependencies.fetchImpl }) : configDependencies.fetchImpl;
+}
+// configTargetID names the node a load or save was made for, so an answer
+// that arrives after the fused view switched node is dropped.
+const configTargetID = () => configPeerTarget()?.id || '';
 
 // ===================================================================
 // Config tab — visual editor for ~/.tclaude/config.json
@@ -38,8 +60,13 @@ const latestSnapshot = () => dashboardState.snapshot.value || {};
 let configObj = null;     // last loaded full config object (clone source)
 let configBaseRaw = '';   // canonical JSON of the config currently on disk
 let configLoaded = false;
+// configLoadedFor is the node the form holds (configTargetID): a save while
+// a picked node's config is still loading is refused, so one node's form
+// (and its secrets) never goes to another.
+let configLoadedFor = '';
 let configFileMalformed = false; // on-disk file is corrupt → form shows defaults
 let configBindingEpoch = 0;
+let configPath = '';      // the loaded config's file path ('' when the node does not name it)
 
 function cfgInt(id, fallback) {
   const v = parseInt($('#' + id).value, 10);
@@ -244,7 +271,7 @@ function setAskSelectValue(sel, value) {
   setSelectValue(sel, value);
 }
 
-// populateScribeProfileSelect fills the Scribe-defaults Profile dropdown from
+// populateProfileSelect fills the Scribe and Steward Profile dropdowns from
 // the saved spawn profiles (the Groups-tab profiles), selecting `selected`. A
 // chosen profile is the launch shape a FRESHLY summoned scribe adopts
 // (JOH-371) — the harness-independent way to run scribes on Codex as well as
@@ -252,17 +279,17 @@ function setAskSelectValue(sel, value) {
 // those. The fetch is async + best-effort: an endpoint error leaves just the
 // "(default)" option. A hand-set profile that's since been deleted is kept as a
 // "(missing)" option so the form shows what's on disk, not a silent reset.
-async function populateScribeProfileSelect(selected) {
+async function populateProfileSelect(selector, defaultLabel, selected) {
   const bindingEpoch = configBindingEpoch;
-  const sel = $('#scribe-profile');
+  const sel = $(selector);
   if (!sel) return;
   const selectedName = (selected || '').trim();
 
   // Seed the selection SYNCHRONOUSLY before the async list load, so a Save that
   // races ahead of loadProfiles() still reads the real profile name off
-  // #scribe-profile rather than an empty value (which assembleConfig would
-  // persist as "delete scribe.profile", silently clearing a saved profile).
-  replaceOptions(sel, [['', '(default — harness default)']]);
+  // the select rather than an empty value (which assembleConfig would persist
+  // as a delete, silently clearing a saved profile).
+  replaceOptions(sel, [['', defaultLabel]]);
   if (selectedName) {
     const pending = document.createElement('option');
     pending.value = selectedName;
@@ -273,8 +300,8 @@ async function populateScribeProfileSelect(selected) {
 
   let profiles = [];
   try { profiles = await loadProfiles(); } catch { profiles = []; }
-  if (bindingEpoch !== configBindingEpoch || sel !== $('#scribe-profile')) return;
-  replaceOptions(sel, [['', '(default — harness default)'], ...profileChoices(profiles).map(choice => [choice.value, choice.label])]);
+  if (bindingEpoch !== configBindingEpoch || sel !== $(selector)) return;
+  replaceOptions(sel, [['', defaultLabel], ...profileChoices(profiles).map(choice => [choice.value, choice.label])]);
   if (selectedName && !findProfileByHandle(profiles, selectedName)) {
     const o = document.createElement('option');
     o.value = selectedName;
@@ -343,6 +370,55 @@ function readCfgThresholdList() {
 
 // syncCfgEnables greys out the companion inputs of any unchecked
 // enable toggle, so the form reads the way it behaves.
+// GITLAB_HOSTS_LIST holds agent.git_proxy.gitlab_hosts as {host, base} rows.
+const GITLAB_HOSTS_LIST = 'cfg-gitproxy-gitlab-hosts';
+
+// syncCfgGitProxy shows the custom protected-branch list only while Custom is
+// picked.
+function syncCfgGitProxy() {
+  const wrap = $('#cfg-gitproxy-protected-wrap');
+  if (wrap) wrap.hidden = $('#cfg-gitproxy-protected-mode').value !== 'custom';
+}
+
+// assembleGitProxy writes the keys the Git & forges form owns onto the agent
+// block, keeping any git_proxy key it has no control for. It throws on what
+// the server could not tell apart from a deliberate choice: a Custom list
+// left empty (which would save as "protect nothing") and one host given two
+// bases.
+function assembleGitProxy(agent) {
+  const gp = (agent.git_proxy && typeof agent.git_proxy === 'object') ? agent.git_proxy : {};
+  const remotes = readCfgStringList('cfg-gitproxy-remotes');
+  if (remotes.length) gp.allowed_remotes = remotes; else delete gp.allowed_remotes;
+  const mode = $('#cfg-gitproxy-protected-mode').value;
+  if (mode === 'custom') {
+    const refs = readCfgStringList('cfg-gitproxy-protected');
+    if (!refs.length) throw new Error('Protected branches: Custom needs at least one branch. To protect none, pick None.');
+    gp.protected_refs = refs;
+  } else if (mode === 'none') {
+    gp.protected_refs = [];
+  } else {
+    delete gp.protected_refs;
+  }
+  if ($('#cfg-gitproxy-forcepush').checked) gp.allow_force_push = true; else delete gp.allow_force_push;
+  for (const [id, key] of [['cfg-gitproxy-sshkey', 'ssh_key'], ['cfg-gitproxy-ghtoken', 'github_token_file'],
+    ['cfg-gitproxy-gltoken', 'gitlab_token_file']]) {
+    const value = $(`#${id}`).value.trim();
+    if (value) gp[key] = value; else delete gp[key];
+  }
+  const hosts = {};
+  for (const row of configDependencies.lists.get(GITLAB_HOSTS_LIST) || []) {
+    const host = String(row.host || '').trim();
+    const base = String(row.base || '').trim();
+    if (!host && !base) continue;
+    if (Object.hasOwn(hosts, host) && hosts[host] !== base) {
+      throw new Error(`GitLab instances: ${host || 'an empty host'} is listed twice with different base URLs.`);
+    }
+    hosts[host] = base;
+  }
+  if (Object.keys(hosts).length) gp.gitlab_hosts = hosts; else delete gp.gitlab_hosts;
+  if (Object.keys(gp).length) agent.git_proxy = gp; else delete agent.git_proxy;
+}
+
 function syncCfgEnables() {
   $('#cfg-precompact-blockmanual').disabled = !$('#cfg-precompact-enabled').checked;
   const rl = $('#cfg-ratelimit-enabled').checked;
@@ -516,8 +592,7 @@ function populateConfigForm(cfg) {
   // off; group attachments has off/float/fixed presentation modes; mounting
   // the shared agent-directory parent defaults on and only an explicit false
   // unchecks it.
-  $('#cfg-feature-processes').checked = !!(cfg.features && cfg.features.processes);
-  $('#cfg-feature-triggers').checked = !!(cfg.features && cfg.features.triggers);
+  $('#cfg-processes-refuse-unsigned').checked = !!(cfg.processes && cfg.processes.refuse_unsigned_imports);
   $('#cfg-feature-groups-route-map').checked = !!(cfg.features && cfg.features.groups_route_map);
   setSelectValue(
     $('#cfg-feature-group-attachments'),
@@ -544,6 +619,16 @@ function populateConfigForm(cfg) {
   // dashboard.always_show_open_prs:false unchecks it. The window field shows
   // its default (3) as a placeholder, so an absent key stays blank.
   $('#cfg-dashboard-always-show-open-prs').checked = !(cfg.dashboard && cfg.dashboard.always_show_open_prs === false);
+  // Side panel edge reveal. Default on; only an explicit false unchecks it.
+  for (const { key, id, def } of SIDE_PANEL_TOGGLES) {
+    const v = cfg.dashboard && cfg.dashboard[key];
+    $('#' + id).checked = typeof v === 'boolean' ? v : def;
+  }
+  for (const { key } of SIDE_PANEL_TUNING_FIELDS) {
+    const v = cfg.dashboard && cfg.dashboard[`side_panel_${key}`];
+    $('#' + sidePanelTuningId(key)).value = v != null ? v : '';
+  }
+  syncCfgSidePanel();
   $('#cfg-dashboard-recent-pr-window-days').value = cfg.dashboard && cfg.dashboard.recent_pr_window_days != null
     ? cfg.dashboard.recent_pr_window_days : '';
 
@@ -560,6 +645,23 @@ function populateConfigForm(cfg) {
   // actions to in-browser web terminals. Default web (checked); only an
   // explicit dashboard.default_terminal:"native" unchecks it.
   $('#cfg-dashboard-default-web-terminal').checked = cfg.dashboard?.default_terminal !== 'native';
+  const voice = cfg.dashboard?.voice || {};
+  for (const { action } of VOICE_ACTIONS) {
+    const { phrase, on } = voiceFormPhrase(cfg.dashboard, action);
+    $(`#cfg-voice-phrase-${action}`).value = phrase;
+    $(`#cfg-voice-on-${action}`).checked = on;
+  }
+  $('#cfg-voice-mark').checked = voice.mark_dictated !== false;
+  for (const [id, seconds] of [['cfg-voice-comma', voice.comma_pause_seconds], ['cfg-voice-period', voice.period_pause_seconds]]) {
+    $(`#${id}`).checked = seconds > 0;
+    $(`#${id}-seconds`).value = seconds > 0 ? seconds : '';
+  }
+  $('#cfg-voice-continuous').checked = voice.continuous_enabled === true;
+  $('#cfg-voice-continuous-idle').value = voice.continuous_idle_seconds > 0 ? voice.continuous_idle_seconds : '';
+  $('#cfg-voice-wake').checked = voice.wake_enabled === true;
+  $('#cfg-voice-silence').checked = voice.silence_send_seconds > 0;
+  $('#cfg-voice-silence-seconds').value = voice.silence_send_seconds > 0 ? voice.silence_send_seconds : '';
+  syncVoiceSection();
 
   const terminalAttach = (cfg.dashboard && cfg.dashboard.terminal_attach) || {};
   setSelectValue($('#cfg-terminal-attach-mode'), terminalAttach.mode || 'repair');
@@ -569,6 +671,12 @@ function populateConfigForm(cfg) {
     ? terminalAttach.repair_delay_ms : '';
   $('#cfg-terminal-attach-pre-delay').value = terminalAttach.pre_attach_delay_ms != null
     ? terminalAttach.pre_attach_delay_ms : '';
+
+  // Keyboard shortcut rebindings, drafted in Config › Keyboard.
+  // An entry this dashboard can't use (an unknown or fixed id, a chord that
+  // doesn't parse) is left out, and so dropped on the next save.
+  configDependencies.lists.set(KEYBINDINGS_LIST, Object.entries((cfg.dashboard && cfg.dashboard.keybindings) || {})
+    .filter(([id, chord]) => validOverride(id, chord)).map(([id, chord]) => ({ id, chord })));
 
   // Auto-close terminal tabs matrix; absent cells show their default.
   const closeTabs = closeTabsChecked(cfg.dashboard && cfg.dashboard.close_terminal_tabs);
@@ -591,6 +699,12 @@ function populateConfigForm(cfg) {
   // Hidden by default (unchecked); only an explicit
   // dashboard.show_group_description true checks it.
   $('#cfg-dashboard-show-group-description').checked = !!(cfg.dashboard && cfg.dashboard.show_group_description);
+  setSelectValue($('#cfg-dashboard-overlay-backdrop'), cfg.dashboard?.overlay_backdrop || 'dim');
+  // A hand-written "standard" is the default look, which the select names auto.
+  const windowControls = cfg.dashboard?.window_controls;
+  setSelectValue($('#cfg-dashboard-window-controls'), !windowControls || windowControls === 'standard' ? 'auto' : windowControls);
+  // Snap Assist is on unless dashboard.no_snap_assist says otherwise.
+  $('#cfg-dashboard-snap-assist').checked = !cfg.dashboard?.no_snap_assist;
 
   // CI pill on merged/closed PRs — hidden unless failing by default
   // (unchecked); only an explicit dashboard.show_final_pr_checks true checks it.
@@ -601,6 +715,9 @@ function populateConfigForm(cfg) {
   // The fused Groups toolbar follows the group acted on by default
   // (checked); only an explicit dashboard.fused_toolbar_fixed_node true unchecks it.
   $('#cfg-dashboard-fused-toolbar-follow').checked = !(cfg.dashboard && cfg.dashboard.fused_toolbar_fixed_node);
+  // The Usage tab offers all its views by default (unchecked); only an
+  // explicit dashboard.usage_collapse_subviews true checks it.
+  $('#cfg-dashboard-usage-collapse-subviews').checked = !!(cfg.dashboard && cfg.dashboard.usage_collapse_subviews);
 
   // Ask defaults — profile + model/effort for `tclaude ask`. Options come
   // from the harness catalog / saved spawn profiles; an unset field shows
@@ -618,7 +735,17 @@ function populateConfigForm(cfg) {
   // with (JOH-371). Options are the saved spawn profiles; "(default)" (empty)
   // means the harness default. Async (fetches the profile list), like the ask
   // profile select above.
-  void populateScribeProfileSelect((cfg.scribe || {}).profile);
+  void populateProfileSelect('#scribe-profile', '(default — harness default)', (cfg.scribe || {}).profile);
+  void populateProfileSelect('#cfg-steward-profile', '(global default profile)', (cfg.steward || {}).profile);
+  setSelectValue($('#cfg-steward-reads'), (cfg.steward || {}).reads || 'operator');
+  setSelectValue($('#cfg-steward-writes'), (cfg.steward || {}).writes || 'messaging');
+  setSelectValue($('#cfg-steward-source-download'), (cfg.steward || {}).source_download || 'ask');
+  $('#cfg-steward-enabled').checked = !(cfg.steward || {}).disabled;
+  $('#cfg-steward-external-enabled').checked = !!(cfg.steward || {}).external_enabled;
+  $('#cfg-steward-external-max-children').value = (cfg.steward || {}).external_max_children || '';
+  $('#cfg-steward-name').value = (cfg.steward || {}).name || '';
+  $('#cfg-steward-dir').value = (cfg.steward || {}).dir || '';
+  $('#cfg-steward-startup-prompt').value = (cfg.steward || {}).startup_prompt || '';
 
   const lr = cfg.log_rotation || {};
   $('#cfg-logrot-maxsize').value = lr.max_size || '';
@@ -695,6 +822,23 @@ function populateConfigForm(cfg) {
 
   $('#cfg-sudo-json').value = a.sudo ? JSON.stringify(a.sudo, null, 2) : '';
 
+  // agent.git_proxy (Config › Git & forges). protected_refs has three
+  // meanings: absent protects the default branches, [] protects none, and a
+  // list protects exactly those.
+  const gp = (a.git_proxy && typeof a.git_proxy === 'object') ? a.git_proxy : {};
+  renderCfgStringList('cfg-gitproxy-remotes', gp.allowed_remotes || [], null, 'gitlab.example.com/team/*');
+  const refs = Array.isArray(gp.protected_refs) ? gp.protected_refs : null;
+  setSelectValue($('#cfg-gitproxy-protected-mode'), refs === null ? 'default' : (refs.length ? 'custom' : 'none'));
+  renderCfgStringList('cfg-gitproxy-protected', refs || [], null, 'branch or release/*');
+  $('#cfg-gitproxy-forcepush').checked = !!gp.allow_force_push;
+  $('#cfg-gitproxy-sshkey').value = gp.ssh_key || '';
+  $('#cfg-gitproxy-ghtoken').value = gp.github_token_file || '';
+  $('#cfg-gitproxy-gltoken').value = gp.gitlab_token_file || '';
+  configDependencies.lists.set(GITLAB_HOSTS_LIST, Object.entries(gp.gitlab_hosts || {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([host, base]) => ({ host, base: String(base ?? '') })));
+  syncCfgGitProxy();
+
   // Remote access — the single `bind` string splits into the interface + port
   // fields; status is rendered live from the snapshot (material/running state).
   const ra = cfg.remote_access || {};
@@ -704,7 +848,212 @@ function populateConfigForm(cfg) {
   $('#cfg-remote-port').value = rb.port;
   syncCfgRemoteStatus();
 
+  populateSelfUpdate(cfg.updates?.self || {});
+
   syncCfgEnables();
+}
+
+// ===================================================================
+// Config › Installation › Updates — updates.self. The inputs load and save like every other
+// field; selfUpdateDraft mirrors the ones the panel's notes depend on, and
+// the daemon's install detection (GET /api/node/update/settings) is read
+// alongside each config load.
+// ===================================================================
+let selfUpdateAcceptedMethod = '';
+let selfUpdateLoadedMethod = '';
+let selfUpdateLoadedFlags = [];
+let installDirTimer = null;
+
+// setSelfUpdateSelect shows a value this build does not list as itself
+// ("(current value)") instead of falling back to the first option, so a save
+// keeps it. Such an option from an earlier load is removed first.
+function setSelfUpdateSelect(select, value) {
+  for (const stale of select.querySelectorAll('option[data-cfg-current]')) stale.remove();
+  setSelectValue(select, value);
+  if (value && select.value !== value) {
+    const option = makeOption(value, `${value} (current value)`);
+    option.setAttribute('data-cfg-current', '');
+    select.append(option);
+    setSelectValue(select, value);
+  }
+}
+
+function setupFlagInputs() { return $$('[data-cfg-setup-flag]'); }
+
+// methodFields are the form values Update now and Test method act on (the
+// method, its inputs, the post-update setup); not the schedule, which only
+// says when automatic runs happen. selfUpdateLoadedFields is their loaded
+// state, so the draft knows whether those buttons would act on what is shown.
+let selfUpdateLoadedFields = '';
+function methodFields() {
+  return JSON.stringify([
+    $('#cfg-selfupdate-method').value,
+    $('#cfg-selfupdate-checkout-path').value.trim(), $('#cfg-selfupdate-checkout-ref').value.trim(),
+    $('#cfg-selfupdate-custom-command').value.trim(), $('#cfg-selfupdate-custom-timeout').value.trim(),
+    $('#cfg-selfupdate-install-dir').value.trim(), $('#cfg-selfupdate-pm-ack').checked,
+    $('#cfg-selfupdate-setup-enabled').checked, $('#cfg-selfupdate-setup-harness').value,
+    setupFlagInputs().filter((input) => input.checked).map((input) => input.getAttribute('data-cfg-setup-flag')),
+  ]);
+}
+
+function syncSelfUpdateDraft() {
+  selfUpdateDraft.value = {
+    method: $('#cfg-selfupdate-method').value,
+    installDir: $('#cfg-selfupdate-install-dir').value.trim(),
+    flags: setupFlagInputs().filter((input) => input.checked).map((input) => input.getAttribute('data-cfg-setup-flag')),
+    harness: $('#cfg-selfupdate-setup-harness').value,
+    setupEnabled: $('#cfg-selfupdate-setup-enabled').checked,
+    frequency: $('#cfg-selfupdate-frequency').value,
+    weekday: $('#cfg-selfupdate-weekday').value,
+    windowStart: $('#cfg-selfupdate-window-start').value.trim(),
+    windowEnd: $('#cfg-selfupdate-window-end').value.trim(),
+    onStart: $('#cfg-selfupdate-on-start').checked,
+    ack: $('#cfg-selfupdate-pm-ack').checked,
+    unsaved: methodFields() !== selfUpdateLoadedFields,
+  };
+}
+
+function populateSelfUpdate(su) {
+  const sched = su.schedule || {};
+  const setup = su.post_update_setup || {};
+  const method = su.method || '';
+  setSelfUpdateSelect($('#cfg-selfupdate-method'), method);
+  selfUpdateAcceptedMethod = method;
+  selfUpdateLoadedMethod = method;
+  $('#cfg-selfupdate-checkout-path').value = su.source_checkout?.path || '';
+  $('#cfg-selfupdate-checkout-ref').value = su.source_checkout?.ref || '';
+  $('#cfg-selfupdate-custom-command').value = su.custom?.command || '';
+  $('#cfg-selfupdate-custom-timeout').value = su.custom?.timeout_seconds ? String(su.custom.timeout_seconds) : '';
+  $('#cfg-selfupdate-install-dir').value = su.install_dir || '';
+  $('#cfg-selfupdate-pm-ack').checked = !!su.package_manager_ack;
+  setSelfUpdateSelect($('#cfg-selfupdate-frequency'), sched.frequency || SCHEDULE_DEFAULTS.frequency);
+  setSelfUpdateSelect($('#cfg-selfupdate-weekday'), sched.weekday || SCHEDULE_DEFAULTS.weekday);
+  $('#cfg-selfupdate-window-start').value = sched.window_start || SCHEDULE_DEFAULTS.window_start;
+  $('#cfg-selfupdate-window-end').value = sched.window_end || SCHEDULE_DEFAULTS.window_end;
+  $('#cfg-selfupdate-defer').checked = !!sched.defer_while_agents_working;
+  $('#cfg-selfupdate-on-start').checked = !!su.update_on_start;
+  $('#cfg-selfupdate-setup-enabled').checked = !!setup.enabled;
+  selfUpdateLoadedFlags = Array.isArray(setup.flags) ? [...setup.flags] : [];
+  const flags = new Set(selfUpdateLoadedFlags);
+  for (const input of setupFlagInputs()) input.checked = flags.has(input.getAttribute('data-cfg-setup-flag'));
+  setSelfUpdateSelect($('#cfg-selfupdate-setup-harness'), setup.harness || '');
+  selfUpdateLoadedFields = methodFields();
+  syncSelfUpdateDraft();
+  selfUpdateLoads.value++;
+}
+
+// setOrDefault writes key unless the value is blank, or is the default and
+// the file did not spell the key out — an untouched form adds no keys.
+function setOrDefault(obj, key, value, fallback) {
+  if (value === '' || value === undefined || (value === fallback && !Object.hasOwn(obj, key))) delete obj[key];
+  else obj[key] = value;
+}
+function childBlock(parent, key) {
+  return (parent[key] && typeof parent[key] === 'object') ? parent[key] : {};
+}
+function putChildBlock(parent, key, value) {
+  if (Object.keys(value).length) parent[key] = value; else delete parent[key];
+}
+
+// mergeSetupFlags keeps the file's flag list as it was — order, and flags
+// without a checkbox here — dropping only flags unticked here and appending
+// newly ticked ones, so an untouched panel leaves the list byte-identical.
+function mergeSetupFlags(loaded, checked) {
+  const boxes = new Set(setupFlagInputs().map((input) => input.getAttribute('data-cfg-setup-flag')));
+  const ticked = new Set(checked);
+  const kept = loaded.filter((flag) => !boxes.has(flag) || ticked.has(flag));
+  return [...kept, ...checked.filter((flag) => !loaded.includes(flag))];
+}
+
+// assembleSelfUpdate writes the keys the Updates panel owns onto
+// updates.self, keeping keys it has no control for, and drops blocks left
+// empty. It refuses a tclaude-driven method next to a package-managed binary
+// until the operator has acknowledged that.
+function assembleSelfUpdate(cfg) {
+  syncSelfUpdateDraft();
+  const draft = selfUpdateDraft.value;
+  // Checked only for a method picked in this edit, so a later change on the
+  // install side never blocks saving an unrelated panel.
+  if (draft.method !== selfUpdateLoadedMethod && needsPackageManagerAck(draft, selfUpdateMeta.value) && !draft.ack) {
+    const pm = managerName(selfUpdateMeta.value.detected.managed_by);
+    throw new Error(`Updates: ${pm} still manages tclaude here. Tick “I understand the package manager still manages tclaude here”, or pick another method.`);
+  }
+  const updates = childBlock(cfg, 'updates');
+  const su = childBlock(updates, 'self');
+  if (draft.method) su.method = draft.method; else delete su.method;
+
+  const sched = childBlock(su, 'schedule');
+  setOrDefault(sched, 'frequency', draft.frequency, SCHEDULE_DEFAULTS.frequency);
+  setOrDefault(sched, 'weekday', $('#cfg-selfupdate-weekday').value, SCHEDULE_DEFAULTS.weekday);
+  setOrDefault(sched, 'window_start', $('#cfg-selfupdate-window-start').value, SCHEDULE_DEFAULTS.window_start);
+  setOrDefault(sched, 'window_end', $('#cfg-selfupdate-window-end').value, SCHEDULE_DEFAULTS.window_end);
+  if ($('#cfg-selfupdate-defer').checked) sched.defer_while_agents_working = true; else delete sched.defer_while_agents_working;
+  putChildBlock(su, 'schedule', sched);
+
+  if ($('#cfg-selfupdate-on-start').checked) su.update_on_start = true; else delete su.update_on_start;
+
+  const setup = childBlock(su, 'post_update_setup');
+  if (draft.setupEnabled) setup.enabled = true; else delete setup.enabled;
+  const flags = mergeSetupFlags(selfUpdateLoadedFlags, draft.flags);
+  if (flags.length) setup.flags = flags; else delete setup.flags;
+  if (draft.harness) setup.harness = draft.harness; else delete setup.harness;
+  putChildBlock(su, 'post_update_setup', setup);
+
+  const checkout = childBlock(su, 'source_checkout');
+  setOrDefault(checkout, 'path', $('#cfg-selfupdate-checkout-path').value.trim());
+  setOrDefault(checkout, 'ref', $('#cfg-selfupdate-checkout-ref').value.trim());
+  putChildBlock(su, 'source_checkout', checkout);
+
+  const custom = childBlock(su, 'custom');
+  setOrDefault(custom, 'command', $('#cfg-selfupdate-custom-command').value.trim());
+  const timeoutRaw = $('#cfg-selfupdate-custom-timeout').value.trim();
+  const timeout = Number(timeoutRaw);
+  if (timeoutRaw !== '' && !Number.isSafeInteger(timeout)) throw new Error('Updates: the update command timeout must be a whole number of seconds');
+  setOrDefault(custom, 'timeout_seconds', timeoutRaw === '' ? '' : timeout, CUSTOM_TIMEOUT_DEFAULT);
+  putChildBlock(su, 'custom', custom);
+
+  setOrDefault(su, 'install_dir', draft.installDir);
+  if (draft.ack) su.package_manager_ack = true; else delete su.package_manager_ack;
+
+  putChildBlock(updates, 'self', su);
+  putChildBlock(cfg, 'updates', updates);
+}
+
+// refreshSelfUpdateMeta re-reads the install detection; with the install dir
+// field filled it also asks whether that dir is shadowed on PATH.
+function refreshSelfUpdateMeta() {
+  const installDir = $('#cfg-selfupdate-install-dir')?.value.trim() || '';
+  return loadSelfUpdateMeta(configDependencies.fetchImpl, { installDir });
+}
+
+// confirmSelfUpdateMethod asks before opting in to a package-manager method;
+// declining puts the previous choice back.
+async function confirmSelfUpdateMethod(select) {
+  const id = select.value;
+  const info = methodInfo(id);
+  if (!info?.package_manager || id === selfUpdateAcceptedMethod) {
+    selfUpdateAcceptedMethod = id;
+    return;
+  }
+  const ok = await configDependencies.confirm({
+    title: `${info.label} to update itself?`,
+    body: `tclaude will run ${info.command ? `“${info.command}”` : 'the package manager'} for scheduled, start-up and manual updates, then check the new version. Pick “Notify me” to run it yourself instead. Nothing changes until you save.`,
+    okLabel: info.label,
+  });
+  if (ok) selfUpdateAcceptedMethod = id;
+  else setSelectValue(select, selfUpdateAcceptedMethod);
+  syncSelfUpdateDraft();
+}
+
+function handleSelfUpdateEvent(event) {
+  const target = event.target;
+  if (!target.closest?.('[data-cfg-install-part="updates"]')) return;
+  syncSelfUpdateDraft();
+  if (event.type === 'change' && target.id === 'cfg-selfupdate-method') void confirmSelfUpdateMethod(target);
+  if (target.id === 'cfg-selfupdate-install-dir' && event.type === 'input') {
+    globalThis.clearTimeout(installDirTimer);
+    installDirTimer = globalThis.setTimeout(() => { void refreshSelfUpdateMeta(); }, 400);
+  }
 }
 
 // assembleConfig builds the config object to submit. It starts from a
@@ -832,15 +1181,18 @@ function assembleConfig() {
 
   // features is an optional block for in-development feature switches. Clone
   // the existing one so a future flag with no widget round-trips. Groups Route
-  // map, Processes, Triggers, terminal_command_palette_shortcut, and
+  // map, terminal_command_palette_shortcut, and
   // recorded_sandbox_details default off; group_attachments omits its "off"
-  // default; agent_dirs_mount_parent defaults on. Drop the block when it is
+  // default; collab is always stored and agent_dirs_mount_parent defaults on. Drop the block when it is
   // empty so an all-default config does not marshal a spurious "features": {}
   // diff.
   const feats = (cfg.features && typeof cfg.features === 'object') ? cfg.features : {};
-  if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
-  if ($('#cfg-feature-triggers').checked) feats.triggers = true; else delete feats.triggers;
+  // Processes and Triggers graduated: their old flags go on the next save.
+  delete feats.processes;
+  delete feats.triggers;
   if ($('#cfg-feature-groups-route-map').checked) feats.groups_route_map = true; else delete feats.groups_route_map;
+  // Collab is always on; a features.collab left by an older build goes.
+  delete feats.collab;
   const groupAttachments = controlValue($('#cfg-feature-group-attachments'));
   if (groupAttachments === 'float' || groupAttachments === 'fixed') {
     feats.group_attachments = groupAttachments;
@@ -857,6 +1209,10 @@ function assembleConfig() {
   }
   if ($('#cfg-feature-agent-dirs-mount-parent').checked) delete feats.agent_dirs_mount_parent; else feats.agent_dirs_mount_parent = false;
   if (Object.keys(feats).length) cfg.features = feats; else delete cfg.features;
+  // Stored only when on, and the block goes with it, like the Go omitempty.
+  const processes = { ...(cfg.processes || {}) };
+  if ($('#cfg-processes-refuse-unsigned').checked) processes.refuse_unsigned_imports = true; else delete processes.refuse_unsigned_imports;
+  if (Object.keys(processes).length) cfg.processes = processes; else delete cfg.processes;
 
   // slop is an optional block — its volumes/channel (owned by the header
   // mixer + picker, no widget on this page) ride along in the clone. Set
@@ -896,6 +1252,19 @@ function assembleConfig() {
   // resolver.
   if (!$('#cfg-dashboard-always-show-open-prs').checked) dashboard.always_show_open_prs = false;
   else delete dashboard.always_show_open_prs;
+  // The side panel's switches: on is the default, so store only the false.
+  // Its tuning values: blank is the default and stores nothing.
+  for (const { key, id, def } of SIDE_PANEL_TOGGLES) {
+    const on = $('#' + id).checked;
+    if (on !== def) dashboard[key] = on;
+    else delete dashboard[key];
+  }
+  for (const { key } of SIDE_PANEL_TUNING_FIELDS) {
+    const raw = $('#' + sidePanelTuningId(key)).value.trim();
+    const n = parseInt(raw, 10);
+    if (raw !== '' && Number.isFinite(n)) dashboard[`side_panel_${key}`] = n;
+    else delete dashboard[`side_panel_${key}`];
+  }
   // recent_pr_window_days: blank means "use the default" and drops the key; 0
   // is a meaningful value (filter off), so it is stored like any other number.
   // The daemon clamps out-of-range values, but keep the field honest here too.
@@ -915,6 +1284,38 @@ function assembleConfig() {
   // default_terminal: web is the default, so store only the NON-default
   // "native" and drop the key otherwise — mirrors the Go resolver.
   if (!$('#cfg-dashboard-default-web-terminal').checked) dashboard.default_terminal = 'native'; else delete dashboard.default_terminal;
+  const phrases = Object.fromEntries(VOICE_ACTIONS.map(({ action }) => [action, {
+    phrase: $(`#cfg-voice-phrase-${action}`).value.trim(), on: $(`#cfg-voice-on-${action}`).checked,
+  }]));
+  for (const { action, title } of VOICE_ACTIONS) {
+    if (phrases[action].on && !phrases[action].phrase) throw new Error(`${title}: type a phrase, or untick it to turn it off.`);
+  }
+  const phraseClash = voiceClashProblem(phrases);
+  if (phraseClash) throw new Error(phraseClash);
+  const voiceConfig = { ...(dashboard.voice || {}) };
+  const voiceList = storedVoicePhrases(phrases);
+  if (voiceList.length) voiceConfig.phrases = voiceList; else delete voiceConfig.phrases;
+  if ($('#cfg-voice-mark').checked) delete voiceConfig.mark_dictated; else voiceConfig.mark_dictated = false;
+  if ($('#cfg-voice-wake').checked) voiceConfig.wake_enabled = true; else delete voiceConfig.wake_enabled;
+  if ($('#cfg-voice-silence').checked) {
+    const seconds = cfgInt('cfg-voice-silence-seconds', SILENCE_SEND_DEFAULT);
+    voiceConfig.silence_send_seconds = Math.min(SILENCE_SEND_MAX, Math.max(SILENCE_SEND_MIN, seconds));
+  } else delete voiceConfig.silence_send_seconds;
+  if ($('#cfg-voice-continuous').checked) voiceConfig.continuous_enabled = true; else delete voiceConfig.continuous_enabled;
+  const idleSeconds = Math.min(CONTINUOUS_IDLE_MAX, Math.max(CONTINUOUS_IDLE_MIN, cfgInt('cfg-voice-continuous-idle', CONTINUOUS_IDLE_DEFAULT)));
+  if (idleSeconds === CONTINUOUS_IDLE_DEFAULT) delete voiceConfig.continuous_idle_seconds; else voiceConfig.continuous_idle_seconds = idleSeconds;
+  const pauseSeconds = (id, fallback) => {
+    if (!$(`#${id}`).checked) return 0;
+    return Math.min(VOICE_PAUSE_MAX, Math.max(VOICE_PAUSE_MIN, cfgFloat(`${id}-seconds`, fallback)));
+  };
+  const comma = pauseSeconds('cfg-voice-comma', COMMA_PAUSE_DEFAULT);
+  const period = pauseSeconds('cfg-voice-period', PERIOD_PAUSE_DEFAULT);
+  const pauseProblem = voicePausesProblem({ comma, period, silence: voiceConfig.silence_send_seconds || 0 });
+  if (pauseProblem) throw new Error(pauseProblem);
+  if (comma) voiceConfig.comma_pause_seconds = comma; else delete voiceConfig.comma_pause_seconds;
+  if (period) voiceConfig.period_pause_seconds = period; else delete voiceConfig.period_pause_seconds;
+  if (Object.keys(voiceConfig).length) dashboard.voice = voiceConfig; else delete dashboard.voice;
+  delete dashboard.dictation_send_phrase;
   const terminalAttach = (dashboard.terminal_attach && typeof dashboard.terminal_attach === 'object')
     ? dashboard.terminal_attach : {};
   const terminalAttachMode = controlValue($('#cfg-terminal-attach-mode'));
@@ -931,6 +1332,11 @@ function assembleConfig() {
   }
   if (Object.keys(terminalAttach).length) dashboard.terminal_attach = terminalAttach;
   else delete dashboard.terminal_attach;
+  // keybindings: only shortcuts moved off their default persist.
+  const keybindings = Object.fromEntries(configDependencies.lists.get(KEYBINDINGS_LIST)
+    .filter(item => item && item.id && item.chord).map(({ id, chord }) => [id, chord]));
+  if (Object.keys(keybindings).length) dashboard.keybindings = keybindings;
+  else delete dashboard.keybindings;
   // close_terminal_tabs: only cells that differ from the Go defaults persist.
   const closeTabsMatrix = {};
   for (const [event] of CLOSE_TAB_EVENTS) {
@@ -950,6 +1356,11 @@ function assembleConfig() {
   // show_group_description: false (hidden) is the default, so store only the
   // NON-default true and drop the key otherwise — mirrors the Go omitempty.
   if ($('#cfg-dashboard-show-group-description').checked) dashboard.show_group_description = true; else delete dashboard.show_group_description;
+  const backdrop = $('#cfg-dashboard-overlay-backdrop').value;
+  if (backdrop && backdrop !== 'dim') dashboard.overlay_backdrop = backdrop; else delete dashboard.overlay_backdrop;
+  const windowControls = controlValue($('#cfg-dashboard-window-controls'));
+  if (windowControls && windowControls !== 'auto') dashboard.window_controls = windowControls; else delete dashboard.window_controls;
+  if ($('#cfg-dashboard-snap-assist').checked) delete dashboard.no_snap_assist; else dashboard.no_snap_assist = true;
   // show_final_pr_checks: false is the default — same store-only-true rule.
   if ($('#cfg-dashboard-show-final-pr-checks').checked) dashboard.show_final_pr_checks = true; else delete dashboard.show_final_pr_checks;
   // stay_on_terminals_after_last_close: false is the default; store only true.
@@ -957,7 +1368,9 @@ function assembleConfig() {
   // fused_toolbar_fixed_node: following (false) is the default; an unchecked
   // follow toggle stores only true.
   if (!$('#cfg-dashboard-fused-toolbar-follow').checked) dashboard.fused_toolbar_fixed_node = true; else delete dashboard.fused_toolbar_fixed_node;
-  // show_debug_tab is retired: the poll-performance view (Activity ›
+  // usage_collapse_subviews: false is the default; store only true.
+  if ($('#cfg-dashboard-usage-collapse-subviews').checked) dashboard.usage_collapse_subviews = true; else delete dashboard.usage_collapse_subviews;
+  // show_debug_tab is retired: the poll-performance view (Diagnostics ›
   // Performance) is always shown, so a save drops the stale opt-in.
   delete dashboard.show_debug_tab;
   if (Object.keys(dashboard).length) cfg.dashboard = dashboard; else delete cfg.dashboard;
@@ -989,6 +1402,27 @@ function assembleConfig() {
   const scribeProfile = controlValue($('#scribe-profile')).trim();
   if (scribeProfile) scribe.profile = scribeProfile; else delete scribe.profile;
   if (Object.keys(scribe).length) cfg.scribe = scribe; else delete cfg.scribe;
+  // Like scribe: the defaults are not written out.
+  const steward = (cfg.steward && typeof cfg.steward === 'object') ? cfg.steward : {};
+  const stewardReads = controlValue($('#cfg-steward-reads'));
+  const stewardWrites = controlValue($('#cfg-steward-writes'));
+  if (stewardReads && stewardReads !== 'operator') steward.reads = stewardReads; else delete steward.reads;
+  if (stewardWrites && stewardWrites !== 'messaging') steward.writes = stewardWrites; else delete steward.writes;
+  const stewardSource = controlValue($('#cfg-steward-source-download'));
+  if (stewardSource && stewardSource !== 'ask') steward.source_download = stewardSource; else delete steward.source_download;
+  const stewardProfile = controlValue($('#cfg-steward-profile')).trim();
+  if (stewardProfile) steward.profile = stewardProfile; else delete steward.profile;
+  const stewardDir = controlValue($('#cfg-steward-dir')).trim();
+  if (stewardDir) steward.dir = stewardDir; else delete steward.dir;
+  const stewardName = controlValue($('#cfg-steward-name')).trim();
+  if (stewardName) steward.name = stewardName; else delete steward.name;
+  const stewardPrompt = controlValue($('#cfg-steward-startup-prompt')).trim();
+  if (stewardPrompt) steward.startup_prompt = stewardPrompt; else delete steward.startup_prompt;
+  if ($('#cfg-steward-enabled').checked) delete steward.disabled; else steward.disabled = true;
+  if ($('#cfg-steward-external-enabled').checked) steward.external_enabled = true; else delete steward.external_enabled;
+  const maxChildren = Number(controlValue($('#cfg-steward-external-max-children')));
+  if (maxChildren > 0) steward.external_max_children = maxChildren; else delete steward.external_max_children;
+  if (Object.keys(steward).length) cfg.steward = steward; else delete cfg.steward;
 
   // focus is an optional block. Clone the existing one so a future
   // sub-field with no widget round-trips, set the one form-owned key, and
@@ -1171,6 +1605,8 @@ function assembleConfig() {
     if (Object.keys(rc).length) a.retired_cleanup = rc; else delete a.retired_cleanup;
   }
 
+  assembleGitProxy(a);
+
   const sudoRaw = $('#cfg-sudo-json').value.trim();
   if (sudoRaw) {
     let parsed;
@@ -1220,6 +1656,8 @@ function assembleConfig() {
   const raBind = joinBind($('#cfg-remote-host').value, raPort);
   if (raBind) raCfg.bind = raBind; else delete raCfg.bind;
   if (Object.keys(raCfg).length) cfg.remote_access = raCfg; else delete cfg.remote_access;
+
+  assembleSelfUpdate(cfg);
 
   return cfg;
 }
@@ -1333,9 +1771,9 @@ function applyConfigFilter() {
       section.hidden = !blockMatch;
       panelHits += hits;
     });
+    const id = panel.getAttribute('data-cfg-panel');
     setFlag(panel, 'data-cfg-nomatch', terms.length > 0 && panelHits === 0);
     shown += panelHits;
-    const id = panel.getAttribute('data-cfg-panel');
     const hitsEl = $(`#tab-config [data-cfg-hits="${id}"]`);
     if (hitsEl) hitsEl.textContent = terms.length && panelHits ? String(panelHits) : '';
     const link = $(`#tab-config [data-cfg-panel-link="${id}"]`);
@@ -1353,8 +1791,27 @@ function applyConfigFilter() {
   }
 }
 
+// followSourceChoice takes up a source choice made on the dashboard's card or
+// row: the one control and the new base, so other unsaved edits stay and the next
+// Save isn't refused as drift.
+async function followSourceChoice() {
+  const target = configTargetID();
+  if (!configLoaded || configLoadedFor !== target) return;
+  const bindingEpoch = configBindingEpoch;
+  try {
+    const r = await configFetch()('/api/config', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID() || !data.raw) return;
+    configBaseRaw = data.raw;
+    configObj = JSON.parse(configBaseRaw);
+    setSelectValue($('#cfg-steward-source-download'), (configObj.steward || {}).source_download || 'ask');
+  } catch { /* Save reports the drift, and Reload recovers. */ }
+}
+
 async function loadConfigTab() {
   const bindingEpoch = configBindingEpoch;
+  const target = configTargetID();
   // Refresh the slug / group datalists from the latest snapshot.
   const snap = latestSnapshot();
   replaceOptions($('#cfg-slug-list'), (snap.slugs || []).map(slug => [slug.slug, '']));
@@ -1364,17 +1821,24 @@ async function loadConfigTab() {
   clearConfigErrors();
   renderConfigNotice([]);
   try {
-    const r = await configDependencies.fetchImpl('/api/config', { credentials: 'same-origin' });
-    if (bindingEpoch !== configBindingEpoch) return;
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const r = await configFetch()('/api/config', { credentials: 'same-origin' });
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
+    if (!r.ok) throw new Error(r.status === 403 ? 'this node does not share its Config tab with you (node.config.read)' : 'HTTP ' + r.status);
     const data = await r.json();
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     configBaseRaw = data.raw || '{}';
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = !!data.malformed;
-    if (data.path) $('#cfg-path').textContent = data.path;
+    // A peer's page, or a fused view, names the node, so nobody saves into
+    // the wrong one.
+    configPath = data.path || '';
+    $('#cfg-path').textContent = configHeader(configPath);
+    // What the viewer may change, before the form renders it (a peer's page:
+    // read-only rows and withheld secrets, config-access.js).
+    setConfigAccess(data);
     populateConfigForm(configObj);
     configLoaded = true;
+    configLoadedFor = target;
     const notices = [];
     if (data.warning) notices.push(data.warning);
     if (data.unknown_keys && data.unknown_keys.length) {
@@ -1388,8 +1852,9 @@ async function loadConfigTab() {
       : 'loaded — edits stay in this form until you Save';
     configLifecycle.loaded?.(data);
   } catch (e) {
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     configLoaded = false;
+    $('#cfg-path').textContent = configHeader('');
     $('#cfg-status').textContent = 'failed to load';
     showConfigErrors(['Could not load config: ' + (e.message || e)]);
     configLifecycle.failed?.(e);
@@ -1399,6 +1864,20 @@ async function loadConfigTab() {
   applyConfigFilter();
 }
 
+// configHeader is what the header calls the file the tab edits.
+// refreshConfigHeader renames the header when the fused view's picker comes
+// or goes over this node's loaded form, which does not reload.
+export function refreshConfigHeader() {
+  const el = $('#cfg-path');
+  if (el && configLoaded) el.textContent = configHeader(configPath);
+}
+
+function configHeader(path) {
+  const label = configNodeLabel();
+  if (!label) return path || 'config.json';
+  return configPeerTarget() || !path ? label : `${label} · ${path}`;
+}
+
 // reportConfigHTTPError surfaces a non-OK /api/config response and
 // returns true when it handled one — the caller then aborts. 400 is
 // the structured validation contract; 409 is the drift guard (the
@@ -1406,8 +1885,18 @@ async function loadConfigTab() {
 async function reportConfigHTTPError(resp) {
   if (resp.status === 400) {
     const d = await resp.json().catch(() => ({}));
-    showConfigErrors(d.errors && d.errors.length ? d.errors : ['Config rejected by the server.']);
+    // A peer answers {code, error} for a refusal that is not validation.
+    showConfigErrors(d.errors && d.errors.length ? d.errors : [d.error || 'Config rejected by the server.']);
     configLifecycle.failed?.(new Error('Config rejected by the server.'));
+    return true;
+  }
+  if (resp.status === 403) {
+    // A peer refuses a change it does not allow, naming each key and what
+    // it takes (config_remote.go).
+    const d = await resp.json().catch(() => ({}));
+    const denied = Array.isArray(d.denied) ? d.denied.map(x => `${x.path} — needs ${x.requires}`) : [];
+    showConfigErrors(denied.length ? ['The node refused this change:', ...denied] : [d.error || 'The node refused this change.']);
+    configLifecycle.failed?.(new Error(d.error || 'refused'));
     return true;
   }
   if (resp.status === 409) {
@@ -1427,11 +1916,12 @@ async function reportConfigHTTPError(resp) {
 
 async function saveConfig() {
   const bindingEpoch = configBindingEpoch;
-  if (!configLoaded) { configDependencies.toast('Config not loaded yet', true); return; }
+  if (!configLoaded || configLoadedFor !== configTargetID()) { configDependencies.toast('Config not loaded yet', true); return; }
   clearConfigErrors();
   let edited;
   try {
-    edited = assembleConfig();
+    // A withheld secret goes out only when the viewer chose Replace.
+    edited = withholdUnreplaced(assembleConfig());
   } catch (e) {
     showConfigErrors([e.message || String(e)]);
     configLifecycle.failed?.(e);
@@ -1439,8 +1929,13 @@ async function saveConfig() {
   }
   // The body carries the edited config plus the canonical baseline
   // the form loaded — the server 409s if the file drifted since.
-  const body = JSON.stringify({ config: edited, base: configBaseRaw });
-  const post = (query) => configDependencies.fetchImpl('/api/config' + query, {
+  // On a peer's page, the withheld secrets the viewer chose to clear; one it
+  // sends back empty is kept.
+  const clear = clearedSecrets();
+  const body = JSON.stringify(clear.length ? { config: edited, base: configBaseRaw, clear } : { config: edited, base: configBaseRaw });
+  const target = configTargetID();
+  const fetchConfig = configFetch();
+  const post = (query) => fetchConfig('/api/config' + query, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body,
   });
@@ -1451,32 +1946,40 @@ async function saveConfig() {
     // Phase 1: dry-run — server validates and returns the canonical
     // "after" without writing anything.
     const dry = await post('?dry_run=1');
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     if (await reportConfigHTTPError(dry)) return;
-    const after = (await dry.json()).raw || '';
-    if (bindingEpoch !== configBindingEpoch) return;
+    const preview = await dry.json();
+    const after = preview.raw || '';
+    // A peer's preview withholds secrets too, so the ones the save sets or
+    // clears are named beside the diff.
+    const secrets = Array.isArray(preview.secrets_changed) ? preview.secrets_changed : [];
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     // When the on-disk file is corrupt the diff baseline is "defaults",
     // so after===base can hold even though the save still meaningfully
     // replaces the corrupt file — don't skip it then.
-    if (after === configBaseRaw && !configFileMalformed) { configDependencies.toast('No changes to save'); configLifecycle.ready?.(); return; }
+    if (after === configBaseRaw && !configFileMalformed && !secrets.length) { configDependencies.toast('No changes to save'); configLifecycle.ready?.(); return; }
 
-    // Phase 2: human confirms the diff before the real write.
+    // Phase 2: human confirms the diff before the real write. A peer's page
+    // names the node again: the fleet may have named it since the load.
+    if (configNodeLabel()) $('#cfg-path').textContent = configHeader(configPath);
     const ok = await configDependencies.confirmDiff(
-      configBaseRaw, after, configFileMalformed, $('#cfg-path').textContent,
+      configBaseRaw, after, configFileMalformed, $('#cfg-path').textContent, secrets,
     );
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     if (!ok) { configDependencies.toast('Save cancelled'); configLifecycle.ready?.(); return; }
 
     // replace_malformed acknowledges wiping a corrupt on-disk file.
     const res = await post(configFileMalformed ? '?replace_malformed=1' : '');
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     if (await reportConfigHTTPError(res)) return;
     const data = await res.json();
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     configBaseRaw = data.raw || configBaseRaw;
     configObj = JSON.parse(configBaseRaw);
     configFileMalformed = false; // the file is canonical after a save
+    setConfigAccess(data);
     populateConfigForm(configObj);
+    invalidateSelfUpdateMeta();
     // The saved file is canonical now — any load-time notice (a
     // malformed file, or unknown keys that this save dropped) is
     // stale, so clear it.
@@ -1485,7 +1988,7 @@ async function saveConfig() {
     configDependencies.toast('Config saved to ' + $('#cfg-path').textContent);
     configLifecycle.saved?.(data);
   } catch (e) {
-    if (bindingEpoch !== configBindingEpoch) return;
+    if (bindingEpoch !== configBindingEpoch || target !== configTargetID()) return;
     showConfigErrors(['Save failed: ' + (e.message || e)]);
     configLifecycle.failed?.(e);
   } finally {
@@ -1506,9 +2009,29 @@ function focusConfigSearch() {
   filterInput.select();
 }
 
+// syncCfgSidePanel greys out what the side panel's switches leave unused: the
+// peek needs the edge reveal, and its growth needs the peek.
+function syncCfgSidePanel() {
+  const reveal = $('#cfg-dashboard-side-panel-edge-reveal');
+  const predictive = $('#cfg-dashboard-side-panel-predictive-peek');
+  const growing = $('#cfg-dashboard-side-panel-growing-peek');
+  if (!reveal || !predictive || !growing) return;
+  predictive.disabled = !reveal.checked;
+  growing.disabled = !reveal.checked || !predictive.checked;
+}
+
+// resetCfgSidePanel puts the side panel's switches and tuning back to their
+// defaults in the form; Save writes it.
+function resetCfgSidePanel() {
+  for (const { id, def } of SIDE_PANEL_TOGGLES) $('#' + id).checked = def;
+  for (const { key } of SIDE_PANEL_TUNING_FIELDS) $('#' + sidePanelTuningId(key)).value = '';
+  syncCfgSidePanel();
+}
+
 function handleConfigEvent(event) {
   const target = event.target;
   const id = target.id;
+  if (event.type === 'input' || event.type === 'change') handleSelfUpdateEvent(event);
   if (event.type === 'input') {
     if (id === 'cfg-filter') applyConfigFilter();
     if (target.closest?.('#cfg-notif-transitions')) syncCfgNotifyTypes();
@@ -1527,6 +2050,8 @@ function handleConfigEvent(event) {
     const notifyType = target.getAttribute?.('data-cfg-notify-type');
     if (notifyType) setCfgNotifyType(notifyType, target.checked);
     if (id === 'ask-profile') applyAskProfileState();
+    if (id === 'cfg-gitproxy-protected-mode') syncCfgGitProxy();
+    if (SIDE_PANEL_TOGGLES.some((toggle) => toggle.id === id)) syncCfgSidePanel();
     if (id === 'cfg-remote-host' || id === 'cfg-remote-port') syncCfgRemoteStatus();
     if (id === 'cfg-remote-enabled') {
       const portEl = $('#cfg-remote-port');
@@ -1545,6 +2070,7 @@ function handleConfigEvent(event) {
   }
   if (id === 'cfg-reload') { void loadConfigTab(); return; }
   if (id === 'cfg-save') { void saveConfig(); return; }
+  if (id === 'cfg-side-panel-reset') { resetCfgSidePanel(); return; }
   if (id === 'cfg-filter-clear') {
     const filterInput = $('#cfg-filter');
     if (filterInput) { filterInput.value = ''; filterInput.focus(); }
@@ -1573,5 +2099,5 @@ function bindConfigActivation() {
   };
 }
 
-export { assembleConfig, bindConfigActivation, configLineDiff, handleConfigEvent, loadConfigTab, populateConfigForm, saveConfig };
+export { assembleConfig, bindConfigActivation, configLineDiff, followSourceChoice, handleConfigEvent, loadConfigTab, populateConfigForm, saveConfig };
 // dashboard-imperative-boundary: config-adapter

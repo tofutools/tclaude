@@ -41,16 +41,17 @@ type snapshotCreateParams struct {
 	WithSummary bool   `long:"with-summary" help:"First ask the agent to write a summary of its earlier work and keep it with the snapshot, so a landing on a smaller context window keeps it. Costs the agent a turn; waits up to --summary-wait."`
 	SummaryWait string `long:"summary-wait" optional:"true" help:"With --with-summary: how long to wait for the agent's summary (default 10m)."`
 	JSON        bool   `long:"json" help:"Print the snapshot as JSON."`
+	CarriedWorkflowParams
 }
 
 func snapshotCreateCmd() *cobra.Command {
-	return boa.CmdT[snapshotCreateParams]{Use: "create <agent>", Short: "Capture a named snapshot of an agent",
+	return boa.CmdT[snapshotCreateParams]{Use: "create", Short: "Capture a named snapshot of an agent",
 		Long: "Capture the agent's definition, environment and conversation (native history plus a harness-neutral\n" +
 			"context) as a PAF in the local library. An idle agent is captured whole; a busy one up to its last\n" +
 			"complete turn. Credential findings are recorded, since a snapshot stays on this node. Needs\n" +
 			"agent.bundle.export on the agent.",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *snapshotCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSnapshotCreate(p, os.Stdout, os.Stderr))
+			os.Exit(runSnapshotCreate(p, cliStdout, cliStderr))
 		}}.ToCobra()
 }
 
@@ -59,7 +60,7 @@ func runSnapshotCreate(p *snapshotCreateParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	var meta snapshotlib.Meta
-	body := map[string]any{"agent": p.Agent, "name": p.Name, "note": p.Note, "expires": p.Expires, "no_history": p.NoHistory}
+	body := map[string]any{"agent": p.Agent, "name": p.Name, "note": p.Note, "expires": p.Expires, "no_history": p.NoHistory, "workflow": p.Workflow, "own_workflows": p.Workflows}
 	if p.WithSummary {
 		id, rc := awaitAgentSummary(p.Agent, p.SummaryWait, stderr)
 		if rc != rcOK {
@@ -123,7 +124,9 @@ type snapshotListParams struct {
 
 func snapshotListCmd() *cobra.Command {
 	return boa.CmdT[snapshotListParams]{Use: "ls", Short: "List the snapshot library", ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *snapshotListParams, _ *cobra.Command, _ []string) { os.Exit(runSnapshotList(p, os.Stdout, os.Stderr)) }}.ToCobra()
+		RunFunc: func(p *snapshotListParams, _ *cobra.Command, _ []string) {
+			os.Exit(runSnapshotList(p, cliStdout, cliStderr))
+		}}.ToCobra()
 }
 
 func runSnapshotList(p *snapshotListParams, stdout, stderr io.Writer) int {
@@ -170,8 +173,10 @@ type snapshotNameParams struct {
 }
 
 func snapshotShowCmd() *cobra.Command {
-	return boa.CmdT[snapshotNameParams]{Use: "show <name>", Short: "Show a snapshot", ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *snapshotNameParams, _ *cobra.Command, _ []string) { os.Exit(runSnapshotShow(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	return boa.CmdT[snapshotNameParams]{Use: "show", Short: "Show a snapshot", ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *snapshotNameParams, _ *cobra.Command, _ []string) {
+			os.Exit(runSnapshotShow(p, cliStdout, cliStderr))
+		}}.ToCobra()
 }
 
 func runSnapshotShow(p *snapshotNameParams, stdout, stderr io.Writer) int {
@@ -199,16 +204,16 @@ func runSnapshotShow(p *snapshotNameParams, stdout, stderr io.Writer) int {
 }
 
 func snapshotRemoveCmd() *cobra.Command {
-	return boa.CmdT[snapshotNameParams]{Use: "rm <name>", Short: "Remove a snapshot (human only)", ParamEnrich: common.DefaultParamEnricher(),
+	return boa.CmdT[snapshotNameParams]{Use: "rm", Short: "Remove a snapshot (human only)", ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *snapshotNameParams, _ *cobra.Command, _ []string) {
-			if rc := RequireDaemonOrExit(os.Stderr); rc != rcOK {
+			if rc := RequireDaemonOrExit(cliStderr); rc != rcOK {
 				os.Exit(rc)
 			}
 			if err := DaemonDelete("/v1/snapshots/"+url.PathEscape(p.Name), nil); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(cliStderr, err)
 				os.Exit(MapDaemonErrorToRC(err))
 			}
-			fmt.Println("Removed", p.Name)
+			fmt.Fprintln(cliStdout, "Removed", p.Name)
 		}}.ToCobra()
 }
 
@@ -218,37 +223,37 @@ type snapshotExportParams struct {
 }
 
 func snapshotExportCmd() *cobra.Command {
-	return boa.CmdT[snapshotExportParams]{Use: "export <name>", Short: "Write a snapshot's PAF to a file",
+	return boa.CmdT[snapshotExportParams]{Use: "export", Short: "Write a snapshot's PAF to a file",
 		Long:        "Write the snapshot's PAF to a file. It holds the agent's conversation: redact and consent before sharing it (tclaude paf redact, tclaude paf consent).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *snapshotExportParams, _ *cobra.Command, _ []string) {
-			if rc := RequireDaemonOrExit(os.Stderr); rc != rcOK {
+			if rc := RequireDaemonOrExit(cliStderr); rc != rcOK {
 				os.Exit(rc)
 			}
 			if err := downloadSnapshot(p.Name, p.File); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(cliStderr, err)
 				os.Exit(MapDaemonErrorToRC(err))
 			}
-			fmt.Println("Exported", p.File)
+			fmt.Fprintln(cliStdout, "Exported", p.File)
 		}}.ToCobra()
 }
 
 func snapshotPruneCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "prune", Short: "Remove expired snapshots (human only)", ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			if rc := RequireDaemonOrExit(os.Stderr); rc != rcOK {
+			if rc := RequireDaemonOrExit(cliStderr); rc != rcOK {
 				os.Exit(rc)
 			}
 			var resp struct {
 				Removed []string `json:"removed"`
 			}
 			if err := DaemonPost("/v1/snapshots/prune", map[string]any{}, &resp); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(cliStderr, err)
 				os.Exit(MapDaemonErrorToRC(err))
 			}
-			fmt.Printf("Removed %d expired snapshot(s)\n", len(resp.Removed))
+			fmt.Fprintf(cliStdout, "Removed %d expired snapshot(s)\n", len(resp.Removed))
 			for _, n := range resp.Removed {
-				fmt.Println(" ", n)
+				fmt.Fprintln(cliStdout, " ", n)
 			}
 		}}.ToCobra()
 }

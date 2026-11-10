@@ -2,8 +2,10 @@ package conv
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,7 +52,7 @@ func SearchCmd() *cobra.Command {
 		Short:       "Search within Claude conversations",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *SearchParams, cmd *cobra.Command, args []string) {
-			exitCode := RunSearch(params, os.Stdout, os.Stderr)
+			exitCode := RunSearch(params, cliStdout, cliStderr)
 			if exitCode != 0 {
 				os.Exit(exitCode)
 			}
@@ -58,7 +60,7 @@ func SearchCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func RunSearch(params *SearchParams, stdout, stderr *os.File) int {
+func RunSearch(params *SearchParams, stdout, stderr io.Writer) int {
 	// Compile regex (case insensitive by default)
 	pattern := params.Pattern
 	if !params.CaseSensitive {
@@ -258,11 +260,23 @@ func searchMetadata(entry SessionEntry, re *regexp.Regexp) []MatchLine {
 }
 
 func searchConversation(filePath string, re *regexp.Regexp) []MatchLine {
+	return scanConversation(context.Background(), filePath, re, 0)
+}
+
+// scanCancelCheckBytes is how much is read between ctx checks. It counts bytes,
+// not lines: a transcript of huge tool outputs has few lines, and matching runs
+// at tens of MB/s on them, so this bounds how long a cancel can go unnoticed.
+const scanCancelCheckBytes = 4 << 20
+
+// scanConversation streams a transcript line by line, so a large file costs one
+// scanner buffer rather than its whole size in memory. maxMatches > 0 stops at
+// that many matches; ctx stops the read early, keeping what was found.
+func scanConversation(ctx context.Context, filePath string, re *regexp.Regexp, maxMatches int) []MatchLine {
 	// A cold Codex rollout (.jsonl.zst) is compressed binary, not text —
 	// regexing over it would yield noise, not matches. Skip it; metadata
 	// search (title/prompt) still covers these convs. (Content search over
 	// compressed rollouts is a later enhancement if it's ever wanted.)
-	if strings.HasSuffix(filePath, ".zst") {
+	if filePath == "" || strings.HasSuffix(filePath, ".zst") {
 		return nil
 	}
 
@@ -273,23 +287,29 @@ func searchConversation(filePath string, re *regexp.Regexp) []MatchLine {
 	defer file.Close()
 
 	var matches []MatchLine
-	var lines []string
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-
-	for i, line := range lines {
-		if re.MatchString(line) {
+	unchecked := 0
+	for lineNum := 1; scanner.Scan(); lineNum++ {
+		unchecked += len(scanner.Bytes())
+		if unchecked >= scanCancelCheckBytes {
+			unchecked = 0
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		if re.Match(scanner.Bytes()) {
 			// Extract a readable portion around the match
-			content := extractMatchContext(line, re)
+			content := extractMatchContext(scanner.Text(), re)
 			matches = append(matches, MatchLine{
-				LineNum: i + 1,
+				LineNum: lineNum,
 				Content: content,
 			})
+			if maxMatches > 0 && len(matches) >= maxMatches {
+				break
+			}
 		}
 	}
 

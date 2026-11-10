@@ -26,6 +26,9 @@
 // would rewrite the address bar to a terminal the operator is not looking at,
 // so the next hard refresh lands somewhere they never were. See classifyChange.
 
+import { drawingBoardFocusOf, drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js';
+import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
+
 const RESTORE_EVENT = 'tclaude:restore-location';
 const NAVIGATED_EVENT = 'tclaude:navigated';
 
@@ -74,12 +77,32 @@ function knownAgent(snapshotValue, agent) {
 // openWebWindowPane the "focus this agent" row action uses, which is what makes
 // a deep link land on exactly the pane a click would have produced.
 //
+// Drawing board and process tabs live in the same strip under their own routes
+// (/drawing-boards/<id>, /collab/processes/<id>), so a location here is any of the
+// three kinds. selectionOf keeps the id spaces apart.
+function selectionOf(location) {
+  const selection = location?.selection ? String(location.selection) : '';
+  if (selection && location.tab === 'drawing-boards') return drawingBoardPaneKey(selection);
+  if (selection && location.tab === COLLAB_PROCESSES) return processPaneKey(selection);
+  return selection;
+}
+
+// A process tab's route, /collab/processes/<template-id> (tcl-tnbtwp).
+const COLLAB_PROCESSES = 'collab-processes';
+const STRIP_TABS = new Set(['terminals', 'drawing-boards', COLLAB_PROCESSES]);
+
 // `isTabActive()` reports whether the Terminals section is the one on screen.
 // A pane change while the operator is looking at another tab is never their
 // navigation — that is exactly the background-open case.
 export function bindTerminalNavRouting({
   state,
   openAgentPane,
+  openDrawingBoardPane = () => null,
+  // focusDrawingBoard(id, { elements, box }) asks the board to show that
+  // part once it is on screen (drawing-board-overlay-state.js
+  // drawingBoardFocus): a location's crop and elements.
+  focusDrawingBoard = () => {},
+  openProcessPane = () => null,
   snapshot = null,
   documentRef = globalThis.document,
   isTabActive = () => !!documentRef?.getElementById('tab-terminals')?.classList?.contains('active'),
@@ -117,6 +140,29 @@ export function bindTerminalNavRouting({
   }
 
   async function applyLocation(loc) {
+    if (loc.tab === 'drawing-boards') {
+      // A bare /drawing-boards names no tab to show, so it offers the list; answering
+      // false corrects the URL to what is on screen.
+      if (!loc.selection) { state.requestDrawingBoardMenu(); return false; }
+      if (!isDrawingBoardId(loc.selection)) return false;
+      // The part to show is asked for once the tab is there: a link to a
+      // deleted board leaves no request behind.
+      const focus = drawingBoardFocusOf(loc.params);
+      const key = drawingBoardPaneKey(loc.selection);
+      const landed = state.panes.value.some((pane) => pane.key === key)
+        ? state.activatePane(key)
+        : !!(await openDrawingBoardPane(loc.selection));
+      if (landed && focus) focusDrawingBoard(loc.selection, focus);
+      return landed;
+    }
+    if (loc.tab === COLLAB_PROCESSES) {
+      if (!loc.selection) { state.requestDrawingBoardMenu('processes'); return false; }
+      if (!isProcessTemplateId(loc.selection)) return false;
+      const key = processPaneKey(loc.selection);
+      if (state.panes.value.some((pane) => pane.key === key)) return state.activatePane(key);
+      const opened = await openProcessPane(loc.selection);
+      return !!opened && !opened.floating;
+    }
     const agent = loc?.selection ? String(loc.selection) : '';
     // A bare /terminals is honoured by any open pane; there is no single
     // terminal it names, so whatever is active stays active.
@@ -131,16 +177,17 @@ export function bindTerminalNavRouting({
       agentLabel(snapshot?.value, agent),
       agentHarness(snapshot?.value, agent),
     );
-    return !!opened;
+    // One held in a window has no pane to name: the router corrects the URL.
+    return !!opened && !opened.floating;
   }
 
   const onRestore = (event) => {
     const loc = event?.detail?.location;
-    if (loc?.tab !== 'terminals') return;
+    if (!STRIP_TABS.has(loc?.tab)) return;
     restoring += 1;
     restoreGeneration += 1;
     const generation = restoreGeneration;
-    restoreTarget = loc.selection ? String(loc.selection) : '';
+    restoreTarget = selectionOf(loc);
     interrupted = null;
     void Promise.resolve(applyLocation(loc))
       .catch((error) => {
@@ -156,6 +203,7 @@ export function bindTerminalNavRouting({
           // network fetch). The URL still names where the router sent us, so
           // their move has to be announced now or it would be lost silently.
           reconcileAfterRestore(loc);
+          dropFocusParams(loc);
           return;
         }
         // We could not land where the URL pointed — a retired agent, or a
@@ -174,6 +222,17 @@ export function bindTerminalNavRouting({
       });
   };
 
+  // dropFocusParams makes a drawing board's focus (crop, elements) one-shot,
+  // as openDrawingBoardAt is: once it is asked for, the entry is corrected to
+  // the bare board, so a Back onto it or a reload does not throw the view
+  // back to that part after the operator moved on.
+  function dropFocusParams(requested) {
+    if (requested?.tab !== 'drawing-boards' || !drawingBoardFocusOf(requested.params)) return;
+    if (selectionOf(state.location.value) !== selectionOf(requested)) return;
+    const { crop, elements, ...rest } = requested.params;
+    announce({ tab: 'drawing-boards', selection: requested.selection, ...(Object.keys(rest).length ? { params: rest } : {}) }, true);
+  }
+
   // reconcileAfterRestore compares where we actually are against the location
   // the router asked for, once the restore has settled. They differ only when
   // the operator navigated during the attach — a real move, so it is announced
@@ -188,12 +247,12 @@ export function bindTerminalNavRouting({
       state.activatePane(claim.key);
     }
     const location = state.location.value;
-    const selection = location?.selection || '';
+    const selection = selectionOf(location);
     seenSelection = selection;
     // A bare /terminals restore names no terminal and moves nothing, so there
     // is never anything to reconcile against it.
     if (!requested?.selection) return;
-    if (!selection || selection === String(requested.selection)) return;
+    if (!selection || selection === selectionOf(requested)) return;
     if (!isTabActive()) return;
     announce(location);
   }
@@ -226,7 +285,7 @@ export function bindTerminalNavRouting({
   let seenSelection = null;
   let previousActiveKey = null;
   const unsubscribe = state.location.subscribe((location) => {
-    const selection = location?.selection || '';
+    const selection = selectionOf(location);
     const activeKey = state.view.value.activeKey || null;
     const wasOn = previousActiveKey;
     previousActiveKey = activeKey;
@@ -246,10 +305,11 @@ export function bindTerminalNavRouting({
       return;
     }
     seenSelection = selection;
-    // Losing the last agent pane leaves the bare tab, which the router's own
-    // snapshot reconcile already corrects (and the tab may be auto-leaving
-    // entirely). Announcing it would forge an entry for a move nobody made.
-    if (!selection) return;
+    // Losing the last pane is the island's to answer once it knows whether the
+    // pane really went (terminal-close-nav.js): a reattach closes and reopens
+    // it, and the tab may be auto-leaving entirely. An open pane with no agent
+    // is a place of its own, and the URL must stop naming the tab it replaced.
+    if (!selection && !state.panes.value.length) return;
     const kind = classifyChange(wasOn);
     if (kind === 'silent') return;
     announce(location, kind === 'correct');

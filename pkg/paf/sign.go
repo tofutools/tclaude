@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"unicode"
 )
 
@@ -112,6 +113,20 @@ func plainText(s string, max int) bool {
 var algRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
 
 // SignedBy reports whether a valid signature in results carries pub.
+// RewriteKeys are the keys a rewrite of a may sign its copy with. A signature on
+// a PAF covers the workflows it carries, and the unsigned-import policy reads it
+// as vouching for their commands. Redacting or consenting vouches for nothing, so
+// while workflows stay only a key that already signed the file signs the copy.
+func RewriteKeys(a *Archive, keys []SigningKey) []SigningKey {
+	if len(a.Manifest.Workflows) == 0 {
+		return keys
+	}
+	return slices.DeleteFunc(slices.Clone(keys), func(k SigningKey) bool {
+		pub, ok := k.Key.Public().(ed25519.PublicKey)
+		return !ok || !SignedBy(a.Signatures, pub)
+	})
+}
+
 func SignedBy(results []SignatureResult, pub ed25519.PublicKey) bool {
 	for _, r := range results {
 		if r.Status == SignatureValid && bytes.Equal(r.Signature.PublicKey, pub) {

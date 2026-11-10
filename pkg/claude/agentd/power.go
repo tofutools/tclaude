@@ -418,7 +418,8 @@ func offlineConvIDs(convIDs []string) []string {
 			continue
 		}
 		seen[id] = true
-		if pickAliveSession(id) == nil {
+		// An external steward is never live here, and is not tclaude's to start.
+		if pickAliveSession(id) == nil && !db.IsExternalStewardConv(id) {
 			out = append(out, id)
 		}
 	}

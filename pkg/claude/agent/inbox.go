@@ -26,6 +26,7 @@ func inboxCmd() *cobra.Command {
 			inboxWatchCmd(),
 			inboxSentCmd(),
 			inboxReadCmd(),
+			inboxAttachmentCmd(),
 			inboxPruneCmd(),
 		},
 	}.ToCobra()
@@ -41,7 +42,7 @@ type inboxLsParams struct {
 	Limit  int    `long:"limit" short:"n" help:"Max number of messages to show" default:"20"`
 	Unread bool   `long:"unread" help:"Only show messages without read_at"`
 	JSON   bool   `long:"json" help:"Output JSON"`
-	Target string `long:"target" optional:"true" help:"Read another agent's inbox (title / prefix / conv-id). Requires the agent.inbox-watch slug or group ownership."`
+	Target string `long:"target" optional:"true" help:"Read another agent's inbox (title / prefix / conv-id)."`
 }
 
 func inboxLsCmd() *cobra.Command {
@@ -50,7 +51,7 @@ func inboxLsCmd() *cobra.Command {
 		Short:       "List messages in this conversation's inbox",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *inboxLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runInboxLs(p, os.Stdout, os.Stderr))
+			os.Exit(runInboxLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -155,7 +156,7 @@ func inboxSentCmd() *cobra.Command {
 		Long:        "Outbox view: messages this conv-id is the sender of, most recent first. Shows delivery + read state from the recipient's side.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *inboxSentParams, _ *cobra.Command, _ []string) {
-			os.Exit(runInboxSent(p, os.Stdout, os.Stderr))
+			os.Exit(runInboxSent(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -240,7 +241,7 @@ func outboxStatusText(e inboxEntry) string {
 type inboxReadParams struct {
 	ID         string `pos:"true" help:"Message ID from inbox ls"`
 	KeepUnread bool   `long:"keep-unread" help:"Don't update read_at"`
-	Target     string `long:"target" optional:"true" help:"Read another agent's message (title / prefix / conv-id). Implies --keep-unread. Requires the agent.inbox-watch slug or group ownership."`
+	Target     string `long:"target" optional:"true" help:"Read another agent's message (title / prefix / conv-id). Implies --keep-unread."`
 }
 
 func inboxReadCmd() *cobra.Command {
@@ -253,7 +254,7 @@ func inboxReadCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *inboxReadParams, _ *cobra.Command, _ []string) {
-			os.Exit(runInboxRead(p, os.Stdout, os.Stderr))
+			os.Exit(runInboxRead(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -281,8 +282,8 @@ type recipientLine struct {
 }
 
 type inboxAttachment struct {
+	ID          int64  `json:"id"`
 	Name        string `json:"name"`
-	Path        string `json:"path"`
 	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
 }
@@ -395,9 +396,9 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 	fmt.Fprintln(stdout, m.Body)
 	if len(m.Attachments) > 0 {
 		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Attachments:")
+		fmt.Fprintf(stdout, "Attachments (save with `tclaude agent inbox attachment %d`):\n", m.ID)
 		for _, a := range m.Attachments {
-			fmt.Fprintf(stdout, "  %s (%d bytes, %s): %s\n", a.Name, a.Size, a.ContentType, a.Path)
+			fmt.Fprintf(stdout, "  %s (%d bytes, %s)\n", a.Name, a.Size, a.ContentType)
 		}
 	}
 	return rcOK
@@ -458,6 +459,19 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		groupName = g.Name
 	}
 	fromTitle := titleFor(m.FromConv)
+	if m.FromConv == "" {
+		// Senderless mail is a remote sender's when it came from a peer, the
+		// operator's when marked so, otherwise tclaude's own, as the daemon
+		// path labels it.
+		switch in, _ := db.FederationInboundForMessage(m.ID); {
+		case in != nil:
+			fromTitle = in.FromName + "@" + in.FromInstance + " (remote)"
+		case db.IsOperatorAgentMessage(m.ID):
+			fromTitle = "human operator"
+		default:
+			fromTitle = "tclaude (system)"
+		}
+	}
 
 	fmt.Fprintln(stdout, "Headers:")
 	fmt.Fprintf(stdout, "  Message-ID: %d\n", m.ID)
@@ -522,7 +536,7 @@ func inboxPruneCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *inboxPruneParams, _ *cobra.Command, _ []string) {
-			os.Exit(runInboxPrune(p, os.Stdout, os.Stderr))
+			os.Exit(runInboxPrune(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -136,7 +136,7 @@ test('a drop between two peers is sent by the source peer, on to the third node'
   assert.match(s.q('#fleetview-move-drop').textContent, /desk sends builder-1 .*to group reviewers on forge.*If forge's permissions allow it/);
   await s.click(s.q('#fleetview-move-drop-ok'));
   assert.deepEqual(calls, [['inst_self', 'agt_b1', { group: 'reviewers', direct_if_allowed: true, to: 'inst_forge' }]]);
-  assert.match(s.q('[data-move-drop-state="relayed"]').textContent, /desk is sending builder-1 to group reviewers on forge.*desk's ⚙ Fleet → Moves/);
+  assert.match(s.q('[data-move-drop-state="relayed"]').textContent, /desk is sending builder-1 to group reviewers on forge.*desk's ⚙ Fleet config → Moves/);
   assert.equal(s.timers.queue.length, 0, 'nothing here to follow');
 });
 

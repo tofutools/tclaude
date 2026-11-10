@@ -1,6 +1,7 @@
 package common
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -50,3 +51,51 @@ func TestTmuxClientFeatureArgsAtLengthLimit(t *testing.T) {
 		t.Fatalf("128-char feature list should be accepted; got %v", got)
 	}
 }
+
+func TestNativeTmuxClientFeatureArgsFollowsTerm(t *testing.T) {
+	prev := Default
+	Default = fakeVersionTmux{}
+	t.Cleanup(func() { Default = prev })
+
+	for term, want := range map[string]bool{
+		"xterm-256color":  true,
+		"xterm-kitty":     true,
+		"xterm-ghostty":   true,
+		"alacritty":       true,
+		"foot":            true,
+		"wezterm":         true,
+		"tmux-256color":   true,
+		"screen-256color": true,
+		"linux":           false,
+		"rxvt-unicode":    false,
+		"dumb":            false,
+		"":                false,
+	} {
+		if got := NativeTmuxClientFeatureArgs(term) != nil; got != want {
+			t.Errorf("NativeTmuxClientFeatureArgs(%q) enabled = %v, want %v", term, got, want)
+		}
+	}
+}
+
+func TestTmuxVersionAtLeast(t *testing.T) {
+	for version, want := range map[string]bool{
+		"tmux 3.2\n":    true,
+		"tmux 3.7b\n":   true,
+		"tmux 4.0\n":    true,
+		"tmux 3.1c\n":   false,
+		"tmux 2.9\n":    false,
+		"tmux next-3.8": false,
+		"tmux master":   false,
+		"":              false,
+	} {
+		if got := TmuxVersionAtLeast(version, 3, 2); got != want {
+			t.Errorf("TmuxVersionAtLeast(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
+type fakeVersionTmux struct{}
+
+func (fakeVersionTmux) Command(...string) *exec.Cmd { return exec.Command("echo", "tmux 3.7b") }
+
+func (fakeVersionTmux) ListSessions() (map[string]struct{}, error) { return nil, nil }

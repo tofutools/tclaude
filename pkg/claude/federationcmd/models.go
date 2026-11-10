@@ -21,8 +21,8 @@ type modelSwitchParams struct {
 }
 
 func modelsCmd() *cobra.Command {
-	switchCmd := func(use string, disabled bool) *cobra.Command {
-		return boa.CmdT[modelSwitchParams]{Use: use, Short: "Switch model gateway access", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *modelSwitchParams, _ *cobra.Command, _ []string) {
+	switchCmd := func(use, short string, disabled bool) *cobra.Command {
+		return boa.CmdT[modelSwitchParams]{Use: use, Short: short, ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *modelSwitchParams, _ *cobra.Command, _ []string) {
 			repoRequest(http.MethodPost, "/v1/models/control", map[string]any{"name": p.Name, "peer": p.Peer, "disabled": disabled})
 		}}.ToCobra()
 	}
@@ -40,6 +40,6 @@ func modelsCmd() *cobra.Command {
 				repoRequest(http.MethodGet, "/v1/models/leases", nil)
 			}
 		}}.ToCobra(),
-		switchCmd("disable", true), switchCmd("enable", false),
+		switchCmd("disable", "Block model gateway access", true), switchCmd("enable", "Allow model gateway access again", false),
 	}}.ToCobra()
 }

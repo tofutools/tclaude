@@ -2,7 +2,7 @@ import { batch, computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 import { dashPrefs } from './prefs.js';
 import {
-  applySortState, JOBS_ACCESSORS, persistedTableSort, persistTableSort,
+  applySortState, JOBS_ACCESSORS, nextSort, persistedTableSort, persistTableSort,
 } from './sort.js';
 import { cronJobToPrefill, standingOrderToPrefill } from './jobs-dialog-model.js';
 
@@ -34,12 +34,6 @@ export function jobsKindForLocation(loc) {
 
 function errorMessage(error) {
   return error ? String(error.message || error) : null;
-}
-
-function nextSort(current, col) {
-  if (!current || current.col !== col) return { col, dir: 'asc' };
-  if (current.dir === 'asc') return { col, dir: 'desc' };
-  return null;
 }
 
 export function createJobsState({ snapshot = dashboardState.snapshot, prefs = dashPrefs } = {}) {

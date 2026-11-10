@@ -3,8 +3,10 @@ package harness
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -255,11 +257,133 @@ func TestEnsureClaudeDirTrustedForLaunch_RefusesRelativeConfigDir(t *testing.T) 
 	require.Error(t, EnsureClaudeDirTrustedForLaunch(getenv, "/work/proj"))
 }
 
-// An empty CLAUDE_CONFIG_DIR means the ambient default: the launch-aware path
-// resolver must fall back to ~/.claude.json rather than fail or write "".
-func TestClaudeConfigJSONPathForLaunch_EmptyFallsBackToHome(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	path, err := claudeConfigJSONPathForLaunch(func(string) string { return "" })
+// An empty or absent CLAUDE_CONFIG_DIR is refused: tclaude never edits the
+// top-level ~/.claude.json, which its panes do not read. A nil getenv is the
+// same case.
+func TestEnsureClaudeDirTrustedForLaunch_RefusesWithoutClaudeConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for name, getenv := range map[string]func(string) string{
+		"nil":   nil,
+		"empty": func(string) string { return "" },
+		"blank": func(string) string { return "  " },
+	} {
+		err := EnsureClaudeDirTrustedForLaunch(getenv, "/work/proj")
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), "CLAUDE_CONFIG_DIR", name)
+	}
+	_, statErr := os.Stat(filepath.Join(home, ClaudeConfigJSONName))
+	assert.True(t, os.IsNotExist(statErr), "the top-level ~/.claude.json must not be created")
+}
+
+// A trust write under a set CLAUDE_CONFIG_DIR lands in that dir and never
+// creates or modifies $HOME/.claude.json — not even an existing one.
+func TestEnsureClaudeDirTrustedForLaunch_NeverTouchesHomeClaudeJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	stateRoot := filepath.Join(home, ".claude")
+	ambient := filepath.Join(home, ClaudeConfigJSONName)
+	before := []byte(`{"numStartups":7}`)
+	require.NoError(t, os.WriteFile(ambient, before, 0o600))
+	beforeStat, err := os.Stat(ambient)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(os.Getenv("HOME"), ClaudeConfigJSONName), path)
+
+	getenv := func(name string) string {
+		if name == "CLAUDE_CONFIG_DIR" {
+			return stateRoot
+		}
+		return ""
+	}
+	require.NoError(t, EnsureClaudeDirTrustedForLaunch(getenv, "/work/proj"))
+
+	out, err := os.ReadFile(filepath.Join(stateRoot, ClaudeConfigJSONName))
+	require.NoError(t, err)
+	assert.True(t, trustedInParsed(t, out, "/work/proj"))
+	after, err := os.ReadFile(ambient)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "$HOME/.claude.json is untouched")
+	afterStat, err := os.Stat(ambient)
+	require.NoError(t, err)
+	assert.Equal(t, beforeStat.ModTime(), afterStat.ModTime(), "$HOME/.claude.json is not rewritten")
+	_, statErr := os.Stat(ambient + ".tclaude.lock")
+	assert.True(t, os.IsNotExist(statErr), "no lock sidecar in $HOME")
+}
+
+// A symlinked .claude.json (a dotfile manager's) is written through, not
+// replaced by a plain file — the same as every other harness's dir-trust seed.
+func TestEnsureClaudeDirTrustedInFile_PreservesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "managed.json")
+	link := filepath.Join(dir, ".claude.json")
+	require.NoError(t, os.WriteFile(target, []byte(`{"numStartups":3}`), 0o640))
+	require.NoError(t, os.Symlink(target, link))
+
+	require.NoError(t, ensureClaudeDirTrustedInFile(link, "/abs/proj"))
+
+	fi, err := os.Lstat(link)
+	require.NoError(t, err)
+	assert.NotZero(t, fi.Mode()&os.ModeSymlink, ".claude.json must remain a symlink")
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.True(t, trustedInParsed(t, data, "/abs/proj"), "the symlink's target carries the trust entry")
+	tfi, err := os.Stat(target)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o640), tfi.Mode().Perm(), "target mode is preserved")
+}
+
+// Claude Code rewrites .claude.json on nearly every turn and takes no lock.
+// A write it makes after tclaude read the file but before the commit must be
+// re-planned on top of, not reverted by tclaude's rename.
+func TestEnsureClaudeDirTrustedInFile_ReplansOverConcurrentClaudeWrite(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), ".claude.json")
+	require.NoError(t, os.WriteFile(cfg, []byte(`{"numStartups":3}`), 0o600))
+
+	prepareCalls := 0
+	err := editClaudeConfigFile(cfg, func(data []byte) (bool, []byte, error) {
+		return planClaudeDirTrust(data, "/abs/proj")
+	}, func(target string, data []byte, perm os.FileMode) (*atomicFileReplacement, error) {
+		prepareCalls++
+		replacement, err := prepareAtomicWriteFile(target, data, perm)
+		if err == nil && prepareCalls == 1 {
+			// Claude Code writes after our temp file is staged, before the
+			// final stale-read check.
+			require.NoError(t, os.WriteFile(cfg, []byte(`{"numStartups":4,"oauthAccount":{"id":"x"}}`), 0o600))
+		}
+		return replacement, err
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, prepareCalls, "the stale read is detected and re-planned once")
+
+	data, err := os.ReadFile(cfg)
+	require.NoError(t, err)
+	assert.True(t, trustedInParsed(t, data, "/abs/proj"))
+	var root map[string]any
+	require.NoError(t, json.Unmarshal(data, &root))
+	assert.EqualValues(t, 4, root["numStartups"], "Claude Code's concurrent write survives")
+	assert.Contains(t, root, "oauthAccount", "Claude Code's concurrent write survives")
+}
+
+// Concurrent tclaude spawns seeding DIFFERENT dirs all land; none drops
+// another's project entry.
+func TestEnsureClaudeDirTrustedInFile_ConcurrentSeedsAllSurvive(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), ".claude.json")
+	const seeds = 8
+	var wg sync.WaitGroup
+	errs := make([]error, seeds)
+	for i := range seeds {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = ensureClaudeDirTrustedInFile(cfg, fmt.Sprintf("/work/proj-%d", i))
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		require.NoError(t, err, "seed %d", i)
+	}
+	data, err := os.ReadFile(cfg)
+	require.NoError(t, err)
+	for i := range seeds {
+		assert.True(t, trustedInParsed(t, data, fmt.Sprintf("/work/proj-%d", i)), "seed %d survives", i)
+	}
 }

@@ -405,21 +405,8 @@ func ConvsForAgent(agentID string) ([]string, error) {
 	// they happen, while the v72 backfill deliberately gives all migrated rows
 	// the same linked_at, so the unique insertion key also keeps those ties
 	// deterministic. See GenerationsForAgent + generations_test.go.
-	rows, err := d.Query(`SELECT conv_id FROM agent_conversations
+	return queryRows(d, scanString, `SELECT conv_id FROM agent_conversations
 		WHERE agent_id = ? ORDER BY rowid`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
 }
 
 // GenerationsForAgent returns every conversation generation linked to agentID
@@ -439,26 +426,19 @@ func GenerationsForAgent(agentID string) ([]AgentConversation, error) {
 		return nil, err
 	}
 	// Oldest link first by the rowid link-insertion order. See ConvsForAgent.
-	rows, err := d.Query(`SELECT conv_id, role, reason, linked_at
-		FROM agent_conversations WHERE agent_id = ? ORDER BY rowid`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []AgentConversation
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (AgentConversation, error) {
 		var (
 			c        AgentConversation
 			linkedAt dbTimestamp
 		)
 		c.AgentID = agentID
 		if err := rows.Scan(&c.ConvID, &c.Role, &c.Reason, &linkedAt); err != nil {
-			return nil, err
+			return AgentConversation{}, err
 		}
 		c.LinkedAt = linkedAt.Time()
-		out = append(out, c)
-	}
-	return out, rows.Err()
+		return c, nil
+	}, `SELECT conv_id, role, reason, linked_at
+		FROM agent_conversations WHERE agent_id = ? ORDER BY rowid`, agentID)
 }
 
 // SetAgentCurrentConv advances an actor's live conversation pointer as a
@@ -609,6 +589,29 @@ func SetAgentEffectiveSandboxConfig(agentID string, snapshot *sandboxpolicy.Snap
 // AgentEffectiveSandboxConfigForConv loads the actor-level launch snapshot for
 // a conversation generation. A nil result is the fail-closed legacy sentinel,
 // not an explicitly resolved empty policy.
+// AgentEffectiveSandboxConfigRaw is an agent's launch snapshot and its stored
+// text, for a compare-and-swap replacement (ApplyAgentSpawnCopy). nil when the
+// agent is unknown or has none.
+func AgentEffectiveSandboxConfigRaw(agentID string) (*sandboxpolicy.Snapshot, string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, "", err
+	}
+	var raw string
+	err = d.QueryRow(`SELECT effective_sandbox_config FROM agents WHERE agent_id = ?`, strings.TrimSpace(agentID)).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	snapshot, err := unmarshalEffectiveSandboxSnapshot(raw)
+	if err != nil {
+		return nil, raw, fmt.Errorf("decode agent effective sandbox for %q: %w", agentID, err)
+	}
+	return snapshot, raw, nil
+}
+
 func AgentEffectiveSandboxConfigForConv(convID string) (*sandboxpolicy.Snapshot, error) {
 	d, err := Open()
 	if err != nil {
@@ -819,20 +822,7 @@ func ListRetiredConvIDs() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(retiredConvsSQL)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	return queryRows(d, scanString, retiredConvsSQL)
 }
 
 // ListAgentRosterState returns the active actors' current conversation ids and
@@ -1085,12 +1075,20 @@ type dbExecQuerier interface {
 // the actor already exists in practice; this is the defensive allocate for
 // the window before the conv-layer is fully populated.
 func ensureAgentForConvTx(tx dbExecQuerier, convID, via string) (string, error) {
+	return ensureAgentWithIDForConvTx(tx, convID, via, "")
+}
+
+// ensureAgentWithIDForConvTx is ensureAgentForConvTx for a caller that already
+// chose the identity a new actor takes. An empty agentID mints one.
+func ensureAgentWithIDForConvTx(tx dbExecQuerier, convID, via, agentID string) (string, error) {
 	if existing, err := agentIDForConvTx(tx, convID); err != nil {
 		return "", err
 	} else if existing != "" {
 		return existing, nil
 	}
-	agentID := newAgentID()
+	if agentID == "" {
+		agentID = newAgentID()
+	}
 	if err := insertAgentTx(tx, agentID, convID, via, time.Now()); err != nil {
 		return "", err
 	}
@@ -1266,6 +1264,7 @@ func absorbBareSuccessorActorTx(tx dbExecQuerier, keepAgentID, newConv string) (
 		{`SELECT COUNT(*) FROM agent_group_members WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_group_owners WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_permissions WHERE agent_id = ?`, []any{newOwner}},
+		{`SELECT COUNT(*) FROM agent_retained_group_permissions WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_sudo_grants WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_notify_prefs WHERE agent_id = ?`, []any{newOwner}},
 		{`SELECT COUNT(*) FROM agent_cron_jobs WHERE owner_agent = ? OR target_agent = ?`, []any{newOwner, newOwner}},

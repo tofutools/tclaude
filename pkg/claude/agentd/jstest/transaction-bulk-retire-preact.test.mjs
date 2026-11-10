@@ -196,11 +196,11 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-regular').textContent,
     'Retire idle agents in "alpha team"');
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-wizard').textContent,
-    'Banish idle familiars in "alpha team"');
+    'Banish idle heroes in "alpha team"');
   assert.equal(host.querySelector('#retire-preview-hint .theme-copy-regular').textContent,
     'These idle agents in group "alpha team" will be demoted to plain, reinstatable conversations. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.');
   assert.equal(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
-    'These idle familiars in party "alpha team" will return to restorable conversation scrolls. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.');
+    'These idle heroes in party "alpha team" will return to restorable conversation scrolls. Status is captured when this preview opens; a checked hero remains selected if its status changes before submit. Each ticked hero is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked heroes are banished.');
   assert.equal(host.querySelector('#retire-preview-count').textContent, '2 of 2 selected');
   assert.equal(harness.document.activeElement.id, 'retire-preview-submit');
 
@@ -317,11 +317,11 @@ test('ungrouped retire preview uses visible-only controls but submits every chec
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-regular').textContent,
     'Retire ungrouped agents');
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-wizard').textContent,
-    'Banish unbound familiars');
+    'Banish unbound heroes');
   assert.equal(host.querySelector('#retire-preview-hint .theme-copy-regular').textContent,
     'These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.');
   assert.equal(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
-    'These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.');
+    'These unbound heroes belong to no party. Each ticked hero will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked heroes are banished.');
   const search = host.querySelector('#retire-preview-search');
   search.value = 'alpha';
   await harness.act(() => harness.fireEvent(search, 'input'));
@@ -360,7 +360,7 @@ test('global retire preview identifies every-group scope including Ungrouped and
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-regular').textContent,
     'Retire offline agents across all groups');
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-wizard').textContent,
-    'Banish offline familiars across all parties');
+    'Banish offline heroes across all parties');
   assert.match(host.querySelector('#retire-preview-hint .theme-copy-regular').textContent,
     /span every group, including Ungrouped/);
   assert.match(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
@@ -368,7 +368,7 @@ test('global retire preview identifies every-group scope including Ungrouped and
   assert.equal(host.querySelector('#retire-preview-submit .theme-copy-regular').textContent,
     'Retire 2 agents');
   assert.equal(host.querySelector('#retire-preview-submit .theme-copy-wizard').textContent,
-    'Banish 2 familiars');
+    'Banish 2 heroes');
   const rows = host.querySelectorAll('#retire-preview-list .cleanup-row');
   assert.equal(rows[0].querySelector('.retire-preview-groups .theme-copy-regular').textContent,
     'in: alpha, research-and-development-with-an-intentionally-long-name, shared');

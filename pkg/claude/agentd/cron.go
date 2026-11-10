@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -116,7 +115,7 @@ func fireScheduledCronJob(jobID int64, now time.Time) {
 // anchor to now. Callers serialize it with cronAuthorityMu when it can race the
 // scheduler. Run-history is best-effort because delivery has already happened.
 func fireCronJobAndRecord(j *db.AgentCronJob, now time.Time) (string, error) {
-	if j.ActionKind != db.CronActionSpawn {
+	if j.ActionKind != db.CronActionSpawn || j.IsPeerOwned() {
 		status := fireCronJob(j, now)
 		if err := db.UpdateAgentCronJobLastRun(j.ID, now, status); err != nil {
 			return status, err
@@ -155,9 +154,6 @@ func fireCronJobAndRecord(j *db.AgentCronJob, now time.Time) (string, error) {
 }
 
 func fireCronSpawn(j *db.AgentCronJob, runID int64, now time.Time) (string, string, int64, string) {
-	if !triggerRoutesEnabled() {
-		return "feature_disabled", "features.triggers is disabled", 0, ""
-	}
 	if !j.IsGroupTarget() || j.GroupID <= 0 {
 		return "spawn_failed", "spawn jobs require a group target", 0, ""
 	}
@@ -259,14 +255,10 @@ func cronSpawnOwnerConv(j *db.AgentCronJob) (string, error) {
 	if g == nil || g.IsArchived() {
 		return "", errors.New("cron target group is unavailable")
 	}
-	req, _ := http.NewRequest(http.MethodPost, "http://cron.invalid", nil)
-	ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
-	allowed, _, authErr := permissionAllowsAction(req, conv, PermGroupsMessagesSchedule, ctx)
+	allowed, authErr := durableOwnerAllows("cron", conv, PermGroupsMessagesSchedule,
+		ActionContext{Group: g.Name, structuralGroup: g.Name})
 	if authErr != nil {
 		return "", authErr
-	}
-	if !allowed && resolvePermissionVerdictForRequest(req, conv, PermGroupsMessagesSchedule).Resolution != permDeny {
-		allowed, _ = structuralPermissionMatch(conv, PermGroupsMessagesSchedule, ctx)
 	}
 	if !allowed {
 		return "", fmt.Errorf("owner lacks %s for group %s", PermGroupsMessagesSchedule, g.Name)
@@ -396,6 +388,11 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 		subject = "[cron] " + subject
 	}
 
+	// A linked node's job: its authority is rechecked and it is delivered as
+	// the peer's mail (peer_cron_jobs.go).
+	if j.IsPeerOwned() {
+		return firePeerCronJob(j, subject)
+	}
 	if j.IsGroupTarget() {
 		var alive map[string]struct{}
 		if !j.QueueWhenOffline {

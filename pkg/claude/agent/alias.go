@@ -77,11 +77,11 @@ type aliasSetParams struct {
 
 func aliasSetCmd() *cobra.Command {
 	return boa.CmdT[aliasSetParams]{
-		Use:         "set <handle> <conv>",
+		Use:         "set",
 		Short:       "Anchor a handle to a conv (re-pointable)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasSetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runAliasSet(p, os.Stdout, os.Stderr))
+			os.Exit(runAliasSet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -118,11 +118,11 @@ type aliasRmParams struct {
 
 func aliasRmCmd() *cobra.Command {
 	return boa.CmdT[aliasRmParams]{
-		Use:         "rm <handle>",
+		Use:         "rm",
 		Short:       "Remove a head alias",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runAliasRm(p, os.Stdout, os.Stderr))
+			os.Exit(runAliasRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -152,7 +152,7 @@ func aliasLsCmd() *cobra.Command {
 		Short:       "List every head alias and its current head conv",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runAliasLs(p, os.Stdout, os.Stderr))
+			os.Exit(runAliasLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -197,11 +197,11 @@ type aliasGetParams struct {
 
 func aliasGetCmd() *cobra.Command {
 	return boa.CmdT[aliasGetParams]{
-		Use:         "get <handle>",
+		Use:         "get",
 		Short:       "Resolve one head alias to its current head conv-id",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *aliasGetParams, _ *cobra.Command, _ []string) {
-			os.Exit(runAliasGet(p, os.Stdout, os.Stderr))
+			os.Exit(runAliasGet(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/paf"
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/paf/privacy"
+	"github.com/tofutools/tclaude/pkg/pwf"
 )
 
 // groups_export.go is the daemon half of per-group export / import. It
@@ -94,7 +95,16 @@ func handleGroupExport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "invalid_arg", "format must be paf (the default) or zip")
 		return
 	}
-	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true", classify(peerFromContext(r.Context())) == classHuman)
+	carried := carriedWorkflowsFromQuery(r.URL.Query())
+	if carried.any() && format != groupArchivePAF {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "only a PAF can carry workflows: drop --format zip")
+		return
+	}
+	workflows, ok := loadCarriedWorkflows(w, r, carried, groupOwnWorkflows(g.ID))
+	if !ok {
+		return
+	}
+	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true", classify(peerFromContext(r.Context())) == classHuman, workflows)
 }
 
 // Archive formats a group export can be written in.
@@ -104,8 +114,8 @@ const (
 )
 
 // serveGroupExport builds the archive and writes it as a file download.
-func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlagged, byHuman bool) {
-	archive, err := buildGroupExportAs(groupName, format, allowFlagged, byHuman)
+func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlagged, byHuman bool, workflows []pwf.Bundle) {
+	archive, err := buildGroupExportAs(groupName, format, allowFlagged, byHuman, workflows)
 	if err != nil {
 		if errors.Is(err, db.ErrGroupNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -142,7 +152,7 @@ func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlag
 // be located is flagged Missing — its DB rows still export.
 // byHuman records allowFlagged as a human's allowance in privacy.json;
 // an agent's allowance passes the export but is not recorded as one.
-func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool) ([]byte, error) {
+func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool, workflows []pwf.Bundle) ([]byte, error) {
 	exp, err := db.CollectGroupExport(groupName)
 	if err != nil {
 		return nil, err
@@ -191,10 +201,11 @@ func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool) ([
 		if scanErr != nil {
 			return nil, scanErr
 		}
+		findings = append(findings, scanWorkflowBundles(workflows)...)
 		if privacy.Blocking(findings) && !allowFlagged {
 			return nil, &flaggedGroupExportError{findings: findings}
 		}
-		archive, err = groupExportPAF(exp, findings, byHuman && allowFlagged && privacy.Blocking(findings))
+		archive, err = groupExportPAF(exp, findings, byHuman && allowFlagged && privacy.Blocking(findings), workflows)
 	} else {
 		archive, err = groupexport.Marshal(exp)
 	}
@@ -222,12 +233,23 @@ func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool) ([
 
 // groupExportPAF writes exp as a group PAF, signed when this node already
 // has a federation identity (exporting never creates one).
-func groupExportPAF(exp *groupexport.Export, findings []paf.Finding, allowed bool) ([]byte, error) {
+func groupExportPAF(exp *groupexport.Export, findings []paf.Finding, allowed bool, workflows []pwf.Bundle) ([]byte, error) {
 	// A PAF bounds its uncompressed size; the PAF default (2 GiB) leaves the
 	// same headroom the zip's 512 MiB compressed upload cap does.
 	opts := legacy.GroupWriteOptions{Producer: paf.Producer{Name: "tclaude", Version: buildversion.AppVersion()}, Findings: findings, AllowedFindings: allowed}
 	if id, err := proto.LoadIdentity(FederationKeyPath()); err == nil {
 		opts.Keys = []paf.SigningKey{{Key: id.Priv, KeyID: id.ID(), Signer: &paf.Signer{Kind: "instance"}}}
+	}
+	if len(workflows) > 0 {
+		opts.AddContent = func(w *paf.Writer, agents []string) error {
+			return writeCarriedWorkflows(w, workflows, agents, false)
+		}
+	}
+	opts.EarlierLosses = map[string]*paf.Losses{}
+	for _, c := range exp.Convs {
+		if l := storedConvLosses(c.ConvID); l != nil {
+			opts.EarlierLosses[c.ConvID] = l
+		}
 	}
 	var buf bytes.Buffer
 	if err := legacy.WriteGroupExport(exp, &buf, opts); err != nil {
@@ -279,6 +301,20 @@ type decodedGroupArchive struct {
 	Source  string
 }
 
+func (d *decodedGroupArchive) workflows() []paf.WorkflowItem {
+	if d.Archive == nil {
+		return nil
+	}
+	return d.Archive.Manifest.Workflows
+}
+
+func (d *decodedGroupArchive) signatures() []pwfSignatureView {
+	if d.Archive == nil {
+		return nil
+	}
+	return pwfSignatureViews(d.Archive.Signatures)
+}
+
 // decodeGroupArchive reads an import archive: a group PAF, verified and
 // read into the group export model, or a group export zip.
 func decodeGroupArchive(archive []byte) (*decodedGroupArchive, error) {
@@ -314,6 +350,9 @@ type importResponse struct {
 	Retitled       map[string]string `json:"retitled,omitempty"`
 	SkippedAliases []string          `json:"skipped_head_aliases,omitempty"`
 	FileWarnings   []string          `json:"file_warnings,omitempty"`
+	// Kept and Dropped list the file's elevated items by what became of them.
+	Kept    []string `json:"kept,omitempty"`
+	Dropped []string `json:"dropped,omitempty"`
 	// PromptWarnings reports what happened to the group's saved-prompt
 	// defaults: prompts created here, local versions kept, names dropped.
 	PromptWarnings []string `json:"prompt_warnings,omitempty"`
@@ -396,6 +435,7 @@ func readImportUpload(w http.ResponseWriter, r *http.Request) (archive []byte, i
 //
 // Permission slug: groups.import (default human-only).
 func handleGroupImport(w http.ResponseWriter, r *http.Request) {
+	r = withApprovalFacts(r, func(body []byte) string { return groupImportApprovalFacts(r, body) })
 	caller, ok := requirePermission(w, r, PermGroupsImport)
 	if !ok {
 		return
@@ -416,13 +456,22 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "import: "+err.Error())
 		return
 	}
-	resp, status, err := runGroupImport(archive, into, asName, caller, landing)
+	resp, status, err := runGroupImport(archive, into, asName, caller, landing, readImportKeep(r))
 	if err != nil {
 		code := "io"
-		switch status {
-		case http.StatusBadRequest:
+		var cut *groupHistoryCutError
+		var refused *groupPostureRefusal
+		var keep *importKeepError
+		switch {
+		case errors.As(err, &keep):
+			code = keep.code
+		case errors.As(err, &cut):
+			code = "history_confirmation_required"
+		case errors.As(err, &refused):
+			code = refused.kind
+		case status == http.StatusBadRequest:
 			code = "invalid_arg"
-		case http.StatusConflict:
+		case status == http.StatusConflict:
 			code = "exists"
 		}
 		writeError(w, status, code, err.Error())
@@ -441,17 +490,22 @@ func handleGroupImport(w http.ResponseWriter, r *http.Request) {
 type importInspection struct {
 	// Manifest summary — what the archive declares it holds. Source is
 	// "paf" for a group PAF, "group-export" for a zip.
-	Source        string `json:"source"`
-	SourceGroup   string `json:"source_group"`
-	FormatVersion int    `json:"format_version"`
-	SchemaVersion int    `json:"schema_version,omitempty"`
-	SourceHome    string `json:"source_home,omitempty"`
-	SourceOS      string `json:"source_os,omitempty"`
-	ExportedAt    string `json:"exported_at,omitempty"`
-	AgentCount    int    `json:"agent_count"`
-	MessageCount  int    `json:"message_count"`
-	ConvCount     int    `json:"conv_count"`
-	MissingConvs  int    `json:"missing_convs"`
+	Source      string `json:"source"`
+	SourceGroup string `json:"source_group"`
+	// CarriedWorkflows are workflows the file also holds. Importing the group
+	// stores none of them; a workflow import of the same file reviews each.
+	CarriedWorkflows []paf.WorkflowItem `json:"carried_workflows,omitempty"`
+	// Signatures are a group PAF's checked signatures.
+	Signatures    []pwfSignatureView `json:"signatures,omitempty"`
+	FormatVersion int                `json:"format_version"`
+	SchemaVersion int                `json:"schema_version,omitempty"`
+	SourceHome    string             `json:"source_home,omitempty"`
+	SourceOS      string             `json:"source_os,omitempty"`
+	ExportedAt    string             `json:"exported_at,omitempty"`
+	AgentCount    int                `json:"agent_count"`
+	MessageCount  int                `json:"message_count"`
+	ConvCount     int                `json:"conv_count"`
+	MissingConvs  int                `json:"missing_convs"`
 
 	// Target + collision analysis against THIS machine.
 	TargetName      string          `json:"target_name"`
@@ -462,6 +516,10 @@ type importInspection struct {
 	// Landings says where each conversation lands: its harness and model
 	// and the rung its history takes.
 	Landings []*groupMemberLanding `json:"landings"`
+	// FileWarnings says what the file asks for and will not get.
+	FileWarnings []string `json:"file_warnings,omitempty"`
+	// Confirm lists what a human may keep of that.
+	Confirm *importConfirmation `json:"confirm"`
 	// Findings are this node's own credential scan of the archive.
 	Findings []paf.Finding `json:"findings"`
 }
@@ -485,12 +543,14 @@ type convCollision struct {
 //   - (nil, 400, err) — the archive itself is unusable: not a zip, no
 //     manifest, malformed, or a format version this tclaude predates.
 //     There is nothing safe to preview; the caller blocks the import.
-func inspectGroupImport(archive []byte, asName, into string, landing groupLandingOptions) (*importInspection, int, error) {
+func inspectGroupImport(archive []byte, asName, into string, landing groupLandingOptions, keep importKeep) (*importInspection, int, error) {
 	decoded, err := decodeGroupArchive(archive)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	exp, source := decoded.Export, decoded.Source
+	drops := fileGroupDrops(exp)
+	settled := settleFileDrops(drops, keep.preview(), nil)
 	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
@@ -503,29 +563,45 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	if err := validateImportedConvIDs(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	// Previewed as the import will run it: mail and head aliases for
+	// conversations outside the file drop (import_foreign_refs.go).
+	foreignWarnings := dropImportForeignRefs(exp)
+	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
+	if keep.restrictedPeer {
+		foreignWarnings = append(foreignWarnings, remapImportOperatorMail(exp)...)
+	}
 
 	insp := &importInspection{
-		Source:         source,
-		SourceGroup:    exp.SourceGroup,
-		FormatVersion:  exp.FormatVersion,
-		SchemaVersion:  exp.SchemaVersion,
-		SourceHome:     exp.SourceHome,
-		SourceOS:       exp.SourceOS,
-		ExportedAt:     exp.ExportedAt,
-		AgentCount:     len(exp.Members),
-		MessageCount:   len(exp.Messages),
-		ConvCount:      len(exp.Convs),
-		ConvCollisions: []convCollision{},
+		CarriedWorkflows: decoded.workflows(),
+		Signatures:       decoded.signatures(),
+		Source:           source,
+		SourceGroup:      exp.SourceGroup,
+		FormatVersion:    exp.FormatVersion,
+		SchemaVersion:    exp.SchemaVersion,
+		SourceHome:       exp.SourceHome,
+		SourceOS:         exp.SourceOS,
+		ExportedAt:       exp.ExportedAt,
+		AgentCount:       len(exp.Members),
+		MessageCount:     len(exp.Messages),
+		ConvCount:        len(exp.Convs),
+		ConvCollisions:   []convCollision{},
 	}
 	cwd := ""
 	if into != "" {
 		cwd, _ = filepath.Abs(expandTilde(into))
 	}
+	insp.FileWarnings = append(append([]string(nil), settled.warnings...), foreignWarnings...)
+	// The confirmation's warnings are what a preview with keepable items
+	// shows, so the dropped mail and aliases ride there too.
+	insp.Confirm = newImportConfirmation(archiveDigest(archive), drops, keep.human, insp.FileWarnings)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, cwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	closeGroupLandings(landings)
+	if err := planGroupPostures(landings, exp, cwd); err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("import: %w", err)
+	}
 	insp.Landings = landings
 	if decoded.Archive != nil {
 		insp.Findings, err = privacy.ScanArchive(decoded.Archive, agentRecordLimit())
@@ -605,8 +681,12 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 // Gated on groups.import: inspecting an archive reveals its full
 // manifest, so the same slug that gates the import gates the preview.
 func handleGroupImportInspect(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermGroupsImport); !ok {
-		return
+	if !reviewingForApproval(r) {
+		r = withApprovalFacts(r, func(body []byte) string { return groupImportApprovalFacts(r, body) })
+		if _, ok := requirePermission(w, r, PermGroupsImport); !ok {
+			return
+		}
+		giveBackSudoUses(r)
 	}
 	archive, into, asName, ok := readImportUpload(w, r)
 	if !ok {
@@ -617,7 +697,7 @@ func handleGroupImportInspect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "import: "+err.Error())
 		return
 	}
-	insp, status, err := inspectGroupImport(archive, asName, into, landing)
+	insp, status, err := inspectGroupImport(archive, asName, into, landing, readImportKeep(r))
 	if err != nil {
 		code := "io"
 		if status == http.StatusBadRequest {
@@ -715,15 +795,6 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 		}
 		permission.ScopeJSON = canonical
 	}
-	for i := range exp.SudoGrants {
-		grant := &exp.SudoGrants[i]
-		grant.Slug = db.CanonicalPermissionSlug(grant.Slug)
-		canonical, err := canonicalImportedPermissionScopeForSlug(grant.Slug, grant.ScopeJSON)
-		if err != nil {
-			return fmt.Errorf("sudo grant %s/%s has invalid scope: %w", grant.ConvID, grant.Slug, err)
-		}
-		grant.ScopeJSON = canonical
-	}
 	return nil
 }
 
@@ -734,6 +805,9 @@ func canonicalizeImportedPermissionScopes(exp *groupexport.Export) error {
 // safe: an archive does not import lineage, so they naturally fail closed until
 // new post-import descendants are spawned.
 func canonicalImportedPermissionScopeForSlug(slug, raw string) (string, error) {
+	// An archive from before the drawing-board rename names a drawing board
+	// as resource=board:<id>; the installed grants were migrated (v320).
+	raw = strings.ReplaceAll(raw, `"board:`, `"drawing_board:`)
 	canonical, err := canonicalPermissionScopeForSlug(slug, raw)
 	if err != nil || canonical == "" {
 		return canonical, err
@@ -750,12 +824,19 @@ func canonicalImportedPermissionScopeForSlug(slug, raw string) (string, error) {
 	return canonical, nil
 }
 
-func runGroupImport(archive []byte, into, asName, caller string, landing groupLandingOptions) (resp *importResponse, status int, err error) {
+func runGroupImport(archive []byte, into, asName, caller string, landing groupLandingOptions, keep importKeep) (resp *importResponse, status int, err error) {
 	decoded, err := decodeGroupArchive(archive)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	exp := decoded.Export
+	drops := fileGroupDrops(exp)
+	if err := keep.check(archiveDigest(archive), fileImportItems(drops)); err != nil {
+		var refused *importKeepError
+		errors.As(err, &refused)
+		return nil, refused.status, err
+	}
+	settled := settleFileDrops(drops, keep, nil)
 	if err := canonicalizeImportedPermissionScopes(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
@@ -767,6 +848,14 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	exp.Group.AttachmentURL, exp.Group.AttachmentLabel = attachmentURL, attachmentLabel
 	if err := validateImportedConvIDs(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
+	}
+	// The importer remaps only the file's own conversations: mail and head
+	// aliases addressed to any other conversation drop, listed in the reply
+	// (import_foreign_refs.go). A peer import already refused them.
+	foreignWarnings := dropImportForeignRefs(exp)
+	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
+	if keep.restrictedPeer {
+		foreignWarnings = append(foreignWarnings, remapImportOperatorMail(exp)...)
 	}
 
 	targetName := asName
@@ -838,11 +927,21 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	}
 	// Members landing through a harness's own history import get the
 	// conversation id that import mints; the rest take the file path below.
+	fileWarnings := append(append([]string(nil), settled.warnings...), foreignWarnings...)
 	landings, err := planGroupLandings(exp, decoded.Archive, landing, targetCwd)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
 	defer closeGroupLandings(landings)
+	if err := planGroupPostures(landings, exp, targetCwd); err != nil {
+		return nil, http.StatusInternalServerError, fmt.Errorf("import: %w", err)
+	}
+	if refused := refusedPostures(landings); refused != nil {
+		return nil, refused.status, refused
+	}
+	if err := unconfirmedCuts(landings, landing.ConfirmHistoryLoss); err != nil {
+		return nil, http.StatusConflict, err
+	}
 	installed := map[string]bool{}
 	var uninstall []func()
 	defer func() {
@@ -884,6 +983,10 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		}
 		newID, undo, installErr := installGroupLanding(l, targetCwd)
 		if installErr != nil {
+			var refused *groupPostureRefusal
+			if errors.As(installErr, &refused) {
+				return nil, refused.status, refused
+			}
 			return nil, http.StatusInternalServerError, fmt.Errorf("import: land %s on %s: %w", c.Title, l.Harness, installErr)
 		}
 		uninstall = append(uninstall, undo)
@@ -925,7 +1028,6 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	}
 	// Any early return from here on must wipe the staging dir.
 	staged := make(map[string]string) // final conv-id -> staged file path
-	fileWarnings := []string{}
 	for i := range exp.Convs {
 		c := &exp.Convs[i]
 		finalID := convRemap[c.ConvID]
@@ -1028,6 +1130,7 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		ConvRemap:                   convRemap,
 		ClaimedConversationPaths:    claimedConversationPaths,
 		InstalledConversations:      installed,
+		MemberPostures:              memberPostures(landings, exp, convRemap),
 		ByConv:                      caller,
 		CanonicalizePermissionScope: canonicalImportedPermissionScopeForSlug,
 	})
@@ -1061,6 +1164,20 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 			collidedOnly[old] = fresh
 		}
 	}
+	for i, l := range landings {
+		if l.Rung == landingNone {
+			continue
+		}
+		c := &exp.Convs[i]
+		var earlier *paf.Losses
+		if decoded.Archive != nil && c.AgentKey != "" {
+			earlier, _ = decoded.Archive.Losses(c.AgentKey)
+		}
+		recordConvLosses(convRemap[c.ConvID], earlier, l.Losses)
+	}
+	saveCutMemberHistories(landings, exp, convRemap, result.GroupName)
+	fileWarnings = append(fileWarnings, recordOpenCodeLandings(landings, exp, convRemap, targetCwd)...)
+	logKeptImportItems(settled.kept)
 	slog.Info("group import complete",
 		"group", result.GroupName, "agents", result.AgentCount,
 		"messages", result.MessageCount, "remapped", len(collidedOnly),
@@ -1076,6 +1193,8 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 		Retitled:       retitled,
 		SkippedAliases: result.HeadAliasesSkipped,
 		FileWarnings:   append(fileWarnings, landingWarnings(landings)...),
+		Kept:           settled.kept,
+		Dropped:        settled.dropped,
 		PromptWarnings: append(promptWarnings, groupImportPromptWarnings(result)...),
 		Landings:       landings,
 	}, http.StatusOK, nil
@@ -1097,12 +1216,21 @@ func groupImportPromptWarnings(result *db.GroupImportResult) []string {
 
 func validateImportedConvIDs(exp *groupexport.Export) error {
 	for _, convID := range importedIdentityConvIDs(exp) {
-		parsed, err := uuid.Parse(convID)
-		if err != nil || parsed == uuid.Nil || parsed.String() != convID {
-			return fmt.Errorf("conversation id %q is not a canonical UUID", convID)
+		if !canonicalConvID(convID) {
+			return fmt.Errorf("conversation id %q is not a canonical UUID or OpenCode session id", convID)
 		}
 	}
 	return nil
+}
+
+// canonicalConvID is whether id is a conversation id as the importer writes
+// one: a canonical UUID or an OpenCode session id.
+func canonicalConvID(id string) bool {
+	if harness.ValidOpenCodeConvID(id) {
+		return true
+	}
+	parsed, err := uuid.Parse(id)
+	return err == nil && parsed != uuid.Nil && parsed.String() == id
 }
 
 func importedIdentityConvIDs(exp *groupexport.Export) []string {

@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DETACH_WINDOW_CHROME_HEIGHT, DETACH_WINDOW_MIN, DRAG_OUT_MARGIN,
-  detachWindowFeatures, dragLeftRegion, dragOutPoint, dragScreenPoint, draggedOut,
+  detachWindowFeatures, dragLeftRegion, dragOutPoint, dragScreenPoint, draggedOut, elementScreenPoint,
 } from '../dashboard/js/terminal-drag-out.js';
 
 const stripRect = { left: 100, top: 0, right: 400, bottom: 30, width: 300, height: 30 };
@@ -105,4 +105,16 @@ test('a dragged-out terminal asks for a window sized to the pane it is leaving',
   assert.equal(features({ screen: null }), '', 'an unmeasured screen asks for a plain tab');
   assert.equal(features({ size: { width: 0, height: 500 } }), '');
   assert.equal(detachWindowFeatures(), '');
+});
+
+test('elementScreenPoint places a page element on screen, past the browser chrome', () => {
+  const win = { screenX: 100, screenY: 50, outerWidth: 1216, innerWidth: 1200, outerHeight: 900, innerHeight: 800 };
+  assert.deepEqual(elementScreenPoint(win, { left: 300, top: 40 }), { x: 408, y: 190 });
+  assert.deepEqual(elementScreenPoint(win, null), { x: 108, y: 150 }, 'no element: the viewport corner');
+  assert.deepEqual(elementScreenPoint({ screenX: 10, screenY: 20 }, { left: 5, top: 6 }), { x: 15, y: 26 },
+    'without sizes, no chrome is assumed');
+  assert.deepEqual(elementScreenPoint({ ...win, outerWidth: 900, outerHeight: 600 }, { left: 5, top: 6 }), { x: 105, y: 56 },
+    'a zoomed page reports inner sizes past the outer ones');
+  assert.equal(elementScreenPoint({}, { left: 5, top: 6 }), null);
+  assert.equal(elementScreenPoint(null), null);
 });

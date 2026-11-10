@@ -40,19 +40,13 @@ func addPeerNodeManageRules(rules map[string]peerViewRule) {
 	}
 	rules["POST /api/spawn-profiles"] = peerViewRule{feature: "spawn.profiles.create", requires: PermNodeSpawnProfilesCreate, write: servePeerProfileCreate}
 	rules["POST /api/groups"] = peerViewRule{feature: "groups.create", requires: PermNodeGroupsCreate, write: servePeerGroupCreate}
-	// A template's team and a clone's members spawn on this node with its
-	// launch settings: only unrestricted trust holds these.
-	rules["POST /api/templates/{name}/instantiate"] = peerViewRule{feature: "groups.create.full", requires: PermNodeGroupsCreate, unrestrictedOnly: true, write: servePeerGrantedWrite(dashboardTemplatesRoute(handleTemplateInstantiate))}
-	rules["POST /api/groups/{name}/clone"] = peerViewRule{feature: "groups.create.full", requires: PermNodeGroupsCreate, unrestrictedOnly: true, write: servePeerGrantedWrite(groupRoute(handleDashboardGroupClone))}
-	// A group's ⚙ delete (with retiring its members first) and cleanup of its
-	// offline members remove what no peer grant hands out: only unrestricted
-	// trust holds these.
+	// Templates and clones: peer_group_launch.go.
+	// Retiring a group's members at once and cleanup of its offline members
+	// remove what no peer grant hands out: only unrestricted trust holds
+	// these. A group's delete is peer_group_structure.go's.
 	manage := func(next http.HandlerFunc) peerViewRule {
 		return peerViewRule{feature: "groups.manage.full", requires: PermGroupsDelete, unrestrictedOnly: true, write: servePeerFullGroup(next)}
 	}
-	rules["DELETE /api/groups/{name}"] = manage(groupRoute(func(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
-		dashboardDeleteGroup(w, g)
-	}))
 	rules["POST /api/groups/{name}/retire"] = manage(groupRoute(dashboardGroupRetire))
 	rules["POST /api/cleanup/group"] = manage(handleDashboardCleanup)
 }
@@ -79,7 +73,7 @@ func servePeerSetDefaultProfile(w http.ResponseWriter, r *http.Request, v *peerV
 		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
 		return
 	}
-	if !db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if !v.unrestricted() {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
 		var body struct {
 			Name string `json:"name"`
@@ -108,7 +102,7 @@ func servePeerProfileCreate(w http.ResponseWriter, r *http.Request, v *peerView,
 		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
 		return
 	}
-	if !db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if !v.unrestricted() {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		var body map[string]json.RawMessage
 		if err != nil || json.Unmarshal(raw, &body) != nil || body == nil {
@@ -143,23 +137,24 @@ func servePeerGroupCreate(w http.ResponseWriter, r *http.Request, v *peerView, r
 		writeError(w, http.StatusForbidden, "permission", "requires "+rule.requires)
 		return
 	}
-	if !db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if !v.unrestricted() {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		var body map[string]json.RawMessage
 		if err != nil || json.Unmarshal(raw, &body) != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "expected a JSON object")
 			return
 		}
+		// Launch settings take the peer's remote spawn grants for every
+		// group (peer_group_launch.go); a subgroup nests under a group the
+		// peer can see.
+		launch := map[string]json.RawMessage{}
 		for key, value := range body {
-			if !peerGroupCreateFields[key] && !emptyJSONValue(value) {
-				writeError(w, http.StatusForbidden, "permission", key+" requires unrestricted trust")
-				return
+			if !peerGroupCreateFields[key] || key == "parent" {
+				launch[key] = value
 			}
 		}
-		// A subgroup nests under a group the peer can see.
-		var parent string
-		if body["parent"] != nil && json.Unmarshal(body["parent"], &parent) != nil || parent != "" && !peerCatalogGroupVisible(parent, v) {
-			writeError(w, http.StatusNotFound, "not_found", "object not found")
+		if fail := peerLaunchBodyFailure(v, launch); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(raw))

@@ -1,6 +1,8 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
 import { shareOptions, shareSpawnFields } from './usage-share-model.js';
+import { openCodeToolsBase } from './opencode-tools-model.js';
+import { sandboxDenyPaths } from './spawn-deny-paths-model.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
 export const WT_NEW = '__new__';
@@ -9,6 +11,9 @@ export const WT_NEW = '__new__';
 // sandbox_profile: the request builder translates it to the explicit
 // omit_sandbox_profiles wire flag.
 export const SANDBOX_PROFILE_NONE = '/omit-all-tclaude-sandbox-profiles';
+// Mirrors Go's agent.IsValidSpawnName / agent.NormalizeSpawnName; the
+// browser cannot call them, so jstest/spawn-name-fixture pins this copy to
+// the same fixture (pkg/claude/agentd/jstest/spawn-name-fixture.json).
 export const MAX_SPAWN_NAME_LEN = 64;
 export const SPAWN_NAME_VALID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -30,20 +35,6 @@ export function findSpawnProfile(profiles, handle) {
   const name = text(handle).trim();
   return (profiles || []).find((profile) =>
     profile?.name === name || (profile?.aliases || []).includes(name)) || null;
-}
-
-export function spawnProfileChoices(profiles) {
-  const choices = [];
-  for (const profile of profiles || []) {
-    const status = profile.disabled
-      ? ` [🚫 disabled: ${text(profile.disabled_reason).replace(/\s+/g, ' ').trim()}]`
-      : profile.operator_only ? ' [👤 operator only]' : '';
-    choices.push({ value: profile.name, label: profile.name + status });
-    for (const alias of profile.aliases || []) {
-      choices.push({ value: alias, label: `${alias} → ${profile.name}${status}` });
-    }
-  }
-  return choices;
 }
 
 export function defaultSpawnHarness(harnesses) {
@@ -534,7 +525,20 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     contextWindowMaxMax: Number(harness?.context_window_max_max) || 0,
     contextFeatureCatalog: Array.isArray(harness?.context_features) ? harness.context_features : [],
     sandboxProfilesDisabled,
+    sandboxDenyBlockedReason: sandboxDenyBlockedReason(effectiveSandboxImpl, sandboxProfilesDisabled, draft),
   };
+}
+
+// sandboxDenyBlockedReason says why this launch cannot enforce a deny
+// overlay, or '': the daemon's denyOverlayLaunchFailure and omit refusal,
+// asked of the effective implementation as sandboxProfilesDisabled is.
+function sandboxDenyBlockedReason(effectiveSandboxImpl, sandboxProfilesDisabled, draft) {
+  if (effectiveSandboxImpl === SANDBOX_IMPL_OFF || effectiveSandboxImpl === SANDBOX_IMPL_RESOURCE_ONLY) {
+    return `Sandbox ${effectiveSandboxImpl} does not confine the filesystem, so it cannot enforce a deny.`;
+  }
+  if (sandboxProfilesDisabled) return 'This sandbox mode carries no sandbox profiles, so it cannot enforce a deny.';
+  if (draft.sandboxProfile === SANDBOX_PROFILE_NONE) return 'Sandbox profile “none” omits the profiles a deny is laid over.';
+  return '';
 }
 
 // harnessBuiltinModeControlLabel names the nested control after the harness that owns
@@ -730,6 +734,10 @@ export function createSpawnDraft({
     name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
     promptRefs: groupDefaultPrompts(groups, group?.name),
 		environment: [],
+    // The deny overlay (--sandbox-deny): paths, plus one still being typed.
+    // Operator intent, so a group or spawn-profile switch keeps it.
+    sandboxDeny: [],
+    sandboxDenyDraft: '',
     ...harnessDefaults(harness, rememberedEffort),
     owner: false,
     permissionOverrides: {},
@@ -737,6 +745,9 @@ export function createSpawnDraft({
     // steered appear, so an untouched dialog changes nothing about what the
     // agent loads.
     contextFeatures: {},
+    // Per-agent relaunch rows this spawn sets (field → mode, or "inherit"):
+    // the operator's own, so a profile change or Clear keeps them.
+    relaunchPolicy: {},
     cwd,
     cwdOrigin: cwd ? 'group' : '',
     wtRepo: cwd,
@@ -842,7 +853,9 @@ export function applySpawnProfile(
     next.approval = compatibleValue(profile.approval, view.approval.modes, next.approval);
   }
   if (profile.tools) {
-    next.tools = compatibleValue(profile.tools, view.tools.modes, next.tools);
+    // A profile's OpenCode value can carry per-tool entries after its base
+    // (all,question=deny), so the base is what must be a known mode.
+    next.tools = view.tools.modes.includes(openCodeToolsBase(profile.tools)) ? profile.tools : next.tools;
   }
   if (view.showApprovalReviewer) {
     // A sparse profile means "inherit", not "keep the last selected profile's
@@ -938,6 +951,10 @@ export function applySpawnProfile(
   // The profile's trims REPLACE the form's rather than merging, matching the
   // daemon's whole-tier resolution: one profile always tells the whole story of
   // what its agents load. A profile that trims nothing clears the form.
+  // The selected profile's own relaunch rows, kept so Save as profile carries
+  // them as it carries the profile's other fields. Not sent: the daemon reads
+  // the profile's rows itself.
+  next.profileRelaunchPolicy = { ...(profile.relaunch_policy || {}) };
   next.contextFeatures = view.showContextFeatures && profile.context_features
     ? { ...profile.context_features } : {};
   return syncSpawnWorktree(next, pickerUsable);
@@ -975,6 +992,7 @@ export function clearSpawnProfileFields(draft, context, {
   return syncSpawnWorktree({
     ...draft,
     profile: '',
+    profileRelaunchPolicy: {},
     name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
     ...spawnUserText(draft, previousProfile, prefill),
     promptRefs: groupDefaultPrompts(context.groups, draft.group),
@@ -1147,6 +1165,14 @@ export function spawnProfileSeed(draft, context) {
   if (view.showContextFeatures && Object.keys(draft.contextFeatures || {}).length) {
     seed.context_features = { ...draft.contextFeatures };
   }
+  // Save as profile carries this spawn's relaunch rows (operator Q10). A
+  // profile follows the global table by leaving a row out, so "Follow
+  // global" is not saved.
+  // The selected profile's rows, under this spawn's own: Follow global drops
+  // the profile's row for that field.
+  const relaunchRows = Object.fromEntries(Object.entries({ ...(draft.profileRelaunchPolicy || {}), ...(draft.relaunchPolicy || {}) })
+    .filter(([, mode]) => mode && mode !== 'inherit'));
+  if (Object.keys(relaunchRows).length) seed.relaunch_policy = relaunchRows;
   if (view.sandbox.visible) seed.sandbox = draft.sandbox;
   if (view.approval.visible) seed.approval = draft.approval;
   if (view.tools.visible) seed.tools = draft.tools;
@@ -1200,7 +1226,9 @@ export function spawnDraftIsDirty(draft, baseline, attachmentCount = 0) {
   if (JSON.stringify(draft.permissionOverrides || {})
     !== JSON.stringify(baseline.permissionOverrides || {})) return true;
   if (JSON.stringify(draft.roleRefs || []) !== JSON.stringify(baseline.roleRefs || [])) return true;
+  if (JSON.stringify(sandboxDenyPaths(draft)) !== JSON.stringify(sandboxDenyPaths(baseline))) return true;
   if (JSON.stringify(draft.promptRefs || []) !== JSON.stringify(baseline.promptRefs || [])) return true;
+  if (JSON.stringify(draft.relaunchPolicy || {}) !== JSON.stringify(baseline.relaunchPolicy || {})) return true;
   return contextFeaturesKey(draft.contextFeatures) !== contextFeaturesKey(baseline.contextFeatures);
 }
 
@@ -1245,7 +1273,33 @@ export function prepareSpawnDraft(
   return syncSpawnWorktree({ ...draft, name }, pickerUsable);
 }
 
-export function buildSpawnRequest(draft, context, worktreeSelection, attachmentPaths = []) {
+// PREFILLED_TOGGLES are the launch toggles the form pre-fills from the group
+// policy and the profiles, keyed draft field → request field (and the key of
+// the daemon's resolved echo). Given omission ({ operatorSet, resolved }),
+// buildSpawnRequest leaves one out when the operator did not set it and the
+// daemon resolves the same value without it, as the CLI does: a pre-filled
+// value is not an explicit choice, so it is not recorded as one, and a later
+// group policy can still reach the agent on relaunch. resolved is the spawn
+// preview's echo (POST .../spawn-preview, tcl-ezvrww) for the request with
+// those toggles left out; resolved null leaves every untouched toggle out (the
+// request to preview), and a toggle the echo does not carry is sent. Without
+// omission every shown toggle is sent.
+export const PREFILLED_TOGGLES = Object.freeze({
+  remoteControl: 'remote_control', autoMemory: 'auto_memory', peerMessaging: 'peer_messaging',
+});
+
+// spawnPreviewURL is the preview twin of a spawn request's URL.
+export function spawnPreviewURL(url) {
+  return String(url).replace(/\/spawn(\?|$)/, '/spawn-preview$1');
+}
+
+export function buildSpawnRequest(draft, context, worktreeSelection, attachmentPaths = [], omission = null) {
+  const sendToggle = (key) => {
+    if (!omission || omission.operatorSet?.has(key)) return true;
+    if (!omission.resolved) return false;
+    const resolved = omission.resolved[PREFILLED_TOGGLES[key]];
+    return !resolved || resolved.value !== String(!!draft[key]);
+  };
   const view = spawnCapabilityView(draft, context);
   const body = {
     name: text(draft.name).trim(),
@@ -1274,6 +1328,12 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   } else if (draft.sandboxProfile) {
     body.sandbox_profile = draft.sandboxProfile;
   }
+  // The deny overlay is sent whenever it is set, even on a launch that cannot
+  // enforce it: the daemon then refuses the spawn, where dropping the paths
+  // here would launch the agent without the denies it was asked for. A remote
+  // spawn cannot carry it, and the dialog does not offer it there.
+  const sandboxDeny = sandboxDenyPaths(draft);
+  if (sandboxDeny.length && !context.remoteSpawn) body.sandbox_deny = sandboxDeny;
   // A usage profile picked here replaces the inherited ones (human-only;
   // a remote spawn cannot carry it).
   if (draft.usageProfile && !context.remoteSpawn) body.usage_profiles = [draft.usageProfile];
@@ -1287,9 +1347,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (view.showTrustDir && draft.trustDirSpecified) {
     body.trust_dir = !!draft.trustDir;
   }
-  if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;
-  if (view.showAutoMemory) body.auto_memory = !!draft.autoMemory;
-  if (view.showPeerMessaging) body.peer_messaging = !!draft.peerMessaging;
+  if (view.showRemoteControl && sendToggle('remoteControl')) body.remote_control = !!draft.remoteControl;
+  if (view.showAutoMemory && sendToggle('autoMemory')) body.auto_memory = !!draft.autoMemory;
+  if (view.showPeerMessaging && sendToggle('peerMessaging')) body.peer_messaging = !!draft.peerMessaging;
   // Sent as an explicit true/false for a Copilot launch — like auto_memory, the
   // modal is authoritative, so an unchecked box overrides a profile's opt-in.
   // Omitted entirely for every other harness, leaving the pointer nil.
@@ -1356,6 +1416,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (view.showContextFeatures) {
     body.context_features = { ...(draft.contextFeatures || {}) };
   }
+  if (Object.keys(draft.relaunchPolicy || {}).length) body.relaunch_policy = { ...draft.relaunchPolicy };
   const cwd = text(draft.cwd).trim();
   const repo = text(draft.wtRepo).trim();
   if (worktreeSelection?.path && repo && repo !== cwd) {
@@ -1377,15 +1438,69 @@ export function groupHasContext(groups, groupName) {
   return text(findSpawnGroup(groups, groupName)?.default_context).trim() !== '';
 }
 
-export function attachKey(file) {
-  return `${file?.name || ''}|${file?.size || 0}|${file?.type || ''}`;
+// The spawn form's record of where its values came from, flat, for a fill's undo
+// (form-fill.js): which fields are touched, set by the operator, or overrides
+// that survive a profile switch, and the draft's own cwdOrigin and wtRepoEdited.
+const PROVENANCE_SETS = ['touched', 'operatorSet', 'profileOverrides'];
+const PROVENANCE_DRAFT = { cwdOrigin: 'cwd', wtRepoEdited: 'wtRepo' };
+
+export function spawnProvenance(sets, draft) {
+  const entries = {};
+  for (const name of PROVENANCE_SETS) for (const key of sets[name]) entries[`${name}:${key}`] = true;
+  for (const key of Object.keys(PROVENANCE_DRAFT)) entries[key] = draft[key];
+  return entries;
 }
 
-export function formatAttachmentSize(size) {
-  const value = Number(size) || 0;
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) {
-    return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+// What a harness change sets for the new harness: the island's changeHarness
+// marks each of these as touched and as a profile override.
+export const SPAWN_HARNESS_FIELDS = [
+  'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
+  'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
+  'autoMemory', 'peerMessaging', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
+  'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
+];
+
+// A field's id names its draft key, but for these: a different name, or a handler
+// that marks more keys than its own (agent-spawn-island.js). An operator who
+// holds the field holds all of them. A group change also re-derives cwd, which
+// is not listed: that is the very origin an undo gives back.
+const MODEL_KEYS = ['model', 'customModel', 'effort'];
+const WORKTREE_KEYS = ['worktree', 'worktreeBranch', 'syncWorktree'];
+const PROVENANCE_ID_ALIASES = {
+  'init-msg': ['initialMessage'], model: MODEL_KEYS, 'model-codex': MODEL_KEYS, 'model-custom': MODEL_KEYS,
+  harness: ['harness', ...SPAWN_HARNESS_FIELDS], group: ['group', 'wtRepo', 'remoteControl'], 'load-profile': ['profile'],
+  'trust-dir': ['trustDir', 'trustDirSpecified'],
+  worktree: WORKTREE_KEYS, 'wt-branch': WORKTREE_KEYS, 'wt-sync': WORKTREE_KEYS,
+  'wt-base': ['worktreeBase'], 'wt-fetch': ['fetchLatestWorktree'],
+  focus: ['autoFocus'], 'group-context': ['includeGroupContext'], 'copilot-api': ['copilotAPI'],
+};
+const camel = (name) => name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+
+function ownedDraftKeys(ownedIds) {
+  const keys = new Set();
+  for (const id of ownedIds) {
+    if (!id.startsWith('agent-spawn-')) continue;
+    const name = id.slice('agent-spawn-'.length);
+    for (const key of PROVENANCE_ID_ALIASES[name] || [camel(name)]) keys.add(key);
   }
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return keys;
+}
+
+// restoreSpawnProvenance puts entries back into the sets, and answers the draft
+// fields to patch. An entry for a field the operator has since touched stays as
+// it is: the field is theirs now.
+export function restoreSpawnProvenance(sets, entries, ownedIds = new Set()) {
+  const owned = ownedDraftKeys(ownedIds);
+  const draft = {};
+  for (const [entry, value] of Object.entries(entries)) {
+    if (entry in PROVENANCE_DRAFT) {
+      if (!owned.has(PROVENANCE_DRAFT[entry])) draft[entry] = value;
+      continue;
+    }
+    const [name, key] = entry.split(':');
+    if (!PROVENANCE_SETS.includes(name) || owned.has(key)) continue;
+    if (value) sets[name].add(key);
+    else sets[name].delete(key);
+  }
+  return draft;
 }

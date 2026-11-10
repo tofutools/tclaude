@@ -25,7 +25,7 @@ function menuMarkup() {
     <div class="action-menu" role="menu">
       <input class="action-menu-filter" type="text" />
       <button role="menuitem" data-act="add-member" title="Add an existing conversation to this group"
-        ><span class="theme-copy-regular">+ add member</span><span class="theme-copy-wizard">+ add familiar</span></button>
+        ><span class="theme-copy-regular">+ add member</span><span class="theme-copy-wizard">+ add hero</span></button>
       <button role="menuitem" data-act="cleanup-worktrees-group" title="Scan this group's repo for stale worktrees"
         >🧹 cleanup worktrees…</button>
       <div class="menu-sep" role="separator"></div>

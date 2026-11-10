@@ -34,7 +34,7 @@ type redactParams struct {
 
 func redactCmd() *cobra.Command {
 	return boa.CmdT[redactParams]{
-		Use:   "redact <file>",
+		Use:   "redact",
 		Short: "Write a redacted copy of a PAF, or preview the redactions",
 		Long: "Write a redacted copy of a PAF. Each redaction applies to every copy of\n" +
 			"the content: the contexts, text attachments, definition, environment,\n" +

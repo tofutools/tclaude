@@ -62,6 +62,7 @@ type auditCtx struct {
 type auditResult struct {
 	targetConv        string
 	targetLabel       string
+	groupName         string
 	eventID           string
 	detail            string
 	spawnResolved     any
@@ -78,6 +79,14 @@ type auditResultContextKey struct{}
 func setAuditTargetLabel(r *http.Request, label string) {
 	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
 		result.targetLabel = auditClip(label, 120)
+	}
+}
+
+// setAuditGroup names the group a command acted in, for a route whose path
+// does not carry it (a task board task id names no group).
+func setAuditGroup(r *http.Request, group string) {
+	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
+		result.groupName = auditClip(group, 120)
 	}
 }
 
@@ -223,11 +232,36 @@ var auditRoutes = []auditRoute{
 
 	// Spawn.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "spawn"}, verb: "spawn", describe: describeSpawn},
+	{method: http.MethodDelete, segs: []string{"spawn-queue", "{id}"}, verb: "spawn.queue.cancel"},
+	// Re-applying an edited spawn profile can stop and resume the agent and
+	// changes what it launches with: one row per agent.
+	{method: http.MethodPost, segs: []string{"spawn-profiles", "{name}", "reapply"}, verb: "spawn-profile.reapply"},
 
 	// Group lifecycle.
 	{method: http.MethodPost, segs: []string{"groups"}, verb: "group.create", describe: describeGroupCreate},
 	{method: http.MethodPost, segs: []string{"groups", "import"}, verb: "group.import"},
 	{method: http.MethodDelete, segs: []string{"groups", "{name}"}, verb: "group.delete"},
+	{method: http.MethodDelete, segs: []string{"drawing-boards", "{id}"}, verb: "drawing-board.delete"},
+	{method: http.MethodPost, segs: []string{"drawing-boards", "{id}", "title"}, verb: "drawing-board.rename"},
+	{method: http.MethodPost, segs: []string{"drawing-boards", "{id}", "group"}, verb: "drawing-board.move"},
+	// Live pages: an agent showing or closing its own page (/v1/pages), and
+	// the operator closing one from the dashboard (/api/pages/{id}).
+	{method: http.MethodPost, segs: []string{"pages"}, verb: "page.show"},
+	{method: http.MethodDelete, segs: []string{"pages", "{id}"}, verb: "page.close"},
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "reopen"}, verb: "page.reopen"},
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "delete"}, verb: "page.delete"},
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "reload"}, verb: "page.reload"},
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "title"}, verb: "page.rename"},
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "group"}, verb: "page.move"},
+	// The operator sending marks on a page to its agent (/api/pages/{id}/marks).
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "marks"}, verb: "page.marks"},
+	// An agent's page snapshot starts a browser on the host (/v1/pages/{name}/snapshot).
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "snapshot"}, verb: "page.snapshot"},
+	// An agent's live patches and evals change what the operator's open view
+	// of its page shows, and an eval runs the agent's script there (tcl-14z3fq).
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "patches"}, verb: "page.patch"},
+	{method: http.MethodDelete, segs: []string{"pages", "{id}", "patches"}, verb: "page.patch.reset"},
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "eval"}, verb: "page.eval"},
 	{method: http.MethodPatch, segs: []string{"groups", "{name}"}, verb: "group.update"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "rename"}, verb: "group.rename", describe: describeNewName},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "clone"}, verb: "group.clone"},
@@ -241,6 +275,20 @@ var auditRoutes = []auditRoute{
 	// write. Keeping this route describer-free avoids buffering or recording
 	// arbitrary denied/invalid request bodies.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "attachment"}, verb: "group.attachment"},
+	// Group task board (docs/taskboard.md): every change, with the task id
+	// and the group in the row.
+	{method: http.MethodPost, segs: []string{"groups", "{name}", "taskboard", "tasks"}, verb: "taskboard.add"},
+	{method: http.MethodPost, segs: []string{"groups", "{name}", "taskboard", "writers"}, verb: "taskboard.writers"},
+	{method: http.MethodPatch, segs: []string{"taskboard", "tasks", "{id}"}, verb: "taskboard.edit"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "move"}, verb: "taskboard.move"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "stage"}, verb: "taskboard.stage"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "status"}, verb: "taskboard.status"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "assign"}, verb: "taskboard.assign"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "unassign"}, verb: "taskboard.unassign"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "report"}, verb: "taskboard.report"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "move-to-group"}, verb: "taskboard.move-to-group"},
+	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "moved-away"}, verb: "taskboard.moved-away"},
+	{method: http.MethodPost, segs: []string{"groups", "{name}", "taskboard", "transfer-in"}, verb: "taskboard.transfer-in"},
 
 	// Membership + ownership.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "members"}, verb: "member.add", describe: describeMemberTarget},
@@ -274,12 +322,23 @@ var auditRoutes = []auditRoute{
 
 	// Permissions.
 	{method: http.MethodPost, segs: []string{"permissions", "grant"}, verb: "permissions.grant", describe: describePerm},
+	{method: http.MethodPost, segs: []string{"steward", "handover"}, verb: "steward.handover", describe: describeStewardHandover},
+	{method: http.MethodPost, segs: []string{"steward", "step-down"}, verb: "steward.step-down", describe: describeStewardHandover},
+	{method: http.MethodPost, segs: []string{"steward", "roster", "remove"}, verb: "steward.roster-remove", describe: describeStewardHandover},
+	// The create and renew responses hold a credential, so neither side of
+	// these is ever buffered.
+	{method: http.MethodPost, segs: []string{"external-stewards"}, verb: "external-steward.create", pathOnly: true},
+	{method: http.MethodPost, segs: []string{"external-stewards", "{name}", "renew"}, verb: "external-steward.renew", pathOnly: true},
+	{method: http.MethodPost, segs: []string{"external-stewards", "{name}", "spawn"}, verb: "external-steward.spawn-pin"},
+	{method: http.MethodPost, segs: []string{"external-stewards", "{name}", "revoke"}, verb: "external-steward.revoke", pathOnly: true},
+	{method: http.MethodPut, segs: []string{"steward", "default-permissions"}, verb: "steward.default-permissions", describe: describeStewardDefaults},
 	{method: http.MethodPost, segs: []string{"permissions", "deny"}, verb: "permissions.deny", describe: describePerm},
 	{method: http.MethodPost, segs: []string{"permissions", "revoke"}, verb: "permissions.revoke", describe: describePerm},
 	{method: http.MethodPost, segs: []string{"permissions"}, verb: "permissions.set", describe: describePermSet},
 
 	// Sudo (time-bounded elevation).
 	{method: http.MethodPost, segs: []string{"sudo"}, verb: "sudo.grant", describe: describeSudo},
+	{method: http.MethodPost, segs: []string{"sudo", "{id}", "extend"}, verb: "sudo.extend"},
 	{method: http.MethodDelete, segs: []string{"sudo", "{id}"}, verb: "sudo.revoke"},
 
 	// Human notification channel.
@@ -287,6 +346,9 @@ var auditRoutes = []auditRoute{
 	// Binary attachment bodies must not be buffered by the audit layer. Their
 	// message metadata is persisted on the resulting human_messages row.
 	{method: http.MethodPost, segs: []string{"notify-human", "attachment"}, verb: "notify-human.attach"},
+
+	// The operator clicking a notification's action link.
+	{method: http.MethodPost, segs: []string{"human-messages", "action"}, verb: "human-message.action"},
 
 	// Human clipboard write. The detail records only the byte count, never
 	// the copied text — clipboard content is often sensitive (a secret, a
@@ -780,6 +842,9 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	if result != nil && result.targetConv != "" {
 		fields.TargetConv = result.targetConv
 	}
+	if result != nil && result.groupName != "" && fields.GroupName == "" {
+		fields.GroupName = result.groupName
+	}
 	if status < http.StatusBadRequest && result != nil && result.targetLabel != "" {
 		fields.TargetLabel = result.targetLabel
 	}
@@ -838,6 +903,9 @@ func auditActor(r *http.Request, source string) (kind, conv, label string) {
 	case classHuman:
 		return db.AuditActorHuman, "", "operator"
 	case classAgent:
+		if p.ExternalSteward {
+			return db.AuditActorAgent, p.ConvID, "external:" + agent.TitleFor(p.ConvID)
+		}
 		return db.AuditActorAgent, p.ConvID, auditConvLabel(p.ConvID)
 	default:
 		return db.AuditActorUnknown, p.ConvID, "(unknown)"
@@ -907,8 +975,9 @@ type auditSpawnEnvelope struct {
 }
 
 // auditSpawnInputSnapshot preserves the request's parameter values without
-// putting the spawn briefing or the one-shot directory proof token into the
-// audit database. Audit detail is intentionally not a prompt/content store.
+// putting the spawn briefing, the one-shot directory proof token or environment
+// values into the audit database; environment names stay, so an operator can see
+// what was set. Audit detail is intentionally not a prompt/content store.
 func auditSpawnInputSnapshot(request []byte) (any, string) {
 	if len(request) == 0 {
 		return map[string]any{}, ""
@@ -918,6 +987,7 @@ func auditSpawnInputSnapshot(request []byte) (any, string) {
 	if err := json.Unmarshal(request, &input); err != nil {
 		return nil, "request body was not valid JSON"
 	}
+	db.RedactAuditEnvironment(input)
 	object, ok := input.(map[string]any)
 	if !ok {
 		return input, ""
@@ -951,6 +1021,7 @@ func encodeSpawnAuditDetail(summary string, request, response []byte, resolved a
 	if len(response) > 0 {
 		var output any
 		if err := json.Unmarshal(response, &output); err == nil {
+			db.RedactAuditEnvironment(output)
 			envelope.Response = output
 		} else {
 			envelope.ResponseRaw = string(response)
@@ -1131,6 +1202,7 @@ var auditedAgentVerbs = map[string]bool{
 	// find, and the /v1 route reserves it to a non-owner-conferred slug for the
 	// same reason.
 	"sandbox-impl": true,
+	"sandbox":      true,
 }
 
 func describeAgentVerb(c *auditCtx) {
@@ -1411,14 +1483,19 @@ func describeCron(c *auditCtx) {
 
 func describePerm(c *auditCtx) {
 	var b struct {
-		Slug string `json:"slug"`
-		Conv string `json:"conv"`
+		Slug   string `json:"slug"`
+		Target string `json:"target"`
 	}
 	_ = json.Unmarshal(c.body, &b)
 	if slug := strings.TrimSpace(b.Slug); slug != "" {
 		c.fields.Detail = slug
 	}
-	if sel := strings.TrimSpace(b.Conv); sel != "" {
+	switch sel := strings.TrimSpace(b.Target); sel {
+	case "":
+	case targetSentinelDefault:
+		// The default-permissions list is no agent, whatever one may be called.
+		c.fields.TargetLabel = sel
+	default:
 		c.fields.TargetConv, c.fields.TargetLabel = resolveAuditTarget(sel)
 	}
 }
@@ -1440,6 +1517,28 @@ func describePermSet(c *auditCtx) {
 	}
 	sort.Strings(parts)
 	c.fields.Detail = auditClip(strings.Join(parts, ", "), 120)
+}
+
+func describeStewardDefaults(c *auditCtx) {
+	var b struct {
+		Overrides map[string]db.PermissionOverride `json:"overrides"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	parts := make([]string, 0, len(b.Overrides))
+	for slug, override := range b.Overrides {
+		parts = append(parts, slug+"="+override.Effect)
+	}
+	sort.Strings(parts)
+	c.fields.Detail = auditClip(strings.Join(parts, ", "), auditDetailMax)
+}
+
+func describeStewardHandover(c *auditCtx) {
+	var b struct {
+		Agent string `json:"agent"`
+		Then  string `json:"then"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	c.fields.Detail = auditClip(strings.TrimSpace(b.Agent+" "+b.Then), auditDetailMax)
 }
 
 func describeSudo(c *auditCtx) {

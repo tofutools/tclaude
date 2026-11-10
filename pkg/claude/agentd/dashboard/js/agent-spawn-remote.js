@@ -29,6 +29,7 @@
 // other prompt is written into the brief.
 
 import { createAgentSpawnActions } from './agent-spawn-actions.js';
+import { requestJSON } from './request-json.js';
 
 const SPAWN_POLL_MS = 2000;
 const SPAWN_POLL_LIMIT_MS = 30 * 60 * 1000;
@@ -122,11 +123,9 @@ const FIELD_CONTROLS = Object.freeze({
   'agent-spawn-context-window-max': 'features',
   'agent-spawn-group-context': 'features',
   'agent-spawn-wt-repo': 'worktree',
-  'agent-spawn-worktree': 'worktree',
   'agent-spawn-wt-sync': 'worktree',
   'agent-spawn-wt-fetch': 'worktree',
   'agent-spawn-wt-branch': 'worktree',
-  'agent-spawn-wt-base': 'worktree',
 });
 
 function text(value) { return typeof value === 'string' ? value : ''; }
@@ -153,23 +152,7 @@ export function peerFetchFor(nodeId, fetchImpl = (...a) => globalThis.fetch(...a
 // peer view, whose /api/* the page already reroutes to the peer.
 export function remoteSpawnApi(nodeId, { fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
   const api = nodeId ? `/api/peer/${encodeURIComponent(nodeId)}/` : '/api/';
-  async function call(method, path, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) {
-      init.headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(body);
-    }
-    const res = await fetchImpl(api + path, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) {
-      const error = new Error(data?.error || `HTTP ${res.status}`);
-      error.status = res.status;
-      error.code = data?.code || '';
-      throw error;
-    }
-    return data;
-  }
+  const call = (method, path, body) => requestJSON(api + path, { method, body, fetchImpl });
   return Object.freeze({
     options: (group) => call('GET', `spawn-options/${encodeURIComponent(group)}`),
     spawn: (group, body) => call('POST', `groups/${encodeURIComponent(group)}/spawn`, body),

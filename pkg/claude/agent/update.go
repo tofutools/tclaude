@@ -14,7 +14,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/common"
-	"github.com/tofutools/tclaude/pkg/federation/proto"
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 	"github.com/tofutools/tclaude/pkg/selfupdate"
 )
 
@@ -24,13 +24,17 @@ type updateParams struct {
 	Apply    bool   `long:"apply" help:"Apply a verified update and gracefully restart agentd"`
 	Rollback bool   `long:"rollback" help:"Restore the previous binaries and restart agentd"`
 	Check    bool   `long:"check" help:"Check for an update (the default)"`
+	DryRun   bool   `long:"dry-run" help:"Test the saved update method without installing: what --apply would run, and the local checks it passes or fails"`
+	Force    bool   `long:"force" help:"With --apply: apply even when the new binary rejects agentd's current flags (the restart may then fail)"`
 	NoWait   bool   `long:"no-wait" help:"Return the durable job ID without waiting"`
 	Job      string `long:"job" optional:"true" help:"Read an existing durable update job by ID"`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
 
 func UpdateCmd() *cobra.Command {
-	return boa.CmdT[updateParams]{Use: "update", Short: "Check, apply or roll back a tclaude update (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *updateParams, _ *cobra.Command, _ []string) { os.Exit(runUpdate(p, os.Stdout, os.Stderr)) }}.ToCobra()
+	cmd := boa.CmdT[updateParams]{Use: "update", Short: "Check, test (--dry-run), apply or roll back a tclaude update (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *updateParams, _ *cobra.Command, _ []string) { os.Exit(runUpdate(p, cliStdout, cliStderr)) }}.ToCobra()
+	cmd.AddCommand(updateConfigCmd())
+	return cmd
 }
 func updateAPIPath(node, tail string) string {
 	if node == "" {
@@ -39,7 +43,11 @@ func updateAPIPath(node, tail string) string {
 	return "/v1/federation/peer/" + url.PathEscape(node) + "/node/update" + tail
 }
 func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
-	if (p.Apply && p.Rollback) || (p.Check && (p.Apply || p.Rollback)) || p.Job != "" && (p.Apply || p.Rollback || p.Check || p.Version != "") {
+	if p.Force && !p.Apply {
+		fmt.Fprintln(stderr, "Error: --force needs --apply")
+		return rcInvalidArg
+	}
+	if (p.Apply && p.Rollback) || (p.Check && (p.Apply || p.Rollback)) || p.Job != "" && (p.Apply || p.Rollback || p.Check || p.Version != "") || p.DryRun && (p.Apply || p.Rollback || p.Check || p.Job != "" || p.Version != "" || p.NoWait) {
 		fmt.Fprintln(stderr, "Error: choose only one update action")
 		return rcInvalidArg
 	}
@@ -50,6 +58,7 @@ func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
 	if p.Rollback {
 		req.Action = "rollback"
 	}
+	req.Force = p.Force
 	if err := req.Validate(); err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return rcInvalidArg
@@ -74,6 +83,12 @@ func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
 		}
 		return MapDaemonErrorToRC(err)
 	}
+	if p.DryRun {
+		if err := request(http.MethodGet, updateAPIPath(p.Node, "/preflight"), nil); err != nil {
+			return fail(err)
+		}
+		return printUpdatePlan(p, raw, stdout, stderr)
+	}
 	if p.Job != "" {
 		if err := request(http.MethodGet, updateAPIPath(p.Node, "/jobs/"+url.PathEscape(p.Job)), nil); err != nil {
 			return fail(err)
@@ -88,7 +103,7 @@ func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	for _, warning := range job.Warnings {
-		fmt.Fprintln(stderr, "Warning:", updateCell(warning))
+		fmt.Fprintln(stderr, "Warning:", termtext.Cell(warning))
 	}
 	if p.NoWait {
 		return printUpdateResult(p, raw, stdout, stderr)
@@ -98,7 +113,7 @@ func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
 	unreachableSince := time.Time{}
 	for time.Now().Before(deadline) {
 		if job.Phase != phase {
-			fmt.Fprintf(stderr, "Update %s: %s\n", job.ID, updateCell(job.Phase))
+			fmt.Fprintf(stderr, "Update %s: %s\n", job.ID, termtext.Cell(job.Phase))
 			phase = job.Phase
 		}
 		if job.State == "succeeded" || job.State == "failed" {
@@ -132,7 +147,6 @@ func runUpdate(p *updateParams, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "Update still running; inspect with --job %s\n", job.ID)
 	return rcIOFailure
 }
-func updateCell(s string) string { return strings.Join(strings.Fields(proto.StripControls(s)), " ") }
 func printUpdateResult(p *updateParams, raw json.RawMessage, stdout, stderr io.Writer) int {
 	var job selfupdate.Job
 	if err := json.Unmarshal(raw, &job); err != nil {
@@ -144,19 +158,106 @@ func printUpdateResult(p *updateParams, raw json.RawMessage, stdout, stderr io.W
 			return rcIOFailure
 		}
 	} else {
-		fmt.Fprintf(stdout, "%s %s: %s (%s)\n", updateCell(job.Action), updateCell(job.Version), updateCell(job.State), updateCell(job.ID))
+		fmt.Fprintf(stdout, "%s %s: %s (%s)\n", termtext.Cell(job.Action), termtext.Cell(job.Version), termtext.Cell(job.State), termtext.Cell(job.ID))
 		if job.Action == "check" && job.State == "succeeded" {
 			available := "unknown"
 			if job.UpdateAvailable != nil {
 				available = fmt.Sprint(*job.UpdateAvailable)
 			}
-			fmt.Fprintf(stdout, "Current: %s; selected: %s; update available: %s\n", updateCell(job.CurrentVersion), updateCell(job.Version), available)
+			fmt.Fprintf(stdout, "Current: %s; selected: %s; update available: %s\n", termtext.Cell(job.CurrentVersion), termtext.Cell(job.Version), available)
 		}
+		if len(job.Commits) > 0 {
+			fmt.Fprintf(stdout, "New commits (%d):\n", len(job.Commits))
+			for _, c := range job.Commits {
+				fmt.Fprintf(stdout, "  %s\n", termtext.Cell(c))
+			}
+		}
+		printLaunchCheck(stdout, job.Launch)
 		if job.Error != "" {
-			fmt.Fprintln(stderr, updateCell(job.Error))
+			fmt.Fprintln(stderr, termtext.Cell(job.Error))
 		}
 	}
 	if job.State == "failed" {
+		return rcIOFailure
+	}
+	return 0
+}
+
+// printLaunchCheck reports whether the update kept agentd's flags and
+// environment: the new binary's pre-flight check and, after the restart, the
+// comparison with what ran before.
+func printLaunchCheck(w io.Writer, c *selfupdate.LaunchCheck) {
+	if c == nil {
+		return
+	}
+	if c.ArgsCheck != "" {
+		line := "Flag check of the new binary: " + strings.ReplaceAll(c.ArgsCheck, "_", " ")
+		if c.ArgsCheckDetail != "" {
+			line += " (" + c.ArgsCheckDetail + ")"
+		}
+		fmt.Fprintln(w, termtext.Cell(line))
+	}
+	switch c.State {
+	case "recorded":
+		fmt.Fprintf(w, "Flags and environment: snapshot of %d flag/argument(s) and %d environment key(s); compared after the restart\n", max(len(c.Argv)-1, 0), c.EnvKeys)
+	case "identical":
+		fmt.Fprintln(w, "Flags and environment: kept ✓")
+	case "differs":
+		fmt.Fprintf(w, "Flags and environment: %d difference(s) after the restart:\n", len(c.Differences))
+		for _, d := range c.Differences {
+			fmt.Fprintf(w, "  %s\n", termtext.Cell(d.String()))
+		}
+	case "unavailable":
+		fmt.Fprintln(w, "Flags and environment: not compared (the snapshot could not be read)")
+	case "not_restarted":
+		fmt.Fprintln(w, "Flags and environment: not compared (agentd was not restarted)")
+	}
+}
+
+// printUpdatePlan prints a dry run (GET …/preflight); it exits non-zero when
+// a check failed, so a script can gate on it.
+func printUpdatePlan(p *updateParams, raw json.RawMessage, stdout, stderr io.Writer) int {
+	var plan selfupdate.Plan
+	if err := json.Unmarshal(raw, &plan); err != nil {
+		fmt.Fprintln(stderr, err)
+		return rcIOFailure
+	}
+	if p.JSON {
+		if err := json.NewEncoder(stdout).Encode(raw); err != nil {
+			return rcIOFailure
+		}
+	} else {
+		method := plan.Method
+		if method == "" {
+			method = "none chosen"
+		}
+		verdict := "ready"
+		if !plan.Ready {
+			verdict = "would fail"
+		}
+		latest := plan.LatestVersion
+		if latest == "" {
+			latest = "not checked (run tclaude update --check)"
+		}
+		fmt.Fprintf(stdout, "Update method %s: %s (dry run; nothing was installed)\n", termtext.Cell(method), verdict)
+		fmt.Fprintf(stdout, "Current: %s; latest release: %s\n", termtext.Cell(plan.CurrentVersion), termtext.Cell(latest))
+		marks := map[string]string{"ok": "ok  ", "warn": "warn", "fail": "FAIL"}
+		fmt.Fprintln(stdout, "Checks:")
+		for _, c := range plan.Checks {
+			fmt.Fprintf(stdout, "  [%s] %s: %s\n", marks[c.State], termtext.Cell(c.Name), termtext.Cell(c.Detail))
+		}
+		fmt.Fprintln(stdout, "Would run:")
+		for i, step := range plan.Steps {
+			fmt.Fprintf(stdout, "  %d. %s\n", i+1, termtext.Cell(step))
+		}
+		if len(plan.NotChecked) > 0 {
+			fmt.Fprintln(stdout, "Not checked:")
+			for _, n := range plan.NotChecked {
+				fmt.Fprintf(stdout, "  - %s\n", termtext.Cell(n))
+			}
+		}
+	}
+	if !plan.Ready {
 		return rcIOFailure
 	}
 	return 0

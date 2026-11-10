@@ -1,0 +1,315 @@
+// overlay-tab-strip.js -- a window's tabs, in its title bar. Even a window of one
+// tab shows it, so there is one layout. That tab drags the window, as a browser's
+// only tab does, and a window of several drags by the bar around them. A tab has
+// the window's two verbs, in the title bar's order: − minimizes it to the dock,
+// and × detaches it, as the window's ✕ does for every tab: it leaves the window
+// and the dock and keeps running in the background (tabClose). Neither stops
+// anything, but a running Steward asks first. Tabs group and take a
+// right-click menu as a Terminals strip's do, and a menu rests under a held finger.
+
+import { h } from 'preact';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
+import htm from 'htm';
+import { signal } from '@preact/signals';
+import { TabContextMenu, TabGroupRename, useArmedCollapse } from './tab-controls.js';
+import { sanitizeGroupName, segmentsFor } from './tab-group-model.js';
+import {
+  activateOverlayTab, changeOverlayGroup, groupOverlayTab, labelOverlayWindow, minimizeOverlayTab, minimizeOverlayTabs, moveOverlayGroup, moveOverlayTab,
+  overlayWindows, startOverlayGroup, tearOverlayGroupOut, tearOverlayTabOut, ungroupOverlayTabs,
+} from './overlay-instances.js';
+import { aimFromCollab, collabDrag, holdForMenu, startTabDrag, stripTargetAt, tabDropTarget, tabGhost } from './overlay-tab-drag.js';
+import { groupsOf, windowHolding } from './overlay-tab-model.js';
+import { TO_COLLAB_LABEL, TO_WINDOW_LABEL, tabMoves } from './overlay-tab-moves.js';
+import { Glyph, STANDARD_GLYPHS } from './overlay-window-controls.js';
+import { TabResourceRename, tabRenameKey, tabRenameTarget } from './tab-resource-rename.js';
+
+const html = htm.bind(h);
+
+const PILL_CLICK_PX = 5;
+
+// The open menu: { x, y, label, trigger } with the tabId or the windowId and
+// groupId it is for. A strip goes when its window shows another tab, so these
+// wait outside it.
+const tabMenu = signal(null);
+// The group being renamed: { windowId, groupId }.
+const renaming = signal(null);
+// The tab whose drawing board or page is being renamed: its id.
+const renamingTab = signal(null);
+
+const groupMembers = (window, groupId) => window.tabs.filter((tab) => tab.groupId === groupId);
+
+// The tab in flight. It stands apart from the strips, as it outlives leaving one.
+export function OverlayTabGhost() {
+  const ghost = tabGhost.value;
+  return ghost && html`<div class="overlay-tab-ghost" style=${{ left: `${ghost.x}px`, top: `${ghost.y}px` }}>${ghost.label}</div>`;
+}
+
+function tabItems(menu, window, { item, separator }, notify) {
+  const { tabId } = menu;
+  const tab = window.tabs.find((candidate) => candidate.id === tabId);
+  const others = window.tabs.length > 1;
+  // Out of the overlay, the same moves its title bar or ⚙ offers.
+  const { toCollab, toWindow, toDock } = tabMoves(tab);
+  const leaving = () => ({ rect: menu.trigger?.closest?.('section')?.getBoundingClientRect?.(), win: menu.trigger?.ownerDocument?.defaultView, notify });
+  const away = [
+    ...(toCollab ? [item(TO_COLLAB_LABEL, toCollab)] : []),
+    ...(toDock ? [item(toDock.label, toDock.run)] : []),
+    ...(toWindow ? [item(TO_WINDOW_LABEL, () => toWindow(leaving()))] : []),
+  ];
+  return [
+    item('New group from this tab', () => {
+      const group = startOverlayGroup(tabId);
+      if (group) renaming.value = { windowId: window.id, groupId: group.id };
+    }, { refocus: false }),
+    ...groupsOf(window).filter((group) => group.id !== tab.groupId).map((group) => item(`Add to “${group.name}”`, () => groupOverlayTab(tabId, group))),
+    ...(tab.groupId ? [item('Remove from group', () => groupOverlayTab(tabId))] : []),
+    separator,
+    ...(others ? [item('Move to a new window', () => tearOverlayTabOut(tabId, null))] : []),
+    ...away,
+    ...(others || away.length ? [separator] : []),
+    item('Minimize tab', () => minimizeOverlayTab(tabId)),
+    ...(others ? [
+      item('Minimize other tabs', () => minimizeOverlayTabs(window.id, (candidate) => candidate.id !== tabId)),
+      item('Minimize all tabs', () => minimizeOverlayTabs(window.id, () => true)),
+    ] : []),
+  ];
+}
+
+function groupItems(menu, window, { item, separator }) {
+  const { groupId } = menu;
+  const group = window.groups?.find((candidate) => candidate.id === groupId);
+  return [
+    item(group.collapsed ? 'Expand group' : 'Collapse group', () => changeOverlayGroup(window.id, groupId, { collapsed: !group.collapsed })),
+    item('Rename group…', () => { renaming.value = { windowId: window.id, groupId }; }, { refocus: false }),
+    item('Ungroup tabs', () => ungroupOverlayTabs(window.id, groupId)),
+    separator,
+    item('Minimize tabs in group', () => minimizeOverlayTabs(window.id, (tab) => tab.groupId === groupId)),
+  ];
+}
+
+const menuWindow = (menu) => {
+  if (!menu) return null;
+  const windows = overlayWindows.value;
+  if (menu.tabId) return windowHolding(windows, menu.tabId);
+  const window = windows.find((candidate) => candidate.id === menu.windowId);
+  return window?.groups?.some((group) => group.id === menu.groupId) ? window : null;
+};
+
+// The strip's menu, shown while what it is for is there.
+export function OverlayTabMenu({ notify = null }) {
+  const menu = tabMenu.value;
+  const window = menuWindow(menu);
+  useEffect(() => { if (menu && !window) tabMenu.value = null; }, [menu, window]);
+  if (!window) return null;
+  const close = (restoreFocus) => {
+    tabMenu.value = null;
+    if (restoreFocus) menu.trigger?.focus?.();
+  };
+  const focusBack = () => menu.trigger?.focus?.();
+  return html`<${TabContextMenu} menu=${menu} closeMenu=${close} focusAfterAction=${() => {}} focusAfterDismiss=${focusBack}
+    items=${(parts) => (menu.tabId ? tabItems(menu, window, parts, notify) : groupItems(menu, window, parts))} />`;
+}
+
+const openMenu = (what, trigger, { x, y }) => { tabMenu.value = { ...what, trigger, x, y }; };
+
+// OverlayTabMore is a window's ⋯, just left of its − ⇄ ×: the tab's own menu,
+// which a right-click or a hold on the tab also opens. Its moves (to Collab, a
+// kind's dock such as the Processes tab, a separate window) are how the title
+// bar offers them, rather than spelled out as buttons beside the symbols
+// (tcl-aukxip). The classic look keeps its words.
+export function OverlayTabMore({ tab, label }) {
+  const open = tabMenu.value?.tabId === tab.id;
+  return html`<button data-ui-exempt type="button" class="overlay-tab-more" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+    title="Move, group or minimize this tab" aria-label=${`More for ${label}`}
+    onClick=${(event) => openFromKeys({ tabId: tab.id, label }, event.currentTarget)}><${Glyph} path=${STANDARD_GLYPHS.more} /></button>`;
+}
+
+// A press from the keyboard has no point of its own, so it opens under the control.
+const openFromKeys = (what, trigger) => {
+  const rect = trigger.getBoundingClientRect();
+  openMenu(what, trigger, { x: rect.left, y: rect.bottom });
+};
+
+const menuHandlers = (what) => ({
+  onContextMenu: (event) => {
+    event.preventDefault();
+    openMenu(what, event.currentTarget, { x: event.clientX, y: event.clientY });
+  },
+  onKeyDown: (event) => {
+    if (!(event.shiftKey && event.key === 'F10')) return;
+    event.preventDefault();
+    openFromKeys(what, event.currentTarget);
+  },
+});
+
+function GroupStack({ window, group, overlay, win, renderTab }) {
+  const members = groupMembers(window, group.id);
+  const toggle = () => changeOverlayGroup(window.id, group.id, { collapsed: !group.collapsed });
+  const { onPillClick, clearCollapseTimer } = useArmedCollapse(toggle);
+  const where = { windowId: window.id, groupId: group.id, label: group.name };
+  const startRename = () => {
+    clearCollapseTimer();
+    renaming.value = { windowId: window.id, groupId: group.id };
+  };
+  const stopRename = () => { renaming.value = null; };
+  // A pill that drags its window rides along under the pointer, so the release
+  // lands on it as a click: only one that stayed put is a click on the pill.
+  const pressedAt = useRef(null);
+  const onClick = (event) => {
+    const from = pressedAt.current;
+    if (!event.detail || !from || Math.hypot(event.clientX - from.x, event.clientY - from.y) < PILL_CLICK_PX) onPillClick(event);
+  };
+  const onPointerDown = (event) => {
+    if (event.button !== 0) return;
+    pressedAt.current = { x: event.clientX, y: event.clientY };
+    const trigger = event.currentTarget;
+    const cancel = members.length === window.tabs.length ? (overlay.dragWindow(event), overlay.cancelGesture) : startTabDrag(event, {
+      ids: members.map((tab) => tab.id),
+      label: group.name,
+      land: (target) => moveOverlayGroup(window.id, group.id, target.windowId, target.index),
+      tear: (at) => tearOverlayGroupOut(window.id, group.id, at),
+    }, win);
+    holdForMenu(event, win, (point) => openMenu(where, trigger, point), cancel);
+  };
+  const menu = menuHandlers(where);
+  const onKeyDown = (event) => {
+    if (event.key === 'F2') {
+      event.preventDefault();
+      startRename();
+    } else menu.onKeyDown(event);
+  };
+  const isRenaming = renaming.value?.windowId === window.id && renaming.value?.groupId === group.id;
+  const visible = group.collapsed ? members.filter((tab) => tab.id === window.active) : members;
+  return html`<div class=${`mux-tab-group mux-group-${group.color} overlay-tab-group${group.collapsed ? ' collapsed' : ''}`} role="group"
+    aria-label=${`${group.name}, ${members.length} tab${members.length === 1 ? '' : 's'}`} data-tab-group=${group.id}>
+    ${isRenaming ? html`<${TabGroupRename} group=${group} label=${`Rename tab group ${group.name}`} onCancel=${stopRename}
+      onCommit=${(id, value) => { stopRename(); changeOverlayGroup(window.id, id, { name: sanitizeGroupName(value, group.name) }); }} />` : html`
+      <button data-ui-exempt type="button" class="mux-group-pill" aria-expanded=${group.collapsed ? 'false' : 'true'} aria-haspopup="menu"
+        aria-label=${`${group.name}, ${members.length} tab${members.length === 1 ? '' : 's'}`}
+        title=${`Drag to move the whole ${group.name} group · click to ${group.collapsed ? 'expand' : 'collapse'} · double-click or F2 to rename · right-click or press and hold for more`}
+        onPointerDown=${onPointerDown} onClick=${onClick} onDblClick=${(event) => { event.preventDefault(); event.stopPropagation(); startRename(); }}
+        onContextMenu=${menu.onContextMenu} onKeyDown=${onKeyDown}>
+        <span class="mux-group-caret" aria-hidden="true">${group.collapsed ? '▸' : '▾'}</span>
+        <span class="mux-group-name">${group.name}</span>
+        <span class="mux-group-count ui-badge" aria-hidden="true">${members.length}</span>
+      </button>`}
+    ${visible.map(renderTab)}
+  </div>`;
+}
+
+export function OverlayTabStrip({ window, overlay, win, viewOf, tabClose = null }) {
+  const target = tabDropTarget.value?.windowId === window.id ? tabDropTarget.value : null;
+  const stripRef = useRef(null);
+  // A strip too full for its bar still shows the tab that is showing.
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    const box = strip?.getBoundingClientRect?.();
+    const tab = strip?.querySelector?.('.companion-tab.selected')?.getBoundingClientRect?.();
+    if (!box || !tab) return;
+    if (tab.left < box.left) strip.scrollLeft += tab.left - box.left;
+    else if (tab.right > box.right) strip.scrollLeft += tab.right - box.right;
+  }, [window.active, window.tabs.length]);
+  const onPointerDown = (event, tab) => {
+    if (event.button !== 0) return;
+    const trigger = event.currentTarget;
+    const cancel = window.tabs.length > 1 ? startTabDrag(event, {
+      ids: [tab.id],
+      label: viewOf(tab).label,
+      land: (where) => moveOverlayTab(tab.id, where.windowId, where.index, where.groupId),
+      tear: (at) => tearOverlayTabOut(tab.id, at),
+    }, win) : (overlay.dragWindow(event), overlay.cancelGesture);
+    holdForMenu(event, win, (point) => openMenu({ tabId: tab.id, label: viewOf(tab).label }, trigger, point), cancel);
+  };
+  // The tabs in flight may be this strip's, and target.index counts without them.
+  const landsBefore = target && window.tabs.filter((tab) => !target.ids.includes(tab.id))[target.index]?.id;
+  // A Collab tab dragged over the title bar shows where it would land; its own
+  // strip's dragend takes it there, as that knows the pane. One that cannot float
+  // is not taken. A browser names no element a drag left for, so leaving is by
+  // where the pointer went.
+  useEffect(() => {
+    const bar = stripRef.current?.closest?.('header');
+    if (!bar) return undefined;
+    const over = (event) => {
+      if (!collabDrag.peek()?.floats) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      aimFromCollab(stripTargetAt(win?.document, { x: event.clientX, y: event.clientY }));
+    };
+    const leave = (event) => {
+      const box = bar.getBoundingClientRect();
+      const inside = event.clientX > box.left && event.clientX < box.right && event.clientY > box.top && event.clientY < box.bottom;
+      if (!inside && tabDropTarget.peek()?.windowId === window.id) aimFromCollab(null);
+    };
+    const drop = (event) => {
+      if (!collabDrag.peek()?.floats) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    bar.addEventListener('dragenter', over);
+    bar.addEventListener('dragover', over);
+    bar.addEventListener('dragleave', leave);
+    bar.addEventListener('drop', drop);
+    return () => {
+      bar.removeEventListener('dragenter', over);
+      bar.removeEventListener('dragover', over);
+      bar.removeEventListener('dragleave', leave);
+      bar.removeEventListener('drop', drop);
+    };
+  }, [window.id]);
+  // A rename ended from the keyboard leaves focus on its tab, not the page.
+  const renamedTab = useRef(null);
+  const editing = renamingTab.value;
+  useEffect(() => {
+    const was = renamedTab.current;
+    renamedTab.current = editing;
+    if (!was || editing === was) return;
+    const doc = stripRef.current?.ownerDocument;
+    if (doc && (!doc.activeElement || doc.activeElement === doc.body)) {
+      [...(stripRef.current?.querySelectorAll('[data-tab-id]') || [])].find((node) => node.dataset.tabId === was)?.querySelector('button[role="tab"]')?.focus();
+    }
+  }, [editing]);
+  // Ctrl+wheel over the title bar zooms a drawing board.
+  const onWheel = (event) => { if (!event.ctrlKey) event.currentTarget.scrollLeft += event.deltaY; };
+  const renderTab = (tab) => {
+    const { label, lead, title } = viewOf(tab);
+    const selected = tab.id === window.active;
+    const menu = menuHandlers({ tabId: tab.id, label });
+    // A drawing board's or a page's tab renames it in place: double-click or F2.
+    const target = tabRenameTarget(tab);
+    const startRename = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      renamingTab.value = tab.id;
+    };
+    const onKeyDown = (event) => {
+      if (target && tabRenameKey(event)) startRename(event);
+      else menu.onKeyDown(event);
+    };
+    const isRenaming = !!target && editing === tab.id;
+    return html`<div key=${tab.id} class=${`companion-tab${selected ? ' selected' : ''}${landsBefore === tab.id ? ' drop-before' : ''}${isRenaming ? ' renaming' : ''}`} data-tab-id=${tab.id}>
+      ${isRenaming ? html`<span class="companion-tab-renaming">${lead}<${TabResourceRename} target=${target} label=${label}
+        onRenamed=${(next) => labelOverlayWindow(tab.id, next)} onDone=${() => { if (renamingTab.peek() === tab.id) renamingTab.value = null; }} /></span>`
+      : html`<button data-ui-exempt type="button" role="tab" aria-selected=${selected ? 'true' : 'false'} aria-haspopup="menu"
+        title=${target ? [title, 'double-click or F2 to rename'].filter(Boolean).join(' · ') : title}
+        onPointerDown=${(event) => onPointerDown(event, tab)} onClick=${(event) => (selected ? overlay.releaseFocus(event) : activateOverlayTab(tab.id))}
+        onDblClick=${target ? startRename : undefined}
+        onContextMenu=${menu.onContextMenu} onKeyDown=${onKeyDown}>${lead}<span>${label}</span></button>`}
+      <span class="companion-tab-buttons">
+        <button data-ui-exempt type="button" class="companion-tab-minimize" aria-label=${`Minimize ${label} to dock`} title="Minimize to dock (it keeps running)"
+          onClick=${() => minimizeOverlayTab(tab.id)}><${Glyph} path=${STANDARD_GLYPHS.minimize} /></button>
+        ${tabClose && html`<button data-ui-exempt type="button" class="companion-tab-close" aria-label=${`Detach ${label} to background`} title=${tabClose.title(tab)}
+          onClick=${() => tabClose.onClose(tab.id)}><${Glyph} path=${STANDARD_GLYPHS.close} /></button>`}
+      </span>
+    </div>`;
+  };
+  const groups = new Map((window.groups || []).map((group) => [group.id, group]));
+  const groupOf = new Map(window.tabs.map((tab) => [tab.id, tab.groupId]));
+  const segments = segmentsFor(window.tabs.map((tab) => ({ ...tab, key: tab.id })), (key) => groupOf.get(key), groups);
+  return html`<div ref=${stripRef} class=${`companion-tabs overlay-tab-strip${target ? ' joining' : ''}`} role="tablist" aria-label="Tabs" data-tab-strip=${window.id} onWheel=${onWheel}>
+    ${segments.map((segment) => (segment.type === 'group'
+    ? html`<${GroupStack} key=${segment.key} window=${window} group=${segment.group} overlay=${overlay} win=${win} renderTab=${renderTab} />`
+    : renderTab(segment.pane)))}
+    ${target && !landsBefore && html`<span class="overlay-tab-drop-end" aria-hidden="true"></span>`}
+  </div>`;
+}

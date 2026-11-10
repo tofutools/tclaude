@@ -22,7 +22,7 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		"run: () => openRolesManageModal(),",
 		// template-management-island/model — the controlled per-agent role
 		// dropdown reads/writes role_ref and renders its transparency panel.
-		`<select class="ta-role-ref" value=${agent.role_ref}`,
+		`className="ta-role-ref"`,
 		"role_ref: agent.role_ref.trim(),",
 		"function RoleInspect({ roleName, roles })",
 		`<div class="ta-role-inspect">`,
@@ -35,15 +35,14 @@ func TestDashboardAssets_RoleLibraryWired(t *testing.T) {
 		"id=${`${domKind}-manage-modal`}",
 		`id="role-editor-modal"`,
 		`id="role-editor-brief"`,
-		`id="role-editor-perms" class="tool"`,
+		`<${Button} id="role-editor-perms"`,
 		`id="role-editor-submit"`,
 		`id="agent-spawn-role-refs"`,
 		`id="profile-editor-role-refs"`,
 		`role_refs: [...new Set((draft.roleRefs || [])`,
 		`.cron-create-row input:not([type])`,
-		`body.wizard #role-editor-modal .cron-create-row input:not([type])`,
-		`id="profile-editor-perms" class="tool"`,
-		`.cron-create-row > button.tool:is(#profile-editor-perms, #profile-editor-context-features, #role-editor-perms)`,
+		`<${Button} id="profile-editor-perms"`,
+		`.cron-create-row > .ui-btn:is(#profile-editor-perms, #profile-editor-context-features, #role-editor-perms)`,
 		// dashboard.css — the pure-CSS wizard vocabulary swap ("roles" → "classes").
 		"body.wizard .roles-word-wizard { display: inline; }",
 	} {

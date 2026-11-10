@@ -1,0 +1,9 @@
+[
+  ".disconnect-card",
+  ".knowledge-source-card",
+  ".mux-terminal-disconnect-card",
+  ".overlay-expose-card",
+  ".snap-assist-card",
+  ".vegas-card",
+  "body.wizard .vegas-card"
+]

@@ -1,0 +1,29 @@
+{
+  "drawing-board.css": [
+    ".drawing-board-section-name"
+  ],
+  "companion.css": [
+    ".companion-cog-head"
+  ],
+  "dashboard.css": [
+    ".cfg-advanced > summary",
+    ".cleanup-cats-label",
+    ".dnd-trash-label",
+    ".fa-k",
+    ".fleet-card-body dt",
+    ".force-role-name",
+    ".gf-label",
+    ".group-pending-title",
+    ".loc-tag",
+    ".mailbox-section",
+    ".pdr-verdict",
+    ".queued-spawns-popover-head",
+    ".role-inspect-key",
+    ".sbx-network-control-kind",
+    ".tc-disabled",
+    ".tc-operator-only",
+    ".usage-ov-heading",
+    ".window-groups .roles-label",
+    ".window-roles .roles-label"
+  ]
+}

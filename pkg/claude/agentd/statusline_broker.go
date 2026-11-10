@@ -2,10 +2,8 @@ package agentd
 
 import (
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/statusbar"
 )
@@ -38,149 +36,29 @@ import (
 // handleWhoamiStatusline applies one statusline render's writes on behalf
 // of the calling agent and returns the facts its bar needs.
 func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
-	const endpoint = "/v1/whoami/statusline"
-
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
-	p := peerFromContext(r.Context())
-	switch classify(p) {
-	case classAgent, classAgentUnknown, classUnconfirmed:
-		// classAgentUnknown is accepted for the same reason the hook
-		// endpoint accepts it: a freshly spawned agent renders its status
-		// line before its first SessionStart hook has established a conv-id.
-		// classUnconfirmed is provisional until the generation-bound pane
-		// proof below authenticates a version-named sandboxed harness.
-	case classUnidentified:
-		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
-			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
-			return
-		}
-		writeUnidentified(w)
-		return
-	default:
-		writeUnconfirmed(w, r)
-		return
-	}
-	if p.PID == 0 {
-		writeUnidentified(w)
-		return
-	}
-
-	// Resolve the ordinary candidate before parsing, but keep it provisional
-	// until the request claim can be checked against the live pane. The shared
-	// guard bounds that pre-proof work; only the final row is charged below.
-	// One process-table view for the whole request; see hook_broker.go.
-	timing := newBrokerTiming(endpoint, p.PID)
-	defer timing.finish()
-	procs := newBrokerProcTable()
-	row, _ := hookSessionRowForPIDIn(procs, p.PID)
-	timing.mark("resolve")
-	if row != nil {
-		timing.resolved = row.ID
-	}
-	preProofKey := brokerPreIdentityKey
-	if row != nil {
-		preProofKey = brokerPreIdentityKeyForRow(row.ID)
-	}
-	if checkBrokerRate(endpoint, preProofKey, brokerPreIdentityRatePerSecond).Reject {
-		if row == nil {
-			brokerRefusals.refuseUnplaceable("statusline: caller could not be placed",
-				brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID})
-		}
-		writeError(w, http.StatusTooManyRequests, "rate", "too many requests before identity verification")
-		return
-	}
-
-	body, err := io.ReadAll(io.LimitReader(r.Body, brokerMaxBody+1))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "body", "could not read request body")
-		return
-	}
-	if len(body) > brokerMaxBody {
-		resolvedID := ""
-		if row != nil {
-			resolvedID = row.ID
-		}
-		logBrokerBodyOverCap(endpoint, resolvedID, len(body))
-		writeError(w, http.StatusRequestEntityTooLarge, "body", "statusline payload too large")
-		return
-	}
-
 	var req statusbar.BrokeredRenderRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "body", "malformed statusline payload")
+	caller := brokerAuthenticate(w, r, brokerKind{
+		endpoint:            "/v1/whoami/statusline",
+		noun:                "statusline",
+		omittedClaimMessage: "tclaude’s sandbox statusline requires a proved session claim",
+		rateMessage:         "too many statusline renders",
+		decode: func(body []byte) (string, string, error) {
+			if err := json.Unmarshal(body, &req); err != nil {
+				return "", "", err
+			}
+			return req.ClaimedSessionID, "", nil
+		},
+	})
+	if caller == nil {
 		return
 	}
-	claimed := strings.TrimSpace(req.ClaimedSessionID)
-	proofKey := ""
-	if row != nil {
-		proofKey = row.ID
-	}
-	if checkBrokerProofRate(endpoint, brokerProofKeyForRow(proofKey)).Reject {
-		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
-		return
-	}
-	refusal := brokerRefusalContext{Endpoint: endpoint, CallerPID: p.PID, Claimed: claimed, procs: procs,
-		connAcceptedAt: connAcceptedAt(r.Context()), requestStartedAt: timing.start}
-	if row != nil {
-		refusal.Resolved = row.ID
-	}
-	if !procs.exists(p.PID) {
-		// See hook_broker.go: a vanished caller is not a refusal to badge.
-		brokerRefusals.noteCallerGone(refusal)
-		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
-		return
-	}
-	timing.mark("parse")
-	proof := proveTclaudeLayerCallerIn(procs, p.PID, claimed)
-	timing.proof = &proof
-	timing.mark("proof")
-	proofDetail := proof.detail
-	refusal.Detail = proofDetail
-	refusal.claimedTmux = proof.claimedTmux
-	layerClaim := proof.layerClaim
-	switch {
-	case proof.callerGone:
-		brokerRefusals.noteCallerGone(refusal)
-		writeError(w, http.StatusForbidden, "auth", "caller exited before its identity could be verified")
-		return
-	case layerClaim && proof.row != nil:
-		row = proof.row
-		timing.resolved = row.ID
-	case layerClaim:
-		if row != nil {
-			brokerRefusals.refuseAttributed(
-				"statusline: claimed tclaude’s sandbox session failed live-pane proof", refusal)
-		} else {
-			brokerRefusals.refuseUnplaceable("statusline: tclaude’s sandbox caller failed live-pane proof", refusal)
-		}
-		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
-		return
-	case row == nil:
-		brokerRefusals.refuseUnplaceable(
-			brokerClaimReason("statusline: caller could not be placed", claimed, proofDetail), refusal)
-		writeError(w, http.StatusForbidden, "auth",
-			"could not resolve a session row for this caller; refusing to apply its statusline")
-		return
-	case isTclaudeLayerRow(row):
-		brokerRefusals.refuseUnplaceable(
-			brokerClaimReason("statusline: tclaude’s sandbox callback omitted its session claim", claimed, proofDetail),
-			refusal)
-		writeError(w, http.StatusForbidden, "auth",
-			"tclaude’s sandbox statusline requires a proved session claim")
-		return
-	case claimed != "" && claimed != row.ID:
-		brokerRefusals.refuseAttributed("statusline: claimed session id disagrees with the resolved row", refusal)
-		writeError(w, http.StatusForbidden, "auth",
-			"claimed session id does not match the session resolved for this caller")
-		return
-	}
-	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
-		writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
-		return
-	}
+	timing := caller.timing
+	defer timing.finish()
+	row := caller.row
 	if !safeBrokeredConvID(req.RenderConvID) {
 		// Same reasoning as the hook endpoint: a conv-id is not merely
 		// stored, and a caller-controlled one that is not a single

@@ -45,15 +45,31 @@ func handleLibraryRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "kind is one of profiles, templates, roles, saved_prompts, sandbox_profiles")
 		return
 	}
-	if _, ok := requirePermission(w, r, perm); !ok {
+	caller, ok := requirePermission(w, r, perm)
+	if !ok {
 		return
 	}
 	if req.Name == req.To {
 		writeJSON(w, http.StatusOK, libraryRenameResp{Kind: req.Kind, Name: req.To, From: req.Name})
 		return
 	}
+	if req.Kind == "roles" {
+		// Renaming onto a name some profile already references hands that
+		// profile the role's grants (roleConferralFailure).
+		if existing, err := db.GetRole(req.Name); err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		} else if existing != nil {
+			renamed := *existing
+			renamed.Name = req.To
+			if fail := roleConferralFailure(caller, existing, &renamed); fail != nil {
+				writeSpawnFailure(w, fail)
+				return
+			}
+		}
+	}
 	if fail := rename(req.Name, req.To); fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	writeJSON(w, http.StatusOK, libraryRenameResp{Kind: req.Kind, Name: req.To, From: req.Name})
@@ -127,6 +143,10 @@ func renameTemplate(from, to string) *spawnFailure {
 		return fail
 	}
 	t.ID = existing.ID
+	// Carry the owner scopes verbatim: the wire round-trip renders a stored map
+	// it cannot decode as empty, and a rename must not drop a narrowing that
+	// changing needs groups.settings.owner-scopes for (tcl-yjjbfh).
+	t.OwnerScopesJSON = existing.OwnerScopesJSON
 	if err := db.UpdateGroupTemplate(t); errors.Is(err, db.ErrGroupTemplateNameTaken) {
 		return renameTaken(err)
 	} else if err != nil {

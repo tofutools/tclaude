@@ -2,11 +2,9 @@ package agentd
 
 import (
 	"io/fs"
-	"math"
 	"reflect"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -313,7 +311,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"<${EditableTitle} controller=${controller} view=${view} />",
 		"controller.setSelection({ type: 'template' })",
 		"controller.setTemplateMeta({ name })",
-		"params…", "⌘K commands",
+		"label: 'Params…'", "label: 'Commands…', shortcut: shortcutText('process-commands')",
 		"Review changes", "Keep editing",
 		"Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.",
 		"process-issues-panel",
@@ -355,7 +353,6 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"process-node-inspector.js": read("js/process-node-inspector.js"),
 		"process-node-fields.js":    read("js/process-node-fields.js"),
 		"process-params-dialog.js":  read("js/process-params-dialog.js"),
-		"process-scribe-dock.js":    read("js/process-scribe-dock.js"),
 		"process-diff-review.js":    read("js/process-diff-review.js"),
 	}
 	for name, source := range graphConsumers {
@@ -412,7 +409,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("process-node-chooser.js", chooser,
 		"buildProcessNodeTypeCommands", "rankCommands", "role: 'combobox'",
 		"role: 'listbox'", "role: 'option'", "aria-activedescendant",
-		"event.key !== 'Escape'", "aria-disabled", "disabledReason", "onOutsidePointerDown",
+		"aria-disabled", "disabledReason", "watchPopover({ roots: () => chooser",
 	)
 	if strings.Contains(validation, "innerHTML") {
 		t.Error("process-validation.js must not use innerHTML; diagnostic text is untrusted at render time")
@@ -445,9 +442,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"editor?.destroy?.()",
 		"document.addEventListener('tclaude:snapshot', poll)",
 		"void actions.observeTemplateHeads()",
-		"useDialogFocus({",
+		// The rename and create forms render the shared Dialog, which owns
+		// their focus trap, Escape and backdrop close.
+		`<${Dialog} id="process-rename-modal"`,
+		`<${Dialog} id="process-create-modal"`,
 		"registerCommandProvider('process-editor'",
-		"buildProcessEditorCommands({ editor: state.currentEditor(), actions })",
+		"buildProcessEditorCommands({ editor: paletteEditor(docked), actions })",
 	)
 	if strings.Contains(processes, "String(Number(value))") {
 		t.Error("processes-island.js must preserve number-param strings without JS precision round-tripping")
@@ -456,7 +456,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("process-params-dialog.js", params,
 		"export function ParamsDialog(",
 		"export function openProcessParamsDialog(",
-		"<${Overlay}",
+		"<${Dialog}",
 		"registered?.({ isDirty, requestClose })",
 		"dispose.isDirty = () => !!handle?.isDirty?.()",
 		"dispose.requestClose = () => handle?.requestClose?.()",
@@ -478,8 +478,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"name === 'templates' && (requestBusy(lifecycle) || headObservationPending)",
 		"'/v1/process/template-heads'",
 		"export function processActorPresentation(",
-		"`/api/open-window/${encodeURIComponent(agentId)}`",
-		"mintAttemptID = mintUUID",
+		"openHelperWindow(agentId, ",
+		"mintAttemptID = randomUUID",
 	)
 
 	css := read("dashboard.css")
@@ -512,13 +512,13 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// Inline controls are explicitly dark-themed (UA-white trap).
 		".process-inspector-select",
 		"body.wizard .process-palette-card",
-		"body.wizard .process-editor .process-action",
 		// Live-validation issues panel, explicitly themed on both skins.
 		".process-issues-panel",
 		".process-issue:hover, .process-issue:focus-visible",
 		"body.wizard .process-issues-panel",
-		".process-param-dialog",
-		"body.wizard .process-param-dialog",
+		// The parameters dialog is a Dialog: .ui-dialog paints its box in
+		// every skin (jstest/ui-dialog.test.mjs), so it keeps only its size.
+		".process-param-dialog {",
 		`.process-editor-modal .process-editor-field input:hover:not(:disabled):not(:focus):not([aria-invalid="true"])`,
 		`.process-editor-modal .process-editor-field input[aria-invalid="true"]`,
 		".process-editor-modal .process-editor-field input:disabled",
@@ -546,149 +546,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	}
 
 	// The graph core and validation loop stay out of every eager entry module:
-	// only the lazily imported editor may import them (flag-off page loads
-	// render nothing).
+	// only the lazily imported editor may import them.
 	for _, entry := range []string{"js/dashboard.js", "js/tabs.js", "js/processes.js", "js/processes-state.js", "js/processes-actions.js"} {
 		for _, banned := range []string{"process-graph.js", "process-validation.js"} {
 			if strings.Contains(read(entry), banned) {
-				t.Errorf("%s eagerly imports %s; flag-off must render nothing", entry, banned)
+				t.Errorf("%s eagerly imports %s; only the lazy editor may", entry, banned)
 			}
 		}
 	}
-}
-
-// TestDashboardProcessEditorScrollbarsScoped pins TCL-571's ownership and
-// theme contract. Actual editor scroll owners opt into one marker. Unrelated
-// dashboard scroll regions must never be captured by this block.
-func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
-	read := func(name string) string {
-		t.Helper()
-		body, err := fs.ReadFile(dashboardAssetsFS, name)
-		if err != nil {
-			t.Fatalf("embedded %s missing: %v", name, err)
-		}
-		return string(body)
-	}
-	css := read("dashboard.css")
-	start := strings.Index(css, "/* Actual editor-owned overflow containers carry this marker.")
-	end := strings.Index(css, ".process-editor-header {")
-	if start < 0 || end <= start {
-		t.Fatal("dashboard.css process scrollbar contract is missing or misplaced")
-	}
-	block := css[start:end]
-	for _, needle := range []string{
-		".process-scroll-surface {",
-		"--process-scrollbar-track: #0d1117;",
-		"--process-scrollbar-thumb: #6e7681;",
-		"--process-scrollbar-thumb-hover: #8b949e;",
-		"--process-scrollbar-thumb-active: #b1bac4;",
-		"--process-scrollbar-corner: #161b22;",
-		"--process-scrollbar-track: #181226;",
-		"--process-scrollbar-thumb: #755da0;",
-		"--process-scrollbar-thumb-hover: #957ac0;",
-		"--process-scrollbar-thumb-active: #d4af37;",
-		"--process-scrollbar-corner: #211832;",
-		"scrollbar-width: thin;",
-		"scrollbar-color: var(--process-scrollbar-thumb) var(--process-scrollbar-track);",
-		".process-scroll-surface::-webkit-scrollbar-thumb:hover {",
-		".process-scroll-surface::-webkit-scrollbar-thumb:active {",
-		".process-scroll-surface::-webkit-scrollbar-corner {",
-		"@media (forced-colors: active)",
-		"scrollbar-width: auto;",
-		"scrollbar-color: auto;",
-		"background: ButtonText;",
-		"background: Highlight;",
-	} {
-		if !strings.Contains(block, needle) {
-			t.Errorf("dashboard.css process scrollbar block missing %q", needle)
-		}
-	}
-	for _, banned := range []string{
-		".process-viewer",
-		".process-worklist",
-		"#command-palette-modal",
-	} {
-		if strings.Contains(block, banned) {
-			t.Errorf("dashboard.css process scrollbar block widened into %q", banned)
-		}
-	}
-
-	for name, needle := range map[string]string{
-		"js/processes-island.js":       `id="process-editor-view" class="process-canvas-view process-scroll-surface"`,
-		"js/process-editor-island.js":  "process-editor-palette process-scroll-surface",
-		"js/process-node-chooser.js":   "process-node-chooser-list process-scroll-surface",
-		"js/process-node-inspector.js": "process-node-inspector process-node-detail process-scroll-surface",
-		"js/process-params-dialog.js":  "process-param-list process-scroll-surface",
-	} {
-		if !strings.Contains(read(name), needle) {
-			t.Errorf("%s missing editor scroll ownership marker %q", name, needle)
-		}
-	}
-
-	for _, theme := range []struct {
-		name, selector string
-	}{
-		{name: "default", selector: ".process-scroll-surface"},
-		{name: "wizard", selector: "body.wizard .process-scroll-surface"},
-	} {
-		selectorMatch := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(theme.selector) + `\s*\{`).FindStringIndex(block)
-		if selectorMatch == nil {
-			t.Fatalf("%s scrollbar theme rule is missing", theme.name)
-		}
-		ruleStart := selectorMatch[0]
-		ruleOpen := strings.Index(block[ruleStart:], "{")
-		if ruleOpen < 0 {
-			t.Fatalf("%s scrollbar theme rule is malformed", theme.name)
-		}
-		ruleBodyStart := ruleStart + ruleOpen
-		ruleClose := strings.Index(block[ruleBodyStart:], "}")
-		if ruleClose < 0 {
-			t.Fatalf("%s scrollbar theme rule is malformed", theme.name)
-		}
-		rule := block[ruleBodyStart : ruleBodyStart+ruleClose]
-		tokens := map[string]string{}
-		for _, match := range regexp.MustCompile(`--process-scrollbar-(track|thumb|thumb-hover|thumb-active): (#[0-9a-f]{6});`).FindAllStringSubmatch(rule, -1) {
-			tokens[match[1]] = match[2]
-		}
-		if len(tokens) != 4 {
-			t.Fatalf("%s scrollbar theme has %d contrast tokens, want 4", theme.name, len(tokens))
-		}
-		normal := cssContrastRatio(t, tokens["thumb"], tokens["track"])
-		hover := cssContrastRatio(t, tokens["thumb-hover"], tokens["track"])
-		active := cssContrastRatio(t, tokens["thumb-active"], tokens["track"])
-		for state, ratio := range map[string]float64{"normal": normal, "hover": hover, "active": active} {
-			if ratio < 3 {
-				t.Errorf("%s %s thumb contrast is %.2f:1, want at least 3:1", theme.name, state, ratio)
-			}
-		}
-		if !(normal < hover && hover < active) {
-			t.Errorf("%s thumb contrast must increase normal < hover < active; got %.2f < %.2f < %.2f", theme.name, normal, hover, active)
-		}
-	}
-}
-
-func cssContrastRatio(t *testing.T, foreground, background string) float64 {
-	t.Helper()
-	luminance := func(value string) float64 {
-		value = strings.TrimPrefix(value, "#")
-		if len(value) != 6 {
-			t.Fatalf("invalid CSS hex color %q", value)
-		}
-		channels := make([]float64, 3)
-		for i := range channels {
-			parsed, err := strconv.ParseUint(value[i*2:i*2+2], 16, 8)
-			if err != nil {
-				t.Fatalf("invalid CSS hex color %q: %v", value, err)
-			}
-			channel := float64(parsed) / 255
-			if channel <= 0.04045 {
-				channels[i] = channel / 12.92
-			} else {
-				channels[i] = math.Pow((channel+0.055)/1.055, 2.4)
-			}
-		}
-		return 0.2126*channels[0] + 0.7152*channels[1] + 0.0722*channels[2]
-	}
-	a, b := luminance(foreground), luminance(background)
-	return (math.Max(a, b) + 0.05) / (math.Min(a, b) + 0.05)
 }

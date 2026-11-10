@@ -29,7 +29,7 @@ func TestDashboardMessageAccessDialogsHaveSingleOwner(t *testing.T) {
 
 	messageLegacy := string(mustReadFS(dashboardAssetsFS, "js/modal-message.js"))
 	dashboardEntry := string(mustReadFS(dashboardAssetsFS, "js/dashboard.js"))
-	if !strings.Contains(dashboardEntry, "openPermEditModal, openSudoGrantModal") {
+	if !strings.Contains(dashboardEntry, "openPermEditModal, openSudoEditModal") {
 		t.Error("dashboard.js uses the Groups permissions handoff without explicitly importing openPermEditModal")
 	}
 	for _, forbidden := range []string{

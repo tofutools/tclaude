@@ -3,6 +3,7 @@ import { useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { relTime, shortId } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
+import { Button, Select } from './ui-components.js';
 import {
   LINK_MODES, decisionFor, initialDraft, itemText, modeText, proposalLines,
   proposalStateText, proposalTurn, withdrawLabel,
@@ -15,8 +16,8 @@ function HeaderRow({ label, children }) {
 }
 
 function ItemStatus({ item }) {
-  if (item.status === 'accepted') return html`<span class="proposal-pill ok">accepted</span>`;
-  if (item.status === 'declined') return html`<span class="proposal-pill off">declined</span>`;
+  if (item.status === 'accepted') return html`<span class="ui-tag proposal-pill ok">accepted</span>`;
+  if (item.status === 'declined') return html`<span class="ui-tag proposal-pill off">declined</span>`;
   return null;
 }
 
@@ -37,9 +38,9 @@ function ProposalItemRow({ item, peer, draft, setDraft, open }) {
       <input type="checkbox" class="proposal-members-tick" checked=${!!draft.members[item.id]} disabled=${locked || !ticked}
         onChange=${(event) => set('members', event.currentTarget.checked)} /> member list</span>`}
     ${item.kind === 'group_link' && (open && !locked
-      ? html`<select class="proposal-mode" value=${draft.modes[item.id]} disabled=${!ticked}
+      ? html`<${Select} size="sm" class="proposal-mode" value=${draft.modes[item.id]} disabled=${!ticked}
           onChange=${(event) => set('modes', event.currentTarget.value)}>
-          ${LINK_MODES.map((mode) => html`<option key=${mode} value=${mode}>${modeText(mode)}</option>`)}</select>`
+          ${LINK_MODES.map((mode) => html`<option key=${mode} value=${mode}>${modeText(mode)}</option>`)}<//>`
       : html`<span class="proposal-mode-text">${modeText(item.mode)}</span>`)}
     <${ItemStatus} item=${item} />
   </label>`;
@@ -58,7 +59,7 @@ function ShareBack({ view, draft, setDraft }) {
       <input type="checkbox" class="proposal-shareback-tick" data-group=${group.name} checked=${draft.shareBack.includes(group.name)}
         onChange=${(event) => toggle(group.name, event.currentTarget.checked)} />
       <span class="grow">${group.name} · ${(group.members || []).length} members</span></label>`)}
-    <div class="proposal-hint">They see the name, description and member count; no member list, mail or presence.</div>
+    <div class="proposal-hint ui-hint">They see the name, description and member count; no member list, mail or presence.</div>
   </details>`;
 }
 
@@ -105,20 +106,20 @@ export function ProposalReader({ request, controller }) {
       <div class="proposal-items">${items.map((item) => html`<${ProposalItemRow} key=${item.id}
         item=${item} peer=${peer} draft=${draft} setDraft=${setDraft} open=${open} />`)}</div>
       ${open && html`<${ShareBack} view=${view} draft=${draft} setDraft=${setDraft} />`}
-      ${open && html`<div class="proposal-hint">Each side applies only its own items. Accepting changes nothing else: no broader messaging and no further links.</div>`}
+      ${open && html`<div class="proposal-hint ui-hint">Each side applies only its own items. Accepting changes nothing else: no broader messaging and no further links.</div>`}
     </div>
     <div class="mail-reader-actions access-reader-actions">
       ${open ? html`<${Fragment}>
           <span class="access-countdown" title="If you don't decide, this proposal is automatically declined.">${controller.accessCountdown(view.deadline || request.deadline)}</span>
           <span class="grow"></span>
-          <button class="access-btn deny" disabled=${busy} onClick=${() => decide({ revision: view.revision, decision: 'decline' })}>Decline all</button>
-          ${primary && html`<button class=${`access-btn ${primary.body.decision === 'counter' ? 'always' : 'approve'}`} id="proposal-primary"
-            disabled=${busy} onClick=${() => decide(primary.body)}>${primary.label}</button>`}</${Fragment}>`
+          <${Button} variant="danger" class="access-btn deny" disabled=${busy} onClick=${() => decide({ revision: view.revision, decision: 'decline' })}>Decline all<//>
+          ${primary && html`<${Button} variant=${primary.body.decision === 'counter' ? '' : 'success'} class=${`access-btn ${primary.body.decision === 'counter' ? 'always' : 'approve'}`} id="proposal-primary"
+            disabled=${busy} onClick=${() => decide(primary.body)}>${primary.label}<//>`}</${Fragment}>`
         : view.ours && turn === 'them' ? html`<${Fragment}>
           <span class="grow"></span>
-          <button class="access-btn deny" id="proposal-withdraw" disabled=${busy}
+          <${Button} variant="danger" class="access-btn deny" id="proposal-withdraw" disabled=${busy}
             title="Cancel the items the peer has not decided. Already accepted links stay until you remove them in Inter-group links."
-            onClick=${() => decide({ revision: view.revision, decision: 'withdraw' })}>${withdrawLabel(view)}</button></${Fragment}>`
+            onClick=${() => decide({ revision: view.revision, decision: 'withdraw' })}>${withdrawLabel(view)}<//></${Fragment}>`
           : html`<${Fragment}><span class="proposal-state">${proposalStateText(view)}</span>${request.decided_at && html`<span class="access-decided-at">${relTime(request.decided_at)}</span>`}</${Fragment}>`}
     </div>
   </${Fragment}>`;

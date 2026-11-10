@@ -568,36 +568,11 @@ func (rt *fedRuntime) stopSupersededTeleport(l *db.FederationTeleportLease) {
 	if err != nil {
 		return
 	}
-	if a != nil && a.Active() {
-		if !prepareTeleportShutdown(l, a.CurrentConvID) {
-			return
-		}
-		res, out := stopOneConvAndWait(a.CurrentConvID, false, db.AgentExitActionStop, "", 0)
-		if res.Action == "error" || out == softExitStuck || out == softExitUnattempted || teleportShutdownAlive(*l) {
-			l.LastError = res.Detail
-			if l.LastError == "" {
-				l.LastError = "pinned pane process still alive; waiting for verified exit"
-			}
-			_, _ = db.TransitionFederationTeleportLease(*l, "")
-			return
-		}
-	}
-	if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err != nil {
+	if a != nil && a.Active() && !stopTeleportAgentVerified(l, a) {
 		return
-	} else if presence != nil && a != nil {
-		if presence.State == "here" {
-			identity := presence.Transfer
-			identity.Hops++
-			if identity.Proofs == nil {
-				identity.Proofs = map[string]string{}
-			}
-			identity.Proofs[arrivalNode()] = db.NewAgentID()
-			if _, err := db.RetireFederationVisitor(a.CurrentConvID, arrivalNode(), l.Peer, l.Offer, identity); err != nil {
-				return
-			}
-		} else if presence.State != "away" || presence.DepartureOffer != l.Offer {
-			return
-		}
+	}
+	if !retireTeleportPresence(l, a) {
+		return
 	}
 	l.State = "superseded"
 	l.LastError = ""
@@ -606,11 +581,47 @@ func (rt *fedRuntime) stopSupersededTeleport(l *db.FederationTeleportLease) {
 }
 func (rt *fedRuntime) stopReturningTeleport(l *db.FederationTeleportLease) {
 	a, err := db.GetAgent(l.TargetAgent)
-	if err != nil || a == nil {
+	if err != nil {
 		return
 	}
-	if !prepareTeleportShutdown(l, a.CurrentConvID) {
+	if a == nil {
+		// The agent was deleted after it reported, so there is no conv left to
+		// stop. Not every delete stops the agent first (`tclaude conv rm` does
+		// not), so a missing row is not proof the harness exited. The return
+		// tells the origin "the remote confirmed it stopped", so it goes out
+		// only on proof: the shutdown process recorded at report time (or by an
+		// earlier stop attempt) is gone. Without that evidence the lease stays
+		// in returning, and the origin falls back to lease-lost recovery, which
+		// correctly warns that the remote may still be alive.
+		if l.ShutdownPID == 0 || teleportShutdownAlive(*l) {
+			msg := "agent deleted before its exit could be verified; waiting for verified exit"
+			if l.ShutdownPID == 0 {
+				msg = "agent deleted before its shutdown process was recorded; cannot verify it stopped"
+			}
+			if l.LastError != msg {
+				l.LastError = msg
+				_, _ = db.TransitionFederationTeleportLease(*l, "")
+			}
+			return
+		}
+	} else if !stopTeleportAgentVerified(l, a) {
 		return
+	}
+	if !retireTeleportPresence(l, a) {
+		return
+	}
+	l.State = "stopped"
+	l.LastError = ""
+	if won, e := db.TransitionFederationTeleportLease(*l, ""); e == nil && won {
+		l.Revision++
+	}
+}
+
+// stopTeleportAgentVerified stops the agent's session and reports whether its
+// exit is verified. When it is not, the lease records why and stays as it is.
+func stopTeleportAgentVerified(l *db.FederationTeleportLease, a *db.Agent) bool {
+	if !prepareTeleportShutdown(l, a.CurrentConvID) {
+		return false
 	}
 	res, out := stopOneConvAndWait(a.CurrentConvID, false, db.AgentExitActionStop, "", 0)
 	if res.Action == "error" || out == softExitStuck || out == softExitUnattempted || teleportShutdownAlive(*l) {
@@ -619,30 +630,33 @@ func (rt *fedRuntime) stopReturningTeleport(l *db.FederationTeleportLease) {
 			l.LastError = "pinned pane process still alive; waiting for verified exit"
 		}
 		_, _ = db.TransitionFederationTeleportLease(*l, "")
-		return
+		return false
 	}
-	if presence, err := db.GetAgentFederationPresence(l.TargetAgent); err != nil {
-		return
-	} else if presence != nil && a != nil {
-		if presence.State == "here" {
-			identity := presence.Transfer
-			identity.Hops++
-			if identity.Proofs == nil {
-				identity.Proofs = map[string]string{}
-			}
-			identity.Proofs[arrivalNode()] = db.NewAgentID()
-			if _, err := db.RetireFederationVisitor(a.CurrentConvID, arrivalNode(), l.Peer, l.Offer, identity); err != nil {
-				return
-			}
-		} else if presence.State != "away" || presence.DepartureOffer != l.Offer {
-			return
+	return true
+}
+
+// retireTeleportPresence retires the agent's visitor presence on this node,
+// or confirms it already left on this lease's offer. False leaves the lease
+// where it is.
+func retireTeleportPresence(l *db.FederationTeleportLease, a *db.Agent) bool {
+	presence, err := db.GetAgentFederationPresence(l.TargetAgent)
+	if err != nil {
+		return false
+	}
+	if presence == nil || a == nil {
+		return true
+	}
+	if presence.State == "here" {
+		identity := presence.Transfer
+		identity.Hops++
+		if identity.Proofs == nil {
+			identity.Proofs = map[string]string{}
 		}
+		identity.Proofs[arrivalNode()] = db.NewAgentID()
+		_, err := db.RetireFederationVisitor(a.CurrentConvID, arrivalNode(), l.Peer, l.Offer, identity)
+		return err == nil
 	}
-	l.State = "stopped"
-	l.LastError = ""
-	if won, e := db.TransitionFederationTeleportLease(*l, ""); e == nil && won {
-		l.Revision++
-	}
+	return presence.State == "away" && presence.DepartureOffer == l.Offer
 }
 func handleTeleportReport(w http.ResponseWriter, r *http.Request) {
 	caller, ok := requireAgent(w, r)
@@ -699,6 +713,21 @@ func beginTeleportReport(w http.ResponseWriter, r *http.Request, caller, finding
 		l.ReturnID = proto.NewEnvelopeID()
 		l.Findings = findings
 		l.State = "returning"
+		// Record the shutdown process now, while the caller's pane is live, so
+		// that a stop finding the agent deleted can still verify the harness
+		// exited (see stopReturningTeleport). Best effort: without it the stop
+		// captures it later, as before. ShutdownConv is deliberately left for
+		// the stop to record: a reincarnation between the report and the stop
+		// would otherwise trip prepareTeleportShutdown's generation check on
+		// every sweep.
+		if l.ShutdownPID == 0 && l.ShutdownConv == "" {
+			if sess := pickAliveSession(caller); sess != nil {
+				if target, err := captureLifecycleTarget(sess); err == nil {
+					l.ShutdownPID = target.panePID
+					l.ShutdownProcessStart = moveProcessStart(target.panePID)
+				}
+			}
+		}
 		won, e := db.TransitionFederationTeleportLease(*l, "")
 		if e != nil || !won {
 			writeError(w, 409, "lease", "lease changed")

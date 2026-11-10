@@ -164,6 +164,10 @@ type processGroupContext struct {
 	// Processes are the processes saved to the group, in pin order
 	// (tcl-8o4rjj).
 	Processes []processGroupProcess `json:"processes"`
+	// Drawing boards and Pages are the group's other collab resources, listed to the
+	// operator only (process_group_resources.go).
+	DrawingBoards []processGroupDrawingBoard `json:"drawingBoards,omitempty"`
+	Pages         []processGroupPage         `json:"pages,omitempty"`
 }
 
 // processGroupRole is one member role of a group and how many active
@@ -223,7 +227,11 @@ func handleProcessContext(w http.ResponseWriter, r *http.Request) {
 // and anyone holding process.runs.read (group owners hold it); otherwise an
 // agent sees its own groups' runs and the runs bound to itself.
 type processContextVisible struct {
-	all     bool
+	all bool
+	// human is the operator: only it is listed groups' drawing boards and pages
+	// (process_group_resources.go). An agent granted process.runs.read sees
+	// every run (all), not every resource.
+	human   bool
 	groups  map[int64]bool
 	agentID string
 }
@@ -255,7 +263,7 @@ func processContextVisibility(w http.ResponseWriter, r *http.Request) (processCo
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classHuman:
-		return processContextVisible{all: true}, true
+		return processContextVisible{all: true, human: true}, true
 	case classAgent:
 	default:
 		// Unidentified and unconfirmed callers get the ordinary gate's answer.
@@ -381,6 +389,11 @@ func buildProcessContext(ctx context.Context, visible processContextVisible) (pr
 	for _, r := range memberRoles {
 		roles[r.GroupID] = append(roles[r.GroupID], processGroupRole{Role: r.Role, Count: r.Count})
 	}
+	var drawingBoards map[int64][]processGroupDrawingBoard
+	var pages map[int64][]processGroupPage
+	if visible.human {
+		drawingBoards, pages = groupResources()
+	}
 	for _, group := range all {
 		if group.IsArchived() || (!visible.all && !visible.groups[group.ID]) {
 			continue
@@ -397,6 +410,7 @@ func buildProcessContext(ctx context.Context, visible processContextVisible) (pr
 		if saved.fs != nil {
 			g.Processes = saved.groupProcesses(ctx, group.ID)
 		}
+		g.DrawingBoards, g.Pages = drawingBoards[group.ID], pages[group.ID]
 	}
 	for _, g := range groups {
 		view.Groups = append(view.Groups, *g)

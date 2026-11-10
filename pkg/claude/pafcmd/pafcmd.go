@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -29,6 +31,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/paf/legacy"
 	"github.com/tofutools/tclaude/pkg/paf/privacy"
 	"github.com/tofutools/tclaude/pkg/paf/render"
+	"github.com/tofutools/tclaude/pkg/pwf"
 )
 
 type Params struct{}
@@ -43,7 +46,7 @@ func Cmd() *cobra.Command {
 			"bundles; they run locally, need no daemon, harness, model or network, and\n" +
 			"never change the file. See docs/paf.md.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		SubCmds:     []*cobra.Command{agent.PAFExportCmd(), agent.PAFImportCmd(), agent.PAFConsentCmd(), agent.PAFPublishCmd(), validateCmd(), inspectCmd(), renderCmd(), redactCmd(), encryptCmd(), decryptCmd()},
+		SubCmds:     []*cobra.Command{agent.PAFExportCmd(), agent.PAFImportCmd(), agent.PAFRevealCmd(), agent.PAFConsentCmd(), agent.PAFPublishCmd(), validateCmd(), inspectCmd(), renderCmd(), redactCmd(), encryptCmd(), decryptCmd()},
 		RunFunc: func(_ *Params, cmd *cobra.Command, _ []string) {
 			_ = cmd.Help()
 		},
@@ -57,7 +60,7 @@ type validateParams struct {
 
 func validateCmd() *cobra.Command {
 	return boa.CmdT[validateParams]{
-		Use:   "validate <file>",
+		Use:   "validate",
 		Short: "Verify a PAF's structure, schemas, hashes and signatures",
 		Long: "Verify a PAF completely: ZIP layout, manifest, schemas, entry hashes and\n" +
 			"sizes, semantic rules and signatures. Exits 1 when the file is invalid.\n" +
@@ -93,6 +96,9 @@ func runValidate(out io.Writer, p *validateParams) int {
 				res.Valid, res.Error = false, "signature "+sig.Path+" is invalid"
 			}
 		}
+		if err := checkWorkflows(o.Archive); err != nil {
+			res.Valid, res.Error = false, err.Error()
+		}
 	}
 	if p.JSON {
 		writeJSON(out, res)
@@ -124,6 +130,20 @@ func runValidate(out io.Writer, p *validateParams) int {
 	return 0
 }
 
+// checkWorkflows runs a workflow reader's checks on what the file carries.
+// pkg/paf only checks their hashes and links.
+func checkWorkflows(a *paf.Archive) error {
+	if len(a.Unsupported) > 0 || len(a.Warnings) > 0 {
+		return nil
+	}
+	for _, wf := range a.Manifest.Workflows {
+		if _, err := pwf.OpenEmbedded(a, wf.Key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type inspectParams struct {
 	File string `descr:"PAF file or legacy agent bundle" positional:"true"`
 	JSON bool   `long:"json" help:"Print the summary as JSON."`
@@ -132,7 +152,7 @@ type inspectParams struct {
 
 func inspectCmd() *cobra.Command {
 	return boa.CmdT[inspectParams]{
-		Use:   "inspect <file>",
+		Use:   "inspect",
 		Short: "Verify a PAF and describe it without showing the conversation",
 		Long: "Verify a PAF, then show what it holds: format and producer, signatures,\n" +
 			"extensions, privacy findings, and for each agent its harness, model,\n" +
@@ -181,6 +201,16 @@ func runInspect(out io.Writer, p *inspectParams) error {
 			fmt.Fprintf(out, "  %-19s %s\n", "Scan (this node):", termSafe(render.FindingLine(f)))
 		}
 	}
+	for _, wf := range s.Workflows {
+		fmt.Fprintf(out, "\nworkflow %s (%s)\n", termSafe(wf.Root), termSafe(wf.Key))
+		for _, role := range slices.Sorted(maps.Keys(wf.Performers)) {
+			fmt.Fprintf(out, "  %-19s %s\n", "Performer:", termSafe(role+": agent "+wf.Performers[role]))
+		}
+		for _, key := range wf.CarriedBy {
+			fmt.Fprintf(out, "  %-19s %s\n", "Carried by:", termSafe(key))
+		}
+		fmt.Fprintf(out, "  %-19s %s\n", "Review:", "tclaude agent process-templates inspect "+termSafe(p.File)+" --workflow "+termSafe(wf.Key))
+	}
 	for _, ag := range s.Agents {
 		fmt.Fprintf(out, "\nagent %s (%s)\n", termSafe(ag.Name), termSafe(ag.Key))
 		for _, f := range render.AgentFacts(ag) {
@@ -191,6 +221,9 @@ func runInspect(out io.Writer, p *inspectParams) error {
 		}
 		for _, l := range ag.Losses {
 			fmt.Fprintf(out, "  %-19s %s\n", "Loss:", termSafe(render.LossLine(l)))
+		}
+		if ag.PriorReports > 0 {
+			fmt.Fprintf(out, "  %-19s %d\n", "Earlier reports:", ag.PriorReports)
 		}
 	}
 	return nil
@@ -205,7 +238,7 @@ type renderParams struct {
 
 func renderCmd() *cobra.Command {
 	return boa.CmdT[renderParams]{
-		Use:   "render <file>",
+		Use:   "render",
 		Short: "Render a PAF as a readable Markdown or HTML document",
 		Long: "Verify a PAF and render it for reading: the archive facts, each agent's\n" +
 			"definition, environment and losses, and its conversation. This is the\n" +

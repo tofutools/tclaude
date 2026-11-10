@@ -1,8 +1,13 @@
 package common
 
 import (
+	"fmt"
+	"log/slog"
 	"os/exec"
+	"path"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/perfstats"
 )
@@ -56,9 +61,11 @@ func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
 		// `tmux ls` exits non-zero when there is no server. Treat that
 		// as the empty set rather than an error — it is the normal
 		// "nothing is running" state, not a probe failure.
-		if _, ok := err.(*exec.ExitError); ok {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			warnTmuxListFailure(string(exitErr.Stderr))
 			return map[string]struct{}{}, nil
 		}
+		warnTmuxListFailure(err.Error())
 		return nil, err
 	}
 	alive := map[string]struct{}{}
@@ -71,6 +78,34 @@ func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
 		alive[name] = struct{}{}
 	}
 	return alive, nil
+}
+
+// tmuxListWarned holds the tmux failures already logged, so a poll loop
+// logs each distinct one once.
+var tmuxListWarned sync.Map
+
+// warnTmuxListFailure logs why listing tclaude's tmux sessions failed,
+// unless it is only that no server runs. Every agent's liveness comes from
+// this listing, so any other failure (tmux missing, a socket directory
+// with the wrong owner or mode, a server of another tmux version) shows
+// every agent offline; without this line nothing said why.
+func warnTmuxListFailure(msg string) {
+	msg = strings.TrimSpace(msg)
+	if tmuxNoServer(msg) {
+		return
+	}
+	if _, seen := tmuxListWarned.LoadOrStore(msg, true); seen {
+		return
+	}
+	slog.Warn("tmux: listing tclaude's sessions failed; every agent shows offline", "error", msg)
+}
+
+// tmuxNoServer reports whether a failed `tmux ls` said only that no server
+// runs: tmux prints "no server running on <socket>", or "error connecting
+// to <socket> (No such file or directory)" when the socket does not exist.
+func tmuxNoServer(msg string) bool {
+	return strings.HasPrefix(msg, "no server running on ") ||
+		(strings.HasPrefix(msg, "error connecting to ") && strings.HasSuffix(msg, "(No such file or directory)"))
 }
 
 // tmuxCounterKey names a tmux invocation by its subcommand for the perfstats
@@ -89,9 +124,18 @@ func TmuxCommand(args ...string) *exec.Cmd {
 	return Default.Command(args...)
 }
 
-// TmuxArgs prepends -L tclaude to the given tmux arguments.
+// TmuxUTF8Flag makes a tmux client handle its I/O as UTF-8 whatever its
+// locale. Without it, a client whose LC_ALL / LC_CTYPE / LANG names no UTF-8
+// locale, and which is not itself inside tmux, escapes control characters
+// in what it prints. agentd under launchd has no locale, so the tab in
+// `list-sessions -F '#{session_name}\t#{pane_dead}'` came out as '_', no
+// session name matched, and every agent read as offline. Every tclaude tmux
+// client passes it, including commands built as shell text.
+const TmuxUTF8Flag = "-u"
+
+// TmuxArgs prepends -u -L tclaude to the given tmux arguments.
 func TmuxArgs(args ...string) []string {
-	return append([]string{"-L", TmuxSocketName}, args...)
+	return append([]string{TmuxUTF8Flag, "-L", TmuxSocketName}, args...)
 }
 
 // TmuxHyperlinksFeature is the tmux terminal-feature name for OSC 8 hyperlink
@@ -100,7 +144,7 @@ func TmuxArgs(args ...string) []string {
 // advertises the `Hls` capability. Neither the terminfo entry for the web
 // terminal's TERM nor tmux's own terminal auto-detection (xterm.js answers no
 // XTVERSION query) supplies it, so without an explicit opt-in every OSC 8 link
-// a harness draws reaches the browser as plain, unclickable label text.
+// a harness draws reaches the client as plain, unclickable label text.
 const TmuxHyperlinksFeature = "hyperlinks"
 
 // TmuxSyncFeature is the tmux terminal-feature name for synchronized output
@@ -111,12 +155,12 @@ const TmuxHyperlinksFeature = "hyperlinks"
 const TmuxSyncFeature = "sync"
 
 // TmuxClientFeaturesEnv asks a `tclaude session attach` child process to pass
-// tmux `-T <features>` for the client it forks. The dashboard's web terminals
-// reach tmux through that wrapper rather than by spawning tmux themselves, so
-// the "this client renders OSC 8" fact has to survive one process hop. It is
-// deliberately an env var and not a CLI flag: the native-terminal attach path
-// shares the same command builder and must keep tmux's default (detected)
-// feature set, since an arbitrary local terminal may not handle OSC 8.
+// tmux `-T <features>` for the client it forks, overriding the TERM-based choice
+// NativeTmuxClientFeatureArgs makes. The dashboard's web terminals reach tmux
+// through that wrapper rather than by spawning tmux themselves, so the "this
+// client renders OSC 8" fact has to survive one process hop. It is deliberately
+// an env var and not a CLI flag: the native-terminal attach path shares the same
+// command builder, and only the caller that knows the renderer may override it.
 const TmuxClientFeaturesEnv = "TCLAUDE_TMUX_CLIENT_FEATURES"
 
 // TmuxClientFeatureArgs turns a requested feature list into the tmux client
@@ -141,6 +185,52 @@ func TmuxClientFeatureArgs(features string) []string {
 		return nil
 	}
 	return []string{"-T", features}
+}
+
+// tmuxHyperlinkTerms are the TERM patterns of a native terminal that gets OSC 8
+// from tmux. The opt-in is per client rather than a server-wide terminal-features
+// entry on purpose: that entry would also match the federation pane renderer,
+// which runs as TERM=xterm-256color, and start sending peers the link targets of
+// a shared pane, which are not on its screen.
+//
+// It is an allowlist because the failure modes differ. A terminal that merely
+// ignores OSC 8 loses nothing, but one that prints unknown sequences, like an old
+// Linux console, would show the URLs as garbage. tmux*/screen* cover a nested
+// client, whose outer multiplexer applies its own policy.
+var tmuxHyperlinkTerms = []string{"xterm*", "alacritty*", "foot*", "wezterm*", "ghostty*", "tmux*", "screen*"}
+
+// NativeTmuxClientFeatureArgs returns the tmux client flags for attaching from a
+// real terminal identified by term, or nil when it gets tmux's default feature
+// set. It is what makes a labelled link a harness draws openable there: without
+// the feature tmux drops the target and leaves dead label text, which is worse
+// than running the harness outside tmux, where it reaches the same terminal.
+//
+// The version gate is load-bearing: tmux before 3.2 has no -T and refuses to
+// start the client, so an unguarded flag would break every attach, and the
+// feature itself arrived in 3.4. Anything that does not parse as a version, like
+// a `next-3.5` build, keeps the safe default.
+func NativeTmuxClientFeatureArgs(term string) []string {
+	if !slices.ContainsFunc(tmuxHyperlinkTerms, func(pattern string) bool {
+		matched, err := path.Match(pattern, term)
+		return err == nil && matched
+	}) {
+		return nil
+	}
+	version, err := Default.Command("-V").Output()
+	if err != nil || !TmuxVersionAtLeast(string(version), 3, 4) {
+		return nil
+	}
+	return TmuxClientFeatureArgs(TmuxHyperlinksFeature)
+}
+
+// TmuxVersionAtLeast reports whether version, the output of `tmux -V`, names at
+// least major.minor. Output it cannot parse reports false.
+func TmuxVersionAtLeast(version string, major, minor int) bool {
+	var gotMajor, gotMinor int
+	if _, err := fmt.Sscanf(strings.TrimSpace(version), "tmux %d.%d", &gotMajor, &gotMinor); err != nil {
+		return false
+	}
+	return gotMajor > major || gotMajor == major && gotMinor >= minor
 }
 
 // ExactTarget returns a tmux -t target that resolves the session name

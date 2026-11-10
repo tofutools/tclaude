@@ -28,6 +28,7 @@ Export a stored template. Its subprocess templates come with it:
 tclaude agent process-templates export ship-feature            # writes ship-feature.pwf
 tclaude agent process-templates export ship-feature -o - > x.pwf
 tclaude agent process-templates export ship-feature --version sha256:<hex> --title "Ship a feature"
+tclaude agent process-templates export ship-feature --author "Acme platform team" --licence MIT
 ```
 
 Exporting an older version (`--version`) makes that version the current one
@@ -42,10 +43,48 @@ the dashboard's share button asks before downloading it. The importing node
 sees the same list in its review, and the workflow cannot run there until the
 problems are fixed.
 
-A step that names one specific agent (an
-`assignee`) is exported as written, but it is not portable: the importing node
-has different agents, so export points those steps out and they wait there
-until someone reassigns them.
+A step that names one specific agent (an `assignee`) is not portable: the
+importing node has different agents, so the step falls to whoever holds its
+profile there, or waits until someone reassigns it. Export points those steps out and writes them as they are unless
+you give them a role instead:
+
+```bash
+tclaude agent process-templates export ship-feature --assignees-to-roles
+tclaude agent process-templates export ship-feature --assignee-role checkout=dev
+```
+
+`--assignees-to-roles` drops the name. The step asks for the role the agent
+holds in your groups, which the command prints, or keeps asking for its
+profile if it has one, since a role would narrow who can take it. An agent with
+no role or several keeps its name. `--assignee-role <agent>=<role>` sets the
+role you give, profile or not. The dashboard's share button offers the same
+conversion as `--assignees-to-roles`. This changes the exported templates only,
+not yours, so their refs differ from the stored ones and importing the file
+back here shows them as `update`. A run with no group needs the assignee, so
+don't take that update for a workflow you run that way.
+
+Export also scans the workflow for paths from your machine. A path under a
+home directory reveals a username, and a path outside the standard system
+directories may not exist on the importing node. `export` warns and lists each
+one with the field it is in, and the dashboard's share button asks first; the
+file is still written, and the importer's review shows the same list. Replace
+them with a param, or a path relative to the run's directory. Commands,
+arguments and param defaults are checked against the standard system
+directories (`/bin`, `/sbin`, `/usr`, `/lib`, `/dev`, `/proc`, `/sys`, `/tmp`,
+`/var/tmp`). Prompts and other text are checked for paths under the usual
+machine-specific roots only (such as `/home`, `/Users`, `/opt`, `/srv` and
+`/mnt`), and a template's source for home paths, since a comment travels too.
+It is a heuristic: it finds paths, not secrets.
+
+`--strict` turns all of this into a refusal: export writes nothing and lists
+every path, every step still naming an agent and every validation problem.
+Use it where a workflow must be portable, such as in a script that publishes
+one. Assignees that come from a `{{ params.x }}` are chosen per run, so they
+do not count. Converted assignees do not count either:
+
+```bash
+tclaude agent process-templates export ship-feature --strict --assignees-to-roles
+```
 
 Check a file without a daemon and without changing anything:
 
@@ -53,10 +92,12 @@ Check a file without a daemon and without changing anything:
 tclaude agent process-templates inspect ship-feature.pwf
 ```
 
-`inspect` verifies the file and prints what the workflow needs: its inputs,
+`inspect` verifies the file and prints who it says it is from and its licence,
+if the exporter gave them, and what the workflow needs: its inputs,
 the agent roles its steps ask for, the steps that ask you something, every
-command it would run, the steps that name a specific agent, and anything that
-keeps it from running (validation problems).
+command it would run, the steps that name a specific agent, paths from the
+exporting machine, and anything that keeps it from running (validation
+problems).
 
 Import it on another node:
 
@@ -104,12 +145,45 @@ tclaude agent process-templates import ship-feature.pwf --group webshop --yes
 Mapping and renaming rewrite templates, so the stored versions have new refs;
 the review lists each one as `<ref> as <new ref>`. A subprocess step pinned to
 a rewritten version is re-pinned to the rewritten one. In the dashboard, the
-import dialog offers the same choices.
+import dialog offers the same choices. Importing from a group, by *Import a
+.pwf* in *Get started* or by dropping the file on the group in Groups ›
+Processes, starts with that group chosen.
 
 Importing stores templates only. It never starts a run, and starting one later
 asks you to authorize each program profile its command steps use, as for any
 run (see [Processes](processes.md#running)). Export needs
 `process.templates.read`; import needs `process.templates.manage`.
+
+### Shipping agents with a workflow
+
+A workflow can travel with agents for its roles, as a `.paf`. See
+[Carrying workflows](paf.md#carrying-workflows).
+
+```bash
+tclaude agent process-templates export ship-feature --performer reviewer=alice --performer-history
+tclaude agent process-templates inspect ship-feature.paf --workflow ship-feature
+tclaude agent process-templates import ship-feature.paf --yes
+```
+
+`inspect` and `import` read a workflow out of any `.paf` that carries one, with
+the same checks and the same review as a `.pwf`. Importing the workflow lands
+none of the agents: they are listed in the review, and each lands through the
+[agent import](paf.md#importing-what-a-file-carries) with a review of its own.
+
+### Refusing unsigned files
+
+An unsigned file imports by default. To refuse it, turn on *Refuse unsigned
+workflows* in [Config › Processes](dashboard-config.md#processes), or set it in
+`config.json`:
+
+```json
+{"processes": {"refuse_unsigned_imports": true}}
+```
+
+The review still shows the file and says it is refused, and importing it fails.
+A signature that does not verify counts as none. A valid signature from a key
+this node does not know passes: the setting asks for a signature, so check the
+signer yourself. `inspect` is offline and does not apply it.
 
 ### Before you share
 
@@ -120,16 +194,18 @@ run (see [Processes](processes.md#running)). Export needs
 - Template text (prompts, questions, descriptions) travels as written. Keep
   secrets, internal hostnames and customer details out of it.
 - Prefer roles over specific agents, so the workflow runs anywhere.
+- Deal with the paths `export` warns about.
 
 ### Before you import
 
-- Check the signer. An unknown key proves only that the file is unchanged
+- Check the signer, not the author line, which anyone can write. An unknown key proves only that the file is unchanged
   since it was signed, not who signed it.
 - Read every command and its program profile. You authorize them, per run,
   when a run starts.
 - An `update` replaces your current version of a template you already have,
   unless you import it under a new id with `--rename`.
 - Map roles the review flags, or those steps wait for a role nobody has.
+- Check the paths the review lists: a step using one may fail here.
 
 ## File format
 
@@ -149,7 +225,7 @@ at most 32 MiB of uncompressed content and 1,000 entries, and 1 MiB per entry.
 
 ```text
 manifest.json                   format, version, root ref, entry hashes
-workflow.json                   title, summary, templates, and what the workflow needs
+workflow.json                   title, summary, credit, templates, and what the workflow needs
 README.md                       optional human documentation
 templates/<id>/<semantic-hash>  one process template source (YAML or JSON) per version carried
 signatures/<key-id>.json        detached signatures over manifest.json (optional)
@@ -179,15 +255,25 @@ Schema: [`manifest.schema.json`](pwf/schema/v0.1/manifest.schema.json).
 }
 ```
 
-`requires` lists features a reader must understand; PWF 0.1 defines none, and
-a 0.1 reader refuses a file that requires any.
+`requires` lists features a reader must understand, and a reader refuses a
+file that requires one it does not know, naming it. PWF 0.1 defines one:
+
+| Feature | Meaning |
+|---|---|
+| `loops` | A step has a [bounded loop](processes.md#review-loops). `workflow.json` lists them under `loops`, which a reader without this feature would leave out of its review. |
+
+A writer lists every feature the workflow uses. A reader still opens a file
+that has loops without the `loops` marker, because files written before the
+marker existed look like that.
 
 ### workflow.json
 
 Schema: [`workflow.schema.json`](pwf/schema/v0.1/workflow.schema.json).
 
-`title` and `summary` are free text from the exporter, without control
-characters (the summary may contain newlines and tabs). Everything else is
+`title`, `summary`, and the optional `author` and `licence` are free text from
+the exporter, without control characters (the summary may contain newlines and
+tabs). `author` and `licence` are at most 200 bytes, and they are only what the
+exporter says: a signature is what ties a file to a key. Everything else is
 derived from the templates, and a reader recomputes it and refuses a file
 whose `workflow.json` disagrees. That makes it safe to show a review from
 `workflow.json` alone.
@@ -197,8 +283,9 @@ whose `workflow.json` disagrees. That makes it safe to show a review from
   marks the version an unpinned subprocess reference to that id resolves to;
   each id has at most one head.
 - `params`: the root template's inputs.
-- `roles`: the agent roles steps ask for (an agent performer's `profile`),
-  each with the steps that use it.
+- `roles`: the agent roles steps ask for (an agent performer's `profile` or
+  `role`), each with the steps that use it. Files written before `role` was
+  listed still open, and read as listing it.
 - `programs`: every command step, as `{step, profile, run, args}`.
 - `assignees`: steps that name one specific agent.
 - `humans`: steps a person performs.
@@ -231,7 +318,8 @@ Signature files have PAF's [signature format](paf.md#signatures). The signed
 message is the ASCII string `pwf-manifest-signature-v1\n` followed by the
 lowercase hex SHA-256 of `manifest.json`. The prefix differs from PAF's, so a
 PAF signature never verifies a PWF file, or the reverse. Trust is decided by
-the public key alone; an unsigned file is valid but unverified.
+the public key alone; an unsigned file is valid but unverified, unless the
+node [refuses unsigned files](#refusing-unsigned-files).
 
 ## Versioning and compatibility
 

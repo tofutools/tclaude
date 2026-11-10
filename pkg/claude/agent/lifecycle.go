@@ -32,7 +32,7 @@ import (
 
 type compactParams struct {
 	FollowUp string `pos:"true" optional:"true" help:"Optional follow-up prompt to submit after /compact lands (quote multi-word strings)"`
-	Target   string `long:"target" optional:"true" help:"Compact ANOTHER agent's pane instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.compact permission, or being an owner of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Compact ANOTHER agent's pane instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -43,8 +43,7 @@ func compactCmd() *cobra.Command {
 		Long: "Asks tclaude agentd to inject `/compact` into a CC pane. " +
 			"By default the target is the calling agent itself (requires the " +
 			"`self.compact` permission). Use --target <selector> to compact ANOTHER " +
-			"agent — the manager pattern (requires `agent.compact`, or being an " +
-			"owner of a group containing the target). " +
+			"agent — the manager pattern. " + CrossAgentAuth("compact") + " " +
 			"\n\n" +
 			"An optional follow-up prompt is queued as the next turn after compact " +
 			"settles — the bytes wait in the pty until CC resumes reading. Note: " +
@@ -58,7 +57,7 @@ func compactCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *compactParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSlashWithOptionalTarget(p.FollowUp, p.Target, p.AskHuman, "compact", os.Stdout, os.Stderr))
+			os.Exit(runSlashWithOptionalTarget(p.FollowUp, p.Target, p.AskHuman, "compact", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -66,7 +65,7 @@ func compactCmd() *cobra.Command {
 // --- agent interrupt ---
 
 type interruptParams struct {
-	Target   string `long:"target" optional:"true" help:"Interrupt ANOTHER agent's active Codex turn instead of self. Requires agent.interrupt, or ownership of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Interrupt ANOTHER agent's active Codex turn instead of self."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On self permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
@@ -84,7 +83,7 @@ func interruptCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *interruptParams, _ *cobra.Command, _ []string) {
-			os.Exit(runSlashWithOptionalTarget("", p.Target, p.AskHuman, "interrupt", os.Stdout, os.Stderr))
+			os.Exit(runSlashWithOptionalTarget("", p.Target, p.AskHuman, "interrupt", cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -93,7 +92,7 @@ func interruptCmd() *cobra.Command {
 
 type contextInfoParams struct {
 	NoCache bool   `long:"no-cache" help:"Force a fresh local status gather (debugging escape hatch; rate limited)"`
-	Target  string `long:"target" optional:"true" help:"Show ANOTHER agent's context-window state instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.context-info permission, or being an owner of a group containing the target."`
+	Target  string `long:"target" optional:"true" help:"Show ANOTHER agent's context-window state instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 	Group   string `long:"group" optional:"true" help:"Show the context-window state of EVERY member of a group at a glance (name or id). Read-only; requires the agent.context-info permission, or being an owner of the group."`
 	JSON    bool   `long:"json" help:"Output JSON"`
 }
@@ -106,8 +105,7 @@ func contextInfoCmd() *cobra.Command {
 			"By default reports the calling agent's own state (read-only, no permission slug). " +
 			"\n\n" +
 			"--target <selector> reports ANOTHER agent's state — the manager pattern, for a lead watching a worker " +
-			"approach its context limit (requires `agent.context-info`, or being an owner of a group containing the " +
-			"target). --group <name|id> lists every member of a group in one table so a lead can spot anyone running " +
+			"approach its context limit. " + CrossAgentAuth("context-info") + " --group <name|id> lists every member of a group in one table so a lead can spot anyone running " +
 			"hot (requires `agent.context-info`, or owning the group). --target and --group are mutually exclusive.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *contextInfoParams, _ *cobra.Command) error {
@@ -116,7 +114,7 @@ func contextInfoCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *contextInfoParams, _ *cobra.Command, _ []string) {
-			os.Exit(runContextInfo(p, os.Stdout, os.Stderr))
+			os.Exit(runContextInfo(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -176,21 +174,20 @@ func isValidInitialMessage(s string) bool {
 // title's 64-char display cap (a spawn name becomes the conversation
 // title via the post-spawn /rename injection), so a name that clears
 // this also clears the daemon's downstream isValidRenameTitle gate.
-// Both the client-side validator here and the daemon-side one
-// (agentd/handlers.go) share this constant so their caps stay identical.
 const MaxSpawnNameLen = 64
 
-// isValidSpawnName mirrors the daemon-side isValidSpawnName check
-// (agentd/handlers.go). It enforces the agent-name charset at the spawn
-// boundary: ASCII letters, digits, '_' and '-' only — no spaces,
-// punctuation, or unicode. An empty name is valid (the name is optional;
-// the agent gets an auto-generated label). This is intentionally
-// stricter than isValidRenameTitle: a spawn name doubles as a git
-// worktree branch name (the dashboard's name→branch sync), so it must be
-// a safe branch token, and the strict set is a clean subset of the
-// rename charset so a non-empty validated name always clears the
-// downstream /rename gate.
-func isValidSpawnName(name string) bool {
+// IsValidSpawnName is the one spawn-name gate, used by this CLI and by the
+// daemon (agentd), and mirrored by the dashboard's SPAWN_NAME_VALID; all three
+// are pinned to agentd/jstest/spawn-name-fixture.json. It enforces the agent-name charset
+// at the spawn boundary: ASCII letters, digits, '_' and '-' only — no spaces,
+// punctuation, or unicode — and at most MaxSpawnNameLen bytes. An empty name
+// is valid (the name is optional; the agent gets an auto-generated label).
+// This is intentionally stricter than the rename-title gate: a spawn name
+// doubles as a git worktree branch name (the dashboard's name→branch sync), so
+// it must be a safe branch token, and the strict set is a clean subset of the
+// rename charset so a non-empty validated name always clears the downstream
+// /rename gate.
+func IsValidSpawnName(name string) bool {
 	if len(name) > MaxSpawnNameLen {
 		return false
 	}
@@ -203,7 +200,7 @@ func isValidSpawnName(name string) bool {
 }
 
 // isSpawnNameRune reports whether r is in the spawn-name charset: ASCII
-// letters, digits, '-' and '_'. Factored out so isValidSpawnName (the
+// letters, digits, '-' and '_'. Factored out so IsValidSpawnName (the
 // accept set) and NormalizeSpawnName (the coerce set) read off ONE
 // definition and can't drift.
 func isSpawnNameRune(r rune) bool {
@@ -219,7 +216,7 @@ func isSpawnNameRune(r rune) bool {
 }
 
 // NormalizeSpawnName coerces an arbitrary string into a valid spawn name —
-// the safe [A-Za-z0-9_-] branch-token charset isValidSpawnName accepts —
+// the safe [A-Za-z0-9_-] branch-token charset IsValidSpawnName accepts —
 // so any name a human types "just works" instead of being rejected. It is
 // the opt-out-able auto-normalization the spawn surfaces (the dashboard
 // modal, `tclaude agent spawn`, the daemon's spawn boundary) apply when
@@ -233,7 +230,7 @@ func isSpawnNameRune(r rune) bool {
 // may leave.
 //
 // It is idempotent: normalizing its own output returns it unchanged, and
-// the output always satisfies isValidSpawnName, so a caller can
+// the output always satisfies IsValidSpawnName, so a caller can
 // normalize-then-spawn with no second rejection. An all-disallowed input
 // (e.g. "🎉") normalizes to "" — still valid, since an empty spawn name is
 // the "just give me an auto-labelled agent" case.
@@ -292,12 +289,15 @@ func runSlashWithOptionalTarget(followUp, target, askHuman, label string, stdout
 		Action        string `json:"action"`
 		FollowUp      string `json:"follow_up,omitempty"`
 		Note          string `json:"note,omitempty"`
+		remoteReply
 	}
 	path := "/v1/agent/" + url.PathEscape(target) + "/" + label
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	if resp.FollowUp != "" {
 		fmt.Fprintf(stdout, "Submitted /%s + follow-up to %s (caller %s)\n", label, short(resp.ConvID), shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	} else {
@@ -320,13 +320,9 @@ func runSelfSlash(followUp, askHuman, path, label string, stdout, stderr io.Writ
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(askHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	body := map[string]string{}
 	if followUp != "" {
@@ -358,6 +354,7 @@ func runSelfSlash(followUp, askHuman, path, label string, stdout, stderr io.Writ
 // /v1/agent/{selector}/context). CallerConv is only set on the
 // cross-agent path.
 type contextInfoResp struct {
+	remoteReply
 	ConvID              string  `json:"conv_id"`
 	SessionID           string  `json:"session_id,omitempty"`
 	ContextPct          float64 `json:"context_pct"`
@@ -420,6 +417,8 @@ func runContextInfo(p *contextInfoParams, stdout, stderr io.Writer) int {
 		}
 		return rcOK
 	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	fmt.Fprintf(stdout, "conv:    %s\n", short(resp.ConvID))
 	if resp.CallerConv != "" {
 		fmt.Fprintf(stdout, "caller:  %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))

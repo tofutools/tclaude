@@ -25,15 +25,17 @@ import (
 // way (dashboard_peer_downloads.go):
 //
 //	POST /api/peer-uploads
-//	    opens a staged upload and answers {id}. Through the peer view it is
-//	    held only by unrestricted trust.
+//	    opens a staged upload and answers {id}. Only the peer that opened it
+//	    appends to it or finishes it (peer_import.go).
 //
 //	POST /api/peer-uploads/chunk?id=ID&offset=O
 //	    appends one chunk (the raw body) at O, the staged size so far.
 //
 //	POST /api/peer-uploads/finish {"id", "path", "content_type"}
 //	    runs one upload route (peerUploadRoutes) with the staged file as its
-//	    body and answers that route's reply. A peer view job.
+//	    body and answers that route's reply. A peer view job, held by the
+//	    route's own peer rule: unrestricted trust, or its peer gate
+//	    (peerUploadGates).
 //
 //	POST /api/peer-upload/{node}?path=P
 //	    local-only: sends this request's body to the peer in chunks and
@@ -43,15 +45,31 @@ import (
 // default); the upload route applies its own caps on top.
 
 // peerUploadRoutes are the POSTs a staged upload may run: upload routes the
-// peer view already serves under unrestricted trust.
+// peer view serves under unrestricted trust, or under the route's own peer
+// grant (peerUploadGates).
 var peerUploadRoutes = map[string]bool{
-	"/api/spawn-attachments": true,
+	"/api/spawn-attachments":          true,
+	"POST /api/groups/import":         true,
+	"POST /api/groups/import/inspect": true,
+	// A task board's files (peer_taskboard.go, peerTaskboardUploads).
+	"POST /v1/taskboard/tasks/{id}/attachments":    true,
+	"POST /v1/taskboard/tasks/{id}/comments":       true,
+	"POST /v1/taskboard/tasks/{id}/questions":      true,
+	"POST /v1/groups/{name}/taskboard/tasks":       true,
+	"POST /v1/groups/{name}/taskboard/transfer-in": true,
+	"POST /v1/groups/{name}/taskboard/ask":         true,
+}
+
+// peerUploadPath reports whether p may name an upload route: a dashboard
+// API path or a /v1 route (peerUploadRoutes decides which).
+func peerUploadPath(p string) bool {
+	return strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/v1/")
 }
 
 const (
 	// peerUploadChunk is the most one chunk carries. Only the chunk route's
 	// request may be this large (peerViewBodyLimit); every other peer view
-	// request keeps fedPeerViewBodyLimit.
+	// request but a drawing board export keeps fedPeerViewBodyLimit.
 	peerUploadChunk       = 512 << 10
 	peerUploadKeep        = 10 * time.Minute
 	peerUploadsKept       = 8
@@ -64,16 +82,35 @@ const (
 // peerViewBodyLimit is the request body a peer view exchange to path may
 // carry.
 func peerViewBodyLimit(path string) int {
-	if path == peerUploadChunkPath {
+	switch {
+	case path == peerUploadChunkPath:
 		return peerUploadChunk
+	case peerDrawingBoardExportPath(path):
+		// An export names its elements: a big pick is more ids than
+		// fedPeerViewBodyLimit holds, and the route takes as many as the
+		// export route here does.
+		return drawingBoardExportBodyLimit
 	}
 	return fedPeerViewBodyLimit
+}
+
+// peerDrawingBoardExportPath reports whether path is a drawing board's export
+// route, /api/drawing-boards/{id}/export.
+func peerDrawingBoardExportPath(path string) bool {
+	id, ok := strings.CutPrefix(path, "/api/drawing-boards/")
+	if !ok {
+		return false
+	}
+	id, ok = strings.CutSuffix(id, "/export")
+	return ok && drawingBoardIDPattern.MatchString(id)
 }
 
 type peerUpload struct {
 	file    string
 	size    int64
 	written time.Time
+	// owner is the peer that opened it ("" when this node's dashboard did).
+	owner string
 }
 
 var peerUploads = struct {
@@ -89,7 +126,7 @@ func registerDashboardPeerUploadRoutes(mux *http.ServeMux) {
 }
 
 // sweepPeerUploadsLocked drops uploads nobody wrote to within
-// peerUploadKeep, then the oldest past peerUploadsKept.
+// peerUploadKeep.
 func sweepPeerUploadsLocked(now time.Time) {
 	for id, u := range peerUploads.byID {
 		if now.Sub(u.written) > peerUploadKeep {
@@ -97,12 +134,24 @@ func sweepPeerUploadsLocked(now time.Time) {
 			delete(peerUploads.byID, id)
 		}
 	}
-	for len(peerUploads.byID) >= peerUploadsKept {
-		oldest := ""
+}
+
+// capPeerUploadsLocked drops owner's oldest uploads past peerUploadsKept, so
+// one peer's uploads never evict another's.
+func capPeerUploadsLocked(owner string) {
+	for {
+		oldest, count := "", 0
 		for id, u := range peerUploads.byID {
+			if u.owner != owner {
+				continue
+			}
+			count++
 			if oldest == "" || u.written.Before(peerUploads.byID[oldest].written) {
 				oldest = id
 			}
+		}
+		if count < peerUploadsKept {
+			return
 		}
 		_ = os.Remove(peerUploads.byID[oldest].file)
 		delete(peerUploads.byID, oldest)
@@ -113,6 +162,11 @@ func handleDashboardPeerUploadOpen(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	openPeerUpload(w, "")
+}
+
+// openPeerUpload opens a staged upload for owner.
+func openPeerUpload(w http.ResponseWriter, owner string) {
 	f, err := os.CreateTemp("", "tclaude-peer-upload-*")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "stage upload")
@@ -125,7 +179,8 @@ func handleDashboardPeerUploadOpen(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	peerUploads.Lock()
 	sweepPeerUploadsLocked(now)
-	peerUploads.byID[id] = &peerUpload{file: f.Name(), written: now}
+	capPeerUploadsLocked(owner)
+	peerUploads.byID[id] = &peerUpload{file: f.Name(), written: now, owner: owner}
 	peerUploads.Unlock()
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
@@ -134,6 +189,11 @@ func handleDashboardPeerUploadChunk(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	appendPeerUpload(w, r, "")
+}
+
+// appendPeerUpload appends one chunk to an upload owner opened.
+func appendPeerUpload(w http.ResponseWriter, r *http.Request, owner string) {
 	offset, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
 	if err != nil || offset < 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "offset is required")
@@ -149,7 +209,7 @@ func handleDashboardPeerUploadChunk(w http.ResponseWriter, r *http.Request) {
 	defer peerUploads.Unlock()
 	sweepPeerUploadsLocked(time.Now())
 	u := peerUploads.byID[r.URL.Query().Get("id")]
-	if u == nil {
+	if u == nil || u.owner != owner {
 		writeError(w, http.StatusNotFound, "not_found", "no such upload")
 		return
 	}
@@ -185,6 +245,15 @@ func handleDashboardPeerUploadFinish(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
+	finishPeerUpload(w, r, "", func(w http.ResponseWriter, sub *http.Request, _ string) {
+		peerDashboardMux().ServeHTTP(w, sub)
+	})
+}
+
+// finishPeerUpload takes owner's staged upload off the stage and runs its
+// upload route through serve with the staged file as sub's body; pattern is
+// the route's.
+func finishPeerUpload(w http.ResponseWriter, r *http.Request, owner string, serve func(w http.ResponseWriter, sub *http.Request, pattern string)) {
 	var body struct {
 		ID          string `json:"id"`
 		Path        string `json:"path"`
@@ -196,7 +265,12 @@ func handleDashboardPeerUploadFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	peerUploads.Lock()
 	u := peerUploads.byID[body.ID]
-	delete(peerUploads.byID, body.ID)
+	if u != nil && u.owner != owner {
+		u = nil
+	}
+	if u != nil {
+		delete(peerUploads.byID, body.ID)
+	}
 	peerUploads.Unlock()
 	if u == nil {
 		writeError(w, http.StatusNotFound, "not_found", "no such upload")
@@ -204,7 +278,7 @@ func handleDashboardPeerUploadFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = os.Remove(u.file) }()
 	target, err := url.ParseRequestURI(body.Path)
-	if err != nil || len(body.Path) > 4096 || target.IsAbs() || target.Host != "" || !strings.HasPrefix(target.Path, "/api/") {
+	if err != nil || len(body.Path) > 4096 || target.IsAbs() || target.Host != "" || !peerUploadPath(target.Path) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "path must be a dashboard API path")
 		return
 	}
@@ -220,12 +294,12 @@ func handleDashboardPeerUploadFinish(w http.ResponseWriter, r *http.Request) {
 	if body.ContentType != "" {
 		sub.Header.Set("Content-Type", body.ContentType)
 	}
-	mux := peerDashboardMux()
-	if _, pattern := mux.Handler(sub); !peerUploadRoutes[pattern] {
+	_, pattern := peerDashboardMux().Handler(sub)
+	if !peerUploadRoutes[pattern] {
 		writeError(w, http.StatusForbidden, "not_uploadable", "that route is not an upload")
 		return
 	}
-	mux.ServeHTTP(w, sub)
+	serve(w, sub, pattern)
 }
 
 // peerUploadExchange runs one request of an upload on the peer and decodes
@@ -252,7 +326,9 @@ var peerUploadExchange = func(ctx context.Context, peer *db.FederationPeer, req 
 	if !validPeerViewReply(reply) {
 		return http.StatusBadGateway, errors.New("peer returned an invalid response")
 	}
-	if reply.Status != http.StatusOK {
+	// A route may answer 201 (a task created with its files): any 2xx is
+	// its success.
+	if reply.Status < 200 || reply.Status > 299 {
 		return reply.Status, &peerDownloadRefused{body: reply.Body}
 	}
 	if out != nil && json.Unmarshal(reply.Body, out) != nil {
@@ -276,8 +352,30 @@ func handleDashboardPeerUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not_trusted", "linked trusted peer required")
 		return
 	}
+	sendPeerUpload(w, r, peer)
+}
+
+// handleFederationPeerUpload is handleDashboardPeerUpload for the CLI
+// (POST /v1/federation/peer-upload/{node}?path=P): the operator's, by the
+// peer's label or instance id. A task board's files reach a linked node
+// through it (`tclaude agent taskboard attach … --peer`).
+func handleFederationPeerUpload(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "upload to a linked node") {
+		return
+	}
+	peer, err := resolveFederationPeerOpt(r.PathValue("node"), false)
+	if err != nil {
+		writeFedErr(w, err)
+		return
+	}
+	sendPeerUpload(w, r, peer)
+}
+
+// sendPeerUpload sends r's body to peer's upload route in chunks and
+// answers that route's reply.
+func sendPeerUpload(w http.ResponseWriter, r *http.Request, peer *db.FederationPeer) {
 	target := r.URL.Query().Get("path")
-	if !strings.HasPrefix(target, "/api/") || len(target) > 4096 || len(r.Header.Get("Content-Type")) > peerUploadContentType {
+	if !peerUploadPath(target) || len(target) > 4096 || len(r.Header.Get("Content-Type")) > peerUploadContentType {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "path must be a dashboard API path")
 		return
 	}

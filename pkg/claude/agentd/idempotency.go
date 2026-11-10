@@ -42,12 +42,19 @@ var idempotencyOwnerID = uuid.NewString()
 // so never gives the space back. An agent polling a failing matrix build would
 // inflate the operator's daemon DB by hundreds of megabytes.
 //
-// Deliberately just these two, not every proxy read: the criterion is that the
+// Deliberately just these, not every proxy read: the criterion is that the
 // response is BULK, and the JSON reads are bounded at 16 KiB, where the
 // durable copy is cheap enough not to be worth reasoning about.
+//
+// A dashboard capture's response is an image of the operator's screen, which
+// must not sit in the database at all. A retry simply takes a fresh one; with
+// --save that can keep a second copy, which retention bounds like any other.
 var bulkReadRoutes = map[string]bool{
 	"/v1/github/pr/comments":    true,
 	"/v1/github/run/log-failed": true,
+	"/v1/dashboard/capture":     true,
+	"/v1/gitlab/mr/comments":    true,
+	"/v1/gitlab/job/log-failed": true,
 }
 
 func isBulkReadRoute(path string) bool { return bulkReadRoutes[path] }
@@ -57,7 +64,21 @@ func isBulkReadRoute(path string) bool { return bulkReadRoutes[path] }
 // response replay must never capture the bearer. Enrollment CLI calls disable
 // automatic mutation retries and require operators to retry explicitly.
 func isEnrollmentCredentialRoute(path string) bool {
-	return path == "/v1/federation/enroll-tokens" || path == "/v1/federation/enroll/preview" || path == "/v1/federation/enroll"
+	return path == "/v1/federation/enroll-tokens" || path == "/v1/federation/enroll/preview" || path == "/v1/federation/enroll" || path == "/v1/federation/become-node"
+}
+
+// An external steward's credential is shown once and stored only hashed, so the
+// responses that issue one stay out of the durable replay table too.
+func isExternalStewardCredentialRoute(path string) bool {
+	for _, root := range []string{"/v1/external-stewards", "/api/external-stewards"} {
+		if path == root {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(path, root+"/"); ok && strings.HasSuffix(rest, "/renew") {
+			return true
+		}
+	}
+	return false
 }
 
 func idempotencyRequests(h http.Handler) http.Handler {
@@ -76,7 +97,7 @@ func idempotencyRequestsWithOwner(h http.Handler, ownerID string) http.Handler {
 func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, waitHook func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimSpace(r.Header.Get(agent.IdempotencyKeyHeader))
-		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) || isEnrollmentCredentialRoute(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/") || strings.HasPrefix(r.URL.Path, "/v1/models/") {
+		if key == "" || !isMutatingMethod(r.Method) || isBulkReadRoute(r.URL.Path) || isEnrollmentCredentialRoute(r.URL.Path) || isExternalStewardCredentialRoute(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/v1/http/proxy/") || strings.HasPrefix(r.URL.Path, "/v1/models/") {
 			h.ServeHTTP(w, r)
 			return
 		}

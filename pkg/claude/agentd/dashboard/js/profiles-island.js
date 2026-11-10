@@ -1,7 +1,8 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { useDialogFocus } from './dialog-focus.js';
+import { Button } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
 import { relTime } from './helpers.js';
 
 const html = htm.bind(h);
@@ -76,7 +77,7 @@ function CaptureRow({ capture, actions, deleting, now }) {
       <div class="muted profile-id">${capture.id}</div>
     </td>
     <td>${capture.label || html`<span class="muted">—</span>`}<div class="muted">${capture.source} · ${capture.seconds}s${capture.trace_seconds ? ` + ${capture.trace_seconds}s trace` : ''}</div></td>
-    <td>${statusPill(capture, now)}${capture.error ? html`<div class="muted profile-error">${capture.error}</div>` : null}</td>
+    <td>${statusPill(capture, now)}${capture.error ? html`<div class="profile-error ui-hint">${capture.error}</div>` : null}</td>
     <td title="agentd's own CPU over the window, as top shows it (100% = one core)">${headline?.cpu_available ? fmtPct(headline.self_cpu_percent) : '—'}</td>
     <td title="CPU of child processes (tmux, git, …) that exited during the window — top shows these under their own names, not agentd">${headline?.cpu_available ? fmtPct(headline.child_cpu_percent) : '—'}</td>
     <td title="Instrumented subprocess starts (tmux) per second — see summary for the per-command breakdown">${headline ? fmtRate(headline.subprocesses_per_sec) : '—'}</td>
@@ -91,11 +92,11 @@ function CaptureRow({ capture, actions, deleting, now }) {
         title="Every file of this capture as one zip — to keep or hand to someone">zip ⤓</a>`}
     </div></td>
     <td class="profile-actions">
-      ${shareable && html`<button type="button" class="tool" title="Send this capture's files to an agent as message attachments"
-        aria-label=${`Share capture ${capture.id} with an agent`} onClick=${() => actions.share(capture)}>share…</button>`}
-      <button type="button" class="tool" disabled=${!done && capture.status === 'running' || deleting === capture.id}
+      ${shareable && html`<${Button} size="sm" title="Send this capture's files to an agent as message attachments"
+        aria-label=${`Share capture ${capture.id} with an agent`} onClick=${() => actions.share(capture)}>share…<//>`}
+      <${Button} size="sm" disabled=${!done && capture.status === 'running' || deleting === capture.id}
         title="Delete this capture's files" aria-label=${`Delete capture ${capture.id}`}
-        onClick=${() => actions.remove(capture)}>${deleting === capture.id ? '…' : '✕'}</button>
+        onClick=${() => actions.remove(capture)}>${deleting === capture.id ? '…' : '✕'}<//>
     </td>
   </tr>`;
 }
@@ -104,15 +105,15 @@ function ProfileModal({ state, actions }) {
   const draft = state.view.value.modal;
   const secondsRef = useRef(null);
   const close = () => state.closeModal();
-  const { dialogRef } = useDialogFocus({ open: !!draft, initialFocusRef: secondsRef, onEscape: close });
   if (!draft) return null;
   const max = state.view.value.defaults.max_seconds;
   const field = (key) => (event) => state.updateModal({ [key]: event.currentTarget.value, error: '' });
-  return html`<div ref=${dialogRef} class="modal-overlay show" id="profile-modal"
-    onClick=${(event) => { if (event.target === event.currentTarget) close(); }}>
-    <form class="cron-create-modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title"
-      onSubmit=${(event) => { event.preventDefault(); void actions.start(); }}>
-      <h3 id="profile-modal-title">Profile the daemon</h3>
+  return html`<${Dialog} id="profile-modal" titleId="profile-modal-title" title="Profile the daemon"
+    initialFocusRef=${secondsRef} onClose=${close} busy=${draft.submitting}
+    error=${draft.error} errorId="profile-modal-error" cancel="Cancel" cancelId="profile-modal-cancel"
+    footer=${html`<${Button} variant="primary" id="profile-modal-submit" type="submit" form="profile-modal-form" disabled=${draft.submitting}>
+      ${draft.submitting ? 'Starting…' : 'Start profiling'}<//>`}>
+    <form id="profile-modal-form" onSubmit=${(event) => { event.preventDefault(); void actions.start(); }}>
       <p class="muted">Captures a CPU profile of this agentd process while it keeps running normally, plus heap,
         goroutine, block and mutex profiles and an execution trace. Run it while the CPU usage you want to explain is happening.
         Press Enter to start with these settings.</p>
@@ -125,14 +126,8 @@ function ProfileModal({ state, actions }) {
       <label class="cron-create-row"><span class="cron-create-label">Label</span>
         <input id="profile-modal-label" type="text" maxlength="80" placeholder="optional — e.g. 12 agents idle" autocomplete="off"
           value=${draft.label} onInput=${field('label')} /></label>
-      <div class="cron-create-error" id="profile-modal-error" role=${draft.error ? 'alert' : undefined}>${draft.error}</div>
-      <div class="modal-buttons">
-        <button id="profile-modal-cancel" type="button" onClick=${close}>Cancel</button><span class="spacer"></span>
-        <button id="profile-modal-submit" class="primary" type="submit" disabled=${draft.submitting}>
-          ${draft.submitting ? 'Starting…' : 'Start profiling'}</button>
-      </div>
     </form>
-  </div>`;
+  <//>`;
 }
 
 function CaptureList({ current, actions, now }) {
@@ -145,7 +140,7 @@ function CaptureList({ current, actions, now }) {
   if (!current.captures.length) {
     return html`<div class="empty">No captures yet. Start one while agentd is busy to see where its CPU goes; captures from <code>tclaude agentd profile</code> appear here too.</div>`;
   }
-  return html`<table class="debug-table profile-table">
+  return html`<table class="debug-table profile-table ui-compact">
     <thead><tr>
       <th scope="col">Started</th><th scope="col">Label</th><th scope="col">Status</th>
       <th scope="col">agentd CPU</th><th scope="col">child CPU</th><th scope="col">subproc</th>
@@ -196,9 +191,9 @@ export function ProfilesApp({
         <strong>Daemon profiling</strong>
         <span class="muted">CPU/heap/goroutine profiles of this agentd process, viewable in pprof's web UI.</span>
         <span class="spacer"></span>
-        <button class="tool" id="profile-start" type="button" disabled=${running}
+        <${Button} id="profile-start" disabled=${running}
           title=${running ? 'A capture is already running' : 'Capture a CPU profile and friends of this daemon'}
-          onClick=${() => state.openModal()}>${running ? '⏱ profiling…' : '⏱ Profile daemon…'}</button>
+          onClick=${() => state.openModal()}>${running ? '⏱ profiling…' : '⏱ Profile daemon…'}<//>
       </div>
       ${current.notice && html`<div class="muted profile-notice" aria-live="polite">${current.notice}</div>`}
       ${current.loaded && current.request.phase === 'error' && html`<div class="island-error" role="alert">Refresh failed: ${current.request.error}</div>`}

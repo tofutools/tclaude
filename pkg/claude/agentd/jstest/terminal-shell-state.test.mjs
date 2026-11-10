@@ -2,17 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-function memoryPrefs(initial = {}) {
-  const values = new Map(Object.entries(initial));
-  const writes = [];
-  return {
-    writes,
-    getItem(key) { return values.get(key) ?? null; },
-    setItem(key, value) { values.set(key, String(value)); writes.push([key, String(value)]); },
-    removeItem(key) { values.delete(key); },
-  };
-}
-
 test('terminal shell state owns stable pane, active, and reveal descriptors', async (t) => {
   const harness = await createPreactHarness(t);
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
@@ -62,19 +51,13 @@ test('terminal shell state owns stable pane, active, and reveal descriptors', as
 test('every opened terminal pane appends and explicit moves remain session-local', async (t) => {
   const harness = await createPreactHarness(t);
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
-  const prefs = memoryPrefs({
-    'tclaude.dash.terminals.order': JSON.stringify(['two', 'one', 'closed']),
-  });
-  const state = createTerminalShellState({ prefs });
+  const state = createTerminalShellState();
 
   const one = state.openPane({ ws: '/one', key: 'one', label: 'one' });
   const two = state.openPane({ ws: '/two', key: 'two', label: 'two' });
   const three = state.openPane({ ws: '/three', key: 'three', label: 'three' });
-  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'two', 'three'],
-    'stored positions do not prepend newly opened terminal instances');
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'two', 'three']);
   assert.equal(state.activeKey.value, 'three');
-  assert.equal(prefs.writes.length, 0,
-    'ordinary opens do not create presentation preferences');
 
   const moved = state.reorderPane('three', 'two');
   assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'three', 'two']);
@@ -83,7 +66,6 @@ test('every opened terminal pane appends and explicit moves remain session-local
   assert.equal(state.panes.value.find((pane) => pane.key === 'one'), one,
     'reordering preserves stable pane descriptors');
   assert.equal(state.panes.value.find((pane) => pane.key === 'two'), two);
-  assert.equal(prefs.writes.length, 0, 'tab order belongs to the current strip instead of stale key history');
 
   state.movePaneByOffset('three', 1);
   assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'two', 'three']);
@@ -269,7 +251,7 @@ test('terminal actions close one, other, and all panes through detach-only seman
 test('terminal shell state follows agent renames from the roster snapshot', async (t) => {
   const harness = await createPreactHarness(t);
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
-  const state = createTerminalShellState({ prefs: memoryPrefs(), persistPresentation: false });
+  const state = createTerminalShellState();
   const byId = state.openPane({ ws: '/w1', key: 'window:agt_one', label: 'old-one', agent: 'agt_one' });
   state.openPane({ ws: '/w2', key: 'window:conv-two', label: 'old-two', hideConv: 'conv-two' });
   state.openPane({ ws: '/g', key: 'groupterm:g', label: 'group shell' });

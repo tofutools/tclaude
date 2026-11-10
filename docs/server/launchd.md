@@ -1,8 +1,21 @@
 # macOS launchd
 
 On a Mac that stays on (a Mac mini in a closet, a build machine), a per-user
-LaunchAgent keeps `agentd` running. tclaude does not install one for you. This
-is an example to adapt.
+LaunchAgent keeps `agentd` running.
+
+`tclaude service install` writes one like the example below as
+`~/Library/LaunchAgents/com.tofutools.tclaude.agentd.plist`, logging to
+`~/.tclaude/data/launchd.log`, and enables it for your next login. It keeps the
+`serve` flags the running `agentd` was started with and your current `PATH`,
+plus the environment of the launchd job it runs under, if any. Variables you
+only exported in a shell are not carried over. Pass other flags after `--`, or
+set a launch profile (see [systemd: Launch profile](systemd.md#launch-profile)),
+which works the same here. The plist holds its environment in
+`EnvironmentVariables`, inherited secrets included, so tclaude writes it 0600.
+It does not load the plist next to a running `agentd`. `tclaude service status` shows it, and
+`tclaude service uninstall` removes it. Both touch only a plist tclaude wrote.
+
+To write it yourself, adapt this example:
 
 `~/Library/LaunchAgents/com.example.tclaude-agentd.plist`:
 
@@ -71,6 +84,24 @@ shows what you have. Agent panes inherit the environment of whatever started
 the tmux server, normally `agentd`, so this `PATH` is theirs too.
 `tclaude harness ls` shows what the daemon finds.
 
+**Login shell environment.** When launchd starts the job tclaude wrote
+(label `com.tofutools.tclaude.agentd`), `agentd serve` asks your login shell
+for its environment and restarts itself with it, under the same PID. It runs
+`$SHELL -l -i` with no terminal. It waits only until the shell answers, and
+at most 30 seconds. That brings
+in what a terminal has: your profile's variables, `TMUX_TMPDIR`, proxies,
+and API keys. Without them, the job may run agents in another environment
+than a terminal-started agentd, or fail to reach their tmux server. The
+plist's own variables still win, and its `PATH` is kept after the shell's.
+When no UTF-8 locale is set anywhere, agentd gets your macOS locale
+(`defaults read -g AppleLocale`, for example `en_GB.UTF-8`), or
+`en_US.UTF-8` when that is not installed. If the shell
+gives no answer, or fails, agentd still starts, with the plist's
+environment. `output.log` has an error line, and a notice in the
+dashboard's Messages says agents may not start or may show offline, and how
+to check (`time $SHELL -l -i -c true`). A plist you wrote yourself, under another label, is
+left as it is.
+
 **Restarts.** `KeepAlive` with `SuccessfulExit` set to false restarts
 `agentd` when it crashes, but not after a clean exit. `AbandonProcessGroup`
 keeps launchd from cleaning up the job's processes when `agentd` stops. That
@@ -79,7 +110,7 @@ pick up. Agents lost to a reboot show as offline. Resume them from the
 dashboard or with `tclaude agent resume <agent>`.
 
 **Logs and the token.** `agentd` writes its own rotated log to
-`~/.tclaude/output.log`. The `StandardOutPath` file only catches startup
+`~/.tclaude/data/output.log`. The `StandardOutPath` file only catches startup
 output. Without a terminal, the startup banner leaves the operator token out.
 Do not add `--print-human-token=always`, which would write the bearer token to
 that log file. With `--persist-operator-token` the token goes to a 0600
@@ -101,7 +132,9 @@ in the login keychain, which must be unlocked for the job to read it.
 
 ## Then open the dashboard
 
-At the Mac, `tclaude agent dashboard` opens it. From elsewhere, use an SSH
+At the Mac, `tclaude agent dashboard` opens it. To open it from Spotlight or
+Launchpad, `tclaude service launcher install` adds `~/Applications/tclaude.app`;
+see [App launcher](../dashboard-config.md#app-launcher). From elsewhere, use an SSH
 tunnel to the fixed port, a private network, or `tclaude remote-access`. See
 [Reaching the dashboard](index.md#what-a-headless-box-changes) and
 [Dashboard](../dashboard.md).

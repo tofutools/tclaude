@@ -187,7 +187,7 @@ func TestRunProcessTemplatesLsJSONKeepsDaemonErrorsOffStdout(t *testing.T) {
 
 	rc := runProcessTemplatesLs(&processTemplatesLsParams{JSON: true}, &stdout, &stderr)
 
-	assert.Equal(t, rcIOFailure, rc, "--json must not change how daemon errors map to exit codes")
+	assert.Equal(t, rcAuth, rc, "--json must not change how daemon errors map to exit codes")
 	assert.Empty(t, stdout.String(), "a denied read must not emit a JSON document")
 	assert.Contains(t, stderr.String(), "process.templates.read")
 }

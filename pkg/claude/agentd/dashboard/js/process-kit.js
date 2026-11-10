@@ -24,13 +24,14 @@
 import { h } from 'preact';
 import { useId, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { layoutProcessGraph } from './process-layout.js';
 import { loopEdgeSuffix } from './process-loops.js';
 
 const html = htm.bind(h);
 
 export const PROCESS_NODE_KINDS = Object.freeze({
-  agent: { glyph: '🤖', label: 'Agent task', wizardLabel: 'Familiar rune', hint: 'prompt, performer slot, stages' },
+  agent: { glyph: '🤖', label: 'Agent task', wizardLabel: 'Hero rune', hint: 'prompt, performer slot, stages' },
   human: { glyph: '👤', label: 'Human step', wizardLabel: 'Mortal rune', hint: 'approve / input / do' },
   command: { glyph: '⌘', label: 'Command', wizardLabel: 'Incantation rune', hint: 'shell, in a sandbox' },
   decision: { glyph: '◆', label: 'Decision', wizardLabel: 'Forking rune', hint: 'on outcome or expression' },
@@ -67,7 +68,7 @@ const STATE_ALIASES = Object.freeze({
 
 export const PROCESS_SCOPES = Object.freeze({
   group: { glyph: '⌂', label: 'group scope', wizardLabel: 'circle-bound' },
-  agent: { glyph: '◉', label: 'agent scope', wizardLabel: 'familiar-bound' },
+  agent: { glyph: '◉', label: 'agent scope', wizardLabel: 'hero-bound' },
 });
 
 export function normalizeNodeKind(kind) {
@@ -526,7 +527,7 @@ export function ProcessNodeChip({ node, compact = false, wizard = false }) {
 
 export function ProcessStateChip({ state, label = '' }) {
   const key = normalizeNodeState(state);
-  return html`<span class=${`pk-chip pk-state-${key}`}><span class="pk-dot" aria-hidden="true"></span>${label || stateLabel(key)}</span>`;
+  return html`<span class=${`pk-chip ui-tag pk-state-${key}`}><span class="pk-dot" aria-hidden="true"></span>${label || stateLabel(key)}</span>`;
 }
 
 export function ProcessScopeChip({ scope, wizard = false }) {
@@ -534,14 +535,14 @@ export function ProcessScopeChip({ scope, wizard = false }) {
   if (!kind) return null;
   const entry = PROCESS_SCOPES[kind];
   const text = `${entry.glyph} ${wizard ? entry.wizardLabel : entry.label}${name ? ` · ${name}` : ''}`;
-  return html`<span class=${`pk-chip pk-scope pk-scope-${kind}`} data-process-scope=${kind}>${text}</span>`;
+  return html`<span class=${`pk-chip ui-tag pk-scope pk-scope-${kind}`} data-process-scope=${kind}>${text}</span>`;
 }
 
 // ProcessPausedChip marks a run an operator paused.
 export function ProcessPausedChip({ run }) {
   if (!run?.paused) return null;
   const by = run.paused.by ? ` by ${run.paused.by}` : '';
-  return html`<span class="pk-chip pk-paused" data-process-paused title=${`Paused${by}: nothing new is dispatched until it is resumed`}>⏸ paused</span>`;
+  return html`<span class="pk-chip ui-tag pk-paused" data-process-paused title=${`Paused${by}: nothing new is dispatched until it is resumed`}>⏸ paused</span>`;
 }
 
 // ProcessPauseControl is the run-level Pause / Resume button. actions:
@@ -565,9 +566,9 @@ export function ProcessPauseControl({ run, actions = {} }) {
     }
   };
   return html`<span class="pk-pause" data-process-pause=${state.paused ? 'paused' : 'live'}>
-    <button type="button" class="mux-btn" disabled=${busy || !state.ok || !act} title=${title}
-      onClick=${() => void click()}>${state.paused ? '▶ resume run' : '⏸ pause run'}</button>
-    ${error ? html`<span class="pk-pause-error" role="alert">${error}</span>` : null}
+    <${Button} size="sm" disabled=${busy || !state.ok || !act} title=${title}
+      onClick=${() => void click()}>${state.paused ? '▶ resume run' : '⏸ pause run'}<//>
+    ${error ? html`<span class="pk-pause-error ui-error" role="alert">${error}</span>` : null}
   </span>`;
 }
 
@@ -584,7 +585,7 @@ export function ProcessRunBadge({ run, performerId = '', nodeId = '', onOpen = n
   const cls = `pk-run-badge pk-state-${view.state}${view.scope ? ` pk-scope-${view.scope}` : ''}`;
   const body = html`<span class="pk-run-glyph" aria-hidden="true">${view.glyph}</span><span class="pk-run-name">${runName(run)}</span>${view.node && html`<span class="pk-sep" aria-hidden="true">›</span><b class="pk-run-node">${view.node.label}</b>`}<${ProcessStepStrip} run=${run} />`;
   if (typeof onOpen === 'function') {
-    return html`<button type="button" class=${cls} title=${view.title} aria-label=${view.title} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
+    return html`<button data-ui-exempt type="button" class=${cls} title=${view.title} aria-label=${view.title} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
   }
   return html`<span class=${cls} title=${view.title} data-process-run=${runID(run)}>${body}</span>`;
 }
@@ -595,9 +596,9 @@ export function ProcessRunBadge({ run, performerId = '', nodeId = '', onOpen = n
 export function ProcessRunIcon({ run, performerId = '', onOpen = null, active = false, small = false }) {
   const view = runIconView(run, performerId);
   const cls = `pk-run-icon pk-state-${view.state}${view.scope ? ` pk-scope-${view.scope}` : ''}${active ? ' on' : ''}${small ? ' small' : ''}`;
-  const body = html`<span class="pk-run-icon-glyph" aria-hidden="true">${view.glyph}</span>${!small && view.badge && html`<span class="pk-run-icon-badge">${view.badge}</span>`}`;
+  const body = html`<span class="pk-run-icon-glyph" aria-hidden="true">${view.glyph}</span>${!small && view.badge && html`<span class="pk-run-icon-badge ui-badge ui-badge-corner">${view.badge}</span>`}`;
   if (typeof onOpen === 'function') {
-    return html`<button type="button" class=${cls} title=${view.title} aria-label=${view.title} aria-pressed=${active ? 'true' : 'false'} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
+    return html`<button data-ui-exempt type="button" class=${cls} title=${view.title} aria-label=${view.title} aria-pressed=${active ? 'true' : 'false'} data-process-run=${runID(run)} onClick=${(event) => { event.stopPropagation(); onOpen(run, view.node); }}>${body}</button>`;
   }
   return html`<span class=${cls} role="img" title=${view.title} aria-label=${view.title} data-process-run=${runID(run)}>${body}</span>`;
 }
@@ -625,7 +626,7 @@ export function ProcessMiniGraph({
     const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}`;
     const style = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
     const round = nodeRound(node);
-    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}`;
+    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}`;
     // The round badge marks the loop body's active node; the others say
     // their round in the tooltip.
     const badge = round && (node.state === 'running' || node.state === 'waiting')
@@ -642,7 +643,7 @@ export function ProcessMiniGraph({
       ...(typeof onNodeHover === 'function' ? { onMouseEnter: () => onNodeHover(node.id), onFocus: () => onNodeHover(node.id) } : {}),
     };
     if (typeof onNodeClick === 'function') {
-      return html`<button type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} data-performers=${performerIds} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)} ...${extra}>${inner}</button>`;
+      return html`<button data-ui-exempt type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} data-performers=${performerIds} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)} ...${extra}>${inner}</button>`;
     }
     return html`<div key=${node.id} class=${cls} style=${style} title=${title} data-process-node=${node.id} data-performers=${performerIds}>${inner}</div>`;
   });

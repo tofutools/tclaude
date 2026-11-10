@@ -8,13 +8,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 func openCodeTestSessions() []openCodeSession {
@@ -39,7 +45,7 @@ func openCodeTestSessions() []openCodeSession {
 }
 
 func openCodeTestStore(sessions []openCodeSession) openCodeConvStore {
-	return openCodeConvStore{listSessions: func() ([]openCodeSession, error) {
+	return openCodeConvStore{listSessions: func(string) ([]openCodeSession, error) {
 		return sessions, nil
 	}}
 }
@@ -228,7 +234,7 @@ func TestOpenCodeConvStore_LiveRenamePrefersAPI(t *testing.T) {
 		"ses_alpha111", "Stale cold rename", OpenCodeName))
 	called := false
 	store := openCodeConvStore{
-		listSessions: func() ([]openCodeSession, error) { return sessions, nil },
+		listSessions: func(string) ([]openCodeSession, error) { return sessions, nil },
 		writeTitle: func(runtime db.OpenCodeRuntime, convID, title string) error {
 			called = true
 			assert.Equal(t, "ses_alpha111", runtime.ConvID)
@@ -299,7 +305,7 @@ func TestWriteOpenCodeTitleUsesAuthenticatedManagedAPI(t *testing.T) {
 func TestOpenCodeConvStore_LiveRenameFallsBackToCache(t *testing.T) {
 	withTestDB(t)
 	store := openCodeConvStore{
-		listSessions: func() ([]openCodeSession, error) {
+		listSessions: func(string) ([]openCodeSession, error) {
 			return nil, errors.New("CLI should not be needed for known runtime")
 		},
 		writeTitle: func(db.OpenCodeRuntime, string, string) error {
@@ -330,10 +336,316 @@ func TestOpenCodeConvStoreRejectsMalformedCLIShape(t *testing.T) {
 }
 
 func TestOpenCodeConvStoreResolveSkipsImpossibleIDWithoutCLI(t *testing.T) {
-	store := openCodeConvStore{listSessions: func() ([]openCodeSession, error) {
+	store := openCodeConvStore{listSessions: func(string) ([]openCodeSession, error) {
 		return nil, errors.New("must not run for a non-OpenCode id")
 	}}
 	ref, err := store.Resolve("019ec004", "/work/a", true)
 	require.NoError(t, err)
 	assert.Nil(t, ref)
+}
+
+// `opencode session list` shows only one project, so a snapshot evicts what is
+// gone from the directories it covers and leaves other projects' rows alone.
+func TestOpenCodeSyncKeepsRowsOutsideTheSnapshot(t *testing.T) {
+	withTestDB(t)
+	for id, dir := range map[string]string{"ses_gone": "/repo/a", "ses_other": "/repo/b"} {
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: dir, ProjectPath: dir, Harness: OpenCodeName}))
+	}
+	_, err := syncOpenCodeConvIndex([]openCodeSession{{ID: "ses_here", Directory: "/repo/a"}}, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+
+	gone, err := db.GetConvIndex("ses_gone")
+	require.NoError(t, err)
+	assert.Nil(t, gone)
+	other, err := db.GetConvIndex("ses_other")
+	require.NoError(t, err)
+	assert.NotNil(t, other)
+}
+
+// `opencode session list` shows one project, so a member landed in a repository
+// the daemon does not run from is only found by listing from there.
+func TestOpenCodeConvStoreFindsConversationInAnotherProject(t *testing.T) {
+	withTestDB(t)
+	repo := testutil.CanonicalTempDir(t)
+	const conv = "ses_landed1"
+	require.NoError(t, db.SetConversationResumeProfile(conv, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: OpenCodeName, Cwd: repo,
+	}))
+	var (
+		mu    sync.Mutex
+		asked []string
+	)
+	store := openCodeConvStore{listSessions: func(dir string) ([]openCodeSession, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, dir)
+		if dir == repo {
+			return []openCodeSession{{ID: conv, Title: "Landed", Directory: repo}}, nil
+		}
+		return nil, nil
+	}}
+
+	exists, err := store.Exists(conv, "")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, []string{repo}, asked, "a known conversation takes one listing")
+
+	ref, err := store.Resolve(conv, "", true)
+	require.NoError(t, err)
+	require.NotNil(t, ref)
+	assert.Equal(t, repo, ref.ProjectPath)
+	assert.Equal(t, []string{repo, repo}, asked, "nor does resolving its full id")
+
+	ref, err = store.Resolve("ses_land", "", true)
+	require.NoError(t, err)
+	require.NotNil(t, ref, "a prefix lists every project")
+
+	require.NoError(t, store.SetTitle(conv, "Renamed before resume"))
+	title, err := store.Title(conv)
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed before resume", title)
+}
+
+// A landed conversation in private state is in no listing. It can still be
+// renamed, and a listing of its directory does not read it as deleted.
+func TestOpenCodeConvStoreKeepsPrivateStateConversation(t *testing.T) {
+	withTestDB(t)
+	repo := testutil.CanonicalTempDir(t)
+	const conv = "ses_private1"
+	require.NoError(t, db.SetConversationResumeProfile(conv, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: OpenCodeName, Cwd: repo,
+	}))
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	_, err = db.InsertOpenCodeAgentStateAllocation(db.OpenCodeAgentStateAllocation{
+		AgentID: agentID, Mode: db.OpenCodeStatePrivate, StateRoot: t.TempDir(),
+	})
+	require.NoError(t, err)
+	previous := OpenCodePrivateEnvironment
+	t.Cleanup(func() { OpenCodePrivateEnvironment = previous })
+	OpenCodePrivateEnvironment = func(*db.OpenCodeAgentStateAllocation) ([]string, error) { return nil, nil }
+	store := openCodeConvStore{
+		listSessions: func(string) ([]openCodeSession, error) {
+			return []openCodeSession{{ID: "ses_ambient", Directory: repo}}, nil
+		},
+		listPrivate: func(string, []string) ([]openCodeSession, error) { return nil, nil },
+	}
+
+	require.NoError(t, store.SetTitle(conv, "Private name"))
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: conv, ProjectDir: repo, ProjectPath: repo, CustomTitle: "Private name", Harness: OpenCodeName}))
+	_, err = store.ListConvs(repo)
+	require.NoError(t, err)
+
+	title, err := store.Title(conv)
+	require.NoError(t, err)
+	assert.Equal(t, "Private name", title)
+}
+
+// One project's listing failing does not hide the others, and a project that
+// is gone is not asked at all.
+func TestOpenCodeConvStoreStoreWideListingSurvivesOneProject(t *testing.T) {
+	withTestDB(t)
+	good, bad := testutil.CanonicalTempDir(t), testutil.CanonicalTempDir(t)
+	for id, dir := range map[string]string{"ses_good": good, "ses_bad": bad, "ses_vanished": filepath.Join(bad, "gone")} {
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: dir, ProjectPath: dir, Harness: OpenCodeName}))
+	}
+	store := openCodeConvStore{listSessions: func(dir string) ([]openCodeSession, error) {
+		switch dir {
+		case good:
+			return []openCodeSession{{ID: "ses_good", Directory: good}}, nil
+		case bad:
+			return nil, errors.New("cannot list")
+		case filepath.Join(bad, "gone"):
+			t.Errorf("listed from %q", dir)
+		}
+		return nil, nil
+	}}
+
+	entries, err := store.ListConvs("")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "ses_good", entries[0].SessionID)
+	row, err := db.GetConvIndex("ses_bad")
+	require.NoError(t, err)
+	assert.NotNil(t, row, "unseen is not gone")
+}
+
+// One answer covers its project, so its other directories are not asked.
+func TestOpenCodeConvStoreListsAProjectOnce(t *testing.T) {
+	withTestDB(t)
+	root := testutil.CanonicalTempDir(t)
+	var dirs []string
+	var answer []openCodeSession
+	for i := range 9 {
+		dir := filepath.Join(root, strconv.Itoa(i))
+		require.NoError(t, os.Mkdir(dir, 0o755))
+		id := "ses_" + strconv.Itoa(i)
+		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: id, ProjectDir: dir, ProjectPath: dir, Harness: OpenCodeName}))
+		dirs = append(dirs, dir)
+		answer = append(answer, openCodeSession{ID: id, Directory: dir})
+	}
+	var calls atomic.Int32
+	store := openCodeConvStore{listSessions: func(dir string) ([]openCodeSession, error) {
+		calls.Add(1)
+		if slices.Contains(dirs, dir) {
+			return answer, nil
+		}
+		return nil, nil
+	}}
+
+	entries, err := store.ListConvs("")
+	require.NoError(t, err)
+	assert.Len(t, entries, 9)
+	assert.LessOrEqual(t, int(calls.Load()), openCodeListConcurrency+1)
+}
+
+// A second identical listing writes nothing, so a watcher of indexed_at rests.
+func TestOpenCodeSyncDoesNotRewriteAnUnchangedRow(t *testing.T) {
+	withTestDB(t)
+	store := openCodeTestStore(openCodeTestSessions())
+	_, err := store.ListConvs("")
+	require.NoError(t, err)
+	before, err := db.GetConvIndex("ses_alpha111")
+	require.NoError(t, err)
+	require.NotNil(t, before)
+
+	_, err = store.ListConvs("")
+	require.NoError(t, err)
+	after, err := db.GetConvIndex("ses_alpha111")
+	require.NoError(t, err)
+	assert.Equal(t, before.IndexedAt, after.IndexedAt)
+}
+
+// A row written while a listing ran was too new for the snapshot to show.
+func TestOpenCodeSyncKeepsRowWrittenDuringTheListing(t *testing.T) {
+	withTestDB(t)
+	listedAt := time.Now().Add(-time.Minute)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: "ses_new", ProjectDir: "/repo/a", ProjectPath: "/repo/a", Harness: OpenCodeName}))
+	_, err := syncOpenCodeConvIndex([]openCodeSession{{ID: "ses_here", Directory: "/repo/a"}}, listedAt)
+	require.NoError(t, err)
+	row, err := db.GetConvIndex("ses_new")
+	require.NoError(t, err)
+	assert.NotNil(t, row)
+}
+
+// A conversation in private state is found through that state, and its listing
+// does not evict what the shared store holds in the same directory.
+func TestOpenCodeConvStoreSeesPrivateState(t *testing.T) {
+	withTestDB(t)
+	repo := testutil.CanonicalTempDir(t)
+	const conv, shared = "ses_private1", "ses_shared1"
+	require.NoError(t, db.SetConversationResumeProfile(conv, db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: OpenCodeName, Cwd: repo,
+	}))
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: shared, ProjectDir: repo, ProjectPath: repo, Harness: OpenCodeName}))
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	_, err = db.InsertOpenCodeAgentStateAllocation(db.OpenCodeAgentStateAllocation{
+		AgentID: agentID, Mode: db.OpenCodeStatePrivate, StateRoot: t.TempDir(),
+	})
+	require.NoError(t, err)
+	previous := OpenCodePrivateEnvironment
+	t.Cleanup(func() { OpenCodePrivateEnvironment = previous })
+	OpenCodePrivateEnvironment = func(*db.OpenCodeAgentStateAllocation) ([]string, error) {
+		return []string{"XDG_DATA_HOME=/private"}, nil
+	}
+	found := true
+	failure := error(nil)
+	store := openCodeConvStore{
+		listSessions: func(string) ([]openCodeSession, error) {
+			t.Error("a private conversation needs no ambient listing")
+			return nil, nil
+		},
+		listPrivate: func(dir string, environment []string) ([]openCodeSession, error) {
+			assert.Equal(t, repo, dir)
+			assert.Equal(t, []string{"XDG_DATA_HOME=/private"}, environment)
+			if !found {
+				return []openCodeSession{{ID: "ses_other", Directory: repo}}, failure
+			}
+			return []openCodeSession{{ID: conv, Title: "Private", Directory: repo}}, failure
+		},
+	}
+
+	exists, err := store.Exists(conv, "")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	ref, err := store.Resolve(conv, "", true)
+	require.NoError(t, err)
+	require.NotNil(t, ref)
+	assert.Equal(t, repo, ref.ProjectPath)
+	row, err := db.GetConvIndex(shared)
+	require.NoError(t, err)
+	assert.NotNil(t, row, "the private listing evicts nothing")
+
+	found = false
+	exists, err = store.Exists(conv, "")
+	require.NoError(t, err)
+	assert.False(t, exists, "a conversation gone from its own store is gone")
+
+	failure = errors.New("cannot read")
+	_, err = store.Exists(conv, "")
+	require.Error(t, err, "a store that cannot be read says so, not that it is gone")
+	_, err = store.Resolve(conv, "", true)
+	require.Error(t, err)
+
+	// A recorded name survives a store that cannot be read.
+	require.NoError(t, db.SetConvIndexCustomTitle(conv, "Recorded", OpenCodeName))
+	title, err := store.Title(conv)
+	require.NoError(t, err)
+	assert.Equal(t, "Recorded", title)
+
+	// With its directory gone nothing was looked at, so nothing is known.
+	failure = nil
+	require.NoError(t, os.RemoveAll(repo))
+	_, err = store.Exists(conv, "")
+	require.Error(t, err, "no directory to look in is not a conversation that is gone")
+}
+
+// A CLI run outside the sandbox must not read what an agent can write. Private
+// state contributes its data directory and nothing else, and project config is
+// off everywhere.
+func TestOpenCodeCLIEnvironmentLoadsNothingAnAgentWrote(t *testing.T) {
+	value := func(env []string, name string) string {
+		found := ""
+		for _, entry := range env {
+			if rest, ok := strings.CutPrefix(entry, name+"="); ok {
+				found = rest
+			}
+		}
+		return found
+	}
+	const agent = "/state/agt_x"
+	env, cleanup, err := openCodeCLIEnvironment([]string{
+		"XDG_DATA_HOME=" + agent + "/data", "XDG_CONFIG_HOME=" + agent + "/config",
+		"XDG_CACHE_HOME=" + agent + "/cache", "XDG_STATE_HOME=" + agent + "/state",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, agent+"/data", value(env, "XDG_DATA_HOME"))
+	fresh := value(env, "XDG_CONFIG_HOME")
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"} {
+		assert.NotContains(t, value(env, name), agent)
+		assert.DirExists(t, value(env, name))
+	}
+	cleanup()
+	assert.NoDirExists(t, fresh)
+
+	ambient, cleanup, err := openCodeCLIEnvironment(nil)
+	require.NoError(t, err)
+	defer cleanup()
+	for _, isolated := range [][]string{env, ambient} {
+		assert.Equal(t, "1", value(isolated, "OPENCODE_DISABLE_PROJECT_CONFIG"))
+		assert.Equal(t, "1", value(isolated, "OPENCODE_PURE"))
+		assert.Equal(t, "{}", value(isolated, "OPENCODE_AUTH_CONTENT"))
+	}
+}
+
+func TestListOpenCodeSessionsRunsFromTheProject(t *testing.T) {
+	dir := testutil.CanonicalTempDir(t)
+	executable := filepath.Join(testutil.CanonicalTempDir(t), "opencode")
+	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nprintf '[{\"id\":\"ses_here\",\"directory\":\"%s\"}]' \"$PWD\"\n"), 0o755))
+
+	sessions, err := listOpenCodeSessions(executable, dir, nil)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, dir, sessions[0].Directory)
 }

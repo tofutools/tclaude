@@ -29,6 +29,9 @@ const (
 	// filteredGeminiPinnedVersion is HARNESS_GEMINI_VERSION in
 	// scripts/filtered-proxy-smoke/lib/harnesses.sh.
 	filteredGeminiPinnedVersion = "0.62.0"
+	// filteredPiPinnedVersion is HARNESS_PI_VERSION in
+	// scripts/filtered-proxy-smoke/lib/harnesses.sh, the pi scripts/ci/pi pins.
+	filteredPiPinnedVersion = "1.5.0"
 )
 
 // TestPinnedFilteredModelEndpointEvidence runs the exact Claude and Codex

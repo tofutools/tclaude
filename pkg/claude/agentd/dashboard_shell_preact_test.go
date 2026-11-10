@@ -114,8 +114,8 @@ func TestDashboardOpenPRsHoverBridge(t *testing.T) {
 		}
 		if strings.TrimSpace(rule.selectors) == "footer:has(.open-prs.is-open)" {
 			foundRaisedFooter = true
-			if !strings.Contains(rule.declarations, "z-index: 46") {
-				t.Errorf("open PR footer must paint above the z-index 45 dock: %q", rule.declarations)
+			if !strings.Contains(rule.declarations, "z-index: var(--z-popover)") {
+				t.Errorf("open PR footer must lift its popover to the popover layer, over the dock and windows: %q", rule.declarations)
 			}
 		}
 	}
@@ -134,41 +134,43 @@ func TestDashboardOpenPRsThemed(t *testing.T) {
 	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
 	island := string(mustReadFS(dashboardAssetsFS, "js/shell-island.js"))
 
-	fallbackStart := strings.Index(css, "@supports not selector(::-webkit-scrollbar) {\n  .open-pr-list")
-	webkitStart := strings.Index(css, ".open-pr-list::-webkit-scrollbar {")
-	if fallbackStart < 0 || webkitStart <= fallbackStart {
-		t.Fatal("open PR standard scrollbar fallback must precede the WebKit scrollbar rules")
-	}
-	fallback := css[fallbackStart:webkitStart]
-	for _, want := range []string{
-		"scrollbar-color: #6e7681 #0d1117",
-		"body.wizard .open-pr-list { scrollbar-color: #7a5db0 #140f28; }",
-	} {
-		if !strings.Contains(fallback, want) {
-			t.Errorf("open PR non-WebKit scrollbar fallback missing %q", want)
+	for _, id := range []string{"open-prs-popover", "open-mrs-popover"} {
+		if !strings.Contains(island, `id="`+id+`" class="open-prs-popover ui-popover"`) {
+			t.Errorf("the %s panel must be a .ui-popover so every skin paints it", id)
 		}
 	}
-
 	for _, want := range []string{
-		".open-pr-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }",
-		".open-pr-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }",
-		"body.wizard .open-prs-popover {",
-		"background: linear-gradient(180deg, #241b3d 0%, #140f28 100%);",
 		"body.wizard .open-prs-filters button.active {",
 		"body.wizard .open-prs-final-ci { color: #b39ddb; }",
-		"body.wizard .open-pr-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }",
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("open PR theming missing %q", want)
 		}
 	}
 
-	list := strings.Index(island, "? html`<ul class=\"open-pr-list\">")
-	empty := strings.Index(island, ": html`<p class=\"open-prs-empty\">")
-	filters := strings.Index(island, `<div class="open-prs-filters"`)
-	footer := strings.Index(island, `<div class="open-prs-foot">`)
-	if list < 0 || empty < 0 || filters < 0 || footer < 0 || list >= filters || empty >= filters || filters >= footer {
-		t.Errorf("open PR filters must follow both result variants and precede the footer")
+	// The filter row is a component both footer popovers share
+	// (FooterListFilters); each popover must still place it after both result
+	// variants and before its footer.
+	if !strings.Contains(island, `<div class="open-prs-filters" role="group" aria-label=${label}>`) {
+		t.Errorf("the shared filter row must keep its open-prs-filters group")
+	}
+	for _, popover := range []struct{ start, end, filters string }{
+		{"function OpenPRs(", "function OpenMRs(", "<${FooterListFilters} label=\"Filter pull requests\""},
+		{"function OpenMRs(", "function Disconnect(", "<${FooterListFilters} label=\"Filter merge requests\""},
+	} {
+		from, to := strings.Index(island, popover.start), strings.Index(island, popover.end)
+		if from < 0 || to <= from {
+			t.Errorf("%s not found ahead of %s", popover.start, popover.end)
+			continue
+		}
+		body := island[from:to]
+		list := strings.Index(body, "? html`<ul class=\"open-pr-list\">")
+		empty := strings.Index(body, ": html`<p class=\"ui-empty-block\">")
+		filters := strings.Index(body, popover.filters)
+		footer := strings.Index(body, `<div class="open-prs-foot">`)
+		if list < 0 || empty < 0 || filters < 0 || footer < 0 || list >= filters || empty >= filters || filters >= footer {
+			t.Errorf("%s: filters must follow both result variants and precede the footer", popover.start)
+		}
 	}
 	for _, want := range []string{
 		"const [showFinalCI, setShowFinalCI] = useState(false);",

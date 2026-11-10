@@ -466,13 +466,42 @@ type Snapshot struct {
 	// tclaude sandbox-profile tier. It keeps resume/reincarnate from later
 	// reapplying newly assigned global or group values to an opted-out agent.
 	ProfilesOmitted bool `json:"profiles_omitted,omitempty"`
+	// ProfilesOmittedDerived marks an omission the launch's sandbox posture
+	// forced (a mode that cannot carry tclaude sandbox profiles, such as
+	// Codex's raw no-sandbox mode), not one the launch asked for. A relaunch
+	// whose posture can carry profiles again re-resolves the group, global and
+	// explicit tiers instead of keeping the omission. A snapshot without it
+	// is an explicit omission, which is how every omission before it was
+	// recorded; an older binary reads a derived one as explicit, the
+	// behaviour it always had.
+	ProfilesOmittedDerived bool `json:"profiles_omitted_derived,omitempty"`
 	// ResolutionGroupID is the launch group whose sandbox assignment supplied
 	// the group tier. It is recorded even when that group had no profile, so a
 	// later resume can pick up a new assignment without guessing among an
 	// actor's other memberships. Zero is the legacy/ungrouped sentinel.
-	ResolutionGroupID int64            `json:"resolution_group_id,omitempty"`
-	Effective         EffectiveProfile `json:"effective"`
-	Applied           []AppliedProfile `json:"applied"`
+	ResolutionGroupID int64 `json:"resolution_group_id,omitempty"`
+	// GroupBinding records an operator's choice, made when the agent moved
+	// between groups, to keep a setting on the group it left. Nil follows the
+	// default: the sandbox tier and the group environment both come from
+	// ResolutionGroupID, which tracks the agent's membership.
+	GroupBinding *GroupBinding `json:"group_binding,omitempty"`
+	// ExplicitProfileReassigned is an operator's change of the explicit-tier
+	// sandbox profile, made on an existing agent after this snapshot was
+	// launched. Nil means the explicit tier follows Applied, as it always did.
+	// Set, it names the profile the next relaunch resolves instead (an empty
+	// one: no explicit profile). A launch that resolved the chain records the
+	// new profile in Applied and drops this; a relaunch that fell back to this
+	// stored policy keeps it, so the operator's choice survives until it can
+	// apply.
+	ExplicitProfileReassigned *ExplicitProfileRef `json:"explicit_profile_reassigned,omitempty"`
+	// DenyOverlay is the spawn-time deny overlay (deny_overlay.go): the
+	// canonical paths denied to this agent on top of its profiles, its
+	// parent's included. Effective already has it applied; it is kept
+	// separately so every relaunch can lay it over a freshly resolved chain,
+	// and so a child's overlay starts from it.
+	DenyOverlay []string         `json:"deny_overlay,omitempty"`
+	Effective   EffectiveProfile `json:"effective"`
+	Applied     []AppliedProfile `json:"applied"`
 	// LaunchEnvironment is merged into the child process after the sandbox
 	// profile environment. It is not sandbox authority, so RequireContained
 	// intentionally does not inspect it.
@@ -488,6 +517,103 @@ type Snapshot struct {
 	// freezes the one filesystem observation shared by disclosure and the
 	// target adapter; every fresh launch replaces it.
 	UnixSocketMaterialization *UnixSocketMaterialization `json:"unix_socket_materialization,omitempty"`
+}
+
+// GroupBinding is the per-setting group provenance of a Snapshot. Each setting
+// names its source group; a pinned source is kept after the agent leaves that
+// group (until the group is deleted), an unpinned one follows membership.
+type GroupBinding struct {
+	// ProfileGroupPinned keeps ResolutionGroupID (the sandbox-profile tier's
+	// group) after the agent has left it.
+	ProfileGroupPinned bool `json:"profile_group_pinned,omitempty"`
+	// EnvironmentGroupSet makes EnvironmentGroupID, not ResolutionGroupID, the
+	// source of the group environment. Zero with the flag set means no group
+	// environment.
+	EnvironmentGroupSet    bool  `json:"environment_group_set,omitempty"`
+	EnvironmentGroupID     int64 `json:"environment_group_id,omitempty"`
+	EnvironmentGroupPinned bool  `json:"environment_group_pinned,omitempty"`
+}
+
+// ExplicitProfileRef names an explicit-tier sandbox profile by stable ID and
+// by name. The zero value is "no explicit profile".
+type ExplicitProfileRef struct {
+	ID   int64  `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+// Clone returns an independent copy; nil stays nil.
+func (r *ExplicitProfileRef) Clone() *ExplicitProfileRef {
+	if r == nil {
+		return nil
+	}
+	out := *r
+	return &out
+}
+
+// Clone returns an independent copy; nil stays nil.
+func (b *GroupBinding) Clone() *GroupBinding {
+	if b == nil {
+		return nil
+	}
+	out := *b
+	return &out
+}
+
+// IsZero reports whether the binding carries no choice.
+func (b *GroupBinding) IsZero() bool {
+	return b == nil || *b == GroupBinding{}
+}
+
+// EnvironmentGroupID returns the group whose environment the agent's launches
+// compose, and whether it was set explicitly rather than following
+// ResolutionGroupID.
+func (s Snapshot) EnvironmentGroupID() (int64, bool) {
+	if s.GroupBinding != nil && s.GroupBinding.EnvironmentGroupSet {
+		return s.GroupBinding.EnvironmentGroupID, true
+	}
+	return s.ResolutionGroupID, false
+}
+
+// ProfilesOmittedByChoice reports an omission the launch asked for, which
+// every relaunch keeps.
+func (s Snapshot) ProfilesOmittedByChoice() bool {
+	return s.ProfilesOmitted && !s.ProfilesOmittedDerived
+}
+
+// CopyOmission copies whether, and why, from omits the sandbox profiles, and
+// the deny overlay laid over them. Both describe the launch contract rather
+// than the effective profile, and every site that rebuilds a snapshot around
+// a changed effective profile calls this: dropping the overlay there would
+// widen the agent's next relaunch.
+func (s *Snapshot) CopyOmission(from Snapshot) {
+	s.ProfilesOmitted = from.ProfilesOmitted
+	s.ProfilesOmittedDerived = from.ProfilesOmitted && from.ProfilesOmittedDerived
+	s.DenyOverlay = append([]string(nil), from.DenyOverlay...)
+}
+
+// CopyGroupProvenance carries the registry provenance a relaunch resolves
+// from (ResolutionGroupID, GroupBinding and a pending explicit-profile
+// reassignment) from another snapshot of the same agent.
+func (s *Snapshot) CopyGroupProvenance(from Snapshot) {
+	s.ResolutionGroupID = from.ResolutionGroupID
+	s.GroupBinding = from.GroupBinding.Clone()
+	s.ExplicitProfileReassigned = from.ExplicitProfileReassigned.Clone()
+}
+
+// ExplicitProfile is the explicit-tier profile the next relaunch resolves:
+// the pending reassignment when there is one, else the one Applied recorded.
+// The zero value means none.
+func (s Snapshot) ExplicitProfile() ExplicitProfileRef {
+	if s.ExplicitProfileReassigned != nil {
+		return *s.ExplicitProfileReassigned
+	}
+	var ref ExplicitProfileRef
+	for _, applied := range s.Applied {
+		if applied.Scope == ScopeExplicit {
+			ref = ExplicitProfileRef{ID: applied.ID, Name: applied.Name}
+		}
+	}
+	return ref
 }
 
 // NewSnapshot freezes a resolver result and its stable registry provenance.
@@ -534,6 +660,14 @@ func OmittedProfilesSnapshot() Snapshot {
 	return out
 }
 
+// DerivedOmittedProfilesSnapshot is OmittedProfilesSnapshot for an omission
+// the launch's sandbox posture forced (ProfilesOmittedDerived).
+func DerivedOmittedProfilesSnapshot() Snapshot {
+	out := OmittedProfilesSnapshot()
+	out.ProfilesOmittedDerived = true
+	return out
+}
+
 // OmittedProfilesSnapshotKeepingLaunchEnvironment is OmittedProfilesSnapshot
 // that keeps previous's launch environment (group, spawn-profile and explicit
 // entries) and the group it was resolved from. That environment is not
@@ -548,7 +682,7 @@ func OmittedProfilesSnapshotKeepingLaunchEnvironment(previous *Snapshot) Snapsho
 	out.LaunchEnvironmentOverrides = append(
 		[]EnvironmentEntry(nil), previous.LaunchEnvironmentOverrides...)
 	out.RefreshGroupEnvironment = previous.RefreshGroupEnvironment
-	out.ResolutionGroupID = previous.ResolutionGroupID
+	out.CopyGroupProvenance(*previous)
 	return out
 }
 
@@ -583,8 +717,8 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.Provenance.ResourceCPU = nil
 	effective.Provenance.ResourcePIDs = nil
 	out := NewSnapshot(effective, in.Applied)
-	out.ResolutionGroupID = in.ResolutionGroupID
-	out.ProfilesOmitted = in.ProfilesOmitted
+	out.CopyGroupProvenance(in)
+	out.CopyOmission(in)
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
 	out.RefreshGroupEnvironment = in.RefreshGroupEnvironment
 	out.LaunchEnvironmentOverrides = append([]EnvironmentEntry(nil), in.LaunchEnvironmentOverrides...)
@@ -753,8 +887,8 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("effective sandbox agent directories changed since resolution")
 	}
 	out := NewSnapshot(in.Effective, in.Applied)
-	out.ResolutionGroupID = in.ResolutionGroupID
-	out.ProfilesOmitted = in.ProfilesOmitted
+	out.CopyGroupProvenance(in)
+	out.CopyOmission(in)
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
 	out.RefreshGroupEnvironment = in.RefreshGroupEnvironment
 	out.LaunchEnvironmentOverrides = append([]EnvironmentEntry(nil), in.LaunchEnvironmentOverrides...)
@@ -996,6 +1130,7 @@ func cloneAccessNotices(in []AccessNotice) []AccessNotice {
 		out[i] = notice
 		out[i].Entries = append([]int(nil), notice.Entries...)
 		out[i].Tiers = append([]string(nil), notice.Tiers...)
+		out[i].Layers = cloneAccessNoticeLayers(notice.Layers)
 	}
 	return out
 }

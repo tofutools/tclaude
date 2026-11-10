@@ -158,10 +158,10 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// activity/desc (which reproduces the server's recency order), wired on
 	// a delegated click — the same affordance as the Audit tab.
 	must("function SortHeader", "sortable Preact header component present")
-	must("th.cost-sort", "header click target class rendered + bound")
+	must("<${SortTh}", "headers render through the shared SortTh")
 	must("function sortCostAgents", "client-side column sort implemented")
-	must("state.cycleSort(key)", "header sort action wired")
-	must("#costs-table th.cost-sort { cursor: pointer", "sortable headers styled clickable")
+	must("colOf=${(column) => column.sort} onSort=${(key) => state.cycleSort(key)}", "header sort action wired to each column's sort key")
+	must("table th.sortable { cursor: pointer", "sortable headers styled clickable")
 
 	// Breakdown filter: harness checkboxes plus a client-side text narrowing of
 	// the table (matches name / id / harness / model), with the matched/all
@@ -188,7 +188,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(`summary::after { content: "▾"`, "open filters use the conventional down-pointing disclosure marker")
 	must("function positionCostFilter(menu)", "filter popovers anchor to their own trigger without reflowing the selector row")
 	must("useLayoutEffect(() => positionCostFilter(menu.current))", "open filters reposition after dynamic content changes")
-	must("position: fixed; z-index: 200; visibility: hidden", "filter popovers use viewport-safe overlay positioning")
+	must("position: fixed; z-index: var(--z-popover); visibility: hidden", "filter popovers use viewport-safe overlay positioning")
 	must("viewportWidth - COST_FILTER_EDGE - width", "filter popovers clamp inside the viewport")
 	must("Turning on a provider selects its models", "linked-filter restore behavior is explained in the model dropdown")
 	must(`id="filter-costs-breakdown"`, "chart breakdown menu is present beside the data filters")
@@ -209,7 +209,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("cost-accumulated-line${segment.projected ? ' projected' : ''}", "projection uses a distinct accumulated-line segment")
 	must("cost-accumulated-hover-target", "the full accumulated plot exposes a continuous hover target")
 	must("{ x: event.clientX, y: event.clientY }", "accumulated popover follows the cursor rather than its snapped data point")
-	must("position: fixed; z-index: 200", "accumulated popover uses viewport coordinates like the daily chart tooltip")
+	must("position: fixed; z-index: var(--z-popover)", "accumulated popover uses viewport coordinates like the daily chart tooltip")
 	must("use Left and Right Arrow keys to inspect daily values", "accumulated values have keyboard-accessible navigation")
 	must("onpointerdown", "accumulated values can be inspected with touch or pen input")
 	must(`class="cost-accumulated-status" role="status" aria-live="polite"`, "keyboard-selected accumulated values are announced to assistive technology")
@@ -380,7 +380,7 @@ func TestDashboardHTML_CostsMonthStepperWired(t *testing.T) {
 	// "This month" routes through activateMonth(0), the span folds back into
 	// 'month' there, and syncSpanHighlight lights the "This month" button
 	// alongside the stepper so the two stay in sync and both read as active.
-	must("monthView ? ' active'", "dual span highlight implemented")
+	must("pressed=${monthView}", "dual span highlight implemented")
 	must("monthOffset.value = 0", "This month is the stepper's offset-0 head")
 
 	// dashboard.css: the stepper group is styled (divider + tight arrows).

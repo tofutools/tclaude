@@ -6,13 +6,18 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { downloadBlob } from './paf-model.js';
+import { Button, Select } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
+import { downloadBlob } from './download.js';
 import { shellConfirm } from './shell-state.js';
+import { managementController } from './management-controller.js';
 
 const html = htm.bind(h);
 const PWF_TYPE = 'application/vnd.tclaude.pwf+zip';
 const MAX_FILE = 32 << 20;
+// A .paf can carry workflows beside whole conversations.
+const MAX_PAF = 1 << 30;
 
 async function errorText(response) {
   const body = await response.json().catch(() => ({}));
@@ -38,29 +43,53 @@ export function displayArg(arg) {
   return text === '' || /[\s'"]/.test(text) ? `'${text.replace(/'/g, "'\\''")}'` : text;
 }
 
-// exportProblemsConfirmation is the confirm() request before sharing a
-// workflow that fails validation. It exports as it is, the way a draft saves;
-// the importer sees the same list in their review.
-export function exportProblemsConfirmation(id, problems) {
-  const shown = problems.slice(0, 12).map((p) => `• ${p}`);
-  if (problems.length > shown.length) shown.push(`…and ${problems.length - shown.length} more`);
+function listed(lines) {
+  const shown = lines.slice(0, 12).map((line) => `• ${line}`);
+  if (lines.length > shown.length) shown.push(`…and ${lines.length - shown.length} more`);
+  return shown.join('\n');
+}
+
+// pathLine says why one machine-specific path matters.
+export function pathLine(finding) {
+  const why = finding.kind === 'home' ? 'reveals a username' : 'may not exist elsewhere';
+  return `${finding.path} (${why}), in ${finding.where}`;
+}
+
+// exportConfirmation is the confirm() request before sharing a workflow that
+// fails validation, carries paths from this machine or names specific agents.
+// Problems and paths export as they are, the way a draft saves, and the
+// importer sees the same lists in their review. A step naming an agent that
+// has a role here is shared with that role instead; the rest stay named.
+export function exportConfirmation(id, problems, paths, assignees = []) {
+  const parts = [];
+  const converted = assignees.filter((a) => a.role);
+  const kept = assignees.filter((a) => !a.role);
+  if (problems.length > 0) parts.push(`${id} cannot run until these are fixed. You can still share it; whoever imports it sees the same list.\n\n${listed(problems)}`);
+  if (paths.length > 0) parts.push(`${id} carries paths from this machine. A param or a relative path travels better; whoever imports it sees the same list.\n\n${listed(paths.map(pathLine))}`);
+  if (converted.length > 0) parts.push(`These steps name an agent the importing node will not have, so they are shared without the name. They ask for the agent's role, or for the profile they already have.\n\n${listed(converted.map((a) => `${a.name} (role ${a.role}), in ${a.steps.join(', ')}`))}`);
+  if (kept.length > 0) parts.push(`These agents have no single role here, so their steps stay named. On the importing node they fall to their profile, or wait until reassigned.\n\n${listed(kept.map((a) => `${a.name}, in ${a.steps.join(', ')}`))}`);
+  let title = 'Share a workflow that names specific agents?';
+  if (problems.length > 0) title = 'Share a workflow that fails validation?';
+  else if (paths.length > 0) title = 'Share a workflow with paths from this machine?';
   return {
-    title: 'Share a workflow that fails validation?',
-    body: `${id} cannot run until these are fixed. You can still share it; whoever imports it sees the same list.\n\n${shown.join('\n')}`,
+    title,
+    body: parts.join('\n\n'),
     preformatted: true,
-    okLabel: 'Share anyway',
+    okLabel: converted.length > 0 ? 'Use roles and share' : 'Share anyway',
   };
 }
 
-// exportWorkflow downloads <id>.pwf, asking first when it fails validation.
-// It resolves to '' (also when the operator declines) or an error message.
+// exportWorkflow downloads <id>.pwf, asking first when exportConfirmation has
+// anything to say. It resolves to '' (also when the operator
+// declines) or an error message.
 export async function exportWorkflow(id, { fetchImpl = fetch, download = downloadBlob, confirm = shellConfirm } = {}) {
   const url = `/v1/process/templates/${encodeURIComponent(id)}/export`;
   const check = await fetchImpl(`${url}?check=1`, { credentials: 'same-origin' });
   if (!check.ok) return errorText(check);
-  const { problems = [] } = await check.json().catch(() => ({}));
-  if (problems.length > 0 && !(await confirm(exportProblemsConfirmation(id, problems)))) return '';
-  const response = await fetchImpl(url, { credentials: 'same-origin' });
+  const { problems = [], paths = [], assignees = [] } = await check.json().catch(() => ({}));
+  if ((problems.length > 0 || paths.length > 0 || assignees.length > 0)
+    && !(await confirm(exportConfirmation(id, problems, paths, assignees)))) return '';
+  const response = await fetchImpl(assignees.some((a) => a.role) ? `${url}?assignees=roles` : url, { credentials: 'same-origin' });
   if (!response.ok) return errorText(response);
   download(await response.blob(), `${String(id).replace(/[^A-Za-z0-9._-]+/g, '-')}.pwf`);
   return '';
@@ -77,6 +106,7 @@ export function importQuery(choices = {}) {
   }
   if (choices.rename) params.set('rename', '1');
   if (choices.group) params.set('group', choices.group);
+  if (choices.workflow) params.set('workflow', choices.workflow);
   return params.toString();
 }
 
@@ -132,6 +162,7 @@ export function importReview(preview) {
   return {
     title: preview.title || preview.rootId || 'Workflow',
     summary: preview.summary || '',
+    credit: [preview.author && `By ${preview.author} (as the file says)`, preview.licence && `Licence: ${preview.licence}`].filter(Boolean).join(' · '),
     signer,
     trusted: valid.some((s) => s.trust === 'this node' || (s.trust || '').startsWith('known peer')),
     params: preview.params || [],
@@ -143,8 +174,11 @@ export function importReview(preview) {
     programs: (preview.programs || []).map((p) => ({ ...p, command: [p.run, ...(p.args || [])].map(displayArg).join(' ') })),
     assignees: preview.assignees || [],
     problems: preview.problems || [],
+    paths: preview.paths || [],
+    refused: preview.refused || '',
     templates,
     updates: preview.updates || 0,
+    envelope: preview.envelope || null,
     nothingToDo: templates.length > 0 && templates.every((t) => t.status === 'identical'),
   };
 }
@@ -157,11 +191,25 @@ async function processGroupNames(fetchImpl = fetch) {
   return (body.groups || []).map((g) => g.group).filter(Boolean);
 }
 
-function ImportDialog({ file, bytes, preview: initialPreview, group: initialGroup = '', onClose, onImported }) {
+// EnvelopeSection says what else the .paf holds. Importing the workflow takes
+// none of it: each performer lands through the agent import and its own review.
+function EnvelopeSection({ envelope, workflow, disabled, onPick, onLand }) {
+  return html`<div class="pwf-section" data-pwf-envelope>
+    ${envelope.workflows.length > 1 && html`<label class="pwf-group">This file holds ${envelope.workflows.length} workflows. Reviewing <${Select} data-pwf-workflow disabled=${disabled} value=${workflow} onChange=${(e) => onPick(e.currentTarget.value)}>
+      ${envelope.workflows.map((w) => html`<option key=${w.key} value=${w.key}>${w.root.split('@')[0]}</option>`)}
+    <//></label>`}
+    ${envelope.performers.length > 0 && html`<h4 class="ui-eyebrow">Agents it ships</h4><ul class="pwf-roles">${envelope.performers.map((p) => html`<li key=${p.role} data-pwf-performer=${p.role}>
+      <b>${p.target}</b> <span class="muted">· ${p.name} on ${p.harness}${p.model ? ` (${p.model})` : ''}, ${p.history ? 'with its conversation' : 'no conversation'}</span>
+      <${Button} class="pwf-land" data-pwf-land=${p.agentKey} disabled=${disabled} onClick=${() => onLand(p)}>Land it…<//></li>`)}</ul>
+      <p class="muted">Importing the workflow lands none of them. Land one to give a role a pre-briefed agent, with the agent import's own review; or use your own agents and ignore these.</p>`}
+  </div>`;
+}
+
+function ImportDialog({ file, source, bytes, preview: initialPreview, group: initialGroup = '', onClose, onImported }) {
   const [preview, setPreview] = useState(initialPreview);
   const review = importReview(preview);
   const [replace, setReplace] = useState(false);
-  const [choices, setChoices] = useState({ roleMap: {}, rename: false, group: initialGroup });
+  const [choices, setChoices] = useState({ roleMap: {}, rename: false, group: initialGroup, workflow: initialPreview.envelope?.workflow || '' });
   const [groups, setGroups] = useState([]);
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -198,7 +246,7 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
       if (seq === latest.current) setReviewing(false);
     }
   };
-  const blocked = review.updates > 0 && !replace;
+  const blocked = Boolean(review.refused) || (review.updates > 0 && !replace);
   const submit = async () => {
     if (busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)) return;
     setBusy(true);
@@ -229,51 +277,53 @@ function ImportDialog({ file, bytes, preview: initialPreview, group: initialGrou
       setBusy(false);
     }
   };
-  return html`<${Overlay} id="process-workflow-import" dialogClass="modal pwf-import-dialog" overlayClass="pwf-import-modal"
-      labelledby="pwf-import-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="pwf-import-title">Import workflow: ${review.title}</h3>
+  return html`<${Dialog} id="process-workflow-import" dialogClass="modal pwf-import-dialog" overlayClass="pwf-import-modal" onClose=${onClose} blocked=${busy} titleId="pwf-import-title" title=${html`Import workflow: ${review.title}`}>
     <p class="muted pwf-file">${file}</p>
     ${review.summary && html`<p class="pwf-summary">${review.summary}</p>`}
+    ${review.credit && html`<p class="muted" data-pwf-credit>${review.credit}</p>`}
     <p class=${`pwf-signer ${review.trusted ? 'is-trusted' : 'is-untrusted'}`} data-pwf-signer>${review.signer}</p>
-    <div class="pwf-section"><h4>Commands it would run</h4>
+    ${review.refused && html`<div class="island-error" role="alert" data-pwf-refused>Import refused: ${review.refused}. Change this in Config › Experimental.</div>`}
+    <div class="pwf-section"><h4 class="ui-eyebrow">Commands it would run</h4>
       ${review.programs.length === 0 ? html`<p class="muted">None. Every step is an agent or you.</p>` : html`<ul class="pwf-commands">${review.programs.map((p) => html`<li key=${p.step} data-pwf-command=${p.step}><code>${p.command}</code> <span class="muted">· ${p.step} · program profile <b>${p.profile || 'default'}</b></span></li>`)}</ul>
       <p class="muted">Nothing runs on import. Starting a run asks you to allow each program profile first.</p>`}
     </div>
-    ${review.roleMap.length > 0 ? html`<div class="pwf-section"><h4>Agent roles it asks for</h4><ul class="pwf-roles">${review.roleMap.map((r) => html`<li key=${r.name} data-pwf-role=${r.name}>
+    ${review.roleMap.length > 0 ? html`<div class="pwf-section"><h4 class="ui-eyebrow">Agent roles it asks for</h4><ul class="pwf-roles">${review.roleMap.map((r) => html`<li key=${r.name} data-pwf-role=${r.name}>
         <b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span>
-        <label class="pwf-role-map">use <select data-pwf-role-map=${r.name} disabled=${busy} value=${choices.roleMap[r.name] || r.name}
+        <label class="pwf-role-map">use <${Select} data-pwf-role-map=${r.name} disabled=${busy} value=${choices.roleMap[r.name] || r.name}
           onChange=${(e) => choose({ roleMap: { ...choices.roleMap, [r.name]: e.currentTarget.value } })}>
           <option value=${r.name}>${r.name} (as named)</option>
           ${review.localRoles.filter((n) => n !== r.name).map((n) => html`<option key=${n} value=${n}>${n}</option>`)}
-        </select></label>
+        <//></label>
         ${!r.known && html`<span class="pwf-role-unknown" data-pwf-role-unknown>nothing here has ${r.target} yet</span>`}</li>`)}</ul>
       <p class="muted">A step waits until a member of the run's group has the role, or its fallback spawns one. Mapping rewrites the imported steps.</p></div>`
-    : review.roles.length > 0 && html`<div class="pwf-section"><h4>Agent roles it asks for</h4><ul>${review.roles.map((r) => html`<li key=${r.name}><b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span></li>`)}</ul>
+    : review.roles.length > 0 && html`<div class="pwf-section"><h4 class="ui-eyebrow">Agent roles it asks for</h4><ul>${review.roles.map((r) => html`<li key=${r.name}><b>${r.name}</b> <span class="muted">· ${r.steps.join(', ')}</span></li>`)}</ul>
       <p class="muted">A step waits until a member of the run's group has the role, or its fallback spawns one.</p></div>`}
-    ${review.humans.length > 0 && html`<div class="pwf-section"><h4>Asks you</h4><p class="muted">${review.humans.join(', ')}</p></div>`}
-    ${review.params.length > 0 && html`<div class="pwf-section"><h4>Start inputs</h4><p>${review.params.map((p) => html`<span key=${p.name} class="pwf-param">${p.name}${p.required ? ' *' : ''}</span>`)}</p></div>`}
-    ${review.problems.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-problems><h4>Fails validation</h4><p class="muted">It imports as it is, but cannot run until these are fixed here.</p><ul>${review.problems.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul></div>`}
-    ${review.assignees.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-assignees><h4>Not portable</h4><ul>${review.assignees.map((a) => html`<li key=${a.name}>${a.steps.join(', ')} name the agent <b>${a.name}</b>, which may not exist here. Those steps wait until reassigned.</li>`)}</ul></div>`}
-    <div class="pwf-section"><h4>What changes here</h4><ul class="pwf-templates">${review.templates.map((t) => html`<li key=${t.ref} data-pwf-template=${t.id} data-pwf-status=${t.status}><b>${t.name || t.id}</b> <span class=${`pwf-status is-${t.status}`}>${t.label}</span></li>`)}</ul>
+    ${review.humans.length > 0 && html`<div class="pwf-section"><h4 class="ui-eyebrow">Asks you</h4><p class="muted">${review.humans.join(', ')}</p></div>`}
+    ${review.params.length > 0 && html`<div class="pwf-section"><h4 class="ui-eyebrow">Start inputs</h4><p>${review.params.map((p) => html`<span key=${p.name} class="pwf-param">${p.name}${p.required ? ' *' : ''}</span>`)}</p></div>`}
+    ${review.problems.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-problems><h4 class="ui-eyebrow">Fails validation</h4><p class="muted">It imports as it is, but cannot run until these are fixed here.</p><ul>${review.problems.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul></div>`}
+    ${review.assignees.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-assignees><h4 class="ui-eyebrow">Not portable</h4><ul>${review.assignees.map((a) => html`<li key=${a.name}>${a.steps.join(', ')} name the agent <b>${a.name}</b>, which may not exist here. Those steps fall to their profile, or wait until reassigned.</li>`)}</ul></div>`}
+    ${review.paths.length > 0 && html`<div class="pwf-section pwf-warn" data-pwf-paths><h4 class="ui-eyebrow">Paths from another machine</h4><p class="muted">Steps using these may need changing here.</p><ul>${review.paths.map((p, i) => html`<li key=${i}><code>${p.path}</code> <span class="muted">· ${p.where}</span></li>`)}</ul></div>`}
+    ${review.envelope && html`<${EnvelopeSection} envelope=${review.envelope} workflow=${choices.workflow} disabled=${busy}
+      onPick=${(workflow) => choose({ workflow, roleMap: {} })} onLand=${(performer) => { managementController().openGroupImport(source, { agent: performer.agentKey, role: performer.target }); onClose(); }} />`}
+    <div class="pwf-section"><h4 class="ui-eyebrow">What changes here</h4><ul class="pwf-templates">${review.templates.map((t) => html`<li key=${t.ref} data-pwf-template=${t.id} data-pwf-status=${t.status}><b>${t.name || t.id}</b> <span class=${`pwf-status is-${t.status}`}>${t.label}</span></li>`)}</ul>
       ${(review.updates > 0 || choices.rename) && html`<label class="pwf-replace"><input type="checkbox" data-pwf-rename checked=${choices.rename} disabled=${busy} onChange=${(e) => { setReplace(false); choose({ rename: e.currentTarget.checked }); }} /> Import under new ids (${'<id>-2'}, …) instead of replacing mine</label>`}
       ${review.updates > 0 && !choices.rename && html`<label class="pwf-replace"><input type="checkbox" data-pwf-replace checked=${replace} onChange=${(e) => setReplace(e.currentTarget.checked)} /> Replace my current version of ${review.updates === 1 ? 'that template' : `those ${review.updates} templates`}</label>`}
     </div>
-    ${(groups.length > 0 || choices.group) && html`<div class="pwf-section"><h4>Save to a group</h4>
-      <label class="pwf-group">Pin it to <select data-pwf-group disabled=${busy} value=${choices.group} onChange=${(e) => choose({ group: e.currentTarget.value })}>
-        <option value="">no group (library only)</option>
-        ${[...new Set([...(choices.group ? [choices.group] : []), ...groups])].map((g) => html`<option key=${g} value=${g}>${g}</option>`)}
-      </select></label></div>`}
+    ${(groups.length > 0 || choices.group) && html`<div class="pwf-section"><h4 class="ui-eyebrow">Save to a group</h4>
+      <label class="pwf-group">Pin it to <${GroupCombobox} attrs=${{ 'data-pwf-group': '' }} disabled=${busy} value=${choices.group}
+        groups=${[...new Set([...(choices.group ? [choices.group] : []), ...groups])]} noneLabel="no group (library only)"
+        ariaLabel="Pin it to group" onChange=${(group) => choose({ group })} /></label></div>`}
     ${error && html`<div class="island-error" role="alert">${error}</div>`}
-    <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
-      <button class="primary" type="button" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</button></div>
-  </${Overlay}>`;
+    <div class="modal-buttons"><${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
+      <${Button} variant="primary" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : review.refused ? 'Refused' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</${Button}></div>
+  </${Dialog}>`;
 }
 
 // WorkflowImportButton picks a .pwf file, previews it and opens the review.
 // A file dropped elsewhere (the dock's Processes section) comes in as
 // `dropped` and takes the same review.
 export function WorkflowImportButton({
-  group = '', onImported, dropped = null, label = '⤒ import workflow', className = 'process-action', id = 'process-workflow-import-btn',
+  group = '', onImported, dropped = null, from = null, label = '⤒ import workflow', className = 'process-action', id = 'process-workflow-import-btn', variant = '', size = '',
 }) {
   const input = useRef(null);
   const [state, setState] = useState(null);
@@ -281,13 +331,13 @@ export function WorkflowImportButton({
   const load = async (picked) => {
     if (!picked) return;
     setError('');
-    if (picked.size > MAX_FILE) {
+    if (picked.size > (/\.paf$/i.test(picked.name) ? MAX_PAF : MAX_FILE)) {
       setError('That file is too large to be a workflow.');
       return;
     }
     try {
       const bytes = new Uint8Array(await picked.arrayBuffer());
-      setState({ file: picked.name, bytes, preview: await previewImport(bytes, { choices: { group } }) });
+      setState({ file: picked.name, source: picked, bytes, preview: await previewImport(bytes, { choices: { group } }) });
     } catch (err) {
       setError(`Cannot import ${picked.name}: ${err?.message || err}`);
     }
@@ -299,15 +349,15 @@ export function WorkflowImportButton({
   };
   useEffect(() => { void load(dropped); }, [dropped]);
   return html`<span class="pwf-import-entry">
-    <input ref=${input} type="file" accept=".pwf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
-    <button id=${id || undefined} class=${className} type="button" title="Import a shared .pwf workflow file: you review what it runs before anything is stored" onClick=${() => input.current?.click()}>${label}</button>
+    <input ref=${input} type="file" accept=".pwf,.paf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
+    <${Button} id=${id || undefined} class=${className} variant=${variant} size=${size} title="Import a shared .pwf workflow file, or a .paf carrying one: you review what it runs before anything is stored" onClick=${() => (from ? void load(from) : input.current?.click())}>${label}<//>
     ${error && html`<span class="island-error pwf-inline-error" role="alert">${error}</span>`}
     ${state && html`<${ImportDialog} ...${state} group=${group} onClose=${() => setState(null)} onImported=${onImported} />`}
   </span>`;
 }
 
 // WorkflowExportButton downloads one template as a .pwf.
-export function WorkflowExportButton({ id }) {
+export function WorkflowExportButton({ id, className = 'process-action', variant = '', size = '', disabled = false, title = '' }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const run = async () => {
@@ -321,7 +371,7 @@ export function WorkflowExportButton({ id }) {
       setBusy(false);
     }
   };
-  return html`<button class="process-action" data-process-action="export" data-id=${id} type="button" disabled=${busy}
-    title=${error || 'Download as a .pwf workflow file to share; it carries the templates this one uses'} aria-invalid=${error ? 'true' : undefined}
-    onClick=${run}>${busy ? 'exporting…' : error ? 'export failed' : 'share'}</button>`;
+  return html`<${Button} class=${className} variant=${variant} size=${size} data-process-action="export" data-id=${id} disabled=${busy || disabled}
+    title=${error || title || 'Download as a .pwf workflow file to share; it carries the templates this one uses'} aria-invalid=${error ? 'true' : undefined}
+    onClick=${run}>${busy ? 'exporting…' : error ? 'export failed' : 'share'}<//>`;
 }

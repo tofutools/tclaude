@@ -20,7 +20,7 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 
 	// The Activity subtab + the panel activity-tab.js toggles (the shared
 	// Activity wiring is pinned by TestDashboardHTML_ActivityTabWired).
-	must(`data-subtab="audit" href="/activity/audit"`, "the Audit subtab")
+	must(`data-subtab="audit" href="/diagnostics/audit"`, "the Audit subtab")
 	must(`id="activity-audit"`, "the Audit panel")
 	must(`id="audit-root"`, "the stable Preact feature host")
 	must(`id="audit-list"`, "the Preact-owned table mount")
@@ -36,7 +36,7 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 
 	// Server-side search / sort / pagination wiring.
 	must("page_size", "audit.js sends the page size to the server")
-	must("audit-sort", "sortable column header class")
+	must("<${SortTh}", "sortable column headers through the shared SortTh")
 	must("<${AuditPager}", "the pager footer (pager.js)")
 	must("resetPage()", "a filter/sort change resets to page 1")
 
@@ -51,14 +51,9 @@ func TestDashboardHTML_AuditTabWired(t *testing.T) {
 	must("statusView", "the outcome pill model")
 	must("SpawnDetails", "spawn rows expose a structured details disclosure")
 	must("audit-spawn-popover", "spawn request/resolution/response overlay")
-	must(".audit-spawn-popover::-webkit-scrollbar", "the outer spawn-details scrollbar uses dashboard chrome")
-	must(".audit-spawn-popover pre::-webkit-scrollbar-thumb", "the nested JSON scrollbar uses dashboard chrome")
-	must("body.wizard .audit-spawn-popover::-webkit-scrollbar-thumb", "wizard spawn-details scrollbars use the arcane chrome")
-	must("body.wizard .audit-spawn-popover {", "the wizard spawn-details surface leaves the default dark chrome")
+	must(`class="audit-spawn-popover ui-popover"`, "the spawn-details overlay is a .ui-popover, so the wizard skin paints it too")
 	must("body.wizard .audit-spawn-popover pre {", "wizard spawn-details JSON bodies take the violet-tinted dark")
-	must("scrollbar-color: #6e7681 #0d1117", "Firefox receives the regular scrollbar fallback")
-	must("scrollbar-color: #7a5db0 #140f28", "Firefox receives the wizard scrollbar fallback")
 	must("response_truncated", "large captured responses disclose truncation")
 	must("closeRef.current?.focus()", "opening the spawn disclosure transfers focus to its close control")
-	must("pointerdown', closeOnOutsidePointer", "outside pointer dismissal is owned by the popover")
+	must("useDismissablePopover([popoverRef, triggerRef]", "outside pointer dismissal is owned by the popover")
 }

@@ -22,6 +22,7 @@
 
 import { $, $$ } from './helpers.js';
 import { isWizardActive } from './slop.js';
+import { bindRowDragGuard } from './row-drag.js';
 
 // Custom drag payload type. Intentionally NOT 'text/plain' — see the module
 // header: withholding text/plain is what keeps dnd.js's member-row drop handler
@@ -91,23 +92,8 @@ function bindProcessTemplateDnd() {
   // action buttons or the trash button must produce that control's CLICK, not a
   // drag — once a native drag starts the click is gone for good. pointerdown
   // fires before the drag is initiated, so it is the right place to decide.
-  let suppressedRow = null;
-  const restoreRowDraggable = () => {
-    if (!suppressedRow) return;
-    suppressedRow.draggable = true;
-    suppressedRow = null;
-  };
-  listen(document, 'pointerdown', (e) => {
-    const row = e.target.closest('[data-process-template-drag]');
-    if (!row) return;
-    const ctl = e.target.closest('button, a, input, select, textarea, label, [contenteditable]');
-    if (ctl && row.contains(ctl)) {
-      row.draggable = false;
-      suppressedRow = row;
-    }
-  });
-  listen(document, 'pointerup', restoreRowDraggable);
-  listen(document, 'pointercancel', restoreRowDraggable);
+  const guard = bindRowDragGuard(document, '[data-process-template-drag]', 'button, a, input, select, textarea, label, [contenteditable]');
+  removers.push(guard.unbind);
 
   listen(document, 'dragstart', (e) => {
     const row = e.target.closest('[data-process-template-drag]');

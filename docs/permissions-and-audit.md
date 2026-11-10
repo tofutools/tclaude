@@ -9,14 +9,30 @@ to an audit trail. The daemon is fail-closed: the CLI refuses to fall back to
 direct database access when `agentd` is down, so killing the daemon never
 bypasses authorization.
 
+The one exception to process identity is an [external steward](external-steward.md),
+which proves itself with a credential and is still judged as an ordinary agent.
+
 Identity is resolved from the kernel, not from tokens agents could leak or
 forge — see [Agents and groups](agents-and-groups.md). A human caller passes
 every gate; an agent caller is checked against permission slugs.
 
+## Start here
+
+**An agent got a 403.** The refusal names the permission it needed. You can:
+
+- answer once: the agent reruns with `--ask-human <duration>`, and you approve it in
+  the dashboard;
+- grant it for a while: `+ sudo` in the agent's ⚙ menu, or the [Access tab](dashboard-access.md);
+- grant it for good: `tclaude agent permissions grant <agent> <slug>`.
+
+**To see what an agent can do:** `tclaude agent permissions ls <agent>`.
+
+**To see what happened:** [Diagnostics › Audit](dashboard-diagnostics.md#audit).
+
 ## The slug model
 
 Every gated action maps to a named **permission slug**. The live registry —
-about 100 slugs — is the source of truth:
+192 slugs — is the source of truth:
 
 ```bash
 tclaude agent permissions slugs
@@ -27,7 +43,7 @@ Slugs fall into recognizable families: `self.*` (an agent acting on itself),
 administration, including `groups.members.*`, `groups.settings.*`,
 `groups.link.*`, and `groups.triggers.*`), `permissions.*`, `human.*`
 (channels to the operator), `message.direct`, `templates.*`, `process.*`,
-`profiles.manage`, `roles.manage`, `routes.publish`/`routes.consume`,
+`profiles.manage`, `roles.manage`, `routes.publish`/`routes.consume`/`routes.publish-host`,
 `sandbox-profiles.*`, `triggers.*`, and `proxy.*`. Don't memorize the list;
 query the registry.
 
@@ -40,7 +56,12 @@ set**, the union of:
   moment the agent leaves the group),
 - per-conversation grants,
 - active [sudo](#sudo-time-bounded-elevation) elevations,
-- grants contributed by group ownership (see below).
+- grants contributed by group ownership (see below),
+- slugs conferred by membership: a few group-scoped slugs are every active
+  member's in that group, checked live at each request. They are
+  `groups.messages.schedule`, and `groups.resources.read` /
+  `groups.resources.write` (read and change the group's drawing boards; see
+  [Drawing boards › Group drawing boards are their members'](drawing-boards.md#group-drawing-boards-are-their-members)).
 
 An explicit per-agent **deny** beats everything except sudo. If no source
 supplies the slug, the request is refused.
@@ -63,16 +84,16 @@ The magic target `default` edits the global defaults list; `deny` blocks an
 otherwise-default slug for one agent; `revoke` clears either back to the
 inherited state.
 
-!!! note
-    Some CLI help text still says overrides live in `~/.tclaude/config.json`.
-    The real path is `~/.tclaude/data/config.json`.
-
 ### Defaults installed by setup
 
 `tclaude setup --install-default-agent-permissions` (idempotent) grants the
 self-management baseline: `self.rename`, `self.compact`, `self.interrupt`,
 `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`,
-`self.tags`, `self.dir-repair`, `self.process`, plus `process.templates.read`, `usage.read`, and `costs.read`.
+`self.tags`, `self.dir-repair`, `self.process`, `self.page`, `groups.pages.read`,
+`groups.pages.patch`, plus `process.templates.read`, `usage.read`, and `costs.read`.
+The two `groups.pages.*` defaults share a live page within its group
+([Live pages](live-page.md#sharing-a-page-with-the-group)); `groups.pages.manage`
+(eval and close) is not a default.
 The account read permissions expose quotas/forecasts and cost history through
 [`tclaude usage` and `tclaude costs`](usage-and-costs.md).
 Self-reincarnation deliberately needs no slug at all. These defaults let an
@@ -91,6 +112,44 @@ a new process run to the group), plus unscoped `human.notify` and
 configuration (`process.templates.manage`, `agent.sandbox-impl`,
 `sandbox.harness-config`, `human.clipboard`, `usage-rules.manage`, and similar). `groups set-owner-scopes` can narrow what
 owning a particular group confers — it only takes reach away, never adds.
+
+A group template can carry owner scopes too, and every group deployed from it
+starts with them. Creating a template with owner scopes needs only
+`templates.manage`. Changing or removing an existing template's owner scopes
+(an edit, an import or bundle that replaces it, a re-snapshot from a group, or
+deleting a template that has them) also needs what changing a live group's
+does: `groups.settings.owner-scopes`, `permissions.grant` and
+`permissions.revoke`. Before this, `templates.manage` alone could loosen the
+narrowing a template's author declared for every later deployment.
+
+### Resource umbrellas: `resources.read` and `resources.write`
+
+A manager agent that looks after resources across groups gets one grant
+instead of one per kind:
+
+- `resources.read` reads every drawing board (`drawing-boards.read`), every process template
+  (`process.templates.read`) and every process run (`process.runs.read`).
+- `resources.write` changes every drawing board (`drawing-boards.write`) and process template
+  (`process.templates.manage`), and implies `resources.read`. The per-kind
+  write slugs still do not imply their read slugs.
+
+Both are scoped like any grant. `group=` reaches the resources linked to
+those groups, `resource=kind:id` (`drawing_board:plan`, `process_template:ship`) the
+named ones, and no scope reaches every resource. A read passes through any
+one of a resource's groups; a write needs every one of them. Operations on
+the whole library (listing changes, imports, pinning, creating a new
+template) still need the unscoped per-kind slug.
+
+The umbrellas are never default-granted and never conferred by ownership or
+membership. A dedicated deny of a per-kind slug (or of `resources.read`)
+still wins over its umbrella. Neither passes an operator lock (see
+[The operator's lock on a resource](#the-operators-lock-on-a-resource)), and
+run mutations stay on `process.runs.manage`.
+
+```bash
+tclaude agent permissions grant ops-manager resources.write --scope group=crew,infra
+tclaude agent permissions grant ops-manager resources.read --scope resource=drawing_board:q4-roadmap
+```
 
 ## Scoped grants
 
@@ -116,9 +175,9 @@ evaluation rules:
   sources, and if none passes, the request gets a 403.
 
 The registry advertises which dimensions each slug supports (`group`,
-`spawn_profile`, `sandbox_profile`, `process_template`, `target_agent`, and proxy-specific
-dimensions). Two relational matchers exist on `agent.retire` and
-`agent.standdown`: `target_agent=@self-spawned` (agents the grantee spawned)
+`spawn_profile`, `sandbox_profile`, `process_template`, `resource`, `target_agent`, and proxy-specific
+dimensions). Two relational matchers exist on `agent.retire`,
+`groups.members.retire` and `agent.standdown`: `target_agent=@self-spawned` (agents the grantee spawned)
 and `@descendants` (its spawn lineage, up to 64 generations). Lineage is
 recorded only for agent-initiated spawns made after the feature existed;
 reincarnation preserves descendants, but a clone is not a child.
@@ -163,11 +222,11 @@ Local and remote grants are disjoint: unscoped grants, local scopes, defaults
 and group ownership never authorize remote actions, and peer-scoped grants
 never authorize local actions. A deny blocks the slug in both cases. The
 receiving operator must also grant the sending instance access to its local
-groups. See [Federation](federation.md#peer-grants-what-a-peer-may-see-and-do)
+groups. See [Federation](federation-peers.md#peer-grants-what-a-peer-may-see-and-do)
 for the two grant sets and worked examples. `tclaude agent permissions
 peer-reach add|remove` merges one `peer=` matcher into an agent's or group's
 grant without replacing the others; see
-[Federation](federation.md#discovery-what-your-agents-may-address).
+[Federation](federation-peers.md#discovery-what-your-agents-may-address).
 
 ### Denies are never scoped
 
@@ -203,6 +262,59 @@ would consult, and for messaging specifically,
 `tclaude agent groups why-can-i-message <target>` explains which path
 authorizes a send.
 
+### The operator's lock on a resource
+
+A process template, a collab drawing board or a live page can be locked against
+agent changes. While it is locked, any change an agent makes is refused with
+`resource_locked` (403), and no grant overrides that (not a slug, a sudo
+elevation of another slug, group ownership or `groups.admin`), except
+`groups.resources.lock` itself. Reads stay open: a group's members still read
+a locked drawing board. For a process template the lock refuses a save, a delete, a
+library-listing change, an unpin and an import over it; pinning it to
+another group is still allowed. For a drawing board it refuses the agent's patches,
+and for a page it refuses patches, eval, close and a re-show, by the shower
+as well as by members.
+
+The operator sets or clears a lock from the dashboard
+(`POST /api/resource-locks`). An agent does it with
+`tclaude agent resources lock|unlock <kind> <id>` (`POST /v1/resource-locks`)
+when it holds `groups.resources.lock` in every group the resource belongs to
+(each group a process template is pinned to); a resource in no group needs an
+unscoped grant. The same grant lets the agent change the resource while it
+is locked, as the operator can, including a re-show that replaces a locked
+page, adopting a locked group page and a config-bundle import over a locked
+template. The resource stays locked to everyone else. The slug is never
+default-granted, never conferred by ownership or membership and not covered
+by `groups.admin`: the operator grants it, for example scoped to one group:
+
+```bash
+tclaude agent permissions grant <agent> groups.resources.lock --scope group=design
+```
+
+`tclaude agent resources ls <group>` lists a group's processes, drawing boards and
+pages with their locks, for its members (`groups.resources.read`). Holding
+the lock in the group covers its drawing boards and pages, but not a template that
+is also pinned to a group where you don't hold it: the list names those.
+
+An operator of a trusted federation peer can lock from their own dashboard
+only as far as this node's grants to that peer reach: the group-scoped peer
+grant `groups.resources.lock`, in every group the resource belongs to.
+Unrestricted trust holds it; it is never granted by default. A federated
+agent never toggles a lock on another node. Listing a group's resources
+there, with their locks, takes the separate peer grant
+`groups.resources.read` (also held by unrestricted trust, never by default). A process or drawing board
+lock is stored and is removed when its drawing board or template is deleted, so a new
+resource with the same id starts unlocked. A page lock lasts until the page
+is closed. A resource is unlocked by default.
+
+What a lock does not cover:
+- It locks a page's tclaude-side state, not its content: an agent still
+  serves the page from its own dev server or files, and a page still
+  closes when its agent retires.
+- A linked peer's operator reaching this node's process editor through
+  peer view acts as an operator, not as an agent, so the lock does not
+  refuse that. A peer never toggles a lock.
+
 ## Sudo: time-bounded elevation
 
 For work that needs a slug an agent doesn't hold — and shouldn't hold
@@ -213,7 +325,7 @@ tclaude agent sudo request agent.stop groups.members.spawn \
   --duration 30m --reason "winding down the review team"
 tclaude agent sudo ls          # my active elevations
 tclaude agent sudo ls --all    # everyone's (human view)
-tclaude agent sudo revoke      # end elevations early
+tclaude agent sudo revoke <id> # end one early (or --conv <agent>, or --all)
 ```
 
 Every agent-originated request raises a human-approval popup — there is no
@@ -228,14 +340,83 @@ The human form `sudo request --target <agent> <slugs…>` grants proactively
 with no popup — the operator's own shell is the consent. Agents cannot use
 `--target`.
 
+The dashboard grants through the sudo variant of the permission editor (see
+[Access](dashboard-access.md)). It can also narrow a grant with a scope and extend
+one that is running. An extension keeps to the same maximum, measured from now,
+and is recorded as `sudo.extend`.
+
+### Use limits
+
+A dashboard grant of a countable permission can also carry a use limit, for example
+any group for 10 minutes, at most 5 agents. It ends at whichever runs out first, the
+time or the count, and the daemon enforces both.
+
+One permitted action is one use. The daemon takes the use atomically before the
+action, so parallel requests cannot exceed the limit, and gives it back when the
+request is refused or fails. Reading (`GET`), dry runs, import previews and a remote
+control status check are free, and uses are only spent where sudo is what allowed the
+action: standing access leaves the grant untouched.
+
+These count:
+
+- spawns: `agent.spawn`, `groups.members.spawn`. One use per launch, given back if the
+  launch fails. A spawn that started and later died has used its count, and so has one
+  whose pane was not seen to come up in time.
+- an agent's own actions, such as `self.rename`, `self.compact`, `self.clone`,
+  `self.task` and `self.tags`.
+- actions on other agents, as `agent.*` and `groups.members.*`: stop, resume, retire,
+  delete, rename, compact, interrupt, clone, morph, promote, reincarnate, remote
+  control, task, tags, PR and process.
+- group changes: `groups.create`, `groups.delete`, `groups.rename`, `groups.clone`,
+  `groups.archive`, `groups.nest`, `groups.attachment`, `groups.import`,
+  `groups.owners.manage`, `groups.link.add`, `groups.link.remove`,
+  `groups.members.add`, `groups.members.remove`, `groups.members.update`.
+- group settings: every `groups.settings.*` slug, from `groups.settings.description`
+  to `groups.settings.owner-scopes`. One save spends one use of each setting it
+  changes, so a save of the description and the default directory spends one of each
+  grant. A rejected save changes nothing and gives both back, but a save that fails
+  after writing some fields keeps its uses. Reads spend nothing, and neither does an
+  agent also covered by `groups.admin` or, for most of these slugs, by owning the group.
+- `message.direct`, `human.notify`, `human.clipboard`.
+- `templates.manage`, `templates.instantiate`, `profiles.manage`, `roles.manage`,
+  `prompts.manage`, `process.templates.manage`, `process.runs.start`,
+  `process.runs.manage`, `process.advance`, `usage-rules.manage` and
+  `settings.default-model`.
+
+Everything else takes no limit, and the editor says why on the row:
+
+- slugs that only read, or are part of a spawn such as `groups.members.spawn.model`.
+- `groups.admin`, which covers many actions: limit the specific permission.
+- schedules and triggers, which act later with no request to count.
+- slugs one task checks many times: drawing boards, dashboard marks, the proxies, sessions and
+  routes.
+- slugs that act across a peer link, such as moves, teleports and remote jobs.
+
+A limited grant only works where a use can be counted. Triggers, schedules, moves and
+other checks made outside a request refuse it, and a grant scoped to a peer takes no
+limit.
+
 ## Asking the human at the moment of denial
 
 Most mutating commands accept `--ask-human <timeout>` (capped at 300s;
 timeout means deny). When the permission check fails, instead of a flat 403
 the daemon creates an **access request** the operator sees in the
-[dashboard](dashboard.md) Messages tab, with **Approve**, **Deny**, and
-**+5min** actions. The agent's command blocks until the human answers or the
+[dashboard](dashboard.md) Messages tab, with **Approve**, **Decline**, and
+**+5m** actions (**Approve**, **Deny** and **+5 min** in the companion). The agent's command blocks until the human answers or the
 timeout expires.
+
+At most 8 requests from one agent, and 64 in all, wait for you at a time. Past
+that a new request is refused at once with a message to ask again later, and the
+requests already waiting are not affected.
+
+An archive has nothing you could read in its bytes, so a workflow, agent or group
+import asking this way shows you a review instead: what the file holds, who signed
+it, what importing changes here and any elevated items, in the words the CLI uses
+for its own preview. The file is held in memory while you decide, so one agent may
+hold 128 MiB and all of them 256 MiB. A larger file is refused, and needs the
+permission granted first or the operator to import it. A file the node cannot read
+says so, and you should decline it. Any other request body that is not text is
+left out of the card rather than shown as raw bytes.
 
 For exactly two slugs — `human.clipboard` and `human.notify` — the card also
 offers **"Always allow for this agent"**, which persists an allow keyed to
@@ -266,8 +447,13 @@ Three properties make the trail defensible rather than decorative:
   reads very differently once you know the same agent is barred from prod.
 - **Sudo is visible.** Requests, the operator's decision, the stated reason,
   and every command executed under the elevation all land in the trail.
+- **Environment values are not kept.** A spawn row lists the names of the
+  environment variables it set, with each value as `[redacted]`. Upgrading
+  redacts the spawn rows already stored the same way, though scraps of the old
+  rows can stay in the database file's free pages. Rotate a token you believe
+  was exposed.
 
-Browse and filter the trail in the dashboard's **Activity › Audit** view. Retention
+Browse and filter the trail in the dashboard's **Diagnostics › Audit** view. Retention
 defaults to 30 days; set `audit.retention_days` in
 `~/.tclaude/data/config.json` to keep more, or a negative value to keep
 forever. The hourly sweep re-reads the config, so changes apply without a
@@ -285,7 +471,7 @@ back to the lifecycle command that asked for it, so a dead agent is never
 just "gone": the trail distinguishes an ordered shutdown from a crash, and a
 crash from a launch that never came up. Spawn failures surface this evidence
 directly ("managed pane exited during startup (signal …)"), with the pane's
-output tail in the dashboard's Activity › Logs view.
+output tail in the dashboard's Diagnostics › Logs view.
 
 Empty cause fields mean the evidence was unavailable — the ledger never
 infers a cause it didn't observe.

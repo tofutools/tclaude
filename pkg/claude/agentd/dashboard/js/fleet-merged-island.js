@@ -33,6 +33,7 @@ import { peerSharesNotifications, usePeerNotifications } from './peer-notificati
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { publishFusedDock } from './dock-nodes.js';
 import { followToolbarNode, setToolbarNodes } from './toolbar-node.js';
+import { triggersAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -111,7 +112,7 @@ function ownGroup(name, node) {
 // paging, pins and folds, error reports): a peer's group runs them on this
 // page under the name it is listed by (group@node), which its pins and folds
 // are kept under.
-const VIEW_ACTIONS = new Set(['sort', 'page', 'setPageSize', 'toggleQuickPin', 'toggleForceFold', 'reportError']);
+const VIEW_ACTIONS = new Set(['sort', 'page', 'setPageSize', 'toggleQuickPin', 'toggleForceFold', 'cycleGroupOffline', 'reportError']);
 
 // createNodeGroupsActions builds the Groups actions for one node's groups in
 // this view: requests through nodeFetch (this node's daemon, or the peer
@@ -185,7 +186,7 @@ export const MAX_IN_FLIGHT = 4;
 // node's own route for this node (read only from a peer's page), with the
 // static_version of the copy already held.
 function snapshotURL(node, staticVersion = '') {
-  const query = staticVersion ? `?static_version=${encodeURIComponent(staticVersion)}` : '';
+  const query = staticVersion ? `?static_version=${encodeURIComponent(staticVersion)}&static_catalogs=1` : '';
   return (node.local ? '/api/snapshot' : `/api/peer/${encodeURIComponent(node.id)}/snapshot`) + query;
 }
 
@@ -491,12 +492,12 @@ export function MergedGroups({
   mergedRef.current = merged;
   useEffect(() => setFusedGroupListing(() => mergedRef.current), []);
   // Triggers are read from each node that lets this one act there (this
-  // node, or a peer trusting it unrestricted) and has them on; each rule is
+  // node, or a peer trusting it unrestricted) and offers them; each rule is
   // tagged with its node, its group under the merged name.
   const [triggers, setTriggers] = useState([]);
   const selfID = fleet?.self?.id || '';
   const triggerNodes = (merged?.fleet_nodes || []).map(({ node }) => node)
-    .filter((node) => snapOf(node.id)?.triggers_enabled === true && (node.id === selfID || snapOf(node.id)?.peer_view?.level === 'unrestricted'));
+    .filter((node) => triggersAvailable(snapOf(node.id)) && (node.id === selfID || snapOf(node.id)?.peer_view?.level === 'unrestricted'));
   const triggerKey = triggerNodes.map((node) => `${node.id}=${node.name}`).join(',');
   // Each node is read once while it stays listed (its rules shown as they
   // arrive), not again as other nodes' snapshots load.

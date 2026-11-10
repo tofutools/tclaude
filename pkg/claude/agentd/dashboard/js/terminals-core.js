@@ -14,6 +14,9 @@
 import { attachTerminalInteractions } from './terminal-interactions.js';
 import { restartWatcher as sharedRestartWatcher } from './instance-watch.js';
 import { terminalThemeFor } from './terminal-theme.js';
+import { drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js';
+import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
+import { isPageId, pagePaneKey } from './page-pane-model.js';
 
 // A newly-created browser terminal can briefly lose an attach race with the
 // client it is replacing (pop-out / reattach), or arrive while a freshly
@@ -105,6 +108,21 @@ const MAX_REMOTE_COLS = 500;
 const REMOTE_FONT_MAX = 13;
 const REMOTE_FONT_MIN = 9;
 const MAX_REMOTE_ROWS = 200;
+// The size a terminal opens at, and how far zoom takes it. A step is a control's
+// click; the wheel goes by half steps, so a pinch moves in small amounts.
+export const TERMINAL_FONT_DEFAULT = 13;
+export const TERMINAL_FONT_MIN = 8;
+export const TERMINAL_FONT_MAX = 32;
+export const TERMINAL_FONT_STEP = 1;
+const ZOOM_WHEEL_PX_PER_HALF_STEP = 15;
+const ZOOM_WHEEL_MAX_PX = 30; // a mouse notch is one step, however large its delta
+// A zoom shows at once as a scale on the rendered screen, which the compositor
+// can do in a frame. The real font and the refit wait for the gesture to settle,
+// because a font change repaints every row, and a refit resizes the pty and
+// makes the harness redraw. A click only waits for the scale to paint; a wheel
+// waits long enough to span a gesture's events.
+const ZOOM_CLICK_SETTLE_MS = 32;
+const ZOOM_WHEEL_SETTLE_MS = 110;
 // How long a shared view waits for the peer to answer its own size report
 // before saying another viewer limits the size.
 const REMOTE_LIMITED_GRACE_MS = 800;
@@ -160,8 +178,38 @@ export const TERMINAL_EXIT = Object.freeze({
   4004: { text: 'detached', closeTab: true },
 });
 
+// A drawing board seed (seed.drawing board) has no socket: it must name a valid drawing board id, and
+// whatever else a crafted hash put in it cannot give it one, or a key that
+// collides with another pane.
 export function normalizeSeed(seed) {
+  if (seed?.drawingBoard !== undefined) {
+    if (!isDrawingBoardId(seed.drawingBoard) || seed.process !== undefined || seed.page !== undefined) return null;
+    const { ws: _ws, ...rest } = seed;
+    return { ...rest, key: drawingBoardPaneKey(seed.drawingBoard) };
+  }
+  // A process seed (seed.process) is the same: a template id and nothing to dial.
+  if (seed?.process !== undefined) {
+    if (!isProcessTemplateId(seed.process) || seed.page !== undefined) return null;
+    const { ws: _ws, ...rest } = seed;
+    return { ...rest, key: processPaneKey(seed.process) };
+  }
+  // A live page's seed (seed.page) names the page and nothing else: its URL
+  // comes from the snapshot, never from a seed.
+  if (seed?.page !== undefined) {
+    // Only these fields: a seed can come from a crafted /terminals?solo=1 link.
+    if (!isPageId(seed.page)) return null;
+    const { label, floats, overlay, initialRetry, wizard, terminalAttach } = seed;
+    return {
+      page: seed.page, key: pagePaneKey(seed.page), label: typeof label === 'string' ? label : '',
+      ...(floats && { floats: true }), ...(overlay && { overlay: true }), ...(initialRetry !== undefined && { initialRetry }),
+      ...(wizard !== undefined && { wizard }), ...(terminalAttach !== undefined && { terminalAttach }),
+    };
+  }
   return (seed && typeof seed.ws === 'string' && seed.ws.startsWith('/')) ? seed : null;
+}
+
+function clampFont(size) {
+  return Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, Math.round(size * 2) / 2));
 }
 
 // mountTerminalWidget is the opaque lifecycle boundary between component-owned
@@ -189,6 +237,10 @@ export function mountTerminalWidget({
   onDisconnect = () => {},
   // Remote terminals report {mode, closed} as the control frames arrive.
   onRemoteChange = () => {},
+  // A zoom the operator chose before, and {size, zoomed} whenever the font
+  // changes; zoomed is false while the size is the terminal's own.
+  initialFontSize = null,
+  onFontChange = () => {},
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
@@ -267,10 +319,18 @@ export function mountTerminalWidget({
     onRemoteChange(remoteState);
   }
   const disposables = [];
+  // The operator's size, or null to leave it to the terminal: 13, or what fits
+  // a remote grid. While set it wins over that fit, and a grid too large for
+  // the panel scrolls, because the operator asked for this size.
+  let zoomFont = Number.isFinite(initialFontSize) ? clampFont(initialFontSize) : null;
+  let zoomWheelRest = 0;
+  let zoomFitTimer = null;
+  // The size a zoom is previewing, until it settles.
+  let zoomPending = null;
 
   const term = new TerminalCtor({
     cursorBlink: true,
-    fontSize: 13,
+    fontSize: zoomFont ?? TERMINAL_FONT_DEFAULT,
     // The harness owns history: Claude Code renders its own off-screen
     // content, while Codex scrolling is handled by tmux. A second xterm
     // scroll buffer only adds redundant chrome and state.
@@ -284,6 +344,58 @@ export function mountTerminalWidget({
   term.loadAddon(fitAddon);
   term.open(host);
   if (remote) host.classList?.add('term-remote');
+  reportFont();
+
+  function reportFont() {
+    if (!disposed) onFontChange({ size: zoomPending ?? term.options.fontSize, zoomed: zoomFont !== null });
+  }
+
+  function previewZoom(size) {
+    const screen = host.getElementsByClassName?.('xterm-screen')[0];
+    if (!screen) return;
+    screen.style.transformOrigin = '0 0';
+    screen.style.transform = size === null ? '' : `scale(${size / term.options.fontSize})`;
+  }
+
+  function setZoom(next, settleMs = ZOOM_CLICK_SETTLE_MS) {
+    if (disposed) return;
+    zoomFont = next;
+    zoomPending = next ?? TERMINAL_FONT_DEFAULT;
+    previewZoom(zoomPending);
+    reportFont();
+    if (zoomFitTimer !== null) clearTimeoutImpl(zoomFitTimer);
+    zoomFitTimer = setTimeoutImpl(() => {
+      zoomFitTimer = null;
+      // Font and grid change in one tick, so xterm paints them once.
+      const size = zoomPending;
+      zoomPending = null;
+      previewZoom(null);
+      term.options.fontSize = size;
+      fit();
+      reportFont();
+    }, settleMs);
+  }
+
+  function zoomBy(step, settleMs) {
+    if (!disposed) setZoom(clampFont((zoomPending ?? term.options.fontSize) + step), settleMs);
+  }
+
+  // zoomWheel takes Ctrl+wheel, which is also how a browser reports a trackpad
+  // pinch: both zoom this terminal, and the browser leaves the page alone.
+  function zoomWheel(event) {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+    const delta = Number(event.deltaY) * scale || 0;
+    zoomWheelRest += Math.max(-ZOOM_WHEEL_MAX_PX, Math.min(ZOOM_WHEEL_MAX_PX, delta));
+    const halves = Math.trunc(zoomWheelRest / ZOOM_WHEEL_PX_PER_HALF_STEP);
+    if (!halves) return;
+    zoomWheelRest -= halves * ZOOM_WHEEL_PX_PER_HALF_STEP;
+    zoomBy(-halves * TERMINAL_FONT_STEP / 2, ZOOM_WHEEL_SETTLE_MS);
+  }
+  // Capture: xterm would otherwise take the wheel for the application first.
+  host.addEventListener?.('wheel', zoomWheel, { capture: true, passive: false });
 
   function setStatus(next) {
     if (disposed) return;
@@ -305,7 +417,10 @@ export function mountTerminalWidget({
   documentRef.addEventListener('tclaude:terminal-palette', syncTheme);
 
   function fit() {
-    if (disposed) return;
+    // A pending zoom settles with its own fit. Until then the font is the old
+    // one, and a remote host's panel may be shrunk by the preview's scrollbars,
+    // so a fit here would report the peer a wrong grid.
+    if (disposed || zoomPending !== null) return;
     if (remote && remoteState.shared) { fitShared(); return; }
     if (remote) { fitRemote(); return; }
     try { fitAddon.fit(); } catch (_) { /* host may not be laid out yet */ }
@@ -351,6 +466,7 @@ export function mountTerminalWidget({
   function fitRemote() {
     // Reads xterm's own grid box; the core never writes shell DOM.
     const screen = host.getElementsByClassName?.('xterm-screen')[0];
+    if (zoomFont !== null) return;
     const width = host.clientWidth; const height = host.clientHeight;
     if (!screen || !width || !height) return;
     const box = () => screen.getBoundingClientRect();
@@ -365,6 +481,7 @@ export function mountTerminalWidget({
       if (r.width <= width && r.height <= height) break;
       term.options.fontSize = Math.max(REMOTE_FONT_MIN, term.options.fontSize - 0.5);
     }
+    if (term.options.fontSize !== font) reportFont();
   }
 
   function focus() {
@@ -779,7 +896,8 @@ export function mountTerminalWidget({
       setRemote({ mode, files: msg.files === true && !!viewer, viewer, shared, others: othersOf(msg.others), canTakeOver: msg.take_over === true });
       setStatus(mode === 'interactive' ? 'connected · interactive' : 'connected · watch-only');
       if (shared) {
-        term.options.fontSize = REMOTE_FONT_MAX;
+        term.options.fontSize = zoomFont ?? REMOTE_FONT_MAX;
+        reportFont();
         initialResizeReady = true;
         lastDesired = '';
         fit();
@@ -878,7 +996,18 @@ export function mountTerminalWidget({
       takeOverNext = true;
       return connect();
     },
+    zoomBy: (step) => zoomBy(step),
+    zoomWheel,
+    resetZoom: () => setZoom(null),
     copy: () => disposed ? Promise.resolve() : interactions.copySelection(),
+    // paste delivers text as terminal input, by the path keystrokes take, and
+    // says whether it could: a closed socket or a watch-only view takes none.
+    paste(text) {
+      if (disposed || !ws || ws.readyState !== WebSocketCtor.OPEN) return false;
+      if (remote && remoteState.mode !== 'interactive') return false;
+      term.paste(text);
+      return true;
+    },
     setActive(next) {
       if (disposed) return;
       isActive = !!next;
@@ -902,6 +1031,8 @@ export function mountTerminalWidget({
       cancelPostAttachResize();
       cancelLimitedHold();
       cancelRestartWatchIfAny();
+      if (zoomFitTimer !== null) clearTimeoutImpl(zoomFitTimer);
+      host.removeEventListener?.('wheel', zoomWheel, { capture: true });
       abortAuth();
       closeSocket();
       documentRef.removeEventListener('tclaude:wizard', syncTheme);

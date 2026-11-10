@@ -51,8 +51,9 @@ func handleWhoamiTags(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAgentTags reads (GET) or replaces (PUT/POST) ANOTHER agent's tag
-// set. Routed via handleAgentByConv. Auth: agent.tags slug OR caller owns
-// a group containing the target.
+// set. Routed via handleAgentByConv. Auth: requireCrossAgentPermission
+// (agent.tags, or groups.members.tags covering every active group
+// containing the target).
 func handleAgentTags(w http.ResponseWriter, r *http.Request, targetConv string) {
 	switch r.Method {
 	case http.MethodGet, http.MethodPut, http.MethodPost:

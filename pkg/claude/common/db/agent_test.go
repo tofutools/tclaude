@@ -1,6 +1,7 @@
 package db
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -89,14 +90,36 @@ func TestAgentGroupPermissionsFollowActiveMembership(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"groups.members.spawn", "human.notify"}, grants)
 
-	ok, err := HasAgentGroupPermission("conv-member", "human.notify")
-	require.NoError(t, err)
-	assert.True(t, ok, "a current member receives the live group grant")
+	assert.True(t, groupGrantsSlug(t, "conv-member", groupID, "human.notify"),
+		"a current member receives the live group grant")
 
 	require.NoError(t, ArchiveAgentGroup("trusted"))
-	ok, err = HasAgentGroupPermission("conv-member", "human.notify")
+	assert.False(t, groupGrantsSlug(t, "conv-member", groupID, "human.notify"),
+		"archived groups confer no permissions")
+}
+
+// groupGrantsSlug reports whether groupID grants slug to convID, as read by
+// ListAgentGroupPermissionRowsForConv, the group read the permission
+// evaluator uses.
+func groupGrantsSlug(t *testing.T, convID string, groupID int64, slug string) bool {
+	t.Helper()
+	rows, err := ListAgentGroupPermissionRowsForConv(convID)
 	require.NoError(t, err)
-	assert.False(t, ok, "archived groups confer no permissions")
+	for _, row := range rows {
+		if row.GroupID == groupID && row.Slug == slug {
+			return true
+		}
+	}
+	return false
+}
+
+// grantsSlug reports whether convID holds an additive per-agent grant for
+// slug, as read by ListAgentPermissionsForConv.
+func grantsSlug(t *testing.T, convID, slug string) bool {
+	t.Helper()
+	granted, err := ListAgentPermissionsForConv(convID)
+	require.NoError(t, err)
+	return slices.Contains(granted, slug)
 }
 
 func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
@@ -108,17 +131,13 @@ func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
 	perms, err := ListAgentPermissionsForConv(conv)
 	require.NoError(t, err, "expected empty list")
 	require.Len(t, perms, 0, "expected empty list, got %v", perms)
-	ok, err := HasAgentPermissionRow(conv, "self.rename")
-	require.NoError(t, err, "expected no perm")
-	require.False(t, ok, "expected no perm")
+	require.False(t, grantsSlug(t, conv, "self.rename"), "expected no perm")
 
 	// Grant.
 	require.NoError(t, GrantAgentPermission(conv, "self.rename", "<human>"), "GrantAgentPermission")
 	// Idempotent.
 	require.NoError(t, GrantAgentPermission(conv, "self.rename", "<human>"), "idempotent grant")
-	ok, err = HasAgentPermissionRow(conv, "self.rename")
-	require.NoError(t, err, "expected perm")
-	require.True(t, ok, "expected perm")
+	require.True(t, grantsSlug(t, conv, "self.rename"), "expected perm")
 
 	// Multiple slugs sort correctly.
 	require.NoError(t, GrantAgentPermission(conv, "groups.members.add", ""))

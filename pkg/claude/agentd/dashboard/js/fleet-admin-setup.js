@@ -4,6 +4,10 @@ import htm from 'htm';
 import { confirmHubSave } from './fleet-admin-node-settings.js';
 import { grantConsequence, grantRows, shortID } from './fleet-admin-model.js';
 import { ClaimDialog } from './fleet-admin-hub.js';
+import { Button, Select } from './ui-components.js';
+import { GroupCombobox } from './group-picker.js';
+import { errText, localStamp } from './cell-format.js';
+import { CopyCode, FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -13,8 +17,6 @@ const html = htm.bind(h);
 // rest of Fleet administration and names its CLI, so nothing here is
 // dashboard-only. It is the landing page until the first three steps are
 // done, and stays one click away after.
-
-function errText(error) { return error?.message || String(error); }
 
 // SHARE_PRESETS are the guide's sets of peer grants on one local group. They
 // are plain peer grants: the Peer grants page shows and revokes each one.
@@ -121,9 +123,8 @@ export function hubProblem(self) {
 
 function problemInvite(self) { return !!hubProblem(self)?.invite; }
 
-function Copyable({ value, what, copy, toast }) {
-  const onCopy = () => copy(value).then(() => toast(`${what} copied`, false)).catch(() => toast(`${what}: ${value}`, false));
-  return html`<span class="fs-copy"><code>${value}</code> <button type="button" class="fa-link" onClick=${onCopy} title=${`Copy the ${what.toLowerCase()}`}>copy</button></span>`;
+function Copyable(props) {
+  return html`<${CopyCode} class="fs-copy" ...${props} />`;
 }
 
 function Cli({ children }) {
@@ -143,10 +144,7 @@ function IdentityCard({ self, copy, toast }) {
 const JOIN_CODE = /^\s*tchj_/;
 const INVITE = /^\s*tchi_/;
 
-function when(iso) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
+const when = (iso) => localStamp(iso, { empty: '' });
 
 // joinConsequence is the confirmation text for joining with a previewed code:
 // where this node connects, what it trusts for TLS, and what it replaces.
@@ -217,7 +215,7 @@ async function joinWithCode({ code, preview, name, actions, confirm }) {
 }
 
 // JOIN_HOWTO is the join step's instructions, shown again once joined.
-const JOIN_HOWTO = html`<p>Nodes link through a hub: each one connects out to it, so no machine needs an open port. Your hub admin gives each node a join code — the hub's address, a single-use invite and, for a private certificate, the CA, in one string (⚙ Fleet → Hub on an admin node, or <code>tclaude hub invite --url wss://… --space <i>space</i></code>). Nodes see each other when they join the same space.</p>`;
+const JOIN_HOWTO = html`<p>Nodes link through a hub: each one connects out to it, so no machine needs an open port. Your hub admin gives each node a join code — the hub's address, a single-use invite and, for a private certificate, the CA, in one string (⚙ Fleet config → Hub on an admin node, or <code>tclaude hub invite --url wss://… --space <i>space</i></code>). Nodes see each other when they join the same space.</p>`;
 
 // RunHubStep explains running a hub, for the one node (or server) that hosts
 // it. Nothing here runs it: the hub is its own process on its host.
@@ -248,15 +246,15 @@ function HubAdminStep({ view, status, actions, confirm, toast, onHub, onClaimed 
     ? html`<p class="fs-warn">Join the hub first (step 3): the hub admits this node, then this node claims admin over that connection. Come back here after joining.</p>`
     : !status ? html`<p class="muted">Reading the hub's admin status…</p>`
     : status.error ? html`<div class="fs-error" role="note">${status.error}</div>`
-    : status.admin ? html`<p class="fs-ok" id="fleet-setup-hub-admin">✓ This node is a hub admin <span class="muted">(${status.admin_count} admin${status.admin_count === 1 ? '' : 's'})</span>. <button type="button" class="fa-link" onClick=${onHub}>Hub…</button> admits nodes, makes invites and adds admins.</p>`
+    : status.admin ? html`<p class="fs-ok" id="fleet-setup-hub-admin">✓ This node is a hub admin <span class="muted">(${status.admin_count} admin${status.admin_count === 1 ? '' : 's'})</span>. <${Button} size="sm" variant="link" class="fa-link" onClick=${onHub}>Hub…<//> admits nodes, makes invites and adds admins.</p>`
     : status.bootstrap_claimable ? html`<p>This hub has no admin yet. Claim it with the one-time token from the private claim file on the hub host.</p>
-      <div class="fs-actions"><button type="button" class="primary" id="fleet-setup-claim" onClick=${() => setClaiming(true)}>Claim hub admin…</button></div>`
+      <div class="fs-actions"><${Button} size="sm" variant="primary" id="fleet-setup-claim" onClick=${() => setClaiming(true)}>Claim hub admin…<//></div>`
     // A hub with admins issues no claim token (rotate-claim refuses);
     // only an existing admin can add this node.
-    : html`<p id="fleet-setup-hub-admin-other">This hub already has ${status.admin_count || 'an'} admin${status.admin_count > 1 ? 's' : ''}. An existing admin adds this node from their ⚙ Fleet → Hub. Only on the hub host, as a break-glass, <code>tclaude hub admin reset</code> removes every admin and issues a new claim token.</p>`;
+    : html`<p id="fleet-setup-hub-admin-other">This hub already has ${status.admin_count || 'an'} admin${status.admin_count > 1 ? 's' : ''}. An existing admin adds this node from their ⚙ Fleet config → Hub. Only on the hub host, as a break-glass, <code>tclaude hub admin reset</code> removes every admin and issues a new claim token.</p>`;
   return html`<div class="fs-body" data-setup-step="hubadmin">
     <h3>Become hub admin <span class="muted">(optional)</span></h3>
-    <p>A hub admin admits and revokes nodes, makes invites, changes hub settings and adds other admins, all from ⚙ Fleet → Hub instead of the hub host's shell. It gives no access to any node's content: the hub only relays what nodes encrypt for each other. Usually the operator who runs the hub claims it, once.</p>
+    <p>A hub admin admits and revokes nodes, makes invites, changes hub settings and adds other admins, all from ⚙ Fleet config → Hub instead of the hub host's shell. It gives no access to any node's content: the hub only relays what nodes encrypt for each other. Usually the operator who runs the hub claims it, once.</p>
     ${body}
     ${claiming && html`<${ClaimDialog} self=${self} actions=${actions} confirm=${confirm} onClose=${() => setClaiming(false)} onDone=${(msg) => { setClaiming(false); toast(msg, false); onClaimed(); }} />`}
     <${Cli}><code>tclaude federation hub claim TOKEN</code>, <code>tclaude federation hub status</code><//>
@@ -308,7 +306,7 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
     return html`<div class="fs-body" data-setup-step="hub">
       <h3>Joined</h3>
       <p class="fs-ok">✓ Connected to <code>${self.hubURL}</code> as <b>${self.name}</b>${self.spaces.length ? html`, in space${self.spaces.length === 1 ? '' : 's'} <b>${self.spaces.join(', ')}</b>` : ''}.</p>
-      <p class="muted">Other nodes in the same space see this node and can ask you to trust them; nothing is shared until you trust a node and grant it something. A node uses one hub at a time: <button type="button" class="fa-link" onClick=${onSettings}>Hub settings…</button> moves it to another hub or renames it.</p>
+      <p class="muted">Other nodes in the same space see this node and can ask you to trust them; nothing is shared until you trust a node and grant it something. A node uses one hub at a time: <${Button} size="sm" variant="link" class="fa-link" onClick=${onSettings}>Hub settings…<//> moves it to another hub or renames it.</p>
       <${Cli}><code>tclaude federation status</code><//>
       <details class="fs-more" id="fleet-setup-hub-howto">
         <summary>How joining works</summary>
@@ -327,10 +325,10 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
       ${problem.invite && JOIN_CODE.test(form.invite) && html`<${JoinPreview} preview=${preview} />`}
       <div class="fs-actions">
         ${problem.invite && (JOIN_CODE.test(form.invite)
-          ? html`<button type="button" class="primary" disabled=${busy || !preview?.hub_url || preview.expired} onClick=${() => joinCode(form.invite, '')}>Join with this code…</button>`
-          : html`<button type="button" class="primary" disabled=${busy || !form.invite.trim()} onClick=${() => save({ ...form, hubURL: self.hubURL, name: self.name, connect: true })}>Retry with this invite…</button>`)}
-        ${!self.enabled && html`<button type="button" class="primary" onClick=${reconnect}>Reconnect</button>`}
-        <button type="button" onClick=${onSettings}>Hub settings…</button>
+          ? html`<${Button} size="sm" variant="primary" disabled=${busy || !preview?.hub_url || preview.expired} onClick=${() => joinCode(form.invite, '')}>Join with this code…<//>`
+          : html`<${Button} size="sm" variant="primary" disabled=${busy || !form.invite.trim()} onClick=${() => save({ ...form, hubURL: self.hubURL, name: self.name, connect: true })}>Retry with this invite…<//>`)}
+        ${!self.enabled && html`<${Button} size="sm" variant="primary" onClick=${reconnect}>Reconnect<//>`}
+        <${Button} size="sm" onClick=${onSettings}>Hub settings…<//>
       </div>
       ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
       <${Cli}><code>tclaude federation status</code>, <code>tclaude federation connect ${self.hubURL} --invite tchi_…</code>, <code>tclaude federation join --code-stdin</code><//>
@@ -339,10 +337,10 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
   return html`<div class="fs-body" data-setup-step="hub">
     <h3>Join a hub</h3>
     ${JOIN_HOWTO}
-    <label class="fa-ns-row"><span class="fa-k">join code</span><textarea id="fleet-setup-code" rows="2" value=${code} placeholder="tchj_… (paste it as is; line breaks are fine)" autocomplete="off" spellcheck="false" onInput=${onCode}></textarea></label>
+    <label class="fa-ns-row"><span class="fa-k">join code</span><textarea data-capture-mask id="fleet-setup-code" rows="2" value=${code} placeholder="tchj_… (paste it as is; line breaks are fine)" autocomplete="off" spellcheck="false" onInput=${onCode}></textarea></label>
     <label class="fa-ns-row"><span class="fa-k">this node's name</span><input id="fleet-setup-name" value=${form.name} placeholder="how other nodes see this one" autocomplete="off" onInput=${set('name')} /></label>
     <${JoinPreview} preview=${preview} />
-    ${JOIN_CODE.test(code) && html`<div class="fs-actions"><button id="fleet-setup-code-join" type="button" class="primary" disabled=${busy || !preview?.hub_url || preview.expired} onClick=${() => joinCode(code, form.name.trim())}>Join hub…</button></div>`}
+    ${JOIN_CODE.test(code) && html`<div class="fs-actions"><${Button} size="sm" variant="primary" id="fleet-setup-code-join" disabled=${busy || !preview?.hub_url || preview.expired} onClick=${() => joinCode(code, form.name.trim())}>Join hub…<//></div>`}
     <h4 class="fs-sub">Or with a hub address and an invite</h4>
     <label class="fa-ns-row"><span class="fa-k">hub address</span><input id="fleet-setup-hub" value=${form.hubURL} placeholder="wss://hub.example:8470" autocomplete="off" spellcheck="false" onInput=${set('hubURL')} /></label>
     <label class="fa-ns-row"><span class="fa-k">invite</span><input id="fleet-setup-invite" type="password" value=${form.invite} placeholder="tchi_… (not needed if the admin admitted this node)" autocomplete="off" onInput=${set('invite')} /></label>
@@ -351,9 +349,9 @@ function HubStep({ view, actions, confirm, toast, copy, reload, onSettings }) {
       <p class="muted">Copy the hub's certificate (or its CA) to this machine and give its absolute path. The daemon reads it on every connect, so leave the file there.</p>
       <label class="fa-ns-row"><span class="fa-k">CA file</span><input id="fleet-setup-ca" value=${form.caFile} placeholder="/home/you/hub.crt" autocomplete="off" spellcheck="false" onInput=${set('caFile')} /></label>
     </details>
-    <div class="fs-actions"><button id="fleet-setup-join" type="button" class=${JOIN_CODE.test(code) ? '' : 'primary'} disabled=${busy || !form.hubURL.trim()} onClick=${() => save(form)}>Join with this address…</button></div>
+    <div class="fs-actions"><${Button} size="sm" id="fleet-setup-join" variant=${JOIN_CODE.test(code) ? '' : 'primary'} disabled=${busy || !form.hubURL.trim()} onClick=${() => save(form)}>Join with this address…<//></div>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-    <div class="fs-aside">
+    <div class="fs-aside ui-card">
       <b>No invite?</b> The admin can admit this node by its instance ID and fingerprint instead (<code>tclaude hub admit</code>). Send them these:
       <${IdentityCard} self=${self} copy=${copy} toast=${toast} />
     </div>
@@ -367,20 +365,17 @@ function TrustStep({ view, copy, toast, onTrust, onPeers }) {
   return html`<div class="fs-body" data-setup-step="trust">
     <h3>Trust your peers</h3>
     <p>Trust is each operator's own decision, made on both sides. Before you trust a node, compare its fingerprint with its operator over another channel (a call, a chat you trust); they compare yours the same way.</p>
-    <div class="fs-aside"><b>Your fingerprint</b> <${Copyable} value=${self.fingerprint} what="Fingerprint" copy=${copy} toast=${toast} /></div>
+    <div class="fs-aside ui-card"><b>Your fingerprint</b> <${Copyable} value=${self.fingerprint} what="Fingerprint" copy=${copy} toast=${toast} /></div>
     ${!connected && html`<p class="fs-warn">Join a hub first: other nodes show up here once this node is connected.</p>`}
     ${connected && (view.waiting.length === 0
       ? html`<div class="empty">No other nodes in your space yet. Each node joins the same space with its own invite; it shows up here once it connects.</div>`
-      : html`<table class="fa-table" id="fleet-setup-waiting">
-        <thead><tr><th>Node</th><th>Fingerprint</th><th></th></tr></thead>
-        <tbody>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
+      : html`<${FaTable} id="fleet-setup-waiting" head=${['Node', 'Fingerprint', '']}>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
           <td><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> ${r.name || html`<span class="muted">unnamed</span>`} <code class="muted" title=${r.id}>${shortID(r.id)}</code></td>
           <td><code class="fa-fp-full">${r.fingerprint || '—'}</code></td>
-          <td class="fa-acts"><button type="button" class="primary" data-fa="trust" onClick=${() => onTrust(r)}>Trust…</button></td>
-        </tr>`)}</tbody>
-      </table>`)}
+          <td class="fa-acts"><${Button} size="sm" variant="primary" data-fa="trust" onClick=${() => onTrust(r)}>Trust…<//></td>
+        </tr>`)}<//>`)}
     ${view.trusted.length > 0 && html`<p class="fs-ok" id="fleet-setup-trusted">✓ Trusted: ${view.trusted.map((r, i) => html`${i ? ', ' : ''}<b>${r.label}</b> <span class="muted">(${r.level}, ${r.online ? 'online' : 'offline'})</span>`)}.
-      <button type="button" class="fa-link" onClick=${onPeers}>Peers…</button></p>`}
+      <${Button} size="sm" variant="link" class="fa-link" onClick=${onPeers}>Peers…<//></p>`}
     <p class="muted">Restricted, the default, gives a peer only what you grant it in the next step. For your own machines you can trust <b>unrestricted</b> instead: every peer permission on every group, including groups created later.</p>
     <${Cli}><code>tclaude federation peers</code>, <code>tclaude federation trust inst_… --label <i>name</i> [--level unrestricted]</code><//>
   </div>`;
@@ -468,10 +463,9 @@ function ShareStep({ view, groups, actions, confirm, toast, reload, onOpenGrants
   };
   return html`<div class="fs-body" data-setup-step="share">${intro}
     <div class="fs-share">
-      <label><span class="fa-k">peer</span><select id="fleet-setup-peer" value=${current.id} onChange=${(e) => setPeer(e.currentTarget.value)}>
-        ${restricted.map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}</select></label>
-      <label><span class="fa-k">group</span><select id="fleet-setup-group" value=${currentGroup} onChange=${(e) => setGroup(e.currentTarget.value)}>
-        ${groups.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}</select></label>
+      <label><span class="fa-k">peer</span><${Select} size="sm" id="fleet-setup-peer" value=${current.id} onChange=${(e) => setPeer(e.currentTarget.value)}>
+        ${restricted.map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}<//></label>
+      <label><span class="fa-k">group</span><${GroupCombobox} id="fleet-setup-group" groups=${groups} value=${currentGroup} onChange=${setGroup} /></label>
     </div>
     <div class="fs-presets" role="group" aria-label="What the peer may do">
       ${SHARE_PRESETS.map((p) => {
@@ -484,10 +478,10 @@ function ShareStep({ view, groups, actions, confirm, toast, reload, onOpenGrants
     </div>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="fs-actions">
-      <button id="fleet-setup-share" type="button" class="primary" disabled=${!grants || !pending.length} onClick=${share}>Share…</button>
+      <${Button} size="sm" variant="primary" id="fleet-setup-share" disabled=${!grants || !pending.length} onClick=${share}>Share…<//>
       <span class="muted">${!grants ? 'Loading its grants…' : pending.length ? `Grants ${pending.map((g) => g.slug).join(', ')} in ${currentGroup}.` : 'Nothing new to grant: pick what to share.'}</span>
     </div>
-    <p class="muted">Every permission, other scopes and spawn launch settings: <button type="button" class="fa-link" onClick=${() => onOpenGrants(current.id)}>Peer grants…</button>${view.trusted.some((r) => r.level === 'unrestricted') ? ' Unrestricted peers already hold everything and are not listed.' : ''}</p>
+    <p class="muted">Every permission, other scopes and spawn launch settings: <${Button} size="sm" variant="link" class="fa-link" onClick=${() => onOpenGrants(current.id)}>Peer grants…<//>${view.trusted.some((r) => r.level === 'unrestricted') ? ' Unrestricted peers already hold everything and are not listed.' : ''}</p>
     <${Cli}>${pending.length
       ? pending.map((g, i) => html`${i ? html`<br />` : ''}<code>tclaude federation grant ${current.label} ${g.slug} --scope group=${currentGroup}${g.spawn_policy ? ` --max-live ${g.spawn_policy.max_live}` : ''}</code>`)
       : html`<code>tclaude federation grant <i>peer</i> <i>permission</i> --scope group=<i>group</i></code>`}<//>
@@ -554,20 +548,20 @@ function ReachRow({ peer, g, slugs, usable, rows, groups, agents, actions, confi
   return html`<div class="fs-reach">
     <div class="fs-reach-holders">${holders.length
       ? holders.map((h) => html`<span class="fs-holder" key=${h.key} data-holder=${h.key}>${onPermissions
-        ? html`<button type="button" class="fa-link" title=${`${h.label}'s permissions: add more, scoped peer=${peer.label}/${g.name}`} onClick=${() => onPermissions(h)}>${h.label}</button>`
+        ? html`<${Button} size="sm" variant="link" class="fa-link" title=${`${h.label}'s permissions: add more, scoped peer=${peer.label}/${g.name}`} onClick=${() => onPermissions(h)}>${h.label}<//>`
         : h.label}${h.exact
-        ? html` <button type="button" class="fa-link" data-reach-take title=${`Stop ${h.label} using it`} onClick=${() => take(h)}>✕</button>`
+        ? html` <${Button} size="sm" variant="link" class="fa-link" data-reach-take title=${`Stop ${h.label} using it`} onClick=${() => take(h)}>✕<//>`
         : html` <span class="muted">(all of ${peer.label})</span>`}</span>`)
       : html`<span class="muted">no one yet</span>`}</div>
     ${options.length ? html`<div class="fs-reach-give">
-      <select class="fs-reach-pick" aria-label=${`Who may use ${peer.label}/${g.name}`} onChange=${(e) => setHolder(e.currentTarget.value)}>
+      <${Select} size="sm" class="fs-reach-pick" aria-label=${`Who may use ${peer.label}/${g.name}`} onChange=${(e) => setHolder(e.currentTarget.value)}>
         <option value="" selected=${!pick}>Give access to…</option>
         ${groups.length && html`<optgroup label="Groups">${options.filter((o) => o.key.startsWith('group:')).map((o) => html`<option key=${o.key} value=${o.key} selected=${o.key === pick}>${o.label}</option>`)}</optgroup>`}
         ${agents.length && html`<optgroup label="Agents">${options.filter((o) => o.key.startsWith('agent:')).map((o) => html`<option key=${o.key} value=${o.key} selected=${o.key === pick}>${o.label}</option>`)}</optgroup>`}
-      </select>
-      <button type="button" class="primary" data-reach-give disabled=${!pick} onClick=${give}>Allow messaging…</button>
+      <//>
+      <${Button} size="sm" variant="primary" data-reach-give disabled=${!pick} onClick=${give}>Allow messaging…<//>
     </div>` : ''}
-    <button type="button" class="fa-link fs-reach-cli" title=${`Copy: ${cli}`} data-cli=${cli} onClick=${copyCli}>⧉ CLI</button>
+    <${Button} size="sm" variant="link" class="fa-link fs-reach-cli" title=${`Copy: ${cli}`} data-cli=${cli} onClick=${copyCli}>⧉ CLI<//>
   </div>`;
 }
 
@@ -590,11 +584,11 @@ function AgentsStep({ view, groups, agents, actions, confirm, copy, toast, reloa
     ${peers.map((r) => {
       const alike = sharedAlike(r.catalog);
       return html`<div class="fs-peer" key=${r.id} data-peer=${r.id}>
-      <div class="fs-peer-head"><span class=${`fa-dot${r.online ? ' on' : ''}`}></span> <b>${r.label}</b> <span class=${`fa-level ${r.level}`}>${r.level}</span></div>
+      <div class="fs-peer-head"><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> <b>${r.label}</b> <span class=${`fa-level ${r.level}`}>${r.level}</span></div>
       ${!r.catalog.length
         ? html`<div class="muted">Shares nothing with this node yet; its operator grants that on their node (their step 5).</div>`
         : html`${alike && html`<div class="fs-shared-alike" data-shared-alike>All ${r.catalog.length} groups share: <span>${alike}</span></div>`}
-        <table class="fa-table fs-reach-table">
+        <table class="fa-table fs-reach-table ui-compact">
           <thead><tr><th>Its group</th>${!alike && html`<th>Shared with you</th>`}<th>Your agents that use it</th></tr></thead>
           <tbody>${r.catalog.map((g) => {
             const usable = agentSlugs(g.caps);
@@ -638,10 +632,10 @@ export function SetupGuide({ view, groups = [], agents = [], actions, confirm, t
   useEffect(() => { onSeen?.(); }, []);
   const shown = progress.steps.find((s) => s.id === step) || progress.steps[0];
   const next = shown.done ? progress.steps[progress.steps.indexOf(shown) + 1] : null;
-  return html`<div class="fleet-setup" id="fleet-setup">
+  return html`<div class="fleet-setup ui-card ui-inset" id="fleet-setup">
     <ol class="fs-steps" aria-label="Setup steps">
       ${progress.steps.map((s, i) => html`<li key=${s.id}>
-        <button type="button" class=${`fs-step${s.done ? ' done' : ''}${s.id === shown.id ? ' on' : ''}`} data-step=${s.id} aria-current=${s.id === shown.id ? 'step' : undefined} onClick=${() => setStep(s.id)}>
+        <button type="button" data-ui-exempt class=${`fs-step${s.done ? ' done' : ''}${s.id === shown.id ? ' on' : ''}`} data-step=${s.id} aria-current=${s.id === shown.id ? 'step' : undefined} onClick=${() => setStep(s.id)}>
           <span class="fs-n" aria-hidden="true">${s.done ? '✓' : i + 1}</span>
           <span>${s.title}${s.optional ? html` <span class="muted">(optional)</span>` : ''}</span>
         </button>
@@ -654,6 +648,6 @@ export function SetupGuide({ view, groups = [], agents = [], actions, confirm, t
       : shown.id === 'trust' ? html`<${TrustStep} view=${view} copy=${copy} toast=${toast} onTrust=${onTrust} onPeers=${onPeers} />`
       : shown.id === 'share' ? html`<${ShareStep} view=${view} groups=${groups} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload} onOpenGrants=${onOpenGrants} />`
       : html`<${AgentsStep} view=${view} groups=${groups} agents=${agents} actions=${actions} confirm=${confirm} copy=${copy} toast=${toast} reload=${reload} onPermissions=${onPermissions} />`}
-    ${next && html`<div class="fs-next"><button type="button" data-setup-next=${next.id} onClick=${() => setStep(next.id)}>Next: ${next.title} →</button></div>`}
+    ${next && html`<div class="fs-next"><${Button} size="sm" data-setup-next=${next.id} onClick=${() => setStep(next.id)}>Next: ${next.title} →<//></div>`}
   </div>`;
 }

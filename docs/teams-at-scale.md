@@ -20,7 +20,7 @@ spawns the whole team.
 ```bash
 tclaude agent templates ls
 tclaude agent templates show review-team
-tclaude agent templates instantiate review-team
+tclaude agent templates instantiate review-team --group reviews
 ```
 
 Templates are JSON-authored. The safe edit loop is round-trip:
@@ -45,10 +45,14 @@ Other verbs:
   of creating a new one.
 
 Template writes need `templates.manage` and `instantiate` needs
-`templates.instantiate`; both are effectively human-only by default. You can
+`templates.instantiate`. `templates.manage` is human-only by default, while
+`templates.instantiate` comes with owning a group, for that group, so owners can
+reinforce and rebrief it. You can
 grant `templates.manage` to a trusted "scribe" agent and author templates
 conversationally — describe the team you want, let the scribe drive the JSON
-round-trip. The scribe's launch profile is configurable via `scribe.profile`
+round-trip. In the dashboard, *Edit with agent* in the templates manager (or
+in a template's editor) does this: after you confirm the grant, the scribe
+opens in its regular overlay chat window. The scribe's launch profile is configurable via `scribe.profile`
 in `~/.tclaude/data/config.json`.
 
 !!! note "Wizard vocabulary"
@@ -78,11 +82,17 @@ tclaude agent task-force stand-down <group>
 ```
 
 `deploy` creates a fresh group (named from the mission unless `--group` is
-given), folds the mission into the group's shared context under
-`## Mission` so every spawned agent's startup briefing carries it, and
+given), records the mission on the group, briefs every spawned agent with it
+under `## Mission` after the group's shared context, and
 spawns the roster — staged by wave if the template defines waves. Long
 missions go in `--mission-file` (`-` reads stdin); a Linear epic/issue link
-is stored verbatim. With `--worktree <branch>` the whole force lands on its
+is stored verbatim. The mission is kept apart from the shared context, so it
+reaches every member (later direct spawns into the force and re-injection after
+compaction included) even when a profile turns the group context off with
+`include_group_default_context: false`; only the shared context follows that
+toggle. Forces deployed before this split keep the mission inside their shared
+context unless it could be moved out unchanged. The mission is set at deploy; editing the shared
+context (`groups set-context` or the dashboard) no longer changes it. With `--worktree <branch>` the whole force lands on its
 own branch in a git [worktree](worktrees.md), which becomes the force's
 working directory.
 
@@ -140,24 +150,27 @@ Permissions: `self.schedule` (default-granted) covers self-targeted jobs;
 cross-agent jobs need `agent.schedule`; group-targeted jobs need
 `groups.messages.schedule`, which membership or ownership confers per group.
 
-### Spawning on a schedule (experimental)
+### Spawning on a schedule
 
 `cron add --action spawn` fires one managed worker per tick instead of a
-message. It is experimental, gated behind `features.triggers=true`, and
-requires a group target, a `--spawn-profile`, and an `--instruction`
+message. It requires a group target, a `--spawn-profile`, and an `--instruction`
 template (`{{fire_time}}` expands to the scheduled firing time). Overlap is
 controlled Kubernetes-style with `--concurrency Forbid|Replace|Allow` plus
 `--max-live-workers`, and `--worker-deadline` bounds each worker's run. The
 job's owner is re-authorized at every firing — a job outliving its creator's
 permissions stops spawning.
+A disabled spawn profile, or an operator-only one under an agent-owned job,
+stops it the same way, whether it is the job's own profile or the group's or
+the global default profile: the run is recorded as failed with the profile's
+name, and the first such refusal is sent to the owner and to the operator.
 
 ## Triggers and standing orders
 
 Where cron fires on a wall clock, **triggers** fire on facts: PR and CI edge
 events, plus the dwell-based agent-state facts `agent.idle` and
 `agent.awaiting_input` (fired once per continuously-true episode). Trigger
-rules are experimental (`features.triggers=true`) and are created and edited
-through the dashboard / REST API; the CLI is read-only:
+rules are created and edited through the dashboard / REST API; the CLI is
+read-only:
 
 ```bash
 tclaude agent triggers ls

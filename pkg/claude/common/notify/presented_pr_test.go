@@ -15,7 +15,7 @@ func TestFormatPresentedPR(t *testing.T) {
 	t.Run("full attribution: url leads the body, summary and group follow", func(t *testing.T) {
 		title, body := formatPresentedPR("tclaude-worker", "tofutools",
 			"https://github.com/tofutools/tclaude/pull/42", "notification on present-pr")
-		assert.Equal(t, "Claude: pull request", title)
+		assert.Equal(t, "tclaude: pull request", title)
 		assert.Equal(t, "tclaude-worker presented a pull request\n"+
 			"https://github.com/tofutools/tclaude/pull/42\n"+
 			"notification on present-pr\n— tofutools", body)
@@ -110,7 +110,7 @@ func TestSendPresentedPR_RequiresBothGates(t *testing.T) {
 				assert.Empty(t, queued, "the banner must stay silent unless both gates are on")
 				return
 			}
-			require.Equal(t, []string{"Claude: pull request"}, queued)
+			require.Equal(t, []string{"tclaude: pull request"}, queued)
 			items, _, err := db.ListBrowserNotificationsSince(0)
 			require.NoError(t, err)
 			require.Len(t, items, 1)

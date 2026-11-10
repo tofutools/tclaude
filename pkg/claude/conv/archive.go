@@ -44,7 +44,7 @@ func ArchiveCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
 		RunFunc: func(p *ArchiveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runArchiveOrUnarchive(p.ConvID, true, os.Stdout, os.Stderr))
+			os.Exit(runArchiveOrUnarchive(p.ConvID, true, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -66,7 +66,7 @@ func UnarchiveCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
 		RunFunc: func(p *ArchiveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runArchiveOrUnarchive(p.ConvID, false, os.Stdout, os.Stderr))
+			os.Exit(runArchiveOrUnarchive(p.ConvID, false, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

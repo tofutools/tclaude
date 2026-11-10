@@ -34,7 +34,7 @@ func groupsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "groups",
 		Short:       "Manage agent groups (allow-listed who can talk to whom)",
-		Long:        "`ls` and `members` are open. Mutating subcommands (create, rm, add, remove, update-member) are gated server-side on a permission slug: humans always pass; agents need the slug granted in agent.default_permissions or agent.permission_overrides in ~/.tclaude/config.json. Slugs: groups.create, groups.delete, groups.members.add, groups.members.remove, groups.members.update.",
+		Long:        "`ls` and `members` are open. Mutating subcommands (create, rm, add, remove, update-member) are gated server-side on a permission slug: humans always pass; agents need the slug granted in agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json. Slugs: groups.create, groups.delete, groups.members.add, groups.members.remove, groups.members.update.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			groupsLsCmd(),
@@ -46,6 +46,9 @@ func groupsCmd() *cobra.Command {
 			groupsMembersCmd(),
 			groupsAddCmd(),
 			groupsRemoveCmd(),
+			groupsMoveCmd(),
+			groupsDropKeptCmd(),
+			groupsSetTaskboardWritersCmd(),
 			groupsUpdateMemberCmd(),
 			groupsStopCmd(),
 			groupsResumeCmd(),
@@ -97,7 +100,7 @@ func groupsLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsLs(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -110,8 +113,10 @@ type groupSummary struct {
 	AttachmentLabelOverride string                           `json:"attachment_label_override,omitempty"`
 	Members                 int                              `json:"members"`
 	Online                  int                              `json:"online"`
-	MaxMembers              int                              `json:"max_members,omitempty"`     // hard member cap; 0 = unlimited
-	DefaultProfile          string                           `json:"default_profile,omitempty"` // spawn profile whose launch fields fill blank spawn fields; "" = none
+	MaxMembers              int                              `json:"max_members,omitempty"`         // hard member cap; 0 = unlimited
+	DefaultProfile          string                           `json:"default_profile,omitempty"`     // spawn profile whose launch fields fill blank spawn fields; "" = none
+	DefaultCwd              string                           `json:"default_cwd,omitempty"`         // directory auto-join matches; served to a human caller only
+	DefaultSpawnGroup       bool                             `json:"default_spawn_group,omitempty"` // auto-join tie-breaker when several groups share DefaultCwd
 	Environment             []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
 	Archived                bool                             `json:"archived,omitempty"`
 	NotifyMuted             bool                             `json:"notify_muted,omitempty"`          // OS notifications switched off for this group's agents
@@ -269,7 +274,7 @@ func groupsCreateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *GroupsCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(RunGroupsCreate(p, os.Stdout, os.Stderr))
+			os.Exit(RunGroupsCreate(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -363,13 +368,9 @@ func RunGroupsCreate(p *GroupsCreateParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		ID   int64  `json:"id"`
@@ -453,7 +454,7 @@ func groupsRmCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRm(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -466,13 +467,9 @@ func runGroupsRm(p *groupsRmParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	if err := DaemonRequest(http.MethodDelete, "/v1/groups/"+url.PathEscape(p.Name), nil, nil, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -499,7 +496,7 @@ func groupsMembersCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsMembersParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsMembers(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsMembers(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -565,6 +562,7 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 	}
 	if len(members) == 0 {
 		fmt.Fprintln(stdout, "(no members)")
+		printKeptPermissionHolders(p.Name, stdout)
 		return rcOK
 	}
 	tbl := table.New(
@@ -600,7 +598,27 @@ func runGroupsMembers(p *groupsMembersParams, stdout, stderr io.Writer) int {
 		}})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
+	printKeptPermissionHolders(p.Name, stdout)
 	return rcOK
+}
+
+// printKeptPermissionHolders notes the non-members that still hold the
+// group's permissions (a move that kept them), so editing the group's grants
+// shows who else receives them. Older daemons lack the route; print nothing.
+func printKeptPermissionHolders(group string, stdout io.Writer) {
+	var holders []struct {
+		AgentID string `json:"agent_id"`
+		ConvID  string `json:"conv_id"`
+		Title   string `json:"title"`
+	}
+	if err := DaemonGet("/v1/groups/"+url.PathEscape(group)+"/kept-permissions", &holders); err != nil || len(holders) == 0 {
+		return
+	}
+	names := make([]string, 0, len(holders))
+	for _, h := range holders {
+		names = append(names, shortAgentID(h.AgentID, h.ConvID)+" "+h.Title)
+	}
+	fmt.Fprintf(stdout, "Also holding this group's permissions (kept after a move): %s\n", strings.Join(names, ", "))
 }
 
 // --- groups add ---
@@ -625,7 +643,7 @@ func groupsAddCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsAddParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsAdd(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsAdd(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -634,13 +652,9 @@ func runGroupsAdd(p *groupsAddParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		ConvID string `json:"conv_id"`
@@ -682,7 +696,7 @@ func groupsRemoveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRemoveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRemove(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRemove(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -691,19 +705,141 @@ func runGroupsRemove(p *groupsRemoveParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	if err := DaemonRequest(http.MethodDelete, "/v1/groups/"+url.PathEscape(p.Group)+"/members/"+url.PathEscape(p.Conv), nil, nil, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
 	fmt.Fprintf(stdout, "Removed %s from group %q\n", p.Conv, p.Group)
+	return rcOK
+}
+
+// --- groups move ---
+
+type groupsMoveParams struct {
+	Group           string `pos:"true" help:"Group the conversation is in now"`
+	Conv            string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	To              string `pos:"true" help:"Group to move it to"`
+	KeepSandbox     bool   `long:"keep-sandbox" optional:"true" help:"Keep the current group's sandbox profile instead of taking the new group's"`
+	KeepEnvironment bool   `long:"keep-environment" optional:"true" help:"Keep the current group's environment variables instead of taking the new group's"`
+	KeepPermissions bool   `long:"keep-permissions" optional:"true" help:"Also keep the current group's group permissions after leaving it (operator only; undo with groups drop-kept-permissions)"`
+	AskHuman        string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsMoveCmd() *cobra.Command {
+	return boa.CmdT[groupsMoveParams]{
+		Use:   "move",
+		Short: "Move a conversation to another group",
+		Long: "Move a conversation from one group to another, keeping its role and description.\n\n" +
+			"The new group's permissions apply immediately and the current group's stop, unless the " +
+			"operator passes --keep-permissions, which keeps them (bound to that group, following its " +
+			"later changes) until `groups drop-kept-permissions` or the group is deleted.\n\n" +
+			"By default the agent takes the new group's sandbox profile and environment from its next " +
+			"resume or restart; the running process is unchanged. --keep-sandbox and --keep-environment " +
+			"leave either on the current group (following that group's later changes) instead. " +
+			"Per-agent overrides are kept either way.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsMoveParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Conv).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.To).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsMoveParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsMove(p, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsMove(p *groupsMoveParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
+	}
+	var resp struct {
+		ConvID          string `json:"conv_id"`
+		Sandbox         string `json:"sandbox"`
+		Environment     string `json:"environment"`
+		KeptPermissions bool   `json:"kept_permissions"`
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Group) + "/members/" + url.PathEscape(p.Conv) + "/move"
+	if err := DaemonRequest(http.MethodPost, path, map[string]any{
+		"to":               p.To,
+		"keep_sandbox":     p.KeepSandbox,
+		"keep_environment": p.KeepEnvironment,
+		"keep_permissions": p.KeepPermissions,
+	}, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	shortID := resp.ConvID
+	if len(shortID) >= 8 {
+		shortID = shortID[:8]
+	}
+	fmt.Fprintf(stdout, "Moved %s from group %q to %q\n", shortID, p.Group, p.To)
+	if resp.Sandbox != "" {
+		fmt.Fprintf(stdout, "  sandbox profile: %s\n  environment: %s\n  (applies at the agent's next resume or restart)\n",
+			resp.Sandbox, resp.Environment)
+	}
+	if p.KeepPermissions {
+		if !resp.KeptPermissions {
+			// An older daemon ignores the field and moves with the defaults.
+			fmt.Fprintf(stderr, "Warning: the daemon did not keep group %q's permissions (restart it to pick up --keep-permissions); the agent now has only %q's.\n", p.Group, p.To)
+			return rcIOFailure
+		}
+		fmt.Fprintf(stdout, "  kept group %q's permissions (applies now)\n", p.Group)
+	}
+	return rcOK
+}
+
+// --- groups drop-kept-permissions ---
+
+type groupsDropKeptParams struct {
+	Group    string `pos:"true" help:"Group whose kept permissions to drop"`
+	Conv     string `pos:"true" help:"Conversation: UUID, prefix, or current title"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+}
+
+func groupsDropKeptCmd() *cobra.Command {
+	return boa.CmdT[groupsDropKeptParams]{
+		Use:         "drop-kept-permissions",
+		Short:       "Stop an agent keeping a group's permissions after a move",
+		Long:        "Ends the group permissions an agent kept from a group it was moved out of with `groups move --keep-permissions`. Applies immediately.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsDropKeptParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.Conv).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *groupsDropKeptParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsDropKept(p, cliStdout, cliStderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsDropKept(p *groupsDropKeptParams, stdout, stderr io.Writer) int {
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	path := "/v1/groups/" + url.PathEscape(p.Group) + "/kept-permissions/" + url.PathEscape(p.Conv)
+	if err := DaemonRequest(http.MethodDelete, path, nil, nil, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "%s no longer keeps group %q's permissions\n", p.Conv, p.Group)
 	return rcOK
 }
 
@@ -727,7 +863,7 @@ func groupsStopCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsStopParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsStop(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsStop(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -740,13 +876,9 @@ func runGroupsStop(p *groupsStopParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/stop"
 	if p.Force {
@@ -774,7 +906,7 @@ func groupsResumeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsResumeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsResume(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsResume(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -827,7 +959,7 @@ func groupsRetireCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRetireParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRetire(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRetire(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -840,13 +972,9 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	// Spell shutdown out explicitly so the CLI default is independent of
 	// the server-side default (which also defaults shutdown ON).
@@ -865,17 +993,10 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/retire?" + q.Encode()
 
 	var resp struct {
-		Group   string `json:"group"`
-		Action  string `json:"action"`
-		Members []struct {
-			AgentID string `json:"agent_id,omitempty"`
-			ConvID  string `json:"conv_id"`
-			Title   string `json:"title,omitempty"`
-			Action  string `json:"action"`
-			Detail  string `json:"detail,omitempty"`
-			TmuxSes string `json:"tmux_session,omitempty"`
-		} `json:"members"`
-		Warnings []string `json:"warnings,omitempty"`
+		Group    string              `json:"group"`
+		Action   string              `json:"action"`
+		Members  []groupMemberResult `json:"members"`
+		Warnings []string            `json:"warnings,omitempty"`
 	}
 	opts := DaemonOpts{AskHuman: ask}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, opts); err != nil {
@@ -886,24 +1007,9 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Group %q has no members.\n", resp.Group)
 		return rcOK
 	}
-	tbl := table.New(
-		table.Column{Header: "ID", Width: 12},
-		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
-		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
-		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
-	)
-	tbl.SetTerminalWidth(table.GetTerminalWidth())
-	for _, m := range resp.Members {
-		name := m.Title
-		if name == "" {
-			name = "(unnamed)"
-		}
-		tbl.AddRow(table.Row{Cells: []string{
-			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
-		}})
-	}
+	rendered := renderMemberResults(resp.Members)
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
-	fmt.Fprintln(stdout, tbl.Render())
+	fmt.Fprintln(stdout, rendered)
 	for _, warn := range resp.Warnings {
 		fmt.Fprintf(stdout, "⚠ %s\n", warn)
 	}
@@ -933,7 +1039,7 @@ func groupsRebriefCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRebriefParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRebrief(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRebrief(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -946,13 +1052,9 @@ func runGroupsRebrief(p *groupsRebriefParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/rebrief"
 	var resp struct {
@@ -974,22 +1076,49 @@ func runGroupsRebrief(p *groupsRebriefParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
+// groupMemberResult is one member's row in the reply of a command that acts
+// on every member of a group (retire, stop, resume, stand-down).
+type groupMemberResult struct {
+	AgentID  string   `json:"agent_id,omitempty"`
+	ConvID   string   `json:"conv_id"`
+	Title    string   `json:"title,omitempty"`
+	Action   string   `json:"action"`
+	Detail   string   `json:"detail,omitempty"`
+	TmuxSes  string   `json:"tmux_session,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+	Changes  []string `json:"changes,omitempty"`
+}
+
+// renderMemberResults renders those rows as the ID/NAME/ACTION/DETAIL table
+// the commands share.
+func renderMemberResults(members []groupMemberResult) string {
+	tbl := table.New(
+		table.Column{Header: "ID", Width: 12},
+		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
+		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
+		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
+	)
+	tbl.SetTerminalWidth(table.GetTerminalWidth())
+	for _, m := range members {
+		name := m.Title
+		if name == "" {
+			name = "(unnamed)"
+		}
+		tbl.AddRow(table.Row{Cells: []string{
+			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
+		}})
+	}
+	return tbl.Render()
+}
+
 // runGroupsLifecycle is shared between stop/resume — both endpoints
 // return the same per-member result shape, only the action label
 // changes.
 func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer) int {
 	var resp struct {
-		Group   string `json:"group"`
-		Action  string `json:"action"`
-		Members []struct {
-			AgentID  string   `json:"agent_id,omitempty"`
-			ConvID   string   `json:"conv_id"`
-			Title    string   `json:"title,omitempty"`
-			Action   string   `json:"action"`
-			Detail   string   `json:"detail,omitempty"`
-			TmuxSes  string   `json:"tmux_session,omitempty"`
-			Warnings []string `json:"warnings,omitempty"`
-		} `json:"members"`
+		Group   string              `json:"group"`
+		Action  string              `json:"action"`
+		Members []groupMemberResult `json:"members"`
 	}
 	// Both endpoints WAIT: stop holds until each agent's pane is actually gone,
 	// resume until each resumed agent is confirmed online. With a fan-out over a
@@ -1007,28 +1136,17 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 		fmt.Fprintf(stdout, "Group %q has no members.\n", resp.Group)
 		return rcOK
 	}
-	tbl := table.New(
-		table.Column{Header: "ID", Width: 12},
-		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
-		table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
-		table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
-	)
-	tbl.SetTerminalWidth(table.GetTerminalWidth())
-	for _, m := range resp.Members {
-		name := m.Title
-		if name == "" {
-			name = "(unnamed)"
-		}
-		tbl.AddRow(table.Row{Cells: []string{
-			shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
-		}})
-	}
+	rendered := renderMemberResults(resp.Members)
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
-	fmt.Fprintln(stdout, tbl.Render())
+	fmt.Fprintln(stdout, rendered)
 	for _, member := range resp.Members {
 		for _, warning := range member.Warnings {
 			fmt.Fprintf(stdout, "Warning (%s): %s\n",
 				shortAgentID(member.AgentID, member.ConvID), warning)
+		}
+		for _, change := range member.Changes {
+			fmt.Fprintf(stdout, "Changed since last launch (%s): %s\n",
+				shortAgentID(member.AgentID, member.ConvID), change)
 		}
 	}
 	return rcOK
@@ -1057,7 +1175,7 @@ func groupsUpdateMemberCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsUpdateMemberParams, cmd *cobra.Command, _ []string) {
-			os.Exit(runGroupsUpdateMember(p, cmd, os.Stdout, os.Stderr))
+			os.Exit(runGroupsUpdateMember(p, cmd, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1123,7 +1241,7 @@ func groupsArchiveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsArchiveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "archive", p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "archive", p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1140,7 +1258,7 @@ func groupsUnarchiveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsArchiveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "unarchive", p.AskHuman, os.Stdout, os.Stderr))
+			os.Exit(runGroupsArchiveOrUnarchive(p.Name, "unarchive", p.AskHuman, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1176,7 +1294,7 @@ func groupsNestCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsNestParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsNest(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsNest(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1198,13 +1316,9 @@ func runGroupsNest(p *groupsNestParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group  string `json:"group"`
@@ -1260,7 +1374,7 @@ func groupsCloneCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsCloneParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsClone(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsClone(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1273,13 +1387,9 @@ func runGroupsClone(p *groupsCloneParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	body := map[string]any{}
 	if p.NewName != "" {
@@ -1354,7 +1464,7 @@ func groupsRenameCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsRenameParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsRename(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsRename(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1367,13 +1477,9 @@ func runGroupsRename(p *groupsRenameParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group   string `json:"group"`
@@ -1419,7 +1525,7 @@ func groupsSetDescrCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetDescrParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetDescr(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetDescr(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1432,13 +1538,9 @@ func runGroupsSetDescr(p *groupsSetDescrParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group string `json:"group"`
@@ -1475,9 +1577,9 @@ func groupsSetDefaultDirCmd() *cobra.Command {
 		Long: "Set the working directory pre-filled into the spawn form for " +
 			"agents created directly into this group. The daemon also " +
 			"substitutes it server-side when a spawn request leaves cwd " +
-			"blank, so `tclaude agent spawn <group>` and the dashboard's " +
-			"'+ spawn agent' button both inherit it. Omit <dir> to clear " +
-			"the default (spawns then fall back to the daemon's own cwd). " +
+			"blank, so `tclaude agent spawn <group>` without --cwd and the " +
+			"dashboard's '+ spawn agent' button both inherit it. Omit <dir> " +
+			"to clear the default (`agent spawn` then uses the caller's cwd). " +
 			"Gated on the `groups.settings.default-dir` permission (or the `groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetDefaultDirParams, _ *cobra.Command) error {
@@ -1486,7 +1588,7 @@ func groupsSetDefaultDirCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetDefaultDirParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetDefaultDir(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetDefaultDir(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1510,13 +1612,9 @@ func runGroupsSetDefaultDir(p *groupsSetDefaultDirParams, stdout, stderr io.Writ
 		}
 		dir = abs
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group      string `json:"group"`
@@ -1564,7 +1662,7 @@ func groupsSetDefaultProfileCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetDefaultProfileParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetDefaultProfile(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetDefaultProfile(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1577,13 +1675,9 @@ func runGroupsSetDefaultProfile(p *groupsSetDefaultProfileParams, stdout, stderr
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group          string `json:"group"`
@@ -1632,7 +1726,7 @@ func groupsSetRemoteControlCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetRemoteControlParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetRemoteControl(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetRemoteControl(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1645,13 +1739,9 @@ func runGroupsSetRemoteControl(p *groupsSetRemoteControlParams, stdout, stderr i
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	// Omitting the policy clears the override (inherit), mirroring the
 	// set-default-profile "omit to clear" convention. The daemon validates the
@@ -1700,7 +1790,7 @@ func groupsSetReinjectCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetReinjectParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetReinject(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetReinject(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1713,13 +1803,9 @@ func runGroupsSetReinject(p *groupsSetReinjectParams, stdout, stderr io.Writer) 
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	mode := strings.TrimSpace(p.Mode)
 	if mode == "" {
@@ -1774,7 +1860,7 @@ func groupsSetOwnerScopesCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetOwnerScopesParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetOwnerScopes(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetOwnerScopes(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1802,13 +1888,9 @@ func runGroupsSetOwnerScopes(p *groupsSetOwnerScopesParams, stdin io.Reader, std
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group       string         `json:"group"`
@@ -1845,7 +1927,7 @@ func groupsSetEnvironmentCmd() *cobra.Command {
 	return boa.CmdT[groupsSetEnvironmentParams]{
 		Use:         "set-environment",
 		Short:       "Replace or clear a group's common spawn environment",
-		Long:        "Replace the environment inherited by fresh spawns in this group. Repeat --env NAME=value; omit --env to clear it. Existing agents retain the values frozen at their original spawn.",
+		Long:        "Replace the environment inherited by fresh spawns in this group. Repeat --env NAME=value; omit --env to clear it. A running process keeps its environment; the group values are read again on its next stop/resume, restart, clone or reincarnate.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetEnvironmentParams, cmd *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -1855,7 +1937,7 @@ func groupsSetEnvironmentCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetEnvironmentParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetEnvironment(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetEnvironment(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1920,7 +2002,7 @@ func groupsSetContextCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetContextParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetContext(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetContext(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1937,13 +2019,9 @@ func runGroupsSetContext(p *groupsSetContextParams, stdin io.Reader, stdout, std
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group          string `json:"group"`
@@ -1990,7 +2068,7 @@ func groupsSetMaxMembersCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetMaxMembersParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetMaxMembers(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetMaxMembers(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -2019,13 +2097,9 @@ func runGroupsSetMaxMembers(p *groupsSetMaxMembersParams, stdout, stderr io.Writ
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group      string `json:"group"`
@@ -2069,7 +2143,7 @@ func groupsSetNotificationsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsSetNotificationsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runGroupsSetNotifications(p, os.Stdout, os.Stderr))
+			os.Exit(runGroupsSetNotifications(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -2092,13 +2166,9 @@ func runGroupsSetNotifications(p *groupsSetNotificationsParams, stdout, stderr i
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group         string `json:"group"`
@@ -2126,13 +2196,9 @@ func runGroupsArchiveOrUnarchive(name, verb, askHuman string, stdout, stderr io.
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(askHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(askHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	var resp struct {
 		Group  string `json:"group"`

@@ -7,7 +7,7 @@ import (
 
 func TestOpenCodeToolGovernanceCatalog(t *testing.T) {
 	c := openCodeToolGovernance{}
-	want := []string{OpenCodeToolsAllow, OpenCodeToolsAsk, OpenCodeToolsDeny}
+	want := []string{OpenCodeToolsAll, OpenCodeToolsAllow, OpenCodeToolsAsk, OpenCodeToolsDeny}
 	if got := c.Modes(); !equalStrings(got, want) {
 		t.Fatalf("Modes() = %v, want %v", got, want)
 	}

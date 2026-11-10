@@ -12,31 +12,31 @@ import (
 // projection. Denied fields keep their typed zero/empty values.
 var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[snapshotPayload](): classifyPeerFields(map[string]string{
-		"public":    "GeneratedAt Version AssetsVersion ActivityBots HScrollFollow GroupQuickOptions DefaultTerminal DefaultDirectoryPicker",
+		"public":    "GeneratedAt Version AssetsVersion ActivityBots HScrollFollow OverlayBackdrop GroupQuickOptions DefaultTerminal DefaultDirectoryPicker",
 		"defaults":  "SpawnProfileDefault SandboxProfileDefault",
 		"catalogs":  "Templates Profiles Roles SavedPrompts SandboxProfiles SandboxProfilesRev",
 		"projected": "Groups Agents AgentRosterAuthoritative StaticVersion",
-		"denied":    "Harnesses AuthSession StaticUnchanged Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs TrackedPRAuthors QueuedSpawns Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible ProcessesEnabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription ShowFinalPRChecks StayOnTerminalsAfterLastClose FusedToolbarFixedNode CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess",
+		"denied":    "Voice WindowControls SnapAssist StewardName StewardActive StewardRoster StewardElevated StewardAccess KnowledgeSource Harnesses AuthSession StaticUnchanged Ungrouped Pending Permissions Slugs Cron ExportJobsActive RetiredTotal Sudo Links RouteMap Usage AuthoredOpenPRs AuthoredOpenMRs TrackedPRAuthors QueuedSpawns CapacityQueue Messages MessagesUnread AccessRequests AccessRequestsPending Plugins PluginsCatalog PluginsWarn PluginsError PluginsTabVisible ProcessesEnabled StewardsDisabled TriggersEnabled GroupsRouteMapEnabled GroupAttachmentsMode TerminalPaletteShortcut Keybindings RecordedSandboxDetails UserDefaultModel SandboxImpl PopupBase NotificationsEnabled SpawnNameNormalize VegasInRegularMode HidePullLever TerminalAttach ShowAgentHideButton ShowGroupDescription SidePanelEdgeReveal SidePanelTuning ShowFinalPRChecks StayOnTerminalsAfterLastClose FusedToolbarFixedNode UsageCollapseSubviews CostTabVisible CostTabWhatIf BrokerRefusalsTotal BrokerRefusalsUnplaceable UsageTabVisible RemoteAccess CompanionCues LivePages GroupResources",
 	}),
 	reflect.TypeFor[dashboardGroup](): classifyPeerFields(map[string]string{
 		"identity":  "ID Name Descr",
 		"projected": "Members Online",
-		"settings":  "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultContext Environment DefaultProfile DefaultPrompts SandboxProfile MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Parent",
-		"denied":    "DefaultSpawnGroup Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes Mission SourceTemplate RouteGeneration Process Waves Scribe FederationLinks",
+		"settings":  "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultContext Environment DefaultProfile DefaultPrompts SandboxProfile MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Parent Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes",
+		"denied":    "DefaultSpawnGroup Mission SourceTemplate RouteGeneration Process Waves Scribe FederationLinks",
 	}),
 	reflect.TypeFor[dashboardMember](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title",
 		"roster":   "Role",
 		"presence": "Online FederationPresence",
 		"status":   "State taskRefView ClaudeSubscription",
-		"settings": "Descr tagsView Notify NotifyEffective",
-		"denied":   "CreatedAt agentLocationView repoLinksView Waking RouteHealth Owner",
+		"settings": "Descr tagsView Notify NotifyEffective Owner",
+		"denied":   "CreatedAt agentLocationView repoLinksView Waking ExternalSteward SpawnedByExternalSteward RouteHealth",
 	}),
 	reflect.TypeFor[dashboardAgent](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title Groups",
 		"presence": "Online",
 		"status":   "State taskRefView",
-		"denied":   "agentLocationView repoLinksView tagsView Waking OwnedGroups Effective ActiveSudo Notify NotifyEffective",
+		"denied":   "agentLocationView repoLinksView tagsView Waking ExternalSteward SpawnedByExternalSteward OwnedGroups Effective ActiveSudo Notify NotifyEffective SpawnGroup",
 	}),
 	reflect.TypeFor[taskRefView](): classifyPeerFields(map[string]string{"status": "TaskURL TaskLabel", "denied": "TaskLabelOverride"}),
 	reflect.TypeFor[agentState](): classifyPeerFields(map[string]string{

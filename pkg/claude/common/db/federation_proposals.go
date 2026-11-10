@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -140,11 +141,40 @@ func GetFederationProposal(id string) (*FederationPeerProposal, error) {
 	return &p, nil
 }
 func ListFederationProposals() ([]FederationPeerProposal, error) {
+	return queryFederationProposals(`SELECT ` + federationProposalColumns + ` FROM federation_peer_proposals ORDER BY updated_at DESC LIMIT 200`)
+}
+
+const federationProposalColumns = `id,peer,origin_instance,revision,body,authority,state,created_at,deadline_at,updated_at`
+
+// federationProposalLive lists the states a deadline can still expire.
+const federationProposalLive = `('sent','countered','applying','pending')`
+
+// ListActionableFederationProposals returns every proposal still in a live
+// state plus the terminal newest ones, newest first: what the dashboard polls.
+// federation_peer_proposals is never pruned, so its handled history stays
+// behind a small cap. Expiry runs on a timer, so a live row past its deadline
+// reads as expired here rather than this read path writing it.
+func ListActionableFederationProposals(now time.Time, recentTerminal int) ([]FederationPeerProposal, error) {
+	out, err := queryFederationProposals(`SELECT `+federationProposalColumns+` FROM federation_peer_proposals WHERE state IN `+federationProposalLive+`
+		UNION ALL SELECT * FROM (SELECT `+federationProposalColumns+` FROM federation_peer_proposals WHERE state NOT IN `+federationProposalLive+` ORDER BY updated_at DESC LIMIT ?)
+		ORDER BY updated_at DESC`, recentTerminal)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if !out[i].Deadline.After(now) && slices.Contains([]string{"sent", "countered", "applying", "pending"}, out[i].State) {
+			out[i].State = "expired"
+		}
+	}
+	return out, nil
+}
+
+func queryFederationProposals(query string, args ...any) ([]FederationPeerProposal, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,peer,origin_instance,revision,body,authority,state,created_at,deadline_at,updated_at FROM federation_peer_proposals ORDER BY updated_at DESC LIMIT 200`)
+	rows, err := d.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

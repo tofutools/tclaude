@@ -7,6 +7,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Read-through refresh of a Copilot session's context/usage row.
@@ -76,6 +77,12 @@ type copilotContextRefreshState struct {
 	persistedWindow int64
 	persistedPct    float64
 
+	// compactions and clears are the counts already answered with a startup
+	// context re-injection. They are only meaningful once boundariesKnown is
+	// set, by a restored checkpoint or by the first scan of the log.
+	compactions, clears int
+	boundariesKnown     bool
+
 	// contextTier is the latest durable session.start/model_change tier. It is
 	// read by the independent Copilot usage-store poller, so access stays under
 	// copilotContextRefreshMu even while the rest of this state is claimed.
@@ -107,7 +114,7 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	}
 	defer releaseCopilotContextRefresh(state)
 
-	home := harness.CopilotHome()
+	home := copilotHomeForSession(sess)
 	if home == "" {
 		// No COPILOT_HOME means no session-state tree to follow. Not an error:
 		// the same condition the conversation store reports as "no
@@ -116,7 +123,7 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	}
 
 	if !state.checkpointLoaded {
-		loadCopilotCheckpoint(sess.ID, state)
+		loadCopilotCheckpoint(sess, state)
 		state.checkpointLoaded = true
 	}
 
@@ -128,7 +135,9 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	}
 	if !hydrated {
 		// Copilot creates the session directory before the log. Nothing to say
-		// yet, and writing zeros would blank a genuine earlier reading.
+		// yet, and writing zeros would blank a genuine earlier reading. It does
+		// settle the boundary baseline: no log means none have happened.
+		state.boundariesKnown = true
 		return
 	}
 	setCopilotContextTier(state, snap.ContextTier)
@@ -138,7 +147,43 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 	copilotContextRefreshMu.Unlock()
 
 	persistCopilotContextSnapshot(sess, state, snap)
+	if reinjectAfterCopilotBoundary(sess, state, snap) {
+		// Saved now, past the throttle: a restart that rolled back to an older
+		// checkpoint would answer this boundary a second time.
+		state.checkpointAt = time.Time{}
+	}
 	persistCopilotCheckpoint(sess, state)
+}
+
+// reinjectAfterCopilotBoundary queues the startup-context re-injection for
+// compactions and clears the log gained since the last look, and reports
+// whether it did. Copilot has no post-compaction hook, so its durable log is
+// the only signal. Several of a kind between two looks earn one message: each
+// would carry the same text.
+//
+// The first scan of a log with no checkpoint only sets the baseline. Those
+// boundaries belong to an earlier lifetime of a resumed conversation, and
+// whatever briefing they dropped is not this launch's to restore.
+func reinjectAfterCopilotBoundary(
+	sess *db.SessionRow,
+	state *copilotContextRefreshState,
+	snap harness.CopilotRuntimeSnapshot,
+) bool {
+	compactions, clears, known := state.compactions, state.clears, state.boundariesKnown
+	state.compactions, state.clears, state.boundariesKnown = snap.Compactions, snap.ContextClears, true
+	if !known {
+		return false
+	}
+	queued := false
+	if snap.Compactions > compactions {
+		session.QueueCompactionReinjection(sess.ConvID)
+		queued = true
+	}
+	if snap.ContextClears > clears {
+		session.QueueClearReinjection(sess.ConvID)
+		queued = true
+	}
+	return queued
 }
 
 // claimCopilotContextRefresh returns the session's follower state when this
@@ -200,7 +245,8 @@ func copilotContextTierForSession(sess *db.SessionRow) string {
 // loadCopilotCheckpoint primes the follower from its durable checkpoint once
 // per daemon lifetime per session. An unusable checkpoint is DELETED rather
 // than retried: it would otherwise be reloaded and rejected on every restart.
-func loadCopilotCheckpoint(sessionID string, state *copilotContextRefreshState) {
+func loadCopilotCheckpoint(sess *db.SessionRow, state *copilotContextRefreshState) {
+	sessionID := sess.ID
 	checkpoint, err := db.LoadCopilotTelemetryCheckpoint(sessionID)
 	if err != nil {
 		slog.Warn("copilot-telemetry: failed to load durable follower checkpoint",
@@ -220,6 +266,7 @@ func loadCopilotCheckpoint(sessionID string, state *copilotContextRefreshState) 
 		return
 	}
 	state.checkpointAt = time.Now()
+	state.compactions, state.clears, state.boundariesKnown = state.follower.CheckpointedBoundaries(sess.ConvID)
 }
 
 func persistCopilotCheckpoint(sess *db.SessionRow, state *copilotContextRefreshState) {

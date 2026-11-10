@@ -36,7 +36,7 @@ type pafConsentParams struct {
 // PAFConsentCmd is `tclaude paf consent`: a human's recorded confirmation
 // that a PAF may go to an audience.
 func PAFConsentCmd() *cobra.Command {
-	return boa.CmdT[pafConsentParams]{Use: "consent <file>", Short: "Record your consent to sharing a PAF with an audience",
+	return boa.CmdT[pafConsentParams]{Use: "consent", Short: "Record your consent to sharing a PAF with an audience",
 		Long: "Show what a PAF would share (size, conversation time range and turn count, this node's credential scan " +
 			"and the recorded redactions), then, once you confirm, record your consent in its privacy.json, bound to the " +
 			"content digest. The content is copied byte for byte and the file is re-signed by this node. Changing the " +
@@ -44,7 +44,7 @@ func PAFConsentCmd() *cobra.Command {
 			"agents are refused.\n\n" +
 			"  tclaude paf consent reviewer.paf --audience recipients --recipient inst_7c21 -o reviewer.paf",
 		ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *pafConsentParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPAFConsent(p, os.Stdin, os.Stdout, os.Stderr, term.IsTerminal(int(os.Stdin.Fd()))))
+			os.Exit(runPAFConsent(p, os.Stdin, cliStdout, cliStderr, term.IsTerminal(int(os.Stdin.Fd()))))
 		}}.ToCobra()
 }
 
@@ -176,11 +176,11 @@ func exchangePAF(path string, f *os.File) ([]byte, error) {
 	attachCallerIdentity(req)
 	req.Header.Set("Content-Type", paf.MediaType)
 	client := httpClientWithTimeout(bundletransfer.DefaultTTL)
-	policy, err := retryPolicyForRequest(client, req, os.Stderr)
+	policy, err := retryPolicyForRequest(client, req, cliStderr)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := doDaemonRequest(client, req, os.Stderr, policy)
+	resp, err := doDaemonRequest(client, req, cliStderr, policy)
 	if err != nil {
 		return nil, err
 	}

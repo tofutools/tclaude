@@ -1,4 +1,12 @@
-# Querying usage and costs
+# Usage and costs
+
+Use this page to read spend and quota from the command line and to set limits. For the
+charts, see the [Usage tab](dashboard-usage.md).
+
+- **To see where you stand:** `tclaude usage` and `tclaude costs`.
+- **To cap spending:** see [Usage limits and budgets](#usage-limits-and-budgets), or
+  **Open usage limits & budgets…** in
+  [Config › Usage & costs](dashboard-config.md#usage-costs).
 
 Operators and agents can query account quotas and recorded costs through the
 agentd daemon. The commands do not access the private database or provider
@@ -212,7 +220,7 @@ top, so the pick is there before the first profile exists.
   fleet limits with their readings. A card's ⚙ edits, clones or deletes the
   limit and its alert ladder; ＋ adds a limit.
 
-**Usage limits & budgets** (the Usage tab's Limits section, Config → Costs,
+**Usage limits & budgets** (the Usage tab's Limits section, Config › Usage & costs,
 the command palette, the limit banner, or any of the above) has four tabs:
 
 - **Limits**: global and group limits with their live readings, an enable
@@ -273,7 +281,7 @@ grants, all off by default, decide what a peer gets from this node:
 
 A **fleet limit** is a limit over spend summed across nodes. Its target is
 `all` (every trusted peer), `pool:<node pool>` (a [local node
-pool](federation.md#local-node-pools) as a sub-fleet) or `peer:<peer>`, and by
+pool](federation-peers.md#local-node-pools) as a sub-fleet) or `peer:<peer>`, and by
 default it counts this node too. Only members sharing `usage.read` count,
 and each reading says how many did. A member's total counts while it is
 under ten minutes old, so an unreachable member keeps its last reading for a
@@ -321,7 +329,7 @@ limits with presets and an editor, each limit's reading per member (counted,
 shares no usage, stale) and whether its steps act on that member's agents, a
 nodes table with each peer's totals, limits and the grants it shares, and the
 peers' fleet limits in force here. The palette opens it as **Fleet usage
-limits…**, and Fleet → Usage sharing links to it. Where a peer granted
+limits…**, and ⚙ Fleet config › Usage sharing links to it. Where a peer granted
 `usage-rules.manage`, its row has **manage its rules…**, which opens the full
 usage dialog against that peer; the same is reachable from the peer's popup in
 the fleet strip and from the **💰 usage rules** button on its peer view. The

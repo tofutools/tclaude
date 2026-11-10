@@ -7,6 +7,9 @@
 // created when they turn on and torn down when they turn off, so the
 // soundtrack stops the moment the feature leaves.
 //
+// The audio engine stays imperative (one detached <audio>); the player card
+// is a Preact island (VegasPlayer) rendered from the engine's signals.
+//
 // We stream an internet radio station via an <audio> element rather than
 // embedding YouTube: monetised YouTube content serves ads, and many of
 // those videos disable embedding outright (the original ?v=… link did —
@@ -33,10 +36,15 @@
 // the track. Best-effort: a blip just leaves the last song shown, and an
 // empty feed hides the song line — the music is unaffected either way.
 
+import { h, render } from 'preact';
+import { signal } from '@preact/signals';
+import htm from 'htm';
 import { isVegasActive } from './slop.js';
 import { isSlopSoundEnabled } from './slop-audio.js';
 import { dashPrefs } from './prefs.js';
 import { dashboardState } from './snapshot-store.js';
+
+const html = htm.bind(h);
 
 // The station catalog. SomaFM is listener-supported and genuinely
 // commercial-free; each entry is one of its channels. The first
@@ -175,7 +183,6 @@ async function loadChannel() {
 function applyChannel(id) {
   if (id === activeChannelId) return;
   activeChannelId = id;
-  const audio = document.querySelector('#vegas-player audio');
   if (audio) {
     const wasPlaying = !audio.paused;
     stopMusic();
@@ -231,7 +238,6 @@ let musicVolume = 50;
 // slop-volume.js on load and on every slider move.
 export function setMusicVolume(pct) {
   musicVolume = Math.min(100, Math.max(0, Number(pct) || 0));
-  const audio = document.querySelector('#vegas-player audio');
   if (audio && Math.round(audio.volume * 100) !== musicVolume) {
     audio.volume = musicVolume / 100;
   }
@@ -240,7 +246,7 @@ export function setMusicVolume(pct) {
 // cancelUnmuteArm tears down a pending "unmute on first gesture" arming
 // (see playWithSound). Held at module scope so stopMusic / a rebuild can
 // cancel a still-waiting arm instead of leaking listeners that reference
-// a removed <audio>.
+// a stopped <audio>.
 let cancelUnmuteArm = null;
 
 // connectionLost is raised by connection.js when the dashboard loses contact
@@ -271,84 +277,31 @@ function rememberPlayIntent(intent) {
   else dashPrefs.setItem(PLAY_INTENT_KEY, 'play');
 }
 
+// ─── The audio engine ──────────────────────────────────────────────────
+// The engine is imperative: one controls-less <audio> element, never in the
+// DOM (a detached media element plays the same), built by startMusic and
+// torn down by stopMusic. Its state reaches the HUD only through the signals
+// below, which VegasPlayer renders into #vegas-player.
+let audio = null;
+let playerMounted = false;
+// hud is null with no player, else the station it is tuned to and whether
+// the stream failed (the HUD then shows the error card instead).
+const hud = signal(null);
+// audible is "playing with sound" (not paused, not muted). The armed-muted
+// autoplay of a gestureless ?slop=1 load reads as not-yet-audible, so the
+// button shows ▶ to invite the click that brings the sound up.
+const audible = signal(false);
+
 function startMusic({ autoplay = true } = {}) {
-  const host = document.getElementById('vegas-player');
-  if (!host) return;
+  if (!playerMounted) return;
   // Already playing — don't rebuild, which would restart the stream on a
   // redundant event (e.g. a duplicate tclaude:vegas).
-  if (host.querySelector('audio')) return;
-  // Drop any stale arm from a previous stop, and clear a leftover error
-  // card from a previous failed attempt.
+  if (audio) return;
+  // Drop any stale arm from a previous stop.
   if (cancelUnmuteArm) cancelUnmuteArm();
-  host.replaceChildren();
-
-  // Now-playing "stereo display": a dynamic song readout (artist / title /
-  // time-on-air, filled by the poller below — empty until the first
-  // successful fetch) above the static station line. It sits above the
-  // play/pause transport so the player reads as a filled card rather than
-  // an empty box, now the (meaningless live-stream) seek bar is gone.
-  const label = document.createElement('div');
-  label.className = 'vegas-nowplaying';
-
-  const songLine = document.createElement('div');
-  songLine.className = 'vegas-song';
-  songLine.id = 'vegas-song';
-
   const chan = channelById(activeChannelId);
-
-  // The station line doubles as a two-level picker: a 📻 then a group
-  // <select> (Vegas Lounge / Wizard's Realm) that filters a channel
-  // <select>. Switching either is a one-click change; the choice persists to
-  // the backend and the now-playing feed follows.
-  const stationLine = document.createElement('div');
-  stationLine.className = 'vegas-station';
-  stationLine.append('📻 ');
-
-  const activeGroup = chan.group;
-
-  // Top-level group picker. Choosing a group jumps to its default station.
-  const groupSel = document.createElement('select');
-  groupSel.className = 'vegas-group';
-  groupSel.id = 'vegas-group';
-  groupSel.setAttribute('aria-label', 'Radio group');
-  for (const g of GROUPS) {
-    const opt = document.createElement('option');
-    opt.value = g.key;
-    opt.textContent = g.label;
-    groupSel.appendChild(opt);
-  }
-  groupSel.value = activeGroup;
-  groupSel.addEventListener('change', () => switchGroup(groupSel.value));
-
-  // Channel picker, filtered to the active group.
-  const select = document.createElement('select');
-  select.className = 'vegas-channel';
-  select.id = 'vegas-channel';
-  select.setAttribute('aria-label', 'Radio channel');
-  for (const c of CHANNELS) {
-    if (c.group !== activeGroup) continue;
-    const opt = document.createElement('option');
-    opt.value = c.id;
-    opt.textContent = c.label;
-    if (c.desc) opt.title = c.desc;
-    select.appendChild(opt);
-  }
-  select.value = chan.id;
-  select.title = chan.desc || ('SomaFM — ' + chan.label);
-  select.addEventListener('change', () => switchChannel(select.value));
-
-  stationLine.appendChild(groupSel);
-  stationLine.append(' ');
-  stationLine.appendChild(select);
-
-  label.appendChild(songLine);
-  label.appendChild(stationLine);
-
-  // The <audio> is a controls-less engine — we draw our own chrome below.
-  // The native <audio controls> bar can't be themed to the casino card,
-  // and with the (meaningless live-stream) seek bar hidden it rendered as
-  // a big empty white pill.
-  const audio = document.createElement('audio');
+  audio = document.createElement('audio');
+  const el = audio;
   audio.src = streamFor(chan.id);
   audio.autoplay = autoplay;
   audio.preload = 'auto';
@@ -356,79 +309,55 @@ function startMusic({ autoplay = true } = {}) {
   audio.volume = musicVolume / 100;
   // A dead/unreachable stream should explain itself rather than sit as a
   // silent broken control.
-  audio.addEventListener('error', () => showStreamError(host), { once: true });
-
-  // Custom play/pause transport. Volume lives in the header mixer
-  // (slop-volume.js's 🎚️ popover), so play/pause is the only control the
-  // player itself needs.
-  const transport = document.createElement('div');
-  transport.className = 'vegas-transport';
-  const playBtn = document.createElement('button');
-  playBtn.type = 'button';
-  playBtn.className = 'vegas-play';
-  transport.appendChild(playBtn);
-
-  // "Active" = audibly playing (not paused, not muted). The armed-muted
-  // autoplay of a gestureless ?slop=1 load reads as not-yet-active, so the
-  // button shows ▶ to invite the click that brings the sound up.
-  const syncPlayBtn = () => {
-    const active = !audio.paused && !audio.muted;
-    playBtn.textContent = active ? '⏸' : '▶';
-    playBtn.setAttribute('aria-label', active ? 'Pause' : 'Play');
-  };
-  playBtn.addEventListener('click', () => {
-    // Decide from the button's shown intent, not the post-event audio
-    // state: the document-level unmute arm (armMutedUntilGesture) fires on
-    // this same gesture and would otherwise flip a "play" into a pause.
-    if (playBtn.getAttribute('aria-label') === 'Play') {
-      rememberPlayIntent('play');
-      audio.muted = false;
-      audio.play().catch(() => {});
-    } else {
-      rememberPlayIntent('pause');
-      audio.pause();
-    }
-  });
-  audio.addEventListener('play', syncPlayBtn);
-  audio.addEventListener('pause', syncPlayBtn);
-  audio.addEventListener('playing', syncPlayBtn);
+  audio.addEventListener('error', () => { if (audio === el) showStreamError(); }, { once: true });
   // Mute flips (the arm muting on a gestureless load, then unmuting on the
   // first interaction) fire volumechange but not play/pause — keep the icon
   // honest about whether sound is actually coming out.
-  audio.addEventListener('volumechange', syncPlayBtn);
-  syncPlayBtn();
-
-  host.appendChild(label);
-  host.appendChild(audio);
-  host.appendChild(transport);
+  const sync = () => { if (audio === el) audible.value = !el.paused && !el.muted; };
+  for (const type of ['play', 'pause', 'playing', 'volumechange']) audio.addEventListener(type, sync);
+  sync();
+  hud.value = { channelId: chan.id, error: false };
   if (autoplay) playWithSound(audio);
   startNowPlayingPoll();
 }
 
+// togglePlay is the HUD's play/pause button. It decides from the button's
+// shown intent, not the post-event audio state: the document-level unmute
+// arm (armMutedUntilGesture) fires on this same gesture and would otherwise
+// flip a "play" into a pause.
+function togglePlay(event) {
+  if (!audio) return;
+  if (event.currentTarget.getAttribute('aria-label') === 'Play') {
+    rememberPlayIntent('play');
+    audio.muted = false;
+    audio.play().catch(() => {});
+  } else {
+    rememberPlayIntent('pause');
+    audio.pause();
+  }
+}
+
 // ─── Now-playing poller ────────────────────────────────────────────────
 // Polls /api/slop/nowplaying (agentd's SomaFM proxy) while music plays and
-// paints the song readout into #vegas-song — an artist line, the title (a
-// link to a YouTube search for the track), and a time-on-air line.
-// Independent of playback state, so the song still shows while the stream
-// is armed-muted before the first gesture.
+// publishes the song readout — an artist line, the title (a link to a
+// YouTube search for the track), and a time-on-air line. Independent of
+// playback state, so the song still shows while the stream is armed-muted
+// before the first gesture.
 //
 // The "· 1:23" after the title is REAL time-on-air, counted up from the
 // track's actual start (the feed's start timestamp) by a 1s ticker. It is
 // NOT a progress bar: SomaFM exposes no song duration, so there's no honest
-// percent-complete to fill. The native <audio> seek bar is even less
-// meaningful for a live stream (no fixed length, and its time readout is
-// the whole listening session, not the song) — dashboard.css hides that
-// bar so this counter is the one position indicator.
+// percent-complete to fill, and a live stream has no meaningful seek bar.
 const NOWPLAYING_POLL_MS = 30000;
 let nowPlayingTimer = null;
 let elapsedTimer = null;
-let lastNowPlayingKey = null;
-let songStartedAt = null; // unix seconds the current track went on air, or null
+// song is the on-air track ({ artist, title, url, album, startedAt }) or
+// null; nowSec is the clock the elapsed counter reads, advanced each second.
+const song = signal(null);
+const nowSec = signal(Math.floor(Date.now() / 1000));
 
 function startNowPlayingPoll() {
   stopNowPlayingPoll();
-  lastNowPlayingKey = null;
-  songStartedAt = null;
   refreshNowPlaying();
   nowPlayingTimer = setInterval(refreshNowPlaying, NOWPLAYING_POLL_MS);
   // A separate 1s tick advances the elapsed counter between the 30s polls.
@@ -438,98 +367,42 @@ function startNowPlayingPoll() {
 function stopNowPlayingPoll() {
   if (nowPlayingTimer) { clearInterval(nowPlayingTimer); nowPlayingTimer = null; }
   if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
-  lastNowPlayingKey = null;
-  songStartedAt = null;
+  song.value = null;
 }
 
 async function refreshNowPlaying() {
-  const el = document.getElementById('vegas-song');
-  if (!el) return; // player torn down between polls
+  const polled = audio;
+  if (!polled) return; // player torn down between polls
   try {
     // Tag the poll with the active channel so the proxy reads the matching
     // feed (the URL is validated server-side against the allowlist).
     const r = await fetch('/api/slop/nowplaying?channel=' + encodeURIComponent(activeChannelId),
       { credentials: 'same-origin' });
     if (!r.ok) return; // transient — keep the last song shown
-    renderNowPlaying(el, await r.json());
+    const data = await r.json();
+    if (audio === polled) song.value = songFrom(data);
   } catch { /* offline / blip — keep the last song shown */ }
 }
 
-function renderNowPlaying(el, data) {
+// songFrom reads the proxy's answer; an empty feed hides the line rather
+// than show a stale track.
+function songFrom(data) {
   const title = ((data && data.title) || '').trim();
   const artist = ((data && data.artist) || '').trim();
-  if (!title && !artist) {
-    // Empty feed — hide the line rather than show a stale track.
-    el.replaceChildren();
-    lastNowPlayingKey = null;
-    songStartedAt = null;
-    return;
-  }
-  const key = artist + '' + title;
-  if (key === lastNowPlayingKey) return; // unchanged — no DOM churn
-  lastNowPlayingKey = key;
+  if (!title && !artist) return null;
   const started = Number(data && data.started_at) || 0;
-  songStartedAt = started > 0 ? started : null;
-
-  el.replaceChildren();
-
-  // Artist line (♪ Artist), above the title.
-  if (artist) {
-    const artistLine = document.createElement('div');
-    artistLine.className = 'vegas-artist';
-    artistLine.textContent = '♪ ' + artist;
-    el.appendChild(artistLine);
-  }
-
-  // Title line — the focal point. With a prebuilt search URL it links to a
-  // YouTube search for the track; otherwise it's plain text.
-  const url = (data && data.search_url) || '';
-  if (title && url) {
-    const a = document.createElement('a');
-    a.className = 'vegas-title';
-    a.href = url;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.textContent = title;
-    if (data && data.album) a.title = 'Album: ' + data.album + ' — search YouTube ↗';
-    else a.title = 'Search YouTube for this track ↗';
-    el.appendChild(a);
-  } else if (title) {
-    const t = document.createElement('div');
-    t.className = 'vegas-title';
-    t.textContent = title;
-    el.appendChild(t);
-  }
-
-  // Time-on-air line ("· 1:23 on air") — only when we know the start time.
-  if (songStartedAt != null) {
-    const elapsedLine = document.createElement('div');
-    elapsedLine.className = 'vegas-elapsed-line';
-    elapsedLine.append('· ');
-    const elapsed = document.createElement('span');
-    elapsed.className = 'vegas-elapsed';
-    elapsed.id = 'vegas-elapsed';
-    elapsed.title = 'Time on air (track started ' +
-      new Date(songStartedAt * 1000).toLocaleTimeString() + ')';
-    elapsedLine.appendChild(elapsed);
-    elapsedLine.append(' on air');
-    el.appendChild(elapsedLine);
-    tickElapsed(); // paint immediately, don't wait a second
-  }
+  tickElapsed(); // paint the counter now, don't wait a second
+  return { artist, title, url: (data && data.search_url) || '', album: (data && data.album) || '', startedAt: started > 0 ? started : null };
 }
 
-// tickElapsed advances the elapsed counter from songStartedAt. Clamped at
-// 0 so listener buffering / clock skew can't show a negative time.
 function tickElapsed() {
-  const el = document.getElementById('vegas-elapsed');
-  if (!el || songStartedAt == null) return;
-  let sec = Math.floor(Date.now() / 1000) - songStartedAt;
-  if (sec < 0) sec = 0;
-  el.textContent = formatElapsed(sec);
+  nowSec.value = Math.floor(Date.now() / 1000);
 }
 
-// formatElapsed renders seconds as m:ss (or h:mm:ss past an hour).
+// formatElapsed renders seconds as m:ss (or h:mm:ss past an hour). Clamped
+// at 0 so listener buffering / clock skew can't show a negative time.
 function formatElapsed(sec) {
+  sec = Math.max(0, sec);
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const ss = String(sec % 60).padStart(2, '0');
@@ -544,65 +417,113 @@ function formatElapsed(sec) {
 // stream live, and unmute on the very first interaction anywhere on the
 // page. The result: music is audible the instant the user touches the
 // page, whatever they click, with no buffering gap.
-function playWithSound(audio) {
-  audio.muted = false;
-  const p = audio.play();
+function playWithSound(el) {
+  el.muted = false;
+  const p = el.play();
   if (p && typeof p.catch === 'function') {
-    p.catch(() => armMutedUntilGesture(audio));
+    // A rejection can also come from releasing the element mid-buffer (a
+    // fast channel switch aborts its play()); only the live element arms.
+    p.catch(() => { if (audio === el) armMutedUntilGesture(el); });
   }
 }
 
-function armMutedUntilGesture(audio) {
-  audio.muted = true;
+function armMutedUntilGesture(el) {
+  if (cancelUnmuteArm) cancelUnmuteArm();
+  el.muted = true;
   // Muted autoplay is allowed without a gesture; this connects the
   // stream so unmuting later is instant.
-  audio.play().catch(() => {});
+  el.play().catch(() => {});
   const unmute = () => {
-    cancelUnmuteArm();
-    audio.muted = false;
+    cancel();
+    el.muted = false;
     // Re-issue play() inside the gesture in case the muted attempt was
     // itself suspended.
-    audio.play().catch(() => {});
+    el.play().catch(() => {});
   };
-  cancelUnmuteArm = () => {
+  // Each arm cancels only itself, so a stale arm can never take down the
+  // live element's.
+  const cancel = () => {
     document.removeEventListener('pointerdown', unmute, true);
     document.removeEventListener('keydown', unmute, true);
-    cancelUnmuteArm = null;
+    if (cancelUnmuteArm === cancel) cancelUnmuteArm = null;
   };
+  cancelUnmuteArm = cancel;
   document.addEventListener('pointerdown', unmute, true);
   document.addEventListener('keydown', unmute, true);
 }
 
-function stopMusic() {
+// releaseAudio stops the engine element for good. Pause + drop the src +
+// load() so the ongoing stream fetch is actually aborted, not just
+// detached — otherwise the connection (and audio) can linger. This is the
+// whole point of the module: music must stop when you leave the mode.
+function releaseAudio() {
   stopNowPlayingPoll();
   if (cancelUnmuteArm) cancelUnmuteArm();
-  const host = document.getElementById('vegas-player');
-  if (!host) return;
-  // Pause + drop the src + load() before removing so the ongoing stream
-  // fetch is actually aborted, not just detached — otherwise the
-  // connection (and audio) can linger. This is the whole point of the
-  // module: music must stop when you leave the mode.
-  const audio = host.querySelector('audio');
-  if (audio) {
-    audio.pause();
-    audio.removeAttribute('src');
-    audio.load();
-  }
-  host.replaceChildren();
+  if (!audio) return;
+  const el = audio;
+  audio = null;
+  el.pause();
+  el.removeAttribute('src');
+  el.load();
+  audible.value = false;
 }
 
-function showStreamError(host) {
-  host.replaceChildren();
-  const msg = document.createElement('div');
-  msg.className = 'vegas-error';
-  msg.append('🎲 Couldn’t reach the stream — ');
-  const a = document.createElement('a');
-  a.href = homeFor(activeChannelId);
-  a.target = '_blank';
-  a.rel = 'noopener';
-  a.textContent = 'open it on SomaFM ↗';
-  msg.appendChild(a);
-  host.appendChild(msg);
+function stopMusic() {
+  releaseAudio();
+  hud.value = null;
+}
+
+// showStreamError swaps the HUD for the error card. The engine is released,
+// so the next sync (a theme or sound toggle) rebuilds a fresh player.
+function showStreamError() {
+  const channelId = activeChannelId;
+  releaseAudio();
+  hud.value = { channelId, error: true };
+}
+
+// ─── The HUD ───────────────────────────────────────────────────────────
+// VegasPlayer renders the player card from the engine's signals: the
+// now-playing "stereo display" (song readout above the station line), the
+// station line's two-level picker (a group <select> filtering a channel
+// <select>), and the play/pause transport. Volume lives in the header mixer
+// (slop-volume.js's 🎚️ popover). The pickers and the round transport button
+// are the casino card's own themed chrome (dashboard.css .vegas-*), so they
+// stay native controls under data-ui-exempt.
+function SongReadout({ track }) {
+  const { artist, title, url, album, startedAt } = track;
+  return html`
+    ${artist && html`<div class="vegas-artist">♪ ${artist}</div>`}
+    ${title && (url
+      ? html`<a class="vegas-title" href=${url} target="_blank" rel="noopener"
+          title=${album ? 'Album: ' + album + ' — search YouTube ↗' : 'Search YouTube for this track ↗'}>${title}</a>`
+      : html`<div class="vegas-title">${title}</div>`)}
+    ${startedAt != null && html`<div class="vegas-elapsed-line">· <span class="vegas-elapsed" id="vegas-elapsed"
+        title=${'Time on air (track started ' + new Date(startedAt * 1000).toLocaleTimeString() + ')'}>${formatElapsed(nowSec.value - startedAt)}</span> on air</div>`}`;
+}
+
+export function VegasPlayer() {
+  const state = hud.value;
+  if (!state) return null;
+  if (state.error) {
+    return html`<div class="vegas-error">🎲 Couldn’t reach the stream — <a href=${homeFor(state.channelId)} target="_blank" rel="noopener">open it on SomaFM ↗</a></div>`;
+  }
+  const chan = channelById(state.channelId);
+  const track = song.value;
+  const on = audible.value;
+  return html`
+    <div class="vegas-nowplaying">
+      <div class="vegas-song" id="vegas-song">${track && html`<${SongReadout} track=${track} />`}</div>
+      <div class="vegas-station">📻 <select data-ui-exempt class="vegas-group" id="vegas-group" aria-label="Radio group"
+          value=${chan.group} onChange=${(e) => switchGroup(e.currentTarget.value)}>
+          ${GROUPS.map((g) => html`<option key=${g.key} value=${g.key}>${g.label}</option>`)}
+        </select> <select data-ui-exempt class="vegas-channel" id="vegas-channel" aria-label="Radio channel"
+          value=${chan.id} title=${chan.desc || ('SomaFM — ' + chan.label)} onChange=${(e) => switchChannel(e.currentTarget.value)}>
+          ${CHANNELS.filter((c) => c.group === chan.group).map((c) => html`<option key=${c.id} value=${c.id} title=${c.desc || null}>${c.label}</option>`)}
+        </select></div>
+    </div>
+    <div class="vegas-transport">
+      <button data-ui-exempt type="button" class="vegas-play" aria-label=${on ? 'Pause' : 'Play'} onClick=${togglePlay}>${on ? '⏸' : '▶'}</button>
+    </div>`;
 }
 
 // When slop turns off while the Vegas tab is the active one, that tab's
@@ -662,6 +583,13 @@ function syncVegas() {
 }
 
 export function bindVegasMusic() {
+  // The HUD is a Preact island on the tab's #vegas-player host; it renders
+  // nothing until the engine builds a player.
+  const host = document.getElementById('vegas-player');
+  if (host && !playerMounted) {
+    render(html`<${VegasPlayer} />`, host);
+    playerMounted = true;
+  }
   // The Vegas features' availability changed — slop toggled, or the
   // regular-mode opt-in flipped (refresh.js → setVegasRegularMode).
   document.addEventListener('tclaude:vegas', syncVegas);

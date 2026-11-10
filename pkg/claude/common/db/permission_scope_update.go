@@ -69,7 +69,8 @@ func UpdateAgentPermissionScopes(agentID string, slugs []string, grantedBy strin
 				(agent_id, slug, effect, granted_at, granted_by, scope_json) VALUES (?, ?, ?, ?, ?, ?)
 				ON CONFLICT(agent_id, slug) DO UPDATE SET
 					effect = excluded.effect, granted_at = excluded.granted_at,
-					granted_by = excluded.granted_by, scope_json = excluded.scope_json`,
+					granted_by = excluded.granted_by, scope_json = excluded.scope_json,
+					birth_source = ''`,
 				agentID, slug, PermEffectGrant, dbTime(time.Now()), grantedBy, scope); err != nil {
 				return err
 			}

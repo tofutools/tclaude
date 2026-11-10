@@ -22,7 +22,7 @@
 // item kind slots in by adding one SECTIONS entry.
 //
 // Data rides the 2s poll: the daemon carries the profile / template / role
-// registries on the snapshot (dashboard.go), so renderDock() publishes
+// registries on the snapshot (dashboard_snapshot_collect.go), so renderDock() publishes
 // lastSnapshot into the keyed Preact island — a manager edit shows up on the
 // next tick, and selections/scroll survive the render. The shell (#agent-dock)
 // + the edge toggle are STATIC markup in dashboard.html; only #dock-body's
@@ -34,12 +34,15 @@
 // when collapsed rather than overlaying dead area.
 
 import { $ } from './helpers.js';
+import { bindDockActions, syncDockActions } from './dock-actions.js';
 import { wizWord } from './slop.js';
 import { dashPrefs } from './prefs.js';
 import { lastSnapshot } from './dashboard.js';
 import { featureState } from './feature-state-registry.js';
 import { syncFullBleedBars } from './hscroll.js';
 import { syncChromeTopInset } from './chrome-inset.js';
+import { activeSidePanel, bindSidePanel, onSidePanelApply, registerSidePanel, setSidePanelOpen } from './side-panel.js';
+import { bindEdgeReveal } from './side-panel-reveal.js';
 // The compact one-line summaries live in the DATA modules (profiles.js /
 // roles.js); the editor/manager openers live in the MODAL modules. Importing
 // each from the module that actually exports it — a bad named import would
@@ -62,7 +65,7 @@ import { openUsageRulesManager } from './modal-usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
 import { fmtAmount, periodLabel, ruleSummary } from './usage-rules-model.js';
 import { loadSandboxProfiles, sandboxProfileForWire, sandboxProfileSummary } from './sandbox-profiles-data.js';
-import { downloadBlob } from './paf-model.js';
+import { downloadJSON } from './download.js';
 import { announceNodeChanged, selfNodeID } from './node-api.js';
 import { nodeHref } from './fleet-model.js';
 import { withFused } from './fleet-scope.js';
@@ -81,7 +84,7 @@ function libraryChanged() {
 
 // The kinds' singular names, for dialog titles and toasts.
 const KIND_NAMES = Object.freeze({
-  profiles: () => wizWord('spawn profile', 'familiar pattern'),
+  profiles: () => wizWord('spawn profile', 'loadout'),
   templates: () => wizWord('group template', 'summoning circle'),
   roles: () => wizWord('role', 'class'),
   saved_prompts: () => wizWord('saved prompt', 'incantation'),
@@ -115,10 +118,6 @@ export function openRename(section, name, { label = name, node = null } = {}) {
       await refresh();
     },
   });
-}
-
-function downloadJSON(fileName, value) {
-  downloadBlob(new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: 'application/json' }), fileName);
 }
 
 // exportItems downloads a config bundle of one item (name) or the section.
@@ -423,7 +422,7 @@ function promptPreview(body) {
 }
 
 // The persisted open/collapsed flag. dash-namespaced like every other
-// server-backed dashboard pref. Default OPEN (see isDockOpen): the dock is a
+// server-backed dashboard pref. Default OPEN (see the groups panel's registration): the dock is a
 // new surface and discoverability beats density here.
 const DOCK_OPEN_KEY = 'tclaude.dash.dock.open';
 
@@ -492,10 +491,10 @@ export const dockSections = Object.freeze([
     // live in headings only; repeating them on every row adds no information.
     icon: () => wizWord('👤', '🐾'),
     // Full section name (JOH-390 item 5): the operator wants the profiles
-    // heading spelled out — "Agent profiles" / "Familiar patterns" — rather
-    // than the bare "Profiles" / "Patterns". Roles keeps its short heading.
-    title: () => wizWord('Agent profiles', 'Familiar patterns'),
-    empty: () => wizWord('no profiles yet', 'no patterns yet'),
+    // heading spelled out — "Agent profiles" / "Loadouts" — rather
+    // than the bare "Profiles" / "Loadouts". Roles keeps its short heading.
+    title: () => wizWord('Agent profiles', 'Loadouts'),
+    empty: () => wizWord('no profiles yet', 'no loadouts yet'),
     items: (snap) => (snap && snap.profiles) || [],
     name: (p) => p.name,
     chips: (p) => [
@@ -511,7 +510,7 @@ export const dockSections = Object.freeze([
     onManageItem: (p, node) => (node ? catalogOn(node).openProfileEditor(p) : openProfileEditor(p)),
     // Clone → the generic name dialog; the copy is the source profile re-POSTed
     // under the new name through the Preact-owned action-dialog host.
-    onCloneItem: (p, node) => openPresetCloneDialog({ kind: 'profile', kindWizard: 'pattern', source: p,
+    onCloneItem: (p, node) => openPresetCloneDialog({ kind: 'profile', kindWizard: 'loadout', source: p,
       create: node ? createOn(node, profilesVia(node.fetch).createProfile) : createProfile }),
     // Delete → the manager's confirm + delete + toast (removeProfile), then a
     // dashboard refresh so the dock card leaves at once (removeProfile only
@@ -522,7 +521,7 @@ export const dockSections = Object.freeze([
     }),
     onManageAll: () => openProfilesManageModal(),
     onNew: () => openProfileEditor(),
-    searchWords: ['agent profiles', 'familiar patterns', 'spawn profiles'],
+    searchWords: ['agent profiles', 'loadouts', 'spawn profiles'],
     isDefault: (p, snap) => !!snap?.spawn_profile_default && snap.spawn_profile_default === p.name,
     onToggleDefault: (p, isDefault) => setDefault('profile', isDefault ? '' : p.name),
     itemPath: (name) => `/api/spawn-profiles/${encodeURIComponent(name)}`,
@@ -713,133 +712,36 @@ export function renderDock() {
   featureState('dock')?.publish(lastSnapshot);
 }
 
-// isDockOpen reads the persisted flag, defaulting to OPEN when unset (the
-// dock is a new, discovery-worthy surface). Only an explicit '0' collapses.
-function isDockOpen() {
-  return dashPrefs.getItem(DOCK_OPEN_KEY) !== '0';
-}
+// The Groups tab's panel in the shared right side panel (side-panel.js): open
+// by default (the dock is a discovery-worthy surface). The Collab view
+// registers its own (collab-rail.js).
+registerSidePanel('groups', {
+  pane: 'tab-groups', pref: DOCK_OPEN_KEY, open: true, body: '#dock-body', autoReveal: true,
+  titles: [['Collapse the palette', 'Furl the grimoire'], ['Expand the palette', 'Unfurl the grimoire']],
+});
 
-// setDockOpen persists the open/collapsed pref and reflects it — the ONE
-// mutation point behind every show/hide control: the edge tab and the in-dock
-// collapse button (both via toggleDock in bindDock) and the Ctrl/Cmd-K command
-// palette's "Show / Hide right panel" command (js/palette.js imports it).
-// Writing the pref and applying it stay together so no caller can persist one
-// state and paint another. Idempotent — re-setting the current state just
-// re-applies. NB the dock is Groups-tab-only, so setting it open off the Groups
-// tab persists the intent but paints nothing until the tab is active (applyDock
-// Open folds isDockTab into the effective open state); the palette's show
-// command switches to the Groups tab first so the panel is actually visible.
+// setDockOpen is what the Ctrl/Cmd-K command palette's "Show / Hide right
+// panel" commands call (js/palette.js imports it); the edge tab and the in-dock
+// collapse button go through side-panel.js directly. Show opens the Groups
+// palette (the palette's show command switches to the Groups tab first so the
+// panel is actually visible). Hide folds whichever tab's panel is showing, the
+// Groups palette when none is.
 export function setDockOpen(open) {
-  dashPrefs.setItem(DOCK_OPEN_KEY, open ? '1' : '0');
-  applyDockOpen(open);
+  setSidePanelOpen(open, open ? 'groups' : activeSidePanel()?.name || 'groups');
 }
 
-// isDockTab reports whether the Groups tab is the active one. The dock is
-// offered ONLY there: its cards drag onto GROUP rows (dock-dnd.js), so the
-// palette is meaningless on Jobs / Access / Config / Costs / … . We read the
-// pane's `.active` class — the same source of truth every tab-switch site
-// writes (bindTabs, the costs/plugins auto-hide redirects, showAccessTab, the
-// command palette, keyboard cycling) — so a single observer over it (bindDock)
-// catches every path without hooking each one. When Groups isn't active,
-// applyDockOpen forces the effective open state off (no reserved page space)
-// and CSS (body:not(.dock-tab)) hides the whole shell, edge toggle included.
-function isDockTab() {
-  return !!document.getElementById('tab-groups')?.classList.contains('active');
-}
-
-// applyDockOpen reflects the open state onto the body class (CSS reflows the
-// page to reclaim the space when collapsed) and keeps the two show/hide controls
-// in sync: the edge tab and the in-dock collapse button both mirror one state
-// (JOH-390 item 7 removed the third, top-bar, toggle). It also re-homes the
-// groups-toolbar globals (item 4) and re-syncs the dock top-inset, since the
-// reserved space changes with the open state.
-//
-// The dock is Groups-tab-only: the tab availability rides a `dock-tab` body
-// class (CSS hides the whole shell — panel + edge toggle — off the Groups tab)
-// and folds into the EFFECTIVE open state, so no page space is reserved while
-// the dock is hidden. `open` here is still the persisted PREF (isDockOpen),
-// left untouched, so returning to Groups restores whatever open/collapsed state
-// the human last chose. Called on boot, on the toggle, and on every tab switch
-// (bindDock's Groups-pane observer) so the gate re-evaluates each time.
-function applyDockOpen(open) {
-  const onTab = isDockTab();
-  document.body.classList.toggle('dock-tab', onTab);
-  const eff = open && onTab;
-  document.body.classList.toggle('dock-open', eff);
-  const edge = $('#dock-toggle');
-  if (edge) {
-    edge.setAttribute('aria-expanded', eff ? 'true' : 'false');
-    edge.title = eff
-      ? wizWord('Collapse the palette', 'Furl the grimoire')
-      : wizWord('Expand the palette', 'Unfurl the grimoire');
-  }
-  // Re-home the groups-toolbar globals into the open dock's head (JOH-390 item 4)
-  // / return them to the toolbar when collapsed OR off the Groups tab. Done here
-  // so it tracks EVERY effective-open change (boot, toggle, tab switch) in
-  // lockstep with the body class. Off-tab both homes are hidden (the toolbar
-  // lives in the inactive #tab-groups pane), so the move is invisible churn.
-  syncDockActions(eff);
+// applyDockOpen follows every paint of the shared shell: it re-homes the
+// groups-toolbar globals (dock-actions.js) while the Groups palette is the one
+// fully open, re-syncs the dock top-inset, since the reserved space changes with the
+// open state, and nudges the full-bleed bars.
+function applyDockOpen({ panel, open }) {
+  syncDockActions(document);
   syncDockTop();
   // Toggling the dock changes the reserved width and whether the horizontal
   // clearance spacer should be parked (req 3), but mutates no <main> child — so
   // hscroll's MutationObserver won't fire. Nudge it directly so the spacer +
   // full-bleed bars re-fit in the same frame.
   syncFullBleedBars();
-}
-
-// The groups-toolbar globals re-homed into the open dock's head (JOH-390 item 4):
-// the "+ new group" primary, the ⚙ more-actions cog (+ its .action-menu) and the
-// 🧠 dashboard-default-profile chip and its 🛡 sandbox-profile peer. While the
-// dock is OPEN they live in the dock head (row 1 = new-group + cog; row 2 = the
-// two profile controls); collapsed, they go
-// back to their exact toolbar slots so the filter bar renders as before.
-//
-// We MOVE the live DOM nodes (not clones), so every listener rides along:
-// id-bound ones (#group-create-open's click), the cog's direct menu listener,
-// and the profile chips' cross-feature action route all remain valid. The toolbar
-// filter bar + the dock head are both STATIC markup (Preact owns #dock-body and
-// #groups-list), so nothing re-creates or clobbers the moved nodes.
-//
-// The cog's .action-menu still anchors to .filter-bar-cog (position:relative
-// rides along) and opens downward INTO the dock body; at the header's top it
-// stays within #agent-dock's box, so .dock-inner's overflow:hidden never clips it.
-const DOCK_ACTION_SPECS = [
-  { sel: '#group-create-open', dock: '#dock-actions-primary' },
-  { sel: '.filter-bar-cog', dock: '#dock-actions-primary' },
-  { sel: '#queued-spawns-control', dock: '#dock-actions-primary' },
-  { sel: '#dashboard-default-profile-control', dock: '#dock-actions-profile' },
-  { sel: '#dashboard-default-sandbox-profile-control', dock: '#dock-actions-profile' },
-];
-let dockActionHomes = null;
-let lastDockActionsOpen = null;
-function syncDockActions(open) {
-  // Only act when the dock-open bit actually FLIPPED — the class observer below
-  // fires on every body-class mutation (hscroll flags, dock-anim, wizard, …), so
-  // this guard keeps those to a cheap no-op and prevents a redundant re-append
-  // that could reorder the primary row.
-  if (open === lastDockActionsOpen) return;
-  lastDockActionsOpen = open;
-  // Capture each control's ORIGINAL toolbar slot once, before the first move.
-  // The nextSibling anchors are the inter-control whitespace text nodes, which
-  // never move — so insertBefore restores the exact slot regardless of the order
-  // we process the controls in.
-  if (!dockActionHomes) {
-    dockActionHomes = DOCK_ACTION_SPECS.map((s) => {
-      const el = $(s.sel);
-      if (!el) return null;
-      return { el, dock: $(s.dock), home: el.parentNode, next: el.nextSibling };
-    });
-  }
-  for (const h of dockActionHomes) {
-    if (!h || !h.el) continue;
-    if (open) {
-      // Append in spec order → primary row becomes [+ new group][⚙ cog]. Guarded
-      // so a repeat call (idempotent re-apply) doesn't re-append and reorder.
-      if (h.dock && h.el.parentNode !== h.dock) h.dock.appendChild(h.el);
-    } else if (h.home && h.el.parentNode !== h.home) {
-      h.home.insertBefore(h.el, h.next);
-    }
-  }
 }
 
 // The dock's top inset is the shared content-area inset (--dock-top), measured
@@ -850,41 +752,18 @@ const syncDockTop = () => syncChromeTopInset();
 
 export function bindDock() {
   if (!$('#agent-dock')) return;
-  // Re-home the toolbar globals off ANY change to body.dock-open, not only the
-  // applyDockOpen path (JOH-390 item 4). The production toggle always routes
-  // through applyDockOpen, but this keeps the controls correctly placed if the
-  // class is flipped directly (e.g. by test or automation code), so the
-  // move can never desync from the visible open state. The change-guard in
-  // syncDockActions makes the extra body-class mutations a no-op.
-  new MutationObserver(() => syncDockActions(document.body.classList.contains('dock-open')))
-    .observe(document.body, { attributes: true, attributeFilter: ['class'] });
-  // The dock is Groups-tab-only (req): re-evaluate the gate on every tab switch.
-  // Every tab-switch site toggles the `active` class on the <section> panes, so
-  // one observer over the Groups pane's class catches them all — present and
-  // future — without hooking each site. applyDockOpen re-reads isDockTab, so it
-  // hides/shows the shell and drops/reserves the page space to match. (This
-  // observes the Groups PANE, not body, so applyDockOpen's own body-class writes
-  // can't retrigger it — no feedback loop with the observer above.)
-  const groupsPane = document.getElementById('tab-groups');
-  if (groupsPane) {
-    new MutationObserver(() => applyDockOpen(isDockOpen()))
-      .observe(groupsPane, { attributes: true, attributeFilter: ['class'] });
-  }
-  applyDockOpen(isDockOpen());
+  // Re-home the toolbar globals into the dock head while it is fully open
+  // (dock-actions.js).
+  bindDockActions(document);
+  // The shared shell re-evaluates on every tab switch, offers the active tab's
+  // panel, and wires the edge tab and the in-dock collapse (side-panel.js).
+  onSidePanelApply(applyDockOpen);
+  bindSidePanel(document);
+  bindEdgeReveal(document);
   // Enable the slide transition only AFTER the initial state is painted, so a
   // default-open dock doesn't flash-slide in on load (the CSS resting state is
   // collapsed). A rAF lands after the first paint of the applied state.
   requestAnimationFrame(() => document.body.classList.add('dock-anim'));
-
-  // One toggler drives both show/hide controls — the edge tab and the in-dock
-  // collapse — flipping the same dashPrefs-backed state (JOH-390 item 7 removed
-  // the third, top-bar, control). The command palette's show/hide commands flip
-  // the same state through the shared setDockOpen.
-  const toggleDock = () => setDockOpen(!isDockOpen());
-  // Two show/hide controls now (JOH-390 item 7 removed the top-bar toggle): the
-  // edge chevron tab and the in-dock "Hide ›/Furl ›" collapse.
-  $('#dock-toggle')?.addEventListener('click', toggleDock);
-  $('#dock-collapse')?.addEventListener('click', toggleDock);
 
   // Keep the content-area top-inset (req 1) fresh as the page scrolls the
   // chrome away and as the chrome's own height changes (slop marquee showing/

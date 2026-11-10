@@ -90,7 +90,7 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 			permission, protected[0])
 	}
 
-	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+	for _, permission := range openCodeGovernedTools {
 		assert.Contains(t, rules,
 			OpenCodePermissionRule{Permission: permission, Pattern: "*", Action: "allow"})
 	}
@@ -142,7 +142,7 @@ func TestBuildOpenCodePermissionRulesToolGovernanceMatrix(t *testing.T) {
 				ToolGovernance:     action,
 			})
 			require.NoError(t, err)
-			for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+			for _, permission := range openCodeGovernedTools {
 				assert.Equal(t, action, lastExactOpenCodeAction(rules, permission, "*"), permission)
 			}
 			assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", "private.env"),
@@ -189,7 +189,7 @@ func TestBuildOpenCodePermissionRulesToolDenyDoesNotChangeProtectedDisk(t *testi
 			})
 			require.NoError(t, err)
 
-			for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+			for _, permission := range openCodeGovernedTools {
 				assert.Equal(t, "deny", lastExactOpenCodeAction(rules, permission, "*"))
 			}
 			for _, root := range protected {
@@ -285,7 +285,7 @@ func TestBuildOpenCodePermissionRulesTclaudeLayerIsPermissiveInsideWall(t *testi
 	for _, permission := range []string{"read", "edit", "external_directory"} {
 		assert.Equal(t, "allow", lastExactOpenCodeAction(rules, permission, "*"), permission)
 	}
-	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+	for _, permission := range openCodeGovernedTools {
 		assert.Equal(t, "ask", lastExactOpenCodeAction(rules, permission, "*"), permission)
 	}
 	assert.Equal(t, "allow", lastMatchingOpenCodeAction(
@@ -334,7 +334,7 @@ func TestBuildOpenCodePermissionRulesOffStillAppliesApprovalAndToolGovernance(t 
 			assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "read", "*"))
 			assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "edit", "*"))
 			assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "external_directory", "*"))
-			for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+			for _, permission := range openCodeGovernedTools {
 				assert.Equal(t, governance, lastExactOpenCodeAction(rules, permission, "*"), permission)
 			}
 		})
@@ -484,4 +484,63 @@ func relativeOpenCodeTestPattern(t *testing.T, worktree, path string) string {
 	relative, err := filepath.Rel(worktree, path)
 	require.NoError(t, err)
 	return filepath.ToSlash(relative)
+}
+
+// TestBuildOpenCodePermissionRulesHidesSubagents pins OpenCode's task tool
+// off in every mode and under every approval and tool-governance setting.
+//
+// The hidden check mirrors OpenCode 1.18.6's Permission.disabled: a tool is
+// removed when the last rule whose permission matches it has pattern "*" and
+// action deny. The second half mirrors deriveSubagentSessionPermission, which
+// copies only the parent's deny and external_directory rules into a child
+// session: it shows that a sub-agent would be unable to read the very file the
+// parent can, which is why the tool must stay hidden.
+func TestBuildOpenCodePermissionRulesHidesSubagents(t *testing.T) {
+	for _, mode := range []string{
+		OpenCodeSandboxAccessControl, OpenCodeSandboxTclaudeLayer, OpenCodeSandboxOff,
+	} {
+		for _, approval := range []string{
+			OpenCodeApprovalDeny, OpenCodeApprovalAsk, OpenCodeApprovalAllowTools,
+		} {
+			for _, governance := range []string{
+				OpenCodeToolsAllow, OpenCodeToolsAsk, OpenCodeToolsDeny,
+			} {
+				name := mode + "/" + approval + "/" + governance
+				rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+					Cwd: "/repo", Worktree: "/repo",
+					HarnessBuiltinMode: mode,
+					ApprovalPolicy:     approval,
+					ToolGovernance:     governance,
+				})
+				require.NoError(t, err, name)
+
+				var last OpenCodePermissionRule
+				for _, rule := range rules {
+					if openCodeTestWildcardMatch("task", rule.Permission) {
+						last = rule
+					}
+				}
+				assert.Equal(t, openCodeSubagentDenyRule, last,
+					"%s: OpenCode must hide the task tool", name)
+
+				var child []OpenCodePermissionRule
+				for _, rule := range rules {
+					if rule.Action == openCodeActionDeny || rule.Permission == "external_directory" {
+						child = append(child, rule)
+					}
+				}
+				if lastMatchingOpenCodeAction(rules, "read", "notes.txt") == openCodeActionAllow {
+					assert.Equal(t, openCodeActionDeny,
+						lastMatchingOpenCodeAction(child, "read", "notes.txt"),
+						"%s: if a derived sub-agent session could read, task would no longer need hiding", name)
+				}
+			}
+		}
+	}
+}
+
+// openCodeTestWildcardMatch is OpenCode's Wildcard.match for the plain
+// permission names and the "*" wildcard this policy uses.
+func openCodeTestWildcardMatch(value, pattern string) bool {
+	return pattern == "*" || pattern == value
 }

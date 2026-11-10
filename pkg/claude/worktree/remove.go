@@ -20,7 +20,7 @@ type RemoveParams struct {
 
 func RemoveCmd() *cobra.Command {
 	cmd := boa.CmdT[RemoveParams]{
-		Use:         "rm <branch-or-path>",
+		Use:         "rm",
 		Short:       "Remove a git worktree",
 		Long:        "Remove a git worktree by branch name or path.\n\nBy default, won't remove worktrees with uncommitted changes (use -f to force).",
 		Aliases:     []string{"remove"},

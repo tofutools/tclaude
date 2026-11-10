@@ -21,7 +21,7 @@ import (
 //	POST /api/pending/focus/{label}
 //
 // It reuses the same openTerminal + openAttachCmd primitive as the spawn
-// auto-focus path (lifecycle.go) and handleDashboardOpenWindowAPI, only
+// auto-focus path (lifecycle_spawn_execute.go) and handleDashboardOpenWindowAPI, only
 // keyed on the label instead of a conv-id. Window-only: like its
 // conv-keyed twin it never touches the agent PROCESS — it just gives the
 // detached pane a window.

@@ -81,7 +81,7 @@ func presentedPRViews(rows []db.AgentPR) []presentedPRView {
 		seen[u] = true
 		v := presentedPRView{
 			URL:       u,
-			Number:    deriveGitHubPRNumber(u),
+			Number:    deriveForgePRNumber(u),
 			Summary:   row.Summary,
 			State:     row.State,
 			updatedAt: row.UpdatedAt,
@@ -130,7 +130,7 @@ func terminalPresentedPRExpired(row db.AgentPR, now time.Time) bool {
 }
 
 func presentedPRNeedsRefresh(row db.AgentPR, now time.Time) bool {
-	if !isGitHubPresentedPRURL(row.PRURL) || isTerminalPresentedPRState(row.State) {
+	if !isForgePresentedPRURL(row.PRURL) || isTerminalPresentedPRState(row.State) {
 		return false
 	}
 	if row.State != "" && !row.UpdatedAt.IsZero() && now.Sub(row.UpdatedAt) < branchLinkTTL {
@@ -233,6 +233,11 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 }
 
 func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
+	if isGitLabPresentedPRURL(rawURL) {
+		// A merge request is read through the GitLab API with the proxy's
+		// token; there is no `gh` to ask. See prs_gitlab.go.
+		return gitlabPresentedPRInfo(rawURL)
+	}
 	args, ok := presentedPRViewArgs(rawURL, "number,title,url,state,isDraft,statusCheckRollup,reviewDecision", gitProxyHardeningActive())
 	if !ok {
 		return presentedPRInfo{}, false
@@ -763,11 +768,18 @@ func validateAgentPRURL(rawURL string, strict bool) error {
 		return fmt.Errorf("PR URL is too long (%d > %d chars)", len(rawURL), maxAgentPRURLLen)
 	}
 	if strict {
-		ref, ok := githubPRRefFromURL(rawURL)
-		if !ok || rawURL != "https://github.com/"+ref.repo+"/pull/"+strconv.Itoa(ref.number) {
-			return fmt.Errorf("PR URL must have the form https://github.com/<owner>/<repo>/pull/<number>")
+		if ref, ok := githubPRRefFromURL(rawURL); ok && rawURL == "https://github.com/"+ref.repo+"/pull/"+strconv.Itoa(ref.number) {
+			return nil
 		}
-		return nil
+		// A merge request in its canonical spelling: the instance base as the
+		// URL names it, the full project path, no trailing sub-page. Whether
+		// that instance is one the daemon may talk to is the policy check's
+		// question, asked next by the caller.
+		if ref, ok := gitlabMRRefFromURL(rawURL); ok && rawURL == ref.canonical() {
+			return nil
+		}
+		return fmt.Errorf("PR URL must have the form https://github.com/<owner>/<repo>/pull/<number> " +
+			"or https://<gitlab host>/<group>/<project>/-/merge_requests/<number>")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {

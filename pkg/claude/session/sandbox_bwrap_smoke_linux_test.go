@@ -1005,6 +1005,12 @@ func assertTclaudeLayerReapsOrphan(t *testing.T) {
 func startTclaudeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) func() {
 	t.Helper()
 	db.ResetForTest()
+	// Migrate the fresh HOME's database here, before agentd starts. Otherwise
+	// agentd runs every migration from v0 before it serves, and on a slow
+	// runner that alone can outlast the readiness deadline below, which is
+	// meant to cover agentd's startup only.
+	_, err := db.Open()
+	require.NoError(t, err, "migrate the smoke database")
 	var output bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, tclaudeBinary, "agentd", "serve",

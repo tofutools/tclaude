@@ -213,6 +213,7 @@ func prepareOneShotLaunch(p spawnParams, h *harness.Harness, askSpec harness.Ask
 		return hostFailure("sandbox_init", err.Error())
 	}
 	session.ApplyAutoMemoryEnv(h, p.AutoMemory, posture.ShellEnvironment)
+	session.ApplyAgentViewEnv(h, posture.ShellEnvironment)
 	var argv []string
 	if h.Name == harness.ShellName {
 		shell := strings.TrimSpace(os.Getenv("SHELL"))

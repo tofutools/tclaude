@@ -10,6 +10,7 @@ package memoryfiles
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,6 +155,31 @@ type scanResult struct {
 	dirs    []string // matched ~/.claude/projects/<encoded...> dirs (sorted, existing)
 	encoded string   // the target's encoded name (handy when nothing matched)
 	note    string   // optional human-facing note (e.g. non-repo fallback)
+}
+
+// scanProjectDirs is how every memory-files command starts: resolve the target
+// dir (dir, or the working directory) and its project dirs, print the scan's
+// note, and say so when there are none. done reports that the command is
+// finished, with code as its exit code.
+func scanProjectDirs(dir string, noSiblings, prefix bool, stdout, stderr io.Writer) (res scanResult, code int, done bool) {
+	targetDir, err := resolveTargetDir(dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error getting current directory: %v\n", err)
+		return scanResult{}, 1, true
+	}
+	res, err = resolveProjectDirs(targetDir, scanModeFrom(noSiblings, prefix))
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return scanResult{}, 1, true
+	}
+	if res.note != "" {
+		fmt.Fprintf(stderr, "Note: %s\n", res.note)
+	}
+	if len(res.dirs) == 0 {
+		fmt.Fprintf(stdout, "No Claude project directories found for %s (encoded: %s).\n", targetDir, res.encoded)
+		return res, 0, true
+	}
+	return res, 0, false
 }
 
 // resolveProjectDirs maps a real project directory to the matching

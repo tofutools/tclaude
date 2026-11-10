@@ -284,8 +284,11 @@ func TestTclaudeLayerCommandKeepsNewSessionBehindWinchRelay(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TMUX_TMPDIR", t.TempDir())
 	got, err := tclaudeLayerCommand(
-		"/usr/bin/bwrap", nil, nil, nil, nil, nil,
-		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		tclaudeLayerRenderInput{
+			Binary: "/usr/bin/bwrap",
+			Plan:   sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		},
+		tclaudeLayerLaunchOpts{},
 		"exec agent --flag",
 	)
 	require.NoError(t, err)
@@ -300,8 +303,11 @@ func TestTclaudeLayerCommandKeepsNewSessionBehindWinchRelay(t *testing.T) {
 
 func TestTclaudeLayerServerCommandOmitsTerminalRelay(t *testing.T) {
 	got, err := tclaudeLayerServerCommand(
-		"/usr/bin/bwrap", nil, nil, nil, nil, nil,
-		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		tclaudeLayerRenderInput{
+			Binary: "/usr/bin/bwrap",
+			Plan:   sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		},
+		0,
 		"exec opencode serve",
 	)
 	require.NoError(t, err)

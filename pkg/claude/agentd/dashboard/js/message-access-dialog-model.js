@@ -1,4 +1,76 @@
-const SUDO_BLOCKLIST = new Set(['permissions.grant', 'permissions.revoke']);
+import { openMemberPRs, prReviewState } from './pr-review-model.js';
+
+// What the sudo editor assumes until GET /api/sudo/policy answers, or when
+// another node's older daemon has no such route. The server decides either way.
+export const DEFAULT_SUDO_POLICY = Object.freeze({
+  max_seconds: 3600, default_seconds: 300,
+  refused: Object.freeze({
+    'permissions.grant': 'Refused: it hands out permissions itself, so a grant made during the window would outlive it.',
+    'permissions.revoke': 'Refused: it hands out permissions itself, so a grant made during the window would outlive it.',
+  }),
+});
+
+export const SUDO_DURATION_PRESETS = Object.freeze(['5m', '15m', '30m', '1h']);
+
+const DURATION_UNITS = { h: 3600, m: 60, s: 1 };
+
+// sudoDurationSeconds reads the Go durations the server accepts, for the
+// editor's own hints. null when it is not one the editor can read.
+export function sudoDurationSeconds(text) {
+  const value = String(text || '').trim();
+  if (!/^(\d+(\.\d+)?[hms])+$/.test(value)) return null;
+  let total = 0;
+  for (const [, amount, unit] of value.matchAll(/(\d+(?:\.\d+)?)([hms])/g)) total += Number(amount) * DURATION_UNITS[unit];
+  return total > 0 ? total : null;
+}
+
+// sudoDurationText writes whole seconds as the shortest Go duration.
+export function sudoDurationText(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  return `${hours ? `${hours}h` : ''}${minutes ? `${minutes}m` : ''}${rest || !total ? `${rest}s` : ''}`;
+}
+
+export function sudoSecondsLeft(grant, now) {
+  const at = Date.parse(grant?.expires_at || '');
+  if (Number.isFinite(at)) return Math.max(0, Math.round((at - now) / 1000));
+  return Math.max(0, Number(grant?.remaining_seconds) || 0);
+}
+
+// sudoGrantScope reads a snapshot row's stored scope: {} when unscoped.
+export function sudoGrantScope(grant) {
+  try { return JSON.parse(grant?.scope_json || '{}') || {}; } catch (_) { return {}; }
+}
+
+const SLUG_AREAS = [
+  ['groups.members', 'Group members'], ['groups.settings', 'Group settings'], ['groups', 'Groups'],
+  ['agents', 'Agents'], ['agent', 'Agents'], ['self', 'The agent itself'],
+  ['human', 'Operator'], ['approvals', 'Operator'], ['message', 'Messaging'],
+  ['node', 'Node and host'], ['host', 'Node and host'], ['jobs', 'Node and host'], ['sessions', 'Sessions'],
+  ['process', 'Processes'], ['templates', 'Processes'], ['triggers', 'Processes'],
+  ['sandbox', 'Sandbox'], ['sandbox-profiles', 'Sandbox'], ['config', 'Config'], ['settings', 'Config'],
+];
+
+export function slugArea(slug) {
+  const text = String(slug || '');
+  const match = SLUG_AREAS.find(([prefix]) => text === prefix || text.startsWith(`${prefix}.`));
+  if (match) return match[1];
+  const head = text.split('.')[0];
+  return head.charAt(0).toUpperCase() + head.slice(1);
+}
+
+// rowsByArea orders the rows area by area, keeping each area alphabetical.
+export function rowsByArea(rows) {
+  const areas = new Map();
+  for (const row of rows) {
+    const area = slugArea(row.slug);
+    if (!areas.has(area)) areas.set(area, []);
+    areas.get(area).push({ ...row, area });
+  }
+  return [...areas.keys()].sort((left, right) => left.localeCompare(right)).flatMap((area) => areas.get(area));
+}
 
 export function snapshotAgents(snapshot) {
   const seen = new Set();
@@ -46,6 +118,33 @@ export function groupMembers(snapshot, groupName) {
     .map((member) => ({ ...member, key: member.agent_id || member.conv_id }));
 }
 
+// RECIPIENT_PICKS are the group message dialog's quick selectors. Each names
+// the members it matches; the dialog replaces, extends (OR) or narrows (AND)
+// the ticked set with it. The PR picks look only at PRs still in flight.
+export const RECIPIENT_PICKS = Object.freeze([
+  { key: 'online', label: 'online', title: 'Members with a live session', test: (member) => !!member.online },
+  { key: 'offline', label: 'offline', title: 'Members without a live session — a message waits in their inbox', test: (member) => !member.online },
+  { key: 'pr', label: 'with PR', title: 'Members with an open or draft PR', test: (member) => openMemberPRs(member).length > 0 },
+  { key: 'no-pr', label: 'no PR', title: 'Members without an open or draft PR', test: (member) => openMemberPRs(member).length === 0 },
+  { key: 'ci-failing', label: 'CI failing', title: 'Members with an open PR whose checks are failing',
+    test: (member) => openMemberPRs(member).some((pr) => pr.checks?.state === 'failing') },
+  { key: 'changes', label: 'changes requested', title: 'Members with an open PR a reviewer asked to change',
+    test: (member) => openMemberPRs(member).some((pr) => prReviewState(pr.reviews) === 'changes') },
+  { key: 'approved', label: 'approved', title: 'Members with an approved open PR',
+    test: (member) => openMemberPRs(member).some((pr) => prReviewState(pr.reviews) === 'approved') },
+]);
+
+// combinePick applies one quick selector to the current recipients: 'add'
+// unions, 'narrow' intersects, anything else replaces.
+export function combinePick(members, current, pick, how = 'only') {
+  const has = new Set(current.map((member) => member.key));
+  return members.filter((member) => {
+    if (how === 'add') return has.has(member.key) || pick.test(member);
+    if (how === 'narrow') return has.has(member.key) && pick.test(member);
+    return pick.test(member);
+  });
+}
+
 export function groupsForPicker(snapshot, scopeGroup = '') {
   if (scopeGroup) return [scopeGroup];
   return (snapshot?.groups || []).map((group) => group.name).sort();
@@ -61,14 +160,20 @@ export function sudoByAgent(snapshot) {
   return out;
 }
 
-export function sudoSlugRows(snapshot) {
-  return (snapshot?.slugs || []).map((slug) => ({
-    ...slug,
-    blocked: SUDO_BLOCKLIST.has(slug.slug),
-  }));
+// stewardAccessFor is where a live Steward's access comes from, for its
+// editors, or null for every other agent. The daemon names the live Stewards,
+// so an agent that merely has the name gets the ordinary editor.
+export function stewardAccessFor(snapshot, conv) {
+  const access = snapshot?.steward_access;
+  if (!conv || !access?.convs?.includes(conv)) return null;
+  return {
+    config: new Set(access.config || []),
+    carried: access.carried || {},
+  };
 }
 
 export function permissionSeed(snapshot, descriptor) {
+  if (descriptor.mode === 'sudo') return {};
   if (descriptor.mode === 'agent') {
     return { ...((snapshot?.permissions?.overrides || {})[descriptor.conv] || {}) };
   }
@@ -102,6 +207,7 @@ function permissionOverrideScope(override) {
 // profile override scopes without separate UI implementations.
 export function permissionScopeSeed(snapshot, descriptor) {
   let stored = {};
+  if (descriptor.mode === 'sudo') return {};
   if (descriptor.mode === 'agent') {
     stored = (snapshot?.permissions?.scopes || {})[descriptor.conv] || {};
   } else if (descriptor.mode === 'group') {
@@ -133,7 +239,7 @@ export function unreadableScopeSlugs(snapshot, descriptor) {
 // All three launch modes persist the same scope shape: immediately for agents
 // and groups, or into the buffered birth-time override for spawns/profiles.
 export function scopeSupported(descriptor) {
-  return ['agent', 'group', 'buffer'].includes(descriptor?.mode);
+  return ['agent', 'group', 'buffer', 'sudo'].includes(descriptor?.mode);
 }
 
 // scopeDimOptions answers the picker's "what can I choose here" for ONE
@@ -148,6 +254,99 @@ export function scopeDimOptions(snapshot, dim) {
     values: [...(advertised.values || [])],
     selectors: [...(advertised.selectors || [])],
   };
+}
+
+// SCOPE_COMBOBOX_DIMS are the dimensions whose catalogue the daemon serves on
+// demand (GET /api/permissions/scope-values) rather than on the snapshot.
+// Every dimension is edited in the same type-to-filter box either way.
+export const SCOPE_COMBOBOX_DIMS = ['resource', 'peer'];
+// SCOPE_CHIPS_SHOWN is how many matcher chips a dimension shows before the
+// rest collapse into "+N more", which opens a searchable list of them.
+export const SCOPE_CHIPS_SHOWN = 6;
+
+
+// RESOURCE_KIND_LABELS heads the resource picker's sections.
+export const RESOURCE_KIND_LABELS = { drawing_board: 'Drawing boards', process_template: 'Process templates', peer: 'Linked nodes' };
+
+// scopeCatalogueKey is the matcher a served catalogue entry stands for: its
+// value when the daemon gives one (peer=, stored as <instance id>[/<group>]),
+// and kind:id otherwise (resource=).
+function scopeCatalogueKey(entry) {
+  return entry.value || `${entry.kind}:${entry.id}`;
+}
+
+// scopeComboItems is a dimension's catalogue as FilterCombobox items: the
+// resource catalogue's entries ({kind, id, title, groups}) keyed by the
+// kind:id a resource= matcher names, or a snapshot dimension's values and
+// @selectors keyed by themselves.
+export function scopeComboItems(dim, options, catalogue) {
+  if (catalogue) {
+    return catalogue.map((entry) => ({
+      key: scopeCatalogueKey(entry), label: entry.title || entry.id, hint: scopeCatalogueKey(entry),
+      kind: entry.kind, group: entry.node || (entry.groups || []).join(', '), keywords: entry.id,
+    }));
+  }
+  return [...(options?.values || []), ...(options?.selectors || [])].map((value) => ({ key: value, label: value }));
+}
+
+// scopeValueLabel is how one matcher reads in a chip: a resource the
+// catalogue knows by its title, anything else as stored.
+export function scopeCatalogueIndex(catalogue) {
+  return catalogue ? new Map(catalogue.map((entry) => [scopeCatalogueKey(entry), entry])) : null;
+}
+
+// scopeValueLabel takes the index scopeCatalogueIndex built, so a sheet of
+// hundreds of chips over thousands of resources is a lookup per chip.
+export function scopeValueLabel(value, index) {
+  if (!index) return { kind: '', text: value };
+  const entry = index.get(value);
+  if (entry?.kind === 'peer') return { kind: '', text: entry.title || entry.id };
+  return entry ? { kind: entry.kind === 'process_template' ? 'template' : entry.kind === 'drawing_board' ? 'drawing board' : entry.kind, text: entry.title || entry.id } : { kind: '', text: value };
+}
+
+const SCOPE_COUNT_NOUNS = { group: ['group', 'groups'], resource: ['resource', 'resources'] };
+
+// scopeCountText says what a scope narrows to in counts, never names:
+// "3 groups and 41 resources". A hint about an umbrella's reach has to stay
+// one line however many resources the grant names.
+export function scopeCountText(scope) {
+  const parts = scopeChips(scope).map(({ dim, values }) => {
+    const [one, many] = SCOPE_COUNT_NOUNS[dim] || [`${dim} value`, `${dim} values`];
+    return `${values.length} ${values.length === 1 ? one : many}`;
+  });
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+// umbrellaCover is the umbrella that covers a row the operator left at
+// Default: the nearest slug up its umbrella chain (served per slug by the
+// registry, so resources.write → resources.read → drawing-boards.read is never
+// re-derived here) that is granted in this editor or held from a source.
+// null when nothing covers it, or the row itself is decided: a Deny of the
+// row wins over its umbrella, and a Grant needs no hint.
+//
+// row.effect is the STORED effect. In the sudo editor effectOf reads the sudo
+// picks instead, and a stored Deny still stops the chain there unless that
+// very slug is picked: sudo wins over a deny of its own slug only.
+//
+// An umbrella's global default is not a source: the resolver's umbrella step
+// reads explicit, group, role and owner grants, never config defaults.
+export function umbrellaCover(row, rowsBySlug, effectOf, scopeOf) {
+  const denied = (slug) => effectOf(slug) === 'deny'
+    || (rowsBySlug.get(slug)?.effect === 'deny' && effectOf(slug) !== 'grant');
+  if (effectOf(row.slug) !== 'default' || denied(row.slug)) return null;
+  const seen = new Set([row.slug]);
+  for (let slug = row.umbrella; slug && !seen.has(slug); slug = rowsBySlug.get(slug)?.umbrella) {
+    seen.add(slug);
+    const umbrella = rowsBySlug.get(slug);
+    if (!umbrella) return null;
+    // A deny of a step in the chain stops the chain there, as the resolver does.
+    if (denied(slug)) return null;
+    if (effectOf(slug) === 'grant') return { slug, scope: scopeOf(slug), sources: [] };
+    const sources = umbrella.granted ? umbrella.sources.filter((source) => source !== 'global default') : [];
+    if (sources.length) return { slug, scope: null, sources };
+  }
+  return null;
 }
 
 // scopeChips flattens a scope into the row's read-at-a-glance chips, in the
@@ -176,7 +375,7 @@ export function scopeChips(scope) {
 }
 
 function membershipGroups(snapshot, descriptor) {
-  if (descriptor.mode === 'agent') {
+  if (descriptor.mode === 'agent' || descriptor.mode === 'sudo') {
     const agent = (snapshot?.agents || []).find((item) => item.conv_id === descriptor.conv);
     const groups = new Set(agent?.groups || []);
     for (const group of snapshot?.groups || []) {
@@ -198,8 +397,11 @@ export function ownerSource(scopeDims, ownedGroups) {
   return 'owner grant: global';
 }
 
+// In the sudo editor the rows show what the agent holds now, so selection is
+// its standing overrides rather than the slugs being elevated.
 export function permissionRows(snapshot, descriptor, selection) {
   const defaults = new Set(snapshot?.permissions?.defaults || []);
+  const stewardLevels = new Set(descriptor.stewardLevels || []);
   const groups = membershipGroups(snapshot, descriptor);
   const groupGrants = new Map();
   const roleGrants = new Map();
@@ -217,13 +419,15 @@ export function permissionRows(snapshot, descriptor, selection) {
       groupGrants.get(slug).push(groupName);
     }
   }
-  const ownedGroups = descriptor.mode === 'agent'
+  const liveAgent = descriptor.mode === 'agent' || descriptor.mode === 'sudo';
+  const ownedGroups = liveAgent
     ? ((snapshot?.agents || []).find((item) => item.conv_id === descriptor.conv)?.owned_groups || [])
     : descriptor.ownsGroup && descriptor.group ? [descriptor.group] : [];
   return [...(snapshot?.slugs || [])].sort((a, b) => a.slug.localeCompare(b.slug)).map((slug) => {
     const effect = selection[slug.slug] || 'default';
     const sources = [];
-    if (effect === 'grant') sources.push('agent override');
+    if (effect === 'grant') sources.push(descriptor.stewardLevels ? 'stored' : 'agent override');
+    if (effect === 'default' && stewardLevels.has(slug.slug)) sources.push('Reads and Writes');
     if (effect === 'default' && defaults.has(slug.slug)) sources.push('global default');
     if (effect === 'default' && groupGrants.has(slug.slug)) {
       sources.push(`group: ${groupGrants.get(slug.slug).join(', ')}`);
@@ -236,10 +440,73 @@ export function permissionRows(snapshot, descriptor, selection) {
     if (effect === 'default' && slug.owner_implied && ownedGroups.length) {
       sources.push(ownerSource(slug.scope_dims, ownedGroups));
     }
-    if (effect === 'default' && slug.member_implied && descriptor.mode === 'agent' && groups.length) {
+    if (effect === 'default' && slug.member_implied && liveAgent && groups.length) {
       sources.push(`member: ${groups.join(', ')}`);
     }
     const granted = descriptor.mode === 'group' ? effect === 'grant' : effect !== 'deny' && sources.length > 0;
     return { ...slug, effect, granted, sources, ownedGroups, inDefault: defaults.has(slug.slug) };
   });
+}
+
+// PERMISSION_FILTER_FACETS are the permission editor's composable filters.
+// Each facet picks one option; facets AND together, and with the text filter.
+// "any" (the first option) leaves a facet out of the match.
+export const PERMISSION_FILTER_FACETS = Object.freeze([
+  Object.freeze({
+    key: 'set', label: 'Set', options: Object.freeze([
+      ['any', 'any', 'However it is set'],
+      ['here', 'here', 'Set to Grant or Deny in this editor, not left at Default'],
+      ['here-or-inherited', 'here or inherited', 'Set in this editor, or held through a default, group, role, ownership or umbrella'],
+      ['unsaved', 'unsaved', 'Changed in this editor since it opened'],
+    ]),
+  }),
+  Object.freeze({
+    key: 'access', label: 'Holds', options: Object.freeze([
+      ['any', 'any', 'Held or not'],
+      ['yes', 'yes', 'Held now, as this editor would save it'],
+      ['no', 'no', 'Not held, as this editor would save it'],
+    ]),
+  }),
+  Object.freeze({
+    key: 'kind', label: 'Kind', options: Object.freeze([
+      ['any', 'any', 'Read and write slugs'],
+      ['read', 'read', 'Slugs that only look and change nothing'],
+      ['write', 'write', 'Slugs that change something'],
+    ]),
+  }),
+]);
+
+// PERMISSION_FILTER_FLAGS narrow to rows with a marker; on together they AND.
+export const PERMISSION_FILTER_FLAGS = Object.freeze([
+  Object.freeze({ key: 'risky', label: '⚠ risky', title: 'Only slugs marked risky', test: (row) => !!row.risky }),
+  Object.freeze({ key: 'owner', label: '👑 owner', title: 'Only slugs group ownership can confer', test: (row) => !!row.owner_implied }),
+]);
+
+export const EMPTY_PERMISSION_FILTER = Object.freeze({ set: 'any', access: 'any', kind: 'any', flags: Object.freeze([]) });
+
+export function permissionFilterActive(filter) {
+  return PERMISSION_FILTER_FACETS.some((facet) => (filter?.[facet.key] || 'any') !== 'any') || !!filter?.flags?.length;
+}
+
+// permissionRowMatches tests one editor row against the facets. state says
+// what the editor knows about the row beyond the catalogue: effect (the
+// draft's Default/Grant/Deny), baseline (what it opened with), held (the row
+// reads as held, umbrella cover included), scopeChanged, and fromLevels (a
+// Steward's Reads and Writes grant: stored as an override, but set in Config,
+// so it is inherited rather than set here).
+export function permissionRowMatches(row, filter, {
+  effect = 'default', baseline = 'default', held = false, scopeChanged = false, fromLevels = false,
+} = {}) {
+  const set = filter?.set || 'any';
+  const setHere = effect !== 'default' && !fromLevels;
+  if (set === 'here' && !setHere) return false;
+  if (set === 'here-or-inherited' && !setHere && !held) return false;
+  if (set === 'unsaved' && effect === baseline && !scopeChanged) return false;
+  const access = filter?.access || 'any';
+  if (access === 'yes' && !held) return false;
+  if (access === 'no' && held) return false;
+  const kind = filter?.kind || 'any';
+  if (kind === 'read' && !row.read_only) return false;
+  if (kind === 'write' && row.read_only) return false;
+  return (filter?.flags || []).every((key) => PERMISSION_FILTER_FLAGS.find((flag) => flag.key === key)?.test(row) ?? true);
 }

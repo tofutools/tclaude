@@ -9,16 +9,21 @@ import { createTerminalShellState } from './terminal-shell-state.js';
 import {
   activeMessageAccessDialogKind, openOperatorMessageDialog,
 } from './message-access-dialog-controller.js';
-import { mountMessageAccessDialogsFeature } from './preact-loader.js';
+import { mountMessageAccessDialogsFeature, mountVoiceWakeFeature } from './preact-loader.js';
 import {
   decodeTerminalOpenHash, requestTerminalReattach, terminalDashboardURL,
 } from './terminal-handoff.js';
 import { normalizeSeed } from './terminals-core.js';
+import { settleDrawingBoardEdits } from './drawing-board-island.js';
 import { SNAPSHOT_HIDDEN_POLL_MS, SNAPSHOT_POLL_MS } from './snapshot-poll.js';
+import { bindShortcutOverrides } from './snapshot-store.js';
 
 export { decodeTerminalOpenHash };
 
 export const STANDALONE_STATUS_TIMEOUT_MS = 20000;
+// A drawing board pop-out has no agent to watch, but names agents: it reads the full
+// roster, a far heavier read, this often.
+export const STANDALONE_ROSTER_POLL_MS = 30000;
 
 // The solo page is not the dashboard SPA, so it cannot subscribe to the
 // dashboard snapshot signal. Keep its one-agent title current through the
@@ -29,6 +34,11 @@ export const STANDALONE_STATUS_TIMEOUT_MS = 20000;
 export function startStandaloneStatusPoll({
   selector,
   snapshot,
+  path = `/api/agents/${encodeURIComponent(selector)}/status`,
+  adopt = (value) => ({
+    agents: [value], voice: value.voice, keybindings: value.keybindings,
+  }),
+  pollMs = null,
   fetchImpl = globalThis.fetch,
   documentRef = globalThis.document,
   setTimeoutImpl = globalThis.setTimeout,
@@ -59,7 +69,7 @@ export function startStandaloneStatusPoll({
     timer = setTimeoutImpl(() => {
       timer = null;
       void run();
-    }, documentRef?.hidden ? SNAPSHOT_HIDDEN_POLL_MS : SNAPSHOT_POLL_MS);
+    }, pollMs || (documentRef?.hidden ? SNAPSHOT_HIDDEN_POLL_MS : SNAPSHOT_POLL_MS));
   };
   const run = async () => {
     if (stopped || inFlight) return;
@@ -71,13 +81,13 @@ export function startStandaloneStatusPoll({
       timeoutTimer = setTimeoutImpl(() => requestController.abort(), STANDALONE_STATUS_TIMEOUT_MS);
     }
     try {
-      const response = await fetchImpl(`/api/agents/${encodeURIComponent(selector)}/status`, {
+      const response = await fetchImpl(path, {
         credentials: 'same-origin', cache: 'no-store',
         ...(requestController ? { signal: requestController.signal } : {}),
       });
       if (stopped || !response?.ok) return;
       const value = await response.json();
-      if (!stopped && value && typeof value === 'object') snapshot.value = { agents: [value] };
+      if (!stopped && value && typeof value === 'object') snapshot.value = adopt(value);
     } catch (_) {
       // Auth-session.js owns the visible redirect. A stopped/aborted request or
       // a transient network miss should leave the last title alone quietly.
@@ -120,6 +130,7 @@ export function createStandaloneTerminalsPage({
   navigatorRef = globalThis.navigator,
   mountShell = mountStandaloneTerminalShell,
   mountMessageDialogs = mountMessageAccessDialogsFeature,
+  mountVoiceWake = mountVoiceWakeFeature,
   openComposeMessage = openOperatorMessageDialog,
   composeMessageDialogKind = activeMessageAccessDialogKind,
 } = {}) {
@@ -128,9 +139,7 @@ export function createStandaloneTerminalsPage({
     throw new TypeError('standalone terminal page requires preference initializers');
   }
 
-  // A solo pop-out has no tab strip or group controls, so attaching its one
-  // pane must not rewrite remembered dashboard group presentation.
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   const composeMessageReady = signal(false);
   const detachConversations = new Set();
   let actions = null;
@@ -143,16 +152,18 @@ export function createStandaloneTerminalsPage({
   let disposed = false;
   let authExpired = false;
   const snapshot = signal(null);
+  const stopShortcutOverrides = bindShortcutOverrides({ snapshot });
   let stopStatusPoll = null;
   let statusPollSelector = null;
 
   function ensureStatusPoll() {
-    const selector = soloSeed?.agent || soloSeed?.hideConv;
+    const selector = soloSeed?.drawingBoard ? 'drawing_board' : soloSeed?.page ? 'page' : soloSeed?.agent || soloSeed?.hideConv;
     if (disposed || authExpired || !selector || statusPollSelector === selector) return;
     stopStatusPolling();
     statusPollSelector = selector;
     stopStatusPoll = startStandaloneStatusPoll({
       selector, snapshot, fetchImpl, documentRef,
+      ...(soloSeed.drawingBoard || soloSeed.page ? { path: '/api/snapshot?standalone=1', adopt: (value) => value, pollMs: STANDALONE_ROSTER_POLL_MS } : {}),
     });
   }
 
@@ -162,15 +173,21 @@ export function createStandaloneTerminalsPage({
     statusPollSelector = null;
   }
 
-  async function reattachPane(pane) {
+  // overlay asks the dashboard to float it instead of giving it a tab.
+  async function reattachPane(pane, { overlay = false } = {}) {
     if (disposed || !pane) return false;
+    // This window is about to close, which would cut a save off. An edit that
+    // could not be saved keeps the drawing board here, where it still exists.
+    if (pane.seed.drawingBoard && !(await settleDrawingBoardEdits(pane.seed.drawingBoard))) return false;
+    if (!state.panes.value.some((candidate) => candidate.key === pane.key)) return false;
     const seed = {
       ...pane.seed,
       label: pane.label,
       initialRetry: true,
+      ...(overlay && { overlay: true }),
     };
     if (seed.hideConv) detachConversations.delete(seed.hideConv);
-    await actions.closePane(pane.key);
+    await actions.closePane(pane.key, { moving: true });
 
     const opener = windowRef.opener;
     const accepted = await requestTerminalReattach({
@@ -190,6 +207,8 @@ export function createStandaloneTerminalsPage({
 
   actions = createTerminalShellActions({
     state, fetchImpl, windowRef, documentRef, onReattachPane: reattachPane,
+    // A page that lost the terminal must not hide it from whoever took it.
+    onPaneDisconnected: (pane) => detachConversations.delete(pane.seed.hideConv),
   });
 
   function consumeHash() {
@@ -241,6 +260,7 @@ export function createStandaloneTerminalsPage({
     windowRef.removeEventListener('pagehide', onPageHide);
     windowRef.removeEventListener('unload', dispose);
     stopStatusPolling();
+    stopShortcutOverrides();
     if (mountCleanup) mountCleanup();
     else actions.dispose();
     if (messageDialogsCleanup) messageDialogsCleanup();
@@ -260,6 +280,9 @@ export function createStandaloneTerminalsPage({
       initThemeSync();
       if (disposed) return false;
 
+      void Promise.resolve().then(() => mountVoiceWake({ snapshot })).catch((error) => {
+        console.error('Detached terminal wake listener unavailable.', error);
+      });
       // The terminal is the primary surface, so connect it without waiting for
       // the optional composer module graph. An early shortcut is queued against
       // this promise and opens as soon as the shared dialog island is ready.

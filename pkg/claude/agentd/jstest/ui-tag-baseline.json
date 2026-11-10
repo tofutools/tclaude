@@ -1,0 +1,27 @@
+{
+  "dashboard.css": [
+    ".agent-tag",
+    ".audit-verb",
+    ".ci-badge",
+    ".dialog-node-chip",
+    ".gf-link-tag",
+    ".gm-handle",
+    ".gm-kind",
+    ".human-notification-drawer-state",
+    ".log-level",
+    ".open-pr-draft-label",
+    ".perm-scope-chip",
+    ".presence-badge",
+    ".remote-node-pill",
+    ".remote-viewers-badge.term-viewers-badge",
+    ".sandbox-import-conflict-count",
+    ".sandbox-import-status",
+    ".state-pill",
+    ".tag",
+    ".term-remote-badge",
+    ".window-role-chip"
+  ],
+  "process-kit.css": [
+    ".pk-round"
+  ]
+}

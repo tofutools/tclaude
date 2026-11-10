@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"sort"
@@ -144,6 +145,9 @@ func runNonInteractiveSpawn(parent context.Context, p spawnParams, seconds int64
 	}
 	if err := prepared.MarkLaunchAttempt(); err != nil {
 		return hostFailure("sandbox_init", err.Error())
+	}
+	if p.onLaunchAttempt != nil {
+		p.onLaunchAttempt()
 	}
 	if runtime.GOOS == "linux" || p.RemoteJob != nil {
 		return finish(runNonInteractiveTmuxCommand(ctx, command))
@@ -294,29 +298,23 @@ func wrapOneShotWithTclaudeLayer(
 func wrapOneShotLayer(
 	h *harness.Harness, cwd string, snapshot *sandboxpolicy.Snapshot, gitWriteDirs, argv []string, preLaunch string,
 ) (string, error) {
-	var harnessReadPaths []string
-	if runtime.GOOS == "linux" {
-		switch h.Name {
-		case harness.DefaultName:
-			resolved, err := harness.ResolveClaudeLaunchExecutable()
-			if err != nil {
-				return "", fmt.Errorf("resolve Claude executable for tclaude’s sandbox: %w", err)
-			}
-			argv[0] = resolved.Path
-			harnessReadPaths = append(harnessReadPaths, resolved.Path)
-		case harness.CodexName:
-			resolved, err := harness.ResolveCodexLaunchExecutable()
-			if err != nil {
-				return "", fmt.Errorf("resolve Codex executable for tclaude’s sandbox: %w", err)
-			}
-			argv[0] = resolved.Path
-			harnessReadPaths = append(harnessReadPaths, resolved.RuntimeRoot)
-		}
-	}
 	input := session.TclaudeLayerLaunchInput{
 		HarnessName: h.Name, Cwd: cwd, Snapshot: snapshot,
-		GitWriteDirs:     append([]string(nil), gitWriteDirs...),
-		HarnessReadPaths: harnessReadPaths,
+		GitWriteDirs: append([]string(nil), gitWriteDirs...),
+	}
+	// The executable `session new` pins for this harness: Claude and Codex
+	// on Linux whatever the root, so before the first build, whose posture
+	// checks then see their read paths, as they always did. pi and Gemini
+	// pin only under a constructed root, which needs that first build.
+	pinned, pinnedExecutable, err := session.ResolveTclaudeLayerExecutable(h.Name, sandboxpolicy.RootHostInherited)
+	if err != nil {
+		return "", err
+	}
+	if pinnedExecutable {
+		if argv, err = spliceOneShotExecutable(argv, h.Spawn.Binary(), pinned); err != nil {
+			return "", err
+		}
+		input.HarnessReadPaths = append(input.HarnessReadPaths, pinned.ReadPaths...)
 	}
 	var piEnv []string
 	if h.Name == harness.PiName {
@@ -356,44 +354,33 @@ func wrapOneShotLayer(
 			}
 			sort.Strings(piEnv[1:])
 		}
-		if runtime.GOOS == "linux" && root == sandboxpolicy.RootConstructed {
-			// pi is a Node CLI, absent from a constructed root unless started
-			// by absolute path with its runtime mounted.
-			resolved, err := harness.ResolvePiLaunchExecutable()
-			if err != nil {
-				return "", fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", err)
-			}
-			if argv, err = resolved.SpliceBinary(argv, "pi"); err != nil {
+	}
+	// pi and Gemini (Node CLIs, absent from a constructed root unless
+	// started by absolute path with their runtime mounted) under a
+	// constructed root. A host-inherited root keeps resolving the bare name
+	// on the pane's own PATH.
+	if !pinnedExecutable && root == sandboxpolicy.RootConstructed {
+		late, ok, err := session.ResolveTclaudeLayerExecutable(h.Name, root)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			if argv, err = spliceOneShotExecutable(argv, h.Spawn.Binary(), late); err != nil {
 				return "", err
 			}
-			input.HarnessReadPaths = append(input.HarnessReadPaths, resolved.ReadPaths...)
+			input.HarnessReadPaths = append(input.HarnessReadPaths, late.ReadPaths...)
 			if spec, err = session.BuildTclaudeLayerLaunchSpec(input); err != nil {
 				return "", err
 			}
 		}
-		argv = slices.Concat([]string{"env"}, piEnv, argv)
 	}
-	if h.Name == harness.GeminiName && runtime.GOOS == "linux" && root == sandboxpolicy.RootConstructed {
-		// Only a constructed root needs this: a host-inherited one still sees
-		// the pane's own PATH, so a launch there keeps resolving `gemini` and
-		// `node` exactly as it did before.
-		resolved, err := harness.ResolveGeminiLaunchExecutable()
-		if err != nil {
-			return "", fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", err)
-		}
-		argv, err = resolved.SpliceArgv(argv)
-		if err != nil {
-			return "", err
-		}
-		input.HarnessReadPaths = append(input.HarnessReadPaths, resolved.ReadPaths...)
-		if spec, err = session.BuildTclaudeLayerLaunchSpec(input); err != nil {
-			return "", err
-		}
+	if h.Name == harness.PiName {
+		argv = slices.Concat([]string{"env"}, piEnv, argv)
 	}
 	if err := session.PrepareTclaudeLayerHarnessState(spec); err != nil {
 		return "", err
 	}
-	binary, _, err := session.ResolveTclaudeLayerServerForEngine(posture, root, spec.Contract.NetworkEngine)
+	binary, _, err := resolveOneShotLayerServer(posture, root, spec.Contract.NetworkEngine)
 	if err != nil {
 		return "", err
 	}
@@ -406,6 +393,31 @@ func wrapOneShotLayer(
 	}
 	return session.WrapTclaudeLayerServerSpec(binary, spec, command)
 }
+
+// spliceOneShotExecutable replaces the harness binary in a one-shot argv
+// with the pinned entry point, preceded by its interpreter when it has one.
+// argv[0] is replaced when it names the binary, bare or as a path (a séance
+// may already have set an absolute Codex path there); otherwise the first
+// bare occurrence is, since Gemini's argv can start with an env prefix.
+func spliceOneShotExecutable(argv []string, binary string, pinned session.TclaudeLayerExecutable) ([]string, error) {
+	at := slices.Index(argv, binary)
+	if len(argv) > 0 && filepath.Base(argv[0]) == binary {
+		at = 0
+	}
+	if at < 0 {
+		return nil, fmt.Errorf("%s one-shot argv has no %s binary", binary, binary)
+	}
+	entry := []string{pinned.Path}
+	if pinned.Interpreter != "" {
+		entry = []string{pinned.Interpreter, pinned.Path}
+	}
+	return slices.Concat(argv[:at], entry, argv[at+1:]), nil
+}
+
+// resolveOneShotLayerServer finds the launcher binary for a one-shot behind
+// tclaude's sandbox. A variable so tests can render the command without
+// probing the host's bwrap.
+var resolveOneShotLayerServer = session.ResolveTclaudeLayerServerForEngine
 
 func quoteOneShotArgv(argv []string) string {
 	quoted := make([]string, len(argv))

@@ -2,21 +2,30 @@ import { SavedPromptPicker } from './saved-prompts.js';
 import { Fragment, h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Select } from './ui-components.js';
+import { FilterCombobox } from './filter-combobox.js';
+import { AgentPickerDialog, TargetPicker } from './agent-picker.js';
 import { TransferTray } from './transfer-card.js';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
+import { RelaunchPolicyDialog } from './relaunch-policy-dialog.js';
 import { registerMessageAccessDialogController } from './message-access-dialog-controller.js';
 import { isPageNode, nodeSnapshot } from './node-api.js';
 import { LockReason, NodeChip } from './lock-reason.js';
 import {
-  agentCandidates, groupMembers, groupsForPicker, permissionRows,
-  permissionScopeSeed, permissionSeed, scopeChips, scopeDimOptions, scopeDimRows,
-  scopeSupported, senderOnline, sudoByAgent, sudoSlugRows, unreadableScopeSlugs,
+  DEFAULT_SUDO_POLICY, SUDO_DURATION_PRESETS, groupMembers, permissionRows,
+  permissionScopeSeed, permissionSeed, rowsByArea, scopeChips, scopeDimOptions, scopeDimRows,
+  RESOURCE_KIND_LABELS, SCOPE_CHIPS_SHOWN, SCOPE_COMBOBOX_DIMS, scopeComboItems, scopeCountText,
+  scopeCatalogueIndex, scopeValueLabel, umbrellaCover,
+  scopeSupported, senderOnline, stewardAccessFor, sudoByAgent, sudoDurationSeconds, sudoDurationText, sudoGrantScope,
+  sudoSecondsLeft, unreadableScopeSlugs, RECIPIENT_PICKS, combinePick,
+  EMPTY_PERMISSION_FILTER, PERMISSION_FILTER_FACETS, PERMISSION_FILTER_FLAGS, permissionFilterActive, permissionRowMatches,
 } from './message-access-dialog-model.js';
+import { openMemberPRs } from './pr-review-model.js';
+import { PRChain } from './pr-chain.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
+import { modClickText, shortcutText } from './keybindings.js';
 
 const html = htm.bind(h);
 
@@ -36,7 +45,7 @@ function memberIsSelected(selection, member) {
   return memberSelectionKeys(member).some((key) => selection.has(key));
 }
 
-function ErrorLine({ id, value, className = 'cron-create-error' }) {
+function ErrorLine({ id, value, className = 'cron-create-error ui-error-box' }) {
   return html`<div id=${id} class=${className} role="alert">${value || ''}</div>`;
 }
 
@@ -57,7 +66,7 @@ function OperatorAttachmentList({ files, busy, remove }) {
     ${files.map((file, index) => html`<li key=${`${index}:${operatorFileName(file, index)}:${file?.size || 0}`}>
       <span class="att-name">${operatorFileName(file, index)}</span>
       <span class="att-size">${file?.size || 0} B</span>
-      <button type="button" class="att-remove" disabled=${busy}
+      <button data-ui-exempt type="button" class="att-remove" disabled=${busy}
         aria-label=${`Remove ${operatorFileName(file, index)}`} onClick=${() => remove(index)}>✕</button>
     </li>`)}
   </ul>`;
@@ -115,11 +124,10 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     }
   };
 
-  return html`<${Overlay}
+  return html`<${Dialog}
     id="operator-message-modal"
     overlayClass="operator-message-overlay"
     dialogClass="cron-create-modal operator-message-modal"
-    labelledby="operator-message-title"
     describedby="operator-message-desc"
     onClose=${state.close}
     onSubmitHotkey=${submit}
@@ -128,7 +136,7 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
     confirmDiscard=${confirmDiscard}
     resizeKey="tclaude.dash.modalSize.operator-message"
     initialFocusRef=${bodyRef}
-    registerClose=${registerClose}
+    guard=${{ requestClose, registerClose }}
     guardBackdropDrag=${true}
     onPaste=${(event) => {
       if (textOnly) return;
@@ -147,41 +155,40 @@ function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
       if (!dropped.length) return;
       event.preventDefault();
       addFiles(dropped);
-    }}>
-    <h3 id="operator-message-title"><${Words}
+    }} title=${html`<${Words}
       plain=${allLive ? 'Announce to all live agents' : 'Send message to agent'}
-      wizard=${allLive ? '📯 Proclaim to all channeling familiars' : '✒ Send a missive to the familiar'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/></h3>
-    <p class="modal-hint" id="operator-message-desc"><${Words}
+      wizard=${allLive ? '📯 Proclaim to all channeling heroes' : '✒ Send a missive to the hero'}/><${NodeChip} name=${descriptor.node ? descriptor.nodeName || descriptor.node.slice(0, 13) : ''}/>`}>
+    <p class="modal-hint ui-hint" id="operator-message-desc"><${Words}
       plain=${allLive
         ? 'Sent once to every agent that is live when you submit. Offline agents are not queued.'
         : 'Queued through the agent mailbox, so incoming agent output cannot interfere with what you type.'}
       wizard=${allLive
-        ? 'Sounded once to every familiar channeling when you proclaim; slumbering familiars will not be stirred.'
-        : "Sealed into the familiar's mailbox, beyond the meddling of terminal omens."}/></p>
-    <div class="cron-create-row"><span class="cron-create-label"><${Words} plain="To" wizard="Familiar"/></span>
+        ? 'Sounded once to every hero channeling when you proclaim; slumbering heroes will not be stirred.'
+        : "Sealed into the hero's mailbox, beyond the meddling of terminal omens."}/></p>
+    <div class="cron-create-row"><span class="cron-create-label"><${Words} plain="To" wizard="Hero"/></span>
       <div class="cron-create-target"><strong id="operator-message-to" title=${allLive ? 'Roster recalculated when sent' : descriptor.agent}>${descriptor.label}</strong></div></div>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Subject" wizard="Seal"/></span>
       <input id="operator-message-subject" type="text" maxlength="256" placeholder="optional" autocomplete="off"
         value=${subject} readOnly=${busy} onInput=${(event) => setSubject(event.currentTarget.value)}/></label>
     <label class="cron-create-row operator-message-body-row"><span class="cron-create-label"><${Words} plain="Message" wizard="Missive"/></span>
       <textarea ref=${bodyRef} id="operator-message-body" rows="6" maxlength="16384"
-        placeholder="Message text — Ctrl/Cmd+Enter to send" spellcheck=${true} value=${body} readOnly=${busy}
+        placeholder=${`Message text — ${shortcutText('dialog-submit')} to send`} spellcheck=${true} value=${body} readOnly=${busy}
         onInput=${(event) => setBody(event.currentTarget.value)}></textarea></label>
     <${SavedPromptPicker} value=${body} onChange=${setBody} textareaRef=${bodyRef}
       disabled=${busy} confirmDiscard=${confirmDiscard}/>
     ${!textOnly && html`<div class="cron-create-row"><span class="cron-create-label"><${Words} plain="Attachments" wizard="Enclosures"/></span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
-        <button type="button" id="operator-message-attach-btn" disabled=${busy}
-          onClick=${() => fileInputRef.current?.click()}><${Words} plain="📎 Attach files…" wizard="📎 Bind relics…"/></button>
+        <${Button} id="operator-message-attach-btn" disabled=${busy}
+          onClick=${() => fileInputRef.current?.click()}><${Words} plain="📎 Attach files…" wizard="📎 Bind relics…"/><//>
         <input ref=${fileInputRef} type="file" id="operator-message-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-        <span class="spawn-attachments-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
+        <span class="spawn-attachments-hint ui-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="operator-message-error" value=${error}/>
-    <div class="modal-buttons"><button id="operator-message-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
-      <span class="spacer"></span><button id="operator-message-submit" class="primary operator-message-submit" type="button" disabled=${busy} onClick=${submit}>
-        <${Words} plain=${busy ? 'Queueing…' : allLive ? 'Announce' : 'Send'} wizard=${busy ? '✒ Sending missive…' : allLive ? '📯 Proclaim' : '✒ Send missive'}/></button></div>
-  </${Overlay}>`;
+    <div class="modal-buttons"><${Button} id="operator-message-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
+      <span class="spacer"></span><${Button} variant="primary" class="operator-message-submit" id="operator-message-submit" disabled=${busy} onClick=${submit}>
+        <${Words} plain=${busy ? 'Queueing…' : allLive ? 'Announce' : 'Send'} wizard=${busy ? '✒ Sending missive…' : allLive ? '📯 Proclaim' : '✒ Send missive'}/></${Button}></div>
+  </${Dialog}>`;
 }
 
 function useLiveTheme() {
@@ -191,108 +198,6 @@ function useLiveTheme() {
     document.addEventListener('tclaude:wizard', refreshThemeCopy);
     return () => document.removeEventListener('tclaude:wizard', refreshThemeCopy);
   }, []);
-}
-
-export function TargetPicker({ prefix, value, onChange, snapshot, pickAgent, groupLocked = '' }) {
-  useLiveTheme();
-  const scope = value.scopeGroup || '';
-  const groups = groupsForPicker(snapshot, scope);
-  const members = scope ? groupMembers(snapshot, scope) : [];
-  const groupOptions = value.groupName && !groups.includes(value.groupName)
-    ? [value.groupName, ...groups] : groups;
-  const memberOptions = value.target && !members.some((member) => member.key === value.target)
-    ? [{ key: value.target, title: `${value.target} (missing)`, online: false }, ...members] : members;
-  const modeName = `${prefix}-target-mode`;
-  const setMode = (mode) => onChange({ ...value, mode });
-  const choose = async () => {
-    const picked = await pickAgent({ title: 'Pick target', identity: 'agent' });
-    if (picked) onChange({ ...value, target: picked });
-  };
-  return html`<div class="cron-create-target" id=${`${prefix}-target-picker`}>
-    <div class="cron-target-modes">
-      <label><input type="radio" name=${modeName} value="solo" checked=${value.mode === 'solo'}
-        onChange=${() => setMode('solo')} /> <${Words} plain="Solo agent" wizard="Solo familiar"/></label>
-      <label class=${groupLocked ? 'locked-field' : ''}><input type="radio" name=${modeName} value="group" checked=${value.mode === 'group'}
-        disabled=${!!groupLocked} onChange=${() => setMode('group')} /> <${Words} plain="Group (multicast)" wizard="Party (multicast)"/></label><${LockReason} why=${groupLocked}/>
-    </div>
-    ${value.mode === 'solo' && !scope && html`<div class="cron-target-input-row" id=${`${prefix}-target-solo`}>
-      <input id=${`${prefix}-target`} type="text" value=${value.target}
-        placeholder="agt_ id / title / conv-id / 8+-char prefix" autocomplete="off" spellcheck="false"
-        onInput=${(event) => onChange({ ...value, target: event.currentTarget.value })} />
-      <button type="button" id=${`${prefix}-target-pick`} title="Pick from the agent / familiar list" onClick=${choose}>🔍</button>
-    </div>`}
-    ${value.mode === 'solo' && scope && html`<div class="cron-target-input-row" id=${`${prefix}-target-scoped`}>
-      <select id=${`${prefix}-scoped-member`} value=${value.target}
-        onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
-        ${memberOptions.length
-          ? html`<${Fragment}><option value="">${wizWord('(pick a member)', '(pick a familiar)')}</option>${memberOptions.map((member) => html`<option key=${member.key} value=${member.key}>${member.title || member.conv_id}${member.online ? '' : ' (offline)'}</option>`)}</${Fragment}>`
-          : html`<option value="">${wizWord('(no members in this group)', '(no familiars in this party)')}</option>`}
-      </select>
-    </div>`}
-    ${value.mode === 'group' && html`<div class="cron-target-input-row" id=${`${prefix}-target-group`}>
-      <select id=${`${prefix}-group`} value=${value.groupName} disabled=${!!scope}
-        onChange=${(event) => onChange({ ...value, groupName: event.currentTarget.value })}>
-        ${groupOptions.length
-          ? html`<${Fragment}><option value="">${wizWord('(pick a group)', '(pick a party)')}</option>${groupOptions.map((name) => html`<option key=${name} value=${name}>${name}${!groups.includes(name) ? ' (missing)' : ''}</option>`)}</${Fragment}>`
-          : html`<option value="">${wizWord('(no groups — create one first)', '(no parties — form one first)')}</option>`}
-      </select>
-    </div>`}
-  </div>`;
-}
-
-function AgentPicker({ descriptor, state, snapshot, confirmDiscard }) {
-  const [query, setQuery] = useState('');
-  const [includeOffline, setIncludeOffline] = useState(false);
-  const [highlight, setHighlight] = useState(0);
-  const searchRef = useRef(null);
-  const highlightedRef = useRef(null);
-  const candidates = agentCandidates(snapshot, { includeOffline, query });
-  const activeSudo = sudoByAgent(snapshot);
-  const bounded = Math.max(0, Math.min(highlight, Math.max(0, candidates.length - 1)));
-  const activeID = candidates[bounded] ? `cron-pick-target-option-${bounded}` : undefined;
-  const activeKey = candidates[bounded]?.agent_id || candidates[bounded]?.conv_id || '';
-  useEffect(() => { if (bounded !== highlight) setHighlight(bounded); }, [bounded, highlight]);
-  useEffect(() => { highlightedRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [bounded, activeKey]);
-  const choose = (agent) => state.finishPicker(descriptor.identity === 'conv'
-    ? agent.conv_id : (agent.agent_id || agent.conv_id));
-  const onKeyDown = (event) => {
-    if (event.isComposing || event.keyCode === 229) return;
-    if (event.key === 'ArrowDown') { event.preventDefault(); setHighlight(Math.min(bounded + 1, candidates.length - 1)); }
-    else if (event.key === 'ArrowUp') { event.preventDefault(); setHighlight(Math.max(bounded - 1, 0)); }
-    else if (event.key === 'Enter' && candidates[bounded]) { event.preventDefault(); choose(candidates[bounded]); }
-  };
-  return html`<${Overlay} id="cron-pick-target-modal" dialogClass="add-member-modal"
-    labelledby="cron-pick-target-title" onClose=${() => state.finishPicker('')}
-    dirty=${false} blocked=${false} confirmDiscard=${confirmDiscard}>
-    <h3 id="cron-pick-target-title">${descriptor.title} <span class="muted"><${Words} plain="— pick agent" wizard="— pick familiar"/></span></h3>
-    <input ref=${searchRef} id="cron-pick-target-search" class="add-member-search" type="text"
-      value=${query} placeholder="Filter by title / role / descr / conv-id / group…" autocomplete="off" spellcheck="false"
-      role="combobox" aria-label="Filter agents" aria-controls="cron-pick-target-list" aria-expanded="true"
-      aria-autocomplete="list" aria-activedescendant=${activeID}
-      onInput=${(event) => { setQuery(event.currentTarget.value); setHighlight(0); }} onKeyDown=${onKeyDown} />
-    <div class="add-member-list" id="cron-pick-target-list" role="listbox">
-      ${candidates.length === 0 ? html`<div class="add-member-empty">No matching conversations. ${includeOffline ? '(Try a different filter.)' : '(Try ticking “Include offline / archived” for a wider pool.)'}</div>`
-        : candidates.map((agent, index) => html`<div key=${agent.agent_id || agent.conv_id}
-          ref=${index === bounded ? highlightedRef : null} id=${`cron-pick-target-option-${index}`}
-          role="option" aria-selected=${index === bounded ? 'true' : 'false'}
-          class=${`add-member-row${index === bounded ? ' highlighted' : ''}`} data-i=${index}
-          onMouseDown=${() => choose(agent)}>
-          <span class=${agent.online ? 'online' : 'offline'} title=${agent.online ? 'online' : 'offline'}>${agent.online ? '●' : '○'}</span>
-          <span class="rowname">${agent.title || '(unnamed)'}</span>
-          <span class="id" title=${idTooltip(agent.agent_id, agent.conv_id)}>${shortAgentId(agent.agent_id, agent.conv_id)}</span>
-          ${descriptor.showSudo && activeSudo.get(agent.agent_id || agent.conv_id)?.length
-            ? html`<span class="sudo-badge" title=${`${activeSudo.get(agent.agent_id || agent.conv_id).length} active sudo grant(s)`}>🔓</span>` : null}
-          ${agent.memberships.length ? html`<span class="groups-tag">in: ${agent.memberships.map((item) => item.group).join(', ')}</span>` : null}
-        </div>`)}
-    </div>
-    <div class="add-member-foot">
-      <label title=${descriptor.includeOfflineHint || 'Include offline / archived agents'}>
-        <input id="cron-pick-target-all" type="checkbox" checked=${includeOffline}
-          onChange=${(event) => { setIncludeOffline(event.currentTarget.checked); setHighlight(0); }} />Include offline / archived
-      </label>
-      <span class="spacer"></span><span><kbd>↑↓</kbd> nav · <kbd>Enter</kbd> pick · <kbd>Esc</kbd> close</span>
-    </div>
-  </${Overlay}>`;
 }
 
 function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
@@ -308,10 +213,11 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [role, setRole] = useState(initial.role || '');
-  const [customized, setCustomized] = useState(false);
-  const [selected, setSelected] = useState(() => new Set(
-    groupMembers(snapshot, scopedGroup).flatMap(memberSelectionKeys),
-  ));
+  // preset 'online' (the default) or 'all' follows live membership and
+  // presence; null means the operator hand-picked `selected`, which is then
+  // retained across live updates.
+  const [preset, setPreset] = useState('online');
+  const [selected, setSelected] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const bodyRef = useRef(null);
@@ -330,21 +236,33 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     group: `Multicast to a whole group needs ${nodeName || 'this peer'}'s unrestricted trust. Its group's ✉ button messages the members it shares.`,
   } : {};
   const groupExists = !scopedGroup || (snapshot?.groups || []).some((group) => group.name === scopedGroup);
-  const selectedMembers = customized ? members.filter((member) => memberIsSelected(selected, member)) : members;
+  const selectedMembers = preset === 'all' ? members
+    : preset === 'online' ? members.filter((member) => member.online)
+      : members.filter((member) => memberIsSelected(selected, member));
+  const selectedKeys = new Set(selectedMembers.map((member) => member.key));
+  const pickCounts = new Map(RECIPIENT_PICKS.map((pick) => [pick.key, members.filter(pick.test).length]));
   const initialMode = initial.targetMode === 'group' ? 'group' : 'solo';
-  const dirty = from !== (initial.from || '') || !!subject || !!body || role !== (initial.role || '') || customized || (!scopedGroup && (
+  const dirty = from !== (initial.from || '') || !!subject || !!body || role !== (initial.role || '') || preset !== 'online' || (!scopedGroup && (
     target.mode !== initialMode || target.target !== (initial.target || '') || target.groupName !== (initial.groupName || '')
   ));
   const chooseFrom = async () => {
     const picked = await state.pickAgent({ title: 'Pick sender', identity: 'agent' });
     if (picked) setFrom(picked);
   };
+  const choose = (picked) => { setSelected(new Set(picked.flatMap(memberSelectionKeys))); setPreset(null); };
   const toggleMember = (member, checked) => {
-    const next = new Set(customized ? selected : members.flatMap(memberSelectionKeys));
+    const next = new Set(selectedMembers.flatMap(memberSelectionKeys));
     for (const key of memberSelectionKeys(member)) {
       if (checked) next.add(key); else next.delete(key);
     }
-    setSelected(next); setCustomized(true);
+    setSelected(next); setPreset(null);
+  };
+  // Shift-click extends the ticked set (OR), Ctrl/⌘-click narrows it (AND),
+  // a plain click replaces it. A plain "online" keeps following presence.
+  const applyPick = (pick, event) => {
+    const how = event.shiftKey ? 'add' : (event.ctrlKey || event.metaKey) ? 'narrow' : 'only';
+    if (how === 'only' && pick.key === 'online') { setPreset('online'); return; }
+    choose(combinePick(members, selectedMembers, pick, how));
   };
   const submit = async () => {
     if (busyRef.current) return;
@@ -353,9 +271,9 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     let to = '', explicit = null;
     if (scopedGroup) {
       if (!groupExists) { setError(`Group “${scopedGroup}” no longer exists — choose a new launcher context.`); return; }
-      if (!selectedMembers.length) { setError(wizWord('Pick at least one recipient — tick the members this message should reach.', 'Pick at least one recipient — tick the familiars this missive should reach.')); return; }
+      if (!selectedMembers.length) { setError(wizWord('Pick at least one recipient — tick the members this message should reach.', 'Pick at least one recipient — tick the heroes this missive should reach.')); return; }
       to = `group:${scopedGroup}`;
-      if (customized) explicit = selectedMembers.map((member) => member.agent_id || member.conv_id);
+      if (preset !== 'all') explicit = selectedMembers.map((member) => member.agent_id || member.conv_id);
     } else if (target.mode === 'group') {
       if (!target.groupName) { setError(wizWord('Pick a group from the dropdown (or create one first via the Groups tab).', 'Pick a party from the dropdown (or form one first via the Parties tab).')); return; }
       if (!(snapshot?.groups || []).some((group) => group.name === target.groupName)) {
@@ -364,7 +282,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       to = `group:${target.groupName}`;
     } else {
       to = target.target.trim();
-      if (!to) { setError(wizWord('Target is required — type a title / conv-id or use 🔍 to pick.', 'Recipient is required — name a familiar or use 🔍 to pick.')); return; }
+      if (!to) { setError(wizWord('Target is required — type a title / conv-id or use 🔍 to pick.', 'Recipient is required — name a hero or use 🔍 to pick.')); return; }
     }
     if (restricted) {
       if (!scopedGroup && target.mode === 'group') { setError(lock.group); return; }
@@ -380,7 +298,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
         const { failed } = await actions.sendDirectMessages(recipients, { subject: subject.trim(), body }, descriptor.node || '');
         if (!failed.length && !skipped) { state.close(); return; }
         // Keep the draft, ticked for exactly the members it did not reach.
-        if (scopedGroup) { setSelected(new Set(failed.map((item) => item.to))); setCustomized(true); }
+        if (scopedGroup) { setSelected(new Set(failed.map((item) => item.to))); setPreset(null); }
         setError([
           ...failed.map((item) => `${members.find((member) => member.agent_id === item.to)?.title || item.to}: ${item.error}`),
           ...(skipped ? [`${skipped} member${skipped === 1 ? '' : 's'} without an agent ID skipped`] : []),
@@ -393,7 +311,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     // send still needs a sender agent to attribute and reply to.
     const isGroup = to.startsWith('group:');
     if (!from.trim() && !isGroup) {
-      setError(wizWord('From is required for a solo message — leave it blank only to multicast to a group as you, the operator.', 'A sending familiar is required for a solo missive — leave it blank only to multicast to a party as yourself.'));
+      setError(wizWord('From is required for a solo message — leave it blank only to multicast to a group as you, the operator.', 'A sending hero is required for a solo missive — leave it blank only to multicast to a party as yourself.'));
       return;
     }
     busyRef.current = true;
@@ -408,35 +326,46 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     } catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
-  return html`<${Overlay} id="message-create-modal" labelledby="message-create-title"
+  return html`<${Dialog} id="message-create-modal"
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-    initialFocusRef=${bodyRef} registerClose=${registerClose}>
-    <h3 id="message-create-title"><${Words}
+    initialFocusRef=${bodyRef} guard=${{ requestClose, registerClose }} title=${html`<${Words}
       plain=${scopedGroup ? `Send a message to group “${scopedGroup}”` : 'Send a message'}
-      wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/><${NodeChip} name=${nodeName}/></h3>
-    <p id="message-create-desc" class="modal-hint"><${Words}
+      wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/><${NodeChip} name=${nodeName}/>`}>
+    <p id="message-create-desc" class="modal-hint ui-hint"><${Words}
       plain=${scopedGroup ? `Delivers one immediate message to the members of “${scopedGroup}” ticked below. Leave From blank to send it as you, the operator.` : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Leave From blank on a group send to multicast as you, the operator.'}
-      wizard=${scopedGroup ? `Delivers one immediate missive to the familiars of “${scopedGroup}” ticked below. Leave the sender blank to send it as yourself.` : 'Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party. Leave the sender blank on a party send to multicast as yourself.'}/></p>
+      wizard=${scopedGroup ? `Delivers one immediate missive to the heroes of “${scopedGroup}” ticked below. Leave the sender blank to send it as yourself.` : 'Delivers one immediate missive to a hero, or multicasts it to every hero in a party. Leave the sender blank on a party send to multicast as yourself.'}/></p>
     <label class="cron-create-row"><span class="cron-create-label" title="Leave blank to multicast as the human operator; a solo message needs a sender agent">From</span><div class="cron-create-target"><div class=${`cron-target-input-row${lock.from ? ' locked-field' : ''}`}>
       <input id="message-create-from" type="text" value=${lock.from ? '' : from} placeholder=${lock.from ? 'you (the operator)' : 'blank = you (the operator) · or a sender: agt_ id / title / conv-id'}
         disabled=${!!lock.from} autocomplete="off" spellcheck="false" onInput=${(event) => setFrom(event.currentTarget.value)} />
-      <button type="button" id="message-create-from-pick" title="Pick from the agent / familiar list" disabled=${!!lock.from} onClick=${chooseFrom}>🔍</button>
+      <${Button} id="message-create-from-pick" title="Pick from the agent / hero list" disabled=${!!lock.from} onClick=${chooseFrom}>🔍<//>
     </div><${LockReason} id="message-create-from-lock" why=${lock.from}/></div></label>
     ${!scopedGroup ? html`<label class="cron-create-row" id="message-create-target-row"><span class="cron-create-label"><${Words} plain="Target" wizard="Recipient"/></span>
-      <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} pickAgent=${state.pickAgent} groupLocked=${lock.group || ''}/>
+      <${TargetPicker} prefix="message-create" value=${target} onChange=${setTarget} snapshot=${snapshot} groupLocked=${lock.group || ''} LockReason=${LockReason}
+        onPick=${async () => {
+          const picked = await state.pickAgent({ title: 'Pick target', identity: 'agent' });
+          if (picked) setTarget((current) => ({ ...current, target: picked }));
+        }}/>
     </label>` : html`<div class="cron-create-row" id="message-create-group-row"><span class="cron-create-label">Recipients</span><div class="cron-create-target">
-      <p class="cleanup-hint" id="message-create-group-hint">${groupExists
-        ? `${members.length} current member${members.length === 1 ? '' : 's'} — ${customized ? 'custom selection is retained across live updates.' : 'all selected follows live membership.'}`
+      <p class="cleanup-hint ui-hint" id="message-create-group-hint">${groupExists
+        ? `${members.length} current member${members.length === 1 ? '' : 's'} — ${preset === 'online' ? 'online members selected, following live presence; tick an offline member to queue it in their inbox.'
+          : preset === 'all' ? 'all selected follows live membership.' : 'custom selection is retained across live updates.'}`
         : `Group “${scopedGroup}” is missing; sending is blocked.`}</p>
-      <div class="cleanup-toolbar"><button type="button" id="message-create-members-all" onClick=${() => { setCustomized(false); setSelected(new Set(members.map((member) => member.key))); }}>select all</button>
-        <button type="button" id="message-create-members-none" onClick=${() => { setCustomized(true); setSelected(new Set()); }}>select none</button>
+      <div class="cleanup-toolbar recipient-picks" id="message-create-picks"><${Button} size="sm" id="message-create-members-all" onClick=${() => setPreset('all')}>all<//>
+        <${Button} size="sm" id="message-create-members-none" onClick=${() => choose([])}>none<//>
+        ${RECIPIENT_PICKS.map((pick) => html`<${Button} size="sm" key=${pick.key} pressed=${preset === pick.key} id=${`message-create-pick-${pick.key}`}
+          class=${`recipient-pick${preset === pick.key ? ' active' : ''}`} disabled=${!pickCounts.get(pick.key)}
+          title=${`${pick.title}. Click: only these · Shift-click: add · ${modClickText()}: narrow`}
+          onClick=${(event) => applyPick(pick, event)}>${pick.label} <span class="recipient-pick-count">${pickCounts.get(pick.key)}</span><//>`)}
         <span class="spacer"></span><span class="cleanup-count" id="message-create-members-count">${selectedMembers.length} of ${members.length} selected</span></div>
-      <div class="cleanup-list" id="message-create-members">${members.length ? members.map((member) => html`<div class="cleanup-row" key=${member.key}><label>
-        <input type="checkbox" data-conv=${member.conv_id} checked=${!customized || memberIsSelected(selected, member)}
+      <div class="cleanup-list" id="message-create-members">${members.length ? members.map((member) => html`<div class=${`cleanup-row${member.online ? '' : ' recipient-offline'}`} key=${member.key}><label>
+        <input type="checkbox" data-conv=${member.conv_id} checked=${selectedKeys.has(member.key)}
           onChange=${(event) => toggleMember(member, event.currentTarget.checked)} />
+        <span class=${`ui-tag cleanup-badge ${member.online ? 'online' : 'offline'}`}>${member.online ? 'online' : 'offline'}</span>
         <span class="title">${member.title || '(untitled)'}</span><span class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</span>
-        ${member.online ? html`<span class="cleanup-badge online">online</span>` : null}
-      </label></div>`) : html`<div class="cleanup-empty">no members in this group</div>`}</div>
+      </label>${openMemberPRs(member).length
+        // Outside the <label>: a click inside a PR hover panel must not toggle the recipient.
+        ? html`<span class="recipient-prs">${openMemberPRs(member).map((pr) => html`<${PRChain} key=${pr.url} pr=${pr} />`)}</span>` : null}</div>`) : html`<div class="ui-empty-block">no members in this group</div>`}</div>
+      <p class="cleanup-hint ui-hint recipient-picks-hint">Quick select: click = only these · Shift-click = add · ${modClickText()} = narrow</p>
     </div></div>`}
     ${(scopedGroup || target.mode === 'group') && html`<label class="cron-create-row" id="message-create-role-row"><span class="cron-create-label"
       title="Optional group role filter; blank or all reaches every selected member"><${Words} plain="Role filter" wizard="Class filter"/></span>
@@ -447,10 +376,10 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Body" wizard="Missive"/></span><textarea ref=${bodyRef} id="message-create-body" rows="4"
       value=${body} placeholder=${wizWord('message text (required)', 'missive text (required)')} spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     <${ErrorLine} id="message-create-error" value=${error}/>
-    <div class="modal-buttons"><button id="message-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
-      <span class="spacer"></span><button id="message-create-submit" class="primary" type="button" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
-        <${Words} plain=${busy ? 'Sending…' : 'Send'} wizard=${busy ? 'Sending…' : '✒ Send missive'}/></button></div>
-  </${Overlay}>`;
+    <div class="modal-buttons"><${Button} id="message-create-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></${Button}>
+      <span class="spacer"></span><${Button} variant="primary" id="message-create-submit" disabled=${busy || (scopedGroup && (!groupExists || !selectedMembers.length))} onClick=${submit}>
+        <${Words} plain=${busy ? 'Sending…' : 'Send'} wizard=${busy ? 'Sending…' : '✒ Send missive'}/></${Button}></div>
+  </${Dialog}>`;
 }
 
 function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
@@ -494,9 +423,9 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
     catch (cause) { if (cause?.code === 'offline') setServerOffline(true); setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
-  return html`<${Overlay} id="human-reply-modal" labelledby="human-reply-title"
+  return html`<${Dialog} id="human-reply-modal"
     onClose=${state.close} dirty=${!!body || files.length > 0} blocked=${busy} confirmDiscard=${confirmDiscard}
-    initialFocusRef=${bodyRef} registerClose=${registerClose} guardBackdropDrag=${true}
+    initialFocusRef=${bodyRef} guard=${{ requestClose, registerClose }} guardBackdropDrag=${true}
     onPaste=${(event) => {
       const pasted = Array.from(event.clipboardData?.files || []);
       if (!pasted.length) return;
@@ -511,9 +440,8 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       if (!dropped.length) return;
       event.preventDefault();
       addFiles(dropped);
-    }}>
-    <h3 id="human-reply-title"><span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the familiar</span></h3>
-    <p id="human-reply-desc" class="modal-hint">${remote
+    }} title=${html`<span class="human-reply-title-regular">Reply to agent</span><span class="human-reply-title-wizard">✒ Answer the hero</span>`}>
+    <p id="human-reply-desc" class="modal-hint ui-hint">${remote
       ? `Sent through ${context.nodeName || 'its node'}, which queues your answer in this agent's inbox for delivery when its pane is ready. The agent sees it comes from this node's operator.`
       : "Queues your answer in this agent's inbox for delivery when its pane is ready. Delivered as a message from you, the operator."}</p>
     <label class="cron-create-row"><span class="cron-create-label">To</span><div class="cron-create-target"><div id="human-reply-to">
@@ -522,69 +450,20 @@ function HumanReplyDialog({ descriptor, state, actions, snapshot, confirmDiscard
       ? '🟢 Online — your reply will be queued and delivered when its pane is ready.'
       : '⚫ Offline — this agent has no live session, so it can’t receive a reply. Replying is disabled until it’s back online.'}</div></div></label>
     <label class="cron-create-row"><span class="cron-create-label">Reply</span><textarea ref=${bodyRef} id="human-reply-body" rows="4" value=${body}
-      placeholder="your reply — ⌘/Ctrl+Enter to send" spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
+      placeholder=${`your reply — ${shortcutText('dialog-submit')} to send`} spellcheck="false" onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)}></textarea></label>
     ${!remote && html`<div class="cron-create-row"><span class="cron-create-label">Attachments</span>
       <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
-        <button type="button" id="human-reply-attach-btn" disabled=${busy}
-          onClick=${() => fileInputRef.current?.click()}>📎 Attach files…</button>
+        <${Button} id="human-reply-attach-btn" disabled=${busy}
+          onClick=${() => fileInputRef.current?.click()}>📎 Attach files…<//>
         <input ref=${fileInputRef} type="file" id="human-reply-attach-input" multiple hidden disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-        <span class="spawn-attachments-hint">…or drag files here / paste a screenshot</span>
+        <span class="spawn-attachments-hint ui-hint">…or drag files here / paste a screenshot</span>
       </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>`}
     <${ErrorLine} id="human-reply-error" value=${error}/><div class="modal-buttons">
-      <button id="human-reply-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span>
-      <button id="human-reply-submit" class="primary" type="button" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</button>
+      <${Button} id="human-reply-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}><span class="spacer"></span>
+      <${Button} variant="primary" id="human-reply-submit" disabled=${busy || !online} onClick=${submit}>${busy ? 'Sending…' : 'Send reply'}</${Button}>
     </div>
-  </${Overlay}>`;
-}
-
-function SudoGrantDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
-  const { requestClose, registerClose } = useGuardedOverlayClose();
-  const [agentID, setAgentID] = useState(descriptor.agentID || '');
-  const [selected, setSelected] = useState(() => new Set());
-  const [duration, setDuration] = useState('');
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
-  const [error, setError] = useState('');
-  const rows = sudoSlugRows(snapshot);
-  const dirty = agentID !== (descriptor.agentID || '') || selected.size > 0 || !!duration || !!reason;
-  const toggle = (slug, checked) => setSelected((current) => {
-    const next = new Set(current); if (checked) next.add(slug); else next.delete(slug); return next;
-  });
-  const submit = async () => {
-    if (busyRef.current) return;
-    setError('');
-    if (!agentID.trim()) { setError('Agent ID is required.'); return; }
-    if (!selected.size) { setError('Pick at least one slug.'); return; }
-    busyRef.current = true;
-    setBusy(true);
-    try { await actions.grantSudo({ agentID: agentID.trim(), slugs: [...selected], duration: duration.trim(), reason: reason.trim(), node: descriptor.node }); state.close(); }
-    catch (cause) { setError(errorText(cause)); }
-    finally { busyRef.current = false; setBusy(false); }
-  };
-  return html`<${Overlay} id="sudo-grant-modal" dialogClass="sudo-grant-modal" labelledby="sudo-grant-title"
-    onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}>
-    <h3 id="sudo-grant-title">Grant sudo</h3><p class="sudo-grant-hint"><${Words}
-      plain="Proactively elevate an agent for a bounded window." wizard="Bestow a bounded sudo boon on a familiar."/> Same blocklist + duration cap as the agent-initiated path; granted_by records <code>${'<human-dashboard>:proactive'}</code> on the audit row.</p>
-    <label class="sudo-grant-row"><span class="sudo-grant-label">Agent ID</span><input id="sudo-grant-agent-id" type="text" value=${agentID}
-      placeholder="agt_…" autocomplete="off" spellcheck="false" onInput=${(event) => setAgentID(event.currentTarget.value)} /></label>
-    <label class="sudo-grant-row"><span class="sudo-grant-label">Slugs</span><div class="sudo-grant-slugs-wrap"><div class="sudo-grant-slugs-toolbar">
-      <button type="button" id="sudo-grant-select-all" title="Select every slug except blocklisted ones" onClick=${() => setSelected(new Set(rows.filter((row) => !row.blocked).map((row) => row.slug)))}>all</button>
-      <button type="button" id="sudo-grant-select-none" title="Clear the slug selection" onClick=${() => setSelected(new Set())}>none</button></div>
-      <div id="sudo-grant-slugs" class="sudo-grant-slugs">${rows.map((row) => html`<label key=${row.slug} class=${`${row.blocked ? 'blocked' : ''}${selected.has(row.slug) ? ' checked' : ''}`} title=${row.descr || row.description || ''}>
-        <input type="checkbox" value=${row.slug} disabled=${row.blocked} checked=${selected.has(row.slug)} onChange=${(event) => toggle(row.slug, event.currentTarget.checked)} />${row.slug}</label>`)}</div>
-    </div></label>
-    <label class="sudo-grant-row"><span class="sudo-grant-label">Duration</span><input id="sudo-grant-duration" type="text" value=${duration}
-      placeholder="5m (default), 30m, 1h" autocomplete="off" spellcheck="false" onInput=${(event) => setDuration(event.currentTarget.value)} /></label>
-    <label class="sudo-grant-row"><span class="sudo-grant-label">Reason</span><input id="sudo-grant-reason" type="text" value=${reason}
-      placeholder="optional — surfaced in the audit row" autocomplete="off" spellcheck="false" onInput=${(event) => setReason(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)} /></label>
-    <${ErrorLine} id="sudo-grant-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
-      <button id="sudo-grant-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
-      <button id="sudo-grant-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Granting…' : 'Grant'}</button>
-    </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ScopeSummary is the row's read-at-a-glance scope: one chip per constrained
@@ -605,9 +484,12 @@ function ScopeSummary({ scope }) {
     // The title carries the full text: a long matcher (a git remote pattern,
     // a long group name) is ellipsized in the row rather than allowed to
     // squeeze the slug column, and hover has to still answer "narrowed to what?".
+    // Past three matchers the chip counts the rest, and its title stops at
+    // twenty: a grant naming hundreds of resources is still one chip.
     ? chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"
-      title=${`${chip.dim} = ${chip.values.join(', ')}`}><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)
-    : html`<span class="perm-scope-chip unscoped" title="This grant applies to every target — open ▸ to narrow it">unscoped</span>`}
+      title=${`${chip.dim} = ${chip.values.slice(0, 20).join(', ')}${chip.values.length > 20 ? `, … (${chip.values.length} in all)` : ''}`}><span class="dim">${chip.dim}=</span>${chip.values.length > 3
+        ? `${chip.values.slice(0, 2).join(', ')} +${chip.values.length - 2} more` : chip.values.join(', ')}</span>`)
+    : html`<span class="perm-scope-chip unscoped" title="This grant applies to every target — add a scope to narrow it">unscoped</span>`}
   </span>`;
 }
 
@@ -616,95 +498,181 @@ function ScopeSummary({ scope }) {
 // nothing to disclose gets an inert placeholder rather than a dead control.
 function ScopeTwisty({ scopable, open, toggle, slug }) {
   if (!scopable) return html`<span class="perm-scope-twisty empty" aria-hidden="true"></span>`;
-  return html`<button type="button" class="perm-scope-twisty" aria-expanded=${open ? 'true' : 'false'}
-    aria-label=${`${open ? 'Hide' : 'Show'} the scope editor for ${slug}`}
-    title=${open ? 'Hide the scope editor' : 'Narrow this grant to particular targets'}
-    onClick=${toggle}>${open ? '▾' : '▸'}</button>`;
+  return html`<button data-ui-exempt type="button" class="perm-scope-twisty" aria-expanded=${open ? 'true' : 'false'}
+    aria-label=${`${open ? 'Hide' : 'Add or edit'} scopes for ${slug}`}
+    title=${open ? 'Hide scopes' : 'Add or edit scopes: narrow this grant to particular targets'}
+    onClick=${toggle}><svg class="perm-scope-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg></button>`;
 }
 
-// holdFocus keeps the focused element focused through a mousedown on a
-// control that acts on it. The + beside a scope dimension's free-text box is
-// the case: browsers that focus a button on mousedown would blur the box
-// first, commit there, and then never dispatch the click to the (now inert)
-// button, while browsers that leave focus alone commit on the click — same
-// outcome, but only ever one of the two paths per browser, and the button
-// visibly goes inert under the cursor mid-click. Suppressing the focus move
-// makes the click the one gesture that commits, everywhere.
-const holdFocus = (event) => event.preventDefault();
+// PermissionFilter is the editor's slug filter with its own clear control.
+// Escape empties a non-empty filter and stops there, so the dialog's Escape
+// only closes it once the filter is already empty. The focus move matters
+// because the clear button unmounts with the text it cleared.
+function PermissionFilter({ value, onChange }) {
+  const inputRef = useRef(null);
+  return html`<div class="perm-edit-filter"><input ref=${inputRef} id="perm-edit-filter" type="text" value=${value} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
+    onInput=${(event) => onChange(event.currentTarget.value)}
+    onKeyDown=${(event) => { if (event.key === 'Escape' && value) { event.preventDefault(); event.stopPropagation(); onChange(''); } }} />
+    ${value && html`<button type="button" data-ui-exempt id="perm-edit-filter-clear" title="Clear filter" aria-label="Clear filter"
+      onClick=${() => { onChange(''); inputRef.current?.focus(); }}>×</button>`}</div>`;
+}
+
+// PermissionFacets are the editor's composable filters, under the slug
+// filter: one segmented choice per facet and a toggle per flag. Facets AND
+// together and with the text, so "write slugs it holds" is Kind write plus
+// Holds yes. The count says how much the filters hide, and Clear drops them
+// all but leaves the text, which has its own ×.
+function PermissionFacets({ value, onChange, shown, total }) {
+  const pick = (key, option) => onChange({ ...value, [key]: option });
+  const toggle = (key) => onChange({
+    ...value, flags: value.flags.includes(key) ? value.flags.filter((item) => item !== key) : [...value.flags, key],
+  });
+  const active = permissionFilterActive(value);
+  return html`<div class="perm-edit-facets" id="perm-edit-facets" role="group" aria-label="Filter permissions">
+    ${PERMISSION_FILTER_FACETS.map((facet) => html`<span key=${facet.key} class="perm-facet" data-facet=${facet.key}>
+      <span class="perm-facet-label">${facet.label}</span>
+      <div class="ui-seg" role="group" aria-label=${facet.label}>${facet.options.map(([option, label, title]) => html`<${Button} size="sm" key=${option}
+        data-option=${option} pressed=${(value[facet.key] || 'any') === option} class=${(value[facet.key] || 'any') === option ? 'active' : ''}
+        title=${title} onClick=${() => pick(facet.key, option)}>${label}<//>`)}</div></span>`)}
+    <span class="perm-facet perm-facet-flags"><span class="perm-facet-label">Only</span>
+      <div class="ui-seg" role="group" aria-label="Only">${PERMISSION_FILTER_FLAGS.map((flag) => html`<${Button} size="sm" key=${flag.key}
+      data-flag=${flag.key} pressed=${value.flags.includes(flag.key)} class=${value.flags.includes(flag.key) ? 'active' : ''}
+      title=${`${flag.title}. Each is a toggle; on together they all apply`} onClick=${() => toggle(flag.key)}>${flag.label}<//>`)}</div></span>
+    <span class="spacer"></span>
+    <span class="perm-facet-count ui-hint" id="perm-edit-facet-count">${shown === total ? `${total} slugs` : `${shown} of ${total}`}</span>
+    ${active && html`<${Button} size="sm" variant="ghost" id="perm-edit-facets-clear" title="Drop every filter here; the text filter stays"
+      onClick=${() => onChange(EMPTY_PERMISSION_FILTER)}>Clear<//>`}
+  </div>`;
+}
 
 // ScopeDimEditor edits ONE dimension's matcher list. It is deliberately
 // ignorant of which dimension it is: the label, the suggestions and the
 // selectors all arrive from the daemon, so a dimension added by a later phase
 // is editable here the moment the daemon advertises it.
 //
-// The free-text field is the ONLY way to narrow a dimension the daemon has no
-// catalogue for (remote, process_template, target_agent), so a value typed
-// there must not depend on the operator knowing to press Enter. The rule is:
-// a typed value commits whenever the box is left (Enter, the + button, blur),
-// and onDraft reports whatever is still uncommitted so Save can flush it
-// instead of silently discarding it. A box that leaves the screen without
-// committing withdraws its draft (the unmount cleanup below), so what Save
+// Every dimension, however short its catalogue, is one type-to-filter box
+// (tcl-4wt1wu) that also takes a typed value: the ONLY way to narrow a
+// dimension the daemon has no catalogue for (remote, process_template,
+// target_agent). So a typed value must not depend on the operator knowing to
+// press Enter: it commits on Enter or when the box is left, and onDraft
+// reports whatever is still uncommitted so Save can flush it instead of
+// silently discarding it. A box that leaves the screen without committing
+// withdraws its draft (ScopeDimCombobox's unmount cleanup), so what Save
 // writes is always what the dialog was showing.
-function ScopeDimEditor({ dim, values, options, onChange, declared = true, onDraft }) {
-  const [draft, setDraft] = useState('');
-  const remove = (value) => onChange(values.filter((item) => item !== value));
-  const add = (value) => {
-    const clean = String(value || '').trim();
-    if (!clean || values.includes(clean)) return;
-    onChange([...values, clean].sort());
-  };
-  // onDraft is a fresh closure every render, so the unmount cleanup reads it
-  // through a ref rather than capturing the one from the first render.
+function ScopeDimEditor(props) {
+  return html`<${ScopeDimCombobox} ...${props} />`;
+}
+
+function ScopeDimLabel({ dim, declared }) {
+  return html`<span class="perm-scope-dim-label"><code>${dim}</code>${declared ? null : html` <span class="perm-scope-stale"
+      title="This slug no longer accepts this dimension. Saving is refused until it is emptied.">⚠ not accepted</span>`}</span>`;
+}
+
+// ScopeDimCombobox edits a dimension's values: the snapshot catalogue the
+// daemon offers, or for resource= and peer= the catalogue it serves on demand, loaded
+// once when the drawer opens. It is the shared FilterCombobox, so nothing
+// here renders more than a handful of rows however many values there are. A
+// value the catalogue does not list is typed and committed with Enter, or by
+// leaving the box, and the daemon validates it on save.
+//
+// Text still in the box is reported as this dimension's draft, so Save folds
+// it in rather than writing the grant wider than the operator meant: it
+// becomes the matching catalogue key when the text names one exactly, and is
+// otherwise taken as typed for the daemon to accept or refuse. Either way the
+// grant is never saved unscoped by accident.
+function ScopeDimCombobox({ dim, values, options, onChange, declared = true, loadValues, onDraft }) {
+  const served = SCOPE_COMBOBOX_DIMS.includes(dim);
+  const [catalogue, setCatalogue] = useState(served ? null : []);
+  const [loadError, setLoadError] = useState('');
+  useEffect(() => {
+    if (!served) return undefined;
+    if (!loadValues) { setCatalogue([]); return undefined; }
+    let live = true;
+    Promise.resolve().then(() => loadValues(dim)).then(
+      (items) => { if (live) setCatalogue(Array.isArray(items) ? items : []); },
+      (cause) => { if (live) { setCatalogue([]); setLoadError(errorText(cause)); } });
+    return () => { live = false; };
+  }, [dim, served]);
+  const known = useMemo(() => (served ? scopeCatalogueIndex(catalogue || []) : null), [served, catalogue]);
   const onDraftRef = useRef(onDraft);
   onDraftRef.current = onDraft;
-  const editDraft = (value) => {
-    setDraft(value);
-    onDraft?.(dim, value);
-  };
-  const commitDraft = () => {
-    if (!draft.trim()) return;
-    add(draft);
-    editDraft('');
-  };
-  // Every way this editor can vanish other than the twisty — the slug moved
-  // off Grant, a stale dimension emptied out of scopeDimRows, the drawer
-  // switching slugs — takes the box off screen with its draft still armed.
-  // Withdraw it here, at the one point common to all of them, so Save cannot
-  // write a matcher the operator abandoned and can no longer see.
   useEffect(() => () => onDraftRef.current?.(dim, ''), [dim]);
-  const unused = [...options.values, ...options.selectors].filter((value) => !values.includes(value));
-  return html`<div class="perm-scope-dim" data-dim=${dim}>
-    <span class="perm-scope-dim-label"><code>${dim}</code>${declared ? null : html` <span class="perm-scope-stale"
-      title="This slug no longer accepts this dimension. Saving is refused until it is emptied.">⚠ not accepted</span>`}</span>
+  const items = useMemo(() => scopeComboItems(dim, options, served ? (catalogue || []) : null),
+    [dim, served, catalogue, options.values.join('\u0000'), options.selectors.join('\u0000')]);
+  const set = (next) => onChange([...new Set(next)].sort());
+  return html`<div class="perm-scope-dim perm-scope-dim-combo" data-dim=${dim}>
+    <${ScopeDimLabel} dim=${dim} declared=${declared} />
     <div class="perm-scope-dim-body">
-      <span class="perm-scope-chips">
-        ${values.map((value) => html`<span key=${value} class="perm-scope-chip">${value}
-          <button type="button" class="x" aria-label=${`Remove ${dim}=${value}`} onClick=${() => remove(value)}>×</button></span>`)}
-        ${unused.length ? html`<select class="perm-scope-add" aria-label=${`Add a ${dim} value`}
-          onChange=${(event) => add(event.currentTarget.value)}>
-          <option value="" selected>+ add…</option>
-          ${unused.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
-        </select>` : null}
-        <input type="text" class="perm-scope-free" value=${draft}
-          placeholder=${unused.length ? 'or type a value' : 'type a value'}
-          autocomplete="off" spellcheck=${false} aria-label=${`Type a ${dim} value`}
-          onInput=${(event) => editDraft(event.currentTarget.value)}
-          onBlur=${commitDraft}
-          onKeyDown=${(event) => {
-    if (event.key !== 'Enter' || event.isComposing) return;
-    event.preventDefault();
-    commitDraft();
+      <${ScopeChips} dim=${dim} values=${values} catalogue=${known}
+        remove=${(value) => set(values.filter((item) => item !== value))} />
+      <${FilterCombobox} items=${items} value=${values} onChange=${set}
+        kindLabels=${RESOURCE_KIND_LABELS} ariaLabel=${`Find a ${dim} value`}
+        placeholder=${catalogue === null ? 'Loading…' : items.length ? `Type to filter ${items.length} ${dim} values…` : `Type a ${dim} value, then Enter`}
+        emptyHint=${items.length ? 'No matches.' : 'Nothing to offer: type a value and press Enter.'}
+        freeText=${(text) => text} commitOnBlur
+        literal=${dim === 'resource' ? (text) => /^[a-z_]+:\S+$/i.test(text) && !text.toLowerCase().startsWith('group:')
+          : dim === 'peer' ? (text) => /^\S+\/\S+$/.test(text) || /^inst_\S+$/.test(text) : null}
+        onQuery=${(text) => {
+    const typed = text.trim();
+    const exact = typed && items.find((item) => item.key === typed
+      || String(item.label || '').toLowerCase() === typed.toLowerCase());
+    onDraft?.(dim, exact ? exact.key : typed);
   }} />
-        <button type="button" class="perm-scope-free-add" aria-disabled=${draft.trim() ? 'false' : 'true'}
-          aria-label=${`Add the typed ${dim} value`} title="Add the typed value"
-          onMouseDown=${holdFocus} onClick=${commitDraft}>+</button>
-      </span>
-      ${values.length ? null : html`<div class="perm-scope-hint">empty — unconstrained on this dimension</div>`}
+      ${loadError ? html`<div class="perm-scope-hint ui-hint perm-scope-load-error">Could not load the catalogue (${loadError}). Type a value and press Enter.</div>` : null}
+      ${values.length ? null : html`<div class="perm-scope-hint ui-hint">empty — unconstrained on this dimension</div>`}
     </div>
   </div>`;
 }
 
-function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft }) {
+// ScopeChips are one dimension's matcher chips. Past SCOPE_CHIPS_SHOWN the
+// rest collapse into "+N more", which opens a searchable, paged list of just
+// those, so a grant naming hundreds of resources stays a few lines tall.
+function ScopeChips({ dim, values, catalogue, remove }) {
+  const [sheet, setSheet] = useState(false);
+  const shown = values.slice(0, SCOPE_CHIPS_SHOWN);
+  const hidden = values.slice(SCOPE_CHIPS_SHOWN);
+  useEffect(() => { if (!hidden.length && sheet) setSheet(false); }, [hidden.length, sheet]);
+  return html`<span class="perm-scope-chips">
+      ${shown.map((value) => html`<${ScopeChip} key=${value} dim=${dim} value=${value} catalogue=${catalogue} remove=${remove} />`)}
+      ${hidden.length ? html`<button data-ui-exempt type="button" class="perm-scope-chip perm-scope-more"
+        aria-expanded=${sheet ? 'true' : 'false'} onClick=${() => setSheet(!sheet)}>${sheet ? 'hide' : `+${hidden.length} more`}</button>` : null}
+    </span>
+    ${sheet && hidden.length ? html`<${ScopeChipSheet} dim=${dim} values=${hidden} catalogue=${catalogue} remove=${remove} />` : null}`;
+}
+
+function ScopeChip({ dim, value, catalogue, remove }) {
+  const label = scopeValueLabel(value, catalogue);
+  return html`<span class="perm-scope-chip" title=${value}>${label.kind ? html`<span class="dim">${label.kind}</span> ` : null}${label.text}
+    <button data-ui-exempt type="button" class="x" aria-label=${`Remove ${dim}=${value}`} onClick=${() => remove(value)}>×</button></span>`;
+}
+
+const SCOPE_SHEET_PAGE = 8;
+
+function ScopeChipSheet({ dim, values, catalogue, remove }) {
+  const [filter, setFilter] = useState('');
+  const [page, setPage] = useState(0);
+  const needle = filter.trim().toLowerCase();
+  const matched = values.filter((value) => !needle
+    || `${value} ${scopeValueLabel(value, catalogue).text}`.toLowerCase().includes(needle));
+  const pages = Math.max(1, Math.ceil(matched.length / SCOPE_SHEET_PAGE));
+  const at = Math.min(page, pages - 1);
+  const rows = matched.slice(at * SCOPE_SHEET_PAGE, (at + 1) * SCOPE_SHEET_PAGE);
+  return html`<div class="perm-scope-sheet" data-dim=${dim}>
+    <div class="perm-scope-sheet-head"><span>${values.length} more ${dim} values</span>
+      <input type="text" class="perm-scope-sheet-filter" value=${filter} placeholder="filter…" autocomplete="off"
+        spellcheck=${false} aria-label=${`Filter the selected ${dim} values`}
+        onInput=${(event) => { setFilter(event.currentTarget.value); setPage(0); }} /></div>
+    ${rows.length ? rows.map((value) => html`<div key=${value} class="perm-scope-sheet-row">
+      <${ScopeChip} dim=${dim} value=${value} catalogue=${catalogue} remove=${remove} />
+      ${scopeValueLabel(value, catalogue).kind ? html`<span class="ui-hint">${value}</span>` : null}</div>`)
+    : html`<div class="ui-hint">No selected value matches.</div>`}
+    ${pages > 1 ? html`<div class="perm-scope-sheet-pager ui-hint">${at * SCOPE_SHEET_PAGE + 1}–${at * SCOPE_SHEET_PAGE + rows.length} of ${matched.length}
+      <button data-ui-exempt type="button" aria-label="Previous page" disabled=${at === 0} onClick=${() => setPage(at - 1)}>‹</button>
+      <button data-ui-exempt type="button" aria-label="Next page" disabled=${at >= pages - 1} onClick=${() => setPage(at + 1)}>›</button></div>` : null}
+  </div>`;
+}
+
+function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft, loadValues }) {
   const dims = scopeDimRows(row, scope);
   const setDim = (dim, values) => {
     const next = { ...scope };
@@ -716,18 +684,121 @@ function ScopeDrawer({ row, scope, snapshot, onChange, effective, onDraft }) {
   };
   return html`<div class="perm-scope-drawer" data-slug=${row.slug}>
     <div class="perm-scope-drawer-head">
-      <span class="perm-scope-drawer-hint">Dimensions <b>AND</b> together; values within one dimension <b>OR</b>.
+      <span class="perm-scope-drawer-hint ui-hint">Dimensions <b>AND</b> together; values within one dimension <b>OR</b>.
         A dimension left empty is unconstrained, and a grant with no dimensions at all applies everywhere.</span>
       ${effective ? html`<span class=${`perm-row-eff ${effective.granted ? 'granted' : 'denied'}`}>${effective.text}</span>` : null}
     </div>
     ${dims.map(({ dim, declared }) => html`<${ScopeDimEditor} key=${dim} dim=${dim} declared=${declared}
-      values=${scope[dim] || []} options=${scopeDimOptions(snapshot, dim)}
+      values=${scope[dim] || []} options=${scopeDimOptions(snapshot, dim)} loadValues=${loadValues}
       onDraft=${onDraft} onChange=${(values) => setDim(dim, values)} />`)}
   </div>`;
 }
 
-function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscard }) {
+// CarryChoice says who a Steward's grant is for. The second option stores it, so
+// it reads as what it does rather than as a scope of this one agent.
+function CarryChoice({ slug, carried, onChange }) {
+  return html`<${Select} class="perm-carry" aria-label=${`Who ${slug} is for`}
+    title="All future Stewards stores this grant and gives it to each new Steward"
+    onChange=${(event) => onChange(event.currentTarget.value === 'all')}>
+    <option value="this" selected=${!carried}>This Steward only</option>
+    <option value="all" selected=${carried}>All future Stewards (stored)</option>
+  <//>`;
+}
+
+// SudoActive lists what an agent holds through sudo now, with its time left
+// ticking, so a grant can be extended or ended where the next one is made.
+// Extending adds whatever the duration control says: one control, one meaning.
+function SudoActive({ grants, duration, maxSeconds, busy, act, steward }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const adds = sudoDurationSeconds(duration);
+  const refusal = (grant) => {
+    if (!adds) return 'Pick a duration below first';
+    return sudoSecondsLeft(grant, now) + adds > maxSeconds ? `That would pass the ${sudoDurationText(maxSeconds)} maximum` : '';
+  };
+  return html`<section class="sudo-active" id="sudo-active" aria-label="Active sudo grants">
+    <div class="sudo-active-head"><b>Active now (${grants.length})</b><span class="spacer"></span>
+      <${Button} size="sm" variant="danger" id="sudo-revoke-all" disabled=${busy} title=${grants.some((grant) => grant.carried) ? 'End every sudo grant this agent holds, including what is stored for future Stewards' : 'End every sudo grant this agent holds'}
+        onClick=${() => act.revokeAll()}>Revoke all<//></div>
+    ${grants.map((grant) => {
+    const blocked = refusal(grant);
+    const chips = scopeChips(sudoGrantScope(grant));
+    return html`<div key=${grant.id} class="sudo-active-row" data-grant=${grant.id} title=${[grant.reason, grant.granted_by].filter(Boolean).join(' · ')}>
+      <span class="sudo-active-slug">${grant.slug}</span>
+      ${chips.length ? html`<span class="perm-scope-chips">${chips.map((chip) => html`<span key=${chip.dim} class="perm-scope-chip"><span class="dim">${chip.dim}=</span>${chip.values.join(', ')}</span>`)}</span>` : null}
+      ${steward && html`<span class="perm-source">${grant.carried ? 'all future Stewards: revoking ends it for them too' : 'this Steward only'}</span>`}
+      <span class="sudo-active-left">${sudoDurationText(sudoSecondsLeft(grant, now))} left</span>
+      ${grant.uses_limit > 0 && html`<span class="sudo-active-left sudo-uses-left" title="Ends at whichever limit comes first">${grant.uses_left} of ${grant.uses_limit} uses left</span>`}
+      <${Button} size="sm" class="sudo-extend" disabled=${busy || !!blocked} title=${blocked || `Add ${duration} to this grant`}
+        aria-label=${`Add ${duration} to ${grant.slug}`} onClick=${() => act.extend([grant.id])}>+${adds ? duration : '…'}<//>
+      <${Button} size="sm" variant="ghost danger" class="sudo-revoke" disabled=${busy} title=${grant.carried ? 'Also ends it for all future Stewards' : ''} aria-label=${`Revoke ${grant.slug}`} onClick=${() => act.revoke([grant.id])}>Revoke<//>
+    </div>`;
+  })}
+  </section>`;
+}
+
+// SudoLimits is the part of the sudo editor that stays on screen under the
+// scrolling list: how long, why, and when that ends.
+function SudoLimits({ duration, setDuration, uses, setUses, usesBad, uncounted, reason, setReason, maxSeconds, submit }) {
+  const seconds = sudoDurationSeconds(duration);
+  const presets = SUDO_DURATION_PRESETS.filter((preset) => sudoDurationSeconds(preset) <= maxSeconds);
+  const over = seconds > maxSeconds;
+  const hint = duration.trim() && !seconds ? 'Use a form like 20m or 1h30m.'
+    : over ? `The maximum for this agent is ${sudoDurationText(maxSeconds)}.`
+    : seconds ? `Ends about ${new Date(Date.now() + seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · maximum ${sudoDurationText(maxSeconds)}` : '';
+  return html`<div class="sudo-limits" id="sudo-limits">
+    <div class="sudo-limits-row"><span class="sudo-limits-label">Duration</span>
+      <div class="ui-seg sudo-presets" role="group" aria-label="Duration presets">${presets.map((preset) => html`<${Button} size="sm" key=${preset}
+        pressed=${preset === duration} class=${preset === duration ? 'active' : ''} onClick=${() => setDuration(preset)}>${preset}<//>`)}</div>
+      <input id="sudo-duration" type="text" value=${duration} aria-label="Custom duration" placeholder="custom" autocomplete="off" spellcheck="false"
+        onInput=${(event) => setDuration(event.currentTarget.value)} />
+      <span class=${`sudo-limits-hint ui-hint${over || (duration.trim() && !seconds) ? ' bad' : ''}`} id="sudo-duration-hint">${hint}</span></div>
+    <div class="sudo-limits-row"><label class="sudo-limits-label" for="sudo-uses">Max uses</label>
+      <input id="sudo-uses" type="text" inputmode="numeric" value=${uses} placeholder="∞" autocomplete="off" aria-label="Maximum uses per permission"
+        onInput=${(event) => setUses(event.currentTarget.value)} />
+      <span class=${`sudo-limits-hint ui-hint${usesBad ? ' bad' : ''}`} id="sudo-uses-hint">${usesBad ? 'Use a whole number from 1 to 1000.'
+    : `Per permission. Ends at whichever comes first, this or the time.${uncounted ? ` ${uncounted} picked ${uncounted === 1 ? 'takes' : 'take'} no limit: see the row.` : ''}`}</span></div>
+    <div class="sudo-limits-row"><span class="sudo-limits-label">Reason</span>
+      <input id="sudo-reason" type="text" value=${reason} placeholder="optional, kept on the audit row" autocomplete="off" spellcheck="false"
+        onInput=${(event) => setReason(event.currentTarget.value)} onKeyDown=${fieldSubmit(submit)} /></div>
+  </div>`;
+}
+
+function PermissionsDialog({ descriptor: launched, state, actions, snapshot, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
+  const sudoMode = launched.mode === 'sudo';
+  // The sudo variant is launched by stable id; the rows are keyed on the conv.
+  const sudoAgent = sudoMode ? (snapshot?.agents || []).find((agent) => agent.agent_id === launched.agentID) : null;
+  const descriptor = sudoMode ? {
+    ...launched,
+    conv: sudoAgent?.conv_id || '',
+    label: launched.label || sudoAgent?.title || launched.agentID,
+  } : launched;
+  const stewardAccess = sudoMode || descriptor.mode === 'agent' ? stewardAccessFor(snapshot, descriptor.conv) : null;
+  // Only what the operator changed; the rest stays as the daemon has it.
+  const [carryChoices, setCarryChoices] = useState({});
+  const carriedNow = (slug) => carryChoices[slug] ?? (!sudoMode && stewardAccess?.carried[slug] !== undefined);
+  const [policy, setPolicy] = useState(DEFAULT_SUDO_POLICY);
+  const [duration, setDuration] = useState(() => sudoDurationText(DEFAULT_SUDO_POLICY.default_seconds));
+  const durationTouched = useRef(false);
+  const chooseDuration = (value) => { durationTouched.current = true; setDuration(value); };
+  const [reason, setReason] = useState('');
+  // slug → the text in its use limit box; empty means no limit.
+  const [sudoUses, setSudoUses] = useState({});
+  const [sudoBundleUses, setSudoBundleUses] = useState('');
+  useEffect(() => {
+    if (!sudoMode) return undefined;
+    let live = true;
+    actions.sudoPolicy?.({ agentID: descriptor.agentID, node: descriptor.node }).then((value) => {
+      if (!live || !value?.max_seconds) return;
+      setPolicy({ ...DEFAULT_SUDO_POLICY, ...value });
+      if (!durationTouched.current && value.default_seconds) setDuration(sudoDurationText(value.default_seconds));
+    }).catch(() => {});
+    return () => { live = false; };
+  }, []);
   // Seed and dirty comparison tuple are frozen for this keyed launch. Snapshot
   // updates may change rows/effective sources, never the draft baseline.
   const [baseline] = useState(() => permissionSeed(snapshot, descriptor));
@@ -740,19 +811,38 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   // remount the drawer's boxes empty (see submit).
   const [draftEpoch, setDraftEpoch] = useState(0);
   const [filter, setFilter] = useState('');
+  const [facets, setFacets] = useState(EMPTY_PERMISSION_FILTER);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState('');
-  const rows = permissionRows(snapshot, descriptor, selection);
-  const visible = rows.filter((row) => !filter.trim() || [row.slug, row.description, row.descr]
-    .some((value) => String(value || '').toLowerCase().includes(filter.trim().toLowerCase())));
+  const rows = permissionRows(snapshot, descriptor, sudoMode
+    ? ((snapshot?.permissions?.overrides || {})[descriptor.conv] || {}) : selection);
+  const rowsBySlug = new Map(rows.map((row) => [row.slug, row]));
+  const activeSudo = sudoMode ? (sudoByAgent(snapshot).get(descriptor.agentID) || []) : [];
   const currentEffect = (slug) => selection[slug] || 'default';
   const baselineEffect = (slug) => baseline[slug] || 'default';
   const scopeOf = (slug) => scopes[slug] || {};
   const scopeJSON = (scope) => JSON.stringify(scopeChips(scope));
-  const rowsDirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
-  const scopesDirty = rows.some((row) => scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}));
   const groupMode = descriptor.mode === 'group';
+  // Whether a row reads as held: the effect column's ✓, umbrella cover
+  // included. The Holds filter asks the same question so the two never disagree.
+  const rowHeld = (row, cover = umbrellaCover(row, rowsBySlug, currentEffect, scopeOf)) => row.granted
+    || (!sudoMode && !groupMode && !(stewardAccess && currentEffect(row.slug) !== 'default') && !!cover);
+  const needle = filter.trim().toLowerCase();
+  const matching = rows.filter((row) => (!needle || [row.slug, row.description, row.descr]
+    .some((value) => String(value || '').toLowerCase().includes(needle)))
+    && (!permissionFilterActive(facets) || permissionRowMatches(row, facets, {
+      effect: currentEffect(row.slug), baseline: baselineEffect(row.slug), held: rowHeld(row),
+      scopeChanged: scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}),
+      fromLevels: !!stewardAccess?.config.has(row.slug) && currentEffect(row.slug) === 'grant',
+    })));
+  const visible = sudoMode ? rowsByArea(matching) : matching;
+  const rowsDirty = rows.some((row) => currentEffect(row.slug) !== baselineEffect(row.slug));
+  // Whether the reset button has anything to do: config-granted Steward slugs
+  // are not this editor's to clear, and a buffered draft's unknown legacy slugs
+  // have no row but are cleared too, so read the selection rather than the rows.
+  const resettable = Object.entries(selection).some(([slug, effect]) => effect !== 'default' && !stewardAccess?.config.has(slug));
+  const scopesDirty = rows.some((row) => scopeJSON(scopeOf(row.slug)) !== scopeJSON(scopeBaseline[row.slug] || {}));
   const grantOnly = descriptor.mode === 'buffer' && !!descriptor.grantOnly;
   const roleMode = grantOnly && descriptor.subject === 'role';
   const scopesEditable = scopeSupported(descriptor);
@@ -770,7 +860,35 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
       ? JSON.stringify(descriptor.ownerScopes, null, 2) : ''));
   const [ownerScopesBaseline] = useState(() => ownerScopesText);
   const ownerScopesDirty = groupMode && ownerScopesText !== ownerScopesBaseline;
-  const dirty = rowsDirty || scopesDirty || ownerScopesDirty;
+  const carryDirty = Object.keys(carryChoices).length > 0;
+  const dirty = rowsDirty || scopesDirty || ownerScopesDirty || carryDirty || !!reason.trim();
+  const sudoPicked = sudoMode ? rows.filter((row) => currentEffect(row.slug) === 'grant') : [];
+  const sudoSeconds = sudoDurationSeconds(duration);
+  // Why a row takes no use limit, or nothing when it can have one.
+  const noLimitWhy = (row, scope = scopeOf(row.slug)) => (!row.countable ? row.not_countable_why || 'It has no single action to count.'
+    : scope.peer?.length ? 'A use limit covers local actions only, and this grant is scoped to a peer.'
+      : row.granted ? 'It already holds this, and what it already holds does not use a count.' : '');
+  // A row's own value wins, and blank there falls back to the whole bundle's.
+  const usesFor = (slug) => String(sudoUses[slug] ?? '').trim() || sudoBundleUses.trim();
+  const usesValid = (value) => !value || /^[1-9]\d{0,2}$|^1000$/.test(value);
+  const usesBad = !usesValid(sudoBundleUses.trim()) || sudoPicked.some((row) => !noLimitWhy(row) && !usesValid(usesFor(row.slug)));
+  const sudoUncounted = sudoPicked.filter((row) => noLimitWhy(row)).length;
+  const sudoReady = sudoPicked.length > 0 && !!sudoSeconds && sudoSeconds <= policy.max_seconds && !usesBad;
+  const sudoLabel = sudoReady ? `Grant ${sudoPicked.length} for ${duration.trim()}` : 'Grant';
+  const sudoRisky = sudoPicked.filter((row) => row.risky).length;
+  const sudoAct = async (work) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true); setError('');
+    try { await work(); }
+    catch (cause) { setError(errorText(cause)); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+  const sudoActive = {
+    extend: (ids) => sudoAct(() => actions.extendSudo({ ids, duration: duration.trim(), node: descriptor.node })),
+    revoke: (ids) => sudoAct(() => actions.revokeSudo({ ids, node: descriptor.node })),
+    revokeAll: () => sudoAct(() => actions.revokeSudo({ agentID: descriptor.agentID, node: descriptor.node })),
+  };
   const setEffect = (slug, effect) => setSelection((current) => ({ ...current, [slug]: effect }));
   const setScope = (slug, scope) => setScopes((current) => {
     const next = { ...current };
@@ -809,8 +927,36 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     pendingScopeRef.current = { slug, dims: {} };
     return { ...current, [slug]: merged };
   };
+  const submitSudo = async () => {
+    if (busyRef.current || !sudoReady) return;
+    busyRef.current = true;
+    setBusy(true); setError('');
+    const effectiveScopes = flushScopeDrafts(scopes);
+    if (effectiveScopes !== scopes) { setScopes(effectiveScopes); setDraftEpoch((epoch) => epoch + 1); }
+    const slugs = sudoPicked.map((row) => row.slug);
+    const scoped = Object.fromEntries(slugs.filter((slug) => Object.keys(effectiveScopes[slug] || {}).length)
+      .map((slug) => [slug, effectiveScopes[slug]]));
+    const uses = Object.fromEntries(sudoPicked.filter((row) => !noLimitWhy(row, effectiveScopes[row.slug] || {}) && usesFor(row.slug))
+      .map((row) => [row.slug, Number(usesFor(row.slug))]));
+    try {
+      await actions.grantSudo({
+        agentID: descriptor.agentID, slugs, duration: duration.trim(), reason: reason.trim(), scopes: scoped,
+        ...(Object.keys(uses).length ? { uses } : {}),
+        ...(stewardAccess ? { carry: slugs.filter(carriedNow) } : {}), node: descriptor.node,
+      });
+      state.close();
+    } catch (cause) { setError(errorText(cause)); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
   const submit = async () => {
+    if (sudoMode) { await submitSudo(); return; }
     if (busyRef.current) return;
+    // A live save replaces the stored list with the rows shown, and the rows
+    // come from the slug catalogue: without it, saving would clear them all.
+    if (descriptor.mode !== 'buffer' && !rows.length) {
+      setError('This node sent no permission catalogue, so there is nothing to save against.');
+      return;
+    }
     const unreadableGroupGrants = groupMode
       ? [...unreadable].filter((slug) => currentEffect(slug) === 'grant') : [];
     if (unreadableGroupGrants.length) {
@@ -882,37 +1028,61 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     // absent field as "unchanged", and sending the box's current value would
     // clear a stored narrowing this build could not decode into it.
     const ownerScopePayload = groupMode && ownerScopesDirty ? ownerScopes : null;
-    try { await actions.savePermissions(descriptor, full, scoped, ownerScopePayload); state.close(); }
+    const carry = Object.fromEntries(Object.entries(carryChoices).filter(([slug]) => currentEffect(slug) !== 'default'));
+    try {
+      await (Object.keys(carry).length
+        ? actions.savePermissions(descriptor, full, scoped, ownerScopePayload, carry)
+        : actions.savePermissions(descriptor, full, scoped, ownerScopePayload));
+      state.close();
+    }
     catch (cause) { setError(errorText(cause)); }
     finally { busyRef.current = false; setBusy(false); }
   };
   const shortConv = String(descriptor.conv || '').slice(0, 8);
-  const subtitle = groupMode ? `Group: ${descriptor.group} · every current member receives these grants immediately`
+  const futureStewards = !!descriptor.stewardLevels;
+  const subtitle = futureStewards ? 'Future Stewards · shows what a new Steward would hold; running Stewards keep what they have'
+    : sudoMode ? `Agent: ${descriptor.label} · ${shortAgentId(descriptor.agentID)}`
+    : groupMode ? `Group: ${descriptor.group} · every current member receives these grants immediately`
     : descriptor.mode === 'agent' ? `Agent: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Role${descriptor.label ? `: ${descriptor.label}` : ''} · granted when the role is assigned`
     : `New agent${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · fully composed from defaults, group, roles, ownership, and overrides`;
-  const wizardSubtitle = groupMode ? `Party: ${descriptor.group} · every familiar receives these boons immediately`
-    : descriptor.mode === 'agent' ? `Familiar: ${descriptor.label || shortConv} · ${shortConv}`
+  const wizardSubtitle = futureStewards ? subtitle
+    : sudoMode ? `Hero: ${descriptor.label} · ${shortAgentId(descriptor.agentID)}`
+    : groupMode ? `Party: ${descriptor.group} · every hero receives these boons immediately`
+    : descriptor.mode === 'agent' ? `Hero: ${descriptor.label || shortConv} · ${shortConv}`
     : roleMode ? `Class${descriptor.label ? `: ${descriptor.label}` : ''} · bestowed when the class is assigned`
-    : `New familiar${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · bestowed when summoned`;
-  return html`<${Overlay} id="perm-edit-modal" dialogClass="perm-edit-modal" labelledby="perm-edit-title"
+    : `New hero${descriptor.label ? ` “${descriptor.label}”` : ''}${descriptor.group ? ` → ${descriptor.group}` : ''} · bestowed when summoned`;
+  return html`<${Dialog} id="perm-edit-modal" dialogClass=${`perm-edit-modal${sudoMode ? ' sudo-edit-modal' : ''}`}
     onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}>
-    <h3 id="perm-edit-title"><span class="perm-edit-title-regular">${groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>
-      <span class="perm-edit-title-wizard">${groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span></h3>
-    <div class="perm-edit-banner" id="perm-edit-banner">${groupMode
-      ? html`<${Words} plain=${html`<strong>GROUP GRANTS</strong> — selected permissions apply immediately to every current member. An agent-level <strong>Deny</strong> still wins.`}
-          wizard=${html`<strong>PARTY BOONS</strong> — bestow capabilities on every familiar in this party. A personal binding against one still wins.`}/>`
+    guard=${{ requestClose, registerClose }} title=${html`<span class="perm-edit-title-regular">${futureStewards ? 'Permissions for future Stewards' : sudoMode ? 'Grant sudo' : groupMode ? 'Edit group permissions' : roleMode ? 'Edit role permissions' : 'Edit permanent permissions'}</span>
+      <span class="perm-edit-title-wizard">${futureStewards ? '📕 The Stewards’ Grimoire' : sudoMode ? '⏳ Bounded Boon' : groupMode ? '✨ Party Boons' : roleMode ? '📕 Class Boons' : '📕 The Grimoire'}</span>`}>
+    <div class="perm-edit-banner" id="perm-edit-banner">${futureStewards
+      ? html`<strong>STORED</strong> — given to each new Steward. <strong>Grant</strong> adds a slug, <strong>Deny</strong> takes one away even if Reads or Writes give it, and <strong>Default</strong> leaves it to them.`
+      : sudoMode
+      ? html`<${Words} plain=${html`<strong>TEMPORARY</strong> — picked permissions apply straight away and end by themselves when the time runs out. Sudo wins over an explicit Deny.`}
+          wizard=${html`<strong>A BOUNDED BOON</strong> — these powers take hold at once and fade when the sands run out. A boon outranks any binding.`}/>`
+      : groupMode ? html`<${Words} plain=${html`<strong>GROUP GRANTS</strong> — selected permissions apply immediately to every current member. An agent-level <strong>Deny</strong> still wins.`}
+          wizard=${html`<strong>PARTY BOONS</strong> — bestow capabilities on every hero in this party. A personal binding against one still wins.`}/>`
       : roleMode ? html`<${Words} plain=${html`<strong>ROLE GRANTS</strong> — granted permissions are applied whenever this role is assigned. Narrow a grant with its scope controls, or leave it unscoped to apply everywhere.`}
-          wizard=${html`<strong>CLASS BOONS</strong> — these powers accompany every familiar assigned this class. Bind a boon with its scope controls, or leave it unbound to apply everywhere.`}/>`
+          wizard=${html`<strong>CLASS BOONS</strong> — these powers accompany every hero assigned this class. Bind a boon with its scope controls, or leave it unbound to apply everywhere.`}/>`
       : html`<${Words} plain=${html`<strong>PERMANENT</strong> — these per-agent overrides persist until changed. <strong>Grant</strong> adds a slug, <strong>Deny</strong> blocks inherited sources, and <strong>Default</strong> inherits them.`}
-          wizard=${html`<strong>THE GRIMOIRE</strong> — these bindings follow this familiar until changed. <strong>Grant</strong> bestows a slug, <strong>Deny</strong> seals inherited boons away, and <strong>Default</strong> inherits them.`}/>`}</div>
+          wizard=${html`<strong>THE GRIMOIRE</strong> — these bindings follow this hero until changed. <strong>Grant</strong> bestows a slug, <strong>Deny</strong> seals inherited boons away, and <strong>Default</strong> inherits them.`}/>`}</div>
     <p class="perm-edit-subtitle" id="perm-edit-subtitle"><${Words} plain=${subtitle} wizard=${wizardSubtitle}/></p>
+    ${stewardAccess && html`<p class="perm-steward-note" id="perm-steward-note">Each grant is for <b>this Steward only</b>, which stays with this agent and reaches no other, or for <b>all future Stewards</b>, which is stored and given to each new Steward${sudoMode ? ' with the same expiry' : ''}. Reads and Writes are set in Config.</p>`}
     ${rows.some((row) => row.ownedGroups?.length) && html`<div class="perm-edit-owner-note" id="perm-edit-owner-note">👑 Owner-implied permissions are shown with their owned-group source; an explicit Deny remains the final veto.</div>`}
-    <div class="perm-edit-toolbar"><input id="perm-edit-filter" type="text" value=${filter} placeholder="Filter slugs…" autocomplete="off" spellcheck="false"
-      onInput=${(event) => setFilter(event.currentTarget.value)} /><button type="button" id="perm-edit-reset" title="Set every slug back to Default (inherit)"
-      onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, 'default'])))}><span class="pe-btn-regular">${groupMode || grantOnly ? 'none granted' : 'all default'}</span><span class="pe-btn-wizard">unbind all</span></button></div>
-    <div id="perm-edit-list" class="perm-edit-list">${visible.length ? visible.map((row) => {
+    <div class="perm-edit-toolbar"><${PermissionFilter} value=${filter} onChange=${setFilter} /></div>
+    <${PermissionFacets} value=${facets} onChange=${setFacets} shown=${matching.length} total=${rows.length} />
+    <div id="perm-edit-list" class="perm-edit-list">${activeSudo.length > 0 && html`<${SudoActive} grants=${activeSudo}
+      duration=${duration.trim()} maxSeconds=${policy.max_seconds} busy=${busy} act=${sudoActive} steward=${!!stewardAccess} />`}
+    ${visible.length ? visible.map((row, index) => {
+    const refusedWhy = sudoMode ? policy.refused?.[row.slug] : '';
+    const sudoHeld = sudoMode ? activeSudo.find((grant) => grant.slug === row.slug) : null;
+    const fromConfig = !!stewardAccess?.config.has(row.slug);
+    const picked = currentEffect(row.slug) !== 'default';
+    // A level slug's grant is what every Steward is born with, so there is
+    // nothing to choose until it is denied.
+    const fromLevels = fromConfig && currentEffect(row.slug) === 'grant';
+    const canCarry = !!stewardAccess && picked && !fromLevels;
     // The scope controls appear only where they can mean something: a slug
     // that declares dimensions, granted, in an editor whose save path can
     // persist a scope. Everywhere else the row renders exactly as before.
@@ -922,33 +1092,67 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
     const unreadableScope = unreadable.has(row.slug) && currentEffect(row.slug) === 'grant';
     const scopable = !unreadableScope && scopesEditable && !!row.scope_dims?.length
       && currentEffect(row.slug) === 'grant';
-    const effText = groupMode
+    // A scoped sudo takes the place of a held slug's own, group and default
+    // access here. Ownership, membership and groups.admin are consulted after
+    // it, and a peer-scoped grant never speaks to a local action at all.
+    const heldNote = !(sudoMode && picked && row.granted && Object.keys(scopeOf(row.slug)).length) ? ''
+      : scopeOf(row.slug).peer?.length ? 'This scope only covers work on that peer. What it holds here does not change.'
+        : 'It already holds this. Until this grant ends, this scope replaces its own, group and default access. Ownership, membership and groups.admin still apply.';
+    // A row left at Default that an umbrella covers says so, with the
+    // umbrella's reach in counts: a resources.read scoped to 41 resources is
+    // one line here, not 41 names.
+    const cover = umbrellaCover(row, rowsBySlug, currentEffect, scopeOf);
+    const coverReach = !cover ? '' : cover.sources.length ? ` (${cover.sources.join(' + ')})`
+      : scopeCountText(cover.scope) ? `, scoped to ${scopeCountText(cover.scope)}` : ', unscoped';
+    const stewardSource = stewardAccess && (fromConfig ? 'Reads and Writes'
+      : stewardAccess.carried[row.slug] !== undefined ? 'all future Stewards' : 'this Steward only');
+    const effText = sudoMode
+      ? (row.granted ? `already held: ${stewardSource || row.sources.join(' + ')}` : 'not held now')
+      : stewardAccess && picked ? (fromLevels ? 'Reads and Writes' : carriedNow(row.slug) ? 'all future Stewards' : 'this Steward only')
+      : groupMode
       ? html`<${Words} plain=${row.granted ? '✓ via group' : '— not via group'} wizard=${row.granted ? '✨ boon active' : '— no boon'}/>`
       : currentEffect(row.slug) === 'deny' ? '✗ denied (explicit veto)'
-        : row.granted ? `✓ ${row.sources.join(' + ')}` : '✗ denied (no source)';
-    return html`<${Fragment} key=${row.slug}><div class="perm-row" data-slug=${row.slug}>
+        : row.granted ? `✓ ${row.sources.join(' + ')}`
+          // The umbrella is a source here as at the gate: a row it covers is
+          // not "denied (no source)", only as narrow as the umbrella's scope.
+          : cover ? `✓ via ${cover.slug}${cover.scope && scopeCountText(cover.scope) ? ' (scoped)' : ''}` : '✗ denied (no source)';
+    const effGranted = rowHeld(row, cover);
+    return html`<${Fragment} key=${row.slug}>${sudoMode && row.area !== visible[index - 1]?.area
+      ? html`<div class="perm-area-head">${row.area}</div>` : null}<div class=${`perm-row${row.risky ? ' risky' : ''}`} data-slug=${row.slug}>
       ${anyScopable && html`<${ScopeTwisty} scopable=${scopable} slug=${row.slug} open=${openScope === row.slug}
         toggle=${() => setOpenScope(openScope === row.slug ? '' : row.slug)} />`}
-      <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.owner_implied ? html` <span class="owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
-        <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span></div>
+      <div class="perm-row-info"><span class="perm-row-slug">${row.slug}${row.risky ? html` <span class="perm-risk-badge" title="Reaches the host or credentials, destroys work, or widens what an agent can hand itself">⚠ risky</span>` : null}${row.owner_implied ? html` <span class="ui-tag ui-tag-own owner-badge" title="Group ownership can confer this slug">👑 owner</span>` : null}</span>
+        <span class="perm-row-desc" title=${row.description || row.descr || ''}>${row.description || row.descr || ''}</span>
+        ${refusedWhy ? html`<span class="perm-row-desc perm-refused-why">${refusedWhy}</span>` : null}
+        ${heldNote ? html`<span class="perm-row-desc perm-narrows-held">${heldNote}</span>` : null}
+        ${cover ? html`<span class="perm-row-desc perm-row-covered">covered by <b>${cover.slug}</b>${coverReach}</span>` : null}</div>
       ${scopable && html`<${ScopeSummary} scope=${scopeOf(row.slug)} />`}
       ${unreadableScope && html`<span class="perm-scope-chips"><span class="perm-scope-chip unreadable"
         title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
-      <div class="perm-tristate"><button type="button" data-effect="default" class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}</button>
-        <button type="button" data-effect="grant" class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}</button>
-        ${!groupMode && !grantOnly && html`<button type="button" data-effect="deny" class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny</button>`}</div>
+      ${sudoMode && picked && (noLimitWhy(row) ? html`<span class="perm-uses none" title=${noLimitWhy(row)}>no limit</span>`
+    : html`<label class="perm-uses" title="Ends at whichever comes first, this or the time. Blank uses the bundle's limit, if any. A refused or failed attempt does not use one.">
+        max <input type="text" inputmode="numeric" aria-label=${`Maximum uses of ${row.slug}`} placeholder=${sudoBundleUses.trim() || '∞'} autocomplete="off" value=${sudoUses[row.slug] ?? ''}
+          onInput=${(event) => { const value = event.currentTarget.value; setSudoUses((current) => ({ ...current, [row.slug]: value })); }} /></label>`)}
+      ${canCarry && html`<${CarryChoice} slug=${row.slug} carried=${carriedNow(row.slug)}
+        onChange=${(carried) => setCarryChoices((current) => ({ ...current, [row.slug]: carried }))} />`}
+      ${refusedWhy ? html`<span class="perm-refused" title=${refusedWhy}>refused</span>`
+    : sudoHeld ? html`<span class="perm-sudo-held" title="Already elevated: extend it under Active now">🔓 active</span>`
+    : html`<div class="ui-seg perm-tristate"><${Button} size="sm" data-effect="default" pressed=${currentEffect(row.slug) === 'default'} class=${currentEffect(row.slug) === 'default' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'default')}>${sudoMode ? 'Off' : groupMode ? html`<${Words} plain="Not granted" wizard="Unbound"/>` : 'Default'}<//>
+        <${Button} size="sm" data-effect="grant" pressed=${currentEffect(row.slug) === 'grant'} class=${currentEffect(row.slug) === 'grant' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'grant')}>${sudoMode ? 'Sudo' : groupMode ? html`<${Words} plain="Grant" wizard="Bestow"/>` : 'Grant'}<//>
+        ${!groupMode && !grantOnly && !sudoMode && html`<${Button} size="sm" data-effect="deny" pressed=${currentEffect(row.slug) === 'deny'} class=${currentEffect(row.slug) === 'deny' ? 'active' : ''} onClick=${() => setEffect(row.slug, 'deny')}>Deny<//>`}</div>`}
       ${scopable
     // The column is kept but emptied rather than removed: dropping it would
     // let a scopable row's tristate buttons sit further right than its
     // neighbours', and a column of buttons that steps sideways row by row
     // reads as a rendering bug. The text itself lives in the drawer.
     ? html`<span class="perm-row-eff empty" aria-hidden="true"></span>`
-    : html`<span class=${`perm-row-eff ${row.granted ? 'granted' : 'denied'}`}>${effText}</span>`}
+    : html`<span class=${`perm-row-eff ${effGranted ? 'granted' : 'denied'}`}>${effText}</span>`}
     </div>
     ${scopable && openScope === row.slug && html`<${ScopeDrawer} key=${`${row.slug}:${draftEpoch}`}
       row=${row} scope=${scopeOf(row.slug)}
       snapshot=${snapshot} onChange=${(scope) => setScope(row.slug, scope)}
       onDraft=${(dim, value) => noteScopeDraft(row.slug, dim, value)}
+      loadValues=${actions.loadScopeValues ? (dim) => actions.loadScopeValues(descriptor, dim) : null}
       effective=${{ granted: row.granted, text: effText }} />`}
     </${Fragment}>`;
   }) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>
@@ -960,11 +1164,17 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
         placeholder=${'{\n  "groups.members.spawn": { "spawn_profile": ["reviewer"] }\n}'}
         value=${ownerScopesText} onInput=${(event) => setOwnerScopesText(event.currentTarget.value)}></textarea>
     </div>`}
-    <${ErrorLine} id="perm-edit-error" className="sudo-grant-error" value=${error}/><div class="modal-buttons">
-      <button id="perm-edit-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></button>
-      <button id="perm-edit-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</button>
+    ${sudoMode && html`<${SudoLimits} uses=${sudoBundleUses} setUses=${setSudoBundleUses} usesBad=${!usesValid(sudoBundleUses.trim())} uncounted=${sudoBundleUses.trim() ? sudoUncounted : 0} duration=${duration} setDuration=${chooseDuration} reason=${reason} setReason=${setReason}
+      maxSeconds=${policy.max_seconds} submit=${submit} />`}
+    <${ErrorLine} id="perm-edit-error" className="sudo-grant-error ui-error" value=${error}/><div class="modal-buttons">
+      ${sudoMode && html`<span class="sudo-picked" id="sudo-picked">${usesBad ? 'A use limit is a whole number from 1 to 1000' : sudoPicked.length ? `${sudoPicked.length} picked${sudoRisky ? ` · ${sudoRisky} risky` : ''}` : 'Pick at least one permission'}</span>`}
+      <${Button} id="perm-edit-reset" disabled=${busy || !resettable}
+        title=${`Set every slug back to Default (${sudoMode ? 'not picked' : 'inherit'}), including any the filter hides`}
+        onClick=${() => setSelection(Object.fromEntries(rows.map((row) => [row.slug, stewardAccess?.config.has(row.slug) ? currentEffect(row.slug) : 'default'])))}><span class="pe-btn-regular">${sudoMode ? 'Clear selections' : groupMode || grantOnly ? 'Clear all grants' : 'Reset all to Default'}</span><span class="pe-btn-wizard">unbind all</span></${Button}>
+      <${Button} id="perm-edit-cancel" disabled=${busy} onClick=${() => { void requestClose(); }}><span class="pe-btn-regular">Cancel</span><span class="pe-btn-wizard">Dispel</span></${Button}>
+      <${Button} variant="primary" id="perm-edit-submit" disabled=${busy || (sudoMode && !sudoReady)} onClick=${submit}>${busy ? 'Saving…' : sudoMode ? sudoLabel : 'Save'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ContextFeaturesDialog edits which parts of Claude Code's startup context an
@@ -1001,44 +1211,42 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
     descriptor.onSave?.({ ...selection });
     state.close();
   };
-  return html`<${Overlay} id="context-features-modal" dialogClass="perm-edit-modal context-features-modal"
-    labelledby="context-features-title" onClose=${state.close} dirty=${dirty} confirmDiscard=${confirmDiscard}
-    registerClose=${registerClose}>
-    <h3 id="context-features-title"><span class="perm-edit-title-regular">Startup context</span>
-      <span class="perm-edit-title-wizard">🧹 Trim the Tome</span></h3>
+  return html`<${Dialog} id="context-features-modal" dialogClass="perm-edit-modal context-features-modal" onClose=${state.close} dirty=${dirty} confirmDiscard=${confirmDiscard}
+    guard=${{ requestClose, registerClose }} title=${html`<span class="perm-edit-title-regular">Startup context</span>
+      <span class="perm-edit-title-wizard">🧹 Trim the Tome</span>`}>
     <div class="perm-edit-banner" id="context-features-banner"><${Words}
       plain=${html`<strong>FOCUS</strong> — every capability the harness advertises is context the agent reads past before it reaches your brief. <strong>Trim</strong> what this agent will not use; <strong>Keep</strong> overrides a profile that trimmed it; <strong>Default</strong> leaves the harness alone.`}
-      wizard=${html`<strong>FOCUS</strong> — every spell in the tome is a page the familiar must turn before it finds your task. <strong>Tear out</strong> what it will not cast; <strong>Keep</strong> restores a page a profile removed; <strong>Default</strong> leaves the tome untouched.`}/></div>
+      wizard=${html`<strong>FOCUS</strong> — every spell in the tome is a page the hero must turn before it finds your task. <strong>Tear out</strong> what it will not cast; <strong>Keep</strong> restores a page a profile removed; <strong>Default</strong> leaves the tome untouched.`}/></div>
     <p class="perm-edit-subtitle" id="context-features-subtitle">${
       descriptor.label ? `New agent “${descriptor.label}”` : 'New agent'} · applied at launch${
       trimmed || kept ? ` · ${[trimmed ? `${trimmed} trimmed` : '', kept ? `${kept} kept` : ''].filter(Boolean).join(' · ')}` : ''}</p>
     <div class="perm-edit-toolbar">
       <input id="context-features-filter" type="text" value=${filter} placeholder="Filter features…"
         autocomplete="off" spellcheck="false" onInput=${(event) => setFilter(event.currentTarget.value)} />
-      <button type="button" id="context-features-lean" title="Trim every feature flagged as a large startup-context win, and leave the rest alone"
+      <${Button} id="context-features-lean" title="Trim every feature flagged as a large startup-context win, and leave the rest alone"
         onClick=${() => setSelection((current) => {
     const draft = { ...current };
     for (const row of catalog) if (row.heavy) draft[row.slug] = 'off';
     return draft;
-  })}>lean</button>
-      <button type="button" id="context-features-reset" title="Set every feature back to Default (leave the harness alone)"
-        onClick=${() => setSelection({})}>all default</button>
+  })}>lean<//>
+      <${Button} id="context-features-reset" title="Set every feature back to Default (leave the harness alone)"
+        onClick=${() => setSelection({})}>all default<//>
     </div>
     <div id="context-features-list" class="perm-edit-list">${visible.length ? visible.map((row) => html`
       <div class="perm-row" key=${row.slug} data-slug=${row.slug}>
         <div class="perm-row-info">
           <span class="perm-row-slug">${row.label || row.slug}${row.heavy
-    ? html` <span class="owner-badge" title="One of the largest startup-context wins">★ heavy</span>` : null}</span>
+    ? html` <span class="ui-tag ui-tag-own owner-badge" title="One of the largest startup-context wins">★ heavy</span>` : null}</span>
           <span class="perm-row-desc" title=${row.descr || ''}>${row.descr || ''}</span>
           ${row.caution ? html`<span class="perm-row-desc context-features-caution" title=${row.caution}>⚠ ${row.caution}</span>` : null}
         </div>
-        <div class="perm-tristate">
-          <button type="button" data-state="default" class=${currentState(row.slug) === 'default' ? 'active' : ''}
-            onClick=${() => setState(row.slug, 'default')}>Default</button>
-          <button type="button" data-state="on" class=${currentState(row.slug) === 'on' ? 'active' : ''}
-            onClick=${() => setState(row.slug, 'on')}>Keep</button>
-          <button type="button" data-state="off" class=${currentState(row.slug) === 'off' ? 'active' : ''}
-            onClick=${() => setState(row.slug, 'off')}>Trim</button>
+        <div class="ui-seg perm-tristate">
+          <${Button} size="sm" data-state="default" pressed=${currentState(row.slug) === 'default'} class=${currentState(row.slug) === 'default' ? 'active' : ''}
+            onClick=${() => setState(row.slug, 'default')}>Default<//>
+          <${Button} size="sm" data-state="on" pressed=${currentState(row.slug) === 'on'} class=${currentState(row.slug) === 'on' ? 'active' : ''}
+            onClick=${() => setState(row.slug, 'on')}>Keep<//>
+          <${Button} size="sm" data-state="off" pressed=${currentState(row.slug) === 'off'} class=${currentState(row.slug) === 'off' ? 'active' : ''}
+            onClick=${() => setState(row.slug, 'off')}>Trim<//>
         </div>
         <span class=${`perm-row-eff ${currentState(row.slug) === 'off' ? 'denied' : 'granted'}`}>${
   currentState(row.slug) === 'off' ? '✂ trimmed'
@@ -1048,11 +1256,11 @@ function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
     ? 'No matching features.'
     : 'This harness has no steerable startup-context features.'}</div>`}</div>
     <div class="modal-buttons">
-      <button id="context-features-cancel" type="button" onClick=${() => { void requestClose(); }}>Cancel</button>
+      <${Button} id="context-features-cancel" onClick=${() => { void requestClose(); }}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="context-features-submit" class="primary" type="button" onClick=${submit}>Save</button>
+      <${Button} variant="primary" id="context-features-submit" onClick=${submit}>Save</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export function MessageAccessDialogApp({ state, actions, snapshot: pageSnapshot, confirmDiscard }) {
@@ -1065,11 +1273,12 @@ export function MessageAccessDialogApp({ state, actions, snapshot: pageSnapshot,
   if (descriptor?.kind === 'operator-message') parent = html`<${OperatorMessageDialog} key=${`operator:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'message') parent = html`<${MessageDialog} key=${`message:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'human-reply') parent = html`<${HumanReplyDialog} key=${`reply:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
-  else if (descriptor?.kind === 'sudo-grant') parent = html`<${SudoGrantDialog} key=${`sudo:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'permissions') parent = html`<${PermissionsDialog} key=${`permissions:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'context-features') parent = html`<${ContextFeaturesDialog} key=${`context-features:${descriptor.launchID}`} descriptor=${descriptor} state=${state} confirmDiscard=${confirmDiscard}/>`;
-  return html`<${Fragment}>${parent}${current.picker && html`<${AgentPicker} key=${`picker:${current.picker.launchID}`}
-    descriptor=${current.picker} state=${state} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`}<${TransferTray} /></${Fragment}>`;
+  else if (descriptor?.kind === 'relaunch-policy') parent = html`<${RelaunchPolicyDialog} key=${`relaunch-policy:${descriptor.launchID}`} descriptor=${descriptor} state=${state} confirmDiscard=${confirmDiscard}/>`;
+  return html`<${Fragment}>${parent}${current.picker && html`<${AgentPickerDialog} key=${`picker:${current.picker.launchID}`}
+    descriptor=${current.picker} snapshot=${snapshot} sudo=${current.picker.showSudo ? sudoByAgent(snapshot) : null}
+    onChoose=${(key) => state.finishPicker(key)} onClose=${() => state.finishPicker('')} confirmDiscard=${confirmDiscard}/>`}<${TransferTray} /></${Fragment}>`;
 }
 
 export function mountMessageAccessDialogIsland({
@@ -1080,11 +1289,12 @@ export function mountMessageAccessDialogIsland({
     openOperatorMessage: state.openOperatorMessage,
     dialogKind: state.dialogKind,
     openHumanReply: state.openHumanReply,
-    openSudoGrant: state.openSudoGrant,
+    openSudoEditor: state.openSudoEditor,
     openAgentPermissions: state.openAgentPermissions,
     openGroupPermissions: state.openGroupPermissions,
     openBufferedPermissions: state.openBufferedPermissions,
     openContextFeatures: state.openContextFeatures,
+    openRelaunchPolicy: state.openRelaunchPolicy,
     pickAgent: state.pickAgent,
   };
   let unregister = null;

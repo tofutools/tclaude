@@ -25,11 +25,11 @@ export function createConfigState({ activeTab = dashboardState.activeTab } = {})
     dirty.value = true;
     if (panel && !dirtyPanels.value.includes(panel)) dirtyPanels.value = [...dirtyPanels.value, panel];
   }
-  function confirmDiff(beforeRaw, afterRaw, malformed, path) {
+  function confirmDiff(beforeRaw, afterRaw, malformed, path, secrets = []) {
     cancelDiff(false);
     return new Promise(resolve => {
       settleDiff = resolve;
-      diff.value = { beforeRaw, afterRaw, malformed, path };
+      diff.value = { beforeRaw, afterRaw, malformed, path, secrets };
     });
   }
   function cancelDiff(result = false) {

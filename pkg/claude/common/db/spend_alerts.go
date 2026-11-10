@@ -74,6 +74,10 @@ func ImportLegacySpendLimit(l *UsageLimit, periodName, periodStart, periodKey st
 		}
 		thresholds = append(thresholds, t)
 	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
 	if err := rows.Close(); err != nil {
 		return err
 	}

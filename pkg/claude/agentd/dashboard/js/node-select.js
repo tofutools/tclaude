@@ -6,6 +6,8 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -58,18 +60,14 @@ export function NodeSelect({
   // A pick the caller ignores (All while already all) still re-renders, so
   // the boxes show the value again rather than the browser's toggle.
   const [, repaint] = useState(0);
+  useDismissablePopover(root, open, (why) => {
+    setOpen(false);
+    if (why !== 'outside') root.current?.querySelector('.node-select-button')?.focus();
+  });
   useEffect(() => {
-    if (!open) return undefined;
-    const close = (event) => { if (!root.current?.contains(event.target)) setOpen(false); };
-    const key = (event) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } };
-    globalThis.document?.addEventListener('pointerdown', close, true);
-    globalThis.document?.addEventListener('keydown', key, true);
-    return () => {
-      globalThis.document?.removeEventListener('pointerdown', close, true);
-      globalThis.document?.removeEventListener('keydown', key, true);
-    };
+    if (open) root.current?.querySelector('.node-pop-filter input')?.focus();
+    else setQuery('');
   }, [open]);
-  useEffect(() => { if (!open) setQuery(''); }, [open]);
   const picked = new Set(pickedNodes(nodes, value, { multiple }).map((n) => n.id));
   const all = multiple ? !value?.length : !value;
   const q = query.trim().toLowerCase();
@@ -89,27 +87,27 @@ export function NodeSelect({
         ? html`<input type="checkbox" checked=${on} disabled=${!!why} aria-label=${`Include ${n.name}`} onChange=${pick} />`
         : html`<input type="radio" name=${id ? `${id}-pick` : undefined} checked=${on} disabled=${!!why} aria-label=${`Show ${n.name}`} onChange=${pick} />`}
       <span class="node-pop-swatch" aria-hidden="true"></span>
-      <button type="button" class="node-pop-name" disabled=${!!why} onClick=${pick}>${nodeName(n)}</button>
-      ${multiple && !why && html`<button type="button" class="node-pop-only" tabindex="-1" title=${`Show only ${n.name}`} onClick=${() => choose([n.id])}>only</button>`}
-      <span class="node-pop-meta">${count ? html`<span class="mailbox-unread">${count > 99 ? '99+' : count}</span>` : null}${status && html`<span class="node-select-note">${status}</span>`}${!status && offline ? 'offline' : ''}</span>
+      <button data-ui-exempt type="button" class="node-pop-name" disabled=${!!why} onClick=${pick}>${nodeName(n)}</button>
+      ${multiple && !why && html`<${Button} size="sm" variant="link" class="node-pop-only" tabindex="-1" title=${`Show only ${n.name}`} onClick=${() => choose([n.id])}>only<//>`}
+      <span class="node-pop-meta">${count ? html`<span class="mailbox-unread ui-badge ui-badge-accent">${count > 99 ? '99+' : count}</span>` : null}${status && html`<span class="node-select-note">${status}</span>`}${!status && offline ? 'offline' : ''}</span>
     </div>`;
   };
   return html`<div class="node-select" ref=${root} id=${id} data-node-select=${multiple ? 'multiple' : 'single'}>
-    <button type="button" class=${`node-select-button${all ? '' : ' narrowed'}`} aria-haspopup="true" aria-expanded=${open ? 'true' : 'false'}
+    <button data-ui-exempt type="button" class=${`node-select-button${all ? '' : ' narrowed'}`} aria-haspopup="true" aria-expanded=${open ? 'true' : 'false'}
       disabled=${disabled} title=${title || label} onClick=${() => setOpen(!open)}>
       <span class="node-select-label">${label}</span>
       <span class="node-select-value">${nodeSelectSummary(nodes, value, { multiple, allLabel })}</span>
-      ${total ? html`<span class="mailbox-unread">${total > 99 ? '99+' : total}</span>` : null}
+      ${total ? html`<span class="mailbox-unread ui-badge ui-badge-accent">${total > 99 ? '99+' : total}</span>` : null}
       <span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
-    ${open && html`<div class="node-select-menu" role="group" aria-label=${menuLabel || label}>
+    ${open && html`<div class="node-select-menu ui-popover" role="group" aria-label=${menuLabel || label}>
       ${nodes.length >= NODE_SELECT_FILTER_AT && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter"
         aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
       ${(multiple || allowAll) && html`<div class=${`node-pop-row node-select-row node-select-all${all ? ' sel' : ''}`} data-node-option="">
         ${multiple
           ? html`<input type="checkbox" checked=${all} aria-label=${allLabel} onChange=${() => choose([])} />`
           : html`<input type="radio" name=${id ? `${id}-pick` : undefined} checked=${all} aria-label=${allLabel} onChange=${() => choose('')} />`}
-        <button type="button" class="node-pop-name" onClick=${() => choose(multiple ? [] : '')}>${allLabel}</button>
+        <button data-ui-exempt type="button" class="node-pop-name" onClick=${() => choose(multiple ? [] : '')}>${allLabel}</button>
         <span class="node-pop-meta">${nodes.length}</span>
       </div>`}
       ${list.map(row)}

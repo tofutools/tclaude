@@ -205,6 +205,11 @@ func rebindFederationIdentityTx(tx *sql.Tx, old, next string, newKey, pinnedKey 
 	if _, err := tx.Exec(`INSERT INTO federation_peers(instance_id,pubkey,label,name,trusted_at,trust_level) SELECT ?,?,?,name,trusted_at,trust_level FROM federation_peers WHERE instance_id=?`, next, newKey, p.Label, old); err != nil {
 		return err
 	}
+	// The predecessor's agent view policy wins over a row left for the
+	// successor's id by an earlier trust, which would otherwise conflict.
+	if _, err := tx.Exec(`DELETE FROM federation_peer_agent_views WHERE peer=? AND EXISTS (SELECT 1 FROM federation_peer_agent_views WHERE peer=?)`, next, old); err != nil {
+		return err
+	}
 	for _, r := range FederationIdentityColumns {
 		if r.Rule != IdentityRebind || r.Column != "peer" {
 			continue
@@ -224,6 +229,10 @@ func rebindFederationIdentityTx(tx *sql.Tx, old, next string, newKey, pinnedKey 
 		if _, err := tx.Exec(q, next, old); err != nil {
 			return err
 		}
+	}
+	// The cron jobs the peer scheduled here stay its own.
+	if _, err := tx.Exec(`UPDATE agent_cron_jobs SET owner_peer=? WHERE owner_peer=?`, next, old); err != nil {
+		return err
 	}
 	// These tables read typed JSON as their source of truth, not the indexed
 	// peer column. Keep both representations in the same transaction.
@@ -328,7 +337,13 @@ func rebindIdentityScopesTx(tx *sql.Tx, old, next string) error {
 			return err
 		}
 		for _, e := range edits {
-			if _, err = tx.Exec(`UPDATE "`+r.Table+`" SET "`+r.Column+`"=? WHERE rowid=?`, e.raw, e.id); err != nil {
+			set := `"` + r.Column + `"=?`
+			if r.Table == "agent_permissions" {
+				// A rewritten scope is no longer what a spawn profile wrote at
+				// birth, so a profile re-apply must leave the row alone.
+				set += `, birth_source=''`
+			}
+			if _, err = tx.Exec(`UPDATE "`+r.Table+`" SET `+set+` WHERE rowid=?`, e.raw, e.id); err != nil {
 				return err
 			}
 		}
@@ -370,6 +385,7 @@ func closeIdentityCapabilitiesTx(tx *sql.Tx, old string, now time.Time) error {
 		{`UPDATE federation_enrollments SET retired=1 WHERE peer=?`, []any{old}},
 		// Sudo is temporary approval and is intentionally never inherited.
 		{`UPDATE agent_sudo_grants SET revoked_at=? WHERE revoked_at IS NULL AND scope_json<>'' AND EXISTS (SELECT 1 FROM json_each(scope_json,'$.peer') WHERE value=? OR value LIKE ?)`, []any{dbTime(now), old, old + "/%"}},
+		{`UPDATE steward_carried_sudo SET revoked_at=? WHERE revoked_at IS NULL AND scope_json<>'' AND EXISTS (SELECT 1 FROM json_each(scope_json,'$.peer') WHERE value=? OR value LIKE ?)`, []any{dbTime(now), old, old + "/%"}},
 	}
 	for _, q := range queries {
 		if _, err := tx.Exec(q.q, q.args...); err != nil {
@@ -403,6 +419,10 @@ func RevokeFederationIdentity(instance string, now time.Time) error {
 		return err
 	}
 	if _, err = tx.Exec(`DELETE FROM federation_peers WHERE instance_id=?`, instance); err != nil {
+		return err
+	}
+	// The cron jobs it scheduled here go with it, as on unlinking.
+	if err = deletePeerCronJobsTx(tx, instance); err != nil {
 		return err
 	}
 	return tx.Commit()

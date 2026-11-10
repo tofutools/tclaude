@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,10 +19,12 @@ import (
 
 var installClaudeHooksMu sync.Mutex
 
-const (
-	installClaudeHooksLockTimeout = 5 * time.Second
-	installClaudeHooksLockRetry   = 10 * time.Millisecond
-)
+// installClaudeHooksLockTimeout bounds the wait for another tclaude process's
+// settings.json edit; a variable so a test can hold the lock and observe the
+// refusal without waiting out the production bound.
+var installClaudeHooksLockTimeout = 5 * time.Second
+
+const installClaudeHooksLockRetry = 10 * time.Millisecond
 
 // isOurHook returns true if a hook command belongs to tclaude (any binary variant,
 // including absolute paths like /usr/local/bin/tclaude)
@@ -230,8 +233,14 @@ func CheckHooksInstalled() (installed bool, missing []string, needsRepair bool) 
 	return len(missing) == 0, missing, needsRepair
 }
 
-// InstallHooks adds tclaude hooks to Claude settings, replacing any existing tclaude hooks
-func InstallHooks() error {
+// withClaudeSettingsLock runs edit against ~/.claude/settings.json under the
+// serialization every tclaude writer of that file shares: an in-process mutex
+// plus an advisory flock on the resolved target, so a hook install and a
+// cleanupPeriodDays sync — in this process or another — cannot interleave
+// their read-modify-writes and drop each other's change. edit receives the
+// write target (a symlinked settings.json resolved to the file it points at);
+// it must read and write that path, and write it with atomicWriteClaudeSettings.
+func withClaudeSettingsLock(edit func(settingsTarget string) error) error {
 	installClaudeHooksMu.Lock()
 	defer installClaudeHooksMu.Unlock()
 
@@ -245,7 +254,7 @@ func InstallHooks() error {
 	}
 	settingsTarget, err := claudeSettingsWriteTarget(settingsPath)
 	if err != nil {
-		return fmt.Errorf("resolve Claude hook settings: %w", err)
+		return fmt.Errorf("resolve Claude settings: %w", err)
 	}
 	fileLock := flock.New(settingsTarget + ".tclaude.lock")
 	lockCtx, cancelLock := context.WithTimeout(
@@ -253,13 +262,21 @@ func InstallHooks() error {
 	defer cancelLock()
 	locked, err := fileLock.TryLockContext(lockCtx, installClaudeHooksLockRetry)
 	if err != nil {
-		return fmt.Errorf("lock Claude hook settings: %w", err)
+		return fmt.Errorf("lock Claude settings: %w", err)
 	}
 	if !locked {
-		return fmt.Errorf("lock Claude hook settings: timed out")
+		return fmt.Errorf("lock Claude settings: timed out")
 	}
 	defer func() { _ = fileLock.Unlock() }()
+	return edit(settingsTarget)
+}
 
+// InstallHooks adds tclaude hooks to Claude settings, replacing any existing tclaude hooks
+func InstallHooks() error {
+	return withClaudeSettingsLock(installHooksInto)
+}
+
+func installHooksInto(settingsTarget string) error {
 	var settings map[string]json.RawMessage
 	data, err := os.ReadFile(settingsTarget)
 	if err != nil {
@@ -396,7 +413,7 @@ func atomicWriteClaudeSettings(path string, data []byte) error {
 // EnsureHooksInstalled checks and optionally installs hooks, returning true if ready.
 // Stale hooks (wrong/duplicate binary) are always auto-repaired since the user already
 // opted into hook management. The autoInstall flag only controls first-time installation.
-func EnsureHooksInstalled(autoInstall bool, stdout, stderr *os.File) bool {
+func EnsureHooksInstalled(autoInstall bool, stdout, stderr io.Writer) bool {
 	installed, missing, needsRepair := CheckHooksInstalled()
 	if installed && !needsRepair {
 		return true

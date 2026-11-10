@@ -123,11 +123,11 @@ export async function powerOnScope(scope, groupName, node = '') {
   let metaLine = '';
   if (scope === 'group') {
     const g = (snap.groups || []).find(x => x.name === groupName);
-    offline = g ? (g.members || []).filter(m => !m.online).length : 0;
+    offline = g ? (g.members || []).filter(m => !m.online && !m.external_steward).length : 0;
     where = `group "${groupName}"`;
     metaLine = groupName;
   } else {
-    offline = (snap.agents || []).filter(a => !a.online).length;
+    offline = (snap.agents || []).filter(a => !a.online && !a.external_steward).length;
     where = 'the whole dashboard';
     metaLine = 'every group + ungrouped agents';
   }
@@ -207,7 +207,7 @@ function groupMembersByStatus(group, status) {
     if (!m.conv_id || seen.has(m.conv_id)) continue; // dedupe owner + member rows
     seen.add(m.conv_id);
     const matches = status === 'offline'
-      ? !m.online
+      ? !m.online && !m.external_steward
       : (m.online && m.state && m.state.status === status);
     if (matches) {
       out.push({
@@ -271,7 +271,7 @@ function retireCandidatesByStatus(rows, status = '') {
     if (!a.conv_id || seen.has(a.conv_id)) continue;
     seen.add(a.conv_id);
     const matches = !status || (status === 'offline'
-      ? !a.online
+      ? !a.online && !a.external_steward
       : (a.online && a.state && a.state.status === status));
     if (!matches) continue;
     out.push({
@@ -418,7 +418,7 @@ export function openWindowModal(scope, groupName) {
     const wizardWhere = scope === 'group' ? `party "${groupName}"` : 'the tower';
     toast(wizWord(
       `agent windows: no running agents in ${where}`,
-      `scrying portals: no channeling familiars in ${wizardWhere}`,
+      `scrying portals: no channeling heroes in ${wizardWhere}`,
     ));
     return null;
   }
@@ -532,7 +532,16 @@ export async function resumeAgentReq(conv, label, recreate, node = '', retried =
     clearPendingWake(conv);
     return false;
   }
-  toast(`wake ${label}: ${action || 'ok'}`);
+  // A relaunch that fell back to its stored sandbox policy says so as an
+  // error; its changed-since-last-launch echo rides the same toast. Other
+  // warnings are standing access notices repeated on every wake, so the
+  // toast leaves them to the CLI and the agent's detail.
+  const fallbacks = (out.warnings || []).filter((w) =>
+    w.includes('relaunched under the sandbox policy stored at its last launch'));
+  const notes = [...fallbacks.map((w) => `⚠ ${w}`),
+    ...(out.changes || []).map((c) => `changed: ${c}`)];
+  toast(`wake ${label}: ${action || 'ok'}${notes.length ? ` — ${notes.join('; ')}` : ''}`,
+    fallbacks.length > 0);
   announceNodeChanged(node);
   refresh();
   return true;

@@ -46,6 +46,15 @@ type ResolvedModelTransport struct {
 	AuxiliaryBaseURLs []string `json:"auxiliary_base_urls,omitempty"`
 	Provenance        []string `json:"provenance,omitempty"`
 	ProviderResolved  bool     `json:"provider_resolved"`
+	// UnresolvedReason says why a harness that may launch with an unknown
+	// route (OpenCode) could not resolve it, for the launch notice. It never
+	// gates anything.
+	UnresolvedReason string `json:"unresolved_reason,omitempty"`
+	// ClaudeLogin says whether a Claude Code launch signs in with a Claude
+	// subscription, whose token refresh needs a host besides the model
+	// endpoint. It only drives the launch warning (ClaudeLoginRefreshNotice);
+	// coverage never gates on it.
+	ClaudeLogin ClaudeLogin `json:"claude_login,omitempty"`
 }
 
 // ModelTransportResolver is deliberately separate from ModelCatalog. A model
@@ -305,6 +314,20 @@ func ValidateModelTransportCoverage(
 	rules sandboxpolicy.NetworkRules,
 	requirement ModelTransportRequirement,
 ) error {
+	return ValidateModelTransportCoverageWithNotices(h, rules, requirement, nil)
+}
+
+// ValidateModelTransportCoverageWithNotices is ValidateModelTransportCoverage
+// with the effective profile's access notices. When a partial_intersection
+// notice shows that some tier allowed a missing destination and the cross-tier
+// intersection dropped it, the error names those tiers. That changes only what
+// the refusal says: coverage is still decided against rules alone.
+func ValidateModelTransportCoverageWithNotices(
+	h *Harness,
+	rules sandboxpolicy.NetworkRules,
+	requirement ModelTransportRequirement,
+	notices []sandboxpolicy.AccessNotice,
+) error {
 	if rules.Mode == sandboxpolicy.AccessModeOpen {
 		var blocked []string
 		for _, required := range requirement.Destinations {
@@ -326,11 +349,17 @@ func ValidateModelTransportCoverage(
 		)
 	}
 	var missing []string
+	layered := false
 	for _, required := range requirement.Destinations {
 		if networkRulesCoverDestination(rules.Allow, required) {
 			continue
 		}
-		missing = append(missing, formatNetworkDestination(required))
+		name := formatNetworkDestination(required)
+		if why := explainIntersectionDrop(required, notices); why != "" {
+			name += " (" + why + ")"
+			layered = true
+		}
+		missing = append(missing, name)
 	}
 	if len(missing) == 0 {
 		return nil
@@ -339,10 +368,58 @@ func ValidateModelTransportCoverage(
 	if requirement.Template != "" {
 		templateRemedy = "include template " + requirement.Template
 	}
+	if layered {
+		templateRemedy = "allow it in every layer that has a network allow list (layers intersect, so one layer cannot add a destination another omits), " + templateRemedy
+	}
 	return modelTransportCapabilityError(h, fmt.Sprintf(
 		"filtered network has no hidden model-traffic bypass; required model destinations not covered: %s; remedies: %s, add the resolved endpoint, choose a resolvable provider, or use network open",
 		strings.Join(missing, ", "), templateRemedy,
 	))
+}
+
+// explainIntersectionDrop names the tiers that allowed required and the
+// tiers that did not, when a partial_intersection notice shows the
+// cross-tier intersection dropped it. It returns "" when no tier allowed it,
+// so a destination nobody listed keeps the plain error.
+func explainIntersectionDrop(
+	required sandboxpolicy.NetworkAllowEntry,
+	notices []sandboxpolicy.AccessNotice,
+) string {
+	for _, notice := range notices {
+		if notice.Axis != "network" ||
+			notice.Reason != sandboxpolicy.AccessNoticeReasonPartialIntersection {
+			continue
+		}
+		// A tier whose lost entries were cut short might have allowed
+		// required beyond the cap, so it is named on neither side.
+		allowedBy := map[string]bool{}
+		unknown := map[string]bool{}
+		var allowing []string
+		for _, layer := range notice.Layers {
+			switch {
+			case networkRulesCoverDestination(layer.NotKept, required):
+				allowedBy[layer.Tier] = true
+				allowing = append(allowing, layer.Tier)
+			case layer.More > 0:
+				unknown[layer.Tier] = true
+			}
+		}
+		if len(allowing) == 0 {
+			continue
+		}
+		var lacking []string
+		for _, tier := range notice.Tiers {
+			if !allowedBy[tier] && !unknown[tier] {
+				lacking = append(lacking, tier)
+			}
+		}
+		why := "allowed by " + strings.Join(allowing, " and ")
+		if len(lacking) > 0 {
+			why += " but not by " + strings.Join(lacking, " or ")
+		}
+		return why + "; network allow lists intersect across layers"
+	}
+	return ""
 }
 
 // DescribeModelTransportRequirement is the approved disclosure baseline. It

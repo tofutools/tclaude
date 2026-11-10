@@ -61,6 +61,10 @@ export function chooseTerminalAction(label, cwd) {
   return requireController().openTerminalChooser({ label, cwd });
 }
 
+export function openStewardHandoverDialog({ agent, label }) {
+  return requireController().openStewardHandover({ agent, label });
+}
+
 export function openLaunchTargetDialog({ mode, agent }) {
   return requireController().openLaunchTarget({ mode, agent });
 }

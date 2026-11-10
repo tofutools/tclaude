@@ -11,7 +11,6 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -30,8 +29,8 @@ import (
 
 func taskForceCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
-		Use:         "task-force",
-		Short:       "Deploy a task force against a mission",
+		Use:   "task-force",
+		Short: "Deploy a task force against a mission",
 		Long: "Deploy a whole agent team against a topic, problem or epic. `deploy` wraps a group template: it " +
 			"creates a fresh group, spawns the template's team, and folds the --mission into the group context " +
 			"every agent sees. The mission-framed twin of `templates instantiate`.",
@@ -48,7 +47,7 @@ func taskForceCmd() *cobra.Command {
 // ---- deploy ----
 
 type taskForceDeployParams struct {
-	Name         string `pos:"true" help:"Template to deploy (from 'tclaude agent templates ls'). Its roster becomes the task force."`
+	Name         string `pos:"true" name:"template" help:"Template to deploy (from 'tclaude agent templates ls'). Its roster becomes the task force."`
 	Mission      string `long:"mission" short:"m" optional:"true" help:"The topic / problem / epic to deploy against — free text or a Linear epic/issue link. Folded into the group context under '## Mission'. Use --mission-file for long or multi-line text."`
 	MissionFile  string `long:"mission-file" optional:"true" help:"Read the mission text from this file ('-' reads stdin). Sidesteps shell quoting; best for long, multi-line missions. Mutually exclusive with --mission."`
 	Group        string `long:"group" optional:"true" help:"Name for the new group (also the prefix for every spawned agent). Defaults to a name derived from the mission."`
@@ -60,7 +59,7 @@ type taskForceDeployParams struct {
 
 func taskForceDeployCmd() *cobra.Command {
 	return boa.CmdT[taskForceDeployParams]{
-		Use:   "deploy <template> --mission <text>",
+		Use:   "deploy --mission <text>",
 		Short: "Deploy a task force from a template against a mission",
 		Long: "Creates a fresh group and spawns one agent per template spec, framed as a task force deployed " +
 			"against --mission. The mission is folded into the group's shared context under '## Mission', so every " +
@@ -74,7 +73,7 @@ func taskForceDeployCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskForceDeployParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskForceDeploy(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTaskForceDeploy(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -133,7 +132,7 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 			}
 			worktreeRepo = wd
 		}
-		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, wt, p.WorktreeBase, 0)
+		prepared, wtErr := resolveSpawnWorktree(p.Group, worktreeRepo, "", wt, p.WorktreeBase, 0)
 		if wtErr != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", wtErr)
 			return MapDaemonErrorToRC(wtErr)
@@ -233,15 +232,15 @@ func runTaskForceDeploy(p *taskForceDeployParams, stdin io.Reader, stdout, stder
 // ---- stand-down ----
 
 type taskForceStandDownParams struct {
-	Name       string `pos:"true" help:"Group to stand down (a deployed task force, or any group)."`
-	NoShutdown bool   `long:"no-shutdown" help:"Leave each retired member's running session alive. By default stand-down also soft-exits the running tmux pane (sends /exit); pass this to keep the processes running."`
+	Name       string `pos:"true" name:"group" help:"Group to stand down (a deployed task force, or any group)."`
+	NoShutdown bool   `long:"no-shutdown" short:"-" help:"Leave each retired member's running session alive. By default stand-down also soft-exits the running tmux pane (sends /exit); pass this to keep the processes running."`
 	Reason     string `long:"reason" short:"r" optional:"true" help:"Why the force is being stood down (recorded in the audit trail)."`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func taskForceStandDownCmd() *cobra.Command {
 	return boa.CmdT[taskForceStandDownParams]{
-		Use:   "stand-down <group>",
+		Use:   "stand-down",
 		Short: "Wind a task force down: retire the roster + sweep its rhythms and pending waves",
 		Long: "The mirror of `deploy`. Retires every member of the group (the bulk parallel of `tclaude agent retire`) " +
 			"and sweeps the deploy-seeded runtime — the template rhythm cron jobs and any pending startup waves — while " +
@@ -257,7 +256,7 @@ func taskForceStandDownCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskForceStandDownParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTaskForceStandDown(p, os.Stdout, os.Stderr))
+			os.Exit(runTaskForceStandDown(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -270,13 +269,9 @@ func runTaskForceStandDown(p *taskForceStandDownParams, stdout, stderr io.Writer
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	// Spell shutdown out explicitly so the CLI default is independent of the
 	// server-side default (mirrors `groups retire`).
@@ -292,18 +287,12 @@ func runTaskForceStandDown(p *taskForceStandDownParams, stdout, stderr io.Writer
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/stand-down?" + q.Encode()
 
 	var resp struct {
-		Group   string `json:"group"`
-		Action  string `json:"action"`
-		Members []struct {
-			AgentID string `json:"agent_id,omitempty"`
-			ConvID  string `json:"conv_id"`
-			Title   string `json:"title,omitempty"`
-			Action  string `json:"action"`
-			Detail  string `json:"detail,omitempty"`
-		} `json:"members"`
-		RhythmsRemoved int      `json:"rhythms_removed"`
-		WavesCancelled int      `json:"waves_cancelled"`
-		Warnings       []string `json:"warnings,omitempty"`
+		Group          string              `json:"group"`
+		Action         string              `json:"action"`
+		Members        []groupMemberResult `json:"members"`
+		RhythmsRemoved int                 `json:"rhythms_removed"`
+		WavesCancelled int                 `json:"waves_cancelled"`
+		Warnings       []string            `json:"warnings,omitempty"`
 	}
 	opts := DaemonOpts{AskHuman: ask}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, opts); err != nil {
@@ -315,23 +304,8 @@ func runTaskForceStandDown(p *taskForceStandDownParams, stdout, stderr io.Writer
 	if len(resp.Members) == 0 {
 		fmt.Fprintf(stdout, "  (no members to retire)\n")
 	} else {
-		tbl := table.New(
-			table.Column{Header: "ID", Width: 12},
-			table.Column{Header: "NAME", MinWidth: 8, Weight: 0.6, Truncate: true},
-			table.Column{Header: "ACTION", MinWidth: 10, Weight: 0.6, Truncate: true},
-			table.Column{Header: "DETAIL", MinWidth: 10, Weight: 1.4, Truncate: true},
-		)
-		tbl.SetTerminalWidth(table.GetTerminalWidth())
-		for _, m := range resp.Members {
-			name := m.Title
-			if name == "" {
-				name = "(unnamed)"
-			}
-			tbl.AddRow(table.Row{Cells: []string{
-				shortAgentID(m.AgentID, m.ConvID), name, m.Action, m.Detail,
-			}})
-		}
-		fmt.Fprintln(stdout, tbl.Render())
+		rendered := renderMemberResults(resp.Members)
+		fmt.Fprintln(stdout, rendered)
 	}
 	fmt.Fprintf(stdout, "Swept: %d rhythm job%s removed, %d pending wave%s cancelled.\n",
 		resp.RhythmsRemoved, plural(resp.RhythmsRemoved),

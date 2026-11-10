@@ -88,6 +88,10 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
   assert.ok(leaf.querySelector(':scope > .gf-section-head [data-act="create-subgroup"]'), 'create subgroup heads the Subgroups line');
   leaf.querySelector('[data-act="create-subgroup"]').click();
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.subgroups.grandchild'), '1', 'create subgroup opens the section');
+  await paint(groups);
+  const opened = section('grandchild');
+  assert.ok(opened.querySelector(':scope > .gf-title-row [data-act="create-subgroup"]'), 'open, create subgroup heads the section on its title row');
+  assert.equal(opened.querySelector(':scope > .gf-section-head [data-act="create-subgroup"]'), null, 'and leaves the open line');
 
   const container = [
     { name: 'container', members: [], online: 0 },

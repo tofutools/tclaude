@@ -17,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -550,7 +551,7 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 			detail: "the history could not be installed for " + dst.Name + ": " + err.Error() + restoreSource()}
 	}
 	newConv := res.ConvID
-	if err := db.ApplyCrossHarnessMorph(convID, newConv, cm.conversation, cm.profile); err != nil {
+	if err := db.ApplyCrossHarnessMorph(convID, newConv, cm.conversation, cm.profile, cm.target, cm.previous, pending.Back); err != nil {
 		res.Cleanup()
 		return morphOutcome{status: http.StatusInternalServerError, code: "io",
 			detail: "the agent could not be rebound to its translated conversation: " + err.Error() + restoreSource()}
@@ -563,6 +564,7 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 	if err := db.SetConvIndexArchived(convID, true); err != nil {
 		slog.Debug("morph: archive source conversation", "conv", short8(convID), "error", err)
 	}
+	recordConvLosses(newConv, storedConvLosses(convID), res.Report)
 	out := morphOutcome{result: "morphed", status: http.StatusOK, convID: newConv, history: res.Report}
 	if live == nil {
 		out.detail = "the agent is offline; it resumes as " + dst.Name + " when it is next woken"
@@ -605,13 +607,21 @@ func (cm *crossMorph) trustDirectory(convID string) {
 // trustAgentDirectory pre-trusts cwd in h's own trust store through the
 // agent's launch environment, so a relocated store (COPILOT_HOME,
 // CLAUDE_CONFIG_DIR) is the one written.
+//
+// CLAUDE_CONFIG_DIR is launch-owned (a profile cannot author it), so it is
+// never in the sandbox snapshot, and the daemon's own environment does not
+// carry it either. It is applied here exactly as the resumed pane's launch
+// applies it (session.ApplyClaudeConfigDirEnv); without it the trust entry
+// would miss the <state root>/.claude.json the morphed pane reads.
 func trustAgentDirectory(h *harness.Harness, convID, cwd string) error {
-	var env map[string]string
+	env := map[string]string{}
 	if snapshot, err := db.AgentEffectiveSandboxConfigForConv(convID); err == nil && snapshot != nil {
-		env = map[string]string{}
 		for _, entry := range sandboxpolicy.EnvironmentForLaunch(snapshot) {
 			env[entry.Name] = entry.Value
 		}
+	}
+	if err := session.ApplyClaudeConfigDirEnv(h.Name, env); err != nil {
+		return err
 	}
 	getenv := func(name string) string {
 		if v, ok := env[name]; ok {

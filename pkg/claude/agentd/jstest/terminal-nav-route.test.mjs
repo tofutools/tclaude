@@ -26,9 +26,7 @@ async function setup(t, { openAgentPane, snapshot = null, tabActive = true } = {
   const harness = await createPreactHarness(t);
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const { bindTerminalNavRouting } = await harness.importDashboardModule('js/terminal-nav-route.js');
-  // persistPresentation off: tab-group prefs are irrelevant here and would
-  // leak state between tests through the shared prefs store.
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   const announced = [];
   const doc = harness.document;
   const onNavigated = (event) => announced.push(event.detail);
@@ -168,6 +166,22 @@ test('a dead deep link with other terminals open corrects to the live one', asyn
   assert.equal(announced[0].correction, true, 'a refused restore corrects, it does not push');
   assert.equal(announced[0].location.selection, OTHER, 'corrected to the pane we are actually on');
   assert.equal(left(), 0, 'the tab still has something to show');
+});
+
+test('a link to an agent held in a window corrects, so Back cannot bounce off it', async (t) => {
+  const { state, restore, announced, settle } = await setup(t, {
+    snapshot: rosterOf(AGENT, OTHER),
+    openAgentPane: async () => ({ key: `window:${AGENT}`, floating: true }),
+  });
+  state.openPane(seedFor(OTHER));
+  await settle();
+  announced.length = 0;
+
+  await restore({ tab: 'terminals', selection: AGENT });
+
+  assert.equal(announced.length, 1);
+  assert.equal(announced[0].correction, true, 'a push here would cut the forward history');
+  assert.equal(announced[0].location.selection, OTHER);
 });
 
 test('a dead cold deep link corrects the URL to the bare Terminals tab and stays', async (t) => {
@@ -356,6 +370,32 @@ test('unbinding stops both announcing and restoring', async (t) => {
 
   assert.deepEqual(announced, []);
   assert.deepEqual(opened, []);
+});
+
+test('a pane without an agent taking over stops the URL naming the tab it replaced', async (t) => {
+  const { state, announced, settle } = await setup(t);
+  state.openPane({ ws: '/api/group-term-ws/tclaude', key: 'groupterm:tclaude', label: 'tclaude' });
+  state.openPane({ drawingBoard: 'plan', key: 'drawing_board:plan', label: 'Plan' });
+  await settle();
+  announced.length = 0;
+
+  state.removePane('drawing_board:plan');
+  await settle();
+
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: true }]);
+});
+
+test('switching to a pane without an agent is a navigation to the bare tab', async (t) => {
+  const { state, announced, settle } = await setup(t);
+  state.openPane({ ws: '/api/group-term-ws/tclaude', key: 'groupterm:tclaude', label: 'tclaude' });
+  state.openPane({ drawingBoard: 'plan', key: 'drawing_board:plan', label: 'Plan' });
+  await settle();
+  announced.length = 0;
+
+  state.activatePane('groupterm:tclaude');
+  await settle();
+
+  assert.deepEqual(announced, [{ location: { tab: 'terminals' }, correction: false }]);
 });
 
 test('a pane without an agent is not addressable', async (t) => {

@@ -1,7 +1,11 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button } from './ui-components.js';
+import { Dialog, DialogClose } from './ui-dialog.js';
+import { requestJSON } from './request-json.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -11,8 +15,6 @@ export const PEER_MAIL_EVENT = 'tclaude:peer-mail';
 const PEER_GROUP = 'federation:';
 // A forwarded away request carries its one-shot ticket in this line.
 const TICKET_RE = /One-shot answer: tclaude federation answer ([0-9a-f]{32}\.[0-9a-f]{32}@[A-Za-z0-9_.-]{1,128}) --decision/;
-
-function errText(error) { return error?.message || String(error); }
 
 // Operator mail from a peer starts with the daemon's remote banner, which
 // names the sender, the peer's label and its instance. Other notices filed
@@ -52,15 +54,7 @@ export function replySubject(s) {
 // and away routes (the cookie mirrors of tclaude federation send / notify /
 // outbox / away / return / answer).
 export function createPeerMailActions({ fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
-  async function call(method, path, body) {
-    const init = { method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
-    const res = await fetchImpl(`/api/federation/${path}`, init);
-    let data = null;
-    try { data = await res.json(); } catch (_) { data = null; }
-    if (!res.ok) { const e = new Error(data?.error || `HTTP ${res.status}`); e.status = res.status; throw e; }
-    return data;
-  }
+  const call = (method, path, body) => requestJSON(`/api/federation/${path}`, { method, body, fetchImpl });
   return Object.freeze({
     peers: async () => ((await call('GET', 'status'))?.peers || []).filter((p) => p.trusted)
       .map((p) => ({ id: p.instance_id, label: p.label || p.name || p.instance_id, online: !!p.online })),
@@ -108,15 +102,24 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       .catch((e) => setError(errText(e)))
       .finally(() => setBusy(false));
   };
-  return html`<${Overlay} id="peer-mail-modal" labelledby="peer-mail-title" onClose=${onClose} blocked=${busy} initialFocusRef=${bodyRef}>
-    <h3 id="peer-mail-title">Message a peer</h3>
+  return html`<${Dialog} id="peer-mail-modal" title="Message a peer" onClose=${onClose} blocked=${busy} initialFocusRef=${bodyRef}
+    footer=${html`<${DialogClose} disabled=${busy}>Close<//>
+      <${Button} variant="primary" id="peer-mail-send" disabled=${busy || !ready} onClick=${send}>${busy ? 'Sending…' : 'Send'}</${Button}>`}
+    after=${html`<h4 class="peer-mail-h">Outbox <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh<//></h4>
+    ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="muted">Loading…</div>` : outbox.length === 0 ? html`<div class="muted">Nothing sent yet.</div>` : html`
+      <table class="fa-table ui-compact" id="peer-mail-outbox"><tbody>${outbox.slice(0, 10).map((o) => html`<tr key=${o.envelope_id}>
+        <td>${o.to}</td><td title=${o.preview || ''}>${o.subject || o.preview}</td>
+        <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}${o.attempts > 1 ? ` · ${o.attempts} tries` : ''}</td>
+        <td class="muted">${localStamp(o.updated_at, { empty: '' })}</td></tr>`)}</tbody></table>`}
+    <div class="muted fa-cli-note">CLI: <code>tclaude federation notify --peer … | send ${'<to>'}</code>, <code>tclaude federation outbox</code></div>`}>
     <div class="peer-mail-kind" role="radiogroup">
       <label><input type="radio" name="peer-mail-kind" value="operator" checked=${kind === 'operator'} onChange=${() => setKind('operator')} /> its operator</label>
       <label><input type="radio" name="peer-mail-kind" value="agents" checked=${kind === 'agents'} onChange=${() => setKind('agents')} /> agents on it</label>
     </div>
     ${kind === 'operator'
-      ? html`<label class="peer-mail-opt">Peer <select id="peer-mail-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
-          ${(peers || []).map((p) => html`<option key=${p.id} value=${p.id}>${p.label}${p.online ? '' : ' (offline: queued)'}</option>`)}</select></label>`
+      ? html`<label class="peer-mail-opt">Peer <${PeerCombobox} id="peer-mail-peer" value=${peer} ariaLabel="Peer"
+          items=${namedItems((peers || []).map((p) => ({ name: p.id, label: p.label, descr: p.online ? '' : 'offline: queued' })))}
+          onChange=${setPeer} /></label>`
       : html`<label class="peer-mail-opt">To <input id="peer-mail-to" value=${to} onInput=${(e) => setTo(e.currentTarget.value)} placeholder="agent@peer or group:<group>@peer" /></label>
         <label class="peer-mail-opt">Role <input id="peer-mail-role" value=${role} onInput=${(e) => setRole(e.currentTarget.value)} placeholder="only with group:…, e.g. reviewer" /></label>`}
     <label class="peer-mail-opt">Subject <input id="peer-mail-subject" value=${subject} onInput=${(e) => setSubject(e.currentTarget.value)} /></label>
@@ -125,18 +128,7 @@ export function PeerMailDialog({ initial = {}, onClose, toast, actions = default
       ? 'Lands in that operator\'s Messages, from you as this node\'s operator.'
       : 'Delivered as mail from you, this node\'s operator, if the peer lets you message that agent or group.'} It waits in the outbox while the peer is offline.</div>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
-    <div class="modal-buttons"><span class="spacer"></span>
-      <button type="button" onClick=${onClose}>Close</button>
-      <button id="peer-mail-send" type="button" class="primary" disabled=${busy || !ready} onClick=${send}>${busy ? 'Sending…' : 'Send'}</button>
-    </div>
-    <h4 class="peer-mail-h">Outbox <button type="button" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh</button></h4>
-    ${outbox?.error ? html`<div class="fa-danger">${outbox.error}</div>` : !outbox ? html`<div class="muted">Loading…</div>` : outbox.length === 0 ? html`<div class="muted">Nothing sent yet.</div>` : html`
-      <table class="fa-table" id="peer-mail-outbox"><tbody>${outbox.slice(0, 10).map((o) => html`<tr key=${o.envelope_id}>
-        <td>${o.to}</td><td title=${o.preview || ''}>${o.subject || o.preview}</td>
-        <td class=${o.last_error ? 'fa-danger' : ''} title=${o.last_error || ''}>${o.state}${o.attempts > 1 ? ` · ${o.attempts} tries` : ''}</td>
-        <td class="muted">${o.updated_at ? new Date(o.updated_at).toLocaleString() : ''}</td></tr>`)}</tbody></table>`}
-    <div class="muted fa-cli-note">CLI: <code>tclaude federation notify --peer … | send ${'<to>'}</code>, <code>tclaude federation outbox</code></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // PeerMailHost mounts the dialog when PEER_MAIL_EVENT fires.
@@ -165,8 +157,8 @@ export function AwayAnswer({ ticket, peerLabel, confirm, toast, actions = defaul
   }).then((r) => { if (r) toast?.(`Answer sent to ${peerLabel} (${r.state || 'queued'})`, false); })
     .catch((e) => toast?.(`Answer failed: ${errText(e)}`, true));
   return html`<span class="peer-away-answer">
-    <button type="button" class="access-btn deny" data-act="away-deny" onClick=${() => go('deny')}>Deny</button>
-    <button type="button" class="access-btn approve" data-act="away-approve" onClick=${() => go('approve')}>Approve once</button>
+    <${Button} size="sm" variant="danger" class="access-btn deny" data-act="away-deny" onClick=${() => go('deny')}>Deny<//>
+    <${Button} size="sm" variant="success" class="access-btn approve" data-act="away-approve" onClick=${() => go('approve')}>Approve once<//>
   </span>`;
 }
 
@@ -220,17 +212,17 @@ export function AwayControl({ confirm, toast, actions = defaultActions(), now = 
   if (away) {
     const until = away.until && !String(away.until).startsWith('0001-') ? new Date(away.until) : null;
     const short = until && (until.toDateString() === new Date(now()).toDateString() ? until.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : until.toLocaleDateString());
-    return html`<span id="fleet-away" title=${`${label(away.cover)}'s operator answers your agents' access requests${until ? ` until ${until.toLocaleString()}` : ''}`}><span class="fa-warn">away</span>: ${label(away.cover)}${short ? ` → ${short}` : ''} <button id="fleet-away-return" type="button" class="fa-link" onClick=${back}>return…</button></span>`;
+    return html`<span id="fleet-away" title=${`${label(away.cover)}'s operator answers your agents' access requests${until ? ` until ${until.toLocaleString()}` : ''}`}><span class="fa-warn">away</span>: ${label(away.cover)}${short ? ` → ${short}` : ''} <${Button} size="sm" variant="link" id="fleet-away-return" class="fa-link" onClick=${back}>return…<//></span>`;
   }
   if (!editing) {
-    return html`<span id="fleet-away"><button id="fleet-away-open" type="button" class="fa-link" disabled=${!peers.length}
-      title=${peers.length ? 'Have a trusted peer\'s operator answer your agents\' access requests while you are away' : 'Trust a peer first'} onClick=${() => setEditing(true)}>away…</button></span>`;
+    return html`<span id="fleet-away"><${Button} size="sm" variant="link" id="fleet-away-open" class="fa-link" disabled=${!peers.length}
+      title=${peers.length ? 'Have a trusted peer\'s operator answer your agents\' access requests while you are away' : 'Trust a peer first'} onClick=${() => setEditing(true)}>away…<//></span>`;
   }
   return html`<span id="fleet-away" class="fa-away-edit">
-    <select id="fleet-away-cover" aria-label="Covering peer" value=${cover} onChange=${(e) => setCover(e.currentTarget.value)}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select>
+    <${PeerCombobox} id="fleet-away-cover" ariaLabel="Covering peer" value=${cover}
+      items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label })))} onChange=${setCover} />
     <input id="fleet-away-until" type="datetime-local" aria-label="Until (optional)" min=${localInput(new Date(now()))} value=${until} onInput=${(e) => setUntil(e.currentTarget.value)} />
-    <button id="fleet-away-go" type="button" disabled=${!cover} onClick=${set}>Go away…</button>
-    <button type="button" class="fa-link" onClick=${() => setEditing(false)}>cancel</button>
+    <${Button} size="sm" id="fleet-away-go" disabled=${!cover} onClick=${set}>Go away…<//>
+    <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setEditing(false)}>cancel<//>
   </span>`;
 }

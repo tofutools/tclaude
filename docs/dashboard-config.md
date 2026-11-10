@@ -1,0 +1,555 @@
+# Config tab
+
+The **Config** tab edits tclaude's settings file,
+`~/.tclaude/data/config.json`, in a form. Use this page to find where a setting
+lives. Each section has its own address, such as `/config/notifications`. Bare
+`/config` opens the section you last had open in this browser tab.
+
+## Using it
+
+- **Search settings…** filters rows by label, description, key or option. Every
+  word must match, the rail shows hits per section, and Esc clears it.
+- **More…** on a row shows the full explanation.
+- **Save changes…** shows a line diff before writing anything. Dots on the rail mark
+  sections with unsaved changes. **Reload** throws away your edits.
+- **A linked node's config.** A trusted peer can read and change this tab
+  through the peer view, under its `node.config.*` grants, with every secret
+  withheld. From the CLI, `tclaude config get|set|clear --node <peer>` does the
+  same. See
+  [Remote Config tab](federation-admin.md#remote-config-tab).
+- **Badges** on a row say when a change takes effect or what it covers:
+  `agentd restart`, `refresh` (next dashboard refresh), `next launch`, `Claude Code`
+  (that harness only), `deprecated`, `irreversible`.
+
+## On a peer's page
+
+A trusted peer's per-node page has a Config tab when that peer shares
+`node.config.read` with you. It edits the peer's settings through the
+[remote Config tab](federation-admin.md#remote-config-tab) API:
+
+- A row you may not change is read-only, and says what it needs: a grant
+  such as `node.config.agents`, or **Change on the node itself** for the keys
+  only the node changes (shell commands, the hub link, audit retention). The
+  rail marks a section **partial** or **read-only**.
+- A secret shows only as **set** or **not set**. The peer never sends its
+  value, not even under unrestricted trust. Where you may change it,
+  **Replace** takes a new value and **Clear** removes it. The save
+  confirmation names the secrets it sets or clears.
+
+### In a fused view
+
+When a fused view spans several nodes, **Config of** at the top of the tab
+picks the node it edits. It starts on this node. A peer is edited as on its
+own page, through this node, and the header and the save confirmation name
+the node. Switching nodes with unsaved changes asks first. The sections read
+from this node itself (Installation and the remote-access setup) and the
+settings with no key link to the peer's own page instead.
+
+## Appearance
+
+`/config/appearance`: how the dashboard looks.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Activity bots | Regular mode, Wizard mode 🧙, Slop mode 🎰 | `dashboard.activity_bots.*` | emoji; emoji; sprites |
+| Tabs | Plugins tab | `dashboard.always_show_plugins_tab` | off |
+| Tabs | Vegas music in regular mode | `slop.vegas_in_regular_mode` | off |
+| Header & rows | Horizontal scroll | `dashboard.hscroll_follow` | on |
+| Header & rows | Group quick options | `dashboard.group_quick_options` | `hover` |
+| Overlays | Preview background | `dashboard.overlay_backdrop` | `dim`; also `blur`, `both`, `none` |
+| Overlays | Window controls | `dashboard.window_controls` | `auto` (Standard: − ⇄ × on the far right); opt-in OS looks `os` (match the browser's OS), `macos`, `windows`, `linux`; also `classic` |
+| Overlays | Snap Assist | `dashboard.no_snap_assist` | off (Snap Assist on) |
+| Header & rows | Group descriptions (deprecated) | `dashboard.show_group_description` | off |
+| Header & rows | CI on finished PRs | `dashboard.show_final_pr_checks` | off |
+| Header & rows | Agent hide button | `dashboard.show_agent_hide_button` | off |
+| Header & rows | Toolbar follows the clicked group | `dashboard.fused_toolbar_fixed_node` | on (key is `false`) |
+| Header & rows | Collapse empty Usage views | `dashboard.usage_collapse_subviews` | off |
+| Header & rows | Open PRs indicator | `dashboard.always_show_open_prs`, `dashboard.recent_pr_window_days` | on; 3 days |
+| Header & rows | Side panel at the edge | `dashboard.side_panel_edge_reveal`, `dashboard.side_panel_predictive_peek`, `dashboard.side_panel_growing_peek` | on, on, off (only a change is written) |
+| Header & rows | Side panel at the edge › Advanced | `dashboard.side_panel_edge_zone_px`, `_retract_ms`, `_predict_min_speed`, `_predict_speed_distance_px`, `_predict_min_speed_floor`, `_predict_min_readings`, `_min_travel_px`, `_brake_percent`, `_peek_min_px` | 32 px, 500 ms, 1200 px/s, 600 px, 600 px/s, 4, 80 px, 70 %, 48 px; out-of-range values are clamped |
+| Slop mode 🎰 | Hide the pull lever | `slop.hide_pull_lever` | off |
+
+## Terminals & windows
+
+`/config/terminals`: which terminal opens, and how windows and web terminals behave.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Terminal | Terminal | `terminal` | auto-detect |
+| Terminal | Default terminal | `dashboard.default_terminal` | `web` |
+| Terminal | Directory picker | `dashboard.default_directory_picker` | `web` (remote dashboards always use it) |
+| Terminal | TUI color scheme | `tui.color_scheme` | `default` |
+| Window focus | Window title | `focus.window_title` | on |
+| Window focus | Raise only | `focus.raise_only` | off |
+| Window focus | Auto-tile | `focus.tile.enabled` | off |
+| Window focus | Tiling layout | `focus.tile.layout`, `.resize`, `.gap`, `.margin` | `grid`; off; 8; 0 |
+| Terminals tab | Stay after last close | `dashboard.stay_on_terminals_after_last_close` | off |
+| Web terminal attachment | Resize strategy | `dashboard.terminal_attach.mode` | `repair` |
+| Web terminal attachment | Wait times | `dashboard.terminal_attach.*_ms` | 0; 250; 250 |
+| Web terminal tabs | Auto-close tabs | `dashboard.close_terminal_tabs` | Shell tabs close when their session ends |
+
+## Keyboard
+
+Lists every dashboard shortcut by where it works, with its keys on Windows and
+Linux and on macOS (this browser's column is marked), and whether it still works
+while a web terminal has focus. See [Keyboard shortcuts](dashboard.md#keyboard-shortcuts) for the
+defaults.
+
+To rebind a shortcut, click **Change** on its row and press the new keys; Escape
+cancels. The keys are recorded as pressed, so Ctrl stays Ctrl and ⌘ stays ⌘.
+Before you use them, the list shows what they would collide with:
+
+- another dashboard shortcut that can be live at the same time,
+- a browser or OS chord the page never receives (Ctrl T, ⌘ Q and the like),
+  which blocks the choice,
+- a browser chord the dashboard would take over (Ctrl L, Ctrl F and so on), or
+  keys a terminal program reads (Ctrl C, Ctrl R…) for a shortcut that works in
+  terminals, which only warn.
+
+New keys need Ctrl, Alt or ⌘ (or an F-key), so they can't take keys you type.
+Only tab cycling can be a single letter, digit or punctuation key. **Reset** puts one back and **Reset all to defaults** puts all of
+them back. Changes are saved with the rest of the form as
+`dashboard.keybindings` and apply on the next refresh of the dashboard data.
+Shortcuts marked *fixed* (the browser's own, the dialog keys, and the process
+editor, drawing board and viewer keys) can't be rebound yet. A peer's per-node view
+uses the default keys.
+
+## Voice
+
+Spoken phrases and the opt-in hands-free settings. See
+[Voice and dictation](companion.md#voice-and-dictation).
+
+| Setting | Key | Default |
+|---|---|---|
+| Send phrase | `dashboard.voice.phrases`, action `send` | on, `send now` |
+| Focused phrase | `dashboard.voice.phrases`, action `wake` | off, `hey agent`; active phrases must differ |
+| Steward phrase | `dashboard.voice.phrases`, action `steward` | off, `hey stewie`; active phrases must differ |
+| Mark dictated messages | `dashboard.voice.mark_dictated` | on |
+| Comma at a pause | `dashboard.voice.comma_pause_seconds` | off; 0.7 seconds when on, 0.3 to 10 |
+| Period at a pause | `dashboard.voice.period_pause_seconds` | off; 1.5 seconds when on, 0.3 to 10 |
+| Stop phrase | `dashboard.voice.phrases`, action `stop` | on, `stop listening`; ends continuous mode |
+| Continuous mode | `dashboard.voice.continuous_enabled` | off |
+| Continuous mode auto-stop | `dashboard.voice.continuous_idle_seconds` | 120; 30 to 3600 |
+| Wake phrase listener | `dashboard.voice.wake_enabled` | off; needs a wake phrase on too |
+| On-device speech | in this browser, not saved in config | not installed |
+| Send after silence | `dashboard.voice.silence_send_seconds` | off; 2 to 30 seconds |
+
+## Notifications
+
+`/config/notifications`: when and how tclaude tells you an agent needs attention.
+Everything still lands in [Messages](dashboard-messages.md). See
+[Notifications](notifications.md).
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Delivery | Desktop notifications | `notifications.enabled` | off |
+| Delivery | Deliver via | `notifications.delivery` | `os` |
+| Delivery | Cooldown | `notifications.cooldown_seconds` | 5 |
+| What raises a banner | Notify me when an agent… | `notifications.transitions` | idle, permission, input, error, exit |
+| What raises a banner | Human messages | `notifications.human_messages` | on |
+| What raises a banner | Access requests | `agent.access_request_auto_open_browser`, `agent.access_request_system_notification` | off; off |
+| What raises a banner | Presented PRs | `agent.present_pr_notification` | off |
+| Advanced | Raw transition rules | `notifications.transitions` | same list |
+| Advanced | Notification command | `notifications.notification_command` | OS default |
+
+## Agents & spawning
+
+`/config/agents`: joining groups, spawn guardrails, naming and default permissions.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Terminal startup groups | Auto-join | `session.auto_join_group` | on |
+| Terminal startup groups | Auto-create | `session.auto_join_or_create_group` | off |
+| Spawn guardrails | Spawn restriction | `agent.spawn_group_restriction` | on |
+| Spawn guardrails | Spawn allowed groups | `agent.spawn_allowed_groups` | empty |
+| Spawn guardrails | Spawn rate limit | `agent.spawn_max_per_hour` | 10 (0 is unlimited) |
+| Spawn guardrails | Clone cooldown | `agent.clone_cooldown` | 1m |
+| Naming | Normalize spawn names | `agent.spawn_name_normalize` | on |
+| Naming | Name the tmux session | `agent.spawn_label_from_name` | off |
+| Permissions | Default permissions | `agent.default_permissions` | empty |
+
+The two terminal startup keys and `agent.spawn_label_from_name` can also be read and changed from the CLI:
+`tclaude config get`, `tclaude config set <key> true|false|default` and `tclaude config clear <key>`.
+
+## Launch
+
+`/config/launch`: the relaunch policy, what a resume or reincarnation does with
+each launch input. It is not part of `config.json`: each change saves at once,
+with no Save step, and applies on each agent's next relaunch.
+
+The **Relaunch policy** table lists every launch input with the reason it
+behaves as it does. Group environment, group remote-control policy and sandbox
+profile contents have a **Re-resolve | Reuse** switch, and the harness-config
+posture has a three-way choice. Every other row shows its rule as a pill:
+**Copied at spawn**, **Fixed**, **Live**, **Re-read** or **Spawn only**.
+**Reset to defaults** puts every row back to its default. Changing the table
+needs `relaunch-policy.manage`. Without it, and always in a peer node's view,
+the table is read-only. What each mode means is in
+[Launch resolution](launch-resolution.md#relaunch-policy).
+
+## Context & sessions
+
+`/config/context`: compaction, nudges, resume prompts and transcript retention.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Compaction | Pre-compact guard | `pre_compact_guard.enabled`, `.block_manual`, `.thresholds` | off; off; 150k of 200k, 800k of 1M |
+| Compaction | Context nudge | `agent.context_nudge.enabled`, `.min_pct`, `.interval_pct` | off; 30; 10 |
+| Sessions | Resume-from-summary prompt | `claude_resume.threshold_minutes`, `.token_threshold` | Claude Code's 70; 100000 |
+| Sessions | Transcript retention | `claude_cleanup_period_days` | Claude Code's 30; written to `~/.claude/settings.json` |
+
+## Usage & costs
+
+`/config/costs`: cost display, estimates and rate limits. **Open usage limits &
+budgets…** opens the limits manager. See [Usage](dashboard-usage.md).
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Cost display | Cost display multipliers | `cost.estimate_factor`, `cost.harness_factors.*` | 1; blank inherits |
+| Cost display | Show cost on subscription | `cost.show_on_subscription` | off |
+| Cost display | Gemini billing | `cost.gemini_billing` | `auto` |
+| Cost display | OpenCode legacy long-context cutoff | `opencode.legacy_long_context_pricing_cutoff` | 272000 |
+| Subscription usage | Poll Anthropic usage API | `usage.poll_anthropic_api` | off |
+| Subscription usage | Idle timeout | `usage.idle_timeout` | 72h |
+| Rate limits | Rate-limit gating | `ratelimit` | off |
+| Rate limits | 5-hour window, 7-day window | `ratelimit.five_hour_percent_max_used`, `ratelimit.seven_day_percent_max_used` | 99; 99.9 when on |
+
+## Ask & scribe
+
+`/config/assistants`: defaults for [`tclaude ask`](ask.md) and for scribe agents.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| tclaude ask | Ask — profile | `ask.profile` | none |
+| tclaude ask | Ask — sandbox | `ask.sandbox` | `global` |
+| tclaude ask | Ask — model | `ask.model` | `sonnet` |
+| tclaude ask | Ask — effort | `ask.effort` | `medium` |
+| Scribes | Scribe — profile | `scribe.profile` | harness default |
+
+Model and effort are disabled while a profile is selected. For **Ask — sandbox**
+options, see [Ask sandbox policy](ask.md#sandbox-policy).
+
+## Steward
+
+`/config/steward`: the [Steward](companion.md). See
+[What the Steward may do](companion.md#what-the-steward-may-do).
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Stewards | Stewards | `steward.disabled` | off (stewards on); see [Opting out of stewards](companion.md#opting-out-of-stewards) |
+| Access | Reads | `steward.reads` | `operator` |
+| Access | Writes | `steward.writes` | `messaging` |
+| Access | Default permissions | stored permissions, saved from their own editor | Reads and Writes only |
+| Launch | Spawn profile | `steward.profile` | global default profile |
+| Launch | Start directory | `steward.dir` (Browse… opens the directory picker) | `~/.tclaude/scribe`; a set directory must exist when the Steward is summoned |
+| Knowledge base | Source download | `steward.source_download` | `ask` |
+| Name and startup | Name | `steward.name` | Steward |
+| Name and startup | Startup prompt | `steward.startup_prompt` | empty |
+
+## Git & forges
+
+`/config/git`: what agents may reach through the
+[credential proxy](proxies.md), and the keys and tokens it uses. Every key starts
+with `agent.git_proxy.`, left out below. Changes apply to the next proxy call,
+with no restart. Open MRs and merge request badges follow within 30 seconds.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Proxy access | Allowed remotes | `allowed_remotes` | empty: the proxy is off |
+| Proxy access | Protected branches | `protected_refs` | Default: `main`, `master` |
+| Proxy access | Force push with lease | `allow_force_push` | off |
+| Credentials | SSH key | `ssh_key` | empty: the daemon's ssh-agent |
+| Credentials | GitHub token file | `github_token_file` | empty: `gh`'s own login |
+| GitLab | GitLab instances | `gitlab_hosts` | none: `gitlab.com` only |
+| GitLab | GitLab token file | `gitlab_token_file` | none: the GitLab proxy refuses |
+
+- **Protected branches** has three choices because the file has three meanings:
+  **Default** leaves the key out, **None** saves `[]` (protection off), and
+  **Custom** saves the list. A Custom list left empty is refused, so it never
+  saves as "protect nothing".
+- **GitLab instances** are rows of remote host → https base URL. Listing any
+  instance turns off the built-in `gitlab.com`; list it too to keep it.
+- The paths are saved as typed, and `~` expands. The form never reads the
+  files. The save dialog's diff masks the three paths, as it masks every key
+  named like a key or token.
+- Save checks the block: an allow-list entry that is a URL or has an empty
+  segment, a blank protected branch, and a GitLab base that is not an https
+  origin are named, row by row, before anything is written. Values typed into
+  `config.json` by hand are not refused on load: the daemon ignores a bad
+  entry, with a log warning where it drops one. Until such a value is
+  corrected, though, the Config tab cannot save any section, because a save
+  checks the whole file.
+
+## Daemon & network
+
+`/config/daemon`: how agentd starts, where the dashboard listens, and remote access.
+Rows with the `agentd restart` badge need one.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Startup | Auto-launch dashboard | `agent.auto_launch_dashboard` | off |
+| Startup | System tray | `agent.disable_tray` | tray shown |
+| Local dashboard | Dashboard port | `agent.dashboard_port` | random free port |
+| Local dashboard | Dashboard bind | `agent.dashboard_bind` | `127.0.0.1` |
+| Security | Persist operator token | `agent.persist_operator_token`, `agent.persist_operator_token_keychain` | off; off |
+| Security | Broker limits | `broker.enforce_limits` | off |
+| Remote access | Remote dashboard | `remote_access.enabled` | off |
+| Remote access | Listen interface, HTTPS port | `remote_access.bind` | `0.0.0.0:8443` |
+
+Certificate management is below the Remote access group. See
+[Operating remotely](remote.md).
+
+## Installation
+
+`/config/installation`: how tclaude is installed, started and updated on this
+machine. Its parts are stacked on one page: **Start automatically**, **App
+launcher**, then **Updates**. Each opens with a status line, tagged On, Off or Needs
+attention, and its main action. A part that is set up and healthy folds its
+detail away; **Show details** opens it, and a settings search shows it
+anyway. `/config/service` and `/config/updates`, the sections these parts
+used to be, open Installation at that part.
+
+### Start automatically
+
+How agentd was started on this machine, what it should be started with, and
+starting it when you log in. The part reads the running daemon, and its
+buttons act at once, never through **Save changes…**. The CLI is
+`tclaude service status|install|uninstall` and `tclaude service launch`.
+
+The status line says whether agentd starts on its own: not at all (it stops
+when you log out or reboot), from a unit tclaude wrote, or from a unit
+tclaude did not write. **Start on login…** or **Remove…** is next to it. It
+needs attention when the unit is not enabled, or runs a different command
+from the running daemon.
+
+- **Launcher** shows what started agentd (a systemd user or system unit,
+  launchd, a tmux pane, a shell, or a detached process with no terminal, such
+  as one the app launcher started), the command and environment it runs with
+  (secret-looking values hidden), and the unit's restart policy.
+  **Restart agentd…** goes through that supervisor (`systemctl --user restart`,
+  `launchctl kickstart -k`), so the unit's own arguments stay; without one,
+  agentd re-runs itself with the same arguments. On macOS with the tray icon
+  showing, it starts again in a new process instead, because the icon does
+  not come back after a re-run in the same process: a detached daemon is
+  started detached again, and a daemon in a shell or tmux pane stays the
+  foreground job there, so Ctrl+C still stops it.
+- **Launch profile** is what agentd should be started with: serve flags, and
+  environment variables, each either set to a value or inherited from
+  agentd's own environment when the unit is written. It is kept in
+  `config.json` as `service.launch`, but only through this section or the
+  CLI.
+  - **Use what's running now** fills the form from the running daemon. A
+    secret-looking flag is left out, with a note: pass the secret through an
+    inherited variable instead. A secret-looking variable is inherited, and
+    its value is never stored.
+  - An inherited name that agentd does not have now is flagged under its row,
+    because the unit would get it empty.
+  - **Save profile** sends the profile. A refused entry is marked on its row.
+    If the profile changed elsewhere meanwhile, your edits are kept, and Save
+    replaces it. **Clear profile…** removes it.
+  - The section compares the running daemon with the profile, or, for a unit
+    tclaude did not write, with that unit. The tag says which. The differences
+    table shows values only for variables that are not secret, and a peer with
+    restricted access sees names only. A viewer who is shown names only
+    cannot edit the profile, so its values are never saved back empty. tclaude never changes a unit it did
+    not write, so a profile is not applied to one.
+  - While a profile is set, **Start on login** writes the unit from it, and
+    an update compares the restarted daemon against it.
+- **Start on login** writes a systemd user unit (Linux) or a LaunchAgent
+  (macOS) for agentd, with `KillMode=process` so tmux sessions survive
+  restarts. With a launch profile set, the unit gets the profile's flags and
+  environment. Without one, it keeps the serve flags and environment agentd
+  runs with now by default, and **use these** takes your own serve flags
+  instead, which the daemon checks one by one. The section compares the unit's command with the running
+  one. Installing takes effect at the next login or boot. **Remove…** deletes
+  only a unit tclaude wrote, and a unit you wrote yourself is shown read-only.
+- On Linux, agentd stops at logout unless lingering is on. That needs sudo, so
+  the section shows the `loginctl enable-linger` command to run yourself.
+
+### App launcher
+
+The app launcher adds tclaude to the desktop's app menu. Picking it opens the
+dashboard. The part's status line says whether it is installed, out of date,
+or made by hand, next to **Add to app menu…** (**Add to Applications…** on
+macOS), **Reinstall…** or **Remove…**; each confirm names the files written
+or removed. Below it, the launcher's files, the binary it runs and **Start
+agentd if it is not running**, then the serve flags: one control per default
+flag (and **No tray icon**), each saying what it does, the other flags as
+text, and the command they make. **Rewrite launcher…** applies them, and
+**Back to tclaude's defaults…** clears the launcher's own setting. When the
+launch profile is set, the part says it decides the flags and shows them
+read-only; change them in the launch profile. The CLI is `tclaude service
+launcher status|install|uninstall` (`--no-start-daemon`, `--node <peer>`),
+and the API is `GET /api/node/launcher` and `POST
+/api/node/launcher/install|uninstall`.
+
+- **Linux:** it writes a desktop entry,
+  `$XDG_DATA_HOME/applications/tclaude.desktop` (default
+  `~/.local/share/applications`), its icon under
+  `icons/hicolor/scalable/apps/`, and a launcher script in
+  `$XDG_DATA_HOME/tclaude/`.
+- **macOS:** it writes `~/Applications/tclaude.app` and registers it with
+  Launch Services, so Spotlight and Launchpad find it straight away. The
+  bundle holds a shell script and is not signed. It is marked as native on
+  Apple Silicon (`LSArchitecturePriority` arm64 first), so macOS does not
+  offer Rosetta for it.
+- The launcher runs the tclaude binary that agentd runs, with agentd's
+  `PATH`. When that binary moves, or an update changes it, agentd rewrites the
+  launcher the next time it starts. The status shows a launcher that is out of
+  date. On macOS, Homebrew's `/opt/homebrew/bin` and `/usr/local/bin` are
+  added to that `PATH` when they exist. An install warns when `tmux` is not on
+  the `PATH`, because an agentd without tmux cannot reach any agent. agentd
+  itself logs an error at start when it cannot find `tmux`.
+- **Start agentd if it is not running** (on by default) starts it first:
+  - through the autostart unit, when **Start on login** installed one;
+  - otherwise (or when that unit does not start) as `tclaude agentd serve`,
+    logging to `~/.tclaude/data/launcher-agentd.log`.
+
+  An app starts with the desktop's bare environment. On macOS that means a
+  short `PATH`, no locale, and none of your shell profile's variables (API
+  keys, proxies). So before starting agentd itself, the launcher asks your
+  login shell for its environment. It runs `$SHELL -l -i` (or your account's
+  shell), which reads the same profile files a terminal does. agentd, and
+  every agent it starts, then gets what a terminal would give it. The
+  launcher's own `PATH` stays on the end as a fallback, and the launch
+  profile's variables still win. The launcher waits only until the shell
+  answers, and at most 30 seconds. If the shell gives no answer by then, or
+  fails, agentd still starts, with the launcher's environment, so the
+  dashboard can tell you. A desktop notification says so. A notice in the
+  dashboard's Messages says agents may not start or may show offline, and
+  how to check (`time $SHELL -l -i -c true`). `launcher-agentd.log` has an
+  error line. On macOS, when the autostart unit (launchd) starts agentd,
+  agentd does this step itself (see [launchd](server/launchd.md)); a Linux
+  systemd unit keeps its own environment. On macOS the locale usually comes
+  from the terminal app rather than your profile. When neither the launcher nor the
+  login shell names a UTF-8 locale, agentd gets your own. On macOS that is
+  your system locale (`defaults read -g AppleLocale`, for example `en_GB`,
+  giving `en_GB.UTF-8`). On Linux it is `LANG` from `/etc/locale.conf` or
+  `/etc/default/locale`. If neither is set, it falls back to `en_US.UTF-8`
+  on macOS and `C.UTF-8` on Linux, and only to a locale that is installed.
+  agentd sets `LANG` when it has none, else `LC_CTYPE`.
+
+  The launcher waits for agentd to answer before it opens the dashboard. If
+  agentd does not start, or the dashboard does not open, a desktop
+  notification says why.
+- **Serve flags.** These are the flags the launcher starts `agentd serve`
+  with. They come from the first of these that is set:
+  1. the launch profile's flags (the profile overrides the rest);
+  2. the launcher's own setting, `service.launcher.serve_args` (CLI:
+     `--serve-args "..."`; `--default-serve-args` goes back to the
+     defaults);
+  3. tclaude's defaults:
+     - `--persist-operator-token`: the dashboard sign-in survives restarts;
+     - `--dashboard-port=<port>`: a fixed port, so bookmarks and open tabs keep
+       working. It is the running daemon's fixed port, or 7878;
+     - `--no-print-human-token`: a launcher has no terminal, so the token
+       would only end up in the log.
+
+  The tray stays on, and the dashboard stays on loopback. The status names
+  the source of the flags in effect. The flags are written into the
+  launcher, and a change to the profile or the setting rewrites it. A peer
+  without full access may set only `--persist-operator-token`,
+  `--dashboard-port`, `--no-print-human-token` and `--no-tray`.
+- **Signing in.** The launcher opens the dashboard as you. To prove that, it
+  needs the operator token, and it has no `TCLAUDE_HUMAN_TOKEN` in its
+  environment, so it reads the persisted token instead: the 0600
+  `~/.tclaude/data/operator_token` file, or the OS keychain under
+  `--persist-operator-token-keychain`.
+  - **The running agentd keeps its token in memory only:** every click is
+    refused as "unconfirmed caller". The status warns about this. Restart
+    agentd with `--persist-operator-token`, or set
+    `agent.persist_operator_token`.
+  - **The launcher's own serve flags do not persist the token:** the status
+    warns as well, because a daemon the launcher starts would have the same
+    problem.
+- **Remove…** deletes only a launcher tclaude wrote. A launcher you made
+  yourself at the same path is reported and left alone.
+- Peers with `node.update.settings` can install and remove the launcher on
+  this node. With `node.read` they can see it.
+
+### Updates
+
+How tclaude updates itself (`updates.self`). Everything is opt-in: nothing
+updates on its own until you choose a method and turn on a schedule or
+start-up updates. The CLI is `tclaude update config show|set`.
+
+The status line says whether tclaude updates itself, with what and when.
+Its button picks a method when none is chosen, turns on a daily update when a
+method is chosen but nothing runs, and **Turn off** stops scheduled and
+start-up updates while keeping the method. These buttons edit the form, so
+they are saved with **Save changes…** like the rows below.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Method | Update method | `updates.self.method` | not chosen |
+| Method | Checkout, Branch or tag (Build from a checkout) | `updates.self.source_checkout.path`, `.ref` | none; the release tag |
+| Method | Update command, Timeout (Custom command) | `updates.self.custom.command`, `.timeout_seconds` | none; 1800 s |
+| Method | Package manager acknowledgement, Install to | `updates.self.package_manager_ack`, `updates.self.install_dir` | off; `~/.local/bin` |
+| When | Scheduled updates | `updates.self.schedule.frequency` | off |
+| When | Day, Time window | `updates.self.schedule.weekday`, `.window_start`, `.window_end` | Monday; 03:00–05:00 |
+| When | Wait while agents are working | `updates.self.schedule.defer_while_agents_working` | off |
+| When | Update when the daemon starts | `updates.self.update_on_start` | off |
+| After an update | Run setup with the new version, Setup options | `updates.self.post_update_setup.enabled`, `.flags`, `.harness` | off |
+
+The part shows how this node's tclaude was installed, with the evidence.
+When a package manager (Homebrew, Nix, mise, asdf, apt or rpm) owns it, the
+part shows the command to update it yourself. **Notify me** is the safe
+choice there. A **Let tclaude run …** method asks you to confirm before it is
+picked. A method that installs the binary itself (release, go install,
+checkout, custom) needs you to acknowledge that the package manager still
+owns tclaude. That method installs to **Install to**, and the part warns
+when that directory comes after the package manager's copy on PATH. Methods
+that cannot run here are greyed out with the reason.
+
+## Logs & housekeeping
+
+`/config/logs`: log verbosity and rotation, and cleanup of retired agents.
+
+| Group | Label | Key | Default |
+|---|---|---|---|
+| Logging | Log level | `log_level` | `info` |
+| Logging | Startup timings | `startup_timing` | off |
+| Logging | Record hooks | `record_hooks` | off |
+| Log rotation | Max log size | `log_rotation.max_size` | 10 MiB (0 disables) |
+| Log rotation | Keep | `log_rotation.keep` | 5 |
+| Retired-agent cleanup | Retired-agent auto-cleanup | `agent.retired_cleanup.enabled`, `.after_days` | off; 365 days |
+
+Auto-cleanup is irreversible.
+
+## Processes
+
+`/config/processes`: policy for [Processes](processes.md).
+
+| Label | Key | Default | What it does |
+|---|---|---|---|
+| Refuse unsigned workflows | `processes.refuse_unsigned_imports` | off | Refuses to [import a workflow file](pwf.md#refusing-unsigned-files) without a valid signature |
+
+## Experimental
+
+`/config/experimental`: feature flags, under **Feature flags**.
+
+| Label | Key | Default | What it adds |
+|---|---|---|---|
+| Groups Route map | `features.groups_route_map` | off | [Group routes](group-routes.md) map view |
+| Group attachments | `features.group_attachments` | off | A group's link or attachment panel |
+| Command palette in terminals | `features.terminal_command_palette_shortcut` | off | Ctrl K (⌘ K on a Mac) inside a terminal |
+| Recorded sandbox details | `features.recorded_sandbox_details` | off | A `›` details link on the sandbox badge |
+| Agent dirs: mount parent | `features.agent_dirs_mount_parent` | **on** | See [Sandboxing](sandboxing.md) |
+
+## Advanced
+
+`/config/advanced`: **Sudo (raw JSON)** edits `agent.sudo`.
+
+## Settings with no form
+
+These keys only exist in `config.json`. The form keeps them when it saves.
+
+- Top level: `status_snapshot`, `host`, `experimental_harnesses`, `conv_watch`,
+  `session_watch`, `audit`, `federation`, `updates`, `snapshots`, `routes`,
+  `taskboard` ([Task boards](taskboard.md) retention and `idle_grace`).
+- `features`: `taskboard` (on; `false` turns it off, see [Task boards](taskboard.md)).
+- `agent`: `branch_history_pr_enrichment`, `resource_delegation_dir`, `morph`,
+  `spawn_legacy_injection`, `spawn_inline_max_chars`, `message_inline_max_chars`,
+  `linear_proxy`, `awb_proxy`, `http_proxies`, `model_proxy_disabled`.
+- `session`: `tmux_name_style`, `auto_name_from_prompt`.
+- `notifications`: `known_types`.

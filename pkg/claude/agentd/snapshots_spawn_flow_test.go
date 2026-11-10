@@ -42,6 +42,38 @@ func TestSnapshotSpawnFlow(t *testing.T) {
 	rec := post("/v1/snapshots", map[string]any{"agent": source, "name": "known-good"}, "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
+	// An agent's --ask-human popup says what the confirmation flag accepts.
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	popups, restorePopup := agentd.StubCapturingApprovalForTest(false)
+	askSpawn := func(body map[string]any) {
+		var buf bytes.Buffer
+		require.NoError(t, json.NewEncoder(&buf).Encode(body))
+		r := httptest.NewRequest(http.MethodPost, "/v1/snapshots/known-good/spawn", &buf)
+		r.Header.Set("X-Tclaude-Ask-Human", "30s")
+		asked := httptest.NewRecorder()
+		f.Mux.ServeHTTP(asked, agentd.AsAgentPeer(r, other))
+		require.Equal(t, http.StatusForbidden, asked.Code, asked.Body.String())
+	}
+	askSpawn(map[string]any{"group": "receiver", "confirm_history_loss": true})
+	askSpawn(map[string]any{"group": "receiver"})
+	require.Len(t, *popups, 2)
+	assert.Contains(t, (*popups)[0].Body, "cuts 25% or more of the conversation")
+	assert.Equal(t, "What approving does", (*popups)[0].Label)
+	assert.NotContains(t, (*popups)[1].Body, "cuts 25%")
+	restorePopup()
+
+	// Past that gate the import raises its own, which says the same beside the review.
+	popups, restorePopup = agentd.StubCapturingApprovalForTest(true)
+	var buf bytes.Buffer
+	require.NoError(t, json.NewEncoder(&buf).Encode(map[string]any{"group": "receiver", "confirm_history_loss": true}))
+	asked := httptest.NewRequest(http.MethodPost, "/v1/snapshots/known-good/spawn", &buf)
+	asked.Header.Set("X-Tclaude-Ask-Human", "30s")
+	f.Mux.ServeHTTP(httptest.NewRecorder(), agentd.AsAgentPeer(asked, other))
+	restorePopup()
+	require.Len(t, *popups, 2)
+	assert.Contains(t, (*popups)[1].Body, "Agent: ")
+	assert.Contains(t, (*popups)[1].Body, "cuts 25% or more of the conversation")
+
 	rec = post("/v1/snapshots/known-good/spawn", map[string]any{"group": "receiver", "count": 21}, "")
 	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	rec = post("/v1/snapshots/missing/spawn", map[string]any{"group": "receiver"}, "")

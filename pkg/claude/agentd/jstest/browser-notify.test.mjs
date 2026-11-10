@@ -207,3 +207,13 @@ test('clicking a browser notification focuses the dashboard and closes the banne
   assert.deepEqual(jumped, ['sess-1']);
   stop();
 });
+
+test('a plain http page counts as unsupported, not as a denied permission', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { browserNotifyPermission, notificationsUnsupportedNote } = await harness.importDashboardModule('js/browser-notify.js');
+  assert.match(notificationsUnsupportedNote({ isSecureContext: false }), /plain HTTP except on localhost/);
+  assert.doesNotMatch(notificationsUnsupportedNote({ isSecureContext: true }), /HTTP/);
+  class Denied { static permission = 'denied'; }
+  assert.equal(browserNotifyPermission({ Notification: Denied, isSecureContext: false }), 'unsupported');
+  assert.equal(browserNotifyPermission({ Notification: Denied, isSecureContext: true }), 'denied');
+});

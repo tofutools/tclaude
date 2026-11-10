@@ -27,7 +27,7 @@ func presentPRCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *presentPRParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPresentPR(p, os.Stdout, os.Stderr))
+			os.Exit(runPresentPR(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -37,7 +37,7 @@ type presentPRParams struct {
 	Summary  string `long:"summary" short:"s" optional:"true" help:"Optional short label/summary for the PR badge"`
 	State    string `long:"state" optional:"true" help:"Optional PR state: open, draft, merged, or closed"`
 	Handled  bool   `long:"handled" optional:"true" help:"Mark this presented PR handled so it no longer appears in the dashboard"`
-	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.pr, or owning a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }
 
@@ -55,13 +55,9 @@ func runPresentPR(p *presentPRParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	path := "/v1/whoami/prs"
 	if target != "" {
@@ -91,6 +87,7 @@ type presentPRResp struct {
 	Handled       bool            `json:"handled"`
 	CallerConv    string          `json:"caller_conv,omitempty"`
 	CallerAgentID string          `json:"caller_agent_id,omitempty"`
+	remoteReply
 }
 
 type presentedPRWire struct {
@@ -101,6 +98,8 @@ type presentedPRWire struct {
 }
 
 func printPresentPRResult(stdout io.Writer, resp *presentPRResp) {
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
 	by := ""
 	if resp.CallerConv != "" {
 		by = " (by " + shortAgentID(resp.CallerAgentID, resp.CallerConv) + ")"

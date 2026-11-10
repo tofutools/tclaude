@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -58,10 +59,9 @@ func TestSudo_Approved_GrantsForDuration(t *testing.T) {
 		"freshly-inserted grant must be active; expires_at=%v revoked_at=%v",
 		got.ExpiresAt, got.RevokedAt)
 
-	// HasActiveSudoGrant — the hot path requirePermission calls.
-	ok, err := db.HasActiveSudoGrant(conv, "groups.members.spawn")
-	require.NoError(t, err, "HasActiveSudoGrant")
-	assert.True(t, ok, "HasActiveSudoGrant must return true for the freshly-granted slug")
+	// The permission evaluator allows the freshly-granted slug.
+	assert.True(t, agentd.HoldsPermissionForTest(conv, "groups.members.spawn"),
+		"the evaluator must allow the freshly-granted slug")
 
 	// PR3c: the listing endpoint (`sudo ls`) surfaces the stable agent_id so
 	// the CLI groups + labels its blocks by the rotation-immune handle.
@@ -223,9 +223,9 @@ func TestSudo_RevokedEarly_TakesEffectImmediately(t *testing.T) {
 	require.NotZero(t, resp.Grants[0].ID, "grant id")
 	grantID := resp.Grants[0].ID
 
-	// Pre-revoke: HasActiveSudoGrant returns true.
-	ok, _ := db.HasActiveSudoGrant(conv, "groups.members.spawn")
-	require.True(t, ok, "pre-revoke: grant should be active")
+	// Pre-revoke: the evaluator allows the slug.
+	require.True(t, agentd.HoldsPermissionForTest(conv, "groups.members.spawn"),
+		"pre-revoke: grant should be active")
 
 	// Revoke as human.
 	delPath := "/v1/sudo/" + itoa64(grantID)
@@ -234,10 +234,10 @@ func TestSudo_RevokedEarly_TakesEffectImmediately(t *testing.T) {
 	delRec := testharness.Serve(f.Mux, delReq)
 	require.Equal(t, http.StatusOK, delRec.Code, "DELETE body=%s", delRec.Body.String())
 
-	// Post-revoke: HasActiveSudoGrant returns false (no time travel
+	// Post-revoke: the evaluator denies the slug (no time travel
 	// needed — revoked_at filter does the work).
-	ok, _ = db.HasActiveSudoGrant(conv, "groups.members.spawn")
-	assert.False(t, ok, "post-revoke: grant must NOT be active")
+	assert.False(t, agentd.HoldsPermissionForTest(conv, "groups.members.spawn"),
+		"post-revoke: grant must NOT be active")
 }
 
 // Scenario: GET /v1/sudo from an agent returns its own active grants;
@@ -661,4 +661,108 @@ func TestSudo_ConfigBlocklist_ReplacesDefaults(t *testing.T) {
 		"groups.owners.manage newly blocked by config body=%s", denyRec.Body.String())
 	assert.Contains(t, denyRec.Body.String(), "groups.owners.manage",
 		"error must name the blocked slug")
+}
+
+// Scenario: a sudo grant overlaps a permission the agent also holds permanently.
+// However it is revoked, the permanent one is untouched and still in force.
+func TestSudo_RevokingLeavesPermanentPermissionsInForce(t *testing.T) {
+	const conv = "sudo-end-aaaa-bbbb-cccc-000000000001"
+	routes := []struct {
+		name string
+		mux  func(f *testharness.Flow) http.Handler
+		paths func(ids []int64, agentID string) []string
+	}{
+		{"cli one", flowMux, func(ids []int64, _ string) []string { return eachSudoPath("/v1/sudo/%d", ids) }},
+		{"cli by agent", flowMux, func([]int64, string) []string { return []string{"/v1/sudo?conv=" + conv} }},
+		{"cli all", flowMux, func([]int64, string) []string { return []string{"/v1/sudo?all=1"} }},
+		{"dialog revoke", dashMux(t), func(ids []int64, _ string) []string { return eachSudoPath("/api/sudo/%d", ids) }},
+		{"End", dashMux(t), func(_ []int64, agentID string) []string { return []string{"/api/sudo?agent_id=" + agentID} }},
+		{"dialog revoke all", dashMux(t), func([]int64, string) []string { return []string{"/api/sudo?all=1"} }},
+	}
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveConvWithTitle(conv, "worker")
+			f.HaveAliveSession(conv, "lbl-end", "tmux-end", f.TestCwd("end"))
+			require.NoError(t, db.SetAgentPermissionOverride(conv, agentd.PermMessageDirect, db.PermEffectGrant, "test"))
+			require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{DefaultPermissions: []string{agentd.PermHumanNotify}}}))
+			defaults := func() []string {
+				cfg, err := config.Load()
+				require.NoError(t, err)
+				return cfg.Agent.DefaultPermissions
+			}
+			agentID, _, err := db.EnsureAgentForConv(conv, "test")
+			require.NoError(t, err)
+			var ids []int64
+			for _, slug := range []string{agentd.PermMessageDirect, agentd.PermHumanNotify} {
+				now := time.Now()
+				id, err := db.InsertSudoGrant(&db.SudoGrant{ConvID: conv, Slug: slug,
+					GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test"})
+				require.NoError(t, err)
+				ids = append(ids, id)
+			}
+
+			for _, path := range route.paths(ids, agentID) {
+				revoke := testharness.Serve(route.mux(f), agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodDelete, path, nil)))
+				require.Equalf(t, http.StatusOK, revoke.Code, "body=%s", revoke.Body.String())
+			}
+			active, err := db.ListActiveSudoGrants(conv)
+			require.NoError(t, err)
+			require.Empty(t, active, "only the permanent sources can answer below")
+
+			overrides, err := db.ListAgentPermissionOverrideRowsForConv(conv)
+			require.NoError(t, err)
+			require.Len(t, overrides, 1)
+			assert.Equal(t, agentd.PermMessageDirect, overrides[0].Slug)
+			assert.Equal(t, db.PermEffectGrant, overrides[0].Effect)
+			assert.Equal(t, []string{agentd.PermHumanNotify}, defaults())
+			assert.True(t, agentd.HoldsPermissionForTest(conv, agentd.PermMessageDirect), "standing permission still in force")
+			assert.True(t, agentd.HoldsPermissionForTest(conv, agentd.PermHumanNotify), "default permission still in force")
+		})
+	}
+}
+
+func eachSudoPath(format string, ids []int64) []string {
+	paths := make([]string, 0, len(ids))
+	for _, id := range ids {
+		paths = append(paths, fmt.Sprintf(format, id))
+	}
+	return paths
+}
+
+func flowMux(f *testharness.Flow) http.Handler { return f.Mux }
+
+func dashMux(t *testing.T) func(*testharness.Flow) http.Handler {
+	return func(*testharness.Flow) http.Handler { return dashMessageMux(t) }
+}
+
+// End ends a carried sudo for later Stewards too, since it is temporary. A
+// standing permission stored for them stays.
+func TestSudo_EndKeepsStoredStandingAndEndsStoredSudo(t *testing.T) {
+	f := newFlow(t)
+	const conv = "sudo-end-aaaa-bbbb-cccc-000000000002"
+	f.HaveConvWithTitle(conv, "steward")
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetStewardCarriedPermission(agentd.PermMessageDirect,
+		db.PermissionOverride{Effect: db.PermEffectGrant}, "test"))
+	now := time.Now()
+	id, err := db.InsertSudoGrant(&db.SudoGrant{ConvID: conv, Slug: agentd.PermHumanNotify,
+		GrantedAt: now, ExpiresAt: now.Add(time.Hour), GrantedBy: "test"})
+	require.NoError(t, err)
+	require.NoError(t, db.CarrySudoGrant(id))
+	before, err := db.ListActiveStewardCarriedSudo()
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+
+	end := testharness.Serve(dashMessageMux(t), agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodDelete, "/api/sudo?agent_id="+agentID, nil)))
+	require.Equalf(t, http.StatusOK, end.Code, "body=%s", end.Body.String())
+
+	stored, err := db.ListActiveStewardCarriedSudo()
+	require.NoError(t, err)
+	assert.Empty(t, stored)
+	standing, err := db.ListStewardCarriedPermissions()
+	require.NoError(t, err)
+	assert.Contains(t, standing, agentd.PermMessageDirect)
 }

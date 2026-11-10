@@ -31,6 +31,7 @@ func TestShellQuoteArg_RoundTripThroughShell(t *testing.T) {
 	}
 
 	cases := []string{
+		"",
 		"plain",
 		"with spaces",
 		"single ' quote",
@@ -47,9 +48,9 @@ func TestShellQuoteArg_RoundTripThroughShell(t *testing.T) {
 	}
 	for _, s := range cases {
 		// Splice the quoted arg into a command string, exactly as the spawner
-		// does (`claude … <ShellQuoteArg(prompt)>`). printf '%s' echoes its one
-		// argument verbatim, so stdout must equal the original input.
-		cmd := "printf '%s' " + ShellQuoteArg(s)
+		// does (`claude … <ShellQuoteArg(prompt)>`). Check arity too: printf
+		// alone cannot distinguish an empty argument from a missing one.
+		cmd := "set -- " + ShellQuoteArg(s) + "; [ \"$#\" -eq 1 ] || exit 1; printf '%s' \"$1\""
 		out, err := exec.Command("sh", "-c", cmd).Output()
 		assert.NoErrorf(t, err, "sh -c failed for %q (cmd=%q)", s, cmd)
 		assert.Equalf(t, s, string(out), "round-trip mismatch (cmd=%q)", cmd)

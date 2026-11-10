@@ -8,7 +8,7 @@ import { loadProfiles, profileChoices } from './profiles.js';
 import { openProfileEditor } from './modal-profiles.js';
 import { loadSandboxProfiles, openSandboxProfileEditor } from './sandbox-profiles.js';
 import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
-import { pickDirectory } from './helpers.js';
+import { groupOfflineOverride, pickDirectory, setGroupOfflineOverride } from './helpers.js';
 import { saveMemberEditorRequests } from './member-editor-actions.js';
 import {
   addExistingMemberRequest,
@@ -197,6 +197,11 @@ export function createGroupsActions({
       const key = `tclaude.dash.quickpin.${group.name}`;
       if (dashPrefs.getItem(key) === '1') dashPrefs.removeItem(key);
       else dashPrefs.setItem(key, '1');
+      state.rerender();
+    },
+    cycleGroupOffline(group) {
+      const next = { inherit: 'show', show: 'hide', hide: 'inherit' };
+      setGroupOfflineOverride(group.name, next[groupOfflineOverride(group.name)]);
       state.rerender();
     },
     toggleForceFold(group) {

@@ -376,7 +376,7 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
     'tclaude:wizard', { detail: { active: true } },
   )));
   assert.equal(filter.getAttribute('aria-label'), 'Filter parties');
-  assert.equal(filter.placeholder, 'Filter parties & familiars');
+  assert.equal(filter.placeholder, 'Filter parties & heroes');
 
   const view = getByRole(mounted.container, 'button', { name: '▾ view' });
   await harness.act(() => harness.fireEvent(view, 'click'));
@@ -500,7 +500,7 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   assert.equal(permanentDelete.dataset.agent, 'agt-loose');
   assert.equal(permanentDelete.dataset.conv, 'loose');
   assert.equal(permanentDelete.dataset.label, 'Loose');
-  assert.equal(permanentDelete.querySelector('.theme-copy-wizard').textContent, 'erase familiar');
+  assert.equal(permanentDelete.querySelector('.theme-copy-wizard').textContent, 'erase hero');
 
   const pending = host.querySelector('tr[data-key="gate-1"]');
   const retired = host.querySelector('tr[data-key="retired-1"]');
@@ -527,7 +527,7 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   )));
   const ungrouped = host.querySelector('details[data-dnd-target-ungrouped]');
   assert.match(ungrouped.querySelector('.subtable .theme-copy-wizard').textContent,
-    /slumbering familiar.*show slumbering/);
+    /slumbering hero.*show slumbering/);
   assert.match(ungrouped.querySelector('.group-virtual-badge').title,
     /cannot be renamed, dispelled, whispered to, or scheduled/);
 
@@ -588,6 +588,70 @@ test('Groups list owns sort and virtual-list pager event routing', async (t) => 
   host.remove();
 });
 
+test('a member on a harness that cannot rename keeps its subscription badge', async (t) => {
+  const harness = await createPreactHarness(t);
+  const group = {
+    name: 'alpha',
+    members: [{
+      conv_id: 'fixed', agent_id: 'agt-fixed', title: 'Fixed', online: true,
+      state: { harness: 'codex' }, claude_subscription: { peer: 'peer-1', label: 'Sam', held: true },
+    }],
+  };
+  const { state, host, mounted } = await mountGroups(t, harness, [group], { sort: () => {}, page: () => {}, setPageSize: () => {} });
+  await harness.act(() => state.publish({
+    ...snapshot([group]), harnesses: [{ name: 'codex', can_rename: false }],
+  }));
+  assert.ok(host.querySelector('tr[data-key="fixed"] .rowname-fixed'), 'the name is not an editor');
+  assert.ok(host.querySelector('tr[data-key="fixed"] .rowname [data-subscription="held"]'));
+  await mounted.unmount();
+});
+
+test('a group menu cycles its offline override and the member list follows', async (t) => {
+  const harness = await createPreactHarness(t);
+  const group = {
+    name: 'alpha',
+    members: [
+      { conv_id: 'live', agent_id: 'agt-live', title: 'Live', online: true, state: { status: 'idle' } },
+      { conv_id: 'gone', agent_id: 'agt-gone', title: 'Gone', online: false, state: {} },
+    ],
+  };
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  const { createGroupsActions } = await harness.importDashboardModule('js/groups-actions.js');
+  const { state, host, mounted } = await mountGroups(t, harness, [group], {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    cycleGroupOffline: (target) => createGroupsActions({ state, refresh: async () => {} }).cycleGroupOffline(target),
+  });
+  const item = () => host.querySelector('[data-offline-override]');
+  const offlineRow = () => host.querySelector('tr[data-key="gone"]');
+  assert.equal(item().dataset.offlineOverride, 'inherit');
+  assert.ok(offlineRow(), 'the tab default shows offline members');
+
+  await harness.act(() => harness.fireEvent(item(), 'click'));
+  assert.equal(item().dataset.offlineOverride, 'show');
+  assert.ok(offlineRow());
+
+  await harness.act(() => harness.fireEvent(item(), 'click'));
+  assert.equal(item().dataset.offlineOverride, 'hide');
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.offline.alpha'), 'hide');
+  assert.equal(offlineRow(), null, 'hidden for this group whatever the tab default says');
+
+  await harness.act(() => state.publish(snapshot([{ ...group, members: [group.members[1]] }])));
+  assert.match(host.querySelector('details[data-group-key="alpha"]').textContent, /⚙ menu hides offline/,
+    'with nobody left to show, the note names the control that hid them');
+  await harness.act(() => state.publish(snapshot([group])));
+
+  await harness.act(() => harness.fireEvent(item(), 'click'));
+  assert.equal(item().dataset.offlineOverride, 'inherit');
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.offline.alpha'), null);
+  assert.ok(offlineRow());
+
+  await mounted.unmount();
+});
+
 test('native group and member menus share dismissal, focus, flip and publish state', async (t) => {
   const harness = await createPreactHarness(t);
   const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
@@ -631,7 +695,7 @@ test('native group and member menus share dismissal, focus, flip and publish sta
   assert.equal(memberMenu.classList.contains('open'), false, 'a menu item dismisses its menu');
 
   await harness.act(() => harness.fireEvent(memberCog, 'click'));
-  await harness.act(() => harness.fireEvent(harness.document.body, 'click'));
+  await harness.act(() => harness.fireEvent(harness.document.body, 'pointerdown'));
   assert.equal(memberMenu.classList.contains('open'), false, 'outside click dismisses the menu');
 
   await harness.act(() => harness.fireEvent(groupCog, 'click'));
@@ -963,8 +1027,8 @@ test('native member rows preserve the legacy field, capability and selector matr
     ...snapshot([{ name: 'alpha', members: [rich, fixed, background] }]),
     recorded_sandbox_details_enabled: true,
     harnesses: [
-      { name: 'claude', can_rename: true, can_remote_control: true },
-      { name: 'codex', can_rename: false, can_remote_control: false },
+      { name: 'claude', can_rename: true, can_remote_control: true, can_compact: true },
+      { name: 'codex', can_rename: false, can_remote_control: false, can_compact: false },
     ],
     sudo: [{ conv_id: 'conv-rich', slug: 'groups.manage', remaining_seconds: 90 }],
   };
@@ -981,7 +1045,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
   state.publish(fullSnapshot);
-  // Processes are off (the shell's boot class), so the gated Process column is absent.
+  // body.hide-processes (a peer without processes) leaves the Process column out.
   harness.document.body.classList.add('hide-processes');
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${actions} />`, host);
@@ -1083,6 +1147,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(menu.getAttribute('role'), 'menu');
   assert.equal(menu.querySelectorAll('button:not([role="menuitem"])').length, 0);
   assert.equal(menu.querySelector('[data-act="toggle-remote-control"]').dataset.intent, 'off');
+  assert.ok(menu.querySelector('[data-act="compact-agent"]'), 'a harness that can compact offers it');
   assert.equal(menu.querySelector('[data-act="retire-agent"]').hasAttribute('data-agent'), false,
     'retire remains deliberately conv-keyed for dangling-agent recovery');
   assert.equal(menu.querySelector('[data-act="perm-edit"]').hasAttribute('data-agent'), false);
@@ -1090,11 +1155,12 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(menu.querySelector('[data-act="cron-new"]').hasAttribute('data-conv'), false);
   assert.equal(menu.querySelector('[data-act="cron-new"]').hasAttribute('data-agent'), false);
   assert.match(menu.querySelector('[data-act="cron-new"]').dataset.prefill, /"target":"agt-rich"/);
-  assert.equal(menu.querySelectorAll('.menu-sep').length, 4, 'includes the send-elsewhere section');
+  assert.equal(menu.querySelectorAll('.ui-menu-sep').length, 4, 'includes the send-elsewhere section');
 
   assert.equal(fixedRow.querySelector('.rowname-fixed').textContent, 'Fixed agent');
   assertAbsent(fixedRow.querySelector('[data-act="rename-name"]'));
   assertAbsent(fixedRow.querySelector('[data-act="toggle-remote-control"]'));
+  assertAbsent(fixedRow.querySelector('[data-act="compact-agent"]'));
   assert.equal(fixedRow.querySelector('.state-pill').classList.contains('state-crashed'), true);
   assert.match(fixedRow.querySelector('.state-pill-wrap').title, /process ended without a clean exit/);
   assert.equal(fixedRow.querySelector('.slop-machine').getAttribute('aria-hidden'), 'true');
@@ -1231,7 +1297,7 @@ test('member editor preserves dirty, IME, busy, stacked overlay and field-level 
   />`, host);
   await harness.input(host.querySelector('#edit-member-role'), 'reviewer');
   await harness.input(host.querySelector('#edit-member-tags'), 'one, two');
-  assert.match(host.querySelector('#edit-member-title').textContent, /Edit agent.*Enchant this familiar/,
+  assert.match(host.querySelector('#edit-member-title').textContent, /Edit agent.*Enchant this hero/,
     'plain and wizard copy remain in the Preact-owned dialog');
 
   const composed = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
@@ -1421,7 +1487,7 @@ test('Groups keeps its trigger projection read-only, collapsed, and capped', asy
   ]);
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
-  state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), triggers_enabled: true });
+  state.publish(snapshot([{ id: 3, name: 'alpha', members: [] }]));
   const rules = Array.from({ length: 6 }, (_, index) => ({
     id: index + 1, name: `rule ${index + 1}`, enabled: true,
     scope: index === 0 ? 'global' : 'group', group: index === 0 ? '' : 'alpha',
@@ -1446,7 +1512,7 @@ test('Groups keeps its trigger projection read-only, collapsed, and capped', asy
   await mounted.unmount();
 });
 
-test('Groups omits the trigger projection and its API load while the feature is off', async (t) => {
+test('Groups omits the trigger projection and its API load on a peer that does not offer triggers', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsList }] = await Promise.all([
     harness.importDashboardModule('js/groups-state.js'),
@@ -1454,7 +1520,7 @@ test('Groups omits the trigger projection and its API load while the feature is 
   ]);
   const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
-  state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), triggers_enabled: false });
+  state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), peer_view: { level: 'restricted' } });
   let loads = 0;
   const actions = {
     sort: () => {}, page: () => {}, setPageSize: () => {},
@@ -1578,7 +1644,7 @@ test('missing extension status has a diagnostic badge only while online', async 
   await offline.unmount();
 });
 
-test('the column menu recomputes when processes turn on or off', async (t) => {
+test('the column menu recomputes when processes come and go, as on a switch to a peer', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsList }] = await Promise.all([
     harness.importDashboardModule('js/groups-state.js'),
@@ -1595,7 +1661,8 @@ test('the column menu recomputes when processes turn on or off', async (t) => {
     },
   });
   state.initialize();
-  state.publish(snapshot([{ name: 'alpha', members: [] }]));
+  const peer = { ...snapshot([{ name: 'alpha', members: [] }]), peer_view: { level: 'restricted' } };
+  state.publish(peer);
   const source = { context: harness.signals.signal(null), status: harness.signals.signal('idle'), error: harness.signals.signal(''), refresh: () => Promise.resolve() };
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   t.after(() => host.remove());
@@ -1603,11 +1670,11 @@ test('the column menu recomputes when processes turn on or off', async (t) => {
   assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role']);
 
   available = true;
-  await harness.act(() => state.publish({ ...snapshot([{ name: 'alpha', members: [] }]), processes_enabled: true }));
+  await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [] }])));
   assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role', 'process']);
 
   available = false;
-  await harness.act(() => state.publish(snapshot([{ name: 'alpha', members: [] }])));
+  await harness.act(() => state.publish(peer));
   assert.deepEqual(state.columnOptions.value.map((c) => c.key), ['role']);
 });
 
@@ -1642,6 +1709,13 @@ test('queued spawns ride the member table as rows, even in an empty group', asyn
   assert.equal(row.getAttribute('data-dnd-queued-group'), 'crew');
   assert.equal(row.getAttribute('data-dnd-label'), 'db-migration-2');
   assert.equal(row.querySelector('.queued-name').textContent, 'db-migration-2');
+  const { registerAgentSpawnController } = await harness.importDashboardModule('js/agent-spawn-controller.js');
+  const opened = [];
+  t.after(registerAgentSpawnController({ open: (o) => opened.push(o) }));
+  const key = (k) => harness.fireEvent(row.querySelector('.queued-name'), 'keydown', { key: k }).defaultPrevented;
+  assert.equal(key('a'), false, 'other keys pass through');
+  assert.equal(key(' '), true, 'Space on the queued name activates it without scrolling the page');
+  assert.equal(opened.length, 1, 'Space opens the queued spawn for editing');
   assert.equal(host.querySelector('.group-queued-block'), null, 'no separate queued block above the table');
   assert.equal(host.textContent.includes('(no members yet)'), false, 'the queued row stands in for the empty note');
   await mounted.unmount();

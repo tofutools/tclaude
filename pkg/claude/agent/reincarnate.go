@@ -25,7 +25,7 @@ import (
 type reincarnateParams struct {
 	FollowUp string `pos:"true" optional:"true" help:"First-turn prompt for the new agent (REQUIRED — give it inline here or via --file). Quote multi-word strings. If you have no concrete next directive, summarise your previous 'life' (what you were doing, where the relevant files are) so the successor has something to start from."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the follow-up from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing follow-ups. Mutually exclusive with the positional argument."`
-	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.reincarnate permission, or being an owner of a group containing the target."`
+	Target   string `long:"target" optional:"true" help:"Reincarnate ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 	AskHuman string `long:"ask-human" optional:"true" help:"Deprecated compatibility no-op for self-reincarnation, which needs no permission; cross-agent calls still require an explicit grant or group ownership."`
 }
 
@@ -47,8 +47,7 @@ func reincarnateCmd() *cobra.Command {
 			"\n\n" +
 			"By default the target is the calling agent itself (self-reincarnate). " +
 			"Use --target <selector> to reincarnate ANOTHER agent — the manager " +
-			"pattern. Cross-agent calls require the agent.reincarnate permission, " +
-			"OR the caller being an owner of a group containing the target. " +
+			"pattern. " + CrossAgentAuth("reincarnate") + " " +
 			"\n\n" +
 			"Persist any task state to disk *before* calling — the daemon migrates " +
 			"identity, not work. The skill (agent-lifecycle) explains the disk-handoff " +
@@ -74,7 +73,7 @@ func reincarnateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *reincarnateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runReincarnate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runReincarnate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -139,10 +138,23 @@ func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Wri
 		FollowUp      string   `json:"follow_up,omitempty"`
 		MessageID     int64    `json:"message_id,omitempty"`
 		Note          string   `json:"note,omitempty"`
+		Warnings      []string `json:"warnings,omitempty"`
+		Changes       []string `json:"changes,omitempty"`
+		// Mode "self" is a peer's agent asked to reincarnate itself
+		// (member@peer): no successor exists yet.
+		Mode   string `json:"mode,omitempty"`
+		ConvID string `json:"conv_id,omitempty"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, body, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	resp.printRemoteBanner(stdout)
+	defer resp.printRemoteNote(stdout)
+	if resp.Mode == "self" {
+		fmt.Fprintf(stdout, "Asked %s to reincarnate itself (inbox message #%d); it writes its own handoff at a clean point\n", short(resp.ConvID), resp.MessageID)
+		return rcOK
 	}
 	if resp.CallerConv != "" {
 		fmt.Fprintf(stdout, "Reincarnated %s -> %s (called by %s)\n",
@@ -165,6 +177,12 @@ func runReincarnate(p *reincarnateParams, stdin io.Reader, stdout, stderr io.Wri
 	}
 	if resp.Note != "" {
 		fmt.Fprintf(stdout, "Note: %s\n", resp.Note)
+	}
+	for _, warning := range resp.Warnings {
+		fmt.Fprintf(stdout, "  Warning: %s\n", warning)
+	}
+	for _, change := range resp.Changes {
+		fmt.Fprintf(stdout, "  Changed since last launch: %s\n", change)
 	}
 	return rcOK
 }

@@ -45,16 +45,16 @@ export function buildFusedNodeCommands(listing, {
       return needs ? { enabled: false, disabledReason: `${nodeName} does not share ${what} with you (needs ${needs})` } : {};
     };
     cmds.push({
-      node: id, icon: wiz('＋', '🔮'), label: wiz(`Spawn agent in ${g.name}…`, `Summon a familiar into ${g.name}…`),
+      node: id, icon: wiz('＋', '🔮'), label: wiz(`Spawn agent in ${g.name}…`, `Summon a hero into ${g.name}…`),
       hint: wiz(`open the spawn dialog pinned to this group on ${nodeName}`, `open the summoning circle bound to this party on ${nodeName}`),
-      keywords: `new agent create spawn launch start group ${g.name} ${nodeName} summon conjure invoke familiar party`,
+      keywords: `new agent create spawn launch start group ${g.name} ${nodeName} summon conjure invoke hero party`,
       run: () => openSpawn({ nodeId: id, node: nodeName, groupName: group, snapshot }),
       ...gate('spawn.request', 'spawning'),
     });
     cmds.push({
       node: id, icon: wiz('✉', '✒'), label: wiz(`Message group: ${g.name}…`, `Send missive to party: ${g.name}…`),
       hint: wiz(`compose a one-shot message to this group on ${nodeName}`, `inscribe a missive for this party on ${nodeName}`),
-      keywords: `message send compose notify group broadcast multicast all members agents ${g.name} ${nodeName} missive inscribe party familiars circle`,
+      keywords: `message send compose notify group broadcast multicast all members agents ${g.name} ${nodeName} missive inscribe party heroes circle`,
       run: () => openMessage({ targetMode: 'group', groupName: group }, id, nodeName),
       ...gate('messaging', 'messaging'),
     });
@@ -68,9 +68,9 @@ export function buildFusedNodeCommands(listing, {
       const label = `${m.title || m.agent_id}@${nodeName}`;
       cmds.push({
         id: `agent-focus:${id}/${m.agent_id}`,
-        node: id, icon: wiz('◎', '👁'), label: wiz(`Open terminal: ${label}`, `Reveal familiar: ${label}`),
-        hint: wiz(`open this agent's terminal on ${nodeName} here`, `conjure this familiar's scrying portal from ${nodeName}`),
-        keywords: `focus show jump open terminal window agent ${label} reveal behold conjure portal scrying familiar`,
+        node: id, icon: wiz('◎', '👁'), label: wiz(`Open terminal: ${label}`, `Reveal hero: ${label}`),
+        hint: wiz(`open this agent's terminal on ${nodeName} here`, `conjure this hero's scrying portal from ${nodeName}`),
+        keywords: `focus show jump open terminal window agent ${label} reveal behold conjure portal scrying hero`,
         run: () => openTerminal({ instance: id, agent: m.agent_id, peerLabel: nodeName, label: m.title || '' }),
       });
     }

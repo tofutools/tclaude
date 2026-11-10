@@ -13,14 +13,14 @@ import (
 // arm selects the variables for ONE carriage and would silently measure the
 // wrong thing if either drifted.
 //
-// 1. Coverage: every variable the launcher strips is also set. The launcher's
-//    own seam test pins the values; this pins the correspondence, which is what
-//    keeps a name added to proxyNetworkProxyVariables from being stripped and
-//    never written.
-// 2. Tagging: HTTP_PROXY/HTTPS_PROXY are the HTTP carriage and ALL_PROXY is the
-//    SOCKS5 carriage, matching the scheme each value actually names. An arm
-//    told that ALL_PROXY was the HTTP carriage would report "OpenCode carries
-//    HTTP" from a launch that in fact only offered SOCKS.
+//  1. Coverage: every variable the launcher strips is also set. The launcher's
+//     own seam test pins the values; this pins the correspondence, which is what
+//     keeps a name added to proxyNetworkProxyVariables from being stripped and
+//     never written.
+//  2. Tagging: HTTP_PROXY/HTTPS_PROXY are the HTTP carriage and ALL_PROXY is the
+//     SOCKS5 carriage, matching the scheme each value actually names. An arm
+//     told that ALL_PROXY was the HTTP carriage would report "OpenCode carries
+//     HTTP" from a launch that in fact only offered SOCKS.
 func TestProxyNetworkCarriageCoversEveryOwnedVariable(t *testing.T) {
 	entries := ProxyNetworkCarriage("127.0.0.1:41234")
 	byName := make(map[string]ProxyNetworkCarriageEntry, len(entries))

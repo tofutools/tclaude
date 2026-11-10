@@ -12,6 +12,9 @@ import {
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 import { fromPath } from './nav-history-core.js';
 import { shellToast } from './shell-state.js';
+import { watchPopover } from './hover-popover.js';
+import { Button, Input } from './ui-components.js';
+import { TableHead } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -74,8 +77,8 @@ function FactorEditor({ state, actions }) {
       : custom ? 'Custom multiplier' : `Uses default · ×${defaultFactor}`;
     return html`<div class="cost-factor-row" key=${key}>
       <label for=${key ? `costs-factor-${key}` : 'costs-factor'}>${label}<small>${hint}</small></label>
-      <span class="cost-factor-reset">${custom && html`<button class="tool" disabled=${!current.loaded}
-        aria-label=${`Use default for ${label}`} onClick=${() => inherit(key)}>Use default</button>`}</span>
+      <span class="cost-factor-reset">${custom && html`<${Button} size="sm" variant="link" disabled=${!current.loaded}
+        aria-label=${`Use default for ${label}`} onClick=${() => inherit(key)}>Use default<//>`}</span>
       <span>×</span><input id=${key ? `costs-factor-${key}` : 'costs-factor'} type="number" min="0.01" max="10" step="0.01"
         aria-label=${key ? `${label} cost display multiplier` : 'Cost display multiplier'} disabled=${!current.loaded}
         placeholder=${key ? defaultFactor : '1'} value=${raw}
@@ -85,14 +88,14 @@ function FactorEditor({ state, actions }) {
   };
   return html`<details ref=${menu} class="cost-filter-menu cost-factor-menu" id="costs-factor-label" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Multipliers</strong><span>${count ? `${count} override${count === 1 ? '' : 's'}` : `×${defaultFactor}`}</span></summary>
-    <div class="cost-filter-popover cost-factor-popover" role="group" aria-label="Cost display multipliers">
+    <div class="cost-filter-popover ui-popover cost-factor-popover" role="group" aria-label="Cost display multipliers">
       <div class="cost-filter-popover-head"><strong>Cost display multipliers</strong><span>1 = no adjustment</span></div>
       <p>Overrides replace the default. Leave a harness blank to use the default.</p>
       ${row('', 'Default')}${COST_FACTOR_HARNESSES.map(({ key, label }) => row(key, label))}
       <p>Applies to displayed costs across the dashboard, including WHAT-IF estimates. Recorded data stays unchanged.</p>
-      <div class="cost-factor-footer"><button class="tool" disabled=${!current.loaded} onClick=${reset}>Reset all to ×1</button>
+      <div class="cost-factor-footer"><${Button} size="sm" disabled=${!current.loaded} onClick=${reset}>Reset all to ×1<//>
         <span id="costs-factor-status" class=${`muted${current.error ? ' error' : ''}`} role=${current.error ? 'alert' : 'status'}>${current.status}</span>
-        ${!current.loaded && current.error && html`<button class="tool" onClick=${actions.loadFactor}>Retry</button>`}
+        ${!current.loaded && current.error && html`<${Button} size="sm" onClick=${actions.loadFactor}>Retry<//>`}
       </div>
     </div>
   </details>`;
@@ -116,18 +119,18 @@ function Controls({ state, actions, current }) {
   // past the window edge, so it gets a row of its own regardless of length.
   return html`<div class="costs-header">
     <div class="filter-bar" id="costs-spans">
-      ${COST_SPANS.map((span) => html`<button class=${`tool${current.span === span.key ? ' active' : ''}`}
+      ${COST_SPANS.map((span) => html`<${Button} pressed=${current.span === span.key}
         data-span=${span.key} title=${span.key === 'month' ? 'Calendar month to date — the only span with a projection' : `Trailing ${span.days} days`}
-        onClick=${() => loadAfter(() => state.setSpan(span.key))}>${span.label}</button>`)}
+        onClick=${() => loadAfter(() => state.setSpan(span.key))}>${span.label}<//>`)}
       <span id="costs-month-nav" title="Browse a month — click the month, then ‹ / › to step">
-        <button class="tool costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month"
+        <${Button} class="costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month"
           disabled=${current.monthOffset >= current.oldestMonthOffset}
-          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset + 1 : current.monthOffset))}>‹</button>
-        <button class=${`tool${monthView ? ' active' : ''}`} id="costs-month-cur" data-span="calmonth" title="View this month"
-          onClick=${() => loadAfter(() => state.activateMonth(current.monthOffset))}>${current.monthLabel}</button>
-        <button class="tool costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month"
+          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset + 1 : current.monthOffset))}>‹<//>
+        <${Button} pressed=${monthView} id="costs-month-cur" data-span="calmonth" title="View this month"
+          onClick=${() => loadAfter(() => state.activateMonth(current.monthOffset))}>${current.monthLabel}<//>
+        <${Button} class="costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month"
           disabled=${current.monthOffset <= 0}
-          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset - 1 : current.monthOffset))}>›</button>
+          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset - 1 : current.monthOffset))}>›<//>
       </span>
       <label class=${`filter-toggle${current.span !== 'month' ? ' disabled' : ''}`} id="costs-fill-weekdays-label"
         title="Fill the empty weekdays before your first run this month with the per-weekday average.">
@@ -186,14 +189,29 @@ export function positionCostFilter(menu) {
   popover.style.visibility = 'visible';
 }
 
+// watchedFilters maps each open filter to the end of its watchPopover. The
+// <details> keeps its own open state, so the toggle event starts and ends it.
+const watchedFilters = new Map();
+
+function unwatchCostFilter(menu) {
+  watchedFilters.get(menu)?.();
+  watchedFilters.delete(menu);
+}
+
 function toggleCostFilter(event) {
   const menu = event.currentTarget;
   const popover = menu.querySelector(':scope > .cost-filter-popover');
+  unwatchCostFilter(menu);
   if (!menu.open && !menu.hasAttribute('open')) {
     if (popover) popover.style.visibility = 'hidden';
     return;
   }
+  watchedFilters.set(menu, watchPopover({ roots: () => menu, close: (why) => {
+    menu.open = false;
+    if (why !== 'outside') menu.querySelector(':scope > summary')?.focus();
+  } }));
   positionCostFilter(menu);
+  menu.querySelector(':scope > .cost-filter-popover input[type="search"]')?.focus({ preventScroll: true });
 }
 
 function useCostFilterPosition() {
@@ -209,7 +227,7 @@ function ProviderFilter({ state, current }) {
     + (current.selectedProviders.has(entry.provider) ? entry.cost : 0), 0);
   return html`<details ref=${menu} id="filter-costs-providers" class="cost-filter-menu" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Providers</strong><span>${current.selectedProviders.size} of ${current.providers.length} · ${fmtUSD(selectedCost)}</span></summary>
-    <div class="cost-filter-popover provider" role="group" aria-label="Cost providers">
+    <div class="cost-filter-popover ui-popover provider" role="group" aria-label="Cost providers">
       <div class="cost-filter-popover-head"><strong>Providers</strong><span>cost share · agents</span></div>
       ${current.providerStats.map((entry) => {
         const share = Math.round(entry.share * 100);
@@ -240,7 +258,7 @@ function ModelFilter({ state, current }) {
   const filtered = current.modelStats.filter((entry) => entry.model.toLowerCase().includes(query.trim().toLowerCase()));
   return html`<details ref=${menu} id="filter-costs-models" class="cost-filter-menu models" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Models</strong><span>${selectedCount} of ${available.length} · ${Math.round(current.modelCoverage * 100)}% spend</span></summary>
-    <div class="cost-filter-popover model" role="group" aria-label="Cost models"
+    <div class="cost-filter-popover ui-popover model" role="group" aria-label="Cost models"
       title="Cost is grouped by the last model recorded for each agent-day slice.">
       <div class="cost-filter-popover-head"><strong>Models in selected providers</strong>
         <input type="search" aria-label="Filter cost models" placeholder="Filter models…" value=${query}
@@ -273,7 +291,7 @@ function BreakdownFilter({ state, current }) {
   const label = modes.length ? modes.join(' + ') : 'Total';
   return html`<details ref=${menu} id="filter-costs-breakdown" class="cost-filter-menu breakdown" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Breakdown</strong><span>${label}</span></summary>
-    <div class="cost-filter-popover breakdown" role="group" aria-label="Cost chart breakdown">
+    <div class="cost-filter-popover ui-popover breakdown" role="group" aria-label="Cost chart breakdown">
       <div class="cost-filter-popover-head"><strong>Chart breakdown</strong><span>affects both graphs</span></div>
       <label class="cost-breakdown-option">
         <input id="costs-stack-provider" type="checkbox" checked=${current.stackByProvider}
@@ -294,20 +312,12 @@ function BreakdownFilter({ state, current }) {
 
 function CostFilters({ state, current }) {
   useEffect(() => {
-    const close = (event) => {
-      if (event.type === 'pointerdown' && event.target.closest?.('.cost-filter-menu')) return;
-      document.querySelectorAll('.cost-filter-menu[open]').forEach((menu) => { menu.open = false; });
-    };
-    const escape = (event) => { if (event.key === 'Escape') close(event); };
     const reposition = () => document.querySelectorAll('.cost-filter-menu[open]')
       .forEach((menu) => positionCostFilter(menu));
-    document.addEventListener('pointerdown', close);
-    document.addEventListener('keydown', escape);
     window.addEventListener?.('resize', reposition);
     window.addEventListener?.('scroll', reposition, true);
     return () => {
-      document.removeEventListener('pointerdown', close);
-      document.removeEventListener('keydown', escape);
+      [...watchedFilters.keys()].forEach(unwatchCostFilter);
       window.removeEventListener?.('resize', reposition);
       window.removeEventListener?.('scroll', reposition, true);
     };
@@ -320,18 +330,9 @@ function CostFilters({ state, current }) {
 }
 
 function SortHeader({ state, current }) {
-  const activate = (event, key) => {
-    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    state.cycleSort(key);
-  };
-  return html`<thead><tr>${COST_COLUMNS.map((column) => {
-    const active = current.sort.key === column.sort;
-    return html`<th class=${`cost-sort${active ? ' active' : ''}`} tabIndex="0"
-      aria-sort=${active ? (current.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-      title=${`Sort by ${column.label}`} onClick=${(event) => activate(event, column.sort)}
-      onKeyDown=${(event) => activate(event, column.sort)}>${column.label}${active ? (current.sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
-  })}<th class="cost-ignore-col" aria-label="Ignore"></th></tr></thead>`;
+  return html`<${TableHead} cols=${COST_COLUMNS} activeCol=${current.sort.key} dir=${current.sort.dir}
+    isSortable=${() => true} colOf=${(column) => column.sort} onSort=${(key) => state.cycleSort(key)}
+    trailing=${html`<th class="cost-ignore-col" aria-label="Ignore"></th>`} />`;
 }
 
 // useCostIgnore runs the Ignore / Restore requests: one at a time per
@@ -365,7 +366,7 @@ function ServedCosts({ current }) {
   return html`<details class="cost-ignored cost-served" id="costs-served" open>
     <summary><strong>Served to peers</strong><span>${fmtUSD(current.payload.served_total_usd || 0)} through your model gateways in this span</span></summary>
     <p class="muted">Peers' agents billed these model calls to your gateways (usage sharing). The gateway charges each one from the token counts the provider reports; one still running, or never answered, counts its worst case${unpriced ? `. ${unpriced} request${unpriced === 1 ? '' : 's'} had no price and count${unpriced === 1 ? 's' : ''} nothing here` : ''}. They are not in your agents' totals above.</p>
-    <table><tbody>
+    <table class="ui-compact"><tbody>
       ${served.map((row) => html`<tr key=${`${row.peer}/${row.gateway}`} data-key=${`cost-served-${row.peer}-${row.gateway}`}>
         <td><span class="rowname">${row.peer_name || row.peer}</span> <span class="muted">· ${row.gateway}</span></td>
         <td><span class="cost-amt">${fmtUSD(row.cost_usd)}</span></td>
@@ -384,17 +385,17 @@ function IgnoredCosts({ current, ignore }) {
   return html`<details class="cost-ignored" id="costs-ignored">
     <summary><strong>Ignored</strong><span>${ignored.length} agent${ignored.length === 1 ? '' : 's'} · ${fmtUSD(excluded)} excluded from this span's totals</span></summary>
     <p class="muted">Ignored agents' spend is left out of every cost total — this view, the header and Overview figures, spend alerts and <code>tclaude costs</code>. Their recorded history is kept, so Restore brings it back exactly. An agent billed to a peer's model gateway is ignored on its own: that peer pays, and counts it.</p>
-    <table><tbody>
+    <table class="ui-compact"><tbody>
       ${ignored.map((row) => html`<tr key=${row.conv_id} data-key=${`cost-ignored-${row.conv_id}`}>
         <td title=${row.title || '(unknown)'}><span class="rowname">${row.title || '(unknown)'}</span> <span class="id" title=${idTooltip(row.agent_id, row.conv_id)}>${shortAgentId(row.agent_id, row.conv_id)}</span></td>
         <td><span class="cost-amt" title="Spend in this span that restoring would add back">${fmtUSD(row.cost_usd)}</span></td>
         <td><span class="muted">${harnessLabel(row.harness)}</span></td>
         <td><span class="muted">${costModelLabel(row)}</span></td>
         <td>${row.billed_to ? html`<span class="muted cost-billed-to" title="Its model calls went through this peer's model gateway; that peer pays for them and counts the cost">billed to ${row.billed_to_name || row.billed_to}</span>`
-          : html`<button class="tool cost-restore" data-act="cost-restore" disabled=${ignore.pending.has(row.conv_id)}
+          : html`<${Button} size="sm" class="cost-restore" data-act="cost-restore" disabled=${ignore.pending.has(row.conv_id)}
           title="Count this agent's spend in cost totals again"
           aria-label=${`Restore ${row.title || row.conv_id} to cost totals`}
-          onClick=${() => ignore.run(row.conv_id, row.title, false)}>Restore</button>`}</td>
+          onClick=${() => ignore.run(row.conv_id, row.title, false)}>Restore<//>`}</td>
       </tr>`)}
     </tbody></table>
   </details>`;
@@ -532,12 +533,12 @@ function CostsTable({ state, current, ignore }) {
   }
   return html`<${Fragment}>
     <div class="filter-bar" id="costs-table-filter">
-      <input ref=${inputRef} id="filter-costs" type="text" aria-label="Filter cost agents"
+      <${Input} domRef=${inputRef} id="filter-costs" aria-label="Filter cost agents"
         placeholder="Filter agents (name / id / harness / model)" autocomplete="off" spellcheck=${false}
         value=${current.query} onInput=${(event) => state.setQuery(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Escape') state.setQuery(''); }} />
       <span class="filter-count" id="filter-costs-count">${current.filtered ? `${current.shownConversations} / ${current.totalConversations}` : ''}</span>
-      <button class="clear-filter" id="filter-costs-clear" title="Clear filter" aria-label="Clear cost filter"
+      <button data-ui-exempt class="clear-filter" id="filter-costs-clear" title="Clear filter" aria-label="Clear cost filter"
         onClick=${() => { state.setQuery(''); inputRef.current?.focus(); }}>×</button>
     </div>
     <${ModelRollup} current=${current} />
@@ -574,7 +575,7 @@ function CostsTable({ state, current, ignore }) {
               <td><span class="muted">${harnessLabel(agent.harness)}</span></td>
               <td><span class="muted">${costModelLabel(agent)}</span></td>
               <td><span class="muted">${fmtLastActivity(agent)}</span></td>
-              <td class="cost-ignore-cell">${agent.conv_id && html`<button class="cost-ignore" data-act="cost-ignore"
+              <td class="cost-ignore-cell">${agent.conv_id && html`<button data-ui-exempt class="cost-ignore" data-act="cost-ignore"
                 disabled=${ignore.pending.has(agent.conv_id)}
                 title="Ignore this conversation's spend (all its days) in every cost total — e.g. spend counted twice. Earlier conversations of the same agent (after /clear or a resume) are separate rows. Restore it from the Ignored list."
                 aria-label=${`Ignore ${agent.title || agent.conv_id} in cost totals`}
@@ -623,7 +624,7 @@ export function CostsApp({ state, actions }) {
       <div class="cost-chart-heading cost-daily-heading"><strong>Daily spend</strong><span>${current.stackByProvider || current.stackByModel
         ? `stacked by ${[current.stackByProvider && 'provider', current.stackByModel && 'model'].filter(Boolean).join(' + ')}`
         : 'total'}</span></div>
-      <${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} />
+      <${CostsChart} chart=${current.chart} enabled=${current.active} />
       <${CostsTable} state=${state} current=${current} ignore=${ignore} />
       <${ServedCosts} current=${current} />
       <${IgnoredCosts} current=${current} ignore=${ignore} />

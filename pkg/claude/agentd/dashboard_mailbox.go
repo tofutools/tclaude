@@ -83,11 +83,12 @@ const (
 	groupMailboxPrefix = "group:"
 )
 
-// mailboxIncludeRetired reports whether the request opted into retired
-// agents (the Messages-tab "show retired agents" toggle). Default off:
+// includeRetiredParam reports whether the request opted into retired
+// agents (?include_retired=1: the Messages-tab "show retired agents" toggle,
+// the harness_config repair CLI's --include-retired). Default off:
 // the roster hides retired-agent folders and the "all" firehose omits
 // their traffic until the operator ticks the box.
-func mailboxIncludeRetired(r *http.Request) bool {
+func includeRetiredParam(r *http.Request) bool {
 	switch r.URL.Query().Get("include_retired") {
 	case "1", "true", "yes":
 		return true
@@ -245,7 +246,7 @@ func handleDashboardMailboxes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	qv := r.URL.Query()
-	includeRetired := mailboxIncludeRetired(r)
+	includeRetired := includeRetiredParam(r)
 	includeEmpty := mailboxIncludeEmpty(r)
 	hidePrevGens := isTruthy(qv.Get("hide_prev_gens"))
 	filter := strings.ToLower(strings.TrimSpace(qv.Get("q")))
@@ -548,6 +549,18 @@ type mailboxMessage struct {
 	// in the aggregate "all" folder. Sourced from operator_agent_messages
 	// (see db.OperatorAuthoredMessages), not from the sender columns.
 	OperatorAuthored bool `json:"operator_authored,omitempty"`
+	// Action is a notification's action link. A peer reading this mailbox never
+	// gets it: see peerMailboxReadKey.
+	Action *dashboardHumanMessageAction `json:"action,omitempty"`
+	// A notification's decision, as dashboardHumanMessage carries it, for the
+	// reader's buttons. A peer's reader shows them and answers on that node.
+	Options       []string `json:"options,omitempty"`
+	Recommended   int      `json:"recommended,omitempty"`
+	Decision      string   `json:"decision,omitempty"`
+	DecidedAt     string   `json:"decided_at,omitempty"`
+	DismissedAt   string   `json:"dismissed_at,omitempty"`
+	DismissedBy   string   `json:"dismissed_by,omitempty"`
+	DismissReason string   `json:"dismiss_reason,omitempty"`
 }
 
 // Mailbox pagination bounds. defaultMailboxPageSize is what the
@@ -646,6 +659,11 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		focus, _ := strconv.ParseInt(r.URL.Query().Get("focus"), 10, 64)
 		unread := r.URL.Query().Get("unread") == "1"
 		p := humanMailboxPage(db.HumanMessageFilter{Sender: sender, Query: q, Unread: unread}, win, focus)
+		if r.Context().Value(peerMailboxReadKey{}) != nil {
+			for i := range p.Messages {
+				p.Messages[i].Action = nil
+			}
+		}
 		writeMailboxPage(w, map[string]any{
 			"id":    humanMailboxID,
 			"kind":  "human",
@@ -660,7 +678,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		// operator opened it on purpose, so they see all of its mail. A
 		// lookup error fails the request (matches the roster handler)
 		// rather than silently falling open to the unfiltered firehose.
-		p, err := agentMailboxPage("", q, win, !mailboxIncludeRetired(r))
+		p, err := agentMailboxPage("", q, win, !includeRetiredParam(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -690,7 +708,7 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		// current member's traffic and channel posts survive. A lookup error
 		// fails the request (matches the all branch) rather than silently
 		// falling open to the unfiltered group scope.
-		p, err := groupMailboxPage(g.ID, q, win, !mailboxIncludeRetired(r))
+		p, err := groupMailboxPage(g.ID, q, win, !includeRetiredParam(r))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
@@ -760,6 +778,12 @@ func humanMailboxMessages(page []*db.HumanMessage) []mailboxMessage {
 			Read:        m.Read,
 			Attachment:  m.Attachment,
 			Attachments: m.Attachments,
+			Action:      m.Action,
+			Options:     m.Options,
+			Recommended: m.Recommended,
+			Decision:    m.Decision,
+			DecidedAt:   m.DecidedAt,
+			DismissedAt: m.DismissedAt, DismissedBy: m.DismissedBy, DismissReason: m.DismissReason,
 		})
 	}
 	return out

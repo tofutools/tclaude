@@ -11,10 +11,12 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button } from './ui-components.js';
+import { Dialog, DialogClose } from './ui-dialog.js';
 import { openTerminalPane } from './terminals-tab.js';
 import { remoteShellPath, remoteTerminalPath } from './terminals-core.js';
 import { shellToast } from './shell-state.js';
+import { writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
 const SESSIONS_TTL_MS = 10000;
@@ -90,6 +92,7 @@ export async function openRemoteTerminal({ instance, agent, peerLabel = '', labe
   const opened = await open({
     wsPath: remoteTerminalPath({ peer: instance, agent, mode }),
     label: name,
+    ...(row.harness ? { harness: row.harness } : {}),
     remote: { peer: instance, peerLabel: peer, agent },
     ...(background ? { reveal: false } : {}),
   });
@@ -128,7 +131,7 @@ export async function openRemoteShell({ instance, group, shell, agent = '', peer
 
 // RemoteSessionsDialog lists a peer's sessions (the map's "Terminals…") with
 // how each opens here; the CLI attach command is the native-terminal option.
-export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellToast, open = openRemotePane, copy = (t) => globalThis.navigator.clipboard.writeText(t) }) {
+export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellToast, open = openRemotePane, copy = writeClipboard }) {
   const [rows, setRows] = useState(null);
   useEffect(() => {
     let off = false;
@@ -141,25 +144,24 @@ export function RemoteSessionsDialog({ node, onClose, fetchImpl, toast = shellTo
     const mode = remoteTerminalMode(row);
     if (!mode || !SAFE_ID.test(row.agent || '')) return;
     onClose();
-    open({ wsPath: remoteTerminalPath({ peer: node.id, agent: row.agent, mode }), label: row.name || row.agent, remote: { peer: node.id, peerLabel: node.name, agent: row.agent } });
+    open({ wsPath: remoteTerminalPath({ peer: node.id, agent: row.agent, mode }), label: row.name || row.agent, ...(row.harness ? { harness: row.harness } : {}), remote: { peer: node.id, peerLabel: node.name, agent: row.agent } });
   };
-  const copyCmd = (cmd) => Promise.resolve().then(() => copy(cmd)).then(() => toast('Command copied', false)).catch(() => toast(`Run in a terminal: ${cmd}`, false));
-  return html`<${Overlay} id="remote-sessions-modal" labelledby="remote-sessions-title" onClose=${onClose}>
-    <h3 id="remote-sessions-title">Terminals on ${node.name}</h3>
+  const copyCmd = (cmd) => Promise.resolve().then(() => copy(cmd)).then((ok) => { if (ok === false) throw new Error('copy failed'); toast('Command copied', false); }).catch(() => toast(`Run in a terminal: ${cmd}`, false));
+  return html`<${Dialog} id="remote-sessions-modal" title=${`Terminals on ${node.name}`} onClose=${onClose}
+    footer=${html`<${DialogClose}>Close<//>`}>
     ${rows?.error ? html`<div class="fa-danger" role="alert">${rows.error}</div>`
       : !rows ? html`<div class="muted">Loading…</div>`
       : rows.length === 0 ? html`<div class="muted">${node.name} shares no sessions with you (it needs sessions.watch to look, sessions.attach to type).</div>`
-      : html`<table class="fa-table" id="remote-sessions"><tbody>${rows.map((r) => {
+      : html`<table class="fa-table ui-compact" id="remote-sessions"><tbody>${rows.map((r) => {
         const mode = remoteTerminalMode(r);
         const cmd = nativeAttachCommand(r.agent, node.id);
         return html`<tr key=${r.agent} data-agent=${r.agent}>
           <td>${r.name || r.agent}${r.stale ? html` <span class="muted" title="The catalog entry is out of date; the peer decides when you open it">· stale</span>` : ''}</td>
           <td class="muted">${(r.groups || []).join(', ')}</td>
-          <td>${mode ? html`<button type="button" data-open=${mode} onClick=${() => go(r)}>${mode === 'interactive' ? '⌨ Open (interactive)' : '👁 Watch'}</button>` : html`<span class="muted">not shared</span>`}</td>
-          <td class="fa-acts">${cmd && html`<button type="button" class="fa-link" data-copy-cli title=${`Native terminal: ${cmd}`} onClick=${() => copyCmd(cmd)}>CLI command</button>`}</td>
+          <td>${mode ? html`<${Button} size="sm" data-open=${mode} onClick=${() => go(r)}>${mode === 'interactive' ? '⌨ Open (interactive)' : '👁 Watch'}<//>` : html`<span class="muted">not shared</span>`}</td>
+          <td class="fa-acts">${cmd && html`<${Button} size="sm" variant="link" class="fa-link" data-copy-cli title=${`Native terminal: ${cmd}`} onClick=${() => copyCmd(cmd)}>CLI command<//>`}</td>
         </tr>`;
       })}</tbody></table>`}
     <div class="muted fa-cli-note">Opening never stops the agent. Viewers share the size: the smallest attached terminal sets it. With the take-over grant you can disconnect the others. ${node.name} shows REMOTE WATCH or REMOTE INPUT on its pane and can disconnect you.</div>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" onClick=${onClose}>Close</button></div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }

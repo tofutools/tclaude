@@ -18,6 +18,10 @@
         }
       }
     },
+    "pi_drive": {
+      "description": "agent.json: the pi agent is driven through tclaude's pi extension instead of tmux send-keys (spawn --pi-drive).",
+      "type": "boolean"
+    },
     "permissions": {
       "description": "agent.json: advisory permission provenance; never grants.",
       "type": "array",

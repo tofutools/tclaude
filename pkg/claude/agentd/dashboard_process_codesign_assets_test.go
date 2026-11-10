@@ -42,25 +42,18 @@ func TestDashboardProcessCodesignAssets(t *testing.T) {
 
 	island := read("js/process-editor-island.js")
 	mustContain("process-editor-island.js", island,
-		"import { ScribeDock } from './process-scribe-dock.js';",
-		"<${ScribeDock} controller=${controller} view=${view} />",
+		"import { GetHelpMenu } from './get-help-menu.js';",
 		"import { DiffReviewBar } from './process-diff-review.js';",
 		"<${DiffReviewBar} controller=${controller} view=${view} />",
-		"onClick=${() => controller.openDiffReview()}>Review on canvas</button>",
+		"onClick=${() => controller.openDiffReview()}>Review on canvas<//>",
 	)
 
-	dock := read("js/process-scribe-dock.js")
-	mustContain("process-scribe-dock.js", dock,
-		"process-scribe-dock process-scroll-surface",
-		"`/api/scribe/${encodeURIComponent(agentId)}/chat`",
-	)
-	if strings.Contains(dock, "innerHTML") || strings.Contains(dock, "dangerouslySetInnerHTML") {
-		t.Error("scribe replies are untrusted text and must render as text")
+	for _, gone := range []string{"process-scribe-dock", "scribeDock", "toggleScribeDock"} {
+		if strings.Contains(island, gone) || strings.Contains(read("js/processes-island.js"), gone) {
+			t.Errorf("the docked scribe is gone (tcl-zdnw9w); found %q", gone)
+		}
 	}
-	mustContain("processes-island.js", read("js/processes-island.js"),
-		"scribeDock: actions?.openScribe ? { scribes: () => state.view.value.scribes, openTerminal: actions.openScribe } : null",
-	)
 	mustContain("dashboard.css", read("dashboard.css"),
-		".process-scribe-dock {", ".process-diff-review {", ".process-node.is-diff-added .process-node-shape",
+		".process-diff-review {", ".process-node.is-diff-added .process-node-shape",
 	)
 }

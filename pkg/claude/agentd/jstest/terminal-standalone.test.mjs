@@ -505,7 +505,7 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   });
   assertAbsent(host.querySelector('[role="tablist"]'));
   assertAbsent(host.querySelector('[title="Move this terminal to its own browser tab"]'));
-  assert.ok(host.querySelector('[title="Move this terminal back to its dashboard tab"]'));
+  assert.ok(host.querySelector('[title="Move this terminal back to a tab of the dashboard"]'));
   assertAbsent(host.querySelector('#mux-empty'));
   assert.equal(fake.widgets.length, 1);
   assert.equal(fake.widgets[0].child.parentElement.classList.contains('mux-pane-xterm-fit'), true);
@@ -522,7 +522,7 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   assertAbsent(host.querySelector('[title*="queued message"]'), 'the composer control stays absent until its optional island is ready');
   const unavailableChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
   Object.defineProperties(unavailableChord, {
-    key: { value: 'm' }, code: { value: 'KeyM' }, metaKey: { value: true },
+    key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true },
   });
   host.querySelector('.mux-pane-header').dispatchEvent(unavailableChord);
   assert.equal(unavailableChord.defaultPrevented, false,
@@ -534,11 +534,11 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   harness.fireEvent(message, 'click');
   const headerChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
   Object.defineProperties(headerChord, {
-    key: { value: 'm' }, code: { value: 'KeyM' }, metaKey: { value: true },
+    key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true },
   });
   host.querySelector('.mux-pane-header').dispatchEvent(headerChord);
   assert.equal(headerChord.defaultPrevented, true,
-    'the standalone shell captures Cmd+M above xterm and header controls');
+    'the standalone shell captures Ctrl M above xterm and header controls');
   assert.deepEqual(composed.map(({ restoreFocus, ...target }) => target), [
     { ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo' },
     { ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo' },
@@ -552,7 +552,7 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   });
   harness.document.dispatchEvent(held);
   assert.equal(held.defaultPrevented, true,
-    'the open standalone composer consumes repeated Ctrl/Cmd+M');
+    'the open standalone composer consumes repeated Ctrl M');
   assert.equal(composed.length, 2, 'the held shortcut does not reopen or retarget the composer');
 
   const beforeUnload = new harness.window.Event('beforeunload', { cancelable: true });
@@ -581,7 +581,7 @@ test('dragging the solo header title off the header sends the terminal back to t
       harness.importDashboardModule('js/terminal-shell-actions.js'),
       harness.importDashboardModule('js/terminal-shell-island.js'),
     ]);
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   const reattached = [];
   const actions = createTerminalShellActions({
     state,
@@ -621,7 +621,7 @@ test('dragging the solo header title off the header sends the terminal back to t
     await Promise.resolve();
   });
   assert.deepEqual(reattached, ['solo'],
-    'the drag runs the same reattach path as the ↩ dashboard button');
+    'the drag runs the same reattach path as the button back to the dashboard');
 
   await harness.act(() => harness.fireEvent(title, 'dragstart', { dataTransfer: transfer }));
   await harness.act(async () => {

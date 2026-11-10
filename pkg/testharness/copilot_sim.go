@@ -954,6 +954,14 @@ func (c *CopilotSim) submit(line string) {
 				"currentTokens": 64000, "tokenLimit": 128000, "trigger": "manual",
 			},
 		})
+		if err == nil {
+			err = c.appendEventLocked(map[string]any{
+				"type": "session.compaction_complete",
+				"data": map[string]any{
+					"success": true, "postCompactionTokens": 12000, "tokenLimit": 128000,
+				},
+			})
+		}
 		c.mu.Unlock()
 		if err != nil {
 			c.t.Errorf("copilot sim: /compact: %v", err)

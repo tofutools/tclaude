@@ -428,123 +428,28 @@ func newLinearProxySession(
 }
 
 // linearEffectiveTeams resolves the team set one request may act within, from
-// the operator's allow-list and the caller's grant scope.
-//
-// The two lists are enforced TOGETHER when both exist, and either alone is
-// enough to make the proxy usable:
-//
-//   - unscoped grant, operator list  → the operator's list (the historical case,
-//     unchanged);
-//   - scoped grant, operator list    → the intersection, so an operator can
-//     narrow one agent without touching the global list, and a grant can never
-//     widen past it;
-//   - scoped grant, no operator list → the grant's own teams, mirroring the git
-//     proxy's remote-scoped grant with an empty allowed_remotes;
-//   - unscoped grant, no operator list → nothing is reachable: the fail-closed
-//     linear_proxy_disabled answer.
-//
-// It resolves in TWO steps, and the split is what makes both answers precise.
-//
-// First, which teams the SCOPE admits, on its own merits: every team the scope
-// names, put through the real evaluator. That is not the same as the names
-// themselves. permissionScopeEnumerate unions the matchers across the winning
-// tier's rows, so a tier holding {linear_team: TCL} beside {linear_team: JOH,
-// group: dev} NAMES both while admitting only TCL — and reporting JOH as
-// something the grant covers would over-claim in a refusal message and in the
-// audit row. Only evalPermissionScope decides, which is also what keeps a scope
-// carrying a second dimension ANDing rather than collapsing to its team term.
-//
-// Second, the operator's ceiling intersected over that — or, with no operator
-// list at all, the scope's own answer standing as the whole policy.
-//
-// Separating the steps also puts the two ways an empty result arises on two
-// different paths, so each gets the refusal that names what the operator would
-// actually have to change.
+// the operator's allow-list and the caller's grant scope. The rules, shared
+// with the AWB proxy's workspace set, are resolveScopedGrantKeys's.
 func linearEffectiveTeams(
 	r *http.Request, convID, perm string, policy config.LinearProxyConfig, teamScoped bool,
 ) (teams, grantTeams []string, fault *proxyFault) {
-	if !teamScoped {
-		if len(policy.AllowedTeams) == 0 {
-			return nil, nil, &proxyFault{
-				Status: http.StatusServiceUnavailable,
-				Code:   linearProxyDisabledCode,
-				Msg:    linearProxyDisabledMessage,
-			}
-		}
-		return policy.AllowedTeams, nil, nil
-	}
-	// A SECOND resolution, because the preflight's verdict does not travel here.
-	// It re-reads the same request-scoped defaults, so in the ordinary case this
-	// is the same verdict the preflight saw.
-	v := resolvePermissionVerdictForRequest(r, convID, perm)
-	if v.Resolution != permAllow {
-		// The grant changed between the two reads. Name THAT rather than blaming
-		// the shape of a scope that may no longer exist — and refuse, rather than
-		// falling back on the operator's list.
-		return nil, nil, faultf(http.StatusForbidden, "permission",
-			"the %s grant was withdrawn while this request was being authorized", perm)
-	}
-	named, ok := permissionScopeEnumerate(v, ScopeDimLinearTeam)
-	if !ok || len(named) == 0 {
-		// The preflight established a scoped allow, so reaching here means this
-		// build cannot decode a scope row, or the scope constrains only
-		// dimensions a Linear request does not describe. Either way the grant
-		// does not speak to any team.
-		return nil, nil, faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
-			"the %s grant is scoped, but names no Linear team this daemon can act on; "+
-				"the scope must carry linear_team (e.g. --scope linear_team=TCL)", perm)
-	}
-	for _, key := range named {
-		if evalPermissionScope(v, convID, ActionContext{LinearTeam: key}).Satisfied {
-			grantTeams = appendTeamKey(grantTeams, key)
-		}
-	}
-	if len(grantTeams) == 0 {
-		// The scope names teams but admits none of them, so something else in the
-		// same scope refused. The operator's list is not the thing to edit.
-		return nil, nil, faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
-			"the %s grant names team(s) %s, but its scope also constrains a dimension a Linear "+
-				"request does not describe, so it authorizes nothing; the scope must constrain "+
-				"linear_team alone", perm, strings.Join(lowerTeamKeys(named), ", "))
-	}
-	if len(policy.AllowedTeams) == 0 {
-		// No operator list: the scope is the whole policy, exactly as a
-		// remote-scoped git grant is against an empty allowed_remotes.
-		return grantTeams, grantTeams, nil
-	}
-	for _, key := range grantTeams {
-		if policy.LinearTeamAllowed(key) {
-			teams = appendTeamKey(teams, key)
-		}
-	}
-	if len(teams) == 0 {
-		return nil, grantTeams, faultf(http.StatusForbidden, linearTeamScopeEmptyCode,
-			"the %s grant is scoped to team(s) %s, none of which is on the operator's "+
-				"agent.linear_proxy.allowed_teams list (allowed: %s); the two must overlap",
-			perm, strings.Join(grantTeams, ", "), strings.Join(policy.AllowedTeams, ", "))
-	}
-	return teams, grantTeams, nil
-}
-
-// lowerTeamKeys normalizes a team-key list the way the operator's allow-list is
-// normalized, so the two are directly comparable and render alike.
-func lowerTeamKeys(keys []string) []string {
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		out = appendTeamKey(out, key)
-	}
-	return out
-}
-
-// appendTeamKey adds one normalized team key to a list, dropping blanks and
-// duplicates. Order is preserved: these lists are rendered to humans in
-// refusals and in `whoami`, so they keep the order the operator wrote.
-func appendTeamKey(out []string, key string) []string {
-	key = strings.ToLower(strings.TrimSpace(key))
-	if key == "" || slices.Contains(out, key) {
-		return out
-	}
-	return append(out, key)
+	return resolveScopedGrantKeys(r, convID, perm, scopedGrantDimension{
+		dim:        ScopeDimLinearTeam,
+		context:    func(key string) ActionContext { return ActionContext{LinearTeam: key} },
+		allowed:    policy.AllowedTeams,
+		allowedKey: policy.LinearTeamAllowed,
+		disabled: &proxyFault{
+			Status: http.StatusServiceUnavailable,
+			Code:   linearProxyDisabledCode,
+			Msg:    linearProxyDisabledMessage,
+		},
+		emptyCode: linearTeamScopeEmptyCode,
+		product:   "Linear",
+		noun:      "team",
+		request:   "a Linear request",
+		example:   "linear_team=TCL",
+		listKey:   "agent.linear_proxy.allowed_teams",
+	}, teamScoped)
 }
 
 // linearRoutes spreads the caller's effective team set across the credentials

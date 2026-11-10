@@ -82,3 +82,19 @@ test('snapshot store represents poll errors and connection recovery', async (t) 
     error: null,
   });
 });
+
+test('restoreUnchangedStatics restores only what the reply left out', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { restoreUnchangedStatics } = await harness.importDashboardModule('js/snapshot-store.js');
+  const prev = {
+    static_version: 'v1', harnesses: [{ name: 'claude' }], sandbox_impl: { platform: 'linux' },
+    permissions: { scope_dim_options: { group: {} } },
+  };
+  const next = restoreUnchangedStatics({ static_version: 'v1', static_unchanged: true, harnesses: null, permissions: {} }, prev);
+  assert.deepEqual(next.harnesses, [{ name: 'claude' }]);
+  assert.deepEqual(next.sandbox_impl, { platform: 'linux' });
+  assert.deepEqual(next.permissions.scope_dim_options, { group: {} });
+
+  const olderPeer = restoreUnchangedStatics({ static_version: 'v1', static_unchanged: true, harnesses: [{ name: 'codex' }] }, prev);
+  assert.deepEqual(olderPeer.harnesses, [{ name: 'codex' }], 'a field the reply did send stays fresh');
+});

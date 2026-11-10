@@ -1,6 +1,10 @@
 package federationcmd
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestAttachHelloText(t *testing.T) {
 	for _, tc := range []struct {
@@ -20,4 +24,14 @@ func TestAttachHelloText(t *testing.T) {
 	if got := attachCloseText("taken_over"); got != "another viewer took over this terminal" {
 		t.Errorf("taken_over: %q", got)
 	}
+}
+
+// A path with a comma is one attachment: --attach is a StringArray, not
+// pflag's comma-splitting StringSlice.
+func TestSendAttachKeepsACommaInsideItsPath(t *testing.T) {
+	cmd := sendCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--attach", "report,v2.pdf", "--attach", "b.png"}))
+	got, err := cmd.Flags().GetStringArray("attach")
+	require.NoError(t, err)
+	require.Equal(t, []string{"report,v2.pdf", "b.png"}, got)
 }

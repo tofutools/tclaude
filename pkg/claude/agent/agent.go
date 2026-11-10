@@ -10,7 +10,7 @@ import (
 
 // Cmd returns the `tclaude agent` cobra command.
 func Cmd() *cobra.Command {
-	return boa.CmdT[struct{}]{
+	root := boa.CmdT[struct{}]{
 		Use:         "agent",
 		Short:       "Coordinate between coding agents",
 		Long:        "Look up other agents (named conversations), send messages, and manage allow-listed groups.",
@@ -54,6 +54,7 @@ func Cmd() *cobra.Command {
 			groupsCmd(),
 			aliasCmd(),
 			spawnCmd(),
+			queueCmd(),
 			inboxCmd(),
 			permissionsCmd(),
 			sudoCmd(),
@@ -64,11 +65,24 @@ func Cmd() *cobra.Command {
 			rolesCmd(),
 			profilesCmd(),
 			sandboxProfilesCmd(),
-			sandboxImplCmd(),
+			relaunchPolicyCmd(),
+			sandboxCmd(),
+			sandboxImplLegacyCmd(),
 			taskForceCmd(),
 			processCmd(),
 			processTemplatesCmd(),
 			dashboardCmd(),
+			guideCmd(),
+			fleetCmd(),
+			knowledgeCmd(),
+			stewardCmd(),
+			drawingBoardCmd(),
+			taskboardCmd(),
+			resourcesCmd(),
+			showCmd(),
+			pageCmd(),
 		},
 	}.ToCobra()
+	applyCrossAgentTargetHelp(root)
+	return root
 }

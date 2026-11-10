@@ -46,14 +46,25 @@ type Service struct {
 	release      func(context.Context, string) (Release, error)
 	stageRelease func(context.Context, Release, string, string) (string, error)
 	stageGo      func(context.Context, string, string, string) (string, error)
-	inspect      func(context.Context, string) (buildversion.Info, error)
+	// stageCheckout builds every binary from a local checkout into dir.
+	stageCheckout func(context.Context, CheckoutOptions, string, string) (map[string]string, error)
+	// buildCheckout builds a checkout path's binaries into a dir (branch mode).
+	buildCheckout func(context.Context, string, string) (map[string]string, error)
+	// revisionOf reads a built binary's vcs.revision and vcs.modified.
+	revisionOf func(string) (string, bool, error)
+	inspect    func(context.Context, string) (buildversion.Info, error)
+	// identify confirms an externally installed file is a tclaude binary.
+	identify func(string) error
+	// checkArgs is the pre-flight check of a new binary against the
+	// daemon's current flags.
+	checkArgs argsChecker
 }
 
 func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "jobs"), 0700); err != nil {
 		return nil, err
 	}
-	s := &Service{dir: dir, binaries: binaries, hooks: hooks, release: loadRelease, stageRelease: stageRelease, stageGo: stageGoInstall, inspect: inspectStaged}
+	s := &Service{dir: dir, binaries: binaries, hooks: hooks, release: loadRelease, stageRelease: stageRelease, stageGo: stageGoInstall, stageCheckout: stageCheckout, buildCheckout: buildCheckout, revisionOf: binaryRevision, inspect: inspectStaged, identify: identifyModule, checkArgs: checkLaunchArgs}
 	s.status = Status{CurrentVersion: buildversion.AppVersion(), InstallMethod: buildversion.InstallMethod, ProtocolVersion: buildversion.BuildInfo().ProtocolVersion, Binaries: binaries, Warnings: []string{}}
 	if s.status.InstallMethod == "" {
 		s.status.InstallMethod = "source_or_unmarked"
@@ -68,6 +79,14 @@ func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 	if readJSON(filepath.Join(dir, "status.json"), &saved) == nil {
 		s.status.LatestVersion = saved.LatestVersion
 		s.status.CheckedAt = saved.CheckedAt
+		if saved.Branch != "" {
+			s.status.Branch, s.status.LatestRevision, s.status.PendingCommits, s.status.UpdateAvailable = saved.Branch, saved.LatestRevision, saved.PendingCommits, saved.UpdateAvailable
+			if len(binaries) > 0 && primary(binaries).Revision == saved.LatestRevision {
+				// This process runs the commit the last check found.
+				current := false
+				s.status.PendingCommits, s.status.UpdateAvailable = nil, &current
+			}
+		}
 		s.status.Job = saved.Job
 	}
 	if _, err := os.Stat(filepath.Join(dir, "backup.json")); err == nil {
@@ -87,6 +106,7 @@ func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
 		} else {
 			job.State = "failed"
 			job.Error = "daemon exited during update; rollback is available when a backup was made"
+			s.endLaunchCheck(&job)
 		}
 		if err := s.saveJob(job); err != nil {
 			return nil, err
@@ -106,6 +126,9 @@ func releaseNewerThanBuild(release, current string) bool {
 	return semver.Compare(release, current) > 0
 }
 func (s *Service) updateAvailable() {
+	if s.status.Branch != "" {
+		return // a branch check sets it from commits, not release versions
+	}
 	if semver.IsValid(s.status.CurrentVersion) && semver.IsValid(s.status.LatestVersion) {
 		v := releaseNewerThanBuild(s.status.LatestVersion, s.status.CurrentVersion)
 		s.status.UpdateAvailable = &v
@@ -130,6 +153,12 @@ func (s *Service) Job(id string) (Job, error) {
 	return job, err
 }
 func (s *Service) Start(req Request, actor string, authorize func() bool) (Job, error) {
+	return s.StartWith(req, actor, authorize, ApplyOptions{})
+}
+
+// StartWith starts a job; opts carry the operator's updates.self choices
+// (never request input) and matter only for apply.
+func (s *Service) StartWith(req Request, actor string, authorize func() bool, opts ApplyOptions) (Job, error) {
 	if err := req.Validate(); err != nil {
 		return Job{}, err
 	}
@@ -156,16 +185,36 @@ func (s *Service) Start(req Request, actor string, authorize func() bool) (Job, 
 		return Job{}, err
 	}
 	job := Job{CurrentVersion: s.status.CurrentVersion, ID: hex.EncodeToString(nonce[:]), Action: req.Action, Version: req.Version, Actor: actor, State: "running", Phase: "queued", StartedAt: time.Now().UTC(), Warnings: append([]string{}, s.status.Warnings...)}
+	if req.Action == "apply" {
+		if err := s.admit(opts); err != nil {
+			return Job{}, err
+		}
+		job.Method = opts.Method
+		if opts.PostSetup != nil {
+			job.PostSetup = &PostSetup{State: "pending", Args: append([]string{}, opts.PostSetup...)}
+		}
+	}
+	if req.Action != "check" && opts.Launch != nil {
+		// Durable before anything is replaced: the restarted daemon
+		// compares itself with it.
+		if err := writeJSONFile(s.launchPath(job.ID), opts.Launch.Snapshot); err != nil {
+			return Job{}, err
+		}
+		job.Launch = opts.Launch.Snapshot.Check()
+	}
+	opts.Force = req.Force
 	if s.hooks.Started != nil {
 		if err := s.hooks.Started(job); err != nil {
+			_ = os.Remove(s.launchPath(job.ID))
 			return Job{}, err
 		}
 	}
 	if err := s.saveJob(job); err != nil {
+		_ = os.Remove(s.launchPath(job.ID))
 		return Job{}, err
 	}
 	s.active = true
-	go s.run(req, job, authorize)
+	go s.run(req, job, authorize, opts)
 	return job, nil
 }
 func (s *Service) saveJob(job Job) error {
@@ -187,13 +236,29 @@ func (s *Service) phase(job *Job, phase string) error {
 	}
 	return nil
 }
-func (s *Service) run(req Request, job Job, authorize func() bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOptions) {
+	// A custom command or checkout build may need longer than the default.
+	budget := 20 * time.Minute
+	if extra := opts.CustomTimeout + 10*time.Minute; opts.Method == MethodCustom && extra > budget {
+		budget = extra
+	}
+	if opts.Method == MethodSourceCheckout {
+		budget = 60 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	var err error
-	if req.Action == "rollback" {
+	branch := false
+	if req.Action != "rollback" && req.Version == "" {
+		branch, err = s.branchMode(ctx, opts)
+	}
+	switch {
+	case err != nil:
+	case branch:
+		err = s.runBranch(ctx, req, &job, authorize, opts)
+	case req.Action == "rollback":
 		err = s.rollback(&job, authorize)
-	} else {
+	default:
 		err = s.phase(&job, "checking_release")
 		var release Release
 		if err == nil {
@@ -211,6 +276,7 @@ func (s *Service) run(req Request, job Job, authorize func() bool) {
 				s.status.LatestVersion = release.Tag
 				s.status.CheckedAt = &now
 			}
+			s.status.Branch, s.status.LatestRevision, s.status.PendingCommits = "", "", nil
 			s.updateAvailable()
 			err = s.saveJob(job)
 			s.mu.Unlock()
@@ -219,12 +285,17 @@ func (s *Service) run(req Request, job Job, authorize func() bool) {
 			err = fmt.Errorf("downgrades are refused; use rollback to restore the journal backup")
 		}
 		if err == nil && req.Action == "apply" {
-			err = s.apply(ctx, release, &job, authorize, req.Version)
+			err = s.apply(ctx, release, &job, authorize, req.Version, opts)
 		}
 	}
 	s.mu.Lock()
 	now := time.Now().UTC()
 	job.FinishedAt = &now
+	if err != nil || !job.RestartRequired {
+		// Setup runs only from a new binary after a completed update.
+		job.PostSetup = nil
+		s.endLaunchCheck(&job)
+	}
 	if err != nil {
 		job.State = "failed"
 		job.Error = err.Error()
@@ -257,6 +328,7 @@ func (s *Service) run(req Request, job Job, authorize func() bool) {
 			job.State = "failed"
 			s.active = false
 			job.Error = "binaries updated but daemon restart failed: " + err.Error()
+			s.endLaunchCheck(&job)
 			_ = s.saveJob(job)
 			s.mu.Unlock()
 		}
@@ -264,7 +336,12 @@ func (s *Service) run(req Request, job Job, authorize func() bool) {
 }
 
 type backupEntry struct {
-	Binary     Binary `json:"binary"`
+	Binary Binary `json:"binary"`
+	// Target is the file the update wrote; empty means Binary.Path.
+	Target string `json:"target,omitempty"`
+	// Created marks a file the update created (an install next to a
+	// package-manager-owned binary); rollback removes it.
+	Created    bool   `json:"created,omitempty"`
 	Backup     string `json:"backup"`
 	BeforeHash string `json:"before_hash"`
 	AfterHash  string `json:"after_hash"`
@@ -327,119 +404,16 @@ func replaceFile(src, dst string, mode os.FileMode) error {
 	}
 	return syncDir(filepath.Dir(dst))
 }
-func (s *Service) apply(ctx context.Context, release Release, job *Job, authorize func() bool, pin string) error {
-	current := len(s.binaries) > 0
-	for _, b := range s.binaries {
-		current = current && b.Version == release.Tag
-	}
-	if current {
-		return nil
-	}
-	if err := s.phase(job, "staging"); err != nil {
-		return err
-	}
-	dir, err := os.MkdirTemp(s.dir, "stage-")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	staged := map[string]string{}
-	for _, b := range s.binaries {
-		if _, ok := staged[b.Name]; ok {
-			continue
-		}
-		var path string
-		if b.Method == "release" || s.hooks.ReleaseOnly {
-			path, err = s.stageRelease(ctx, release, b.Name, dir)
-		} else {
-			version := release.Tag
-			if b.Method == "source" && pin == "" {
-				version = "latest"
-			}
-			path, err = s.stageGo(ctx, b.Name, version, dir)
-		}
-		if err != nil {
-			return err
-		}
-		info, err := s.inspect(ctx, path)
-		if err != nil {
-			return err
-		}
-		if info.Version != release.Tag {
-			return fmt.Errorf("staged %s version does not match %s", b.Name, release.Tag)
-		}
-		if info.ProtocolVersion != s.status.ProtocolVersion {
-			return fmt.Errorf("target federation protocol %d differs from current %d; linked peers may be incompatible", info.ProtocolVersion, s.status.ProtocolVersion)
-		}
-		staged[b.Name] = path
-	}
-	if !authorize() {
-		return fmt.Errorf("update authority was revoked before replacement")
-	}
-	if err := s.phase(job, "backing_up"); err != nil {
-		return err
-	}
-	backupDir := filepath.Join(s.dir, "backup-"+job.ID)
-	if err := os.Mkdir(backupDir, 0700); err != nil {
-		return err
-	}
-	manifest := backupManifest{ID: job.ID, Version: release.Tag, Entries: []backupEntry{}}
-	for i, b := range s.binaries {
-		info, err := os.Lstat(b.Path)
-		if err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("update target is not a regular file")
-		}
-		hash, err := fileHash(b.Path)
-		if err != nil {
-			return err
-		}
-		after, err := fileHash(staged[b.Name])
-		if err != nil {
-			return err
-		}
-		backup := filepath.Join(backupDir, fmt.Sprint(i))
-		if err := copyExclusive(b.Path, backup, 0600); err != nil {
-			return fmt.Errorf("backup failed: %w", err)
-		}
-		copied, err := fileHash(backup)
-		if err != nil || copied != hash {
-			return fmt.Errorf("update target changed during backup")
-		}
-		manifest.Entries = append(manifest.Entries, backupEntry{Binary: b, Backup: backup, BeforeHash: hash, AfterHash: after, Mode: uint32(info.Mode().Perm())})
-	}
-	if err := syncDir(backupDir); err != nil {
-		return fmt.Errorf("could not persist backup directory: %w", err)
-	}
-	if err := writeJSONFile(filepath.Join(s.dir, "backup.json"), manifest); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.status.RollbackAvailable = true
-	s.mu.Unlock()
-	if err := s.phase(job, "replacing"); err != nil {
-		return err
-	}
-	replaced := []backupEntry{}
-	for _, e := range manifest.Entries {
-		hash, err := fileHash(e.Binary.Path)
-		if err != nil || hash != e.BeforeHash {
-			return s.undo(replaced, fmt.Errorf("update target changed before replacement"))
-		}
-		if !authorize() {
-			return s.undo(replaced, fmt.Errorf("update authority revoked"))
-		}
-		if err := replaceFile(staged[e.Binary.Name], e.Binary.Path, os.FileMode(e.Mode)); err != nil {
-			return s.undo(append(replaced, e), err)
-		}
-		replaced = append(replaced, e)
-	}
-	job.RestartRequired = true
-	return nil
-}
 func (s *Service) undo(entries []backupEntry, cause error) error {
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
-		if err := replaceFile(e.Backup, e.Binary.Path, os.FileMode(e.Mode)); err != nil {
+		var err error
+		if e.Created {
+			err = os.Remove(e.target())
+		} else {
+			err = replaceFile(e.Backup, e.target(), os.FileMode(e.Mode))
+		}
+		if err != nil {
 			cause = errors.Join(cause, fmt.Errorf("automatic rollback failed: %w", err))
 		}
 	}
@@ -448,22 +422,42 @@ func (s *Service) undo(entries []backupEntry, cause error) error {
 func (s *Service) verifyRestart(job Job) error {
 	var manifest backupManifest
 	if err := readJSON(filepath.Join(s.dir, "backup.json"), &manifest); err != nil {
+		// A package-manager update keeps no tclaude backup; it was verified
+		// before the restart.
+		if errors.Is(err, os.ErrNotExist) && job.Action == "apply" && !s.hooks.Supervised && job.Method != "" {
+			return nil
+		}
 		return err
 	}
 	if s.hooks.Supervised && job.Action == "apply" && manifest.ID != job.ID {
 		return fmt.Errorf("backup does not match pending update")
+	}
+	if !s.hooks.Supervised && job.Action == "apply" && job.Method != "" && manifest.ID != job.ID {
+		return nil // this update replaced nothing tclaude backed up
 	}
 	for _, e := range manifest.Entries {
 		expected := e.AfterHash
 		if job.Action == "rollback" {
 			expected = e.BeforeHash
 		}
-		hash, err := fileHash(e.Binary.Path)
+		hash, err := fileHash(e.target())
+		if job.Action == "rollback" && e.Created {
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("installed binaries do not match the completed rollback")
+			}
+			continue
+		}
 		if err != nil || hash != expected {
 			return fmt.Errorf("installed binaries do not match the completed update")
 		}
 	}
 	return nil
+}
+func (e backupEntry) target() string {
+	if e.Target != "" {
+		return e.Target
+	}
+	return e.Binary.Path
 }
 func (s *Service) rollback(job *Job, authorize func() bool) error {
 	if !authorize() {
@@ -484,17 +478,34 @@ func (s *Service) rollback(job *Job, authorize func() bool) error {
 		}
 	}()
 	undo := []backupEntry{}
-	for i, e := range manifest.Entries {
+	replaced, created := []backupEntry{}, []backupEntry{}
+	for _, e := range manifest.Entries {
+		if e.Created {
+			created = append(created, e)
+		} else {
+			replaced = append(replaced, e)
+		}
+	}
+	if len(manifest.Entries) == 0 {
+		return fmt.Errorf("the last update kept no tclaude backup; nothing to roll back")
+	}
+	for _, e := range created {
+		hash, err := fileHash(e.target())
+		if err != nil && !errors.Is(err, os.ErrNotExist) || err == nil && hash != e.AfterHash {
+			return fmt.Errorf("binary changed outside updater; refusing rollback")
+		}
+	}
+	for i, e := range replaced {
 		hash, err := fileHash(e.Backup)
 		if err != nil || hash != e.BeforeHash {
 			return fmt.Errorf("rollback backup verification failed")
 		}
-		hash, err = fileHash(e.Binary.Path)
+		hash, err = fileHash(e.target())
 		if err != nil || (hash != e.AfterHash && hash != e.BeforeHash) {
 			return fmt.Errorf("binary changed outside updater; refusing rollback")
 		}
 		current := filepath.Join(dir, fmt.Sprint(i))
-		if err := copyExclusive(e.Binary.Path, current, 0600); err != nil {
+		if err := copyExclusive(e.target(), current, 0600); err != nil {
 			return err
 		}
 		copied, err := fileHash(current)
@@ -503,7 +514,7 @@ func (s *Service) rollback(job *Job, authorize func() bool) error {
 		}
 		binary := e.Binary
 		binary.Version = job.CurrentVersion
-		undo = append(undo, backupEntry{Binary: binary, Backup: current, BeforeHash: hash, AfterHash: e.BeforeHash, Mode: e.Mode})
+		undo = append(undo, backupEntry{Binary: binary, Target: e.Target, Backup: current, BeforeHash: hash, AfterHash: e.BeforeHash, Mode: e.Mode})
 	}
 	if s.hooks.Supervised {
 		if err := syncDir(dir); err != nil {
@@ -517,17 +528,25 @@ func (s *Service) rollback(job *Job, authorize func() bool) error {
 	if err := s.phase(job, "restoring_backup"); err != nil {
 		return err
 	}
-	for i, e := range manifest.Entries {
-		hash, err := fileHash(e.Binary.Path)
+	for i, e := range replaced {
+		hash, err := fileHash(e.target())
 		if err != nil || hash != undo[i].BeforeHash {
 			return s.undo(undo[:i], fmt.Errorf("binary changed before rollback"))
 		}
 		if !authorize() {
 			return s.undo(undo[:i], fmt.Errorf("update authority revoked"))
 		}
-		if err := replaceFile(e.Backup, e.Binary.Path, os.FileMode(e.Mode)); err != nil {
+		if err := replaceFile(e.Backup, e.target(), os.FileMode(e.Mode)); err != nil {
 			return s.undo(undo[:i+1], err)
 		}
+	}
+	// Files the update created are removed last: nothing after them can fail
+	// and need undoing. The daemon then restarts from the original binary.
+	for _, e := range created {
+		if err := os.Remove(e.target()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("could not remove %s installed by the update: %w", e.target(), err)
+		}
+		job.Relocations = append(job.Relocations, Relocation{Name: e.Binary.Name, From: e.target(), To: e.Binary.Path})
 	}
 	job.RestartRequired = true
 	return nil
@@ -584,6 +603,7 @@ func (s *Service) RestartFailed(err error) {
 		job := *s.status.Job
 		job.State = "failed"
 		job.Error = "daemon restart failed: " + err.Error()
+		s.endLaunchCheck(&job)
 		_ = s.saveJob(job)
 	}
 }

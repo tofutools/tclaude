@@ -6,6 +6,7 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { QueuedSpawnRow, queuedSpawns } from './queued-spawns.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -25,39 +26,25 @@ export function QueuedSpawnsChip({ snapshot }) {
     setAnchor({ top: rect.bottom + 6, right: Math.max(8, window.innerWidth - rect.right) });
     setOpen(true);
   };
-  useEffect(() => {
-    if (!open) return undefined;
-    const outside = (event) => {
-      if (!root.current?.contains(event.target)) setOpen(false);
-    };
-    const escape = (event) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', outside);
-    document.addEventListener('keydown', escape);
-    return () => {
-      document.removeEventListener('pointerdown', outside);
-      document.removeEventListener('keydown', escape);
-    };
-  }, [open]);
+  useDismissablePopover(root, open, () => setOpen(false));
   useEffect(() => {
     if (!rows.length) setOpen(false);
   }, [rows.length]);
   if (!rows.length) return null;
   return html`<span class="queued-spawns-chip-wrap" ref=${root}>
-    <button type="button" id="queued-spawns-open" class=${`queued-spawns-chip${open ? ' open' : ''}`}
+    <button data-ui-exempt type="button" id="queued-spawns-open" class=${`queued-spawns-chip${open ? ' open' : ''}`}
       aria-haspopup="dialog" aria-expanded=${open ? 'true' : 'false'}
       title="Queued agents — prepared spawns that have not started yet"
       onClick=${toggle}>
       ⏸ <span class="theme-copy-regular">queued</span><span class="theme-copy-wizard">dormant</span>
-      <span class="queued-spawns-count">${rows.length}</span>
+      <span class="queued-spawns-count ui-badge ui-badge-warn">${rows.length}</span>
     </button>
-    ${open && html`<div class="queued-spawns-popover" role="dialog" aria-label="Queued agents"
+    ${open && html`<div class="queued-spawns-popover ui-popover" role="dialog" aria-label="Queued agents"
       style=${anchor ? { top: `${anchor.top}px`, right: `${anchor.right}px` } : undefined}
       onClick=${(event) => { if (event.target.closest('.queued-spawn-row')) setOpen(false); }}>
       <div class="queued-spawns-popover-head">
         <span><span class="theme-copy-regular">Queued agents</span><span class="theme-copy-wizard">Dormant summonings</span></span>
-        <span class="queued-spawns-popover-hint">click = review/edit · ▶ = spawn now</span>
+        <span class="queued-spawns-popover-hint ui-hint">click = review/edit · ▶ = spawn now</span>
       </div>
       ${rows.map((entry) => html`<${QueuedSpawnRow} key=${entry.id} entry=${entry} />`)}
     </div>`}

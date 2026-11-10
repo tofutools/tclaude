@@ -47,6 +47,29 @@ func fedReceiveAgents(t *testing.T, fh *fedHarness, group string) {
 	rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": "agents.receive", "scope": "group=" + group})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 }
+// A sender writes the offer's move label, so the label alone keeps no posture.
+// The receiver's teleport grant for that group is what does.
+func TestFederation_AcceptedOfferKeepsPostureOnlyWithTheGrant(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("receiver")
+	fedReceiveAgents(t, fh, "receiver")
+	group, err := db.GetAgentGroupByName("receiver")
+	require.NoError(t, err)
+	labelled := &db.FederationBundleOffer{Peer: p.id.ID()}
+	labelled.Descriptor.Move = &bundletransfer.MoveIntent{}
+	plain := &db.FederationBundleOffer{Peer: p.id.ID()}
+
+	require.False(t, agentd.OfferKeepsItsPostureForTest(labelled, group.ID), "agents.receive alone trusts no label")
+
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{
+		"peer": "bob", "slug": agentd.PermAgentsTeleportReceive, "scope": "group=receiver"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+
+	require.True(t, agentd.OfferKeepsItsPostureForTest(labelled, group.ID))
+	require.False(t, agentd.OfferKeepsItsPostureForTest(plain, group.ID), "an offer that is no move is a file")
+}
+
 func TestFederation_AgentOfferAdmissionAndLocalImport(t *testing.T) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer

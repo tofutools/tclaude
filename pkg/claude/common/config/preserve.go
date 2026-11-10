@@ -32,7 +32,9 @@ import (
 // retiredConfigKeys lists dotted paths tclaude once modeled and retired. A
 // save drops them silently; they are not reported as unknown.
 var retiredConfigKeys = map[string]bool{
-	"dashboard.show_debug_tab": true, // the Debug tab became Activity › Performance, always shown
+	"dashboard.show_debug_tab": true, // the Debug tab became Diagnostics › Performance, always shown
+	"features.processes":       true, // Processes graduated: always on
+	"features.triggers":        true, // Triggers graduated: always on
 }
 
 // orderedObject is a JSON object that keeps its key order, so a merge can

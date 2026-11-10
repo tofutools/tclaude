@@ -22,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
+	"github.com/tofutools/tclaude/pkg/claude/common/renametitle"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -546,12 +547,12 @@ var clearInjectReadyDelay = 1 * time.Second
 // helper directly from session (would cycle), and the cold reviewer
 // explicitly asked us to replicate the shape rather than reinvent.
 //
-// Charset gate is isValidRenameTitle — the strict gate documented at
-// pkg/claude/agentd/handlers.go's runRenameOrchestration as "a hard
-// security gate against keystroke injection ... not bypassable". The
+// Charset gate is isValidRenameTitle — the same strict send-keys gate
+// the daemon applies (pkg/claude/common/renametitle), "a hard security
+// gate against keystroke injection ... not bypassable". The
 // carried name comes from conv_index.custom_title (parsed verbatim
 // from .jsonl files) or pending_name (stored even when invalid by
-// lifecycle.go) — neither is pre-checked by the strict gate, so the
+// lifecycle_spawn_enroll.go) — neither is pre-checked by the strict gate, so the
 // gate runs here.
 //
 // renameCommand is the harness's declared in-pane rename; empty means it has
@@ -614,38 +615,10 @@ func waitClearInjectPaneReady(tmuxSession string) bool {
 	return false
 }
 
-// isValidRenameTitle mirrors the daemon-side gate in
-// pkg/claude/agentd/handlers.go. Kept in sync deliberately: agentd is
-// the authoritative gate for cross-agent renames, but the /clear
-// title-restore injection happens from inside the hook callback (a
-// separate subprocess that can't import the daemon package without
-// cycling), and we want the SAME strict charset to govern keystrokes
-// before send-keys hits the pty — anything else would re-open the
-// injection sink the daemon path closed. The agentd unit test
-// TestIsValidRenameTitle is the authoritative spec; this mirror must
-// stay aligned.
-func isValidRenameTitle(t string) bool {
-	if t == "" || len(t) > 64 {
-		return false
-	}
-	if strings.Contains(t, "  ") {
-		return false
-	}
-	for _, r := range t {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_':
-		case r == '[' || r == ']' || r == '{' || r == '}':
-		case r == '(' || r == ')':
-		case r == ' ':
-		default:
-			return false
-		}
-	}
-	return true
-}
+// isValidRenameTitle gates the /clear title-restore injection, which happens
+// from inside the hook callback before send-keys reaches the pty. It is the
+// same gate the daemon applies (renametitle), not a copy of it.
+func isValidRenameTitle(t string) bool { return renametitle.Valid(t) }
 
 // DecodeHookCallbackInput parses one hook payload as the callback receives it
 // on stdin, including the translation of Gemini CLI's event vocabulary (see
@@ -704,7 +677,7 @@ func runHookCallback() error {
 	// agentd, which runs this same dispatch host-side on the caller's
 	// behalf. Every other launch keeps writing directly, unchanged.
 	if brokerHookEvents() {
-		return brokerHookEvent(input, os.Stdout)
+		return brokerHookEvent(input, cliStdout)
 	}
 
 	// An ordinary launch applies its own hooks, but a permission prompt
@@ -722,11 +695,11 @@ func runHookCallback() error {
 	// event out of that carve-out would half-break the very thing the carve-out
 	// exists to keep whole.
 	if _, inTaskMode := taskSignalPath(); !inTaskMode &&
-		autoPermitNeedsDaemon(input) && brokerHookEventIfDelivered(input, os.Stdout) {
+		autoPermitNeedsDaemon(input) && brokerHookEventIfDelivered(input, cliStdout) {
 		return nil
 	}
 
-	if err := DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), os.Stdout); err != nil {
+	if err := DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), cliStdout); err != nil {
 		return err
 	}
 	MaybeRequestAutoName(input)
@@ -802,6 +775,12 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 		if stateErr == nil {
 			persistCodexHookModel(state, input)
 		}
+		// A compaction that may be a subagent's says nothing about the main
+		// thread, so it passes the guard and paints no status, and its orders
+		// wait to learn whose it was.
+		if stateErr == nil && !amb.InTaskRunnerHook() && holdCompaction(input, envSessionID) {
+			return HookResponse{}, nil
+		}
 		resp, err := decidePreCompact(input, envSessionID, amb)
 		if err != nil || stateErr != nil ||
 			!hookBelongsToTrackedMainConversation(state, input) {
@@ -831,6 +810,9 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 	if !amb.InTaskRunnerHook() {
 		QueueContextReinjection(input, envSessionID)
 	}
+	if !amb.InTaskRunnerHook() && compactionHeld(input, envSessionID) {
+		return HookResponse{}, nil
+	}
 	input = applyStandingOrderTurnOrigin(input, envSessionID)
 	return standingOrderResponse(ctx, input, envSessionID), nil
 }
@@ -855,154 +837,85 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 }
 
 func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string, amb HookAmbient) error {
-	// Acquire a per-session exclusive lock to prevent concurrent hook callbacks
-	// from racing on the read-modify-write of session state.
-	sessionKey := envSessionID
-	if sessionKey == "" {
-		sessionKey = input.ConvID
-	}
-	if sessionKey != "" {
-		unlock, lockErr := acquireHookLockContext(ctx, sessionKey)
-		if lockErr != nil {
-			slog.Warn("failed to acquire hook lock", "error", lockErr, "module", "hooks")
-			return fmt.Errorf("failed to acquire hook lock: %w", lockErr)
-		}
-
-		defer unlock()
-	}
-
-	// Log hook event
-	slog.Debug("hook received",
-		"event", input.HookEventName,
-		"conv_id", input.ConvID,
-		"notification_type", input.NotificationType,
-		"tool_name", input.ToolName,
-		"cwd", input.Cwd,
-		"sessionId", envSessionID,
-		"module", "hooks",
-	)
-
-	// Get or create session state
-	state, err := getOrCreateSessionState(input, envSessionID, amb)
-	if err != nil || state == nil {
+	unlock, err := lockHookSession(ctx, input, envSessionID)
+	if err != nil {
 		return err
 	}
-	slog.Debug("session found", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
+	defer unlock()
 
-	// A shell row never has a ConvID, so the foreign-process guard below
-	// (keyed off state.ConvID != "") can never engage for one. runNewShell
-	// still exports TCLAUDE_SESSION_ID (goto/focus need it), so a headless
-	// coding-harness run launched from inside the shell (`claude -p "hi"`,
-	// an interactive `claude`, …) inherits it and its hooks land here,
-	// against the shell's own row. Without this guard that hijacks the
-	// row: the throwaway conv-id gets stamped onto it, its PID gets
-	// rewritten via FindClaudePID, it gets enrolled as a dashboard agent,
-	// and it flips to "exited" when the child exits — while the shell
-	// itself is still alive. A shell row has no hooks of its own, ever,
-	// so drop every hook unconditionally.
-	if state.Harness == ShellHarnessName {
-		return nil
+	state, err := loadHookSession(input, envSessionID, amb)
+	if state == nil {
+		return err
 	}
 
-	// Foreign-process guard. An env-keyed session's hooks normally all
-	// carry the conversation its row tracks. A hook carrying a DIFFERENT
-	// conv-id is one of two things:
-	//
-	//   - an in-process conversation transition (/clear, an interactive
-	//     /resume switch, compaction) — always announced by a
-	//     SessionStart whose `source` names the transition; or
-	//   - a FOREIGN process's event: a one-shot headless claude run
-	//     (`claude -p`, `claude mcp get`, …) launched from this
-	//     session's own Bash, inheriting TCLAUDE_SESSION_ID, firing
-	//     hooks for its own throwaway conv against OUR row.
-	//
-	// Foreign events must be dropped wholesale: processing one flips the
-	// live session's status (a notified "Exited" for a 2-second `claude
-	// mcp get`; an idle stamp from the child's Stop that can fire a
-	// context nudge mid-turn), and the conv-advance logic below would
-	// read the rotation as a /clear and migrate the agent's identity
-	// onto the throwaway conv — observed in production as a live agent
-	// retired "superseded by <conv> (clear)" where <conv> was a plugin
-	// probe's conv-id.
-	//
-	// A transition SessionStart records its new conv-id as pending_conv
-	// BEFORE the row advances, so the migration-failure retry keeps
-	// working: post-/clear hooks carry the announced conv-id and pass
-	// this guard via the pending_conv match, while a foreign conv-id
-	// was never announced and cannot match.
-	//
-	// One rotation is real but NEVER announced by an accepted source:
-	// Claude Code's /remote-control bridge handoff rotates the
-	// conversation to a fresh conv-id (full history copied into the new
-	// file) and fires only SessionStart(source=startup) — by source
-	// alone a foreign one-shot. For that case a mismatched hook gets one
-	// more chance before the drop: a bounded transcript head-scan that
-	// proves the new conv is an in-process continuation of the tracked
-	// one (isVerifiedConvContinuation). A verified continuation is
-	// recorded as pending_conv exactly like an announced transition, so
-	// the same conv-advance/identity-migration/retry machinery runs.
-	//
-	// PostCompact is exempt — it
-	// only resets per-env-session compact state and returns before any
-	// status or conv mutation, and it may legitimately arrive carrying
-	// a rotated conv-id.
-	//
-	// `tclaude task run` is exempt too (HookAmbient.InTaskRunnerHook): it drives a
-	// sequence of independent conversations under one env-session — one
-	// fresh conv per task — so its conv-id rotations are legitimate, not
-	// foreign. See HookAmbient.InTaskRunnerHook for the full rationale.
-	if !amb.InTaskRunnerHook() &&
-		envSessionID != "" && state.ConvID != "" && input.ConvID != "" &&
-		input.ConvID != state.ConvID &&
-		input.HookEventName != "PostCompact" {
-		if isConvTransitionStart(input) {
-			// Announce the rotation. Persisted immediately (not via the
-			// SaveSessionState at the end of this call) so a crash or
-			// migration failure mid-call still leaves the announcement
-			// for the retry on the next hook. If THIS write fails too,
-			// the retry hooks get dropped as foreign and the rotation
-			// only converges at the next transition SessionStart —
-			// accepted: it takes two correlated SQLite faults in one
-			// call to get there.
-			if err := db.SetSessionPendingConv(state.ID, input.ConvID); err != nil {
-				slog.Warn("failed to record pending conv", "error", err, "module", "hooks")
-			}
-		} else if pending, err := db.GetSessionPendingConv(state.ID); err != nil || pending != input.ConvID {
-			if err != nil {
-				slog.Warn("failed to read pending conv; dropping mismatched-conv hook", "error", err, "module", "hooks")
-				return nil
-			}
-			if isVerifiedConvContinuation(input, state) {
-				// An unannounced in-process rotation (the /remote-control
-				// bridge handoff) proven by transcript lineage. Record it
-				// as pending_conv like an announced transition would —
-				// later hooks then pass via the pending match without
-				// re-reading the transcript, even if this call's
-				// conv-advance/migration fails and has to retry.
-				slog.Info("accepting unannounced conv rotation: transcript verified as in-process continuation",
-					"event", input.HookEventName, "new_conv", input.ConvID,
-					"tracked_conv", state.ConvID, "session_id", state.ID, "module", "hooks")
-				if err := db.SetSessionPendingConv(state.ID, input.ConvID); err != nil {
-					slog.Warn("failed to record pending conv", "error", err, "module", "hooks")
-				}
-			} else {
-				slog.Info("ignoring hook from foreign claude process",
-					"event", input.HookEventName, "foreign_conv", input.ConvID,
-					"tracked_conv", state.ConvID, "session_id", state.ID, "module", "hooks")
-				// Deliberately NOT stamping last_hook: a foreign process's
-				// event is no evidence the host session itself is alive.
-				return nil
-			}
-		}
+	adoptingConv := adoptHookConv(state, input, envSessionID)
+	wasCompacting := clearStaleCompacting(state)
+
+	// Capture previous status for notification
+	prevStatus := state.Status
+
+	state.LastHook = time.Now()
+
+	trackedSubagentStop := updateSubagentLedger(state, input)
+	updateBackgroundLedgers(state, input)
+
+	ev := &hookEvent{
+		state:               state,
+		input:               input,
+		envSessionID:        envSessionID,
+		amb:                 amb,
+		prevStatus:          prevStatus,
+		wasCompacting:       wasCompacting,
+		trackedSubagentStop: trackedSubagentStop,
+	}
+	if outcome := routeSubagentHook(ev); outcome != hookContinue {
+		return finishHookEarly(state, outcome)
 	}
 
-	// A tclaude-spawned Codex pane can miss its earliest hooks while it is
-	// behind a startup gate or a transient hook-install race. As soon as any
-	// later hook carries the first conv-id, persist it immediately, before
-	// event-specific early returns (unknown events, PostCompact, etc.) can skip
-	// the normal SaveSessionState tail. This is also the exact signal the
-	// pending-spawn sweeper waits on.
-	if envSessionID != "" && state.ConvID == "" && input.ConvID != "" {
+	// Capture before event-specific early returns such as PostCompact. The
+	// helper independently verifies the conversation match because PostCompact
+	// is exempt from the status machine's foreign-process guard above.
+	persistCodexHookModel(state, input)
+	persistPiHookTelemetry(state, input, amb)
+
+	if outcome := applyHookEvent(ev); outcome != hookContinue {
+		return finishHookEarly(state, outcome)
+	}
+	stopped := ev.stopped
+
+	// subagent_count is a derived cache of the ledger — recompute after
+	// every arm so no code path can drift the two apart.
+	state.SubagentCount = len(state.Subagents)
+
+	nudgeContextAfterStop(state, stopped, envSessionID, amb)
+
+	state.Updated = time.Now()
+
+	advanceHookConv(state, input, envSessionID, amb)
+	refreshHookIdentity(state, input, envSessionID, amb, adoptingConv)
+
+	// Save updated state
+	slog.Debug("updating session", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
+	if err := SaveSessionState(state); err != nil {
+		return err
+	}
+	afterHookSaved(state, input, prevStatus, stopped, amb)
+	return nil
+}
+
+// adoptHookConv records what this hook proves about the session before any
+// event arm can return early, and reports whether it adopted the first
+// conv-id.
+//
+// A tclaude-spawned Codex pane can miss its earliest hooks while it is
+// behind a startup gate or a transient hook-install race. As soon as any
+// later hook carries the first conv-id, persist it immediately, before
+// event-specific early returns (unknown events, PostCompact, etc.) can skip
+// the normal SaveSessionState tail. This is also the exact signal the
+// pending-spawn sweeper waits on.
+func adoptHookConv(state *SessionState, input HookCallbackInput, envSessionID string) (adoptingConv bool) {
+	adoptingConv = envSessionID != "" && state.ConvID == "" && input.ConvID != ""
+	if adoptingConv {
 		if err := db.SetSessionConvID(state.ID, input.ConvID); err != nil {
 			slog.Warn("failed to backfill session conv-id from hook",
 				"session_id", state.ID, "conv_id", input.ConvID, "error", err, "module", "hooks")
@@ -1023,718 +936,48 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	if state.Cwd == "" && input.Cwd != "" {
 		state.Cwd = input.Cwd
 	}
+	return adoptingConv
+}
 
-	// A permitted PreCompact paints "working: compacting". Any later
-	// accepted hook proves that phase is over (PostCompact is the usual
-	// boundary, but a failed/aborted compaction may only produce another
-	// turn hook). Clear the phase eagerly so even an event whose arm below
-	// only stamps last_hook cannot leave the dashboard wedged on it.
-	wasCompacting := state.Status == StatusWorking && state.StatusDetail == "compacting"
+// clearStaleCompacting ends a "working: compacting" phase and reports
+// whether it did.
+//
+// A permitted PreCompact paints "working: compacting". Any later
+// accepted hook proves that phase is over (PostCompact is the usual
+// boundary, but a failed/aborted compaction may only produce another
+// turn hook). Clear the phase eagerly so even an event whose arm below
+// only stamps last_hook cannot leave the dashboard wedged on it.
+func clearStaleCompacting(state *SessionState) (wasCompacting bool) {
+	wasCompacting = state.Status == StatusWorking && state.StatusDetail == "compacting"
 	if wasCompacting {
 		state.StatusDetail = ""
 		if err := SaveSessionState(state); err != nil {
 			slog.Warn("failed to clear compacting status", "error", err, "module", "hooks")
 		}
 	}
+	return wasCompacting
+}
 
-	// Capture previous status for notification
-	prevStatus := state.Status
-
-	stopped := false
-
-	state.LastHook = time.Now()
-
-	// ---- Sub-agent ledger (db.SubagentSet) ----
-	// The hook stream is LOSSY: Claude Code fires no hooks at all on a
-	// user interrupt (anthropics/claude-code#11189) and SubagentStop has
-	// no documented guarantee for aborts/errors/process death — so the
-	// ledger, not the event stream, is what the "🤖+N" badge trusts.
-	// Sweep expired entries first (self-healing for a lost SubagentStop),
-	// then apply this event's evidence: Start/Stop maintain the set, and
-	// any OTHER hook carrying agent_id proves that sub-agent is alive —
-	// Sight() re-adds one whose SubagentStart was lost.
-	state.Subagents.Sweep(state.LastHook)
-	// Whether this SubagentStop names a sub-agent the ledger still knows
-	// after the TTL sweep, captured before Remove erases that evidence.
-	// Claude Code 2.1.220 ends
-	// EVERY main-thread turn with a synthetic SubagentStop carrying a
-	// freshly minted agent_id that no SubagentStart ever announced, an
-	// empty agent_type, and an agent_transcript_path pointing at a file
-	// that does not exist — fired right after the turn's real Stop. It
-	// describes the main thread finishing, not a sub-agent.
-	//
-	// This is HARDENING, not a repair: at the ordering 2.1.220 actually
-	// produces (always after Stop) the sub-agent lifecycle arm happens to
-	// be a no-op or idempotent, so no misbehaviour was observed. What it
-	// removes is the standing hazard of an event that is not a sub-agent
-	// stopping being routed through the arm that decides what a sub-agent
-	// stopping means to the MAIN thread's status — an ordering tclaude
-	// does not control and upstream has already changed once.
-	//
-	// Ledger membership, not the empty agent_type, is the discriminator
-	// for whether the stop may drive stopped-only side effects. A real
-	// sub-agent can still arrive unknown when its ledger entry was swept
-	// during a long model turn, or when its preceding SessionEnd removed
-	// the entry. Such a stop may settle a now-empty main_agent_idle state
-	// below, but does not drive the context nudge/task signal because its
-	// attribution is ambiguous. An empty agent_id is the legacy shape;
-	// Remove falls back to decrement semantics for it, so it keeps its
-	// old stopped behaviour.
-	trackedSubagentStop := input.HookEventName == "SubagentStop" &&
-		(input.AgentID == "" || state.Subagents.Has(input.AgentID))
-	switch {
-	case input.HookEventName == "SubagentStart":
-		state.Subagents = state.Subagents.Add(input.AgentID, input.AgentType, state.LastHook)
-	case input.HookEventName == "SubagentStop":
-		state.Subagents.Remove(input.AgentID)
-	case input.AgentID != "" && input.HookEventName == "SessionEnd":
-		// A sub-agent's own conversation ending is as good as a
-		// SubagentStop for the ledger (the main-thread status handling
-		// of this event stays in the big switch below).
-		state.Subagents.Remove(input.AgentID)
-	case input.AgentID != "":
-		state.Subagents = state.Subagents.Sight(input.AgentID, input.AgentType, state.LastHook)
+// nudgeContextAfterStop runs the context nudge once a turn has stopped.
+//
+// The context nudge injects a hint that names `/reincarnate` into
+// the agent's pane. It only ran before JOH-170 because context_pct
+// stayed 0 for non-CC harnesses — nothing populated it. Now that
+// persistCodexContextTelemetry (below) DOES populate it for Codex,
+// gate the injection on the harness actually understanding those
+// commands, or a Codex pane would be typed a hint it can't act on.
+// Harness-aware nudging is future work (Codex Lifecycle).
+func nudgeContextAfterStop(state *SessionState, stopped bool, envSessionID string, amb HookAmbient) {
+	if !stopped || !harnessUsesSlashContextControls(state.Harness) {
+		return
 	}
+	handleContextNudge(envSessionID, amb)
+}
 
-	// ---- Background-shell ledger (db.BgShellSet) ----
-	// Strictly lossier than the sub-agent ledger above: Claude Code
-	// announces a background shell's LAUNCH (this PostToolUse) and never
-	// its exit, so hooks alone can only ever grow the set. What actually
-	// retires an entry is the daemon's process-liveness reconcile on the
-	// dashboard read path; the two removals available here are the
-	// explicit ones — a TaskStop naming the task, and the known-zero
-	// boundaries handled in the SessionStart/SessionEnd arms below.
-	//
-	// Deliberately placed BEFORE the sub-agent gate below: a shell
-	// backgrounded by a SUB-agent is a child of the same harness process
-	// and keeps running past the parent's turn just the same, so it
-	// belongs in the session's ledger. The gate's early return persists
-	// full state, so the mutation is not lost.
-	//
-	// ---- Monitor ledger (db.MonitorSet) ----
-	//
-	// Same shape, same lossiness, and — because a `Monitor` watch is a
-	// background task in the SAME id namespace as a background shell — the
-	// same TaskStop event retires from either. A stop is routed to the one
-	// ledger that actually knows the id rather than offered to both, so a
-	// TaskStop naming a monitor cannot also decrement the shell count.
-	//
-	// A stop carrying NO id keeps its legacy meaning ("drop the oldest
-	// background shell") and is deliberately not extended to monitors: with
-	// two ledgers there is no non-arbitrary way to guess which one lost an
-	// entry, and dropping from both would double-count a single kill.
-	trackShells := harnessTracksBackgroundShells(state.Harness)
-	trackMonitors := harnessTracksMonitors(state.Harness)
-	if trackShells {
-		state.BgShells.Sweep(state.LastHook)
-	}
-	if trackMonitors {
-		state.Monitors.Sweep(state.LastHook)
-	}
-	shellID, shellCommand, isShellLaunch := bgShellLaunch(input)
-	monitor, isMonitorLaunch := monitorLaunch(input, state.LastHook)
-	stopID, isStop := bgShellStop(input)
-	switch {
-	case trackShells && isShellLaunch:
-		state.BgShells = state.BgShells.Add(shellID, shellCommand, state.LastHook)
-	case trackMonitors && isMonitorLaunch:
-		state.Monitors = state.Monitors.Add(
-			monitor.ID, monitor.Command, monitor.Label, monitor.WS,
-			state.LastHook, monitor.Deadline)
-	case isStop && trackMonitors && state.Monitors.Has(stopID):
-		state.Monitors.Remove(stopID)
-	case isStop && trackShells:
-		state.BgShells.Remove(stopID)
-	}
-
-	// Hooks fired from INSIDE a sub-agent (agent_id set) must not drive
-	// the main thread's status machine: before this gate, a background
-	// sub-agent's PreToolUse flipped an idle parent to "working" — and
-	// the SubagentStop idle-fallback below only fires from
-	// main_agent_idle, so the parent stayed wedged at "working" after
-	// the sub-agent finished. Exceptions that DO fall through to the
-	// status switch:
-	//   - SubagentStart and SubagentStop — their arms below handle the
-	//     main status transitions around sub-agent lifecycle. An unknown
-	//     SubagentStop gets this dedicated fall-through rather than the
-	//     default arm, so Claude Code's synthetic per-turn event cannot
-	//     clear awaiting_*; trackedSubagentStop controls whether it may
-	//     drive stopped-only side effects;
-	//   - PermissionRequest / Notification — a sub-agent's permission
-	//     prompt surfaces on the parent (Claude Code parks the prompt in
-	//     the parent's UI), so awaiting_permission must still be set.
-	if input.AgentID != "" {
-		switch input.HookEventName {
-		case "SubagentStop":
-			// Fall through to the lifecycle settle below. An unknown id
-			// may be CC's synthetic turn-end event or a real stop whose
-			// ledger entry was already swept/removed; only the latter
-			// needs the now-empty main_agent_idle state settled, while
-			// neither should take the default awaiting_* arm.
-		case "SubagentStart", "PermissionRequest", "Notification", "SessionStart", "SessionEnd":
-			// fall through to the status switch below
-		default:
-			// A sub-agent acting again while the parent shows awaiting_*
-			// is exactly the evidence that the prompt (parked on the
-			// parent) was answered — but the resolved state must be
-			// main_agent_idle, NOT "working" via the tool arms: only
-			// main_agent_idle is a state the SubagentStop settle below
-			// can take back to idle, so painting "working" here wedged
-			// the parent at "working: <tool>" forever once the sub-agent
-			// finished (found by cold review — the gate's original
-			// awaiting fall-through re-created the very wedge the gate
-			// exists to fix). If the parent's own turn is genuinely in
-			// flight (a foreground Task), its next main-thread hook
-			// repaints "working"; both states style as busy either way.
-			if state.Status == StatusAwaitingPermission || state.Status == StatusAwaitingInput {
-				state.Status = StatusMainAgentIdle
-				state.StatusDetail = state.backgroundActivityDetail()
-			}
-			state.SubagentCount = len(state.Subagents)
-			return SaveSessionState(state)
-		}
-	}
-
-	// Capture before event-specific early returns such as PostCompact. The
-	// helper independently verifies the conversation match because PostCompact
-	// is exempt from the status machine's foreign-process guard above.
-	persistCodexHookModel(state, input)
-	persistPiHookTelemetry(state, input, amb)
-
-	// Update state based on hook event. This switch is tclaude's
-	// cross-harness event→status map. Claude Code and Codex deliver the
-	// same snake_case payload field names through the same
-	// `tclaude session hook-callback` — the parse of a Codex hook payload
-	// into HookCallbackInput is JOH-157's contract — so both harnesses
-	// drive this switch unchanged. Codex fires only a SUBSET of these
-	// events (no Notification, SessionEnd, StopFailure or
-	// PostToolUseFailure), so JOH-159's two degradations are handled by
-	// what the subset DOES carry:
-	//   - needs-attention comes from PermissionRequest (Codex has no
-	//     Notification(permission_prompt)); both land on
-	//     StatusAwaitingPermission below.
-	//   - exit comes from the session reaper (tmux has-session → PID
-	//     liveness, RefreshSessionStatus) rather than a SessionEnd hook.
-	// A subset event tclaude doesn't model (e.g. PreCompact) falls through
-	// to the default arm: last_hook is stamped, status is left untouched.
-	switch input.HookEventName {
-	case "UserPromptSubmit":
-		state.Status = StatusWorking
-		state.StatusDetail = "UserPromptSubmit"
-
-	case "PreToolUse":
-		// Tool is about to execute
-		state.Status = StatusWorking
-		state.StatusDetail = input.ToolName
-
-	case "PostToolUse", "PostToolUseFailure":
-		// Tool completed (success or failure) - back to working
-		state.Status = StatusWorking
-		state.StatusDetail = input.ToolName
-		// Track where the agent is building: a file-editing tool just
-		// ran, so the file's directory is the most-relevant "working
-		// dir" — distinct from input.Cwd, which is the launch dir. We
-		// also resolve that dir's git worktree root + branch here, so
-		// read surfaces report the agent's *current* branch (correct
-		// when it hops between sub-repos) rather than the launch dir's.
-		// Recorded per conv-id; the daemon's read paths use it back.
-		// Best-effort: a failed UpsertAgentWorkdir just leaves the
-		// previous value in place.
-		if dir, ok := WorkDirFromToolUse(input.ToolName, input.ToolInput, input.Cwd); ok {
-			worktreeRoot, branch := GitLocationOf(dir)
-			if err := db.UpsertAgentWorkdir(input.ConvID, dir, worktreeRoot, branch); err != nil {
-				slog.Warn("failed to record agent workdir", "error", err, "module", "hooks")
-			}
-			// Append the branch to the conv's history. This catches a
-			// branch in a worktree the launch-dir .jsonl never names —
-			// Claude Code stamps only the launch repo's branch onto each
-			// turn, so the .jsonl re-scan alone would miss it. An empty
-			// branch (edit outside a git repo) is a silent no-op.
-			if err := db.AppendConvBranchHistoryHook(input.ConvID, branch, worktreeRoot); err != nil {
-				slog.Warn("failed to record branch history", "error", err, "module", "hooks")
-			}
-		}
-
-	case "SubagentStart":
-		// Ledger already updated above; no main-status transition.
-
-	case "SubagentStop":
-		if len(state.Subagents) == 0 && state.Status == StatusMainAgentIdle {
-			// Unknown-id stops are ambiguous: allow the status settle so
-			// a delayed real stop cannot leave stale activity, but reserve
-			// context nudges and task signals for tracked/legacy stops.
-			stopped = trackedSubagentStop
-			if state.hasBackgroundActivity() {
-				state.StatusDetail = state.backgroundActivityDetail()
-			} else {
-				state.Status = StatusIdle
-				state.StatusDetail = ""
-			}
-		}
-
-	case "Stop":
-		// The turn is over, but a sub-agent or a background shell can
-		// outlive it — settling to plain idle then would report an agent
-		// as finished while work it launched is still running. Either
-		// ledger therefore holds the session at main_agent_idle; the
-		// dashboard badges the counts, and for background shells the
-		// daemon's liveness reconcile is what eventually settles it.
-		//
-		// `stopped` stays keyed on the SUB-AGENT ledger alone. It drives
-		// the context nudge, and a background shell is genuinely not the
-		// agent working: the main thread really has finished its turn and
-		// can act on a nudge. Gating it on background shells too would
-		// mute the nudge for as long as the agent keeps a dev server or a
-		// test watch running — potentially hours.
-		if len(state.Subagents) == 0 {
-			stopped = true
-		}
-		if state.hasBackgroundActivity() {
-			state.Status = StatusMainAgentIdle
-			state.StatusDetail = state.backgroundActivityDetail()
-		} else {
-			state.Status = StatusIdle
-			state.StatusDetail = ""
-		}
-
-	case "StopFailure":
-		// The turn ended because of an API/auth/billing error rather
-		// than completing normally (CC fires StopFailure instead of
-		// Stop). Mark the agent "error" with error_type as the detail
-		// so the dashboard can surface it (e.g. "error: rate_limit").
-		//
-		// This status is TRANSIENT, not sticky: every other hook case
-		// here sets state.Status unconditionally, so the next normal
-		// event (UserPromptSubmit, a tool event, a later Stop) clears
-		// it back to working/idle. A retried agent leaves the error
-		// state on its own — nothing else has to reset it.
-		//
-		// Deliberately NOT setting stopped=true (unlike the Stop case):
-		// the stopped branch drives the context nudge and the task-runner
-		// signal — both of which would "act on" the error (typing a nudge
-		// into a broken pane, or reporting a half-finished task as done).
-		// Acting on an error is explicitly out of scope here. The status
-		// transition and the desktop notification (notify.OnStateTransition
-		// below) both fire regardless of the stopped flag.
-		state.Status = StatusError
-		state.StatusDetail = input.ErrorType
-		if state.StatusDetail == "" {
-			state.StatusDetail = "unknown"
-		}
-		slog.Warn("agent turn ended in error",
-			"conv_id", input.ConvID,
-			"error_type", input.ErrorType,
-			"error_message", input.ErrorMessage,
-			"module", "hooks",
-		)
-
-	case "SessionStart":
-		// A SessionStart carrying agent_id fired from inside a subagent
-		// (subagents share the main session's conv-id, so the foreign-
-		// process guard above can't catch them; agent_id is the
-		// documented discriminator). It is not the main conversation
-		// (re)starting — flipping a working session to idle here, or
-		// clearing a recorded exit reason, would misreport the main
-		// thread's state. It IS live evidence of the sub-agent though
-		// (the ledger block Sighted it above), so persist the full state,
-		// not just last_hook.
-		if input.AgentID != "" {
-			state.SubagentCount = len(state.Subagents)
-			return SaveSessionState(state)
-		}
-		// Session started or resumed - update ConvID and normally set to
-		// idle. A post-compaction SessionStart is different: it is an
-		// in-process continuation boundary, not evidence that the turn
-		// stopped. PostCompact already selected working (auto/unknown) or
-		// idle (manual), so preserve that status until the next operational
-		// hook determines a new one.
-		// A (re)starting main thread definitionally has NO sub-agents
-		// running yet — this is a known-zero boundary for the ledger, and
-		// the reset is what clears phantoms left by lost SubagentStops
-		// (e.g. sub-agents that died with a previous process). A /clear
-		// or /resume transition lands here too; a background sub-agent
-		// that somehow survives one re-adds itself via Sight() on its
-		// next hook.
-		state.Subagents = nil
-		// Background shells are children of the harness PROCESS, and
-		// monitors belong to it, which a /clear or /resume does not
-		// restart — so unlike sub-agents both can genuinely outlive this
-		// boundary, and only a startup SessionStart (a new process) is a
-		// true known-zero for them. Clearing on every SessionStart would
-		// blank the ledgers on every /clear while the work kept running;
-		// the liveness reconcile retires them honestly instead.
-		if input.Source == "startup" || input.Source == "" {
-			state.BgShells = nil
-			state.Monitors = nil
-		}
-		if input.Source != "compact" && !lateSessionStart(state) {
-			state.Status = StatusIdle
-			state.StatusDetail = ""
-		}
-		// The conversation is alive again — drop any exit_reason a
-		// previous exit (or the reaper) recorded. Cleared conv-wide, not
-		// just for this row: a conv can own several session rows and the
-		// dashboard reads exit_reason off whichever is most recent, so a
-		// stale reason left on a sibling row could later be misread as a
-		// crash.
-		if state.ConvID != "" {
-			if err := db.ClearSessionExitReasonByConv(state.ConvID); err != nil {
-				slog.Warn("failed to clear exit reason", "error", err, "module", "hooks")
-			}
-			if err := db.ClearSessionExitIntentByConv(state.ConvID); err != nil {
-				slog.Warn("exit audit: clear stale lifecycle intent failed",
-					"session", state.ID, "error", err, "module", "hooks")
-			}
-		}
-
-	case "SessionEnd":
-		// Claude Code is shutting down this conversation. The `reason`
-		// field tells a real process exit apart from a /clear or an
-		// interactive /resume switch, both of which end the conversation
-		// but keep the process alive and fire a fresh SessionStart
-		// immediately after — so neither must mark the session exited.
-		// logout / prompt_input_exit / other all mean the process is
-		// going away.
-		//
-		// A SessionEnd carrying agent_id was fired from inside a
-		// subagent (the docs call agent_id THE discriminator for
-		// "subagent hook call vs main-thread call") — whatever ended
-		// there, it was not the main process, so it must not flip this
-		// session to exited or fire an "Exited" notification. It does
-		// mean that sub-agent is gone (the ledger block Removed it
-		// above), so persist the full state, not just last_hook.
-		if input.AgentID != "" {
-			state.SubagentCount = len(state.Subagents)
-			return SaveSessionState(state)
-		}
-		// The reason itself can say this is not an exit: a /clear or an
-		// interactive /resume ends the conversation but not the process.
-		if !sessionEndIsExit(input.Reason) {
-			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
-				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
-			}
-			return nil
-		}
-		// So can the HARNESS. A harness whose SessionEnd is best-effort has not
-		// proven the event means the process is going away, and acting as if it
-		// had would declare a live pane dead — settling its ledgers, writing an
-		// exit observation and raising an "Exited" notification on an agent
-		// sitting at a prompt. Exit detection for those harnesses stays where
-		// it is provable: the reaper's tmux/PID liveness.
-		//
-		// The session is still OVER as far as the harness will report, so the
-		// status settles to idle. That matters for a turn that ended without a
-		// turn-end event at all: a Copilot provider error emits SessionStart →
-		// ErrorOccurred → SessionEnd and no Stop, and ErrorOccurred is not in
-		// the installed baseline, so without this the agent would sit at
-		// "working" until its pane died. Status only — no exit observation, no
-		// notification, no ledger reset, since none of those are warranted by
-		// an event that has not proven a process ended.
-		if !sessionEndProvesExit(state.Harness) {
-			if state.Status == StatusWorking {
-				state.Status = StatusIdle
-				state.StatusDetail = ""
-			}
-			return SaveSessionState(state)
-		}
-		// The process is going away — sub-agents and monitors run inside
-		// it and background shells are its children, so none of the three
-		// can survive. Known-zero boundary, same as the reaper's
-		// MarkSessionExitedIfUnchanged.
-		state.Subagents = nil
-		state.BgShells = nil
-		state.Monitors = nil
-		state.Status = StatusExited
-		state.StatusDetail = ""
-		accepted, _, err := db.RecordSessionEndExitObservation(db.AgentExitObservation{
-			At:                 time.Now(),
-			SessionID:          state.ID,
-			TmuxSession:        state.TmuxSession,
-			Observer:           db.AgentExitObserverHook,
-			CauseKind:          db.AgentExitCauseNormal,
-			Reason:             boundedSessionEndReason(input.Reason),
-			ObservedState:      StatusExited,
-			ExpectedGeneration: amb.ExitGeneration,
-		})
-		if err != nil {
-			slog.Warn("exit audit: persist SessionEnd observation failed",
-				"session", state.ID, "observer", db.AgentExitObserverHook,
-				"error", err, "module", "hooks")
-			return nil
-		}
-		if !accepted {
-			slog.Info("ignoring stale SessionEnd from predecessor launch",
-				"session", state.ID, "module", "hooks")
-			return nil
-		}
-		if !amb.InTaskRunnerHook() {
-			convTitle := getConvTitle(state.ConvID, state.Cwd)
-			notifyOnStateTransition(state.ID, state.ConvID, prevStatus, state.Status,
-				state.Cwd, convTitle, state.Harness)
-		}
-		return nil
-
-	case "PermissionRequest":
-		state.Status = StatusAwaitingPermission
-		state.StatusDetail = input.ToolName
-		if state.StatusDetail == "" {
-			state.StatusDetail = "permission"
-		}
-
-	case "PostCompact":
-		// A compaction just happened — zero the pre-compaction context_pct
-		// (the statusline hook will report the new, smaller figure) and the
-		// nudged_pct ladder so the context nudge re-arms from scratch on the
-		// next climb.
-		if envSessionID != "" {
-			if err := db.ResetCompact(envSessionID); err != nil {
-				slog.Warn("failed to reset compact state", "error", err, "module", "hooks")
-			} else {
-				slog.Debug("post-compact state reset", "session_id", envSessionID, "module", "hooks")
-			}
-		}
-		// Auto-compaction happens inside an active turn, so the eager
-		// compacting-detail clear above intentionally leaves it working.
-		// A manual /compact returns the human to an idle prompt instead.
-		// SessionStart(source=compact), which follows this hook, preserves
-		// whichever status this boundary selected.
-		// PostCompact is exempt from the mismatched-conversation guard
-		// because a legitimate compaction can rotate the conv-id before its
-		// SessionStart(compact) announces that rotation. Do not let that
-		// exemption turn a foreign child's manual PostCompact into an idle
-		// stamp on the host: require either the ordinary attribution check,
-		// or the attributed compacting phase this hook just cleared.
-		attributed := wasCompacting || hookBelongsToTrackedMainConversation(state, input)
-		if input.Trigger == "manual" && attributed {
-			state.Status = StatusIdle
-			state.StatusDetail = ""
-			if err := SaveSessionState(state); err != nil {
-				return err
-			}
-		}
-		if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
-			slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
-		}
-		return nil
-
-	case "Notification":
-		// Check notification type for legacy support
-		switch input.NotificationType {
-		case "permission_prompt":
-			state.Status = StatusAwaitingPermission
-			state.StatusDetail = input.Message
-		case "elicitation_dialog":
-			state.Status = StatusAwaitingInput
-			state.StatusDetail = input.Message
-		case "idle_prompt":
-			// CC has been idle and is waiting for user input. This is
-			// our only signal back to idle after the user cancels an
-			// in-flight turn with Escape: Stop does NOT fire on
-			// interrupt (anthropics/claude-code#11189, closed as
-			// not-planned), so without this case the agent stays stuck
-			// at e.g. "working: UserPromptSubmit". CC's idle detection
-			// runs on its own ~60s timer, so recovery is delayed, not
-			// instant. Deliberately NOT setting stopped=true — that
-			// branch context-nudges into the pane, which would collide
-			// with a user mid-typing.
-			//
-			// The main thread can be idle while work it launched is not.
-			// Keep the same main_agent_idle contract as Stop whenever a
-			// sub-agent or background shell is still in the ledger. Besides
-			// keeping the dashboard honest, this prevents the generic
-			// "* → idle" notification rule from announcing completion while
-			// background work is active. The daemon's liveness reconcile
-			// eventually settles lost SubagentStop events and shell exits.
-			if state.hasBackgroundActivity() {
-				state.Status = StatusMainAgentIdle
-				state.StatusDetail = state.backgroundActivityDetail()
-			} else {
-				state.Status = StatusIdle
-				state.StatusDetail = ""
-			}
-		default:
-			// Unknown notification type - log but don't update status.
-			// One from inside a sub-agent still Sighted the ledger above,
-			// so persist the full state for it; a last_hook-only write
-			// would silently drop that mutation.
-			if input.AgentID != "" {
-				state.SubagentCount = len(state.Subagents)
-				return SaveSessionState(state)
-			}
-			if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
-				slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
-			}
-			return nil
-		}
-
-	default:
-		// Unknown hook event - log but don't update status
-		if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
-			slog.Warn("failed to persist last_hook", "error", err, "module", "hooks")
-		}
-		return nil
-	}
-
-	// subagent_count is a derived cache of the ledger — recompute after
-	// every arm so no code path can drift the two apart.
-	state.SubagentCount = len(state.Subagents)
-
-	if stopped && harnessUsesSlashContextControls(state.Harness) {
-		// The context nudge injects a hint that names `/reincarnate` into
-		// the agent's pane. It only ran before JOH-170 because context_pct
-		// stayed 0 for non-CC harnesses — nothing populated it. Now that
-		// persistCodexContextTelemetry (below) DOES populate it for Codex,
-		// gate the injection on the harness actually understanding those
-		// commands, or a Codex pane would be typed a hint it can't act on.
-		// Harness-aware nudging is future work (Codex Lifecycle).
-		handleContextNudge(envSessionID, amb)
-	}
-
-	state.Updated = time.Now()
-
-	// Update ConvID from hook input (tracks conversation changes). A
-	// /clear rotates the conv-id; needsIdentityMigration / migrateClearedIdentity
-	// handle moving the agent's identity across that rotation.
-	if input.ConvID != "" && state.ConvID != input.ConvID {
-		switch {
-		case envSessionID == "" || state.ConvID == "" || amb.InTaskRunnerHook():
-			// Not an env-keyed rotation we can migrate identity across
-			// (a non-tclaude session, or the session's first conv-id
-			// record). Plain advance — the pre-/clear-fix behaviour.
-			//
-			// `tclaude task run` lands here too: its rotation is a fresh
-			// task starting, NOT an identity move. Forcing the plain
-			// advance is load-bearing, not just an optimisation — the
-			// reaper (agentd enrollOnlineSession) enrolls a task session's
-			// CURRENT conv each tick, so without this exemption the next
-			// task boundary would see the old task conv as "an active
-			// agent", fire needsIdentityMigration, and inject a stray
-			// `/rename` into the running task pane via migrateClearedIdentity.
-			slog.Info("updating conversation ID",
-				"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
-				"session_id", state.ID, "module", "hooks")
-			state.ConvID = input.ConvID
-		default:
-			shouldMigrate, predErr := needsIdentityMigration(state.ConvID, input.ConvID)
-			switch {
-			case predErr != nil:
-				// A transient DB error trying to decide. Do NOT advance:
-				// advancing on an "I don't know" answer would skip the
-				// migration if the truth was "migrate," and identity
-				// would strand. The next hook re-evaluates the predicate
-				// (the rotation is still visible since we left ConvID
-				// alone).
-				slog.Warn("clear-migrate: predicate check failed; deferring conv-id advance to the next hook",
-					"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
-					"session_id", state.ID, "error", predErr, "module", "hooks")
-			case shouldMigrate:
-				// A /clear rotated the conv-id and the old conv is an
-				// agent whose identity has not moved yet. Migrate it
-				// BEFORE recording the new conv-id (the migration needs
-				// the old value). On a migration failure DO NOT advance
-				// state.ConvID: the migration is atomic so identity is
-				// still wholly on the old conv-id — keeping the session
-				// row there means needsIdentityMigration still fires on
-				// the next hook and the (idempotent) migration is
-				// retried, rather than the conv-id silently advancing
-				// to a conv whose identity never arrived (issue #192).
-				if migrateClearedIdentity(state, input.ConvID) {
-					slog.Info("updating conversation ID after /clear",
-						"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
-						"session_id", state.ID, "module", "hooks")
-					state.ConvID = input.ConvID
-				} else {
-					slog.Warn("clear-migrate: deferring conv-id advance until the migration succeeds",
-						"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
-						"session_id", state.ID, "module", "hooks")
-				}
-			default:
-				// Predicate said no — the rotation does not need
-				// identity migration (oldConv not an agent, newConv
-				// already an agent, or the edge is already recorded).
-				// Advance normally.
-				slog.Info("updating conversation ID",
-					"old_conv_id", state.ConvID, "new_conv_id", input.ConvID,
-					"session_id", state.ID, "module", "hooks")
-				state.ConvID = input.ConvID
-			}
-		}
-	}
-
-	// Instant agent-enrollment for a tclaude-launched session. A
-	// SessionStart means the conversation just (re)booted, and by here
-	// state.ConvID is the settled conv-id (after any /clear or /resume
-	// identity migration above). Enrolling it now means a
-	// terminal-launched session — `tclaude conv new`, a fresh
-	// `tclaude session` — surfaces on the dashboard the instant it
-	// starts, the same way a web-UI/CLI `tclaude agent spawn` does,
-	// instead of waiting up to one reaper interval for the daemon's
-	// online-enrollment sweep (which stays as the backstop, and also
-	// covers sessions tclaude did not launch — see agentd
-	// enrollOnlineSession).
-	//
-	// Gated on envSessionID (TCLAUDE_SESSION_ID): only sessions tclaude
-	// launched get the instant path, so a foreign headless one-shot
-	// (`claude -p`, a plugin probe) firing a SessionStart never lands an
-	// enrollment row the reaper would never have created. Subagent and
-	// foreign-process SessionStarts already returned early above, so they
-	// cannot reach here.
-	//
-	// Restricted to a genuine fresh launch (source startup / none) via
-	// !isConvTransitionStart: a /clear, an interactive /resume switch, or
-	// a compaction also fires a SessionStart, but those are in-process
-	// conversation TRANSITIONS, not a process booting — and the
-	// conv-advance/migration block above already decided their
-	// enrollment correctly (an agent's identity, including its
-	// enrollment, migrates onto the new conv-id; a plain conversation's
-	// conv-id rotation just advances the session row and stays plain).
-	// Without this guard the post-/clear SessionStart(source=clear) would
-	// promote a never-an-agent plain conversation to an agent on the
-	// freshly rotated conv-id — the #407 regression
-	// (TestClearRotation_PlainConversationNotPromotedToAgent). The reaper
-	// sweep still enrolls any genuinely live transitioned conv as the
-	// backstop, exactly as it does for sessions tclaude did not launch.
-	//
-	// EnsureAgentForConv makes this idempotent and retirement-safe: a conv
-	// the rotation above already linked to an actor, or one the human
-	// deliberately retired, is left untouched (a retired actor is never
-	// reinstated by an ensure).
-	//
-	// `tclaude task run` is exempt: its per-task conversations are
-	// throwaway task executions, not managed agents, so skip the INSTANT
-	// path here. (The reaper's online-reconcile sweep still enrolls a task
-	// session's current conv — making the roster fully task-free is a
-	// separate agentd concern; the conv-advance exemption above is what
-	// keeps the migration machinery from firing regardless.) The task
-	// runner needs only the session row + Stop-hook signal. See
-	// HookAmbient.InTaskRunnerHook.
-	//
-	// Codex has one extra repair path: if the launch/start hooks were missed,
-	// a later modeled hook from a non-pending spawned session still proves the
-	// conv is alive and should be enrolled. Pending dashboard spawns are skipped
-	// here because agentd's sweeper owns their group/name/briefing intent.
-	if shouldEnrollLaunchedSessionFromHook(state, input, envSessionID, amb) {
-		agentID, created, err := db.EnsureAgentForConv(state.ConvID, "session-start")
-		if err != nil {
-			slog.Warn("failed to register launched session as agent",
-				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
-		} else {
-			AssignFreeFloatingFallback(state, agentID, created)
-		}
-	}
-
-	// Keep the row keyed by the real harness process, not tmux's shell
-	// wrapper pane PID. Spawn records #{pane_pid}; hooks run under the
-	// harness, so FindClaudePID can correct wrapper-shaped rows.
-	if newPID := amb.HarnessPID(); newPID > 0 && state.PID != newPID {
-		state.PID = newPID
-	}
-
-	// Save updated state
-	slog.Debug("updating session", "session_id", state.ID, "status", state.Status, "subagent_count", state.SubagentCount, "module", "hooks")
-	if err := SaveSessionState(state); err != nil {
-		return err
-	}
+// afterHookSaved runs the side effects that follow a saved hook: agent
+// message bookkeeping, the workspace snapshot, the task-runner signal and
+// the desktop notification.
+func afterHookSaved(state *SessionState, input HookCallbackInput, prevStatus string, stopped bool, amb HookAmbient) {
 	if input.HookEventName == "UserPromptSubmit" {
 		if messageID, inline, ok := agentMessagePrompt(input.Prompt); ok {
 			if _, err := db.MarkRegularAgentMessageStarted(messageID, state.ConvID, inline, time.Now()); err != nil {
@@ -1763,16 +1006,6 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			slog.Warn("failed to mark regular agent messages processed",
 				"error", err, "conv_id", state.ConvID, "module", "hooks")
 		}
-		// The process editor's scribe chat reads the scribe's turn replies
-		// back from here (a features.processes surface). The store decides
-		// scribe membership itself; for every other conv this is a no-op
-		// lookup.
-		if cfg, err := config.Load(); err == nil && cfg.ProcessesEnabled() {
-			if _, err := db.RecordScribeTurnReply(state.ConvID, input.LastAssistantMessage, time.Now()); err != nil {
-				slog.Warn("failed to record scribe turn reply",
-					"error", err, "conv_id", state.ConvID, "module", "hooks")
-			}
-		}
 	}
 
 	persistHookWorkspaceSnapshot(state, input)
@@ -1796,7 +1029,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// `tclaude` /exit is deliberately NOT affected here — that is not task
 	// mode, and /exit is the normal interactive/dashboard lifecycle.
 	if amb.InTaskRunnerHook() {
-		return nil
+		return
 	}
 
 	// Look up conversation title for notification
@@ -1809,8 +1042,6 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	if input.HookEventName != "SessionStart" {
 		notifyOnStateTransition(state.ID, state.ConvID, prevStatus, state.Status, state.Cwd, convTitle, state.Harness)
 	}
-
-	return nil
 }
 
 // AssignFreeFloatingFallback covers both the normal hook-first enrollment and
@@ -2320,7 +1551,7 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, amb HookAmbi
 	}
 
 	reason := fmt.Sprintf(
-		"tclaude pre-compact guard: refused %s compaction — context is ~%.0f%% (~%d of %d tokens), below the %d-token floor for this window. Let context grow (or reincarnate) before compacting; adjust pre_compact_guard in ~/.tclaude/config.json to change or disable this.",
+		"tclaude pre-compact guard: refused %s compaction — context is ~%.0f%% (~%d of %d tokens), below the %d-token floor for this window. Let context grow (or reincarnate) before compacting; adjust pre_compact_guard in ~/.tclaude/data/config.json to change or disable this.",
 		input.Trigger, snap.ContextPct, usedTokens, window, minTokens,
 	)
 	slog.Info("pre-compact guard: blocked compaction",

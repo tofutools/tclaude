@@ -25,7 +25,7 @@ async function mountCog(t, { onRun = () => {} } = {}) {
   // snapshot the way an online/offline item does.
   const items = (extra) => html`
     <button role="menuitem" data-act="add-member" title="Add an existing conversation to this group"
-      ><span class="theme-copy-regular">+ add member</span><span class="theme-copy-wizard">+ add familiar</span></button>
+      ><span class="theme-copy-regular">+ add member</span><span class="theme-copy-wizard">+ add hero</span></button>
     <button role="menuitem" data-act="clone-group" title="Clone this group"
       onClick=${() => onRun('clone-group')}
       ><span class="theme-copy-regular">⧉ clone…</span><span class="theme-copy-wizard">⧉ mirror party…</span></button>

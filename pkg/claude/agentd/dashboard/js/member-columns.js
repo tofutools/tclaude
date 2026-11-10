@@ -10,7 +10,7 @@
 //
 // MEMBER_COLS (sort.js) is the single source of truth for the column set.
 // This module reads the `hideable` (togglable) and `defaultHidden` (starts
-// off) flags off it, and BOTH the header (sortHead, fed visibleMemberCols())
+// off) flags off it, and BOTH the header (SortHead in groups-list.js, fed visibleMemberCols())
 // and the body (memberRowHTML, which emits only visible keys) filter through
 // the same store — so they can never drift out of alignment. A new column
 // plugs in by adding one MEMBER_COLS entry: it then appears in the table, in
@@ -33,9 +33,9 @@ import { MEMBER_COLS } from './sort.js';
 // the column's default (mirrors the sort state's single-key storage).
 const COLS_LS_KEY = 'tclaude.dash.members.hidden';
 
-// columnAvailable drops feature-gated columns while their feature is off:
-// the Process column exists only while features.processes is on, which
-// processes.js mirrors onto body.hide-processes.
+// columnAvailable drops the Process column where processes are unavailable
+// (a peer that does not share them), which processes.js mirrors onto
+// body.hide-processes.
 function columnAvailable(c) {
   return !c.processes || !globalThis.document?.body?.classList.contains('hide-processes');
 }

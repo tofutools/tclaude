@@ -62,16 +62,17 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		`<a data-tab="jobs" href="/automations"`,
 		`<a data-tab="access" href="/access"`,
 		`<a data-tab="usage" href="/usage"`,
-		`<a data-tab="activity" href="/activity"`,
+		`<a data-tab="diagnostics" href="/diagnostics"`,
 		`<a data-tab="config" href="/config"`,
 		// Vegas is NOT URL-routed, so it stays a <button> (no href to hover).
-		`<button data-tab="vegas">`,
+		`<button data-ui-exempt data-tab="vegas">`,
 		// Subtabs are anchors too, carrying their nested path (/access/sudo,
 		// /automations/processes) while keeping tablist ARIA.
-		`data-subtab=${subtab} href=${` + "`/access/${subtab}`" + `} role="tab"`,
-		`<a href=${entryHref(key)}`,
-		`role="tab" aria-selected=${active === key ? 'true' : 'false'}`,
-		`data-subtab="logs" href="/activity/logs" role="tab"`,
+		"key: subtab, label: labels[subtab], href: `/access/${subtab}`",
+		"key, label: LABELS[key], href: entryHref(key)",
+		"? html`<a ...${props} href=${item.href}",
+		"role: radio ? 'radio' : 'tab',",
+		`data-subtab="logs" href="/diagnostics/logs" role="tab"`,
 		// The shared SPA-link guard: a modified/middle click is left to the
 		// browser (native new tab); a plain left-click / synthetic element.click()
 		// returns false and the handler preventDefaults + switches in place.
@@ -80,9 +81,10 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		// The tab + subtab handlers actually apply the guard and cancel the
 		// anchor's own navigation on a plain click.
 		`if (isModifiedClick(e)) return;`,
-		// <a> tabs activate on Enter only; a Space shim restores the former
+		"if (item.href && event.type === 'click' && isModifiedClick(event)) return;",
+		// <a> tabs activate on Enter only; Tabs adds Space so a link tab keeps
 		// <button> keyboard parity (Space selects the focused tab).
-		`e.key !== ' ' && e.key !== 'Spacebar'`,
+		"if (event.key === ' ' || event.key === 'Spacebar' || (event.key === 'Enter' && !item.href)) {",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard nav-links contract missing %q", needle)

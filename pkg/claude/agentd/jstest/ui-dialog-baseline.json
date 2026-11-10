@@ -1,0 +1,8 @@
+[
+  ".image-preview-dialog",
+  ".markdown-preview-dialog",
+  "body.slop :is(.markdown-preview-dialog, .image-preview-dialog)",
+  "body.wizard #group-standing-orders-modal .cron-create-modal",
+  "body.wizard #standing-order-modal .cron-create-modal",
+  "body.wizard :is(.markdown-preview-dialog, .image-preview-dialog)"
+]

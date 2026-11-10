@@ -41,7 +41,7 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 		"onClick=${() => actions.openCreate()}",
 		"onClick=${() => actions.openEdit(",
 		"onClick=${() => remove(link)}",
-		"onClick=${() => state.cycleSort(column.col)}",
+		`sortTable="links" onSort=${(col) => state.cycleSort(col)}`,
 		"registerLinksController(actions)",
 	} {
 		if !strings.Contains(island, needle) {

@@ -1,38 +1,36 @@
 import { h, render } from 'preact';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { useDialogFocus } from './dialog-focus.js';
+import { Button } from './ui-components.js';
+import { DiffLines } from './diff-lines.js';
+import { Dialog } from './ui-dialog.js';
 import { ConfigFormMarkup } from './config-form-markup.js';
-import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, handleConfigEvent } from './config-form-adapter.js';
+import { bindConfigActivation, configLineDiff, configureConfigAdapter, configureConfigLifecycle, followSourceChoice, handleConfigEvent, loadConfigTab, refreshConfigHeader } from './config-form-adapter.js';
+import { SOURCE_CHOICE_EVENT } from './knowledge-source-island.js';
+import { configNodeName, configPeerTarget, configTarget, setConfigSwitchHook, setSecretEditHook } from './config-access.js';
+import { effect } from '@preact/signals';
+import { shellConfirm } from './shell-state.js';
 
 const html = htm.bind(h);
 
 function ConfigDiffModal({ model, close }) {
   const confirmRef = useRef(null);
-  const { dialogRef } = useDialogFocus({
-    open: !!model, initialFocusRef: confirmRef, onEscape: () => close(false),
-  });
   if (!model) return null;
   const diff = configLineDiff(model.beforeRaw, model.afterRaw);
   const adds = diff.filter(line => line.t === 'add').length;
   const dels = diff.filter(line => line.t === 'del').length;
   const sign = { add: '+', del: '-', ctx: ' ' };
-  const cancelOutside = (event) => { if (event.target === event.currentTarget) close(false); };
-  return html`<div ref=${dialogRef} id="config-diff-modal" class="modal-overlay show" role="dialog" aria-modal="true"
-    aria-labelledby="config-diff-title" onClick=${cancelOutside}>
-    <div class="config-diff-modal">
-      <h3 id="config-diff-title">Confirm config changes</h3>
-      ${model.malformed && html`<div id="config-diff-warn" class="config-diff-warn" style="display:block">⚠ config.json on disk is corrupt and could not be parsed. The form shows DEFAULT values, not your previous settings. Saving replaces the corrupt file entirely — anything it contained is lost. The diff below is against defaults.</div>`}
-      <p id="config-diff-sub" class="cfg-diff-sub">${adds} line(s) added, ${dels} removed — writing to ${model.path}</p>
-      <div id="config-diff-body" class="config-diff">${diff.map((line, index) => html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${line.s}</span>`)}</div>
-      <div class="modal-buttons">
-        <button id="config-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button>
-        <span class="spacer"></span>
-        <button ref=${confirmRef} id="config-diff-confirm" class="primary" type="button"
-          onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : 'Save to config.json'}</button>
-      </div>
-    </div>
-  </div>`;
+  const node = configNodeName();
+  const where = configTarget.value && !configPeerTarget() ? 'this node' : 'remote';
+  return html`<${Dialog} id="config-diff-modal" dialogClass="config-diff-modal" title=${node ? `Confirm config changes on ${node} (${where})` : 'Confirm config changes'}
+    initialFocusRef=${confirmRef} onClose=${() => close(false)} cancel="Cancel"
+    footer=${html`<${Button} variant="primary" domRef=${confirmRef} id="config-diff-confirm"
+      onClick=${() => close(true)}>${model.malformed ? 'Replace corrupt config.json' : node ? `Save to ${node}` : 'Save to config.json'}<//>`}>
+    ${model.malformed && html`<div id="config-diff-warn" class="config-diff-warn" style="display:block">⚠ config.json on disk is corrupt and could not be parsed. The form shows DEFAULT values, not your previous settings. Saving replaces the corrupt file entirely — anything it contained is lost. The diff below is against defaults.</div>`}
+    <p id="config-diff-sub" class="cfg-diff-sub">${adds} line(s) added, ${dels} removed — writing to ${model.path}</p>
+    ${model.secrets?.length ? html`<p id="config-diff-secrets" class="cfg-diff-sub">Withheld secrets this save sets or clears (their values are never shown): ${model.secrets.join(', ')}</p>` : null}
+    <div id="config-diff-body" class="config-diff"><${DiffLines} diff=${diff} sign=${sign} unreadable=${!!model.malformed} /></div>
+  <//>`;
 }
 
 // The large form deliberately uses uncontrolled browser inputs. Config loads
@@ -49,17 +47,31 @@ export function ConfigApp({ state, dependencies = {} }) {
       confirmDiff: dependencies.confirmDiff || state.confirmDiff,
     });
     configureConfigLifecycle(state.lifecycle);
+    setSecretEditHook((panel) => state.markDirty(panel));
+    // A fused view's node picker (config-access.js) asks before it drops
+    // unsaved edits, and the form reloads for the node picked.
+    const confirm = dependencies.confirm || shellConfirm;
+    setConfigSwitchHook(async (node) => !state.dirty.value || confirm({
+      title: `Switch to ${node.name}'s config?`,
+      body: 'This form has unsaved changes. Switching to another node drops them.',
+      okLabel: 'Drop changes and switch',
+    }));
+    // This node, picked or with no picker shown, is one target: ticking a
+    // node into the fused view does not reload this node's form.
+    const targetOf = (t) => (t && !t.local ? t.id : '');
+    let shown = targetOf(configTarget.peek());
+    const stopFollowing = effect(() => {
+      const id = targetOf(configTarget.value);
+      if (id === shown) { refreshConfigHeader(); return; }
+      shown = id;
+      loadConfigTab();
+    });
     const unbind = bindConfigActivation();
-    // The remote-access certificate panel is static dashboard HTML wired by
-    // remote-admin.js; move it (listeners intact) into the Daemon & network
-    // panel, and back to its original host on unmount.
-    const remoteAdmin = document.getElementById('cfg-remote-admin');
-    const remoteAdminHome = remoteAdmin?.parentElement;
-    const remoteAdminNext = remoteAdmin?.nextSibling;
-    const remoteAdminSlot = root.current?.querySelector('#cfg-remote-admin-slot');
-    if (remoteAdmin && remoteAdminSlot) remoteAdminSlot.appendChild(remoteAdmin);
+    document.addEventListener(SOURCE_CHOICE_EVENT, followSourceChoice);
     return () => {
-      if (remoteAdmin && remoteAdminHome) remoteAdminHome.insertBefore(remoteAdmin, remoteAdminNext?.parentNode === remoteAdminHome ? remoteAdminNext : null);
+      stopFollowing();
+      setConfigSwitchHook(null);
+      document.removeEventListener(SOURCE_CHOICE_EVENT, followSourceChoice);
       unbind?.();
       state.cancelDiff(false);
     };
@@ -80,7 +92,7 @@ export function ConfigApp({ state, dependencies = {} }) {
     handleConfigEvent(event);
   };
   return html`<div ref=${root} class="config-island">
-    <${ConfigFormMarkup} lists=${lists} onListChange=${changeList} onFormEvent=${routeFormEvent} dirtyPanels=${state.dirtyPanels} />
+    <${ConfigFormMarkup} lists=${lists} onListChange=${changeList} onFormEvent=${routeFormEvent} dirtyPanels=${state.dirtyPanels} loads=${state.metadata} />
     <${ConfigDiffModal} model=${state.diff.value} close=${state.cancelDiff} />
   </div>`;
 }

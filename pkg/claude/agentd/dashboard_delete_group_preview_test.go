@@ -38,8 +38,8 @@ func TestDashboardHTML_DeleteGroupPreviewWired(t *testing.T) {
 		island: {
 			"kind === 'delete-group'", `id="delete-group-modal"`, `id="delete-group-list"`,
 			`id="delete-group-retire"`, "explicitly included", "not auto-retired",
-			"Banish checked familiars before disbanding the party",
-			"single-party familiars are checked by default; familiars also in other parties",
+			"Banish checked heroes before disbanding the party",
+			"single-party heroes are checked by default; heroes also in other parties",
 		},
 		actions: {
 			"async deleteGroupPlan(request)", "pendingRetire", "retireComplete",

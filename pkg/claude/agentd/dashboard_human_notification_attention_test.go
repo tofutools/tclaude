@@ -41,7 +41,7 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 		"global a11y":     {"js/shell-island.js", "one or more agents have unread notifications"},
 		"styles":          {"dashboard.css", ".human-notification-attention"},
 		"drawer styles":   {"dashboard.css", ".human-notification-drawer"},
-		"panel geometry":  {"dashboard.css", ".human-notification-drawer {\n  position: fixed; z-index: 90;\n  top: var(--dock-top); right: 0; bottom: var(--footer-h);"},
+		"panel geometry":  {"dashboard.css", ".human-notification-drawer {\n  position: fixed; z-index: var(--z-panel);\n  top: var(--dock-top); right: 0; bottom: var(--footer-h);"},
 		"panel slide in":  {"dashboard.css", "@keyframes human-notification-drawer-in"},
 		"panel slide out": {"dashboard.css", ".human-notification-drawer.closing"},
 		"reduced motion":  {"dashboard.css", ".human-notification-drawer.closing { animation: none; }"},

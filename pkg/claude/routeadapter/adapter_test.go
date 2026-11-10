@@ -30,9 +30,21 @@ func freePort(t *testing.T) int {
 	return port
 }
 
+// freePortPair holds both reservations until selection is complete so the
+// kernel cannot return the same ephemeral port for two slots in one fixture.
+func freePortPair(t *testing.T) (int, int) {
+	t.Helper()
+	first, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer first.Close()
+	second, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer second.Close()
+	return first.Addr().(*net.TCPAddr).Port, second.Addr().(*net.TCPAddr).Port
+}
+
 func TestAdapterForwardsOpaqueTCPThroughBroker(t *testing.T) {
-	targetPort := freePort(t)
-	consumerPort := freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(targetPort))
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +126,7 @@ func (refusePublisher) AuthorizePublisher(context.Context, routebroker.Publisher
 }
 
 func TestAdapterPublishWaitsForBrokerRouteRegistration(t *testing.T) {
-	targetPort, consumerPort := freePort(t), freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
 	require.NoError(t, err)
 	defer target.Close()
@@ -300,7 +312,7 @@ func TestAdapterReportsRefusedConsumerAttach(t *testing.T) {
 // no observer degraded to proxying a refused stream, the seam would only be
 // hiding the original bug rather than fixing it.
 func TestAdapterRefusedConsumerStreamIsClosedWithoutAnObserver(t *testing.T) {
-	targetPort, consumerPort := freePort(t), freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
 	require.NoError(t, err)
 	defer target.Close()
@@ -355,7 +367,7 @@ func TestAdapterRefusedConsumerStreamIsClosedWithoutAnObserver(t *testing.T) {
 // Capacity is the other refusal the adapter used to discard, and it must reach
 // the same seam so the daemon can tell it apart from an authority verdict.
 func TestAdapterReportsConsumerCapacityRefusal(t *testing.T) {
-	targetPort, consumerPort := freePort(t), freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
 	require.NoError(t, err)
 	defer target.Close()
@@ -453,8 +465,7 @@ func TestAdapterRefusesAnOccupiedConsumerSlot(t *testing.T) {
 }
 
 func TestAdapterPublisherEOFPreservesReverseDirection(t *testing.T) {
-	targetPort := freePort(t)
-	consumerPort := freePort(t)
+	targetPort, consumerPort := freePortPair(t)
 	target, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(targetPort)))
 	if err != nil {
 		t.Fatal(err)
@@ -538,7 +549,7 @@ func TestAdapterPublisherEOFPreservesReverseDirection(t *testing.T) {
 }
 
 func TestAdapterIdleLeaseCleanupReusesOnlyClosedSlot(t *testing.T) {
-	firstPort, secondPort := freePort(t), freePort(t)
+	firstPort, secondPort := freePortPair(t)
 	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
 	if err != nil {
 		t.Fatal(err)
@@ -573,7 +584,7 @@ func TestAdapterIdleLeaseCleanupReusesOnlyClosedSlot(t *testing.T) {
 }
 
 func TestAdapterCloseLeaseDoesNotCloseSiblingSameAgentRoute(t *testing.T) {
-	firstPort, secondPort := freePort(t), freePort(t)
+	firstPort, secondPort := freePortPair(t)
 	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
 	require.NoError(t, err)
 	defer broker.Close()
@@ -594,4 +605,101 @@ func TestAdapterCloseLeaseDoesNotCloseSiblingSameAgentRoute(t *testing.T) {
 	if first == second {
 		t.Fatal("sibling lease unexpectedly reused the closed endpoint")
 	}
+}
+
+func TestHostListenerBoundsConcurrentStreams(t *testing.T) {
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	require.NoError(t, err)
+	defer broker.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	target, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer target.Close()
+	adapter, err := New(broker, []int{target.Addr().(*net.TCPAddr).Port})
+	require.NoError(t, err)
+	defer adapter.Close()
+	go func() {
+		for {
+			conn, err := target.Accept()
+			if err != nil {
+				return
+			}
+			go func() { defer conn.Close(); _, _ = io.Copy(conn, conn) }()
+		}
+	}()
+	_, err = adapter.Publish(ctx, Publisher{RouteID: "host-route", AgentID: "publisher", ConvID: "publisher", LaunchGeneration: "generation", GroupGeneration: 1, Target: "tcp://" + target.Addr().String()})
+	require.NoError(t, err)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	endpoint, err := adapter.OpenHost(ctx, Consumer{LeaseID: "host-lease", RouteID: "host-route", AgentID: "host", ConvID: "host", LaunchGeneration: "generation", GroupGeneration: 1}, listener)
+	require.NoError(t, err)
+	for range 8 {
+		conn, err := net.DialTimeout("tcp4", endpoint, time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+		require.NoError(t, conn.SetDeadline(time.Now().Add(3*time.Second)))
+		_, err = conn.Write([]byte("a"))
+		require.NoError(t, err)
+		_, err = io.ReadFull(conn, make([]byte, 1))
+		require.NoError(t, err)
+	}
+	excess, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	defer excess.Close()
+	require.NoError(t, excess.SetReadDeadline(time.Now().Add(time.Second)))
+	_, err = excess.Read(make([]byte, 1))
+	require.Error(t, err)
+	var timeout net.Error
+	require.False(t, errors.As(err, &timeout) && timeout.Timeout(), "excess stream must close, not hang")
+}
+
+func TestHostLeaseCancellationClosesActiveStream(t *testing.T) {
+	broker, err := routebroker.New(routebroker.Config{Authorizer: allowAll{}})
+	require.NoError(t, err)
+	defer broker.Close()
+	target, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer target.Close()
+	targetClosed := make(chan struct{})
+	go func() {
+		conn, err := target.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		defer close(targetClosed)
+		_, _ = io.Copy(conn, conn)
+	}()
+	adapter, err := New(broker, []int{target.Addr().(*net.TCPAddr).Port})
+	require.NoError(t, err)
+	defer adapter.Close()
+	_, err = adapter.Publish(context.Background(), Publisher{RouteID: "cancel-route", AgentID: "publisher", Target: "tcp://" + target.Addr().String()})
+	require.NoError(t, err)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	endpoint, err := adapter.OpenHost(ctx, Consumer{LeaseID: "cancel-lease", RouteID: "cancel-route", AgentID: "host"}, listener)
+	require.NoError(t, err)
+	conn, err := net.DialTimeout("tcp4", endpoint, time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, conn.SetDeadline(time.Now().Add(3*time.Second)))
+	_, err = conn.Write([]byte("echo"))
+	require.NoError(t, err)
+	_, err = io.ReadFull(conn, make([]byte, 4))
+	require.NoError(t, err)
+	// Keep publisher authority valid: only lease cancellation ends the stream.
+	adapter.CloseLease("cancel-lease")
+	_, err = conn.Read(make([]byte, 1))
+	require.Error(t, err)
+	var timeout net.Error
+	require.False(t, errors.As(err, &timeout) && timeout.Timeout(), "client must observe closure")
+	select {
+	case <-targetClosed:
+	case <-time.After(time.Second):
+		t.Fatal("publisher target still has an active stream")
+	}
+	require.Eventually(t, func() bool { return broker.Metrics().ConsumerChannels == 0 }, time.Second, time.Millisecond)
 }

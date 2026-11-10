@@ -84,6 +84,7 @@ func startRemoteServer(bind string) (*http.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bind %s: %w", bind, err)
 	}
+	ln = registerStageDaemonListener(ln)
 
 	// The listener (tls.Listen) already terminates TLS, so srv.Serve over it
 	// is correct and srv.TLSConfig is intentionally NOT set (it would be
@@ -110,7 +111,10 @@ func startRemoteServer(bind string) (*http.Server, error) {
 func buildRemoteDashboardHandler(m *remoteaccess.Material) http.Handler {
 	dashMux := http.NewServeMux()
 	registerDashboardRoutes(dashMux)
-	return remoteAuthMiddleware(m, auditRequests(dashMux))
+	// Live pages' remote stage (remote_stage.go) sits in front of the
+	// session check: a page's frame sends no cookie. The client certificate
+	// still gates it, at the TLS layer.
+	return remoteStageRoute(remoteAuthMiddleware(m, auditRequests(dashMux)))
 }
 
 // Running-listener state — recorded when startRemoteServer succeeds so the

@@ -11,7 +11,7 @@ import { openCronCreateModal } from './jobs-controller.js';
 import { openGroupCreateModal } from './group-create-controller.js';
 import {
   openGroupPermEditor, openHumanReplyModal, openMessageCreateModal,
-  openPermEditModal, openSudoGrantModal,
+  openPermEditModal, openSudoEditModal,
 } from './message-access-dialog-controller.js';
 import { openGroupContextModal, openGroupCloneModal, openFromGroupModal, openAgentExport, openGroupExport, openSnapshots } from './modal-templates.js';
 import {
@@ -20,7 +20,7 @@ import {
 import {
   chooseTerminalAction, chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
   openGroupSettingsDialog, openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
-  openTaskLinkDialog, openLaunchTargetDialog } from './action-dialog-controller.js';
+  openTaskLinkDialog, openLaunchTargetDialog, openStewardHandoverDialog } from './action-dialog-controller.js';
 import { launchAgent } from './launch-target-dialog.js';
 import { ensureClaudeSubscription, switchToOwnLogin } from './subscription-relaunch.js';
 import { fleetState } from './fleet-state.js';
@@ -48,6 +48,8 @@ import { refuseInPeerView } from './peer-view-guard.js';
 import { ownGroupData } from './fleet-merged-model.js';
 import { GROUP_GRANT_ACTS, READ_ONLY_ACTS, isAgentGrantAct } from './peer-view-limits.js';
 import { announceNodeChanged, isPageNode, nodeFetch, nodeSnapshot } from './node-api.js';
+import { writeClipboard } from './insecure-origin.js';
+import { downloadBlob } from './download.js';
 
 export async function handleRowAction(action) {
   // A control on a group in the fused Groups view names it group@node: the
@@ -181,10 +183,10 @@ export async function handleRowAction(action) {
       }
       case 'remove-member': {
         const confirmed = await confirmModal({
-          title: wizWord('Remove member from group?', 'Dismiss familiar from party?'),
+          title: wizWord('Remove member from group?', 'Dismiss hero from party?'),
           body: wizWord(
             'This unsubscribes them from group messages and severs the manager-pattern path. Their conv keeps running.',
-            'This removes the familiar from party missives and severs the manager-pattern path. Its conversation keeps channeling.',
+            'This removes the hero from party missives and severs the manager-pattern path. Its conversation keeps channeling.',
           ),
           meta: `${label} → ${group}`,
           okLabel: wizWord('Remove', 'Dismiss'),
@@ -553,11 +555,11 @@ export async function handleRowAction(action) {
         return;
       }
       case 'sudo-grant': {
-        // Per-row affordance: open the same modal the Sudo tab's
-        // "+ Grant sudo" button uses, pre-filled with this stable agent id.
+        // Per-row affordance: the sudo variant of the permission editor,
+        // the one the Sudo tab's "+ Grant sudo" button opens, on this agent.
         // Modal handles the rest (validation, POST /api/sudo,
         // refresh).
-        openSudoGrantModal(agent, node);
+        openSudoEditModal(agent, label, node);
         return;
       }
       case 'perm-edit': {
@@ -627,19 +629,10 @@ export async function handleRowAction(action) {
         // out-of-band — `claude --resume <id>` from its dir, or
         // `tclaude agent seance --target <id>`. A one-click in-dashboard
         // open of the grave is a planned follow-up.
-        // Only claim "copied" when the clipboard API exists AND the write
-        // resolves. `navigator.clipboard?.writeText(...)` returns undefined
-        // (not a rejection) when clipboard is missing — awaiting that would
-        // still hit the success toast without anything being written. So gate
-        // on the API first, and fall back to the conv-id toast otherwise.
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          try {
-            await navigator.clipboard.writeText(conv);
-            toast(`conv-id copied: ${shortId(conv)} — inspect with 'claude --resume' or 'tclaude agent seance --target'`);
-            return;
-          } catch (_) {
-            // fall through to the conv-id toast below
-          }
+        // Only claim "copied" when the write worked; otherwise show the id.
+        if (await writeClipboard(conv)) {
+          toast(`conv-id copied: ${shortId(conv)} — inspect with 'claude --resume' or 'tclaude agent seance --target'`);
+          return;
         }
         toast(`conv-id: ${conv}`);
         return;
@@ -704,6 +697,10 @@ export async function handleRowAction(action) {
         openGroupCreateModal(undefined, group, node);
         return;
       }
+      case 'make-steward': {
+        openStewardHandoverDialog({ agent, label });
+        return;
+      }
       case 'send-elsewhere': {
         // The ⚙ "Send elsewhere" items: one launch-target dialog per mode.
         // data-node names another node's agent (a Terminals tab's ⚙).
@@ -724,6 +721,30 @@ export async function handleRowAction(action) {
         openSnapshots({ agent, node: rowNode() });
         return;
       }
+      case 'compact-agent': {
+        // The menu item only shows where the harness can compact and is
+        // disabled offline; the daemon re-checks both. The summary replaces
+        // the agent's context, so it asks first.
+        const confirmed = await confirmModal({
+          title: `Compact ${label}?`,
+          body: 'The agent summarises its conversation so far and carries on from the summary. Its detailed context cannot be restored afterwards.',
+          okLabel: 'Compact',
+        });
+        if (!confirmed) return;
+        const r = await api(`/api/agents/${encodeURIComponent(agent)}/compact`, { method: 'POST', credentials: 'same-origin' });
+        if (!r.ok) {
+          const text = await r.text();
+          let body = {};
+          try { body = JSON.parse(text); } catch (_) { /* plain error */ }
+          // A slow compaction is running, not failed: the daemon stopped waiting.
+          if (body.code === 'settling') toast(`${label} is still compacting`);
+          else toast(`compact ${label} failed: ${body.error || text}`, true);
+          return;
+        }
+        toast(`Asked ${label} to compact`);
+        refresh();
+        return;
+      }
       case 'reincarnate': {
         // Open the reincarnate modal pre-populated with this
         // agent. The modal enforces the required follow_up and
@@ -736,8 +757,8 @@ export async function handleRowAction(action) {
         // Open the picker that assigns the durable sandbox implementation. The
         // dialog loads the recorded posture itself — the row's sandbox fields
         // describe the LAST LAUNCH, which is a different question from what the
-        // next one will use. The button is disabled while the agent is online,
-        // and the daemon re-checks and refuses if it came back up meanwhile.
+        // next one will use. For a running agent the dialog asks the daemon to
+        // restart it under the new implementation.
         openSandboxImplDialog({
           conv: agent,
           label,
@@ -766,14 +787,7 @@ export async function handleRowAction(action) {
         const disposition = response.headers.get('Content-Disposition') || '';
         const match = disposition.match(/filename="([^"]+)"/i);
         const filename = match?.[1] || `tclaude-agent-debug-${shortId(agent)}.json`;
-        const href = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = href;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(href);
+        downloadBlob(blob, filename);
         toast(`debug info exported for ${label}`);
         return;
       }
@@ -1198,4 +1212,3 @@ export async function handleRowAction(action) {
     toast(`Request failed: ${err && err.message || err}`, true);
   }
 }
-// dashboard-imperative-boundary: browser-io

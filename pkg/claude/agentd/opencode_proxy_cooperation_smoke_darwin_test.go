@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -23,6 +25,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -229,6 +232,17 @@ func TestOpenCodeProxyCooperationDarwin(t *testing.T) {
 	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stopOpenCodeRuntime(openCodeDarwinProxySessionID) })
+	if tree, psErr := exec.Command("ps", "-axo", "pid,ppid,pgid,stat,command").CombinedOutput(); psErr == nil {
+		var lines []string
+		for _, line := range strings.Split(string(tree), "\n") {
+			lower := strings.ToLower(line)
+			if strings.Contains(lower, "opencode") || strings.Contains(lower, "tclaude") ||
+				strings.Contains(lower, "sandbox-exec") {
+				lines = append(lines, line)
+			}
+		}
+		t.Logf("process tree after launch (root pid %d):\n%s", launch.PID, strings.Join(lines, "\n"))
+	}
 
 	require.Eventually(t, func() bool {
 		_, statErr := os.Stat(fixture.probeMarker)
@@ -238,14 +252,28 @@ func TestOpenCodeProxyCooperationDarwin(t *testing.T) {
 
 	require.NoError(t, sendOpenCodePrompt(
 		launch, fixture.cwd, "reply with exactly ok", openCodeDarwinProxyModel, ""))
-	require.Eventuallyf(t, func() bool {
-		return openCodeDarwinProxyDecisionsInclude(
-			readOpenCodeDarwinProxyDecisions(t, fixture.supervisorHome),
-			"http", openCodeDarwinProxyOrigin, 443, "allowed")
-	}, 120*time.Second, 250*time.Millisecond,
-		"the managed OpenCode model request did not use HTTP CONNECT through the production proxy; decisions:\n%s",
-		formatOpenCodeDarwinProxyDecisions(
-			readOpenCodeDarwinProxyDecisions(t, fixture.supervisorHome)))
+	promptSent := time.Now()
+	deadline := promptSent.Add(120 * time.Second)
+	rootLost := false
+	for !openCodeDarwinProxyDecisionsInclude(
+		readOpenCodeDarwinProxyDecisions(t, fixture.supervisorHome),
+		"http", openCodeDarwinProxyOrigin, 443, "allowed") {
+		if !rootLost && launch != nil && !session.IsProcessAlive(launch.PID) {
+			rootLost = true
+			t.Logf("launch root pid %d (the proxy launcher) is gone %s after the prompt",
+				launch.PID, time.Since(promptSent).Round(time.Millisecond))
+		}
+		if time.Now().After(deadline) {
+			// Read everything at failure time: a message built before the wait
+			// would only show the state from before the prompt was sent.
+			dumpOpenCodeDarwinProxyDiagnostics(t, launch, fixture)
+			t.Fatalf("the managed OpenCode model request did not use HTTP CONNECT through the production proxy within %s of the prompt",
+				time.Since(promptSent).Round(time.Second))
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Logf("model-origin CONNECT observed %s after the prompt",
+		time.Since(promptSent).Round(time.Millisecond))
 
 	decisions := readOpenCodeDarwinProxyDecisions(t, fixture.supervisorHome)
 	assert.True(t, openCodeDarwinProxyDecisionsInclude(
@@ -352,6 +380,17 @@ func prepareOpenCodeDarwinProxySmoke(t *testing.T) openCodeDarwinProxySmokeFixtu
 	t.Setenv(openCodeDarwinProxyProbeEnv, "1")
 	t.Setenv(openCodeDarwinProxyMarkerEnv, probeMarker)
 
+	// The managed server's own debug log is the only account of where it
+	// stalls when the model request never reaches the proxy.
+	previousLogLevel := openCodeServeLogLevel
+	openCodeServeLogLevel = "DEBUG"
+	t.Cleanup(func() { openCodeServeLogLevel = previousLogLevel })
+
+	// Write the debug config BEFORE agentd starts, so the launcher reads it from
+	// the first launch; otherwise it logs at info and every debug-level proxy
+	// decision is silently dropped.
+	writeOpenCodeDarwinProxyDebugConfig(t, home)
+
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
 	agentSocket := agentipc.CanonicalSocketPath()
@@ -397,7 +436,6 @@ func prepareOpenCodeDarwinProxySmoke(t *testing.T) openCodeDarwinProxySmokeFixtu
 	// Filtered networking retains the profile-frozen harness HOME; provider
 	// isolation no longer redirects the supervisor into filtered-home.
 	supervisorHome := home
-	writeOpenCodeDarwinProxyDebugConfig(t, supervisorHome)
 	spec, err := openCodeTclaudeLayerLaunchSpec(
 		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, &snapshot, agentID)
 	require.NoError(t, err)
@@ -541,4 +579,142 @@ func removeOpenCodeDarwinProxyAmbientEnv(t *testing.T) {
 		require.NoError(t, os.Unsetenv(name))
 		t.Cleanup(func() { _ = os.Setenv(name, previous) })
 	}
+}
+
+// dumpOpenCodeDarwinProxyDiagnostics records what the managed OpenCode server
+// was doing when its model request never reached the proxy: the proxy's
+// decisions as of now, the server's view of the conversation, the process
+// tree, a native stack sample and open sockets of each OpenCode process, and
+// the server's own log.
+func dumpOpenCodeDarwinProxyDiagnostics(
+	t *testing.T,
+	launch *openCodeLaunch,
+	fixture openCodeDarwinProxySmokeFixture,
+) {
+	t.Helper()
+	t.Logf("proxy decisions at failure:\n%s", formatOpenCodeDarwinProxyDecisions(
+		readOpenCodeDarwinProxyDecisions(t, fixture.supervisorHome)))
+	for _, path := range []string{
+		filepath.Join(fixture.supervisorHome, ".tclaude", "data", "output.log"),
+		filepath.Join(fixture.supervisorHome, ".tclaude", "output.log"),
+	} {
+		if raw, err := os.ReadFile(path); err == nil {
+			t.Logf("tclaude log %s:\n%s", path, tailOpenCodeDarwinProxyDiagnostic(raw, 32<<10))
+		}
+	}
+	if launch != nil {
+		runtime := db.OpenCodeRuntime{
+			PID: launch.PID, ServerURL: launch.ServerURL, Password: launch.Password,
+			Transport: launch.Transport, ControlSocketPath: launch.ControlSocketPath,
+			ControlSocketDevice: launch.ControlSocketDevice,
+			ControlSocketInode:  launch.ControlSocketInode,
+		}
+		directory := "?directory=" + url.QueryEscape(fixture.cwd)
+		for _, endpoint := range []string{
+			"/session/status" + directory,
+			"/session/" + url.PathEscape(launch.ConvID) + "/message" + directory,
+		} {
+			t.Logf("OpenCode GET %s:\n%s", endpoint,
+				openCodeDarwinProxyDiagnosticGET(launch.ServerURL+endpoint, runtime))
+		}
+	}
+	if launch != nil {
+		t.Logf("launch root pid %d alive=%v", launch.PID, session.IsProcessAlive(launch.PID))
+	}
+	configPath := filepath.Join(fixture.supervisorHome, ".tclaude", "data", "config.json")
+	if raw, err := os.ReadFile(configPath); err == nil {
+		t.Logf("%s:\n%s", configPath, raw)
+	} else {
+		t.Logf("%s: %v", configPath, err)
+	}
+	// Every tclaude log under the smoke root, wherever a process's HOME put it.
+	_ = filepath.WalkDir(filepath.Dir(fixture.supervisorHome),
+		func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil || entry.IsDir() ||
+				!strings.HasPrefix(entry.Name(), "output.log") {
+				return nil
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			var matched []string
+			for _, line := range strings.Split(string(raw), "\n") {
+				if strings.Contains(line, "proxy") || strings.Contains(line, "launcher") ||
+					strings.Contains(line, "\"level\":\"ERROR\"") ||
+					strings.Contains(line, "\"level\":\"WARN\"") {
+					matched = append(matched, line)
+				}
+			}
+			t.Logf("log %s (%d bytes), proxy/launcher/WARN/ERROR lines:\n%s",
+				path, len(raw), strings.Join(matched, "\n"))
+			return nil
+		})
+	if all, err := exec.Command("ps", "-axo", "pid,ppid,pgid,stat,lstart,command").CombinedOutput(); err == nil {
+		t.Logf("all processes:\n%s", headOpenCodeDarwinProxyDiagnostic(all, 48<<10))
+	}
+	listing, err := exec.Command("ps", "-axo", "pid,ppid,stat,etime,%cpu,command").CombinedOutput()
+	if err != nil {
+		t.Logf("ps: %v", err)
+	}
+	var openCodePIDs []string
+	var relevant []string
+	for _, line := range strings.Split(string(listing), "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "opencode") && !strings.Contains(lower, "tclaude") &&
+			!strings.Contains(lower, "sandbox-exec") {
+			continue
+		}
+		relevant = append(relevant, line)
+		fields := strings.Fields(line)
+		if len(fields) > 5 && strings.Contains(lower, "opencode") &&
+			strings.Contains(line, " serve") && !strings.HasPrefix(fields[5], "sh") &&
+			!strings.Contains(fields[5], "sandbox-exec") && !strings.Contains(fields[5], "tclaude") {
+			openCodePIDs = append(openCodePIDs, fields[0])
+		}
+	}
+	t.Logf("processes:\n%s", strings.Join(relevant, "\n"))
+	for _, pid := range openCodePIDs {
+		if sockets, err := exec.Command("lsof", "-nP", "-a", "-p", pid, "-i").CombinedOutput(); err == nil || len(sockets) > 0 {
+			t.Logf("lsof -i for OpenCode pid %s:\n%s", pid, sockets)
+		}
+		samplePath := filepath.Join(t.TempDir(), "opencode-"+pid+".sample")
+		if out, err := exec.Command("sample", pid, "3", "-mayDie", "-file", samplePath).CombinedOutput(); err != nil {
+			t.Logf("sample %s: %v: %s", pid, err, out)
+			continue
+		}
+		if raw, err := os.ReadFile(samplePath); err == nil {
+			t.Logf("native stack sample of OpenCode pid %s:\n%s",
+				pid, headOpenCodeDarwinProxyDiagnostic(raw, 48<<10))
+		}
+	}
+	logOpenCodeDarwinLayerSmokeServerLogs(t, fixture.serverLogDir)
+}
+
+func openCodeDarwinProxyDiagnosticGET(endpoint string, runtime db.OpenCodeRuntime) string {
+	request, err := openCodeRequest(http.MethodGet, endpoint, runtime, nil)
+	if err != nil {
+		return "request: " + err.Error()
+	}
+	response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
+	if err != nil {
+		return "error (a wedged server times out here): " + err.Error()
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	return fmt.Sprintf("HTTP %d\n%s", response.StatusCode, body)
+}
+
+func tailOpenCodeDarwinProxyDiagnostic(raw []byte, limit int) []byte {
+	if len(raw) > limit {
+		return raw[len(raw)-limit:]
+	}
+	return raw
+}
+
+func headOpenCodeDarwinProxyDiagnostic(raw []byte, limit int) []byte {
+	if len(raw) > limit {
+		return raw[:limit]
+	}
+	return raw
 }

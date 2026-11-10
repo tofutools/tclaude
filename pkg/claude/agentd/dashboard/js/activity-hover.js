@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
 
 const html = htm.bind(h);
 
@@ -14,7 +15,7 @@ function ActivityState({ state, wizard }) {
     <div class=${`activity-hover-state activity-hover-state-${state.key}`}>
       <div class="activity-hover-state-heading">
         <span class="activity-hover-state-label">${label}</span>
-        <span class="activity-hover-state-count">${state.members.length}</span>
+        <span class="activity-hover-state-count ui-badge">${state.members.length}</span>
       </div>
       <ul class="activity-hover-workers">
         ${state.members.map((member) => html`
@@ -32,7 +33,7 @@ function ActivityState({ state, wizard }) {
 function ActivityHoverPanel({ details, wizard, panelID, headingID }) {
   if (!details?.groups?.length) return null;
   return html`
-    <div class="activity-hover-panel" id=${panelID} role="dialog" aria-labelledby=${headingID}>
+    <div class="activity-hover-panel ui-popover" id=${panelID} role="dialog" aria-labelledby=${headingID}>
       <div class="activity-hover-panel-heading" id=${headingID}>Worker activity</div>
       <div class="activity-hover-panel-summary">
         ${plural(details.total || 0, 'worker')} · grouped by current state
@@ -79,20 +80,16 @@ export function ActivityHover({
   const headingID = `${panelID}-heading`;
   const open = hovered || focused || pinned;
 
+  const leave = useLeaveGrace(() => setHovered(false));
   const close = () => {
+    leave.cancel();
     setPinned(false);
     setHovered(false);
     setFocused(false);
   };
+  useExclusivePopover(rootRef, open, () => { leave.cancel(); setHovered(false); setFocused(false); }, pinned);
 
-  useEffect(() => {
-    if (!pinned) return undefined;
-    const onPointerDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) close();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [pinned]);
+  useDismissablePopover(rootRef, pinned, close);
 
   const onBlur = (event) => {
     if (!rootRef.current?.contains(event.relatedTarget)) setFocused(false);
@@ -112,13 +109,13 @@ export function ActivityHover({
     <span
       ref=${rootRef}
       class=${`activity-hover${className ? ` ${className}` : ''}${open ? ' is-open' : ''}`}
-      onMouseEnter=${() => setHovered(true)}
-      onMouseLeave=${() => setHovered(false)}
+      onMouseEnter=${() => { leave.cancel(); setHovered(true); }}
+      onMouseLeave=${leave.schedule}
       onFocusIn=${() => setFocused(true)}
       onFocusOut=${onBlur}
     >
       ${badge}
-      <button
+      <button data-ui-exempt
         id=${id}
         type="button"
         class="activity-hover-trigger"

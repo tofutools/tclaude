@@ -10,8 +10,9 @@ implementation diary, roadmap, or project-management scratchpad.
 session management, conversation search, usage/status reporting, worktree
 helpers, and multi-agent coordination.
 
-The project is harness-agnostic. Six harnesses are registered via
-`--harness claude|codex|opencode|copilot|gemini|pi` (Claude Code is the default); the
+The project is harness-agnostic. Six coding harnesses are registered via
+`--harness claude|codex|opencode|copilot|gemini|pi` (Claude Code is the default),
+plus a plain `shell`; the
 selected harness is persisted per conversation. The harness seam lives in
 `pkg/claude/harness`.
 
@@ -39,6 +40,11 @@ while `. ./cmd/...` adds the standalone `tclaude-agentd` daemon and the
 CI runs `go test ./...` and `golangci-lint run ./...`. Do make sure your changes at 
 least build, and run focused local tests when they help your own iteration on the code 
 you are changing.
+
+PR CI runs Linux only by default. When a change mostly matters on macOS
+(darwin-only files, Seatbelt or sandbox code), opt the PR into macOS CI with
+a `CI-macOS: true` trailer on the head commit, in the same final paragraph as
+any other trailers; see "macOS CI" in `CONTRIBUTING.md`.
 
 Platform target: Linux and macOS. WSL is treated as Linux for practical use.
 Native Windows is not a supported development target; do not design new
@@ -99,6 +105,11 @@ may contain symlinks on macOS. Preserve explicit aliases in symlink-behavior
 tests. Run focused tests via `scripts/test.sh`, which supplies a symlinked
 `TMPDIR` on Linux too. See `CONTRIBUTING.md` for path-testing guidance.
 
+Never rely on a single fixed sleep in a test: poll until the condition holds,
+up to a time limit, and fail with a clear message (prefer a fake or injected
+clock). Widening a margin is not a flake fix. See "Deterministic timing in
+tests" in `CONTRIBUTING.md`.
+
 Unit tests live next to the code they cover. Flow tests live under
 `pkg/claude/agentd/*_flow_test.go` and run under plain `go test ./...`.
 
@@ -117,9 +128,8 @@ Keep new tests focused on user-visible surfaces such as CLI/API results,
 conversation listings, and dashboard snapshots. Avoid asserting on simulator
 internals when a production read path can be exercised instead.
 
-The dashboard visual smoke harness (`pkg/claude/agentd/dashsnap`, its
-`TCLAUDE_DASHSNAP` browser tests, and the `TCLAUDE_DOCSHOTS` docs/Learn
-screenshot generators) has been removed. CI never ran its browser
+The dashboard visual smoke harness (`pkg/claude/agentd/dashsnap` and its
+`TCLAUDE_DASHSNAP` browser tests) has been removed. CI never ran its browser
 tests (all env-gated), yet its go-rod browser driver pinned old, API-incompatible
 `ysmood/*` modules into `go.mod` and broke `go get -u`. To bring it back, find
 the removal commit with
@@ -127,7 +137,15 @@ the removal commit with
 restore from its parent. `scripts/e2e/drive` still uses go-rod, but as its own
 nested module (`scripts/e2e/drive/go.mod`), so it stays out of the main module.
 
+Dashboard images in the README and `docs/` come from
+`scripts/docs/screenshots.sh`; see `CONTRIBUTING.md`. Do not hand-edit them.
+
 ## UI design proposals: mock, render, notify
+
+Before opening a dashboard PR, look at the change in the sandbox
+(`scripts/sandbox/ui.sh up`) with Playwright and say so in the PR; see "See your
+change in the sandbox" in `CONTRIBUTING.md`, which also covers showing it to the
+operator.
 
 For UI direction questions — which control type fits, competing layout ideas, a
 contested visual change — do not iterate in the production frontend. The full
@@ -158,8 +176,8 @@ The same loop works agent-to-agent. A lead can ask the implementing agent for
 a mock before green-lighting implementation, or send the implementor a
 rendered mock of what is wanted; either side re-renders and replies with an
 updated image, passing an absolute path the peer can read in the message body
-(`tclaude agent send` carries text only — attachments exist only on
-notify-human), iterating on the design together before any production code is
+(`tclaude agent send` to a local peer carries text only; attachments exist on
+notify-human and for remote `member@peer` recipients), iterating on the design together before any production code is
 written. Bring the human in with notify-human whenever a decision is taste 
 rather than mechanics.
 

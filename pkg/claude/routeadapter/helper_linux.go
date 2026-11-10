@@ -38,7 +38,7 @@ type HelperConfig struct {
 // launch-scoped credential; the enclosing session must be relaunched to mint a
 // replacement helper contract.
 func RunHelper(ctx context.Context, cfg HelperConfig) error {
-	if strings.TrimSpace(cfg.SocketPath) == "" || strings.TrimSpace(cfg.AgentID) == "" || strings.TrimSpace(cfg.ConvID) == "" || strings.TrimSpace(cfg.LaunchGeneration) == "" || strings.TrimSpace(cfg.Credential) == "" {
+	if strings.TrimSpace(cfg.SocketPath) == "" || strings.TrimSpace(cfg.AgentID) == "" || strings.TrimSpace(cfg.LaunchGeneration) == "" || strings.TrimSpace(cfg.Credential) == "" {
 		return errors.New("route helper launch identity is incomplete")
 	}
 	if len(cfg.GroupIDs) == 0 {
@@ -80,20 +80,26 @@ func RunHelper(ctx context.Context, cfg HelperConfig) error {
 }
 
 // ValidateHelper performs one authenticated, read-only discovery before the
-// outer launch releases the harness. It makes the readiness marker mean that
-// the inherited credential was not only consumed, but accepted by agentd.
+// outer launch releases the harness. Pre-enrolled launches prove daemon
+// acceptance here. Late-enrolled launches can only prove credential consumption:
+// discovery remains unauthorized until the harness creates its conversation.
 func ValidateHelper(ctx context.Context, cfg HelperConfig) error {
-	if strings.TrimSpace(cfg.SocketPath) == "" || strings.TrimSpace(cfg.AgentID) == "" || strings.TrimSpace(cfg.ConvID) == "" || strings.TrimSpace(cfg.LaunchGeneration) == "" || strings.TrimSpace(cfg.Credential) == "" {
+	if strings.TrimSpace(cfg.SocketPath) == "" || strings.TrimSpace(cfg.AgentID) == "" || strings.TrimSpace(cfg.LaunchGeneration) == "" || strings.TrimSpace(cfg.Credential) == "" {
 		return errors.New("route helper launch identity is incomplete")
 	}
 	if len(cfg.GroupIDs) == 0 {
 		return errors.New("route helper requires at least one explicit group")
 	}
+	if strings.TrimSpace(cfg.ConvID) == "" {
+		// Waiting for discovery would deadlock: the harness is held behind this
+		// readiness marker, and only the harness can create its conversation.
+		return nil
+	}
 	var payload struct {
 		Routes []routeRecord `json:"routes"`
 	}
 	return GetUnixJSON(ctx, cfg.SocketPath,
-		"/v1/routes?group_id="+strconv.FormatInt(cfg.GroupIDs[0], 10),
+		helperPublisherListPath(cfg.GroupIDs[0]),
 		cfg.Credential, &payload)
 }
 
@@ -112,11 +118,24 @@ func cancelHandles(handles map[string]*helperHandle) {
 func syncPublisherRoutes(ctx context.Context, cfg HelperConfig, active map[string]*helperHandle) error {
 	seen := make(map[string]bool)
 	var firstErr error
-	for _, groupID := range cfg.GroupIDs {
+	// Every publisher-capable helper can discover its own host publications.
+	// A later host permission grant must not leave an existing group helper
+	// watching only its original group catalog. Broker authority still gates use.
+	selectors := append([]int64(nil), cfg.GroupIDs...)
+	hasHost := false
+	for _, id := range selectors {
+		if id == 0 {
+			hasHost = true
+		}
+	}
+	if !hasHost {
+		selectors = append(selectors, 0)
+	}
+	for _, groupID := range selectors {
 		var payload struct {
 			Routes []routeRecord `json:"routes"`
 		}
-		path := "/v1/routes?group_id=" + strconv.FormatInt(groupID, 10)
+		path := helperPublisherListPath(groupID)
 		if err := GetUnixJSON(ctx, cfg.SocketPath, path, cfg.Credential, &payload); err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -124,7 +143,7 @@ func syncPublisherRoutes(ctx context.Context, cfg HelperConfig, active map[strin
 			continue
 		}
 		for _, route := range payload.Routes {
-			if route.State != "ready" || route.PublisherAgentID != cfg.AgentID || route.PublisherConvID != cfg.ConvID || route.PublisherLaunchGeneration != cfg.LaunchGeneration {
+			if route.State != "ready" || route.PublisherAgentID != cfg.AgentID || (cfg.ConvID != "" && route.PublisherConvID != cfg.ConvID) || route.PublisherLaunchGeneration != cfg.LaunchGeneration {
 				continue
 			}
 			seen[route.ID] = true
@@ -136,7 +155,7 @@ func syncPublisherRoutes(ctx context.Context, cfg HelperConfig, active map[strin
 			active[route.ID] = handle
 			go func(route routeRecord, id string, h *helperHandle) {
 				defer close(h.done)
-				auth := ChannelAuth{Role: RolePublisher, RouteID: route.ID, AgentID: cfg.AgentID, ConvID: cfg.ConvID, LaunchGeneration: cfg.LaunchGeneration, GroupGeneration: route.GroupGeneration, Credential: cfg.Credential}
+				auth := ChannelAuth{Role: RolePublisher, RouteID: route.ID, AgentID: cfg.AgentID, ConvID: route.PublisherConvID, LaunchGeneration: cfg.LaunchGeneration, GroupGeneration: route.GroupGeneration, Credential: cfg.Credential}
 				channel, err := DialUnixChannel(handleCtx, cfg.SocketPath, auth)
 				if err == nil {
 					_ = RunPublisher(handleCtx, channel, route.Target)
@@ -157,6 +176,9 @@ func syncConsumerLeases(ctx context.Context, cfg HelperConfig, active map[string
 	seen := make(map[string]bool)
 	var firstErr error
 	for _, groupID := range cfg.GroupIDs {
+		if groupID == 0 {
+			continue
+		}
 		var payload struct {
 			Leases []leaseRecord `json:"leases"`
 		}
@@ -168,7 +190,7 @@ func syncConsumerLeases(ctx context.Context, cfg HelperConfig, active map[string
 			continue
 		}
 		for _, lease := range payload.Leases {
-			if lease.State != "open" || lease.ConsumerAgentID != cfg.AgentID || lease.ConsumerConvID != cfg.ConvID || lease.ConsumerLaunchGeneration != cfg.LaunchGeneration {
+			if lease.State != "open" || lease.ConsumerAgentID != cfg.AgentID || (cfg.ConvID != "" && lease.ConsumerConvID != cfg.ConvID) || lease.ConsumerLaunchGeneration != cfg.LaunchGeneration {
 				continue
 			}
 			seen[lease.ID] = true
@@ -195,7 +217,7 @@ func syncConsumerLeases(ctx context.Context, cfg HelperConfig, active map[string
 			active[lease.ID] = handle
 			go func(lease leaseRecord, h *helperHandle) {
 				defer close(h.done)
-				auth := ChannelAuth{Role: RoleConsumer, RouteID: lease.RouteID, LeaseID: lease.ID, AgentID: cfg.AgentID, ConvID: cfg.ConvID, LaunchGeneration: cfg.LaunchGeneration, GroupGeneration: lease.GroupGeneration, ConsumerEndpoint: endpoint, Credential: cfg.Credential}
+				auth := ChannelAuth{Role: RoleConsumer, RouteID: lease.RouteID, LeaseID: lease.ID, AgentID: cfg.AgentID, ConvID: lease.ConsumerConvID, LaunchGeneration: cfg.LaunchGeneration, GroupGeneration: lease.GroupGeneration, ConsumerEndpoint: endpoint, Credential: cfg.Credential}
 				channel, err := DialUnixChannel(handleCtx, cfg.SocketPath, auth)
 				if err != nil {
 					_ = reportConsumerEndpoint(handleCtx, cfg, lease.ID, "refused", "", "route adapter channel refused")
@@ -346,4 +368,12 @@ func PostUnixJSON(ctx context.Context, socketPath, path, credential string, in, 
 		return nil
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
+}
+
+// Zero is a host-only discovery selector, never a group identity or consumer grant.
+func helperPublisherListPath(groupID int64) string {
+	if groupID == 0 {
+		return "/v1/routes?host=true"
+	}
+	return "/v1/routes?group_id=" + strconv.FormatInt(groupID, 10)
 }

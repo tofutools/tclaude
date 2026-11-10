@@ -198,7 +198,9 @@ type Workdir struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-// SudoGrant is an agent_sudo_grants row — a time-boxed elevated grant.
+// SudoGrant is an agent_sudo_grants row — a time-boxed elevated grant. Only an
+// older file holds one: sudo is temporary, so an export no longer carries it and
+// an import always drops it.
 type SudoGrant struct {
 	ConvID    string `json:"conv_id"`
 	Slug      string `json:"slug"`
@@ -208,6 +210,8 @@ type SudoGrant struct {
 	GrantedBy string `json:"granted_by"`
 	Reason    string `json:"reason"`
 	RevokedAt string `json:"revoked_at"`
+	UsesLimit int64  `json:"uses_limit,omitempty"`
+	UsesLeft  int64  `json:"uses_left,omitempty"`
 }
 
 // HeadAlias is an agent_head_aliases row — a stable handle pointing at a

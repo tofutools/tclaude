@@ -10,6 +10,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 )
 
 type AttachParams struct {
@@ -30,7 +31,7 @@ func isWebTerminalAttach() bool {
 
 func AttachCmd() *cobra.Command {
 	return boa.CmdT[AttachParams]{
-		Use:         "attach <id>",
+		Use:         "attach",
 		Short:       "Attach to a coding session",
 		Long:        "Attach to an existing coding session. Use Ctrl+B D to detach.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -42,7 +43,7 @@ func AttachCmd() *cobra.Command {
 		},
 		RunFunc: func(params *AttachParams, cmd *cobra.Command, args []string) {
 			if err := runAttach(params); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -72,25 +73,16 @@ func runAttach(params *AttachParams) error {
 
 	// By default, don't attach if session already has clients (use --force to override)
 	if !params.Force && IsTmuxSessionAttached(state.TmuxSession) {
-		fmt.Printf("Session %s is already attached in another terminal\n", sessionHandle(state))
+		fmt.Fprintf(cliStdout, "Session %s is already attached in another terminal\n", sessionHandle(state))
 		// Try to focus the terminal window
 		TryFocusAttachedSession(state.TmuxSession)
 		return nil
 	}
 
 	if !isWebTerminalAttach() {
-		fmt.Printf("Attaching to session %s... (Ctrl+B D to detach)\n", sessionHandle(state))
+		fmt.Fprintf(cliStdout, "Attaching to session %s... (Ctrl+B D to detach)\n", sessionHandle(state))
 	}
 	return AttachToSession(state.ID, state.TmuxSession, params.Force)
-}
-
-// AttachToTmuxSession attaches to a tmux session, replacing the current process
-// Returns exit code (0 = success) for use by other packages
-func AttachToTmuxSession(tmuxSession string) int {
-	if err := attachToSession(tmuxSession); err != nil {
-		return 1
-	}
-	return 0
 }
 
 // AttachToSession attaches to a tmux session.
@@ -129,8 +121,15 @@ func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
 func setTerminalTitle(title string) {
 	// OSC 0 sets both icon and window title
 	// Format: ESC ] 0 ; <title> BEL
-	fmt.Printf("\033]0;%s\007", title)
+	// The sequence is ours, so it goes to the raw terminal; the title may be
+	// an agent's (it can rename itself), so it is cleaned, or a BEL in it
+	// would end the sequence and the rest would reach the terminal.
+	fmt.Fprintf(os.Stdout, "\033]0;%s\007", termTitle(title))
 }
+
+// termTitle is title as it may sit inside an OSC title sequence: one line,
+// with nothing a terminal would interpret.
+func termTitle(title string) string { return termtext.Line(title) }
 
 // findSession finds a session by ID or prefix
 func findSession(id string) (*SessionState, error) {

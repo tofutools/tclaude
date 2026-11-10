@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -8,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -35,6 +35,12 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		selector = u
 	}
 	res, _, err := agent.ResolveSelector(selector)
+	// member@peer: a selector that names no local agent but a trusted peer
+	// runs the verb on that peer's agent (federation_member_verbs.go). An
+	// ambiguous local match stays a local error: it never reaches the peer.
+	if err != nil && !errors.Is(err, agent.ErrAmbiguous) && serveRemoteMemberVerb(w, r, selector, verb) {
+		return
+	}
 	var convID string
 	if err == nil {
 		convID = res.ConvID
@@ -85,7 +91,11 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentRename(w, r, convID)
 	case "remote-control":
 		handleAgentRemoteControl(w, r, convID)
+	case "sandbox":
+		handleAgentSandboxImplementation(w, r, convID)
 	case "sandbox-impl":
+		// Deprecated spelling of "sandbox", kept for older clients.
+		markDeprecatedRoute(w, "/v1/agent/{selector}/sandbox")
 		handleAgentSandboxImplementation(w, r, convID)
 	case "clone":
 		handleAgentClone(w, r, convID)
@@ -127,9 +137,9 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 //   - they hold the slug `perm` (granted via config defaults or
 //     per-conv SQLite grants — same dual-source check as
 //     requirePermission)
-//   - they own at least one group that contains targetConv (mirrors
-//     the owner-implicit-power semantics already used for messaging
-//     in db.CanSenderReachTarget)
+//   - they hold the slug's group sibling (groups.members.<verb>, from
+//     PermissionDefs) covering every current active group that contains
+//     targetConv; owning a group contributes that sibling for it
 //   - they sent X-Tclaude-Ask-Human: <duration> AND the human
 //     approves the cross-agent action via the loopback popup before
 //     the timeout expires (same escape hatch the self-targeted
@@ -173,6 +183,9 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
+	if refuseExternalStewardCeiling(w, p, perm) {
+		return "", false
+	}
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, targetConv) ||
 		hasHumanApprovalContinuation(r, perm, targetConv) {
 		recordAuthorizedPermission(r, perm, 0)
@@ -190,6 +203,9 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		}
 	}
 	if allowed, matched, _ := permissionAllowsAction(r, p.ConvID, perm, scopeContext); allowed {
+		if !standingSiblingCovers(p.ConvID, perm, scopeContext) && !spendSudoUse(w, r, p.ConvID, perm, scopeContext) {
+			return "", false
+		}
 		recordAuditPermissionScope(r, perm, matched)
 		recordAuthorizedPermission(r, perm, loadBearingSudoGrantID(r, p.ConvID, perm, scopeContext))
 		return p.ConvID, true
@@ -210,6 +226,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		} else if len(groups) > 0 {
 			covered := true
 			var sudoGrantID int64
+			var limited *ActionContext
 			for _, group := range groups {
 				candidate := scopeContext
 				candidate.Group = group
@@ -221,8 +238,14 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 				if sudoGrantID == 0 {
 					sudoGrantID = loadBearingSudoGrantID(r, p.ConvID, sibling, candidate)
 				}
+				if _, ok := limitedSudoSource(r, p.ConvID, sibling, candidate); ok && limited == nil {
+					limited = &candidate
+				}
 			}
 			if covered {
+				if limited != nil && !spendSudoUse(w, r, p.ConvID, sibling, *limited) {
+					return "", false
+				}
 				recordAuditPermissionScope(r, sibling, "group="+strings.Join(groups, ","))
 				recordAuthorizedPermission(r, sibling, sudoGrantID)
 				return p.ConvID, true
@@ -235,36 +258,24 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	// target surfaced so the popup can render
 	// "<caller> wants to <verb> <target>". Timeout = deny.
 	if timeout := parseAskHumanHeader(r); timeout > 0 && popupBaseURL != "" {
-		bodyPreview := snapshotRequestBody(r)
-		callerTitle := ""
-		if row := agent.FreshConvRowResolved(p.ConvID); row != nil {
-			callerTitle = agent.DisplayTitle(row)
+		slot, ok := admitApproval(w, p.ConvID)
+		if !ok {
+			return "", false
 		}
-		targetTitle := ""
-		if row := agent.FreshConvRowResolved(targetConv); row != nil {
-			targetTitle = agent.DisplayTitle(row)
+		defer approvals.release(slot)
+		bodyPreview, bodyLabel, heldErr := approvalPreviewFacts(r, slot, snapshotRequestBody(r), "")
+		if heldErr != nil {
+			refuseApprovalBody(w, heldErr)
+			return "", false
 		}
-		req := &approvalRequest{
-			id:              newApprovalID(),
-			perm:            perm,
-			convID:          p.ConvID,
-			convTitle:       callerTitle,
-			method:          r.Method,
-			path:            r.URL.Path,
-			rawQuery:        r.URL.RawQuery,
-			bodyPreview:     bodyPreview,
-			targetConvID:    targetConv,
-			targetConvTitle: targetTitle,
-			// autoGrantable stays false on the cross-agent path: "always
-			// allow" persists the slug on the CALLER, which for a cross-agent
-			// capability would grant it against ALL targets — broader than the
-			// one-off, one-target approval the human gave. "Always allow" is
-			// intentionally scoped to the self / human-surface popup path.
-			createdAt: time.Now(),
-			timeout:   timeout,
-			decision:  make(chan approvalOutcome, 1),
-			extend:    make(chan time.Duration, 1),
-		}
+		req := newAgentApprovalRequest(r, perm, p.ConvID, convDisplayTitle(p.ConvID), timeout)
+		req.bodyPreview, req.bodyLabel = bodyPreview, bodyLabel
+		req.targetConvID, req.targetConvTitle = targetConv, convDisplayTitle(targetConv)
+		// autoGrantable stays false on the cross-agent path: "always allow"
+		// persists the slug on the CALLER, which for a cross-agent capability
+		// would grant it against ALL targets — broader than the one-off,
+		// one-target approval the human gave. "Always allow" is intentionally
+		// scoped to the self / human-surface popup path.
 		if requestHumanApproval(req, popupBaseURL) {
 			markWriteProofHumanApproval(r, perm, targetConv)
 			recordAuthorizedPermission(r, perm, 0)
@@ -276,8 +287,14 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		return "", false
 	}
 
+	if GroupSiblingForSlug(perm) == "" {
+		writeError(w, http.StatusForbidden, "permission",
+			fmt.Sprintf("caller is not granted %q for target %s (grant via `tclaude agent permissions grant %s %s`)",
+				perm, short8(targetConv), perm, short8(p.ConvID)))
+		return "", false
+	}
 	writeError(w, http.StatusForbidden, "permission",
-		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of any group containing it (grant via `tclaude agent permissions grant %s %s`, add caller as owner of a shared group, or call again with X-Tclaude-Ask-Human: <duration> to ask the human via popup)",
+		fmt.Sprintf("caller is not granted %q for target %s, and is not an owner of every active group containing it (grant via `tclaude agent permissions grant %s %s`, add caller as owner of each of those groups, or use --ask-human on a command that offers it for another agent)",
 			perm, short8(targetConv), perm, short8(p.ConvID)))
 	return "", false
 }

@@ -110,7 +110,7 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return
 		}
-		writePRUpdateResponse(w, target, caller, presentedPRView{URL: body.URL, Number: deriveGitHubPRNumber(body.URL), State: "handled"}, true)
+		writePRUpdateResponse(w, target, caller, presentedPRView{URL: body.URL, Number: deriveForgePRNumber(body.URL), State: "handled"}, true)
 		return
 	}
 	var row db.AgentPR

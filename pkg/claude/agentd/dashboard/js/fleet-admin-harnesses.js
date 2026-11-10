@@ -1,19 +1,18 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
+import { UpdateScriptsSection } from './fleet-admin-update-scripts.js';
 import { CREDENTIAL_FILE_HARNESSES, SHARE_WARNING, accessHint, cellView, harnessColumns, jobActive } from './fleet-harness-model.js';
+import { errText, localStamp } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
 const JOB_POLL_MS = 1000;
 
-function errText(error) { return error?.message || String(error); }
-
-function when(iso) {
-  const t = new Date(iso);
-  return Number.isFinite(t.getTime()) ? t.toLocaleString() : '—';
-}
+const when = (iso) => localStamp(iso);
 
 // HarnessDialog manages one harness on one node: install or update it (with
 // the busy-workers choice the daemon asks for), copy this operator's login
@@ -95,8 +94,7 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
     .catch((e) => toast(`Push failed: ${errText(e)}`, true));
 
   const cell = cellView(row);
-  return html`<${Overlay} id="fleet-harness-modal" labelledby="fleet-harness-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-harness-title">${label} on ${node.label}</h3>
+  return html`<${Dialog} id="fleet-harness-modal" onClose=${onClose} blocked=${busy} title=${html`${label} on ${node.label}`}>
     <div class="fa-dl">
       <span class="fa-k">Installed</span><span>${row?.installed ? `${row.version || 'version unknown'}${row.path ? ` · ${row.path}` : ''}` : 'no'}</span>
       ${row?.latest_version && html`<span class="fa-k">Latest</span><span>${row.latest_version}${row.update_available === true ? ' — update available' : ''}</span>`}
@@ -114,26 +112,25 @@ export function HarnessDialog({ node, row, actions, confirm, toast, onJob, onClo
               <span>Replace an existing login there (it is backed up first)</span></label>`}`}
         ${busyChoice
           ? html`<div class="fa-consequence" role="alert">Agents using ${label} on ${node.label} are busy.
-              <div class="modal-buttons"><button id="fleet-harness-now" type="button" class="danger" disabled=${busy} onClick=${() => start('now')}>Run now (may interrupt them)</button>
-              <button id="fleet-harness-idle" type="button" disabled=${busy} onClick=${() => start('when_idle')}>When they are idle</button></div></div>`
-          : html`<button id="fleet-harness-run" type="button" class="primary" disabled=${busy || !ops} onClick=${run}>${action === 'install' ? 'Install…' : 'Update…'}</button>`}`}
+              <div class="modal-buttons"><${Button} variant="danger" id="fleet-harness-now" disabled=${busy} onClick=${() => start('now')}>Run now (may interrupt them)</${Button}>
+              <${Button} id="fleet-harness-idle" disabled=${busy} onClick=${() => start('when_idle')}>When they are idle</${Button}></div></div>`
+          : html`<${Button} size="sm" variant="primary" id="fleet-harness-run" disabled=${busy || !ops} onClick=${run}>${action === 'install' ? 'Install…' : 'Update…'}<//>`}`}
     ${fileLogin
       ? html`<h4>Login files</h4>
         ${credError
           ? html`<div class="muted">${node.local ? errText(credError) : `${node.label}: ${accessHint(credError, 'node.credentials.receive')}.`}</div>`
           : html`<div class="fa-grant-form">
-              ${!node.local && html`<button id="fleet-harness-push" type="button" class="danger" onClick=${push}>Push my login…</button>`}
-              <button id="fleet-harness-backup" type="button" onClick=${backupNow}>Back up now</button>
+              ${!node.local && html`<${Button} size="sm" variant="danger" id="fleet-harness-push" onClick=${push}>Push my login…<//>`}
+              <${Button} size="sm" id="fleet-harness-backup" onClick=${backupNow}>Back up now<//>
             </div>
             ${backups && (backups.length
-              ? html`<table class="fa-table" id="fleet-harness-backups"><thead><tr><th>Backup</th><th>Taken</th><th></th></tr></thead>
-                <tbody>${backups.map((b) => html`<tr key=${b.id}><td><code>${b.id.slice(0, 12)}</code></td><td>${when(b.created_at)}</td>
-                  <td class="fa-acts"><button type="button" data-fa="restore" onClick=${() => restore(b)}>Restore…</button></td></tr>`)}</tbody></table>`
+              ? html`<${FaTable} id="fleet-harness-backups" head=${['Backup', 'Taken', '']}>${backups.map((b) => html`<tr key=${b.id}><td><code title=${b.id}>${b.id.slice(0, 12)}</code></td><td>${when(b.created_at)}</td>
+                  <td class="fa-acts"><${Button} size="sm" data-fa="restore" onClick=${() => restore(b)}>Restore…<//></td></tr>`)}<//>`
               : html`<div class="muted">No backups yet.</div>`)}`}`
       : html`<div class="muted">${label} keeps its login outside copyable files (keychain or environment): log in on ${node.label} itself.</div>`}
-    <div class="cron-create-error" role="alert">${error}</div>
-    <div class="modal-buttons"><span class="spacer"></span><button type="button" disabled=${busy} onClick=${onClose}>Close</button></div>
-  </${Overlay}>`;
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
+    <div class="modal-buttons"><span class="spacer"></span><${Button} disabled=${busy} onClick=${onClose}>Close</${Button}></div>
+  </${Dialog}>`;
 }
 
 function JobRow({ entry, copy, toast, onDismiss }) {
@@ -144,12 +141,12 @@ function JobRow({ entry, copy, toast, onDismiss }) {
     <td>${job.action} ${(job.harnesses || []).join(', ')}${job.mode ? html` <span class="muted">(${job.mode === 'when_idle' ? 'when idle' : 'now'})</span>` : ''}</td>
     <td class=${job.state === 'failed' ? 'fa-danger' : ''}>${job.state === 'waiting_idle' ? 'waiting for idle agents' : job.state}${job.phase ? html` <span class="muted">· ${job.phase}</span>` : ''}</td>
     <td>${(job.results || []).map((r) => html`<div key=${r.harness}>${r.harness}: <span class=${r.state === 'failed' ? 'fa-danger' : r.state === 'manual_required' ? 'fa-warn' : ''}>${r.state}</span>${r.error ? html` <span class="muted">${r.error}</span>` : ''}
-        ${r.manual_command && html` <code>${r.manual_command}</code> <button type="button" class="fa-link" onClick=${() => copy(r.manual_command).then(() => toast('Command copied', false)).catch(() => toast(r.manual_command, false))}>copy</button>`}
+        ${r.manual_command && html` <code>${r.manual_command}</code> <${Button} size="sm" variant="link" class="fa-link" onClick=${() => copy(r.manual_command).then(() => toast('Command copied', false)).catch(() => toast(r.manual_command, false))}>copy<//>`}
         ${r.credentials && html` <span class="muted">login ${r.credentials.copied ? 'copied' : 'kept'}${r.credentials.backup_id ? `, backup ${r.credentials.backup_id.slice(0, 12)}` : ''}</span>`}</div>`)}
       ${!(job.results || []).length && last ? html`<span class="muted">${last.message}</span>` : ''}
       ${job.error && html`<div class="fa-danger">${job.error}</div>`}
       ${(job.warnings || []).map((w, i) => html`<div key=${i} class="fa-warn">${w}</div>`)}</td>
-    <td class="fa-acts">${!jobActive(job) && html`<button type="button" class="fa-link" onClick=${onDismiss}>dismiss</button>`}</td>
+    <td class="fa-acts">${!jobActive(job) && html`<${Button} size="sm" variant="link" class="fa-link" onClick=${onDismiss}>dismiss<//>`}</td>
   </tr>`;
 }
 
@@ -215,10 +212,10 @@ export function HarnessesPage({ view, actions, confirm, toast, copy, timers = gl
   const jobList = Object.values(jobs).sort((a, b) => String(b.job.started_at).localeCompare(String(a.job.started_at)));
   return html`<div class="fa-harnesses">
     <div class="fa-grant-form">
-      <button id="fleet-harness-refresh" type="button" onClick=${() => load(true)}>Re-check</button>
+      <${Button} size="sm" id="fleet-harness-refresh" onClick=${() => load(true)}>Re-check<//>
       <span class="muted">Versions are cached for a few minutes; Re-check probes again. A peer shows here when it shares node.harnesses.read. CLI: <code>tclaude harness ls|install|update|credentials</code>.</span>
     </div>
-    <table class="fa-table" id="fleet-harnesses">
+    <table class="fa-table ui-compact" id="fleet-harnesses">
       <thead><tr><th>Node</th>${columns.map((c) => html`<th key=${c}>${c}</th>`)}<th></th></tr></thead>
       <tbody>${nodes.map((node) => {
         const a = avail[node.id] || {};
@@ -233,19 +230,17 @@ export function HarnessesPage({ view, actions, confirm, toast, copy, timers = gl
                 const row = byName.get(c);
                 const v = cellView(row);
                 return html`<td key=${c}>${row && v.state !== 'na'
-                  ? html`<button type="button" class=${`fa-cell ${v.state}`} data-cell=${c} title=${v.title} onClick=${() => setOpen({ node, row })}>
+                  ? html`<button type="button" data-ui-exempt class=${`fa-cell ${v.state}`} data-cell=${c} title=${v.title} onClick=${() => setOpen({ node, row })}>
                       ${v.text}${v.update ? html` <span class="fa-up" aria-label="update available">↑</span>` : ''}${v.credential ? html` <span aria-label="login present" title="login files present">🔑</span>` : ''}</button>`
                   : html`<span class="muted" title=${v.title}>${v.text}</span>`}</td>`;
               })}
-          <td class="fa-acts">${a.data && (a.data.harnesses || []).some((x) => x.update_available === true) && html`<button type="button" data-fa="update-all" onClick=${() => updateAll(node)}>Update all…</button>`}</td>
+          <td class="fa-acts">${a.data && (a.data.harnesses || []).some((x) => x.update_available === true) && html`<${Button} size="sm" data-fa="update-all" onClick=${() => updateAll(node)}>Update all…<//>`}</td>
         </tr>`;
       })}</tbody>
     </table>
-    ${jobList.length > 0 && html`<h4>Jobs</h4><table class="fa-table" id="fleet-harness-jobs">
-      <thead><tr><th>Node</th><th>Job</th><th>State</th><th>Result</th><th></th></tr></thead>
-      <tbody>${jobList.map((entry) => html`<${JobRow} key=${entry.job.id} entry=${entry} copy=${copy} toast=${toast}
-        onDismiss=${() => setJobs((cur) => { const next = { ...cur }; delete next[entry.job.id]; return next; })} />`)}</tbody>
-    </table>`}
+    ${jobList.length > 0 && html`<h4>Jobs</h4><${FaTable} id="fleet-harness-jobs" head=${['Node', 'Job', 'State', 'Result', '']}>${jobList.map((entry) => html`<${JobRow} key=${entry.job.id} entry=${entry} copy=${copy} toast=${toast}
+        onDismiss=${() => setJobs((cur) => { const next = { ...cur }; delete next[entry.job.id]; return next; })} />`)}<//>`}
+    <${UpdateScriptsSection} nodes=${nodes} actions=${actions} confirm=${confirm} toast=${toast} timers=${timers} />
     ${open && html`<${HarnessDialog} node=${open.node} row=${open.row} actions=${actions} confirm=${confirm} toast=${toast} onJob=${onJob}
       onClose=${() => setOpen(null)} onChanged=${(availability) => { if (availability) setAvail((cur) => ({ ...cur, [open.node.id]: { data: availability } })); }} />`}
   </div>`;

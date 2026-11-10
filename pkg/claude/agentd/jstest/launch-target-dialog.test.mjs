@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
 const self = { id: 'inst_a', name: 'node-a', color: '#58a6ff', local: true };
 const fleet = {
@@ -70,7 +71,7 @@ test('modes, targets and what carries over say what is possible and why not', as
   assert.deepEqual([relayed.ok, relayed.groups], [true, ['qa']], 'an unrestricted peer sends its agent on to a third node');
   assert.equal(m.nodeTargets({ mode: 'teleport', fleet: fleet3, self, source: fromForge, status: STATUS, relay: true }).find((n) => n.id === 'inst_lab').ok, false, 'only a move relays');
 
-  assert.deepEqual(m.carries('teleport', { node: 'forge', home: 'node-a' }).map((r) => r[1]), ['History', 'Identity', 'Permissions', 'Here']);
+  assert.deepEqual(m.carries('teleport', { node: 'forge', home: 'node-a' }).map((r) => r[1]), ['History', 'Identity', 'Permissions', 'Sandbox', 'Here']);
   const morph = m.carries('morph', { morph: { history: { source: 'claude', target: 'codex', source_entries: 40, carried_entries: 31, items: [{ kind: 'tool_call', count: 9 }] }, after: { sandbox: 'workspace-write' } } });
   assert.match(morph[1][2], /translated claude → codex: 31 of 40 entries carried \(tool_call ×9\)/);
   assert.match(morph[2][2], /workspace-write/, 'an older daemon names only the harness mode');
@@ -91,7 +92,21 @@ async function mountDialog(t, props) {
   const setValue = (el, value) => Object.defineProperty(el, 'value', { configurable: true, writable: true, value });
   const change = async (el, value) => { setValue(el, value); await harness.act(() => harness.fireEvent(el, 'change')); await settle(); };
   await settle();
-  return { harness, q, click, change, settle, setValue, timers, toasts, closed: () => closed };
+  // pickGroup chooses a receiving group in the group choice (#lt-group).
+  const pickGroup = async (value) => { await comboPick(harness, q('#lt-group'), value); await settle(); };
+  // pickProfile chooses a morph's profile (#lt-morph-profile).
+  const pickProfile = async (value) => { await comboPick(harness, q('#lt-morph-profile'), value); await settle(); };
+  // until settles until cond() holds, up to a time limit: the dialog's api
+  // calls chain several awaits, which one fixed settle may not cover on a
+  // loaded machine.
+  const until = async (cond, what, limitMs = 2000) => {
+    const start = Date.now();
+    while (!cond()) {
+      if (Date.now() - start > limitMs) throw new Error(`timed out waiting for ${what}`);
+      await settle();
+    }
+  };
+  return { harness, q, click, change, pickGroup, pickProfile, settle, setValue, timers, toasts, until, closed: () => closed };
 }
 
 test('move from the ⚙ menu: pick a node, then a receiving group, then confirm', async (t) => {
@@ -106,12 +121,27 @@ test('move from the ⚙ menu: pick a node, then a receiving group, then confirm'
   assert.equal(s.q('[data-lt-node="inst_a"]').disabled, true);
   assert.equal(s.q('[data-lt-node="inst_ci"]').disabled, true);
   await s.click(s.q('[data-lt-node="inst_forge"]'));
-  await s.change(s.q('#lt-group'), 'reviewers');
+  await s.pickGroup('reviewers');
   assert.match(s.q('#launch-target').textContent, /to.*forge · reviewers/);
   assert.match(s.q('[data-lt-carries]').textContent, /What carries over to forge.*History/);
   await s.click(s.q('#fleetview-move-drop-ok'));
   assert.deepEqual(sent, [{ agent: 'agt_b1', peer: 'inst_forge', group: 'reviewers', direct_if_allowed: true }]);
   assert.ok(s.q('[data-move-drop-state="waiting"]'));
+});
+
+test('a group the receiving list lacks is typed: "another group" swaps the choice for a text field', async (t) => {
+  const s = await mountDialog(t, {
+    initialMode: 'move', teleport: false,
+    api: { status: async () => STATUS },
+    actions: { moveAgent: async () => ({}), moveDetail: async () => ({}) },
+  });
+  await s.click(s.q('[data-lt-node="inst_forge"]'));
+  const keys = await comboKeys(s.harness, s.q('#lt-group'));
+  assert.equal(keys.at(-1), '\u0000other', 'the type-its-name row comes last');
+  await s.pickGroup('\u0000other');
+  const field = s.q('#lt-group');
+  assert.equal(field.tagName, 'INPUT', 'typing is the fallback');
+  assert.equal(field.value, '');
 });
 
 test('morph previews the change with a dry run, then applies it at the next idle turn', async (t) => {
@@ -128,9 +158,9 @@ test('morph previews the change with a dry run, then applies it at the next idle
   };
   const s = await mountDialog(t, { initialMode: 'morph', api, actions: {} });
   const select = s.q('#lt-morph-profile');
-  assert.deepEqual([...select.options].map((o) => o.getAttribute('value')), ['', 'codex-high'], 'disabled profiles are not offered');
+  assert.deepEqual(await comboKeys(s.harness, select), ['codex-high'], 'disabled profiles are not offered');
   assert.equal(s.q('#lt-ok').disabled, true, 'nothing to apply before a preview');
-  await s.change(select, 'codex-high');
+  await s.pickProfile('codex-high');
   assert.deepEqual(calls[0], ['conv_b1', { profile: 'codex-high', dry_run: true }]);
   assert.match(s.q('.lt-morph-preview').textContent, /was claude · opus.*now codex · gpt-5 · effort high/);
   assert.match(s.q('[data-lt-carries]').textContent, /translated claude → codex: 8 of 10/);
@@ -150,7 +180,7 @@ test('morph previews the change with a dry run, then applies it at the next idle
 test('a refused morph preview says why and keeps the button off', async (t) => {
   const api = { status: async () => ({}), profiles: async () => [{ name: 'gem' }], morph: async () => { const e = new Error('x'); e.body = { error: 'gemini has no reasoning effort' }; throw e; } };
   const s = await mountDialog(t, { initialMode: 'morph', api, actions: {} });
-  await s.change(s.q('#lt-morph-profile'), 'gem');
+  await s.pickProfile('gem');
   assert.match(s.q('#launch-target [role=alert]').textContent, /no reasoning effort/);
   assert.equal(s.q('#lt-ok').disabled, true);
 });
@@ -172,7 +202,7 @@ test('with the teleport routes, teleport follows the move until its copy runs', 
     actions: { moveDetail: async () => ({ state: 'confirmed', disposition: 'landed', target_agent: 'agt_b1' }) },
   });
   await s.click(s.q('[data-lt-node="inst_forge"]'));
-  await s.change(s.q('#lt-group'), 'reviewers');
+  await s.pickGroup('reviewers');
   assert.match(s.q('.lt-consequence').textContent, /leaves at once: it keeps running here until its copy runs there/, 'no promise of waiting for idle');
   const n = s.q('#lt-note'); s.setValue(n, 'review 1.1'); await s.harness.act(() => s.harness.fireEvent(n, 'input'));
   await s.click(s.q('#lt-ok'));
@@ -197,7 +227,7 @@ test('teleport picks the model access it lands on: the target\'s login, a gatewa
     actions: { moveDetail: async () => ({ state: 'confirmed', disposition: 'landed', target_agent: 'agt_b1' }) },
   });
   await s.click(s.q('[data-lt-node="inst_forge"]'));
-  await s.change(s.q('#lt-group'), 'reviewers');
+  await s.pickGroup('reviewers');
   await s.settle();
   assert.deepEqual(asked, [['inst_forge', 'reviewers']], 'asks the target what it accepts from this node');
   const options = [...s.q('#lt-model-access').querySelectorAll('option')];
@@ -227,7 +257,7 @@ test('teleport on your own Claude subscription sends the token for the offer rig
     actions: { moveDetail: async () => ({ state: 'confirmed', disposition: 'landed', target_agent: 'agt_b1' }) },
   });
   await s.click(s.q('[data-lt-node="inst_forge"]'));
-  await s.change(s.q('#lt-group'), 'reviewers');
+  await s.pickGroup('reviewers');
   await s.settle();
   await s.change(s.q('#lt-model-access'), 'claude-subscription');
   await s.click(s.q('#lt-ok'));
@@ -284,9 +314,9 @@ test('a peer agent opens on a mode it can use, and a sent move locks the target'
   assert.equal(s.q('#lt-morph-profile'), null);
   assert.equal(s.q('[data-lt-mode="morph"]').disabled, true);
   await s.click(s.q('[data-lt-node="inst_a"]'));
-  await s.change(s.q('#lt-group'), 'builders');
+  await s.pickGroup('builders');
   await s.click(s.q('#fleetview-move-drop-ok'));
-  assert.equal(s.q('#lt-group').disabled, true, 'the group is frozen once the move is sent');
+  assert.equal(s.q('#lt-group-input').disabled, true, 'the group is frozen once the move is sent');
   assert.equal(s.q('[data-lt-node="inst_forge"]').disabled, true);
   assert.equal(s.q('[data-lt-mode="clone"]').disabled, true);
 });
@@ -304,7 +334,7 @@ test('a dropped peer agent can be teleported or cloned here through the peer\'s 
   assert.match(s.q('[data-lt-mode="teleport"]').title, /trip.*Recall home/);
   await s.click(s.q('[data-lt-mode="clone"]'));
   assert.match(s.q('[data-lt-hint]').textContent, /original keeps running/);
-  assert.equal(s.q('#lt-group').value, 'builders', 'the dropped group stays picked');
+  assert.equal(s.q('#lt-group').dataset.value, 'builders', 'the dropped group stays picked');
   assert.match(s.q('#launch-target').textContent, /original keeps running on forge/);
   await s.click(s.q('#lt-ok'));
   assert.deepEqual(sent, [{ node: 'inst_forge', id: 'agt_b1', body: { group: 'builders', clone: true } }]);
@@ -334,7 +364,7 @@ test('large morph cut confirms once and waits visibly for the source summary; ca
     api:{status:async()=>({}),profiles:async()=>[{name:'small',harness:'codex'}], morphStatus:async()=>({conv_id:AGENT.conv,pending_morph:null}),
       morph:async(id,body)=>{ sent.push(body); return body.dry_run ? {history:{budget_warning:true, needs_summary:true, dropped_percent:60,kept_percent:40,selection_reason:'summary with task and latest instructions'}} : body.cancel ? {} : {result:'pending',pending_morph:pending}; }},
   });
-  await s.change(s.q('#lt-morph-profile'),'small');
+  await s.pickProfile('small');
   assert.equal(s.q('#lt-ok').disabled,true);
   assert.match(s.q('#launch-target').textContent,/60%.*summary/);
   const confirm=s.q('#lt-confirm-cut');
@@ -379,15 +409,18 @@ test('provider outage continuation requires an explicit loss checkbox and works 
 test('encrypted compaction requests a handoff using the summary wait without a large-cut confirmation',async(t)=>{
  const sent=[];
  const pending={history:'summary',handoff_reason:'encrypted_compaction_summary',expires_at:new Date(Date.now()+60000).toISOString()};
- const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>({}),morph:async(id,b)=>{if(b.dry_run)return {history:{needs_handoff:true,needs_summary:false}};sent.push(b);return {result:'pending',pending_morph:pending};}}});
- await s.change(s.q('#lt-morph-profile'),'small');
- assert.match(s.q('#lt-ok').textContent,/Request handoff/);
+ const s=await mountDialog(t,{initialMode:'morph',api:{status:async()=>({}),profiles:async()=>[{name:'small'}],morphStatus:async()=>(sent.length?{conv_id:AGENT.conv,pending_morph:pending}:{}),morph:async(id,b)=>{if(b.dry_run)return {history:{needs_handoff:true,needs_summary:false}};sent.push(b);return {result:'pending',pending_morph:pending};}}});
+ // morphStatus reports the pending morph once it is requested, as the daemon
+ // does: the dialog's first status poll runs at once, and a fake that never
+ // reports it would end the wait before the test could see it.
+ await s.pickProfile('small');
+ await s.until(()=>/Request handoff/.test(s.q('#lt-ok')?.textContent||''),'the dry run to ask for a handoff');
  assert.match(s.q('#launch-target').textContent,/Compaction summary unreadable/);
  assert.equal(s.q('#lt-morph-now').disabled,true);
  assert.equal(s.q('#lt-confirm-cut'),null);
  assert.ok(s.q('#lt-proceed-without-summary'));
  await s.click(s.q('#lt-ok'));
- assert.ok(s.q('[data-lt-state="waiting-summary"]'));
+ await s.until(()=>!!s.q('[data-lt-state="waiting-summary"]'),'the summary wait');
  assert.equal(sent.length,1);
  assert.equal(sent[0].now,undefined);
  assert.equal(s.closed(),0);

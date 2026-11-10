@@ -22,7 +22,7 @@ Open the `hello` group's **⚙** menu, next to the group name, and choose
 > Work on your own branch and open a pull request when a change is ready.
 > Run go test ./... before you push.
 
-<!-- The images on this page are maintained by hand; the generator was removed (see "Visual smoke testing" in docs/dashboard.md). -->
+<!-- The images on this page are maintained by hand. -->
 ![The Group settings dialog for hello. The Startup context field holds three lines about the project, and Re-inject after compact is set to identity + startup context.](../assets/learn-dashboard-group-settings.png)
 
 Click **Save settings**. Every agent you start in `hello` from now on gets
@@ -63,7 +63,7 @@ Further down, the editor's spawn defaults are worth a look:
 - **Group owner**: whether the agent owns its group. The next tutorial uses
   it.
 
-To change a profile later, press **Ctrl/Cmd+K** and choose
+To change a profile later, press **Ctrl K (⌘ K on a Mac)** and choose
 **Manage spawn profiles…**.
 
 ## 3. Start an agent from the profile
@@ -76,7 +76,7 @@ A few shortcuts make this faster:
 
 - **Spawn profile** in **⚙ settings…** makes a profile the group's default,
   so the spawn dialog starts from it.
-- **Ctrl/Cmd+K** opens the command palette. Type `spawn worker` to open the
+- **Ctrl K (⌘ K on a Mac)** opens the command palette. Type `spawn worker` to open the
   spawn dialog with the profile already picked.
 
 !!! info "Go deeper"

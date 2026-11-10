@@ -22,7 +22,7 @@ func TestFederationRotationAtomicAuthorityAndBackupTransfer(t *testing.T) {
 	d, err := Open()
 	require.NoError(t, err)
 	scope, _ := json.Marshal(map[string][]string{"peer": {old.ID() + "/team", "group:workers"}, "http_proxy": {"payer"}})
-	_, err = d.Exec(`INSERT INTO agent_permissions(agent_id,slug,granted_at,scope_json) VALUES('actor','self.teleport',?,?)`, dbTime(time.Now()), string(scope))
+	_, err = d.Exec(`INSERT INTO agent_permissions(agent_id,slug,granted_at,scope_json,birth_source) VALUES('actor','self.teleport',?,?,'{"profile_id":1}')`, dbTime(time.Now()), string(scope))
 	require.NoError(t, err)
 	group, err := CreateAgentGroup("team", "")
 	require.NoError(t, err)
@@ -68,7 +68,9 @@ func TestFederationRotationAtomicAuthorityAndBackupTransfer(t *testing.T) {
 	require.True(t, paid.Revoked)
 	require.Equal(t, old.ID(), paid.Peer, "billing provenance stays historical")
 	var updated string
-	require.NoError(t, d.QueryRow(`SELECT scope_json FROM agent_permissions WHERE agent_id='actor'`).Scan(&updated))
+	var birthSource string
+	require.NoError(t, d.QueryRow(`SELECT scope_json, birth_source FROM agent_permissions WHERE agent_id='actor'`).Scan(&updated, &birthSource))
+	require.Empty(t, birthSource, "a rewritten scope is no longer the spawn profile's")
 	require.Contains(t, updated, next.ID()+"/team")
 	require.Contains(t, updated, "group:workers")
 	require.NotContains(t, updated, old.ID())
@@ -107,10 +109,17 @@ func TestFederationRotationConflictingSuccessorsFailClosed(t *testing.T) {
 	p, err := GetFederationPeer(old.ID())
 	require.NoError(t, err)
 	require.NotNil(t, p)
+	require.NoError(t, SetFederationPeerAgentViews(old.ID(), FederationPeerAgentViewsDeny))
+	// A row an earlier trust left for the successor's id gives way to the
+	// predecessor's policy rather than failing the rebind.
+	require.NoError(t, SetFederationPeerAgentViews(b.ID(), FederationPeerAgentViewsAllow))
 	require.NoError(t, RebindFederationIdentity(old.ID(), b.ID(), b.Pub, now.Add(time.Hour)))
 	p, err = GetFederationPeer(b.ID())
 	require.NoError(t, err)
 	require.NotNil(t, p)
+	policy, err := GetFederationPeerAgentViews(b.ID())
+	require.NoError(t, err)
+	require.Equal(t, FederationPeerAgentViewsDeny, policy, "a denied peer stays denied across rotation")
 }
 
 func TestFederationIdentityLocalHistoryBeyondPublicProofBudget(t *testing.T) {

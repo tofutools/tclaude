@@ -68,26 +68,13 @@ type ghProxyCommentRequest struct {
 func openGHProxy(w http.ResponseWriter, r *http.Request, perm string, body any, remoteOf func() string) (
 	*ghProxySession, bool,
 ) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-		return nil, false
-	}
-	convID, deferred, ok := preflightProxyPermission(w, r, perm)
-	if !ok {
-		return nil, false
-	}
-	if body != nil && !decodeGitProxyBody(w, r, body) {
-		return nil, false
-	}
-	g, fault := newGHProxySession(r.Context(), convID, remoteOf(), deferred)
-	if fault != nil {
-		writeProxyFault(w, fault)
-		return nil, false
-	}
-	if !finishProxyPermission(w, r, convID, perm, g.remoteKey, deferred) {
-		return nil, false
-	}
-	return g, true
+	return openRemoteProxy(w, r, perm, body, func(ctx context.Context, convID string, deferred bool) (*ghProxySession, string, *proxyFault) {
+		g, fault := newGHProxySession(ctx, convID, remoteOf(), deferred)
+		if fault != nil {
+			return nil, "", fault
+		}
+		return g, g.remoteKey, nil
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -200,27 +187,42 @@ func handleGHProxyPRCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Persist the same pr.opened edge the explicit `present-pr` path uses.
-	// GitHub has already committed the PR, so a local persistence failure is
-	// reported as a warning and the successful create response is preserved.
+	// GitHub has already committed the PR, so a local persistence failure
+	// keeps the successful create response and is reported beside it.
 	// The write itself atomically queues the durable trigger observation.
+	var recordFailure error
 	if agentID, lookupErr := db.AgentIDForConv(g.convID); lookupErr != nil {
 		slog.Warn("github proxy: resolve PR author for trigger", "conv", g.convID, "error", lookupErr)
+		recordFailure = lookupErr
 	} else if agentID != "" {
 		state := "open"
 		if body.Draft {
 			state = "draft"
 		}
-		if _, persistErr := db.UpsertValidatedAgentPRDetails(agentID, created.HTMLURL,
+		if _, persistErr := recordCreatedPR(agentID, created.HTMLURL,
 			strings.TrimSpace(body.Title), state, head, body.Draft, g.repoRoot); persistErr != nil {
 			slog.Warn("github proxy: persist created PR for trigger reconciliation",
 				"conv", g.convID, "pr", created.HTMLURL, "error", persistErr)
+			recordFailure = persistErr
 		}
 	}
 	// The URL alone, as text rather than JSON. That is what this verb has
 	// always printed, it is what an agent pastes into a report, and it is the
 	// one output in this file a human reads more often than a machine does.
-	g.respond(w, r, "pr.create", ProxyResult{Stdout: created.HTMLURL + "\n"}, nil)
+	out := ProxyResult{Stdout: created.HTMLURL + "\n"}
+	if recordFailure != nil {
+		// The pull request exists, so this is still a success; only the
+		// dashboard's record of it failed, and the agent can repair that.
+		out.Stderr = fmt.Sprintf("the pull request was created, but the dashboard could not record it (%v); "+
+			"run `tclaude agent present-pr %s` to show it there\n", recordFailure, created.HTMLURL)
+	}
+	g.respond(w, r, "pr.create", out, nil)
 }
+
+// recordCreatedPR records a pull or merge request a proxy just created, for
+// the dashboard and the triggers; a variable so a test can make the record
+// fail.
+var recordCreatedPR = db.UpsertValidatedAgentPRDetails
 
 // defaultBranch reads the repository's default branch.
 func (g *ghProxySession) defaultBranch(ctx context.Context) (string, *ProxyResult, error) {
@@ -404,27 +406,9 @@ func handleGHProxyPREdit(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	title := strings.TrimSpace(body.Title)
-	hasBody := strings.TrimSpace(body.Body) != ""
-	if title == "" && !hasBody {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to edit: pass a title, a body, or both")
+	payload, ok := proxyEditPayload(w, body.Title, body.Body, "body")
+	if !ok {
 		return
-	}
-	payload := map[string]any{}
-	if title != "" {
-		if fault := validateGHTitle(title); fault != nil {
-			writeProxyFault(w, fault)
-			return
-		}
-		payload["title"] = title
-	}
-	if hasBody {
-		if fault := validateGHBody(body.Body, true); fault != nil {
-			writeProxyFault(w, fault)
-			return
-		}
-		payload["body"] = body.Body
 	}
 	raw, failure, err := g.rest(r.Context(), ghAPIRequest{
 		Method: http.MethodPatch,
@@ -436,6 +420,36 @@ func handleGHProxyPREdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.respond(w, r, "pr.edit", ProxyResult{Stdout: ghURLOf(raw)}, nil)
+}
+
+// proxyEditPayload validates a `pr edit` / `mr edit` title and body and builds
+// the edit's payload: the trimmed title, and the body as written under
+// bodyKey ("body" on GitHub, "description" on GitLab). Only what was given is
+// sent, and at least one must be. A refusal is written to w.
+func proxyEditPayload(w http.ResponseWriter, title, body, bodyKey string) (map[string]any, bool) {
+	title = strings.TrimSpace(title)
+	hasBody := strings.TrimSpace(body) != ""
+	if title == "" && !hasBody {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"nothing to edit: pass a title, a body, or both")
+		return nil, false
+	}
+	payload := map[string]any{}
+	if title != "" {
+		if fault := validateGHTitle(title); fault != nil {
+			writeProxyFault(w, fault)
+			return nil, false
+		}
+		payload["title"] = title
+	}
+	if hasBody {
+		if fault := validateGHBody(body, true); fault != nil {
+			writeProxyFault(w, fault)
+			return nil, false
+		}
+		payload[bodyKey] = body
+	}
+	return payload, true
 }
 
 // ghProxyPREditRequest edits an existing pull request's title and/or body.
@@ -550,6 +564,7 @@ func handleGHProxyPRReady(w http.ResponseWriter, r *http.Request) {
 		g.respondOrFail(w, r, "pr.ready", failure, err)
 		return
 	}
+	recordReadyState(g.convID, pr.URL, prStateFromGH(pr.State, false))
 	g.respond(w, r, "pr.ready", ProxyResult{Stdout: pr.URL + "\n"}, nil)
 }
 

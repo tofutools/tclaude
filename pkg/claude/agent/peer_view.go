@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/common/termtext"
 )
 
 // ReadPeerView uses the local operator API and its existing pinned transport.
@@ -92,7 +93,7 @@ func runPeerListing(node, kind, group string, asJSON bool, stdout, stderr io.Wri
 				fmt.Fprintln(stderr, err)
 				return rcIOFailure
 			}
-			fmt.Fprintf(tw, "%s\t%d\t%d\n", peerViewCell(g.Name), len(g.Members), g.Online)
+			fmt.Fprintf(tw, "%s\t%d\t%d\n", termtext.Cell(g.Name), len(g.Members), g.Online)
 		} else {
 			var a peerEntry
 			if err := json.Unmarshal(raw, &a); err != nil {
@@ -103,7 +104,7 @@ func runPeerListing(node, kind, group string, asJSON bool, stdout, stderr io.Wri
 			if status == "" {
 				status = "not reported"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\n", peerViewCell(a.AgentID), peerViewCell(a.Title), peerViewCell(status))
+			fmt.Fprintf(tw, "%s\t%s\t%s\n", termtext.Cell(a.AgentID), termtext.Cell(a.Title), termtext.Cell(status))
 		}
 	}
 	if err := tw.Flush(); err != nil {
@@ -111,4 +112,3 @@ func runPeerListing(node, kind, group string, asJSON bool, stdout, stderr io.Wri
 	}
 	return 0
 }
-func peerViewCell(s string) string { return strings.Join(strings.Fields(proto.StripControls(s)), " ") }

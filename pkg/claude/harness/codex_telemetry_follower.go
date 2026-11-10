@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -424,7 +426,9 @@ func (f *CodexTelemetryFollower) aggregateChildrenLocked(
 		f.children = map[string]*CodexTelemetryFollower{}
 	}
 	parts := []CodexRuntimeSnapshot{f.snapshot}
-	for id := range f.state.discoveredSubagents {
+	// Sorted: the cost totals are float sums over these parts, and an old day's
+	// figure must not change from flush to flush with map order.
+	for _, id := range slices.Sorted(maps.Keys(f.state.discoveredSubagents)) {
 		child := f.children[id]
 		if child == nil {
 			child = &CodexTelemetryFollower{preserveMissing: true}

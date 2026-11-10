@@ -21,19 +21,20 @@ directory. In **Groups**, click **+ new group** at the top right:
 Click **Create group**. The group appears, empty.
 
 !!! info "Go deeper"
-    [Dashboard → Creating a group workspace](../dashboard.md#creating-a-group-workspace)
+    [Dashboard → Creating a group workspace](../dashboard-groups.md#creating-a-group-workspace)
     shows how to clone a repository for a group instead.
 
 ## 2. Start an agent
 
-Under the group's name, click the blue spawn button (a person with a plus
-sign). The spawn dialog opens, joining `hello`, with the group's directory
+Open the group. Under its **Subgroups** line, click the blue spawn button (a person
+with a plus sign). The similar button on the **Subgroups** line creates a subgroup
+instead. The spawn dialog opens, joining `hello`, with the group's directory
 as the agent's working directory. Set:
 
 - **Name**: `alice`;
 - **Initial msg**: `Read this project and tell me in three sentences what it does.`
 
-<!-- The images on this page are maintained by hand; the generator was removed (see "Visual smoke testing" in docs/dashboard.md). -->
+<!-- The images on this page are maintained by hand. -->
 ![The spawn dialog, joining group hello. Name is alice, the initial message asks for a three-sentence summary of the project, and Harness and Model are left at their defaults.](../assets/learn-dashboard-spawn.png)
 
 Because the directory is a git repository, the dialog also prepares a new
@@ -53,7 +54,7 @@ in the **Pending spawns** list in **Groups**; its **focus** button opens the
 same terminal.
 
 !!! info "Go deeper"
-    [Dashboard → The spawn dialog](../dashboard.md#the-spawn-dialog) lists
+    [Dashboard → The spawn dialog](../dashboard-groups.md#the-spawn-dialog) lists
     every field.
 
 ## 3. Watch it work
@@ -75,8 +76,8 @@ Read the row from left to right:
   it opens a pull request.
 
 !!! info "Go deeper"
-    [Dashboard → The member row](../dashboard.md#the-member-row) explains every
-    column, and the [badge glossary](../dashboard.md#badge-glossary) every pill.
+    [Dashboard → The member row](../dashboard-groups.md#the-member-row) explains every
+    column, and the [badge glossary](../dashboard-groups.md#badge-glossary) every pill.
 
 ## 4. Open its terminal
 
@@ -85,13 +86,13 @@ terminal in **Terminals**. This is the real session, not a copy: the agent's
 answer is there, and what you type reaches the agent. Ask a follow-up
 question.
 
-Use focus whenever you want to see an agent or answer it. Ctrl/Cmd-click
+Use focus whenever you want to see an agent or answer it. Ctrl-click (⌘-click on a Mac)
 opens the terminal without leaving **Groups**. Focus and **✉ Message**,
 next, are the two things you will do most with any agent.
 
 ## 5. Send it a message
 
-In the terminal pane, click **✉ Message** (Ctrl/Cmd+M). This queues a
+In the terminal pane, click **✉ Message** (Ctrl M). This queues a
 message for the agent rather than typing into its terminal, so it never
 interrupts what the agent is typing. Send:
 
@@ -111,7 +112,8 @@ Everything above has a CLI equivalent, for scripts:
 
 ```bash
 tclaude agent groups create hello --descr "my first team"
-tclaude agent spawn hello --name alice \
+tclaude agent groups set-default-dir hello ~/code/my-project
+tclaude agent spawn hello --name alice --cwd ~/code/my-project \
   --initial-message "Read this project and tell me in three sentences what it does."
 ```
 
@@ -124,7 +126,7 @@ covers the spawn options.
     directory. It is for people who run agents in native terminal
     windows (`dashboard.default_terminal` set to `"native"`) and sometimes
     want a browser terminal. See
-    [Zooming into a terminal](../dashboard.md#zooming-into-a-terminal).
+    [Terminals and Collab](../dashboard-terminals.md).
 
 ## What you learned
 
@@ -135,4 +137,5 @@ covers the spawn options.
   You will use these two all the time.
 - The status dot stops and wakes an agent.
 
-**Next:** [Set up your team](team-setup.md).
+**Next:** [Set up your team](team-setup.md), or try the optional
+[Ask the Steward](steward.md) first.

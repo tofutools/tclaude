@@ -328,6 +328,50 @@ test('a disconnected active pane gets a terminal-area notice while keeping Recon
   assert.equal(badgeHost.childElementCount, 0);
 });
 
+test('every settled loss that offers Reconnect gets the terminal-area notice, not only a plain disconnect', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, badgeHost } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({ widgetFactory: fake.factory });
+
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/early', key: 'early', label: 'early', agent: 'agt_early' });
+    await Promise.resolve();
+  });
+  const pane = host.querySelector('.mux-pane.active');
+
+  // Attaching to a just-spawned agent before its tmux session exists runs out
+  // the initial retries and settles on agentd's 'session ended' close.
+  await harness.act(() => {
+    fake.widgets[0].options.onStatus('session ended');
+    fake.widgets[0].options.onReconnectChange(true);
+  });
+  const notice = pane.querySelector('.mux-terminal-disconnect-overlay');
+  assert.ok(notice, 'an early attach that settled on session ended still shows the big Reconnect');
+  assert.match(notice.querySelector('.mux-terminal-disconnect-body').textContent, /\(session ended\)/,
+    'the card says why the terminal is down');
+  assert.ok(getByRole(notice, 'button', { name: 'Reconnect terminal' }));
+
+  // The same close also ends a session that finished normally; Dismiss
+  // uncovers its final output, and the next settled loss shows the card again.
+  await harness.act(() => harness.fireEvent(getByRole(notice, 'button', { name: 'Dismiss' }), 'click'));
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'), 'Dismiss uncovers the terminal');
+  await harness.act(() => fake.widgets[0].options.onReconnectChange(false));
+  await harness.act(() => fake.widgets[0].options.onReconnectChange(true));
+  assert.ok(pane.querySelector('.mux-terminal-disconnect-overlay'), 'a later loss shows the card again');
+
+  await harness.act(() => {
+    fake.widgets[0].options.onStatus('closed: the peer revoked your access to this terminal');
+    fake.widgets[0].options.onReconnectChange(false);
+  });
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'),
+    'a final close that offers no Reconnect shows no Reconnect card');
+  cleanup();
+  assert.equal(badgeHost.childElementCount, 0);
+});
+
 test('background pane open and focus leave the current dashboard tab visible', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, badgeHost, terminals } = installHosts(harness);
@@ -467,7 +511,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   // ungrouped case offers: start a group from this tab (no stacks exist yet, so
   // no join items and no leave item).
   assert.deepEqual([...pointerMenu.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent),
-    ['New group from this tab', 'Detach tab', 'Close tab', 'Close other tabs', 'Close all tabs']);
+    ['New group from this tab', 'Open in separate window', 'Close tab', 'Close other tabs', 'Close all tabs']);
   assert.equal(pointerMenu.querySelectorAll('[role="separator"]').length, 2);
   assert.equal(harness.document.activeElement.textContent, 'New group from this tab',
     'opening focuses the first action');
@@ -503,7 +547,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   await harness.act(() => harness.fireEvent(tab('detached'), 'contextmenu', { clientX: 24, clientY: 32 }));
   const detachMenu = getByRole(host, 'menu', { name: 'Actions for detached' });
   await harness.act(async () => {
-    harness.fireEvent(getByRole(detachMenu, 'menuitem', { name: 'Detach tab' }), 'click');
+    harness.fireEvent(getByRole(detachMenu, 'menuitem', { name: 'Open in separate window' }), 'click');
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -523,7 +567,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   assert.equal(keyboardOpen.defaultPrevented, true, 'Shift+F10 is the keyboard context-menu gesture');
   const keyboardMenu = getByRole(host, 'menu', { name: 'Actions for three' });
   harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
-  assert.equal(harness.document.activeElement.textContent, 'Detach tab');
+  assert.equal(harness.document.activeElement.textContent, 'Open in separate window');
   harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
   assert.equal(harness.document.activeElement.textContent, 'Close tab');
   harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
@@ -936,7 +980,7 @@ test('closing the last terminal moves to Groups unless configured to stay', asyn
   await harness.act(() => harness.fireEvent(closeButton('four'), 'click'));
   await settle();
   assert.equal(terminals.classList.contains('active'), true, 'the opt-out keeps the empty Terminals tab');
-  assert.equal(corrections.length, 1);
+  assert.deepEqual(corrections, [{ tab: 'terminals' }, { tab: 'terminals' }], 'and the URL stops naming the terminal that closed');
   cleanup();
 });
 

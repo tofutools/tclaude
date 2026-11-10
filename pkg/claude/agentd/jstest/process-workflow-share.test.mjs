@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 const PREVIEW = Object.freeze({
   title: 'Ship a feature', summary: 'Implement, review, approve, merge.', root: 'ship@sha256:aa', rootId: 'ship',
@@ -34,6 +35,8 @@ test('importReview: signer, commands and what changes', async (t) => {
   assert.equal(review.nothingToDo, false);
 
   assert.match(importReview({ ...PREVIEW, signatures: [] }).signer, /^Unsigned/);
+  assert.equal(review.credit, '');
+  assert.equal(importReview({ ...PREVIEW, author: 'Acme', licence: 'MIT' }).credit, 'By Acme (as the file says) · Licence: MIT');
   assert.equal(importReview({ ...PREVIEW, signatures: [{ status: 'valid', trust: 'known peer laptop' }] }).trusted, true);
   assert.match(importReview({ ...PREVIEW, signatures: [{ status: 'invalid' }] }).signer, /does not verify/);
   assert.equal(importReview({ ...PREVIEW, templates: [{ ref: 'x', id: 'x', status: 'identical' }] }).nothingToDo, true);
@@ -188,9 +191,8 @@ test('import flow: each choice is reviewed again, and the apply carries the revi
   assert.equal(doc.querySelector('[data-pwf-replace]'), null, 'renaming needs no replace consent');
   assert.match(doc.querySelector('[data-pwf-template="review"]').textContent, /as review-2/);
 
-  const group = doc.querySelector('[data-pwf-group]');
-  Object.defineProperty(group, 'value', { configurable: true, value: 'webshop' });
-  await harness.act(async () => { harness.fireEvent(group, 'change'); await settle(); });
+  await comboPick(harness, doc.querySelector('[data-pwf-group]'), 'webshop');
+  await harness.act(settle);
   const reviewed = calls.length;
   assert.equal(calls.at(-1), '/v1/process/import?map=dev%3Dengineer&rename=1&group=webshop');
 
@@ -230,4 +232,94 @@ test('exportWorkflow: a workflow that fails validation is shared only after the 
 
   const confirmed = await run(['template "ship": nodes.work: task has no performer'], true);
   assert.deepEqual(confirmed.downloads, ['ship.pwf']);
+});
+
+test('WorkflowExportButton takes a look, a reason and a disabled state from its surface', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { WorkflowExportButton } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const { container } = await harness.mount(harness.html`<${WorkflowExportButton} id="ship" className="gq-link" disabled title="Save first" />`);
+  const button = container.querySelector('[data-process-action="export"]');
+  assert.ok(button.classList.contains('gq-link'), 'the surface class rides on the standard button');
+  assert.equal(button.disabled, true);
+  assert.equal(button.title, 'Save first');
+});
+
+test('exportWorkflow: paths from this machine are shared only after the operator confirms', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { exportWorkflow } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const paths = [{ where: 'ship: nodes.merge.performer.run', path: '/home/alice/bin/gh', kind: 'home' }, { where: 'ship: description', path: '/opt/acme/x', kind: 'machine' }];
+  const fetchImpl = async (url) => (String(url).endsWith('check=1')
+    ? { ok: true, json: async () => ({ problems: [], paths }) }
+    : { ok: true, blob: async () => 'file' });
+  const asked = [];
+  let downloads = 0;
+  const run = (answer) => exportWorkflow('ship', { fetchImpl, download: () => { downloads += 1; }, confirm: async (request) => { asked.push(request); return answer; } });
+
+  assert.equal(await run(false), '');
+  assert.equal(downloads, 0);
+  assert.equal(await run(true), '');
+  assert.equal(downloads, 1);
+  assert.match(asked[0].title, /paths from this machine/);
+  assert.match(asked[0].body, /\/home\/alice\/bin\/gh \(reveals a username\), in ship: nodes\.merge\.performer\.run/);
+  assert.match(asked[0].body, /\/opt\/acme\/x \(may not exist elsewhere\)/);
+});
+
+test('exportWorkflow: confirming shares named agents with their roles, and the rest stay named', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { exportWorkflow } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const run = async (assignees, answer) => {
+    const urls = [];
+    const asked = [];
+    const fetchImpl = async (url) => {
+      urls.push(String(url));
+      return String(url).endsWith('check=1') ? { ok: true, json: async () => ({ problems: [], paths: [], assignees }) } : { ok: true, blob: async () => 'file' };
+    };
+    await exportWorkflow('ship', { fetchImpl, download: () => {}, confirm: async (request) => { asked.push(request); return answer; } });
+    return { urls, asked };
+  };
+
+  const both = await run([{ name: 'checkout', role: 'dev', steps: ['ship:build'] }, { name: 'solo', steps: ['ship:fix'] }], true);
+  assert.equal(both.urls.at(-1), '/v1/process/templates/ship/export?assignees=roles');
+  assert.equal(both.asked[0].okLabel, 'Use roles and share');
+  assert.match(both.asked[0].body, /checkout \(role dev\), in ship:build/);
+  assert.match(both.asked[0].body, /solo, in ship:fix/);
+
+  const none = await run([{ name: 'solo', steps: ['ship:fix'] }], true);
+  assert.equal(none.urls.at(-1), '/v1/process/templates/ship/export');
+  assert.equal(none.asked[0].okLabel, 'Share anyway');
+
+  const declined = await run([{ name: 'checkout', role: 'dev', steps: ['ship:build'] }], false);
+  assert.equal(declined.urls.length, 1, 'declining downloads nothing');
+});
+
+test('import dialog: a file this node refuses can be reviewed but not imported', async (t) => {
+  const harness = await createPreactHarness(t);
+  const previous = globalThis.fetch;
+  const refused = { ...PREVIEW, signatures: [], updates: 0, refused: 'this node refuses workflows without a valid signature (processes.refuse_unsigned_imports)' };
+  globalThis.fetch = async (url) => (String(url) === '/v1/process/context' ? CONTEXT_RESPONSE : { ok: true, status: 200, json: async () => refused });
+  t.after(() => { globalThis.fetch = previous; });
+  const { WorkflowImportButton } = await harness.importDashboardModule('js/process-workflow-share.js');
+  const { container } = await harness.mount(harness.html`<${WorkflowImportButton} />`);
+  const input = container.querySelector('[data-pwf-file]');
+  Object.defineProperty(input, 'files', { configurable: true, value: [{ name: 'ship.pwf', size: 3, arrayBuffer: async () => new Uint8Array([1]).buffer }] });
+  await harness.act(async () => { harness.fireEvent(input, 'change'); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  const doc = harness.document;
+  assert.match(doc.querySelector('[data-pwf-refused]').textContent, /without a valid signature/);
+  assert.ok(doc.querySelector('[data-pwf-command="ship:merge"]'), 'the review is still shown');
+  const button = doc.querySelector('[data-pwf-import]');
+  assert.equal(button.disabled, true);
+  assert.equal(button.textContent, 'Refused');
+});
+
+// A workflow read out of a .paf shows what else the file holds. Importing lands
+// nobody, and the choice of workflow is part of what is reviewed.
+test('importQuery names the chosen workflow; the review keeps the envelope', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { importQuery, importReview } = await harness.importDashboardModule('js/process-workflow-share.js');
+  assert.equal(importQuery({ workflow: 'ship' }), 'workflow=ship');
+  const envelope = { workflow: 'ship', workflows: [{ key: 'ship', root: 'ship@sha256:aa' }], performers: [{ role: 'dev', target: 'dev', agentKey: 'scout', name: 'scout', harness: 'claude', history: true }] };
+  assert.equal(importReview({ ...PREVIEW, envelope }).envelope, envelope);
+  assert.equal(importReview(PREVIEW).envelope, null, 'a .pwf has none');
 });

@@ -122,3 +122,36 @@ func TestAssignedHarnessBuiltinSurvivesTheHistoricalImplementationRepair(t *test
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.ImplementationTclaudeLayer, recovered)
 }
+
+// Leaving private OpenCode state records the posture and forgets the allocation
+// together, so a crash cannot leave the agent on one store and lookups on another.
+func TestAssignLeavingOpenCodeStateIsOneTransaction(t *testing.T) {
+	setupTestDB(t)
+	const convID = "conv-leaves-private"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	allocate := func() {
+		_, err := InsertOpenCodeAgentStateAllocation(OpenCodeAgentStateAllocation{
+			AgentID: agentID, Mode: OpenCodeStatePrivate, StateRoot: "/nonexistent/state"})
+		require.NoError(t, err)
+	}
+	allocate()
+	assign := func() error {
+		return AssignAgentSandboxImplementationLeavingOpenCodeState(
+			agentID, string(sandboxpolicy.ImplementationHarnessBuiltin), "on", AssignedSandboxImplementationSource)
+	}
+
+	temporary := "off"
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, TemporaryHarnessBuiltinMode: &temporary}))
+	require.ErrorIs(t, assign(), ErrTemporarySandboxOverrideActive)
+	allocation, err := GetOpenCodeAgentStateAllocation(agentID)
+	require.NoError(t, err)
+	assert.NotNil(t, allocation, "a refused assignment keeps the allocation")
+
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{Version: RelaunchProfileVersion}))
+	require.NoError(t, assign())
+	allocation, err = GetOpenCodeAgentStateAllocation(agentID)
+	require.NoError(t, err)
+	assert.Nil(t, allocation)
+}

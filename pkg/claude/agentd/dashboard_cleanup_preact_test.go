@@ -57,7 +57,7 @@ func TestDashboardTransactionCleanupExclusiveOwnership(t *testing.T) {
 		"export function buildCleanupDescriptor(",
 		"export function normalizeCleanupCandidates(candidates)",
 		"export function openCleanupDialog(descriptor)",
-		"kind: 'cleanup'", "if (member?.online) continue",
+		"kind: 'cleanup'", "if (member?.online || member?.external_steward) continue",
 		"categories: mode === 'group' ? ['agent'] : cleanupCategories(options.categories)",
 	} {
 		if !strings.Contains(controller, required) {

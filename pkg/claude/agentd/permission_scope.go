@@ -30,6 +30,9 @@ const (
 	ScopeDimLinearTeam      ScopeDim = "linear_team"
 	ScopeDimAWBWorkspace    ScopeDim = "awb_workspace"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
+	// ScopeDimResource names specific resources as kind:id (drawing_board:plan,
+	// process_template:release), for the resources.read/write umbrellas.
+	ScopeDimResource ScopeDim = "resource"
 	// ScopeDimPeer identifies a trusted federation peer, optionally followed by /group.
 	ScopeDimPeer ScopeDim = "peer"
 	// legacyScopeDimAWBProject is accepted only while parsing persisted grants
@@ -70,6 +73,11 @@ const (
 	// is a local nickname the operator can move to another instance, and a
 	// grant must not silently follow it there.
 	permissionScopeMatchInstanceID
+	// permissionScopeMatchResourceRef is an exact comparison whose shape is
+	// kind:id with a kind the resource umbrellas cover, so a matcher naming a
+	// kind nothing describes is refused instead of stored as a grant that can
+	// never match.
+	permissionScopeMatchResourceRef
 )
 
 type permissionScopeDimension struct {
@@ -110,6 +118,7 @@ var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
 	ScopeDimLinearTeam:      {matcher: permissionScopeMatchTeamKey, enumerable: true},
 	ScopeDimAWBWorkspace:    {matcher: permissionScopeMatchWorkspaceKey, enumerable: true},
 	ScopeDimPeer:            {matcher: permissionScopeMatchInstanceID},
+	ScopeDimResource:        {matcher: permissionScopeMatchResourceRef},
 	ScopeDimTargetAgent: {selectors: map[string]struct{}{
 		"@descendants":  {},
 		"@self-spawned": {},
@@ -216,6 +225,12 @@ func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, ma
 		if strings.TrimSpace(ref) == "" || (grouped && strings.TrimSpace(group) == "") {
 			return fmt.Errorf("permission scope dimension %q: %q is not an instance id (inst_…); "+
 				"use peer=<label-or-instance-id>[/group]", dim, matcher)
+		}
+	case permissionScopeMatchResourceRef:
+		kind, id, ok := strings.Cut(matcher, ":")
+		if !ok || !isResourceScopeKind(kind) || strings.TrimSpace(id) == "" || id != strings.TrimSpace(id) {
+			return fmt.Errorf("permission scope dimension %q: %q is not kind:id with kind %s or %s "+
+				"(for example drawing_board:plan)", dim, matcher, resourceScopeKindDrawingBoard, resourceScopeKindProcessTemplate)
 		}
 	case permissionScopeMatchWorkspaceKey:
 		// Same reasoning one vocabulary over: an AWB workspace key is what the AWB

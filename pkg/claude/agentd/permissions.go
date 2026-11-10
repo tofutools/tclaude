@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -56,13 +57,39 @@ type PermSlug struct {
 	// explicit deny, not an endpoint-specific bypass.
 	MemberImplied bool `json:"member_implied,omitempty"`
 	AutoGrantable bool `json:"auto_grantable,omitempty"`
+	// Umbrella is the slug that implies this one (permissionUmbrellaFor):
+	// groups.admin for the groups.* namespace, resources.read or
+	// resources.write for a per-kind resource slug. The editor shows a row its
+	// umbrella covers as covered, so the chain is served, never re-derived.
+	Umbrella string `json:"umbrella,omitempty"`
+	// Risky marks a slug the editors call out: see riskySlugs.
+	Risky bool `json:"risky,omitempty"`
+	// ReadOnly marks a slug that only looks: see readOnlySlug. The editors
+	// filter on it, so this is display guidance, not a gate.
+	ReadOnly bool `json:"read_only,omitempty"`
+	// Countable marks a slug a sudo grant can limit by uses: see countableSudoSlugs.
+	Countable bool `json:"countable,omitempty"`
+	// NotCountableWhy says why it cannot, for the editor to show.
+	NotCountableWhy string `json:"not_countable_why,omitempty"`
+	// Federation is what a federation peer can be granted for the slug,
+	// filled from slugFederationReach (permission_federation_reach.go).
+	Federation FedReach `json:"-"`
 }
 
 func initPermissionRegistry() {
+	initAgentPeerViewScopes(permissionRegistry)
 	initPermissionRegistryEntries(permissionRegistry)
+	initFederationReach(permissionRegistry, slugFederationReach)
 }
 
 func initPermissionRegistryEntries(registry []PermSlug) {
+	for i := range registry {
+		registry[i].Risky = slices.Contains(riskySlugs, registry[i].Slug)
+		registry[i].ReadOnly = readOnlySlug(registry[i].Slug)
+		registry[i].Countable = slices.Contains(countableSudoSlugs, registry[i].Slug)
+		registry[i].NotCountableWhy = sudoUseLimitRefusal(registry[i].Slug)
+		registry[i].Umbrella = permissionUmbrellaFor(registry[i].Slug)
+	}
 	seenSlugs := map[string]bool{}
 	for i := range registry {
 		p := &registry[i]
@@ -117,6 +144,36 @@ func containsScopeDim(dims []ScopeDim, want ScopeDim) bool {
 
 func init() { initPermissionRegistry() }
 
+// riskySlugs are the slugs the permission editors mark: each reaches past
+// tclaude's own state to the host or to credentials, destroys work, or widens
+// what an agent can hand itself. It is display guidance, not a gate.
+var riskySlugs = []string{
+	PermNodeExec, PermSessionsShell, PermSessionsAttach, PermSessionsTakeover,
+	PermNodeUpdate, PermNodeUpdateSettings, PermNodeHarnessesInstall, PermNodeCredentialsReceive,
+	PermNodeConfigAgents, PermNodeConfigNetwork, PermNodeConfigCredentials,
+	PermConfigImport, PermConfigExport, PermAgentBundleImport,
+	PermAgentDelete, PermGroupsMembersDelete,
+	PermGroupsMembersSpawnPermissions, PermGroupsMembersSpawnSandbox, PermGroupsMembersSpawnAll,
+	PermGroupsOwnersManage, PermGroupsAdmin, PermSandboxProfilesManage, PermSandboxHarnessConfig, PermRelaunchPolicyManage,
+	PermPermissionsGrant, PermPermissionsRevoke,
+}
+
+// readOnlyWatchSlugs are the slugs that only look but whose name does not
+// end in ".read".
+var readOnlyWatchSlugs = []string{
+	PermAgentContextInfo, PermGroupsMembersContextInfo,
+	PermAgentInboxWatch, PermGroupsMembersInboxWatch,
+	PermSessionsWatch, PermDashboardCapture,
+}
+
+// readOnlySlug says whether a slug only reads: it shows the holder something
+// and changes nothing, in tclaude or outside it. The permission editors offer
+// it as a "read" filter and everything else as "write". An export counts as a
+// write: it produces something. Display guidance, not a gate.
+func readOnlySlug(slug string) bool {
+	return strings.HasSuffix(slug, ".read") || slices.Contains(readOnlyWatchSlugs, slug)
+}
+
 // permissionRegistry is the single source of truth for known slugs. It's
 // what `permissions slugs` returns and what the validators consult when
 // they want to refuse an unknown slug. Legacy config/DB rows may retain an
@@ -125,11 +182,30 @@ func init() { initPermissionRegistry() }
 // this vocabulary.
 var permissionRegistry = []PermSlug{
 	{Slug: PermJobsRun, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Request and inspect remote one-shot jobs in an allowed repository. Requires peer= scope. Peer grants independently require a receiving group and launch policy."},
+	{Slug: PermDashboardViewRead, Description: "Read which dashboard view the operator is currently looking at (tab, path, title). Granted to the companion Steward at summon; not default-granted."},
+	{Slug: PermDashboardGuide, Description: "Point at the operator's dashboard: switch it to a view, highlight a control with a short note, or open an agent in their companion window, which attaches its terminal there. Cannot press buttons or change state. Granted to the companion Steward at summon; not default-granted."},
+	{Slug: PermDashboardCapture, Description: "Capture what the operator's dashboard shows right now: an image of the focused dashboard tab, terminals and open messages included, plus cursor, focus, viewport and open drawing board. Dashboard pages only, never other windows; a hidden tab is not captured and the operator sees a cue each time. Granted to the companion Steward at summon; not default-granted."},
+	{Slug: PermDashboardFormsCapture, Description: "Read the values in the operator's open dashboard form as text with a capture (`guide capture --form`, which also takes dashboard.capture): the whole form including what is off screen or collapsed, or what is on screen when no form is open. Passwords and fields marked secret are never delivered, and terminals are named but not read. The operator's cue says so each time, and the text is not stored. Not default-granted, including for the companion Steward."},
+	{Slug: PermDashboardFormsFill, Description: "Propose values in the operator's open spawn or Config form (`guide fill`). Values go through the form's own validation, stay highlighted and can be undone in one click. It never submits or presses anything, never overwrites a field the operator edited, and cannot fill a password or marked field. Anything that widens access shows a warning naming the agent. Not default-granted, including for the companion Steward."},
+	{Slug: PermDashboardMark, Description: "Draw marks on the operator's dashboard to get their attention: highlights, shapes, arrows, freehand strokes and labels with a short tip, and list how past marks ended. Marks take no clicks, time out on their own, and the operator can dismiss, acknowledge or answer them. Granted to the companion Steward at summon; not default-granted."},
+	{Slug: PermFleetRead, Description: "See the whole fleet: every active agent with its status, groups, task link and presented PRs, plus what needs the operator (pending approvals, prompts, questions, failed turns, idle agents). `tclaude agent ls` and `groups ls` then cover every agent and group, as they do for the operator. Granted to the companion Steward at summon; not default-granted."},
+	{Slug: PermKnowledgeRead, Description: "Read the knowledge base: the docs and source of the build this daemon is running, through a read-only API. It holds only what ships with tclaude, so it gives no other access. Granted to the companion Steward at summon; not default-granted."},
+	{Slug: PermDrawingBoardsRead, Description: "Read collab drawing boards: list them, show their elements and fetch the latest PNG snapshot. Granted to the companion Steward at summon; not default-granted."},
+	{Slug: PermDrawingBoardsWrite, Description: "Create collab drawing boards, add, change or delete elements on them (authored as the calling agent, which joins the drawing board), and open or close the agent's own drawing board session. Granted to the companion Steward at summon; not default-granted."},
+	{
+		Slug: PermResourcesRead, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimResource},
+		Description: "Umbrella for reading every kind of resource: drawing boards (drawing-boards.read), process templates (process.templates.read) and their runs (process.runs.read), for a manager agent. Scope with group=<name> for the resources linked to those groups, or resource=<kind>:<id> (drawing_board:<id>, process_template:<id>) for specific ones; no scope reaches every resource. Never member- or owner-implied and not default-granted. A dedicated deny of a per-kind slug still wins.",
+	},
+	{
+		Slug: PermResourcesWrite, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimResource},
+		Description: "Umbrella for changing every kind of resource: drawing boards (drawing-boards.write) and process templates (process.templates.manage), for a manager agent. Implies resources.read (a deny of resources.read still wins); the per-kind write slugs do not imply their read slugs. Scoped like resources.read; a resource in several groups needs every one of them in a group= scope. It does not pass an operator lock (only groups.resources.lock or the human unlocks), and run mutations stay on process.runs.manage. Never member- or owner-implied and not default-granted.",
+	},
 	{Slug: PermHostRead, Description: "Read cached host CPU, RAM, disk and live agent/session load, including configured local work-directory paths. Not default-granted."},
-	{Slug: PermHumanInboxRead, Description: "Peer-only: read this node's human notifications and pending ask-human requests. Held only through unrestricted federation trust; not grantable, not requestable."},
-	{Slug: PermHumanInboxAnswer, Description: "Peer-only: reply to this node's agents' human notifications and answer their ask-human requests once (approve or deny). Held only through unrestricted federation trust; not grantable, not requestable."},
+	{Slug: PermHumanInboxRead, Description: "Peer-only: read this node's unread human notifications that agents sent in the granted groups, and the pending ask-human requests of agents all of whose groups are granted. Unrestricted trust reads them all."},
+	{Slug: PermHumanInboxAnswer, Description: "Peer-only: reply to the human notifications human.inbox.read shows and answer those ask-human requests once. Deny needs only this grant; approve also needs the requested action within what the peer may grant here (the peer ceiling). Unrestricted trust answers them all."},
 	{Slug: PermApprovalsAnswer, Description: "Peer-only one-shot access-request answers while selected as away cover. Configure as an unscoped federation peer grant; ordinary agent grants do not authorize answers."},
 	{Slug: PermModelsProxyLeased, Description: "Peer-only access to requester-issued model gateway leases. Configure through federation peer grants."},
+	{Slug: PermConfigOffer, Description: "Peer-only: offer configuration bundles to this node for its operator to review; nothing is imported until they accept. Configure as an unscoped federation peer grant; ordinary agent grants do not authorize it."},
 	{Slug: PermSelfTeleportPermissions, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Opt in to carrying permissions on self-initiated teleport; requires peer scope and receiver approval. Default off."},
 	{Slug: PermAgentsReceivePermissions, Description: "Peer-only: allow opt-in permission carry into a receiving group, optionally limited to permission slugs. Does not transfer ownership or sensitive authority."},
 	{Slug: PermAgentsReceive, Description: "Peer-only admission for agent bundle offers into an explicitly granted receiving group. Configure through federation peer grants; ordinary agent grants do not authorize receipt."},
@@ -167,6 +243,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Set/clear own task-reference link — the Task column's Linear/GitHub/ticket URL (tclaude agent task set/clear). Default-granted, mirroring the self-lifecycle slugs.",
 	},
 	{
+		Slug:        PermSelfTaskboard,
+		Description: "Deprecated alias of taskboard.own, which every active member of a group now holds on its board. An existing grant keeps working and adds nothing; an explicit deny of it still denies taskboard.own. No longer default-granted.",
+	},
+	{
 		Slug:        PermSelfPR,
 		Description: "Present own pull request to the operator dashboard (tclaude agent present-pr). Default-granted, mirroring the self-lifecycle slugs.",
 	},
@@ -181,6 +261,22 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:        PermSelfProcess,
 		Description: "Start an agent-scoped process run bound to self (tclaude process run start --agent <self>). Default-granted, mirroring the self-lifecycle slugs. Authorizing program profiles still needs process.runs.manage.",
+	},
+	{
+		Slug:        PermSelfPage,
+		Description: "Show the operator a live page of own port or worktree files, and list or close own pages (tclaude agent show / agent page). Acts only on pages this agent showed. Default-granted, mirroring the self-lifecycle slugs.",
+	},
+	{
+		Slug: PermGroupsPagesRead, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Read a live page another member of the page's group showed: its marks (and what the operator typed in them), snapshot, DOM and live-patch journal. Both agents must be current members of that group; never across groups, to peers or over federation, and a static page only when its shower's view is exact. Default-granted, so sharing within a group is what membership implies; a deny override, or a page shown with --private, stops it.",
+	},
+	{
+		Slug: PermGroupsPagesPatch, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Add or reset live patches on a live page another member of the page's group showed: CSS, set-text and remove. A set-attr or insert-html patch can carry script (an onclick, an onerror), so on another agent's page it needs groups.pages.manage. Default-granted, like groups.pages.read.",
+	},
+	{
+		Slug: PermGroupsPagesManage, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Run a script (page eval) in, add a set-attr or insert-html patch to, or close, a live page another member of the page's group showed. Eval runs code in the operator's view of the page and returns what it reads, so it is not default-granted and not owner-implied: by default only the page's shower does these. groups.admin covers it.",
 	},
 	{
 		Slug: PermAgentProcess, GroupSibling: PermGroupsMembersProcess,
@@ -397,7 +493,7 @@ var permissionRegistry = []PermSlug{
 		Slug:         PermGroupsSettingsOwnerScopes,
 		OwnerImplied: true,
 		ScopeDims:    []ScopeDim{ScopeDimGroup},
-		Description:  "Set or clear a group's owner-grant constraints. Also requires permissions.grant and permissions.revoke.",
+		Description:  "Set or clear a group's owner-grant constraints, or change or remove a group template's (which every group later deployed from it inherits). Also requires permissions.grant and permissions.revoke.",
 	},
 	{
 		Slug:         PermGroupsMembersAdd,
@@ -523,8 +619,8 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug: PermAgentSandboxImplementation,
-		Description: "Assign the durable sandbox implementation an EXISTING offline agent relaunches under (tclaude agent sandbox-impl set). " +
-			"It can move an agent onto an implementation with no OS-level access confinement, so group ownership does NOT confer it and it is not default-granted (effectively human-only).",
+		Description: "Assign the durable sandbox implementation and explicit sandbox profile an EXISTING agent relaunches under (tclaude agent sandbox set). " +
+			"It can move an agent onto an implementation with no OS-level access confinement, or onto a wider profile, so group ownership does NOT confer it and it is not default-granted (effectively human-only).",
 	},
 	{
 		Slug: PermAgentInboxWatch, GroupSibling: PermGroupsMembersInboxWatch,
@@ -542,7 +638,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermGroupsExport,
-		Description: "Export a whole group to a portable .zip archive — DB rows plus every member's conversation .jsonl (tclaude agent groups export). The archive holds full conversation content; not default-granted (effectively human-only).",
+		Description: "Export a whole group to a portable .paf (or legacy .zip) archive — DB rows plus every member's conversation .jsonl (tclaude agent groups export). The archive holds full conversation content; not default-granted (effectively human-only).",
 	},
 	{
 		Slug:        PermGroupsImport,
@@ -550,7 +646,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:        PermTemplatesManage,
-		Description: "Create, edit, delete group templates and snapshot a live group into a template (dashboard Templates tab). A template is a reusable blueprint, not a conversation snapshot. Not default-granted (effectively human-only).",
+		Description: "Create, edit, delete group templates and snapshot a live group into a template (dashboard Templates tab). Changing or removing an existing template's owner scopes also needs groups.settings.owner-scopes, permissions.grant and permissions.revoke. A template is a reusable blueprint, not a conversation snapshot. Not default-granted (effectively human-only).",
 	},
 	{
 		Slug:         PermTemplatesUse,
@@ -579,6 +675,10 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:        PermSandboxProfilesManage,
 		Description: "Read, create, edit, delete and assign sandbox profiles — operator policy that can add host filesystem access and launch environment to agents. This is intentionally separate from profiles.manage and is not default-granted (effectively human-only).",
+	},
+	{
+		Slug:        PermRelaunchPolicyManage,
+		Description: "Change the global relaunch policy: how every agent's resume, reincarnate and clone resolve the configurable launch fields, such as whether an explicit --harness-config posture or the sandbox profiles' posture wins. A change can widen what a relaunch gives every agent, so treat it like sandbox-profiles.manage. An agent also needs it to give a spawn, or to save into a spawn profile, a per-agent row that keeps old settings (reuse, explicit-wins) where the agent would not inherit it; rows that apply the operator's current settings are free. Reads are open; not default-granted (effectively human-only).",
 	},
 	{
 		Slug:        PermSandboxProfilesDraft,
@@ -664,6 +764,12 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermAgentsStatusRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer group’s shared agent runtime status, task links and numeric context. Requires peer= scope; no terminal authority."},
 	{Slug: PermFederationAuditRead, Description: "Read local federation activity metadata across peers. No payloads or credential values are exposed."},
 	{Slug: PermNodeUpdate, Description: "Permit trusted peers to replace installed tclaude binaries and restart agentd. High trust, default off; instance-wide peer grant."},
+	{Slug: PermNodeUpdateSettings, Description: "Permit trusted peers to change this node's self-update settings: method (never to a package-manager, custom or source-checkout method), schedule, update on start and post-update setup flags. Needs node.update as well. The custom command and its timeout, the source checkout (path and ref), the install dir and the package-manager acknowledgement stay local. High trust, default off; instance-wide peer grant."},
+	{Slug: PermNodeConfigRead, Description: "Permit trusted peers to read this node's Config tab: every setting, including paths, labels and the operator's own instructions, but never a secret value (tokens, header values, shell commands), which a peer sees only as set or not set, not even when unrestricted. Default off; instance-wide peer grant."},
+	{Slug: PermNodeConfigWrite, Description: "Permit trusted peers to change this node's general settings in the Config tab: appearance, terminals, keyboard, voice, notifications (not the notification command), context, costs and usage, logs and the task board. Needs node.config.read as well. Default off; instance-wide peer grant."},
+	{Slug: PermNodeConfigAgents, Description: "Permit trusted peers to change what this node's agents may do: default agent and Steward permissions, sudo, spawn guardrails, capacity, sandbox choices, inbound teleports, and settings that delete data (transcript and retired-agent retention). Needs node.config.read as well. High trust, default off; instance-wide peer grant."},
+	{Slug: PermNodeConfigNetwork, Description: "Permit trusted peers to change where this node listens: the dashboard bind address and port, operator token persistence, remote access, routes and federation tunables. Never the hub link or trust, which stay local. Needs node.config.read as well. High trust, default off; instance-wide peer grant."},
+	{Slug: PermNodeConfigCredentials, Description: "Permit trusted peers to change this node's credential proxies: git forges, Linear, awb and HTTP proxies, their allowed targets and the key and token files they use. A secret value can be replaced, never read. Needs node.config.read as well. High trust, default off; instance-wide peer grant."},
 	{Slug: PermNodeHarnessesInstall, Description: "Install/update harnesses on this node; high trust, runs official installers as the daemon user"},
 	{Slug: PermNodeExec, Description: nodeExecWarning},
 	{Slug: PermNodeMessagesRead, Description: "Read private human notifications and agent message bodies across this node. Default off; instance-wide peer grant. No reply or approval authority."},
@@ -683,11 +789,51 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermGroupsMembersSpawnWorktree, Description: "Federation peer grant (group-scoped): launch a remote spawn into the group in a git worktree, with a groups.members.spawn grant: list a repository's worktrees and branches and create a worktree in it on this machine. Broad like .cwd: any repository on this machine."},
 	{Slug: PermGroupsMembersSpawnAll, Description: "Federation peer grant (group-scoped): every groups.members.spawn.* launch setting (directory, harness, model, effort, profile, roles, sandbox profile, permissions, environment, owner, features, prompts, worktree) of a remote spawn into the group, with a groups.members.spawn grant. Unrestricted trust holds all of them."},
 	{Slug: PermGroupsMembersManage, Description: "Federation peer grant (group-scoped): change an agent's ordinary settings from the peer's dashboard — its name, tags, task link and notifications, and its role and description in the group. An agent's own settings need it in every active group the agent is in. Unrestricted trust holds it."},
+	{
+		Slug: PermGroupsResourcesRead, ScopeDims: []ScopeDim{ScopeDimGroup}, MemberImplied: true,
+		Description: "Read the resources linked to a group as a member of that group: its drawing boards (drawing board ls/show/snapshot), the process templates pinned to it and the process runs scoped to it (process runs ls --group, show, events). Conferred by active membership, live, so joining or leaving the group takes effect at once; an explicit deny stops it. The global drawing-boards.read still covers every drawing board. Also a federation peer grant (group-scoped): list the group's resources (its saved processes, drawing boards and live pages, with their agent locks) on the peer's dashboard, by name only: nothing opens a drawing board or page there. Locking them takes groups.resources.lock. Unrestricted trust holds it.",
+	},
+	{
+		Slug: PermGroupsResourcesWrite, ScopeDims: []ScopeDim{ScopeDimGroup}, MemberImplied: true,
+		Description: "Change the resources linked to a group as a member of that group: draw on its drawing boards, open a drawing board session there, create a drawing board in it, and save a new version of a process template pinned to it (pinned to several groups, it needs this in each). Never a run mutation: those stay on process.runs.manage. Implies groups.resources.read. Conferred by active membership, live; an explicit deny stops it. An operator lock on a resource still refuses the change. The global drawing-boards.write still covers every drawing board.",
+	},
+	{
+		Slug: PermGroupsResourcesLock, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Lock and unlock the resources linked to a group (its drawing boards, the process templates pinned to it, its live pages) against agent changes, and still change them while they are locked (tclaude agent resources lock/unlock). A resource in several groups needs it in each; one in no group needs an unscoped grant. Never default-granted, never conferred by group ownership or membership, and not covered by groups.admin: the operator grants it. Also a federation peer grant (group-scoped): lock and unlock them from the peer's dashboard, as this node's operator does. Unrestricted trust holds it.",
+	},
+	{
+		Slug: PermTaskboardRead, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true, MemberImplied: true,
+		Description: "Read a group's task board: list its tasks, show one and its history (tclaude agent taskboard ls/show/history). Scope with group=<name> for named groups; unscoped reaches every group, future ones included. Conferred by active membership and by ownership of the group; never default-granted. A task in a group the caller cannot read answers 404.",
+	},
+	{
+		Slug: PermTaskboardWrite, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
+		Description: "Change a group's task board: add unassigned tasks, import, ask a member for tasks, and edit, move, promote/demote, block/unblock, drop and close any task (tclaude agent taskboard add/edit/move/...). Implies taskboard.read. Scope with group=<name>. Conferred by ownership of the group, not by membership: a member tracks its own work under taskboard.own. A group grant of it, scoped to the group itself, gives every member the broad rights back. Never default-granted.",
+	},
+	{
+		Slug: PermTaskboardOwn, ScopeDims: []ScopeDim{ScopeDimGroup}, MemberImplied: true,
+		Description: "Track your own work on the task board of a group you are an active member of: add a task, assigned to you as it is created; edit, promote/demote, block/unblock, close and report on the tasks assigned to you; take any open, unassigned task (an idea is promoted) and release your own; comment on any task of the board (tclaude agent taskboard add/take/release/report/...). Never reaches a group you are not an active member of, whatever its scope. Narrowed by the writer lock, except a report; an explicit grant scoped to the group passes the lock. Conferred by active membership; replaces self.taskboard, now its deprecated alias.",
+	},
+	{
+		Slug: PermTaskboardAssign, ScopeDims: []ScopeDim{ScopeDimGroup, ScopeDimTargetAgent}, OwnerImplied: true,
+		Description: "Assign a task on a group's task board to another agent, take it back, and close a task assigned to someone else (tclaude agent taskboard assign/unassign/done). The assignee must be an active member of the task's group. Scope with group=<name> and target_agent=<agent|@descendants>. Conferred by ownership of the group, not by membership; never default-granted. Taking and releasing your own task is taskboard.own.",
+	},
+	{
+		Slug: PermTaskboardTransfer, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
+		Description: "Move or clone a task from another group's board into this group's board (tclaude agent taskboard move-to-group). Scope with group=<name>, the target group. A move also needs taskboard.write on the source group when the caller holds the task, taskboard.manage there otherwise; a clone needs taskboard.read on the source. Conferred by ownership of the target group, not by membership; never default-granted. The operator's dashboard drag needs no grant.",
+	},
+	{
+		Slug: PermTaskboardManage, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
+		Description: "Manage a group's task board as a whole: its writer lock (tclaude agent groups set-taskboard-writers) and its columns (implies taskboard.columns). Scope with group=<name>. Conferred by ownership of the group, not by membership; never default-granted.",
+	},
+	{
+		Slug: PermTaskboardColumns, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
+		Description: "Manage a group's task board columns: add, rename, reorder and remove its custom columns, and hide, show, cordon or uncordon a column for the whole board (tclaude agent taskboard columns ...). Moving a task in or out of a column stays taskboard.write / taskboard.own; a cordoned column takes no new task from anyone. Scope with group=<name>. Implied by taskboard.manage; conferred by ownership of the group, not by membership; never default-granted.",
+	},
 	{Slug: PermGroupsSettings, Description: "Federation peer grant (group-scoped): change the group's ordinary settings from the peer's dashboard — description, startup context, member cap, notifications, remote-control policy, attachment, name and nesting (under a group this node shows the peer). What every spawn into the group inherits also needs the matching spawn grant: its default directory groups.members.spawn.cwd, its default saved prompts groups.members.spawn.prompts, its sandbox profile groups.members.spawn.sandbox, and a default profile must be one the peer may pick for a spawn there. Its environment needs groups.settings.environment. Unrestricted trust holds it."},
 	{Slug: PermNodeSpawnRead, Description: "Read the spawn dialog's catalogs on this node, so a peer's remote spawn dialog shows what this node would apply and offers its profiles and prompts: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model. Read-only; spawn and sandbox profiles carry their environment values (often tokens) and paths. Default off; instance-wide peer grant."},
 	{Slug: PermNodeSpawnDefaultsManage, Description: "Set or clear this node's global default spawn profile and global sandbox profile from a peer's dashboard, choosing among this node's existing profiles (listing them takes node.spawn.read); an operator-only profile takes unrestricted trust. Applies to every spawn here without its own profile. Default off; instance-wide peer grant."},
-	{Slug: PermNodeSpawnProfilesCreate, Description: "Save new spawn profiles on this node from a peer's dashboard (the spawn dialog's Save as profile…). A restricted peer's profile is saved operator-only, so the peer cannot pick it for its own remote spawns until this node's operator lifts that; editing and deleting profiles take unrestricted trust. Default off; instance-wide peer grant."},
-	{Slug: PermNodeGroupsCreate, Description: "Create plain groups on this node from a peer's dashboard: name, parent (a group the peer can see), description, context, attachment and member cap. Launch settings (directory, environment, profile, repository clone), templates and clones take unrestricted trust. The peer sees the new group only through an unscoped grant. Default off; instance-wide peer grant."},
+	{Slug: PermNodeSpawnProfilesCreate, Description: "Save new spawn profiles on this node from a peer's dashboard (the spawn dialog's Save as profile…). A restricted peer's profile is saved operator-only, so the peer cannot pick it for its own remote spawns until this node's operator lifts that; editing and deleting profiles take profiles.manage. Default off; instance-wide peer grant."},
+	{Slug: PermNodeGroupsCreate, Description: "Create plain groups on this node from a peer's dashboard: name, parent (a group the peer can see), description, context, attachment and member cap. A launch setting (directory, environment, profile, repository clone, remote-control policy) takes the matching remote spawn grant for every group; deploying from a template takes templates.instantiate, and a clone groups.clone. The peer sees the new group only through an unscoped grant. Default off; instance-wide peer grant."},
 	{Slug: PermNodeMessagesManage, Description: "Explicitly change agent mailbox read state across this node. Default off; no delete, reply or approval authority."},
 	{Slug: PermNodeMessagesMarkRead, Description: "Mark this node's human notifications read or unread from a peer's dashboard — opening one there marks it read, as it does locally. Default off; instance-wide peer grant. No reply, delete or approval authority."},
 	{Slug: PermNodeCredentialsReceive, Description: "Receive operator harness credentials; high trust, agents can act as the sender"},
@@ -695,6 +841,10 @@ var permissionRegistry = []PermSlug{
 	{Slug: PermNodeHarnessesRead, Description: "Share detailed installed harness paths, versions and credential presence with trusted peers. Default off; instance-wide peer grant."},
 	{Slug: PermNodeRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read shared peer platform, harnesses, labels and numeric resource summaries. Requires peer= scope."},
 	{Slug: PermSessionsRead, ScopeDims: []ScopeDim{ScopeDimPeer}, Description: "Read a peer's shared live agent sessions and waiting states. Requires peer= scope; no local session authority."},
+	{
+		Slug:        PermRoutesPublishHost,
+		Description: "Publish and withdraw the caller’s host-only routes without sharing them with groups or peers. Not default-granted.",
+	},
 	{
 		Slug:        PermRoutesPublish,
 		ScopeDims:   []ScopeDim{ScopeDimGroup},
@@ -750,6 +900,33 @@ var permissionRegistry = []PermSlug{
 			"pull request may target any branch — ordinarily one of that list's defaults (main, master), which is what " +
 			"would make honouring it here a no-op for most of the merges a grant is given for. Not default-granted and " +
 			"not owner-implied.",
+	},
+	{
+		Slug:      PermGitLabRead,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
+		Description: "Read GitLab merge requests, issues and CI results through the daemon's GitLab token (tclaude proxy gitlab " +
+			"mr ls/view/checks/comments, issue ls/view, pipeline ls, job log-failed/artifacts/download). Restricted to the project " +
+			"the agent's own remote resolves to, and only when that remote is on the operator's allow-list and its host is a " +
+			"configured GitLab instance (agent.git_proxy.gitlab_hosts, or gitlab.com). Not default-granted: it reads private " +
+			"project data as the token's owner. job download also WRITES, under the same bounds as the GitHub proxy: into " +
+			".tclaude-artifacts/ in the agent's own work tree, 512 MiB compressed and 2 GiB unpacked per download, at most 3 " +
+			"directories kept.",
+	},
+	{
+		Slug:      PermGitLabWrite,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
+		Description: "Create and comment on GitLab merge requests and issues through the daemon's GitLab token " +
+			"(tclaude proxy gitlab mr create/edit/comment/ready, issue comment). Everything it writes is attributed to the " +
+			"token's owner, so it is not default-granted and not owner-implied. It does NOT confer proxy.gitlab.merge.",
+	},
+	{
+		Slug:      PermGitLabMerge,
+		ScopeDims: []ScopeDim{ScopeDimRemote},
+		Description: "Merge a GitLab merge request through the daemon's GitLab token (tclaude proxy gitlab mr merge). " +
+			"Split off from proxy.gitlab.write, and not implied by it: opening a merge request proposes a change, while " +
+			"merging one lands it on the target branch. GitLab's own protected-branch rules and approval requirements still " +
+			"apply. agent.git_proxy.protected_refs does NOT, for the reason given on proxy.github.merge. Not default-granted " +
+			"and not owner-implied.",
 	},
 	{Slug: PermModelsProxy, Description: "Use a named peer model gateway. Scope with peer= and http_proxy=.", ScopeDims: []ScopeDim{ScopeDimPeer, ScopeDimHTTPProxy}},
 	{Slug: PermHTTP, Description: "Send HTTP requests through a named daemon proxy with its configured credential header. Grants full service access; scope with http_proxy=name.", ScopeDims: []ScopeDim{ScopeDimHTTPProxy}},
@@ -837,7 +1014,8 @@ func visiblePermissionRegistry(vis proxyVisibility) []PermSlug {
 // proxy permission is always visible.
 func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
 	switch slug {
-	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge:
+	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+		PermGitLabRead, PermGitLabWrite, PermGitLabMerge:
 		return vis.git
 	case PermLinearRead, PermLinearWrite:
 		return vis.linear
@@ -853,6 +1031,7 @@ func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
 func isSemanticProxyPermission(slug string) bool {
 	switch slug {
 	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+		PermGitLabRead, PermGitLabWrite, PermGitLabMerge,
 		PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite, PermHTTP:
 		return true
 	default:
@@ -884,9 +1063,10 @@ func IsKnownPermSlug(slug string) bool {
 // slug. The registry deliberately reserves the groups.* namespace for group
 // administration, so newly registered operations join
 // the umbrella automatically instead of requiring a second hand-maintained
-// list. The umbrella never implies itself.
+// list. The umbrella never implies itself, nor groups.resources.lock: a lock
+// holds against groups.admin, and only the lock slug itself passes it.
 func IsGroupsAdminImpliedSlug(slug string) bool {
-	return slug != PermGroupsAdmin && strings.HasPrefix(slug, "groups.")
+	return slug != PermGroupsAdmin && slug != PermGroupsResourcesLock && strings.HasPrefix(slug, "groups.")
 }
 
 // IsOwnerImpliedSlug reports whether group ownership structurally confers
@@ -1449,7 +1629,7 @@ func effectivePermsFor(state permissionsState, convID string, ownerImplied owner
 	src := loadPermSources(convID)
 	for _, slug := range candidatePermissionSlugs(state, convID, ownerImplied, src) {
 		v := resolveEffectivePermissionVerdictFrom(src, slug,
-			defaults[slug], defaults[PermGroupsAdmin])
+			defaults[slug], defaults[permissionUmbrellaFor(slug)])
 		switch v.Resolution {
 		case permAllow:
 			effective = append(effective, slug)
@@ -1625,6 +1805,9 @@ type permissionsMutateResp struct {
 	Effect    string          `json:"effect,omitempty"` // post-mutation override effect: "grant", "deny", or "default" (cleared)
 	Scope     PermissionScope `json:"scope,omitempty"`
 	Effective []string        `json:"effective"` // post-mutation GRANTED slug list for that target
+	// Warnings call out what the grant reaches that its slug may not say,
+	// such as a peer-scoped grant that ends sessions on a peer.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func decodeMutateReq(w http.ResponseWriter, r *http.Request) (*permissionsMutateReq, bool) {
@@ -1698,7 +1881,7 @@ func auditedCallerWithSudoGrant(callerConvID, perm string, decisionGrantID int64
 	withoutSudo := src
 	withoutSudo.sudo = map[string]sudoPermSource{}
 	standing := resolveEffectivePermissionVerdictFrom(withoutSudo, perm,
-		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(permissionUmbrellaFor(perm)))
 	if contextFreeResolution(standing) == permAllow {
 		return callerConvID
 	}
@@ -1706,7 +1889,7 @@ func auditedCallerWithSudoGrant(callerConvID, perm string, decisionGrantID int64
 	// exact operation slug or groups.admin; carrying SudoGrantID from that
 	// verdict preserves the umbrella elevation's forensic provenance.
 	effective := resolveEffectivePermissionVerdictFrom(src, perm,
-		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(PermGroupsAdmin))
+		cfg.HasDefaultPermission(perm), cfg.HasDefaultPermission(permissionUmbrellaFor(perm)))
 	if contextFreeResolution(effective) != permAllow || effective.SudoGrantID == 0 {
 		return callerConvID
 	}
@@ -1754,6 +1937,14 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
+	if refusal := refuseExternalStewardGrant(target.Key, body.Slug); refusal != "" {
+		writeError(w, http.StatusConflict, externalStewardCeilingCode, refusal)
+		return
+	}
+	if refusal := refuseExternalStewardSpawnGrant(target.Key, body.Slug, scope); refusal != "" {
+		writeError(w, http.StatusConflict, externalStewardCeilingCode, refusal)
+		return
+	}
 	// Attenuation-only delegation: an AGENT granter may not hand out a scope
 	// wider than its own for this slug. granter is "" for the human operator,
 	// who is unconstrained. Selector-bearing target_agent scopes additionally
@@ -1767,6 +1958,9 @@ func handlePermissionsGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := permissionsMutateResp{Target: body.Target, Slug: body.Slug, Effect: db.PermEffectGrant, Scope: scope}
+	if len(scope[ScopeDimPeer]) != 0 && agentPeerViewDestructive(body.Slug) {
+		resp.Warnings = append(resp.Warnings, agentPeerViewDestructiveWarning(body.Slug, strings.Join(scope[ScopeDimPeer], ", ")))
+	}
 	if target.Sentinel {
 		if len(scope) != 0 {
 			writeError(w, http.StatusBadRequest, "invalid_scope", "scoped grants are not supported on the default-permissions list")
@@ -1843,6 +2037,7 @@ func handlePermissionsDeny(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	endStoredStewardPermission(r, target.Key, body.Slug)
 	slugs, _ := db.ListAgentPermissionsForConv(target.Key)
 	writeJSON(w, http.StatusOK, permissionsMutateResp{
 		Target:    body.Target,
@@ -1896,6 +2091,7 @@ func handlePermissionsRevoke(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
+		endStoredStewardPermission(r, target.Key, body.Slug)
 		resp.TargetKey = target.Key
 		resp.AgentID = target.AgentID
 		resp.Title = target.ConvTitle

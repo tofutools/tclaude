@@ -113,7 +113,7 @@ func TestDashboardJS_PendingDeleteWired(t *testing.T) {
 }
 
 // TestDashboardJS_DragToRetireBinWizardSkin guards the 🧙 wizard-mode
-// re-skin of the bin: retiring an agent is "banishing a familiar", so the
+// re-skin of the bin: retiring an agent is "banishing a hero", so the
 // trashcan becomes a swirling banishment portal with a "Banish" label. Like
 // the other per-theme label swaps (Summon / Awaken / Slumber), both voices
 // are always emitted and CSS picks one per theme — so a wizard-mode user

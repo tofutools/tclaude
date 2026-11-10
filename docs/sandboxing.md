@@ -19,6 +19,38 @@ Egress filtering has its own page ([Network filtering](network-filtering.md)),
 and credential-less workflows that make strict profiles livable have theirs
 ([Credential proxies](proxies.md)).
 
+## Start here
+
+**By default**, a new install runs agents inside tclaude's own sandbox. If that can't
+run on your host, agents won't start, and [Doctor](dashboard-diagnostics.md#doctor)
+tells you why.
+
+**To confine an agent:**
+
+1. Create a sandbox profile in the [library](dashboard-library.md), or use
+   `tclaude agent sandbox-profiles`.
+2. Pick it under **Sandbox profile** in the spawn dialog, or set it for a group with 🛡.
+3. Check the result: the row shows 🔒, or ⚠ if some rules are enforced more
+   loosely than configured. Its tooltip lists what applies, and
+   `tclaude agent sandbox-profiles plan` shows the plan for a profile.
+
+**When something is blocked**, one of three things happens: the launch is refused
+with a reason, it launches with a notice, or a path is simply masked inside the
+sandbox. See [Symptom → cause](#symptom-cause).
+
+**To get unstuck:**
+
+- Give the profile a rule for just that path.
+- If the refusal is about network rules or resource limits, tick **Allow launch with
+  unenforced rules** in the spawn dialog, for one fresh launch. It doesn't help with
+  masked or protected paths.
+- On a running agent, use **⚠ restart without sandbox** in its ⚙ menu, or click the
+  sandbox badge. **🔒 restore sandbox + restart** puts it back.
+- `tclaude agent debug-export <agent>` shows what really ran, as does
+  **export debug info** in the agent's ⚙ menu.
+
+The rest of this page is reference.
+
 ## Who enforces: `--sandbox-impl`
 
 The sandbox implementation is selected at spawn and recorded with the
@@ -42,7 +74,7 @@ same layer. The values:
   CLI `off` via `GEMINI_SANDBOX=false`; Copilot has no off-flag tclaude can
   set, so its configuration is verified instead and an unverifiable posture
   refuses; pi has no sandbox to turn off). Supported for Claude Code, Codex,
-  OpenCode, Copilot, Gemini CLI and pi, on Linux and macOS. For OpenCode the wrapped process is the
+  OpenCode, Copilot, Gemini CLI, pi and shell, on Linux and macOS. For OpenCode the wrapped process is the
   agentd-owned `opencode serve` executor; the attach pane stays outside.
   Requires `bwrap` and working unprivileged user namespaces on Linux; a missing
   capability refuses the launch — never a silent fallback — from whichever tier
@@ -81,25 +113,158 @@ dashboard spawn dialog — which presents the implementation choice first and
 shows a "\<Harness\> sandbox mode" row only after you pick the harness's
 built-in sandbox. Precedence, highest first: explicit flag or dialog selection,
 then `--profile`, then the group's default spawn profile, then the global
-default profile, then the harness default.
+default profile, then the install default (below), then the harness default.
+
+### The install default
+
+The install default is what an agent spawn gets when nothing above chooses an
+implementation. It has three states:
+
+- **`tclaude-layer`** — new agents use tclaude's own sandbox. `tclaude setup`
+  records this on a **new install** (a database this tclaude version created).
+- **`harness`** — each harness's own sandbox stays in charge, exactly the
+  behavior before the install default existed.
+- **undecided** — behaves like `harness`. An install that already had history
+  when it upgraded stays here, so an upgrade never changes how the next agent
+  is confined; the dashboard's **Diagnostics › Doctor** view asks the operator to choose.
+
+```bash
+tclaude agent sandbox default show
+tclaude agent sandbox default set tclaude-layer   # or: harness
+tclaude agent sandbox default clear              # back to undecided
+```
+
+`set` and `clear` need `sandbox-profiles.manage`. The install default applies to
+new agent spawns only: existing agents relaunch, reincarnate and clone under the
+implementation recorded when they were spawned, and a human's own
+`tclaude`/`tclaude session new` terminal launch keeps the harness's posture.
+On a host that cannot run tclaude's sandbox (no `bwrap`, or unprivileged user
+namespaces disabled) a spawn that gets `tclaude-layer` from the install default
+is still refused rather than silently unconfined; the refusal names both ways
+out, and Diagnostics › Doctor shows the install command.
+
+For OpenCode, Copilot and pi, which own no OS sandbox of their own, the old
+"unset" posture (for OpenCode, its command filter) has no per-spawn spelling
+once the install default is `tclaude-layer`: `harness-builtin` is refused for
+them and `off` drops the filter too. Set the install default to `harness` to
+get it back.
 
 ### Reassigning an existing agent
 
 ```bash
-tclaude agent stop <agent>
-tclaude agent sandbox-impl set <agent> resource-only
-tclaude agent resume <agent>
+tclaude agent sandbox set <agent> resource-only --restart
 ```
 
-`tclaude agent sandbox-impl show|set` takes a positional selector (there is no
-self form and no `--target`), refuses while the agent is online, validates the
-assignment against the chain the *relaunch* will resolve, and probes cgroup
+`tclaude agent sandbox show|set` (formerly `sandbox-impl`, which still works
+but is deprecated, as is its `/v1/agent/{selector}/sandbox-impl` route in
+favour of `/v1/agent/{selector}/sandbox`) takes a positional selector (there is no
+self form and no `--target`). A stopped agent is assigned and left stopped
+(wake it to apply). A running agent is refused unless `--restart` is given:
+then, once every check below has passed, the agent — which must be fully
+idle — is stopped, assigned, and resumed in the same conversation, carrying
+any attached terminal across. The assignment is validated against the chain
+the *relaunch* will resolve, and probes cgroup
 creation for implementations that cannot launch without one. It needs the
 `agent.sandbox-impl` permission, which group ownership deliberately does not
 confer and which is not granted by default. The dashboard equivalent is
-**🧩 sandbox implementation…** in the agent's row menu. A harness mode that was
+**🧩 sandbox implementation / profile…** in the agent's row menu, which restarts a
+running agent the same way. A harness mode that was
 merely derived from the old implementation is not carried forward; the harness
 default is recorded instead unless `--sandbox` pins one.
+
+Assigning tclaude's sandbox to an OpenCode agent with no private state moves
+its conversation there, because the sandboxed server cannot read the shared
+store. The conversation keeps its id and its spend, along with any subagent
+sessions under it. tclaude checks that the copy reads back the same before it
+records the assignment, then deletes the shared copy. If the copy fails, the
+agent stays as it was and the assignment reports why. A running agent is
+stopped first, as for any assignment with a restart.
+
+The move carries what `opencode export` carries, so the agent's todo list is
+deleted with the shared copy, and the assignment's result says so. Older
+conversations from before a reincarnation stay in the shared store.
+
+Assigning any other implementation moves the conversation back, because those
+read the shared store. It works the same way and has the same limits: the
+conversation keeps its id, the copy is checked before the assignment is recorded,
+and the todo list is deleted. Every conversation in the agent's private state
+moves, including any from before a reincarnation, and the private state is then
+deleted. Agents outside tclaude's sandbox can read the shared store, so these
+conversations are no longer private, and the assignment's result says so.
+Assigning tclaude's sandbox again moves only the current conversation back.
+
+This move asks first. Before anything stops or moves, the dashboard shows how many
+conversations will be exposed, that agents outside tclaude's sandbox can read them
+once moved, and that todo lists are deleted, and you confirm it there. On the
+command line `sandbox set` refuses with the same facts unless you pass
+`--yes`. An agent that asks with `--ask-human` gets you a popup with the same
+facts. Nothing asks when the agent has no private state. Private conversation
+storage is something only OpenCode has here: other harnesses keep conversations
+in a state root shared per harness, so moving out puts this agent where those
+already are.
+
+If a conversation cannot move, the assignment is refused and the agent stays as
+it was. One reason is that the shared store already holds a different conversation
+under the same id. To change that agent's posture, export it and import it under
+the posture you want.
+
+The dashboard's restart without sandbox is refused while the conversation is in
+private state, because a one-off restart should not move it. Assign the
+implementation you want instead.
+
+### Changing an existing agent's sandbox profile
+
+```bash
+tclaude agent sandbox set <agent> --sandbox-profile strict --restart
+tclaude agent sandbox set <agent> --no-sandbox-profile
+tclaude agent sandbox set <agent> tclaude-layer --sandbox-profile strict
+```
+
+The same assignment replaces the agent's **explicit** sandbox profile (the
+one its spawn named with `--sandbox-profile`), alone or together with the
+implementation, in one restart. The global and group tiers are not the
+agent's to change here: they keep following the workspace and group
+assignments. The same rules apply as for the implementation: a stopped agent
+is assigned and left stopped, a running one needs `--restart`, the
+`agent.sandbox-impl` permission is required, and every launch gate is run now
+against the chain the new profile gives, so a profile the agent's posture
+cannot carry is refused here rather than at wake time. The agent's explicit
+harness-config posture, group environment and deny overlay must still apply
+over the new chain.
+
+The change is recorded beside the policy stored at the last launch, not in
+it. `show` reports the profile as assigned until a launch applies it. If the
+relaunch cannot use the new profile (it was deleted meanwhile, say), it falls
+back to the stored policy with a warning, as for any unusable profile, and
+the assignment stays pending for the launch after. Under a relaunch policy
+that reuses stored profile contents, a changed profile is re-read, exactly as
+a changed group assignment is. Choosing the profile the agent last launched
+under again cancels a pending change.
+
+An agent whose launches omit sandbox profiles (spawned with
+`--omit-sandbox-profiles`, or under a mode that cannot carry them) takes them
+back the same way: assigning a profile, or `--no-sandbox-profile`, lifts the
+omission, and the next launch applies the global, group and explicit tiers
+again. The implementation the agent relaunches under must be able to carry
+them, so an agent on `off` needs another implementation in the same
+assignment. `--omit-sandbox-profiles` goes the other way and makes every
+launch of the agent omit all tiers; it is refused for an agent that carries a
+deny overlay. In the dashboard,
+the same dialog has a **Sandbox profile** picker beside the implementations,
+and shows the global and group profiles that also apply. It starts on **keep
+current**, which changes nothing. **Default** removes the agent's explicit
+profile, so it resolves like a spawn that names none: the global profile,
+then the group's (`--no-sandbox-profile` on the command line). **None** omits every tclaude sandbox profile
+(`--omit-sandbox-profiles`).
+
+A peer with restricted trust cannot change a profile: its sandbox
+requests carry only an implementation.
+
+### Imported agents
+
+Imports take the receiver's posture, resolved the way a spawn resolves it, and
+an unmeetable one is refused rather than downgraded. See
+[Landing posture](paf.md#landing-posture).
 
 ## The harness's own mode: `--sandbox`
 
@@ -237,8 +402,8 @@ The axes:
   Linux (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
   hosts without delegated controllers refuse by default every cgroup a launch
   cannot proceed without — an authored ceiling under any implementation, and
-  `resource-only` even with no ceiling; the dashboard's "allow launch without
-  enforcement" checkbox is the one operator escape hatch and records a visible
+  `resource-only` even with no ceiling; the dashboard's "Allow launch with
+  unenforced rules" checkbox is the one operator escape hatch and records a visible
   degradation notice. Only the opportunistic layer boundary degrades instead.
 - **`darwin_allow_mach_register`** — a Seatbelt `(allow mach-register)` opt-in
   for browser/XPC workloads on macOS.
@@ -256,9 +421,22 @@ The axes:
 ### Protected roots
 
 `~/.tclaude/data` and `~/.claude/sessions` are an absolute wall. No profile,
-include, launch contract, or flag reopens them, and any read/write rule that
-*intersects* one is refused — ancestors count, so an ordinary row over
-`~/.claude` is rejected because it contains `sessions`. Comparison is by
+include, launch contract, or flag reopens them, and any read/write rule at or
+below one is refused. A rule on an *ancestor* is allowed and keeps the wall:
+`{"path": "~", "access": "write"}` makes the whole Home writable, including
+directories created later, while the protected roots stay hidden on top of it
+under every implementation that enforces access rules (`off` and
+`resource-only` enforce none, so there the row changes nothing).
+tclaude’s sandbox also pins the directories between the grant and each
+protected root (`~/.tclaude`, `~/.claude`) so they cannot be renamed or
+removed: on Linux they become mount points, on macOS they get an unlink deny.
+Their contents stay writable. A harness-native sandbox has no way to express
+that pin, so a *write* row on an ancestor is refused under `harness-builtin`
+with `unsupported_sandbox_profile_protected_ancestor_write`; a read row is
+fine. An ancestor row with a `mount_path` is refused everywhere, because the
+projection would carry the protected tree to a sandbox path the re-hide does
+not cover.
+Comparison is by
 filesystem identity, not string: case or Unicode-normalization spellings of a
 protected root are refused alike, on every volume, including for paths that do
 not exist yet. `~/.codex` is not protected and must be reopened under a denied
@@ -298,9 +476,11 @@ history, account/onboarding data. The same tree also holds the harness's
   Codex's `harness-builtin` confinement.
 - A hook, skill, agent, or command dropped under `~/.claude/hooks` (and
   friends) runs in the human's **next, unsandboxed** session.
+- An allow rule appended to `~/.codex/rules/default.rules` pre-approves a
+  command for every later Codex session, unsandboxed ones included.
 
 So tclaude binds a closed per-harness catalog of those paths read-only by
-default, materializing missing ones first — an absent `~/.claude/hooks` under a
+default, creating missing directories first — an absent `~/.claude/hooks` under a
 writable state root is just a directory the agent can create. The floor is
 enforced by the ordinary read-grant path, so it appears in
 `sandbox-profiles plan` as `launch-contract / harness-config-floor` on both
@@ -309,7 +489,7 @@ bubblewrap and Seatbelt.
 | harness | floored |
 |---|---|
 | claude | `hooks/`, `skills/`, `agents/`, `commands/`, `output-styles/`, `plugins/`, `workflows/`, `routines/`, `rules/`, `local/`, `cowork_plugins/`, `settings.json`, `settings.local.json`, `CLAUDE.md`, `keybindings.json` |
-| codex | `hooks/`, `prompts/`, `config.toml`, `hooks.json`, `AGENTS.md`, `tclaude-agent.config.toml` |
+| codex | `hooks/`, `prompts/`, `rules/`, `config.toml`, `hooks.json`, `AGENTS.md`, `tclaude-agent.config.toml` |
 | copilot | `hooks/`, `settings.json`, `config.json`, `mcp-config.json` |
 | gemini | `extensions/`, `commands/`, `skills/`, `agents/`, `policies/`, `settings.json`, `.env`, `trustedFolders.json`, `trusted_hooks.json`, `policy_integrity.json`, `GEMINI.md` |
 | pi | nothing — a walled pi runs against tclaude's walled copy of its agent directory (`~/.tclaude/pi-agent`), and the operator's agent directory is read-only as a whole apart from its session store; see [pi](harnesses.md#pi) |
@@ -319,11 +499,11 @@ Claude Code's own sandbox deny-writes a broadly similar set for its Bash tool;
 without the floor tclaude’s sandbox was *weaker* than the harness's own
 default.
 
-Materialization writes only what is indistinguishable from absent: an empty
-directory, or `{}` for a JSON entry. An empty JSON file is **not** equivalent
-to a missing one — tclaude's own readers and Claude Code alike treat a missing
-file as `{}` but report an existing empty one as unparseable — so the seed
-matters. Existing content is never touched.
+Only directories are created. A file the host doesn't have is left out of the
+floor and never written, so **an absent file stays writable**: an agent can create
+it, and it takes effect in your next unsandboxed session. The table lists
+candidates, not a guarantee. To close the gap, create the file yourself, since a
+file that exists is bound read-only. Existing content is never touched.
 
 **Symlinked entries are skipped**, with a warning naming the path. Dotfile
 managers commonly point `~/.claude/skills` at a repo, and there is no faithful
@@ -336,11 +516,13 @@ the real directory — if you want it floored.
 **What it costs.** Unlike Claude Code's Bash-only deny list, a bubblewrap
 read-only bind blocks everyone inside the wall, the harness process included.
 In-pane writes to a floored file therefore fail: Claude Code's `/config` and
-user-scope `/permissions`, Codex's `/model` persistence, Copilot's
-trust-folder record. `/model` and directory trust for Claude Code land in
+user-scope `/permissions`, Codex's `/model` persistence and its "don't ask
+again" command approvals (Codex warns that it could not save the rule and runs
+the approved command once; the next one asks again), Copilot's trust-folder
+record. `/model` and directory trust for Claude Code land in
 `.claude.json`, which stays writable.
 
-**Two escape hatches**, least blunt first:
+**Three escape hatches**, least blunt first:
 
 1. An explicit profile write row **at exactly one floored path** drops that
    single entry — `{"path": "~/.claude/plugins", "access": "write"}` reopens
@@ -380,6 +562,40 @@ trust-folder record. `/model` and directory trust for Claude Code land in
    and [lineage](#lineage-and-spawn-write-proofs) still refuses a child posture
    wider than its recorded parent's — an agent holding the slug can pin the
    floor on a child, but can only pass `write` down if it already has it.
+
+   **Agents relaunched before #3817 may have lost it.** Resume, reincarnate
+   and some clones used to rebuild the policy from the profile chain without
+   the explicit posture, so a `read` pin over a `write` chain widened to
+   `write`. To find them:
+
+   ```bash
+   tclaude agent sandbox-profiles harness-config-repairs
+   ```
+
+   This lists every active agent whose recorded launch no longer carries the
+   posture its spawn request asked for, marked as follows:
+
+   - **widened**: asked for the floor, now runs without it.
+   - **narrowed**: asked for `write`, now runs under the floor.
+   - **unpinned**: same posture today, but a profile edit could change it.
+
+   Retired agents are skipped, so the check stays quick on an install with a
+   long retired history. `--include-retired` lists them too, marked
+   `retired`. They are listed only: a retired agent is never restored.
+
+   The command only reads. To restore agents, use Diagnostics › Doctor in the
+   dashboard. It previews them with every agent selected, and you can deselect
+   any you want to leave as they are. Restoring writes the posture back into
+   each agent's recorded launch, and the next resume keeps it. A running agent
+   takes the posture when it next resumes, or when you restart it from the
+   preview. Both the list and the restore require `sandbox-profiles.manage`.
+
+   Some agents can't be found this way, because the finder needs the recorded
+   spawn request:
+
+   - agents created by the pending-spawn sweeper or a group template, and
+     promoted or backfilled agents, which have none;
+   - a clone whose own spawn request didn't name the posture.
 
 The floor applies with tclaude’s sandbox.
 Under `harness-builtin` the harness's own policy governs and the axis is
@@ -536,6 +752,25 @@ and an **explicit per-spawn profile** (`--sandbox-profile` on
 tiers, and the omission is recorded in the launch snapshot so a resume or
 reincarnation cannot resurrect the ambient tiers.
 
+A launch mode that cannot carry tclaude sandbox profiles (Codex's
+`danger-full-access`, for example) omits them too, but that omission is the
+mode's, not the agent's choice. While the agent keeps that mode, its relaunches
+keep omitting the profiles. Once its mode can carry them again, the next resume
+or reincarnation applies the global and group assignments as they are then,
+plus the profile its spawn named with `--sandbox-profile` when its launch
+recorded one and that profile exists.
+
+Scribe and Steward summons, and trigger and process workers, get the global
+and group tiers like any other spawn into their group, along with the group's
+environment. A scribe or Steward with no profile and no environment configured
+launches with no sandbox snapshot, as it always has. A scribe's sandbox is the
+operator's policy for its group, so it is not checked against the sandbox of
+the agent that summoned it. A scribe always works in `~/.tclaude/scribe`, and a
+Steward there too unless `steward.dir` names another directory, so a profile
+that denies exactly that directory refuses the summon with an error naming the
+profile. A deny on an ancestor, such as the home directory, does
+not: the launch reopens its workspace, as it does for every agent.
+
 Cross-scope composition is **not** last-wins:
 
 - **Filesystem**: a canonical-path union where deny dominates write dominates
@@ -619,7 +854,10 @@ Renames go through `edit` (change the JSON `name`; stable-ID assignments
 follow). `import` is transactional, with assignment application opt-in.
 `draft --token --file` is the scribe seam: a dashboard-summoned drafting agent
 holding only `sandbox-profiles.draft` can propose a validated profile for human
-preview but can never save, assign, or launch. Payload reads (`show`) and all
+preview but can never save, assign, or launch. In the dashboard, *configure
+with agent* asks you to confirm that grant, then opens the scribe in its
+regular overlay chat window; the draft it returns opens in the editor for
+review. Payload reads (`show`) and all
 writes require `sandbox-profiles.manage` — human-only by default, and
 deliberately not implied by `profiles.manage`; reading the global and group
 *assignments* does not.
@@ -642,11 +880,92 @@ a "Deny access to the Home directory" rule that inserts an ordinary editable
 
 Confinement is heritable, in one direction only. Resume, reincarnation, and
 agent-initiated child spawns can never weaken a deny or introduce a reopen the
-recorded parent lacked; both count as widening and are refused. The check is
+parent lacks; both count as widening and are refused. The check is
 specificity-aware — a broad parent read above a deny does not "cover" a child's
-reopen beneath it. Launch snapshots are revalidated on resume, and drifted
-profile rows or spellings refuse with `sandbox_profile_changed`. Humans are the
-trust root and bypass lineage.
+reopen beneath it. A resume or reincarnation re-reads the agent's sandbox
+profiles and revalidates the result. If the re-read profiles cannot be
+applied (an explicit profile was deleted, the agent's groups now assign
+different profiles, or the rules no longer validate or cannot be enforced for
+this launch), it relaunches under the policy stored at the agent's last launch
+and returns a warning saying why. It refuses only when the stored policy
+cannot be launched either (on resume, as `sandbox_profile_changed`). Humans are the trust
+root and bypass lineage.
+
+An agent's child gets its sandbox as follows:
+
+- **Into the parent's own group, naming no profile:** the child inherits the
+  parent's selected profiles, resolved the way the parent's own next relaunch
+  would resolve them. Under the relaunch policy's `sandbox_profile_contents`
+  row, re-resolve (the default) gives their current contents and reuse gives
+  the contents stored at the parent's last launch. An operator who edits the
+  parent's profiles while it runs, widening or narrowing them, edits its
+  children too. That edit is the operator's, not an escalation by the parent.
+- **Into another group, naming no profile:** the child takes that group's
+  assignment. It must fit inside the parent's configuration as resolved now,
+  and a group that assigns more than the parent has is refused
+  (`sandbox_profile_restricted`).
+- **Naming a profile explicitly:** the child gets that profile, which must
+  fit inside the parent's configuration as resolved now, the same bound.
+
+Members of a template the parent instantiates, and agents launched on its
+behalf, are held to that bound too. If the parent's profiles cannot be used
+now, as when one was deleted, the bound is the policy stored at its last
+launch, as the parent's own relaunch would fall back to. Judging the bound
+creates nothing on disk: the parent's agent-owned directories are not probed
+or recreated for it.
+
+In every case the child's own `--harness-config` posture is applied last and
+checked with the profiles. A parent's own explicit posture is not inherited.
+Spawns by a peer, a federation request or an external steward have no parent
+sandbox here: they take the target group's assignment.
+
+### Denying a child more: `--sandbox-deny`
+
+A spawner can deny its child paths on top of whatever profiles the child
+resolves:
+
+```bash
+tclaude agent spawn crew --name worker --sandbox-deny ~/secrets --sandbox-deny /srv/keys
+```
+
+The API field is `sandbox_deny`: absolute paths, or `~/…` under the daemon's
+home. The CLI expands `~` and makes relative paths absolute. In the
+dashboard's spawn dialog, **Deny paths** (under Sandbox profile) takes the
+same paths as chips. It flags a relative path and a deny over the working
+directory, and when the chosen sandbox cannot enforce a deny it says so and
+keeps the paths, so the spawn is refused rather than launched without them.
+It is not offered for a spawn on another node.
+
+- **A denied path covers its whole subtree.** A more specific grant beneath
+  it, which profile composition alone would keep (the most specific rule
+  wins), is removed. The same goes for a temporary filesystem or a Unix
+  socket allowed there, and for a grant that mounts an ancestor of the denied
+  path at another sandbox path, since that path would expose the subtree. A
+  composition notice on the launch names what was removed.
+- **It is the agent's configuration.** The overlay is stored with the child
+  and reapplied at every resume and reincarnation, under re-resolve and reuse
+  alike. A later profile edit that adds a grant beneath a denied path is
+  removed again at the next relaunch rather than reopening it.
+- **It is inherited.** A child's overlay is its parent's plus its own, into
+  the parent's group or another, so denies only accumulate down a lineage.
+  A child can never drop its parent's. Members of a template the agent
+  instantiates, and agents launched on its behalf, inherit it too.
+- **It fails closed.** A spawn or relaunch whose launch would not enforce
+  the overlay is refused: a sandbox implementation of `off` or
+  `resource-only`, or a mode that omits the sandbox profiles
+  (`--omit-sandbox-profiles` is refused alongside `--sandbox-deny`), and an
+  operator's temporary sandbox-off restart.
+- **A launch never reopens it.** A launch opens some paths for itself: the
+  working directory, the workspace's Git administrative directories, the
+  harness's own state, and agent-owned directories. A denied path covering
+  one of those is not opened for it; the launch is refused and the error
+  names the path. The spawn request is refused up front for the working
+  directory and the Git directories; the rest are only known when the
+  session assembles its launch, and a spawn, resume, reincarnation or clone
+  fails there instead.
+
+The overlay denies filesystem paths only. External steward spawns cannot set
+it, and a group exported and imported elsewhere lands without it.
 
 A second guardrail closes the anchor-point escape: a sandboxed parent choosing
 a child cwd its own sandbox cannot write. agentd answers such a spawn with a
@@ -718,11 +1037,16 @@ in-code spec identical):
 Re-run the installer after upgrades — older installs lack newer keys such as
 `failIfUnavailable`. Conflicting scalars are preserved and reported. On shared
 machines, use managed settings with `forbidUnsandboxedCommands: true`. tclaude
-also applies a per-launch overlay denying the exact tmux socket path, so agents
-cannot `send-keys` at tclaude's tmux server.
+also applies a per-launch overlay denying the exact tmux socket path on Linux, so
+agents cannot `send-keys` at tclaude's tmux server. macOS's built-in sandbox has no
+exact socket deny, and the overlay is skipped in mode `off`.
 
 ### Honestly residual holes
 
+- **Settings files you don't have aren't floored.** An agent can create an absent
+  `settings.json`, `CLAUDE.md`, `AGENTS.md` or similar file in the harness config
+  directory, and your next unsandboxed session reads it. See
+  [the harness-config floor](#the-harness-config-floor).
 - **`~/.claude/.claude.json` stays writable, and it carries `mcpServers`.**
   Under tclaude’s sandbox the harness-config floor cannot cover it: Claude Code
   writes that file continuously (project records, directory trust, history),
@@ -744,6 +1068,12 @@ cannot `send-keys` at tclaude's tmux server.
   so an empty `~/.gemini/.env` would hide the operator's `~/.env`. To close
   the hole, create the files you care about yourself; once present, they are
   bound read-only.
+- **Codex's project layer lives in the workspace.** In a project Codex
+  trusts, it also loads `<repo>/.codex/config.toml` and
+  `<repo>/.codex/rules/*.rules`. Both sit in the writable workspace, outside the
+  floor's state-root catalog, so an agent can still add allow rules that your
+  next unsandboxed Codex in that repo honors. Review `.codex/` changes the way
+  you review code.
 - **MCP bypasses both layers entirely.** MCP servers run in the harness host
   process over their own transport, outside the Bash sandbox and the permission
   rules. An agent that cannot see `~/.config/gh` may still file a GitHub issue
@@ -764,7 +1094,7 @@ cannot `send-keys` at tclaude's tmux server.
   badge is a launch-time verdict — resume re-resolves it.
 
 The dashboard badges the posture per agent: `🔒` sandbox on,
-`⚠` off or unknown, nothing for plain inherit. An unsandboxed-autonomy warning
+`⚠` off, unknown or not fully enforced, nothing for plain inherit. An unsandboxed-autonomy warning
 fires wherever auto-approval pairs with an unprovable sandbox. The
 [credential proxies](proxies.md) are what make denying `~/.ssh` and
 `~/.config/gh` survivable for agents that still need to push branches.
@@ -825,7 +1155,7 @@ Two consequences worth knowing:
   all; see the best-effort note above. With no `resource_limits` authored that
   degrades with a diagnosis. With a ceiling authored it fails closed, exactly
   as an undelegated host does — there is no flag to wave it through; the
-  dashboard's "Allow launch without enforcement" fresh-spawn control is the
+  dashboard's "Allow launch with unenforced rules" fresh-spawn control is the
   only thing that widens it.
 
 UTS is deliberately not unshared. The sandbox already cannot change a hostname
@@ -864,7 +1194,7 @@ A sandbox profile can select the filesystem root explicitly with
 read-only host root, or use `separate` to request the minimal constructed root
 even when network and Unix sockets remain open. Explicit separation is
 supported by tclaude’s sandbox on Linux for Claude Code, Codex, OpenCode,
-Copilot, and Gemini CLI; other targets refuse it during preview/spawn rather than ignoring it.
+Copilot, Gemini CLI and shell; pi and other targets refuse it during preview/spawn rather than ignoring it.
 
 The setting composes monotonically. `separate` in any included, global, group,
 or explicit profile wins. `inherit` cannot weaken a private/restricted network
@@ -874,7 +1204,8 @@ automatic derivation they had before the control existed.
 
 A profile that leaves network access open but authors the `unix_sockets` axis
 as `closed` or an allow `list` gets a **host-network constructed root** on
-Linux for Claude Code, Codex, OpenCode, Copilot, and Gemini CLI: bubblewrap builds the same fresh
+Linux for Claude Code, Codex, OpenCode, Copilot, Gemini CLI and shell, but not pi:
+bubblewrap builds the same fresh
 root and PID namespace as the isolated posture, binds the agentd socket and any
 listed sockets back, and does NOT create a network namespace, so host IP
 networking, host loopback services, and the IDE bridge keep working. For
@@ -939,6 +1270,18 @@ The isolated posture has an explicit platform delta:
 | Agentd | Canonical socket bind-mounted into the constructed root | Canonical socket and surviving aliases are the only outbound Unix-socket exceptions |
 | Processes and filesystem root | Isolated PIDs and a constructed root | No PID isolation and no constructed root; hidden paths remain enumerable |
 
+tclaude writes the macOS profile in a fixed rule order: `(allow default)`
+first, then every deny, and every other allow (`darwin_allow_mach_register`,
+Local access ports) last. Seatbelt is usually described as last-match-wins,
+where the order of unrelated rules would not matter. It does not behave that
+way: a later deny on a Unix-socket path intermittently overrides an earlier
+TCP localhost allow, even though that deny cannot match the TCP connect.
+Measured on macOS 26.7.2 and 27.2, the earlier allow lost about 1 connect in
+10 and 8 in 10. With every allow last, it won every time. The isolated posture
+has no separate allows. Its exceptions sit inside the deny itself
+(`require-not`), and that form holds. The macOS assumption suite checks both
+orders on every macOS CI run.
+
 The stricter Darwin localhost behavior is deliberate. If a real harness later
 requires an internal localhost server, the remedy is a harness-descriptor
 capability plus launch-time refusal for Darwin isolated mode. It must not gain a
@@ -948,24 +1291,37 @@ If a fresh dashboard spawn requests closed network access on an implementation
 that cannot enforce it, the launch normally refuses with:
 
 ```text
-<harness> (<scope> scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch without enforcement” in the dashboard spawn dialog
+<harness> (<scope> scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch with unenforced rules” in the dashboard spawn dialog
 ```
 
 The human operator may explicitly check that named dashboard escape hatch for
-one fresh launch. Only this exact closed-network capability gap is widened:
-network access becomes open, while enforceable filesystem and Unix-socket rules
+one fresh launch. This also drops network deny rows the target can't enforce and
+waives resource limits the host can't apply, each with a recorded notice. It admits
+pi `auto` outside the wall too, which shows up only in the spawn audit. For a
+closed-network gap, network
+access becomes open, while enforceable filesystem and Unix-socket rules
 keep their planned posture. Protected-root checks, filtered model-transport
-gates, implementation availability, and every other launch refusal remain
+gates, implementation availability, and other launch refusals remain
 non-overridable. Raw API callers, including agents and human-class credentials,
-cannot set the override.
+cannot set the override; an authorized federated spawn can.
 
-The authorization is deliberately neither saved nor inherited. Resume,
+The network authorization is deliberately neither saved nor inherited. Resume,
 reincarnate, and clone of an overridden agent do not carry it forward and refuse
-again unless a future fresh spawn is explicitly authorized in the dashboard.
+again unless a future fresh spawn is explicitly authorized in the dashboard. Two
+things differ: a pi `auto` agent's resume, reincarnation or no-copy clone keeps its
+posture, and a waived resource limit's notice stays on the launch record.
 The launch snapshot records a degradation notice with network reason
 `operator_unenforced_launch_override` and effect `not_enforced`; the dashboard
 renders a warning badge and the exact notice rather than claiming a sandbox
-lock or changing the recorded OS-sandbox verdict.
+lock or changing the recorded OS-sandbox verdict. The same goes for any other
+degradation notice with that effect, such as `operator_reduced_network_deny_override`
+for omitted deny entries; only a `resource_limits` notice leaves the lock.
+
+A sandbox that is on but enforces a rule more loosely than configured, recorded
+as a notice with effect `enforced_wider`, gets the same warning badge. Its hover
+says `PARTLY ENFORCED`, confirms the sandbox is on and names what is loose. This
+is display only: the launch and its enforcement are unchanged, and the badge
+keeps the click that temporarily disables the sandbox.
 
 ### An untrusted `bwrap`
 
@@ -1073,6 +1429,7 @@ cause, not a restored pre-flight contract.
 | Profile looks strict, nothing is denied | Claude Code sandbox `inherit`/`off` — the deny rows are emitted but the sandbox never engages |
 | Agent read a denied path with the `Read` tool | Expected under `deny ~` — that shape reaches layer 1 only |
 | Agent reached something the profile denied | Check MCP, which bypasses the sandbox |
+| Claude Code loses the model hours into a filtered session | A Claude subscription login refreshes its token at `platform.claude.com`; include `net-anthropic` (see [Network filtering](network-filtering.md#the-model-transport-gate)). The rotated token is written back to `~/.claude/.credentials.json` from inside tclaude’s sandbox |
 | `/config`, `/permissions`, or `/model` write fails in the pane | The harness-config floor — reopen the one path, or set `harness_config: "write"` |
 
 ## See also

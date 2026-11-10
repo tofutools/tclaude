@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -53,20 +55,9 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 		portStr = strconv.Itoa(port)
 	}
 	bindAddr := net.JoinHostPort(bindHost, portStr)
-	ln, err := net.Listen("tcp", bindAddr)
+	listeners, addr, err := bindDashboardListeners(bindAddr, port == 0)
 	if err != nil {
-		return nil, "", fmt.Errorf("bind dashboard listener %s: %w", bindAddr, err)
-	}
-	listeners := []net.Listener{ln}
-	addr := ln.Addr().(*net.TCPAddr)
-	if !addr.IP.IsUnspecified() && !addr.IP.IsLoopback() {
-		loopbackAddr := net.JoinHostPort(defaultDashboardBind, strconv.Itoa(addr.Port))
-		loopback, loopbackErr := net.Listen("tcp", loopbackAddr)
-		if loopbackErr != nil {
-			_ = ln.Close()
-			return nil, "", fmt.Errorf("bind mandatory loopback dashboard listener %s: %w", loopbackAddr, loopbackErr)
-		}
-		listeners = append(listeners, loopback)
+		return nil, "", err
 	}
 	mux := http.NewServeMux()
 	// The dashboard is the one human-facing surface on this listener — a
@@ -83,8 +74,10 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 		// auditRequests records dashboard commands (spawn, message,
 		// lifecycle, access-request decisions, …) to the audit log;
 		// non-command routes (/, /static, the snapshot poll) fall through
-		// unmatched. See audit.go (JOH-268).
-		Handler:           auditRequests(mux),
+		// unmatched. See audit.go (JOH-268). Live-page origins
+		// (*.ui.localhost) split off to the stage handler before any of
+		// that; see stage.go.
+		Handler:           buildPopupHandler(auditRequests(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	for _, listener := range listeners {
@@ -106,6 +99,42 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 		urlHost = defaultDashboardBind
 	}
 	return srv, "http://" + net.JoinHostPort(urlHost, strconv.Itoa(addr.Port)), nil
+}
+
+// dashboardRandomPortAttempts bounds how often a random-port dashboard on a
+// concrete non-loopback bind looks for a port also free on loopback.
+const dashboardRandomPortAttempts = 8
+
+// dashboardListen opens a dashboard listener (a seam for the port-race test).
+var dashboardListen = net.Listen
+
+// bindDashboardListeners binds bindAddr and, for a concrete non-loopback
+// host, the mandatory loopback listener on the same port. The OS picks a
+// random port free on the non-loopback address only, so loopback can already
+// hold it: with a random port the pair is tried again on a fresh port, a
+// bounded number of times. A fixed port is the operator's, so a clash there
+// is an error at once.
+func bindDashboardListeners(bindAddr string, randomPort bool) ([]net.Listener, *net.TCPAddr, error) {
+	for attempt := 1; ; attempt++ {
+		ln, err := dashboardListen("tcp", bindAddr)
+		if err != nil {
+			return nil, nil, fmt.Errorf("bind dashboard listener %s: %w", bindAddr, err)
+		}
+		addr := ln.Addr().(*net.TCPAddr)
+		ln = registerStageDaemonListener(ln)
+		if addr.IP.IsUnspecified() || addr.IP.IsLoopback() {
+			return []net.Listener{ln}, addr, nil
+		}
+		loopbackAddr := net.JoinHostPort(defaultDashboardBind, strconv.Itoa(addr.Port))
+		loopback, loopbackErr := dashboardListen("tcp", loopbackAddr)
+		if loopbackErr == nil {
+			return []net.Listener{ln, registerStageDaemonListener(loopback)}, addr, nil
+		}
+		_ = ln.Close()
+		if !randomPort || attempt >= dashboardRandomPortAttempts || !errors.Is(loopbackErr, syscall.EADDRINUSE) {
+			return nil, nil, fmt.Errorf("bind mandatory loopback dashboard listener %s: %w", loopbackAddr, loopbackErr)
+		}
+	}
 }
 
 // dashboardURLHost maps a bind host to the host to put in the
@@ -196,8 +225,9 @@ type approvalRequest struct {
 // approvalRegistry holds pending approvals keyed by ID. Browser
 // callbacks resolve the matching channel.
 type approvalRegistry struct {
-	mu      sync.Mutex
-	pending map[string]*approvalRequest
+	mu        sync.Mutex
+	pending   map[string]*approvalRequest
+	admission approvalAdmission
 }
 
 // maxResolvedApprovals bounds the dashboard's recent-history query.
@@ -224,6 +254,7 @@ func (a *approvalRegistry) recordResolved(req *approvalRequest, outcome string) 
 		slog.Warn("access request: failed to persist resolved request",
 			"id", req.id, "perm", req.perm, "outcome", outcome, "err", err)
 	}
+	approvalResolved(req, outcome)
 }
 
 // outcomeLabel maps a decided outcome to its history label. The timeout path
@@ -475,6 +506,7 @@ func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		slog.Warn("access request: failed to persist pending request",
 			"id", req.id, "perm", req.perm, "conv", req.convID, "err", err)
 	}
+	mirrorApproval(req)
 	forwardAwayApproval(req)
 	for {
 		select {
@@ -514,6 +546,42 @@ func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 			return false
 		}
 	}
+}
+
+// newAgentApprovalRequest is the shared core of an agent-initiated approval
+// popup: the requester, the request line (path and query projected the same
+// way the HTTP log projects them, so a sensitive route never lands in the
+// approval record), the timeout and the decision/extend channels. Each gate
+// site fills in what it alone knows: the preview, the targets, the scope and
+// whether "always allow" is offered.
+func newAgentApprovalRequest(r *http.Request, perm, callerConv, callerTitle string, timeout time.Duration) *approvalRequest {
+	path, sensitive := projectSafeHTTPLogPath(r.URL.Path)
+	query := r.URL.RawQuery
+	if sensitive {
+		query = ""
+	}
+	return &approvalRequest{
+		id:        newApprovalID(),
+		perm:      perm,
+		convID:    callerConv,
+		convTitle: callerTitle,
+		method:    r.Method,
+		path:      path,
+		rawQuery:  query,
+		createdAt: time.Now(),
+		timeout:   timeout,
+		decision:  make(chan approvalOutcome, 1),
+		extend:    make(chan time.Duration, 1),
+	}
+}
+
+// convDisplayTitle is a conversation's display title for a popup, "" when it
+// has no fresh row.
+func convDisplayTitle(convID string) string {
+	if row := agent.FreshConvRowResolved(convID); row != nil {
+		return agent.DisplayTitle(row)
+	}
+	return ""
 }
 
 // newApprovalID returns a 32-hex-char random token. Callers should
@@ -775,6 +843,52 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 // snapshotApprovalRequestBody builds the human-facing preview for a permission
 // request. The preview is bounded and the request body is restored for the
 // downstream handler.
+// approvalFactsKey carries a request's approvalFactsFunc on its context.
+type approvalFactsKey struct{}
+
+// approvalFactsFunc states, from the request body, what approving does that the
+// body does not say: a confirmation flag shows as true, not as what it accepts.
+// "" adds nothing.
+type approvalFactsFunc func(body []byte) string
+
+// decodeLikeHandler reads a request body's first JSON value, as the handlers do,
+// so nothing after it can hide a confirmation from the facts.
+func decodeLikeHandler(body []byte, v any) bool {
+	return json.NewDecoder(bytes.NewReader(body)).Decode(v) == nil
+}
+
+// withApprovalFacts makes a handler's facts part of any popup a gate raises for
+// r, so the human sees what a client asking for the same thing is shown.
+func withApprovalFacts(r *http.Request, facts approvalFactsFunc) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), approvalFactsKey{}, facts))
+}
+
+// approvalPreviewFacts puts the request's facts ahead of its body in a popup.
+// Call it after the body is snapshotted. Facts read the body the handler will,
+// not the preview, which is capped. The body stays in memory until the human
+// answers, charged to slot; an error says why it cannot be held, or that it could
+// not be read whole, since a handler must never get a short body as if complete.
+func approvalPreviewFacts(r *http.Request, slot *approvalTicket, bodyPreview, bodyLabel string) (string, string, error) {
+	facts, _ := r.Context().Value(approvalFactsKey{}).(approvalFactsFunc)
+	if facts == nil {
+		return bodyPreview, bodyLabel, nil
+	}
+	var body []byte
+	if r.Body != nil {
+		var err error
+		body, err = approvals.readBody(slot, r.Body)
+		if err != nil {
+			return "", "", err
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	stated := facts(body)
+	if stated == "" {
+		return bodyPreview, bodyLabel, nil
+	}
+	return stated + "\n\nRequest:\n" + bodyPreview, "What approving does", nil
+}
+
 func snapshotApprovalRequestBody(r *http.Request, _ string) string {
 	return snapshotRequestBody(r)
 }
@@ -786,21 +900,25 @@ const (
 
 // snapshotRequestBody reads the request body, builds a bounded preview
 // string for the popup (JSON-prettified when it parses), and replaces
-// r.Body with a fresh reader holding the SAME bytes so the downstream
-// handler still receives its full request. Returns the preview ("" if no
-// body).
+// r.Body with a reader that yields the SAME bytes, so the downstream handler
+// still receives its full request. Returns the preview ("" if no body).
 //
 // The preview is capped at maxApprovalBodyPreview and marked "…[truncated]" when
-// it overflows — that only affects what the human is shown. The RESTORED
-// body is preserved up to maxApprovalRestoreBody (well above the largest legit
-// mutating body — a 256 KiB clipboard payload is ≈1.5 MiB on the wire),
-// so the popup never silently shortens what the handler decodes. A body
-// past maxApprovalRestoreBody is restored truncated, but the handler's own
-// MaxBytesReader then rejects it with the same 400 it would return with no
-// popup — never a silent mis-decode. (Restoring only the 64 KiB preview,
-// as this did before, truncated a large clipboard body AFTER the human had
-// approved it: an approve-then-fail.)
+// it overflows — that only affects what the human is shown. About
+// maxApprovalRestoreBody stays in memory here while the popup waits. Past that
+// the buffered prefix is handed back in front of the unread remainder, which
+// waits on the connection, unless a route's approval facts read it (see
+// approvalPreviewFacts, which charges it), so the handler's own MaxBytesReader
+// decides as it would with no popup. (Restoring only what was read shortened a large body AFTER the
+// human had approved it: an approve-then-fail.)
 func snapshotRequestBody(r *http.Request) string {
+	// An archive import's popup shows its review instead; see popup_review.go.
+	switch r.URL.Path {
+	case "/v1/process/import":
+		return "[workflow file omitted]"
+	case "/v1/agent-bundle/import", "/v1/groups/import", "/v1/groups/import/inspect":
+		return "[archive omitted]"
+	}
 	// A notify-human attachment can be hundreds of MiB. Its small human-readable
 	// metadata lives in a bounded header specifically so an ad-hoc approval can
 	// describe the action without consuming, buffering, or truncating the binary
@@ -817,19 +935,28 @@ func snapshotRequestBody(r *http.Request) string {
 	if r.Body == nil {
 		return ""
 	}
-	buf, err := io.ReadAll(io.LimitReader(r.Body, maxApprovalRestoreBody))
-	_ = r.Body.Close()
+	orig := r.Body
+	// One byte past the bound, so "exactly at it" and "over it" are distinguishable.
+	buf, err := io.ReadAll(io.LimitReader(orig, maxApprovalRestoreBody+1))
 	if err != nil {
+		_ = orig.Close()
 		r.Body = io.NopCloser(bytes.NewReader(nil))
 		return ""
 	}
-	// Restore the full body we read, so the handler decodes exactly what the
-	// client sent (up to the restore bound).
-	r.Body = io.NopCloser(bytes.NewReader(buf))
+	if len(buf) > maxApprovalRestoreBody {
+		r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(buf), orig), Closer: orig}
+	} else {
+		_ = orig.Close()
+		r.Body = io.NopCloser(bytes.NewReader(buf))
+	}
 	if len(buf) == 0 {
 		return ""
 	}
-	// Build the preview from the leading bytes only.
+	// Build the preview from the leading bytes only. Raw bytes tell a person
+	// nothing, and they would be approving them.
+	if binaryApprovalBody(buf[:min(len(buf), maxApprovalBodyPreview)]) {
+		return "[binary request body omitted; this popup cannot show what it holds]"
+	}
 	preview := buf
 	truncated := false
 	if len(preview) > maxApprovalBodyPreview {

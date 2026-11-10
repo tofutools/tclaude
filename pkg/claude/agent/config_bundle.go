@@ -35,13 +35,16 @@ type configImportParams struct {
 
 // ConfigCmd exposes operator setup transfer independently of federation.
 func ConfigCmd() *cobra.Command {
-	return boa.CmdT[struct{}]{Use: "config", Short: "Export and import portable setup bundles", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
+	return boa.CmdT[struct{}]{Use: "config", Short: "Export and import setup bundles; show and change terminal-launch settings, or a linked node's config (--node)", ParamEnrich: common.DefaultParamEnricher(), SubCmds: []*cobra.Command{
 		boa.CmdT[configExportParams]{Use: "export", Short: "Export a portable config bundle", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *configExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runConfigExport(p, os.Stdout, os.Stderr))
+			configExit(runConfigExport(p, cliStdout, cliStderr))
 		}}.ToCobra(),
 		boa.CmdT[configImportParams]{Use: "import", Short: "Preview and selectively apply a config bundle", Long: "Defaults to preview, including before/after values and security tags. Use --apply to write; conflicts require --replace. Sections: roles, saved-prompts, sandbox-profiles, profiles, templates, process-templates, default-permissions, config. Agents need config.import, which permits changing agent authority.", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *configImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runConfigImport(p, os.Stdin, os.Stdout, os.Stderr))
+			configExit(runConfigImport(p, os.Stdin, cliStdout, cliStderr))
 		}}.ToCobra(),
+		configGetCmd(),
+		configSetCmd(),
+		configClearCmd(),
 	}}.ToCobra()
 }
 func runConfigExport(p *configExportParams, out, stderr io.Writer) int {

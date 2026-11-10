@@ -123,6 +123,29 @@ func TestFederation_HistoryRoundTripNode(t *testing.T) {
 				require.NoError(t, agentd.Spawn.SpawnNew(clcommon.SpawnArgs{Harness: "copilot", SessionID: in.Conv, Label: "traveller", Cwd: cwd, TrustDir: true, Approval: "all", SandboxImplementation: "off"}))
 			case "codex":
 				f.HaveAliveCodexSession(in.Conv, "traveller", "traveller-pane", cwd)
+				if mode := os.Getenv("TCLAUDE_TEST_HISTORY_SANDBOX"); mode != "" {
+					f.HaveEnrolledAgent(in.Conv)
+					agentID, err := db.AgentIDForConv(in.Conv)
+					require.NoError(t, err)
+					profile, err := db.AgentRelaunchProfileForConv(in.Conv)
+					require.NoError(t, err)
+					if profile == nil {
+						profile = &db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
+					}
+					profile.HarnessBuiltinMode = &mode
+					require.NoError(t, db.SetAgentRelaunchProfile(agentID, *profile))
+					// A launch records its mode on all three, and the session row
+					// projects onto the profiles, so they have to agree.
+					row, err := db.LoadSession("traveller")
+					require.NoError(t, err)
+					row.HarnessBuiltinMode = mode
+					require.NoError(t, db.SaveSession(row))
+					resume, err := db.ConversationResumeProfileForConv(in.Conv)
+					require.NoError(t, err)
+					require.NotNil(t, resume)
+					resume.FallbackRelaunch.HarnessBuiltinMode = &mode
+					require.NoError(t, db.SetConversationResumeProfile(in.Conv, *resume))
+				}
 			default:
 				f.HaveAliveSession(in.Conv, "traveller", "traveller-pane", cwd)
 			}
@@ -324,6 +347,12 @@ func TestFederation_OperatorTeleportRecallRoundTrip(t *testing.T) {
 	runHistoryRoundTrip(t, "claude", false, false, true)
 }
 
+// A move must not land an agent with wider access than it had: a Codex agent
+// under read-only is still read-only on the far node and back home.
+func TestFederation_TeleportKeepsATighterCodexMode(t *testing.T) {
+	runHistoryRoundTrip(t, "codex", false, false, false, true)
+}
+
 func TestFederation_HomeMailNativeRoundTrip(t *testing.T) {
 	runHistoryRoundTrip(t, "claude", false, true)
 }
@@ -366,7 +395,12 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool, mailChecks ...bo
 		}
 	}))
 	t.Cleanup(func() { h.Close(); srv.Close(); _ = st.Close() })
-	a, b := startHistoryNode(t, name, "A"), startHistoryNode(t, name, "B")
+	readOnly := len(mailChecks) > 2 && mailChecks[2]
+	var nodeEnv []string
+	if readOnly {
+		nodeEnv = []string{"TCLAUDE_TEST_HISTORY_SANDBOX=read-only"}
+	}
+	a, b := startHistoryNode(t, name, "A", nodeEnv...), startHistoryNode(t, name, "B", nodeEnv...)
 	require.NotEqual(t, a.Instance, b.Instance)
 	require.NotEqual(t, a.Cwd, b.Cwd)
 	require.NoError(t, st.Admit(a.Instance))
@@ -528,6 +562,15 @@ func runHistoryRoundTrip(t *testing.T, name string, large bool, mailChecks ...bo
 			})
 		}
 		require.NotEmpty(t, result.Spawn.Conv, string(raw))
+		if readOnly {
+			code, raw := historyNodeRequest(t, node, "GET", "/v1/agent/"+result.Spawn.Conv+"/sandbox-impl", "", nil)
+			require.Equal(t, 200, code, string(raw))
+			var posture struct {
+				Sandbox string `json:"sandbox"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &posture))
+			require.Equal(t, "read-only", posture.Sandbox, "the agent lands no wider than it was")
+		}
 		return result.Spawn.Conv
 	}
 	outward := teleport(a, b, sourceConv, false)

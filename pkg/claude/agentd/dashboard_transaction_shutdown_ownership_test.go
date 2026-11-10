@@ -29,7 +29,7 @@ func TestDashboardTransactionShutdownExclusiveOwnership(t *testing.T) {
 	}
 	for _, required := range []string{
 		`id="shutdown-modal"`, `kind === 'shutdown-agent'`,
-		`wizard="Slumber this familiar?"`,
+		`wizard="Slumber this hero?"`,
 		`wizard=${retrying && !forceChoice ? 'Retry slumber' : '🌙 Slumber'}`,
 		`wizard=${retrying && forceChoice ? 'Retry force slumber' : 'Force slumber'}`,
 	} {
@@ -38,7 +38,6 @@ func TestDashboardTransactionShutdownExclusiveOwnership(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"body.wizard #shutdown-modal .modal {",
 		"body.wizard #shutdown-modal #shutdown-soft {",
 		"body.wizard #shutdown-modal #shutdown-force {",
 	} {

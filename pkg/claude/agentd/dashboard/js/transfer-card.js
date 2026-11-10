@@ -4,6 +4,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { fileProgress, setTransferMinimized, subscribeTransfers } from './transfers.js';
 import { fileSize } from './remote-files-panel.js';
 
@@ -37,15 +38,15 @@ function rowStatus(transfer, file, done) {
 export function TransferCard({ transfer }) {
   const per = fileProgress(transfer.files, transfer.sent);
   if (transfer.minimized) {
-    return html`<button type="button" class="transfer-pill" title="Show upload progress"
+    return html`<button data-ui-exempt type="button" class="transfer-pill" title="Show upload progress"
       onClick=${() => setTransferMinimized(transfer.id, false)}>⇪ ${transfer.phase === 'uploading' ? `${percent(transfer)}%` : heading(transfer)}</button>`;
   }
-  return html`<div class=${`transfer-card transfer-${transfer.phase}`} role="status" aria-live="polite">
+  return html`<div class=${`transfer-card ui-popover transfer-${transfer.phase}`} role="status" aria-live="polite">
     <div class="transfer-top">
       <span class="transfer-title">${heading(transfer)}</span>
-      ${transfer.cancel ? html`<button type="button" class="mux-btn transfer-cancel" onClick=${transfer.cancel}>
-        ${transfer.files.length > 1 ? 'Cancel all' : 'Cancel'}</button>` : null}
-      <button type="button" class="transfer-min" title="Minimise" aria-label="Minimise upload progress"
+      ${transfer.cancel ? html`<${Button} size="sm" class="transfer-cancel" onClick=${transfer.cancel}>
+        ${transfer.files.length > 1 ? 'Cancel all' : 'Cancel'}<//>` : null}
+      <button data-ui-exempt type="button" class="transfer-min" title="Minimise" aria-label="Minimise upload progress"
         onClick=${() => setTransferMinimized(transfer.id, true)}>▁</button>
     </div>
     ${transfer.files.map((file, i) => html`<div class="transfer-file" key=${i}>

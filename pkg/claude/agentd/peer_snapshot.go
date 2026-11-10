@@ -34,8 +34,10 @@ func (v *peerView) snapshot() (snapshotPayload, error) {
 	// Normal dashboard clients expect arrays/maps, even for withheld concepts.
 	// Initialize only empty collections; this introduces no values or names.
 	fields := allPeerProjectionFields
-	catalogs := peerSpawnCatalogReadable(v)
-	if catalogs || v.allows(peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage}, 0) {
+	// An agent's view carries no spawn catalogs or defaults: profiles can
+	// hold environment values, and agents cannot spawn through a view.
+	catalogs := v.agent == nil && peerSpawnCatalogReadable(v)
+	if catalogs || v.agent == nil && v.allows(peerViewRule{feature: "spawn.defaults", requires: PermNodeSpawnDefaultsManage}, 0) {
 		fields = peerDefaultsProjectionFields
 		if p := globalDefaultProfile(); p != nil {
 			out.SpawnProfileDefault = p.Name
@@ -51,6 +53,19 @@ func (v *peerView) snapshot() (snapshotPayload, error) {
 		}
 	}
 	filterPeerFields(reflect.ValueOf(&out).Elem(), peerSnapshotGate(fields))
+	// The permission editor builds its rows from the slug catalogue, so a
+	// peer shown a group's member permissions gets it too: without it the
+	// editor would list no rows and save an empty list over them.
+	// So does a peer shown an agent's own overrides, which come with the
+	// scope picker's group names: only the groups the peer sees.
+	editsAgents, err := projectPeerAgentsPermissions(v, &out, agents)
+	if err != nil {
+		return snapshotPayload{}, err
+	}
+	if v.agent == nil && (editsAgents || peerReadsAnyGroupPermissions(v.peer.InstanceID, groups)) {
+		out.Slugs = visiblePermissionRegistry(configuredProxyVisibility())
+		sort.Slice(out.Slugs, func(i, j int) bool { return out.Slugs[i].Slug < out.Slugs[j].Slug })
+	}
 	emptyPeerCollections(reflect.ValueOf(&out).Elem())
 	// The restricted projection always sends its (small) registry fields. Never
 	// accept a local static_version, or let cached blobs cross a peer switch or
@@ -118,12 +133,15 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 	rules := peerViewRules()
 	// The settings a peer may change in a group reach it too, so its editors
 	// start from the real values (peerGroupGrants lists its grants once).
-	var settings map[string][]string
-	if v != nil {
+	// An agent's view gets neither: its routes change no setting it would
+	// need to read first, and environment or startup context are the
+	// operator's.
+	var settings, agentHeld map[string][]string
+	if v != nil && v.agent == nil {
 		settings = peerGroupGrants(v.peer.InstanceID, groups)
+		// So do the member settings its editors change (peerAgentGrants).
+		agentHeld = v.agentGrants(groups)
 	}
-	// So do the member settings its editors change (peerAgentGrants).
-	agentHeld := v.agentGrants(groups)
 	for _, g := range groups {
 		if g.IsArchived() || (v != nil && !fedPeerGroupVisible(v.peer.InstanceID, g.ID)) {
 			continue
@@ -215,6 +233,9 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 		emptyPeerCollections(reflect.ValueOf(&row).Elem())
 		if held := settings[g.Name]; len(held) > 0 {
 			projectPeerGroupSettings(&row, g, v.peer.InstanceID, held)
+			if err := projectPeerGroupPermissions(&row, g, held); err != nil {
+				return nil, nil, err
+			}
 		}
 		for i := range row.Members {
 			if m := &row.Members[i]; slices.Contains(settings[g.Name], PermGroupsMembersManage) || len(agentHeld[m.AgentID]) > 0 {
@@ -253,7 +274,7 @@ func servePeerSummary(w http.ResponseWriter, _ *http.Request, v *peerView, _ pee
 			waiting++
 		}
 	}
-	if v == nil || db.FederationPeerUnrestricted(v.peer.InstanceID) {
+	if v == nil || v.unrestricted() {
 		// Unrestricted visibility includes loose agents, which are deliberately
 		// absent from a restricted peer's group-scoped projection.
 		active, err := db.ListActiveAgents()
@@ -304,6 +325,10 @@ func servePeerSummary(w http.ResponseWriter, _ *http.Request, v *peerView, _ pee
 			out["resources"] = resources
 			out["health"] = resources.Status
 		}
+	}
+	// The task boards it reads, summed, for the fleet map card.
+	if counts := peerSummaryTaskboardCounts(v); counts != nil {
+		out["taskboard"] = counts
 	}
 	// Revalidate every request so trust and grants cannot remain usable in a
 	// browser cache after revocation. The ETag is over the authorized response.

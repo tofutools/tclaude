@@ -88,7 +88,7 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
   await harness.act(() => harness.fireEvent(cog, 'click'));
   assert.ok(menu.classList.contains('open'));
   getByRole(menu, 'menuitem', { name: 'Edit' }).focus();
-  await harness.act(() => harness.fireEvent(harness.document.body, 'click'));
+  await harness.act(() => harness.fireEvent(harness.document.body, 'pointerdown'));
   await Promise.resolve();
   assert.equal(cog.getAttribute('aria-expanded'), 'false', 'outside click closes the menu');
   assertSameNode(harness.document.activeElement, cog, 'outside click restores focus when it remained in the hidden menu');
@@ -210,7 +210,10 @@ test('Profile cards show complete details in a non-reflowing tooltip', async (t)
   assert.ok(tooltip.classList.contains('open'), 'normal hover details resume on the next entry');
 
   await harness.act(() => harness.fireEvent(card, 'mouseleave'));
-  assert.equal(tooltip.classList.contains('open'), false, 'leaving the card closes the tooltip');
+  assert.ok(tooltip.classList.contains('open'), 'the details outlive a brief slip off the card');
+  const { HOVER_CLOSE_MS } = await harness.importDashboardModule('js/hover-popover.js');
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, HOVER_CLOSE_MS + 20)));
+  assert.equal(tooltip.classList.contains('open'), false, 'leaving the card closes the tooltip after the grace');
   await harness.act(() => harness.fireEvent(card, 'focusin'));
   assert.ok(tooltip.classList.contains('open'), 'keyboard focus opens the same details region');
   await harness.act(() => harness.fireEvent(card, 'focusout', {
@@ -254,9 +257,11 @@ test('Dock removes its document listeners when the island unmounts', async (t) =
       setSectionOpen=${() => {}}
     />
   `, host);
+  await harness.act(() => state.publish({ profiles: [{ name: 'review' }] }));
+  await harness.act(() => harness.fireEvent(host.querySelector('.dock-card-manage'), 'click'));
 
   await mounted.unmount();
-  for (const type of ['click', 'keydown']) {
+  for (const type of ['pointerdown', 'keydown']) {
     const installed = added.find(([candidate]) => candidate === type);
     assert.ok(installed, `${type} listener installed`);
     assert.ok(removed.some(([candidate, listener]) =>
@@ -305,6 +310,8 @@ function memoryPrefs() {
 
 test('Dock search filters cards and sections; the card menu carries the library rows and pins', async (t) => {
   const harness = await createPreactHarness(t);
+  // Processes always has a dock section; give it an empty library.
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ templates: [] }) }));
   const [{ createDockState }, { Dock }] = await Promise.all([
     harness.importDashboardModule('js/dock-state.js'),
     harness.importDashboardModule('js/dock-island.js'),
@@ -390,7 +397,7 @@ test('Dock search filters cards and sections; the card menu carries the library 
   await harness.act(() => harness.fireEvent(search, 'input'));
   await harness.act(() => harness.fireEvent(host.querySelector('details[data-key="profiles"] [data-dock-act="new-item"]'), 'click'));
   await harness.act(() => harness.fireEvent(host.querySelector('details[data-key="profiles"] [data-dock-act="section-menu"]'), 'click'));
-  await harness.act(() => harness.fireEvent(getByRole(host, 'menuitem', { name: 'Export all' }), 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(host.querySelector('details[data-key="profiles"]'), 'menuitem', { name: 'Export all' }), 'click'));
   assert.deepEqual(calls.slice(-2), [['new'], ['export-all']]);
 });
 
@@ -401,7 +408,7 @@ test('Dock draws Processes after the snapshot sections and an afterProcesses sec
     harness.importDashboardModule('js/dock-island.js'),
   ]);
   const state = createDockState();
-  state.publish({ processes_enabled: true, profiles: [] });
+  state.publish({ profiles: [] });
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   host.getBoundingClientRect = () => ({ top: 0, bottom: 800 });
   const last = { ...section([]), key: 'sandbox_profiles', afterProcesses: true };

@@ -16,25 +16,52 @@ export function queryString(params) {
 
 // exportParams is the agent export query for the dialog's choices. Without
 // history the conversation stays home; native and neutral pick its copies.
-export function exportParams({ agent, history = true, native = true, neutral = true, allowFlagged = false }) {
+export function exportParams({ agent, history = true, native = true, neutral = true, allowFlagged = false, workflows = false }) {
   return {
     agent, format: 'paf', history,
     no_native: history && !native, no_context: history && !neutral,
     allow_flagged: allowFlagged,
+    workflows: workflows ? 'own' : '',
   };
 }
 
 // landingParams turns the group preview's choices into the
 // parseGroupLandingOptions query: an all-members harness/model plus
 // per-member overrides keyed by the member's title (or conv id).
-export function landingParams({ harness = '', model = '', members = {} } = {}) {
+export function landingParams({ harness = '', model = '', members = {}, confirmHistoryLoss = false } = {}) {
   const memberHarness = [];
   const memberModel = [];
   for (const [member, choice] of Object.entries(members)) {
     if (choice?.harness) memberHarness.push(`${member}=${choice.harness}`);
     if (choice?.model) memberModel.push(`${member}=${choice.model}`);
   }
-  return { harness, model, member_harness: memberHarness, member_model: memberModel };
+  return { harness, model, member_harness: memberHarness, member_model: memberModel, confirm_history_loss: confirmHistoryLoss ? 'true' : '' };
+}
+
+// keepParams turns the confirm list's ticks into the import query. overrides
+// holds what the human changed; every other item stays as the preview ticks it.
+// Nothing ticked still says so, because a request that names nothing is not a
+// choice. A caller who cannot keep sends nothing.
+export function keepParams(confirm, overrides = {}) {
+  if (!confirm?.can_keep || !confirm.items?.length) return {};
+  const keep = confirm.items.filter((item) => overrides[item.id] ?? !!item.default).map((item) => item.id);
+  return keep.length ? { keep, keep_digest: confirm.digest } : { keep_none: 'true' };
+}
+
+// confirmGroups lists a confirm list's items under their headings.
+const CONFIRM_HEADINGS = {
+  owners: 'Group owners', permissions: 'Permissions', posture: 'Approval, tools and auto-review',
+  launch: 'Launch settings', context: 'Instructions and policy', environment: 'Environment', cron: 'Scheduled jobs',
+};
+export function confirmGroups(items) {
+  const groups = [];
+  for (const item of items || []) {
+    const heading = CONFIRM_HEADINGS[item.kind] || item.kind;
+    const group = groups.find((row) => row.heading === heading);
+    if (group) group.items.push(item);
+    else groups.push({ heading, items: [item] });
+  }
+  return groups;
 }
 
 const RUNG = {
@@ -89,19 +116,6 @@ export function modelsFor(snapshot, harness) {
   return spawnableHarnesses(snapshot).find((h) => h.name === harness)?.models || [];
 }
 
-// downloadBlob saves a fetched file through a transient anchor; the object
-// URL is revoked right after the click.
-// dashboard-imperative-boundary: browser-io
-export function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 
 // safeFilename keeps an agent title usable as a file name.
 export function safeFilename(name, ext) {

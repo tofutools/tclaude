@@ -31,6 +31,10 @@ type launchDefaults struct {
 	// provenance vocabulary (`group default profile "x"`, `harness default`, …),
 	// deduplicated across the three fields.
 	resolvedBy string
+	// sandboxSource and implementationSource are the tiers behind each field.
+	sandboxSource, implementationSource string
+	// tiers are the profile tiers walked, for a caller resolving another field.
+	tiers []launchProfileTier
 }
 
 // resolveLaunchDefaults walks the same tiers a real spawn walks — the named
@@ -128,21 +132,12 @@ func resolveLaunchDefaults(
 		return launchDefaults{}, nil, err
 	}
 
-	requestedSandbox, sandboxSource, _, fail := resolveStringLaunchField(
-		"sandbox", "", resolvedHarness.Name, tiers,
-		func(profile *db.SpawnProfile) string { return profile.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(resolvedHarness, raw) },
-	)
+	requestedSandbox, sandboxSource, fail := resolveLaunchValueField(resolvedHarness, tiers, launchValueSandbox)
 	if fail != nil {
 		return launchDefaults{}, fail, nil
 	}
-	requestedImplementation, implementationSource, _, fail := resolveStringLaunchField(
-		sandboxImplementationField, "", resolvedHarness.Name, tiers,
-		func(profile *db.SpawnProfile) string { return profile.SandboxImplementation },
-		func(raw string) (string, error) {
-			return validateSandboxImplementationForHarness(resolvedHarness, raw)
-		},
-	)
+	requestedImplementation, implementationSource, _, fail := resolveSandboxImplementationLaunchField(
+		resolvedHarness, "", tiers)
 	if fail != nil {
 		return launchDefaults{}, fail, nil
 	}
@@ -159,6 +154,9 @@ func resolveLaunchDefaults(
 		sandbox:        harnessBuiltinMode,
 		implementation: implementation,
 		resolvedBy:     joinProvenanceSources(harnessSource, sandboxSource, implementationSource),
+
+		sandboxSource: sandboxSource, implementationSource: implementationSource,
+		tiers: tiers,
 	}, nil, nil
 }
 
@@ -203,7 +201,7 @@ func handleSpawnLaunchDefaults(w http.ResponseWriter, r *http.Request) {
 		query.Get("group"), query.Get("profile"), query.Get("harness"),
 	)
 	if fail != nil {
-		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		writeSpawnFailure(w, fail)
 		return
 	}
 	if err != nil {

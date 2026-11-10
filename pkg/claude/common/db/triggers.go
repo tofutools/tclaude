@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -407,9 +408,6 @@ func SetTriggerRuleEnabled(id, rowVersion int64, enabled bool) error {
 }
 
 func GetTriggerRule(id int64) (*TriggerRule, error) { return getTriggerRule(`WHERE id=?`, id) }
-func GetTriggerRuleByName(name string) (*TriggerRule, error) {
-	return getTriggerRule(`WHERE name=?`, strings.TrimSpace(name))
-}
 
 func getTriggerRule(where string, arg any) (*TriggerRule, error) {
 	d, err := Open()
@@ -429,20 +427,7 @@ func ListTriggerRules() ([]*TriggerRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(triggerRuleSelect + ` ORDER BY name, id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*TriggerRule
-	for rows.Next() {
-		r, err := scanTriggerRule(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	return queryRows(d, scanTriggerRule, triggerRuleSelect+` ORDER BY name, id`)
 }
 
 func HasEnabledTriggerSource(source string) (bool, error) {
@@ -459,9 +444,7 @@ const triggerRuleSelect = `SELECT id, name, row_version, revision, enabled, owne
 	operator_authored, scope_kind, COALESCE(group_id,0), source, author_is_agent,
 	draft_filter, debounce_seconds, cooldown_seconds, for_seconds, actions_json, created_at, updated_at FROM trigger_rules`
 
-type triggerRuleScanner interface{ Scan(...any) error }
-
-func scanTriggerRule(s triggerRuleScanner) (*TriggerRule, error) {
+func scanTriggerRule(s rowScanner) (*TriggerRule, error) {
 	var r TriggerRule
 	var author sql.NullInt64
 	var actions string
@@ -490,11 +473,32 @@ func derivePRNumber(raw string) int {
 		return 0
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 4 || parts[len(parts)-2] != "pull" {
+	// GitHub: owner/repo/pull/<n>. GitLab: group/…/project/-/merge_requests/<n>.
+	if len(parts) < 4 {
 		return 0
 	}
-	var n int
-	_, _ = fmt.Sscanf(parts[len(parts)-1], "%d", &n)
+	switch parts[len(parts)-2] {
+	case "pull":
+	case "merge_requests":
+		// group/…/project/-/merge_requests/<n>: the route marker, and a
+		// project path in front of it (a namespace and the project).
+		if len(parts) < 5 || parts[len(parts)-3] != "-" {
+			return 0
+		}
+	default:
+		return 0
+	}
+	// The whole segment must be the number: Sscanf would read "7suffix" as 7.
+	last := parts[len(parts)-1]
+	for _, r := range last {
+		if r < '0' || r > '9' {
+			return 0
+		}
+	}
+	n, err := strconv.Atoi(last)
+	if err != nil || n <= 0 {
+		return 0
+	}
 	return n
 }
 
@@ -747,22 +751,15 @@ func ListTriggerDwellStates(ruleID int64) ([]TriggerDwellState, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT rule_id,agent_id,rule_revision,episode,result,detail,harness,
-		fact_observed_at,true_since,fired_at,updated_at FROM trigger_dwell_states
-		WHERE (?=0 OR rule_id=?) ORDER BY agent_id`, ruleID, ruleID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []TriggerDwellState
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (TriggerDwellState, error) {
 		state, err := scanTriggerDwellState(rows)
 		if err != nil {
-			return nil, err
+			return TriggerDwellState{}, err
 		}
-		out = append(out, *state)
-	}
-	return out, rows.Err()
+		return *state, nil
+	}, `SELECT rule_id,agent_id,rule_revision,episode,result,detail,harness,
+		fact_observed_at,true_since,fired_at,updated_at FROM trigger_dwell_states
+		WHERE (?=0 OR rule_id=?) ORDER BY agent_id`, ruleID, ruleID)
 }
 
 func scanTriggerDwellState(row rowScanner) (*TriggerDwellState, error) {
@@ -859,16 +856,7 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,agent_pr_id,origin_rule_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,
-		agent_id,agent_harness,fact_result,fact_observed_at,dwell_started_at,draft,
-		group_ids_json,previous_state,current_state,occurred_at,updated_at,status,processed_at FROM trigger_pr_events
-		WHERE status IN ('pending','interrupted') AND processed_at IS NULL ORDER BY occurred_at,id LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []TriggerPREvent
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (TriggerPREvent, error) {
 		var e TriggerPREvent
 		var agentPRID, originRuleID sql.NullInt64
 		var groups string
@@ -877,7 +865,7 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 		if err := rows.Scan(&e.ID, &agentPRID, &originRuleID, &e.Source, &e.EventRef, &e.PRURL, &e.PRNumber, &e.PRBranch, &e.PRAuthorAgent,
 			&e.AgentID, &e.AgentHarness, &e.FactResult, &observed, &dwell, &e.Draft, &groups,
 			&e.PreviousState, &e.CurrentState, &occurred, &updated, &e.Status, &processed); err != nil {
-			return nil, err
+			return TriggerPREvent{}, err
 		}
 		if agentPRID.Valid {
 			e.AgentPRID = agentPRID.Int64
@@ -900,9 +888,11 @@ func ListPendingTriggerPREvents(limit int) ([]TriggerPREvent, error) {
 		if processed.Valid {
 			e.ProcessedAt = time.Unix(0, processed.Int64).UTC()
 		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
+		return e, nil
+	}, `SELECT id,agent_pr_id,origin_rule_id,source,event_ref,pr_url,pr_number,pr_branch,pr_author_agent,
+		agent_id,agent_harness,fact_result,fact_observed_at,dwell_started_at,draft,
+		group_ids_json,previous_state,current_state,occurred_at,updated_at,status,processed_at FROM trigger_pr_events
+		WHERE status IN ('pending','interrupted') AND processed_at IS NULL ORDER BY occurred_at,id LIMIT ?`, limit)
 }
 
 func MarkTriggerPREventProcessed(id int64, now time.Time) error {
@@ -949,6 +939,10 @@ func InterruptRunningTriggerFirings(now time.Time) (int64, error) {
 			return 0, err
 		}
 		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
 	}
 	if err := rows.Close(); err != nil {
 		return 0, err
@@ -1036,25 +1030,14 @@ func ListTriggerFirings(ruleID int64, limit int) ([]TriggerFiring, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT f.id,COALESCE(f.rule_id,0),f.rule_revision,f.event_id,f.event_ref,
-		COALESCE(e.source,''),COALESCE(e.previous_state,''),COALESCE(e.current_state,''),
-		COALESCE(e.agent_id,''),COALESCE(e.agent_harness,''),COALESCE(e.fact_result,''),e.fact_observed_at,e.dwell_started_at,
-		f.outcome,f.detail,f.started_at,f.finished_at FROM trigger_firings f
-		LEFT JOIN trigger_pr_events e ON e.id=f.event_id
-		WHERE (?=0 OR f.rule_id=?) ORDER BY f.started_at DESC,f.id DESC LIMIT ?`, ruleID, ruleID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []TriggerFiring
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (TriggerFiring, error) {
 		var f TriggerFiring
 		var st dbTimestamp
 		var observed, dwell, fin sql.NullInt64
 		if err := rows.Scan(&f.ID, &f.RuleID, &f.RuleRevision, &f.EventID, &f.EventRef, &f.Source,
 			&f.PreviousState, &f.CurrentState, &f.AgentID, &f.AgentHarness, &f.FactResult, &observed, &dwell,
 			&f.Outcome, &f.Detail, &st, &fin); err != nil {
-			return nil, err
+			return TriggerFiring{}, err
 		}
 		if observed.Valid {
 			f.FactObservedAt = time.Unix(0, observed.Int64).UTC()
@@ -1068,12 +1051,16 @@ func ListTriggerFirings(ruleID int64, limit int) ([]TriggerFiring, error) {
 		}
 		acts, err := ListTriggerActionOutcomes(f.ID)
 		if err != nil {
-			return nil, err
+			return TriggerFiring{}, err
 		}
 		f.Actions = acts
-		out = append(out, f)
-	}
-	return out, rows.Err()
+		return f, nil
+	}, `SELECT f.id,COALESCE(f.rule_id,0),f.rule_revision,f.event_id,f.event_ref,
+		COALESCE(e.source,''),COALESCE(e.previous_state,''),COALESCE(e.current_state,''),
+		COALESCE(e.agent_id,''),COALESCE(e.agent_harness,''),COALESCE(e.fact_result,''),e.fact_observed_at,e.dwell_started_at,
+		f.outcome,f.detail,f.started_at,f.finished_at FROM trigger_firings f
+		LEFT JOIN trigger_pr_events e ON e.id=f.event_id
+		WHERE (?=0 OR f.rule_id=?) ORDER BY f.started_at DESC,f.id DESC LIMIT ?`, ruleID, ruleID, limit)
 }
 
 func ListTriggerActionOutcomes(firingID int64) ([]TriggerActionOutcome, error) {
@@ -1081,26 +1068,15 @@ func ListTriggerActionOutcomes(firingID int64) ([]TriggerActionOutcome, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,firing_id,action_index,action_type,outcome,detail,spawned_agent,COALESCE(message_id,0),created_at FROM trigger_action_outcomes WHERE firing_id=? ORDER BY action_index`, firingID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []TriggerActionOutcome
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (TriggerActionOutcome, error) {
 		var o TriggerActionOutcome
 		var ts dbTimestamp
 		if err := rows.Scan(&o.ID, &o.FiringID, &o.ActionIndex, &o.ActionType, &o.Outcome, &o.Detail, &o.SpawnedAgent, &o.MessageID, &ts); err != nil {
-			return nil, err
+			return TriggerActionOutcome{}, err
 		}
 		o.CreatedAt = ts.Time()
-		out = append(out, o)
-	}
-	return out, rows.Err()
-}
-
-func CountLiveTriggerWorkers(ruleID int64, actionIndex int) (int, error) {
-	return CountLiveManagedWorkers(ruleID, 0, actionIndex)
+		return o, nil
+	}, `SELECT id,firing_id,action_index,action_type,outcome,detail,spawned_agent,COALESCE(message_id,0),created_at FROM trigger_action_outcomes WHERE firing_id=? ORDER BY action_index`, firingID)
 }
 
 // CountLiveManagedWorkers counts durable reservations as live capacity. Exactly
@@ -1178,20 +1154,12 @@ func ListActiveTriggerWorkers() ([]TriggerWorker, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id,COALESCE(rule_id,0),COALESCE(firing_id,0),COALESCE(cron_job_id,0),COALESCE(cron_run_id,0),action_index,agent_id,conv_id,pending_label,state,
-		deadline_at,created_at,completed_at,detail FROM trigger_workers
-		WHERE state IN ('reserved','pending','live') ORDER BY created_at,id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []TriggerWorker
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (TriggerWorker, error) {
 		var w TriggerWorker
 		var deadline, completed sql.NullInt64
 		var created dbTimestamp
 		if err := rows.Scan(&w.ID, &w.RuleID, &w.FiringID, &w.CronJobID, &w.CronRunID, &w.ActionIndex, &w.AgentID, &w.ConvID, &w.PendingLabel, &w.State, &deadline, &created, &completed, &w.Detail); err != nil {
-			return nil, err
+			return TriggerWorker{}, err
 		}
 		w.CreatedAt = created.Time()
 		if deadline.Valid {
@@ -1200,9 +1168,10 @@ func ListActiveTriggerWorkers() ([]TriggerWorker, error) {
 		if completed.Valid {
 			w.CompletedAt = time.Unix(0, completed.Int64).UTC()
 		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
+		return w, nil
+	}, `SELECT id,COALESCE(rule_id,0),COALESCE(firing_id,0),COALESCE(cron_job_id,0),COALESCE(cron_run_id,0),action_index,agent_id,conv_id,pending_label,state,
+		deadline_at,created_at,completed_at,detail FROM trigger_workers
+		WHERE state IN ('reserved','pending','live') ORDER BY created_at,id`)
 }
 
 func ListActiveCronWorkers(jobID int64) ([]TriggerWorker, error) {

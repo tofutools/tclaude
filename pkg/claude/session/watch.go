@@ -1398,7 +1398,7 @@ func RunWatchMode(includeAll bool, initialSort table.SortState, initialFilter, i
 					}
 				}
 				if newest != nil && newest.TmuxSession != "" {
-					fmt.Printf("Attaching to %s... (Ctrl+B D to detach)\n", newest.TmuxSession)
+					fmt.Fprintf(cliStdout, "Attaching to %s... (Ctrl+B D to detach)\n", newest.TmuxSession)
 					if err := AttachToSession(newest.ID, newest.TmuxSession, false); err != nil {
 						state.Notice = fmt.Sprintf("Failed to attach to %s: %v", newest.TmuxSession, err)
 					}
@@ -1423,9 +1423,9 @@ func RunWatchMode(includeAll bool, initialSort table.SortState, initialFilter, i
 
 		// Attach to the session
 		if result.ForceAttach {
-			fmt.Printf("Attaching to %s (detaching others)... (Ctrl+B D to detach)\n", result.TmuxSession)
+			fmt.Fprintf(cliStdout, "Attaching to %s (detaching others)... (Ctrl+B D to detach)\n", result.TmuxSession)
 		} else {
-			fmt.Printf("Attaching to %s... (Ctrl+B D to detach)\n", result.TmuxSession)
+			fmt.Fprintf(cliStdout, "Attaching to %s... (Ctrl+B D to detach)\n", result.TmuxSession)
 		}
 
 		err = AttachToSession(result.SessionID, result.TmuxSession, result.ForceAttach)

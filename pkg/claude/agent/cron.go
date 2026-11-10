@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -45,6 +46,8 @@ type cronJobJSON struct {
 	Name                       string   `json:"name,omitempty"`
 	OwnerAgent                 string   `json:"owner_agent,omitempty"`
 	OwnerConv                  string   `json:"owner_conv"`
+	OwnerPeer                  string   `json:"owner_peer,omitempty"`
+	OwnerPeerAgent             string   `json:"owner_peer_agent,omitempty"`
 	TargetKind                 string   `json:"target_kind"`
 	TargetAgent                string   `json:"target_agent,omitempty"`
 	TargetConv                 string   `json:"target_conv"`
@@ -75,7 +78,9 @@ type cronJobJSON struct {
 
 // ---- ls ----
 
-type cronLsParams struct{}
+type cronLsParams struct {
+	Remote string `long:"remote" optional:"true" help:"List a linked node's cron jobs instead: those in reach of the grants it gave this node (groups.messages.schedule, groups.members.schedule). Its answer is remote content."`
+}
 
 func cronLsCmd() *cobra.Command {
 	return boa.CmdT[cronLsParams]{
@@ -83,23 +88,24 @@ func cronLsCmd() *cobra.Command {
 		Short:       "List scheduled cron jobs visible to this caller",
 		Long:        "Returns all jobs the caller can see: humans see everything, agents see jobs they own, jobs targeting them, and jobs targeting any conv in a group they own.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(_ *cronLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronLs(os.Stdout, os.Stderr))
+		RunFunc: func(p *cronLsParams, _ *cobra.Command, _ []string) {
+			os.Exit(runCronLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
-func runCronLs(stdout, stderr io.Writer) int {
+func runCronLs(p *cronLsParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	var resp struct {
 		Jobs []cronJobJSON `json:"jobs"`
 	}
-	if err := DaemonRequest(http.MethodGet, "/v1/cron", nil, &resp, DaemonOpts{}); err != nil {
+	if err := remoteRequest(p.Remote, http.MethodGet, "/v1/cron", nil, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	printRemoteScheduleBanner(stdout, p.Remote, "cron jobs")
 	if len(resp.Jobs) == 0 {
 		fmt.Fprintln(stdout, "(no scheduled cron jobs)")
 		return rcOK
@@ -174,7 +180,7 @@ func cronTargetLabel(j cronJobJSON) string {
 // ---- add ----
 
 type cronAddParams struct {
-	Action            string   `long:"action" optional:"true" help:"Action per tick: message (default) or spawn. Spawn is gated by features.triggers."`
+	Action            string   `long:"action" optional:"true" help:"Action per tick: message (default) or spawn."`
 	Target            string   `long:"target" optional:"true" help:"Selector for the conv that receives the cron message, or group:NAME to multicast to every member of a group. Defaults to self when omitted."`
 	Interval          string   `long:"interval" optional:"true" help:"Recurrence interval as a Go duration (e.g. 10m, 1h, 30s). Minimum 30s (the scheduler tick). Mutually exclusive with --cron."`
 	Cron              string   `long:"cron" optional:"true" help:"Recurrence as a cron expression (e.g. '*/5 * * * *', '@daily', 'CRON_TZ=UTC 0 9 * * 1'). Evaluated in the daemon's local timezone unless CRON_TZ is given. Mutually exclusive with --interval."`
@@ -192,6 +198,7 @@ type cronAddParams struct {
 	Concurrency       string   `long:"concurrency" optional:"true" help:"Spawn overlap policy: Forbid (default), Replace, or Allow."`
 	MaxLiveWorkers    int      `long:"max-live-workers" optional:"true" help:"Maximum concurrent workers for Allow (default 1)."`
 	WorkerDeadline    string   `long:"worker-deadline" optional:"true" help:"Optional worker deadline as a Go duration (for example 2h)."`
+	Remote            string   `long:"remote" optional:"true" help:"Schedule it on a linked node instead, under the grants it gave this node (groups.messages.schedule for --target group:NAME, groups.members.schedule for an agent id there). The job is your node's there: it sends messages only, never spawns, and stops firing if the grants are taken back."`
 }
 
 func cronAddCmd() *cobra.Command {
@@ -205,7 +212,7 @@ func cronAddCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *cronAddParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronAdd(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runCronAdd(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -257,6 +264,15 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		deadlineSeconds = int64(d.Seconds())
 	}
 	target := strings.TrimSpace(p.Target)
+	remote := strings.TrimSpace(p.Remote)
+	if remote != "" && action != "message" {
+		fmt.Fprintln(stderr, "Error: a job on a linked node sends messages only; it never spawns there")
+		return rcInvalidArg
+	}
+	if remote != "" && target == "" {
+		fmt.Fprintln(stderr, "Error: --remote needs --target group:NAME or an agent id on that node")
+		return rcInvalidArg
+	}
 	if target == "" {
 		// Self-targeted default — use the daemon-resolved canonical
 		// dot selector so the daemon picks our caller conv.
@@ -297,10 +313,11 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 		body["role"] = role
 	}
 	var resp cronJobJSON
-	if err := DaemonRequest(http.MethodPost, "/v1/cron", body, &resp, DaemonOpts{}); err != nil {
+	if err := remoteRequest(remote, http.MethodPost, "/v1/cron", body, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	printRemoteScheduleBanner(stdout, remote, "cron job")
 	if resp.CronExpr != "" {
 		fmt.Fprintf(stdout, "Scheduled job #%d on cron %q → %s\n",
 			resp.ID, resp.CronExpr, cronTargetLabel(resp))
@@ -343,18 +360,30 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 
 // ---- rm ----
 
+// CronJobAuth says who may change an existing cron job (rm, enable, disable,
+// run-now), as the daemon enforces it in authCronJob. A conv-target job is
+// gated like scheduling on that conv; a group-target job on the group's
+// groups.messages.schedule.
+func CronJobAuth() string {
+	return "Auth for a job targeting one conv: self.schedule when that conv is the caller " +
+		"(any generation of the same agent). Otherwise, as for any cross-agent verb: " + CrossAgentAuth("schedule") +
+		" Auth for a group:NAME job: groups.messages.schedule for that group (group ownership confers it); " +
+		"if the group no longer exists, an unscoped groups.messages.schedule grant. The operator always passes."
+}
+
 type cronRmParams struct {
-	ID string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+	ID     string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+	Remote string `long:"remote" optional:"true" help:"Act on a linked node instead, through its peer view under the grants it gave this node: the job is your node's there, sends messages only, and only you (or your operator) change, fire or delete it."`
 }
 
 func cronRmCmd() *cobra.Command {
 	return boa.CmdT[cronRmParams]{
-		Use:         "rm <id>",
+		Use:         "rm",
 		Short:       "Delete a scheduled cron job",
-		Long:        "Removes a job by ID. Caller must be the job's owner_conv, hold agent.schedule, or own a group containing the job's target.",
+		Long:        "Removes a job by ID. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronRm(p, os.Stdout, os.Stderr))
+			os.Exit(runCronRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -369,60 +398,65 @@ func runCronRm(p *cronRmParams, stdout, stderr io.Writer) int {
 		return rc
 	}
 	path := "/v1/cron/" + strconv.FormatInt(id, 10)
-	if err := DaemonRequest(http.MethodDelete, path, nil, nil, DaemonOpts{}); err != nil {
+	if err := remoteRequest(p.Remote, http.MethodDelete, path, nil, nil); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintf(stdout, "Deleted cron job #%d\n", id)
+	fmt.Fprintf(stdout, "Deleted cron job #%d%s\n", id, remoteSuffix(p.Remote))
 	return rcOK
 }
 
 // ---- enable / disable / run-now ----
 
 type cronIDOnlyParams struct {
-	ID string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+	ID     string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+	Remote string `long:"remote" optional:"true" help:"Act on a linked node instead, through its peer view under the grants it gave this node: the job is your node's there, sends messages only, and only you (or your operator) change, fire or delete it."`
 }
 
 func cronEnableCmd() *cobra.Command {
 	return boa.CmdT[cronIDOnlyParams]{
-		Use:         "enable <id>",
+		Use:         "enable",
 		Short:       "Re-enable a previously disabled cron job",
-		Long:        "Flips enabled=true. Does NOT touch last_run_at, so re-enabling a paused job doesn't fire immediately if it ran recently.",
+		Long:        "Flips enabled=true. Does NOT touch last_run_at, so re-enabling a paused job doesn't fire immediately if it ran recently. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronEnable(p, true, os.Stdout, os.Stderr))
+			os.Exit(runCronEnable(p, true, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 func cronDisableCmd() *cobra.Command {
 	return boa.CmdT[cronIDOnlyParams]{
-		Use:         "disable <id>",
+		Use:         "disable",
 		Short:       "Pause a cron job without deleting it",
-		Long:        "Flips enabled=false. The row stays — `cron enable` reactivates it. Use to silence a noisy job temporarily.",
+		Long:        "Flips enabled=false. The row stays — `cron enable` reactivates it. Use to silence a noisy job temporarily. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronEnable(p, false, os.Stdout, os.Stderr))
+			os.Exit(runCronEnable(p, false, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 func cronRunNowCmd() *cobra.Command {
 	return boa.CmdT[cronIDOnlyParams]{
-		Use:         "run-now <id>",
+		Use:         "run-now",
 		Short:       "Fire a cron job immediately (without waiting for the next tick)",
-		Long:        "Manually triggers one fire. Useful for testing a freshly-added job or for a one-off nudge between regular runs. Updates last_run_at + appends a row to the run history.",
+		Long:        "Manually triggers one fire. Useful for testing a freshly-added job or for a one-off nudge between regular runs. Updates last_run_at + appends a row to the run history. " + CronJobAuth(),
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronIDOnlyParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronRunNow(p, os.Stdout, os.Stderr))
+			os.Exit(runCronRunNow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 func runCronEnable(p *cronIDOnlyParams, enabled bool, stdout, stderr io.Writer) int {
-	id, err := strconv.ParseInt(strings.TrimSpace(p.ID), 10, 64)
+	return runCronSetEnabled(p.ID, p.Remote, enabled, stdout, stderr)
+}
+
+func runCronSetEnabled(rawID, remote string, enabled bool, stdout, stderr io.Writer) int {
+	id, err := strconv.ParseInt(strings.TrimSpace(rawID), 10, 64)
 	if err != nil {
-		fmt.Fprintf(stderr, "Error: id must be an integer; got %q\n", p.ID)
+		fmt.Fprintf(stderr, "Error: id must be an integer; got %q\n", rawID)
 		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
@@ -433,14 +467,15 @@ func runCronEnable(p *cronIDOnlyParams, enabled bool, stdout, stderr io.Writer) 
 		verb = "disable"
 	}
 	path := "/v1/cron/" + strconv.FormatInt(id, 10) + "/" + verb
-	if err := DaemonRequest(http.MethodPost, path, nil, nil, DaemonOpts{}); err != nil {
+	if err := remoteRequest(remote, http.MethodPost, path, nil, nil); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	on := remoteSuffix(remote)
 	if enabled {
-		fmt.Fprintf(stdout, "Enabled cron job #%d\n", id)
+		fmt.Fprintf(stdout, "Enabled cron job #%d%s\n", id, on)
 	} else {
-		fmt.Fprintf(stdout, "Disabled cron job #%d\n", id)
+		fmt.Fprintf(stdout, "Disabled cron job #%d%s\n", id, on)
 	}
 	return rcOK
 }
@@ -458,29 +493,30 @@ func runCronRunNow(p *cronIDOnlyParams, stdout, stderr io.Writer) int {
 	var resp struct {
 		Status string `json:"status"`
 	}
-	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{}); err != nil {
+	if err := remoteRequest(p.Remote, http.MethodPost, path, nil, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	fmt.Fprintf(stdout, "Fired cron job #%d (status: %s)\n", id, resp.Status)
+	fmt.Fprintf(stdout, "Fired cron job #%d%s (status: %s)\n", id, remoteSuffix(p.Remote), resp.Status)
 	return rcOK
 }
 
 // ---- logs ----
 
 type cronLogsParams struct {
-	ID    string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
-	Limit int    `long:"limit" optional:"true" help:"Max number of runs to return (default 25, max 1000)."`
+	ID     string `pos:"true" help:"Cron job ID (from 'tclaude agent cron ls')."`
+	Limit  int    `long:"limit" optional:"true" help:"Max number of runs to return (default 25, max 1000)."`
+	Remote string `long:"remote" optional:"true" help:"Read a linked node's cron job instead, under the grants it gave this node (its runs come without error text). Its answer is remote content."`
 }
 
 func cronLogsCmd() *cobra.Command {
 	return boa.CmdT[cronLogsParams]{
-		Use:         "logs <id>",
+		Use:         "logs",
 		Short:       "Show recent execution history for a cron job",
 		Long:        "Returns the most-recent fires for a job (newest first), one row per scheduler tick that picked it up. Visibility: caller must be owner, target, or owner of a group containing the target.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cronLogsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCronLogs(p, os.Stdout, os.Stderr))
+			os.Exit(runCronLogs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -509,10 +545,11 @@ func runCronLogs(p *cronLogsParams, stdout, stderr io.Writer) int {
 			WorkerAgent string `json:"worker_agent"`
 		} `json:"runs"`
 	}
-	if err := DaemonRequest(http.MethodGet, path, nil, &resp, DaemonOpts{}); err != nil {
+	if err := remoteRequest(p.Remote, http.MethodGet, path, nil, &resp); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	printRemoteScheduleBanner(stdout, p.Remote, "cron job runs")
 	if len(resp.Runs) == 0 {
 		fmt.Fprintln(stdout, "(no runs yet)")
 		return rcOK
@@ -533,12 +570,23 @@ func runCronLogs(p *cronLogsParams, stdout, stderr io.Writer) int {
 	return rcOK
 }
 
+// truncate shortens s to at most n bytes, ending in "..." when it cuts. It
+// cuts on a rune boundary, so a multi-byte character at the cut is dropped
+// whole rather than split into invalid UTF-8.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
 	if n <= 3 {
-		return s[:n]
+		return s[:runeBoundary(s, n)]
 	}
-	return s[:n-3] + "..."
+	return s[:runeBoundary(s, n-3)] + "..."
+}
+
+// runeBoundary is the largest index at most i that starts a rune in s.
+func runeBoundary(s string, i int) int {
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return i
 }

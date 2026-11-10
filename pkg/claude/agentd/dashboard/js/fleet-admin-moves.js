@@ -1,12 +1,17 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { sentLanding } from './fleet-admin-landing.js';
+import { AgentCombobox, choiceAgents } from './agent-picker.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText, localStamp, timeOf } from './cell-format.js';
+import { FaTable } from './fa-table.js';
+import { peerLabelFor } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 // ABANDONABLE are the outgoing move states the daemon lets the operator stop:
 // retirement of the source has not started yet.
@@ -33,6 +38,10 @@ export function moveErrorText(error, peer) {
   return hint ? `${hint(peer)} (${errText(error)})` : errText(error);
 }
 
+// OTHER_GROUP is the receiving-group choice that falls back to typing a name;
+// no group name holds a NUL, so it cannot shadow a listed group.
+const OTHER_GROUP = '\u0000other';
+
 // MoveAgentDialog is tclaude federation move-agent: the agent and its
 // conversation history go to a peer, and the agent retires here once the peer
 // confirms its copy is running.
@@ -48,8 +57,8 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
   const receiving = peers.find((p) => p.id === form.peer)?.receiving || [];
   const [typed, setTyped] = useState(false);
   const picking = receiving.length > 0 && !typed;
-  const pickPeer = (e) => { setForm({ ...form, peer: e.currentTarget.value, group: '' }); setTyped(false); setFindings(null); setAllow(false); };
-  const pickGroup = (e) => { if (e.currentTarget.value === '\u0000other') { setTyped(true); setForm({ ...form, group: '' }); } else set('group')(e); };
+  const pickPeer = (peer) => { setForm({ ...form, peer, group: '' }); setTyped(false); setFindings(null); setAllow(false); };
+  const pickGroup = (key) => { if (key === OTHER_GROUP) { setTyped(true); setForm({ ...form, group: '' }); } else set('group')({ currentTarget: { value: key } }); };
   const agentLabel = agents.find((a) => a.id === form.agent)?.label || form.agent;
   // The full ID is named once; after that the name reads better.
   const agentName = agents.find((a) => a.id === form.agent)?.name || agentLabel;
@@ -70,18 +79,16 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
         else setError(moveErrorText(e, peerLabel));
       });
   };
-  return html`<${Overlay} id="fleet-move-agent" labelledby="fleet-move-agent-title" onClose=${onClose}>
-    <h3 id="fleet-move-agent-title">Move an agent to a peer</h3>
+  return html`<${Dialog} id="fleet-move-agent" onClose=${onClose} title="Move an agent to a peer">
     ${!agents.length || !peers.length ? html`<div class="muted">${!agents.length ? 'This node has no agent to move.' : 'Trust a peer first.'}</div>` : html`
-    <label class="fa-of-row"><span class="fa-k">agent</span><select id="fleet-move-agent-agent" value=${form.agent} onChange=${set('agent')}>
-      ${agents.map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}</select></label>
-    <label class="fa-of-row"><span class="fa-k">peer</span><select id="fleet-move-agent-peer" value=${form.peer} onChange=${pickPeer}>
-      ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}</select></label>
+    <div class="fa-of-row"><span class="fa-k">agent</span><${AgentCombobox} id="fleet-move-agent-agent" value=${form.agent} agents=${choiceAgents(agents)} ariaLabel="Agent"
+      onChange=${(agent) => set('agent')({ currentTarget: { value: agent, type: 'text' } })} /></div>
+    <label class="fa-of-row"><span class="fa-k">peer</span><${PeerCombobox} id="fleet-move-agent-peer" value=${form.peer} ariaLabel="Peer"
+      items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label })))} onChange=${pickPeer} /></label>
     <label class="fa-of-row"><span class="fa-k">group</span>${picking
-      ? html`<select id="fleet-move-agent-group-pick" value=${form.group} onChange=${pickGroup}>
-          <option value="">pick a group that receives agents…</option>
-          ${receiving.map((g) => html`<option key=${g} value=${g} selected=${form.group === g}>${g}</option>`)}
-          <option value=${'\u0000other'}>another group (type its name)…</option></select>`
+      ? html`<${GroupCombobox} id="fleet-move-agent-group-pick" value=${form.group} onChange=${pickGroup}
+          noneLabel="pick a group that receives agents…"
+          groups=${[...receiving, { value: OTHER_GROUP, label: 'another group (type its name)…', hint: 'not listed' }]} />`
       : html`<input id="fleet-move-agent-group" value=${form.group} placeholder="receiving group on the peer (it must grant agents.receive)" autocomplete="off" onInput=${set('group')} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!(findings && !allow)) send(); } }} />`}</label>
     <div class="muted">The agent retires here once the peer runs its copy. To keep it running here, offer a copy from Offers instead. Starting directory: the receiver chooses on accept.</div>`}
     ${findings && html`<div class="fa-plan"><ul>${findings.map((f) => html`<li class="fa-warn">${f.kind} ×${f.count}${f.locations?.length ? ` (${f.locations.slice(0, 3).join(', ')})` : ''}</li>`)}</ul></div>
@@ -89,9 +96,9 @@ export function MoveAgentDialog({ peers, agents, actions, confirm, onClose, onDo
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation move-agent AGENT PEER --group … [--allow-flagged]</code></div>
     <div class="modal-buttons"><span class="spacer"></span>
-      ${agents.length && peers.length ? html`<button id="fleet-move-agent-send" type="button" class="primary" disabled=${!!findings && !allow} onClick=${send}>Move…</button>` : ''}
-      <button type="button" onClick=${onClose}>Close</button></div>
-  </${Overlay}>`;
+      ${agents.length && peers.length ? html`<${Button} variant="primary" id="fleet-move-agent-send" disabled=${!!findings && !allow} onClick=${send}>Move…</${Button}>` : ''}
+      <${Button} onClick=${onClose}>Close</${Button}></div>
+  </${Dialog}>`;
 }
 
 // MovesPage lists durable agent moves and teleports in both directions and
@@ -103,7 +110,8 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
   const [error, setError] = useState('');
   const [teleport, setTeleport] = useState(null);
   const [tick, setTick] = useState(0);
-  const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
+  const label = (id) => peerLabelFor(view.trusted, id);
+  const cellLabel = (id) => peerLabelFor(view.trusted, id, { short: true });
 
   useEffect(() => {
     let off = false;
@@ -135,30 +143,27 @@ export function MovesPage({ view, agents = [], actions, confirm, toast, now = Da
 
   const list = Array.isArray(moves) ? [...moves].sort((a, b) => String(b.expires_at || '').localeCompare(String(a.expires_at || ''))) : [];
   return html`<div class="fa-moves">
-    <div class="fa-run-settings" id="fleet-teleport">
+    <div class="fa-run-settings ui-card ui-inset" id="fleet-teleport">
       <span class="fa-k">Teleports</span>
       ${teleport?.error ? html`<span class="fa-danger">${teleport.error}</span>`
         : frozen == null ? html`<span class="muted">loading…</span>`
         : html`<span class=${frozen ? 'fa-warn' : 'muted'}>${frozen ? 'frozen: none leave or land here' : 'allowed (each still needs its grants)'}</span>
-          <button id="fleet-teleport-toggle" type="button" class=${frozen ? '' : 'fa-danger'} onClick=${toggleTeleport}>${frozen ? 'Allow teleports…' : 'Freeze teleports…'}</button>`}
-      <button type="button" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh</button>
-      <button id="fleet-move-open" type="button" onClick=${() => setMoving(true)}>Move an agent to a peer…</button>
+          <${Button} size="sm" id="fleet-teleport-toggle" variant=${frozen ? '' : 'danger'} onClick=${toggleTeleport}>${frozen ? 'Allow teleports…' : 'Freeze teleports…'}<//>`}
+      <${Button} size="sm" variant="link" class="fa-link" onClick=${() => setTick((n) => n + 1)}>refresh<//>
+      <${Button} size="sm" id="fleet-move-open" onClick=${() => setMoving(true)}>Move an agent to a peer…<//>
     </div>
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     ${!moves && !error ? html`<div class="empty">Loading…</div>` : list.length === 0 && !error ? html`<div class="empty">No agent moves or teleports.</div>` : html`
-    <table class="fa-table" id="fleet-moves">
-      <thead><tr><th></th><th>Kind</th><th>Agent</th><th>Peer</th><th>Group</th><th>State</th><th>Expires</th><th></th></tr></thead>
-      <tbody>${list.map((m) => html`<tr key=${m.id} data-move=${m.id}>
+    <${FaTable} id="fleet-moves" head=${['', 'Kind', 'Agent', 'Peer', 'Group', 'State', 'Expires', '']}>${list.map((m) => html`<tr key=${m.id} data-move=${m.id}>
         <td title=${m.direction === 'out' ? 'leaving this node' : 'arriving here'}>${m.direction === 'out' ? '⇢' : '⇠'}</td>
         <td>${m.teleport ? 'teleport' : 'move'}</td>
         <td><code title=${m.source_agent}>${shortAgent(m.source_agent)}</code>${m.target_agent ? html` → <code title=${m.target_agent}>${shortAgent(m.target_agent)}</code>` : ''}</td>
-        <td>${label(m.peer)}</td>
+        <td>${cellLabel(m.peer)}</td>
         <td>${m.group || ''}</td>
         <td class=${FAILED.has(m.state) ? 'fa-danger' : ''} title=${m.last_error || ''}>${m.state}${m.last_error ? html` <span class="muted">— ${m.last_error}</span>` : ''}</td>
-        <td class="muted">${m.expires_at && !String(m.expires_at).startsWith('0001-') ? (Date.parse(m.expires_at) < now ? 'expired' : new Date(m.expires_at).toLocaleString()) : ''}</td>
-        <td class="fa-acts">${canAbandon(m) ? html`<button type="button" class="fa-danger" data-fa="abandon" onClick=${() => abandon(m)}>Abandon…</button>` : ''}</td>
-      </tr>`)}</tbody>
-    </table>`}
+        <td class="muted">${!timeOf(m.expires_at) ? '' : Date.parse(m.expires_at) < now ? 'expired' : localStamp(m.expires_at)}</td>
+        <td class="fa-acts">${canAbandon(m) ? html`<${Button} size="sm" variant="ghost danger" data-fa="abandon" onClick=${() => abandon(m)}>Abandon…<//>` : ''}</td>
+      </tr>`)}<//>`}
     <div class="muted fa-cli-note">Moves also start from a peer's view (Move here / Teleport here). CLI: <code>tclaude federation move-agent</code>, <code>tclaude federation moves</code>, <code>tclaude federation teleport</code>.</div>
     ${moving && html`<${MoveAgentDialog} peers=${view.trusted} agents=${agents} actions=${actions} confirm=${confirm} onClose=${() => setMoving(false)}
       onDone=${(msg) => { setMoving(false); toast(msg, false); setTick((n) => n + 1); }} />`}

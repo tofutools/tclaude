@@ -1,10 +1,10 @@
 // groups-process-indicators.js -- process state inside the Groups tab: an
 // animated running / needs-you / planned flow-graph row on each group header
-// (the process twin of the member bots in group-activity.js, shown in both
-// perspectives), and a `run › node` badge with a step strip on each member
-// row for the process node that agent performs (Agents focus, mock G1). Both
-// read the process context read model (process-context.js) and click
-// through to the runs (the Processes focus, or Both's Processes section).
+// (the process twin of the member bots in group-activity.js), and a
+// `run › node` badge with a step strip on each member row for the process
+// node that agent performs (mock G1). Both read the process context read
+// model (process-context.js) and click through to the runs (the group card's
+// Processes section, or the single-run focus).
 //
 // Large fleets: one context fetch per snapshot poll, and one agent→runs index
 // per context object (cached), so each row is a Map lookup.
@@ -14,10 +14,11 @@ import htm from 'htm';
 import { ProcessRunBadge } from './process-kit.js';
 import { groupContextEntry, processContext, withRunKind } from './process-context.js';
 import { featureState } from './feature-state-registry.js';
-import { focusRun, groupsRunLocation, revealRunsLens, showRunsLens } from './groups-focus.js';
+import { focusRun, groupsRunLocation, showGroupRuns } from './groups-focus.js';
 import { setFusedSectionOpen } from './groups-fused-sections.js';
 import { UNGROUPED_VKEY } from './virtual-groups.js';
 import { useProcessScope } from './groups-process-scope.js';
+import { processesAvailable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -51,43 +52,38 @@ export function groupProcessCounts(entry) {
 }
 
 // openGroupInProcesses shows the group's runs with the `filter` kind ticked
-// and brings them into view: in Both, the group's Processes section, opened;
-// otherwise the group's row in the Processes focus. The group's row is opened
-// too (the open state is shared between lenses, so a group folded in one
-// would hide its runs in another).
+// and brings them into view: the group's row and its Processes section,
+// opened, leaving the Route map if need be.
 // `rowKey` is the group's row when the list names it apart from the run
 // context (the fused view's group@node).
 export function openGroupInProcesses(groupName, filter = 'running', { doc = document, rowKey = groupName } = {}) {
   const groups = featureState('groups');
-  if (!groups?.setFocus) return;
+  if (!groups?.setProcessFilter) return;
   // Tick the clicked kind without unticking the others.
-  groups.setProcessFilter?.(withRunKind(groups.processFilter?.value, filter));
+  groups.setProcessFilter(withRunKind(groups.processFilter?.value, filter));
   if (groups.focusedRun) focusRun(groups, null, { doc });
-  const fused = revealRunsLens(groups, { doc });
-  if (fused) {
-    setFusedSectionOpen(groupName, 'processes', true);
-    groups.rerender?.();
-  }
+  showGroupRuns(groups, { announce: true, doc });
+  setFusedSectionOpen(groupName, 'processes', true);
+  groups.rerender?.();
   const reveal = () => {
     const row = doc.querySelector(`details[data-group-key="${cssString(rowKey)}"]`);
     if (!row) return;
     row.open = true;
-    const target = fused ? row.querySelector(`[data-fused-processes="${cssString(groupName)}"]`) || row : row;
+    const target = row.querySelector(`[data-fused-processes="${cssString(groupName)}"]`) || row;
     target.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   };
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(reveal));
   else reveal();
 }
 
-// openRunInProcesses opens one run in the single-run focus, which Both and
-// Processes share.
+// openRunInProcesses opens one run in the single-run focus.
 export function openRunInProcesses(groupName, runId, { doc = document } = {}) {
   const groups = featureState('groups');
-  if (!groups?.setFocus) return;
-  if (!groupName || !runId || !groups.focusedRun) { revealRunsLens(groups, { doc }); return; }
-  showRunsLens(groups);
-  // Already open (behind the Agents lens): the lens change alone is the step.
-  if (!focusRun(groups, { group: groupName, runId }, { doc })) {
+  if (!groups?.setFocusedRun) return;
+  if (!groupName || !runId) { showGroupRuns(groups, { announce: true, doc }); return; }
+  const leftRoutes = showGroupRuns(groups);
+  // Already open (behind the Route map): leaving it alone is the step.
+  if (!focusRun(groups, { group: groupName, runId }, { doc }) && leftRoutes) {
     doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: groupsRunLocation(groups.focusedRun.value) } }));
   }
 }
@@ -97,7 +93,7 @@ function cssString(value) {
 }
 
 export function enabled(snapshot, source) {
-  return snapshot?.processes_enabled === true && source.status.value === 'ready';
+  return processesAvailable(snapshot) && source.status.value === 'ready';
 }
 
 // GRAPH_STATES is the process twin of group-activity.js's bot row: one
@@ -134,7 +130,7 @@ export function ProcessGraphRow({ counts, wizard = false, groupName = '', onOpen
       const body = html`<${FlowGlyph} />${n > 1 ? html`<span class="gpi-count">${n}</span>` : null}`;
       const className = `gpi-graph gpi-state-${spec.state}`;
       if (!onOpen) return html`<span key=${spec.data} class=${className} data-group-processes=${spec.data} role="img" title=${label} aria-label=${label}>${body}</span>`;
-      return html`<button key=${spec.data} type="button" class=${className} data-group-processes=${spec.data}
+      return html`<button data-ui-exempt key=${spec.data} type="button" class=${className} data-group-processes=${spec.data}
         title=${`${label} — show ${groupName}'s processes`} aria-label=${label}
         onClick=${(event) => { event.preventDefault(); event.stopPropagation(); onOpen(spec.filter); }}
       >${body}</button>`;

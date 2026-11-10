@@ -22,6 +22,7 @@ function installBrowsingContext(t, harness, startPath = '/') {
   const calls = [];
   let current = startPath;
   const location = {
+    origin: 'http://dashboard.test',
     get pathname() { return current.split('?')[0]; },
     get search() { const q = current.split('?')[1]; return q ? `?${q}` : ''; },
   };
@@ -65,19 +66,19 @@ function installActivityShell(harness) {
   harness.document.body.innerHTML = `
     <nav>
       <button data-tab="groups"></button>
-      <button data-tab="activity" class="active"></button>
+      <button data-tab="diagnostics" class="active"></button>
     </nav>
-    <main><section id="tab-activity" class="active">
-      <a class="activity-subtab active" data-subtab="audit" href="/activity/audit">Audit</a>
-      <a class="activity-subtab" data-subtab="logs" href="/activity/logs">Logs</a>
-      <a class="activity-subtab" data-subtab="performance" href="/activity/performance">Performance</a>
+    <main><section id="tab-diagnostics" class="active">
+      <a class="activity-subtab active" data-subtab="audit" href="/diagnostics/audit">Audit</a>
+      <a class="activity-subtab" data-subtab="logs" href="/diagnostics/logs">Logs</a>
+      <a class="activity-subtab" data-subtab="performance" href="/diagnostics/performance">Performance</a>
       <div class="activity-panel active" id="activity-audit"></div>
       <div class="activity-panel" id="activity-logs"></div>
       <div class="activity-panel" id="activity-performance"></div>
     </section></main>`;
 }
 
-test('a retired /logs deep link heals to /activity/logs; subtabs push and Back restores', async (t) => {
+test('a retired /logs deep link heals to /diagnostics/logs; subtabs push and Back restores', async (t) => {
   const harness = await createPreactHarness(t);
   installActivityShell(harness);
   const browsing = installBrowsingContext(t, harness, '/logs?wizard=1');
@@ -91,7 +92,7 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
   const panel = (name) => harness.document.getElementById(`activity-${name}`);
 
   initNavHistory();
-  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/activity/logs' }],
+  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/diagnostics/logs' }],
     'the old path is rewritten in place — no extra Back step');
   assert.equal(activitySubtab.value, 'logs');
   assert.equal(panel('logs').classList.contains('active'), true);
@@ -99,7 +100,7 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
   browsing.calls.length = 0;
 
   harness.document.querySelector('[data-subtab="performance"]').click();
-  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/activity/performance' }]);
+  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/diagnostics/performance' }]);
   assert.equal(panel('performance').classList.contains('active'), true);
   const atPerformance = browsing.history.state;
   harness.document.querySelector('[data-subtab="performance"]').click();
@@ -107,7 +108,7 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
   browsing.calls.length = 0;
 
   // Back: the browser has moved to the previous entry and fires popstate.
-  browsing.history.replaceState({ ...atPerformance, navIndex: 0 }, '', '/activity/logs');
+  browsing.history.replaceState({ ...atPerformance, navIndex: 0 }, '', '/diagnostics/logs');
   browsing.calls.length = 0;
   const back = new harness.window.Event('popstate');
   back.state = browsing.history.state;
@@ -121,10 +122,23 @@ test('a retired /logs deep link heals to /activity/logs; subtabs push and Back r
   assert.equal(activitySubtab.value, 'logs');
 });
 
+test('navigateToPath refuses an unknown tab instead of reporting Groups', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/processes');
+  const { initNavHistory, navigateToPath } = await harness.importDashboardModule('js/nav-history.js');
+  initNavHistory();
+  browsing.calls.length = 0;
+  assert.equal(navigateToPath('/not-a-tab'), false);
+  assert.deepEqual(browsing.calls, [], 'nothing moved');
+  assert.equal(navigateToPath('/groups'), true);
+  assert.equal(browsing.calls[0].kind, 'push');
+});
+
 test('a peer view keeps a Logs deep link until the peer answers (unrestricted trust serves it)', async (t) => {
   const harness = await createPreactHarness(t);
   installActivityShell(harness);
-  const browsing = installBrowsingContext(t, harness, '/activity/logs');
+  const browsing = installBrowsingContext(t, harness, '/diagnostics/logs');
   const previous = globalThis.__tclaudeRemoteNode;
   globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
   t.after(() => { globalThis.__tclaudeRemoteNode = previous; });
@@ -134,7 +148,7 @@ test('a peer view keeps a Logs deep link until the peer answers (unrestricted tr
   ]);
   initNavHistory();
   assert.equal(activitySubtab.value, 'logs', 'an unrestricted peer serves the daemon log');
-  assert.equal(browsing.at(), '/activity/logs?node=inst_forge7', 'boot keeps the location');
+  assert.equal(browsing.at(), '/diagnostics/logs?node=inst_forge7', 'boot keeps the location');
   assert.equal(browsing.calls.every((call) => call.kind === 'replace'), true);
 });
 
@@ -235,6 +249,45 @@ test('a terminals deep link survives boot with the tab still hidden', async (t) 
   assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/terminals/agt_abc123' }]);
   assert.deepEqual(restores, [{ tab: 'terminals', selection: 'agt_abc123' }],
     'the island is asked to reattach the agent named in the URL');
+});
+
+test('a /drawing-boards deep link shows the Terminals section and asks the shell for the tab', async (t) => {
+  // A drawing board is a tab of the Terminals section, so its route has no nav anchor
+  // of its own to click.
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const terminals = harness.document.querySelector('nav').appendChild(harness.document.createElement('button'));
+  terminals.dataset.tab = 'terminals';
+  const clicks = [];
+  terminals.addEventListener('click', () => clicks.push('terminals'));
+  const browsing = installBrowsingContext(t, harness, '/drawing-boards/plan');
+  const { initNavHistory } = await harness.importDashboardModule('js/nav-history.js');
+  const restores = [];
+  harness.document.addEventListener('tclaude:restore-location',
+    (event) => restores.push(event.detail.location));
+
+  initNavHistory();
+
+  assert.deepEqual(clicks, ['terminals']);
+  assert.equal(browsing.at(), '/drawing-boards/plan', 'the URL keeps naming the drawing board');
+  assert.deepEqual(restores, [{ tab: 'drawing-boards', selection: 'plan' }]);
+});
+
+test('a /drawing-boards deep link falls back on a peer\'s page', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge7' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; });
+  const browsing = installBrowsingContext(t, harness, '/drawing-boards/plan');
+  const { initNavHistory } = await harness.importDashboardModule('js/nav-history.js');
+  const restores = [];
+  harness.document.addEventListener('tclaude:restore-location',
+    (event) => restores.push(event.detail.location));
+
+  initNavHistory();
+
+  assert.equal(browsing.at(), '/?node=inst_forge7');
+  assert.deepEqual(restores, [], 'no drawing board is asked for');
 });
 
 test('a bare /terminals with no terminals open still falls back', async (t) => {
@@ -379,7 +432,7 @@ test('the adapter reads the open editor id from the island, not the DOM', async 
   ]);
 });
 
-async function bootGroupsFocus(t, startPath, { focus = 'both', processesHidden = false } = {}) {
+async function bootGroupsFocus(t, startPath, { processesHidden = false } = {}) {
   const harness = await createPreactHarness(t);
   installShell(harness);
   if (processesHidden) harness.document.body.classList.add('hide-processes');
@@ -388,10 +441,9 @@ async function bootGroupsFocus(t, startPath, { focus = 'both', processesHidden =
     harness.importDashboardModule('js/feature-state-registry.js'),
     harness.importDashboardModule('js/nav-history.js'),
   ]);
-  const groupsFocus = harness.signals.signal(focus);
   const focusedRun = harness.signals.signal(null);
   const unregister = registerFeatureState('groups', {
-    subview: harness.signals.signal('members'), routeSelection: harness.signals.signal(''), focus: groupsFocus, focusedRun,
+    subview: harness.signals.signal('members'), routeSelection: harness.signals.signal(''), focusedRun,
   });
   t.after(unregister);
   const restores = [];
@@ -399,121 +451,44 @@ async function bootGroupsFocus(t, startPath, { focus = 'both', processesHidden =
     restores.push(event.detail.location);
     if (event.detail.location.tab === 'groups') {
       const { subtab } = event.detail.location;
-      if (subtab === 'runs') {
-        focusedRun.value = { group: event.detail.location.selection, runId: event.detail.location.item };
-        return;
-      }
-      focusedRun.value = null;
-      groupsFocus.value = subtab === 'processes' || subtab === 'agents' ? subtab : 'both';
+      focusedRun.value = subtab === 'runs' ? { group: event.detail.location.selection, runId: event.detail.location.item } : null;
     }
   });
   initNavHistory();
-  return { harness, browsing, restores, groupsFocus, focusedRun };
+  return { harness, browsing, restores, focusedRun };
 }
 
-test('a /groups/processes deep link restores the Processes focus', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/groups/processes');
-  assert.equal(browsing.at(), '/groups/processes');
-  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'processes' }]);
-  assert.equal(groupsFocus.value, 'processes');
-});
+for (const path of ['/groups/processes', '/groups/agents']) {
+  test(`the retired ${path} deep link lands on bare Groups`, async (t) => {
+    const { browsing, restores } = await bootGroupsFocus(t, path);
+    assert.equal(browsing.at(), '/');
+    assert.deepEqual(restores, [], 'nothing to restore: it is the default view');
+  });
+}
 
-test('a /groups/agents deep link restores the Agents focus; bare Groups is Both', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/groups/agents');
-  assert.equal(browsing.at(), '/groups/agents');
-  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'agents' }]);
-  assert.equal(groupsFocus.value, 'agents');
-});
-
-test('a fresh bare load in Both keeps the bare URL', async (t) => {
-  const fused = await bootGroupsFocus(t, '/');
-  assert.equal(fused.browsing.at(), '/');
-  assert.equal(fused.groupsFocus.value, 'both');
-});
-
-test('a fresh bare load names the remembered Agents focus in the URL', async (t) => {
-  const { browsing, groupsFocus } = await bootGroupsFocus(t, '/', { focus: 'agents' });
-  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/groups/agents' }]);
-  assert.equal(groupsFocus.value, 'agents');
-});
-
-test('a /groups/processes deep link falls back to Groups while processes are off', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/groups/processes', { processesHidden: true });
+test('a fresh bare load keeps the bare URL', async (t) => {
+  const { browsing, restores } = await bootGroupsFocus(t, '/');
   assert.equal(browsing.at(), '/');
   assert.deepEqual(restores, []);
-  assert.equal(groupsFocus.value, 'both');
 });
 
-test('a fresh bare load names the remembered Processes focus in the URL', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/', { focus: 'processes' });
-  assert.deepEqual(browsing.calls, [{ kind: 'replace', url: '/groups/processes' }],
-    'the entry is rewritten in place, so a later Back onto it restores Processes');
-  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'processes' }]);
-  assert.equal(groupsFocus.value, 'processes');
+test('a /groups/runs deep link opens the run', async (t) => {
+  const on = await bootGroupsFocus(t, '/groups/runs/ops/run_1');
+  assert.equal(on.browsing.at(), '/groups/runs/ops/run_1');
+  assert.deepEqual(on.focusedRun.value, { group: 'ops', runId: 'run_1' });
 });
 
-test('a remembered Processes focus stays out of the URL while processes are off, and survives', async (t) => {
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/', { focus: 'processes', processesHidden: true });
+test('a /groups/runs deep link falls back to Groups while processes are off', async (t) => {
+  const { browsing, restores, focusedRun } = await bootGroupsFocus(t, '/groups/runs/ops/run_1', { processesHidden: true });
   assert.equal(browsing.at(), '/');
-  assert.deepEqual(restores, [], 'no synthetic restore clobbers the remembered lens');
-  assert.equal(groupsFocus.value, 'processes');
+  assert.deepEqual(restores, []);
+  assert.equal(focusedRun.value, null);
 });
 
-test('a stale-target fallback lands on the remembered Processes lens', async (t) => {
+test('a stale-target fallback lands on bare Groups', async (t) => {
   // /terminals with no panes (they do not survive a reload) is unavailable.
-  const { browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/terminals', { focus: 'processes' });
-  assert.equal(browsing.at(), '/groups/processes');
-  assert.deepEqual(restores, [{ tab: 'groups', subtab: 'processes' }]);
-  assert.equal(groupsFocus.value, 'processes');
-});
-
-test('focus switches push entries and Back returns to the Both focus', async (t) => {
-  const { harness, browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/');
-  browsing.calls.length = 0;
-  groupsFocus.value = 'processes';
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
-    detail: { location: { tab: 'groups', subtab: 'processes' } },
-  }));
-  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/groups/processes' }]);
-
-  // Leaving and re-entering Groups through the nav reads the focus back.
-  const nav = (tab) => {
-    for (const b of harness.document.querySelectorAll('nav [data-tab]')) b.classList.toggle('active', b.dataset.tab === tab);
-    harness.document.querySelector(`nav [data-tab="${tab}"]`).click();
-  };
-  nav('jobs');
-  nav('groups');
-  assert.equal(browsing.at(), '/groups/processes');
-
-  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/');
-  restores.length = 0;
-  harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  assert.deepEqual(restores, [{ tab: 'groups' }], 'a bare Groups pop from Processes is an explicit restore');
-  assert.equal(groupsFocus.value, 'both');
-});
-
-test('the Agents lens keeps its URL across tabs, and Back onto bare Groups returns to Both', async (t) => {
-  const { harness, browsing, restores, groupsFocus } = await bootGroupsFocus(t, '/');
-  browsing.calls.length = 0;
-  groupsFocus.value = 'agents';
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
-    detail: { location: { tab: 'groups', subtab: 'agents' } },
-  }));
-  assert.deepEqual(browsing.calls, [{ kind: 'push', url: '/groups/agents' }]);
-
-  const nav = (tab) => {
-    for (const b of harness.document.querySelectorAll('nav [data-tab]')) b.classList.toggle('active', b.dataset.tab === tab);
-    harness.document.querySelector(`nav [data-tab="${tab}"]`).click();
-  };
-  nav('jobs');
-  nav('groups');
-  assert.equal(browsing.at(), '/groups/agents', 're-entering Groups names the Agents lens');
-
-  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/');
-  restores.length = 0;
-  harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  assert.deepEqual(restores, [{ tab: 'groups' }], 'a bare Groups pop from Agents is an explicit restore');
-  assert.equal(groupsFocus.value, 'both');
+  const { browsing } = await bootGroupsFocus(t, '/terminals');
+  assert.equal(browsing.at(), '/');
 });
 
 // installTabsShell is a nav whose buttons switch the active tab on click, the
@@ -656,7 +631,7 @@ test('a Messages search survives the deep link next to the page-global theme', a
   assert.equal(browsing.at(), '/messages/human?slop=1&q=rollback');
 });
 
-test('Back from a run opened in Both closes it on bare Groups', async (t) => {
+test('Back from an open run closes it on bare Groups', async (t) => {
   const { harness, browsing, restores, focusedRun } = await bootGroupsFocus(t, '/');
   focusedRun.value = { group: 'ops', runId: 'run_1' };
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', {
@@ -732,10 +707,10 @@ test('a navigation right after an overlay close waits for the step back to land'
   browsing.calls.length = 0;
   open = '';
   overlays.announceOverlay({ closed: true, doc: harness.document });
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', { detail: { location: { tab: 'groups', subtab: 'processes' } } }));
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', { detail: { location: { tab: 'groups', subtab: 'runs', selection: 'ops', item: 'run_1' } } }));
   assert.deepEqual(browsing.calls.map((c) => c.kind), ['back'], 'the push waits for the traversal');
   browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/automations');
   harness.window.dispatchEvent(new harness.window.Event('popstate'));
   assert.equal(browsing.calls.at(-1).kind, 'push');
-  assert.equal(browsing.at(), '/groups/processes');
+  assert.equal(browsing.at(), '/groups/runs/ops/run_1');
 });

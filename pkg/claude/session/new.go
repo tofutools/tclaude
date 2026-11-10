@@ -1,37 +1,27 @@
 package session
 
 import (
-	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
-	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/launchundo"
 	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
-	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -75,9 +65,10 @@ type NewParams struct {
 	// avoids re-deriving permission roots from a mutable path in the child.
 	GitWorktreeWriteDirs       []string `short:"X" long:"git-worktree-write-dir" optional:"true" help:"Internal: proof-pinned repository sandbox write root"`
 	GitWorktreeWriteDirsPinned bool     `short:"Y" long:"git-worktree-write-dirs-pinned" help:"Internal: use the daemon-pinned repository write roots, including an empty set"`
-	Resume                     string   `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
+	Resume                     string   `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID, or an agent by name or agent ID"`
+	ResumeLast                 bool     `long:"resume-last" help:"Resume the newest conversation in the current directory, skipping retired ones (Claude Code only)"`
 	Global                     bool     `short:"g" help:"Search for conversation across all projects (with --resume)"`
-	Label                      string   `long:"label" optional:"true" help:"Custom label for the session"`
+	Label                      string   `long:"label" optional:"true" help:"Custom tmux label for a solo session. Keeps the launch solo (no directory auto-join, a notice says so); to join a group with a custom name use -n NAME instead"`
 	Detached                   bool     `long:"detached" short:"d" help:"Start detached (don't attach to session)"`
 	WaitForRateLimit           bool     `long:"wait-for-rate-limit" short:"w" help:"Wait for rate limit (5-hour and 7-day) to reset before starting session"`
 
@@ -91,7 +82,7 @@ type NewParams struct {
 	// an omitted value from the global default spawn profile; if that is also
 	// blank the harness receives no override. A non-empty value is normalized
 	// and validated by the harness catalog in runNew.
-	ModelProxy string `long:"model-proxy" optional:"true" help:"Model gateway <name>@<trusted peer>"`
+	ModelProxy string `long:"model-proxy" optional:"true" help:"Model gateway <name>@<trusted peer>, for Claude Code, Codex or Copilot"`
 	// ClaudeSubscription is set by agentd for an agent that runs on a peer
 	// operator's own Claude subscription; the token never passes through here.
 	ClaudeSubscription bool   `long:"claude-subscription" optional:"true" hidden:"true" help:"Run Claude Code on the agent's peer-provided subscription token"`
@@ -126,13 +117,13 @@ type NewParams struct {
 	// profile (a spawned agent is the untrusted party) and Claude to inherit (no
 	// override — its settings.json is the operator's chosen posture). See
 	// JOH-192 / JOH-207.
-	Sandbox string `long:"sandbox" optional:"true" help:"The HARNESS'S OWN sandbox setting (per-harness) — not who enforces containment, which is --sandbox-impl. Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
+	Sandbox string `long:"sandbox" optional:"true" help:"The HARNESS'S OWN sandbox setting (per-harness) — not who enforces containment, which is --sandbox-impl. Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. OpenCode: access-control | tclaude-layer | off. Copilot: inherit | off. Gemini CLI: inherit | off, and seatbelt on macOS. pi: off. Unset = global profile, then no override (each harness uses its own config)"`
 
 	// SandboxImplementation selects who owns OS-level containment. The default
 	// is the harness's historical behavior; tclaude-layer is a
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
 	// historical behavior is a command filter, not confinement.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude’s built-in sandbox, harness OS sandbox off) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude’s built-in sandbox, harness OS sandbox off) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset = global profile, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
 	// sandboxImplExplicit preserves the decision/replay boundary after
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.
@@ -146,6 +137,11 @@ type NewParams struct {
 	// reads CopilotAPI they are the same bool. Same reason as sandboxImplExplicit
 	// above: the carryover is the only place the distinction still exists.
 	copilotAPIDriveCarriedFrom string
+	// recordedLaunchFlags names the flags applyRecordedLaunchPosture found a
+	// recorded value for (applied, a recorded no-op, or dropped), so the default
+	// profile only fills what the conversation never recorded. Internal state,
+	// not a CLI parameter.
+	recordedLaunchFlags map[string]bool
 	// copilotAPIDriveDropped marks a launch that resolved the drive and then could
 	// not honour it, so the posture write asserts nil instead of false and the
 	// conversation's recorded choice survives. Internal state, not a CLI parameter.
@@ -178,12 +174,12 @@ type NewParams struct {
 	// daemon spawn path defaults it to each harness's safe value (Codex: never,
 	// so a detached pane can't deadlock; Claude: inherit, no override). See
 	// JOH-200.
-	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. Unset = no override (each harness uses its own config)"`
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Gemini CLI approval mode: yolo|auto_edit|default|plan|inherit. pi: auto|ask|read-only. OpenCode: deny|ask|allow-tools. Copilot: inherit|allow-tools|yolo. Unset = global profile, then no override (each harness uses its own config)"`
 
 	// ToolGovernance controls OpenCode's homogeneous built-in tool block. A
 	// direct session launch validates but does not default it; daemon launches
 	// resolve blank to allow and pass the concrete value through this flag.
-	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance for bash/glob/grep/lsp/task/skill: allow | ask | deny. Unset = no override for a direct launch. Not applicable to claude/codex"`
+	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance: allow | ask | deny for bash/glob/grep/lsp/skill, with other tools and sub-agents (task) off; or all, which allows every OpenCode tool, sub-agents included, with optional per-tool entries all,question=deny,plan=deny,env=allow (.env reads are denied under all unless env=allow). all needs sandbox-impl tclaude-layer or off and approval deny or allow-tools. Unset = no override for a direct launch. Not applicable to claude/codex"`
 
 	// AutoReview opts into the harness's guardian subagent (Codex's `-c
 	// approvals_reviewer=auto_review`), which auto-decides approval prompts in
@@ -200,15 +196,15 @@ type NewParams struct {
 	// none of them exposes a per-invocation trust flag:
 	//
 	//   codex   → [projects."<cwd>"] trust_level = "trusted" in ~/.codex/config.toml
-	//   claude  → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude.json
+	//   claude  → projects.<cwd>.hasTrustDialogAccepted = true in ~/.claude/.claude.json
 	//   copilot → <cwd> appended to trustedFolders in $COPILOT_HOME/config.json
 	//
 	// OFF by default and NEVER auto-defaulted on this path: editing a config
 	// tclaude does not own is a side effect the user must explicitly request
 	// (dashboard checkbox / this flag). Rejected for a harness with no
 	// dir-trust dialog. The write is atomic + idempotent
-	// (harness.EnsureDirTrusted).
-	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude.json, copilot gets the directory appended to trustedFolders in $COPILOT_HOME/config.json. Off by default; edits that harness's config, so opt-in only"`
+	// (harness.EnsureDirTrustedForLaunch).
+	TrustDir bool `long:"trust-dir" help:"Pre-trust the launch directory so a detached pane doesn't freeze on the harness's trust-folder dialog: codex gets [projects.\"<cwd>\"] trust_level=\"trusted\" in ~/.codex/config.toml, claude gets projects.<cwd>.hasTrustDialogAccepted=true in ~/.claude/.claude.json, copilot gets the directory appended to trustedFolders in $COPILOT_HOME/config.json, and gemini and pi record it in their own trust stores. Off by default; edits that harness's config, so opt-in only"`
 
 	// RemoteControl arms Claude Code's built-in Remote Access at launch
 	// (`claude --remote-control`), so the session is reachable from
@@ -337,7 +333,7 @@ type NewParams struct {
 	// Automatic group discovery is resolved from explicit CLI flags over the
 	// config file in RunNewFromCommand. Programmatic RunNew callers retain their
 	// historical solo-session behavior because these zero values stay false.
-	AutoJoinGroup         bool `long:"auto-join-group" default:"true" help:"Automatically join an active group whose configured default directory matches the normalized launch directory (default: config session.auto_join_group, then true). Pass --auto-join-group=false to disable"`
+	AutoJoinGroup         bool `long:"auto-join-group" default:"true" help:"Automatically join an active group whose configured default directory matches the normalized launch directory (default: config session.auto_join_group, see 'tclaude config get', then true). Solo-only flags (--label, --session-id, --permission-profile, --wait-for-rate-limit, --global, --send-keys) keep a launch solo; passing this flag explicitly with one is an error. Pass --auto-join-group=false to stay solo"`
 	AutoJoinOrCreateGroup bool `long:"auto-join-or-create-group" help:"When directory auto-join finds no group, create one for the normalized launch directory and join it (default: config session.auto_join_or_create_group, then false)"`
 	NoDaemon              bool `long:"no-daemon" help:"Start a solo session without agentd-backed group discovery or agent features; useful for non-interactive launches when agentd is unavailable"`
 
@@ -350,7 +346,7 @@ type NewParams struct {
 	Worktree            string `long:"worktree" optional:"true" help:"Create or reuse this git worktree branch for a group-joined launch"`
 	WorktreeBase        string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree"`
 	WorktreeRepo        string `long:"worktree-repo" optional:"true" help:"Repository in which to create --worktree when it differs from the launch directory"`
-	InitialMessage      string `long:"initial-message" optional:"true" help:"Task brief delivered to a group-joined agent's inbox"`
+	InitialMessage      string `long:"initial-message" optional:"true" help:"Task brief for a group-joined agent, delivered with its welcome (the dashboard spawn dialog's initial message). Refused on a launch that stays solo"`
 	File                string `long:"file" optional:"true" help:"Read --initial-message from this file ('-' reads stdin)"`
 	ReplyTo             string `long:"reply-to" optional:"true" help:"Recipient for replies to the group-joined agent's startup brief"`
 	SpawnTimeout        string `long:"timeout" optional:"true" help:"How long to wait for a group-joined agent to register (default 30s, max 5m)"`
@@ -370,7 +366,7 @@ type NewParams struct {
 	// (JOH-205); a direct human `session new` leaves it empty and types
 	// their own first message. Ignored by a harness that reports its conv-id
 	// at launch (Claude Code) and on a --resume. See codexSpawner.BuildCommand.
-	InitialPrompt string `long:"initial-prompt" optional:"true" help:"First-turn prompt the harness submits itself at launch (its positional [prompt]). Daemon spawns set it automatically (Claude Code: the agent welcome; Codex: a conv-id seed)"`
+	InitialPrompt string `long:"initial-prompt" optional:"true" help:"First-turn prompt the harness submits itself at launch (its positional [prompt]). When this launch joins a group it becomes the agent's startup brief instead, like -i (pass only one of the two). Daemon spawns set it automatically (Claude Code: the agent welcome; Codex: a conv-id seed)"`
 
 	// SessionID pins the conversation id for a FRESH launch of a harness that
 	// accepts a preset id — Claude Code (`claude --session-id <uuid>`) and
@@ -381,7 +377,7 @@ type NewParams struct {
 	// specific id. Mutually exclusive with --resume; both harnesses require a
 	// valid UUID. (OpenCode also accepts one, but only as an internal
 	// agentd-minted `ses_` id on a managed launch.)
-	SessionID string `long:"session-id" optional:"true" help:"Use a specific conversation id (UUID) for a fresh Claude Code or Copilot session (--session-id). Mutually exclusive with --resume"`
+	SessionID string `long:"session-id" optional:"true" help:"Use a specific conversation id (UUID) for a fresh Claude Code, Copilot, Gemini CLI or pi session (--session-id). OpenCode ids come from agentd, and Codex takes none. Mutually exclusive with --resume"`
 
 	// RouteHelper* are an internal daemon-to-session handoff. The daemon mints
 	// the launch generation and opaque credential before the pane starts; callers
@@ -402,7 +398,7 @@ func NewCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(params *NewParams, cmd *cobra.Command, args []string) {
 			if err := RunNewFromCommand(params, cmd); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},
@@ -522,7 +518,7 @@ func runNew(params *NewParams) error {
 	timing := config.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
 	defer timing("return")
 	if params.HelpContextFeatures {
-		harness.PrintContextFeatureCatalog(os.Stdout)
+		harness.PrintContextFeatureCatalog(cliStdout)
 		return nil
 	}
 	var effectiveSandbox *sandboxpolicy.Snapshot
@@ -542,7 +538,7 @@ func runNew(params *NewParams) error {
 	// Freeze which filesystem rules are concrete once for this launch. Keep the
 	// original snapshot for persistence; launchSandbox is the consistent set
 	// used by capability checks, write proofs, and the harness handoff.
-	launchSandbox, err := sandboxSnapshotForLaunch(effectiveSandbox)
+	launchSandbox, err := SandboxSnapshotForLaunch(effectiveSandbox)
 	if err != nil {
 		return err
 	}
@@ -560,518 +556,17 @@ func runNew(params *NewParams) error {
 		return runNewShell(params)
 	}
 
-	// The spawn command, model/effort validation and resume form all come
-	// from the selected harness behind the seam (pkg/claude/harness).
-	// --harness picks it (default "claude"); an unknown value errors here
-	// rather than silently launching Claude Code, as does an experimental
-	// harness the operator has not opted into.
-	h, err := harness.ResolveSpawnable(params.Harness)
+	opts, err := resolveNewLaunch(params, launchSandbox)
 	if err != nil {
 		return err
 	}
-
-	// Normalise + validate --effort up front so a typo errors cleanly
-	// here (and, on the daemon spawn path, surfaces as the forked
-	// `tclaude session new`'s non-zero exit) rather than being forwarded
-	// to claude. Empty stays empty → the flag is omitted entirely. The
-	// cleaned value is written back so the --join-group handler sees the
-	// normalised level too.
-	effort, err := h.Models.ValidateEffort(params.Effort)
-	if err != nil {
-		return err
-	}
-	params.Effort = effort
-
-	// Same treatment for --model: normalise + validate up front, empty
-	// stays empty → the flag is omitted entirely.
-	model, err := h.Models.ValidateModel(params.Model)
-	if err != nil {
-		return err
-	}
-	params.Model = model
-	if params.ModelProxy == "off" {
-		params.ModelProxy = ""
-	}
-	if params.ClaudeSubscription && (h.Name != harness.DefaultName || params.ModelProxy != "") {
-		return errors.New("a Claude subscription launch runs Claude Code without a model gateway")
-	}
-	if params.ModelProxy != "" {
-		if !h.SupportsModelProxy() {
-			return errors.New(h.ModelProxyRefusal())
-		}
-		if h.Name == harness.CopilotName && (strings.TrimSpace(params.Model) == "" || params.Model == "auto") {
-			return errors.New("copilot model gateway requires an explicit --model; automatic model selection is unavailable offline")
-		}
-		if !strings.Contains(params.ModelProxy, "@") {
-			return fmt.Errorf("--model-proxy must be <name>@<trusted peer>")
-		}
-	}
-
-	// --session-id pins a fresh conversation id for a harness that declares a
-	// preset shape (Harness.PresetSessionID): a UUID for Claude Code, Copilot
-	// CLI and Gemini CLI, an agentd-minted ses_ id for OpenCode. Codex
-	// generates its own at first turn and refuses one.
-	params.SessionID = strings.TrimSpace(params.SessionID)
-	if err := validatePresetSessionID(h, params.SessionID, params.Resume, params.ManagedLaunch); err != nil {
-		return err
-	}
-	// A harness that declares MintFreshSessionID (Gemini CLI) would otherwise
-	// have nothing report the id it mints for itself, and the session row would
-	// stay conversation-less for good — unresumable and invisible to every
-	// conv-keyed surface. Its `--session-id` accepts a caller-chosen id, so a
-	// fresh launch that was not handed one gets one here and is known from
-	// the first moment, exactly like a launch-enrolled daemon spawn.
-	if h.MintsFreshLaunchSessionID() && params.SessionID == "" && params.Resume == "" {
-		params.SessionID = convops.GenerateUUID()
-	}
-	params.CwdWriteProof = strings.TrimSpace(params.CwdWriteProof)
-	if params.CwdWriteProof != "" && !isValidSpawnCwdProofToken(params.CwdWriteProof) {
-		return fmt.Errorf("invalid internal cwd write proof")
-	}
-	params.DirWriteProof = strings.TrimSpace(params.DirWriteProof)
-	if params.DirWriteProof != "" && !isValidSpawnCwdProofToken(params.DirWriteProof) {
-		return fmt.Errorf("invalid internal dir write proof")
-	}
-	if params.CwdWriteProof != "" && params.DirWriteProof != "" && params.CwdWriteProof != params.DirWriteProof {
-		return fmt.Errorf("internal cwd and dir write proofs must use the same token")
-	}
-	if err := validateCodexGitCommonDirPin(params); err != nil {
-		return err
-	}
-	if err := validateGitWorktreeWriteDirPins(params); err != nil {
-		return err
-	}
-
-	// Validate --sandbox up front WITHOUT defaulting it: a FRESH
-	// `tclaude session new` is the human's own session, and the human is the
-	// trust root — tclaude must not silently override their config.toml
-	// sandbox_mode, so we emit a sandbox flag only when they pass it explicitly.
-	// (The daemon spawn path is where the secure default belongs — an
-	// agentd-spawned agent is the untrusted party — and it threads the resolved
-	// mode in explicitly.) On a --resume params.Sandbox may already carry the
-	// conversation's RECORDED mode, filled by applyRecordedLaunchPosture before
-	// runNew: a relaunch replays the containment decision that was made rather
-	// than re-deriving a new one, and erasing it would be permanent (TCL-730).
-	// That is a replay, not a default — an explicit flag still wins.
-	// For Claude Code, ValidateHarnessBuiltinMode normalizes its
-	// inherit/blank to "" (no `--settings` override); the spawner turns on/off
-	// into the override. The cwd-safety check needs the resolved cwd, so it
-	// happens later.
-	harnessBuiltinMode, err := harness.ValidateHarnessBuiltinMode(h, params.Sandbox)
-	if err != nil {
-		return err
-	}
-	params.Sandbox = harnessBuiltinMode
-
-	sandboxImplementation, err := sandboxpolicy.NormalizeImplementation(params.SandboxImpl)
-	if err != nil {
-		return err
-	}
-	// A set harness-builtin on a fresh launch (or an explicit override on a
-	// resume) is a new applicability decision and must be truthful. A flagless
-	// resume may carry the exact same spelling from a legacy/default record;
-	// that pure replay is deliberately grandfathered because historical rows
-	// never persisted setness and OpenCode gains no privilege from the spelling.
-	freshSandboxImplementationResolution :=
-		strings.TrimSpace(params.Resume) == "" || params.sandboxImplExplicit
-	if err := validateSandboxImplementationDecision(
-		h, params.SandboxImpl, sandboxImplementation, freshSandboxImplementationResolution,
-	); err != nil {
-		return err
-	}
-	params.SandboxImpl = string(sandboxImplementation)
-	outerLayer := sandboxImplementation.UsesTclaudeLayer()
-	requestedHarnessBuiltinMode := harnessBuiltinMode
-	harnessBuiltinMode, err = harness.ResolveSandboxImplementationMode(
-		h, harnessBuiltinMode, sandboxImplementation)
-	if err != nil {
-		return err
-	}
-	params.Sandbox = harnessBuiltinMode
-	if outerLayer {
-		// The single-wall implementation replaces the harness's own permission
-		// profile with tclaude's outer wall; ResolveSandboxImplementationMode
-		// above has already forced the matching harness-native mode. Clearing
-		// the profile HERE — rather than after the Codex managed-profile
-		// normalization below, where this used to live — keeps that
-		// normalization and the --permission-profile/--sandbox mutual-exclusion
-		// check from judging a profile this launch does not use.
-		//
-		// Clearing it is not the same as ignoring it: a profile flag the outer
-		// wall discards is still a flag the operator typed, and a combination
-		// that was a loud error before must stay one. Validate what they asked
-		// for against the mode they asked for, THEN discard it.
-		if err := validateReplacedPermissionProfile(
-			h, requestedHarnessBuiltinMode, params.PermissionProfile,
-		); err != nil {
-			return err
-		}
-		params.PermissionProfile = ""
-	}
-	if outerLayer {
-		if err := ValidateTclaudeLayerHarness(h.Name); err != nil {
-			return err
-		}
-	}
-
-	// Normalize the managed-profile pseudo-mode. SandboxManagedProfile is the
-	// dashboard/daemon way of selecting `codex -p tclaude-agent` through the one
-	// sandbox dropdown, but it is the profile name, not a real Codex --sandbox
-	// value — so on the direct CLI translate `--sandbox tclaude-agent` into
-	// --permission-profile here, converging both paths on the profile rather than
-	// emitting a bogus literal `--sandbox tclaude-agent` Codex would reject. (The
-	// daemon never reaches this: appendSandboxArgs already passes
-	// --permission-profile.) A conflicting explicit --permission-profile is a real
-	// error; an equal one is harmless.
-	if h.Name == harness.CodexName && harnessBuiltinMode == harness.SandboxManagedProfile {
-		if up := strings.TrimSpace(params.PermissionProfile); up != "" && up != harness.CodexAgentProfile {
-			return fmt.Errorf("--sandbox %s selects the managed %s profile and conflicts with --permission-profile %s",
-				harness.SandboxManagedProfile, harness.CodexAgentProfile, up)
-		}
-		params.PermissionProfile = harness.CodexAgentProfile
-		harnessBuiltinMode = ""
-		params.Sandbox = ""
-	}
-	// Mount paths are enforceable only where tclaude owns a mount namespace.
-	// This gate runs before every harness-specific one because the alternative
-	// is not a weaker policy but a WRONG one: the host path would be exposed and
-	// the authored sandbox path would be empty.
-	if err := sandboxpolicy.ValidateMountPathSupport(
-		sandboxSnapshotActiveFilesystem(launchSandbox), sandboxImplementation, runtime.GOOS,
-	); err != nil {
-		return err
-	}
-	// Same shape, same reason, for a rule naming a single file: the directory
-	// lists below cannot carry one, so an implementation that enforces through
-	// them would launch with the rule silently absent.
-	if err := sandboxpolicy.ValidateFileGrantSupport(
-		sandboxSnapshotActiveFilesystem(launchSandbox), sandboxImplementation, runtime.GOOS,
-	); err != nil {
-		return err
-	}
-	// And the same for a temporary filesystem, which no path-filter or
-	// directory-list sandbox can conjure at all.
-	if err := sandboxpolicy.ValidateTmpfsSupport(
-		sandboxSnapshotTmpfs(launchSandbox), sandboxImplementation, runtime.GOOS,
-	); err != nil {
-		return err
-	}
-	// An implementation that confines nothing is not asked whether the harness
-	// can represent a rule: it has stood every access boundary down on purpose,
-	// so the rules below are inert rather than unsupported. Refusing here would
-	// make the implementation unreachable for any operator whose global or
-	// group profile already carries such a rule, while the chain itself must
-	// keep resolving because resource_limits travel in it. This mirrors the
-	// daemon seam's arm in sandboxProfileCapabilityFailure; mount paths are
-	// still refused above, where an empty authored path is a real failure.
-	unconfined := sandboxImplementation.OmitsOSConfinement()
-	if launchSandbox != nil {
-		if err := harness.ValidateExplicitFilesystemRoot(
-			h, sandboxImplementation, launchSandbox.Effective.FilesystemRoot,
-			runtime.GOOS,
-		); err != nil {
-			return err
-		}
-	}
-	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
-		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
-		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
-	}
-	if !outerLayer && !unconfined && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
-		h.Name == harness.DefaultName && harnessBuiltinMode != harness.ClaudeSandboxOn {
-		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
-	}
-	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
-		h.Name == harness.GeminiName {
-		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Gemini CLI's own sandbox cannot represent sandbox-profile filesystem rules; use --sandbox-impl tclaude-layer")
-	}
-	if !outerLayer && !unconfined && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
-		h.Name == harness.OpenCodeName && harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
-		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
-	}
-	// Capability gates. Both refuse loudly rather than launching with a weaker
-	// policy than the operator asked for: a reopen beneath a deny that the
-	// harness silently discards, or an acknowledged protected grant it quietly
-	// dropped, would both be worse than an error, because the operator would
-	// trust isolation that is not there. This is the EARLY gate over the
-	// authored profile; the rendered rules are gated again once the launch
-	// contract has added its own reopens.
-	codexManagedProfile := h.Name == harness.CodexName && params.PermissionProfile == harness.CodexAgentProfile
-	effectiveHarnessBuiltinMode := harnessBuiltinMode
-	if codexManagedProfile {
-		// The managed profile is selected via -p rather than --sandbox, so
-		// harnessBuiltinMode was cleared above; restore the logical mode for the gates.
-		effectiveHarnessBuiltinMode = harness.SandboxManagedProfile
-	}
-	launchFilesystem := sandboxSnapshotActiveFilesystem(launchSandbox)
-	if !outerLayer && !unconfined {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode, launchFilesystem); err != nil {
-			return err
-		}
-	}
-	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
-	hasNewAccessAxes := launchSandbox != nil &&
-		(launchSandbox.Effective.Network != nil ||
-			launchSandbox.Effective.UnixSockets != nil ||
-			launchSandbox.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate)
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer && !unconfined {
-		switch h.Name {
-		case harness.CodexName:
-			if params.PermissionProfile != harness.CodexAgentProfile {
-				return fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
-			}
-			if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
-				return fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
-			}
-		case harness.OpenCodeName:
-			if harnessBuiltinMode != harness.OpenCodeSandboxAccessControl {
-				return fmt.Errorf("unsupported_sandbox_profile_network: OpenCode web-tool network rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
-			}
-		default:
-			return fmt.Errorf("unsupported_sandbox_profile_network: network policies are supported by the Codex managed sandbox or as OpenCode web-tool access control")
-		}
-	}
-	if outerLayer && !hasNewAccessAxes {
-		effective := sandboxpolicy.EffectiveProfile{NetworkAccess: networkAccess}
-		if launchSandbox != nil {
-			effective = launchSandbox.Effective
-		}
-		if _, err := ValidateTclaudeLayerNetwork(
-			h,
-			effective,
-			harness.ResolvedModelTransport{Model: model},
-		); err != nil {
-			return err
-		}
-	}
-
-	// Validate --permission-profile: a Codex-only knob (codex -p <name>) that
-	// is mutually exclusive with --sandbox. The daemon spawn path passes the
-	// managed tclaude-agent profile here IN PLACE OF --sandbox workspace-write
-	// so a sandboxed agent can still reach the agentd socket (JOH-207) — Codex
-	// ignores a permission profile whenever a --sandbox is present, and only a
-	// profile can allowlist that one Unix socket. The name is charset-validated
-	// (it becomes a launch arg / filename / TOML key).
-	profile, err := harness.ValidateCodexProfileName(params.PermissionProfile)
-	if err != nil {
-		return err
-	}
-	params.PermissionProfile = profile
-	if profile != "" {
-		if harnessBuiltinMode != "" {
-			return fmt.Errorf("--permission-profile and --sandbox are mutually exclusive: " +
-				"Codex ignores a permission profile when --sandbox is set")
-		}
-		if h.Name != harness.CodexName {
-			return fmt.Errorf("--permission-profile is a Codex launch option; harness %q has no permission profiles", h.Name)
-		}
-	}
-
-	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same
-	// trust-root reason as --sandbox above: a FRESH `tclaude session new` is
-	// the human's own session and they can attach to answer prompts, so tclaude
-	// emits the approval/permission flag only when they pass it explicitly. The
-	// daemon spawn path is where each harness's safe default belongs (its pane
-	// is unattended) and it threads the resolved value in explicitly. A --resume
-	// may arrive with the recorded posture already on params, on the same replay
-	// terms as --sandbox above. The value
-	// is validated per-harness (Codex's --ask-for-approval policy vs Claude
-	// Code's --permission-mode); for Claude, inherit/blank normalizes to "" (no
-	// --permission-mode override). The spawner emits the harness-appropriate flag.
-	approvalPolicy, err := harness.ValidateApprovalPolicy(h, params.Approval)
-	if err != nil {
-		return err
-	}
-	recordedApprovalPolicy := approvalPolicy
-	if h.Name == harness.DefaultName && recordedApprovalPolicy == "" {
-		// No Claude flag means the inherit posture exactly. Persist the sentinel
-		// even though command emission still omits it, so approval-lineage checks
-		// can distinguish a known inherit launch from a legacy unknown row.
-		recordedApprovalPolicy = harness.ClaudePermissionInherit
-	}
-	if h.Name == harness.CopilotName && recordedApprovalPolicy == "" {
-		// Identical reasoning for Copilot: emitting no permission flags IS the
-		// `inherit` token, so persisting the sentinel is a faithful record
-		// rather than an inference. Without it, every human-started Copilot
-		// session would look like a legacy unreconstructable row to the spawn
-		// approval guard, and a human's own session could not spawn even the
-		// baseline children its posture provably permits.
-		recordedApprovalPolicy = harness.CopilotApprovalInherit
-	}
-	if h.Name == harness.GeminiName && recordedApprovalPolicy == "" {
-		// And for Gemini: no --approval-mode IS the inherit posture.
-		recordedApprovalPolicy = harness.GeminiApprovalInherit
-	}
-	if h.Name == harness.PiName && recordedApprovalPolicy == "" {
-		// And for pi: no tool restriction IS its native auto posture.
-		recordedApprovalPolicy = harness.PiApprovalAuto
-	}
-	if err := RequireConfinementForApproval(h, recordedApprovalPolicy, outerLayer,
-		params.AllowUnenforcedSandbox, launchIsSandboxContinuation(params)); err != nil {
-		return err
-	}
-	params.Approval = approvalPolicy
-
-	toolGovernance, err := harness.ValidateToolGovernance(h, params.ToolGovernance)
-	if err != nil {
-		return err
-	}
-	params.ToolGovernance = toolGovernance
-
-	// Gate --auto-review the same way: it is allowed only for a harness with an
-	// approvals subsystem (Codex), so setting it for Claude Code errors here.
-	// There is no non-false default to apply (it is off unless explicitly opted
-	// into), so ResolveAutoReview serves both this direct path and the daemon
-	// path. See JOH-200 part 2.
-	autoReview, err := harness.ResolveAutoReview(h, params.AutoReview)
-	if err != nil {
-		return err
-	}
-	params.AutoReview = autoReview
-
-	// Gate --trust-dir the same way: pre-trusting the launch cwd means something
-	// only for a harness with a directory-trust dialog tclaude can pre-seed
-	// (Claude Code and Codex), and unlike the flags above it edits a config file
-	// tclaude does not own, so it is strictly opt-in and never defaulted on any
-	// path. Setting it for another harness errors here; the actual write happens
-	// just before launch, once cwd is resolved.
-	if _, err := harness.ResolveTrustDir(h, params.TrustDir); err != nil {
-		return err
-	}
-
-	// Gate --remote-control: arming built-in Remote Access at launch is a
-	// Claude Code feature (the --remote-control flag), so setting it for a
-	// harness without Remote Access (Codex) errors here. Off unless opted into
-	// on a fresh launch — or unless a --resume carried the conversation's
-	// recorded posture onto params, which reproduces reachability the agent
-	// already had rather than granting new. One ResolveRemoteControl serves this
-	// direct path and the daemon path. See JOH-258.
-	remoteControl, err := harness.ResolveRemoteControl(h, params.RemoteControl)
-	if err != nil {
-		return err
-	}
-	params.RemoteControl = remoteControl
-
-	// Gate --auto-memory the same way: opting back into auto memory only means
-	// something for a harness that has an auto-memory system (Claude Code), so
-	// requesting it for Codex errors here rather than silently doing nothing.
-	// The default (off) is valid for every harness — it is simply not injected
-	// for one that has no such switch. See ApplyAutoMemoryEnv.
-	autoMemory, err := harness.ResolveAutoMemory(h, &params.AutoMemory)
-	if err != nil {
-		return err
-	}
-	params.AutoMemory = autoMemory
-
-	// Gate --peer-messaging the same way: opting back into Claude Code's
-	// cross-session messaging only means something for a harness that has it
-	// (Claude Code), so requesting it for Codex errors here rather than
-	// silently doing nothing. The default (off) is valid for every harness — it
-	// is simply not injected for one with no such system.
-	peerMessaging, err := harness.ResolvePeerMessaging(h, &params.PeerMessaging)
-	if err != nil {
-		return err
-	}
-	params.PeerMessaging = peerMessaging
-
-	// Validate --ask-user-question-timeout: a Claude-Code-only settings.json
-	// override (never|60s|5m|10m) delivered via `--settings`, so a value for a
-	// harness with no AskUserQuestion dialog (Codex) errors here. There is no
-	// forced default (inherit/blank normalizes to "" = no override — enabling
-	// auto-continue is an explicit opt-in), so one ResolveAskTimeoutMode serves
-	// both this direct path and the daemon path.
-	askTimeout, err := harness.ResolveAskTimeoutMode(h, params.AskUserQuestionTimeout)
-	if err != nil {
-		return err
-	}
-	params.AskUserQuestionTimeout = askTimeout
-
-	// Gate --context-features the same way: parse the CLI spelling, then resolve
-	// it against the harness so an unknown slug, a bad state, or a trim requested
-	// for a harness with no steerable startup context (Codex) errors here rather
-	// than silently doing nothing. Unset stays nil, which injects nothing.
-	requestedFeatures, err := harness.ParseContextFeatures(params.ContextFeatures)
-	if err != nil {
-		return err
-	}
-	contextFeatures, err := harness.ResolveContextFeatures(h, requestedFeatures)
-	if err != nil {
-		return err
-	}
-	params.ContextFeatures = harness.FormatContextFeatures(contextFeatures)
-
-	// Gate --auto-compact-window the same way, with one extra job: the resolve
-	// also NORMALIZES the operator's spelling ("450k" → "450000"), and params is
-	// written back so everything downstream — the env injection, the recorded
-	// session row, the durable relaunch profile — agrees on one canonical form.
-	autoCompactWindow, err := harness.ResolveAutoCompactWindow(h, params.AutoCompactWindow)
-	if err != nil {
-		return err
-	}
-	params.AutoCompactWindow = autoCompactWindow
-	contextWindowMax, err := harness.ResolveCopilotContextWindow(h, params.ContextWindowMax)
-	if err != nil {
-		return err
-	}
-	params.ContextWindowMax = contextWindowMax
-	fastModeWasSpecified := strings.TrimSpace(params.FastMode) != ""
-	fastMode, err := harness.ResolveFastModeFlag(h, params.FastMode)
-	if err != nil {
-		return err
-	}
-	params.FastMode = fastMode
-	if params.JoinGroup != "" && fastModeWasSpecified && params.FastMode == harness.FastModeInherit {
-		// RunJoinGroup must distinguish explicit inherit from an omitted flag so
-		// it can suppress group/global/profile fast-mode defaults on the wire.
-		params.FastMode = "inherit"
-	}
-	// Opt-in only on this surface: the flag's absence leaves the posture false,
-	// so a launch that never asked for it keeps the send-keys path exactly as it
-	// was. A request for a harness with no API-backed mode is refused here.
-	copilotAPI, err := harness.ResolveCopilotAPI(h, &params.CopilotAPI)
-	if err != nil {
-		return err
-	}
-	params.CopilotAPI = copilotAPI
-	// Whether anything can actually PROVIDE the drive this launch resolved. Placed
-	// before the port resolution rather than after it, because a launch that is
-	// about to be refused or dropped must not allocate a loopback port first —
-	// binding and closing 127.0.0.1:0 for a drive nobody is going to run is
-	// exactly the pointless exposure this gate exists to prevent (TCL-1084).
-	//
-	// Every consequence of that decision — the drive params runs with, the drop
-	// marker the posture write reads, and clearing a port the drive no longer needs
-	// — lives inside the applier rather than here, so they are testable without a
-	// pane and cannot be separated from each other by a tidy-up.
-	if err := applyCopilotAPIDriveDecision(params, h, os.Stderr); err != nil {
-		return err
-	}
-	copilotAPIPort, err := ResolveCopilotAPIPort(params.CopilotAPI, params.CopilotAPIPort)
-	if err != nil {
-		return err
-	}
-	params.CopilotAPIPort = copilotAPIPort
-	codexAppServer, err := harness.ResolveCodexAppServer(h, &params.CodexAppServer)
-	if err != nil {
-		return err
-	}
-	params.CodexAppServer = codexAppServer
-	if params.CodexAppServer {
-		if !params.ManagedLaunch || strings.TrimSpace(params.CodexAppServerSocket) == "" ||
-			strings.TrimSpace(params.CodexAppServerURL) == "" ||
-			strings.TrimSpace(params.CodexAppServerTokenSHA256) == "" ||
-			strings.TrimSpace(params.CodexAppServerTokenHandoff) == "" ||
-			strings.TrimSpace(params.CodexAppServerPIDFile) == "" ||
-			strings.TrimSpace(params.CodexAppServerLogFile) == "" ||
-			strings.TrimSpace(params.CodexAppServerGeneration) == "" {
-			return fmt.Errorf("--codex-app-server requires an agentd-managed launch with private runtime paths")
-		}
-	} else if params.CodexAppServerSocket != "" || params.CodexAppServerPIDFile != "" ||
-		params.CodexAppServerURL != "" || params.CodexAppServerTokenSHA256 != "" ||
-		params.CodexAppServerTokenHandoff != "" ||
-		params.CodexAppServerLogFile != "" || params.CodexAppServerGeneration != "" {
-		return fmt.Errorf("codex app-server runtime paths require --codex-app-server")
-	}
+	h, effort, model := opts.h, opts.effort, opts.model
+	harnessBuiltinMode, effectiveHarnessBuiltinMode := opts.harnessBuiltinMode, opts.effectiveHarnessBuiltinMode
+	sandboxImplementation, outerLayer, unconfined := opts.sandboxImplementation, opts.outerLayer, opts.unconfined
+	networkAccess := opts.networkAccess
+	approvalPolicy, recordedApprovalPolicy := opts.approvalPolicy, opts.recordedApprovalPolicy
+	autoReview, remoteControl, autoMemory := opts.autoReview, opts.remoteControl, opts.autoMemory
+	askTimeout, contextFeatures, autoCompactWindow := opts.askTimeout, opts.contextFeatures, opts.autoCompactWindow
 
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
@@ -1135,137 +630,24 @@ func runNew(params *NewParams) error {
 		return err
 	}
 
-	// Self-guard: a Claude Code instance must not directly launch
-	// another Claude Code session. Placed after the --join-group and
-	// pass-through branches on purpose: --join-group delegates to the
-	// agentd daemon (gated there by the `groups.members.spawn` permission), and
-	// pass-through only prints `claude --help`/`--version`. Daemon-forked
-	// spawns are unaffected — see GuardAgainstNestedSpawn.
-	if err := GuardAgainstNestedSpawn(); err != nil {
-		return err
-	}
-
-	// Check tmux is installed
-	if err := CheckTmuxInstalled(); err != nil {
-		return err
-	}
-
-	// Check if hooks are installed (warn if not)
-	EnsureHooksInstalled(false, os.Stdout, os.Stderr)
-
-	// Sync the configured Claude Code transcript-retention override
-	// (claude_cleanup_period_days) into ~/.claude/settings.json. No-op unless
-	// set; logs and continues on failure.
-	_ = EnsureClaudeCleanupPeriod()
-
-	// Determine working directory
-	cwd, err := resolveSessionDir(params.Dir)
+	cwd, err := preflightNewLaunch(params.Dir)
 	if err != nil {
 		return err
 	}
-
-	// Set up signal handling for clean shutdown
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-
-	// Bridge sigCh into a context so WaitForRateLimit can be interrupted by Ctrl-C.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-
-	// Extract just the ID from autocomplete format (e.g.,
-	// "0459cd73_[title]_prompt..." -> "0459cd73"). OpenCode's native
-	// server-issued IDs contain an underscore themselves (`ses_…`), so a
-	// managed resume carrying the full ID must not go through the historical
-	// underscore-delimited completion decoder.
-	shortID := resumeIDFromParam(h, params.Resume)
-
-	// Resolve to full UUID and get project path, via the harness's
-	// conversation source (CC's cwd-indexed resolver, or another harness's
-	// ConvStore — e.g. Codex's rollout/state DB).
-	var fullConvID string
-	var convProjectPath string
-	if shortID != "" {
-		var err error
-		fullConvID, convProjectPath, err = resolveResumeConv(h, shortID, params.Global, cwd)
-		if err != nil {
-			return err
-		}
-		// Use conversation's project directory instead of cwd
-		if convProjectPath != "" {
-			cwd = convProjectPath
-		}
-	}
-
-	// The session row's primary key carries the FULL identity — never a
-	// truncation. On resume that's the conversation's full UUID (already in
-	// sessions.conv_id); collapsing it to 8 chars made two conversations
-	// sharing a hex prefix collide on the PK (SaveSession's ON CONFLICT(id)
-	// silently overwrote the row → wrong-session reattach + conflated
-	// notify_state / session_cost_daily). See JOH-248.
-	// Priority: explicit label > resumed conv UUID > random synthetic.
-	sessionID := GenerateSessionID()
-	if fullConvID != "" {
-		sessionID = fullConvID
-	}
-	if params.Label != "" {
-		sessionID = params.Label
-	}
-
-	timing("validated", "session_id", sessionID)
-
-	// When resuming, reserve the conversation before launching. This both
-	// rejects an already-live conv AND serializes against a concurrent resume:
-	// two `session new -r` of the same conv that both pass a bare read-guard
-	// would otherwise both run `claude --resume` on the same .jsonl (interleaved
-	// appends → corruption), because the disambiguated tmux name no longer makes
-	// the second `new-session` clean-fail. Keyed on conv_id, it catches the live
-	// session whatever its PK shape (full-UUID / synthetic / old convID[:8]).
-	// The lock is held (defer) until the session row is written and runNew
-	// returns; the OS frees it if this process dies. The PK guard below still
-	// backstops a reused --label. See JOH-332.
-	if fullConvID != "" {
-		release, reject := ReserveConvForLaunch(fullConvID)
-		if reject != nil {
-			return reject
-		}
-		defer release()
-	}
-
-	// The session PK is now final (priority above: label > resumed conv UUID >
-	// random synthetic). Reject if a LIVE session already owns it. The tmux
-	// name is disambiguated below (UniqueTmuxSessionName), so without this
-	// guard SaveSessionState's ON CONFLICT(id) would silently overwrite that
-	// live session's row. Before JOH-248 the PK and tmux name were identical,
-	// so the duplicate `new-session` clean-failed; this restores that now that
-	// the names diverge. A row owned only by a DEAD session is fine to reuse.
-	// (This PK guard primarily backstops a reused --label; the resumed-conv
-	// case is covered by the conv_id guard above. See JOH-332.)
-	owner, err := liveOwnerConflict(sessionID, params.Label)
+	ctx, stopLaunchContext := newLaunchContext()
+	defer stopLaunchContext()
+	id, err := resolveLaunchIdentity(h, params, cwd)
 	if err != nil {
 		return err
 	}
-	if owner != nil {
-		return fmt.Errorf("session %s already exists for this conversation; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
+	timing("validated", "session_id", id.sessionID)
+	releaseLaunchIdentity, err := claimLaunchIdentity(ctx, params, &id)
+	if err != nil {
+		return err
 	}
-
-	// The tmux session name is the short, human-facing handle (tmux status
-	// line, `session ls`, attach target). Render it short here while the PK
-	// stays full, and keep it unique among live tmux sessions.
-	tmuxSession := UniqueTmuxSessionName(TmuxNameBase(sessionID, params.Label, cwd))
-
-	if params.WaitForRateLimit {
-		if ratelimit.WaitForRateLimit(ctx, os.Stdout, sessionID, cwd) {
-			return fmt.Errorf("interrupted")
-		}
-	}
+	defer releaseLaunchIdentity()
+	fullConvID, sessionID, tmuxSession := id.fullConvID, id.sessionID, id.tmuxSession
+	cwd = id.cwd
 
 	// TCLAUDE_SESSION_ID is the stable session-row/routing key consumed by
 	// hooks, statusline, focus, and resume flows. It is caller-controlled
@@ -1273,185 +655,47 @@ func runNew(params *NewParams) error {
 	// authorizes callers from Unix-socket peer credentials and recorded PIDs.
 	// Build the harness command with all environment variables forwarded.
 	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
-	var routeHelper *TclaudeLayerRouteHelper
 	// networkFiltered: the launch runs under a filtered network, so a harness
 	// that can start traffic of its own outside the model route is told not
 	// to (harness.SpawnSpec.NetworkFiltered).
 	networkFiltered := false
-	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
-		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
-			return fmt.Errorf("linux group-route helper requires a pane-authoritative launch with tclaude’s sandbox")
-		}
-		if params.RouteHelperProxyOnly && runtime.GOOS != "darwin" {
-			return fmt.Errorf("darwin route proxy authority requires macOS")
-		}
-		if !params.RouteHelperProxyOnly && runtime.GOOS != "linux" {
-			return fmt.Errorf("linux group-route helper requires Linux")
-		}
-		if strings.TrimSpace(params.RouteHelperAgentID) == "" || strings.TrimSpace(params.RouteHelperConvID) == "" || strings.TrimSpace(params.RouteHelperLaunchGeneration) == "" || strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath) == "" || len(params.RouteHelperGroupIDs) == 0 {
-			return fmt.Errorf("linux group-route helper launch identity is incomplete")
-		}
-		socketFloor := sandboxpolicy.AgentdSocketFloor()
-		if len(socketFloor) == 0 || strings.TrimSpace(socketFloor[0]) == "" {
-			return fmt.Errorf("linux group-route helper agentd socket is unavailable")
-		}
-		helperBinary, helperBinaryErr := os.Executable()
-		if helperBinaryErr != nil || strings.TrimSpace(helperBinary) == "" {
-			if helperBinaryErr == nil {
-				helperBinaryErr = errors.New("executable path is empty")
-			}
-			return fmt.Errorf("linux group-route helper executable is unavailable: %w", helperBinaryErr)
-		}
-		routeHelper = &TclaudeLayerRouteHelper{
-			BinaryPath:        filepath.Clean(helperBinary),
-			SocketPath:        socketFloor[0],
-			AgentID:           strings.TrimSpace(params.RouteHelperAgentID),
-			ConvID:            strings.TrimSpace(params.RouteHelperConvID),
-			LaunchGeneration:  strings.TrimSpace(params.RouteHelperLaunchGeneration),
-			HandoffSocketPath: strings.TrimSpace(params.RouteHelperCredentialHandoffSocketPath),
-			GroupIDs:          append([]int64(nil), params.RouteHelperGroupIDs...),
-			ProxyOnly:         params.RouteHelperProxyOnly,
-		}
+	routeHelper, err := resolveLaunchRouteHelper(params, h.Name, outerLayer)
+	if err != nil {
+		return err
+	}
+	if routeHelper != nil {
 		exitGeneration = routeHelper.LaunchGeneration
 	}
-	additionalEnv := map[string]string{
-		"TCLAUDE_SESSION_ID":      sessionID,
-		"TCLAUDE_EXIT_GENERATION": exitGeneration,
-	}
-	applyManagedAgentHint(params.ManagedLaunch, additionalEnv)
-	if effectiveSandbox != nil {
-		for _, entry := range sandboxpolicy.EnvironmentForLaunch(effectiveSandbox) {
-			additionalEnv[entry.Name] = entry.Value
-		}
-	}
-	if outerLayer || harness.HooksRunInsideBuiltinSandbox(h, harnessBuiltinMode) {
-		// Hook callbacks write private SQLite state, which this launch's own
-		// namespace hides (or, for Gemini's Seatbelt mode, its profile makes
-		// read-only). Route them through agentd instead, which applies
-		// them host-side on the caller's behalf (TCL-754). Apply after the
-		// profile environment so policy cannot unset the marker for an
-		// outer-layer launch and silently send the pane's telemetry into the
-		// throwaway database behind the wall.
-		additionalEnv[HookBrokerEnvVar] = HookBrokerAgentd
-	}
-	if h.Name == harness.GeminiName && harnessBuiltinMode == harness.GeminiSandboxSeatbelt {
-		// Gemini's Seatbelt profile hides its OAuth credentials and every
-		// trust store from the sandboxed CLI (gemini_seatbelt.go): refuse an
-		// auth type that cannot work in there, and carry the host's trust
-		// decision in as the environment Gemini honours ahead of the file.
-		seatbeltEnv := launchModelEnvironment(sandboxpolicy.EnvironmentForLaunch(effectiveSandbox))
-		getenv := func(name string) string { return seatbeltEnv[name] }
-		if err := harness.ValidateGeminiSeatbeltLaunch(getenv, cwd); err != nil {
-			return err
-		}
-		trustEnv, err := harness.GeminiSeatbeltLaunchEnv(getenv, cwd, params.TrustDir)
-		if err != nil {
-			slog.Warn("gemini seatbelt: cannot read the trust store; the sandboxed pane may ask for folder trust",
-				"cwd", cwd, "err", err)
-		}
-		for name, value := range trustEnv {
-			additionalEnv[name] = value
-		}
+	additionalEnv, err := baseLaunchEnv(params, h, harnessBuiltinMode, effectiveSandbox, outerLayer, sessionID, exitGeneration, cwd)
+	if err != nil {
+		return err
 	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""
 	var codexAppServerProfileOverrides []string
 	var launchCodexSplitCapability *harness.CodexSplitPolicyCapability
-	launchProfileOwnedByPane := false
+	// launchUndo holds what this launch creates and must undo on any
+	// return before the final commit: the Codex launch-profile file and its
+	// native generation, the darwin route claim, the session row and the
+	// private attachment dir. Each step registers once its state exists; the
+	// commit at the end hands them all to the live session. Rollbacks with
+	// another lifetime stay as their own defers: the snapshot file and the
+	// darwin slot reservation go on every return, and the resource cgroup
+	// passes to the pane when it launches.
+	var launchUndo launchundo.Undo
+	defer launchUndo.UnwindUnlessCommitted()
+	// ordinaryNativeGeneration is the native permission generation this
+	// launch registered, activated only at the final commit.
 	ordinaryNativeGeneration := ""
-	ordinaryNativeActivated := false
-	defer func() {
-		if launchProfilePath != "" && !launchProfileOwnedByPane {
-			_ = os.Remove(launchProfilePath)
-		}
-		if ordinaryNativeGeneration != "" && !ordinaryNativeActivated {
-			_ = UnregisterCodexNativePermissionProfile(ordinaryNativeGeneration)
-		}
-	}()
-	// Pin managed Codex sessions to agentd's canonical state-free socket. That
-	// socket lives outside the profile's denied ~/.tclaude private-state tree.
-	tclaudeLayerPosture, err := sandboxpolicy.NetworkPostureForAccess(networkAccess)
+	layerNetwork, err := resolveTclaudeLayerNetwork(h, sandboxImplementation, outerLayer, networkAccess, launchSandbox)
 	if err != nil {
 		return err
 	}
-	var filteredNetworkProbe *FilteredNetworkPrerequisite
-	// The engine this launch DEPLOYS, resolved once here and carried to every
-	// site that must agree about which floor is being built: the posture gate
-	// below, the host-capability resolve, and the boundary sentence. Unset means
-	// "no engine deployed", which leaves every one of those on the pre-engine
-	// path by construction.
-	tclaudeLayerEngine := sandboxpolicy.NetworkEngineUnset
-	tclaudeLayerPreserveCallerIdentity := false
-	if outerLayer &&
-		sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer &&
-		launchSandbox != nil && launchSandbox.Effective.Network != nil {
-		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)
-		if axesErr != nil {
-			return fmt.Errorf("derive sandbox access axes: %w", axesErr)
-		}
-		requestedNetworkPosture, postureErr := TclaudeLayerNetworkPosture(
-			launchSandbox.Effective)
-		if postureErr != nil {
-			return fmt.Errorf("derive sandbox network posture: %w", postureErr)
-		}
-		deployedEngine, engineErr := sandboxpolicy.DeployedNetworkEngineForRules(
-			axes.Network)
-		if engineErr != nil {
-			return fmt.Errorf("resolve network filtering engine: %w", engineErr)
-		}
-		tclaudeLayerEngine = deployedEngine
-		tclaudeLayerPreserveCallerIdentity = requestedNetworkPosture == sandboxpolicy.NetworkFiltered &&
-			deployedEngine == sandboxpolicy.NetworkEnginePacket
-		if requestedNetworkPosture == sandboxpolicy.NetworkFiltered {
-			if runtime.GOOS == "darwin" &&
-				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
-				tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
-			} else if runtime.GOOS == "linux" {
-				if ProxyEngineFloorApplies(axes.Network) {
-					// TCL-883: the proxy floor gets its own spawn-time gate. The
-					// packet gateway's probe is not it — pasta and nft are never
-					// called here — and gating on it would refuse the filtered
-					// posture on exactly the low-prerequisite hosts this engine
-					// exists to serve. The gate that DOES apply is the posture-
-					// exact resolve below, which maps the proxy floor onto the
-					// isolated posture and probes bubblewrap's namespaces plus
-					// pidfd; a host that cannot build the floor is refused there
-					// rather than silently widened to open here.
-					tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
-				} else {
-					probe := ProbeFilteredNetworkPrerequisite()
-					filteredNetworkProbe = &probe
-					if supportErr := ValidateFilteredNetworkHarnessSupport(
-						h, sandboxImplementation, axes, probe,
-					); supportErr != nil {
-						return supportErr
-					}
-					if probe.Detected {
-						tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
-					}
-				}
-			}
-		}
-	}
-	// The constructed root is what makes the canonical agentd socket the only
-	// reachable one, so the environment follows the ROOT posture rather than the
-	// network posture it used to be inseparable from (TCL-798).
-	tclaudeLayerRoot := sandboxpolicy.RootHostInherited
-	if outerLayer && launchSandbox != nil {
-		// This runs before the capability ladder, so the gated helper is
-		// required: on a target where the socket-driven constructed root does
-		// not apply the ladder is about to widen the axis away, and claiming a
-		// constructed root here would refuse an explicit agentd socket for a
-		// launch that never confines sockets.
-		tclaudeLayerRoot, err = TclaudeLayerLaunchRootPosture(
-			h, sandboxImplementation, tclaudeLayerPosture, launchSandbox.Effective)
-		if err != nil {
-			return fmt.Errorf("derive sandbox root posture: %w", err)
-		}
-	} else if tclaudeLayerPosture == sandboxpolicy.NetworkIsolatedWithAgentd ||
-		tclaudeLayerPosture == sandboxpolicy.NetworkFiltered {
-		tclaudeLayerRoot = sandboxpolicy.RootConstructed
-	}
+	tclaudeLayerPosture, tclaudeLayerEngine := layerNetwork.posture, layerNetwork.engine
+	tclaudeLayerPreserveCallerIdentity := layerNetwork.preserveCallerIdentity
+	filteredNetworkProbe, tclaudeLayerRoot := layerNetwork.probe, layerNetwork.root
+	// Pin managed Codex sessions to agentd's canonical state-free socket. That
+	// socket lives outside the profile's denied ~/.tclaude private-state tree.
 	if err := ApplyAgentSocketEnv(
 		h.Name,
 		params.Sandbox,
@@ -1461,81 +705,21 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
-	// Every tclaude-launched Claude pane reads its config from the state root
-	// rather than the top-level ~/.claude.json, which a constructed root could
-	// not see (the pane would park on the login wizard) and which would
-	// otherwise fork state between an agent's sandboxed and unsandboxed
-	// launches. No-op for other harnesses. See ApplyClaudeConfigDirEnv.
-	if err := ApplyClaudeConfigDirEnv(h.Name, additionalEnv); err != nil {
+	// The launch-posture environment (state-root config dir, resume chooser,
+	// auto memory, agent view, startup-context trims, auto-compaction window) is
+	// shared with resume, which must rebuild the same pane. See
+	// ApplyLaunchPostureEnv for the order and what each step sets.
+	if err := ApplyLaunchPostureEnv(h, LaunchPostureEnv{
+		AutoMemory: autoMemory, ContextFeatures: contextFeatures, AutoCompactWindow: autoCompactWindow,
+	}, additionalEnv); err != nil {
 		return err
 	}
-	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
-	// this detached pane (the daemon forks `tclaude session new -r` here, and a
-	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude
-	// harnesses. See ApplyClaudeResumeEnv.
-	ApplyClaudeResumeEnv(h, additionalEnv)
-	// Pin the auto-memory posture for this launch. Unset resolves to OFF, so a
-	// Claude Code pane spawned by tclaude does not accumulate per-project
-	// memory files that every other agent on the repo would inherit. No-op for
-	// harnesses without an auto-memory system. See ApplyAutoMemoryEnv.
-	ApplyAutoMemoryEnv(h, autoMemory, additionalEnv)
-	// Trim this pane's Claude Code startup context to what the operator actually
-	// wants the agent thinking about. Sparse and opt-in: an empty map injects
-	// nothing. Settings-only trims ride the `--settings` payload the spec builds
-	// below instead. See ApplyContextFeaturesEnv.
-	ApplyContextFeaturesEnv(h, contextFeatures, additionalEnv)
-	// Pin where Claude Code's auto-compaction fires. Unset injects nothing and
-	// the model's own threshold decides; a pinned window makes a long-lived agent
-	// compact while it is still sharp. No-op for harnesses with no such knob.
-	// See ApplyAutoCompactWindowEnv.
-	ApplyAutoCompactWindowEnv(h, autoCompactWindow, additionalEnv)
 	envExports := clcommon.BuildEnvExports(additionalEnv)
-	openCodeServerURL := ""
-	openCodeTransport := ""
-	openCodeControlSocketPath := ""
-	var openCodeControlSocketDevice, openCodeControlSocketInode int64
-	var openCodeServerPID int
+	var openCodeServer openCodeLaunchServer
 	if h.UsesAuthoritativeServer() {
-		openCodeServerURL = strings.TrimSpace(os.Getenv("TCLAUDE_OPENCODE_SERVER_URL"))
-		if openCodeServerURL == "" || os.Getenv("OPENCODE_SERVER_PASSWORD") == "" {
-			return fmt.Errorf("OpenCode requires an authenticated agentd-managed server; launch it through `tclaude agent spawn`")
-		}
-		parsed, parseErr := url.Parse(openCodeServerURL)
-		if parseErr != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" {
-			return fmt.Errorf("invalid internal OpenCode server URL")
-		}
-		openCodeTransport = strings.TrimSpace(os.Getenv(clcommon.OpenCodeTransportEnv))
-		if openCodeTransport == "" {
-			openCodeTransport = db.OpenCodeTransportLoopbackTCP
-		}
-		if openCodeTransport == db.OpenCodeTransportUnixRelay {
-			openCodeControlSocketPath = strings.TrimSpace(
-				os.Getenv(clcommon.OpenCodeControlSocketPathEnv))
-			openCodeControlSocketDevice, parseErr = strconv.ParseInt(
-				os.Getenv(clcommon.OpenCodeControlSocketDeviceEnv), 10, 64)
-			if parseErr != nil {
-				return fmt.Errorf("invalid internal OpenCode control socket device")
-			}
-			openCodeControlSocketInode, parseErr = strconv.ParseInt(
-				os.Getenv(clcommon.OpenCodeControlSocketInodeEnv), 10, 64)
-			if parseErr != nil {
-				return fmt.Errorf("invalid internal OpenCode control socket inode")
-			}
-			openCodeServerPID, parseErr = strconv.Atoi(
-				os.Getenv(clcommon.OpenCodeServerPIDEnv))
-			if parseErr != nil {
-				return fmt.Errorf("invalid internal OpenCode server pid")
-			}
-			if err := db.ValidateOpenCodeRuntimeTransport(db.OpenCodeRuntime{
-				Transport:           openCodeTransport,
-				ControlSocketPath:   openCodeControlSocketPath,
-				ControlSocketDevice: openCodeControlSocketDevice,
-				ControlSocketInode:  openCodeControlSocketInode,
-			}); err != nil || openCodeServerPID <= 1 {
-				return fmt.Errorf("invalid internal OpenCode Unix-relay authority")
-			}
-		} else if openCodeTransport != db.OpenCodeTransportLoopbackTCP {
-			return fmt.Errorf("invalid internal OpenCode transport")
+		openCodeServer, err = resolveOpenCodeLaunchServer()
+		if err != nil {
+			return err
 		}
 		applyOpenCodeAttachEnvironment(
 			additionalEnv,
@@ -1552,409 +736,59 @@ func runNew(params *NewParams) error {
 		envExports = appendTclaudeLayerConstructedRootPathExport(envExports)
 	}
 
-	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
-	// confines writes to the cwd subtree, so a cwd at/above $HOME would make
-	// ~/.tclaude / ~/.codex / ~/.claude writable and defeat the protection.
-	// Refuse that rather than spawn an agent with a false sense of
-	// containment. No-op for harnesses/modes that don't write outside cwd.
-	// The managed tclaude-agent profile extends :workspace (same cwd-subtree
-	// writability), so guard it exactly as workspace-write.
-	guardMode := harnessBuiltinMode
-	if params.PermissionProfile == harness.CodexAgentProfile {
-		guardMode = harness.SandboxWorkspaceWrite
-	}
-	if home, herr := os.UserHomeDir(); herr == nil && harness.CodexSandboxCwdConflict(guardMode, cwd, home) {
-		return fmt.Errorf("refusing to launch a %s agent in %q under workspace-write containment (%s): "+
-			"that cwd contains your tclaude/Codex/Claude state dirs, which the sandbox would make writable "+
-			"(defeating it). Run the agent from a project subdirectory, or use sandbox %s to opt out of the sandbox",
-			h.Name, cwd, sandboxDescr(harnessBuiltinMode, params.PermissionProfile), harness.SandboxDangerFull)
+	if err := refuseStateDirCwdUnderWorkspaceWrite(h, params, harnessBuiltinMode, cwd); err != nil {
+		return err
 	}
 
-	// Spawn-posture warnings: the Claude unsandboxed-autonomy pairing (TCL-586)
-	// and OpenCode's look-like-a-sandbox access-control mode. Unlike the daemon
-	// spawn path this one applies no approval default, so the Claude case fires
-	// only on a posture the human asked for by name OR one a --resume replayed
-	// from the conversation's own record — never on a tclaude-invented default.
-	// A human who typed `--permission-mode auto`, and equally one who typed a
-	// bare `-r` on a conversation recorded under it, deserves to know tclaude
-	// found nothing that confines it; applyRecordedLaunchPosture separately
-	// echoes which postures the resume carried. It stays a warning on stderr,
-	// never a refusal: the human is the trust root here.
-	if !outerLayer || h.Name == harness.OpenCodeName {
-		for _, info := range harness.SpawnSandboxInfo(h, harnessBuiltinMode) {
-			fmt.Fprintf(os.Stderr, "ℹ %s\n", info)
-		}
-		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, harnessBuiltinMode, cwd, outerLayer) {
-			fmt.Fprintf(os.Stderr, "%s\n", warning)
-		}
-	}
+	discloseSpawnPosture(h, approvalPolicy, harnessBuiltinMode, cwd, outerLayer)
 
-	// Record what the warning check just resolved: whether the OS sandbox will
-	// actually confine this agent, and what decided that. The recorded
-	// sandbox mode cannot say — Claude Code's `inherit` default means "whatever
-	// settings.json says" — and the answer is only knowable HERE, against the
-	// settings files as they are at launch (TCL-729). Same inputs as the
-	// messages above, so the badge an operator sees later cannot contradict the
-	// disclosure or warning they saw at spawn.
-	// Who chose the mode. The daemon resolves it through its profile tier stack
-	// and passes it in; a direct `session new --sandbox …` is the human's own
-	// choice. A managed launch with nothing passed stays unattributed rather
-	// than claiming "explicit" on the daemon's behalf — an older agentd that
-	// does not send the tier is unknown, not explicit.
-	// Bounded and scrubbed HERE, at the point of record: this value is written
-	// to sessions.sandbox_mode_source, projected into the durable relaunch
-	// profile, and replayed into a child argv on every later relaunch. Cleaning
-	// only the derived os_sandbox_source would leave the raw label in all three.
-	sandboxChosenBy := harness.SanitizeSandboxChosenBy(params.SandboxChosenBy)
-	if sandboxChosenBy == "" && harnessBuiltinMode != "" && !params.ManagedLaunch {
-		sandboxChosenBy = harness.SandboxChosenExplicitly
+	osSandbox := resolveLaunchOSSandbox(h, params, harnessBuiltinMode, cwd, outerLayer, tclaudeLayerNetwork{
+		posture: tclaudeLayerPosture, engine: tclaudeLayerEngine,
+		preserveCallerIdentity: tclaudeLayerPreserveCallerIdentity, root: tclaudeLayerRoot,
+	})
+	sandboxChosenBy, launchOSSandbox := osSandbox.chosenBy, osSandbox.launch
+	bwrapBinary, bwrapCapabilityErr := osSandbox.bwrapBinary, osSandbox.bwrapCapabilityErr
+	if err := GateTclaudeLayerHarnessPosture(h, outerLayer, launchSandbox, extraArgs); err != nil {
+		return err
 	}
-	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, harnessBuiltinMode, sandboxChosenBy, cwd)
-	bwrapBinary := ""
-	var bwrapCapabilityErr error
-	if outerLayer {
-		if tclaudeLayerWrapsPane(h.Name) {
-			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerForEngineWithIdentity(
-				tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine,
-				tclaudeLayerPreserveCallerIdentity)
-		} else {
-			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServerForEngineWithIdentity(
-				tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine,
-				tclaudeLayerPreserveCallerIdentity)
-		}
-		if bwrapCapabilityErr == nil {
-			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(
-				h.Name, tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine,
-				tclaudeLayerPreserveCallerIdentity)
-		}
+	discloseUnconfinedAccessRules(sandboxImplementation, unconfined, launchSandbox, effectiveSandbox)
+	access := launchAccessState{
+		posture: tclaudeLayerPosture, root: tclaudeLayerRoot,
+		osSandbox: launchOSSandbox, networkFiltered: networkFiltered,
 	}
-	if outerLayer {
-		if h.Name == harness.OpenCodeName {
-			switch os.Getenv(clcommon.OpenCodeStateIsolationEnv) {
-			case "private":
-				launchOSSandbox.Source += "; " + clcommon.OpenCodeStatePrivateNote
-			case "legacy-shared":
-				launchOSSandbox.Source += "; " + clcommon.OpenCodeStateLegacyNote
-			}
-		}
+	if err := planLaunchAccessEnforcement(launchAccessPlanInput{
+		h: h, params: params, model: model, cwd: cwd, extraArgs: extraArgs,
+		sandboxImplementation: sandboxImplementation, effectiveHarnessBuiltinMode: effectiveHarnessBuiltinMode,
+		unconfined: unconfined, outerLayer: outerLayer,
+		layerEngine: tclaudeLayerEngine, filteredNetworkProbe: filteredNetworkProbe,
+		launchSandbox: launchSandbox, effectiveSandbox: effectiveSandbox,
+	}, &access); err != nil {
+		return err
 	}
-	// A harness whose own sandbox cannot be turned off by the launch has its
-	// posture verified for EVERY tclaude-layer launch, not only for one that
-	// authored a policy.
-	//
-	// This used to sit inside the access-axes block below, which runs only when
-	// a profile declares network or socket rules. A direct
-	// `session new --sandbox-impl tclaude-layer --harness copilot` with no
-	// profile — the simplest way to reach this code — therefore launched with
-	// neither the assert-off gate nor the pass-through-argument refusal ever
-	// running, while the recorded posture claimed a single boundary. The gate
-	// belongs to the IMPLEMENTATION choice, which is what makes that claim, not
-	// to the access axes.
-	//
-	// The environment is the launch's own when a profile supplied one, because
-	// a profile that relocates COPILOT_HOME moves which file governs the launch
-	// and a gate reading the ambient one would be inspecting a file the agent
-	// never opens. With no profile there is nothing to compose, and nil means
-	// the ambient environment — which is then also what the launch itself uses.
-	if outerLayer {
-		var launchEnvironment []sandboxpolicy.EnvironmentEntry
-		if launchSandbox != nil {
-			launchEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
-		}
-		if err := ValidateTclaudeLayerHarnessPosture(h, launchEnvironment, extraArgs); err != nil {
-			return err
-		}
-	}
-	if unconfined && launchSandbox != nil {
-		// Everything the block below does — resolve capabilities, render the
-		// planned rules, probe the filtered-network prerequisite, materialize a
-		// unix socket set — describes enforcement. This implementation has
-		// none, so there is nothing to render and, in particular, nothing to
-		// materialize: a socket set prepared for a launch that enforces no
-		// socket policy is state created for no reader.
-		//
-		// The rules still have to be DISCLOSED, and by the same words the
-		// daemon uses, which is why the notice is built in sandboxpolicy rather
-		// than at either seam.
-		if notice, ok := sandboxpolicy.UnconfinedAccessRulesNotice(
-			sandboxImplementation, launchSandbox.Effective,
-		); ok {
-			launchSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
-				launchSandbox.Effective.AccessNotices, notice,
-			)
-			if effectiveSandbox != nil {
-				effectiveSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
-					effectiveSandbox.Effective.AccessNotices, notice,
-				)
-			}
-		}
-	}
-	if !unconfined && launchSandbox != nil &&
-		(launchSandbox.Effective.Network != nil ||
-			launchSandbox.Effective.UnixSockets != nil ||
-			launchSandbox.Effective.FilesystemRoot == sandboxpolicy.FilesystemRootSeparate) {
-		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)
-		if axesErr != nil {
-			return fmt.Errorf("derive sandbox access axes: %w", axesErr)
-		}
-		caps, capsErr := harness.ResolveAccessEnforcement(
-			h, sandboxImplementation, axes, launchOSSandbox, effectiveHarnessBuiltinMode,
-		)
-		if capsErr != nil {
-			return capsErr
-		}
-		accessOptions := accessEnforcementOptionsFromLaunchNotices(
-			launchSandbox.Effective.AccessNotices)
-		rendered, notices, planErr := harness.PlanAccessEnforcement(
-			axes, caps, accessOptions,
-		)
-		if planErr != nil {
-			return planErr
-		}
-		renderedNetworkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
-			rendered.Network)
-		if postureErr != nil {
-			return postureErr
-		}
-		filteredEnforcing := renderedNetworkPosture == sandboxpolicy.NetworkFiltered &&
-			launchOSSandbox.FilteredNetwork
-		if runtime.GOOS == "linux" ||
-			(runtime.GOOS == "darwin" &&
-				!sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network)) {
-			notices = appendFilteredNetworkPrerequisiteNotice(
-				notices, outerLayer, axes.Network,
-				filteredEnforcing,
-				func() FilteredNetworkPrerequisite {
-					if filteredNetworkProbe != nil {
-						return *filteredNetworkProbe
-					}
-					return ProbeFilteredNetworkPrerequisite()
-				},
-			)
-		}
-		if tclaudeLayerPosture == sandboxpolicy.NetworkFiltered && !filteredEnforcing {
-			tclaudeLayerPosture = sandboxpolicy.NetworkHostOpen
-			// The root posture is re-derived rather than carried over: the
-			// filtered posture implied a constructed root, and dropping to
-			// host-open must not keep claiming one unless the profile's own
-			// socket axis still asks for it.
-			tclaudeLayerRoot, err = TclaudeLayerLaunchRootPosture(
-				h, sandboxImplementation, tclaudeLayerPosture,
-				launchSandbox.Effective)
-			if err != nil {
-				return fmt.Errorf("derive sandbox root posture: %w", err)
-			}
-			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(
-				h.Name, tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine)
-		}
-		if outerLayer {
-			plannedEffective := launchSandbox.Effective
-			plannedEffective.AccessNotices = replaceAccessDegradationNotices(
-				plannedEffective.AccessNotices, notices...,
-			)
-			resolvedModel := harness.ResolvedModelTransport{Model: model}
-			plannedAxes, plannedAxesErr := sandboxpolicy.PlannedEffectiveAccessAxes(
-				plannedEffective)
-			if plannedAxesErr != nil {
-				return plannedAxesErr
-			}
-			plannedNetworkPosture, plannedPostureErr :=
-				sandboxpolicy.NetworkPostureForRules(plannedAxes.Network)
-			if plannedPostureErr != nil {
-				return plannedPostureErr
-			}
-			// §7.4, from the same pre-injection environment the model-transport
-			// gate below inspects: the launcher discards exactly what the
-			// resolver saw, so the disclosure and the gate describe one launch.
-			// The planned posture is passed in for the same reason the gate
-			// below is conditioned on it: a policy that is not launching
-			// filtered runs no proxy and performs no override. The enclosing
-			// branch is already the tclaude-layer one, and the implementation
-			// is handed over anyway so both launch surfaces ask one predicate
-			// the same way rather than relying on where they sit.
-			if noProxyNotice := ProxyEngineNoProxyOverrideNotice(
-				runtime.GOOS, sandboxImplementation, plannedNetworkPosture,
-				plannedAxes.Network, plannedEffective.Environment,
-			); noProxyNotice != nil {
-				notices = append(notices, *noProxyNotice)
-			}
-			// Private routed open is default-accept: no destination list to
-			// resolve a route against, and nothing for pi to stay offline for.
-			networkFiltered = plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
-				!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network)
-			if networkFiltered {
-				var resolveModelErr error
-				resolvedModel, resolveModelErr = ResolveTclaudeLayerModelTransport(
-					h,
-					ModelTransportLaunchContext{
-						Model:       model,
-						ModelProxy:  params.ModelProxy,
-						Cwd:         cwd,
-						Environment: plannedEffective.Environment,
-						ExtraArgs:   extraArgs,
-					},
-				)
-				if resolveModelErr != nil {
-					return AnnotateDenyDrivenFilteredModelTransport(
-						plannedAxes.Network, resolveModelErr)
-				}
-			}
-			modelNotices, modelErr := ValidateTclaudeLayerNetwork(
-				h,
-				plannedEffective,
-				resolvedModel,
-			)
-			if modelErr != nil {
-				return AnnotateDenyDrivenFilteredModelTransport(
-					plannedAxes.Network, modelErr)
-			}
-			notices = append(notices, modelNotices...)
-		}
-		materialization := launchSandbox.UnixSocketMaterialization
-		if materialization == nil || rendered.UnixSockets.Mode != sandboxpolicy.AccessModeList {
-			var materializationErr error
-			materialization, materializationErr = sandboxpolicy.PrepareUnixSocketLaunch(
-				rendered.UnixSockets)
-			if materializationErr != nil {
-				return materializationErr
-			}
-		}
-		launchSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
-			launchSandbox.Effective.AccessNotices, notices...,
-		)
-		sandboxpolicy.SetUnixSocketLaunchMaterialization(launchSandbox, materialization)
-		if effectiveSandbox != nil {
-			effectiveSandbox.Effective.AccessNotices = replaceAccessDegradationNotices(
-				effectiveSandbox.Effective.AccessNotices, notices...,
-			)
-			sandboxpolicy.SetUnixSocketLaunchMaterialization(
-				effectiveSandbox, materialization)
-		}
-	}
+	// The plan's revised posture has no reader past this point: it is already
+	// folded into the root and the OS-sandbox verdict copied back here.
+	tclaudeLayerRoot = access.root
+	launchOSSandbox, networkFiltered = access.osSandbox, access.networkFiltered
 	if launchSandbox != nil {
 		for _, notice := range launchSandbox.Effective.AccessNotices {
-			fmt.Fprintf(os.Stdout, "Warning: %s\n", notice.Detail)
+			fmt.Fprintf(cliStdout, "Warning: %s\n", notice.Detail)
 		}
 	}
 
-	// Ensure the managed profile file exists before launch (self-healing —
-	// works even if `tclaude setup` was never run). This lives after cwd
-	// resolution so the profile can add a narrow write grant for the launch
-	// repo's Git common dir, which linked worktrees need for `git commit`.
-	// Only the tclaude-owned profile is auto-created; any other name must
-	// already be defined by the user's own config.
 	if params.PermissionProfile == harness.CodexAgentProfile {
-		profileName, profilePath, splitCapability, err := ensureCodexManagedProfileWithSnapshot(params, cwd, exitGeneration, launchSandbox)
+		profile, err := prepareCodexAgentProfile(params, cwd, fullConvID, sessionID, exitGeneration, outerLayer, launchSandbox, &launchUndo)
 		if err != nil {
 			return err
 		}
-		launchPermissionProfile = profileName
-		launchProfilePath = profilePath
-		launchCodexSplitCapability = splitCapability
-		ownerConvID := fullConvID
-		if params.SessionID != "" && ownerConvID == "" {
-			ownerConvID = params.SessionID
-		}
-		ownerAgentID, ownerErr := db.AgentIDForConv(ownerConvID)
-		if ownerErr != nil {
-			return fmt.Errorf("resolve generated Codex profile owner: %w", ownerErr)
-		}
-		mandatoryNative := params.CodexAppServerSocket != "" && !outerLayer
-		if mandatoryNative {
-			if err := RegisterCodexNativePermissionProfile(
-				params.CodexAppServerGeneration, profileName, profilePath,
-			); err != nil {
-				return fmt.Errorf("register managed Codex app-server profile: %w", err)
-			}
-		} else {
-			generation := "launch:" + exitGeneration
-			registered, registerErr := RegisterCodexNativePermissionProfileIfInstalled(
-				db.CodexNativePermissionProfile{
-					Generation: generation, ProfileName: profileName,
-					OwnerAgentID: ownerAgentID, OwnerConvID: ownerConvID, LaunchID: sessionID,
-				}, profilePath)
-			if registerErr != nil {
-				return fmt.Errorf("join installed Codex permission registry: %w", registerErr)
-			}
-			if registered {
-				ordinaryNativeGeneration = generation
-			}
-		}
-		if params.CodexAppServerSocket != "" {
-			if outerLayer {
-				codexAppServerProfileOverrides, err = harness.CodexAppServerProfileOverrides(profilePath)
-			} else {
-				codexAppServerProfileOverrides, err = harness.CodexAppServerRegisteredProfileOverrides(profilePath)
-			}
-			if err != nil {
-				return fmt.Errorf("prepare managed Codex app-server profile: %w", err)
-			}
-		}
+		launchPermissionProfile = profile.name
+		launchProfilePath = profile.path
+		launchCodexSplitCapability = profile.splitCapability
+		ordinaryNativeGeneration = profile.nativeGeneration
+		codexAppServerProfileOverrides = profile.appServerOverrides
 	}
 
-	// Pre-trust the launch dir when the operator opted in (--trust-dir), BEFORE
-	// the pane starts: each harness reads its trust store at startup, so the
-	// entry must already be there or the agent freezes on the trust-folder
-	// dialog (JOH-205 for Codex, JOH-369 for Claude Code, TCL-973 for Copilot,
-	// whose modal blocks before the CLI contacts the provider at all). Opt-in
-	// only (the early gate guarantees the harness has a trust store);
-	// EnsureDirTrustedForLaunch dispatches to the right editor and is atomic +
-	// idempotent.
-	//
-	// The LAUNCH's environment is handed over rather than the ambient one for
-	// the same reason the Copilot sandbox gate above reads it: Copilot's trust
-	// store lives under COPILOT_HOME, so a profile that relocates it moves the
-	// file that has to carry the entry, and seeding tclaude's own home would
-	// leave the pane parked on the modal. The two harnesses whose stores sit at
-	// a fixed path under the operator's home ignore it.
-	//
-	// Best-effort: pre-trust is an optimisation over the focus-button fallback
-	// — if it fails (an FS error, or a config shape the editor refuses to touch
-	// rather than corrupt), the agent still launches and the operator can clear
-	// the trust dialog on the pending pane via the dashboard focus button
-	// (Part A). So warn and continue rather than fail the spawn.
-	// The API drive's own folder-trust gate, and the backstop for every launch
-	// path: agentd refuses earlier so the operator gets a named spawn failure,
-	// but relaunch, clone and the direct `tclaude session new --copilot-api`
-	// call all arrive here, so this is the one place the invariant is total.
-	//
-	// Placed immediately BEFORE the seeding block rather than after it, because
-	// the two answer the same question and the seed is what makes the check
-	// pass: a --trust-dir launch is admitted on its promise to seed, and the
-	// seed below is that promise being kept.
-	{
-		var launchEnvironment []sandboxpolicy.EnvironmentEntry
-		if launchSandbox != nil {
-			launchEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
-		}
-		if err := ValidateCopilotAPIFolderTrust(
-			h, params.CopilotAPI, params.TrustDir,
-			strings.TrimSpace(params.Resume) != "", cwd, launchEnvironment,
-		); err != nil {
-			return err
-		}
-	}
-
-	if params.TrustDir {
-		var launchEnvironment []sandboxpolicy.EnvironmentEntry
-		if launchSandbox != nil {
-			launchEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
-		}
-		trustEnv := launchModelEnvironment(launchEnvironment)
-		if configDir, ok := additionalEnv["CLAUDE_CONFIG_DIR"]; ok {
-			// Launch-owned, never profile-authored (the name is reserved): a
-			// constructed-root Claude launch relocates its config file into the
-			// state root, and the trust entry must land in the file that launch
-			// will actually read. See ApplyClaudeConfigDirEnv.
-			trustEnv["CLAUDE_CONFIG_DIR"] = configDir
-		}
-		if err := harness.EnsureDirTrustedForLaunch(h, cwd,
-			func(name string) string { return trustEnv[name] },
-			strings.TrimSpace(trustEnv["HOME"]),
-		); err != nil {
-			slog.Warn("could not pre-trust the launch dir; the trust-folder dialog may appear — clear it via the dashboard focus button",
-				"harness", h.Name, "cwd", cwd, "err", err)
-		}
+	if err := prepareLaunchDirTrust(h, params, launchSandbox, additionalEnv, cwd); err != nil {
+		return err
 	}
 
 	// A preset --session-id makes the conv-id known before launch (fresh CC
@@ -1976,134 +810,44 @@ func runNew(params *NewParams) error {
 		}
 	}
 	var darwinRouteReservation *DarwinRouteSlotReservation
-	darwinRouteRegistered := false
-	darwinRouteCommitted := false
 	defer func() {
 		if darwinRouteReservation != nil {
 			_ = darwinRouteReservation.Release()
 		}
-		if darwinRouteRegistered && !darwinRouteCommitted {
-			if err := db.DeleteDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
-				slog.Warn("Darwin route launch cleanup failed", "conv", rowConvID, "error", err)
-			}
-		}
 	}()
-	if params.DarwinRouteCapable {
-		if runtime.GOOS != "darwin" {
-			return fmt.Errorf("darwin route-capable launch requires macOS")
-		}
-		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
-			return fmt.Errorf("darwin route-capable launch requires the pane tclaude’s sandbox")
-		}
-		if rowConvID == "" {
-			return fmt.Errorf("darwin route-capable launch requires a conversation generation")
-		}
-		resolvedAgentID, resolveErr := db.AgentIDForConv(rowConvID)
-		if resolveErr != nil {
-			return fmt.Errorf("resolve Darwin route agent identity: %w", resolveErr)
-		}
-		if params.DarwinRouteAgentID != "" && params.DarwinRouteAgentID != resolvedAgentID {
-			return fmt.Errorf("darwin route agent identity does not match conversation owner")
-		}
-		params.DarwinRouteAgentID = resolvedAgentID
-		if params.DarwinRouteAgentID == "" {
-			return fmt.Errorf("darwin route-capable launch requires a stable agent identity")
-		}
-		darwinRouteReservation, err = ReserveDarwinRouteSlots()
-		if err != nil {
-			return fmt.Errorf("reserve Darwin route launch slots: %w", err)
-		}
-		// Claim the kernel-reserved slots before any launch contract is
-		// rendered. The normalized DB claims are the logical exclusion that
-		// survives reservation-FD closure; every later rendering/launch step
-		// is therefore downstream of one pending exact-generation claim.
-		if err := db.RegisterDarwinRouteLaunch(
-			params.DarwinRouteAgentID, rowConvID, exitGeneration, darwinRouteReservation.Slots()); err != nil {
-			return fmt.Errorf("register Darwin route launch contract: %w", err)
-		}
-		darwinRouteRegistered = true
+	darwinRouteReservation, err = claimDarwinRouteLaunch(params, h.Name, outerLayer, rowConvID, exitGeneration, &launchUndo)
+	if err != nil {
+		return err
 	}
 
-	launchCreated := time.Now()
-	state := &SessionState{
-		ID:                       sessionID,
-		TmuxSession:              tmuxSession,
-		Cwd:                      cwd,
-		ConvID:                   rowConvID,
-		Status:                   StatusIdle,
-		Harness:                  h.Name,
-		HarnessBuiltinMode:       sandboxDescr(harnessBuiltinMode, params.PermissionProfile),
-		SandboxImplementation:    string(sandboxImplementation),
-		HarnessBuiltinModeSource: sandboxChosenBy,
-		OSSandboxState:           launchOSSandbox.State,
-		OSSandboxSource:          launchOSSandbox.Source,
-		OSSandboxUnverified:      launchOSSandbox.Unverified,
-		EffectiveSandbox:         effectiveSandbox,
-		ApprovalPolicy:           recordedApprovalPolicy,
-		ApprovalAutoReview:       autoReview,
-		AskUserQuestionTimeout:   askTimeout,
-		Created:                  launchCreated,
-		Updated:                  launchCreated,
+	// A Codex launch that asks for no sandbox may still run in one: managed
+	// requirements can overrule the request (codex_requirements.go). Checked
+	// here, after access enforcement was planned from the mode, because the
+	// verdict it records is for the record only.
+	if !outerLayer {
+		var requirementsEnvironment []sandboxpolicy.EnvironmentEntry
+		if launchSandbox != nil {
+			requirementsEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
+		}
+		if verdict, checked := VerifyCodexSandboxOff(h, sandboxImplementation,
+			harnessBuiltinMode, cwd, requirementsEnvironment); checked {
+			launchOSSandbox = verdict
+		}
 	}
-	if h.UsesCommandInput() {
-		state.Status = StatusRunning
-	}
-	// Establish the fresh launch identity before any private barrier/token
-	// filesystem setup. Row reuse therefore cannot retain predecessor callback
-	// or lifecycle-intent authority when that optional setup degrades.
-	//
-	// A launch that fails between this row write and its pane surviving must
-	// take the row back out: the row may carry a preset conv-id that will now
-	// never exist, and a dead convless row lingers as a ghost session the
-	// operator has to clear by hand (the "command too long" incident's second
-	// bug). Only a row this launch CREATED is deleted — a resume/relaunch
-	// reuses its existing row (same PK) and keeps its prior state on failure,
-	// exactly as before.
-	priorRow, err := db.LoadSession(sessionID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check for existing session row: %w", err)
-	}
-	launchRowOwned := priorRow == nil
-	launchRowCommitted := false
+
 	// launchPaneCommand is assigned once the pane command is fully assembled,
-	// so the rollback below can report what this launch actually tried to run.
+	// so the row rollback can report what this launch actually tried to run.
 	launchPaneCommand := ""
-	defer func() {
-		if launchRowCommitted || !launchRowOwned {
-			return
-		}
-		// Rolling the row back also destroys the exit audit's only anchor: a
-		// pane-died callback arriving afterwards cannot load the session and
-		// fails with "sql: no rows in result set", so neither the pane's output
-		// nor the command that produced it is recorded anywhere. Write the
-		// command here, where it is still known.
-		//
-		// Redacted: the command carries the whole forwarded environment, and
-		// output.log is not a place for the operator's API keys.
-		if launchPaneCommand != "" {
-			if redacted, ok := RedactPaneCommand(
-				launchPaneCommand, envExports, authoredPaneCommandSecrets(effectiveSandbox)); ok {
-				slog.Error("launch failed; rolling back its session row",
-					"session_id", sessionID, "tmux_session", tmuxSession,
-					"pane_command", redacted)
-			} else {
-				// Fail closed: without proof the environment was removed, the
-				// command cannot be written at all.
-				slog.Error("launch failed; rolling back its session row",
-					"session_id", sessionID, "tmux_session", tmuxSession,
-					"pane_command", "<withheld: environment prefix could not be located to redact>")
-			}
-		}
-		// Generation-conditional: a concurrent same-label launch that re-wrote
-		// the row after us must keep it — only the exact row THIS launch wrote
-		// (still stamped with our exit generation) is rolled back.
-		if derr := db.DeleteSessionForLaunchGeneration(sessionID, exitGeneration); derr != nil {
-			slog.Warn("launch failed; could not remove its session row",
-				"session_id", sessionID, "error", derr)
-		}
-	}()
-	if err := SaveSessionStateForLaunch(state, exitGeneration, db.SessionExitGateUngated); err != nil {
-		return fmt.Errorf("prepare managed pane exit identity: %w", err)
+	state, err := createLaunchRow(launchRowInput{
+		sessionID: sessionID, tmuxSession: tmuxSession, cwd: cwd, convID: rowConvID,
+		exitGeneration: exitGeneration, h: h, params: params,
+		harnessBuiltinMode: harnessBuiltinMode, sandboxImplementation: sandboxImplementation,
+		sandboxChosenBy: sandboxChosenBy, osSandbox: launchOSSandbox, effectiveSandbox: effectiveSandbox,
+		approvalPolicy: recordedApprovalPolicy, autoReview: autoReview, askTimeout: askTimeout,
+		envExports: envExports, paneCommand: &launchPaneCommand,
+	}, &launchUndo)
+	if err != nil {
+		return err
 	}
 	// Save the off/unavailable verdict before refusing so a resume of an
 	// existing conversation cannot leave a stale "on" badge behind.
@@ -2111,181 +855,28 @@ func runNew(params *NewParams) error {
 		return bwrapCapabilityErr
 	}
 
-	if launchCodexSplitCapability != nil {
-		if err := harness.RevalidateCodexHomeSplitPolicyCapability(*launchCodexSplitCapability); err != nil {
-			return fmt.Errorf("revalidate strict-Home Codex launch capability: %w", err)
-		}
-	}
-	executablePath := ""
-	executableInterpreter := ""
-	var harnessReadPaths []string
-	if params.ManagedInstructionsRoot != "" {
-		harnessReadPaths = append(harnessReadPaths, params.ManagedInstructionsRoot)
-	}
-	if launchCodexSplitCapability != nil {
-		executablePath = launchCodexSplitCapability.ExecutablePath
-	} else if outerLayer && h.Name == harness.CodexName && runtime.GOOS == "linux" {
-		resolvedCodex, resolveErr := harness.ResolveCodexLaunchExecutable()
-		if resolveErr != nil {
-			return fmt.Errorf("resolve Codex executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedCodex.Path
-		harnessReadPaths = append(harnessReadPaths, resolvedCodex.RuntimeRoot)
-	} else if outerLayer && h.Name == harness.DefaultName && runtime.GOOS == "linux" {
-		resolvedClaude, resolveErr := harness.ResolveClaudeLaunchExecutable()
-		if resolveErr != nil {
-			return fmt.Errorf("resolve Claude executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedClaude.Path
-		harnessReadPaths = append(harnessReadPaths, resolvedClaude.Path)
-	} else if outerLayer && h.Name == harness.GeminiName && runtime.GOOS == "linux" &&
-		tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-		// Only a constructed root needs this: a host-inherited one still sees
-		// the pane's own PATH, profile environment and pre-launch script, so a
-		// launch there keeps resolving `gemini` and `node` as it did before.
-		resolvedGemini, resolveErr := harness.ResolveGeminiLaunchExecutable()
-		if resolveErr != nil {
-			return fmt.Errorf("resolve Gemini executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedGemini.Path
-		executableInterpreter = resolvedGemini.Interpreter
-		harnessReadPaths = append(harnessReadPaths, resolvedGemini.ReadPaths...)
-	} else if outerLayer && h.Name == harness.PiName && runtime.GOOS == "linux" &&
-		tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-		// As for Gemini: pi is a Node CLI, absent from a constructed root
-		// unless started by absolute path with its runtime mounted.
-		resolvedPi, resolveErr := harness.ResolvePiLaunchExecutable()
-		if resolveErr != nil {
-			return fmt.Errorf("resolve pi executable for tclaude’s sandbox: %w", resolveErr)
-		}
-		executablePath = resolvedPi.Path
-		executableInterpreter = resolvedPi.Interpreter
-		harnessReadPaths = append(harnessReadPaths, resolvedPi.ReadPaths...)
-	} else if h.Name == harness.OpenCodeName {
-		executablePath, err = harness.OpenCodeExecutable()
-		if err != nil {
-			return fmt.Errorf("find OpenCode executable: %w", err)
-		}
-	}
-	if h.Name == harness.CopilotName && params.ModelProxy != "" {
-		executablePath, err = exec.LookPath("copilot")
-		if err != nil {
-			return fmt.Errorf("find Copilot gateway executable: %w", err)
-		}
-		if err = validateCopilotModelProxyVersion(executablePath); err != nil {
-			return err
-		}
-	}
-	if params.ClaudeSubscription {
-		binary := executablePath
-		if binary == "" {
-			binary = harnesspath.ManagedExecutable(h.Spawn.Binary())
-		}
-		if err = validateClaudeSubscriptionVersion(binary); err != nil {
-			return err
-		}
-	}
-	if h.CheckVersion != nil {
-		binary := executablePath
-		if binary == "" {
-			if binary, err = exec.LookPath(h.Spawn.Binary()); err != nil {
-				return fmt.Errorf("find %s executable: %w", h.DisplayName, err)
-			}
-		}
-		if err := h.CheckVersion(binary); err != nil {
-			return err
-		}
-	}
-	codexRuntimeDir, err := codexAppServerPrivateWriteDir(params)
+	exe, err := resolveLaunchExecutable(params, h, outerLayer, tclaudeLayerRoot, launchCodexSplitCapability)
 	if err != nil {
 		return err
 	}
-	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, harnessBuiltinMode, cwd)
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		// Derive repository grants for the outer wall independently of the
-		// harness-native mode.
-		launchGitWriteDirs = gitWorktreeWriteDirs(params, harness.DefaultName, harness.ClaudeSandboxOn, cwd)
-	}
-	if sandboxDenyCoversPath(launchSandbox, cwd) {
-		launchGitWriteDirs = denyNarrowedGitWriteDirs(cwd, params.CodexGitCommonDir, launchGitWriteDirs)
-	}
-	launchContractReadDirs := sandboxLaunchContractReadDirs(launchSandbox, append([]string{cwd}, launchGitWriteDirs...)...)
-	launchWriteDirs := append(launchGitWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...)
-	if codexRuntimeDir != nil {
-		// The Codex harness must be able to create the socket/pid/log; under
-		// tclaude's sandbox the outer wall gets the narrower private-parent
-		// hide/reopen contract below.
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, codexRuntimeDir.Current)
-	}
-	if outerLayer {
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, canonicalSandboxPath(cwd))
-	}
-	// A temporary filesystem really is writable inside the namespace, so the
-	// harness has to be told so. These lists become the harness's OWN view —
-	// Claude Code's permission settings, Copilot's --add-dir roots — and a
-	// scratch directory the operator mounted but the harness treats as
-	// out-of-bounds would prompt on every write to space it was given on
-	// purpose. Gated on the capability so this is a no-op on every
-	// implementation ValidateTmpfsSupport has already refused.
-	if sandboxpolicy.SupportsTmpfsMounts(sandboxImplementation, runtime.GOOS) {
-		for _, mount := range sandboxSnapshotTmpfs(launchSandbox) {
-			launchWriteDirs = appendUniqueDir(launchWriteDirs, mount.Path)
-		}
-	}
-	launchReadDirs := append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
-	if params.ManagedInstructionsRoot != "" {
-		launchReadDirs = appendUniqueDir(launchReadDirs, params.ManagedInstructionsRoot)
-	}
-	launchDenyDirs := sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)
-	// Re-run the capability gate on the RULES THAT WILL BE EMITTED. The early
-	// gate saw only the authored profile, but the launch contract above adds
-	// reopens beneath a deny (workspace, Git admin paths, agent directories), so
-	// an authored `deny ~` with no reopen of its own still renders as a split
-	// policy and must be gated as one.
-	// The LATE gate, over rendered rules rather than authored ones. It needs the
-	// same unconfined arm as its early twin above: the rendered shape is no more
-	// enforceable than the authored one when nothing is enforcing.
-	if !outerLayer && !unconfined {
-		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveHarnessBuiltinMode,
-			sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
-			return err
-		}
-	}
-	// The mirror-image shape, for the one harness whose path grants have no
-	// negative form: a deny nested INSIDE a granted root would be opened rather
-	// than merely unrepresented. The grant set includes Copilot's automatic cwd
-	// and system-temp grants, which no flag expresses and which are where this
-	// shape usually appears. Only without an outer wall to enforce the deny.
-	// The temp directory is resolved from the COMPOSED launch environment, not
-	// from tclaude's own: a profile that sets TMPDIR moves the directory
-	// Copilot grants, and a gate reading tclaude's ambient temp root would
-	// inspect one directory while the pane was handed another. Same resolver
-	// the Copilot sandbox baseline uses, for the same reason.
-	var copilotGateEnvironment []sandboxpolicy.EnvironmentEntry
-	if launchSandbox != nil {
-		copilotGateEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
-	}
-	if err := harness.ValidateCopilotAddDirGrants(
-		h.Name, cwd,
-		CopilotLaunchTempDir(launchModelEnvironment(copilotGateEnvironment)),
-		launchReadDirs, launchWriteDirs, launchDenyDirs, outerLayer); err != nil {
+	executablePath, executableInterpreter, harnessReadPaths := exe.path, exe.interpreter, exe.readPaths
+	dirs, err := planLaunchDirs(launchDirsInput{
+		params: params, h: h, cwd: cwd, launchSandbox: launchSandbox,
+		harnessBuiltinMode: harnessBuiltinMode, effectiveHarnessBuiltinMode: effectiveHarnessBuiltinMode,
+		sandboxImplementation: sandboxImplementation, outerLayer: outerLayer, unconfined: unconfined,
+	})
+	if err != nil {
 		return err
 	}
+	codexRuntimeDir, launchGitWriteDirs := dirs.codexRuntime, dirs.gitWrite
+	launchWriteDirs, launchReadDirs, launchDenyDirs := dirs.write, dirs.read, dirs.deny
 	// Rendered from the same snapshot ShellEnvironment reads, so what the pane
 	// runs and what the harness is told about agree by construction.
 	preLaunchScript, err := RenderPreLaunchScript(effectiveSandbox)
 	if err != nil {
 		return err
 	}
-	shellEnvironment := sandboxSnapshotEnvironment(effectiveSandbox)
-	if outerLayer && tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-		if selected := additionalEnv[agentipc.SocketEnv]; selected != "" {
-			if shellEnvironment == nil {
-				shellEnvironment = map[string]string{}
-			}
-			shellEnvironment[agentipc.SocketEnv] = selected
-		}
-	}
+	shellEnvironment := launchShellEnvironment(effectiveSandbox, outerLayer, tclaudeLayerRoot, additionalEnv)
 	spawnSpec := harness.SpawnSpec{
 		ModelProxy:                     params.ModelProxy,
 		ClaudeSubscription:             params.ClaudeSubscription,
@@ -2300,12 +891,12 @@ func runNew(params *NewParams) error {
 		CodexAppServerLogFile:          params.CodexAppServerLogFile,
 		CodexAppServerProfileOverrides: codexAppServerProfileOverrides,
 		Cwd:                            cwd,
-		ServerURL:                      openCodeServerURL,
-		OpenCodeTransport:              openCodeTransport,
-		OpenCodeControlSocketPath:      openCodeControlSocketPath,
-		OpenCodeControlSocketDevice:    openCodeControlSocketDevice,
-		OpenCodeControlSocketInode:     openCodeControlSocketInode,
-		OpenCodeServerPID:              openCodeServerPID,
+		ServerURL:                      openCodeServer.url,
+		OpenCodeTransport:              openCodeServer.transport,
+		OpenCodeControlSocketPath:      openCodeServer.controlSocketPath,
+		OpenCodeControlSocketDevice:    openCodeServer.controlSocketDevice,
+		OpenCodeControlSocketInode:     openCodeServer.controlSocketInode,
+		OpenCodeServerPID:              openCodeServer.pid,
 		EnvExports:                     envExports,
 		PreLaunchScript:                preLaunchScript,
 		ShellEnvironment:               shellEnvironment,
@@ -2330,184 +921,30 @@ func runNew(params *NewParams) error {
 		CopilotAPIPort:                 params.CopilotAPIPort,
 		InitialPrompt:                  params.InitialPrompt,
 	}
-	if h.Name == harness.PiName {
-		// Verified above; pi registers its skills and rules natively.
-		spawnSpec.ManagedInstructionsRoot = params.ManagedInstructionsRoot
-	}
-	if outerLayer && h.Name == harness.PiName {
-		// A walled pi runs against tclaude's walled agent directory, never
-		// the operator's (pi_walled_agent.go), and one of its own: the
-		// directory is keyed by the conversation it launches.
-		conversation := spawnSpec.ResumeID
-		if conversation == "" {
-			conversation = spawnSpec.SessionID
-		}
-		walled, err := harness.PreparePiWalledAgentDir(conversation)
-		if err != nil {
-			return err
-		}
-		spawnSpec.HarnessStateDir = walled
-	}
-	if h.StatusExtension != nil {
-		// The extension is the harness's only status channel. Failing to
-		// write it costs live status, not the launch: say so plainly.
-		path, err := h.StatusExtension()
-		if err != nil && h.Name == harness.PiName && approvalPolicy == harness.PiApprovalAsk {
-			// ask's gate is the permission extension written beside it.
-			return fmt.Errorf("pi's ask posture needs tclaude's permission extension: %w", err)
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %s live status is unavailable for this session: %v\n", h.DisplayName, err)
-			slog.Warn("status extension unavailable", "harness", h.Name, "error", err, "module", "session")
-		} else {
-			spawnSpec.StatusExtensionPath = path
-			if outerLayer {
-				// The extension runs inside the pane, so tclaude's sandbox
-				// mounts it read-only (its directory holds only this
-				// version's file), and it reaches tclaude where the sandbox
-				// puts it.
-				harnessReadPaths = append(harnessReadPaths, filepath.Dir(path))
-				if tclaudeLayerRoot == sandboxpolicy.RootConstructed {
-					spawnSpec.TclaudeExecutable = tclaudeLayerConstructedRootTclaudePath
-				}
-			}
-		}
-	}
-	spawnSpec.NetworkFiltered = networkFiltered
-	var privateWriteDirs []TclaudeLayerPrivateWriteDir
-	if outerLayer {
-		if codexRuntimeDir != nil {
-			privateWriteDirs = append(privateWriteDirs, *codexRuntimeDir)
-		}
-		privateAttachmentDir, privateAttachmentDirCreated, prepareErr :=
-			common.PrepareSpawnAttachmentsPrivateDir(sessionID)
-		if prepareErr != nil {
-			return fmt.Errorf(
-				"prepare tclaude’s sandbox private attachment directory: %w",
-				prepareErr,
-			)
-		}
-		defer func() {
-			if privateAttachmentDirCreated && !launchRowCommitted {
-				// Never recursively delete a root that gained an upload while
-				// launch was in flight; os.Remove succeeds only while empty.
-				_ = os.Remove(privateAttachmentDir)
-			}
-		}()
-		privateWriteDirs = append(privateWriteDirs, TclaudeLayerPrivateWriteDir{
-			Parent:  common.SpawnAttachmentsPrivateBase(),
-			Current: privateAttachmentDir,
-		})
-		// A cross-harness morph left this agent's translated history there,
-		// and the agent is pointed at it on every later launch.
-		if rowConvID != "" {
-			if agentID, err := db.AgentIDForConv(rowConvID); err == nil {
-				if dir := common.ExistingMorphArtifactsDir(agentID); dir != "" {
-					privateWriteDirs = append(privateWriteDirs, TclaudeLayerPrivateWriteDir{
-						Parent: common.MorphArtifactsBase(), Current: dir,
-					})
-				}
-			}
-		}
-	}
-	var layerSpec TclaudeLayerLaunchSpec
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
-			HarnessName:      h.Name,
-			StateRoot:        spawnSpec.HarnessStateDir,
-			Cwd:              cwd,
-			GitWriteDirs:     launchGitWriteDirs,
-			Snapshot:         launchSandbox,
-			PrivateWriteDirs: privateWriteDirs,
-			DarwinRouteSlots: func() []int {
-				if darwinRouteReservation == nil {
-					return nil
-				}
-				return darwinRouteReservation.Slots()
-			}(),
-			DarwinRouteReservation: darwinRouteReservation,
-			RouteHelper:            routeHelper,
-			HarnessReadPaths:       harnessReadPaths,
-		})
-		if specErr != nil {
-			return fmt.Errorf("build tclaude’s sandbox launch spec: %w", specErr)
-		}
-		layerSpec = spec
-		if prepareErr := PrepareTclaudeLayerHarnessState(layerSpec); prepareErr != nil {
-			return fmt.Errorf("prepare tclaude’s sandbox launch state: %w", prepareErr)
-		}
-	}
-	spawnSpec, err = h.PrepareHostControlSandboxLaunch(spawnSpec)
+	extensionReadPaths, err := FinishHarnessSpawnSpec(
+		h, &spawnSpec, params.ManagedInstructionsRoot, outerLayer, tclaudeLayerRoot, approvalPolicy, cliStderr)
 	if err != nil {
-		return fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
-	}
-	versionProbeExecutable := spawnSpec.ExecutablePath
-	var versionEnvironment []sandboxpolicy.EnvironmentEntry
-	if effectiveSandbox != nil {
-		versionEnvironment = sandboxpolicy.EnvironmentForLaunch(effectiveSandbox)
-	}
-	timing("sandbox_and_command_prepared")
-	if err := verifyCodexAppServerLaunchVersion(
-		params, versionProbeExecutable, cwd, versionEnvironment); err != nil {
 		return err
 	}
-	timing("codex_version_checked")
-	gatewayCLIPath := clcommon.SelfTclaudePath()
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		gatewayCLIPath, err = HTTPProxyCLIForLayerSpec(&layerSpec)
-		if err != nil {
-			return fmt.Errorf("resolve HTTP proxy launch CLI: %w", err)
-		}
+	harnessReadPaths = append(harnessReadPaths, extensionReadPaths...)
+	spawnSpec.NetworkFiltered = networkFiltered
+	layerSpec, err := prepareTclaudeLayerLaunch(tclaudeLayerLaunchStepInput{
+		h: h, sessionID: sessionID, cwd: cwd, convID: rowConvID, outerLayer: outerLayer,
+		stateRoot: spawnSpec.HarnessStateDir, gitWriteDirs: launchGitWriteDirs, launchSandbox: launchSandbox,
+		codexRuntimeDir: codexRuntimeDir, darwinRouteReservation: darwinRouteReservation,
+		routeHelper: routeHelper, harnessReadPaths: harnessReadPaths,
+	}, &launchUndo)
+	if err != nil {
+		return err
 	}
-	if err := db.RecordSessionModelProxy(sessionID, params.ModelProxy); err != nil {
-		return fmt.Errorf("record model gateway launch choice: %w", err)
-	}
-	harnessCmd := HTTPProxySpawnCommand(sessionID, h, spawnSpec, gatewayCLIPath)
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		harnessCmd, err = WrapTclaudeLayerSpecWithLoopbackBind(
-			bwrapBinary, layerSpec, codexAppServerLoopbackPort(params), harnessCmd)
-		if err != nil {
-			return fmt.Errorf("wrap harness with tclaude’s sandbox: %w", err)
-		}
-	}
-	boundaryInput := ExecutionBoundaryInput{
-		LaunchGeneration:      exitGeneration,
-		SandboxImplementation: string(sandboxImplementation),
-		HarnessName:           h.Name,
-		HarnessLookupName:     h.Spawn.Binary(),
-		HarnessExecutable:     spawnSpec.ExecutablePath,
-		HarnessRuntimeRoots:   harnessReadPaths,
-		Cwd:                   cwd,
-		Environment:           additionalEnv,
-	}
-	if effectiveSandbox != nil {
-		boundaryInput.PreLaunch = effectiveSandbox.Effective.PreLaunch
-	}
-	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		boundaryInput.LauncherBinary = bwrapBinary
-		boundaryInput.LauncherBinaryResolved = true
-		boundaryInput.LayerSpec = &layerSpec
-	}
-	var executionBoundaryJSON []byte
-	// OpenCode's authoritative tool-executing boundary belongs to its managed
-	// server, not this attach-only pane. agentd records that server boundary
-	// after both server and pane are live.
-	if h.Name != harness.OpenCodeName {
-		executionBoundary, boundaryErr := BuildExecutionBoundary(boundaryInput)
-		if boundaryErr != nil {
-			// Debug evidence must never become a launch prerequisite. A missing
-			// executable or other observation race is represented by the absent
-			// record and logged for the operator.
-			slog.Warn("could not record launch execution boundary",
-				"session_id", sessionID, "error", boundaryErr)
-		} else {
-			executionBoundaryJSON, err = json.Marshal(executionBoundary)
-			if err != nil {
-				slog.Warn("could not encode launch execution boundary",
-					"session_id", sessionID, "error", err)
-				executionBoundaryJSON = nil
-			}
-		}
+	harnessCmd, executionBoundaryJSON, err := assembleLaunchPaneCommand(launchPaneCommandInput{
+		h: h, params: params, spawnSpec: spawnSpec, layerSpec: &layerSpec, sessionID: sessionID, cwd: cwd,
+		exitGeneration: exitGeneration, outerLayer: outerLayer, sandboxImplementation: sandboxImplementation,
+		effectiveSandbox: effectiveSandbox, bwrapBinary: bwrapBinary, harnessReadPaths: harnessReadPaths,
+		additionalEnv: additionalEnv, timing: timing,
+	})
+	if err != nil {
+		return err
 	}
 	resourceCgroupCleanup := func() {}
 	resourceCgroupOwnedByPane := false
@@ -2516,76 +953,11 @@ func runNew(params *NewParams) error {
 			resourceCgroupCleanup()
 		}
 	}()
-	// resource-only and tclaude-layer request the cgroup through the
-	// implementation alone, so this seam must not require a launch snapshot to
-	// find the request: a direct `tclaude session new --sandbox-impl
-	// resource-only` and a CLI resume both arrive with no snapshot at all.
-	var launchResourceLimits sandboxpolicy.ResourceLimits
-	var launchResourceNotices []sandboxpolicy.AccessNotice
-	if launchSandbox != nil {
-		launchResourceLimits = launchSandbox.Effective.ResourceLimits
-		launchResourceNotices = launchSandbox.Effective.AccessNotices
+	resourceCmd, resourceCleanup, err := wrapLaunchInResourceCgroup(params, sessionID, sandboxImplementation, launchSandbox, effectiveSandbox, harnessCmd)
+	if err != nil {
+		return err
 	}
-	recordResourceNotice := func(notice sandboxpolicy.AccessNotice) {
-		if launchSandbox != nil {
-			launchSandbox.Effective.AccessNotices = append(launchSandbox.Effective.AccessNotices, notice)
-		}
-		if effectiveSandbox != nil {
-			effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
-		}
-	}
-	if sandboxpolicy.ResourceCgroupRequested(launchResourceLimits, sandboxImplementation, runtime.GOOS) &&
-		!resourceLimitsAlreadyOverridden(launchResourceNotices) {
-		if err := sandboxpolicy.ValidateResourceLimitTarget(
-			launchResourceLimits, sandboxImplementation, runtime.GOOS,
-		); err != nil {
-			if !params.AllowUnenforcedSandbox {
-				return fmt.Errorf("unsupported_sandbox_profile_resource_limits: %w", err)
-			}
-			recordResourceNotice(resourceLimitOverrideNotice(err))
-		} else {
-			var wrapped string
-			var cleanup func()
-			var resourceErr error
-			if strings.TrimSpace(params.ResourceCgroupDir) != "" {
-				// A daemon-prepared dir means a managed server owns this boundary
-				// and is already running inside it; the pane merely joins for
-				// accounting. Shared: the wrapper must not reap or remove the
-				// boundary when the attach client exits.
-				wrapped = wrapPreparedResourceCgroupCommand(
-					sessionID, params.ResourceCgroupDir, harnessCmd, params.AllowUnenforcedSandbox, true, false,
-					!sandboxpolicy.ResourceCgroupRequired(launchResourceLimits, sandboxImplementation))
-				cleanup = func() {}
-			} else {
-				wrapped, cleanup, resourceErr = wrapResourceLimitedCommand(
-					sessionID, launchResourceLimits, sandboxImplementation, harnessCmd,
-					params.AllowUnenforcedSandbox,
-				)
-			}
-			if resourceErr == nil {
-				resourceCgroupCleanup = cleanup
-				harnessCmd = wrapped
-			} else {
-				continuation := launchIsSandboxContinuation(params)
-				switch ResourceCgroupFailureAction(
-					launchResourceLimits, sandboxImplementation,
-					continuation, params.AllowUnenforcedSandbox) {
-				case DiscloseMissingResourceAccounting:
-					slog.Warn("resource cgroup unavailable; launching without per-agent accounting",
-						"session_id", sessionID, "continuation", continuation, "error", resourceErr)
-					recordResourceNotice(ResourceCgroupUnavailableNotice(resourceErr))
-				case DiscloseUnenforcedResourceOverride:
-					recordResourceNotice(resourceLimitOverrideNotice(resourceErr))
-				case RefuseResourceCgroupFailure:
-					return resourceErr
-				default:
-					// A policy value this seam does not know must not silently drop the
-					// boundary the launch asked for.
-					return resourceErr
-				}
-			}
-		}
-	}
+	harnessCmd, resourceCgroupCleanup = resourceCmd, resourceCleanup
 	if launchProfilePath != "" {
 		// The launch-specific profile must remain present until Codex exits: it
 		// may not have loaded the file when tmux reports the pane ready. Keeping
@@ -2593,56 +965,24 @@ func runNew(params *NewParams) error {
 		// overwriting another launch's proof-scoped authority.
 		harnessCmd = commandWithFileCleanup(harnessCmd, launchProfilePath)
 	}
-	exitGuard, err := newExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
-	if err != nil {
-		slog.Warn("exit audit: private launch setup unavailable; continuing without callback",
-			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
-		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
-	} else if err := db.MarkSessionExitLaunchPending(sessionID, exitGeneration); err != nil {
-		slog.Warn("exit audit: launch gate state unavailable; continuing without callback",
-			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
-		exitGuard.abort()
-		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
-	}
+	exitGuard := newLaunchExitGuard(sessionID, tmuxSession, exitGeneration)
 	defer exitGuard.abort()
 	// The existing cwd proof remains the outer bootstrap below so it can report
 	// readiness to the parent; the actual harness stays behind this private,
 	// bounded gate until its pane-local exit hook and durable binding are ready.
 	harnessCmd = exitGuard.wrap(harnessCmd)
-	proofReadyPath := ""
-	proofToken := params.CwdWriteProof
-	if proofToken == "" {
-		proofToken = params.DirWriteProof
+	harnessCmd, proofReadyPath, cleanupProofReady, err := guardLaunchWithDirProof(params, launchSandbox, harnessCmd)
+	if err != nil {
+		return err
 	}
-	profileWriteDirs := sandboxSnapshotHostDirs(launchSandbox, sandboxpolicy.AccessWrite)
-	profileWriteFiles := sandboxSnapshotHostFiles(launchSandbox, sandboxpolicy.AccessWrite)
-	if proofToken != "" || len(profileWriteDirs) > 0 || len(profileWriteFiles) > 0 {
-		path, cleanupProofReady, readyErr := newSpawnCwdReadinessFile()
-		if readyErr != nil {
-			return readyErr
-		}
-		defer cleanupProofReady()
-		proofReadyPath = path
-		harnessCmd = guardHarnessCommandWithDirProof(
-			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "",
-			params.GitWorktreeWriteDirs, profileWriteDirs, profileWriteFiles)
-	}
+	defer cleanupProofReady()
 
 	// The command is now fully assembled — every wrapper layer applied. Hand it
 	// to the rollback above so a launch that fails from here on says what it
 	// tried to run, and emit it at debug for a launch that fails in a way the
 	// rollback never sees.
 	launchPaneCommand = harnessCmd
-	if redacted, ok := RedactPaneCommand(
-		harnessCmd, envExports, authoredPaneCommandSecrets(effectiveSandbox)); ok {
-		slog.Debug("launching managed pane",
-			"session_id", sessionID, "tmux_session", tmuxSession,
-			"pane_command", redacted)
-	} else {
-		slog.Warn("launching managed pane; command withheld from the log",
-			"session_id", sessionID, "tmux_session", tmuxSession,
-			"reason", "environment prefix could not be located to redact")
-	}
+	logLaunchPaneCommand(harnessCmd, envExports, effectiveSandbox, sessionID, tmuxSession)
 
 	// Create the detached tmux session running the harness command. The
 	// managed Codex launch-profile path (when any) rides as an inert argv
@@ -2653,166 +993,40 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	if darwinRouteReservation != nil {
-		if err := db.ActivateDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
-			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
-			return fmt.Errorf("activate Darwin route launch contract: %w", err)
-		}
-		if err := darwinRouteReservation.Release(); err != nil {
-			return fmt.Errorf("release Darwin route launch reservation: %w", err)
+		if err := handOffDarwinRouteAtLaunch(darwinRouteReservation,
+			func() error {
+				return db.ActivateDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration)
+			},
+			func() { _ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run() },
+		); err != nil {
+			return err
 		}
 		darwinRouteReservation = nil
 	}
 	timing("tmux_launched")
 	resourceCgroupOwnedByPane = true
 	// killLaunchPane tears the just-launched pane down on a late launch
-	// failure. It also reclaims launch-profile removal for the parent defer:
-	// a killed pane's shell never reaches its own cleanup trailer, so leaving
-	// launchProfileOwnedByPane set would strand the profile file on disk.
+	// failure. launchUndo, still uncommitted, then removes the launch-profile
+	// file: a killed pane's shell never reaches its own cleanup trailer.
 	killLaunchPane := func() {
-		launchProfileOwnedByPane = false
 		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
 		resourceCgroupCleanup()
 	}
-	exitGuard.armPaneHook()
-	exitGuard.bind()
-	if proofReadyPath != "" {
-		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {
-			killLaunchPane()
-			return err
-		}
-	}
-	timing("pane_gate_and_directory_proof_complete")
-	resumeProvenance := ""
-	physicalCwd, provenanceErr := clcommon.LivePaneCwd(tmuxSession)
-	if provenanceErr == nil {
-		var captured resumeprovenance.Provenance
-		captured, provenanceErr = resumeprovenance.Capture(physicalCwd)
-		if provenanceErr == nil {
-			resumeProvenance, provenanceErr = resumeprovenance.Encode(captured)
-		}
-	}
-	if provenanceErr != nil {
-		if params.ManagedLaunch {
-			killLaunchPane()
-			return fmt.Errorf("capture managed launch provenance metadata: %w", provenanceErr)
-		}
-		slog.Warn("could not capture launch-directory metadata for direct session",
-			"session", sessionID, "error", provenanceErr)
-	}
-	applyTmuxWindowTitle(tmuxSession, sessionID)
-
-	// All harness windows allow terminal integration sequences (such as
-	// clipboard OSC 52) through tmux without changing the server-wide policy.
-	ConfigureTmuxPassthrough(tmuxSession)
-
-	// Enable tmux mouse-wheel scrollback for this session when the harness
-	// relies on tmux for history (Codex CLI). Scoped to this session only so
-	// Claude Code panes — which own their scrollback — are untouched (JOH-213).
-	ConfigureTmuxScrollback(tmuxSession, h)
-
-	// Configure keybindings for session navigation (idempotent)
-	ConfigureTmuxKeybindings()
-
-	// Get the PID of claude in the tmux session
-	pid := ParsePIDFromTmux(tmuxSession)
-
-	state.PID = pid
-	state.ResumeProvenance = resumeProvenance
-
-	if err := SaveSessionState(state); err != nil {
-		// Kill the pane like the sibling failure paths below: leaving it alive
-		// while the launch-row defer rolls the row back would orphan a live
-		// pane tclaude can no longer see.
-		killLaunchPane()
-		return fmt.Errorf("failed to save session state: %w", err)
-	}
-	if resumeProvenance != "" {
-		// SessionStart may have inserted this row before the launch parent got
-		// here. SaveSession deliberately never updates provenance on conflict;
-		// the launch boundary therefore owns this explicit post-upsert write.
-		if err := db.SetSessionResumeProvenance(sessionID, resumeProvenance); err != nil {
-			killLaunchPane()
-			return fmt.Errorf("persist managed launch resume provenance: %w", err)
-		}
-	}
-	// Record the postures this launch actually ran with so a later relaunch
-	// reproduces them instead of falling back to defaults. Out-of-band like
-	// SetSessionResumeProvenance, since SaveSession's UPSERT does not own these
-	// columns. On a --resume the values came from the conversation's own record
-	// via applyRecordedLaunchPosture, so this write keeps them alive rather than
-	// overwriting them. See RecordLaunchPosture.
-	// The authoring surface for both pointer fields, and the only one: this launch
-	// resolved --context-window-max and --copilot-api (an explicit flag, the
-	// profile chain, or the conversation's own record via
-	// applyRecordedLaunchPosture) and rendered the launch from them, so it may
-	// assert either value including a zero. A surface that cannot resolve them
-	// passes nil instead — see LaunchPosture.
-	//
-	// The one exception is copilotAPIPostureToRecord's, and it is a launch that DID
-	// resolve the drive.
-	RecordLaunchPosture(sessionID, h, LaunchPosture{
-		AutoMemory:        autoMemory,
-		PeerMessaging:     params.PeerMessaging,
-		ContextFeatures:   contextFeatures,
-		AutoCompactWindow: autoCompactWindow,
-		RemoteControl:     remoteControl,
-		FastMode:          params.FastMode,
-		ContextWindowMax:  &params.ContextWindowMax,
-		CopilotAPI:        copilotAPIPostureToRecord(params),
-		CodexAppServer:    &params.CodexAppServer,
-	})
-	// Claude reports its live model and effort through the statusline hook.
-	// Codex and OpenCode have no equivalent startup callback, so seed the
-	// validated launch choices immediately; their telemetry paths can replace
-	// these values after an in-session model/effort change.
-	if h.Name == harness.CodexName || h.Name == harness.OpenCodeName {
-		if err := db.UpdateSessionModel(sessionID, model); err != nil {
-			slog.Warn("failed to seed session model", "harness", h.Name, "session_id", sessionID, "error", err)
-		}
-		if err := db.UpdateSessionModelID(sessionID, model); err != nil {
-			slog.Warn("failed to seed session model id", "harness", h.Name, "session_id", sessionID, "error", err)
-		}
-		if err := db.UpdateSessionEffort(sessionID, effort); err != nil {
-			slog.Warn("failed to seed session effort", "harness", h.Name, "session_id", sessionID, "error", err)
-		}
-	}
-	// Gemini's session file names each call's model, but only once the first
-	// call lands. Until then show the launch choice; the usage refresh replaces
-	// it with the observed model. Display only: the relaunch model is unchanged.
-	if h.Name == harness.GeminiName && model != "" {
-		if err := db.UpdateSessionModel(sessionID, model); err != nil {
-			slog.Warn("failed to seed session model", "harness", h.Name, "session_id", sessionID, "error", err)
-		}
-	}
-	if err := exitGuard.release(); err != nil {
-		killLaunchPane()
-		return fmt.Errorf("bind managed pane exit audit: %w", err)
-	}
-	// Launch bookkeeping and exit attribution are durable. Publish successor
-	// readiness only at this final boundary: any earlier failure unregisters
-	// this generation and cannot prune a still-resumable predecessor.
-	if ordinaryNativeGeneration != "" {
-		if err := ActivateCodexNativePermissionProfile(ordinaryNativeGeneration); err != nil {
-			killLaunchPane()
-			return fmt.Errorf("activate generated Codex permission profile: %w", err)
-		}
-		ordinaryNativeActivated = true
-	}
-	launchProfileOwnedByPane = launchProfilePath != ""
-	if len(executionBoundaryJSON) > 0 {
-		// Publish only at the same successful launch-commit boundary as the row.
-		// Until here a relaunch retains its predecessor's last-known-good record;
-		// any persistence failure tears down this pane and leaves that record intact.
-		if err := db.SetSessionExecutionBoundary(sessionID, string(executionBoundaryJSON)); err != nil {
-			slog.Warn("could not persist launch execution boundary",
-				"session_id", sessionID, "error", err)
-		}
+	if err := settleLaunchedPane(launchSettleInput{
+		exitGuard: exitGuard, proofReadyPath: proofReadyPath, killLaunchPane: killLaunchPane, timing: timing,
+		tmuxSession: tmuxSession, sessionID: sessionID, params: params, h: h, state: state,
+		model: model, effort: effort, autoMemory: autoMemory, remoteControl: remoteControl,
+		contextFeatures: contextFeatures, autoCompactWindow: autoCompactWindow,
+		ordinaryNativeGeneration: ordinaryNativeGeneration, executionBoundaryJSON: executionBoundaryJSON,
+	}); err != nil {
+		return err
 	}
 
-	// The pane is up and bound; from here the row belongs to the live session
-	// (an attach failure below must not delete it).
-	launchRowCommitted = true
-	darwinRouteCommitted = true
+	// The pane is up and bound; from here the row, the route claim, the
+	// activated native generation and the launch-profile file (removed by the
+	// pane's own cleanup trailer) belong to the live session. An attach
+	// failure below must not undo them.
+	launchUndo.Commit()
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
 }
 
@@ -2984,6 +1198,12 @@ func OneShotLaunchPosture(
 	); err != nil {
 		return harness.SpawnSpec{}, err
 	}
+	if err := sandboxpolicy.ValidateProtectedAncestorWriteSupport(
+		sandboxSnapshotActiveFilesystem(effectiveSandbox),
+		implementation, runtime.GOOS,
+	); err != nil {
+		return harness.SpawnSpec{}, err
+	}
 	// And for the same reason a recorded FILE rule cannot be replayed here: the
 	// harness-native posture is rendered from directory lists, so replaying one
 	// would drop the rule rather than reproduce it.
@@ -3015,14 +1235,19 @@ func OneShotLaunchPosture(
 	launchWriteDirs := append(launchGitWriteDirs,
 		sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	if implementation.UsesTclaudeLayer() {
-		launchWriteDirs = appendUniqueDir(launchWriteDirs, canonicalSandboxPath(cwd))
+		launchWriteDirs = AppendUniqueDir(launchWriteDirs, CanonicalSandboxPath(cwd))
 		for _, mount := range sandboxSnapshotTmpfs(effectiveSandbox) {
-			launchWriteDirs = appendUniqueDir(launchWriteDirs, mount.Path)
+			launchWriteDirs = AppendUniqueDir(launchWriteDirs, mount.Path)
 		}
 	}
 	launchReadDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead),
 		launchContractReadDirs...)
 	launchDenyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
+	if effectiveSandbox != nil {
+		if err := sandboxpolicy.ValidateDenyOverlayHeld(effectiveSandbox.DenyOverlay, []string{cwd}, launchReadDirs, launchWriteDirs); err != nil {
+			return harness.SpawnSpec{}, err
+		}
+	}
 	if err := harness.ValidateSandboxReopenUnderDeny(harnessName, harnessBuiltinMode,
 		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 		return harness.SpawnSpec{}, err
@@ -3080,7 +1305,7 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
 	if params.ManagedInstructionsRoot != "" {
-		readDirs = appendUniqueDir(readDirs, params.ManagedInstructionsRoot)
+		readDirs = AppendUniqueDir(readDirs, params.ManagedInstructionsRoot)
 	}
 	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
@@ -3089,64 +1314,92 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		// outside a Git repository. The workspace is an invariant launch
 		// requirement rather than an optional grant, so reopen it explicitly.
 		if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
-			writeDirs = appendUniqueDir(writeDirs, workspace)
+			writeDirs = AppendUniqueDir(writeDirs, workspace)
 		}
 	}
-	// Codex needs the verified split-policy backend for exactly the shape it
-	// cannot otherwise honor: a narrower reopen beneath a denied ancestor. The
-	// shape is read from the RENDERED rules, not the authored profile — the
-	// launch contract above adds reopens of its own, so `deny ~` on its own
-	// still emits a split policy and must still be probed and refused on macOS.
+	return EnsureCodexManagedLaunchProfile(CodexManagedProfileRules{
+		ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs,
+	}, effectiveSandbox, launchID)
+}
+
+// CodexManagedProfileRules are the rendered directory lists a managed Codex
+// launch's permission profile is built from.
+type CodexManagedProfileRules struct {
+	ReadDirs, WriteDirs, DenyDirs []string
+}
+
+// EnsureCodexManagedLaunchProfile is the managed-Codex profile step that
+// `session new` and the conv resume share. It first runs the reopen-under-deny
+// gate on the rules: a reopen beneath a deny is refused where Codex cannot
+// enforce it. The gate runs on the RENDERED rules, not the authored profile:
+// the launch contract adds reopens of its own, so `deny ~` on its own still
+// emits a split policy. It runs here, whatever the sandbox implementation,
+// because the profile is written whatever the implementation; an unconfined
+// resume skips the gate in planResumeDirs (awb tcl-jyd8zy).
+//
+// When the rules reopen a path beneath a denied ancestor, it then verifies
+// Codex's split-policy backend, the one that can honor that shape, and adds
+// the Codex executable to the reads when the backend needs it. It writes the
+// launch-unique profile with the snapshot's network posture and Unix-socket
+// allowlist.
+//
+// The caller removes path after the pane exits, and revalidates a non-nil
+// capability immediately before the exec boundary, pinning its
+// ExecutablePath.
+func EnsureCodexManagedLaunchProfile(
+	rules CodexManagedProfileRules,
+	effectiveSandbox *sandboxpolicy.Snapshot,
+	launchID string,
+) (name, path string, capability *harness.CodexSplitPolicyCapability, err error) {
+	if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
+		sandboxpolicy.GrantsFromDirs(rules.ReadDirs, rules.WriteDirs, rules.DenyDirs)); err != nil {
+		return "", "", nil, err
+	}
+	readDirs := append([]string(nil), rules.ReadDirs...)
 	requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(
-		sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs))
-	var splitCapability *harness.CodexSplitPolicyCapability
+		sandboxpolicy.GrantsFromDirs(readDirs, rules.WriteDirs, rules.DenyDirs))
 	if requireSplitPolicy {
-		if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
-			sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)); err != nil {
-			return "", "", nil, err
-		}
 		verified, err := harness.VerifyCodexHomeSplitPolicy()
 		if err != nil {
 			return "", "", nil, err
 		}
-		splitCapability = &verified
+		capability = &verified
 		if verified.RequiresExecutableReopen {
 			readDirs = append(readDirs, verified.ExecutablePath)
 		}
 	}
-	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
-	profileName, path, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
+	name, path, err = harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
 		ReadDirs:    readDirs,
-		WriteDirs:   writeDirs,
-		DenyDirs:    denyDirs,
+		WriteDirs:   rules.WriteDirs,
+		DenyDirs:    rules.DenyDirs,
 		UnixSockets: sandboxSnapshotUnixSockets(effectiveSandbox),
 		MaterializedUnixSocketPaths: sandboxSnapshotMaterializedUnixSocketPaths(
 			effectiveSandbox),
 		RequireSplitPolicy: requireSplitPolicy,
-	}, networkAccess, launchID)
+	}, sandboxSnapshotNetworkAccess(effectiveSandbox), launchID)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
+		return "", "", nil, fmt.Errorf("write managed Codex permission profile: %w", err)
 	}
-	return profileName, path, splitCapability, nil
+	return name, path, capability, nil
 }
 
 func denyNarrowedGitWriteDirs(cwd, gitCommonDir string, candidates []string) []string {
 	var out []string
 	if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
-		out = appendUniqueDir(out, workspace)
+		out = AppendUniqueDir(out, workspace)
 	}
 	common := filepath.Clean(strings.TrimSpace(gitCommonDir))
 	if common == "." || !filepath.IsAbs(common) {
 		return out
 	}
-	out = appendUniqueDir(out, common)
+	out = AppendUniqueDir(out, common)
 	for _, candidate := range candidates {
 		candidate = filepath.Clean(strings.TrimSpace(candidate))
 		// A candidate at/below the verified common directory is an exact Git
 		// admin identity (for linked worktrees Codex needs the more-specific
 		// worktrees/<name> reopen). Ancestors such as ~/git are discarded.
 		if candidate != "." && filepath.IsAbs(candidate) && sandboxpolicy.PathContainsOrEqual(common, candidate) {
-			out = appendUniqueDir(out, candidate)
+			out = AppendUniqueDir(out, candidate)
 		}
 	}
 	return out
@@ -3168,7 +1421,8 @@ func canonicalLaunchWorkspace(cwd string) string {
 	return filepath.Clean(resolved)
 }
 
-func appendUniqueDir(dirs []string, dir string) []string {
+// AppendUniqueDir appends dir unless dirs already holds it.
+func AppendUniqueDir(dirs []string, dir string) []string {
 	for _, existing := range dirs {
 		if existing == dir {
 			return dirs
@@ -3256,14 +1510,14 @@ func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]str
 	return out
 }
 
-// canonicalSandboxPath symlink-resolves a launch-time path so it can be
+// CanonicalSandboxPath symlink-resolves a launch-time path so it can be
 // compared against effective grants, which normalization has already fully
 // resolved. Without this a cwd reached through a symlinked ancestor (macOS
 // /var → /private/var, or a symlinked home) would not appear to be covered by a
 // deny that does cover it, and the launch contract would silently skip the
 // reopens the agent needs. Falls back to the lexical form when the path cannot
 // be resolved; the ordinary cwd checks report that failure.
-func canonicalSandboxPath(path string) string {
+func CanonicalSandboxPath(path string) string {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "." || !filepath.IsAbs(path) {
 		return ""
@@ -3282,7 +1536,7 @@ func sandboxDenyCoversPath(snapshot *sandboxpolicy.Snapshot, path string) bool {
 	if snapshot == nil {
 		return false
 	}
-	path = canonicalSandboxPath(path)
+	path = CanonicalSandboxPath(path)
 	if path == "" {
 		return false
 	}
@@ -3336,11 +1590,11 @@ func sandboxLaunchContractReadDirs(snapshot *sandboxpolicy.Snapshot, candidates 
 	for _, candidate := range all {
 		// Emit the canonical form: the rule must name the path the sandbox will
 		// actually see, and must be comparable to the canonical deny above.
-		candidate = canonicalSandboxPath(candidate)
+		candidate = CanonicalSandboxPath(candidate)
 		if candidate == "" || !sandboxDenyCoversPath(snapshot, candidate) {
 			continue
 		}
-		out = appendUniqueDir(out, candidate)
+		out = AppendUniqueDir(out, candidate)
 	}
 	sort.Strings(out)
 	return out
@@ -3423,7 +1677,12 @@ func sandboxSnapshotTmpfs(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.Tmpf
 	return snapshot.Effective.Tmpfs
 }
 
-func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
+// SandboxSnapshotForLaunch is the snapshot as a launch sees it: its
+// filesystem rules filtered by sandboxpolicy.FilesystemForLaunch, which drops
+// read and write rows whose paths do not exist yet. Gates that count or check
+// rules read this view, so a rule waiting for its path does not refuse the
+// launch.
+func SandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
 	if snapshot == nil {
 		return nil, nil
 	}
@@ -3442,7 +1701,7 @@ func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.
 // preparation: missing ordinary grants become inactive, while missing denies
 // fail closed.
 func SandboxSnapshotForOneShotLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
-	return sandboxSnapshotForLaunch(snapshot)
+	return SandboxSnapshotForLaunch(snapshot)
 }
 
 func commandWithFileCleanup(cmd, path string) string {
@@ -3716,7 +1975,7 @@ func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool,
 	// this process's terminal. `new-session -d` prints nothing on success (bar the -P id), and
 	// on failure ("bad session name", "can't create socket") the message is the
 	// whole explanation — attaching it to the error keeps it with the caller
-	// that can render it. Writing it to os.Stderr instead would land it
+	// that can render it. Writing it to cliStderr instead would land it
 	// wherever this process's stderr happens to point, which since
 	// StartShellSession includes an agentd console sitting in bubbletea's
 	// alternate screen: the diagnostic would overwrite the rendered frame while
@@ -3874,15 +2133,15 @@ func applyTmuxWindowTitle(tmuxSession, sessionID string) {
 // the harness-specific "Created …" headline (a coding session vs a shell
 // session). Shared launch tail of runNew and runNewShell.
 func announceAndAttach(createdLine, sessionID, tmuxSession, cwd string, detached bool) error {
-	fmt.Println(createdLine)
-	fmt.Printf("  Directory: %s\n", cwd)
+	fmt.Fprintln(cliStdout, createdLine)
+	fmt.Fprintf(cliStdout, "  Directory: %s\n", cwd)
 
 	if detached {
-		fmt.Printf("\nAttach with: tclaude session attach %s\n", tmuxSession)
+		fmt.Fprintf(cliStdout, "\nAttach with: tclaude session attach %s\n", tmuxSession)
 		return nil
 	}
 
-	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
+	fmt.Fprintln(cliStdout, "\nAttaching... (Ctrl+B D to detach)")
 	return AttachToSession(sessionID, tmuxSession, false)
 }
 
@@ -3971,9 +2230,13 @@ func resumeIDFromParam(h *harness.Harness, value string) string {
 	return clcommon.ExtractIDFromCompletion(value)
 }
 
+// errResumeNotFound marks a selector that matched nothing, as opposed to an
+// ambiguous one or an unreadable store.
+var errResumeNotFound = errors.New("not found")
+
 func resumeNotFoundErr(shortID string, global bool) error {
 	if global {
-		return fmt.Errorf("conversation %s not found", shortID)
+		return fmt.Errorf("conversation %s %w", shortID, errResumeNotFound)
 	}
-	return fmt.Errorf("conversation %s not found in current project (use -g to search all projects)", shortID)
+	return fmt.Errorf("conversation %s %w in current project (use -g to search all projects)", shortID, errResumeNotFound)
 }

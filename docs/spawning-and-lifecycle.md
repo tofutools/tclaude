@@ -43,8 +43,9 @@ The flags that matter most:
   display and routing label), `--role-ref` (a saved role — brief plus
   baseline permissions, see below), `--descr` (one-line dashboard label),
   `--task <url>` and `--task-label` (the dashboard Task column link),
-  `--owner` / `--no-owner` (owner spawns need `groups.owners.manage`
-  authority).
+  `--owner` / `--no-owner` (owner spawns need a `groups.owners.manage`
+  grant covering the target group: one scoped to a group mints owners in
+  that group only, and owning the group is not enough).
 - **Brief**: `--initial-message`, or `--file <path>` (`-` reads stdin;
   16384-byte cap) for anything long, multi-line, or containing backticks.
   `--reply-to` picks who the agent's first reply reaches; it defaults to
@@ -61,8 +62,14 @@ The flags that matter most:
   Values may contain `=` and commas. These are ordinary configuration, not a
   secret store: they are visible in the dashboard and persisted with the
   agent's launch record.
+- **Directory**: `--cwd <dir>` sets the launch directory, and a relative path
+  means relative to where you ran the command. Without it the agent starts in
+  the group's default directory, then your current directory. A sandboxed agent
+  must be able to write the directory, so one that cannot reach the group's
+  default is refused; it can pass `--cwd .` to stay where it is.
 - **Worktree**: `--worktree <branch>` creates or reuses a git worktree on
-  that branch and spawns the agent into it; `--worktree-base` picks the
+  that branch and spawns the agent into it, in the repository of that same
+  directory; `--worktree-base` picks the
   branch it is cut from; `--worktree-repo` covers the monorepo case — the
   agent launches in `--cwd` and the worktree's path and branch ride into
   its welcome instead. The checkout runs in the daemon, and a rejected
@@ -166,6 +173,51 @@ up current group environment settings while retaining the original higher-tier
 overrides. A process that is already running keeps its existing environment
 until one of those lifecycle actions.
 
+What every relaunch (resume, reincarnate, clone, morph) does with each launch
+field, and why, is listed in [Launch resolution](launch-resolution.md).
+A spawn can override the global relaunch policy for its agent with
+`--relaunch-policy field=mode` (repeatable) or `--relaunch-policy-file`, and a
+spawn profile can carry the same rows; see
+[Per-agent overrides](launch-resolution.md#per-agent-overrides), which also
+covers when an agent spawner needs `relaunch-policy.manage`.
+
+#### Remote control, auto memory, peer messaging and group context
+
+Four profile toggles — `remote_control`, `auto_memory`, `peer_messaging` and
+`include_group_default_context` — resolve the same way on every spawn path:
+a direct spawn, a template or task-force deploy, a scribe or Steward summon, a
+trigger worker and a process worker. Highest first:
+
+1. the explicit flag (direct spawn only). The dashboard's spawn dialog
+   pre-fills the remote-control, auto-memory and peer-messaging checkboxes
+   from the tiers below and leaves one out of the request when you did not
+   change it and the daemon resolves the same value, so a box left as
+   pre-filled is not an explicit choice. To know what the daemon resolves,
+   the dialog asks it: a spawn preview (`POST /api/groups/{name}/spawn-preview`,
+   the spawn request's body) runs the spawn's own resolution and validation,
+   stops before anything is launched, and answers with each launch field's
+   value and the tier that decided it, including the relaunch-policy rows the
+   agent would get (each with a `kind`: explicit, profile or global). A box the daemon would not resolve the
+   same way is sent as shown, and so is every box when the preview fails
+2. the group's remote-control policy (`groups set-remote-control`; remote
+   control only)
+3. the named profile (`--profile`, a template agent's inline or referenced
+   profile, a trigger action's or process node's profile)
+4. the group's default spawn profile
+5. the global default spawn profile
+6. off — except the group context, which falls back to the path's own
+   default: included for direct spawns, deploys, trigger and process workers;
+   left out for scribes and `--non-interactive` one-shots. A deployed task
+   force's mission is not part of the group context for this toggle: every
+   member is briefed with it either way, like its role and process blocks
+   (a `--non-interactive` one-shot only when it includes the group context)
+
+Remote control is honoured for unattended trigger and process workers too, so
+a profile or group policy that turns it on makes those workers reachable from
+the Claude app. A `--non-interactive` one-shot never gets remote control: it
+has no session to control. A value derived from a policy or profile is dropped
+for a harness with no Remote Access instead of failing the spawn.
+
 The harness resolves through the full chain *first*; the other fields then
 validate against it. An incompatible explicit flag is a loud error; an
 incompatible value from a lower profile tier is skipped, falls through, and
@@ -247,11 +299,121 @@ too. See [max members](agents-and-groups.md#max-members).
 Guardrail denials, like all permission denials, land in the audit trail —
 see [Permissions and audit](permissions-and-audit.md).
 
+## Capacity limits and the spawn queue
+
+An instance can cap how many agents it runs at once and require free RAM and
+disk before it launches another. Configure `capacity` in
+`~/.tclaude/data/config.json`:
+
+```json
+{
+  "capacity": {
+    "max_live_agents": 8,
+    "min_free_ram_mb": 4096,
+    "min_free_disk_mb": 10240,
+    "when_full": "queue",
+    "max_queued": 50
+  }
+}
+```
+
+Everything is off by default: with no `capacity` block nothing is limited and
+nothing changes. Each field is independent; zero or omitted disables it.
+
+- `max_live_agents` counts managed agents with a live pane, plus reservations:
+  spawns still starting up, undecided or launching federation spawn requests,
+  running remote jobs and incoming teleports. Plain `tclaude session new`
+  panes and non-interactive one-shot runs do not count. The older
+  `federation.max_live_agents` is the same cap and still applies when
+  `capacity.max_live_agents` is unset.
+- `min_free_ram_mb` is free (available) memory, and `min_free_disk_mb` the
+  free space on the data directory's and the launch directory's filesystems.
+  Both are read fresh when a launch is admitted. They only gate new launches
+  and never stop running agents. A reading that fails counts as not enough,
+  with the reason in the refusal.
+- `when_full` is `refuse` (the default) or `queue`.
+
+With `refuse`, a spawn past a limit fails with `409 node_busy` and the reason,
+for example `free RAM 512 MB is below capacity.min_free_ram_mb 1024`.
+
+With `queue`, a spawn from `tclaude agent spawn` or the dashboard spawn dialog
+that does not fit waits in one first-in-first-out queue instead. It returns
+`202` with its queue ID and position, and there is no ETA:
+
+```text
+Queued spawn #12 in group "builders" at position 2 (no ETA): node capacity reached: 8 of 8 live and reserved agents
+```
+
+While spawns wait, a new spawn queues behind them even if a slot is free, and
+other launch paths whose capacity no earlier reservation already counts
+(triggers, templates, waves, process steps, AWB pickups, agent imports) are
+refused rather than jumping the line. Approved federation spawn requests and
+incoming teleports reserved their place when admitted and are not held back. When capacity
+frees, agentd launches the head entry, then the next, in order. The launch
+replays the stored request as the original requester, so permissions, group
+membership, group state and profiles are checked again at launch time. A
+requester agent that was retired, or that left the target group while its
+spawn waited, fails the entry with that reason; no other identity stands in.
+The requester is told the outcome: an agent through its inbox, the operator
+in the dashboard Messages tab.
+
+A spawn that holds one-time authority cannot wait and is refused even in
+queue mode: one approved by a single human `--ask-human` decision, one
+authorized by a sudo grant use, one carrying attachments, external steward
+spawns, and spawns made on a peer's behalf. Directory write-proofs are checked
+when the spawn is queued; the launch accepts only the same canonical
+directories. `tclaude agent spawn --no-queue` refuses instead of queueing, and
+`tclaude --join-group` never queues because it attaches at once.
+`max_queued` (default 50) caps waiting spawns; past it the spawn is refused
+with `spawn_queue_full`.
+
+```sh
+tclaude agent queue ls          # capacity, used/max, and waiting spawns with positions
+tclaude agent queue ls --all    # also ended entries kept for a week
+tclaude agent queue rm 12       # cancel a waiting spawn
+```
+
+Spawn requests from federation peers share this queue; see
+[Automatic worker placement](federation-work.md#automatic-worker-placement) for how they wait and are handed on. Remote
+one-shot jobs are not queued: a full node, or one with spawns waiting, refuses
+them with `node_busy`.
+
+`tclaude agent ls` lists waiting spawns under the agent table, and the
+dashboard shows them in the [Spawn queue](dashboard-groups.md#the-spawn-queue)
+block above the groups. An agent sees
+its own queued spawns and those targeting a group it is in; the operator sees
+all. A waiting spawn can be cancelled by its requester, an owner of its target
+group, or the operator. Listings show only the name, group, requester,
+position and age, never the stored request, which may hold environment values.
+That request stays in the private database and is deleted when the entry
+launches, fails or is cancelled. The queue survives daemon restarts; an entry
+left mid-launch by a crash is settled from the launch's own records rather than
+launched twice. Queueing and cancelling are audited, and so is each launch the
+queue makes, as `spawn.queue.launched` or `spawn.queue.failed`.
+
 ## Spawn profiles and roles
 
 Two libraries make spawns repeatable instead of flag soups. Reads are open
 to every agent; writes are gated (`profiles.manage`, `roles.manage`) and
 effectively human-only by default.
+
+A profile can be any group's default, or the global one, and a default
+reaches every spawn there, trigger, schedule and process workers included.
+So an agent writing a profile or role may only add access it could confer
+itself, on top of the library slug:
+
+- A permission grant, set as a profile's `permission_overrides`, or reached
+  through a role the profile names, or in a role's own permissions, takes
+  `permissions.grant`, and no wider a scope than the agent's own.
+- `is_owner` takes `groups.owners.manage` unscoped, since the profile can
+  reach any group.
+- Setting the global default profile takes the same authority over
+  everything that profile confers.
+
+Only what a write adds is checked. Editing a profile's description or model,
+or a role's brief, needs nothing more even when the profile or role already
+grants, and a deny never needs authority. Imports (profile, template and
+config bundle) are writes too. The operator is never refused.
 
 **Spawn profiles** (`tclaude agent profiles ls|show|create|edit|rm|
 disable|enable|default`) are named bundles of the whole spawn dialog:
@@ -326,7 +488,10 @@ inbox instruction asking the target to name itself.
 ### compact and context-info
 
 `compact [follow-up]` injects `/compact`, with an optional follow-up
-message queued after it (timing best-effort). `context-info` reads the
+message queued after it (timing best-effort). In the dashboard, *compact* in
+an agent's ⚙ menu does the same with no follow-up, after a confirmation. It
+shows only for harnesses that can compact and is disabled while the agent is
+offline. `context-info` reads the
 context meter (populated by the status line) for yourself — ungated — a
 `--target`, or a whole team at once with `--group`.
 
@@ -429,10 +594,19 @@ cannot be written, the clone is stopped and the command fails, so a clone never
 runs with only part of its source's identity. Group ownerships are not copied
 unless you pass `--copy-ownership` (memberships, roles and grants always are). `--group <name>` also adds the clone to one more group in the same
 request; an agent caller needs `groups.members.add` for that group, just as
-for adding a member directly. `--cwd <dir>` starts the clone in another
+for adding a member directly. That clone launches under the group's sandbox
+profile and environment from its first launch; `--keep-sandbox` and
+`--keep-environment` keep the source's instead (the dashboard's clone dialog
+offers the same as checkboxes). Its handoff message says which group each
+comes from. A groups clone launches every member under the new group's.
+`--cwd <dir>` starts the clone in another
 directory, typically a git worktree; an agent caller must prove it can write
 there. A clone records no spawn lineage, so `@self-spawned` and `@descendants`
-grants never reach it through the agent that cloned it.
+grants never reach it through the agent that cloned it. It does carry its
+source's launch record: what the source set explicitly at spawn stays explicit
+for the clone, a re-applied spawn profile treats both alike, and after a
+compaction the clone is re-briefed as its source would be (the same group
+context choice and profile startup context).
 
 Agent-initiated clones are rate-limited by the daemon's clone cooldown
 (default one minute).
@@ -452,7 +626,8 @@ predecessor's launch directory to still exist.
 `stop <selector>` soft-exits the target's session, escalating after about
 ten seconds through pane kill, SIGTERM, and finally SIGKILL of the frozen
 pane's process group, re-checking identity at each step. Idempotent;
-`--force` skips the soft phase.
+`--force` skips the soft phase and kills the pane at once, and the same SIGTERM
+and SIGKILL follow in the background if the pane does not go.
 
 `resume <selector>` relaunches an offline agent into its recorded working
 directory. If that directory has vanished, resume fails with
@@ -495,8 +670,10 @@ daemon, and `--repair` recreates your own deleted startup directory
   tracked flag. Claude Code only — see [Remote](remote.md).
 - `interrupt` interrupts an active Codex app-server turn;
   `codex-app-server status` shows drive diagnostics.
-- `sandbox-impl show|set` reads or assigns the durable sandbox
-  implementation an *offline* agent relaunches under. Its slug
+- `sandbox show|set` (formerly `sandbox-impl`, now a deprecated alias)
+  reads or assigns the durable sandbox implementation and sandbox profile
+  an agent relaunches under; `set --restart` applies it to a
+  running, idle agent by stopping, assigning and resuming it. Its slug
   (`agent.sandbox-impl`) is deliberately not owner-conferred and not
   default-granted — effectively human-only. See
   [Sandboxing](sandboxing.md).
@@ -507,7 +684,7 @@ are covered in [Teams at scale](teams-at-scale.md).
 
 ### Diagnosing slow startup
 
-Enable **Config → Logging → Startup timings** and save, or set
+Enable **Config › Logs & housekeeping › Logging › Startup timings** and save, or set
 `"startup_timing": true` in `~/.tclaude/data/config.json`. Changes apply to new
 traces immediately, without restarting agentd. Traces already running finish
 with the setting they started with, preserving complete measurements. The
@@ -522,7 +699,7 @@ config key is absent. An explicit config `true` or `false` overrides it; saving
 the dashboard checkbox writes an explicit value. The checkbox displays the
 saved config value, not an inherited environment setting.
 
-Filter the dashboard's Activity › Logs view for `startup timing`, or inspect those JSON
+Filter the dashboard's Diagnostics › Logs view for `startup timing`, or inspect those JSON
 records in `~/.tclaude/data/output.log`. These are info-level records, so no
 log-level change is needed with the default configuration. Each record has a
 component, process ID, per-process trace number, milestone, total `elapsed_ms`,
@@ -543,6 +720,10 @@ Useful boundaries:
 - `codex_effective_config` separates launching the preflight Codex app-server,
   waiting for `config/read`, and process teardown. This probe runs separately
   from the agent's actual Codex process and can occur in either daemon or wrapper.
+- `codex_requirements` is the same for the `configRequirements/read` a
+  Codex launch in `danger-full-access` (harness-builtin, `off` or
+  `resource-only`) makes, bounded at 10s, to learn whether
+  managed requirements keep Codex's own sandbox on.
 - `codex_bootstrap` separates version/PID availability, listener ownership
   proof, the TUI's thread binding, client initialization, and verified readiness.
   `codex_await_ready`, `spawn_backfill`, and `spawn_post_init` cover later work.

@@ -131,6 +131,7 @@ func TestMatchAuditRoute(t *testing.T) {
 		{"dashboard spawn", http.MethodPost, "/api/groups/crew/spawn", true, "spawn", db.AuditSourceDashboard, map[string]string{"name": "crew"}},
 		{"cli message", http.MethodPost, "/v1/messages", true, "message", db.AuditSourceCLI, nil},
 		{"dashboard message singular", http.MethodPost, "/api/message", true, "message", db.AuditSourceDashboard, nil},
+		{"dashboard drawing board delete", http.MethodDelete, "/api/drawing-boards/plan", true, "drawing-board.delete", db.AuditSourceDashboard, map[string]string{"id": "plan"}},
 		{"cli agent verb", http.MethodPost, "/v1/agent/worker/reincarnate", true, "", db.AuditSourceCLI, map[string]string{"conv": "worker", "verb": "reincarnate"}},
 		{"dashboard agents verb", http.MethodPost, "/api/agents/worker/retire", true, "", db.AuditSourceDashboard, map[string]string{"conv": "worker", "verb": "retire"}},
 		{"cli permissions grant", http.MethodPost, "/v1/permissions/grant", true, "permissions.grant", db.AuditSourceCLI, nil},
@@ -477,4 +478,18 @@ func TestBufferAuditBodyIsBoundedAndExact(t *testing.T) {
 		r.Body = nil
 		assert.Nil(t, bufferAuditBody(r))
 	})
+}
+
+// Environment values stay out of a spawn row whatever shape the request has,
+// and the names stay in, so an operator can still see what was set.
+func TestSpawnAuditRedactsEnvironmentValues(t *testing.T) {
+	request := `{"name":"worker","environment":[{"name":"API_TOKEN","value":"s3cret-input"}]}`
+	refused := `{"name":"worker","ENVIRONMENT":"s3cret-input"}`
+	response := []byte(`{"launch":{"sandbox_policy":{"environment":["API_TOKEN"]}},"debug":{"environment":[{"name":"X","value":"s3cret-output"}]}}`)
+	for _, body := range []string{request, refused} {
+		detail := encodeSpawnAuditDetail("role: dev", []byte(body), response, nil, false)
+		assert.NotContains(t, detail, "s3cret")
+		assert.Contains(t, detail, `"sandbox_policy":{"environment":["API_TOKEN"]}`)
+	}
+	assert.Contains(t, encodeSpawnAuditDetail("", []byte(request), nil, nil, false), `{"name":"API_TOKEN","value":"[redacted]"}`)
 }

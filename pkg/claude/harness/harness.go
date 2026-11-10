@@ -119,6 +119,10 @@ type Harness struct {
 	// Transcript converts History's wire format to and from the neutral
 	// transcript for cross-harness morph. nil = no translation support.
 	Transcript TranscriptCodec
+	// Compaction proves whose compaction a hook announced, for a harness whose
+	// in-harness subagents fire compaction hooks indistinguishable from the
+	// main thread's. nil = the hooks attribute themselves.
+	Compaction CompactionProof
 	// Hooks installs/checks/repairs the tclaude callback in the harness's
 	// config target (+ any trust step). nil = this build can't install
 	// hooks for the harness; `tclaude setup` skips it with a message.
@@ -183,7 +187,7 @@ type Harness struct {
 	AskTimeout AskTimeoutCatalog
 	// ToolGovernance names the uniform allow/ask/deny action applied to a
 	// harness-defined built-in tool group. OpenCode supplies this catalog for
-	// bash/glob/grep/lsp/task/skill; Claude Code and Codex leave it nil.
+	// bash/glob/grep/lsp/skill; Claude Code and Codex leave it nil.
 	ToolGovernance ToolGovernanceCatalog
 	// HostControlSandbox is the optional harness-native launch preparation that
 	// keeps an agent from reaching tclaude's host control plane. nil means the
@@ -303,6 +307,12 @@ type Harness struct {
 	// true. See JOH-200 part 2.
 	ApprovalsReviewer bool
 
+	// MailMidTurn marks a harness proven to take mail while a turn runs, by
+	// queueing or steering it. Continuous dictation gates on it: Gemini CLI and
+	// pi only have send-keys, so a dictated message per sentence stays unproven
+	// there, and those agents get one message at a time.
+	MailMidTurn bool
+
 	// BackgroundShells marks a harness that can run a shell command in the
 	// BACKGROUND — detached from the turn, so the agent's turn ends while
 	// the command keeps running — and that names each such command in its
@@ -363,7 +373,7 @@ type Harness struct {
 	//     three — it blocks before the CLI contacts the model provider at all —
 	//     and its store is the only one that MOVES with the launch environment.
 	//
-	// EnsureDirTrusted dispatches on that shape; this flag is only the "is there
+	// EnsureDirTrustedForLaunch dispatches on that shape; this flag is only the "is there
 	// anything to dispatch to" gate that ResolveTrustDir, the spawn dialog and
 	// the profile editor read.
 	//

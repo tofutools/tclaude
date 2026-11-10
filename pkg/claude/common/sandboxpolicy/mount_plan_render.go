@@ -105,10 +105,11 @@ type mountGrantSection struct {
 
 // RenderMountPlan renders one resolved effective sandbox policy to a MountPlan.
 //
-// Only the ordinary Filesystem grants contribute. Every one of them has already
-// been proven by normalizeFilesystem not to intersect a protected root, so no
-// entry this renderer emits can land at or beneath one — the class-3 hides
-// above are never reopened. There is deliberately no second authority section:
+// Only the ordinary Filesystem grants contribute. normalizeFilesystem has
+// proven none of them lies at or beneath a protected root; one may be an
+// ancestor (a writable `~`), which the appliers cover by re-hiding the
+// protected roots on top and pinning the directories in between, so the
+// class-3 hides above are never reopened. There is deliberately no second authority section:
 // break_glass_filesystem was the one exception and TCL-791 removed it.
 //
 // Sections that do not describe host paths (Environment and AgentDirectories)

@@ -92,5 +92,5 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 	// items are styled.
 	must(".notify-bell {", "master bell style")
 	must("#notify-pop {", "popover style")
-	must(".action-menu button {", "menu items (incl. the relocated notify toggles) are styled")
+	must(`class="ui-menu ui-sm action-menu"`, "menu items (incl. the relocated notify toggles) are standard menu rows")
 }

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -28,6 +30,16 @@ const pendingSpawnSweepInterval = 5 * time.Second
 // reservation whose launch is merely slow would make the operator's Pending
 // row vanish mid-launch.
 const pendingSpawnLaunchGrace = 60 * time.Second
+
+// deferredSpawnsRunning holds the labels of deferred launches this daemon is
+// still running. A launch slower than pendingSpawnLaunchGrace loses its
+// reservation but keeps its state.
+var deferredSpawnsRunning sync.Map
+
+func deferredSpawnRunning(label string) bool {
+	_, running := deferredSpawnsRunning.Load(label)
+	return running
+}
 
 // startPendingSpawnSweeper runs the pending-spawn back-fill sweeper in its
 // own goroutine until stop closes (the daemon-wide quit channel). JOH-205
@@ -111,6 +123,8 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		// from a spawn that never happened.
 		slog.Info("pending-spawn sweeper: session row gone; dropping pending spawn",
 			"label", ps.Label)
+		revokePendingRouteHelperCredentials(ps.AgentID, ps.Label)
+		discardOrphanedOpenCodeState(ps)
 		deletePendingSpawnRow(ps.Label)
 		surfacePendingSpawnDrop(ps)
 		return
@@ -144,6 +158,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		if sess.Status == session.StatusExited {
 			slog.Info("pending-spawn sweeper: session exited before conv-id; dropping pending spawn",
 				"label", ps.Label)
+			revokePendingRouteHelperCredentials(ps.AgentID, ps.Label)
 			deletePendingSpawnRow(ps.Label)
 		}
 		return
@@ -161,6 +176,7 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		// into. Drop the row.
 		slog.Warn("pending-spawn sweeper: group gone; dropping pending spawn",
 			"label", ps.Label, "group_id", ps.GroupID)
+		revokePendingRouteHelperCredentials(ps.AgentID, ps.Label)
 		deletePendingSpawnRow(ps.Label)
 		return
 	}
@@ -198,6 +214,15 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 			requeuePendingSpawn(ps.Label, ps)
 			return
 		}
+		if db.IsExternalStewardConv(ps.SpawnedByConv) {
+			if err := writeExternalStewardChildDenies(convID, ps.SpawnedByConv); err != nil {
+				slog.Warn("pending-spawn sweeper: external steward denies repair failed",
+					"label", ps.Label, "conv", convID, "error", err)
+				requeuePendingSpawn(ps.Label, ps)
+				return
+			}
+		}
+		attachRouteHelperConversation(ps.AgentID, convID, routeHelperGenerationForSession(ps.Label))
 		slog.Info("pending-spawn sweeper: already enrolled; cleared pending row",
 			"label", ps.Label, "conv", convID)
 		return
@@ -213,19 +238,20 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		sshWorkaround = *ps.SSHWorkaround
 	}
 	p := spawnParams{
-		AgentID:          ps.AgentID,
-		Harness:          sess.Harness,
-		EffectiveSandbox: ps.EffectiveSandbox,
-		SSHWorkaround:    sshWorkaround,
-		SSHWorkaroundSet: true,
-		Role:             ps.Role,
-		Descr:            ps.Descr,
-		Name:             ps.Name,
-		InitialMessage:   ps.InitialMessage,
-		GroupContext:     ps.GroupContext,
-		ProfileContext:   ps.ProfileContext,
-		ReplyToConv:      ps.ReplyToConv,
-		SpawnedByConv:    ps.SpawnedByConv,
+		AgentID:                     ps.AgentID,
+		routeHelperLaunchGeneration: routeHelperGenerationForSession(ps.Label),
+		Harness:                     sess.Harness,
+		EffectiveSandbox:            ps.EffectiveSandbox,
+		SSHWorkaround:               sshWorkaround,
+		SSHWorkaroundSet:            true,
+		Role:                        ps.Role,
+		Descr:                       ps.Descr,
+		Name:                        ps.Name,
+		InitialMessage:              ps.InitialMessage,
+		GroupContext:                ps.GroupContext,
+		ProfileContext:              ps.ProfileContext,
+		ReplyToConv:                 ps.ReplyToConv,
+		SpawnedByConv:               ps.SpawnedByConv,
 		// The durable agent_id companions (JOH-321 F2): minutes have passed since
 		// the spawn was recorded, so the spawner may have rotated. These let
 		// finishSpawnEnrollment re-resolve its LIVE generation for the briefing
@@ -357,6 +383,53 @@ func ensurePendingTaskRefBound(convID string, ps *db.PendingSpawn) bool {
 		return false
 	}
 	return true
+}
+
+// discardOrphanedOpenCodeState removes the private OpenCode state of a dropped
+// reservation whose session row never appeared. executeServerSpawnDeferred
+// allocates it before the launch and only memory knew how to remove it, so a
+// daemon restart mid-boot would leave it for good. No pane can be behind it: the
+// launch writes the session row before it creates a pane. A deferred launch still
+// running here owns its state, and an agent row means something else may read it,
+// so neither is touched.
+func discardOrphanedOpenCodeState(ps *db.PendingSpawn) {
+	if ps.AgentID == "" || deferredSpawnRunning(ps.Label) {
+		return
+	}
+	agent, err := db.GetAgent(ps.AgentID)
+	if err != nil {
+		slog.Warn("pending-spawn sweeper: agent lookup failed; keeping OpenCode state",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+		return
+	}
+	if agent != nil {
+		return
+	}
+	allocation, err := db.GetOpenCodeAgentStateAllocation(ps.AgentID)
+	if err != nil {
+		slog.Warn("pending-spawn sweeper: OpenCode state lookup failed",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+		return
+	}
+	if allocation == nil || allocation.Mode != db.OpenCodeStatePrivate {
+		return
+	}
+	// A server that outlived the daemon must not outlive the state it serves from.
+	if err := stopOpenCodeRuntime(ps.Label); err != nil {
+		slog.Warn("pending-spawn sweeper: stop OpenCode server; keeping its state",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+		return
+	}
+	// The record goes first: a directory nothing points at is only unused.
+	if err := db.DeleteOpenCodeAgentStateAllocation(ps.AgentID); err != nil {
+		slog.Warn("pending-spawn sweeper: forget unused OpenCode state",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+		return
+	}
+	if err := os.RemoveAll(allocation.StateRoot); err != nil {
+		slog.Warn("pending-spawn sweeper: remove unused OpenCode state",
+			"label", ps.Label, "agent", ps.AgentID, "error", err)
+	}
 }
 
 // surfacePendingSpawnDrop lands a daemon-originated Messages-tab notice when

@@ -11,6 +11,7 @@ import { usageView } from './shell-model.js';
 import { featureNeeds, featureState, needsSuffix } from './peer-view-limits.js';
 import { LockReason } from './lock-reason.js';
 import { dashPrefs } from './prefs.js';
+import { useDismissablePopover } from './hover-popover.js';
 
 const html = htm.bind(h);
 export const USAGE_NODE_PREF = 'tclaude.dash.headerUsageNode';
@@ -88,28 +89,18 @@ export function useUsageNode({ nodes, selfID, fetchImpl = (...a) => globalThis.f
 export function UsageNodePill({ nodes, selected, onSelect, peakOf, onOpen }) {
   const [open, setOpen] = useState(false);
   const root = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event) => { if (!root.current?.contains(event.target)) setOpen(false); };
-    const key = (event) => { if (event.key === 'Escape') setOpen(false); };
-    globalThis.document?.addEventListener('pointerdown', close, true);
-    globalThis.document?.addEventListener('keydown', key);
-    return () => {
-      globalThis.document?.removeEventListener('pointerdown', close, true);
-      globalThis.document?.removeEventListener('keydown', key);
-    };
-  }, [open]);
+  useDismissablePopover(root, open, () => setOpen(false));
   const node = nodes.find((n) => n.id === selected) || nodes[0];
   const label = (n) => `${n.local ? '⌂ ' : ''}${n.name}`;
   return html`<span class="usage-node" ref=${root}>
-    <button type="button" class="usage-node-pill" style=${`--nc:${node.color}`} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+    <button data-ui-exempt type="button" class="usage-node-pill" style=${`--nc:${node.color}`} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       title=${`Usage of ${node.name}: pick another node`} onClick=${() => { if (!open) onOpen?.(); setOpen(!open); }}>
       <span class="usage-node-dot" aria-hidden="true"></span>${label(node)} ▾
     </button>
     ${open ? html`<span class="usage-node-menu" role="menu">
       ${nodes.map((n) => {
         const peak = peakOf(n.id);
-        return html`<button key=${n.id} type="button" role="menuitemradio" aria-checked=${n.id === selected ? 'true' : 'false'}
+        return html`<button data-ui-exempt key=${n.id} type="button" role="menuitemradio" aria-checked=${n.id === selected ? 'true' : 'false'}
           class=${`usage-node-item${n.id === selected ? ' on' : ''}${peak.why && !peak.pending ? ' locked' : ''}`} style=${`--nc:${n.color}`}
           disabled=${!!peak.why && !peak.pending} onClick=${() => { onSelect(n.id); setOpen(false); }}>
           <span class="usage-node-dot" aria-hidden="true"></span>${label(n)}
@@ -175,8 +166,8 @@ export function fusedUsageRows(nodes, selfUsage, entries) {
 export function FusedUsageSummary({ nodes, selfUsage, entries, fmt }) {
   const { rows, total } = fusedUsageRows(nodes, selfUsage, entries);
   const label = (n) => `${n.local ? '⌂ ' : ''}${n.name}`;
-  return html`<section class="fused-usage" aria-label="Usage on the fused nodes">
-    <table class="fused-usage-table">
+  return html`<section class="fused-usage ui-card" aria-label="Usage on the fused nodes">
+    <table class="fused-usage-table ui-compact">
       <thead><tr><th>Node</th><th class="n">Today</th><th class="n">Month to date</th><th class="n">Peak quota</th></tr></thead>
       <tbody>
         ${rows.map((r) => html`<tr key=${r.node.id} style=${`--nc:${r.node.color}`}>

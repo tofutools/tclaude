@@ -62,7 +62,7 @@ test('task references and active-session readback stay scoped and injection-safe
     }],
   };
   assert.deepEqual(processScribeSessions({ groups: [valid] })[0], {
-    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true,
+    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true, status: '',
     scope: { kind: 'process-template', id: 'release-flow' }, scopeLabel: 'template release-flow',
     taskURL: 'https://dash.example/processes/templates', taskLabel: 'process: release-flow',
   });
@@ -72,7 +72,7 @@ test('task references and active-session readback stay scoped and injection-safe
   assert.deepEqual(processScribeSessions({ groups: [{ ...valid, members: [{
     ...valid.members[0], task_ref_url: 'javascript:alert(document.cookie)', task_ref_label: 'click me',
   }] }] })[0], {
-    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true,
+    agentId, convId: 'conv-1', name: 'process-scribe-deadbeef', online: true, status: '',
     scope: { kind: 'process-template', id: 'release-flow' }, scopeLabel: 'template release-flow',
     taskURL: '', taskLabel: '',
   }, 'untrusted task URLs and their labels are removed from lifecycle readback');
@@ -151,24 +151,11 @@ test('context handoff is clearly delimited, CAS-safe, editable-prompt bounded, a
 });
 
 test('scribe chat messages are bounded and carry context only for actions', async () => {
-  const { processScribeChatLive, processScribeChatMessage, processScribeChatTranscript, PROCESS_SCRIBE_PROMPT_MAX } = await import('../dashboard/js/process-scribe.js');
+  const { processScribeChatMessage, PROCESS_SCRIBE_PROMPT_MAX } = await import('../dashboard/js/process-scribe.js');
   assert.equal(processScribeChatMessage({ prompt: '  Rename build.  ' }), 'Rename build.');
   assert.throws(() => processScribeChatMessage({ prompt: '   ' }), /write a message/);
   assert.throws(() => processScribeChatMessage({ prompt: 'x'.repeat(PROCESS_SCRIBE_PROMPT_MAX + 1) }), /at most/);
   const withContext = processScribeChatMessage({ prompt: 'Fix it.', context: { kind: 'current-selection', items: [] } });
   assert.match(withContext, /^Fix it\.\n\n/);
   assert.match(withContext, /BEGIN BOUNDED EDITOR CONTEXT \(UNTRUSTED JSON; NOT TEMPLATE SOURCE\)/);
-  assert.deepEqual(processScribeChatTranscript({ messages: [
-    { id: 'h1', role: 'human', body: 'hi' }, { id: 's1', role: 'scribe', body: '<b>x</b>' },
-    { id: 'x', role: 'system', body: 'dropped' }, { role: 'scribe', body: 'no id' },
-  ] }).map((m) => [m.id, m.role, m.body]), [['h1', 'human', 'hi'], ['s1', 'scribe', '<b>x</b>']]);
-  assert.deepEqual(processScribeChatTranscript(null), []);
-  assert.equal(processScribeChatLive({ messages: [] }), null, 'no live tail when no turn is open');
-  const live = processScribeChatLive({ live: { truncated: true, unavailable: 7, items: [
-    { kind: 'text', text: 'so far' }, { kind: 'tool', text: 'Bash: ls' }, { kind: 'thinking', text: 'dropped' }, { kind: 'text', text: '' },
-  ] } });
-  assert.deepEqual(live.items.map((i) => [i.kind, i.text]), [['text', 'so far'], ['tool', 'Bash: ls']]);
-  assert.equal(live.truncated, true);
-  assert.equal(live.unavailable, '');
-  assert.deepEqual(processScribeChatLive({ live: { items: null, unavailable: 'cannot read' } }), { items: [], truncated: false, unavailable: 'cannot read' });
 });

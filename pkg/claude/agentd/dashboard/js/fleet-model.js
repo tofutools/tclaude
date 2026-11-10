@@ -9,6 +9,17 @@
 // Everything here is pure so the polling contract and card wording can be
 // unit-tested without a browser.
 
+// seenAt is a peer's last-seen time, or null when it was never seen. The daemon
+// sends Go's zero time (0001-01-01T00:00:00Z) for a peer it has never seen,
+// which would otherwise read as "Last seen 1/1/1"; an unparseable value is
+// unknown too.
+export function seenAt(value) {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms) || new Date(ms).getUTCFullYear() <= 1) return null;
+  return value;
+}
+
 // LOCAL_COLOR marks this node. Peer colours are a fixed palette chosen by a
 // stable hash of the instance ID, so a node keeps its colour across reloads and
 // on every operator's dashboard. Purple is deliberately absent: it must not read
@@ -97,7 +108,7 @@ export function normalizeFleet(status) {
       name: peerName(p),
       level: p.level === 'unrestricted' ? 'unrestricted' : 'restricted',
       online: !!p.online,
-      lastSeen: p.last_seen || null,
+      lastSeen: seenAt(p.last_seen),
       keyTransition: keyTransition(p),
       offlineNotice: offlineNotice(p),
       // partTime: its offline/back notices are off, as it is often off on purpose.
@@ -129,7 +140,7 @@ export function normalizeStrangers(status) {
       label: p.name || String(p.instance_id).slice(0, 13),
       fingerprint: p.fingerprint || '',
       online: !!p.online,
-      lastSeen: p.last_seen && !String(p.last_seen).startsWith('0001-') ? p.last_seen : null,
+      lastSeen: seenAt(p.last_seen),
       // request: this instance asked to be trusted (its note is its own words);
       // requestedAt: when this node last asked it.
       request: p.trust_request ? { note: String(p.trust_request.note || ''), trustsYou: !!p.trust_request.trusts_you, receivedAt: Date.parse(p.trust_request.received_at || '') || null } : null,
@@ -183,7 +194,7 @@ export function mapFleet(fleet, node) {
 export function hubOffReason(node) {
   if (!node) return 'Not connected to a federation hub';
   if (node.hub === 'connected') return '';
-  if (node.hub === 'off') return 'Not connected to a federation hub: federation is off (set it up in ⚙ Fleet)';
+  if (node.hub === 'off') return 'Not connected to a federation hub: federation is off (set it up in ⚙ Fleet config)';
   // A hub also says "refused" as it shuts down, so show its own words.
   if (node.hub === 'refused') return `Not connected to a federation hub: ${node.error || 'the hub refused the connection'}`;
   if (node.hub === 'disconnected') return 'Not connected to a federation hub: hub unreachable, retrying';
@@ -217,7 +228,7 @@ export function staggerOffset(index, count, base = MAP_POLL_MS) {
 // code=not_trusted; anything else is an ordinary error.
 export function classifyFailure(status, body) {
   const code = body?.code || '';
-  if (code === 'peer_unreachable') return { kind: body.reason === 'peer_timeout' ? 'timeout' : 'offline', lastSeen: body.last_seen || null };
+  if (code === 'peer_unreachable') return { kind: body.reason === 'peer_timeout' ? 'timeout' : 'offline', lastSeen: seenAt(body.last_seen) };
   if (code === 'not_trusted') return { kind: 'not_trusted' };
   if (status === 404) return { kind: 'unavailable' };
   return { kind: 'error', message: body?.error || (status ? `HTTP ${status}` : 'network error') };
@@ -260,7 +271,7 @@ export function cardView(node, entry, now = Date.now()) {
   else if (failure) presence = failure.kind === 'unavailable' ? 'online' : 'error';
   else presence = 'loading';
   const stale = !!summary && (presence === 'offline' || presence === 'error');
-  const lastSeen = failure?.lastSeen || node.lastSeen || null;
+  const lastSeen = seenAt(failure?.lastSeen) || seenAt(node.lastSeen);
   const omitted = (summary?.peer_view?.omitted || []).filter(shownOmission).map((o) => (typeof o === 'string' ? o : o?.feature)).filter(Boolean);
   return {
     presence,

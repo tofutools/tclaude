@@ -35,6 +35,16 @@ test("a fused view is always this node's page: a peer's page with ?nodes= loads 
   assert.equal(classes.size, 0);
 });
 
+test("the operator's tab stays this node's for capture and marks on a peer's page", async () => {
+  const { window, calls } = boot('?node=inst_forge7');
+  for (const path of ['/api/companion/view', '/api/companion/presence', '/api/companion/capture/c1', '/api/companion/marks/7/dismiss']) {
+    await window.fetch(path, { method: 'POST' });
+    assert.equal(calls.at(-1).url, path);
+  }
+  await window.fetch('/api/companion/a1/peek');
+  assert.equal(calls.at(-1).url, '/api/peer/inst_forge7/companion/a1/peek', 'only those routes are kept back');
+});
+
 test('a malformed node id is ignored rather than proxied', () => {
   assert.equal(boot('?node=../../api').window.__tclaudeRemoteNode, undefined);
 });

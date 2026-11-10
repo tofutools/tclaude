@@ -46,11 +46,17 @@ Back in **Groups**, `bob` and `carol` appear in `hello` as `alice` starts
 them. Each works in its own worktree and branch, so they do not get in each
 other's way:
 
-<!-- The images on this page are maintained by hand; the generator was removed (see "Visual smoke testing" in docs/dashboard.md). -->
+<!-- The images on this page are maintained by hand. -->
 ![The Groups view. The hello group lists carol, working, and bob, idle, each in its own worktree on a branch with a pull request, and alice, the owner, on main.](../assets/learn-dashboard-lead-team.png)
 
 The workers got the group's startup context and `alice`'s task when they
 started. You can focus or message any of them, as with `alice`.
+
+The group's **Task board** section, under its agents, is a short list of
+what the team is on now and next. Add a line there, or ask `alice` to put
+the work on the board and assign each piece. A worker that reports done or
+failed tells her, and a task whose worker went idle without reporting shows
+as *stalled*. See [Task boards](../taskboard.md).
 
 ## 4. Read their mail
 
@@ -117,21 +123,21 @@ shows how to bring a retired agent back.
 !!! info "Go deeper"
     [Agents and groups → Ownership](../agents-and-groups.md#ownership),
     [Spawning and lifecycle → The manager pattern](../spawning-and-lifecycle.md#the-manager-pattern),
-    [Dashboard → PR, CI and review pills](../dashboard.md#pr-ci-and-review-pills) and
-    [Dashboard → Messages](../dashboard.md#messages).
+    [Dashboard → PR, CI and review pills](../dashboard-groups.md#pr-ci-and-review-pills) and
+    [Dashboard → Messages](../dashboard-messages.md).
 
 ## From the terminal
 
 ```bash
 tclaude agent groups grant-owner hello alice
 tclaude agent groups members hello
+tclaude agent taskboard ls hello
 tclaude agent inbox ls --target bob
 tclaude agent retire bob
 ```
 
-`tclaude agent message` and `tclaude agent notify-human` are the agents'
-own commands. They do not work from your shell: use the dashboard to write
-to agents.
+`tclaude agent message` is the agents' own command, and doesn't work from your
+shell. Use the dashboard to write to agents.
 
 ## What you learned
 
@@ -139,7 +145,8 @@ to agents.
   them, so you talk to one agent.
 - Group **ownership** lets an agent manage its group's members and notify
   you.
-- **Groups** shows each worker's branch, pull request and CI.
+- **Groups** shows each worker's branch, pull request and CI, and the
+  group's task board.
 - **Messages** holds the team's mail, your notifications with their
   attachments, and access requests.
 

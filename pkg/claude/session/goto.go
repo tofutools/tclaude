@@ -18,7 +18,7 @@ type GotoParams struct {
 
 func GotoCmd() *cobra.Command {
 	return boa.CmdT[GotoParams]{
-		Use:         "goto <next|prev>",
+		Use:         "goto",
 		Short:       "Focus the next or previous session's terminal window",
 		Long:        "Cycles through alive, attached sessions and focuses the terminal window of the next or previous one relative to the current session (identified by $TCLAUDE_SESSION_ID).",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -30,7 +30,7 @@ func GotoCmd() *cobra.Command {
 		},
 		RunFunc: func(params *GotoParams, cmd *cobra.Command, args []string) {
 			if err := runGoto(params); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(cliStderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 		},

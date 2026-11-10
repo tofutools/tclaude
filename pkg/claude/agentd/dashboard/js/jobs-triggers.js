@@ -1,9 +1,13 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button, Input, Select } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { SpawnActionFields, TemplatePlaceholderChips } from './spawn-action-fields.js';
+import { groupScopeLabel, localStamp } from './cell-format.js';
+import { tableState } from './table-kit.js';
 
 const html = htm.bind(h);
 const TRIGGER_SOURCES = Object.freeze([
@@ -84,7 +88,7 @@ function actionSummary(action) {
 }
 
 function scopeSummary(rule) {
-  return rule.scope === 'group' ? `group:${rule.group || ('#' + rule.group_id)}` : 'global';
+  return rule.scope === 'group' ? groupScopeLabel(rule.group, rule.group_id) : 'global';
 }
 
 function ownerSummary(rule) {
@@ -135,18 +139,18 @@ function TriggerInspector({ rule, actions, onEdit }) {
   return html`<div class="trigger-inspector" onClick=${(event) => event.stopPropagation()}>
     <div class="trigger-inspector-head">
       <div><strong>Why this rule matches</strong><span class="muted">Configured conditions; fire-time permission checks are recorded below.</span></div>
-      <button type="button" onClick=${onEdit}>edit rule</button>
+      <${Button} size="sm" onClick=${onEdit}>edit rule<//>
     </div>
     <div class="trigger-inspector-grid">
       <section>
-        <h4>Configured match</h4>
+        <h4 class="ui-eyebrow">Configured match</h4>
         <div class="trigger-verdicts">${configured.map(([label, detail]) => html`
           <div key=${label}><span class="muted">•</span>
             <strong>${label}</strong><span class="muted">— ${detail}</span></div>`)}</div>
         <div class="trigger-fact-note">${stateSource
           ? 'Live observations are persisted below. Unknown means the fact could not be observed; it is never treated as false and resets the sustained timer.'
           : 'The current API does not expose a live PR fact snapshot. Unknown event facts are evaluated at firing time, never displayed as false.'}</div>
-        ${stateSource && html`<div class="trigger-dwell-section"><h4>Current agent observations</h4>
+        ${stateSource && html`<div class="trigger-dwell-section"><h4 class="ui-eyebrow">Current agent observations</h4>
           ${dwellStates.length === 0 ? html`<div class="muted">No agent observations recorded yet.</div>`
             : html`<div class="trigger-dwell-states">${dwellStates.map((dwell) => {
                 const result = firingField(dwell, 'result', 'Result') || 'unknown';
@@ -165,8 +169,8 @@ function TriggerInspector({ rule, actions, onEdit }) {
         </div>`}
       </section>
       <section>
-        <h4>Recent firings</h4>
-        ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
+        <h4 class="ui-eyebrow">Recent firings</h4>
+        ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}</div>`}
         ${loading ? html`<div class="muted">Loading firing history…</div>` : firings.length === 0
           ? html`<div class="muted">No firings recorded.</div>`
           : html`<div class="trigger-firings">${firings.map((firing) => {
@@ -186,22 +190,22 @@ function TriggerInspector({ rule, actions, onEdit }) {
               const outcomes = firingField(firing, 'actions', 'Actions') || [];
               return html`<div class="trigger-firing" key=${id}>
                 <div><strong class=${outcome === 'ok' ? 'trigger-ok' : 'trigger-warn'}>${outcome}</strong>
-                  <span>${started ? new Date(started).toLocaleString() : ''}</span>
+                  <span>${localStamp(started, { empty: '' })}</span>
                   <span class="muted">${eventRef || ''}</span></div>
                 ${(source || previousState || currentState || agentID || factResult || factObservedAt || dwellStartedAt) && html`<div class="trigger-firing-context">
                   ${source && html`<span><span class="muted">source</span> <code>${source}</code></span>`}
                   ${(previousState || currentState) && html`<span><span class="muted">transition</span> ${previousState || 'unknown'} → ${currentState || 'unknown'}</span>`}
                   ${agentID && html`<span><span class="muted">agent</span> <code title=${agentID}>${shortAgentId(agentID, '')}</code>${agentHarness ? ` · ${agentHarness}` : ''}</span>`}
                   ${factResult && html`<span><span class="muted">fact</span> <strong class=${`trigger-fact-result ${factResult}`}>${factResult}</strong></span>`}
-                  ${factObservedAt && html`<span><span class="muted">observed</span> ${new Date(factObservedAt).toLocaleString()}</span>`}
-                  ${dwellStartedAt && html`<span><span class="muted">dwell began</span> ${new Date(dwellStartedAt).toLocaleString()}</span>`}
+                  ${factObservedAt && html`<span><span class="muted">observed</span> ${localStamp(factObservedAt, { empty: '' })}</span>`}
+                  ${dwellStartedAt && html`<span><span class="muted">dwell began</span> ${localStamp(dwellStartedAt, { empty: '' })}</span>`}
                 </div>`}
                 ${detail && html`<div class="muted">${detail}</div>`}
                 ${outcomes.map((action) => {
                   const actionOutcome = firingField(action, 'outcome', 'Outcome');
                   const success = ['spawned', 'queued', 'ok'].includes(actionOutcome);
                   const failure = !success && (/denied|invalid|not_found|\bio\b|fail|error/.test(actionOutcome) ||
-                    ['max_live_workers', 'rate_limited'].includes(actionOutcome));
+                    ['max_live_workers', 'rate_limited', 'profile_disabled', 'profile_operator_only'].includes(actionOutcome));
                   return html`<div class="trigger-action-outcome" key=${firingField(action, 'id', 'ID')}>
                     <span class=${success ? 'trigger-pass' : failure ? 'trigger-fail' : 'trigger-warn'}>${success ? '✓' : failure ? '×' : '!'}</span>
                     <code>${firingField(action, 'action_type', 'ActionType')}</code>
@@ -229,10 +233,10 @@ function TriggerRow({ rule, selected, actions, onSelect, onEdit, onChanged }) {
       <td class="trigger-disclosure">${selected ? '▾' : '▸'}</td>
       <td><div class="rowname">${rule.name}</div><div class="muted">${ownerSummary(rule)}</div></td>
       <td><strong class="trigger-source">${rule.source}</strong><div class="muted">${whenSummary(rule).replace(`${rule.source} · `, '')}</div></td>
-      <td><span class=${`trigger-scope ${rule.scope}`}>${scopeSummary(rule)}</span></td>
+      <td><span class=${`ui-tag trigger-scope ${rule.scope}`}>${scopeSummary(rule)}</span></td>
       <td>${(rule.actions || []).map((action, index) => html`<div key=${index} class="trigger-action-chip">${actionSummary(action)}</div>`)}</td>
       <td><${Fragment}>${lastFiring(rule)}</${Fragment}></td>
-      <td><span class=${`trigger-state ${state.key}`}>${state.label}</span></td>
+      <td><span class=${`ui-tag trigger-state ${state.key}`}>${state.label}</span></td>
       <td><label class="trigger-switch" onClick=${(event) => event.stopPropagation()}>
         <input type="checkbox" checked=${!!rule.enabled} aria-label=${`${rule.enabled ? 'Disable' : 'Enable'} ${rule.name}`}
           onChange=${async (event) => {
@@ -241,8 +245,8 @@ function TriggerRow({ rule, selected, actions, onSelect, onEdit, onChanged }) {
             else input.checked = !!rule.enabled;
           }} /><span></span></label></td>
       <td><div class="row-actions" onClick=${(event) => event.stopPropagation()}>
-        <button type="button" onClick=${onEdit}>edit</button>
-        <button type="button" class="danger" onClick=${async () => { if (await actions.deleteTrigger(rule)) onChanged(); }}>delete</button>
+        <${Button} size="sm" type="button" onClick=${onEdit}>edit<//>
+        <${Button} size="sm" type="button" variant="ghost danger" onClick=${async () => { if (await actions.deleteTrigger(rule)) onChanged(); }}>delete<//>
       </div></td>
     </tr>
     ${selected && html`<tr class="trigger-inspector-row"><td colspan="9">
@@ -276,17 +280,18 @@ export function TriggerWorkspace({ state, actions }) {
   }, [rules, query]);
   return html`<div class="triggers-workspace">
     <div class="filter-bar trigger-filter-bar">
-      <input type="search" aria-label="Filter triggers" placeholder="Filter triggers (name + source + scope + action)"
+      <${Input} type="search" aria-label="Filter triggers" placeholder="Filter triggers (name + source + scope + action)"
         value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
       <span class="filter-count">${shown.length}${query ? ` / ${rules.length}` : ` trigger${rules.length === 1 ? '' : 's'}`}</span>
-      <button class="clear-filter" title="Clear trigger filter" onClick=${() => setQuery('')}>×</button>
+      <button data-ui-exempt class="clear-filter" title="Clear trigger filter" onClick=${() => setQuery('')}>×</button>
       <span class="spacer"></span>
-      <button id="trigger-create-open" class="primary" onClick=${() => state.openTriggerCreate()}>+ new trigger</button>
+      <${Button} id="trigger-create-open" variant="primary" onClick=${() => state.openTriggerCreate()}>+ new trigger<//>
     </div>
-    ${error && html`<div class="jobs-error" role="alert">${error}<button onClick=${() => void load()}>retry</button></div>`}
-    ${loading ? html`<div class="empty">Loading triggers…</div>` : shown.length === 0
-      ? html`<div class="empty">${rules.length ? 'No triggers match this filter.' : 'No triggers yet. Create an event rule to automate a bounded response.'}</div>`
-      : html`<table class="triggers-table"><thead><tr><th></th><th>Trigger</th><th>When</th><th>Where</th><th>Then</th><th>Last fired</th><th>State</th><th>Enabled</th><th></th></tr></thead>
+    ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}<${Button} size="sm" onClick=${() => void load()}>retry<//></div>`}
+    ${tableState({
+      loading: loading && 'Loading triggers…',
+      empty: shown.length === 0 && (rules.length ? 'No triggers match this filter.' : 'No triggers yet. Create an event rule to automate a bounded response.'),
+    }) || html`<table class="triggers-table"><thead><tr><th></th><th>Trigger</th><th>When</th><th>Where</th><th>Then</th><th>Last fired</th><th>State</th><th>Enabled</th><th></th></tr></thead>
           <tbody>${shown.map((rule) => html`<${TriggerRow} key=${rule.id} rule=${rule} selected=${selected === rule.id}
             actions=${actions} onSelect=${(id) => setSelected(selected === id ? null : id)}
             onEdit=${() => state.openTriggerEdit(rule)} onChanged=${() => void load()} />`)}</tbody></table>`}
@@ -321,7 +326,7 @@ function draftValid(draft) {
 
 function Step({ name, summary, expanded, onToggle, valid, children }) {
   return html`<section class=${`trigger-editor-step${expanded ? ' expanded' : ''}`}>
-    <button type="button" class="trigger-step-head" onClick=${onToggle} aria-expanded=${expanded ? 'true' : 'false'}>
+    <button data-ui-exempt type="button" class="trigger-step-head" onClick=${onToggle} aria-expanded=${expanded ? 'true' : 'false'}>
       <span class=${`trigger-step-label ${name.toLowerCase()}`}>${name}</span>
       <span class="trigger-step-summary">${summary}</span>
       <span class=${valid ? 'trigger-step-valid' : 'trigger-step-required'}>${valid ? '✓' : 'required'}</span>
@@ -356,9 +361,9 @@ function ActionEditor({ action, index, update, remove, profileOptions, stateSour
   };
   return html`<div class="trigger-action-editor">
     <div class="trigger-action-editor-head"><strong>${index + 1} · ${action.type === 'spawn' ? '⚡ Spawn agent' : '✉ Message'}</strong>
-      <select value=${action.type} onChange=${(event) => update(emptyAction(event.currentTarget.value, stateSource))}>
+      <${Select} size="sm" value=${action.type} onChange=${(event) => update(emptyAction(event.currentTarget.value, stateSource))}>
         <option value="spawn">spawn agent</option><option value="message">message</option>
-      </select><button type="button" class="danger" onClick=${remove} disabled=${false}>×</button></div>
+      <//><${Button} size="sm" variant="ghost danger" onClick=${remove}>×<//></div>
     ${action.type === 'spawn' ? html`<${Fragment}>
       <${SpawnActionFields} fieldPrefix=${`trigger-action-${index}`} placeholderTokens=${placeholders}
         profileOptions=${profileOptions}
@@ -378,12 +383,12 @@ function ActionEditor({ action, index, update, remove, profileOptions, stateSour
         onInput=${(event) => update({ ...action, spawn: { ...action.spawn, max_live_workers: Number(event.currentTarget.value) } })} /></label>
       </div>
     </${Fragment}>` : html`<div class="trigger-action-fields">
-      <label>Target<select value=${action.message?.target || (stateSource ? 'agent' : 'pr.author_agent')}
+      <label>Target<${Select} size="sm" value=${action.message?.target || (stateSource ? 'agent' : 'pr.author_agent')}
         onChange=${(event) => update({ ...action, message: { ...action.message, target: event.currentTarget.value } })}>
         ${stateSource
           ? html`<option value="agent">selected fact agent</option>`
           : html`<option value="pr.author_agent">PR author agent</option>`}
-        <option value="group">event group</option></select></label>
+        <option value="group">event group</option><//></label>
       <label>Subject template<input value=${action.message?.subject_template || ''}
         onInput=${(event) => update({ ...action, message: { ...action.message, subject_template: event.currentTarget.value } })} /></label>
       <label class="trigger-template-field">Body template<textarea rows="4" required value=${action.message?.body_template || ''}
@@ -447,7 +452,7 @@ function TriggerDialog({ descriptor, state, actions }) {
       for_seconds: nextIsState ? (wasState ? value.for_seconds : (Number(value.for_seconds) || 300)) : 0,
     };
   });
-  return html`<${Overlay} id="trigger-modal" dialogClass="cron-create-modal trigger-modal" labelledby="trigger-modal-title"
+  return html`<${Dialog} id="trigger-modal" dialogClass="cron-create-modal trigger-modal" labelledby="trigger-modal-title"
     onClose=${state.closeTriggerDialog} blocked=${busy} resizeKey="tclaude.dash.modalSize.trigger">
     <form onSubmit=${save}>
       <div class="trigger-modal-heading"><div><h3 id="trigger-modal-title">${editing ? `Edit trigger — ${descriptor.rule.name}` : 'New trigger'}</h3>
@@ -461,15 +466,15 @@ function TriggerDialog({ descriptor, state, actions }) {
           ? `${source.summary} for ${secondsLabel(draft.for_seconds)} · then debounce ${secondsLabel(draft.debounce_seconds)} · cooldown ${secondsLabel(draft.cooldown_seconds)}`
           : `${source.summary} · ${draft.author_is_agent === true ? 'by an agent' : draft.author_is_agent === false ? 'by a human' : 'any author'} · ${draft.draft_filter === 'exclude' ? 'not a draft' : draft.draft_filter === 'only' ? 'draft only' : 'drafts included'} · debounce ${secondsLabel(draft.debounce_seconds)}`}>
         <div class="trigger-fields">
-          <label>Source<select value=${draft.source} onChange=${(event) => changeSource(event.currentTarget.value)}>
+          <label>Source<${Select} size="sm" value=${draft.source} onChange=${(event) => changeSource(event.currentTarget.value)}>
             ${TRIGGER_SOURCES.map((entry) => html`<option key=${entry.value} value=${entry.value}>${entry.label} · ${entry.value}</option>`)}
-          </select></label>
+          <//></label>
           ${stateSource ? html`<label>Sustained for (seconds)<input type="number" min="1" required value=${draft.for_seconds}
             onInput=${(event) => setDraft({ ...draft, for_seconds: Number(event.currentTarget.value) })} /></label>` : html`<${Fragment}>
-            <label>Author<select value=${String(draft.author_is_agent)} onChange=${(event) => setDraft({ ...draft, author_is_agent: event.currentTarget.value === 'null' ? null : event.currentTarget.value === 'true' })}>
-              <option value="true">agent only</option><option value="false">human only</option><option value="null">any author</option></select></label>
-            <label>Draft PRs<select value=${draft.draft_filter} onChange=${(event) => setDraft({ ...draft, draft_filter: event.currentTarget.value })}>
-              <option value="exclude">exclude</option><option value="include">include</option><option value="only">only drafts</option></select></label>
+            <label>Author<${Select} size="sm" value=${String(draft.author_is_agent)} onChange=${(event) => setDraft({ ...draft, author_is_agent: event.currentTarget.value === 'null' ? null : event.currentTarget.value === 'true' })}>
+              <option value="true">agent only</option><option value="false">human only</option><option value="null">any author</option><//></label>
+            <label>Draft PRs<${Select} size="sm" value=${draft.draft_filter} onChange=${(event) => setDraft({ ...draft, draft_filter: event.currentTarget.value })}>
+              <option value="exclude">exclude</option><option value="include">include</option><option value="only">only drafts</option><//></label>
             <label>Debounce (seconds)<input type="number" min="0" value=${draft.debounce_seconds} onInput=${(event) => setDraft({ ...draft, debounce_seconds: Number(event.currentTarget.value) })} /></label>
           </${Fragment}>`}
           ${stateSource && html`<label>Debounce after dwell (seconds)<input type="number" min="0" value=${draft.debounce_seconds}
@@ -484,26 +489,26 @@ function TriggerDialog({ descriptor, state, actions }) {
         <div class="trigger-fields trigger-scope-fields">
           <label class="trigger-scope-option"><input type="radio" name="trigger-scope" checked=${draft.scope === 'global'} onChange=${() => setDraft({ ...draft, scope: 'global', group: '' })} /> global</label>
           <label class="trigger-scope-option"><input type="radio" name="trigger-scope" checked=${draft.scope === 'group'} onChange=${() => setDraft({ ...draft, scope: 'group' })} /> group</label>
-          ${draft.scope === 'group' && html`<label class="trigger-scope-group">Group<select required value=${draft.group} onChange=${(event) => setDraft({ ...draft, group: event.currentTarget.value })}>
-            <option value="">pick a group…</option>${groups.map((group) => html`<option key=${group} value=${group}>${group}</option>`)}</select></label>`}
+          ${draft.scope === 'group' && html`<label class="trigger-scope-group">Group<${GroupCombobox} id="trigger-scope-group" groups=${groups}
+            value=${draft.group} noneLabel="pick a group…" onChange=${(key) => setDraft({ ...draft, group: key })} /></label>`}
         </div>
       </${Step}>
       <${Step} name="THEN" expanded=${step === 'then'} onToggle=${() => setStep(step === 'then' ? '' : 'then')}
         valid=${thenValid} summary=${draft.actions.length ? draft.actions.map(actionSummary).join(' → ') : 'action required'}>
         <div class="trigger-actions-editor">${draft.actions.map((action, index) => html`<${ActionEditor} key=${index} action=${action} index=${index}
           update=${(next) => updateAction(index, next)} remove=${() => removeAction(index)} profileOptions=${profileOptions} stateSource=${stateSource} />`)}
-          <div class="trigger-add-actions"><button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('spawn', stateSource)] })}>+ spawn action</button>
-            <button type="button" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('message', stateSource)] })}>+ message action</button></div>
+          <div class="trigger-add-actions"><${Button} size="sm" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('spawn', stateSource)] })}>+ spawn action<//>
+            <${Button} size="sm" onClick=${() => setDraft({ ...draft, actions: [...draft.actions, emptyAction('message', stateSource)] })}>+ message action<//></div>
           ${draft.actions.some((action) => action.type === 'spawn') && html`<div class="trigger-permission-warning" role="note">
             ⚠ This rule spawns agents. Firings are re-authorized as the owning principal; revoked or missing permissions are recorded as denied, not silently dropped.
           </div>`}
         </div>
       </${Step}>
-      ${error && html`<div class="jobs-error" role="alert">${error}</div>`}
-      <div class="modal-buttons"><button type="button" onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</button>
-        <button type="submit" class="primary" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</button></div>
+      ${error && html`<div class="jobs-error ui-error-box" role="alert">${error}</div>`}
+      <div class="modal-buttons"><${Button} onClick=${state.closeTriggerDialog} disabled=${busy}>Cancel</${Button}>
+        <${Button} variant="primary" type="submit" disabled=${busy || !draftValid(draft)}>${busy ? 'Saving…' : editing ? 'Save trigger' : 'Create trigger'}</${Button}></div>
     </form>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 export { actionSummary, scopeSummary, triggerSource, triggerState, whenSummary };

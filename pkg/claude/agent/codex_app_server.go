@@ -14,7 +14,7 @@ import (
 )
 
 type codexAppServerStatusParams struct {
-	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's Codex-drive diagnostics instead of self. Requires agent.context-info, or ownership of a group containing the target."`
+	Target string `long:"target" optional:"true" help:"Show ANOTHER agent's Codex-drive diagnostics instead of self."`
 	JSON   bool   `long:"json" help:"Output JSON"`
 }
 
@@ -69,7 +69,7 @@ func codexAppServerStatusCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *codexAppServerStatusParams, _ *cobra.Command, _ []string) {
-			os.Exit(runCodexAppServerStatus(p, os.Stdout, os.Stderr))
+			os.Exit(runCodexAppServerStatus(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

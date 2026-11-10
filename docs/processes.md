@@ -2,12 +2,7 @@
 
 Processes are reusable, versioned workflow templates — task chains, decisions,
 parallel fan-out, retries, human approvals — authored once and executed as
-daemon-owned runs with durable state and an auditable evidence trail. The
-feature is experimental and off by default: enable it with the
-`features.processes` config flag (in the [dashboard's](dashboard.md) Config tab
-or in config.json). While the flag is off, every process route in the daemon
-returns 404 with the code `processes_disabled` and a message pointing at the
-flag.
+daemon-owned runs with durable state and an auditable evidence trail.
 
 The runtime is partially implemented: a substantial subset of the engine is
 live, and the rest of the CLI surface is stubbed. This page states exactly
@@ -18,6 +13,15 @@ which half is which.
     from a task-force template — a checklist for coordination, never enforced.
     That is a different feature; see [Teams at scale](teams-at-scale.md). This
     page is about `tclaude process`: executable templates run by the daemon.
+
+## Start here
+
+1. Create a template under **Automations › Processes**, or let **Edit with agent** draft it.
+2. Start a run from a group's Resources section: the **＋** menu › **Process for the group**.
+3. Follow it in [Groups](dashboard-groups.md#agents-and-processes).
+
+[In the dashboard](#in-the-dashboard) covers all of this. The next sections are
+reference for the format, the engine and the CLI.
 
 ## Authoring templates
 
@@ -40,13 +44,30 @@ stored version, so two writers cannot silently clobber each other — a stale
 hash is a refused save, and the caller re-reads with `show` and merges. The
 bundled `process-templates` agent skill and the CLI's `--help` are the deep
 reference for the authoring shape and the safe show-edit-validate-save loop;
-this page does not repeat them.
+this page does not repeat them. The bundled `process-runs` skill is the agent
+reference for starting, watching and steering runs (see [Running](#running)).
 
 Two permissions govern authoring, and neither executes anything:
 
 - `process.templates.read` — list, show, validate, export. Installed as an ordinary
   agent default by `tclaude setup --install-default-agent-permissions`.
 - `process.templates.manage` — save, import. Never a default.
+
+A template pinned to a group is also one of that group's resources. Its
+members, with neither slug, list and show it (`groups.resources.read`, which
+membership confers), and save a new version of it (`groups.resources.write`)
+when they are members of every group it is pinned to: a save changes it for
+all of them. Creating a template, deleting one, its library listing and its
+pins stay `process.templates.manage`'s, and a lock on the template refuses a
+member's save as it does any agent's. See
+[Drawing boards › Group drawing boards are their members'](drawing-boards.md#group-drawing-boards-are-their-members)
+for how the membership source works.
+
+Pins say who edits a template, not who runs it: a run in any group may start
+any template, and a subprocess without a pinned version follows its head. So
+a member's save also changes what later runs of that template, elsewhere,
+execute. Program steps still need `--authorize-program-profile` when a run
+starts, so a save alone runs nothing on the host.
 
 ### Sharing workflows
 
@@ -60,8 +81,15 @@ tclaude agent process-templates import <file.pwf> --yes  # review, then import
 ```
 
 Importing stores templates and never starts a run. The review lists every
-command the workflow would run, the roles it asks for and the signer. See
+command the workflow would run, the roles it asks for and the signer, and an
+`--ask-human` popup shows the human the same review. See
 [Portable Workflow Format](pwf.md).
+
+In the dashboard, **share** downloads a `.pwf` from a template's row, the full
+editor (saved versions only) or a group's process strip. Import one from the
+Processes toolbar, the dock, or a group: use *Import a .pwf* in *Get started*,
+or drop the file on the group in Groups › Processes. A group's import offers to
+pin the process to that group.
 
 ### Saved to a group, or to the library
 
@@ -138,20 +166,21 @@ entered only at its target, left only through decisions, holds no
 its count over with each round of the loop around it.
 
 Two worked examples live in the repo under `docs/examples/`
-(`code-change-with-review.yaml`, `parallel-any-review.yaml`). They are valid
-authoring-shape templates and pass template validation, but note that they use
-agent and human performers, `approvalRetry`, and same-session retry feedback —
-features the current engine does not execute yet (see below) — so run creation
-refuses them today. Read them as illustrations of the full authoring format,
-not as templates you can run unmodified.
+(`code-change-with-review.yaml`, `parallel-any-review.yaml`). Both pass template
+validation. `parallel-any-review.yaml` also passes the engine's eligibility check,
+and needs its `reviewer` and `codex-reviewer` profiles to exist. Run creation
+refuses `code-change-with-review.yaml` today, because it uses stage retries,
+`plan.approvalRetry`, a human review stage and two routes out of a task, which the
+engine does not execute yet (see below). Read that one as an illustration of the
+full authoring format.
 
 ## Running
 
 Runs are created and driven through the daemon:
 
-![A running process in the dashboard: a decision fanning out to parallel tasks that join before the outcome is recorded](assets/process-run-graph.png)
+![A process template in the dashboard editor: a decision branching to two tasks that join before the outcome is recorded](assets/process-run-graph.png)
 
-*A running process in the dashboard: a decision fanning out to parallel tasks that join before the outcome is recorded*
+*A process template in the dashboard editor: a decision branching to two tasks that join before the outcome is recorded*
 
 ```bash
 tclaude process run <template-id> --param key=value \
@@ -170,7 +199,7 @@ tclaude process resolve-blocked <run-id> --node <node> --attempt <n> \
     --action retry|skip|cancel [--note "why"]
 tclaude process report succeeded|failed [--run <run-id> --node <node> \
     --attempt <n>] [--verdict <verdict>] [--note "summary"]   # agent performers only
-tclaude process templates ls
+tclaude agent process-templates ls
 ```
 
 Creating a run pins the exact saved template head and its parameters; later
@@ -190,6 +219,15 @@ explicit per-agent deny overrides everything, the owner grant included. See
 [Permissions and audit](permissions-and-audit.md). Starting a run bound to a
 group or an agent uses the scope gates below instead.
 
+A run scoped to a group is that group's resource too: its members read it
+without `process.runs.read`. They list the group's runs with
+`runs ls --group <g>`, and `show` and `events` them (`groups.resources.read`,
+conferred by membership). The boundary is deliberate: membership confers no
+mutation. Pausing, resuming, deciding, assigning, reissuing, resolving a
+block or recording an outcome steers other agents' work, so they stay on
+`process.runs.manage`. An unfiltered `runs ls` still needs
+`process.runs.read`.
+
 ## Run scope
 
 Every run is bound to a context when it starts, and keeps that binding:
@@ -201,7 +239,9 @@ Every run is bound to a context when it starts, and keeps that binding:
 | `agent` (◉) | `... --agent <agent>` | the agent's stable `agent_id`, so the run survives reincarnate and compact; a clone does not copy it |
 
 The run's **owner** is whoever started it (`human:operator` or
-`agent:<agent_id>`). `tclaude process show` prints the scope and owner;
+`agent:<agent_id>`, or `peer:<instance>` for a linked node; see
+[federation peers](federation-peers.md)). A linked node's run tasks only the
+members in its scope, spawns no performer and runs no program. `tclaude process show` prints the scope and owner;
 `tclaude process runs ls` adds a SCOPE column and filters with `--group`,
 `--agent` and `--performer`. `--performer` matches runs bound to that agent
 and runs with a node attempt dispatched to it.
@@ -282,8 +322,9 @@ agent-scoped run, `rescope --group` **promotes** it to a group the agent
 belongs to; completed history is kept. Demoting a group-scoped run to agent
 scope is not supported.
 
-Unscoped runs need no migration and appear only in the Processes list, not
-in the Groups or Terminals overlays.
+Unscoped runs need no migration and appear only in `tclaude process runs ls`,
+not in the dashboard: Automations › Processes lists templates, and the Groups
+and Terminals overlays show scoped runs only.
 
 **Runs in context.** The dashboard overlays poll `GET /v1/process/context`
 alongside the snapshot. It returns one mini-graph projection per scoped run
@@ -301,23 +342,52 @@ itself. Visibility is unchanged:
 
 ## In the dashboard
 
-With `features.processes` on, the dashboard covers the whole loop: authoring,
+The dashboard covers the whole loop: authoring,
 starting a run in a group or for one agent, following it, and acting on it.
 All of it goes through the same daemon routes and permissions as the CLI.
 
 **Quick start** (Groups › Processes). Before your first process, a group
 with no processes shows *Get started* in its body; afterwards (or once you
-dismiss it) it folds to *No processes yet · Get started ▸*. From it, pick a starter (filled from the group's roles and
+dismiss it) it folds to *No processes yet · Get started ▸*. In the Both view,
+*Get started* opens from the start form instead: the **＋** menu › *Process for
+the group* (or *for one agent*), then *or build a new one ▸*. From it, pick a starter (filled from the group's roles and
 members), reuse a library template, or begin a blank step list. Or describe
-the flow in plain words and press *Draft steps*: the description becomes a
-draft saved to the group (pinned, not listed in the library), opened in the
-graph editor with a process scribe (see *Co-design with a scribe* below) asked to draft its steps
-for the group's members and roles. The scribe's request and permissions are
-shown for your approval first, and the draft is never started for you. The step
+the flow in plain words and press *Draft steps*: a process scribe drafts the
+steps in the background for the group's members and roles.
+This uses a model run, so it only ever starts from that click, after you
+approve the scribe's access: the same grant as any process scribe
+(`process.templates.read` and `process.templates.manage`, every other
+permission denied; see *Co-design with a scribe* below). The grant is not
+limited to this draft: the scribe is asked to work on it, and it can save any
+process template. The draft is saved to the group (pinned, not listed in the library),
+and the scribe opens in its regular overlay chat window (a terminal tab
+without the companion), with your words as the first message: answer it or
+ask for changes there. The group body says whether it is working or waiting
+for you, and *💬 chat window* brings the window back. When it has saved a
+draft and is idle, *Review steps* opens the draft in the step list. *Stop
+scribe* stops it, keeps the draft and opens what it saved so far, and *open in
+graph editor* opens the draft in the graph editor, where *Get help* reaches
+the scribe. A reload or a tab
+change brings the panel back while the scribe is running; *hide* leaves the
+scribe working, and *✎ Scribe* in the process's ▶ strip reopens the panel. The
+scribe cannot start a run, and nothing runs until you press *Start now*. *Start
+now* runs the version on screen: if a newer one was saved after you opened it,
+say by asking the scribe for more through the graph editor's *Get help*, nothing
+starts, and you choose between reviewing the newer version and starting the one
+you reviewed. *Start* in a process's ▶ strip, like the group's start form, runs the current
+version, and asks first only while a scribe is at work on it: when its scribe is mid-turn, or when
+a running scribe saved a version you have not opened from the group. Reviewing
+in the graph editor does not count, so that version can ask once. You then open
+the draft or start anyway, and if the version changes before you answer, nothing
+runs. An idle scribe with nothing new adds no step, so reruns stay one click. The
+step
 list edits a process as numbered steps, each done by a specific agent, any
 member with a role, anyone free in the group, you, or a command; one line sets
 what an agent step does when no member can take it (wait, spawn the group's
-default spawn profile, or fail: the template's `fallback`); your answers to a *you* step branch to
+default spawn profile or another profile you pick, or fail: the template's
+`fallback`), and an agent step can override that with its own choice under
+its Who picker, or follow the process; a step that does not simply wait shows
+its fallback (`↯ spawn opus-lead`, `↯ fail`) on its node; your answers to a *you* step branch to
 later steps, and `{{name}}` in a prompt becomes a start input. A preview, the
 start inputs and who each step would use now (the daemon's resolve-preview,
 a dry run of the group rules) update as you edit. A command
@@ -337,34 +407,74 @@ Graph*): hover a step for *+ after*, *⑂ branch* (a decision's new outcome) and
 compact inspector with the step list's fields, right-click it for structure
 (insert before or after, branch, run alongside, duplicate, change kind,
 delete), or drag *+* into empty space to add a step. *⤢ full editor* opens the
-same draft (saved first) in Automations › Processes, which also edits
-parallel, wait and subprocess nodes; *Save new version* writes it against the
+same draft (saved first) in the full graph editor, which also edits parallel,
+wait and subprocess nodes. It opens in an overlay window over
+Groups, so it can sit beside a *Get help* chat; its *Open in the Processes
+tab* and *Open in the Collab tab* still move it there. *Save new version* writes it against the
 version it was opened at. A process the step list cannot
 show (parallel, wait or subprocess nodes) opens in the graph editor instead.
 
 **Authoring** (Automations › Processes, then open a template). The graph
 editor has the node inspector, live validation, undo/redo, snippets and
-versioned saves; see [Dashboard › Processes](dashboard.md#processes). Three
+versioned saves; see [Dashboard › Processes](dashboard-automations.md#processes). Three
 things there are specific to processes:
 
-- **Co-design with a scribe.** *Edit with agent* docks the template's scribe
-  beside the canvas: chat with it there (while it works, what it has written
-  so far and a one-line note per tool call stream in, read from its own
-  transcript, on every harness but OpenCode; its final reply replaces them
-  when the turn ends) or switch the dock to its terminal. The dock's context
-  actions send it the selection, a node to explain, the focused validation
-  issue, or a description to draft from. When the scribe saves a version, *Review on
+- **Co-design with a scribe.** The editor header's *Get help ▾* brings an
+  agent in: *New helper* starts the template's scribe (or reopens the one
+  already scoped to it) after you confirm its grant, and *Ask an existing
+  agent…* briefs one already running, granting only the process-template
+  permissions it lacks, again after you confirm. Either opens in its regular
+  overlay chat window (a terminal tab without the companion). The menu's
+  context actions send that agent the selection, a node to explain, the
+  focused validation issue, or a description to draft from, as a message you
+  preview first; with no helper running yet, they start one with that ask. When the scribe saves a version, *Review on
   canvas* paints it over your draft (added, changed, removed) and you accept
   or reject each change; your own unsaved edits are never overwritten, and
   conflicting edits are flagged rather than merged silently. The scribe can
   save an unfinished template too: graph and semantic validation errors are
   advisory on save (the draft just cannot run yet), so each step it makes
   reaches your canvas as it goes.
+- **The editor's menus.** The header carries the drawing board's menu bar:
+  **File** has Save, *Export › Workflow file (.pwf)…*, *Template settings…*
+  and *Params…*; **Edit** has Undo, Redo and *Auto layout* (tidy the graph,
+  and the flow's direction); **View** has the node palette, *Commands…* and
+  the moves below. *Get help ▾* and Save stay beside the menus.
+- **In an overlay window or a window of its own.** **View** › *Open in
+  overlay* and *Open in separate window* move
+  the editor over the dashboard or into a browser window of its own, so you
+  can edit beside a chat or a drawing board. It moves as it is: unsaved edits, undo
+  and redo, and the version a save is checked against go with it, and
+  nothing is saved on the way. An overlay tab reorders, groups and joins
+  other windows like any overlay tab, and its title bar and right-click menu
+  have *Open in the Processes tab* and *Open in separate window*. A separate
+  window has *Open in the Processes tab* and *Open in overlay* while the
+  dashboard that opened it is still open, and asks before closing with
+  unsaved edits. If it closes before it has the draft, the editor comes back
+  to the dashboard. A template is edited in one place at a time: opening it
+  from the list while it is elsewhere brings that window forward. Ctrl S (⌘ S on a Mac)
+  saves a floating editor while its window has the keyboard, and ⌘K serves
+  the editor you last clicked in. Closing a floating editor, from the dock
+  or with its window's close button, asks first when it has unsaved edits. A reload reopens an
+  overlay tab on the last saved version.
+- **In a Collab tab.** **＋ New ▾** › **Process…** in the Collab side panel
+  lists every template, under the
+  groups it is pinned to (*Not pinned* last), with a box that searches names,
+  ids, descriptions and groups. Pick one to open its editor as a Collab tab, or
+  type a new name and *＋ New process* stores a blank template and opens it.
+  `/collab/processes/<id>` opens that template's tab, and
+  `/collab/processes` opens the list. A process tab reorders, joins tab
+  groups and drags off the strip like a drawing board tab, and its **View**
+  menu and right-click menu have *Open in overlay*, *Open in the Processes tab* and *Open in
+  separate window*; an overlay tab has *Open in the Collab tab*. The editor
+  moves as it does between the other places, draft and all, and an editor open
+  in the Processes tab moves to the strip when you pick it from **Process…**.
+  Closing a process tab asks first when it has unsaved edits. Back to the Processes tab's URL of a template in a Collab tab brings
+  the editor back there.
 - **Subprocesses.** A ▣ node runs a nested graph (see
   [Subprocess nodes](#what-executes-today)). Double-click it to edit its body
   in place: a breadcrumb and a minimap of the parent show where you are, the
   dashed port nodes are its contract (⇄ ports binds body params and maps body
-  ends onto the ▣ node's outcomes), and Esc or Alt+↑ goes back up. The
+  ends onto the ▣ node's outcomes), and Esc or Alt ↑ goes back up. The
   palette's outline lists every nested body. *⇪ extract as template* saves a
   body as its own template and turns the node into a reference to it. A
   reference is not edited in place, since other templates may share it. While
@@ -380,18 +490,20 @@ things there are specific to processes:
   node — the ports come from the connectors crossing its boundary — and
   *⇲ unwrap* inlines a body again.
 
-**Starting a run.** In Groups, in the **Both** or **Processes** focus, use
-*+ start process* on a group: pick a template, fill its params, and tick the
-program profiles you authorize it to run under (never pre-ticked). The run is
-group-scoped (⌂). Agent-scoped runs (◉) start from the CLI with `--agent`.
+**Starting a run.** In Groups, in the **Both** or **Processes** focus, open
+the **＋** menu on the group and pick **Process for the group**, or **Process for
+one agent** for a run bound to one agent: pick a template, fill its params, and tick the
+program profiles you authorize it to run under (never pre-ticked). A group process
+is group-scoped (⌂) and an agent process is agent-scoped (◉). The CLI equivalent
+for an agent is `--agent`.
 
 **Following it.**
 
-- **Groups › Agents** — each group header counts running, waiting-on-you and
-  planned runs, and each member row's Process column shows a *run › node*
-  badge for every run the agent works in (amber when parked on a human gate,
-  dashed when queued).
-- **Groups › Processes** — each group's runs as live graph cards with the
+- **Groups, a group's Agents section** — each group header counts running, waiting-on-you and
+  planned runs, and the optional Process column (turn it on under **▾ view**)
+  shows a *run › node* badge on each member row for every run the agent works
+  in (amber when parked on a human gate, dashed when queued).
+- **Groups, a group's Processes section** — each group's runs as live graph cards with the
   agents on the nodes they perform, needs-you first. *open ›* focuses one run:
   the live graph, a docked inspector (approve or request changes on a human
   gate, the node's history), the group's agents as a performer dock, and the
@@ -580,6 +692,13 @@ waits as **needs performer**, and `fail` fails the attempt, so the step's
 retry and fail routing apply. Set it on a step, or once for the whole process
 with a top-level `fallback`; the step's own wins. A step with neither uses
 the legacy `spawn: allowed` (spawn with its `profile`), and otherwise waits.
+
+A spawn fallback that a spawn profile refuses fails the attempt with the reason,
+instead of waiting for a performer that cannot come. The refusing profile can be
+the step's own, the group's default or the global default: it is disabled, or it
+is operator-only and an agent owns the run. The first such refusal for a run
+owner in a group is also sent to that owner and to the operator; a performer
+spawned there again re-arms the notice.
 
 | Scope | Resolution |
 | --- | --- |

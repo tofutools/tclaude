@@ -164,8 +164,8 @@ test('the S1 sheet mounts every section', async (t) => {
   const root = mounted.container.querySelector('[data-process-kit-sheet]');
   assert.equal(root.querySelectorAll('.pk-sheet-box').length, 6);
   assert.equal(root.querySelectorAll('.pk-mini-graph').length, 4);
-  assert.match(root.textContent, /Familiar rune/);
-  assert.match(root.textContent, /familiar-bound · search-indexer/);
+  assert.match(root.textContent, /Hero rune/);
+  assert.match(root.textContent, /hero-bound · search-indexer/);
   await mounted.unmount();
 });
 

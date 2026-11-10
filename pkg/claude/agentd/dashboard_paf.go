@@ -23,6 +23,7 @@ import (
 func registerDashboardPAFRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent-bundle/export", dashboardPAFRoute(handleAgentBundleExport))
 	mux.HandleFunc("POST /api/agent-bundle/import", dashboardPAFRoute(handleAgentBundleImport))
+	mux.HandleFunc("POST /api/import/reveal", dashboardPAFRoute(handleImportReveal))
 	mux.HandleFunc("POST /api/paf/redact", dashboardPAFRoute(handlePAFRedact))
 	mux.HandleFunc("POST /api/paf/publish", dashboardPAFRoute(handlePAFPublish))
 

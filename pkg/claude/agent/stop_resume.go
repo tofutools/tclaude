@@ -24,13 +24,13 @@ import (
 // interesting when the target is a DIFFERENT conv. So both verbs
 // require a positional selector.
 //
-// Auth: agent.stop / agent.resume slugs (default human-only) OR the
-// caller is an owner of a group containing the target. Same shape as
-// agent.compact / agent.rename / agent.reincarnate.
+// Auth: CrossAgentAuth("stop") / CrossAgentAuth("resume"); the agent.*
+// slugs are not default-granted. Same shape as agent.compact /
+// agent.rename / agent.reincarnate.
 
 type stopParams struct {
 	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
-	Force    bool   `long:"force" short:"f" help:"Use tmux kill-session instead of soft-stop /exit (drops unsubmitted input)"`
+	Force    bool   `long:"force" short:"f" help:"Skip the soft /exit and kill the pane at once (drops unsubmitted input)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
@@ -39,14 +39,15 @@ func stopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop another agent's tmux session",
 		Long: "Soft-stops the target agent's tmux pane by injecting `/exit`. " +
-			"With --force, falls back to tmux kill-session — last resort, " +
+			"A target that does not exit escalates through pane kill, SIGTERM and SIGKILL. " +
+			"--force skips the soft exit and kills the pane at once, with SIGTERM and SIGKILL following " +
+			"in the background if the pane does not go — last resort, " +
 			"drops any unsubmitted input the agent hadn't sent yet. " +
 			"\n\n" +
 			"Idempotent: agents already offline come back as " +
 			"`skipped:already_offline`. " +
 			"\n\n" +
-			"Auth: requires global agent.stop, or groups.members.stop covering " +
-			"every current active group containing the target. Ownership automatically contributes the latter for owned groups. The single-conv variant of " +
+			"Auth: " + CrossAgentAuth("stop") + " The single-conv variant of " +
 			"`tclaude agent groups stop`.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *stopParams, _ *cobra.Command) error {
@@ -55,7 +56,7 @@ func stopCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *stopParams, _ *cobra.Command, _ []string) {
-			os.Exit(runStop(p, os.Stdout, os.Stderr))
+			os.Exit(runStop(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -69,13 +70,9 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	path := "/v1/agent/" + url.PathEscape(selector) + "/stop"
 	if p.Force {
@@ -88,12 +85,15 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 		Action        string `json:"action"`
 		Detail        string `json:"detail,omitempty"`
 		TmuxSession   string `json:"tmux_session,omitempty"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
 	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
+	resp.printRemoteNote(stdout)
 	if resp.TmuxSession != "" {
 		fmt.Fprintf(stdout, "  tmux: %s\n", resp.TmuxSession)
 	}
@@ -132,8 +132,7 @@ func resumeCmd() *cobra.Command {
 			"Malformed, missing, or changed provenance also fails closed; a direct " +
 			"human resume or an approved `--ask-human` request may recapture it. " +
 			"\n\n" +
-			"Auth: requires global agent.resume, or groups.members.resume covering " +
-			"every current active group containing the target. Ownership automatically contributes the latter for owned groups. The single-conv variant of " +
+			"Auth: " + CrossAgentAuth("resume") + " The single-conv variant of " +
 			"`tclaude agent groups resume`.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *resumeParams, _ *cobra.Command) error {
@@ -142,7 +141,7 @@ func resumeCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *resumeParams, _ *cobra.Command, _ []string) {
-			os.Exit(runResume(p, os.Stdout, os.Stderr))
+			os.Exit(runResume(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -179,17 +178,24 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 		Action        string   `json:"action"`
 		Detail        string   `json:"detail,omitempty"`
 		Warnings      []string `json:"warnings,omitempty"`
+		Changes       []string `json:"changes,omitempty"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
 	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
+	resp.printRemoteNote(stdout)
 	if resp.Detail != "" {
 		fmt.Fprintf(stdout, "  detail: %s\n", resp.Detail)
 	}
 	for _, warning := range resp.Warnings {
 		fmt.Fprintf(stdout, "  Warning: %s\n", warning)
+	}
+	for _, change := range resp.Changes {
+		fmt.Fprintf(stdout, "  Changed since last launch: %s\n", change)
 	}
 	// The recorded launch dir was deleted; the daemon did nothing rather than
 	// wedge the agent at startup. Point the human at the recreate opt-in.
@@ -216,8 +222,8 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 // kills the tmux session inline before deleting (mirrors the stop
 // endpoint's --force).
 //
-// Auth: requires the agent.delete permission (NOT default-granted —
-// destructive) OR being an owner of a group containing the target.
+// Auth: CrossAgentAuth("delete"); agent.delete is NOT default-granted
+// (destructive).
 // Self-delete via this command is refused; humans should use
 // `tclaude conv rm` instead.
 
@@ -238,8 +244,7 @@ func deleteCmd() *cobra.Command {
 			"Refuses when the target's tmux session is alive — pass --force " +
 			"to kill the session inline. " +
 			"\n\n" +
-			"Auth: requires the agent.delete permission (not default-granted) " +
-			"OR being an owner of a group containing the target. Self-delete " +
+			"Auth: " + CrossAgentAuth("delete") + " agent.delete is not default-granted. Self-delete " +
 			"is refused via this command; use `tclaude conv rm` instead.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *deleteParams, _ *cobra.Command) error {
@@ -247,7 +252,7 @@ func deleteCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *deleteParams, _ *cobra.Command, _ []string) {
-			os.Exit(runDelete(p, os.Stdout, os.Stderr, os.Stdin))
+			os.Exit(runDelete(p, cliStdout, cliStderr, os.Stdin))
 		},
 	}.ToCobra()
 }

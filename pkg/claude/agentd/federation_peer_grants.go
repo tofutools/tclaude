@@ -12,7 +12,6 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
 const (
@@ -41,65 +40,20 @@ const (
 	// PermSnapshotsReceive lets a peer send this node encrypted resilience
 	// snapshots of its agents to keep. Instance-wide; nothing is imported.
 	PermSnapshotsReceive = "snapshots.receive"
+	// PermConfigOffer lets a peer offer configuration bundles for this
+	// node's operator to review. Instance-wide; bundletransfer.Config's
+	// admission slug.
+	PermConfigOffer = "config.offer"
 )
 
-// Wire capabilities stay stable while authority lives in regular peer slugs.
-var federationPeerSlugs = map[string]string{
-	PermGroupsVisibilityRead:     proto.CapGroupVisibility,
-	PermGroupsLinkAccept:         proto.CapGroupLinkAccept,
-	PermAgentsStatusRead:         proto.CapAgentStatus,
-	PermGroupsRosterRead:         proto.CapRoster,
-	PermSessionsRead:             proto.CapSessions,
-	PermSessionsWatch:            proto.CapSessionsWatch,
-	PermSessionsAttach:           proto.CapSessionsAttach,
-	PermSessionsTakeover:         proto.CapSessionsTakeover,
-	PermSessionsFilesRead:        proto.CapSessionsFilesRead,
-	PermSessionsShell:            proto.CapSessionsShell,
-	PermGroupsPresenceRead:       proto.CapPresence,
-	PermMessageDirect:            proto.CapMail,
-	PermMessageAttachments:       proto.CapAttachments,
-	PermAgentsReceive:            proto.CapAgentsReceive,
-	PermAgentsReceivePermissions: proto.CapAgentsReceivePermissions,
-	PermAgentsTeleportReceive:    proto.CapTeleportReceive,
-	PermGroupsMembersSpawn:       proto.CapSpawn,
-	// The launch settings a peer may choose on a spawn (federation_spawn_overrides.go).
-	PermGroupsMembersSpawnCwd:         "spawn_cwd",
-	PermGroupsMembersSpawnHarness:     "spawn_harness",
-	PermGroupsMembersSpawnModel:       "spawn_model",
-	PermGroupsMembersSpawnEffort:      "spawn_effort",
-	PermGroupsMembersSpawnProfile:     "spawn_profile",
-	PermGroupsMembersSpawnRoles:       "spawn_roles",
-	PermGroupsMembersSpawnSandbox:     "spawn_sandbox",
-	PermGroupsMembersSpawnPermissions: "spawn_permissions",
-	PermGroupsMembersSpawnEnvironment: "spawn_environment",
-	PermGroupsMembersSpawnOwner:       "spawn_owner",
-	PermGroupsMembersSpawnFeatures:    "spawn_features",
-	PermGroupsMembersSpawnPrompts:     "spawn_prompts",
-	PermGroupsMembersSpawnWorktree:    "spawn_worktree",
-	PermGroupsMembersSpawnAll:         "spawn_all",
-	PermGroupsSettings:                "group_settings",
-	PermGroupsSettingsEnvironment:     "group_environment",
-	PermGroupsMembersManage:           "member_manage",
-	PermGroupsMembersStop:             "stop",
-	PermGroupsMembersResume:           "resume",
-	PermGroupsMembersRetire:           "retire",
-	PermGroupsMembersClone:            "clone",
-	PermAgentMove:                     "move",
-	PermRoutesConsume:                 proto.CapRoutes,
-	PermJobsRun:                       proto.CapJobs,
-	// A fleet usage limit's actions on member agents (usage_fleet_receive.go).
-	PermUsageRulesEnforce: "usage_enforce",
-}
+// federationPeerSlugs maps each group-scoped peer slug to its wire
+// capability: wire capabilities stay stable while authority lives in regular
+// peer slugs. Derived from slugFederationReach.
+var federationPeerSlugs = deriveFederationPeerSlugs()
 
-// fedInstancePeerSlugs are the unscoped, instance-wide peer grants.
-var fedInstancePeerSlugs = map[string]bool{
-	"config.offer": true, PermApprovalsAnswer: true, PermNodeRead: true, PermNodeHarnessesRead: true,
-	PermNodeUpdate: true, PermNodeHarnessesInstall: true, PermNodeCredentialsReceive: true, PermNodeExec: true,
-	PermCostsRead: true, PermFederationAuditRead: true, PermNodeMessagesRead: true, PermNodeMessagesManage: true,
-	PermNodeMessagesMarkRead: true, PermSnapshotsReceive: true, PermNodeSpawnRead: true, PermNodeSpawnDefaultsManage: true, PermNodeSpawnProfilesCreate: true, PermNodeGroupsCreate: true,
-	// Usage sharing for fleet limits, and managing this node's usage rules.
-	PermUsageRead: true, PermUsageRulesManage: true,
-}
+// fedInstancePeerSlugs are the unscoped, instance-wide peer grants. Derived
+// from slugFederationReach.
+var fedInstancePeerSlugs = deriveFedInstancePeerSlugs()
 
 func fedInstancePeerSlug(slug string) bool { return fedInstancePeerSlugs[slug] }
 
@@ -213,6 +167,12 @@ func fedExplicitGroupGrant(grants []db.FederationPeerGrant, groupID int64, slug 
 		if slug != "" && grant.Slug != slug {
 			continue
 		}
+		// A grant that must name a local group authorizes nothing unscoped,
+		// whichever path stored it (a node profile saved before its
+		// validation refused one): it would otherwise cover every group.
+		if grant.Scope == "" && fedPeerSlugRequiresGroup(grant.Slug) {
+			continue
+		}
 		// A spawn's launch-setting grant only extends a spawn grant; on its
 		// own it shows the peer nothing.
 		if slug == "" && strings.HasPrefix(grant.Slug, PermGroupsMembersSpawn+".") {
@@ -248,6 +208,28 @@ func fedPeerAllows(peer string, groupID int64, slug string) bool {
 	return fedPeerGroupGrant(peer, groupID, slug) != nil
 }
 func fedPeerGroupVisible(peer string, groupID int64) bool { return fedPeerAllows(peer, groupID, "") }
+
+// fedPeerHoldsUnscoped reports whether peer holds slug node-wide: under
+// unrestricted trust, or through an unscoped effective grant of slug. It is
+// the check for a slug that is never group-scoped; fedPeerAllows is the one
+// for a slug that can be.
+func fedPeerHoldsUnscoped(peer, slug string) bool {
+	return db.FederationPeerUnrestricted(peer) || fedPeerHasUnscopedGrant(peer, slug)
+}
+
+// fedPeerHasUnscopedGrant reports whether peer holds an unscoped effective
+// grant of slug, whatever its trust level; a caller that must not let
+// unrestricted trust stand in for the grant uses it directly. A failed grant
+// read denies.
+func fedPeerHasUnscopedGrant(peer, slug string) bool {
+	grants, err := db.ListEffectiveFederationPeerGrants(peer)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(grants, func(g db.FederationPeerGrant) bool {
+		return g.Slug == slug && g.Scope == ""
+	})
+}
 
 type fedPeerGrantReq struct {
 	Peer        string                   `json:"peer"`
@@ -298,10 +280,20 @@ type fedPeerGrantView struct {
 	GroupID      int64  `json:"group_id,omitempty"`
 	GroupName    string `json:"group_name,omitempty"`
 	GroupDeleted bool   `json:"group_deleted,omitempty"`
+	// Inert says why a stored grant authorizes nothing.
+	Inert string `json:"inert,omitempty"`
+}
+
+// fedPeerGrantInert says why a stored grant authorizes nothing, or "".
+func fedPeerGrantInert(g db.FederationPeerGrant) string {
+	if g.Scope == "" && fedPeerSlugRequiresGroup(g.Slug) {
+		return "needs a group scope: grant it per group"
+	}
+	return ""
 }
 
 func fedViewPeerGrant(g db.FederationPeerGrant) fedPeerGrantView {
-	out := fedPeerGrantView{FederationPeerGrant: g}
+	out := fedPeerGrantView{FederationPeerGrant: g, Inert: fedPeerGrantInert(g)}
 	if strings.HasPrefix(g.Scope, "group=") {
 		id, err := strconv.ParseInt(strings.TrimPrefix(g.Scope, "group="), 10, 64)
 		if err == nil && id > 0 {
@@ -392,12 +384,12 @@ func handleFederationPeerGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	_, groupSlug := federationPeerSlugs[in.Slug]
 	instanceSlug := fedInstancePeerSlug(in.Slug)
-	if !groupSlug && !instanceSlug && (in.Slug != PermModelsProxy && in.Slug != PermModelsProxyLeased) {
+	if !groupSlug && !instanceSlug && !fedProxyPeerSlug(in.Slug) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "slug is not supported for peers: "+in.Slug)
 		return
 	}
 	scope := strings.TrimSpace(in.Scope)
-	if (in.Slug == PermAgentsReceive || in.Slug == PermAgentsTeleportReceive || in.Slug == PermAgentsReceivePermissions) && scope == "" {
+	if fedPeerSlugRequiresGroup(in.Slug) && scope == "" {
 		writeError(w, 400, "invalid_arg", in.Slug+" requires scope group=<local group>")
 		return
 	}
@@ -552,19 +544,7 @@ func fedPeerMailCoversScope(peer string, groupID int64) bool {
 	if groupID != 0 {
 		return fedPeerAllows(peer, groupID, PermMessageDirect)
 	}
-	if db.FederationPeerUnrestricted(peer) {
-		return true
-	}
-	grants, err := db.ListEffectiveFederationPeerGrants(peer)
-	if err != nil {
-		return false
-	}
-	for _, grant := range grants {
-		if grant.Slug == PermMessageDirect && grant.Scope == "" {
-			return true
-		}
-	}
-	return false
+	return fedPeerHoldsUnscoped(peer, PermMessageDirect)
 }
 
 func fedGrantMailCoversScope(peer, poolID string, groupID int64) bool {

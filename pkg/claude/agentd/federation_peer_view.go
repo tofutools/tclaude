@@ -45,6 +45,9 @@ const (
 var (
 	errPeerViewOffline = errors.New("peer is offline")
 	errPeerViewBusy    = errors.New("peer view is busy")
+	// errPeerViewNoAgents: the peer answered an agent's open without
+	// confirming the agent principal, so no request is sent.
+	errPeerViewNoAgents = errors.New("peer does not serve agent peer views")
 )
 
 type fedPeerViewRequest struct {
@@ -60,14 +63,9 @@ type fedPeerViewReply struct {
 	Body   []byte      `json:"body,omitempty"`
 }
 
-type fedPeerViewWaiter struct {
-	peer, request string
-	answer        chan proto.PeerViewAnswerPayload
-}
-
 type fedPeerViewState struct {
 	active  map[string]string
-	waiters map[string]fedPeerViewWaiter
+	waiters map[string]fedAnswerWaiter[proto.PeerViewAnswerPayload]
 	// freed is closed (and replaced) whenever a slot is released, waking
 	// outbound requests queued for one.
 	freed chan struct{}
@@ -75,7 +73,7 @@ type fedPeerViewState struct {
 
 func (rt *fedRuntime) peerViewsLocked() *fedPeerViewState {
 	if rt.peerViews == nil {
-		rt.peerViews = &fedPeerViewState{active: map[string]string{}, waiters: map[string]fedPeerViewWaiter{}, freed: make(chan struct{})}
+		rt.peerViews = &fedPeerViewState{active: map[string]string{}, waiters: map[string]fedAnswerWaiter[proto.PeerViewAnswerPayload]{}, freed: make(chan struct{})}
 	}
 	return rt.peerViews
 }
@@ -142,15 +140,9 @@ func (rt *fedRuntime) handlePeerViewAnswer(peer *db.FederationPeer, env *proto.E
 		return
 	}
 	rt.peerViewsMu.Lock()
-	waiter, ok := rt.peerViewsLocked().waiters[a.Stream]
+	w := rt.peerViewsLocked().waiters[a.Stream]
 	rt.peerViewsMu.Unlock()
-	if !ok || waiter.peer != peer.InstanceID || waiter.request != env.InReplyTo {
-		return
-	}
-	select {
-	case waiter.answer <- a:
-	default:
-	}
+	w.offer(peer.InstanceID, env.InReplyTo, a)
 }
 
 type fedPeerViewConn struct {
@@ -201,13 +193,13 @@ func (rt *fedRuntime) openPeerViewOnce(ctx context.Context, peer *db.FederationP
 	if err != nil {
 		return nil, err
 	}
-	env, err := proto.NewEnvelope(rt.id, proto.KindPeerViewOpen, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: peer.InstanceID}, fedPeerViewTimeout+time.Minute, proto.PeerViewOpenPayload{Stream: sid, Key: kp.Pub})
+	env, err := proto.NewEnvelope(rt.id, proto.KindPeerViewOpen, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: peer.InstanceID}, fedPeerViewTimeout+time.Minute, proto.PeerViewOpenPayload{Stream: sid, Key: kp.Pub, Agent: peerViewPrincipalFrom(ctx)})
 	if err != nil {
 		return nil, err
 	}
-	ch := make(chan proto.PeerViewAnswerPayload, 1)
+	w := newFedAnswerWaiter[proto.PeerViewAnswerPayload](peer.InstanceID, env.ID)
 	rt.peerViewsMu.Lock()
-	rt.peerViewsLocked().waiters[sid] = fedPeerViewWaiter{peer.InstanceID, env.ID, ch}
+	rt.peerViewsLocked().waiters[sid] = w
 	rt.peerViewsMu.Unlock()
 	defer func() { rt.peerViewsMu.Lock(); delete(rt.peerViewsLocked().waiters, sid); rt.peerViewsMu.Unlock() }()
 	sealed, err := proto.Seal(rt.id, env, peer.PubKey)
@@ -222,12 +214,15 @@ func (rt *fedRuntime) openPeerViewOnce(ctx context.Context, peer *db.FederationP
 		return nil, errPeerViewOffline
 	}
 	select {
-	case a := <-ch:
+	case a := <-w.answer:
 		if !a.OK {
 			if a.Reason == "busy" {
 				return nil, errPeerViewBusy
 			}
 			return nil, fmt.Errorf("peer refused view: %s", proto.StripControls(a.Reason))
+		}
+		if peerViewPrincipalFrom(ctx) != nil && !a.AgentPrincipal {
+			return nil, errPeerViewNoAgents
 		}
 		conn, err := rt.joinStream(ctx, peer.InstanceID, sid, kp, a.Key, true)
 		if err != nil {
@@ -247,6 +242,12 @@ func (rt *fedRuntime) acceptPeerViewOpen(peer *db.FederationPeer, env *proto.Env
 	}
 	answer := func(ok bool, key []byte, reason string) {
 		rt.sendControl(peer.InstanceID, proto.KindPeerViewAnswer, env.ID, proto.PeerViewAnswerPayload{Stream: p.Stream, OK: ok, Key: key, Reason: reason})
+	}
+	// An agent principal must be well formed: it is audited as sent, and a
+	// malformed one must not fall back to the operator's view.
+	if p.Agent != nil && !p.Agent.Valid() {
+		answer(false, nil, "invalid agent principal")
+		return
 	}
 	key := "in:" + peer.InstanceID + ":" + p.Stream
 	if !rt.reservePeerView(key, peer.InstanceID) {
@@ -271,7 +272,7 @@ func (rt *fedRuntime) acceptPeerViewOpen(peer *db.FederationPeer, env *proto.Env
 			answer(false, nil, "unavailable")
 			return
 		}
-		answer(true, kp.Pub, "")
+		rt.sendControl(peer.InstanceID, proto.KindPeerViewAnswer, env.ID, proto.PeerViewAnswerPayload{Stream: p.Stream, OK: true, Key: kp.Pub, AgentPrincipal: p.Agent != nil})
 		conn, err := rt.joinStream(ctx, peer.InstanceID, p.Stream, kp, p.Key, false)
 		if err != nil {
 			return
@@ -297,7 +298,7 @@ func (rt *fedRuntime) acceptPeerViewOpen(peer *db.FederationPeer, env *proto.Env
 		// operator token reaches the receiving node's authorization boundary.
 		req.Header = peerViewRequestHeaders(wire.Header)
 		out := &peerViewResponse{header: make(http.Header)}
-		PeerViewHandler(peer.InstanceID).ServeHTTP(out, req)
+		peerViewHandlerFor(peer.InstanceID, p.Agent).ServeHTTP(out, req)
 		if out.body.Len() > fedPeerViewResponseBodyLimit {
 			out = &peerViewResponse{header: make(http.Header)}
 			writeError(out, 502, "peer_response_too_large", "peer response exceeds limit")

@@ -1,6 +1,8 @@
 import { h } from 'preact';
 import htm from 'htm';
+import { Button } from './ui-components.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
+import { fmtExactUSD } from './costs-model.js';
 
 const html = htm.bind(h);
 
@@ -14,7 +16,7 @@ const ACTION_TEXT = {
 const PERIOD_TEXT = { day: 'today', week: 'this week', month: 'this month', window: 'this window' };
 
 function amount(limit, value) {
-  return limit.metric === 'window_pct' ? `${Math.round(value)}%` : `$${value.toFixed(2)}`;
+  return limit.metric === 'window_pct' ? `${Math.round(value)}%` : fmtExactUSD(value);
 }
 
 function limitLabel(limit) {
@@ -45,6 +47,6 @@ export function SpendLimitBanner({ state }) {
   const fleetOnly = !globalThis.__tclaudeRemoteNode?.id && !crossed.some(limit => limit.scope !== 'fleet');
   return html`<div class=${`spend-limit-banner${over ? ' over-limit' : ''}`} role="status">
     ${text}.${estimates ? ' Cost-ledger estimates may differ from charges.' : ''}
-    <button type="button" class="tool spend-limit-manage" onClick=${() => openUsageRulesManager(fleetOnly ? { tab: 'fleet' } : {})}>Manage limits…</button>
+    <${Button} size="sm" class="spend-limit-manage" onClick=${() => openUsageRulesManager(fleetOnly ? { tab: 'fleet' } : {})}>Manage limits…<//>
   </div>`;
 }

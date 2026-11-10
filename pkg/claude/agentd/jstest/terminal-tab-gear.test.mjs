@@ -18,7 +18,7 @@ async function mountTabs(t, nodeFleet = fleet) {
     harness.importDashboardModule('js/fleet-state.js'),
   ]);
   fleetState.fleet.value = nodeFleet;
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   const actions = createTerminalShellActions({
     state, fetchImpl: async () => ({ ok: true }), windowRef: harness.window, documentRef: harness.document,
   });
@@ -104,7 +104,7 @@ test('the launch dialog styles its fields with the dashboard controls, in both t
   const shared = css.split('\n').filter((l) => l.startsWith(':where(.fleet-admin, [id^="fleet-"], #launch-target) :where(select, textarea'));
   assert.ok(shared.length >= 1, 'selects, inputs and textareas share the Fleet form controls');
   assert.match(css, /#launch-target input\[type="checkbox"\] \{[^}]*color-scheme: dark/, 'checkboxes follow the dark scheme');
-  assert.match(css, /body\.wizard :is\(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target\) :is\(\.cron-create-row, \.lt-row\) :is\(input\[type=text\], input:not\(\[type\]\), select, textarea\)/,
+  assert.match(css, /body\.wizard :is\(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal, #launch-target\) :is\(\.cron-create-row, \.lt-row\) :is\(input\[type=text\], input:not\(\[type\]\), select:where\(:not\(\.ui-select\)\), textarea\)/,
     'wizard mode gives its fields the Clone dialog family skin');
 });
 
@@ -122,6 +122,6 @@ test('status lights and the tab ⚙ are drawn, and sit on the title\'s x-height 
   // Both are 15px boxes placed by vertical-align: middle in the tab's own font,
   // i.e. on the title's x-height centre, not by flex box centring.
   assert.match(css, /\.mux-tab-status::before \{\s*content: ""; display: inline-block; vertical-align: middle;\s*width: 15px; height: 15px; margin: -4px 0;/);
-  assert.match(css, /\.mux-tab-gear \.cog-btn \{[^}]*vertical-align: middle;[^}]*width: 15px; height: 15px; margin: -4px 0;/);
+  assert.match(css, /\.mux-tab-gear \.ui-btn\.ui-btn-icon\.cog-btn \{[^}]*vertical-align: middle;[^}]*width: 15px; height: 15px; margin: -4px 0;/);
   assert.doesNotMatch(css, /\.mux-tab-status \{[^}]*font-size/, 'the light keeps the tab font, whose x-height places it');
 });

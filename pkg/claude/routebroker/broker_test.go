@@ -671,3 +671,31 @@ func TestBrokerAttachPublisherReadyReportsClosedBroker(t *testing.T) {
 	require.ErrorIs(t, b.AttachPublisherReady(context.Background(), routebroker.PublisherAuth{RouteID: "route-a"}, conn, func(err error) { ready <- err }), routebroker.ErrClosed)
 	require.ErrorIs(t, <-ready, routebroker.ErrClosed)
 }
+
+func TestBrokerCloseRacesChannelAdmission(t *testing.T) {
+	for range 100 {
+		b, err := routebroker.New(routebroker.Config{Authorizer: newTestAuthorizer()})
+		require.NoError(t, err)
+		start := make(chan struct{})
+		var done sync.WaitGroup
+		for _, publisher := range []bool{false, true} {
+			peer, brokerConn := net.Pipe()
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				defer peer.Close()
+				<-start
+				if publisher {
+					_ = b.AttachPublisher(context.Background(), routebroker.PublisherAuth{RouteID: "closing"}, brokerConn)
+				} else {
+					_ = b.AttachConsumer(context.Background(), routebroker.ConsumerAuth{RouteID: "closing", LeaseID: "closing"}, brokerConn)
+				}
+			}()
+		}
+		close(start)
+		require.NoError(t, b.Close())
+		done.Wait()
+		require.Zero(t, b.Metrics().PublisherChannels)
+		require.Zero(t, b.Metrics().ConsumerChannels)
+	}
+}

@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// Dashboard surface for daemon profiling (Activity › Performance):
+// Dashboard surface for daemon profiling (Diagnostics › Performance):
 //
 //	GET    /api/profiles                         list captures, newest first
 //	POST   /api/profiles                         start an in-process capture

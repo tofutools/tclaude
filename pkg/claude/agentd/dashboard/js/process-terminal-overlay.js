@@ -10,17 +10,20 @@
 // terminal stays usable underneath: nothing here takes focus or traps keys.
 //
 // Data comes from GET /v1/process/context (the read model), polled by ONE
-// shared poller however many panes subscribe, and only while the snapshot
-// says features.processes is on.
+// shared poller however many panes subscribe, and only where processes are
+// available.
 
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import {
   ProcessMiniGraph, ProcessPauseControl, ProcessPausedChip, ProcessRunIcon, ProcessScopeChip, ProcessStateChip,
   normalizeNodeState, reassignableNode, runIconView, runName,
 } from './process-kit.js';
 import { ProcessAgentStepper, isAgentScopedTo, namedScope } from './process-agent-stepper.js';
+import { Button } from './ui-components.js';
+import { AgentCombobox, choiceAgents } from './agent-picker.js';
 
 export { reassignableNode };
 
@@ -196,22 +199,18 @@ export function ProcessPaneOverlay({ agentId, enabled, actions = {}, bounds = nu
   const [collapsed, setCollapsed] = useState(false);
   const [openID, setOpenID] = useState('');
   const open = collapsed ? null : runs.find((run) => run.runId === openID) || null;
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (event) => { if (event.key === 'Escape') setOpenID(''); };
-    globalThis.addEventListener?.('keydown', onKey);
-    return () => globalThis.removeEventListener?.('keydown', onKey);
-  }, [open]);
+  const rootRef = useRef(null);
+  useDismissablePopover(rootRef, open?.runId, () => setOpenID(''));
   if (!runs.length) return null;
   const toggleTitle = collapsed ? `Show ${runs.length} process icon${runs.length === 1 ? '' : 's'}` : 'Hide process icons';
   return html`
-    <div class=${`pk-pane-overlay${collapsed ? ' collapsed' : ''}${open ? ' open' : ''}`} data-process-overlay=${agentId}>
+    <div ref=${rootRef} class=${`pk-pane-overlay${collapsed ? ' collapsed' : ''}${open ? ' open' : ''}`} data-process-overlay=${agentId}>
       <div class="pk-pane-overlay-bar" role="toolbar" aria-label="Processes this agent takes part in">
         ${collapsed
           ? html`<span class="pk-pane-overlay-count" aria-hidden="true">◈ ${runs.length}</span>`
           : runs.map((run) => html`<${ProcessRunIcon} key=${run.runId} run=${run} performerId=${agentId}
               active=${openID === run.runId} onOpen=${() => setOpenID(openID === run.runId ? '' : run.runId)} />`)}
-        <button type="button" class="pk-pane-overlay-toggle" aria-expanded=${collapsed ? 'false' : 'true'}
+        <button data-ui-exempt type="button" class="pk-pane-overlay-toggle" aria-expanded=${collapsed ? 'false' : 'true'}
           title=${toggleTitle} aria-label=${toggleTitle}
           onClick=${() => { setCollapsed(!collapsed); setOpenID(''); }}>${collapsed ? '◂' : '▾'}</button>
       </div>
@@ -278,17 +277,15 @@ function ReassignControl({ run, node, actions, candidatesFor }) {
     }
   };
   if (!open) {
-    return html`<button type="button" class="mux-btn" disabled=${!enabled} title=${title}
-      onClick=${() => setOpen(true)}>↻ reassign node</button>`;
+    return html`<${Button} size="sm" class="mux-btn" disabled=${!enabled} title=${title}
+      onClick=${() => setOpen(true)}>↻ reassign node<//>`;
   }
   return html`<span class="pk-reassign" data-process-reassign=${node.id}>
-    <select class="pk-reassign-select" aria-label=${`New performer for ${node.label || node.id}`}
-      value=${chosen} onChange=${(event) => setTarget(event.currentTarget.value)}>
-      ${candidates.map((candidate) => html`<option key=${candidate.id} value=${candidate.id}>${candidate.label}</option>`)}
-    </select>
-    <button type="button" class="mux-btn" disabled=${busy || !chosen || !enabled} onClick=${() => void assign()}>assign</button>
-    <button type="button" class="mux-btn" disabled=${busy} onClick=${() => { setOpen(false); setError(''); }}>cancel</button>
-    ${error ? html`<span class="pk-run-popover-error" role="alert">${error}</span>` : null}
+    <${AgentCombobox} ariaLabel=${`New performer for ${node.label || node.id}`} value=${chosen} agents=${choiceAgents(candidates)}
+      onChange=${setTarget} />
+    <${Button} size="sm" class="mux-btn" disabled=${busy || !chosen || !enabled} onClick=${() => void assign()}>assign<//>
+    <${Button} size="sm" class="mux-btn" disabled=${busy} onClick=${() => { setOpen(false); setError(''); }}>cancel<//>
+    ${error ? html`<span class="pk-run-popover-error ui-error" role="alert">${error}</span>` : null}
   </span>`;
 }
 
@@ -324,41 +321,41 @@ function ProcessRunGraphPopover({ run, agentId, agentName = '', actions = {}, on
         <${ProcessScopeChip} scope=${namedScope(run.scope, agentId, agentName)} />
         <${ProcessStateChip} state=${view.state} label=${`${run.status || view.state}${age ? ` ${age}` : ''}`} />
         <${ProcessPausedChip} run=${run} />
-        <button type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>
+        <button data-ui-exempt type="button" class="pk-run-popover-close" title="Close" aria-label="Close" onClick=${onClose}>×</button>
       </div>
       <div class="pk-run-popover-graph"><${ProcessMiniGraph} run=${run} performerId=${agentId} compact=${true} /></div>
       <div class="pk-run-popover-body">
         <div class="pk-run-popover-node">
           ${node ? html`
-            <div class="pk-run-popover-kicker">${mine ? "This agent's node" : 'The run is at'}${view.badge ? ` · ${view.badge.replace('/', ' of ')}` : ''}</div>
+            <div class="pk-run-popover-kicker ui-eyebrow">${mine ? "This agent's node" : 'The run is at'}${view.badge ? ` · ${view.badge.replace('/', ' of ')}` : ''}</div>
             <div class="pk-run-popover-title">${node.label || node.id}</div>
             ${node.description ? html`<p class="pk-run-popover-desc">${node.description}</p>` : null}
             ${around.outcomes.length ? html`<div class="pk-run-popover-outcomes"><b>Outcomes:</b>
-              ${around.outcomes.map((outcome) => html`<span key=${outcome} class="pk-chip">${outcome}</span>`)}</div>` : null}
-          ` : html`<div class="pk-run-popover-kicker">No step of this run is current for this agent.</div>`}
+              ${around.outcomes.map((outcome) => html`<span key=${outcome} class="pk-chip ui-tag">${outcome}</span>`)}</div>` : null}
+          ` : html`<div class="pk-run-popover-kicker ui-eyebrow">No step of this run is current for this agent.</div>`}
         </div>
         <div class="pk-run-popover-around">
-          <div class="pk-run-popover-kicker">Around it</div>
+          <div class="pk-run-popover-kicker ui-eyebrow">Around it</div>
           <${NeighbourList} items=${around.upstream} prefix="↑" />
           <${NeighbourList} items=${around.siblings} prefix="⇉" />
           <${NeighbourList} items=${around.downstream} prefix="↓" />
         </div>
       </div>
       <div class="pk-run-popover-actions">
-        ${onStepper ? html`<button type="button" class="mux-btn" onClick=${onStepper}>☰ stepper view</button>` : null}
-        <button type="button" class="mux-btn" disabled=${!actions.openGroups} onClick=${() => actions.openGroups?.(run)}>↗ open in Groups</button>
-        <button type="button" class="mux-btn" disabled=${!owner || !actions.onComposeMessage}
+        ${onStepper ? html`<${Button} size="sm" class="mux-btn" onClick=${onStepper}>☰ stepper view<//>` : null}
+        <${Button} size="sm" class="mux-btn" disabled=${!actions.openGroups} onClick=${() => actions.openGroups?.(run)}>↗ open in Groups<//>
+        <${Button} size="sm" class="mux-btn" disabled=${!owner || !actions.onComposeMessage}
           title=${owner ? `Message the run owner (${owner})` : 'The run owner is the human'}
-          onClick=${() => actions.onComposeMessage?.({ agent: owner, label: owner })}>✉ message owner</button>
+          onClick=${() => actions.onComposeMessage?.({ agent: owner, label: owner })}>✉ message owner<//>
         <${ProcessPauseControl} run=${run} actions=${actions} />
         <${ReassignControl} key=${`${node?.id || ''}:${node?.dispatch?.nodeId || ''}:${node?.dispatch?.attempt || 0}`}
           run=${run} node=${node} actions=${actions} candidatesFor=${candidatesFor} />
         ${awaitingDecision && actions.decide
-          ? around.outcomes.map((verdict) => html`<button key=${verdict} type="button" class="mux-btn pk-run-popover-verdict"
-              disabled=${deciding} title=${`Decide ${verdict} as the human`} onClick=${() => void decide(verdict)}>✓ ${verdict} (as human)</button>`)
-          : html`<button type="button" class="mux-btn" disabled=${true}
-              title="Marking an outcome as the human applies to a node waiting on a decision">✓ mark outcome (as human)</button>`}
-        ${decideError ? html`<span class="pk-run-popover-error" role="alert">${decideError}</span>` : null}
+          ? around.outcomes.map((verdict) => html`<${Button} size="sm" key=${verdict} class="mux-btn pk-run-popover-verdict"
+              disabled=${deciding} title=${`Decide ${verdict} as the human`} onClick=${() => void decide(verdict)}>✓ ${verdict} (as human)<//>`)
+          : html`<${Button} size="sm" class="mux-btn" disabled=${true}
+              title="Marking an outcome as the human applies to a node waiting on a decision">✓ mark outcome (as human)<//>`}
+        ${decideError ? html`<span class="pk-run-popover-error ui-error" role="alert">${decideError}</span>` : null}
       </div>
     </div>
   `;

@@ -310,105 +310,14 @@ func TestDashboardCSS_SpawnFieldsCannotOverflow(t *testing.T) {
 	}
 }
 
-// TestDashboardCSS_ModalScrollbarsThemed guards the themed scrollbars on the
-// spawn/clone/cron/group/profile modal family. The tall dialogs (and their
-// multiline textareas) scroll, and an unstyled scroll container falls back to
-// the browser's default light, classic scrollbar — loud against the dark
-// dialog, and especially against the near-black wizard re-skin. Two layers:
-//  1. a base dark scrollbar on the shared .cron-create-modal class (all modes);
-//  2. a wizard arcane override on the five wizard-reskinned dialogs, scoped by
-//     #id via :is() so the dark-chrome clone/reincarnate/message dialogs (same
-//     class, NOT reskinned) keep the base dark bar — the same positive-scoping
-//     the surface re-skins follow. A refactor dropping either, or widening the
-//     wizard rule to an unscoped .cron-create-modal, regresses the look.
-func TestDashboardCSS_ModalScrollbarsThemed(t *testing.T) {
-	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
-	if err != nil {
-		t.Fatalf("reading embedded dashboard.css: %v", err)
-	}
-	css := string(cssBytes)
-	for _, needle := range []string{
-		".cron-create-modal::-webkit-scrollbar-thumb { background: #3a4553;",        // base dark thumb
-		".cron-create-row textarea::-webkit-scrollbar-thumb { background: #3a4553;", // base dark textarea thumb
-		"scrollbar-color: #3a4553 #161b22;",                                         // base Firefox (dialog body)
-		"scrollbar-color: #7a5db0 #140f28;",                                         // wizard Firefox (arcane)
-		"linear-gradient(180deg, #7a5db0, #3a2a63)",                                 // wizard arcane thumb
-	} {
-		if !strings.Contains(css, needle) {
-			t.Errorf("dashboard.css missing %q — modal scrollbar theming regressed", needle)
-		}
-	}
-	// The wizard override MUST name the five reskinned dialogs by #id (via :is)
-	// and MUST NOT widen to an unscoped `.cron-create-modal` scrollbar, which
-	// would arcane-paint the dark clone/reincarnate/message dialogs' bars too.
-	for _, id := range []string{
-		"#agent-spawn-modal", "#cron-create-modal", "#group-create-modal",
-		"#profile-editor-modal", "#export-agent-modal",
-	} {
-		if !strings.Contains(css, id) {
-			t.Errorf("dashboard.css wizard scrollbar :is() list missing %q", id)
-		}
-	}
-	if strings.Contains(css, "body.wizard .cron-create-modal::-webkit-scrollbar") {
-		t.Error("wizard scrollbar override is unscoped — would repaint clone/reincarnate/message dialogs")
-	}
-}
-
-// TestDashboardCSS_PermissionEditorScrollbarThemed guards the inner slug
-// list's scrollbar in both the regular dark editor and its wizard re-skin.
-// This list, rather than the dialog surface, owns the scroll overflow.
-func TestDashboardCSS_PermissionEditorScrollbarThemed(t *testing.T) {
-	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
-	if err != nil {
-		t.Fatalf("reading embedded dashboard.css: %v", err)
-	}
-	css := string(cssBytes)
-	for _, needle := range []string{
-		"#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {",
-		"scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;",
-		"body.wizard #perm-edit-modal .perm-edit-list { scrollbar-color: #7a5db0 #140f28; }",
-		"body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {",
-	} {
-		if !strings.Contains(css, needle) {
-			t.Errorf("dashboard.css missing %q — permission-editor scrollbar theming regressed", needle)
-		}
-	}
-	if strings.Contains(css, "body.wizard .perm-edit-list::-webkit-scrollbar") {
-		t.Error("wizard permission-editor scrollbar override is unscoped")
-	}
-}
-
-// TestDashboardCSS_SandboxProfilesScrollbarThemed guards the resizable manage
-// surface's scrollbar in regular and wizard modes. Long profile cards make the
-// surface itself scroll, so styling a child list would not cover this dialog.
-func TestDashboardCSS_SandboxProfilesScrollbarThemed(t *testing.T) {
-	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
-	if err != nil {
-		t.Fatalf("reading embedded dashboard.css: %v", err)
-	}
-	css := string(cssBytes)
-	for _, needle := range []string{
-		"#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {",
-		"scrollbar-width: thin; scrollbar-color: #3a4553 #161b22;",
-		"body.wizard #sandbox-profiles-manage-modal .manage-modal {\n    scrollbar-color: #7a5db0 #140f28;",
-		"body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {",
-	} {
-		if !strings.Contains(css, needle) {
-			t.Errorf("dashboard.css missing %q — sandbox-profile scrollbar theming regressed", needle)
-		}
-	}
-	if strings.Contains(css, "body.wizard .manage-modal::-webkit-scrollbar") {
-		t.Error("wizard sandbox-profile scrollbar override is unscoped")
-	}
-}
-
 // TestDashboardJS_SelectTooltipWired guards full-path tooltip ownership on
 // the maintained Preact worktree controls. Spawn gives each shortened option
 // its full path, while clone also derives the closed select's controlled title.
 func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	for _, needle := range []string{
-		"title=${`${branch}${main} — ${worktree.path}`}", // Preact worktree options retain the full path
-		"title=${selectTitle}",                           // clone's closed select follows controlled selection
+		"title: `${label} — ${worktree.path}`",                                // worktree rows (git-picker.js) retain the full path
+		"title=${item.disabled ? item.reason || '' : item.title || item.key}", // FilterCombobox rows show it
+		"attrs=${{ title: selectTitle }}",                                     // clone's closed box follows controlled selection
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — select tooltip wiring broken", needle)
@@ -516,8 +425,10 @@ func TestDashboardCSS_SandboxProfileSelectLayouts(t *testing.T) {
 		"  grid-template-columns: 10rem minmax(10rem, 1fr) auto auto auto;") {
 		t.Error("dashboard.css authored filesystem rows must use the shared segmented/path/action grid")
 	}
-	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;") {
-		t.Error("dashboard.css included-profile selector must retain intrinsic width")
+	// The included-profile choice is a type-to-filter box (tcl-986r2g), which
+	// has no intrinsic width of its own: it takes a bounded share of the row.
+	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 1 1 14em; min-width: 0; max-width: 32em;") {
+		t.Error("dashboard.css included-profile choice must keep its bounded row share")
 	}
 }
 
@@ -883,8 +794,8 @@ func TestDashboardAssets_DirectoryPickerWired(t *testing.T) {
 		"dashboard.default_directory_picker = 'native'",
 		`id="directory-picker-modal"`,
 		`#directory-picker-modal {`,
-		`z-index: 10002`,
-		`.toast.error { border-left-color: #f85149; z-index: 10003; }`,
+		`z-index: calc(var(--z-dialog) + 100)`,
+		`.toast.error { border-left-color: #f85149; z-index: calc(var(--z-toast) + 1); }`,
 		"body.wizard .directory-picker-modal",
 		"directory-picker-new",
 		"directory-picker-entry-action",
@@ -1034,7 +945,7 @@ func TestDashboardAssets_ShowFinalPRChecksWired(t *testing.T) {
 		"'show-final-pr-checks', !!data.show_final_pr_checks",
 		"(prState === 'merged' || prState === 'closed') && stateName !== 'failing'",
 		`body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }`,
-		"summary=${checks} prState=${prState}",
+		// pr-chain.js — the shared PR run passes the PR state to the CI pill.
 		"summary=${pr.checks} prState=${pr.state}",
 		"#cfg-dashboard-show-final-pr-checks",
 		"dashboard.show_final_pr_checks = true",
@@ -1096,14 +1007,14 @@ func TestDashboardAssets_UsageReadoutWired(t *testing.T) {
 	}
 }
 
-// TestDashboardAssets_FeatureFlagsWired guards the experimental feature flags
+// TestDashboardAssets_FeatureFlagsWired guards the feature flags (Collab included)
 // across their exact Preact markup and adapter owners. The Go accessors +
 // round-trip are covered separately in common/config.
 func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	owners := map[string][]string{
 		"js/config-form-markup.js": {
-			`id="cfg-feature-processes"`, `features.processes`,
-			`id="cfg-feature-triggers"`, `features.triggers`,
+			`id="cfg-processes-refuse-unsigned"`, `processes.refuse_unsigned_imports`,
+			`id="cfg-steward-enabled"`, `steward.disabled`,
 			`id="cfg-feature-groups-route-map"`, `features.groups_route_map`,
 			`id="cfg-feature-group-attachments"`, `features.group_attachments`,
 			`id="cfg-feature-terminal-command-palette-shortcut"`,
@@ -1112,8 +1023,9 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 			`features.recorded_sandbox_details`,
 		},
 		"js/config-form-adapter.js": {
-			"#cfg-feature-processes", "feats.processes = true",
-			"#cfg-feature-triggers", "feats.triggers = true",
+			"#cfg-processes-refuse-unsigned", "processes.refuse_unsigned_imports = true",
+			"#cfg-steward-enabled", "steward.disabled = true",
+			"delete feats.processes", "delete feats.triggers",
 			"#cfg-feature-groups-route-map", "feats.groups_route_map = true",
 			"#cfg-feature-group-attachments", "feats.group_attachments = groupAttachments",
 			"#cfg-feature-terminal-command-palette-shortcut",
@@ -1132,7 +1044,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	}
 }
 
-// TestDashboardAssets_ProcessesTabWired pins the feature-gated template shell
+// TestDashboardAssets_ProcessesTabWired pins the Processes template shell
 // and the stable editor mount contract.
 // The module has no build step, so literal asset pins catch a renamed
 // DOM id or route before it becomes a browser-only failure.
@@ -1142,8 +1054,8 @@ func TestDashboardAssets_ProcessesTabWired(t *testing.T) {
 		`id="processes-root"`,
 		`active=${PROCESSES_SUBTAB}`,
 		`nav [data-tab="processes"] { display: none; }`,
-		`id="process-editor-canvas"`,
-		`data-process-mount="editor"`,
+		`mount.id = 'process-editor-canvas'`,
+		`mount.dataset.processMount = 'editor'`,
 		"name === 'templates' ? '/v1/process/templates'",
 		"'/v1/process/template-heads'",
 		"applyProcessesTabVisibility(data)",

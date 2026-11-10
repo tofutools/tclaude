@@ -2,7 +2,7 @@
 
 tclaude raises a desktop notification when a session transitions into a
 state that needs you: by default `idle`, `awaiting_permission`,
-`awaiting_input`, and `exited`. Clicking the notification focuses the
+`awaiting_input`, `error` and `exited`. Clicking the notification focuses the
 terminal window running that session. With many sessions in flight, this is
 what lets you stop watching panes.
 
@@ -37,6 +37,7 @@ The `notifications` block in `~/.tclaude/data/config.json`:
       {"from": "*", "to": "idle"},
       {"from": "*", "to": "awaiting_permission"},
       {"from": "*", "to": "awaiting_input"},
+      {"from": "*", "to": "error"},
       {"from": "*", "to": "exited"}
     ],
     "cooldown_seconds": 5
@@ -46,6 +47,10 @@ The `notifications` block in `~/.tclaude/data/config.json`:
 
 - `transitions` — `{from, to}` rules with `*` wildcards; the defaults above
   apply when the list is omitted.
+- `known_types` — bookkeeping for `tclaude setup`: the per-type
+  categories this block has already been offered. Setup only adds a
+  category that is new to your config; one you switched off stays off.
+  Written automatically; you never need to edit it.
 - `cooldown_seconds` — per-session rate limit (default 5) so a flapping
   state does not spam you.
 - `human_messages` — also notify when an agent sends `tclaude agent
@@ -97,15 +102,16 @@ pinged while a subagent is still running.
 
 !!! note "Harness labeling caveat"
     Notification titles are `<Harness>: <Status>`: `Claude: …`, `Codex: …`,
-    `OpenCode: …`, `Copilot: …`, `Gemini: …`, `pi: …` or `Shell: …`. A
-    harness-neutral notification (the task runner, rate-limit warnings) keeps
-    the `Claude: …` title.
+    `OpenCode: …`, `Copilot: …`, `Gemini: …`, `pi: …` or `Shell: …`. Agent
+    `notify-human` messages, presented PRs and access requests say `tclaude: …`.
+    The task runner and rate-limit warnings always say `Claude: …`, whichever
+    harness is involved.
 
 ## Click-to-focus per platform
 
 | Platform | Notifier | Clickable | Focus method |
 |----------|----------|-----------|--------------|
-| Linux | D-Bus | Yes | `xdotool` |
+| Linux | D-Bus | Yes | `xdotool` or `kdotool` |
 | macOS | `terminal-notifier` (or osascript) | Yes | iTerm2 / Terminal.app AppleScript |
 | WSL | PowerShell toast | Yes | Windows Terminal, via `tclaude://` handler |
 | Windows (native) | Not implemented | — | — |
@@ -113,7 +119,7 @@ pinged while a subagent is still running.
 ### Linux
 
 Notifications go through D-Bus; window focus on click needs `xdotool`
-(`sudo apt install xdotool`). Without it, notifications still appear but are
+(`sudo apt install xdotool`), or `kdotool` on KDE Plasma Wayland. Without either, notifications still appear but are
 not clickable.
 
 ### macOS

@@ -90,15 +90,50 @@ func costDeltasFromRows(rows []db.CostDailyRow, whatif bool) []costDelta {
 // conversations come back separately so the Costs view can list them for
 // restoring. A row with no conversation id cannot be ignored and always counts.
 func countedCostDailyRows() (counted, ignored []db.CostDailyRow, ignoredConvs map[string]time.Time, err error) {
-	// A conversation billed to a peer's gateway is that peer's spend; it is
-	// marked ignored (with the reference) before the totals read.
-	if err := db.MarkCostConvsBilledElsewhere(); err != nil {
+	if err := db.MarkCostConvsBilledElsewhere(""); err != nil {
 		return nil, nil, nil, err
 	}
 	rows, err := db.AllCostDailyRows()
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	return splitCountedCostRows(rows)
+}
+
+// costWindowRead is one windowed read of the cost ledger, split like
+// countedCostDailyRows.
+type costWindowRead struct {
+	counted, ignored []db.CostDailyRow
+	ignoredConvs     map[string]time.Time
+	labels           map[string]db.CostOpening
+	fromOpening      bool // older rows were left out, see db.CostLedger
+}
+
+// countedCostRowsForWindow is countedCostDailyRows for surfaces that only read
+// days in [fromDay, toDay]: deltas before fromDay are not meaningful, see
+// db.CostLedgerWindow. The dashboard polls this, so unless a request asks for
+// an older range it reads at most db.CostReadLimitDays of the ledger.
+func countedCostRowsForWindow(fromDay, toDay string, withIgnored bool) (costWindowRead, error) {
+	ledger, err := db.CostLedgerWindow(fromDay, toDay, withIgnored)
+	if err != nil {
+		return costWindowRead{}, err
+	}
+	if ledger.NeedsRefresh {
+		requestCostOpeningRefresh()
+	}
+	// A conversation billed to a peer's gateway is that peer's spend; it is
+	// marked ignored (with the reference) before the totals read.
+	if err := db.MarkCostConvsBilledElsewhere(ledger.OpeningDay); err != nil {
+		return costWindowRead{}, err
+	}
+	counted, ignored, ignoredConvs, err := splitCountedCostRows(ledger.Rows)
+	if err != nil {
+		return costWindowRead{}, err
+	}
+	return costWindowRead{counted: counted, ignored: ignored, ignoredConvs: ignoredConvs, labels: ledger.Labels, fromOpening: ledger.OpeningDay != ""}, nil
+}
+
+func splitCountedCostRows(rows []db.CostDailyRow) (counted, ignored []db.CostDailyRow, ignoredConvs map[string]time.Time, err error) {
 	ignoredConvs, err = db.CostIgnoredConvs()
 	if err != nil {
 		return nil, nil, nil, err
@@ -115,6 +150,21 @@ func countedCostDailyRows() (counted, ignored []db.CostDailyRow, ignoredConvs ma
 		counted = append(counted, row)
 	}
 	return counted, ignored, ignoredConvs, nil
+}
+
+// costLabelDeltas turns the stored labels of ignored conversations into empty
+// deltas ahead of their recent ones, so ignoredCostRows names a conversation
+// from the same fold whether or not its older rows were read.
+func costLabelDeltas(labels map[string]db.CostOpening, includeWhatIf bool) []costDelta {
+	out := make([]costDelta, 0, len(labels))
+	for convID, opening := range labels {
+		label := opening.Real
+		if includeWhatIf {
+			label = opening.Mixed
+		}
+		out = append(out, costDelta{convID: convID, sessionID: label.SessionID, updatedAtNS: label.UpdatedAtNS, model: label.Model, harness: label.Harness})
+	}
+	return out
 }
 
 // displayedCostDeltasFromRows is the single source of cost slices for every
@@ -138,24 +188,6 @@ func sumCostDeltas(deltas []costDelta, from, to string) float64 {
 		}
 	}
 	return total
-}
-
-// firstCostDay returns the earliest day carrying recorded spend across
-// all deltas — tclaude's first-ever costed day — or "" when nothing
-// has ever been spent. The Costs tab's month projection uses it to
-// anchor the per-weekday average: when the first-ever spend was this
-// month, the empty days before it must not dilute the average (a fresh
-// install would otherwise project far too low); when earlier-month
-// history exists, those leading zeros are genuine idle weekdays and
-// stay in the denominator. Deltas need not be sorted.
-func firstCostDay(deltas []costDelta) string {
-	first := ""
-	for _, d := range deltas {
-		if first == "" || d.day < first {
-			first = d.day
-		}
-	}
-	return first
 }
 
 // costDayPoint is one bar of the Costs tab chart: total spend across
@@ -194,8 +226,9 @@ type costAgentRow struct {
 	// AgentID is the spending actor's stable key — a display companion to
 	// ConvID so a row can name WHO it belongs to. The per-conv keying and
 	// the cumulative-cost delta walk are unchanged: cost stays a per-conv
-	// series (a generation's cost resets per /clear), and this is only an
-	// added attribution field, never a rekey. "" when the conv is not a
+	// series, and this is only an added attribution field, never a rekey.
+	// (Claude Code's counter does NOT reset per /clear or rename; the walk
+	// carries it across the conv switch, see db.AnnotateCostCarry.) "" when the conv is not a
 	// known agent (e.g. a plain conversation's spend).
 	AgentID            string  `json:"agent_id,omitempty"`
 	ConvID             string  `json:"conv_id"`
@@ -220,7 +253,7 @@ type costAgentRow struct {
 // render gaps as empty bars without client-side date math. FirstDay is
 // the earliest day carrying any recorded spend across all history (not
 // just this span); the Costs tab's month projection uses it to decide
-// where the per-weekday average starts (see firstCostDay).
+// where the per-weekday average starts.
 type costsResponse struct {
 	From     string         `json:"from"`
 	To       string         `json:"to"`
@@ -295,12 +328,21 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 	fromKey := from.Format(costDayKey)
 	toKey := to.Format(costDayKey)
 
-	rows, ignoredRows, ignoredConvs, err := countedCostDailyRows()
+	read, err := countedCostRowsForWindow(fromKey, toKey, true)
 	if err != nil {
 		return costsResponse{}, err
 	}
-	deltas := displayedCostDeltasFromRows(rows, includeWhatIf)
-	ignoredDeltas := displayedCostDeltasFromRows(ignoredRows, includeWhatIf)
+	ignoredConvs := read.ignoredConvs
+	// firstDay anchors the Costs tab's month projection: when the first-ever
+	// spend was this month, the empty days before it must not dilute the
+	// per-weekday average, while earlier-month history keeps its idle weekdays
+	// in the denominator. It spans all history, which the stored opening answers.
+	firstDay, err := db.FirstCountedCostDay(includeWhatIf)
+	if err != nil {
+		return costsResponse{}, err
+	}
+	deltas := displayedCostDeltasFromRows(read.counted, includeWhatIf)
+	ignoredDeltas := append(costLabelDeltas(read.labels, includeWhatIf), displayedCostDeltasFromRows(read.ignored, includeWhatIf)...)
 	models, err := db.SessionModels()
 	if err != nil {
 		return costsResponse{}, err
@@ -412,7 +454,7 @@ func collectCosts(from, to time.Time, cfg *config.Config, includeWhatIf bool) (c
 		total += d.usd
 	}
 
-	out := costsResponse{From: fromKey, To: toKey, FirstDay: firstCostDay(deltas), TotalUSD: total,
+	out := costsResponse{From: fromKey, To: toKey, FirstDay: firstDay, TotalUSD: total,
 		RealTotalUSD: realTotal, WhatIfTotalUSD: whatIfTotal, VirtualCostCredits: virtualCreditsTotal,
 		CostKind: costKind(realTotal, whatIfTotal),
 		Days:     []costDayPoint{}, Agents: []costAgentRow{},
@@ -582,6 +624,24 @@ func scaleCostDeltas(deltas []costDelta, cfg *config.Config, harnesses map[strin
 		}
 		deltas[i].usd *= cfg.CostFactorForHarness(deltas[i].harness)
 	}
+}
+
+// costHarnessFallback looks up the harness of the sessions behind deltas with
+// none denormalised. Those are rare pre-v103 rows, so a current ledger reads
+// nothing here.
+func costHarnessFallback(deltas []costDelta) (map[string]string, error) {
+	seen := map[string]struct{}{}
+	var ids []string
+	for _, d := range deltas {
+		if d.harness != "" {
+			continue
+		}
+		if _, dup := seen[d.sessionID]; !dup {
+			seen[d.sessionID] = struct{}{}
+			ids = append(ids, d.sessionID)
+		}
+	}
+	return db.SessionHarnessesByIDs(ids)
 }
 
 func costKind(real, whatif float64) string {

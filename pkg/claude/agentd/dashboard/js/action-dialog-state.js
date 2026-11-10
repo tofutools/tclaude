@@ -91,6 +91,9 @@ export function createActionDialogState() {
     openLaunchTarget({ mode = 'move', agent }) {
       return !!open({ kind: 'launch-target', mode, agent });
     },
+    openStewardHandover({ agent, label = '' }) {
+      return !!open({ kind: 'steward-handover', agent, label });
+    },
     openTerminalDirectory({ label = '' }) {
       return openChoice({ kind: 'terminal-directory', label });
     },

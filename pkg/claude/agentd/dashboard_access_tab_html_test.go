@@ -65,7 +65,12 @@ func TestDashboardHTML_AccessTabMerged(t *testing.T) {
 	present(`function showAccessTab(`, "the Access-tab deep-link helper")
 	present(`showAccessTab('sudo')`, "the sudo-manage badge deep-links into the Access tab's Sudo sub-view")
 
-	// The segmented-control styling ships.
-	present(`.access-subnav`, "segmented-control CSS")
-	present(`.access-subtab.active`, "segmented-control active-state CSS")
+	// The sub-nav renders through the shared Tabs component, which ui.css styles.
+	present("<${Tabs} class=\"access-subnav\"", "the access sub-nav uses the shared Tabs")
+	ui := dashboardAssetFile(t, "ui.css")
+	for _, needle := range []string{".ui-tabs {", `.ui-tab:is(.active, [aria-selected="true"])`} {
+		if !strings.Contains(ui, needle) {
+			t.Errorf("ui.css missing %q (shared tab styling)", needle)
+		}
+	}
 }

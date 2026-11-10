@@ -6,6 +6,9 @@ import {
   MENU_FILTER_PLACEHOLDER, MENU_FILTER_WIZARD_PLACEHOLDER,
 } from './menu-filter.js';
 import { isWizardActive } from './slop.js';
+import { useDismissablePopover } from './hover-popover.js';
+import { Button } from './ui-components.js';
+import { onActivateKey } from './table-kit.js';
 
 const html = htm.bind(h);
 const GroupsInteractions = createContext(null);
@@ -47,25 +50,18 @@ export function GroupsInteractionProvider({ children }) {
   };
 
   useEffect(() => {
-    const onClick = (event) => {
-      const key = openMenuKeyRef.current;
-      if (!key) return;
-      const entry = menus.current.get(key);
-      if (entry?.button?.contains(event.target) || entry?.menu?.contains(event.target)) return;
-      closeMenu();
-    };
     const onKeyDown = (event) => {
       if (event.key !== 'Escape' || !openMenuKeyRef.current) return;
       event.preventDefault();
       closeMenu(true);
     };
-    document.addEventListener('click', onClick);
     document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('click', onClick);
-      document.removeEventListener('keydown', onKeyDown);
-    };
+    return () => document.removeEventListener('keydown', onKeyDown);
   }, []);
+  useDismissablePopover(() => {
+    const entry = menus.current.get(openMenuKeyRef.current);
+    return [entry?.button, entry?.menu];
+  }, openMenuKey, () => closeMenu(), { escape: false });
 
   const value = useMemo(() => ({
     openMenuKey,
@@ -180,9 +176,10 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
   }, [open]);
 
   const body = html`
-    <button
-      ref=${buttonRef}
-      type="button"
+    <${Button}
+      domRef=${buttonRef}
+      size="sm"
+      icon=${true}
       class="cog-btn"
       data-act=${kind}
       aria-haspopup="menu"
@@ -194,15 +191,15 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
         event.stopPropagation();
         interactions.toggleMenu(menuKey);
       }}
-    ><span class="cog-glyph">⚙︎</span></button>
+    ><span class="cog-glyph">⚙︎</span><//>
     <div
       ref=${menuRef}
-      class=${`action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
+      class=${`ui-menu ui-sm action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
       data-preact-menu="1"
       role="menu"
     ><input
         ref=${filterRef}
-        class="action-menu-filter"
+        class="ui-input ui-sm action-menu-filter"
         type="text"
         autocomplete="off"
         spellcheck=${false}
@@ -261,12 +258,7 @@ export function InlineEditor({
         event.stopPropagation();
         interactions.beginEditor(editorKey, event.currentTarget);
       },
-      onKeyDown: (event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
-        event.stopPropagation();
-        interactions.beginEditor(editorKey, event.currentTarget);
-      },
+      onKeyDown: onActivateKey((event) => interactions.beginEditor(editorKey, event.currentTarget), { stop: true }),
     }, children);
   }
 
@@ -312,5 +304,5 @@ export function InlineEditor({
     onBlur=${() => cancel()}
   />`;
   if (!note?.text) return input;
-  return html`${input}<div class=${`inline-editor-hint${note.warn ? ' warn' : ''}`} role="status">${note.text}</div>`;
+  return html`${input}<div class=${`inline-editor-hint ui-hint${note.warn ? ' warn' : ''}`} role="status">${note.text}</div>`;
 }

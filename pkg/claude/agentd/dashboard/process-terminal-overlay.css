@@ -42,9 +42,7 @@
 .pk-run-popover-body { display: grid; grid-template-columns: 1.2fr 1fr; gap: 0; }
 .pk-run-popover-node, .pk-run-popover-around { padding: 10px 12px; min-width: 0; }
 .pk-run-popover-around { border-left: 1px solid var(--pk-line); }
-.pk-run-popover-kicker {
-  font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--pk-muted); margin-bottom: 6px;
-}
+.pk-run-popover-kicker { margin-bottom: 6px; }
 .pk-run-popover-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
 .pk-run-popover-desc { margin: 0 0 8px; color: var(--pk-planned-text); line-height: 1.4; }
 .pk-run-popover-outcomes { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
@@ -61,12 +59,13 @@
   display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px; border-top: 1px solid var(--pk-line);
 }
 .pk-run-popover-actions .mux-btn[disabled] { opacity: .5; cursor: not-allowed; }
-.pk-run-popover-error { flex-basis: 100%; color: var(--pk-failed-text); }
-.pk-run-popover-verdict { border-color: var(--pk-waiting); color: var(--pk-waiting-text); }
+.pk-run-popover-error { flex-basis: 100%; }
+/* A verdict keeps its waiting colours on the standard button. */
+.pk-run-popover-verdict, .pk-run-popover-verdict.ui-btn { border-color: var(--pk-waiting); color: var(--pk-waiting-text); }
 
 /* Reassign picker in the T2 actions row */
 .pk-reassign { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.pk-reassign-select { font: inherit; font-size: 12px; background: var(--pk-surface); color: var(--pk-text); border: 1px solid var(--pk-line); border-radius: 4px; max-width: 220px; }
+.pk-reassign .agent-combobox { display: inline-block; vertical-align: top; min-width: 200px; max-width: 260px; }
 
 /* T3: agent-scoped run stepper (js/process-agent-stepper.js) */
 .pk-agent-stepper { width: min(440px, calc(100vw - 48px)); }
@@ -75,13 +74,10 @@
   border-bottom: 1px solid var(--pk-line);
   background: color-mix(in srgb, var(--pk-agent) 9%, var(--pk-surface));
 }
-.pk-bounds-chip {
-  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px;
-  font-size: 11px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
-  border: 1px solid color-mix(in srgb, var(--pk-agent) 55%, transparent);
-  color: var(--pk-text);
-}
-.pk-bounds-unknown { border-color: var(--pk-line); color: var(--pk-muted); }
+/* An agent-bound .ui-tag: two classes out-rank its inline-block and neutral tone. */
+.pk-bounds .pk-bounds-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.pk-bounds .pk-bounds-chip { border-color: color-mix(in srgb, var(--pk-agent) 55%, transparent); color: var(--pk-text); }
+.pk-bounds .pk-bounds-unknown { border-color: var(--pk-line); color: var(--pk-muted); }
 .pk-stepper-list { padding: 6px 12px 4px; }
 .pk-stepper-step { position: relative; display: flex; gap: 10px; padding: 6px 0 10px; }
 .pk-stepper-step:not(:last-child)::before {
@@ -105,7 +101,7 @@
 .pk-stepper-step-time { margin-left: auto; font-size: 11px; color: var(--pk-muted); }
 .pk-stepper-step-detail { color: var(--pk-muted); font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
 .pk-stepper-step-warning { color: var(--pk-waiting-text); font-size: 11px; margin-top: 2px; }
-.pk-stepper-group { font: inherit; font-size: 12px; background: var(--pk-surface); color: var(--pk-text); border: 1px solid var(--pk-line); border-radius: 4px; }
+.pk-run-popover-actions > .choice-combobox { flex: 1 1 100%; }
 
 /* Tab-strip ("rail") miniatures */
 .pk-tab-icons { display: inline-flex; gap: 3px; margin: 0 2px; vertical-align: middle; }

@@ -53,6 +53,21 @@ test('polling contract: staggered starts, relaxed jittered interval, capped back
   assert.equal(model.pollDelay({ failures: 9, random: () => 0.5 }), model.MAX_BACKOFF_MS);
 });
 
+test('a peer never seen has no last-seen time, not Go\'s zero time (tk_7dcf4f84)', async (t) => {
+  const { model } = await load(t);
+  const zero = '0001-01-01T00:00:00Z';
+  for (const v of [zero, '0001-01-01T00:53:28+00:53', '', null, undefined, 'not a time']) assert.equal(model.seenAt(v), null, String(v));
+  assert.equal(model.seenAt('2026-10-09T20:37:00Z'), '2026-10-09T20:37:00Z');
+  // The status poll, the proxy's unreachable reply and the card all agree.
+  const fleet = model.normalizeFleet(status([{ instance_id: 'inst_new', label: 'new', trusted: true, online: false, last_seen: zero }]));
+  const fresh = fleet.peers.find((p) => p.name === 'new');
+  assert.equal(fresh.lastSeen, null);
+  assert.equal(fleet.peers.find((p) => p.name === 'lab').lastSeen, '2026-10-09T20:37:00Z');
+  const failure = model.classifyFailure(502, { code: 'peer_unreachable', reason: 'peer_offline', last_seen: zero });
+  assert.equal(failure.lastSeen, null);
+  assert.equal(model.cardView(fresh, { failure }, 1000).lastSeen, null, 'the map card says "Unreachable." without a date');
+});
+
 test('card view distinguishes stale data, unreachable peers and absent summaries', async (t) => {
   const { model } = await load(t);
   const peer = { id: 'p', local: false, online: true };
@@ -65,8 +80,8 @@ test('card view distinguishes stale data, unreachable peers and absent summaries
   // A requestable or non-transport entry always shows, whatever its name.
   const restricted = model.cardView(peer, { summary: { peer_view: { omitted: [{ feature: 'node.exec', requires: 'node.exec', requestable: true, transport: false }, { feature: 'terminals', requestable: true }, { feature: 'spawn.inline', transport: false }] } }, receivedAt: 1000 }, 2000);
   assert.deepEqual(restricted.omitted, ['node.exec', 'terminals', 'spawn.inline']);
-  const stale = model.cardView(peer, { summary: { shared_agents: 4 }, receivedAt: 0, failure: model.classifyFailure(502, { code: 'peer_unreachable', reason: 'peer_offline', last_seen: 'x' }) }, 840000);
-  assert.equal(stale.presence, 'offline'); assert.equal(stale.stale, true); assert.equal(model.fmtAge(stale.ageMs), '14 min'); assert.equal(stale.lastSeen, 'x');
+  const stale = model.cardView(peer, { summary: { shared_agents: 4 }, receivedAt: 0, failure: model.classifyFailure(502, { code: 'peer_unreachable', reason: 'peer_offline', last_seen: '2026-10-09T20:37:00Z' }) }, 840000);
+  assert.equal(stale.presence, 'offline'); assert.equal(stale.stale, true); assert.equal(model.fmtAge(stale.ageMs), '14 min'); assert.equal(stale.lastSeen, '2026-10-09T20:37:00Z');
   assert.equal(model.classifyFailure(504, { code: 'peer_unreachable', reason: 'peer_timeout' }).kind, 'timeout');
   assert.equal(model.classifyFailure(404, null).kind, 'unavailable');
   assert.equal(model.classifyFailure(403, { code: 'not_trusted' }).kind, 'not_trusted');
@@ -541,7 +556,7 @@ test('node self-update: the card shows the version and an available update; the 
   const q = (s) => mounted.container.ownerDocument.querySelector(s);
   const selfCard = mounted.container.querySelector('[aria-label="desk node"]');
   assert.match(selfCard.textContent, /v1\.2\.0 ↑ v1\.3\.0 update…/);
-  assert.match(mounted.container.querySelector('[aria-label="forge node"]').textContent, /v1\.3\.0 manage…/);
+  assert.match(mounted.container.querySelector('[aria-label="forge node"]').textContent, /v1\.3\.0 installation…/);
   const settle = () => harness.act(() => new Promise((r) => setTimeout(r, 25)));
   await harness.act(() => selfCard.querySelector('[data-fleet="node-update"]').click());
   await settle();

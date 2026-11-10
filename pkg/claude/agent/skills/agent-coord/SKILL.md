@@ -86,6 +86,16 @@ The output has a `Headers:` block (Message-ID, From, To, Group, Subject,
 Date, **Reply-To**, **Reply-Cmd**) followed by `Body:`. Reading marks
 the message as read; pass `--keep-unread` if you want to defer that.
 
+A message with attachments says so. The files are out of a sandbox's reach, so
+fetch them through the daemon; it prints where each one landed:
+
+```bash
+tclaude agent inbox attachment 42              # all of them, to a new temp dir
+tclaude agent inbox attachment 42 mock.png -o mock.png
+```
+
+To send one, add `--attach <file>` to `agent message` or `agent reply`.
+
 The `Reply-To` and `Reply-Cmd` headers are how you reply — see below.
 
 To browse multiple messages:
@@ -135,7 +145,8 @@ body
 EOF
 ```
 
-`message`, `msg`, and `send` are command aliases. The recipient can be the
+`message`, `msg`, and `send` are command aliases. `--cc <peer>` (repeatable) adds
+recipients, and `tclaude agent inbox sent` lists what you've sent. The recipient can be the
 first positional argument or supplied with the interchangeable `--to` /
 `--recipient` flags. Give exactly one recipient source. With a recipient flag,
 an optional positional argument is the message body.
@@ -293,7 +304,7 @@ vendor/model (see the policy-bound warning below).
 When you delegate work by spawning a fresh agent
 (`tclaude agent spawn [group] …`, needs `groups.members.spawn`), the launch shape is
 **not** simply "the flags you passed, else the harness default". Each launch
-field (`--harness`, `--model`, `--effort`, `--sandbox`, `--ask-for-approval`,
+field (`--harness`, `--model`, `--effort`, `--sandbox`, `--sandbox-impl`, `--ask-for-approval`,
 `--ask-user-question-timeout`) is resolved independently through this
 precedence, highest first:
 
@@ -420,7 +431,7 @@ generates no approval request for the reviewer to decide.
 
   Permissions live in three durable places:
   - **Defaults** — `agent.default_permissions` in
-    `~/.tclaude/config.json`. Granted to every agent.
+    `~/.tclaude/data/config.json`. Granted to every agent.
   - **Group grants** — live additive grants for every current member of an
     active group, configured in the dashboard's Groups tab under the group ⚙
     menu. They are membership policy rather than spawn-time copies; an
@@ -441,7 +452,8 @@ generates no approval request for the reviewer to decide.
     `permissions.revoke`) so by default only the human can run them.
 
   **Ad-hoc human approval.** If you need an action just this once,
-  every mutating command takes `--ask-human <duration>`:
+  most mutating commands take `--ask-human <duration>` (check `--help`; writes to
+  `templates`, `profiles`, `roles` and `sandbox-profiles`, and `cron` writes, do not):
 
   ```bash
   tclaude agent groups create foo --ask-human 30s
@@ -457,7 +469,7 @@ generates no approval request for the reviewer to decide.
 
 - `Error: tclaude agentd is not running.` → ask the human to start
   the daemon. The CLI no longer falls back to direct DB access.
-- `not in a shared group` → ask the human to add you and the peer to
+- `no shared group with …` → ask the human to add you and the peer to
   the same group.
 - `selector matches multiple conversations` → address the peer by its
   stable `agent_id` (shown by `tclaude agent ls` / `whoami`), which is

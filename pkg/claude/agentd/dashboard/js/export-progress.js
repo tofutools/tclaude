@@ -13,6 +13,8 @@
 
 import { esc } from './helpers.js';
 import { refuseInPeerView } from './peer-view-guard.js';
+import { downloadURL } from './download.js';
+import { binarySize } from './cell-format.js';
 
 // The steps, in ladder order. `label` is the modal checklist line; `short` is
 // the Jobs-tab stepper chip. The first three are activities keyed by the job
@@ -86,24 +88,14 @@ function exportChecklistSteps(status, failedAt) {
 // the Jobs tab's per-row download button.
 function triggerExportDownload(jobId) {
   if (refuseInPeerView('Export download')) return;
-  const a = document.createElement('a');
-  a.href = `/api/export-jobs/${encodeURIComponent(jobId)}/artifact`;
-  a.download = '';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  downloadURL(`/api/export-jobs/${encodeURIComponent(jobId)}/artifact`);
 }
 
 // fmtBytes renders an artifact size for humans. Shared by the export modal's
 // history panel and the Jobs tab's export rows.
-function fmtBytes(n) {
-  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MiB`;
-  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)} KiB`;
-  return `${n} B`;
-}
+function fmtBytes(n) { return binarySize(n); }
 
 export {
   EXPORT_STEPS, activeExportStepIndex,
   exportChecklistSteps, renderExportChecklist, triggerExportDownload, fmtBytes,
 };
-// dashboard-imperative-boundary: browser-io

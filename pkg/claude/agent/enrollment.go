@@ -25,9 +25,9 @@ import (
 //                 `agent delete`.
 //   - reinstate — return a retired agent to active status.
 //
-// Auth: promote/reinstate need the agent.promote slug, retire needs
-// agent.retire — OR being an owner of a group containing the target.
-// Humans always pass. Same shape as the other cross-agent verbs.
+// Auth: promote and reinstate are CrossAgentAuth("promote"), retire is
+// CrossAgentAuth("retire"). Humans always pass. Same shape as the other
+// cross-agent verbs.
 
 type promoteParams struct {
 	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
@@ -43,14 +43,14 @@ func promoteCmd() *cobra.Command {
 			"\n\n" +
 			"If the target is a retired agent, promote reinstates it. " +
 			"\n\n" +
-			"Auth: requires global agent.promote, or groups.members.promote covering every current active group containing the target. Ownership automatically contributes the latter for owned groups.",
+			"Auth: " + CrossAgentAuth("promote"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *promoteParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
 			return nil
 		},
 		RunFunc: func(p *promoteParams, _ *cobra.Command, _ []string) {
-			os.Exit(runPromote(p, os.Stdout, os.Stderr))
+			os.Exit(runPromote(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -123,7 +123,7 @@ func retireCmd() *cobra.Command {
 			"This is the non-destructive alternative to `tclaude agent " +
 			"delete`, which permanently wipes the conversation. " +
 			"\n\n" +
-			"Auth: requires global agent.retire, or groups.members.retire covering every current active group containing the target. Ownership automatically contributes the latter for owned groups.",
+			"Auth: " + CrossAgentAuth("retire"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *retireParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
@@ -131,7 +131,7 @@ func retireCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *retireParams, _ *cobra.Command, _ []string) {
-			os.Exit(runRetire(p, os.Stdout, os.Stderr))
+			os.Exit(runRetire(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -145,13 +145,9 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	// Always send shutdown and delete_worktree explicitly so the request
 	// is unambiguous — the daemon defaults shutdown ON and delete_worktree
@@ -195,6 +191,7 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 			Action string `json:"action"`
 			Detail string `json:"detail"`
 		} `json:"worktree"`
+		remoteReply
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		// A dangling agent entry — an enrollment whose conversation data
@@ -210,7 +207,9 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	resp.printRemoteBanner(stdout)
 	fmt.Fprintf(stdout, "%s: retired → plain conversation (data kept, reinstatable)\n", short(resp.ConvID))
+	resp.printRemoteNote(stdout)
 	if len(resp.Outcome.GroupsLeft) > 0 {
 		fmt.Fprintf(stdout, "  left groups: %s\n", strings.Join(resp.Outcome.GroupsLeft, ", "))
 	}
@@ -251,15 +250,14 @@ func reinstateCmd() *cobra.Command {
 			"back — retire stripped those — so the reinstated agent starts " +
 			"fresh. " +
 			"\n\n" +
-			"Auth: requires the agent.promote permission OR being an owner " +
-			"of a group containing the target.",
+			"Auth: " + CrossAgentAuth("promote"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *reinstateParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
 			return nil
 		},
 		RunFunc: func(p *reinstateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runReinstate(p, os.Stdout, os.Stderr))
+			os.Exit(runReinstate(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

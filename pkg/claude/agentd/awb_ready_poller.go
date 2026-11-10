@@ -763,22 +763,23 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID, harnessName string) (str
 	}
 	body := w.spawnRequest(issueID, cwd, wtPath, wtBranch, harnessName)
 	raw, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/v1/groups/"+url.PathEscape(w.config.Group)+"/spawn", bytes.NewReader(raw))
-	req.SetPathValue("name", w.config.Group)
-	req = req.WithContext(context.WithValue(req.Context(), peerKey{}, &peer{PID: os.Getpid(), HumanTokenValid: true}))
-	req = req.WithContext(context.WithValue(req.Context(), reservedAgentIDContextKey{}, reservedAgentID))
-	rec := httptest.NewRecorder()
-	handleGroupSpawn(rec, req, g)
-	if rec.Code < 200 || rec.Code > 299 {
+	res := serveInternalGroupSpawn(newInternalSpawnRequest(internalSpawnRequest{
+		Path:            "/v1/groups/" + url.PathEscape(w.config.Group) + "/spawn",
+		Group:           w.config.Group,
+		Body:            raw,
+		Actor:           &peer{PID: os.Getpid(), HumanTokenValid: true},
+		ReservedAgentID: reservedAgentID,
+	}), g)
+	if !res.OK() {
 		if discard != "" {
 			_ = internalHumanJSON(handleWorktreeDiscard, "/v1/worktrees/discard", agent.WorktreeDiscardRequest{Token: discard}, nil)
 		}
-		w.audit("spawn", issueID, rec.Code)
-		return "", fmt.Errorf("spawn failed: HTTP %d: %s", rec.Code, strings.TrimSpace(rec.Body.String()))
+		w.audit("spawn", issueID, res.Status)
+		return "", fmt.Errorf("spawn failed: HTTP %d: %s", res.Status, strings.TrimSpace(string(res.Body)))
 	}
-	w.audit("spawn", issueID, rec.Code)
-	var out agent.SpawnResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+	w.audit("spawn", issueID, res.Status)
+	out, err := res.Response()
+	if err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(out.AgentID) == "" {

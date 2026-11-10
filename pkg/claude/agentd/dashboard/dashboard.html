@@ -15,6 +15,11 @@
 <!-- Shared process UI kit (js/process-kit.js): node glyphs, run states, scope. -->
 <link rel="stylesheet" href="/static/process-kit.css">
 <link rel="stylesheet" href="/static/process-terminal-overlay.css">
+<!-- The floating companion window (js/companion-island.js). -->
+<link rel="stylesheet" href="/static/companion.css">
+<link rel="stylesheet" href="/static/drawing-board.css">
+<!-- Standard controls (ui-* classes). Last, so a ui-* class wins its ties. -->
+<link rel="stylesheet" href="/static/ui.css">
 <!-- Browser-native package resolution for the no-build Preact/HTM islands.
      Every target is embedded and served from the authenticated agentd origin.
      Declared here, BEFORE the modulepreload block below, so the map is parsed
@@ -32,7 +37,8 @@
     "@preact/signals-core": "/static/third_party/preact/signals-core.module.js",
     "@preact/signals": "/static/third_party/preact/signals.module.js",
     "htm": "/static/third_party/preact/htm.module.js",
-    "markdown-it": "/static/third_party/markdown-it/markdown-it.esm.min.mjs"
+    "markdown-it": "/static/third_party/markdown-it/markdown-it.esm.min.mjs",
+    "codemirror": "/static/third_party/codemirror/codemirror.esm.min.mjs"
   }
 }
 </script>
@@ -165,7 +171,7 @@
 })();
 </script>
 </head>
-<body class="hide-processes dashboard-booting">
+<body class="dashboard-booting">
 <!-- Boot progress overlay. A direct child of <body> so it participates in the
      paint curtain (body.dashboard-booting > *), then dashboard.css re-exempts
      just this element so it stays visible while the rest of the shell is hidden.
@@ -184,7 +190,7 @@
        so the controls stay usable while the page is scrolled sideways. -->
   <div class="bar-inner header-inner">
   <h1>
-    <button class="slop-icon" type="button" title="Change dashboard mode" aria-label="Change dashboard mode">
+    <button data-ui-exempt class="slop-icon" type="button" title="Change dashboard mode" aria-label="Change dashboard mode">
       <img src="/static/tclaude-icon.svg" alt="">
       <span class="theme-mode-badge" aria-hidden="true"></span>
     </button>
@@ -227,13 +233,13 @@
        volume controls, which must stay reachable when shown. -->
   <span class="slop-hud" id="slop-hud">
     <span class="shell-contents-root" id="shell-credits-root"></span>
-    <button class="slop-hud-btn" id="slop-sound-btn" type="button" aria-pressed="true" title="Slop sound (music + FX): on — click to mute">🔊</button>
+    <button data-ui-exempt class="slop-hud-btn" id="slop-sound-btn" type="button" aria-pressed="true" title="Slop sound (music + FX): on — click to mute">🔊</button>
     <!-- The mixer — persistent music/FX volume sliders in a popover,
          anchored next to the master mute so all sound control lives in
          one spot. slop-volume.js owns it; values persist to
-         ~/.tclaude/config.json via /api/slop/volumes. -->
+         ~/.tclaude/data/config.json via /api/slop/volumes. -->
     <span class="slop-volume-wrap">
-      <button class="slop-hud-btn" id="slop-volume-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="slop-volume-pop" title="Volume — music &amp; FX sliders (saved to tclaude config)">🎚️</button>
+      <button data-ui-exempt class="slop-hud-btn" id="slop-volume-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="slop-volume-pop" title="Volume — music &amp; FX sliders (saved to tclaude config)">🎚️</button>
       <div id="slop-volume-pop" role="group" aria-label="Slop volume sliders">
         <label class="slop-vol-row" title="Music volume — the Vegas lounge radio">
           <span class="slop-vol-ico">🎵</span>
@@ -258,20 +264,20 @@
        panel's own on-dock collapse + edge tab. The remaining show/hide
        affordances are the in-dock "Hide ›/Furl ›" collapse and the edge chevron
        tab (dock.js drives both off the same body.dock-open state). -->
-  <!-- The label re-letters to "👁 familiars…" in 🧙 mode via the
+  <!-- The label re-letters to "👁 heroes…" in 🧙 mode via the
        .win-label-regular/.win-label-wizard span pair (CSS picks which shows —
        see the wizard windows button/modal rules in dashboard.css), matching
        how the sibling Power On / Shutdown chips swap to "✨ Awaken all" /
        "🌙 Slumber all". The aria-label names both voices so speech input
        matches either theme's visible label (WCAG Label-in-Name). -->
-  <button id="window-all-btn" data-act="window-modal-all" aria-label="Reveal or veil familiars — focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way."><span class="win-label-regular">🪟 windows…</span><span class="win-label-wizard">👁 familiars…</span></button>
+  <button id="window-all-btn" class="ui-btn ui-sm" type="button" data-act="window-modal-all" aria-label="Reveal or veil heroes — focus or unfocus agent terminal windows" title="Focus / unfocus agent windows — open a modal to bulk-attach (focus) or bulk-detach (unfocus) the terminal windows of every running agent on the dashboard. Window-only: the agents keep running either way."><span class="win-label-regular">🪟 windows…</span><span class="win-label-wizard">👁 heroes…</span></button>
   <!-- Power on / shutdown re-flavour to "✨ Awaken all" / "🌙 Slumber all" in
        🧙 mode via the .pwr-label-regular/.pwr-label-wizard span pair (CSS picks
        which shows — see the wizard power-controls rules in dashboard.css). The
        aria-label names both voices so speech input matches either theme's
        visible label (WCAG Label-in-Name), as the group buttons do. -->
-  <button id="power-on-all-btn" data-act="power-on-all" aria-label="Awaken all — power on all offline agents on the dashboard" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on all</span><span class="pwr-label-wizard">✨ Awaken all</span></button>
-  <button id="shutdown-all-btn" data-act="shutdown-all" aria-label="Slumber all — shutdown all running agents on the dashboard" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown all</span><span class="pwr-label-wizard">🌙 Slumber all</span></button>
+  <button id="power-on-all-btn" class="ui-btn ui-sm ui-btn-success" type="button" data-act="power-on-all" aria-label="Awaken all — power on all offline agents on the dashboard" title="Power on — resume every offline agent on the dashboard. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular">🟢 power on all</span><span class="pwr-label-wizard">✨ Awaken all</span></button>
+  <button id="shutdown-all-btn" class="ui-btn ui-sm ui-btn-danger" type="button" data-act="shutdown-all" aria-label="Slumber all — shutdown all running agents on the dashboard" title="Shutdown — stop every running agent on the dashboard. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular">🛑 shutdown all</span><span class="pwr-label-wizard">🌙 Slumber all</span></button>
   </div>
 </header>
 <!-- Slop-mode marquee — populated and ticked by slop-fx.js; hidden via
@@ -296,7 +302,7 @@
   <!-- Terminals — the in-SPA multiplexer (js/terminals-tab.js). Always shown,
        even with nothing open; the badge counts the live terminals plus
        background tmux sessions. -->
-  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals, plus tclaude sessions still running in the background. Each terminal can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
+  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals, plus tclaude sessions still running in the background."><span class="tab-label-regular">Collab</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
   <a data-tab="jobs" href="/automations" title="Automations — agent exports, recurring cron jobs, and trigger-driven standing orders"><span class="tab-label-regular">Automations</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚒</span> <span class="tab-title">Labours</span></span><span id="jobs-badge-root"></span></a>
   <!-- Processes lives under Automations: its sub-nav entry there is the
        visible way in, so this anchor is permanently CSS-hidden. It stays the
@@ -307,13 +313,13 @@
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🛡</span> <span class="tab-title">Wards</span></span></a>
   <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕊</span> <span class="tab-title">Missives</span></span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
   <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">💰</span> <span class="tab-title">Treasury</span></span></a>
-  <a data-tab="activity" href="/activity" title="Activity — the audit trail of daemon-proxied commands, tclaude's own daemon/CLI log, and dashboard poll performance"><span class="tab-label-regular">Activity</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span></a>
+  <a data-tab="diagnostics" href="/diagnostics" title="Diagnostics — the audit trail of daemon-proxied commands, tclaude's own daemon/CLI log, and dashboard poll performance"><span class="tab-label-regular">Diagnostics</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span><span id="doctor-badge-root"></span></a>
   <a data-tab="config" href="/config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📜</span> <span class="tab-title">Almanac</span></span></a>
   <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
        dashboard.css); vegas.js owns the player inside it. The label swaps to
        "🍺 The Tavern" in wizard mode (CSS body.wizard). -->
-  <button data-tab="vegas"><span class="tab-label-vegas">🎰 Vegas</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🍺</span> <span class="tab-title">The Tavern</span></span></button>
+  <button data-ui-exempt data-tab="vegas"><span class="tab-label-vegas">🎰 Vegas</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🍺</span> <span class="tab-title">The Tavern</span></span></button>
   <!-- Fleet node row (js/fleet-island.js): this node and its trusted
        federation peers, right-aligned in the tab bar so it costs no height.
        Empty when federation is off or has no trusted peers; the map anchor
@@ -336,32 +342,33 @@
       <!-- Preact owns the Groups query, visibility menu and column controls.
            display:contents keeps their existing filter-bar flex geometry. -->
       <div id="groups-filter-root"></div>
-      <button id="groups-cost-toggle" aria-label="Show agent costs" class="cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">$</button>
+      <!-- Ghost by operator exception: the $ toggle stays a quiet glyph. -->
+      <button id="groups-cost-toggle" aria-label="Show agent costs" class="ui-btn ui-btn-ghost ui-sm ui-btn-icon cost-toggle" type="button" aria-pressed="true" title="Show or hide the per-agent cost badge on each row. On a subscription this shows the hypothetical pay-per-token-equivalent cost (WHAT-IF); on pay-per-token it shows the real spend.">$</button>
       <span class="spacer"></span>
       <span id="dashboard-default-profile-control" class="toolbar-profile-control"></span>
       <span id="dashboard-default-sandbox-profile-control" class="toolbar-profile-control"></span>
       <!-- Label copy swaps per theme (pure-CSS span swap, like the spawn
            dialog's .spawn-title-* pair): a plain "+ new group" normally, an
            arcane "⚔ Form a party" in 🧙 wizard mode. -->
-      <button id="group-create-open" class="primary" title="Create a new agent group"><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></button>
+      <button id="group-create-open" class="ui-btn ui-btn-primary" type="button" title="Create a new agent group"><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></button>
       <div class="filter-bar-cog">
-        <button class="cog-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, and manage group resources" aria-label="More group actions"><span class="cog-glyph">⚙︎</span></button>
-        <div class="action-menu" role="menu">
+        <button class="ui-btn ui-btn-icon cog-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, and manage group resources" aria-label="More group actions"><span class="cog-glyph">⚙︎</span></button>
+        <div class="ui-menu ui-sm action-menu" role="menu">
           <!-- Type-to-filter over the items below. toolbar-actions-menu.js wires
                it through the shared menu-filter core (the same one the Preact
                per-group / per-agent cogs use) and sets the themed placeholder on
                open; the items themselves stay plain click targets. -->
-          <input class="action-menu-filter" type="text" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-label="Filter actions" placeholder="filter actions…">
-          <button role="menuitem" id="group-import-open" title="Import an agent .paf, or a group .zip / .paf produced by ⤓ export. The file decides which preview opens; nothing is written before you confirm. You can also drop a .paf onto the page."><span class="tpl-word-regular">⤒ import…</span><span class="tpl-word-wizard">⤒ unseal an archive</span></button>
-          <button role="menuitem" id="snapshots-open" title="This node's snapshot library: take, spawn from, export, share on a Board or publish agent snapshots, and see resilience policy status."><span class="tpl-word-regular">📸 snapshots…</span><span class="tpl-word-wizard">📸 captured familiars…</span></button>
-          <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
-          <button role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
-          <button role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ patterns…</span></button>
-          <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
-          <button role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
-          <button role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — filesystem and environment policy applied at agent launch"><span class="sandbox-word-regular">🛡 sandbox profiles…</span><span class="sandbox-word-wizard">🛡 wards…</span></button>
-          <button role="menuitem" id="spawn-harness-policy-open" title="Control which agent harnesses may spawn agents on other harnesses, with denial reasons returned to the spawning agent"><span class="theme-copy-regular">⇄ cross-harness spawns…</span><span class="theme-copy-wizard">⇄ cross-realm summons…</span></button>
-          <button role="menuitem" id="links-manage-open" data-act="links-manage" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
+          <input class="ui-input ui-sm action-menu-filter" type="text" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-label="Filter actions" placeholder="filter actions…">
+          <button class="ui-menu-item" type="button" role="menuitem" id="group-import-open" title="Import an agent .paf, or a group .zip / .paf produced by ⤓ export. The file decides which preview opens; nothing is written before you confirm. You can also drop a .paf onto the page."><span class="tpl-word-regular">⤒ import…</span><span class="tpl-word-wizard">⤒ unseal an archive</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="snapshots-open" title="This node's snapshot library: take, spawn from, export, share on a Board or publish agent snapshots, and see resilience policy status."><span class="tpl-word-regular">📸 snapshots…</span><span class="tpl-word-wizard">📸 captured heroes…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="profiles-manage-open" title="Manage spawn profiles — reusable bundles of the spawn dialog's fields (harness, model, effort, name, role, …) that pre-fill the spawn dialog and can be a group or dashboard default"><span class="profiles-word-regular">⧉ profiles…</span><span class="profiles-word-wizard">⧉ loadouts…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — filesystem and environment policy applied at agent launch"><span class="sandbox-word-regular">🛡 sandbox profiles…</span><span class="sandbox-word-wizard">🛡 wards…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="spawn-harness-policy-open" title="Control which agent harnesses may spawn agents on other harnesses, with denial reasons returned to the spawning agent"><span class="theme-copy-regular">⇄ cross-harness spawns…</span><span class="theme-copy-wizard">⇄ cross-realm summons…</span></button>
+          <button class="ui-menu-item" type="button" role="menuitem" id="links-manage-open" data-act="links-manage" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
       </div>
       <!-- ⏸ queued chip (queued-spawns-island.js): empty until a spawn is
@@ -385,12 +392,12 @@
       </span>
       <span class="theme-copy-wizard"><strong>party maneuvers:</strong>
         party banner → onto a party → bind beneath it; onto its top/bottom edge → reorder (or draw a top-level party back out) ·
-        familiar → another party ·
-        <em>Unbound</em> familiar → party ·
-        party familiar → <em>Unbound</em> (release) ·
+        hero → another party ·
+        <em>Unbound</em> hero → party ·
+        party hero → <em>Unbound</em> (release) ·
         <em>Plain scroll</em> → party (awaken + bind) ·
-        any familiar → <em>Banished</em> (banish) ·
-        <em>Banished</em> familiar → party (restore + bind)
+        any hero → <em>Banished</em> (banish) ·
+        <em>Banished</em> hero → party (restore + bind)
       </span>
     </aside>
   </section>
@@ -431,68 +438,6 @@
   <section id="tab-config">
     <!-- Preact exclusively owns the Config form and its load/edit/save state. -->
     <div id="config-root"></div>
-
-    <!-- Remote-access certificate management (JOH-278). Served over both the
-         loopback dashboard and the remote (mTLS + passphrase) listener — a
-         remote session is already a full control-plane operator. remote-admin.js
-         fills the dynamic parts (info/SANs/devices) and wires the forms. -->
-    <div class="cfg-section" id="cfg-remote-admin">
-      <h3>Remote access — certificate management</h3>
-      <p class="cfg-hint" style="padding-left:0">
-        Generate and manage the remote-access secret material (CA, device
-        <code>.p12</code> bundles, the login passphrase) without dropping to the
-        <code>tclaude remote-access</code> CLI.
-      </p>
-      <div id="ra-admin-msg" class="ra-msg" style="display:none"></div>
-
-      <div class="cfg-field">
-        <span class="cfg-label">Material</span>
-        <span class="cfg-hint" id="ra-admin-state" style="padding-left:0"></span>
-      </div>
-
-      <div class="cfg-field">
-        <span class="cfg-label">Cert valid for</span>
-        <div style="flex-basis:100%">
-          <div id="ra-admin-sans" class="ra-chips"></div>
-          <span class="cfg-hint" style="padding-left:0">The host names / IPs a device may dial without a certificate-name mismatch (the server cert's SANs).</span>
-          <div class="ra-inline-form">
-            <input type="text" id="ra-addhosts-input" placeholder="myhost.tailnet.ts.net, example.com" aria-label="Additional host names" autocomplete="off" spellcheck="false" />
-            <button type="button" id="ra-addhosts-btn">Add host name(s)</button>
-          </div>
-          <span class="cfg-hint" style="padding-left:0">Adds SANs to the <strong>server</strong> cert (keeps the existing CA), so a public URL / new name verifies — <em>installed devices keep working</em>, no reinstall. Restart agentd to serve the updated cert.</span>
-        </div>
-      </div>
-
-      <div class="cfg-field">
-        <span class="cfg-label">Devices</span>
-        <div style="flex-basis:100%">
-          <div id="ra-admin-devices" class="ra-devices"></div>
-          <div class="ra-inline-form">
-            <input type="text" id="ra-addclient-name" placeholder="device name (e.g. phone)" aria-label="New device name" autocomplete="off" spellcheck="false" />
-            <input type="password" id="ra-addclient-pw" placeholder=".p12 password" aria-label="New device .p12 password" autocomplete="new-password" />
-            <button type="button" id="ra-addclient-btn">Add device</button>
-          </div>
-          <span class="cfg-hint" style="padding-left:0">Issues a new <code>.p12</code> from the existing CA, then download it to install on the device. <button type="button" id="ra-ca-btn" class="ra-link">Download CA cert</button></span>
-        </div>
-      </div>
-
-      <details class="cfg-advanced" id="ra-setup-details">
-        <summary>First-time setup / regenerate material</summary>
-        <div class="cfg-advanced-body">
-          <p class="cfg-hint">Generate the CA + server cert + first device, set the login passphrase, and (optionally) enable the listener. If material already exists, <strong>regenerate</strong> rotates everything including the CA — this <strong>invalidates every installed device</strong> and they must reinstall.</p>
-          <div class="ra-form-grid">
-            <label>Bind <input type="text" id="ra-setup-bind" placeholder="0.0.0.0:8443" autocomplete="off" spellcheck="false" /></label>
-            <label>Extra host names <input type="text" id="ra-setup-hosts" placeholder="myhost.tailnet.ts.net (optional)" autocomplete="off" spellcheck="false" /></label>
-            <label>Login passphrase <input type="password" id="ra-setup-pass" autocomplete="new-password" /></label>
-            <label>Device .p12 password <input type="password" id="ra-setup-p12pw" autocomplete="new-password" /></label>
-            <label>First device name <input type="text" id="ra-setup-client" placeholder="phone" autocomplete="off" spellcheck="false" /></label>
-          </div>
-          <label class="cfg-inline"><input type="checkbox" id="ra-setup-enable" checked /> enable in config.json (restart agentd to start the listener)</label>
-          <label class="cfg-inline"><input type="checkbox" id="ra-setup-regenerate" /> regenerate even though material exists (rotates the CA — invalidates installed devices)</label>
-          <div class="ra-inline-form"><button type="button" id="ra-setup-btn" class="primary">Generate material</button></div>
-        </div>
-      </details>
-    </div>
   </section>
   <!-- Usage tab — three views under one nav tab (usage-hub-island.js owns
        the subnav, the Overview, and data-subview on this section, which CSS
@@ -514,14 +459,15 @@
   <section id="tab-map">
     <div id="fleetview-map-root"></div>
   </section>
-  <!-- Activity — Audit, Logs and Performance share one nav tab. The static
+  <!-- Diagnostics — Audit, Logs and Performance share one nav tab. The static
        sub-navigation is wired by activity-tab.js; each panel keeps its own
        bounded Preact island, which activates only while its subtab shows. -->
-  <section id="tab-activity">
-    <div class="access-subnav activity-subnav" role="tablist" aria-label="Activity views">
-      <a class="access-subtab activity-subtab active" data-subtab="audit" href="/activity/audit" role="tab" aria-selected="true" aria-controls="activity-audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">Deeds</span></a>
-      <a class="access-subtab activity-subtab" data-subtab="logs" href="/activity/logs" role="tab" aria-selected="false" aria-controls="activity-logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">Runes</span></a>
-      <a class="access-subtab activity-subtab" data-subtab="performance" href="/activity/performance" role="tab" aria-selected="false" aria-controls="activity-performance" title="Performance — daemon CPU/heap profiling captures, plus dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Performance</span><span class="tab-label-wizard">Alchemy</span></a>
+  <section id="tab-diagnostics">
+    <div class="ui-tabs activity-subnav" role="tablist" aria-label="Diagnostics views">
+      <a class="ui-tab activity-subtab active" data-subtab="audit" href="/diagnostics/audit" role="tab" aria-selected="true" aria-controls="activity-audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">Deeds</span></a>
+      <a class="ui-tab activity-subtab" data-subtab="logs" href="/diagnostics/logs" role="tab" aria-selected="false" aria-controls="activity-logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/data/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">Runes</span></a>
+      <a class="ui-tab activity-subtab" data-subtab="performance" href="/diagnostics/performance" role="tab" aria-selected="false" aria-controls="activity-performance" title="Performance — daemon CPU/heap profiling captures, plus dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Performance</span><span class="tab-label-wizard">Alchemy</span></a>
+      <a class="ui-tab activity-subtab" data-subtab="doctor" href="/diagnostics/doctor" role="tab" aria-selected="false" aria-controls="activity-doctor" title="Doctor — missing tools, incomplete setup, and decisions tclaude needs from you"><span class="tab-label-regular">Doctor</span><span class="tab-label-wizard">Apothecary</span><span id="doctor-subtab-badge-root"></span></a>
     </div>
     <div class="activity-panel active" id="activity-audit" role="tabpanel" aria-label="Audit">
       <div id="audit-root"></div>
@@ -538,6 +484,11 @@
     <div class="activity-panel" id="activity-performance" role="tabpanel" aria-label="Performance">
       <div id="profiles-root"></div>
       <div id="debug-root"></div>
+    </div>
+    <!-- Preact (js/doctor-island.js) owns the Doctor view; its badge is
+         mirrored onto the Diagnostics nav tab and this view's subtab. -->
+    <div class="activity-panel" id="activity-doctor" role="tabpanel" aria-label="Doctor">
+      <div id="doctor-root"></div>
     </div>
   </section>
   <!-- Messages tab — a mail client for introspecting every mailbox the
@@ -614,12 +565,16 @@
      dashPrefs (tclaude.dash.dock.open) so CSS reflows <main> to reclaim the
      space when collapsed rather than overlaying dead area. NB: named `dock`,
      not `palette`, because js/palette.js is the Ctrl/Cmd-K command palette. -->
+<!-- The side panel's predictive-peek debug overlay (js/side-panel-predict-debug.js); empty unless its flag is on. -->
+<div id="side-panel-predict-debug"></div>
 <aside id="agent-dock" class="dock" aria-label="Palette of profiles, templates and roles">
   <!-- Edge toggle — a chevron tab on the dock's left edge, pinned to the
        viewport so it stays reachable in both states. Its glyph is CSS-rotated
        per open state; dock.js keeps its title/aria in sync. -->
-  <button id="dock-toggle" class="dock-toggle" type="button" aria-controls="agent-dock" aria-expanded="true" title="Collapse the palette">
+  <button data-ui-exempt id="dock-toggle" class="dock-toggle" type="button" aria-controls="agent-dock" aria-expanded="true" title="Collapse the palette">
     <span class="dock-toggle-chevron" aria-hidden="true">›</span>
+    <!-- The Collab panel's background count while it is folded (collab-rail.js renders it). -->
+    <span id="dock-toggle-count"></span>
   </button>
   <div class="dock-inner">
     <!-- Dock header (JOH-388 req 6 dropped the decorative "Palette" title). It
@@ -635,13 +590,16 @@
     <div class="dock-head">
       <div class="dock-head-main">
         <span id="dock-actions-primary" class="dock-actions"></span>
-        <button id="dock-collapse" class="dock-collapse" type="button" aria-controls="agent-dock" title="Hide the palette" aria-label="Hide the palette"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
+        <button id="dock-collapse" class="ui-btn ui-btn-ghost ui-sm dock-collapse" type="button" aria-controls="agent-dock" title="Hide the panel" aria-label="Hide the panel"><span class="tpl-word-regular">Hide ›</span><span class="tpl-word-wizard">Furl ›</span></button>
       </div>
       <div id="dock-actions-profile" class="dock-actions-profile"></div>
     </div>
     <!-- The dock Preact island renders the three keyed <details> sections here
          off the live snapshot; open/collapsed state persists via dashPrefs. -->
     <div id="dock-body" class="dock-body"></div>
+    <!-- The Collab view's body in the same shell (side-panel.js): its list of
+         live agents and resources, rendered by the Collab view (collab-rail.js). -->
+    <div id="dock-collab-body" class="dock-body dock-collab-body" hidden></div>
   </div>
 </aside>
 <!-- Horizontal-scroll clearance spacer (JOH-388 req 3). An invisible, inert
@@ -663,6 +621,10 @@
 <footer>
   <div class="footer-inner">
     <span class="shell-contents-root" id="shell-meta-root"></span>
+    <!-- The overlay windows' dock (overlay-dock.js): ☰ and the minimized windows,
+         in whatever room the bar has left. -->
+    <span class="footer-dock-root" id="overlay-dock-root"></span>
+    <span class="shell-contents-root" id="shell-open-mrs-root"></span>
     <span class="shell-contents-root" id="shell-open-prs-root"></span>
   </div>
 </footer>
@@ -695,7 +657,7 @@
 <div class="access-banner" id="access-banner" role="alert" aria-live="assertive" aria-hidden="true">
   <span class="access-banner-sigil" aria-hidden="true">🔐</span>
   <span class="access-banner-text" id="access-banner-text">An agent is requesting access</span>
-  <button class="access-banner-review" id="access-banner-review" type="button">Review</button>
+  <button class="ui-btn ui-sm access-banner-review" id="access-banner-review" type="button">Review</button>
 </div>
 <div id="shell-confirm-root"></div>
 <!-- Preact-owned combined member editor. Its local draft remains mounted
@@ -757,8 +719,8 @@
     <path d="M6 7l1 12.5a2 2 0 0 0 2 1.9h6a2 2 0 0 0 2-1.9L18 7"/>
     <path d="M10 11.5v6M14 11.5v6"/>
   </svg>
-  <!-- 🧙 wizard-mode glyph: retiring an agent IS "banishing a familiar"
-       (the retire dialog already says "Banish this familiar?"), so the
+  <!-- 🧙 wizard-mode glyph: retiring an agent IS "banishing a hero"
+       (the retire dialog already says "Banish this hero?"), so the
        mundane trashcan becomes a swirling banishment portal. body.wizard
        hides the SVG above and shows this vortex instead. -->
   <span class="dnd-trash-glyph-wizard" aria-hidden="true">🌀</span>
@@ -771,8 +733,11 @@
        the duration of a template drag) picks the template pair, and body.wizard
        picks the voice within whichever pair is active. A group's saved-process
        chip drag (groups-saved-process-dnd.js) sets .dnd-trash-unpin-mode for
-       the Remove/Unbind pair. -->
-  <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span><span class="dnd-trash-label-template">Delete</span><span class="dnd-trash-label-template-wizard">Unmake</span><span class="dnd-trash-label-unpin">Remove</span><span class="dnd-trash-label-unpin-wizard">Unbind</span></span>
+       the Remove/Unbind pair. A Collab panel row's drag (collab-rail-bin.js)
+       retires an agent (the default pair), deletes a drawing board or page
+       (the template pair), or sets .dnd-trash-kill-mode for a shell or
+       session: Kill/Dispel. -->
+  <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span><span class="dnd-trash-label-template">Delete</span><span class="dnd-trash-label-template-wizard">Unmake</span><span class="dnd-trash-label-unpin">Remove</span><span class="dnd-trash-label-unpin-wizard">Unbind</span><span class="dnd-trash-label-task">Drop</span><span class="dnd-trash-label-task-wizard">Abandon</span><span class="dnd-trash-label-kill">Kill</span><span class="dnd-trash-label-kill-wizard">Dispel</span></span>
 </div>
 <div id="shell-toast-root"></div>
 <!-- The Preact shell owns the command palette overlay. It uses the shared
@@ -783,6 +748,15 @@
      Browse… opens it above its still-visible caller, and ManagementOverlay's
      DOM-order topmost check must give the picker Escape/Tab ownership. -->
 <div id="directory-picker-root"></div>
+<!-- The floating companion: chips, peek and window over every view. -->
+<!-- The overlay windows' dock and saved set. The windows are in the companion's root. -->
+<div id="drawing-board-overlay-root"></div>
+<div id="companion-root"></div>
+<div id="voice-wake-root"></div>
+<!-- The quick permissions panel (js/access-panel-island.js), raised by event. -->
+<div id="access-panel-root"></div>
+<!-- The source download's question and progress (js/knowledge-source-island.js). -->
+<div id="knowledge-source-root"></div>
 
 <!-- Vendored xterm addons are small classic scripts which attach plain globals.
      The larger xterm core is loaded by js/xterm-loader.js only when the first

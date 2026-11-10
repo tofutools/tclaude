@@ -11,6 +11,12 @@ on:
       - pkg/claude/common/db/**
       - pkg/claude/routeadapter/**
       - pkg/claude/session/**
+      # Dashboard-only changes cannot move a route probe. Negations must
+      # follow the patterns they carve out of; they mirror what
+      # scripts/ci/classify-changes.py calls ui.
+      - '!pkg/claude/agentd/dashboard/**'
+      - '!pkg/claude/agentd/jstest/**'
+      - '!pkg/claude/agentd/dashboard_*_test.go'
   workflow_dispatch:
 
 permissions:
@@ -98,8 +104,11 @@ jobs:
             ${{ runner.temp }}/group-route-feasibility-linux.log
             ${{ runner.temp }}/tcl-952-linux-route-smoke.log
 
+  # On demand only: PRs run no macOS jobs (hosted macOS runners are
+  # concurrency-capped; see "macOS CI" in CONTRIBUTING.md).
   darwin:
     name: Darwin Seatbelt port-pool feasibility
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     steps:
       - name: Checkout requested commit

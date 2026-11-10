@@ -248,6 +248,30 @@ func AgentRelaunchProfileForConv(convID string) (*AgentRelaunchProfile, error) {
 	return decodeAgentRelaunchProfile(raw)
 }
 
+// ConversationResumeCwds returns the distinct directories harnessName
+// conversations were recorded in.
+func ConversationResumeCwds(harnessName string) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT DISTINCT json_extract(profile_json, '$.cwd') FROM conversation_resume_profiles
+		WHERE json_extract(profile_json, '$.harness') = ? AND json_extract(profile_json, '$.cwd') != ''`, harnessName)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation resume directories: %w", err)
+	}
+	defer rows.Close()
+	var cwds []string
+	for rows.Next() {
+		var cwd string
+		if err := rows.Scan(&cwd); err != nil {
+			return nil, err
+		}
+		cwds = append(cwds, cwd)
+	}
+	return cwds, rows.Err()
+}
+
 // ConversationResumeProfileForConv loads conversation-owned resume facts. It
 // never consults sessions and works for conversations without an agent.
 func ConversationResumeProfileForConv(convID string) (*ConversationResumeProfile, error) {
@@ -307,6 +331,31 @@ func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source
 	if convID == "" || source == "" {
 		return errors.New("SetAgentCodexAppServerSelectionForConv: conversation and source required")
 	}
+	return setAgentRelaunchFieldsForConv(convID, "SetAgentCodexAppServerSelectionForConv", func(p *AgentRelaunchProfile) {
+		p.CodexAppServer = boolPtr(selected)
+		p.CodexAppServerSource = stringPtr(source)
+	})
+}
+
+// SetAgentPiDriveForConv records whether a pi agent is driven through
+// tclaude's pi extension. The drive has no session column or session-new flag:
+// the extension asks agentd (pi_drive.go), which reads it from here, so a
+// clone or an imported agent that should keep the drive needs it written on
+// its own new agent.
+func SetAgentPiDriveForConv(convID string, on bool) error {
+	return setAgentRelaunchFieldsForConv(convID, "SetAgentPiDriveForConv", func(p *AgentRelaunchProfile) {
+		p.PiDrive = boolPtr(on)
+	})
+}
+
+// setAgentRelaunchFieldsForConv applies a field change to the conv's agent
+// relaunch profile in one transaction, starting an empty profile when the
+// agent has none yet, so unrelated durable launch intent is preserved.
+func setAgentRelaunchFieldsForConv(convID, caller string, apply func(*AgentRelaunchProfile)) error {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return errors.New(caller + ": conversation required")
+	}
 	d, err := Open()
 	if err != nil {
 		return err
@@ -323,7 +372,7 @@ func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source
 		JOIN agents a ON a.agent_id = ac.agent_id
 		WHERE ac.conv_id = ?`, convID).Scan(&agentID, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("SetAgentCodexAppServerSelectionForConv: conversation %s is not an agent", convID)
+		return fmt.Errorf("%s: conversation %s is not an agent", caller, convID)
 	}
 	if err != nil {
 		return err
@@ -335,8 +384,7 @@ func SetAgentCodexAppServerSelectionForConv(convID string, selected bool, source
 	if profile == nil {
 		profile = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
 	}
-	profile.CodexAppServer = boolPtr(selected)
-	profile.CodexAppServerSource = stringPtr(source)
+	apply(profile)
 	encoded, err := encodeRelaunchProfile(*profile)
 	if err != nil {
 		return err
@@ -566,6 +614,29 @@ func AssignAgentSandboxImplementation(
 	harnessBuiltinMode string,
 	source string,
 ) error {
+	return assignAgentSandboxImplementation(agentID, implementation, harnessBuiltinMode, source, false)
+}
+
+// AssignAgentSandboxImplementationLeavingOpenCodeState also forgets the agent's
+// OpenCode state allocation, in the same transaction: the allocation says where
+// lookups read the conversation, the posture says where the agent runs, and
+// they must not disagree after a crash.
+func AssignAgentSandboxImplementationLeavingOpenCodeState(
+	agentID string,
+	implementation string,
+	harnessBuiltinMode string,
+	source string,
+) error {
+	return assignAgentSandboxImplementation(agentID, implementation, harnessBuiltinMode, source, true)
+}
+
+func assignAgentSandboxImplementation(
+	agentID string,
+	implementation string,
+	harnessBuiltinMode string,
+	source string,
+	forgetOpenCodeState bool,
+) error {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return errors.New("AssignAgentSandboxImplementation: agent_id required")
@@ -617,6 +688,11 @@ func AssignAgentSandboxImplementation(
 	if _, err := tx.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`,
 		encoded, agentID); err != nil {
 		return err
+	}
+	if forgetOpenCodeState {
+		if _, err := tx.Exec(`DELETE FROM opencode_agent_state_allocations WHERE agent_id = ?`, agentID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -856,21 +932,6 @@ func BackfillDurableRelaunchProfilesFromLatestSession(convID string) error {
 		return err
 	}
 	return tx.Commit()
-}
-
-// SetConversationResumeProvenance updates only conversation-owned physical
-// identity. Empty is meaningful: a failed controlled-stop capture invalidates
-// unattended resume without discarding the remaining conversation facts.
-func SetConversationResumeProvenance(convID, provenance string) error {
-	p, err := ConversationResumeProfileForConv(convID)
-	if err != nil {
-		return err
-	}
-	if p == nil {
-		return fmt.Errorf("conversation %q has no durable resume profile", convID)
-	}
-	p.ResumeProvenance = provenance
-	return SetConversationResumeProfile(convID, *p)
 }
 
 // projectSessionRelaunchProfilesTx copies a session's current launch snapshot

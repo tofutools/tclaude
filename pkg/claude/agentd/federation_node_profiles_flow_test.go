@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -380,5 +381,20 @@ func TestFederation_NodeProfileEmptyWorkerDefaultsPreserveLegacySpawn(t *testing
 			require.Empty(t, snapshot.Permissions)
 			fh.f.AssertGroupMember("team", a.CurrentConvID, "legacy-worker", 5*time.Second)
 		})
+	}
+}
+
+// A node profile refuses the same unscoped grants the grant route refuses:
+// the receiving grants that need a local group (tcl-7a6axl).
+func TestFederationNodeProfileRequiresGroupScopeLikeGrants(t *testing.T) {
+	fh := newFedHarness(t)
+	fh.f.HaveGroup("landing")
+	for _, slug := range []string{agentd.PermAgentsReceive, agentd.PermAgentsTeleportReceive, agentd.PermAgentsReceivePermissions} {
+		rec := fedHuman(t, fh.f, http.MethodPost, "/v1/federation/profiles", map[string]any{"name": "p-" + strings.ReplaceAll(slug, ".", "-"), "definition": map[string]any{"peer_grants": []any{map[string]any{"slug": slug}}}})
+		require.Equal(t, 400, rec.Code, "profile with unscoped %s: %s", slug, rec.Body.String())
+		rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": slug})
+		require.Equal(t, 400, rec.Code, "unscoped %s grant: %s", slug, rec.Body.String())
+		rec = fedHuman(t, fh.f, http.MethodPost, "/v1/federation/profiles", map[string]any{"name": "s-" + strings.ReplaceAll(slug, ".", "-"), "definition": map[string]any{"peer_grants": []any{map[string]any{"slug": slug, "scope": "group=landing"}}}})
+		require.Equal(t, 200, rec.Code, "profile with %s on a group: %s", slug, rec.Body.String())
 	}
 }

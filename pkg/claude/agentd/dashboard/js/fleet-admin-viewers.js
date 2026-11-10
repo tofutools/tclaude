@@ -2,12 +2,14 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { viewersFocus } from './remote-viewers.js';
+import { Button } from './ui-components.js';
+import { errText } from './cell-format.js';
+import { FaTable } from './fa-table.js';
+import { peerLabelFor } from './fleet-admin-model.js';
 
 const html = htm.bind(h);
 
 const POLL_MS = 5000;
-
-function errText(error) { return error?.message || String(error); }
 
 function since(t, now) {
   const s = Math.max(0, Math.round((now - Date.parse(t)) / 1000));
@@ -33,7 +35,8 @@ export function ViewersPanel({ view, actions, confirm, toast, timers = globalThi
     loop();
     return () => { off = true; timers.clearTimeout(t); };
   }, [tick]);
-  const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
+  const label = (id) => peerLabelFor(view.trusted, id);
+  const cellLabel = (id) => peerLabelFor(view.trusted, id, { short: true });
   const unrestricted = (id) => view.trusted.find((r) => r.id === id)?.level === 'unrestricted';
   const kick = (v) => confirm({
     title: `Disconnect ${label(v.peer)} from ${v.session || v.agent}?`,
@@ -52,17 +55,16 @@ export function ViewersPanel({ view, actions, confirm, toast, timers = globalThi
   if (!rows.length && !error && !focus) return null;
   return html`<div class="fa-viewers" id="fleet-viewers">
     <h4>Watching this node's terminals now <span class="muted">${rows.length}</span></h4>
-    ${focus && html`<div class="muted" id="fleet-viewers-focus">${shown.length ? 'Showing who views' : 'No one is viewing'} <code title=${focus}>${shown[0]?.session || focus}</code> now · <button type="button" class="fa-link" onClick=${() => { viewersFocus.value = ''; }}>show all</button></div>`}
+    ${focus && html`<div class="muted" id="fleet-viewers-focus">${shown.length ? 'Showing who views' : 'No one is viewing'} <code title=${focus}>${shown[0]?.session || focus}</code> now · <${Button} size="sm" variant="link" class="fa-link" onClick=${() => { viewersFocus.value = ''; }}>show all<//></div>`}
     ${error && html`<div class="fa-danger">${error}</div>`}
-    ${shown.length > 0 && html`<table class="fa-table"><thead><tr><th>Peer</th><th>Agent</th><th>Group</th><th>Mode</th><th>For</th><th></th></tr></thead>
-      <tbody>${shown.map((v) => html`<tr key=${v.id} data-viewer=${v.id}>
-        <td>${label(v.peer)}</td>
+    ${shown.length > 0 && html`<${FaTable} head=${['Peer', 'Agent', 'Group', 'Mode', 'For', '']}>${shown.map((v) => html`<tr key=${v.id} data-viewer=${v.id}>
+        <td>${cellLabel(v.peer)}</td>
         <td><code title=${v.agent}>${v.session || v.agent}</code></td>
         <td>${v.group || ''}</td>
         <td class=${v.read_only ? 'muted' : 'fa-warn'}>${v.read_only ? 'watching' : 'interactive'}</td>
         <td class="muted">${v.started ? since(v.started, now()) : ''}</td>
-        <td class="fa-acts"><button type="button" class="fa-danger" data-fa="kick" onClick=${() => kick(v)}>Disconnect…</button></td>
-      </tr>`)}</tbody></table>`}
+        <td class="fa-acts"><${Button} size="sm" variant="ghost danger" data-fa="kick" onClick=${() => kick(v)}>Disconnect…<//></td>
+      </tr>`)}<//>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation viewers [--session …]</code>, <code>tclaude federation kick ID</code></div>
   </div>`;
 }

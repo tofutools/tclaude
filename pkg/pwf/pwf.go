@@ -48,12 +48,23 @@ const (
 
 	maxTitle   = 200
 	maxSummary = 2000
+	// maxCredit bounds Author and Licence.
+	maxCredit = 200
 )
 
 var (
 	templateIDRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 	hashRE       = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
+
+// FeatureLoops marks a workflow with bounded loops (Workflow.Loops). A reader
+// that predates loops cannot show them in its review, so the marker makes it
+// refuse the file by name instead. Files written before the marker existed
+// carry loops without it and still open.
+const FeatureLoops = "loops"
+
+// knownFeatures are the requires values this reader understands.
+var knownFeatures = map[string]bool{FeatureLoops: true}
 
 // Manifest is manifest.json: the format header and every entry's hash.
 type Manifest struct {
@@ -70,18 +81,24 @@ type Manifest struct {
 
 // Workflow is workflow.json: what the workflow is and what it needs, derived
 // from the templates so a reader can review it without walking the graph.
-// A reader recomputes everything but Title and Summary and refuses a file
+// A reader recomputes everything but the exporter's text (Title, Summary,
+// Author and Licence) and refuses a file
 // whose workflow.json disagrees with its templates.
 type Workflow struct {
 	Title   string `json:"title"`
 	Summary string `json:"summary,omitempty"`
+	// Author and Licence are what the exporter says about the workflow. Only a
+	// signature ties a file to anyone, so neither is proof of who wrote it.
+	Author  string `json:"author,omitempty"`
+	Licence string `json:"licence,omitempty"`
 	Root    string `json:"root"`
 	// Templates lists every template in the file, root first. Head marks the
 	// version an unpinned subprocess reference to that id resolves to.
 	Templates []TemplateEntry `json:"templates"`
 	Params    []Param         `json:"params"`
-	// Roles are the agent roles steps ask for (Performer.Profile on agent
-	// performers); an importer maps each to a local role.
+	// Roles are the agent roles steps ask for (Performer.Profile or
+	// Performer.Role on agent performers); an importer maps each to a local
+	// role.
 	Roles []Use `json:"roles"`
 	// Programs are every command a step would run. Nothing runs on import;
 	// starting a run asks the operator to authorize each program profile.
@@ -151,6 +168,8 @@ type Bundle struct {
 	Root      string
 	Title     string
 	Summary   string
+	Author    string
+	Licence   string
 	Readme    []byte
 	Templates []Template
 }
@@ -185,6 +204,9 @@ type Archive struct {
 	// file does not carry. Readers recompute it rather than trusting the
 	// file, so it is not part of workflow.json.
 	Problems []string
+	// Paths are the machine-specific paths the file carries (see pathscan.go),
+	// recomputed the same way.
+	Paths []PathFinding
 }
 
 // Root returns the root template.
@@ -316,6 +338,12 @@ func checkClosure(root string, byRef map[string]*Template, order []string) ([]st
 
 // Summarize derives workflow.json's computed fields from the templates.
 func Summarize(root string, byRef map[string]*Template, order []string) Workflow {
+	return summarize(root, byRef, order, true)
+}
+
+// summarize leaves role selectors out of Roles when roleSelectors is false,
+// which is how files written before they were listed derive.
+func summarize(root string, byRef map[string]*Template, order []string, roleSelectors bool) Workflow {
 	w := Workflow{Root: root, Params: []Param{}, Roles: []Use{}, Programs: []Program{}, Assignees: []Use{}, Humans: []string{}}
 	for _, ref := range order {
 		t := byRef[ref]
@@ -341,6 +369,9 @@ func Summarize(root string, byRef map[string]*Template, order []string) Workflow
 				case model.PerformerAgent:
 					if p.Profile != "" {
 						roles[p.Profile] = append(roles[p.Profile], where)
+					}
+					if roleSelectors && p.Role != "" && p.Role != p.Profile {
+						roles[p.Role] = append(roles[p.Role], where)
 					}
 					if p.Assignee != "" {
 						assignees[p.Assignee] = append(assignees[p.Assignee], where)
@@ -432,31 +463,71 @@ func Problems(b Bundle) ([]string, error) {
 	return problems, err
 }
 
+// Assignees lists the steps of a bundle that name one specific agent.
+func Assignees(b Bundle) ([]Use, error) {
+	byRef, order, _, err := prepare(b)
+	if err != nil {
+		return nil, err
+	}
+	return Summarize(b.Root, byRef, order).Assignees, nil
+}
+
+// content is what a bundle writes, with paths relative to the workflow, in
+// either container.
+type content struct {
+	workflow Workflow
+	files    []contentFile
+}
+
+type contentFile struct {
+	name, mediaType string
+	data            []byte
+}
+
+func bundleContent(b Bundle) (*content, error) {
+	byRef, order, _, err := prepare(b)
+	if err != nil {
+		return nil, err
+	}
+	wf := Summarize(b.Root, byRef, order)
+	wf.Title, wf.Summary = workflowText(b, byRef[b.Root].Parsed)
+	wf.Author, wf.Licence = strings.TrimSpace(b.Author), strings.TrimSpace(b.Licence)
+	if err := wf.checkText(); err != nil {
+		return nil, err
+	}
+	workflow, err := marshal(wf)
+	if err != nil {
+		return nil, err
+	}
+	c := &content{workflow: wf, files: []contentFile{{WorkflowPath, "application/json", workflow}}}
+	if len(b.Readme) > 0 {
+		c.files = append(c.files, contentFile{ReadmePath, "text/markdown", b.Readme})
+	}
+	for _, ref := range order {
+		name, err := templatePath(ref)
+		if err != nil {
+			return nil, fmt.Errorf("pwf: %w", err)
+		}
+		c.files = append(c.files, contentFile{name, TemplateMediaType, byRef[ref].Source})
+	}
+	return c, nil
+}
+
+// Roles lists the agent roles a bundle's steps ask for.
+func Roles(b Bundle) ([]Use, error) {
+	byRef, order, _, err := prepare(b)
+	if err != nil {
+		return nil, err
+	}
+	return Summarize(b.Root, byRef, order).Roles, nil
+}
+
 // Write packs a bundle into a PWF file. The bundle should be complete (the
 // root and every template its subprocess steps reference), but templates
 // with validation errors and references it does not carry are written as
 // they are and reported to readers as Archive.Problems.
 func Write(out io.Writer, b Bundle, opts WriteOptions) error {
-	byRef, order, _, err := prepare(b)
-	if err != nil {
-		return err
-	}
-	wf := Summarize(b.Root, byRef, order)
-	wf.Title = strings.TrimSpace(b.Title)
-	if wf.Title == "" {
-		wf.Title = byRef[b.Root].Parsed.Name
-	}
-	if wf.Title == "" {
-		wf.Title = byRef[b.Root].Parsed.ID
-	}
-	wf.Summary = strings.TrimSpace(b.Summary)
-	if wf.Summary == "" {
-		wf.Summary = byRef[b.Root].Parsed.Description
-	}
-	if err := checkText(wf.Title, wf.Summary); err != nil {
-		return err
-	}
-	workflow, err := marshal(wf)
+	c, err := bundleContent(b)
 	if err != nil {
 		return err
 	}
@@ -471,7 +542,7 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 	}
 	zw := zip.NewWriter(out)
 	man := Manifest{Format: Format, PwfVersion: Version, Kind: KindWorkflow, CreatedAt: created.UTC().Truncate(time.Second).Format(time.RFC3339),
-		Producer: opts.Producer, Requires: []string{}, Root: b.Root}
+		Producer: opts.Producer, Requires: requiredFeatures(c.workflow), Root: b.Root}
 	add := func(name, mediaType string, data []byte) error {
 		if int64(len(data)) > limits.MaxMetadataBytes {
 			return fmt.Errorf("pwf: entry %q exceeds %d bytes", name, limits.MaxMetadataBytes)
@@ -487,20 +558,8 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 		man.Entries = append(man.Entries, paf.Entry{Path: name, Bytes: int64(len(data)), SHA256: hex.EncodeToString(sum[:]), MediaType: mediaType})
 		return nil
 	}
-	if err := add(WorkflowPath, "application/json", workflow); err != nil {
-		return err
-	}
-	if len(b.Readme) > 0 {
-		if err := add(ReadmePath, "text/markdown", b.Readme); err != nil {
-			return err
-		}
-	}
-	for _, ref := range order {
-		name, err := templatePath(ref)
-		if err != nil {
-			return fmt.Errorf("pwf: %w", err)
-		}
-		if err := add(name, TemplateMediaType, byRef[ref].Source); err != nil {
+	for _, f := range c.files {
+		if err := add(f.name, f.mediaType, f.data); err != nil {
 			return err
 		}
 	}
@@ -533,6 +592,42 @@ func Write(out io.Writer, b Bundle, opts WriteOptions) error {
 		}
 	}
 	return zw.Close()
+}
+
+// workflowText is the title and summary a bundle is written with: the
+// exporter's, or the root template's when it gave none.
+func workflowText(b Bundle, root *model.Template) (string, string) {
+	title, summary := strings.TrimSpace(b.Title), strings.TrimSpace(b.Summary)
+	if title == "" {
+		title = root.Name
+	}
+	if title == "" {
+		title = root.ID
+	}
+	if summary == "" {
+		summary = root.Description
+	}
+	return title, summary
+}
+
+// requiredFeatures is the manifest's requires list for a workflow. It is never
+// nil: requires is a required field of the manifest.
+func requiredFeatures(w Workflow) []string {
+	features := []string{}
+	if len(w.Loops) > 0 {
+		features = append(features, FeatureLoops)
+	}
+	return features
+}
+
+func unknownFeatures(requires []string) []string {
+	var unknown []string
+	for _, feature := range requires {
+		if !knownFeatures[feature] {
+			unknown = append(unknown, feature)
+		}
+	}
+	return unknown
 }
 
 // Open reads and fully verifies a PWF file: container rules, manifest,
@@ -582,8 +677,8 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 	if m.Kind != KindWorkflow {
 		return nil, fmt.Errorf("pwf: unsupported kind %q", m.Kind)
 	}
-	if len(m.Requires) > 0 {
-		return nil, fmt.Errorf("pwf: file requires features this reader does not support: %s", strings.Join(m.Requires, ", "))
+	if unknown := unknownFeatures(m.Requires); len(unknown) > 0 {
+		return nil, fmt.Errorf("pwf: file requires features this reader does not support: %s", strings.Join(unknown, ", "))
 	}
 	listed := map[string]paf.Entry{}
 	for _, e := range m.Entries {
@@ -621,43 +716,57 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 		if hex.EncodeToString(sum[:]) != e.SHA256 {
 			return nil, fmt.Errorf("pwf: entry %q hash does not match the manifest", p)
 		}
-		switch {
-		case p == WorkflowPath, p == ReadmePath, strings.HasPrefix(p, TemplatesDir):
-		default:
-			return nil, fmt.Errorf("pwf: unknown entry %q", p)
-		}
 		contents[p] = data
 	}
+	if err := a.loadContents(contents); err != nil {
+		return nil, err
+	}
+	if err := a.readSignatures(files, read); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// loadContents checks a workflow's files, whichever container held them,
+// against a.Manifest and fills in everything but the signatures.
+func (a *Archive) loadContents(contents map[string][]byte) error {
+	for p := range contents {
+		if p != WorkflowPath && p != ReadmePath && !strings.HasPrefix(p, TemplatesDir) {
+			return fmt.Errorf("pwf: unknown entry %q", p)
+		}
+	}
+	m := &a.Manifest
 	raw, ok := contents[WorkflowPath]
 	if !ok {
-		return nil, errors.New("pwf: workflow.json is missing")
+		return errors.New("pwf: workflow.json is missing")
 	}
-	if err := paf.DecodeStrict(raw, &a.Workflow); err != nil {
-		return nil, fmt.Errorf("pwf: workflow.json: %w", err)
+	var err error
+	if err = paf.DecodeStrict(raw, &a.Workflow); err != nil {
+		return fmt.Errorf("pwf: workflow.json: %w", err)
 	}
-	if err := checkText(a.Workflow.Title, a.Workflow.Summary); err != nil {
-		return nil, err
+	if err := a.Workflow.checkText(); err != nil {
+		return err
 	}
 	a.Readme = contents[ReadmePath]
 	carried := map[string]bool{}
 	for _, te := range a.Workflow.Templates {
 		name, err := templatePath(te.Ref)
 		if err != nil {
-			return nil, fmt.Errorf("pwf: workflow.json: %w", err)
+			return fmt.Errorf("pwf: workflow.json: %w", err)
 		}
 		source, ok := contents[name]
 		if !ok {
-			return nil, fmt.Errorf("pwf: template %s is not in the file", te.Ref)
+			return fmt.Errorf("pwf: template %s is not in the file", te.Ref)
 		}
 		if a.Templates[te.Ref] != nil {
-			return nil, fmt.Errorf("pwf: template %s listed twice", te.Ref)
+			return fmt.Errorf("pwf: template %s listed twice", te.Ref)
 		}
 		parsed, ref, problems, err := parseTemplate(source)
 		if err != nil {
-			return nil, fmt.Errorf("pwf: %s: %w", name, err)
+			return fmt.Errorf("pwf: %s: %w", name, err)
 		}
 		if ref != te.Ref {
-			return nil, fmt.Errorf("pwf: %s hashes to %s", name, ref)
+			return fmt.Errorf("pwf: %s hashes to %s", name, ref)
 		}
 		a.Templates[ref] = &Template{Ref: ref, Head: te.Head, Source: source, Parsed: parsed, Problems: problems}
 		a.Order = append(a.Order, ref)
@@ -665,26 +774,33 @@ func Open(r io.ReaderAt, size int64, limits paf.Limits) (*Archive, error) {
 	}
 	for name := range contents {
 		if strings.HasPrefix(name, TemplatesDir) && !carried[name] {
-			return nil, fmt.Errorf("pwf: %s is not listed in workflow.json", name)
+			return fmt.Errorf("pwf: %s is not listed in workflow.json", name)
 		}
 	}
 	if len(a.Order) == 0 || a.Order[0] != m.Root || a.Workflow.Root != m.Root {
-		return nil, errors.New("pwf: the root template must be listed first in workflow.json and match the manifest")
+		return errors.New("pwf: the root template must be listed first in workflow.json and match the manifest")
 	}
 	if a.Problems, err = checkClosure(m.Root, a.Templates, a.Order); err != nil {
-		return nil, fmt.Errorf("pwf: %w", err)
+		return fmt.Errorf("pwf: %w", err)
 	}
 	derived := Summarize(m.Root, a.Templates, a.Order)
-	derived.Title, derived.Summary = a.Workflow.Title, a.Workflow.Summary
+	derived.Title, derived.Summary, derived.Author, derived.Licence = a.Workflow.Title, a.Workflow.Summary, a.Workflow.Author, a.Workflow.Licence
 	got, _ := marshal(a.Workflow)
 	want, _ := marshal(derived)
 	if !bytes.Equal(got, want) {
-		return nil, errors.New("pwf: workflow.json does not match its templates")
+		// A file written before role selectors were listed still opens, and
+		// reads as listing them, so its review matches a newer file's.
+		legacy := summarize(m.Root, a.Templates, a.Order, false)
+		legacy.Title, legacy.Summary, legacy.Author, legacy.Licence = a.Workflow.Title, a.Workflow.Summary, a.Workflow.Author, a.Workflow.Licence
+		if want, _ = marshal(legacy); !bytes.Equal(got, want) {
+			return errors.New("pwf: workflow.json does not match its templates")
+		}
+		a.Workflow.Roles = derived.Roles
 	}
-	if err := a.readSignatures(files, read); err != nil {
-		return nil, err
+	if a.Paths, err = scanPaths(a.Workflow, a.Readme, inOrder(a.Templates, a.Order)); err != nil {
+		return err
 	}
-	return a, nil
+	return nil
 }
 
 func (a *Archive) readSignatures(files map[string]*zip.File, read func(string) ([]byte, error)) error {
@@ -719,21 +835,26 @@ func (a *Archive) readSignatures(files map[string]*zip.File, read func(string) (
 // SignedBy reports whether a valid signature carries pub.
 func (a *Archive) SignedBy(pub ed25519.PublicKey) bool { return paf.SignedBy(a.Signatures, pub) }
 
-func checkText(title, summary string) error {
-	if title == "" || len(title) > maxTitle {
+func (w Workflow) checkText() error {
+	if w.Title == "" || len(w.Title) > maxTitle {
 		return fmt.Errorf("pwf: title must be 1..%d bytes", maxTitle)
 	}
-	if len(summary) > maxSummary {
+	if len(w.Summary) > maxSummary {
 		return fmt.Errorf("pwf: summary exceeds %d bytes", maxSummary)
 	}
-	for _, r := range summary {
+	for _, r := range w.Summary {
 		if (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f || (r >= 0x80 && r < 0xa0) {
 			return errors.New("pwf: summary has control characters")
 		}
 	}
-	for _, r := range title {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
-			return errors.New("pwf: title has control characters")
+	for name, text := range map[string]string{"title": w.Title, "author": w.Author, "licence": w.Licence} {
+		if name != "title" && len(text) > maxCredit {
+			return fmt.Errorf("pwf: %s exceeds %d bytes", name, maxCredit)
+		}
+		for _, r := range text {
+			if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+				return fmt.Errorf("pwf: %s has control characters", name)
+			}
 		}
 	}
 	return nil

@@ -217,6 +217,10 @@ func waitForDaemon(stderr io.Writer, available func() bool, policy daemonRetryPo
 	return false
 }
 
+// daemonAskHumanHint is the ask-human hint agentd puts in a permission
+// denial, phrased for API callers (agentd/identity.go askHumanHint).
+const daemonAskHumanHint = "X-Tclaude-Ask-Human: <duration>"
+
 // DaemonError represents a non-2xx response from the daemon. Callers can
 // inspect Code to map back to CLI exit codes.
 type DaemonError struct {
@@ -228,7 +232,9 @@ type DaemonError struct {
 
 func (e *DaemonError) Error() string {
 	if e.Msg != "" {
-		return e.Msg
+		// A denial names the API's ask-human header; on the command line the
+		// same thing is the --ask-human flag.
+		return strings.ReplaceAll(e.Msg, daemonAskHumanHint, "--ask-human <duration>")
 	}
 	return fmt.Sprintf("agentd returned %d", e.Status)
 }
@@ -249,6 +255,21 @@ func (e *DaemonError) IsDangling() bool {
 		return false
 	}
 	return body.Dangling
+}
+
+// parseAskHumanFlag is the prologue of a command that takes --ask-human: a
+// malformed value is an Error line and rcInvalidArg, and a set one says the
+// command will wait for the human. rc is rcOK otherwise.
+func parseAskHumanFlag(v string, stdout, stderr io.Writer) (time.Duration, int) {
+	ask, err := ParseAskHuman(v)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 0, rcInvalidArg
+	}
+	if ask > 0 {
+		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	}
+	return ask, rcOK
 }
 
 // ParseAskHuman normalises a --ask-human flag value into a duration.
@@ -294,7 +315,7 @@ type DaemonOpts struct {
 	// popup wait happens in the daemon BEFORE the endpoint runs, so a
 	// request that needs both waits for both.
 	Timeout time.Duration
-	// RetryOutput receives retry notices. Nil writes to os.Stderr. This is
+	// RetryOutput receives retry notices. Nil writes to cliStderr. This is
 	// primarily useful to callers that already expose an injectable stderr.
 	RetryOutput io.Writer
 	// NoRetry disables both connection and HTTP 5xx retries. Use it for
@@ -507,12 +528,43 @@ func DaemonGetRaw(path string) ([]byte, http.Header, error) {
 }
 
 func daemonGetRaw(path string) ([]byte, http.Header, error) {
+	return daemonGetRawWithOptions(path, DaemonOpts{})
+}
+
+// DaemonGetRawWithOptionsImpl is the seam for DaemonGetRawWithOptions, as
+// DaemonGetRawImpl is for DaemonGetRaw.
+var DaemonGetRawWithOptionsImpl = daemonGetRawWithOptions
+
+// DaemonGetRawWithOptions is DaemonGetRaw with opts: an AskHuman turns a
+// permission refusal into the operator's approval popup, as on the JSON
+// transport. Like DaemonPostRawWithOptions it honours AskHuman and
+// RetryOutput only; TargetConv, Timeout and NoRetry are not applied.
+func DaemonGetRawWithOptions(path string, opts DaemonOpts) ([]byte, http.Header, error) {
+	return DaemonGetRawWithOptionsImpl(path, opts)
+}
+
+// rawGetRequest builds a raw GET and the client to send it with.
+func rawGetRequest(path string, opts DaemonOpts) (*http.Request, *http.Client, error) {
 	req, err := http.NewRequest(http.MethodGet, "http://_"+path, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 	attachCallerIdentity(req)
-	resp, err := doDaemonRequest(httpClientWithTimeout(daemonRawTimeout), req, os.Stderr, defaultRetryPolicy())
+	client := httpClientWithTimeout(daemonRawTimeout)
+	if opts.AskHuman > 0 {
+		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
+		// Defensive: ParseAskHuman caps the popup well inside the raw budget.
+		client = httpClientWithTimeout(max(daemonRawTimeout, opts.AskHuman+30*time.Second))
+	}
+	return req, client, nil
+}
+
+func daemonGetRawWithOptions(path string, opts DaemonOpts) ([]byte, http.Header, error) {
+	req, client, err := rawGetRequest(path, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err := doDaemonRequest(client, req, retryOutput(opts.RetryOutput), defaultRetryPolicy())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -538,9 +590,39 @@ func DaemonPostRaw(path, contentType string, body []byte, out any) error {
 // carry small metadata for binary endpoints; opts preserves the same ad-hoc
 // human approval behavior as JSON commands.
 func DaemonPostRawWithOptions(path, contentType string, body []byte, headers http.Header, out any, opts DaemonOpts) error {
-	req, err := http.NewRequest(http.MethodPost, "http://_"+path, bytes.NewReader(body))
+	return DaemonPostRawWithOptionsImpl(path, contentType, body, headers, out, opts)
+}
+
+// DaemonPostRawWithOptionsImpl is the seam for DaemonPostRawWithOptions, as
+// DaemonRequestImpl is for the JSON transport: CLI flow tests reassign it
+// (with t.Cleanup restoration) to serve the upload from a test mux.
+var DaemonPostRawWithOptionsImpl = daemonPostRawWithOptions
+
+func daemonPostRawWithOptions(path, contentType string, body []byte, headers http.Header, out any, opts DaemonOpts) error {
+	raw, _, err := daemonPostRawBytes(path, contentType, body, headers, opts)
 	if err != nil {
 		return err
+	}
+	if out != nil && len(raw) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// DaemonPostRawBytes is a raw POST whose reply is passed through unparsed,
+// with its headers: a request for a rendered image (drawing-board export).
+// Like DaemonPostRawWithOptions it honours AskHuman and RetryOutput only.
+func DaemonPostRawBytes(path, contentType string, body []byte, opts DaemonOpts) ([]byte, http.Header, error) {
+	return DaemonPostRawBytesImpl(path, contentType, body, nil, opts)
+}
+
+// DaemonPostRawBytesImpl is the seam for DaemonPostRawBytes.
+var DaemonPostRawBytesImpl = daemonPostRawBytes
+
+func daemonPostRawBytes(path, contentType string, body []byte, headers http.Header, opts DaemonOpts) ([]byte, http.Header, error) {
+	req, err := http.NewRequest(http.MethodPost, "http://_"+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, nil, err
 	}
 	attachCallerIdentity(req)
 	req.Header.Set("Content-Type", contentType)
@@ -556,31 +638,28 @@ func DaemonPostRawWithOptions(path, contentType string, body []byte, headers htt
 	}
 	policy, err := retryPolicyForRequest(client, req, retryOutput(opts.RetryOutput))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	resp, err := doDaemonRequest(client, req, retryOutput(opts.RetryOutput), policy)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, readErr := daemonResponseBytes(resp)
 	if readErr != nil {
-		return fmt.Errorf("read response body: %w", readErr)
+		return nil, nil, fmt.Errorf("read response body: %w", readErr)
 	}
 	if resp.StatusCode >= 400 {
-		return decodeDaemonError(resp.StatusCode, raw)
+		return nil, nil, decodeDaemonError(resp.StatusCode, raw)
 	}
-	if out != nil && len(raw) > 0 {
-		return json.Unmarshal(raw, out)
-	}
-	return nil
+	return raw, resp.Header, nil
 }
 
 func retryOutput(out io.Writer) io.Writer {
 	if out != nil {
 		return out
 	}
-	return os.Stderr
+	return cliStderr
 }
 
 // doDaemonRequest retries transient failures at the single shared agentd
@@ -832,9 +911,15 @@ func MapDaemonErrorToRC(err error) int {
 		return rcAmbiguous
 	case "invalid_arg", "route_invalid_argument", "route_invalid_name", "route_invalid_target", "route_invalid_transport", "route_group":
 		return rcInvalidArg
-	case "auth":
+	case "auth", "permission":
 		return rcAuth
 	default:
+		// Every 403 is a refusal, whatever its code: the daemon understood the
+		// request and will not do it for this caller. It is not an I/O
+		// failure, so a caller can tell "not allowed" from "agentd is down".
+		if de.Status == http.StatusForbidden {
+			return rcAuth
+		}
 		return rcIOFailure
 	}
 }

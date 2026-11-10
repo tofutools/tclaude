@@ -298,7 +298,7 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	// of a protected root is a different map key, so it would render as
 	// read/write right next to the root's own "none" and reopen exactly what
 	// the deny is there to close. normalizeFilesystem already refuses any
-	// read/write rule intersecting a protected root, and TCL-791 removed
+	// read/write rule at or below a protected root, and TCL-791 removed
 	// break-glass, the one input that could previously carry such a path — so
 	// nothing upstream should reach here with one. This prunes it anyway: it is
 	// the point where the invariant stops depending on every caller having

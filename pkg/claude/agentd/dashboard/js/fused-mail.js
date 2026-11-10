@@ -32,9 +32,10 @@ import { enterFirstRow, focusRow, leaveFirstRow, movePaneFocus, moveRowSelection
 import { messageKind, msgPreview } from './mail-labels.js';
 import { messageDeleteEndpoint } from './mail-state.js';
 import {
-  AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, MailFilters, MailFooterToggles, MailGutters,
+  AgentMailAttachments, FolderCaret, FolderRow, HeaderRow, LoadMore, MessageAttachments, HumanActions, DecisionChoices, MailFilters, MailFooterToggles, MailGutters,
   MailPager, MailRow, MessageBody, MessageHeaders, PAGE_SIZES, SectionToggle, SelectAll,
 } from './mail-parts.js';
+import { MessageAction } from './message-action.js';
 import { withPeerAttachments } from './human-attachments.js';
 import { humanReadShared } from './peer-view-limits.js';
 import { LockReason } from './lock-reason.js';
@@ -45,6 +46,10 @@ import {
   messageKey, nodeFolders, ownerRoutes, readFailure, replyTarget, rosterURL,
 } from './fused-mail-model.js';
 import { cursorKey, legacyDepth, legacyStream, mergeCursorPage, newWalk, pageCount as mergedPageCount, recordVector, walkTarget, LEGACY_MAX_DEPTH } from './fleet-pager.js';
+import { Button } from './ui-components.js';
+import { requestJSON } from './request-json.js';
+import { errText, localStamp } from './cell-format.js';
+import { NodePill } from './cell-parts.js';
 
 const html = htm.bind(h);
 
@@ -77,22 +82,15 @@ function initialPageSize() {
 const SIDEBAR_ROWS = { rowSelector: '.mailbox', wrapSelector: '.mailbox-row' };
 const LIST_ROWS = { rowSelector: '.mail-row', wrapSelector: '.mail-row-wrap' };
 
-function errText(e) { return e?.message || String(e); }
-function when(s) { const t = Date.parse(s || ''); return Number.isFinite(t) ? new Date(t).toLocaleString() : ''; }
+const when = (s) => localStamp(s, { empty: '' });
 
-async function readJSON(fetchFn, url, init) {
-  const res = await fetchFn(url, { credentials: 'same-origin', cache: 'no-store', ...init });
-  let data = null;
-  try { data = await res.json(); } catch (_) { data = null; }
-  if (!res.ok) { const e = new Error(data?.error || `HTTP ${res.status}`); e.status = res.status; e.body = data; throw e; }
-  return data;
-}
+const readJSON = (fetchFn, url) => requestJSON(url, { cache: 'no-store', fetchImpl: fetchFn });
 
 // createFusedMailActions posts an action to the node that owns the message.
 // A peer serves deleting (deleteLocal, its own delete routes) only under
 // unrestricted trust.
 export function createFusedMailActions({ fetchImpl = (...a) => globalThis.fetch(...a), localFetch = globalThis.__tclaudeRemoteNode?.localFetch || fetchImpl } = {}) {
-  const post = (node, url, body) => readJSON(node.local ? localFetch : fetchImpl, url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const post = (node, url, body) => requestJSON(url, { method: 'POST', body, cache: 'no-store', fetchImpl: node.local ? localFetch : fetchImpl });
   return Object.freeze({
     markAgent: (node, ids, read) => post(node, ownerRoutes(node).markRead, { ids: [].concat(ids), read }),
     markFolderRead: (node, conv) => post(node, ownerRoutes(node).markRead, { conv, read: true }),
@@ -108,10 +106,6 @@ export function createFusedMailActions({ fetchImpl = (...a) => globalThis.fetch(
 // do from here lives: it leaves the fused view.
 function defaultOpenOnNode(node) {
   globalThis.location.assign(nodeHref(node.local ? '' : node.id, { pathname: '/messages', search: withFused(globalThis.location.search, null) }));
-}
-
-function NodePill({ node }) {
-  return html`<span class="scope-pill" style=${`--nc:${node.color}`}>${node.local ? '⌂ ' : ''}${node.name}</span>`;
 }
 
 // folderKey names a sidebar folder: a fused folder spans the nodes in view,
@@ -289,11 +283,11 @@ function AccessReader({ item, node, peerView, busy, run, actions, confirm, toast
       </div></div>
       ${item.body && html`<div class="mail-reader-body">${item.body}</div>`}`;
   const buttons = human ? html`
-      <button type="button" data-fused="deny" disabled=${busy} onClick=${() => run('Deny', actions.decide(node, item.id, 'deny'), `Denied on ${node.name}`)}>Deny</button>
-      <button type="button" class="primary" data-fused="approve" disabled=${busy} onClick=${() => confirm({
+      <${Button} size="sm" data-fused="deny" disabled=${busy} onClick=${() => run('Deny', actions.decide(node, item.id, 'deny'), `Denied on ${node.name}`)}>Deny<//>
+      <${Button} size="sm" variant="primary" data-fused="approve" disabled=${busy} onClick=${() => confirm({
         title: `Approve ${item.perm} on ${node.name}?`, body: approveConsequence(item, node.name), okLabel: 'Approve once', busyLabel: 'Approving…',
         action: () => actions.decide(node, item.id, 'approve'),
-      }).then((r) => { if (r) { toast(`Approved once on ${node.name}`, false); onDone(); } }, (e) => toast(`Approve failed: ${errText(e)}`, true))}>Approve once…</button>`
+      }).then((r) => { if (r) { toast(`Approved once on ${node.name}`, false); onDone(); } }, (e) => toast(`Approve failed: ${errText(e)}`, true))}>Approve once…<//>`
     : html`<span class="muted">Answer this on ${node.name}'s own dashboard.</span>`;
   return { body, buttons };
 }
@@ -331,7 +325,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
     if (key && item.kind === 'human' && !item.read && humanMarkable(item.node, peerView)) actions.humanRead(item.node, item.id, true).then(onDone, () => {});
   }, [item?.key]);
   if (!item) {
-    return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" role="region" aria-label="Message reader" tabindex="0">
+    return html`<div class="mail-reader fused-mail-reader ui-card" id="fused-mail-reader" role="region" aria-label="Message reader" tabindex="0">
       <div class="empty">Select a message to read.</div></div>`;
   }
   const { node } = item;
@@ -339,7 +333,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
     setBusy(false);
     toast(e.status === 403 ? `${what}: ${node.name} does not allow it from here (${errText(e)}). Open it on ${node.name}.` : `${what} failed: ${errText(e)}`, true);
   }); };
-  const open = html`<button type="button" data-fused-open=${node.id} title=${`Show ${node.name}'s own Messages (leaves the fused view)`} onClick=${() => openOnNode(node)}>Open on ${node.name}</button>`;
+  const open = html`<${Button} size="sm" data-fused-open=${node.id} title=${`Show ${node.name}'s own Messages (leaves the fused view)`} onClick=${() => openOnNode(node)}>Open on ${node.name}<//>`;
   let body;
   let buttons;
   if (item.kind === 'access') {
@@ -362,10 +356,12 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
         focus: node.local ? null : (m) => openRemote({ instance: node.id, agent: m.from_agent, peerLabel: node.name, label: m.from_title || '', toast }),
         mark: (id, read) => actions.humanRead(node, id, read), reply: (id, body) => actions.humanReply(node, id, body),
       };
-      return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0"
+      return html`<div class="mail-reader fused-mail-reader ui-card" id="fused-mail-reader" data-kind="decree" role="region" aria-label="Message reader" tabindex="0"
         onClick=${(e) => { if (!peer && e.target?.closest?.('[data-act]')) timers.setTimeout(onDone, 800); }}>
         ${headers}
         <${MessageAttachments} message=${item} />
+        <${DecisionChoices} message=${item} toast=${toast} onDone=${onDone} remote=${!!peer} />
+        <${MessageAction} message=${item} toast=${toast} onDone=${onDone} onRefused=${onDone} remote=${!!peer} />
         <${HumanActions} message=${item} senderLive=${peer ? undefined : senderOnline(item.from_agent, item.from_conv, snapshot.value)}
           harness=${peer ? '' : senderHarness(item, snapshot)} toast=${toast} peer=${peer} onDone=${onDone}>${open}</${HumanActions}>
       </div>`;
@@ -374,13 +370,13 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
       <${AgentMailAttachments} message=${item} />
       ${target && html`<textarea class="mail-reply-text" rows="3" placeholder=${`Reply to ${item.from_title || target} on ${node.name}`} value=${text} onInput=${(e) => setText(e.currentTarget.value)}></textarea>`}`;
     buttons = html`
-        <button type="button" data-fused="mark" disabled=${busy} title=${item.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}
-          onClick=${() => run(item.read ? 'Mark unread' : 'Mark read', actions.markAgent(node, item.id, !item.read), `Marked ${item.read ? 'unread' : 'read'} on ${node.name}`)}>${item.read ? 'mark unread' : 'mark read'}</button>
-        ${target && html`<button type="button" class="primary" data-fused="reply" disabled=${busy || !text.trim()} onClick=${() => run('Reply', actions.reply(node, target, replySubject(item.subject), text.trim()), `Sent to ${item.from_title || target} on ${node.name}`)}>send reply</button>`}`;
+        <${Button} size="sm" data-fused="mark" disabled=${busy} title=${item.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}
+          onClick=${() => run(item.read ? 'Mark unread' : 'Mark read', actions.markAgent(node, item.id, !item.read), `Marked ${item.read ? 'unread' : 'read'} on ${node.name}`)}>${item.read ? 'mark unread' : 'mark read'}<//>
+        ${target && html`<${Button} size="sm" variant="primary" data-fused="reply" disabled=${busy || !text.trim()} onClick=${() => run('Reply', actions.reply(node, target, replySubject(item.subject), text.trim()), `Sent to ${item.from_title || target} on ${node.name}`)}>send reply<//>`}`;
     const deleteLock = canActOnHuman(node, peerView) ? '' : `${node.name} keeps deleting its messages to its own operator: it needs unrestricted trust from ${node.name}.`;
-    buttons = html`${buttons}<button type="button" class="danger" data-fused="delete" disabled=${busy || !!deleteLock} title=${deleteLock ? undefined : `Permanently delete this message on ${node.name}`} onClick=${() => onDelete([item])}>delete</button><${LockReason} why=${deleteLock} />`;
+    buttons = html`${buttons}<${Button} size="sm" variant="danger" data-fused="delete" disabled=${busy || !!deleteLock} title=${deleteLock ? undefined : `Permanently delete this message on ${node.name}`} onClick=${() => onDelete([item])}>delete<//><${LockReason} why=${deleteLock} />`;
   }
-  return html`<div class="mail-reader fused-mail-reader" id="fused-mail-reader" data-kind=${item.kind === 'access' ? 'decree' : messageKind(item, item.kind === 'human')}
+  return html`<div class="mail-reader fused-mail-reader ui-card" id="fused-mail-reader" data-kind=${item.kind === 'access' ? 'decree' : messageKind(item, item.kind === 'human')}
     role="region" aria-label="Message reader" tabindex="0">
     ${body}
     <div class="mail-reader-actions fused-mail-actions">${buttons}<span class="spacer"></span>${open}</div>
@@ -634,7 +630,7 @@ export function FusedMail({
     const agentsShown = !!bq || agentsOpen.has(n.id);
     const shownGroups = groups.filter((g) => folderMatches(g, bq));
     return html`<div key=${n.id} class="fused-mail-section" data-node=${n.id}>
-      <button type="button" class="mailbox-section mailbox-section-toggle fused-mail-node-head" aria-expanded=${String(open)}
+      <button data-ui-exempt type="button" class="mailbox-section mailbox-section-toggle fused-mail-node-head" aria-expanded=${String(open)}
         title=${open ? `Fold ${n.name}'s folders` : `Show ${n.name}'s folders`} onClick=${() => toggleSet(setCollapsed, n.id)}>
         <span class="mailbox-section-caret">${open ? '▾' : '▸'}</span><${NodePill} node=${n} />${s && html` <span class="muted">${s}</span>`}</button>
       ${open && html`<${Fragment}>
@@ -653,7 +649,7 @@ export function FusedMail({
             })}
             ${isOpen && (members.length > 0
               ? members.map((m) => html`<${Fragment} key=${m.id}>${agentRow(n, m, true)}</${Fragment}>`)
-              : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty">${e?.rosterURL?.includes('expand=') ? 'no member folders shown' : 'loading…'}</div></div>`)}
+              : html`<div class="mailbox-row nested"><span class="mail-box-check-spacer"></span><div class="mailbox-nested-empty ui-empty">${e?.rosterURL?.includes('expand=') ? 'no member folders shown' : 'loading…'}</div></div>`)}
             ${isOpen && (g.members_total || 0) > members.length && html`<${LoadMore} nested=${true} shown=${members.length} total=${g.members_total}
               busy=${busy} what=${`${g.title}'s member mailboxes`}
               onMore=${() => setMemberLimits((cur) => ({ ...cur, [gk]: (cur[gk] || ROSTER_PAGE) + ROSTER_PAGE }))} />`}
@@ -717,15 +713,15 @@ export function FusedMail({
         const next = new Set(cur); for (const r of rows) { if (on) next.add(r.key); else next.delete(r.key); } return next;
       })} />`}
       <span class="grow">${checked.size ? `${checked.size} selected` : ''}</span>
-      ${rows.length > 0 && !isHuman && html`<${Fragment}><button disabled=${busy || !checkedRows.length} title="Mark the selected messages read on their nodes"
-        onClick=${() => markRows(true)}>✓ read</button>
-        <button disabled=${busy || !checkedRows.length} title="Mark the selected messages unread on their nodes"
-          onClick=${() => markRows(false)}>○ unread</button></${Fragment}>`}
-      ${rows.length > 0 && html`<button class="danger" disabled=${busy || !checkedRows.some(deletable)}
+      ${rows.length > 0 && !isHuman && html`<${Fragment}><${Button} size="sm" disabled=${busy || !checkedRows.length} title="Mark the selected messages read on their nodes"
+        onClick=${() => markRows(true)}>✓ read<//>
+        <${Button} size="sm" disabled=${busy || !checkedRows.length} title="Mark the selected messages unread on their nodes"
+          onClick=${() => markRows(false)}>○ unread<//></${Fragment}>`}
+      ${rows.length > 0 && html`<${Button} size="sm" variant="danger" disabled=${busy || !checkedRows.some(deletable)}
         title=${checkedRows.length && !checkedRows.some(deletable) ? 'Only messages on nodes that trust you unrestricted can be deleted from here' : 'Delete the selected messages on their nodes'}
-        onClick=${() => deleteRows(checkedRows)}>🗑 delete selected</button>`}
-      ${agentFolder && html`<span class="mail-folder-actions"><button disabled=${busy} title=${`Mark every message this agent has received as read (on ${folderNode.name})`}
-        onClick=${() => runBulk('Mark all read', new Map([[folderNode, [folder.id]]]), (node) => acts.current.markFolderRead(node, folder.id))}>✓ mark all read</button></span>`}
+        onClick=${() => deleteRows(checkedRows)}>🗑 delete selected<//>`}
+      ${agentFolder && html`<span class="mail-folder-actions"><${Button} size="sm" disabled=${busy} title=${`Mark every message this agent has received as read (on ${folderNode.name})`}
+        onClick=${() => runBulk('Mark all read', new Map([[folderNode, [folder.id]]]), (node) => acts.current.markFolderRead(node, folder.id))}>✓ mark all read<//></span>`}
     </div>`;
 
   const countText = isAccess
@@ -746,7 +742,7 @@ export function FusedMail({
   ];
   const aggregate = folder.id === 'all' || folder.id.startsWith('group:');
   return html`<div class="mail-client fused-mail" ref=${clientRef} onKeyDown=${(event) => !hasShownOverlay() && movePaneFocus(event, panes)}>
-    <${MailFilters} boxId="fused-mail-box-filter" boxPlaceholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
+    <${MailFilters} boxId="fused-mail-box-filter" boxPlaceholder=${wizard ? 'Seek a hero…' : 'Filter mailboxes (name / id)'}
       boxValue=${boxQuery} onBoxInput=${(value) => { nav.current = 'box'; setBoxQuery(value); }}
       onBoxKeyDown=${(event) => enterFirstRow({ event, container: clientRef.current?.querySelector('#fused-mail-sidebar'), ...SIDEBAR_ROWS, select: (row) => { const f = folderRows.get(row.dataset.id); if (f) pick(f); } })}
       id="fused-mail-filter" placeholder=${solo ? `Filter ${scopeName}'s messages` : scope ? `Filter messages on ${scopeName}` : 'Filter messages on every ticked node'}
@@ -755,7 +751,7 @@ export function FusedMail({
       countId="fused-mail-filter-count" countText=${countText} clearId="fused-mail-filter-clear" onClear=${() => { nav.current = 'q'; setQuery(''); setQ(''); }} />
     <div class="mail-col mail-sidebar-col">
       ${chips}
-      <aside class="mail-sidebar" id="fused-mail-sidebar" onKeyDown=${sidebarKeyDown}>
+      <aside class="mail-sidebar ui-card" id="fused-mail-sidebar" onKeyDown=${sidebarKeyDown}>
         ${fusedRows}
         ${sections}
       </aside>
@@ -765,12 +761,12 @@ export function FusedMail({
     </div>
     <div class="mail-col mail-list-col">
       ${bulkBar}
-      <div class="mail-list" id="fused-mail-list" role="list" onKeyDown=${listKeyDown}>
+      <div class="mail-list ui-card" id="fused-mail-list" role="list" onKeyDown=${listKeyDown}>
         ${!rows.length && html`<div class="empty">${loaded ? (q ? 'No messages match the filter.' : 'No messages here.') : 'Loading…'}</div>`}
         ${rows.map((m) => (m.kind === 'access'
           ? html`<div class="mail-row-wrap access-row-wrap" key=${m.key} data-key=${m.key} data-kind="decree" role="listitem">
             <span class="mail-box-check-spacer"></span>
-            <button type="button" class=${`mail-row access-row-item unread${m.key === selected ? ' active' : ''}`} data-id=${m.key}
+            <button type="button" data-ui-exempt class=${`mail-row access-row-item unread${m.key === selected ? ' active' : ''}`} data-id=${m.key}
               aria-current=${m.key === selected ? 'true' : undefined} onClick=${(event) => { focusRow(event.currentTarget); selectRow(m.key); }}>
               <span class="mail-row-top"><span class="mail-row-dot" title="pending">●</span><${NodePill} node=${m.node} />
                 <span class="mail-row-party">${m.title || m.agent_id || 'agent'}</span>

@@ -14,12 +14,14 @@ import { ImageAttachmentPreview } from './image-preview-overlay.js';
 import { VideoAttachmentPreview } from './video-preview-overlay.js';
 import { MarkdownAttachment } from './markdown-attachment.js';
 import { ROSTER_MAX } from './fused-mail-model.js';
+import { dismissedNote, postDismiss } from './decision-dismiss.js';
 import { MessageDownloadMenu } from './message-download-menu.js';
 import { openHumanReplyModal } from './message-access-dialog-controller.js';
 import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
 import { shellConfirm } from './shell-state.js';
 import { allRecipientLabel, counterparty, senderLabel } from './mail-labels.js';
+import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -36,8 +38,8 @@ export function LoadMore({ shown, total, busy, what, onMore, nested = false }) {
   if (shown >= ROSTER_MAX) {
     return html`<div class=${`mailbox-load-more capped${nested ? ' nested' : ''}`}>${shown} of ${total} shown · filter to narrow</div>`;
   }
-  return html`<button type="button" class=${`mailbox-load-more${nested ? ' nested' : ''}`} disabled=${busy}
-    title=${`Load the next page of ${what}`} onClick=${onMore}>Show more · ${shown} of ${total}</button>`;
+  return html`<${Button} size="sm" class=${`mailbox-load-more${nested ? ' nested' : ''}`} disabled=${busy}
+    title=${`Load the next page of ${what}`} onClick=${onMore}>Show more · ${shown} of ${total}<//>`;
 }
 
 const ATTACHMENT_ICONS = {
@@ -105,10 +107,10 @@ export function MessageAttachments({ message, label = 'Agent file', downloadTitl
   const attachments = messageAttachments(message);
   if (!attachments.length) return null;
   return html`<${Fragment}>${attachments.map((attachment, index) => html`
-    <div class="mail-attachment" key=${attachment.url || attachment.id || index}>
+    <div class="mail-attachment ui-card ui-inset" key=${attachment.url || attachment.id || index}>
       <${ImageAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
       <${VideoAttachmentPreview} messageID=${message.id} attachment=${attachment} siblings=${attachments} surface="messages" />
-      <span class="mail-attachment-label">${label}</span>
+      <span class="ui-eyebrow mail-attachment-label">${label}</span>
       <a href=${attachmentHref(message, attachment)}
         download=${attachment.filename || ''} title=${downloadTitle}>⤓ ${attachment.filename || 'attachment'}</a>
       <span class="mail-attachment-size">${attachmentSize(attachment.size_bytes)}</span>
@@ -156,7 +158,7 @@ export function FolderRow({
   lead = null, className = '', nested = false, disabled = false, onSelect,
 }) {
   const cls = `mailbox-row${className ? ` ${className}` : ''}${nested ? ' nested' : ''}`;
-  return html`<div class=${cls}>${lead || html`<span class="mail-box-check-spacer"></span>`}<button
+  return html`<div class=${cls}>${lead || html`<span class="mail-box-check-spacer"></span>`}<button data-ui-exempt
     class=${`mailbox${active ? ' active' : ''}${unread ? ' has-unread' : ''}`}
     data-id=${id} title=${title} disabled=${disabled}
     aria-current=${active ? 'true' : undefined}
@@ -165,13 +167,13 @@ export function FolderRow({
     <span class="mailbox-name">${label}</span>
     ${tags}
     ${total !== null && html`<span class="mailbox-count" title=${totalTitle}>${total}</span>`}
-    ${unread ? html`<span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>` : null}
+    ${unread ? html`<span class="mailbox-unread ui-badge ui-badge-accent">${unread > 99 ? '99+' : unread}</span>` : null}
   </button></div>`;
 }
 
 // FolderCaret expands or collapses a group folder's member folders.
 export function FolderCaret({ expanded, disabled = false, group, onToggle }) {
-  return html`<button type="button" class="mail-group-caret" data-group=${group} aria-expanded=${String(expanded)}
+  return html`<button type="button" data-ui-exempt class="mail-group-caret" data-group=${group} aria-expanded=${String(expanded)}
     disabled=${disabled}
     title=${expanded ? 'Collapse members' : 'Expand members'}
     onClick=${onToggle}>${expanded ? '▾' : '▸'}</button>`;
@@ -180,12 +182,12 @@ export function FolderCaret({ expanded, disabled = false, group, onToggle }) {
 // SectionToggle is a foldable sidebar heading, such as "All agent mailboxes
 // (12)" with its folded unread badge.
 export function SectionToggle({ expanded, label, unread = 0, onToggle, className = '' }) {
-  return html`<button type="button" class=${`mailbox-section mailbox-section-toggle${className ? ` ${className}` : ''}${unread ? ' has-unread' : ''}`}
+  return html`<button type="button" data-ui-exempt class=${`mailbox-section mailbox-section-toggle${className ? ` ${className}` : ''}${unread ? ' has-unread' : ''}`}
     aria-expanded=${String(expanded)}
     title=${expanded ? 'Collapse the agent list' : 'Expand the agent list'}
     onClick=${onToggle}><span class="mailbox-section-caret">${expanded ? '▾' : '▸'}</span>
     ${label}
-    ${unread > 0 && html` <span class="mailbox-unread">${unread > 99 ? '99+' : unread}</span>`}</button>`;
+    ${unread > 0 && html` <span class="mailbox-unread ui-badge ui-badge-accent">${unread > 99 ? '99+' : unread}</span>`}</button>`;
 }
 
 // MessageHead names a row's parties: sender → recipient in an aggregate
@@ -220,7 +222,7 @@ export function MailRow({
     <input type="checkbox" class="mail-msg-check" data-id=${id} checked=${checked}
       disabled=${busy} title="Select message"
       onChange=${(event) => onCheck(event.currentTarget.checked)} />
-    <button class=${`mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}`}
+    <button data-ui-exempt class=${`mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}`}
       data-id=${id} aria-current=${active ? 'true' : undefined}
       onClick=${(event) => { focusRow(event.currentTarget); onSelect(); }}>
       <span class="mail-row-top">
@@ -235,9 +237,9 @@ export function MailRow({
         <${MessageAttachmentIndicator} attachments=${messageAttachments(message)} />
       </span>
     </button>
-    <button class="mail-row-del" data-id=${id}
+    <${Button} size="sm" icon=${true} variant="ghost danger" class="mail-row-del" data-id=${id}
       title=${deleteTitle} disabled=${busy || !canDelete}
-      onClick=${onDelete}>🗑</button>
+      onClick=${onDelete}>🗑<//>
   </div>`;
 }
 
@@ -275,7 +277,7 @@ export function MailFilters({
         onInput=${(event) => onInput(event.currentTarget.value)}
         onKeyDown=${onKeyDown} />
       <span class="filter-count" id=${countId}>${countText}</span>
-      <button class="clear-filter" id=${clearId} title="Clear filter"
+      <button data-ui-exempt class="clear-filter" id=${clearId} title="Clear filter"
         aria-label="Clear message filter" onClick=${(event) => {
           const input = event.currentTarget.closest('.mail-list-filter')?.querySelector('input');
           onClear();
@@ -355,6 +357,70 @@ export function MessageBody({ message, agentMail = false }) {
 // SAFE_AGENT admits only a plain agent ID into a terminal request.
 const SAFE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
 
+// DecisionChoices shows a decision an agent put to the operator (notify-human
+// --option): one button per option, the agent's recommendation marked, or
+// the pick once made. Answering posts the choice through the reply route, so
+// the agent gets it as mail. A peer's decision is answered on that node.
+export function DecisionChoices({ message, toast, onDone, remote = false, fetchImpl = (...a) => globalThis.fetch(...a) }) {
+  const [busy, setBusy] = useState(0);
+  useEffect(() => { setBusy(0); }, [message.id]);
+  const options = Array.isArray(message.options) ? message.options : [];
+  // A decision is answered back to the agent that asked; without one there
+  // is nobody to send the pick to.
+  if (options.length < 2 || (!message.from_conv && !message.from_agent && !message.decision && !message.dismissed_at)) return null;
+  if (message.dismissed_at) {
+    return html`<div class="mail-decision decided dismissed" role="group" aria-label="Decision">
+      <span class="mail-decision-label">${dismissedNote(message)}</span>
+    </div>`;
+  }
+  if (message.decision) {
+    return html`<div class="mail-decision decided" role="group" aria-label="Decision">
+      <span class="mail-decision-label">Decided:</span> <b>${message.decision}</b>
+    </div>`;
+  }
+  const choose = async (choice) => {
+    setBusy(choice);
+    try {
+      const res = await fetchImpl('/api/human-messages/reply', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: message.id, choice }),
+      });
+      if (!res.ok) {
+        let reason = `HTTP ${res.status}`;
+        try { reason = (await res.json())?.error || reason; } catch (_) { /* keep the status */ }
+        throw new Error(reason);
+      }
+      toast?.(`Sent “${options[choice - 1]}” to ${message.from_title || 'the agent'}`, false);
+      onDone?.();
+    } catch (e) {
+      setBusy(0);
+      toast?.(`Decision failed: ${e?.message || e}`, true);
+    }
+  };
+  const dismiss = async () => {
+    setBusy('dismiss');
+    try {
+      await postDismiss(fetchImpl, [message.id]);
+      toast?.(`Dismissed; ${message.from_title || 'the agent'} is told`, false);
+      onDone?.();
+    } catch (e) {
+      setBusy(0);
+      toast?.(`Dismiss failed: ${e?.message || e}`, true);
+    }
+  };
+  return html`<div class="mail-decision" role="group" aria-label="Decide">
+    <span class="mail-decision-label">Decide:</span>
+    ${options.map((option, i) => {
+      const recommended = i + 1 === message.recommended;
+      return html`<${Button} key=${option} size="sm" variant=${recommended ? 'primary' : ''} disabled=${!!busy || remote}
+        title=${remote ? 'Answer this decision on the node it came from' : recommended ? 'The agent recommends this one' : 'Send this choice to the agent'}
+        onClick=${() => choose(i + 1)}>${busy === i + 1 ? 'Sending…' : option}${recommended ? ' ★' : ''}<//>`;
+    })}
+    ${!remote && html`<${Button} size="sm" disabled=${!!busy} title="No longer relevant: dismiss without answering; the agent is told"
+      onClick=${dismiss}>${busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}<//>`}
+  </div>`;
+}
+
 // HumanActions are the reader's buttons for a human notification, one row
 // wherever a notification is read (this node's Messages, a peer's page, the
 // fused view): reply, focus, mark read/unread, ⤓ download and delete, then
@@ -377,16 +443,16 @@ export function HumanActions({ message, senderLive, harness = '', toast, peer = 
     const fromTarget = message.from_agent || message.from_conv;
     return html`<div class="mail-reader-actions">
       ${before}
-      ${message.from_conv && html`<${Fragment}><button data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}
+      ${message.from_conv && html`<${Fragment}><${Button} size="sm" data-act="msg-reply" data-id=${message.id} data-agent=${message.from_agent || ''}
         data-conv=${message.from_conv} data-label=${message.from_title || message.from_conv} data-subject=${message.subject || ''}
-        title="Reply to this agent — opens a dialog to send your answer back">reply</button>
-        <button data-act="msg-focus" data-id=${message.id} data-conv=${fromTarget} data-label=${message.from_title || message.from_conv}
+        title="Reply to this agent — opens a dialog to send your answer back">reply<//>
+        <${Button} size="sm" data-act="msg-focus" data-id=${message.id} data-conv=${fromTarget} data-label=${message.from_title || message.from_conv}
           data-harness=${harness}
-          disabled=${!senderLive} title=${senderLive ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}>focus</button></${Fragment}>`}
-      <button data-act=${message.read ? 'msg-mark-unread' : 'msg-mark-read'} data-id=${message.id} title=${markTitle}>${markLabel}</button>
+          disabled=${!senderLive} title=${senderLive ? 'Focus this agent’s terminal window and mark the message read' : 'Sending agent is offline — no window to focus'}>focus<//></${Fragment}>`}
+      <${Button} size="sm" data-act=${message.read ? 'msg-mark-unread' : 'msg-mark-read'} data-id=${message.id} title=${markTitle}>${markLabel}<//>
       <span class="spacer"></span>
       <${MessageDownloadMenu} message=${message} toast=${toast} />
-      <button class="danger" data-act="msg-delete" data-id=${message.id} title="Permanently delete this message">delete</button>
+      <${Button} size="sm" variant="danger" data-act="msg-delete" data-id=${message.id} title="Permanently delete this message">delete<//>
       ${children}
     </div>`;
   }
@@ -440,16 +506,16 @@ export function HumanActions({ message, senderLive, harness = '', toast, peer = 
   }).then((ok) => { if (ok) { toast(`Deleted on ${name}`, false); onDone?.(); } }, fail('Delete'));
   return html`<div class="mail-reader-actions">
     ${before}
-    ${(message.from_conv || message.from_agent) && html`<${Fragment}><button type="button" data-human="reply" disabled=${!!replyLock}
-      title=${replyLock ? undefined : `Reply to this agent on ${name} — opens a dialog to send your answer back`} onClick=${reply}>reply</button><${LockReason} why=${replyLock} />
-      <button type="button" data-human="focus" disabled=${!!focusLock || offline}
-        title=${focusLock ? undefined : offline ? 'Sending agent is offline — no terminal to open' : `Open this agent's terminal on ${name} here and mark the message read`} onClick=${focus}>focus</button><${LockReason} why=${focusLock} /></${Fragment}>`}
-    <button type="button" data-human="mark" disabled=${busy || !!markLock}
-      title=${markLock ? undefined : `${markTitle} on ${name}`} onClick=${mark}>${markLabel}</button><${LockReason} why=${markLock} />
+    ${(message.from_conv || message.from_agent) && html`<${Fragment}><${Button} size="sm" data-human="reply" disabled=${!!replyLock}
+      title=${replyLock ? undefined : `Reply to this agent on ${name} — opens a dialog to send your answer back`} onClick=${reply}>reply<//><${LockReason} why=${replyLock} />
+      <${Button} size="sm" data-human="focus" disabled=${!!focusLock || offline}
+        title=${focusLock ? undefined : offline ? 'Sending agent is offline — no terminal to open' : `Open this agent's terminal on ${name} here and mark the message read`} onClick=${focus}>focus<//><${LockReason} why=${focusLock} /></${Fragment}>`}
+    <${Button} size="sm" data-human="mark" disabled=${busy || !!markLock}
+      title=${markLock ? undefined : `${markTitle} on ${name}`} onClick=${mark}>${markLabel}<//><${LockReason} why=${markLock} />
     <span class="spacer"></span>
     <${MessageDownloadMenu} message=${message} node=${peer.exportNode || ''} toast=${toast} />
-    <button type="button" class="danger" data-human="delete" disabled=${busy || !!deleteLock}
-      title=${deleteLock ? undefined : `Permanently delete this message on ${name}`} onClick=${remove}>delete</button><${LockReason} why=${deleteLock} />
+    <${Button} size="sm" variant="danger" data-human="delete" disabled=${busy || !!deleteLock}
+      title=${deleteLock ? undefined : `Permanently delete this message on ${name}`} onClick=${remove}>delete<//><${LockReason} why=${deleteLock} />
     ${children}
   </div>`;
 }

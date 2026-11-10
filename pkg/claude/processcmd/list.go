@@ -42,18 +42,12 @@ func templatesLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesLsParams, cmd *cobra.Command, _ []string) {
-			exitProcessRuntime(runTemplatesLs(cmd, p, os.Stdout, os.Stderr), os.Stderr)
+			exitProcessRuntime(runTemplatesLs(cmd, p, os.Stdout), os.Stderr)
 		},
 	}.ToCobra()
 }
 
-func runTemplatesLs(cmd *cobra.Command, p *templatesLsParams, out, stderr io.Writer) error {
-	// templates ls reads a filesystem store rather than a daemon route, so it
-	// has no operation response to carry the feature gate. Resolve the flag
-	// through the daemon capability projection — never client-side config.
-	if err := requireProcessesEnabledViaDaemon(stderr); err != nil {
-		return err
-	}
+func runTemplatesLs(cmd *cobra.Command, p *templatesLsParams, out io.Writer) error {
 	fs, err := openStore(p.StoreRoot)
 	if err != nil {
 		return err

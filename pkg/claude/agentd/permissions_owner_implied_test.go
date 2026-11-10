@@ -36,6 +36,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermGroupsTriggersRead, PermGroupsTriggersManage,
 		PermProcessAdvance, PermTemplatesUse,
 		PermProcessRunsStart, PermGroupsMembersProcess,
+		PermTaskboardRead, PermTaskboardWrite, PermTaskboardManage, PermTaskboardAssign, PermTaskboardTransfer, PermTaskboardColumns,
 	}
 	want := append([]string{}, wantGroupScoped...)
 	want = append(want, PermProcessRunsRead, PermHumanNotify)
@@ -125,7 +126,8 @@ func TestPermissionRegistry_MemberImpliedSet(t *testing.T) {
 			got = append(got, entry.Slug)
 		}
 	}
-	if want := []string{PermGroupsMessagesSchedule}; !slices.Equal(got, want) {
+	if want := []string{PermGroupsMessagesSchedule, PermGroupsResourcesRead, PermGroupsResourcesWrite,
+		PermTaskboardRead, PermTaskboardOwn}; !slices.Equal(got, want) {
 		t.Fatalf("member-implied slugs = %v, want %v", got, want)
 	}
 }

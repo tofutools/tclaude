@@ -29,6 +29,8 @@
   const LOCAL_PREFIXES = [
     '/api/federation/', '/api/peer/', '/api/node-summary', '/api/node/update',
     '/api/dashboard/prefs', '/api/auth/', '/api/human-messages', '/api/browser-notifications', '/api/slop/',
+    // This node's agents see, capture and mark the operator's tab, whichever node it shows.
+    '/api/companion/view', '/api/companion/presence', '/api/companion/capture/', '/api/companion/marks/',
     // A peer's notification files, read by this node from the peer.
     '/api/peer-attachments/', '/api/peer-message-export/',
     // A peer's file downloads, read the same way (dashboard_peer_downloads.go).
@@ -53,7 +55,13 @@
   }
 
   function rewrite(url) {
-    if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) return null;
+    if (url.origin !== window.location.origin) return null;
+    // A group's task board is a /v1 route the peer view serves too
+    // (peer_taskboard.go); node-api.js isTaskboardPath matches the same.
+    if (url.pathname.startsWith('/v1/taskboard/') || /^\/v1\/groups\/[^/]+\/taskboard(\/|$)/.test(url.pathname)) {
+      return prefix + url.pathname.slice(1) + url.search;
+    }
+    if (!url.pathname.startsWith('/api/')) return null;
     if (LOCAL_PREFIXES.some((p) => url.pathname.startsWith(p))) return null;
     return prefix + url.pathname.slice('/api/'.length) + url.search;
   }

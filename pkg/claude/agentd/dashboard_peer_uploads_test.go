@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,7 +97,8 @@ func TestDashboardPeerUploadSendsChunksUnderUnrestrictedTrust(t *testing.T) {
 	}
 
 	rec := upload("/api/spawn-attachments")
-	require.Equal(t, http.StatusForbidden, rec.Code, "a restricted peer takes no upload: %s", rec.Body.String())
+	require.Equal(t, http.StatusForbidden, rec.Code, "a restricted peer's spawn attachments are refused at finish: %s", rec.Body.String())
+	chunks = 0
 
 	trust(db.FederationTrustUnrestricted)
 	rec = upload("/api/spawn-attachments")
@@ -122,11 +124,51 @@ func pathOf(uri string) string {
 	return uri
 }
 
-// Only the chunk route's request may carry more than a control request.
-func TestPeerViewBodyLimitOpensOnlyForUploadChunks(t *testing.T) {
+// Only the chunk route's request, and a drawing board export's pick, may
+// carry more than a control request.
+func TestPeerViewBodyLimitOpensOnlyForUploadChunksAndExports(t *testing.T) {
 	require.Equal(t, peerUploadChunk, peerViewBodyLimit(peerUploadChunkPath))
+	require.Equal(t, drawingBoardExportBodyLimit, peerViewBodyLimit("/api/drawing-boards/plan/export"))
+	for _, p := range []string{"/api/drawing-boards/plan", "/api/drawing-boards/a/b/export", "/api/drawing-boards//export", "/v1/drawing-boards/plan/export"} {
+		require.Equal(t, fedPeerViewBodyLimit, peerViewBodyLimit(p), p)
+	}
+	require.Less(t, (drawingBoardExportBodyLimit+2)/3*4+8192, fedPeerViewRequestLimit)
 	require.Equal(t, fedPeerViewBodyLimit, peerViewBodyLimit("/api/spawn-attachments"))
 	require.Equal(t, fedPeerViewBodyLimit, peerViewBodyLimit(peerUploadFinishPath))
 	// A chunk, base64-encoded in its JSON frame, fits the frame limit.
 	require.Less(t, (peerUploadChunk+2)/3*4+8192, fedPeerViewRequestLimit)
+}
+
+// A staged upload is appended to and finished only by the peer that opened
+// it: another peer, or this node's dashboard, finds no such upload.
+func TestPeerUploadIsWrittenOnlyByItsOwner(t *testing.T) {
+	open := httptest.NewRecorder()
+	openPeerUpload(open, "inst_alice")
+	require.Equal(t, http.StatusOK, open.Code, open.Body.String())
+	var opened struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(open.Body.Bytes(), &opened))
+	t.Cleanup(func() {
+		peerUploads.Lock()
+		if u := peerUploads.byID[opened.ID]; u != nil {
+			_ = os.Remove(u.file)
+			delete(peerUploads.byID, opened.ID)
+		}
+		peerUploads.Unlock()
+	})
+	appendAs := func(owner string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/peer-uploads/chunk?id="+opened.ID+"&offset=0", strings.NewReader("x"))
+		rec := httptest.NewRecorder()
+		appendPeerUpload(rec, req, owner)
+		return rec.Code
+	}
+	require.Equal(t, http.StatusNotFound, appendAs("inst_mallory"))
+	require.Equal(t, http.StatusNotFound, appendAs(""))
+	finish := httptest.NewRecorder()
+	finishPeerUpload(finish, httptest.NewRequest(http.MethodPost, "/api/peer-uploads/finish", strings.NewReader(`{"id":"`+opened.ID+`","path":"/api/spawn-attachments"}`)), "inst_mallory", func(http.ResponseWriter, *http.Request, string) {
+		t.Fatal("another peer finished the upload")
+	})
+	require.Equal(t, http.StatusNotFound, finish.Code)
+	require.Equal(t, http.StatusOK, appendAs("inst_alice"))
 }

@@ -118,6 +118,78 @@ func collectRolesSnapshot() []roleJSON {
 	return out
 }
 
+// roleConferralFailure refuses an agent giving a role grants it could not
+// confer itself: a role's grants reach every spawn that names it, through a
+// default profile unattended workers included, so the role is held to the
+// same permissions.grant plus attenuation as a profile's overrides
+// (profileConferralFailure). When before is the role as it was, only grants
+// the write adds or widens are judged. A human (caller "") passes.
+func roleConferralFailure(caller string, before, after *db.Role) *spawnFailure {
+	if caller == "" || after == nil {
+		return nil
+	}
+	grants, fail := roleNewGrants(before, after)
+	if fail != nil {
+		return fail
+	}
+	if fail, _ := spawnerMayConfer(caller, grantConferee{}, []overrideContribution{
+		{grants: grants, ambient: true}}); fail != nil {
+		return &spawnFailure{fail.Status, fail.Kind, fmt.Sprintf(
+			"role %q confers permissions on every spawn that names it: %s (default profiles reach unattended workers too)",
+			after.Name, fail.Msg)}
+	}
+	return nil
+}
+
+// roleConferralFailureFor is roleConferralFailure for a request: a linked
+// node's operator (peer_library.go) writes a role's name, description and
+// brief, never a grant the role would confer that it did not already: that
+// takes permissions.grant, which no peer grant hands out.
+func roleConferralFailureFor(r *http.Request, caller string, before, after *db.Role) *spawnFailure {
+	if peerGrantFromRequest(r) == nil {
+		return roleConferralFailure(caller, before, after)
+	}
+	grants, fail := roleNewGrants(before, after)
+	if fail != nil {
+		return fail
+	}
+	if len(grants) > 0 {
+		return &spawnFailure{http.StatusForbidden, "permission", fmt.Sprintf(
+			"role %q would confer permissions on every spawn that names it, which takes %s", after.Name, PermPermissionsGrant)}
+	}
+	return nil
+}
+
+// roleNewGrants are the grants after confers that before did not: all of
+// them for a new role, or for a rename onto a name profiles already
+// reference.
+func roleNewGrants(before, after *db.Role) (map[string]db.PermissionOverride, *spawnFailure) {
+	grants := map[string]db.PermissionOverride{}
+	for _, g := range after.Permissions {
+		grants[g.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: g.Scope}
+	}
+	if before != nil && before.Name != after.Name {
+		// A rename re-points every profile that already names the new name
+		// at this role, a reference that conferred nothing while it dangled.
+		// Those profiles gain all of the role's grants, so judge them all.
+		named, err := db.SpawnProfilesReferencingRole(after.Name)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		if len(named) > 0 {
+			before = nil
+		}
+	}
+	if before != nil {
+		had := map[string]db.PermissionOverride{}
+		for _, g := range before.Permissions {
+			had[g.Slug] = db.PermissionOverride{Effect: db.PermEffectGrant, Scope: g.Scope}
+		}
+		grants = grantsNotIn(grants, had)
+	}
+	return grants, nil
+}
+
 // handleRoles dispatches the collection endpoint /v1/roles: GET lists every
 // role (open, read-only), POST creates one (gated on roles.manage).
 func handleRoles(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +206,8 @@ func handleRoles(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
-		if _, ok := requirePermission(w, r, PermRolesManage); !ok {
+		caller, ok := requirePermission(w, r, PermRolesManage)
+		if !ok {
 			return
 		}
 		var body roleJSON
@@ -144,7 +217,11 @@ func handleRoles(w http.ResponseWriter, r *http.Request) {
 		}
 		rl, fail := buildRoleFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
+			return
+		}
+		if fail := roleConferralFailureFor(r, caller, nil, rl); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		id, err := db.CreateRole(rl)
@@ -185,7 +262,8 @@ func handleRoleByName(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, roleToJSON(rl))
 	case http.MethodPatch:
-		if _, ok := requirePermission(w, r, PermRolesManage); !ok {
+		caller, ok := requirePermission(w, r, PermRolesManage)
+		if !ok {
 			return
 		}
 		existing, err := db.GetRole(name)
@@ -204,7 +282,11 @@ func handleRoleByName(w http.ResponseWriter, r *http.Request) {
 		}
 		rl, fail := buildRoleFromJSON(body)
 		if fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			writeSpawnFailure(w, fail)
+			return
+		}
+		if fail := roleConferralFailureFor(r, caller, existing, rl); fail != nil {
+			writeSpawnFailure(w, fail)
 			return
 		}
 		rl.ID = existing.ID

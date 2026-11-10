@@ -72,11 +72,24 @@ tclaude conv resume <conv-id>
 tclaude conv resume -d <conv-id>   # detached
 ```
 
+The argument can also be the name or agent ID from `tclaude agent ls`.
+
 `conv resume` finds the conversation in any harness's store, changes to its
 project directory, and relaunches it through its **recorded harness** in a
 new tmux session — you never tell it which CLI to use. The relaunch also
 carries the conversation's recorded launch posture; see
 [Sessions](sessions.md#a-resume-keeps-its-recorded-posture).
+
+For an agent's conversation, `conv resume` and watch mode first ask agentd to
+prepare the agent's sandbox the way an ordinary resume does. That means the
+sandbox profiles are re-read, the group's current environment and
+remote-control policy apply, and the relaunch policy is followed. Only the operator can ask for this. If agentd
+cannot prepare the sandbox, the conversation still resumes, under the sandbox
+policy stored at its last launch, with a one-line warning saying what to do.
+That happens when agentd is not running, when it cannot confirm the terminal
+as the operator (export `TCLAUDE_HUMAN_TOKEN`), or when it is older than this
+build (restart it). A refusal from agentd, such as a sandbox profile that can
+no longer be applied, stops the resume, as it stops an ordinary resume.
 
 The lower-level equivalent is `tclaude session new --resume <id>`, which
 needs `--harness` for non-Claude conversations.
@@ -154,13 +167,17 @@ merged conversation list:
 | `Enter` | Create or attach a session for the selected conversation |
 | `/` | Text search: title, first prompt, project path, git branch, session id |
 | `s` | [Semantic search](#semantic-search) (requires Ollama) |
-| `x`/`Del` | Delete (session-aware confirmation, below) |
-| `W` | Create a [worktree](worktrees.md) from the selected conversation |
+| `Del`/`Backspace`/`ctrl+d` | Delete (session-aware confirmation, below) |
+| `x` | Show or hide archived conversations |
+| `w`/`W` | Create a [worktree](worktrees.md) from the selected conversation |
+| `f` | Group filter |
+| `c` | Choose columns |
 | `r` | Refresh |
 | `h`/`?` | Help |
+| `q` | Quit |
 
 Session indicators in the list: `⚡` means the conversation has an attached
-session; `○` means an active background session.
+session, `▷` a detached tmux session, and `◉` a session outside tmux.
 
 Deleting a conversation that has an active session asks what to do: `y`
 deletes the conversation and stops the session, `s` stops the session only,

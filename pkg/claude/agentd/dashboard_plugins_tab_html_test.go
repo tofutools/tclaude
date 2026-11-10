@@ -22,7 +22,7 @@ func TestDashboardHTML_PluginsTab(t *testing.T) {
 	// Nav button + warning badge.
 	present(`data-tab="plugins"`, "the Plugins nav button")
 	present(`id="plugins-badge"`, "the warning badge on the nav button")
-	present(`class="tab-badge warn"`, "the badge uses the amber warn variant")
+	present(`class="tab-badge ui-badge ui-badge-warn"`, "the badge uses the amber warn variant")
 
 	// Tab section + filter bar + toolbar buttons.
 	present(`id="tab-plugins"`, "the Plugins tab section")
@@ -53,7 +53,7 @@ func TestDashboardHTML_PluginsTab(t *testing.T) {
 
 // TestDashboardHTML_PluginsTabAutoHide guards the Plugins-tab auto-hide
 // wiring across the embedded assets, mirroring the Costs-tab auto-hide
-// guard. The server's plugins_tab_visible flag (dashboard.go) drives a
+// guard. The server's plugins_tab_visible flag (dashboard_snapshot_collect.go) drives a
 // body.hide-plugins CSS class via the Plugins island;
 // the Config tab exposes the dashboard.always_show_plugins_tab opt-in. A
 // rename in any one file silently re-shows (or strands) the tab, so pin all

@@ -15,14 +15,19 @@
 HARNESS_CLAUDE_VERSION="2.1.220"
 HARNESS_CODEX_VERSION="0.145.0"
 # Kept in step with the OpenCode pin the executor-smoke jobs in
-# .github/workflows/ (ci.yml and the reusable-sandbox-v2-*.yml smokes)
-# provision, so the carriage answer this shard records is about the same
+# .github/ (ci.yml, reusable-sandbox-v2-smoke.yml and the
+# actions/seatbelt-smoke action) provision, so the carriage answer this shard records is about the same
 # binary those smokes exercise. A carriage result is a fact
 # about a version, not about OpenCode forever.
 HARNESS_OPENCODE_VERSION="1.18.6"
 # The Gemini CLI version the adapter in pkg/claude/harness is pinned to
 # (GeminiPinnedVersion), so the cooperation record is about the same CLI.
 HARNESS_GEMINI_VERSION="0.62.0"
+# The pi that scripts/ci/pi pins (and so the pi fixture and sandbox smokes
+# install). Keep in step with filteredPiPinnedVersion in
+# pkg/claude/session/filtered_network_model_endpoint_smoke_test.go. This is
+# the CI-tested pi, not harness.PiMinimumVersion (the oldest pi tclaude accepts).
+HARNESS_PI_VERSION="1.5.0"
 
 # Where a CI cache may keep pinned harness artifacts between runs. The workflow
 # keys its cache on a hash of THIS FILE, which is where the pins live — a
@@ -200,6 +205,28 @@ harnesses::install_gemini() {
   gemini --version
   gemini --version | grep -qF "$HARNESS_GEMINI_VERSION" || {
     smoke::error "gemini is not at the pinned version ${HARNESS_GEMINI_VERSION}"
+    return 1
+  }
+}
+
+harnesses::install_pi() {
+  smoke::log "Installing pinned pi ${HARNESS_PI_VERSION}"
+  # scripts/ci/pi pins pi and its whole dependency tree, at this version.
+  "$repo_root/scripts/ci/install-pi.sh"
+  # Must resolve under the read-only OS surface the constructed root binds,
+  # for the same reason as every harness above.
+  local resolved
+  resolved="$(command -v pi)"
+  case "$resolved" in
+    /usr/*|/opt/*) ;;
+    *)
+      smoke::error "pi resolved to $resolved, which the sandbox root does not bind"
+      return 1
+      ;;
+  esac
+  pi --version </dev/null
+  pi --version </dev/null | grep -qF "$HARNESS_PI_VERSION" || {
+    smoke::error "pi is not at the pinned version ${HARNESS_PI_VERSION}"
     return 1
   }
 }

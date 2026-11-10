@@ -171,6 +171,62 @@ func finishProxyPermission(w http.ResponseWriter, r *http.Request, convID, perm,
 	return ok && authorizedConvID == convID
 }
 
+// openRemoteProxy is the request prologue the git, GitHub and GitLab proxies
+// share: POST only, the permission preflight, the bounded body decode, then
+// open (every git-side gate, and the remote the request is about, read from
+// the decoded body), then the final remote-scoped permission decision on that
+// remote's key. All of it comes before a credential is spent.
+func openRemoteProxy[S any](w http.ResponseWriter, r *http.Request, perm string, body any,
+	open func(ctx context.Context, convID string, deferred bool) (S, string, *proxyFault),
+) (S, bool) {
+	var none S
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return none, false
+	}
+	convID, deferred, ok := preflightProxyPermission(w, r, perm)
+	if !ok {
+		return none, false
+	}
+	if body != nil && !decodeGitProxyBody(w, r, body) {
+		return none, false
+	}
+	s, remoteKey, fault := open(r.Context(), convID, deferred)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return none, false
+	}
+	if !finishProxyPermission(w, r, convID, perm, remoteKey, deferred) {
+		return none, false
+	}
+	return s, true
+}
+
+// gitRemoteSession is a git proxy session with the remote it acts on.
+type gitRemoteSession struct {
+	s        *gitProxySession
+	resolved resolvedRemote
+}
+
+// openGitRemoteProxy is openRemoteProxy for a git verb: the permission is
+// judged on the remote's fetch URL, or its push URL for a push.
+func openGitRemoteProxy(w http.ResponseWriter, r *http.Request, perm string, body any, remoteOf func() string, push bool) (
+	*gitProxySession, resolvedRemote, bool,
+) {
+	open, ok := openRemoteProxy(w, r, perm, body, func(ctx context.Context, convID string, deferred bool) (gitRemoteSession, string, *proxyFault) {
+		s, resolved, fault := openProxyRemote(ctx, convID, remoteOf(), deferred)
+		if fault != nil {
+			return gitRemoteSession{}, "", fault
+		}
+		key := resolved.FetchRef.Key()
+		if push {
+			key = resolved.PushRef.Key()
+		}
+		return gitRemoteSession{s, resolved}, key, nil
+	})
+	return open.s, open.resolved, ok
+}
+
 // handleGitProxyRemotes serves GET /v1/git/remotes — the "what can I reach
 // from here" question an agent should ask before anything else.
 //
@@ -258,7 +314,7 @@ func describeProxyRemote(ctx context.Context, s *gitProxySession, name, convID s
 	// Every configured URL must pass, not just the first — that asymmetry is
 	// exactly what a second, unlisted url line would exploit.
 	for _, raw := range append(append([]string{}, fetchURLs...), pushURLs...) {
-		ref, err := parseRemoteURL(raw)
+		ref, err := parseRemoteURLFor(raw, s.policy)
 		if err != nil {
 			view.RefusedFor = err.Error()
 			return view
@@ -287,27 +343,12 @@ func describeProxyRemote(ctx context.Context, s *gitProxySession, name, convID s
 // credentialed round trip, and the one an agent should use to check whether a
 // branch already exists on the remote.
 func handleGitProxyLsRemote(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-		return
-	}
-	convID, deferred, ok := preflightProxyPermission(w, r, PermGitRead)
+	var body gitProxyLsRemoteRequest
+	s, resolved, ok := openGitRemoteProxy(w, r, PermGitRead, &body, func() string { return body.Remote }, false)
 	if !ok {
 		return
 	}
-	var body gitProxyLsRemoteRequest
-	if !decodeGitProxyBody(w, r, &body) {
-		return
-	}
 	ctx := r.Context()
-	s, resolved, fault := openProxyRemote(ctx, convID, body.Remote, deferred)
-	if fault != nil {
-		writeProxyFault(w, fault)
-		return
-	}
-	if !finishProxyPermission(w, r, convID, PermGitRead, resolved.FetchRef.Key(), deferred) {
-		return
-	}
 	args := []string{"ls-remote", gitProxyUploadPack}
 	if body.Heads {
 		args = append(args, "--heads")
@@ -337,27 +378,12 @@ func handleGitProxyLsRemote(w http.ResponseWriter, r *http.Request) {
 // to get there — its objects and refs have to end up in the agent's repository
 // — and gitproxy_refs.go is that half.
 func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-		return
-	}
-	convID, deferred, ok := preflightProxyPermission(w, r, PermGitRead)
+	var body gitProxyFetchRequest
+	s, resolved, ok := openGitRemoteProxy(w, r, PermGitRead, &body, func() string { return body.Remote }, false)
 	if !ok {
 		return
 	}
-	var body gitProxyFetchRequest
-	if !decodeGitProxyBody(w, r, &body) {
-		return
-	}
 	ctx := r.Context()
-	s, resolved, fault := openProxyRemote(ctx, convID, body.Remote, deferred)
-	if fault != nil {
-		writeProxyFault(w, fault)
-		return
-	}
-	if !finishProxyPermission(w, r, convID, PermGitRead, resolved.FetchRef.Key(), deferred) {
-		return
-	}
 	branch := strings.TrimSpace(body.Branch)
 	if branch != "" {
 		if fault := validateBranchName(branch); fault != nil {
@@ -382,27 +408,12 @@ func handleGitProxyFetch(w http.ResponseWriter, r *http.Request) {
 // handleGitProxyPush serves POST /v1/git/push — the only route that writes to
 // a remote, and the only one behind the separate proxy.git.push slug.
 func handleGitProxyPush(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
-		return
-	}
-	convID, deferred, ok := preflightProxyPermission(w, r, PermGitPush)
+	var body gitProxyPushRequest
+	s, resolved, ok := openGitRemoteProxy(w, r, PermGitPush, &body, func() string { return body.Remote }, true)
 	if !ok {
 		return
 	}
-	var body gitProxyPushRequest
-	if !decodeGitProxyBody(w, r, &body) {
-		return
-	}
 	ctx := r.Context()
-	s, resolved, fault := openProxyRemote(ctx, convID, body.Remote, deferred)
-	if fault != nil {
-		writeProxyFault(w, fault)
-		return
-	}
-	if !finishProxyPermission(w, r, convID, PermGitPush, resolved.PushRef.Key(), deferred) {
-		return
-	}
 
 	branch := strings.TrimSpace(body.Branch)
 	if branch == "" {

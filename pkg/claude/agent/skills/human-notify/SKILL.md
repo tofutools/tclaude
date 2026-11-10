@@ -32,7 +32,7 @@ If the human has OS notifications enabled (`tclaude setup`), each
 notify-human **also raises a desktop notification** — so it reaches them
 even when the dashboard isn't open. This is on by default once
 notifications are enabled and can be silenced with
-`"human_messages": false` under `notifications` in `~/.tclaude/config.json`.
+`"human_messages": false` under `notifications` in `~/.tclaude/data/config.json`.
 
 ## It is an extra channel, not a replacement
 
@@ -121,6 +121,75 @@ delete older attachment messages before publishing when a quota is full. Count
 caps (1,000 published files per stable agent, 10,000 total) also apply,
 including to empty files.
 
+### Putting a decision to the human
+
+When you need the human to choose — a design direction, a trade-off, which
+of two approaches — ask with options instead of prose:
+
+```bash
+tclaude agent notify-human -s "Which layout for the fleet brief?" \
+  "Tabs keep it compact; a sidebar shows more at once. Mock attached." \
+  --option "Tabs" --option "Sidebar" --recommend 2 --attach mock.png
+```
+
+Give 2 to 6 short, single-line options; `--recommend N` marks the one you
+suggest (counting from 1). The human sees one button per option in their
+companion window (when they have you pinned) and in the Messages reader, and
+voice reads the question out if they have voice on for you. Their pick
+arrives in your inbox as a message starting `Decision: <option>`, with the
+question it answers and any note they added — even if you are offline by
+then. Only the first answer counts. Keep working on what does not depend on
+the answer instead of waiting idle; one decision per message.
+
+When a decision you asked no longer matters (you settled it yourself, or the
+work moved on), withdraw it so it stops waiting on the human:
+
+```bash
+tclaude agent notify-human dismiss 123 --reason "went with tabs after all"
+tclaude agent notify-human dismiss --all   # every open decision of yours
+```
+
+It leaves the human's "to decide" queue and stays in Messages, marked
+dismissed with your reason. You can dismiss only decisions you asked; anyone
+else's reads as not found. An answered decision cannot be dismissed, and a
+dismissed one cannot be answered: whichever comes first counts. The human can
+dismiss your decisions too; you then get an inbox message "Decision #N
+dismissed by the operator" (one message per batch), so stop waiting for an
+answer.
+
+Decisions are part of Collab, which the operator can turn off. If `--option` is refused
+with `collab_disabled`, send the same message without it and list the choices in
+the body; the human answers with a reply.
+
+Use decisions for taste and direction calls, where the human's judgement is
+the point. Do not use them for things you can decide yourself, and do not
+ask the same question twice.
+
+### Putting an action on a message
+
+`--action` puts one button on the message, chosen from a fixed list:
+
+```bash
+tclaude agent notify-human "The build is broken here; have a look." --action terminal
+tclaude agent notify-human "The layout is on the drawing board." --action drawing_board:<id>
+tclaude agent notify-human "Ready for review." --action pr:<url>
+tclaude agent notify-human "Usage is close to the limit." --action tab:usage
+```
+
+- `terminal` opens a shell in your own tracked directory. It takes no path.
+- `drawing_board:<id>` opens a drawing board.
+- `pr:<url>` opens a GitHub PR (`https://github.com/<owner>/<repo>/pull/<n>`)
+  you presented with `tclaude agent present-pr` first.
+- `tab:<name>` goes to `groups`, `terminals`, `automations`, `processes`,
+  `plugins`, `access`, `messages`, `usage`, `diagnostics` or `config`.
+
+The daemon resolves the target and writes the button's text, including the
+directory and, for a terminal, that it runs outside your sandbox. Nothing
+happens until the human clicks. You get no output back, and no word that they
+clicked. A message takes one action, and a message is a decision or an action,
+not both. Actions need Collab, like decisions: on `collab_disabled`, send the
+message without `--action`.
+
 ## Permission
 
 Sending is gated on the **`human.notify`** permission slug. It is
@@ -148,5 +217,6 @@ The human opens the dashboard (`tclaude agent dashboard`) and the
 **Messages** tab. Messages are listed newest-first with sender, group,
 subject, body, and a read/unread marker; the human marks them read,
 focuses the sending agent's window, or clears read messages. There is
-no separate reply channel — the focus button IS the reply path: the
-human reads a message, focuses your window, and talks to you there.
+a reply button too: a reply, or the pick on a decision, comes back to your
+inbox. The focus button opens your window so the human can talk to you
+there.

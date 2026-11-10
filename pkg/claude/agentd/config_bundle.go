@@ -210,7 +210,8 @@ func handleConfigBundleExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleConfigBundleImport(w http.ResponseWriter, r *http.Request) {
-	if _, ok := requirePermission(w, r, PermConfigImport); !ok {
+	caller, ok := requirePermission(w, r, PermConfigImport)
+	if !ok {
 		return
 	}
 	var in configBundleRequest
@@ -286,7 +287,16 @@ func handleConfigBundleImport(w http.ResponseWriter, r *http.Request) {
 			}
 			// Bind the plan now. Unresolved items remain visible but cannot apply.
 			if len(unresolved) == 0 {
-				action, err := planConfigBundleItem(r, section, item, in.Replace, &preview, &in.Bundle)
+				action, err := planConfigBundleItem(r, caller, section, item, in.Replace, &preview, &in.Bundle)
+				var locked *resourceLockedError
+				if errors.As(err, &locked) {
+					// A preview shows the change; applying it is refused.
+					if in.Apply {
+						writeResourceLocked(w, locked.what)
+						return
+					}
+					continue
+				}
 				if err != nil {
 					writeError(w, 400, "invalid_item", c.Item+": "+err.Error())
 					return
@@ -343,7 +353,7 @@ func bundleFailure(f *spawnFailure) error {
 	return errors.New(f.Msg)
 }
 
-func planConfigBundleItem(r *http.Request, section string, item configbundle.Item, replace bool, preview *configBundlePreview, selected *configbundle.Bundle) (func() error, error) {
+func planConfigBundleItem(r *http.Request, caller, section string, item configbundle.Item, replace bool, preview *configBundlePreview, selected *configbundle.Bundle) (func() error, error) {
 	switch section {
 	case "roles":
 		var v roleJSON
@@ -355,6 +365,15 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 		}
 		p, fail := buildRoleFromJSON(v)
 		if fail != nil {
+			return nil, bundleFailure(fail)
+		}
+		// Judged at planning, before any item applies; a replace is judged
+		// against the role it replaces.
+		current, err := db.GetRole(p.Name)
+		if err != nil {
+			return nil, err
+		}
+		if fail := roleConferralFailure(caller, current, p); fail != nil {
 			return nil, bundleFailure(fail)
 		}
 		return func() error {
@@ -437,7 +456,23 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 		check.RoleRef = ""
 		check.RoleRefs = nil
 		check.PromptRefs = nil
-		if _, fail := buildProfileFromJSON(check); fail != nil {
+		judged, fail := buildProfileFromJSON(check)
+		if fail != nil {
+			return nil, bundleFailure(fail)
+		}
+		// Judge its overrides and is_owner at planning, before any item
+		// applies; a replace is judged against the profile it replaces. The
+		// grants of the roles it names are judged with their own items, and
+		// once more when importProfiles applies it.
+		var before *db.SpawnProfile
+		if replace {
+			current, err := db.GetSpawnProfile(item.Name)
+			if err != nil {
+				return nil, err
+			}
+			before = current
+		}
+		if fail := profileConferralFailure(r, caller, before, judged, "", libraryProfileReach); fail != nil {
 			return nil, bundleFailure(fail)
 		}
 		action := "create"
@@ -445,7 +480,7 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 			action = "overwrite"
 		}
 		return func() error {
-			_, fail := importProfiles(env, []profileImportDecision{{Name: item.Name, Action: action}})
+			_, fail := importProfiles(caller, env, []profileImportDecision{{Name: item.Name, Action: action}})
 			return bundleFailure(fail)
 		}, nil
 	case "sandbox-profiles":
@@ -595,11 +630,23 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 				check.Agents[n].ProfileInline = &inline
 			}
 		}
-		if _, fail := buildTemplateFromJSON(check); fail != nil {
+		built, fail := buildTemplateFromJSON(check)
+		if fail != nil {
 			return nil, bundleFailure(fail)
 		}
+		// Judged at planning, before any item applies, and again when it applies.
+		gate := callerTemplateOwnerScopesGate(r, caller)
+		if replace {
+			current, err := db.GetGroupTemplate(built.Name)
+			if err != nil {
+				return nil, err
+			}
+			if fail := checkTemplateOwnerScopes(gate, current, built.OwnerScopesJSON); fail != nil {
+				return nil, bundleFailure(fail)
+			}
+		}
 		return func() error {
-			res, exists, fail := importTemplateEnvelope(env, "", replace)
+			res, exists, fail := importTemplateEnvelope(caller, env, "", replace, gate)
 			preview.Warnings = append(preview.Warnings, res.Warnings...)
 			if fail != nil {
 				return bundleFailure(fail)
@@ -643,6 +690,10 @@ func planConfigBundleItem(r *http.Request, section string, item configbundle.Ite
 		}
 		if hash != "" && !replace {
 			return func() error { return errors.New("process template already exists") }, nil
+		}
+		if !callerIsHuman(r) && db.GroupResourceLocked(resourceKindProcess, parsed.Template.ID) &&
+			!agentHoldsResourceLock(r, resourceKindProcess, parsed.Template.ID) {
+			return nil, &resourceLockedError{what: "process template " + parsed.Template.ID}
 		}
 		return func() error { _, err := fs.PutTemplateEditorSource(r.Context(), parsed.Template, hash); return err }, nil
 	case "default-permissions":

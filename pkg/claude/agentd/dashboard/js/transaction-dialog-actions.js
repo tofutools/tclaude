@@ -509,7 +509,7 @@ export function createTransactionDialogActions({
       // Keep the daemon's deliberately asymmetric defaults explicit at this
       // destructive boundary: shutdown is always named; worktree deletion is
       // sent only when the frozen choice opted in. Retire removes the worktree
-      // AND force-deletes its branch, so both halves of the probed identity
+      // AND deletes its branch when merged, so both halves of the probed identity
       // ride along as server-authoritative preconditions — a retry can neither
       // retarget another worktree nor destroy a branch switched in underneath
       // the confirmed path. A detached HEAD freezes an empty branch, which is a

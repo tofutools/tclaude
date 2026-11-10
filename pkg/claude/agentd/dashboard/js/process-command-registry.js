@@ -1,5 +1,6 @@
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
 import { isWizardActive } from './slop.js';
+import { shortcutText } from './keybindings.js';
 
 function presented(plain, wizard, active) {
   return active ? wizard : plain;
@@ -75,7 +76,7 @@ export function buildProcessEditorCommands({ editor, actions, wizard = isWizardA
       'select all everything bind whole', context.hasGraph, 'The graph is empty.', () => editor.selectAll()),
     command('clear-selection', '○', 'Clear selection', 'Release selection', 'Leave every graph item unselected',
       'clear deselect unselect release', context.hasSelection, 'Nothing is selected.', () => editor.clearSelection()),
-    command('auto-layout', '▦', 'Auto layout', 'Let the runes arrange themselves', 'Tidy the graph (or just the selected nodes) into the layered layout; undo restores hand-placed positions (Ctrl/Cmd+Shift+L)',
+    command('auto-layout', '▦', 'Auto layout', 'Let the runes arrange themselves', 'Tidy the graph (or just the selected nodes) into the layered layout; undo restores hand-placed positions (' + shortcutText('process-auto-layout') + ')',
       'auto layout arrange tidy organize reflow relayout clean up', context.canAutoLayout, context.autoLayoutReason, () => editor.autoLayout()),
     ...[['down', '↓', 'top to bottom'], ['right', '→', 'left to right'], ['up', '↑', 'bottom to top'], ['left', '←', 'right to left']].map(([direction, arrow, words]) => command(
       `auto-layout-${direction}`, arrow, `Auto layout ${words}`, `Let the runes flow ${direction}`,
@@ -100,10 +101,10 @@ export function buildProcessEditorCommands({ editor, actions, wizard = isWizardA
       'next issue error warning diagnostic omen', context.issueCount > 0, 'No validation issues.', () => editor.focusIssue(1)),
     command('previous-issue', '↑', 'Focus previous issue', 'Seek the previous omen', `${context.issueCount} current validation issue${context.issueCount === 1 ? '' : 's'}`,
       'previous prior issue error warning diagnostic omen', context.issueCount > 0, 'No validation issues.', () => editor.focusIssue(-1)),
-    command('scribe-selection', '🤖', 'Ask agent about selection', 'Ask a scribe about chosen runes', 'Preview selected stable graph identities, then reuse or summon the scoped scribe',
-      'ask agent scribe selection context chosen runes', context.hasGraphSelection, 'Select a node or edge first.', () => editor.requestScribe('selection')),
-    command('scribe-diagnostic', '🩹', 'Ask agent to fix this issue', 'Ask a scribe to mend this omen', 'Preview the focused diagnostic code and target, then reuse or summon the scoped scribe',
-      'ask agent scribe fix issue diagnostic error warning omen mend', context.hasCurrentIssue, 'Focus a validation issue first.', () => editor.requestScribe('diagnostic')),
+    command('scribe-selection', '🤖', 'Ask agent about selection', 'Ask a scribe about chosen runes', 'Preview selected stable graph identities, then send them to this editor\'s helper, or start one',
+      'ask agent scribe selection context chosen runes', context.hasGraphSelection, 'Select a node or edge first.', () => editor.askHelper('selection')),
+    command('scribe-diagnostic', '🩹', 'Ask agent to fix this issue', 'Ask a scribe to mend this omen', 'Preview the focused diagnostic code and target, then send it to this editor\'s helper, or start one',
+      'ask agent scribe fix issue diagnostic error warning omen mend', context.hasCurrentIssue, 'Focus a validation issue first.', () => editor.askHelper('diagnostic')),
     command('scribe-template', '🤖', 'Edit / refactor with agent', 'Rewrite the process with a scribe', 'Preview bounded whole-template context, then reuse or summon the scoped scribe',
       'edit refactor agent scribe whole template rewrite process', true, '', () => editor.requestScribe('template')),
     command('save', '💾', 'Save template', 'Seal the template', 'Use validation, versioning, and CAS conflict handling',

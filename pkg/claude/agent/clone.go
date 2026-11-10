@@ -28,12 +28,14 @@ import (
 type cloneParams struct {
 	FollowUp      string `pos:"true" optional:"true" help:"Optional first-turn prompt for the clone (quote multi-word strings)."`
 	File          string `long:"file" short:"f" optional:"true" help:"Read the follow-up from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing follow-ups. Mutually exclusive with the positional argument."`
-	Target        string `long:"target" optional:"true" help:"Clone ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires the agent.clone permission, or being an owner of a group containing the target."`
+	Target        string `long:"target" optional:"true" help:"Clone ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix."`
 	NoCopyConv    bool   `long:"no-copy-conv" help:"Spawn the clone with a fresh context (default: copy the original's jsonl so the clone starts with the same conversation history)."`
 	AskHuman      string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny. Self-target only."`
 	Cwd           string `long:"cwd" short:"C" optional:"true" help:"Spawn the clone in this directory (e.g. a git worktree) instead of the original's cwd. An agent caller must be able to write there."`
 	Group         string `long:"group" optional:"true" help:"Also add the clone to this group, on top of the groups it inherits. Requires the groups.members.add permission for that group."`
 	CopyOwnership bool   `long:"copy-ownership" help:"Also make the clone an owner of every group the original owns (default: off — the clone gets the original's memberships, roles and permissions, but no group ownership)."`
+	KeepSandbox   bool   `long:"keep-sandbox" help:"With --group: keep the original's sandbox profile source group instead of launching under that group's profile."`
+	KeepEnv       bool   `long:"keep-environment" help:"With --group: keep the original's group environment source instead of applying that group's environment variables."`
 }
 
 func cloneCmd() *cobra.Command {
@@ -59,8 +61,7 @@ func cloneCmd() *cobra.Command {
 			"request. --copy-ownership also copies the original's group ownerships " +
 			"(off by default). " +
 			"\n\n" +
-			"Cross-agent: --target <selector> clones ANOTHER agent (requires the " +
-			"agent.clone permission, or being an owner of a group containing the target). " +
+			"Cross-agent: --target <selector> clones ANOTHER agent. " + CrossAgentAuth("clone") + " " +
 			"Otherwise self-targeted, requires the self.clone permission " +
 			"(default-granted alongside self.compact; self-reincarnation needs no slug).",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -71,7 +72,7 @@ func cloneCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *cloneParams, _ *cobra.Command, _ []string) {
-			os.Exit(runClone(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runClone(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -103,13 +104,9 @@ func runClone(p *cloneParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	ask, err := ParseAskHuman(p.AskHuman)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcInvalidArg
-	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+	ask, rc := parseAskHumanFlag(p.AskHuman, stdout, stderr)
+	if rc != rcOK {
+		return rc
 	}
 	body := map[string]any{}
 	if followUp != "" {
@@ -127,6 +124,11 @@ func runClone(p *cloneParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if group := strings.TrimSpace(p.Group); group != "" {
 		body["group"] = group
+		body["keep_sandbox"] = p.KeepSandbox
+		body["keep_environment"] = p.KeepEnv
+	} else if p.KeepSandbox || p.KeepEnv {
+		fmt.Fprintln(stderr, "Error: --keep-sandbox and --keep-environment only apply with --group.")
+		return rcInvalidArg
 	}
 	if p.CopyOwnership {
 		body["copy_ownership"] = true

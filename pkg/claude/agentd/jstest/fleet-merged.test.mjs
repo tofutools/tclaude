@@ -5,6 +5,10 @@ const self = { id: 'inst_self', name: 'desk', color: '#58a6ff', local: true };
 const forge = { id: 'inst_forge', name: 'forge', color: '#f0883e', local: false };
 const lab = { id: 'inst_lab', name: 'lab', color: '#39c5cf', local: false };
 const group = (name, extra = {}) => ({ name, members: [], online: 0, ...extra });
+// This node always has Triggers, so the fused view reads its rules; tests
+// about snapshot polling answer that read without recording it.
+const triggersRead = (url) => /\/triggers(\?|$)/.test(url);
+const noTriggers = () => ({ ok: true, status: 200, json: async () => ({ triggers: [] }) });
 
 test('merge names groups group@node, keeps parents per node, and marks stale peers', async (t) => {
   const harness = await createPreactHarness(t);
@@ -86,7 +90,7 @@ test('the merged view polls peers only while shown, renders group@node, and guar
   const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
   const timers = fakeTimers(); const calls = []; const toasts = []; const switched = []; const opened = [];
   const inits = [];
-  const fetchImpl = async (url, init) => { calls.push(url); inits.push(init); return { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], peer_view: { included: ['agents.status'] } }) }; };
+  const fetchImpl = async (url, init) => { if (triggersRead(url)) return noTriggers(); calls.push(url); inits.push(init); return { ok: true, status: 200, json: async () => ({ groups: [group('build')], agents: [], peer_view: { included: ['agents.status'] } }) }; };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${(m) => toasts.push(m)} switchNode=${(id) => switched.push(id)} openTerminal=${(o) => opened.push(o)} />`);
   assert.equal(timers.queue.length, 0, 'one node shown: polls nothing');
@@ -142,13 +146,13 @@ test('a peer poll sends the static_version it holds and keeps the registries an 
     { groups: [group('build')], agents: [], static_version: 'v1', roles: [{ name: 'reviewer' }] },
     { groups: [group('build')], agents: [], static_version: 'v1', static_unchanged: true, roles: null },
   ];
-  const fetchImpl = async (url) => { calls.push(url); const body = replies.shift(); return { ok: true, status: 200, json: async () => body }; };
+  const fetchImpl = async (url) => { if (triggersRead(url)) return noTriggers(); calls.push(url); const body = replies.shift(); return { ok: true, status: 200, json: async () => body }; };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} timers=${timers} remote="" toast=${() => {}} switchNode=${() => {}} />`);
   await harness.act(() => { state.setFused('all'); });
   await harness.act(async () => { await timers.queue.shift().fn(); });
   await harness.act(async () => { await timers.queue.shift().fn(); });
-  assert.deepEqual(calls, ['/api/peer/inst_forge/snapshot', '/api/peer/inst_forge/snapshot?static_version=v1']);
+  assert.deepEqual(calls, ['/api/peer/inst_forge/snapshot', '/api/peer/inst_forge/snapshot?static_version=v1&static_catalogs=1']);
   assert.deepEqual(nodeApi.nodeSnapshot('inst_forge')?.roles, [{ name: 'reviewer' }], 'the unchanged reply keeps the roles already read');
   await harness.act(() => { activeTab.value = 'usage'; });
   await mounted.unmount(); state.dispose();
@@ -228,7 +232,7 @@ test('fused Groups shows each node\'s triggers in its own groups, read from node
   const activeTab = harness.signals.signal('groups');
   const state = stateMod.createFleetState({ activeTab, search: '?nodes=all' });
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: [{ instance_id: 'inst_forge', label: 'forge', trusted: true, online: true }, { instance_id: 'inst_lab', label: 'lab', trusted: true, online: true }] });
-  const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [], triggers_enabled: true });
+  const snapshot = harness.signals.signal({ groups: [group('ops')], agents: [] });
   const rules = {
     self: [{ id: 1, name: 'desk-global', scope: 'global', source: 'pr.opened', enabled: true }],
     forge: [{ id: 1, name: 'forge-ops', scope: 'group', group: 'ops', source: 'pr.merged', enabled: true }],
@@ -435,8 +439,8 @@ test('fused Groups shows only the ticked nodes; on a peer\'s page that peer is t
   // The page shows forge (?node=): its snapshot is the page's.
   const snapshot = harness.signals.signal({ groups: [group('build')], agents: [] });
   const timers = fakeTimers(); const proxied = []; const local = [];
-  const fetchImpl = async (url) => { proxied.push(url); return { ok: true, status: 200, json: async () => ({ groups: [], agents: [] }) }; };
-  const localFetch = async (url) => { local.push(url); return { ok: true, status: 200, json: async () => ({ groups: [group('ops')], agents: [] }) }; };
+  const fetchImpl = async (url) => { if (triggersRead(url)) return noTriggers(); proxied.push(url); return { ok: true, status: 200, json: async () => ({ groups: [], agents: [] }) }; };
+  const localFetch = async (url) => { if (triggersRead(url)) return noTriggers(); local.push(url); return { ok: true, status: 200, json: async () => ({ groups: [group('ops')], agents: [] }) }; };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${snapshot} fetchImpl=${fetchImpl} localFetch=${localFetch} timers=${timers} remote="inst_forge" />`);
   assert.equal(timers.queue.length, 1, 'only this node is read: forge is the page, lab is not ticked');
@@ -477,7 +481,7 @@ test('a wide fused view keeps at most four snapshot reads in flight', async (t) 
   const ids = ['a', 'b', 'c', 'd', 'e', 'f'].map((x) => `inst_${x}0000`);
   state.setStatus({ instance_id: 'inst_self', name: 'desk', peers: ids.map((id) => ({ instance_id: id, label: id.slice(5, 6), trusted: true, online: true })) });
   const timers = fakeTimers(); let open = 0; let peak = 0; const release = [];
-  const fetchImpl = () => { open += 1; peak = Math.max(peak, open); return new Promise((r) => release.push(() => { open -= 1; r({ ok: true, status: 200, json: async () => ({ groups: [], agents: [] }) }); })); };
+  const fetchImpl = (url) => { if (triggersRead(url)) return Promise.resolve(noTriggers()); open += 1; peak = Math.max(peak, open); return new Promise((r) => release.push(() => { open -= 1; r({ ok: true, status: 200, json: async () => ({ groups: [], agents: [] }) }); })); };
   const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   const mounted = await harness.mount(harness.html`<${island.MergedGroups} state=${state} host=${host} snapshot=${harness.signals.signal({ groups: [], agents: [] })} fetchImpl=${fetchImpl} timers=${timers} remote="" />`);
   const ticks = timers.queue.splice(0);
@@ -515,13 +519,13 @@ test("this node's groups run the Groups actions under their own names; a peer's 
 
 // fusedGroups mounts the fused view with its own Groups toolbar state and a
 // process context covering this node's groups only.
-async function mountFusedLens(t, { focus = 'agents', query = '' } = {}) {
+async function mountFusedLens(t, { query = '' } = {}) {
   const harness = await createPreactHarness(t);
   const [stateMod, island, groupsStateMod, islandMod] = await Promise.all([
     harness.importDashboardModule('js/fleet-state.js'), harness.importDashboardModule('js/fleet-merged-island.js'),
     harness.importDashboardModule('js/groups-state.js'), harness.importDashboardModule('js/groups-island.js'),
   ]);
-  const values = new Map([['tclaude.dash.groups.lens', focus]]);
+  const values = new Map();
   const prefs = { getItem: (k) => values.get(k) ?? null, setItem: (k, v) => values.set(k, String(v)), removeItem: (k) => values.delete(k) };
   const groups = groupsStateMod.createGroupsState({ prefs, resetOffsets: () => {}, reorder: (g) => g,
     columns: { list: () => [{ key: 'id', label: 'ID' }], hidden: () => false, setHidden: () => {}, deviationCount: () => 0 } });
@@ -556,11 +560,11 @@ test('fused Groups is driven by the Groups toolbar: its filter narrows every nod
   assert.equal(toolbar.querySelector('#filter-groups-count').textContent, '1 / 3', 'the toolbar counts the fused listing');
   for (const key of ['ungrouped', 'retired', 'conversations', 'replaced']) assert.ok(toolbar.querySelector(`#filter-groups-${key}`), `show ${key} is offered while fused`);
   assert.ok(toolbar.querySelector('#filter-groups-offline'));
-  assert.ok(toolbar.querySelector('[data-groups-focus="processes"]'), 'the lens switch is there');
+  assert.equal(toolbar.querySelector('[data-groups-focus]'), null, 'there is no lens switch');
 });
 
-test('fused Processes shows this node\'s runs on its groups, and says a peer\'s are not shared', async (t) => {
-  const { root } = await mountFusedLens(t, { focus: 'processes' });
+test('fused Groups shows this node\'s runs on its groups, and says a peer\'s are not shared', async (t) => {
+  const { root } = await mountFusedLens(t);
   const home = root.querySelector('details[data-group-key="frontend-squad@desk"]');
   const peer = root.querySelector('details[data-group-key="frontend-squad@forge"]');
   assert.deepEqual([...home.querySelectorAll('[data-process-run-card]')].map((c) => c.dataset.processRunCard), ['run_migrate', 'run_release', 'run_reindex'],
@@ -572,8 +576,8 @@ test('fused Processes shows this node\'s runs on its groups, and says a peer\'s 
   assert.equal(peer.querySelector('summary .gpi-graphs'), null, 'the peer header shows none');
 });
 
-test('fused Both keeps a peer group\'s member table beside the not-shared note', async (t) => {
-  const { root } = await mountFusedLens(t, { focus: 'both' });
+test('fused Groups keeps a peer group\'s member table beside the not-shared note', async (t) => {
+  const { root } = await mountFusedLens(t);
   const peer = root.querySelector('details[data-group-key="frontend-squad@forge"]');
   assert.ok(peer.querySelector('[data-fused-section="agents"]'), 'the Agents section is there');
   assert.match(peer.textContent, /far-away/);
@@ -583,7 +587,7 @@ test('fused Both keeps a peer group\'s member table beside the not-shared note',
 });
 
 test('fused view lets this node\'s process drags through, the run focus\'s performer dock included', async (t) => {
-  const { harness, root } = await mountFusedLens(t, { focus: 'processes' });
+  const { harness, root } = await mountFusedLens(t);
   const add = (inner) => { const d = harness.document.createElement('div'); d.innerHTML = inner; root.appendChild(d); return d; };
   const dock = add('<div data-run-dock><span draggable="true" data-run-dock-agent="agt_fe_lead">fe</span></div>').querySelector('[data-run-dock-agent]');
   assert.equal(harness.fireEvent(dock, 'dragstart').defaultPrevented, false, 'a performer drags onto a step');

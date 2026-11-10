@@ -32,6 +32,8 @@ func TestInlineProfileJSONCoversEveryLaunchField(t *testing.T) {
 		"AgentName": true, "Role": true, "RoleRef": true, "RoleRefs": true, "PromptRefs": true, "Descr": true, "InitialMessage": true,
 		// Spawn-dialog-only toggles: meaningless for a template deploy.
 		"SyncWorktree": true, "AutoFocus": true, "IncludeGroupDefaultContext": true,
+		// Per-agent relaunch rows: a saved spawn profile only (launch slice 11).
+		"RelaunchPolicy": true,
 	}
 
 	inline := reflect.TypeOf(templateInlineProfileJSON{})

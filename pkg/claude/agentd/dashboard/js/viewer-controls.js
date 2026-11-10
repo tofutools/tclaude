@@ -198,13 +198,13 @@ function Icon({ name }) {
 // Maximize is hidden while fullscreen: the window size underneath is moot.
 export function ViewerDisplayButtons({ maximized, fullscreen, canFullscreen, toggleMaximize, toggleFullscreen }) {
   return html`
-    ${!fullscreen && html`<button type="button" class="viewer-display-button viewer-maximize"
+    ${!fullscreen && html`<button data-ui-exempt type="button" class="viewer-display-button viewer-maximize"
       onClick=${toggleMaximize} aria-pressed=${maximized}
       aria-label=${maximized ? 'Restore the viewer size' : 'Maximize the viewer'}
       title=${maximized ? 'Restore size (T)' : 'Maximize to the window (T)'}>
       <${Icon} name=${maximized ? 'restore' : 'maximize'} />
     </button>`}
-    ${canFullscreen && html`<button type="button" class="viewer-display-button viewer-fullscreen"
+    ${canFullscreen && html`<button data-ui-exempt type="button" class="viewer-display-button viewer-fullscreen"
       onClick=${toggleFullscreen} aria-pressed=${fullscreen}
       aria-label=${fullscreen ? 'Exit full screen' : 'Full screen'}
       title=${fullscreen ? 'Exit full screen (F or Esc)' : 'Full screen (F)'}>

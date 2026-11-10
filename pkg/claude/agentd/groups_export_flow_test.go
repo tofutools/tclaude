@@ -108,9 +108,7 @@ func TestGroupImport_CanonicalizesLegacyPermissionSlugs(t *testing.T) {
 	require.NotNil(t, g)
 	permissions, err := db.ListAgentGroupPermissionRows(g.ID)
 	require.NoError(t, err)
-	require.Len(t, permissions, 1)
-	assert.Equal(t, agentd.PermGroupsMembersSpawn, permissions[0].Slug)
-	assert.Equal(t, "canonical", permissions[0].GrantedBy)
+	assert.Empty(t, permissions, "a file's grants do not land")
 
 	overrides, err := db.ListAgentPermissionOverrideRowsForConv(convID)
 	require.NoError(t, err)
@@ -232,18 +230,18 @@ func groupRoundTripPreservesEverything(t *testing.T, format string) {
 	assert.Equal(t, agA.AgentID, toB[0].FromAgent, "imported message keeps the sender's stable agent_id")
 	assert.Equal(t, agB.AgentID, toB[0].ToAgent, "imported message keeps the recipient's stable agent_id")
 
-	// Permissions — both the grant and the deny.
+	// A file's grant does not land; its deny only takes away.
 	permA, err := db.ListAgentPermissionOverridesForConv(aConv)
 	require.NoError(t, err)
-	assert.Equal(t, db.PermEffectGrant, permA["groups.members.spawn"], "grant override restored")
+	assert.Empty(t, permA["groups.members.spawn"], "grant override dropped")
 	permB, err := db.ListAgentPermissionOverridesForConv(bConv)
 	require.NoError(t, err)
 	assert.Equal(t, db.PermEffectDeny, permB["self.rename"], "deny override restored")
 	jobs, err := db.ListAgentCronJobs()
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
-	assert.True(t, jobs[0].OperatorAuthored, "operator-authored cron ownership survives export/import")
-	assert.Empty(t, jobs[0].OwnerConv, "operator-authored cron remains ownerless")
+	assert.False(t, jobs[0].Enabled, "a file's job lands disabled")
+	assert.False(t, jobs[0].OperatorAuthored, "a file cannot speak as the operator")
 
 	// .jsonl content restored at the new location, with the source cwd
 	// rewritten to the import target and no stale source path left.
@@ -346,6 +344,7 @@ func TestGroupExportImport_SameMachineReimportRemaps(t *testing.T) {
 	f.HaveMemberWithRole("team", aConv, "lead")
 	f.HaveMemberWithRole("team", bConv, "worker")
 	require.NoError(t, db.SetAgentPermissionOverride(aConv, "groups.members.spawn", db.PermEffectGrant, "test"))
+	require.NoError(t, db.SetAgentPermissionOverride(bConv, "self.rename", db.PermEffectDeny, "test"))
 
 	archive := exportGroup(t, f, "team")
 	srcContentA, err := os.ReadFile(convJSONLPath(home, srcCwd, aConv))
@@ -375,12 +374,12 @@ func TestGroupExportImport_SameMachineReimportRemaps(t *testing.T) {
 		assert.NotEqual(t, bConv, m.ConvID)
 		assert.Equal(t, res.ConvRemaps[remapSource(res.ConvRemaps, m.ConvID)], m.ConvID)
 	}
-	// The permission grant followed conv-id A to its fresh id.
-	freshA := res.ConvRemaps[aConv]
-	require.NotEmpty(t, freshA)
-	permFresh, err := db.ListAgentPermissionOverridesForConv(freshA)
+	// The deny followed conv-id B to its fresh id.
+	freshB := res.ConvRemaps[bConv]
+	require.NotEmpty(t, freshB)
+	permFresh, err := db.ListAgentPermissionOverridesForConv(freshB)
 	require.NoError(t, err)
-	assert.Equal(t, db.PermEffectGrant, permFresh["groups.members.spawn"],
+	assert.Equal(t, db.PermEffectDeny, permFresh["self.rename"],
 		"permission remapped onto the fresh conv-id")
 
 	// The ORIGINAL group is untouched.
@@ -396,6 +395,8 @@ func TestGroupExportImport_SameMachineReimportRemaps(t *testing.T) {
 	assert.Equal(t, srcContentA, origNow, "original .jsonl left byte-for-byte untouched")
 
 	// The fresh agent's title resolves to the -i-N name via its .jsonl.
+	freshA := res.ConvRemaps[aConv]
+	require.NotEmpty(t, freshA)
 	if row, _ := db.GetConvIndex(freshA); assert.NotNil(t, row) {
 		assert.Equal(t, res.Retitled[freshA], row.CustomTitle)
 	}
@@ -473,9 +474,10 @@ func TestGroupImport_RejectsInvalidPermissionScopeBeforeFilesystem(t *testing.T)
 	exp := &groupexport.Export{
 		FormatVersion: groupexport.FormatVersion,
 		SourceGroup:   "invalid-scope",
-		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
-			Slug: agentd.PermGroupsMembersSpawn, ScopeJSON: `{"remote":["origin"]}`,
-		}}},
+		Permissions: []groupexport.Permission{{
+			ConvID: "11111111-1111-2222-3333-444444444444", Slug: agentd.PermGroupsMembersSpawn,
+			Effect: db.PermEffectDeny, ScopeJSON: `{"remote":["origin"]}`,
+		}},
 	}
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)
@@ -496,9 +498,10 @@ func TestGroupImport_RejectsExactTargetAgentScopeWithoutActorMapping(t *testing.
 	exp := &groupexport.Export{
 		FormatVersion: groupexport.FormatVersion,
 		SourceGroup:   "exact-target-scope",
-		Group: groupexport.Group{Permissions: []groupexport.GroupPermission{{
-			Slug: agentd.PermAgentRetire, ScopeJSON: `{"target_agent":["agt_original_actor"]}`,
-		}}},
+		Permissions: []groupexport.Permission{{
+			ConvID: "11111111-1111-2222-3333-444444444444", Slug: agentd.PermAgentRetire,
+			Effect: db.PermEffectDeny, ScopeJSON: `{"target_agent":["agt_original_actor"]}`,
+		}},
 	}
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)

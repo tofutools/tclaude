@@ -436,7 +436,7 @@ test('retire renderer preserves copy, corrected worktree defaults, coupling, and
   assert.ok(host.querySelector('#retire-modal'));
   assert.equal(host.querySelectorAll('#retire-modal').length, 1);
   assert.equal(host.querySelector('#retire-title .retire-title-regular').textContent, 'Retire this agent?');
-  assert.equal(host.querySelector('#retire-title .retire-title-wizard').textContent, 'Banish this familiar?');
+  assert.equal(host.querySelector('#retire-title .retire-title-wizard').textContent, 'Banish this hero?');
   assert.match(host.querySelector('#retire-modal').textContent, /non-destructive soft-delete/);
   assert.match(host.querySelector('#retire-modal .theme-copy-wizard').textContent, /plain conversation/,
     'wizard copy is rendered concurrently so a live theme flip cannot reset state');

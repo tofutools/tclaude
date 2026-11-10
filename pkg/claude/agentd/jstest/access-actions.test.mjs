@@ -21,3 +21,17 @@ test('Access revoke preserves endpoint and exposes authorization failures', asyn
   assert.equal(state.mutation.value.busy.size, 0);
   assert.equal(notices.at(-1)[1], true);
 });
+
+test('revoking a stored grant says it ends for future Stewards too', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createAccessState }, { createAccessActions }] = await Promise.all([
+    harness.importDashboardModule('js/access-state.js'), harness.importDashboardModule('js/access-actions.js'),
+  ]);
+  const state = createAccessState({ snapshot: harness.signals.signal(null), prefs: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
+  const asked = [];
+  const actions = createAccessActions({ state, confirm: async (dialog) => { asked.push(dialog.body); return false; }, openGrant: () => {}, notify: () => {}, requestMutation: async () => {} });
+  await actions.revoke({ id: 1, slug: 'agent.stop', carried: true });
+  await actions.revoke({ id: 2, slug: 'agent.stop' });
+  assert.match(asked[0], /all future Stewards/);
+  assert.doesNotMatch(asked[1], /Stewards/);
+});

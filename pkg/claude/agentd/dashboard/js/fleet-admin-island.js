@@ -1,7 +1,9 @@
 import { h, render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
+import { Dialog } from './ui-dialog.js';
 import { GrantsPage } from './fleet-admin-grants.js';
 import { InvitesPage } from './fleet-admin-invites.js';
 import { ProfilesPage } from './fleet-admin-profiles.js';
@@ -33,6 +35,9 @@ import { openProposalComposer } from './links-controller.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 import { fmtAge, nodeHref, pollDelay, remoteNodeID } from './fleet-model.js';
 import { LABEL_RE, UNRESTRICTED_CONSEQUENCE, adminView, shortFingerprint, shortID } from './fleet-admin-model.js';
+import { writeClipboard } from './insecure-origin.js';
+import { errText } from './cell-format.js';
+import { CopyCode, FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
@@ -72,13 +77,9 @@ function defaultSwitchHome() {
   globalThis.location.assign(nodeHref('', { pathname: toPath(fleetAdminLocation()), search: globalThis.location.search }));
 }
 
-function defaultCopy(text) {
-  const clipboard = globalThis.navigator?.clipboard;
-  if (!clipboard?.writeText) return Promise.reject(new Error('clipboard unavailable'));
-  return clipboard.writeText(text);
+async function defaultCopy(text) {
+  if (!await writeClipboard(text)) throw new Error('clipboard unavailable');
 }
-
-function errText(error) { return error?.message || String(error); }
 
 let runActionsSingleton = null;
 function defaultRunActions() {
@@ -140,8 +141,7 @@ function ago(iso, now) {
 
 function Fingerprint({ value, copy, toast }) {
   if (!value) return html`<span class="muted">—</span>`;
-  const onCopy = () => copy(value).then(() => toast('Fingerprint copied', false)).catch(() => toast(`Fingerprint: ${value}`, false));
-  return html`<span class="fa-fp"><code>${value}</code> <button type="button" class="fa-link" onClick=${onCopy} title="Copy the fingerprint">copy</button></span>`;
+  return html`<${CopyCode} class="fa-fp" value=${value} what="Fingerprint" copy=${copy} toast=${toast} />`;
 }
 
 function Identity({ self, actions, confirm, toast, copy, reload, onUpdate, onSettings }) {
@@ -159,16 +159,16 @@ function Identity({ self, actions, confirm, toast, copy, reload, onUpdate, onSet
     .then(() => { toast('Reconnecting to the hub…', false); reload(); })
     .catch((error) => toast(`Reconnect failed: ${errText(error)}`, true));
   const hubClass = self.hubState === 'connected' ? 'ok' : self.enabled ? 'warn' : 'off';
-  return html`<div class="fa-identity">
+  return html`<div class="fa-identity ui-card ui-inset">
     <span><span class="fa-k">This node</span> <b>${self.name}</b></span>
     <span><span class="fa-k">Instance</span> <code>${self.id}</code></span>
     <span><span class="fa-k">Fingerprint</span> <${Fingerprint} value=${self.fingerprint} copy=${copy} toast=${toast} /></span>
-    <span><span class="fa-k">tclaude</span> <button id="fleet-node-update-open" type="button" class="fa-link" onClick=${onUpdate}>version & updates…</button></span>
+    <span><span class="fa-k">tclaude</span> <${Button} size="sm" variant="link" id="fleet-node-update-open" class="fa-link" onClick=${onUpdate}>installation…<//></span>
     <span><${AwayControl} confirm=${confirm} toast=${toast} /></span>
-    <span><span class="fa-k">Hub</span> ${self.hubURL ? html`<code>${self.hubURL}</code> ` : ''}<span class=${`fa-hub ${hubClass}`} title=${self.hubError || ''}>${self.hubState}</span>${' '}<button id="fleet-node-settings-open" type="button" class="fa-link" title="Hub connection and node labels" onClick=${onSettings}>${self.hubURL ? 'settings…' : 'connect…'}</button></span>
+    <span><span class="fa-k">Hub</span> ${self.hubURL ? html`<code>${self.hubURL}</code> ` : ''}<span class=${`fa-hub ${hubClass}`} title=${self.hubError || ''}>${self.hubState}</span>${' '}<${Button} size="sm" variant="link" id="fleet-node-settings-open" class="fa-link" title="Hub connection and node labels" onClick=${onSettings}>${self.hubURL ? 'settings…' : 'connect…'}<//></span>
     ${self.enabled
-      ? html`<button type="button" class="fa-danger" onClick=${disconnect}>Disconnect</button>`
-      : self.hubURL ? html`<button type="button" onClick=${reconnect}>Reconnect</button>` : ''}
+      ? html`<${Button} size="sm" variant="danger" onClick=${disconnect}>Disconnect<//>`
+      : self.hubURL ? html`<${Button} size="sm" onClick=${reconnect}>Reconnect<//>` : ''}
   </div>`;
 }
 
@@ -222,8 +222,7 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
     } finally { setBusy(false); }
   };
   const plan = preview?.plan;
-  return html`<${Overlay} id="fleet-trust-modal" labelledby="fleet-trust-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-trust-title">Trust ${row.label}?</h3>
+  return html`<${Dialog} id="fleet-trust-modal" onClose=${onClose} blocked=${busy} title=${html`Trust ${row.label}?`}>
     <div class="fa-dl">
       <span class="fa-k">Instance</span><code class="fa-wrap">${row.id}</code>
       <span class="fa-k">Fingerprint</span><code class="fa-wrap fa-fp-full">${preview?.fingerprint || row.fingerprint || '…'}</code>
@@ -233,7 +232,7 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
       <input id="fleet-trust-label" type="text" value=${label} placeholder="optional, a-z 0-9 - _ ." autocomplete="off" spellcheck="false"
         onInput=${(e) => setLabel(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!busy && preview && checked && labelOK) submit(); } }} />
     </label>
-    ${!labelOK && html`<div class="cron-create-error">Labels are 1–32 characters of a-z, 0-9, - _ .</div>`}
+    ${!labelOK && html`<div class="cron-create-error ui-error-box">Labels are 1–32 characters of a-z, 0-9, - _ .</div>`}
     ${profile
       ? html`<div class="fa-profile">Default profile <b>${profile.name}</b> applies: level <b>${preview.level}</b>${plan ? `, ${plan.changes?.length || 0} change(s), ${plan.security_changes || 0} security-relevant` : ''}.
           <label><input type="checkbox" checked=${noDefault} onChange=${(e) => setNoDefault(e.currentTarget.checked)} /> Don't apply the default profile</label></div>`
@@ -242,19 +241,19 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
           <label><input type="radio" name="fa-level" checked=${level === 'restricted'} onChange=${() => setLevel('restricted')} /> <b>Restricted</b> — the peer gets only the grants you give it</label>
           <label><input type="radio" name="fa-level" checked=${level === 'unrestricted'} onChange=${() => setLevel('unrestricted')} /> <b>Unrestricted</b></label>
         </div>`}
-    ${plan?.conflicts?.length > 0 && html`<div class="cron-create-error">Profile conflicts: ${plan.conflicts.join('; ')}</div>`}
+    ${plan?.conflicts?.length > 0 && html`<div class="cron-create-error ui-error-box">Profile conflicts: ${plan.conflicts.join('; ')}</div>`}
     ${effective === 'unrestricted' && html`<${ConsequenceNote} />`}
     <label class="fa-ack"><input id="fleet-trust-ack" type="checkbox" checked=${checked} onChange=${(e) => setChecked(e.currentTarget.checked)} />
       <span>I compared this fingerprint with ${row.label}'s operator over another channel (e.g. <code>tclaude federation identity</code> on their node)</span></label>
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="fleet-trust-submit" type="button" class=${effective === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !preview || !checked || !labelOK} onClick=${submit}>
+      <${Button} id="fleet-trust-submit" variant=${effective === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !preview || !checked || !labelOK} onClick=${submit}>
         ${busy ? 'Trusting…' : effective === 'unrestricted' ? 'Trust unrestricted' : 'Trust'}
-      </button>
+      </${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // UnrestrictDialog widens a trusted peer to unrestricted: the consequence and
@@ -271,8 +270,7 @@ export function UnrestrictDialog({ row, actions, onClose, onDone }) {
       onDone(`${row.label} is now unrestricted`);
     } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
-  return html`<${Overlay} id="fleet-level-modal" labelledby="fleet-level-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-level-title">Make ${row.label} unrestricted?</h3>
+  return html`<${Dialog} id="fleet-level-modal" onClose=${onClose} blocked=${busy} title=${html`Make ${row.label} unrestricted?`}>
     <div class="fa-dl">
       <span class="fa-k">Instance</span><code class="fa-wrap">${row.id}</code>
       <span class="fa-k">Fingerprint</span><code class="fa-wrap fa-fp-full">${row.fingerprint || '—'}</code>
@@ -280,13 +278,13 @@ export function UnrestrictDialog({ row, actions, onClose, onDone }) {
     <${ConsequenceNote} />
     <label class="fa-ack"><input id="fleet-level-ack" type="checkbox" checked=${checked} onChange=${(e) => setChecked(e.currentTarget.checked)} />
       <span>I understand, and this is ${row.label}'s fingerprint</span></label>
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="fleet-level-submit" type="button" class="danger" disabled=${busy || !checked || !row.fingerprint} onClick=${submit}>${busy ? 'Saving…' : 'Make unrestricted'}</button>
+      <${Button} variant="danger" id="fleet-level-submit" disabled=${busy || !checked || !row.fingerprint} onClick=${submit}>${busy ? 'Saving…' : 'Make unrestricted'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 function grantsCell(g) {
@@ -298,51 +296,42 @@ function grantsCell(g) {
 function PeersPage({ view, now, onTrust, onUnrestrict, onRestrict, onUntrust, onGrants, onKey, onPropose, proposable }) {
   return html`<div class="fa-peers">
     <h4>This node</h4>
-    <table class="fa-table" id="fleet-self">
-      <thead><tr><th>Node</th><th>Instance</th><th>Fingerprint</th><th>Level</th><th>Seen</th></tr></thead>
-      <tbody><tr data-self=${view.self.id}>
+    <${FaTable} id="fleet-self" head=${['Node', 'Instance', 'Fingerprint', 'Level', 'Seen']}><tr data-self=${view.self.id}>
         <td><span class="fa-dot on" title="online"></span> <b>${view.self.name}</b> <span class="muted">(this node)</span></td>
         <td><code title=${view.self.id}>${shortID(view.self.id)}</code></td>
         <td><code title=${view.self.fingerprint}>${shortFingerprint(view.self.fingerprint)}</code></td>
         <td>self</td><td>online</td>
-      </tr></tbody>
-    </table>
+      </tr><//>
     <h4>Trusted peers <span class="muted">${view.trusted.length}</span></h4>
     ${view.trusted.length === 0
       ? html`<div class="empty">No trusted peers yet. Trust an instance below once its operator has read you its fingerprint.</div>`
-      : html`<table class="fa-table" id="fleet-trusted">
-        <thead><tr><th>Peer</th><th>Instance</th><th>Fingerprint</th><th>Level</th><th>Seen</th><th>Grants</th><th>Pools</th><th></th></tr></thead>
-        <tbody>${view.trusted.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
+      : html`<${FaTable} id="fleet-trusted" head=${['Peer', 'Instance', 'Fingerprint', 'Level', 'Seen', 'Grants', 'Pools', '']}>${view.trusted.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
           <td><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> <b>${r.label}</b>${r.name && r.name !== r.label ? html` <span class="muted">${r.name}</span>` : ''}</td>
           <td><code title=${r.id}>${shortID(r.id)}</code></td>
-          <td><code title=${r.fingerprint}>${shortFingerprint(r.fingerprint)}</code>${keyBadge(r.keyTransition) && html` <button type="button" class=${`fa-link ${keyBadge(r.keyTransition).cls}`} data-fa="key" title=${keyBadge(r.keyTransition).title} onClick=${() => onKey(r)}>${keyBadge(r.keyTransition).text}</button>`}</td>
+          <td><code title=${r.fingerprint}>${shortFingerprint(r.fingerprint)}</code>${keyBadge(r.keyTransition) && html` <${Button} size="sm" variant="link" class="fa-link" data-fa="key" title=${keyBadge(r.keyTransition).title} onClick=${() => onKey(r)}><span class=${keyBadge(r.keyTransition).cls}>${keyBadge(r.keyTransition).text}</span><//>`}</td>
           <td><span class=${`fa-level ${r.level}`}>${r.level}</span></td>
           <td>${r.online ? 'online' : ago(r.lastSeen, now)}</td>
           <td>${grantsCell(r.grants)}</td>
           <td>${r.pools.length ? r.pools.join(', ') : html`<span class="muted">—</span>`}</td>
           <td class="fa-acts">
-            <button type="button" data-fa="grants" onClick=${() => onGrants(r)}>Grants…</button>
-            ${onPropose && proposable?.has(r.id) && html`<button type="button" data-fa="propose" title=${`Offer ${r.label} groups to see and cross-node links; nothing changes until their operator accepts`} onClick=${() => onPropose(r)}>Propose…</button>`}
+            <${Button} size="sm" data-fa="grants" onClick=${() => onGrants(r)}>Grants…<//>
+            ${onPropose && proposable?.has(r.id) && html`<${Button} size="sm" data-fa="propose" title=${`Offer ${r.label} groups to see and cross-node links; nothing changes until their operator accepts`} onClick=${() => onPropose(r)}>Propose…<//>`}
             ${r.level === 'unrestricted'
-              ? html`<button type="button" data-fa="restrict" onClick=${() => onRestrict(r)}>Restrict…</button>`
-              : html`<button type="button" data-fa="unrestrict" onClick=${() => onUnrestrict(r)}>Make unrestricted…</button>`}
-            <button type="button" class="fa-danger" data-fa="untrust" onClick=${() => onUntrust(r)}>Untrust…</button>
+              ? html`<${Button} size="sm" data-fa="restrict" onClick=${() => onRestrict(r)}>Restrict…<//>`
+              : html`<${Button} size="sm" data-fa="unrestrict" onClick=${() => onUnrestrict(r)}>Make unrestricted…<//>`}
+            <${Button} size="sm" variant="ghost danger" data-fa="untrust" onClick=${() => onUntrust(r)}>Untrust…<//>
           </td>
-        </tr>`)}</tbody>
-      </table>`}
+        </tr>`)}<//>`}
     <h4>Waiting to be trusted <span class="muted">${view.waiting.length}</span></h4>
     ${view.waiting.length === 0
       ? html`<div class="empty">No other instances visible on the hub.</div>`
-      : html`<table class="fa-table" id="fleet-waiting">
-        <thead><tr><th>Reports name</th><th>Instance</th><th>Fingerprint</th><th>Seen</th><th></th></tr></thead>
-        <tbody>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
-          <td><span class=${`fa-dot${r.online ? ' on' : ''}`}></span> ${r.name || html`<span class="muted">unnamed</span>`}${r.asks && html` <span class="fa-asks" title="This instance asked to be trusted; its note is on the map">🤝 asks to be trusted</span>`}</td>
+      : html`<${FaTable} id="fleet-waiting" head=${['Reports name', 'Instance', 'Fingerprint', 'Seen', '']}>${view.waiting.map((r) => html`<tr key=${r.id} data-peer=${r.id}>
+          <td><span class=${`fa-dot${r.online ? ' on' : ''}`} title=${r.online ? 'online' : 'offline'}></span> ${r.name || html`<span class="muted">unnamed</span>`}${r.asks && html` <span class="fa-asks" title="This instance asked to be trusted; its note is on the map">🤝 asks to be trusted</span>`}</td>
           <td><code title=${r.id}>${shortID(r.id)}</code></td>
           <td><code title=${r.fingerprint}>${shortFingerprint(r.fingerprint)}</code></td>
           <td>${r.online ? 'online' : ago(r.lastSeen, now)}</td>
-          <td class="fa-acts"><button type="button" class="primary" data-fa="trust" onClick=${() => onTrust(r)}>Trust…</button></td>
-        </tr>`)}</tbody>
-      </table>`}
+          <td class="fa-acts"><${Button} size="sm" variant="primary" data-fa="trust" onClick=${() => onTrust(r)}>Trust…<//></td>
+        </tr>`)}<//>`}
   </div>`;
 }
 
@@ -484,11 +473,12 @@ export function FleetAdmin({
   const sub = SUB_PAGES.find((p) => p.id === (page || landing.current)) || SUB_PAGES[1];
   return html`<div class="fleet-admin">
     <${Identity} self=${view.self} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload} onUpdate=${() => setDialog({ kind: 'update' })} onSettings=${() => setDialog({ kind: 'settings' })} />
-    <div class="fa-subtabs" role="tablist">${SUB_PAGES.map((p) => html`<button type="button" role="tab" key=${p.id} aria-selected=${p.id === sub.id ? 'true' : 'false'}
-      class=${`fa-subtab${p.id === sub.id ? ' on' : ''}`} onClick=${() => { if (p.id !== sub.id) { setRunPreselect(''); setPage(p.id); } }}>${p.label}${p.id === 'setup' && !progress.complete
-        ? html` <span class="fa-badge fa-badge-setup" id="fleet-setup-progress" title="Setup steps done">${progress.done}/${progress.total}</span>` : ''}${p.id === 'spawns' && pendingSpawns > 0
-        ? html` <span class="fa-badge" id="fleet-spawns-pending-count" title="Spawn requests from peers waiting for your decision">${pendingSpawns}</span>` : ''}${p.id === 'boards' && boardUpdates?.updates?.length > 0
-        ? html` <span class="fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}</button>`)}</div>
+    <${Tabs} class="fa-subnav" label="Fleet administration views" value=${sub.id}
+      onSelect=${(id) => { if (id !== sub.id) { setRunPreselect(''); setPage(id); } }}
+      items=${SUB_PAGES.map((p) => ({ key: p.id, class: 'fa-subtab', label: html`${p.label}${p.id === 'setup' && !progress.complete
+        ? html` <span class="ui-tag ui-tag-accent fa-badge fa-badge-setup" id="fleet-setup-progress" title="Setup steps done">${progress.done}/${progress.total}</span>` : ''}${p.id === 'spawns' && pendingSpawns > 0
+        ? html` <span class="ui-tag ui-tag-accent fa-badge" id="fleet-spawns-pending-count" title="Spawn requests from peers waiting for your decision">${pendingSpawns}</span>` : ''}${p.id === 'boards' && boardUpdates?.updates?.length > 0
+        ? html` <span class="ui-tag ui-tag-accent fa-badge" id="fleet-boards-update-count" title="Items you keep have a newer version">${boardUpdates.updates.length}</span>` : ''}` }))} />
     ${sub.id === 'setup'
       ? html`<${SetupGuide} onSeen=${state.markSetupSeen} onHub=${() => setPage('hub')} view=${view} groups=${localGroups(snapshot.value)} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} reload=${reload}
           onTrust=${(r) => setDialog({ kind: 'trust', row: r })} onSettings=${() => setDialog({ kind: 'settings' })} onPeers=${() => setPage('peers')}
@@ -506,7 +496,7 @@ export function FleetAdmin({
       : sub.id === 'moves'
       ? html`<${MovesPage} view=${view} agents=${localAgents(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} now=${now()} />`
       : sub.id === 'invites'
-      ? html`<${InvitesPage} view=${view} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
+      ? html`<${InvitesPage} view=${view} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} copy=${copy} now=${now()} />`
       : sub.id === 'profiles'
       ? html`<${ProfilesPage} view=${view} pools=${pools} groups=${localGroups(snapshot.value)} actions=${actions} confirm=${confirm} toast=${toast} reload=${reload}
           onOpenGrants=${openGrants} />`

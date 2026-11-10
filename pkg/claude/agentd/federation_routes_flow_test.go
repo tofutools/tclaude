@@ -44,6 +44,14 @@ func fedRouteAnswerFor(t *testing.T, p *fedPeer, sid string) proto.RouteAnswerPa
 	return out
 }
 
+// fedRouteAnswerTo builds the scripted peer's answer to one route_open, bound
+// to that open the way a real peer binds it (InReplyTo is the open's ID).
+func fedRouteAnswerTo(p *fedPeer, open *proto.Envelope, a proto.RouteAnswerPayload) *proto.Envelope {
+	env := p.envelope(proto.KindRouteAnswer, proto.Endpoint{}, a)
+	env.InReplyTo = open.ID
+	return env
+}
+
 // fedPeerStream joins the hub stream sid from the scripted peer's side.
 func fedPeerStream(t *testing.T, p *fedPeer, sid string, kp *stream.KeyPair, daemonKey []byte, initiator bool) *stream.Conn {
 	t.Helper()
@@ -327,7 +335,12 @@ func testFederationRoutesOpenRemoteRoute(t *testing.T, unrestricted bool) {
 	require.Equal(t, remoteRoute, req.Route)
 	kp, err := stream.NewKeyPair()
 	require.NoError(t, err)
-	p.send(p.envelope(proto.KindRouteAnswer, proto.Endpoint{}, proto.RouteAnswerPayload{Stream: req.Stream, OK: true, Key: kp.Pub}))
+	// An answer that names the stream but replies to some other envelope is
+	// not this open's answer. It is dropped, and the open keeps waiting.
+	decoy := p.envelope(proto.KindRouteAnswer, proto.Endpoint{}, proto.RouteAnswerPayload{Stream: req.Stream, Reason: "decoy"})
+	decoy.InReplyTo = proto.NewEnvelopeID()
+	p.send(decoy)
+	p.send(fedRouteAnswerTo(p, open, proto.RouteAnswerPayload{Stream: req.Stream, OK: true, Key: kp.Pub}))
 	conn := fedPeerStream(t, p, req.Stream, kp, req.Key, false)
 	require.Equal(t, routebroker.KindOpenOK, readBrokerFrameWithin(t, helper, 30*time.Second).Kind)
 
@@ -345,8 +358,9 @@ func testFederationRoutesOpenRemoteRoute(t *testing.T, unrestricted bool) {
 	// A refused open surfaces as an ordinary open error.
 	require.NoError(t, routebroker.WriteFrame(helper, routebroker.Frame{Kind: routebroker.KindOpen, Stream: 2}, 0))
 	fedEventually(t, "second route_open", func() bool { return len(p.envelopes(proto.KindRouteOpen)) == 2 })
-	require.NoError(t, p.envelopes(proto.KindRouteOpen)[1].DecodePayload(&req))
-	p.send(p.envelope(proto.KindRouteAnswer, proto.Endpoint{}, proto.RouteAnswerPayload{Stream: req.Stream, Reason: "busy"}))
+	second := p.envelopes(proto.KindRouteOpen)[1]
+	require.NoError(t, second.DecodePayload(&req))
+	p.send(fedRouteAnswerTo(p, second, proto.RouteAnswerPayload{Stream: req.Stream, Reason: "busy"}))
 	fr = readBrokerFrameWithin(t, helper, 10*time.Second)
 	require.Equal(t, routebroker.KindOpenError, fr.Kind)
 	require.Equal(t, uint64(2), fr.Stream)

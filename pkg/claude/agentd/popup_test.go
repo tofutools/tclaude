@@ -4,11 +4,14 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
@@ -194,4 +197,26 @@ func requireConfigSave(t *testing.T, cfg *config.Config) {
 	if err := config.Save(cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
+}
+
+// Raw bytes tell a person nothing, wherever they arrive from.
+func TestSnapshotRequestBodyOmitsBinary(t *testing.T) {
+	for name, body := range map[string]string{
+		"nul":     "PK\x03\x04\x00\x00archive",
+		"invalid": "not text \xff\xfe\xfd\xfc here",
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/anything", strings.NewReader(body))
+			preview := snapshotRequestBody(req)
+			assert.Contains(t, preview, "binary request body omitted")
+			assert.NotContains(t, preview, "archive")
+			restored, err := io.ReadAll(req.Body)
+			require.NoError(t, err)
+			assert.Equal(t, body, string(restored))
+		})
+	}
+	// A cut through a rune is still text.
+	text := strings.Repeat("a", maxApprovalBodyPreview-1) + "é tail"
+	preview := snapshotRequestBody(httptest.NewRequest(http.MethodPost, "/v1/anything", strings.NewReader(text)))
+	assert.NotContains(t, preview, "binary request body omitted")
 }

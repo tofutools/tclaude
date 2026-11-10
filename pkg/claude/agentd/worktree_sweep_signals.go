@@ -76,7 +76,7 @@ func scanSweepSignals(ctx context.Context, root string, rows []sweepWorktree) {
 		ref, known := refs["refs/heads/"+row.Branch]
 		// Detached checkouts still have a registered commit, without a branch upstream.
 		if !known {
-			ref.commit = row.commit
+			ref.commit = row.Commit
 			if ref.commit != "" {
 				date, err := git("show", "-s", "--format=%ct", ref.commit, "--")
 				if err == nil {

@@ -8,6 +8,7 @@ import htm from 'htm';
 import { nodeFetch } from './node-api.js';
 import { fleetState } from './fleet-state.js';
 import { tickedNodes } from './fleet-scope.js';
+import { NodeCombobox, namedItems } from './registry-picker.js';
 
 const html = htm.bind(h);
 
@@ -40,12 +41,15 @@ export function activityFetch(fetchImpl, { target = activityTarget(), fetchFor =
   };
 }
 
+// LOCAL_KEY keys this node's row in the switch.
+const LOCAL_KEY = '/local';
+
 // ActivityNodeSwitch is the switch in Logs' and Performance's filter bars.
 export function ActivityNodeSwitch({ nodes = activityNodes(), value = activityNode.value, onChange }) {
   if (nodes.length < 2) return null;
   const shown = activityTarget(nodes, value) ? value : '';
-  return html`<label class="filter-toggle" title="Whose daemon to show"><span>node</span><select class="activity-node" value=${shown}
-    onChange=${(event) => { activityNode.value = event.currentTarget.value; onChange?.(); }}>
-    ${nodes.map((n) => html`<option key=${n.id} value=${n.local ? '' : n.id}>${n.local ? `⌂ ${n.name}` : n.name}</option>`)}
-  </select></label>`;
+  // This node is '' here; the box keys it LOCAL_KEY, as a choice needs a key.
+  return html`<label class="filter-toggle" title="Whose daemon to show"><span>node</span><${NodeCombobox} className="activity-node" value=${shown || LOCAL_KEY}
+    ariaLabel="Node" items=${namedItems(nodes.map((n) => ({ name: n.local ? LOCAL_KEY : n.id, label: n.local ? `⌂ ${n.name}` : n.name })))}
+    onChange=${(next) => { activityNode.value = next === LOCAL_KEY ? '' : next; onChange?.(); }} /></label>`;
 }

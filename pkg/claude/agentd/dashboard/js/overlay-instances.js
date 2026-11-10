@@ -1,0 +1,259 @@
+// overlay-instances.js -- which overlay windows are open (tcl-ppvf8g). A window
+// holds tabs (overlay-tab-model.js), and has its own saved placement, place in
+// the stack and place in a split, so a chat or a drawing board is just one kind of tab,
+// and there can be any number of either. Everything that opens or finds a window
+// names it by its tab, because a tab can move between windows.
+
+import { batch, computed, effect, signal } from '@preact/signals';
+import { useEffect, useState } from 'preact/hooks';
+import { parsePlacement, viewportOf } from './overlay-window-model.js';
+import { forgetOverlayWindow, raiseOverlayWindow, readPref, setOverlayDockCheck, writePref } from './overlay-window.js';
+import { addedTab, changedGroup, dissolvedGroup, groupedTab, minimizedTab, movedGroup, movedTab, newTabGroup, parseSavedOverlays, removedTab, restoredTab, savedOverlays, swappedTab, tabsOfWindows, tornOutGroup, tornOutTab, windowAround, windowHolding } from './overlay-tab-model.js';
+
+// In session storage, as the companion's open state is: a reload brings the
+// windows back, another browser tab does not get a second set.
+export const OVERLAY_WINDOWS_KEY = 'tclaude.dash.overlay-windows';
+
+export const overlayWindows = signal([]);
+// Tabs minimized on their own, which wait outside any window.
+export const minimizedOverlayTabs = signal([]);
+// Every tab with a place here, with what it takes from its window. A tab on the
+// dock is one of them, in no window: the session still has its one view here.
+export const overlayTabs = computed(() => [
+  ...tabsOfWindows(overlayWindows.value),
+  ...minimizedOverlayTabs.value.map(({ tab }) => ({ ...tab, windowId: '', minimized: true })),
+]);
+// Whether anything is there to show a window, which a peer's page has not.
+export const overlayHostUp = signal(false);
+
+function sessionStore(win) {
+  try { return win?.sessionStorage ?? null; } catch { return null; }
+}
+
+const holding = (tabId) => windowHolding(overlayWindows.peek(), tabId);
+
+function patchWindow(id, patch) {
+  overlayWindows.value = overlayWindows.peek().map((window) => (window.id === id ? { ...window, ...patch } : window));
+}
+
+// A window whose tabs wait on the dock comes back as itself, to its cell.
+const onDock = (id, minimizedTabs = minimizedOverlayTabs.peek()) => !!id && minimizedTabs.some(({ home }) => home === id);
+setOverlayDockCheck((id) => onDock(id));
+// The ids windows on the dock come back as, which no new window may take.
+const dockHomes = () => minimizedOverlayTabs.peek().map(({ home }) => home).filter(Boolean);
+
+// Windows and the dock change together. A window left with no tabs is gone from
+// the stack, and from any split once no tab of it waits on the dock.
+function commit({ windows, minimizedTabs = minimizedOverlayTabs.peek() }) {
+  const here = (id) => windows.some((other) => other.id === id);
+  const gone = overlayWindows.peek().map(({ id }) => id).filter((id) => !here(id));
+  const leftDock = minimizedOverlayTabs.peek().map(({ home }) => home).filter((id) => id && !here(id) && !gone.includes(id) && !onDock(id, minimizedTabs));
+  batch(() => {
+    overlayWindows.value = windows;
+    minimizedOverlayTabs.value = minimizedTabs;
+  });
+  for (const id of gone) forgetOverlayWindow(id, onDock(id, minimizedTabs));
+  for (const id of new Set(leftDock)) forgetOverlayWindow(id);
+}
+
+const dockState = () => ({ windows: overlayWindows.peek(), minimizedTabs: minimizedOverlayTabs.peek() });
+
+// openOverlayWindow shows a tab: in the window holding it, back from the dock, or
+// in a new window. A chat or a drawing board opens in one place at a time.
+export function openOverlayWindow(instance) {
+  const window = holding(instance.id);
+  if (window) patchWindow(window.id, { minimized: false, active: instance.id });
+  else if (minimizedOverlayTabs.peek().some(({ tab }) => tab.id === instance.id)) commit(restoredTab(dockState(), instance.id));
+  else overlayWindows.value = [...overlayWindows.peek(), windowAround(overlayWindows.peek(), instance, { at: instance.at, reserved: dockHomes() })];
+  raiseOverlayTab(instance.id);
+}
+
+// openTabInWindow shows a tab that has a place already, or else adds it to the
+// window called windowId. With none of that name, or none named, it gets a window
+// of its own, saving where it goes as place. With activate false it arrives
+// without taking the window over, and a window of its own starts minimized.
+export function openTabInWindow(windowId, place, tab, { activate = true } = {}) {
+  const held = overlayTabs.peek().some((other) => other.id === tab.id);
+  const into = windowId && overlayWindows.peek().find((window) => window.id === windowId);
+  if (held) {
+    if (activate) openOverlayWindow(tab);
+    return;
+  }
+  if (into) commit({ windows: addedTab(overlayWindows.peek(), windowId, tab, activate) });
+  else overlayWindows.value = [...overlayWindows.peek(), { ...windowAround(overlayWindows.peek(), tab, { id: windowId || tab.id, place, reserved: windowId ? [] : dockHomes() }), minimized: !activate }];
+  if (activate) raiseOverlayTab(tab.id);
+}
+
+// swapOverlayTab puts tab in another's place, which leaves the window as it was.
+export function swapOverlayTab(id, tab) {
+  if (holding(id)) commit({ windows: swappedTab(overlayWindows.peek(), id, tab) });
+}
+
+// raiseOverlayTab brings the window holding a tab to the front.
+export function raiseOverlayTab(id) {
+  const window = holding(id);
+  if (window) raiseOverlayWindow(window.id);
+}
+
+export function activateOverlayTab(id) {
+  const window = holding(id);
+  if (window && window.active !== id) patchWindow(window.id, { active: id });
+}
+
+// moveOverlayTab puts a tab at index in a window, its own or another, and in
+// groupId if it landed inside that group.
+export function moveOverlayTab(id, windowId, index, groupId = '') {
+  commit({ windows: movedTab(overlayWindows.peek(), id, windowId, index, groupId) });
+  raiseOverlayWindow(windowId);
+}
+
+// moveOverlayGroup does the same for a whole group.
+export function moveOverlayGroup(sourceId, groupId, windowId, index) {
+  commit({ windows: movedGroup(overlayWindows.peek(), sourceId, groupId, windowId, index) });
+  raiseOverlayWindow(windowId);
+}
+
+// tearOverlayGroupOut gives a group a window of its own, at the drop point.
+export function tearOverlayGroupOut(sourceId, groupId, at) {
+  const before = new Set(overlayWindows.peek().map((window) => window.id));
+  commit({ windows: tornOutGroup(overlayWindows.peek(), sourceId, groupId, at, dockHomes()) });
+  const opened = overlayWindows.peek().find((window) => !before.has(window.id));
+  if (opened) raiseOverlayWindow(opened.id);
+}
+
+// groupOverlayTab adds a tab to a group of its window, or with none takes it out.
+export function groupOverlayTab(id, group = null) {
+  commit({ windows: groupedTab(overlayWindows.peek(), id, group) });
+}
+
+// startOverlayGroup makes a group of one tab and says which, or null at the cap.
+export function startOverlayGroup(id) {
+  const window = holding(id);
+  const group = window && newTabGroup(window);
+  if (group) groupOverlayTab(id, group);
+  return group;
+}
+
+export function changeOverlayGroup(windowId, groupId, patch) {
+  commit({ windows: changedGroup(overlayWindows.peek(), windowId, groupId, patch) });
+}
+
+export function ungroupOverlayTabs(windowId, groupId) {
+  commit({ windows: dissolvedGroup(overlayWindows.peek(), windowId, groupId) });
+}
+
+// tearOverlayTabOut gives a tab a window of its own, at the drop point.
+export function tearOverlayTabOut(id, at) {
+  commit({ windows: tornOutTab(overlayWindows.peek(), id, at, dockHomes()) });
+  raiseOverlayTab(id);
+}
+
+// minimizeOverlayTab sends one tab to the dock. It stops nothing, and only the
+// last tab takes the window with it.
+export function minimizeOverlayTab(id) {
+  commit(minimizedTab(dockState(), id));
+}
+
+// closeEveryTab is the window's close. It stops nothing: each tab leaves for good,
+// with nothing left on the dock, the way the × on its pill takes it (closeOf(tab),
+// or else straight off), and it opens again from wherever it opened first. The
+// tab that asks (a running Steward) stays to ask. A kind's own close may ask a
+// question first, so each waits its turn: the shell asks one at a time.
+export function closeEveryTab(windowId, options = {}) {
+  return closeWindowTabs(windowId, () => true, options);
+}
+
+// closeWindowTabs is closeEveryTab for the tabs of a window that picks picks: a
+// tab's own × is the window's close, for that tab alone.
+export async function closeWindowTabs(windowId, picks, { asking = '', closeOf = () => null } = {}) {
+  const window = overlayWindows.peek().find((candidate) => candidate.id === windowId);
+  const leaving = (window?.tabs || []).filter(picks).filter((candidate) => candidate.id !== asking);
+  const plain = leaving.filter((tab) => !closeOf(tab));
+  for (const tab of plain) closeOverlayTab(tab.id);
+  for (const tab of leaving.filter((candidate) => !plain.includes(candidate))) await closeOf(tab)();
+}
+
+// minimizeOverlayTabs sends the tabs of a window that leaves picks to the dock.
+export function minimizeOverlayTabs(windowId, leaves) {
+  const window = overlayWindows.peek().find((candidate) => candidate.id === windowId);
+  for (const tab of (window?.tabs || []).filter(leaves)) minimizeOverlayTab(tab.id);
+}
+
+// askOverlayClose shows a tab and asks it to put its own question about closing.
+export function askOverlayClose(id) {
+  const window = holding(id);
+  if (window) patchWindow(window.id, { active: id, closeAsked: (window.closeAsked || 0) + 1 });
+}
+
+export function overlayCloseHeard(id) {
+  const window = holding(id);
+  if (window) patchWindow(window.id, { closeAsked: undefined });
+}
+
+// focusOverlayWindow asks a shown window to take the keyboard.
+export function focusOverlayWindow(id) {
+  const window = holding(id);
+  if (window) patchWindow(window.id, { focusAsked: (window.focusAsked || 0) + 1 });
+}
+
+// closeOverlayTab takes a tab off for good, from a window or the dock.
+export function closeOverlayTab(id) {
+  commit(removedTab(dockState(), id));
+}
+
+export function minimizeOverlayWindow(id, minimized = true) {
+  const window = holding(id);
+  if (!window) return;
+  patchWindow(window.id, { minimized });
+  if (!minimized) raiseOverlayWindow(window.id);
+}
+
+export function labelOverlayWindow(id, label) {
+  const window = holding(id);
+  if (!window) {
+    minimizedOverlayTabs.value = minimizedOverlayTabs.peek().map((entry) => (entry.tab.id === id ? { ...entry, tab: { ...entry.tab, label } } : entry));
+    return;
+  }
+  if (window.tabs.find((tab) => tab.id === id).label === label) return;
+  patchWindow(window.id, { tabs: window.tabs.map((tab) => (tab.id === id ? { ...tab, label } : tab)) });
+}
+
+// The drop point of a window dragged out, which only its first placement reads.
+export function placedOverlayWindow(id) {
+  const window = holding(id);
+  if (window) patchWindow(window.id, { at: undefined });
+}
+
+// useDropPoint makes where a window was dropped its place from now on, floating,
+// with every panel size it had still saved. It runs before the window reads its
+// placement.
+export function useDropPoint(instance, { win, prefs, prefKey, start }) {
+  useState(() => {
+    if (!instance.at) return;
+    const saved = parsePlacement(readPref(prefs, prefKey)) || start(viewportOf(win));
+    writePref(prefs, prefKey, JSON.stringify({ ...saved, ...instance.at, snap: '' }));
+  });
+  useEffect(() => { if (instance.at) placedOverlayWindow(instance.id); }, []);
+}
+
+// keepOverlayWindows reads the saved set, keeping only tabs valid(tab) accepts,
+// and saves it from then on. It returns the way to stop saving.
+export function keepOverlayWindows(win, valid) {
+  try {
+    const { windows, minimizedTabs } = parseSavedOverlays(sessionStore(win)?.getItem?.(OVERLAY_WINDOWS_KEY), valid);
+    // Islands mount in no set order, so a window may have opened already. A tab
+    // the saved set knows comes back as saved.
+    const saved = new Set([...tabsOfWindows(windows), ...minimizedTabs.map(({ tab }) => tab)].map((tab) => tab.id));
+    let current = overlayWindows.peek();
+    for (const id of saved) if (windowHolding(current, id)) current = removedTab({ windows: current, minimizedTabs: [] }, id).windows;
+    current = current.filter((window) => !windows.some((other) => other.id === window.id));
+    overlayWindows.value = [...windows, ...current];
+    minimizedOverlayTabs.value = [...minimizedTabs, ...minimizedOverlayTabs.peek().filter(({ tab }) => !saved.has(tab.id))];
+  } catch { /* they just do not come back after a reload */ }
+  return effect(() => {
+    const saved = savedOverlays(overlayWindows.value, minimizedOverlayTabs.value);
+    try {
+      sessionStore(win)?.setItem?.(OVERLAY_WINDOWS_KEY, saved);
+    } catch { /* as above */ }
+  });
+}

@@ -48,10 +48,10 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must(`class="harness-name" title=${tooltip}>${shortLabel}</span>`,
 		"an unknown future harness keeps a visible text fallback and accepts the general tooltip")
 
-	// The reasoning-effort level (JOH-37) trails the model — "CC · Opus 4.8
+	// The reasoning-effort level (JOH-37) trails the model — "<logo> · Opus 4.8
 	// hi" — read off state.effort_level, with its own styled span and a
 	// full-name tooltip. Omitted when absent so models without effort support
-	// stay at "CC · Opus 4.8".
+	// stay at "<logo> · Opus 4.8".
 	must("state.effort_level", "HarnessLine reads the effort level off the agent's state")
 	must("const EFFORT_LABELS = {", "effort levels have compact display labels")
 	must("low: 'lw'", "low effort is displayed as lw")
@@ -277,7 +277,7 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must("harnesses: Object.freeze([...(snapshot.harnesses || [])])", "open snapshots the harness catalog")
 	must("export function spawnCapabilityView(", "the plain model reshapes per harness")
 	must("modelSelectValue(draft, context)", "the component derives the active model control")
-	must("view.models.map((model)", "the Model dropdown is rebuilt from the selected harness catalog")
+	must("entries=${[...view.models, { name: MODEL_CUSTOM_VALUE", "the Model choice is rebuilt from the selected harness catalog")
 
 	// agent-spawn-model.js: the spawn POST body always carries the dropdown's explicit
 	// harness selection (including Claude) and sandbox.

@@ -4,7 +4,7 @@ import { dashPrefs } from './prefs.js';
 import {
   ACCESS_SUBTABS, matchesSudo, permissionRows, remainingSeconds, sortSudo,
 } from './access-model.js';
-import { persistedTableSort, persistTableSort } from './sort.js';
+import { nextSort, persistedTableSort, persistTableSort } from './sort.js';
 
 const SUDO_FILTER_KEY = 'tclaude.dash.filter.sudo';
 const SLUG_FILTER_KEY = 'tclaude.dash.filter.slugs';
@@ -92,12 +92,9 @@ export function createAccessState({
   function cycleSudoSort(key) {
     if (!SUDO_COLUMNS_KEYS.has(key)) return false;
     const current = sudoSort.value;
-    let next;
-    if (!current || current.key !== key) next = { key, dir: 'asc' };
-    else if (current.dir === 'asc') next = { key, dir: 'desc' };
-    else next = null;
-    sudoSort.value = next;
-    persistTableSort('sudo', next ? { col: next.key, dir: next.dir } : null);
+    const next = nextSort(current && { col: current.key, dir: current.dir }, key);
+    sudoSort.value = next && { key, dir: next.dir };
+    persistTableSort('sudo', next);
     return true;
   }
   function tick(value = now()) { clock.value = value; }

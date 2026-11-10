@@ -1,0 +1,277 @@
+# External stewards
+
+If you already run an assistant of your own, it can act as a steward on your tclaude
+instance, alone or beside the built-in [Steward](companion.md). It gets a name, a
+place on the roster, an inbox and a credential you can end at any time. It reads the
+fleet and messages agents, and you decide what else it may do.
+
+This page covers the access mechanism. The assistant connects on the same machine;
+remote access is not supported.
+
+## Turning it on
+
+External stewards are off by default. Turn on **Allow external stewards** under
+**Config** › **Steward**. They are refused while you have
+[opted out of stewards](companion.md#opting-out-of-stewards). That page lists what
+an assistant can do, so you can read it first. In `~/.tclaude/config.json` the setting is:
+
+```json
+{ "steward": { "external_enabled": true } }
+```
+
+While it is off, no credential can be created and every credential presented is
+refused. You can still revoke credentials. A running daemon picks up a change to this
+file within about 5 seconds.
+
+## Creating one
+
+Only you can do this. Agents are refused, with no permission or sudo path, and so is
+another instance viewing your dashboard. Use **Your external stewards** under **Config** ›
+**Steward**, or the command line:
+
+```bash
+tclaude agent steward external add my-assistant --days 30
+```
+
+The credential is printed once and is stored only as a hash, so it can't be shown
+again. It lasts 30 days by default and at most 365. On the Config page it stays on screen
+until you press **Done**, and it's left out of anything a Steward captures from the page.
+
+Give it to the assistant through the environment or a file only you can read
+(`chmod 600`). Don't put it on a command line, where other processes can read it.
+
+| Command | What it does |
+|---|---|
+| `tclaude agent steward external ls` | Lists external stewards and their credentials, never the secret |
+| `tclaude agent steward external renew <name>` | Makes a new credential; old ones keep working until they expire |
+| `tclaude agent steward external renew <name> --revoke-old` | Makes a new credential and ends the old ones at once |
+| `tclaude agent steward external revoke <name>` | Ends all its credentials on the next request |
+| `tclaude agent steward external revoke <name> --token <id>` | Ends one credential |
+
+The Config page can list, add, renew and revoke too. Its **Revoke** ends all of a
+steward's credentials, and to end old ones while keeping a new one, use the command line.
+
+Retiring the agent also ends its credentials, and reinstating it doesn't bring them
+back.
+
+## Connecting your assistant
+
+Add `tclaude mcp serve` to your assistant's MCP settings. It talks to your assistant over
+standard input and output, so the assistant starts it. The tclaude daemon has to be running
+on the same machine, and the assistant has to run outside tclaude's terminals.
+
+For example, in a Claude Code `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "tclaude": {
+      "command": "tclaude",
+      "args": ["mcp", "serve", "--credential-file", "/home/you/.config/tclaude-steward"]
+    }
+  }
+}
+```
+
+Create that file with `chmod 600`. `tclaude mcp serve` refuses a credential file anyone else
+can read, and it has no option that takes the credential itself. You can set
+`TCLAUDE_EXTERNAL_STEWARD_CREDENTIAL` in its environment instead, but not both.
+
+It reads the credential once when it starts, so restart it after a renewal.
+
+| Tool | What it does | What decides it |
+|---|---|---|
+| `whoami` | Shows its name and identity | Always available |
+| `fleet_brief` | Reads the fleet: who is working, idle, offline or needs you | Needs `fleet.read` |
+| `list_agents` | Lists the agents and groups it can reach | Always shows its own groups and agents in no group; `fleet.read` adds every group |
+| `inbox` | Lists its messages, with previews | Always available |
+| `read_message` | Reads one message and marks it read | Always available |
+| `send_message` | Sends a message to an agent or group, including `member@peer` on a linked instance | An agent needs `message.direct`, a shared or owned group, or a group link. A group needs it to be a member or owner. Another instance needs a group link or `message.direct` |
+| `reply` | Replies to a message it received | Always available: having received a message is enough |
+| `notify_human` | Sends you a message in the dashboard | Needs `human.notify`, or owning a group |
+| `wait_for_activity` | Waits up to 50 seconds for new mail or a change in what needs attention | Always watches mail; `fleet.read` adds what needs attention |
+| `list_drawing_boards` | Lists the collab drawing boards | Needs `drawing-boards.read` |
+| `read_drawing_board` | Reads a drawing board's elements | Needs `drawing-boards.read` |
+| `create_drawing_board` | Creates a drawing board | Needs `drawing-boards.write` |
+| `update_drawing_board` | Adds, changes or deletes drawing board elements | Needs `drawing-boards.write` |
+| `dashboard_view` | Reads which view your dashboard is on | Needs `dashboard.view.read` |
+| `dashboard_cue` | Moves your dashboard to a view or highlights something there | Needs `dashboard.guide` |
+| `dashboard_capture` | Sees your dashboard as an image | Off until you grant `dashboard.capture`, because the image goes to your assistant's provider |
+| `spawn_agent` | Starts a worker in a group you chose | Off until you [set where it can start workers](#starting-workers) |
+| `set_task_link` | Sets or clears the task link beside an agent | Needs `agent.task`, which comes with the Workers level, or owning every group that agent is in |
+
+So taking `message.direct` away doesn't stop it messaging agents it can reach through a group.
+
+**Config** › **Steward** shows this list whether or not the feature is on.
+
+Drawing boards work with no dashboard open. The dashboard tools depend on your page, and say so
+when it isn't there. `dashboard_view` reports `known: false` if no dashboard has reported
+since the daemon started. `dashboard_capture` fails and gives the reason. `dashboard_cue`
+answers `dashboard_on_screen: false` when no dashboard is showing, and a cue expires
+unseen if you don't get to it in time.
+
+`dashboard_capture` doesn't send a form's text separately, but the image shows whatever is
+on screen, including what's typed into fields. Passwords and fields marked secret are
+masked. No tool fills forms.
+
+Drawing board edits don't reach it as mail, and `wait_for_activity` doesn't watch drawing boards, so it
+reads a drawing board again to see what you changed.
+
+Nothing wakes an idle assistant: it only sees new mail when it asks. Call `wait_for_activity`
+in a loop to stay current, passing back the `cursor` from the last call. Past 10 unread
+messages, senders are told to retry until it reads some, so it has to keep up.
+
+Each tool calls the ordinary daemon routes with the credential, so the same permissions and
+audit log apply. `tclaude mcp serve` makes no decisions of its own, and it never sends your
+operator token, even if the token is in its environment.
+
+## What it can do
+
+It starts with the Steward's [**Reads** and **Writes** levels](companion.md#what-the-steward-may-do)
+as they are when you create it, as ordinary permissions you can change in the usual
+editor. There are four differences:
+
+- **No screen capture.** `dashboard.capture` is off until you grant it, because a
+  capture shows whatever you have open and would go to your assistant's own model
+  provider. `dashboard.forms.capture` and `dashboard.forms.fill` are separate opt-ins.
+- **No starting agents, until you choose where.** It doesn't get `agent.spawn`, even
+  with **Message agents and start workers**. See [Starting workers](#starting-workers).
+- **No default permissions.** `agent.default_permissions` is for agents tclaude runs,
+  and doesn't apply.
+- **No sudo.** It can't request or hold sudo, and what you stored for future Stewards
+  never reaches it.
+
+It uses the same permissions and the same routes as any other agent, and shows in the
+audit log as `external:<name>`.
+
+Dashboard tools need an open dashboard page. The fleet, messages, drawing boards and
+notifications work without one.
+
+### What it can never do
+
+It is never treated as you. Everything only you can do stays out of its reach,
+including answering permission requests. It also can't become the Steward.
+
+These permissions can't be used, even if you grant them. Trying fails with an error in
+the editor rather than saving a grant that does nothing:
+
+| Why | Permissions |
+|---|---|
+| Answering your questions, directly or through a prompt in a terminal | `approvals.answer`, `human.inbox.read`, `human.inbox.answer`, `sessions.attach`, `sessions.takeover`, `sessions.shell` |
+| Handing out permissions | `permissions.grant`, `permissions.revoke`, `config.import`, `roles.manage`, `profiles.manage`, `templates.manage`, `groups.owners.manage`, `groups.settings.member-permissions`, `groups.settings.owner-scopes`, `groups.members.spawn.permissions`, `groups.members.spawn.owner`, `groups.members.spawn.all` |
+| Acting later without a credential, because a schedule or trigger would keep firing after you revoke it | `self.schedule`, `agent.schedule`, `groups.members.schedule`, `groups.messages.schedule`, `triggers.manage`, `groups.triggers.manage` |
+| Receiving your harness credentials | `node.credentials.receive` |
+| Starting or changing a launch any other way than [below](#starting-workers) | `groups.members.spawn`, `agent.clone`, `groups.members.clone`, `groups.clone`, `agent.morph`, `groups.members.morph`, `agent.resume`, `groups.members.resume` |
+| Changing what a worker's launch means | `groups.settings.default-dir`, `groups.settings.environment`, `groups.settings.default-spawn-target`, `groups.settings.default-profile`, `sandbox-profiles.manage`, `relaunch-policy.manage`, `agent.sandbox-impl`, `templates.instantiate`, `groups.import` |
+| Moving an agent to a linked instance | `agent.move`, `agent.share` |
+
+Password fields and fields marked secret are masked in the page before a capture
+leaves it, as for the [Steward](companion.md#capture).
+
+## Starting workers
+
+An external steward can start workers only where you choose. In **Config** › **Steward**,
+press **Choose** on its row, or run:
+
+```bash
+tclaude agent steward external spawn assistant \
+  --group crew --spawn-profile worker --sandbox-profile locked
+```
+
+You name its groups, one spawn profile and one sandbox profile. All three are required,
+and they are checked when you set them and again at every spawn.
+
+- **Its workers stop for you.** The spawn profile has to set an approval mode where you
+  answer every action: `default` on Claude, `untrusted` on Codex, `default` on Gemini, `ask`
+  on pi. A worker stops at the first action that isn't read-only until you answer, and the
+  assistant can't answer for you. Copilot and a shell have no such mode, so they can't be
+  used. Neither can OpenCode, whose `bash` follows its tools policy instead.
+- **The sandbox holds.** The spawn profile also has to enforce the sandbox profile while
+  still asking you: `sandbox_implementation` set to `tclaude-layer` for Claude, Gemini, pi
+  or Codex, or for Codex `sandbox` set to `tclaude-agent`, or to `read-only` or
+  `workspace-write` if no rules apply in that group. Claude's own sandbox can't be used, because it runs Bash without asking. Check your own Claude
+  settings too: a `permissions.allow` entry there applies to a worker as well. A profile
+  that gives its agents ownership, permissions or a trusted directory can't be used either.
+- **A request can't change the launch.** The assistant chooses the group, a name, the first
+  message and a task link. Everything else comes from what you chose, and a request that
+  sets anything else is refused. A worker starts in the group's default directory, so a
+  group without one can't be chosen. A directory the harness doesn't trust yet waits at its
+  dialog for you.
+- **Workers can't do what it can't.** Each is denied everything in the table above, plus
+  `agent.spawn`, `self.clone` and `self.teleport`, at birth, ahead of what its group or `agent.default_permissions` would give
+  it. So they can't start workers of their own or schedule anything. You can still lift a
+  deny, grant sudo or approve a one-off request for a worker yourself.
+- **There's a cap.** Each external steward can have 3 workers running, or the number you
+  set under **Workers per external steward**. Past that, it's refused.
+- **This instance only.** It can't start workers on a linked instance.
+
+Workers keep running if its credential ends, because stopping one mid-edit does damage and
+they can't act without you. Revoking lists them and offers to stop them, or use
+`tclaude agent steward external revoke assistant --stop-children`. When a credential expires
+with workers running, you're notified in the dashboard. Each worker's row says which
+assistant started it.
+
+## Mail
+
+An external steward has no terminal, so nothing is typed anywhere when mail arrives.
+Messages wait in its inbox until it reads them.
+
+The address `steward` stays with the built-in Steward while one is running, so the two
+can work side by side. With none online, `steward` goes to your external steward, if
+exactly one can answer: the switch is on and it holds a credential that hasn't expired
+or been revoked. With several able to answer, the sender is told to address one by name.
+Addressing an external steward by name works either way. A name you gave the built-in
+Steward still means only that Steward.
+
+It holds 10 unprocessed messages at most, like any agent that is offline. After that a
+sender gets a `queue_full` error it can retry, and reading a message makes room.
+
+tclaude can't start or resume an external steward. It runs where you put it, and shows
+on the roster as an offline agent labelled **External steward**, with no resume.
+Bulk "offline" actions pass over it, so a routine tidy-up doesn't end its credential.
+
+## What the credential protects against
+
+The credential is a real boundary against **agents in a sandbox**, which can't read
+your files or your environment.
+
+It does **not** protect against:
+
+- **Anything running as your user outside a sandbox.** Such a program can read a file
+  you saved the credential in, or the environment of a process holding it. It can also
+  change `~/.tclaude` directly, with or without a credential.
+- **Your assistant itself, or whatever it is talked into.** A credential proves which
+  assistant is calling, not that its request is a good idea. Text in a message or a
+  capture can steer it, and it acts with everything you granted. Grant what you'd
+  accept being misused.
+- **Your assistant's model provider.** What the assistant reads, it may send there.
+  That includes agents' messages and anything else you let it read.
+
+An agent running in a tclaude terminal that gets hold of a credential is still refused,
+because tclaude looks for itself or one of its terminals above the caller. This covers
+one-shot agents, OpenCode tools, and a background process inside a sandbox that has its own process namespace. It
+can't catch a process that has left its terminal with no such namespace, as an agent can
+under a sandbox that doesn't isolate processes. So keep the credential where sandboxed
+agents can't read it: the check is a second line, not the boundary.
+
+It also means your own assistant has to run outside tclaude's terminals. Your own tmux is
+fine, because tclaude keeps its terminals on a tmux server of its own.
+
+Revoking takes effect on the next request. A request already waiting for your approval
+isn't checked again, so if you approve it after revoking, it still runs.
+
+### How this differs from the operator token
+
+Both are presented over the local socket, but the rule for harness processes is
+opposite on purpose:
+
+- The **operator token** is ignored for anything running under a coding harness.
+  You export it in your shell, a harness started from there inherits it, and honouring
+  it would make that agent you.
+- An **external steward credential** is accepted from a harness tclaude doesn't manage,
+  so your own Claude Code can be the steward. It only ever names a limited agent, never
+  you. A harness tclaude does manage is refused.
+
+The credential is never logged and doesn't appear in the audit log. A bad, expired or
+revoked credential is refused outright: tclaude doesn't fall back to the operator token
+or the process.

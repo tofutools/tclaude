@@ -50,8 +50,7 @@ func TestOperatorOnlyWaveResultPreservesTypedFailure(t *testing.T) {
 
 	result := spawnWaveAgents(g, []db.GroupTemplateAgent{{
 		Name: "worker", SpawnProfile: "operator", SpawnProfileID: profileID,
-	}}, nil, "", home, "", "", nil,
-		"agent-caller", "", "", nil, false, "", nil, "", nil)
+	}}, nil, waveDeploy{cwd: home, caller: "agent-caller"})
 	require.Len(t, result.Results, 1)
 	assert.Equal(t, "profile_operator_only", result.Results[0].ErrorKind)
 	assert.Contains(t, result.Results[0].Error, "restricted to human/operator spawns")

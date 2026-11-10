@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -154,6 +155,86 @@ func applyMorphForm(p *AgentRelaunchProfile, f AgentMorphForm) {
 	}
 }
 
+// morphExplicitValues is the explicit layer entries for the fields a morph
+// form changes from the form it replaces, keyed by launchspec field key and
+// spawn request field name (a test pins both against launchspec). A field
+// the form sets to the value it already had is not the morph's choice. (A
+// morph back normally undoes instead, see applyMorphExplicitTx; these are
+// what it records when there is nothing to undo.) The model is recorded
+// bare: its context window lives in the relaunch profile, as the form keeps
+// it.
+//
+// A cross-harness form also names its harness and built-in sandbox mode; a
+// same-harness form leaves both unset.
+//
+// The auto-compact window shares launchspec's context_window key with the
+// Copilot-only ContextWindowMax, which the resolver treats as one unit. A
+// morph cannot set both on one agent: the auto-compact window is Claude
+// Code's and pi's only (harness.SupportsAutoCompactWindow), and a morph to
+// Copilot resets the cap with the rest of the drive.
+func morphExplicitValues(f, previous AgentMorphForm, at time.Time) map[string]ExplicitLaunchValue {
+	out := map[string]ExplicitLaunchValue{}
+	var harnessName, previousHarness *string
+	if f.Harness != "" {
+		harnessName, previousHarness = &f.Harness, &previous.Harness
+	}
+	for _, v := range []struct {
+		key, field      string
+		value, previous *string
+	}{
+		{"harness", "Harness", harnessName, previousHarness},
+		{"sandbox_mode", "HarnessBuiltinMode", f.HarnessBuiltinMode, previous.HarnessBuiltinMode},
+		{"model", "Model", f.Model, previous.Model},
+		{"effort", "Effort", f.Effort, previous.Effort},
+		{"approval", "ApprovalPolicy", f.Approval, previous.Approval},
+		{"tools", "ToolGovernance", f.Tools, previous.Tools},
+		{"ask_timeout", "AskUserQuestionTimeout", f.AskTimeout, previous.AskTimeout},
+		{"context_window", "AutoCompactWindow", f.AutoCompactWindow, previous.AutoCompactWindow},
+	} {
+		if v.value == nil || (v.previous != nil && *v.previous == *v.value) {
+			continue
+		}
+		raw, err := json.Marshal(*v.value)
+		if err != nil {
+			continue
+		}
+		out[v.key] = ExplicitLaunchValue{
+			Fields:     map[string]json.RawMessage{v.field: raw},
+			Provenance: ExplicitAtMorph(at),
+			SetAt:      at,
+		}
+	}
+	return out
+}
+
+// morphFormForKeys is f with only the fields of the given launchspec keys.
+// The model's context window goes with the model.
+func morphFormForKeys(f AgentMorphForm, keys map[string]bool) AgentMorphForm {
+	out := AgentMorphForm{Profile: f.Profile, Harness: f.Harness}
+	if keys["model"] {
+		out.Model, out.ContextWindowSize = f.Model, f.ContextWindowSize
+	}
+	if keys["effort"] {
+		out.Effort = f.Effort
+	}
+	if keys["approval"] {
+		out.Approval = f.Approval
+	}
+	if keys["tools"] {
+		out.Tools = f.Tools
+	}
+	if keys["ask_timeout"] {
+		out.AskTimeout = f.AskTimeout
+	}
+	if keys["context_window"] {
+		out.AutoCompactWindow = f.AutoCompactWindow
+	}
+	if keys["sandbox_mode"] {
+		out.HarnessBuiltinMode = f.HarnessBuiltinMode
+	}
+	return out
+}
+
 // CurrentMorphForm returns the agent's current morphable launch form plus the
 // previous form recorded by its last morph (nil when it was never morphed).
 func CurrentMorphForm(convID string) (current AgentMorphForm, previous *AgentMorphForm, err error) {
@@ -181,6 +262,15 @@ func effectiveMorphBase(convID string, p *AgentRelaunchProfile) *AgentRelaunchPr
 // updateAgentRelaunchProfileForConvTx runs a read/modify/write of the current
 // generation's profile in one transaction so unrelated launch intent is kept.
 func updateAgentRelaunchProfileForConv(convID string, apply func(agentID string, p *AgentRelaunchProfile) error) error {
+	return updateAgentRelaunchProfileForConvTx(convID, func(_ *sql.Tx, agentID string, p *AgentRelaunchProfile) error {
+		return apply(agentID, p)
+	})
+}
+
+// updateAgentRelaunchProfileForConvTx is updateAgentRelaunchProfileForConv
+// with the transaction passed to apply, for a change that writes another of
+// the agent's columns with the profile.
+func updateAgentRelaunchProfileForConvTx(convID string, apply func(tx *sql.Tx, agentID string, p *AgentRelaunchProfile) error) error {
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return errors.New("conversation required")
@@ -212,7 +302,7 @@ func updateAgentRelaunchProfileForConv(convID string, apply func(agentID string,
 	if profile == nil {
 		return fmt.Errorf("agent %s has no durable launch profile", agentID)
 	}
-	if err := apply(agentID, profile); err != nil {
+	if err := apply(tx, agentID, profile); err != nil {
 		return err
 	}
 	encoded, err := encodeRelaunchProfile(*profile)
@@ -228,18 +318,38 @@ func updateAgentRelaunchProfileForConv(convID string, apply func(agentID string,
 // ApplyAgentMorphForConv writes target into the durable relaunch profile,
 // records the form it replaced for a later morph-back, and clears any pending
 // morph. It returns the replaced form.
-func ApplyAgentMorphForConv(convID string, target AgentMorphForm) (AgentMorphForm, error) {
+//
+// The fields the form changes are also recorded as the agent's explicit
+// launch values, in the same transaction, so re-applying its spawn profile
+// keeps the morphed form instead of putting the profile's values back. A
+// morph back (back) undoes what the morph it reverses recorded.
+func ApplyAgentMorphForConv(convID string, target AgentMorphForm, back bool) (AgentMorphForm, error) {
 	var previous AgentMorphForm
 	conversation, err := ConversationResumeProfileForConv(convID)
 	if err != nil {
 		return previous, err
 	}
-	err = updateAgentRelaunchProfileForConv(convID, func(_ string, p *AgentRelaunchProfile) error {
+	err = updateAgentRelaunchProfileForConvTx(convID, func(tx *sql.Tx, agentID string, p *AgentRelaunchProfile) error {
 		base := p
 		if conversation != nil {
 			base = ComposeAgentRelaunchProfile(conversation.FallbackRelaunch, p)
 		}
 		previous = morphFormOf(base, p.MorphProfile)
+		if back {
+			// A back with an undo record restores only the fields its morph
+			// changed: a field a spawn-copy re-apply set since keeps that
+			// value rather than the one recorded at morph time.
+			keys, err := morphUndoKeysTx(tx, agentID)
+			if err != nil {
+				return err
+			}
+			if len(keys) > 0 {
+				target = morphFormForKeys(target, keys)
+			}
+		}
+		if err := applyMorphExplicitTx(tx, agentID, morphExplicitValues(target, previous, time.Now()), back); err != nil {
+			return err
+		}
 		applyMorphForm(p, target)
 		p.MorphProfile = target.Profile
 		p.PreviousMorphForm = &previous
@@ -317,8 +427,11 @@ func ListAgentsWithPendingMorph() ([]AgentWithPendingMorph, error) {
 // translated conversation of another harness, in one transaction: the
 // generation rotation (succession edge and live pointer, as reincarnate
 // does), the successor's conversation resume profile, and the agent's
-// relaunch profile rebuilt for that harness. Nothing is committed on error.
-func ApplyCrossHarnessMorph(oldConv, newConv string, conversation ConversationResumeProfile, profile AgentRelaunchProfile) error {
+// relaunch profile rebuilt for that harness, and the fields the morph changes
+// (target over previous, the form it replaces) recorded as explicit launch
+// values, or undone for a morph back, as for a same-harness morph. Nothing is
+// committed on error.
+func ApplyCrossHarnessMorph(oldConv, newConv string, conversation ConversationResumeProfile, profile AgentRelaunchProfile, target, previous AgentMorphForm, back bool) error {
 	oldConv, newConv = strings.TrimSpace(oldConv), strings.TrimSpace(newConv)
 	if oldConv == "" || newConv == "" || oldConv == newConv {
 		return errors.New("ApplyCrossHarnessMorph: two distinct conversations required")
@@ -367,6 +480,9 @@ func ApplyCrossHarnessMorph(oldConv, newConv string, conversation ConversationRe
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return fmt.Errorf("agent %s did not advance to %s", agentID, newConv)
+	}
+	if err := applyMorphExplicitTx(tx, agentID, morphExplicitValues(target, previous, time.Now()), back); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

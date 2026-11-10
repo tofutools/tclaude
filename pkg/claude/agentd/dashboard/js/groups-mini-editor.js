@@ -11,6 +11,7 @@
 
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { ProcessMiniGraph } from './process-kit.js';
 import { ProcessEditModel } from './process-edit-model.js';
@@ -21,8 +22,11 @@ import {
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import { collapseParamShorthand, setStepName, setStepText, setStepWho, stepText, stepWho, viewToStepList } from './process-step-list.js';
-import { handOffProcessDraft } from './process-draft-handoff.js';
-import { WhoPicker, defaultNotify, markQuickStart } from './groups-quickstart.js';
+import { openProcessDraft } from './process-draft-handoff.js';
+import { FallbackPicker, WhoPicker, defaultNotify, inheritLabel, markQuickStart, useSpawnProfiles } from './groups-quickstart.js';
+import { fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
+import { withShortcut } from './keybindings.js';
+import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
@@ -31,15 +35,18 @@ const VALIDATE_DELAY_MS = 400;
 // A pointer that moves this far from a handle is a drag, not a click.
 const DRAG_SLOP = 8;
 
-// whoLine is a step's sub line in the graph: who does it.
-function whoLine(node) {
+// whoLine is a step's sub line in the graph: who does it, and its fallback
+// when that is not to wait.
+function whoLine(node, fallbackInfo) {
   const who = stepWho({ node });
-  if (who.mode === 'agent') return who.agent;
-  if (who.mode === 'role') return `any ${who.role}`;
-  if (who.mode === 'anyone') return 'anyone free';
+  const note = fallbackNote({ node }, fallbackInfo);
+  const agent = (label) => (note ? `${label} ${note}` : label);
+  if (who.mode === 'agent') return agent(who.agent);
+  if (who.mode === 'role') return agent(`any ${who.role}`);
+  if (who.mode === 'anyone') return agent('anyone free');
   if (who.mode === 'you') return 'you';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
-  return 'pick who';
+  return agent('pick who');
 }
 
 function viewOf(model) {
@@ -60,23 +67,23 @@ function floating(at, width, height) {
 // KindChips is a row of agent / you / command buttons.
 function KindChips({ onPick, disabled = '', label = '' }) {
   return html`<span class="gm-kinds" role="group" aria-label=${label || 'Pick a kind'}>
-    ${KIND_CHOICES.map(([kind, glyph, text]) => html`<button key=${kind} type="button" class="gm-kind" data-mini-kind=${kind}
+    ${KIND_CHOICES.map(([kind, glyph, text]) => html`<button data-ui-exempt key=${kind} type="button" class="gm-kind" data-mini-kind=${kind}
       disabled=${!!disabled} title=${disabled || `${label ? `${label}: ` : ''}${text}`} onClick=${() => onPick(kind)}>${glyph} ${text}</button>`)}
   </span>`;
 }
 
 // Inspector is the compact editor of one step: the step list's fields.
-function Inspector({ view, id, roster, roles, onApply, onKind, onClose, onFullEditor }) {
+function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onClose, onFullEditor }) {
   const node = view.template.nodes[id];
   if (!node) return null;
   const kind = miniKind(node);
   if (!isStep(node)) {
     return html`<div class="gm-inspector" data-mini-inspector=${id} role="dialog" aria-label=${`${node.name || id}`}>
       <div class="gm-row"><b>${node.name || id}</b><span class="gq-dim">${node.type}</span><span class="gq-spacer"></span>
-        <button type="button" class="gq-link" aria-label="Close" onClick=${onClose}>✕</button></div>
+        <${Button} size="sm" variant="link" class="gq-link" aria-label="Close" onClick=${onClose}>✕<//></div>
       ${kind === 'advanced'
     ? html`<p class="gq-dim">${node.type} nodes are edited in the full editor.</p>
-        <button type="button" class="gq-btn" data-mini-full-node onClick=${onFullEditor}>⤢ edit in full editor</button>`
+        <${Button} size="sm" data-mini-full-node onClick=${onFullEditor}>⤢ edit in full editor<//>`
     : html`<p class="gq-dim">The ${node.type} of the process. Hover it for + after.</p>`}
     </div>`;
   }
@@ -95,6 +102,10 @@ function Inspector({ view, id, roster, roles, onApply, onKind, onClose, onFullEd
     <label class="gm-field"><span>Step</span><input type="text" data-mini-name value=${node.name || ''} placeholder=${id}
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepName(s, event.currentTarget.value)))} /></label>
     <div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} /></div>
+    ${kind === 'agent' && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}
+      label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
+      defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
+      onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}
     <label class="gm-field"><span>${label}</span><textarea rows="3" data-mini-text value=${text}
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepText(s, event.currentTarget.value)))}></textarea></label>
     <div class="gm-field"><span>${node.type === 'decision' ? 'Outcomes' : 'Then'}</span><div class="gm-outcomes">
@@ -103,36 +114,37 @@ function Inspector({ view, id, roster, roles, onApply, onKind, onClose, onFullEd
     ? html`<input type="text" class="gm-outcome-name" aria-label=${`Rename ${outcome}`} value=${outcome}
           onChange=${(event) => onApply(renameOutcome(view, id, outcome, event.currentTarget.value))} />`
     : ''} →
-        <select aria-label=${`After ${outcome}`} value=${to} onChange=${(event) => onApply(setOutcomeTarget(view, id, outcome, event.currentTarget.value))}>
+        <${Select} size="sm" aria-label=${`After ${outcome}`} value=${to} onChange=${(event) => onApply(setOutcomeTarget(view, id, outcome, event.currentTarget.value))}>
           ${targetsFor(view, id, outcome).map((target) => html`<option key=${target.id} value=${target.id} data-mini-back=${target.back ? '' : undefined}>${target.back ? `↺ ${target.label} (again)` : target.label}</option>`)}
-        </select>
-        ${loopBound(node, outcome) && html`<label class="gm-loop" data-mini-loop=${outcome} title="Going back runs that work again; past the last round this outcome is refused">
+        <//>
+        ${loopBound(node, outcome) && html`<label class="ui-tag ui-tag-warn gm-loop" data-mini-loop=${outcome} title="Going back runs that work again; past the last round this outcome is refused">
           ≤<input type="number" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} aria-label=${`Rounds for ${outcome}`} value=${loopBound(node, outcome).maxIterations}
             onChange=${(event) => { const rounds = normalizeRounds(event.currentTarget.value); if (rounds) onApply(setLoopRounds(view, id, outcome, rounds)); else event.currentTarget.value = String(loopBound(node, outcome).maxIterations); }} /> rounds</label>`}
-        ${node.type === 'decision' && !canRemoveOutcome(view, id, outcome) && html`<button type="button" class="gq-link" aria-label=${`Remove ${outcome}`}
-          onClick=${() => onApply(removeOutcome(view, id, outcome))}>✕</button>`}
+        ${node.type === 'decision' && !canRemoveOutcome(view, id, outcome) && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove ${outcome}`}
+          onClick=${() => onApply(removeOutcome(view, id, outcome))}>✕<//>`}
       </span>`)}
-      ${node.type === 'decision' && html`<button type="button" class="gm-add-outcome" data-mini-add-outcome title="Add an outcome"
-        onClick=${() => onApply(addOutcome(view, id, outcomes.find((o) => !loopBound(node, o.outcome))?.to || targets.find((t) => view.template.nodes[t.id]?.type === 'end')?.id || targets[0]?.id))}>+</button>`}
+      ${node.type === 'decision' && html`<${Button} size="sm" icon=${true} class="gm-add-outcome" data-mini-add-outcome title="Add an outcome"
+        onClick=${() => onApply(addOutcome(view, id, outcomes.find((o) => !loopBound(node, o.outcome))?.to || targets.find((t) => view.template.nodes[t.id]?.type === 'end')?.id || targets[0]?.id))}>+<//>`}
       ${!outcomes.length && html`<span class="gq-dim">nothing yet: hover the step for + after</span>`}
     </div></div>
-    <div class="gm-row"><span class="gq-spacer"></span><button type="button" class="gq-link" onClick=${onClose}>done</button></div>
+    <div class="gm-row"><span class="gq-spacer"></span><${Button} size="sm" variant="link" class="gq-link" onClick=${onClose}>done<//></div>
   </div>`;
 }
 
 // StructureMenu is the right-click menu of one node.
 function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
+  const rootRef = useRef(null);
+  useDismissablePopover(rootRef, true, onClose);
   const { id } = menu;
   const node = view.template.nodes[id];
   if (!node) return null;
   const step = isStep(node);
   const orphans = step || node.type === 'end' ? deleteOrphans(view, id) : [];
-  const item = (key, text, why, onClick) => html`<button type="button" role="menuitem" class="gm-menu-item" data-mini-menu=${key}
+  const item = (key, text, why, onClick) => html`<button data-ui-exempt type="button" role="menuitem" class="gm-menu-item" data-mini-menu=${key}
     disabled=${!!why} title=${why} onClick=${onClick}>${text}</button>`;
   const kinds = (key, text, why, op) => html`<div class="gm-menu-kinds" data-mini-menu=${key}><span class=${why ? 'gm-off' : ''} title=${why}>${text}</span>
     <${KindChips} label=${text} disabled=${why} onPick=${(kind) => onRun(() => op(view, id, kind))} /></div>`;
-  return html`<div class="gm-menu" role="menu" aria-label=${`Structure of ${node.name || id}`} style=${floating(menu, 400, 330)}
-    onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+  return html`<div ref=${rootRef} class="gm-menu" role="menu" aria-label=${`Structure of ${node.name || id}`} style=${floating(menu, 400, 330)}>
     ${kinds('before', 'Insert step before', canInsertBefore(view, id), insertBefore)}
     ${kinds('after', 'Insert step after', canInsertAfter(view, id), insertAfter)}
     ${kinds('branch', 'Branch on outcome', step ? canBranch(view, id) : 'only a step branches', branch)}
@@ -199,6 +211,8 @@ export function MiniGraphEditor({
   }, [!!menu, !!picker]);
   const errors = diagnostics.filter((d) => d.severity === 'error');
   const roles = groupInfo?.roles || null;
+  const profiles = useSpawnProfiles(api);
+  const fallbackInfo = { fallback: draft.template.fallback || null, defaultSpawnProfile: String(groupInfo?.defaultSpawnProfile || ''), profiles };
   // apply lands one operation's result as one undoable edit.
   const apply = (result, focus = undefined) => {
     setError('');
@@ -241,7 +255,7 @@ export function MiniGraphEditor({
   };
   const fullEditor = async () => {
     if (dirty && !(await save())) return;
-    handOffProcessDraft({ id: process.templateId, name });
+    await openProcessDraft({ id: process.templateId, name });
     onClose();
   };
   // pointAt is a pointer position in the graph's own coordinates, where the
@@ -258,7 +272,7 @@ export function MiniGraphEditor({
   };
   // A handle opens the kind picker for its operation; dragged into empty
   // space, the new step lands from that step (a decision branches).
-  const handle = (op, id, x, y, glyph, text, why) => html`<button type="button" class=${`gm-handle gm-handle-${op}`} data-mini-handle=${op}
+  const handle = (op, id, x, y, glyph, text, why) => html`<button type="button" data-ui-exempt class=${`gm-handle gm-handle-${op}`} data-mini-handle=${op}
     style=${`left:${x}px;top:${y}px`} disabled=${!!why} title=${why || text} aria-label=${`${text} ${view.template.nodes[id]?.name || id}`}
     onPointerDown=${(event) => { if (op === 'after' && !why) { const at = pointAt(event); setDrag({ id, ...at, x0: at.x, y0: at.y, moved: false }); } }}
     onClick=${(event) => {
@@ -285,13 +299,13 @@ export function MiniGraphEditor({
       ${picker && html`<div class="gm-picker" data-mini-picker=${picker.op} style=${floating(picker, 300, 40)}>
         <${KindChips} label=${`${{ after: 'Add after', branch: 'Branch to', alongside: 'Run alongside', before: 'Insert before' }[picker.op]}`}
           onPick=${(kind) => run(() => OPS[picker.op](draft, picker.id, kind))} />
-        <button type="button" class="gq-link" aria-label="Close" onClick=${() => setPicker(null)}>✕</button>
+        <${Button} size="sm" variant="link" class="gq-link" aria-label="Close" onClick=${() => setPicker(null)}>✕<//>
       </div>`}
       ${menu && html`<${StructureMenu} view=${draft} menu=${menu} onRun=${run} onClose=${() => setMenu(null)}
         onWrap=${() => { setMenu(null); void fullEditor(); }} />`}`;
   };
-  const projection = draftProjection(draft, { whoOf: (id, node) => whoLine(node), name });
-  return html`<section class="gm-card" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
+  const projection = draftProjection(draft, { whoOf: (id, node) => whoLine(node, fallbackInfo), noteOf: (id, node) => fallbackNote({ node }, fallbackInfo), name });
+  return html`<section class="gm-card ui-card ui-inset" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
     onKeyDown=${(event) => {
       if (event.key === 'Escape' && (menu || picker)) { event.stopPropagation(); setMenu(null); setPicker(null); }
       if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !/INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '')) { event.preventDefault(); undo(); }
@@ -300,21 +314,21 @@ export function MiniGraphEditor({
       <b class="gm-name">${name}</b>
       <span class="gq-dim">${dirty ? 'draft' : 'saved'}</span>
       <span class="gm-toggle" role="group" aria-label="View">
-        <button type="button" data-mini-steps disabled=${!stepsList.ok} title=${stepsList.ok ? 'Show the same draft as a step list' : `The step list cannot show it: ${stepsList.reason}`}
-          onClick=${() => onSteps({ list: stepsList.list, changed: dirty })}>☰ Steps</button>
-        <button type="button" aria-pressed="true" class="on">◈ Graph</button>
+        <button type="button" data-ui-exempt data-mini-steps disabled=${!stepsList.ok} title=${stepsList.ok ? 'Show the same draft as a step list' : `The step list cannot show it: ${stepsList.reason}`}
+          onClick=${() => onSteps({ list: stepsList.list, changed: dirty, sourceHash: model.current.sourceHash, ref: model.current.currentRef })}>☰ Steps</button>
+        <button data-ui-exempt type="button" aria-pressed="true" class="on">◈ Graph</button>
       </span>
       ${dirty && html`<span class="gm-changes" data-mini-changes=${summary.length}>● ${summary.length || 1} unsaved change${summary.length === 1 ? '' : 's'}${summary.length ? `: ${summary.slice(0, 3).join(', ')}${summary.length > 3 ? '…' : ''}` : ''}</span>`}
       <span class="gq-spacer"></span>
-      <button type="button" class="gq-btn" data-mini-undo disabled=${!model.current.canUndo} title="Undo (Ctrl+Z)" onClick=${undo}>↶ undo</button>
-      <button type="button" class="gq-btn" data-mini-full disabled=${!!busy} title=${dirty ? 'Save, then open it in the full editor' : 'Open it in the full editor'} onClick=${fullEditor}>⤢ full editor</button>
+      <${Button} size="sm" data-mini-undo disabled=${!model.current.canUndo} title=${withShortcut('Undo', 'mini-undo')} onClick=${undo}>↶ undo<//>
+      <${Button} size="sm" data-mini-full disabled=${!!busy} title=${dirty ? 'Save, then open it in the full editor' : 'Open it in the full editor'} onClick=${fullEditor}>⤢ full editor<//>
       ${discarding
     ? html`<span class="gq-confirm">Discard ${summary.length || 'the'} change${summary.length === 1 ? '' : 's'}?
-        <button type="button" class="gq-btn" data-mini-discard onClick=${onClose}>discard</button>
-        <button type="button" class="gq-link" onClick=${() => setDiscarding(false)}>keep</button></span>`
-    : html`<button type="button" class="gq-btn" data-mini-cancel onClick=${() => (dirty ? setDiscarding(true) : onClose())}>cancel</button>`}
-      <button type="button" class="gq-btn primary" data-mini-save disabled=${!!busy || !dirty} title=${dirty ? 'Save as a new version' : 'Nothing changed'}
-        onClick=${async () => { if (await save()) onClose(); }}>${busy === 'save' ? 'saving…' : 'Save new version'}</button>
+        <${Button} size="sm" variant="danger" data-mini-discard onClick=${onClose}>discard<//>
+        <${Button} size="sm" variant="link" class="gq-link" onClick=${() => setDiscarding(false)}>keep<//></span>`
+    : html`<${Button} size="sm" data-mini-cancel onClick=${() => (dirty ? setDiscarding(true) : onClose())}>cancel<//>`}
+      <${Button} size="sm" variant="primary" data-mini-save disabled=${!!busy || !dirty} title=${dirty ? 'Save as a new version' : 'Nothing changed'}
+        onClick=${async () => { if (await save()) onClose(); }}>${busy === 'save' ? 'saving…' : 'Save new version'}<//>
     </div>
     <div class="gm-canvas" ref=${canvas} data-mini-canvas
       onMouseLeave=${() => { if (!drag) setHover(''); }}
@@ -333,7 +347,7 @@ export function MiniGraphEditor({
         onNodeClick=${(node) => { setMenu(null); setPicker(null); setSelected(node.id === selected ? '' : node.id); }}
         onNodeContextMenu=${openMenu} onNodeHover=${setHover} overlay=${overlay} />
     </div>
-    ${selected && html`<${Inspector} view=${draft} id=${selected} roster=${roster} roles=${roles}
+    ${selected && html`<${Inspector} view=${draft} id=${selected} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
       onApply=${(result) => apply(result)} onClose=${() => setSelected('')} onFullEditor=${fullEditor}
       onKind=${(kind, who) => run(() => {
         const result = changeKind(draft, selected, kind);
@@ -341,12 +355,12 @@ export function MiniGraphEditor({
       })} />`}
     <div class="gm-foot">
       <span class="gq-dim">Saving makes a new version; runs already going keep theirs.</span>
-      ${errors.length > 0 && html`<span class="gq-error" role="alert" data-mini-problems=${errors.length}>${errors.length} problem${errors.length === 1 ? '' : 's'}: ${errors[0].message}</span>`}
+      ${errors.length > 0 && html`<span class="gq-error ui-error" role="alert" data-mini-problems=${errors.length}>${errors.length} problem${errors.length === 1 ? '' : 's'}: ${errors[0].message}</span>`}
       <span class="gq-spacer"></span>
       ${!process.listed && html`<label class="gq-dim"><input type="checkbox" data-mini-publish checked=${publish}
         onChange=${(event) => setPublish(event.currentTarget.checked)} /> also publish to the library</label>`}
     </div>
-    ${error && html`<div class="gq-error" role="alert">${error}</div>`}
+    ${error && html`<div class="gq-error ui-error" role="alert">${error}</div>`}
   </section>`;
 }
 

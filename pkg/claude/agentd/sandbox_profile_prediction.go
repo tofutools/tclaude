@@ -192,6 +192,11 @@ func predictSandboxFilesystem(
 			),
 		)
 	}
+	if err := sandboxpolicy.ValidateProtectedAncestorWriteSupport(
+		profile.Filesystem, target.implementation, target.platform,
+	); err != nil {
+		return predictedSandboxFeature(tier, harness.AccessPredictionRefused, err.Error())
+	}
 	// Same shape for a rule naming a single file, and for the same reason: the
 	// surfaces that cannot bind one render directory lists, so the preview must
 	// not show a cell reading as enforced for a rule that would simply be absent.

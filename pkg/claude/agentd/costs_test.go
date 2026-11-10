@@ -208,20 +208,3 @@ func TestCostDeltasFromRows_CarryForwardNotReset(t *testing.T) {
 	assert.InDelta(t, 12.26, sumCostDeltas(deltas, "", ""), 1e-9,
 		"carry-forward resume counts only the rise: 7.86 + (12.26 - 7.86), not 7.86 + 12.26")
 }
-
-// TestFirstCostDay covers the first-ever-costed-day helper the Costs
-// tab's month projection anchors its weekday average on: it's the min
-// day across all deltas regardless of input order, and "" when nothing
-// has been spent.
-func TestFirstCostDay(t *testing.T) {
-	assert.Equal(t, "", firstCostDay(nil), "no spend → no first day")
-	assert.Equal(t, "", firstCostDay([]costDelta{}), "empty deltas → no first day")
-
-	// Unsorted on purpose: the earliest day must win regardless of order.
-	deltas := []costDelta{
-		{day: "2026-06-10", usd: 1.0},
-		{day: "2026-05-28", usd: 2.0},
-		{day: "2026-06-03", usd: 0.5},
-	}
-	assert.Equal(t, "2026-05-28", firstCostDay(deltas), "earliest day across all deltas")
-}

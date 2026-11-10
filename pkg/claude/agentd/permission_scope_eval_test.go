@@ -25,6 +25,7 @@ func TestActionContextCoversEveryScopeDimension(t *testing.T) {
 		Remote:          "github.com/acme/repo",
 		LinearTeam:      "TCL",
 		AWBWorkspace:    "awb",
+		Resource:        "drawing_board:b",
 		RemotePeer:      "inst_x",
 	}
 	for dim := range permissionScopeDimensions {
@@ -345,6 +346,16 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 	}
 }
 
+// Every agent peer view route's slug takes a peer= scope, which
+// servePeerViewForAgent evaluates over the route's footprint on the peer.
+func init() {
+	for _, slug := range agentPeerViewSlugs() {
+		if scopedSlugEnforcementPaths[slug] == "" {
+			scopedSlugEnforcementPaths[slug] = "servePeerViewForAgent evaluates peer=<inst>/<group> over the route's footprint"
+		}
+	}
+}
+
 // Enforcement checklist. Every slug that declares ScopeDims must have a
 // named authorization path that actually evaluates the scope — otherwise an
 // operator can write a grant that reads as narrow in `permissions ls` and is
@@ -356,6 +367,8 @@ func TestContextFreeResolutionFailsClosedOnScopedAllow(t *testing.T) {
 // gap it closes is the one that shipped routes.publish/routes.consume with a
 // bespoke, scope-blind gate for the better part of a phase.
 var scopedSlugEnforcementPaths = map[string]string{
+	PermResourcesRead:                     "requireGroupResourceAccess / requireGroupsResourceAccess evaluate Group and Resource per resource (agentReachesThroughScopedUmbrella); the drawing board and template lists filter per item",
+	PermResourcesWrite:                    "requireGroupResourceAccess / requireGroupsResourceAccess evaluate Group (every group for a write) and Resource (agentReachesThroughScopedUmbrella)",
 	PermJobsRun:                           "jobCallerAllowed / authorizeJobAccess evaluate concrete RemotePeer and RemoteGroup; list projects only authorized owned jobs",
 	PermAgentsStatusRead:                  "handleFederationReachable evaluates peer/group scope before projecting status",
 	PermModelsProxy:                       "modelLaunchAllowed checks peer and HTTPProxy on bind and every request",
@@ -431,12 +444,27 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermRoutesPublish:                     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
 	PermRoutesConsume:                     "requireRoutePermissionForIdentity — central resolver plus ActionContext{Group}",
 	PermGroupsTriggersRead:                "requireGroupPermission / triggerRuleReadable — fills ActionContext{Group}",
+	PermGroupsPagesRead:                   "pageFor (pages_share.go) — requirePermission with ActionContext{Group: the page's group}",
+	PermGroupsResourcesRead:               "requireGroupResourceAccess / agentHoldsGroupResource (group_resource_access.go) — ActionContext{Group: the resource's group}",
+	PermGroupsResourcesWrite:              "requireGroupResourceAccess / agentHoldsGroupResource (group_resource_access.go) — ActionContext{Group: the resource's group}",
+	PermTaskboardRead:                     "requireTaskboard / agentReadsTaskboard (taskboard.go) — requireGroupPermission with ActionContext{Group: the drawing board's group}",
+	PermTaskboardWrite:                    "requireTaskboard (taskboard.go) — requireGroupPermission with ActionContext{Group: the drawing board's group}",
+	PermTaskboardOwn:                      "requireTaskboardOwn (taskboard_own.go) — requireGroupPermission with ActionContext{Group: the board's group}, and only on a group the agent is an active member of",
+	PermTaskboardManage:                   "handleTaskboardWritersSet (taskboard_assign.go) — requireGroupPermission with ActionContext{Group}",
+	PermTaskboardTransfer:                 "requireTaskboardTransfer (taskboard_transfer.go) — requireGroupPermission on the target group with ActionContext{Group}",
+	PermTaskboardAssign:                   "handleTaskboardAssign / requireTaskboardAssigneeAction (taskboard_assign.go) — requireGroupPermission with ActionContext{Group, TargetAgent}",
+	PermGroupsResourcesLock:               "handleAgentResourceLock / agentHoldsResourceLock (group_resource_access.go) — ActionContext{Group} for each group the resource belongs to",
+	PermGroupsPagesPatch:                  "pageFor (pages_share.go) — requirePermission with ActionContext{Group: the page's group}",
+	PermGroupsPagesManage:                 "pageFor (pages_share.go) — requirePermission with ActionContext{Group: the page's group}",
 	PermGroupsTriggersManage:              "triggerOwnerConv — evaluates ActionContext{Group} again at fire time",
 	PermGitRead:                           "git proxy handlers — resolved fetch remote in ActionContext{Remote}",
 	PermGitPush:                           "git proxy handler — resolved push remote in ActionContext{Remote}",
 	PermGitHubRead:                        "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
 	PermGitHubWrite:                       "GitHub proxy handlers — derived repository remote in ActionContext{Remote}",
 	PermGitHubMerge:                       "GitHub proxy pr merge handler — derived repository remote in ActionContext{Remote}",
+	PermGitLabRead:                        "GitLab proxy handlers — derived project remote in ActionContext{Remote}",
+	PermGitLabWrite:                       "GitLab proxy handlers — derived project remote in ActionContext{Remote}",
+	PermGitLabMerge:                       "GitLab proxy mr merge handler — derived project remote in ActionContext{Remote}",
 	PermLinearRead: "Linear proxy — linearEffectiveTeams evaluates ActionContext{LinearTeam} per candidate team " +
 		"into the session's effective set, which every team check reads",
 	PermLinearWrite: "Linear proxy — same effective-set resolution as proxy.linear.read",

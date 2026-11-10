@@ -192,3 +192,20 @@ func reserveDarwinRouteSlots() (*DarwinRouteSlotReservation, error) {
 	}
 	return reservation, nil
 }
+
+// handOffDarwinRouteAtLaunch is the route launch's step once its pane is up:
+// it activates the launch contract, then releases the reservation's
+// listeners so the admitted child can bind the slots. A failure in either
+// leaves a live pane whose row, route claim and cgroup the caller is about
+// to roll back, so both kill the pane before reporting.
+func handOffDarwinRouteAtLaunch(r *DarwinRouteSlotReservation, activate func() error, killPane func()) error {
+	if err := activate(); err != nil {
+		killPane()
+		return fmt.Errorf("activate Darwin route launch contract: %w", err)
+	}
+	if err := r.Release(); err != nil {
+		killPane()
+		return fmt.Errorf("release Darwin route launch reservation: %w", err)
+	}
+	return nil
+}

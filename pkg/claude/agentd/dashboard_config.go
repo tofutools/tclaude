@@ -8,6 +8,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/stewardtools"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -57,8 +58,11 @@ func handleDashboardConfigAPI(w http.ResponseWriter, r *http.Request) {
 		handleDashboardConfigGet(w, r)
 	case http.MethodPost:
 		handleDashboardConfigPost(w, r)
+	case http.MethodPatch:
+		// A partial update, as a peer makes one (config_remote.go).
+		serveConfigChange(w, r, localConfigCaller())
 	default:
-		http.Error(w, "GET or POST only", http.StatusMethodNotAllowed)
+		http.Error(w, "GET, POST or PATCH only", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -88,6 +92,10 @@ func handleDashboardConfigGet(w http.ResponseWriter, _ *http.Request) {
 	resp := map[string]any{
 		"raw":  string(raw),
 		"path": config.ConfigPath(),
+		// The same shape a peer gets (config_remote.go), so the tab's code
+		// is shared: the node's operator may change every class.
+		"version": configVersion(string(raw)),
+		"access":  localConfigCaller().access(),
 	}
 	if loadErr != nil {
 		resp["malformed"] = true
@@ -97,6 +105,7 @@ func handleDashboardConfigGet(w http.ResponseWriter, _ *http.Request) {
 	if unknown := unknownConfigKeys(); len(unknown) > 0 {
 		resp["unknown_keys"] = unknown
 	}
+	addExternalStewardInfo(resp, cfg)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -166,6 +175,9 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	// dry-run preview, the bytes written to disk, and the next GET all
 	// match exactly — config.Save persists this normalized form.
 	config.Normalize(cfg)
+	// The form shows every per-type checkbox, so an unchecked one is a
+	// choice `tclaude setup` must not undo.
+	cfg.Notifications.MarkNotifyTypesKnown()
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		http.Error(w, "marshal config: "+err.Error(), http.StatusInternalServerError)
@@ -189,10 +201,29 @@ func handleDashboardConfigPost(w http.ResponseWriter, r *http.Request) {
 	// must not fail the save the human already confirmed.
 	_ = session.SyncClaudeCleanupPeriod(cfg)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	if loadErr == nil {
+		tellStewardsNewName(current, cfg)
+	}
+	if len(stewardConvs()) > 0 {
+		autoFetchKnowledgeSource(cfg)
+	}
+
+	resp := map[string]any{
 		"raw":  string(raw),
 		"path": config.ConfigPath(),
-	})
+	}
+	addExternalStewardInfo(resp, cfg)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// addExternalStewardInfo is what the Config page shows of external stewards, in
+// the load and in the save, which replaces it: the tool list has to be there
+// before the feature can be turned on.
+func addExternalStewardInfo(resp map[string]any, cfg *config.Config) {
+	resp["external_steward"] = map[string]any{
+		"enabled": cfg.ExternalStewardsEnabled(),
+		"tools":   stewardtools.List(),
+	}
 }
 
 // unknownConfigKeys returns the dotted paths of the on-disk config's keys

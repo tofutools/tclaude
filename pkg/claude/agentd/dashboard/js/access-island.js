@@ -3,6 +3,9 @@ import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { ACCESS_SUBTABS, SUDO_COLUMNS, fmtRemaining } from './access-model.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
+import { Button, Input } from './ui-components.js';
+import { Tabs } from './ui-tabs.js';
+import { TableHead, tableState } from './table-kit.js';
 
 const html = htm.bind(h);
 
@@ -12,10 +15,11 @@ function SlugTags({ values, denied = false }) {
 }
 
 function PermissionsView({ current }) {
-  if (!current.snapshotLoaded) return html`<div class="empty">Loading permissions…</div>`;
-  if (current.snapshotLoaded && !current.permissions) {
-    return html`<div role="alert" class="island-error">Permissions data is unavailable in the latest snapshot.</div>`;
-  }
+  const placeholder = tableState({
+    loading: !current.snapshotLoaded && 'Loading permissions…',
+    error: !current.permissions && 'Permissions data is unavailable in the latest snapshot.',
+  });
+  if (placeholder) return placeholder;
   return html`<${Fragment}>
     <h3 style="margin-top:0">Defaults <span class="muted" style="font-size:11px">— granted to every agent (config.json)</span></h3>
     ${current.defaults.length === 0
@@ -43,13 +47,14 @@ function ownerGrantLabel(scopeDims = []) {
 
 function SlugsView({ state, current }) {
   const filterRef = useRef(null);
-  if (!current.snapshotLoaded) return html`<div class="empty">Loading slug registry…</div>`;
-  if (current.snapshotLoaded && !current.slugs) {
-    return html`<div role="alert" class="island-error">The permission slug registry is unavailable in the latest snapshot.</div>`;
-  }
+  const placeholder = tableState({
+    loading: !current.snapshotLoaded && 'Loading slug registry…',
+    error: !current.slugs && 'The permission slug registry is unavailable in the latest snapshot.',
+  });
+  if (placeholder) return placeholder;
   return html`<${Fragment}>
     <div class="filter-bar">
-      <input ref=${filterRef} id="filter-slugs" type="text" aria-label="Filter permission slugs by name"
+      <${Input} domRef=${filterRef} id="filter-slugs" aria-label="Filter permission slugs by name"
         placeholder="Filter by slug name" autocomplete="off" spellcheck=${false}
         value=${current.slugQuery} onInput=${(event) => {
           const normalized = state.setSlugQuery(event.currentTarget.value);
@@ -62,7 +67,7 @@ function SlugsView({ state, current }) {
       <span class="filter-count" id="filter-slugs-count" aria-live="polite">${current.slugQuery
         ? `${current.slugs.length} / ${current.slugTotal}`
         : `${current.slugTotal} slug${current.slugTotal === 1 ? '' : 's'}`}</span>
-      <button class="clear-filter" id="filter-slugs-clear" title="Clear filter" aria-label="Clear slug filter"
+      <button data-ui-exempt class="clear-filter" id="filter-slugs-clear" title="Clear filter" aria-label="Clear slug filter"
         onClick=${() => { state.setSlugQuery(''); filterRef.current?.focus(); }}>×</button>
     </div>
     <div class="muted" style="font-size:11px;margin-bottom:6px">👑 = group ownership automatically contributes this permission. <b>owned groups</b> means one ordinary grant scoped to each group you own; <b>global</b> is unscoped when you own any active group. 👥 = group membership contributes the permission for that group. A same-slug per-agent deny suppresses the contributed grant.</div>
@@ -73,8 +78,8 @@ function SlugsView({ state, current }) {
         <td><span class="slug">${slug.slug}</span></td>
         <td>${slug.owner_implied || slug.member_implied
           ? html`<${Fragment}>
-              ${slug.owner_implied ? html`<span class="owner-badge" title=${ownerGrantTitle(slug.scope_dims)}>👑 ${ownerGrantLabel(slug.scope_dims)}</span>` : ''}
-              ${slug.member_implied ? html` <span class="owner-badge" title="Conferred by membership — only for the group the agent belongs to">👥 group</span>` : ''}
+              ${slug.owner_implied ? html`<span class="ui-tag ui-tag-own owner-badge" title=${ownerGrantTitle(slug.scope_dims)}>👑 ${ownerGrantLabel(slug.scope_dims)}</span>` : ''}
+              ${slug.member_implied ? html` <span class="ui-tag ui-tag-own owner-badge" title="Conferred by membership — only for the group the agent belongs to">👥 group</span>` : ''}
             </${Fragment}>`
           : html`<span class="muted">—</span>`}</td>
         <td>${slug.description || ''}</td>
@@ -84,49 +89,34 @@ function SlugsView({ state, current }) {
 }
 
 function SudoHeader({ state, current }) {
-  const activate = (event, key) => {
-    if (!key) return;
-    if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    state.cycleSudoSort(key);
-  };
-  return html`<thead><tr>${SUDO_COLUMNS.map((column) => {
-    const active = column.key && current.sudoSort?.key === column.key;
-    return html`<th class=${column.key ? `sortable${active ? ' sort-active' : ''}` : undefined}
-      tabIndex=${column.key ? '0' : undefined} aria-sort=${active ? (current.sudoSort.dir === 'asc' ? 'ascending' : 'descending') : column.key ? 'none' : undefined}
-      title=${column.key ? `Sort by ${column.label}` : undefined}
-      onClick=${(event) => activate(event, column.key)} onKeyDown=${(event) => activate(event, column.key)}>
-      ${column.label}${column.key && html`<span class="sort-arrow">${active ? (current.sudoSort.dir === 'asc' ? '▲' : '▼') : '▾'}</span>`}
-    </th>`;
-  })}</tr></thead>`;
+  return html`<${TableHead} cols=${SUDO_COLUMNS} activeCol=${current.sudoSort?.key} dir=${current.sudoSort?.dir}
+    isSortable=${(column) => !!column.key} colOf=${(column) => column.key} onSort=${(key) => state.cycleSudoSort(key)} />`;
 }
 
 function SudoView({ state, actions, current }) {
   const filterRef = useRef(null);
   return html`<${Fragment}>
     <div class="filter-bar">
-      <input ref=${filterRef} id="filter-sudo" type="text" aria-label="Filter active sudo grants"
+      <${Input} domRef=${filterRef} id="filter-sudo" aria-label="Filter active sudo grants"
         placeholder="Filter active sudo grants (matches conv title / id / slug / reason)" autocomplete="off" spellcheck=${false}
         value=${current.sudoQuery} onInput=${(event) => state.setSudoQuery(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Escape') state.setSudoQuery(''); }} />
       <span class="filter-count" id="filter-sudo-count" aria-live="polite">${current.sudoQuery
         ? `${current.sudo.length} / ${current.sudoTotal}`
         : `${current.sudoTotal} active grant${current.sudoTotal === 1 ? '' : 's'}`}</span>
-      <button class="clear-filter" id="filter-sudo-clear" title="Clear filter" aria-label="Clear sudo filter"
+      <button data-ui-exempt class="clear-filter" id="filter-sudo-clear" title="Clear filter" aria-label="Clear sudo filter"
         onClick=${() => { state.setSudoQuery(''); filterRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
-      <button id="sudo-grant-open" class="primary" title="Proactively grant a time-bounded sudo elevation to an agent"
-        onClick=${actions.openGrant}>+ Grant sudo</button>
+      <${Button} id="sudo-grant-open" variant="primary" title="Proactively grant a time-bounded sudo elevation to an agent"
+        onClick=${actions.openGrant}>+ Grant sudo<//>
     </div>
     ${current.mutation.error && html`<div role="alert" class="island-error access-mutation-error">${current.mutation.error}</div>`}
     <div id="sudo-list">
-      ${!current.snapshotLoaded
-        ? html`<div class="empty">Loading sudo grants…</div>`
-        : !current.sudoAvailable
-        ? html`<div role="alert" class="island-error">Sudo grant data is unavailable in the latest snapshot.</div>`
-        : current.sudo.length === 0
-        ? html`<div class="empty">No active sudo grants.</div>`
-        : html`<table><${SudoHeader} state=${state} current=${current} /><tbody>
+      ${tableState({
+        loading: !current.snapshotLoaded && 'Loading sudo grants…',
+        error: !current.sudoAvailable && 'Sudo grant data is unavailable in the latest snapshot.',
+        empty: current.sudo.length === 0 && 'No active sudo grants.',
+      }) || html`<table><${SudoHeader} state=${state} current=${current} /><tbody>
           ${current.sudo.map((grant) => {
             const key = `revoke:${grant.id}`;
             return html`<tr key=${grant.id} data-key=${`sudo-${grant.id}`}>
@@ -136,8 +126,8 @@ function SudoView({ state, actions, current }) {
               <td><span class="last-hook" data-sudo-countdown=${grant.id}>${fmtRemaining(grant.remaining_seconds)}</span></td>
               <td>${grant.reason || ''}</td>
               <td><span class="muted" title=${grant.granted_by || ''}>${grant.granted_by || ''}</span></td>
-              <td><button class="danger" disabled=${current.mutation.busy.has(key)} onClick=${() => actions.revoke(grant)}
-                title="Revoke this grant">${current.mutation.busy.has(key) ? 'revoking…' : 'revoke'}</button></td>
+              <td><${Button} size="sm" variant="ghost danger" disabled=${current.mutation.busy.has(key)} onClick=${() => actions.revoke(grant)}
+                title="Revoke this grant">${current.mutation.busy.has(key) ? 'revoking…' : 'revoke'}<//></td>
             </tr>`;
           })}
         </tbody></table>`}
@@ -149,25 +139,16 @@ function AccessSubnav({ state, current }) {
   const notifyNavigation = (subtab) => document.dispatchEvent(new CustomEvent('tclaude:navigated', {
     detail: { location: { tab: 'access', subtab } },
   }));
-  const navigate = (event, subtab) => {
-    if (event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    event.preventDefault();
+  const select = (subtab) => {
     state.setSubtab(subtab);
     notifyNavigation(subtab);
   };
-  const keyDown = (event, subtab) => {
-    if (event.key !== ' ' && event.key !== 'Spacebar') return;
-    event.preventDefault();
-    state.setSubtab(subtab);
-    notifyNavigation(subtab);
-  };
-  return html`<div class="access-subnav" role="tablist" aria-label="Access control views">
-    ${ACCESS_SUBTABS.map((subtab) => html`<a key=${subtab} class=${`access-subtab${current.subtab === subtab ? ' active' : ''}`}
-      data-subtab=${subtab} href=${`/access/${subtab}`} role="tab" aria-selected=${current.subtab === subtab ? 'true' : 'false'}
-      aria-controls=${`access-${subtab}`} onClick=${(event) => navigate(event, subtab)} onKeyDown=${(event) => keyDown(event, subtab)}>
-      ${{ permissions: 'Permissions', slugs: 'Slug registry', sudo: 'Sudo' }[subtab]}
-    </a>`)}
-  </div>`;
+  const labels = { permissions: 'Permissions', slugs: 'Slug registry', sudo: 'Sudo' };
+  return html`<${Tabs} class="access-subnav" label="Access control views" value=${current.subtab} onSelect=${select}
+    items=${ACCESS_SUBTABS.map((subtab) => ({
+      key: subtab, label: labels[subtab], href: `/access/${subtab}`, class: 'access-subtab',
+      attrs: { 'data-subtab': subtab, 'aria-controls': `access-${subtab}` },
+    }))} />`;
 }
 
 export function AccessApp({ state, actions }) {

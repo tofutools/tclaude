@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	triggerlogic "github.com/tofutools/tclaude/pkg/claude/triggers"
@@ -81,10 +80,6 @@ func startTriggerSourcePollers(stop <-chan struct{}) {
 				case <-t.C:
 				}
 			}
-			if !triggerRoutesEnabled() {
-				delay = recentlyMergedPRPollInterval
-				continue
-			}
 			enabled, enabledErr := db.HasEnabledTriggerSource(db.TriggerSourcePRMerged)
 			if enabledErr != nil {
 				slog.Warn("triggers: inspect merged PR watchers", "error", enabledErr)
@@ -138,15 +133,13 @@ func initializeTriggerCIWatchState() {
 	triggerCIWatchState.Lock()
 	defer triggerCIWatchState.Unlock()
 	triggerCIWatchState.identities = make(map[string]struct{})
-	if triggerRoutesEnabled() {
-		prs, err := db.ListTriggerCIWatchPRs(0)
-		if err != nil {
-			triggerCIWatchState.initialized = false
-			return
-		}
-		for _, watch := range triggerCIIdentityWatches(prs) {
-			triggerCIWatchState.identities[watch.key] = struct{}{}
-		}
+	prs, err := db.ListTriggerCIWatchPRs(0)
+	if err != nil {
+		triggerCIWatchState.initialized = false
+		return
+	}
+	for _, watch := range triggerCIIdentityWatches(prs) {
+		triggerCIWatchState.identities[watch.key] = struct{}{}
 	}
 	triggerCIWatchState.initialized = true
 }
@@ -177,18 +170,7 @@ func markTriggerCIIdentityWatched(key string) {
 	triggerCIWatchState.Unlock()
 }
 
-func clearTriggerCIWatchSet() {
-	triggerCIWatchState.Lock()
-	triggerCIWatchState.identities = make(map[string]struct{})
-	triggerCIWatchState.initialized = true
-	triggerCIWatchState.Unlock()
-}
-
 func pollTriggerCITransitions(now time.Time) {
-	if !triggerRoutesEnabled() {
-		clearTriggerCIWatchSet()
-		return
-	}
 	prs, err := db.ListTriggerCIWatchPRs(0)
 	if err != nil {
 		slog.Warn("triggers: list CI-watched PRs", "error", err)
@@ -217,7 +199,7 @@ func pollTriggerCITransitions(now time.Time) {
 			continue
 		}
 		info.FetchedAt = now
-		info.Summary = summarizePRChecks(info.Checks, now)
+		info.Summary = resolvedChecksSummary(info, now)
 		savePRChecks(pr.PRURL, info)
 		state := strings.ToLower(strings.TrimSpace(info.PRState))
 		if state != "" {
@@ -260,9 +242,6 @@ func pollTriggerCITransitions(now time.Time) {
 func PollTriggerCITransitionsForTest(now time.Time) { pollTriggerCITransitions(now) }
 
 func runTriggerTick(now time.Time) {
-	if !triggerRoutesEnabled() {
-		return
-	}
 	if _, err := db.InterruptRunningTriggerFirings(now); err != nil {
 		slog.Warn("triggers: close interrupted firings", "error", err)
 		return
@@ -602,9 +581,8 @@ func triggerOwnerConv(rule *db.TriggerRule) (string, error) {
 	if conv == "" {
 		return "", errors.New("owning agent has no current conversation")
 	}
-	req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
 	if rule.ScopeKind == db.TriggerScopeGlobal {
-		allowed, _, authErr := permissionAllowsAction(req, conv, PermTriggersManage, ActionContext{})
+		allowed, authErr := durableOwnerAllows("trigger", conv, PermTriggersManage, ActionContext{})
 		if authErr != nil {
 			return "", authErr
 		}
@@ -620,13 +598,10 @@ func triggerOwnerConv(rule *db.TriggerRule) (string, error) {
 	if g == nil || g.IsArchived() {
 		return "", errors.New("trigger group is unavailable")
 	}
-	ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
-	allowed, _, authErr := permissionAllowsAction(req, conv, PermGroupsTriggersManage, ctx)
+	allowed, authErr := durableOwnerAllows("trigger", conv, PermGroupsTriggersManage,
+		ActionContext{Group: g.Name, structuralGroup: g.Name})
 	if authErr != nil {
 		return "", authErr
-	}
-	if !allowed && resolvePermissionVerdictForRequest(req, conv, PermGroupsTriggersManage).Resolution != permDeny {
-		allowed, _ = structuralPermissionMatch(conv, PermGroupsTriggersManage, ctx)
 	}
 	if !allowed {
 		return "", fmt.Errorf("owner lacks %s for group %s", PermGroupsTriggersManage, g.Name)
@@ -667,6 +642,27 @@ func executeTriggerSpawn(rule *db.TriggerRule, firingID int64, index int, spec *
 type managedSpawn struct {
 	group  *db.AgentGroup
 	params spawnParams
+	// promptRefs are the saved prompts the brief opens with (the profile's,
+	// else the group's defaults). Kept so a caller that replaces the brief
+	// after planning recomposes it rather than dropping them.
+	promptRefs []string
+	// notes disclose the identity and access decisions a tier other than the
+	// rule made, such as a default profile's grant the owner could not confer.
+	notes []string
+}
+
+// setInitialMessage replaces the planned brief, composing the plan's saved
+// prompts in front of it as planManagedSpawn did.
+func (m *managedSpawn) setInitialMessage(body string) *spawnFailure {
+	if len(m.promptRefs) > 0 {
+		composed, fail := composeSavedPrompts(m.promptRefs, body)
+		if fail != nil {
+			return fail
+		}
+		body = composed
+	}
+	m.params.InitialMessage = body
+	return nil
 }
 
 // planManagedSpawn performs every authorization, guardrail, rate, role, cwd,
@@ -689,8 +685,8 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	if profile == nil {
 		return nil, "profile_not_found", fmt.Sprintf("spawn profile %q does not exist", profileName)
 	}
-	if fail := profileSpawnFailure(profile, ownerConv); fail != nil {
-		return nil, "permission_denied", fail.Msg
+	if fail := managedProfileRefusal(g, profile, ownerConv, false); fail != nil {
+		return nil, fail.Kind, fail.Msg
 	}
 	allowAnyGroup := false
 	// A managed worker never selects a sandbox profile of its own, so the
@@ -702,11 +698,16 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	sandboxScopePinned := false
 	if ownerConv != "" {
 		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
+		// Metered only so a limited grant is seen and refused by name below.
+		req, _ = withSudoUseMeter(req)
 		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
 			SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
 		allowed, authorizedSlug, _, authErr := spawnPermissionAllowsAction(req, ownerConv, ctx)
 		if authErr != nil {
 			return nil, "io", authErr.Error()
+		}
+		if allowed && spawnAuthorityIsCounted(req, ownerConv, authorizedSlug, ctx) {
+			return nil, "permission_denied", "a trigger cannot spend a use-limited sudo grant"
 		}
 		if !allowed {
 			return nil, "permission_denied", fmt.Sprintf("owner lacks %s or %s for group %s and spawn profile %s", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile.Name)
@@ -720,80 +721,44 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 			return nil, status, detail
 		}
 	}
-	recorder := httptest.NewRecorder()
-	if !checkSpawnGuardrails(recorder, g, ownerConv, allowAnyGroup) {
-		return nil, "guardrail_denied", strings.TrimSpace(recorder.Body.String())
+	// The default tiers too, before a rate slot is spent on a refusal that
+	// repeats on every firing.
+	if fail := managedProfileRefusal(g, nil, ownerConv, true); fail != nil {
+		return nil, fail.Kind, fail.Msg
 	}
-	claimed := claimSpawnRateSlot(recorder, ownerConv)
+	if fail := checkSpawnGuardrails(g, ownerConv, allowAnyGroup); fail != nil {
+		return nil, "guardrail_denied", fail.Msg
+	}
+	rateFail := claimSpawnRateSlot(ownerConv)
 	if ownerConv == "" {
-		claimed = claimDaemonSpawnRateSlot(recorder, ratePrincipal)
+		rateFail = claimDaemonSpawnRateSlot(ratePrincipal)
 	}
-	if !claimed {
-		return nil, "rate_limited", strings.TrimSpace(recorder.Body.String())
+	if rateFail != nil {
+		return nil, "rate_limited", rateFail.Msg
 	}
 
-	roles := roleRefs
-	if len(roles) == 0 {
-		roles = profile.RoleRefs
+	// Roles, role label, description, saved prompts, startup context, owner
+	// flag and permission overrides resolve over the worker's profile, the
+	// group's default and the global default, with the owner's authority
+	// checked exactly as a direct spawn checks its caller's
+	// (resolveLaunchIdentity). The rule's own roles are the explicit tier.
+	var request agent.SpawnRequest
+	if len(roleRefs) > 0 {
+		request.StateRoleRefs(roleRefs)
 	}
-	profileContext := profile.StartupContext
-	overrides := map[string]db.PermissionOverride{}
-	for slug, v := range profile.PermissionOverrides {
-		overrides[slug] = v
+	tiers := defaultLaunchTiers(g, profile, profileSource(profile, agent.ProvCLIProfileSource))
+	identity, fail := resolveLaunchIdentity(launchIdentityRequest{body: request, group: g,
+		harness: harnessOrDefault(profile.Harness), spawner: ownerConv, tiers: tiers})
+	if fail != nil {
+		return nil, managedIdentityFailureKind(fail.Kind), fail.Msg
 	}
-	roleLabel := profile.Role
-	for _, ref := range roles {
-		role, roleErr := db.GetRole(ref)
-		if roleErr != nil {
-			return nil, "io", roleErr.Error()
-		}
-		if role == nil {
-			return nil, "invalid_role", fmt.Sprintf("role %q does not exist", ref)
-		}
-		if roleLabel == "" {
-			roleLabel = role.Name
-		}
-		profileContext = appendRoleBlock(profileContext, role.Brief)
-		for _, grant := range role.Permissions {
-			candidate := db.PermissionOverride{Effect: db.PermEffectGrant, Scope: grant.Scope}
-			if prior, ok := overrides[grant.Slug]; ok && prior != candidate {
-				return nil, "invalid_role", "roles grant incompatible scopes for " + grant.Slug
-			}
-			overrides[grant.Slug] = candidate
-		}
-	}
-	// Saved prompts open the worker's brief the way they do a direct spawn's:
-	// the profile's set, else the group's own default prompts.
-	promptRefs := cleanRoleRefs(profile.PromptRefs)
-	if len(promptRefs) == 0 {
-		promptRefs = cleanRoleRefs(g.DefaultPrompts)
-	}
-	if len(promptRefs) > 0 && harnessOrDefault(profile.Harness) != harness.ShellName {
+	promptRefs := identity.promptRefs
+	if len(promptRefs) > 0 {
 		composed, fail := composeSavedPrompts(promptRefs, initialMessage)
 		if fail != nil {
 			return nil, fail.Kind, fail.Msg
 		}
 		initialMessage = composed
-	}
-	if ownerConv != "" && len(overrides) > 0 {
-		if resolvePermission(ownerConv, PermPermissionsGrant) != permAllow {
-			return nil, "permission_denied", "spawn profile/roles confer permissions but owner lacks " + PermPermissionsGrant
-		}
-		if err := checkGrantAttenuation(ownerConv, grantConferee{descendantByConstruction: true}, conferredGrantsFromOverrides(overrides)); err != nil {
-			return nil, "permission_denied", err.Error()
-		}
-	}
-	isOwner := profile.IsOwner != nil && *profile.IsOwner
-	if ownerConv != "" && isOwner {
-		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
-		ctx := ActionContext{Group: g.Name, structuralGroup: g.Name}
-		allowed, _, _ := permissionAllowsAction(req, ownerConv, PermGroupsOwnersManage, ctx)
-		if !allowed && resolvePermissionVerdictForRequest(req, ownerConv, PermGroupsOwnersManage).Resolution != permDeny {
-			allowed, _ = structuralPermissionMatch(ownerConv, PermGroupsOwnersManage, ctx)
-		}
-		if !allowed {
-			return nil, "permission_denied", "spawn profile confers group ownership but owner lacks " + PermGroupsOwnersManage
-		}
 	}
 	cwd := strings.TrimSpace(g.DefaultCwd)
 	if cwd == "" && ownerConv != "" {
@@ -808,18 +773,30 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 		return nil, "invalid_cwd", fmt.Sprintf("launch directory %q is unavailable", cwd)
 	}
 
-	p := spawnParams{UsageSpawnProfile: profile, Name: name, Role: roleLabel, Descr: profile.Descr, InitialMessage: initialMessage,
-		ProfileContext: profileContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv, IsOwner: isOwner, PermissionOverrides: overrides, Async: true}
-	includeGroup := profile.IncludeGroupDefaultContext == nil || *profile.IncludeGroupDefaultContext
-	if includeGroup {
-		p.GroupContext = g.DefaultContext
-	}
-	profileGroup := *g
-	profileGroup.DefaultProfile = profile.Name
-	if fail := applyDefaultProfile(&profileGroup, &p); fail != nil {
+	p := spawnParams{UsageSpawnProfile: profile, managedProfile: profile, spawnCopyCallerTiers: spawnCopyTiers(spawnCopyTier(db.SpawnCopyTierNamed, profile)), Name: name, Role: identity.role, Descr: identity.descr, InitialMessage: initialMessage,
+		ProfileContext: identity.startupContext, Cwd: cwd, ReplyToConv: ownerConv, SpawnedByConv: ownerConv,
+		IsOwner: identity.isOwner, PermissionOverrides: identity.overrides, PermissionSources: identity.overrideSources, Async: true,
+		LaunchNotes: identity.launchNotes(),
+		// The worker's profile is the named tier, above the group's and the
+		// global default profile, for every launch field: identity above, the
+		// rest in applyDefaultProfile. With no tier speaking, the group context
+		// is included, as it always was for these workers.
+		IncludeGroupContextDefault: true,
+		// The default profiles identity resolved from, so the launch fields
+		// resolve from the same versions.
+		defaultProfiles: &pinnedDefaultProfiles{group: tiers[1].profile, global: tiers[2].profile}}
+	if fail := resolveManagedLaunch(g, &p, ownerConv, false); fail != nil {
+		if fail.Kind == "io" || fail.Kind == "permission_denied" || isManagedProfileRefusal(fail.Kind) {
+			return nil, fail.Kind, fail.Msg
+		}
+		// The owner's sandbox refused the worker as it would refuse a child
+		// it spawned: a refusal of the owner's authority, in the outcome
+		// vocabulary a managed worker's run records.
+		if fail.Kind == "sandbox_profile_restricted" {
+			return nil, "permission_denied", fail.Msg
+		}
 		return nil, "spawn_failed", fail.Msg
 	}
-	snapshot := sandboxpolicy.OmittedProfilesSnapshot()
 	// The owner's grant was conditioned on the inherited sandbox profile, so
 	// refuse when the spawn profile resolves a launch that would not enforce
 	// it. Only a scope-pinned owner is bound: an unscoped grant or group
@@ -828,35 +805,24 @@ func planManagedSpawn(g *db.AgentGroup, profileName string, roleRefs []string, o
 	if sandboxScopePinned &&
 		sandboxProfileTierInert(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
 		return nil, "permission_denied", fmt.Sprintf(
-			"this firing is authorized by a grant scoped to sandbox profile %s, and spawn profile %s resolves a launch mode that would not enforce it",
+			"this firing is authorized by a grant scoped to sandbox profile %s, and its launch (spawn profile %s over the group's and the global default profiles) resolves a mode that would not enforce it",
 			sandboxProfileForScope, profile.Name)
 	}
-	if !sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
-		snapshot, err = db.ResolveEffectiveSandboxSnapshot(g.ID, "")
-		if err != nil {
-			return nil, "spawn_failed", err.Error()
-		}
+	return &managedSpawn{group: g, params: p, promptRefs: promptRefs, notes: identity.notes}, "", ""
+}
+
+// managedIdentityFailureKind maps a refused identity resolution onto the
+// outcome kinds a managed worker's run records.
+func managedIdentityFailureKind(kind string) string {
+	switch kind {
+	case "io", "invalid_role":
+		return kind
+	case "role_scope_conflict":
+		return "invalid_role"
+	case "forbidden", "scope_not_attenuated":
+		return "permission_denied"
 	}
-	if ownerConv != "" {
-		parent, readErr := db.AgentEffectiveSandboxConfigForConv(ownerConv)
-		if readErr != nil {
-			return nil, "io", readErr.Error()
-		}
-		if parent == nil && sandboxpolicy.HasCapabilities(snapshot) {
-			return nil, "permission_denied", "owning principal predates effective sandbox snapshots"
-		}
-		if parent != nil {
-			validated, valErr := ensureAgentDirectoriesForRelaunch(*parent)
-			if valErr != nil {
-				return nil, "spawn_failed", valErr.Error()
-			}
-			if containErr := sandboxpolicy.RequireContained(validated, snapshot); containErr != nil {
-				return nil, "permission_denied", containErr.Error()
-			}
-		}
-	}
-	p.EffectiveSandbox = &snapshot
-	return &managedSpawn{group: &profileGroup, params: p}, "", ""
+	return "spawn_failed"
 }
 
 type managedWorkerSource struct {
@@ -903,6 +869,8 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 			return "", ""
 		})
 	if plan == nil {
+		announceManagedProfileRefusal(managedRefusalSource{Key: source.Tag,
+			Label: managedSourceLabel(rule, source), OwnerConv: ownerConv}, status, detail)
 		return status, detail, ""
 	}
 	profileGroup, p := plan.group, plan.params
@@ -952,7 +920,16 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 		return "spawned_tracking_failed", "worker reservation ended while spawn dispatch was in progress; launched worker was stopped best-effort", agentID
 	}
 	_ = db.AddAgentTags(agentID, source.Tag)
-	return "spawned", "", agentID
+	rearmManagedProfileRefusal(source.Tag)
+	return "spawned", strings.Join(plan.notes, "; "), agentID
+}
+
+// managedSourceLabel names a managed worker's automation for a notice.
+func managedSourceLabel(rule *db.TriggerRule, source managedWorkerSource) string {
+	if source.CronJobID != 0 {
+		return fmt.Sprintf("schedule %q", rule.Name)
+	}
+	return fmt.Sprintf("trigger %q", rule.Name)
 }
 
 // SetManagedWorkerBeforePromotionForTest installs a deterministic seam after

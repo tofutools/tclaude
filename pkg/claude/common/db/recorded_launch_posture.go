@@ -148,7 +148,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 // there is reported as unknown rather than as intent. That is the safe reading
 // twice over: a legacy row never asserted anything, and every zero in that tier
 // is also the launch default, so preserving nothing and preserving the zero
-// produce the same launch.
+// produce the same launch — except that a terminal `session new -r` fills
+// unknown fields from the global default spawn profile, so there such a
+// legacy zero takes the profile's value (applyResumeDefaultLaunchProfile).
 func RecordedLaunchPostureForConv(convID string) (*AgentRelaunchProfile, error) {
 	convID = strings.TrimSpace(convID)
 	if convID == "" {

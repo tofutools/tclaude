@@ -547,7 +547,7 @@ func RollbackFederationArrival(conv string) (bool, error) {
 	if old.Presence.HomeInstance != p.CurrentInstance {
 		// A visiting actor had no remaining local authority at departure. Remove
 		// only the new birth grants; home grants never enter this branch.
-		for _, table := range []string{"agent_permissions", "agent_group_members", "agent_group_owners"} {
+		for _, table := range []string{"agent_permissions", "agent_group_members", "agent_group_owners", "agent_retained_group_permissions"} {
 			if _, e = tx.Exec(`DELETE FROM `+table+` WHERE agent_id=?`, id); e != nil {
 				return false, e
 			}
@@ -610,13 +610,13 @@ func RemintFederationClone(id, conv string) (string, error) {
 	if e = insertAgentTx(tx, clone, conv, "clone", time.Now()); e != nil {
 		return "", e
 	}
-	if _, e = tx.Exec(`UPDATE agents SET (pending_name,initial_spawn_config,relaunch_profile,effective_sandbox_config,task_ref_url,task_ref_label)=(SELECT pending_name,initial_spawn_config,relaunch_profile,effective_sandbox_config,task_ref_url,task_ref_label FROM agents WHERE agent_id=?) WHERE agent_id=?`, id, clone); e != nil {
+	if _, e = tx.Exec(`UPDATE agents SET (pending_name,initial_spawn_config,relaunch_profile,launch_layers,effective_sandbox_config,task_ref_url,task_ref_label)=(SELECT pending_name,initial_spawn_config,relaunch_profile,launch_layers,effective_sandbox_config,task_ref_url,task_ref_label FROM agents WHERE agent_id=?) WHERE agent_id=?`, id, clone); e != nil {
 		return "", e
 	}
 	if _, e = tx.Exec(`UPDATE agent_conversations SET agent_id=?,reason='teleport-superseded-clone' WHERE conv_id=? AND agent_id=?`, clone, conv, id); e != nil {
 		return "", e
 	}
-	for _, table := range []string{"agent_group_members", "agent_group_owners", "agent_permissions"} {
+	for _, table := range []string{"agent_group_members", "agent_group_owners", "agent_permissions", "agent_retained_group_permissions"} {
 		if _, e = tx.Exec(`UPDATE `+table+` SET agent_id=? WHERE agent_id=?`, clone, id); e != nil {
 			return "", e
 		}

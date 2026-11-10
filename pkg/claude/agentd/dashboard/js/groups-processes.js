@@ -20,22 +20,32 @@ import {
   normalizeRunFilter, processContext, processRunApi, runDetailApi, runFilterHas, runFilterKinds, runNeedsYou,
   unauthorizedProfiles, withPerformerNames,
 } from './process-context.js';
+import { TemplateCombobox, namedItems } from './registry-picker.js';
 import { GroupsProcessesPlaceholder } from './groups-focus.js';
-import { GroupsRunFocus } from './groups-run-focus.js';
+import { GroupsRunFocus, memberName } from './groups-run-focus.js';
+import { WorkflowImportButton } from './process-workflow-share.js';
 import {
   ProcessGraphRow, agentRunIndex, enabled, groupProcessCounts,
 } from './groups-process-indicators.js';
 import {
-  GetStarted, StepListEditor, defaultNotify, draftWithScribe, markQuickStart, openInGraphEditor, quickStartSeen,
+  GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen,
 } from './groups-quickstart.js';
+import { DraftStartWarning, ScribeDraft, draftWithScribe, leaveScribeDraft, noteDraftOpened, restorableScribeDraft, scribeStartWarning } from './groups-scribe-draft.js';
+import { processScribeSessions } from './process-scribe.js';
+import { viewToStepList } from './process-step-list.js';
+import { shellConfirm } from './shell-state.js';
 import { SavedProcesses } from './groups-saved-processes.js';
+import { AddResource, GroupResources, PeerGroupResources, groupShellsOf } from './groups-resources.js';
+import { dashboardState } from './snapshot-store.js';
 import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
 import { handOffProcessDraft } from './process-draft-handoff.js';
 import { takeProcessStart } from './process-start-handoff.js';
-import { fusedSectionOpen, setFusedSectionOpen } from './groups-fused-sections.js';
+import { fusedSectionOpen, fusedSectionsRevision, setFusedSectionOpen } from './groups-fused-sections.js';
 import { FusedLinks } from './groups-fused-links.js';
 import { useProcessScope } from './groups-process-scope.js';
+import { Button } from './ui-components.js';
+import { AgentCombobox } from './agent-picker.js';
 
 const html = htm.bind(h);
 
@@ -45,10 +55,6 @@ function filterLabel(filter, wizard) {
   const kinds = runFilterKinds(filter);
   if (kinds.length === RUN_KINDS.length) return '';
   return kinds.map((kind) => RUN_KIND_LABELS[kind][wizard ? 1 : 0].toLowerCase()).join(' or ');
-}
-
-function memberName(member) {
-  return member?.title || member?.agent_id || member?.conv_id || '';
 }
 
 function memberKey(member) {
@@ -64,8 +70,9 @@ function memberInitial(member) {
 // pre-ticked: authorizing host program execution is the human's call), then
 // POST it with the group pre-filled. Refusals show inline; a refusal naming
 // unauthorized profiles (a referenced template's) adds them to the list. The
-// created run appears on the next context refresh.
-function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '', members = null, onBuild = null }) {
+// created run appears on the next context refresh. While a scribe is at work on
+// the template it asks first, as the ▶ strip does.
+function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '', members = null, onBuild = null, scribes = [], onOpenTemplate = null }) {
   // members set means an agent-scoped run: the operator picks which member
   // the run is bound to, and its steps run as that agent's work.
   const agentScoped = Array.isArray(members);
@@ -77,6 +84,8 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
   const [authorized, setAuthorized] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Set while Start asks about a scribe's unreviewed work; see scribeStartWarning.
+  const [draftWarning, setDraftWarning] = useState(null);
   useEffect(() => {
     let live = true;
     api.listTemplates().then((rows) => {
@@ -92,6 +101,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     setValues({});
     setAuthorized(new Set());
     setError('');
+    setDraftWarning(null);
     if (!templateId || typeof api.templateRequirements !== 'function') return () => { live = false; };
     api.templateRequirements(templateId).then((found) => {
       if (!live) return;
@@ -111,17 +121,12 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     return () => { live = false; };
   }, [api, templateId]);
   const missing = needs.params.filter((param) => param.required && !String(values[param.name] ?? '').trim());
-  const start = async (event) => {
-    event.preventDefault();
-    if (!templateId || busy || missing.length || (agentScoped && !agent)) return;
+  const act = async (work) => {
+    if (busy) return;
     setBusy(true);
     setError('');
     try {
-      const scope = agentScoped ? { agent } : { group: group.name };
-      await api.startGroupRun({ templateId, ...scope, params: values, authorizeProgramProfiles: [...authorized] });
-      markQuickStart();
-      onClose();
-      void source.refresh();
+      await work();
     } catch (cause) {
       const named = unauthorizedProfiles(cause.message);
       if (named.length) {
@@ -132,6 +137,45 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
       setBusy(false);
     }
   };
+  const begin = async (expectedRef = '') => {
+    const scope = agentScoped ? { agent } : { group: group.name };
+    await api.startGroupRun({
+      templateId, ...scope, params: values, authorizeProgramProfiles: [...authorized], ...(expectedRef ? { expectedRef } : {}),
+    });
+    markQuickStart();
+    onClose();
+    void source.refresh();
+  };
+  const start = (event) => {
+    event.preventDefault();
+    if (!templateId || busy || draftWarning || missing.length || (agentScoped && !agent)) return;
+    void act(async () => {
+      const warning = await scribeStartWarning(api, scribes, templateId);
+      if (warning) setDraftWarning(warning);
+      else await begin();
+    });
+  };
+  // Pinned to the version the question was about: a save since then asks again
+  // instead of running what nobody was asked about.
+  const startAnyway = () => act(async () => {
+    try {
+      await begin(draftWarning.ref);
+    } catch (cause) {
+      if (cause.body?.code !== 'process_run_template_moved') throw cause;
+      const warning = await scribeStartWarning(api, scribes, templateId);
+      setDraftWarning(warning);
+      if (!warning) setError('It changed since you were asked. Press start to run the current version.');
+    }
+  });
+  const openDraft = () => act(async () => {
+    const chosen = templates.find((template) => template.id === templateId);
+    // An agent-scoped start stays one from the editor it opens.
+    const bound = agentScoped ? agents.find((member) => member.agent_id === agent) : null;
+    await onOpenTemplate({
+      templateId, name: chosen?.name || templateId,
+      ...(bound ? { runAgent: { id: bound.agent_id, name: memberName(bound) } } : {}),
+    });
+  });
   const toggleProfile = (profile, on) => setAuthorized((current) => {
     const next = new Set(current);
     if (on) next.add(profile);
@@ -139,31 +183,32 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     return next;
   });
   const label = agentScoped
-    ? (wizard ? `Begin a rite for one familiar of ${group.name}` : `Start a process for one agent in ${group.name}`)
+    ? (wizard ? `Begin a rite for one hero of ${group.name}` : `Start a process for one agent in ${group.name}`)
     : (wizard ? `Begin a rite for ${group.name}` : `Start a process in ${group.name}`);
   const agents = agentScoped ? members.filter((member) => member.agent_id) : [];
   return html`<form class="gp-start-form" aria-label=${label} data-start-scope=${agentScoped ? 'agent' : 'group'} onSubmit=${start}
-    onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+    onKeyDown=${(event) => { if (event.key === 'Escape' && !busy) { event.stopPropagation(); onClose(); } }}>
     ${agentScoped
-    ? html`<span class="pk-chip pk-scope pk-scope-agent">◉ ${wizard ? 'familiar-bound' : 'agent scope'}</span>
+    ? html`<span class="pk-chip ui-tag pk-scope pk-scope-agent">◉ ${wizard ? 'hero-bound' : 'agent scope'}</span>
       ${agents.length
-        ? html`<select aria-label="Agent" data-start-agent value=${agent} disabled=${busy} onChange=${(event) => setAgent(event.currentTarget.value)}>
-          ${agents.map((member) => html`<option key=${member.agent_id} value=${member.agent_id}>${memberName(member)}</option>`)}
-        </select>`
-        : html`<span class="gp-start-note">${wizard ? 'No familiar here can bear a rite.' : 'No agent in this group to run it.'}</span>`}`
-    : html`<span class="pk-chip pk-scope pk-scope-group">⌂ ${wizard ? 'circle-bound' : 'group scope'} · ${group.name}</span>`}
+        ? html`<${AgentCombobox} attrs=${{ 'data-start-agent': '' }} ariaLabel="Agent" value=${agent} disabled=${busy} agents=${agents} group=${group.name}
+          placeholder=${wizard ? 'Type to find a hero…' : 'Type to find an agent…'} onChange=${setAgent} />`
+        : html`<span class="gp-start-note">${wizard ? 'No hero here can bear a rite.' : 'No agent in this group to run it.'}</span>`}`
+    : html`<span class="pk-chip ui-tag pk-scope pk-scope-group">⌂ ${wizard ? 'circle-bound' : 'group scope'} · ${group.name}</span>`}
     ${templates === null
     ? html`<span class="gp-start-note">Loading templates…</span>`
     : templates.length === 0 && !error
       ? html`<span class="gp-start-note">${wizard ? 'No rites written yet.' : 'No saved processes yet.'}</span>`
-      : html`<select aria-label="Template" value=${templateId} disabled=${busy} onChange=${(event) => setTemplateId(event.currentTarget.value)}>
-        ${templates.map((template) => html`<option key=${template.id} value=${template.id}>${template.name}</option>`)}
-      </select>`}
-    <button type="submit" class="primary" disabled=${busy || !templateId || missing.length > 0 || (agentScoped && !agent)}
-      title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}</button>
-    <button type="button" onClick=${onClose}>cancel</button>
-    ${onBuild && html`<button type="button" class="gq-link" data-process-new=${group.name} onClick=${onBuild}
-      title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name} from steps or a starter`}>${wizard ? 'or shape a new rite ▸' : 'or build a new one ▸'}</button>`}
+      : html`<${TemplateCombobox} className="gp-start-template" ariaLabel="Template" value=${templateId} disabled=${busy}
+        placeholder=${wizard ? 'Type to find a rite…' : 'Type to find a process…'} emptyHint=${wizard ? 'No rites.' : 'No processes.'}
+        items=${namedItems(templates.map((template) => ({ name: template.id, label: template.name, descr: template.description })))}
+        onChange=${setTemplateId} />`}
+    <${Button} size="sm" variant="primary" type="submit" disabled=${busy || !!draftWarning || !templateId || missing.length > 0 || (agentScoped && !agent)}
+      title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}<//>
+    <${Button} size="sm" disabled=${busy} onClick=${onClose}>cancel<//>
+    ${draftWarning && html`<${DraftStartWarning} warning=${draftWarning} busy=${busy} openDisabled=${!onOpenTemplate} onOpen=${openDraft} onStartAnyway=${startAnyway} />`}
+    ${onBuild && html`<${Button} size="sm" variant="link" class="gq-link" data-process-new=${group.name} onClick=${onBuild}
+      title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name} from steps or a starter`}>${wizard ? 'or shape a new rite ▸' : 'or build a new one ▸'}<//>`}
     ${needs.params.length > 0 && html`<div class="gp-start-params" role="group" aria-label="Parameters">
       ${needs.params.map((param) => html`<label key=${param.name} class="gp-start-param" title=${param.description}>
         <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
@@ -180,7 +225,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
         authorize <code>${profile || '(default profile)'}</code>
       </label>`)}
     </div>`}
-    ${error && html`<span class="gp-start-error" role="alert">${error}</span>`}
+    ${error && html`<span class="gp-start-error ui-error" role="alert">${error}</span>`}
   </form>`;
 }
 
@@ -226,7 +271,7 @@ function GroupAvatarStrip({ members, busy, wizard }) {
       return html`<span key=${state} class=${`gp-member is-${state}${state === 'process' ? ' busy' : ''}`}
         data-availability=${state} title=${`${names.length} ${tip} — ${names.join(', ')}`}>
         <svg class="gp-member-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.2" r="3" /><path d="M2.4 14.6c0-3.4 2.5-5.6 5.6-5.6s5.6 2.2 5.6 5.6z" /></svg>
-        ${names.length > 1 && html`<span class="gp-member-count">${names.length}</span>`}
+        ${names.length > 1 && html`<span class="gp-member-count ui-badge-corner">${names.length}</span>`}
       </span>`;
     })}</span>
     <span class="gp-strip-text">${parts.join(' · ')}</span>
@@ -240,15 +285,15 @@ function RunCard({ run, entry, nameOf, wizard, onOpen }) {
   const duration = formatRunDuration(named.startedAt, terminal && named.updatedAt ? Date.parse(named.updatedAt) : Date.now());
   const template = named.templateRef || named.templateId || '';
   const owner = named.scope?.owner ? nameOf(named.scope.owner) || named.scope.owner : '';
-  return html`<article class="gp-card" data-process-run-card=${named.runId}>
+  return html`<article class="gp-card ui-card" data-process-run-card=${named.runId}>
     <div class="gp-card-head">
       <span class="gp-card-name">${runName(named)}</span>
       <${ProcessStateChip} state=${state} label=${`${stateLabel(state)}${duration ? ` · ${duration}` : ''}`} />
       <${ProcessScopeChip} scope=${named.scope?.kind === 'agent' && nameOf(named.scope.agentId) ? { kind: 'agent', name: nameOf(named.scope.agentId) } : named.scope} wizard=${wizard} />
       ${(template || owner) && html`<span class="gp-card-meta">${template && html`${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}${template && owner && ' · '}${owner && html`owner <b>${owner}</b>`}</span>`}
       <span class="gp-spacer"></span>
-      ${runNeedsYou(named, entry) && html`<span class="pk-chip pk-state-waiting gp-needs-you">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
-      <button type="button" class="gp-open" data-process-open=${named.runId} onClick=${() => onOpen(named.runId)}
+      ${runNeedsYou(named, entry) && html`<span class="pk-chip ui-tag pk-state-waiting gp-needs-you">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
+      <button data-ui-exempt type="button" class="gp-open" data-process-open=${named.runId} onClick=${() => onOpen(named.runId)}
         title=${wizard ? `Gaze into ${runName(named)}` : `Open ${runName(named)}: live graph, node inspector and performers`}>${wizard ? 'gaze ›' : 'open ›'}</button>
     </div>
     <div class="gp-card-body"><${ProcessMiniGraph} run=${named} wizard=${wizard} /></div>
@@ -260,7 +305,7 @@ function PlannedRow({ item, wizard }) {
   const when = item.nextAt ? new Date(item.nextAt) : null;
   const at = when && !Number.isNaN(when.getTime())
     ? when.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-  return html`<span class="pk-chip gp-planned" data-process-planned=${item.id}>
+  return html`<span class="pk-chip ui-tag gp-planned" data-process-planned=${item.id}>
     ${item.source === 'trigger' ? '⚡' : '⏲'} ${item.name || item.templateRef || item.templateId || item.id}${at && ` · ${at}`}
     <span class="gp-planned-source">${wizard ? (item.source === 'trigger' ? 'omen' : 'drumbeat') : (item.source || 'scheduled')}</span>
   </span>`;
@@ -299,16 +344,6 @@ function MemberRuns({ entries, label, onOpen }) {
   </div>`;
 }
 
-// The run-control icons are small process graphs in the place of the Agents
-// row's person glyphs: a single lane (start, then one step) for a process
-// run by one agent, and a lane that forks into parallel steps for a process
-// the whole group runs.
-function RunIcon({ group = false }) {
-  return group
-    ? html`<svg class="subgroup-ico" viewBox="0 0 28 24" width="17" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="12" r="3"></circle><path d="M7 12h4M11 12l3-6h2M11 12l3 6h2"></path><rect x="17" y="3" width="9" height="6" rx="1.5"></rect><rect x="17" y="15" width="9" height="6" rx="1.5"></rect></svg>`
-    : html`<svg class="spawn-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="12" r="3"></circle><path d="M7 12h5"></path><path d="M10 9l3 3-3 3"></path><rect x="14" y="7" width="9" height="10" rx="1.5"></rect></svg>`;
-}
-
 // liveGroupRuns are the runs pause all / resume all act on: the group's own
 // live runs and its members' agent-scoped runs, whatever the run filter
 // shows, so the result never depends on what happens to be visible.
@@ -324,9 +359,9 @@ function plural(n, word) {
 }
 
 // RunControls is the Processes perspective's version of the Agents row
-// (spawn agent, create subgroup, power on, shutdown), in the same places:
-// start a process for one agent, start one for the group, resume every
-// paused run, pause every running one. Pause stands in for shutdown because
+// (spawn agent, power on, shutdown), in the same places: ＋ (`add`, a
+// process for the group or one agent, and in Both a drawing board, page or shell),
+// resume every paused run, pause every running one. Pause stands in for shutdown because
 // it is reversible: work in flight finishes, nothing new is dispatched until
 // resume. Ending runs (cancel) is deliberately not one click away. Pause and
 // resume wear ⏸/⏵ rather than the agent row's 🛑/🟢, so in Both, where the
@@ -340,7 +375,7 @@ function RunGlyph({ kind }) {
     : html`<path d="M3.2 1.8v8.4c0 .5.5.8.9.5l6.2-4.2c.4-.3.4-.8 0-1L4.1 1.3c-.4-.3-.9 0-.9.5z" />`}</svg>`;
 }
 
-function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, onStart, inline = false }) {
+function RunControls({ group, runs, agentIds, runApi, source, notify, add, inline = false }) {
   const [busy, setBusy] = useState('');
   const pausable = runs.filter((run) => !run.paused);
   const resumable = runs.filter((run) => run.paused);
@@ -371,19 +406,14 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
   const shared = { 'data-group': group.name };
   // Inline is Both's half-row beside the agent controls; otherwise the row.
   return html`<${inline ? 'span' : 'div'} class=${inline ? 'gp-run-controls gf-run-controls' : 'group-header-actions gp-run-controls'}>
-    <button type="button" class="spawn-btn" ...${shared} data-process-start-agent=${group.name} onClick=${() => onStart('agent')}
-      title=${wizard ? `Begin a rite for one familiar of ${group.name}` : `Agent process: run a saved process, or build a new one, for one agent in ${group.name}`}
-      aria-label="Start a process for one agent in this group"><${RunIcon} /><span class="spawn-btn-label-wizard" aria-hidden="true">📜</span></button>
-    <button type="button" class="spawn-btn subgroup-btn" ...${shared} data-process-start=${group.name} onClick=${() => onStart('group')}
-      title=${wizard ? `Begin a rite bound to ${group.name}` : `Group process: run a saved process, or build a new one, for the whole group`}
-      aria-label="Start a process for this group"><${RunIcon} group=${true} /><span class="subgroup-icon-wizard" aria-hidden="true">⚔📜</span></button>
+    ${add}
     <span class="group-actions">
-      <button type="button" ...${shared} data-process-resume-all=${group.name} disabled=${!!busy || !resumable.length}
+      <${Button} size="sm" ...${shared} data-process-resume-all=${group.name} disabled=${!!busy || !resumable.length}
         onClick=${() => bulk('resume', resumable)} aria-label="Resume every paused process in this group"
-        title=${resumable.length ? `Resume ${plural(resumable.length, 'paused process')}: what waited is planned again` : 'No paused processes in this group'}><${RunGlyph} kind="resume" /></button>
-      <button type="button" class="warn" ...${shared} data-process-pause-all=${group.name} disabled=${!!busy || !pausable.length}
+        title=${resumable.length ? `Resume ${plural(resumable.length, 'paused process')}: what waited is planned again` : 'No paused processes in this group'}><${RunGlyph} kind="resume" /><//>
+      <${Button} size="sm" class="warn" ...${shared} data-process-pause-all=${group.name} disabled=${!!busy || !pausable.length}
         onClick=${() => bulk('pause', pausable)} aria-label="Pause every running process in this group"
-        title=${pausable.length ? `Pause ${plural(pausable.length, 'running process')}: steps in flight finish, nothing new starts until you resume. Nothing is cancelled.` : 'No running processes to pause in this group'}><${RunGlyph} kind="pause" /></button>
+        title=${pausable.length ? `Pause ${plural(pausable.length, 'running process')}: steps in flight finish, nothing new starts until you resume. Nothing is cancelled.` : 'No running processes to pause in this group'}><${RunGlyph} kind="pause" /><//>
     </span>
   <//>`;
 }
@@ -393,7 +423,7 @@ function RunControls({ group, runs, agentIds, wizard, runApi, source, notify, on
 // process controls and the Processes section: the Agents and Processes
 // sections, each with its own controls on its header line, then
 // `fused.after` (the group's triggers).
-function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify, fused = null }) {
+function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify, fused = null, confirm = shellConfirm, scribes = [] }) {
   const [starting, setStarting] = useState(false);
   // quick is the quick start: null, 'pick' (the Get started panel opened on a
   // group that has processes), {list, origin, saved} (the step-list editor;
@@ -402,16 +432,40 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   // Both editors of a saved process carry `process` and `stored` (the view
   // it was opened at), so ☰ Steps / ◈ Graph switch over the same draft.
   const [quick, setQuick] = useState(null);
+  // The ＋ menu, held here: a click on a folded section line opens the
+  // section, which moves the button to the title row (a new instance).
+  const [adding, setAdding] = useState(false);
   // dismissed only re-renders this group at once; the pref folds the rest.
   const [, setDismissed] = useState(false);
   // "Start in <group>" from the dock's library opens this group's start form
   // on that template.
+  // The importer sits here rather than in Get started: importing pins a process
+  // to the group, which takes the panel away, and a stale review stays open.
+  const importerRef = useRef(null);
+  const [droppedPwf, setDroppedPwf] = useState(null);
+  const [pwfOver, setPwfOver] = useState(false);
+  const pickPwf = () => importerRef.current?.querySelector('[data-pwf-file]')?.click();
+  const fileDrag = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+  // Only a .pwf is taken: any other file falls through to the page's own drop
+  // (a .paf), and one dropped on the importer's own dialog changes nothing.
+  const pwfDrop = {
+    onDragOver: (event) => { if (!fileDrag(event)) return; event.preventDefault(); setPwfOver(true); },
+    onDragLeave: (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPwfOver(false); },
+    onDrop: (event) => {
+      setPwfOver(false);
+      if (!fileDrag(event) || event.target.closest?.('.modal-overlay, [role="dialog"]')) return;
+      const file = [...(event.dataTransfer.files || [])].find((f) => /\.pwf$/i.test(f.name));
+      if (!file) return;
+      event.preventDefault();
+      setDroppedPwf(file);
+    },
+  };
   useEffect(() => {
     const take = () => {
       const request = takeProcessStart(group.name);
       if (!request) return;
       setQuick(null);
-      setStarting({ templateId: request.templateId, scope: 'group' });
+      setStarting(request.templateId ? { templateId: request.templateId, scope: 'group' } : { scope: 'group' });
     };
     take();
     document.addEventListener('tclaude:process-start', take);
@@ -444,80 +498,140 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const people = groupRoster({ members }, busy);
   // The step list may have saved a version (a refused start keeps it open):
   // the graph continues from that one, so its CAS base is the newest.
-  const toGraph = ({ view, changed, sourceHash }) => {
+  const toGraph = ({ view, changed, sourceHash, ref }) => {
     const resaved = !!sourceHash && sourceHash !== quick.saved?.sourceHash;
     setQuick({
       mode: 'graph', key: Date.now(), process: quick.process, changed,
       stored: resaved && !changed ? view : quick.stored,
-      view: { ...view, sourceHash: sourceHash || quick.saved?.sourceHash || '' },
+      view: { ...view, sourceHash: sourceHash || quick.saved?.sourceHash || '', currentRef: ref || quick.saved?.ref || '' },
     });
   };
-  const toSteps = ({ list, changed }) => setQuick({
+  const toSteps = ({ list, changed, sourceHash, ref }) => setQuick({
     list, origin: '', key: Date.now(), process: quick.process, stored: quick.stored,
-    saved: { templateId: quick.process.templateId, sourceHash: quick.view.sourceHash || '', listed: !!quick.process.listed, changed },
+    saved: { templateId: quick.process.templateId, sourceHash: sourceHash || quick.view.sourceHash || '', ref: ref || quick.view.currentRef || '', listed: !!quick.process.listed, changed },
   });
-  const quickStart = editing && quick.mode === 'graph'
+  // A stored version opens as any saved process does: the step list, or the
+  // inline graph when the list cannot show it.
+  const openStored = (process, view) => {
+    noteDraftOpened(scribes, process.templateId, view);
+    const converted = viewToStepList(view);
+    if (!converted.ok) {
+      setQuick({ mode: 'graph', key: Date.now(), process, view, stored: view });
+      return;
+    }
+    setQuick({
+      list: converted.list, origin: '', key: Date.now(), process, stored: view,
+      saved: { templateId: process.templateId, sourceHash: String(view.sourceHash || ''), ref: String(view.currentRef || ''), listed: !!process.listed },
+    });
+  };
+  const reviewDraft = ({ draft }, view) => {
+    leaveScribeDraft(draft.templateId);
+    openStored(savedProcesses.find((saved) => saved.templateId === draft.templateId)
+      || { templateId: draft.templateId, name: draft.name, listed: false }, view);
+  };
+  const closeDraft = ({ draft }) => {
+    leaveScribeDraft(draft.templateId);
+    setQuick(null);
+  };
+  // A scribe outlives its panel: after a reload or a tab change, its draft
+  // comes back on its own unless the operator already left it. Only with
+  // nothing else open, so it never replaces what they are doing.
+  const restoring = !quick && !starting ? restorableScribeDraft(scribes, savedProcesses) : null;
+  useEffect(() => {
+    if (restoring) setQuick({ mode: 'scribe', key: Date.now(), draft: restoring });
+  }, [restoring?.templateId]);
+  const quickStart = editing && quick.mode === 'scribe'
+    ? html`<${ScribeDraft} key=${quick.key} group=${group} draft=${quick.draft} api=${api} scribes=${scribes} wizard=${wizard} notify=${notify || defaultNotify}
+        onReview=${(view) => reviewDraft(quick, view)} onClose=${() => closeDraft(quick)} />`
+    : editing && quick.mode === 'graph'
     ? html`<${MiniGraphEditor} key=${quick.key} group=${group} roster=${people} groupInfo=${entry} process=${quick.process}
         view=${quick.view} stored=${quick.stored || quick.view} changed=${!!quick.changed} api=${api} source=${source} wizard=${wizard}
         notify=${notify || defaultNotify} onClose=${() => setQuick(null)} onSteps=${toSteps} />`
     : editing
     ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin} saved=${quick.saved || null} groupInfo=${entry}
+        runAgent=${quick.process?.runAgent || null}
         api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)}
-        onGraph=${quick.saved && quick.process ? toGraph : null} />`
+        onGraph=${quick.saved && quick.process ? toGraph : null}
+        onNewer=${quick.saved && quick.process ? (view) => openStored(quick.process, view) : null} />`
     : picking ? html`<${GetStarted} group=${group} roster=${people} wizard=${wizard} api=${api}
         onEditList=${(list, origin) => setQuick({ list, origin, key: Date.now() })}
         onOpenGraph=${(view, name) => (view
           ? openInGraphEditor(api, view, name).catch((cause) => (notify || defaultNotify)(`Could not open the graph editor: ${cause.message}`, true))
           : handOffProcessDraft({ create: true }))}
-        onDraft=${(text) => draftWithScribe(api, { group, text, roster: people })
+        onDraft=${(text) => draftWithScribe(api, { group, text, roster: people, confirm })
+          .then((draft) => { if (draft) { setQuick({ mode: 'scribe', key: Date.now(), draft }); void source?.refresh?.(); } })
           .catch((cause) => (notify || defaultNotify)(`Could not draft the process: ${cause.message}`, true))}
+        onImport=${pickPwf}
         onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }}
         onDismiss=${() => { markQuickStart('dismissed'); setQuick(null); setDismissed(true); }} />`
-      : fresh && folded && !starting && html`<div class="gp-empty gq-folded" data-quickstart-folded=${group.name}>
-        ${wizard ? 'No rites yet' : 'No processes yet'} · <button type="button" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸</button></div>`;
+      : !fused && fresh && folded && !starting && html`<div class="gp-empty gq-folded ui-empty" data-quickstart-folded=${group.name}>
+        ${wizard ? 'No rites yet' : 'No processes yet'} · <${Button} size="sm" variant="link" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸<//></div>`;
   const startScope = (scope) => { setQuick(null); setStarting({ scope }); };
+  // In Both, ＋ also makes the drawing boards, pages and shell its section lists.
+  const add = html`<${AddResource} group=${group} pages=${entry?.pages || []} api=${api} source=${source} wizard=${wizard}
+    notify=${notify || defaultNotify} processesOnly=${!fused} open=${adding} onOpen=${setAdding} onAddProcess=${startScope} />`;
   const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
-    agentIds=${members.map((member) => member.agent_id).filter(Boolean)} wizard=${wizard} runApi=${runApi}
-    source=${source} notify=${notify} onStart=${startScope} inline=${inline} />`;
+    agentIds=${members.map((member) => member.agent_id).filter(Boolean)} runApi=${runApi}
+    source=${source} notify=${notify} add=${add} inline=${inline} />`;
+  // Beside the body, not in it: Both's section unmounts its body when folded,
+  // which would lose an open review and replay a dropped file on unfolding.
+  const importer = html`<span ref=${importerRef}><${WorkflowImportButton} group=${group.name} id="" className="dock-process-import-hidden"
+    dropped=${droppedPwf} onImported=${() => void source.refresh()} /></span>`;
   const body = html`${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
       wizard=${wizard} notify=${notify || defaultNotify}
-      editing=${editing ? quick.process?.templateId || quick.saved?.templateId || '' : ''}
+      editing=${editing ? quick.process?.templateId || quick.saved?.templateId || quick.draft?.templateId || '' : ''} scribes=${scribes}
       onEdit=${(edit) => {
         setStarting(false);
         setQuick(edit.mode === 'graph' ? { ...edit, stored: edit.view, key: Date.now() } : { ...edit, key: Date.now() });
       }} />`}
     ${starting && html`<${StartRunForm} key=${starting.scope || 'group'} group=${group} api=${api} source=${source} wizard=${wizard}
       members=${starting.scope === 'agent' ? members : null} onBuild=${() => { setStarting(false); setQuick('pick'); }}
-      initialTemplateId=${starting?.templateId || ''} onClose=${() => setStarting(false)} />`}
+      initialTemplateId=${starting?.templateId || ''} scribes=${scribes} onClose=${() => setStarting(false)}
+      onOpenTemplate=${async (process) => {
+        const view = await api.getTemplate(process.templateId);
+        setStarting(false);
+        openStored({ ...process, listed: view.listed }, view);
+      }} />`}
     ${quickStart}
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
-    <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Familiar rites' : 'Member runs'} onOpen=${open} />
+    <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Hero rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
-    ${!runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty">${!label
+    ${!fused && !runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty ui-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
-      : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}`;
+      : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
+    ${fused && html`<${GroupResources} group=${group} drawingBoards=${entry?.drawingBoards || []} pages=${entry?.pages || []} api=${api} source=${source}
+      notify=${notify || defaultNotify} nameOf=${nameOf} head=${!savedProcesses.length} />`}`;
   if (fused) {
-    const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0;
+    const shell = groupShellsOf(dashboardState.snapshot.value, group).length;
+    const listed = savedProcesses.length + (entry?.drawingBoards || []).length + (entry?.pages || []).length + shell;
+    const shown = runs.length > 0 || planned.length > 0 || memberRuns.length > 0 || listed > 0;
+    // One line only when the section holds nothing at all: the count is
+    // what it lists, and the ＋ menu is the one way to add (no "Get started ▸").
+    const empty = !shown && !starting && !quick && html`<div class="gp-empty ui-empty" data-resources-empty=${group.name}>${wizard
+      ? 'Nothing here yet. The ＋ menu adds a rite, drawing board, page or shell.'
+      : 'No resources yet. The ＋ menu adds a process, drawing board, page or shell.'}</div>`;
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.
-    return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} count=${fused.count}
+    return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
         actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
-      <${FusedSection} group=${group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
-        count=${runs.length + planned.length + memberRuns.length}
-        actions=${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
+      <${FusedSection} group=${group.name} section="processes" label="Resources"
+        count=${listed}
+        actions=${quick === 'pick' ? html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>` : null}
         closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
-        <div class="gp-group" data-process-group=${group.name}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}</div>
+        <div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}${empty}</div>
       <//>
-      ${fused.after}`;
+      ${fused.after}
+      ${importer}`;
   }
-  return html`<div class="gp-group" data-process-group=${group.name}>
+  return html`<div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}>
+    ${importer}
     ${controls(false)}
     <div class="gp-group-head">
       <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
       <span class="gp-spacer"></span>
-      ${quick === 'pick' && html`<button type="button" class="gp-start" onClick=${() => setQuick(null)}>close</button>`}
+      ${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}
     </div>
     ${body}
   </div>`;
@@ -534,14 +648,17 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
 // (see groups-fused-sections.js), and `force` holds it open while a start
 // or edit form inside needs it. `onToggle(el)` runs after a fold changes,
 // with the clicked element, for a section whose state matters outside it
-// (Subgroups moves activity bots).
+// (Subgroups moves activity bots). `summary`, when given, takes the count's
+// place inside the toggle: a richer one-line digest of a folded section.
 // A button on a folded line unfolds the section too, so what it spawns or
 // starts shows up rather than landing out of sight. That re-render waits for
 // a task, not a microtask: a microtask runs between listeners, and opening
 // drops `closedActions`, which would detach the button before the
 // document's row-action handler sees the click.
-export function FusedSection({ group, section, label, count = null, auto = true, force = false, attrs = {}, actions = null, closedActions = null, onToggle = null, children }) {
+export function FusedSection({ group, section, label, count = null, summary = null, auto = true, force = false, attrs = {}, actions = null, closedActions = null, onToggle = null, children }) {
   const [, bump] = useState(0);
+  // Subscribes this section to a reveal set from outside it.
+  void fusedSectionsRevision.value;
   const open = force || fusedSectionOpen(group, section, auto);
   const toggle = (event) => {
     if (force) return;
@@ -558,10 +675,10 @@ export function FusedSection({ group, section, label, count = null, auto = true,
   const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
   return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}${force ? ' forced' : ''}`} data-fused-section=${section} ...${attrs}>
     <div class="gf-section-head">
-      <button type="button" class="gf-section-toggle" aria-expanded=${open ? 'true' : 'false'} disabled=${force} title=${title} onClick=${toggle}>
+      <button data-ui-exempt type="button" class="gf-section-toggle" aria-expanded=${open ? 'true' : 'false'} disabled=${force} title=${title} onClick=${toggle}>
         <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
         <span class="gf-label">${label}</span>
-        ${count !== null && html`<span class=${`gf-count${count ? '' : ' zero'}`}>${count}</span>`}
+        ${summary || (count !== null && html`<span class=${`gf-count${count ? '' : ' zero'}`}>${count}</span>`)}
       </button>
       ${(actions || (!open && closedActions)) && html`<span class="group-header-actions gf-section-actions" onClickCapture=${unfold}>${!open && closedActions}${actions}</span>`}
       <span class="gf-section-fill" aria-hidden="true" title=${title} onClick=${toggle}></span>
@@ -572,9 +689,9 @@ export function FusedSection({ group, section, label, count = null, auto = true,
 
 const ProcessesPerspective = createContext(null);
 
-// useProcessesPerspective is what the groups tree reads to tell the lenses
-// apart: null in Agents, the run context and handlers in Processes, and the
-// same with `fused` set in Both.
+// useProcessesPerspective is what the groups tree reads: null where runs do
+// not show (processes unavailable, the Route map), else the run context and
+// handlers, with `fused` set on the Groups tab.
 export function useProcessesPerspective() {
   return useContext(ProcessesPerspective);
 }
@@ -590,26 +707,29 @@ export function GroupProcessBody({ group, fused = null }) {
   const perspective = useProcessesPerspective();
   const own = useProcessScope()(group);
   if (!perspective) return null;
-  if (!own) return html`<${UnsharedRuns} group=${group} wizard=${perspective.wizard} fused=${fused} />`;
+  if (!own) return html`<${UnsharedRuns} group=${group} wizard=${perspective.wizard} fused=${fused} notify=${perspective.notify} />`;
   return html`<${GroupRuns} group=${own} roster=${perspective.rosters.get(own.name)} context=${perspective.context}
     filter=${perspective.filter} wizard=${perspective.wizard} api=${perspective.api} source=${perspective.source}
-    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} fused=${fused} />`;
+    onFocusRun=${perspective.onFocusRun} notify=${perspective.notify} runApi=${perspective.runApi} fused=${fused} confirm=${perspective.confirm} scribes=${perspective.scribes} />`;
 }
 
 // UnsharedRuns stands in for the runs of a group on a node whose run context
 // is not read here (a peer's group in the fused view). In Both the Agents
 // section stays as it is.
-function UnsharedRuns({ group, wizard, fused }) {
+function UnsharedRuns({ group, wizard, fused, notify }) {
   const node = group.fleet_node?.name || 'this node';
   // This node's own groups on a peer's page: their runs show on its own page.
   const text = group.fleet_node?.local
     ? (wizard ? 'The rites of this realm show on its own page.' : "This node's process runs show on its own page.")
     : (wizard ? `The rites of ${node} are not shared across realms.` : `Process runs on ${node} are not shared across nodes.`);
-  const note = html`<div class="gp-empty gp-unshared" data-process-unshared=${group.name}>${text}</div>`;
+  const note = html`<div class="gp-empty gp-unshared ui-empty" data-process-unshared=${group.name}>${text}</div>`;
   if (!fused) return html`<div class="gp-group" data-process-group=${group.name}>${note}</div>`;
-  return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Familiars' : 'Agents'} count=${fused.count}
+  // A peer's group lists its resources from that node (tcl-i9elme): their
+  // locks change only under that node's grants to this one.
+  return html`<${FusedSection} group=${group.name} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${fused.count}
       actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
     ${note}
+    ${!group.fleet_node?.local && html`<${PeerGroupResources} group=${group} notify=${notify || defaultNotify} />`}
     ${fused.after}`;
 }
 
@@ -619,29 +739,55 @@ function ungroupedRuns(perspective, group) {
   return memberRunEntries(perspective.context, group.members || [], perspective.filter);
 }
 
-export function UngroupedProcessBody({ group }) {
+// ungroupedDrawingBoards are the drawing boards in no group, as the snapshot lists them
+// (group_id 0), in the shape GroupResources' drawing board rows read.
+export function ungroupedDrawingBoards(snapshotValue) {
+  return (snapshotValue?.group_resources || [])
+    .filter((r) => r && r.kind === 'drawing_board' && !r.group_id)
+    .map((r) => ({ id: r.id, title: r.title || r.id, editing: Number.parseInt(r.detail, 10) || 0, agentsLocked: !!r.locked }));
+}
+
+// UngroupedProcessBody is Ungrouped's body in Processes and Both. In Both it
+// is laid out as a real group's: an Agents section (`agents`, the member
+// table, and `count`), then Resources: the drawing boards in no group, with the
+// same rows and ⋯ menu (Move to group links one), then its agents' runs.
+// There is no ＋: what is made here belongs in a group.
+export function UngroupedProcessBody({ group, agents = null, count = 0, snapshot = dashboardState.snapshot }) {
   const perspective = useProcessesPerspective();
   if (!perspective) return null;
   const { wizard, filter } = perspective;
   const entries = ungroupedRuns(perspective, group);
   const label = filterLabel(filter, wizard);
-  // In Both, Ungrouped's runs follow its member table only when there are
-  // any: it has no controls, so an empty section would be pure noise.
+  const key = group.key || group.name;
   if (perspective.fused) {
-    if (!entries.length) return null;
-    return html`<${FusedSection} group=${group.key || group.name} section="processes" label=${wizard ? 'Rites' : 'Processes'}
-      attrs=${{ 'data-fused-processes': group.key || group.name }}>
-      <div class="gp-group" data-process-group=${group.key || group.name}>
-        <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
-          onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
-      </div>
-    <//>`;
+    // The snapshot is this node's: another node's Ungrouped (the fused
+    // fleet view) lists none of its drawing boards.
+    const own = !group.fleet_node || group.fleet_node.local;
+    const drawingBoards = own ? ungroupedDrawingBoards(snapshot?.value) : [];
+    const shown = drawingBoards.length > 0 || entries.length > 0;
+    const agentsSection = html`<${FusedSection} group=${key} section="agents" label=${wizard ? 'Heroes' : 'Agents'} count=${count}>${agents}<//>`;
+    // Another node's drawing boards are not read here, so its Ungrouped claims none:
+    // Resources shows only for its agents' runs.
+    if (!own && !entries.length) return agentsSection;
+    return html`${agentsSection}
+      <${FusedSection} group=${key} section="processes" label="Resources" count=${drawingBoards.length} auto=${shown}
+        attrs=${{ 'data-fused-processes': key }}>
+        <div class="gp-group" data-process-group=${key}>
+          <${GroupResources} group=${{ id: 0, name: key }} drawingBoards=${drawingBoards} api=${perspective.api} source=${perspective.source}
+            notify=${perspective.notify || defaultNotify} snapshot=${snapshot} />
+          <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}
+            onOpen=${(runId) => perspective.onFocusRun({ group: key, runId })} />
+          ${!shown && own && html`<div class="gp-empty ui-empty" data-resources-empty=${key}>${wizard
+            ? 'Nothing here. A drawing board made outside a party lands here; ⋯ binds it to one.'
+            : 'No resources outside groups. A drawing board made outside a group lands here; its ⋯ moves it into one.'}</div>`}
+        </div>
+      <//>`;
   }
   return html`<div class="gp-group" data-process-group=${group.key || group.name}>
-    <${MemberRuns} entries=${entries} label=${wizard ? 'Familiar rites' : 'Agent runs'}
+    <${MemberRuns} entries=${entries} label=${wizard ? 'Hero rites' : 'Agent runs'}
       onOpen=${(runId) => perspective.onFocusRun({ group: group.key || group.name, runId })} />
-    ${!entries.length && html`<div class="gp-empty">${runFilterHas(filter, 'running')
-      ? (wizard ? 'No unbound familiar walks a rite.' : 'No ungrouped agent runs a process.')
+    ${!entries.length && html`<div class="gp-empty ui-empty">${runFilterHas(filter, 'running')
+      ? (wizard ? 'No unbound hero walks a rite.' : 'No ungrouped agent runs a process.')
       : `No ${label} ${wizard ? 'rites' : 'processes'} outside groups.`}</div>`}
   </div>`;
 }
@@ -703,13 +849,15 @@ function findFocusGroup(focusedRun, rosters, groups) {
 // GroupsProcessesFocus frames the Processes perspective: the load states, and
 // either the single-run focus or `children` -- the shared groups tree --
 // under the ProcessesPerspective it reads. The run filter itself is the
-// checklist on the toolbar's Processes button (groups-focus.js).
+// checklist in the toolbar's ▾ view menu (groups-focus.js RunKindFilter).
 //
-// `fused` frames Both the same way, except that the tree never waits on the
-// run context: until it is ready the tree shows as in Agents.
+// `fused` is how the Groups tab frames it: each group card shows its
+// sections, and the tree never waits on the run context (until it is ready
+// it shows the member tables). Unfused, the run graphs replace each group's
+// member details; the Groups tab no longer offers that lens.
 export function GroupsProcessesFocus({
   groups, allGroups = null, filter = DEFAULT_RUN_FILTER, wizard = false, source = processContext, api = processRunApi,
-  focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null, notify = undefined, fused = false,
+  focusedRun = null, onFocusRun = () => {}, runApi = undefined, children = null, notify = undefined, fused = false, confirm = undefined,
 }) {
   const rosters = new Map((allGroups || []).map((group) => [group.name, group]));
   const current = normalizeRunFilter(filter);
@@ -745,11 +893,12 @@ export function GroupsProcessesFocus({
         onSelectRun=${(runId) => onFocusRun({ group: focusedRun.group, runId })} />
     </div>`;
   }
-  const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify, fused };
+  const scribes = processScribeSessions({ groups: allGroups || [] });
+  const perspective = { context, filter: current, wizard, api, runApi: runApi || runDetailApi, source, onFocusRun, rosters, notify, fused, confirm, scribes };
   if (fused) {
     return html`<div class="gp-focus gf-focus" data-groups-fused ref=${fusedFrame}>
       ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
-      ${status === 'error' && html`<div class="gp-toolbar"><span class="gp-stale gp-error" role="alert">Could not load process runs: ${source.error.value}</span></div>`}
+      ${status === 'error' && html`<div class="gp-toolbar"><span class="gp-stale gp-error ui-error" role="alert">Could not load process runs: ${source.error.value}</span></div>`}
       ${status === 'ready'
         ? html`<${ProcessesPerspective.Provider} value=${perspective}><div class="gp-tree">${children}</div><//>`
         : html`<div class="gp-tree">${children}</div>`}
@@ -759,8 +908,8 @@ export function GroupsProcessesFocus({
   }
   return html`<div class="gp-focus" data-groups-processes>
     ${source.error.value && status === 'ready' && html`<div class="gp-toolbar"><span class="gp-stale" role="status">Showing the last update: ${source.error.value}</span></div>`}
-    ${status === 'idle' && html`<div class="gp-empty" role="status">Loading process runs…</div>`}
-    ${status === 'error' && html`<div class="gp-empty gp-error" role="alert">Could not load process runs: ${source.error.value}</div>`}
+    ${status === 'idle' && html`<div class="gp-empty ui-empty" role="status">Loading process runs…</div>`}
+    ${status === 'error' && html`<div class="gp-empty gp-error ui-error" role="alert">Could not load process runs: ${source.error.value}</div>`}
     ${status === 'unavailable' && html`<${GroupsProcessesPlaceholder} wizard=${wizard} />`}
     ${status === 'ready' && html`<${ProcessesPerspective.Provider} value=${perspective}><div class="gp-tree">${children}</div><//>`}
     ${status === 'ready' && context?.truncated && html`<div class="gp-card-note">Some runs are not shown: the run context was truncated.</div>`}

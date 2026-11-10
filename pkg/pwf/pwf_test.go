@@ -4,6 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -320,4 +323,277 @@ func TestSummaryListsBoundedLoops(t *testing.T) {
 	plain, err := open(t, writeBundle(t))
 	require.NoError(t, err)
 	assert.Nil(t, plain.Workflow.Loops, "a workflow without loops carries no loops field")
+	assert.Equal(t, []string{}, plain.Manifest.Requires, "a workflow without loops requires nothing")
+	assert.Equal(t, []string{pwf.FeatureLoops}, a.Manifest.Requires, "loops are marked so an older reader refuses the file by name")
+}
+
+// TestLoopsInASubprocessAreMarked covers a loop that is not in the root: an
+// older reader would drop it from the review all the same.
+func TestLoopsInASubprocessAreMarked(t *testing.T) {
+	root := `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: outer
+name: Outer
+start: rework
+nodes:
+  rework:
+    type: subprocess
+    subprocess:
+      templateRef: rework
+    next: {success: done}
+  done: {type: end, result: success}
+`
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, pwf.Bundle{
+		Root: refOf(t, root),
+		Templates: []pwf.Template{
+			{Source: []byte(root), Head: true},
+			{Source: []byte(loopSource), Head: true},
+		},
+	}, pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: "test"}, CreatedAt: time.Unix(1_700_000_000, 0)}))
+	a, err := open(t, buf.Bytes())
+	require.NoError(t, err)
+	assert.Equal(t, []string{pwf.FeatureLoops}, a.Manifest.Requires)
+}
+
+func rewriteManifest(t *testing.T, data []byte, change func(*pwf.Manifest)) []byte {
+	t.Helper()
+	return rezip(t, data, func(name string, body []byte) ([]byte, bool) {
+		if name != pwf.ManifestPath {
+			return body, true
+		}
+		var m pwf.Manifest
+		require.NoError(t, json.Unmarshal(body, &m))
+		change(&m)
+		out, err := json.Marshal(m)
+		require.NoError(t, err)
+		return out, true
+	})
+}
+
+// TestRequiresRefusesOnlyUnknownFeatures pins both sides of the marker: a
+// feature this reader does not know is refused by name alongside one it does,
+// and a file from before the marker, with loops but no marker, still opens.
+func TestRequiresRefusesOnlyUnknownFeatures(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, pwf.Bundle{
+		Root:      refOf(t, loopSource),
+		Templates: []pwf.Template{{Source: []byte(loopSource), Head: true}},
+	}, pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: "test"}, CreatedAt: time.Unix(1_700_000_000, 0)}))
+
+	unknown := rewriteManifest(t, buf.Bytes(), func(m *pwf.Manifest) { m.Requires = []string{pwf.FeatureLoops, "teleport"} })
+	_, err := open(t, unknown)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support: teleport")
+
+	legacy := rewriteManifest(t, buf.Bytes(), func(m *pwf.Manifest) { m.Requires = []string{} })
+	a, err := open(t, legacy)
+	require.NoError(t, err)
+	assert.Len(t, a.Workflow.Loops, 1)
+}
+
+const roleSelectorSource = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: triage
+name: Triage
+start: s
+nodes:
+  s:
+    type: start
+    next:
+      pass: sort
+  sort:
+    type: task
+    performer:
+      kind: agent
+      role: triager
+      prompt: Sort the queue
+    next:
+      pass: fix
+  fix:
+    type: task
+    performer:
+      kind: agent
+      profile: fixer
+      role: fixer
+      prompt: Fix the top item
+    next:
+      pass: done
+  done:
+    type: end
+`
+
+func writeRoleSelectorBundle(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	err := pwf.Write(&buf, pwf.Bundle{
+		Root:      refOf(t, roleSelectorSource),
+		Templates: []pwf.Template{{Source: []byte(roleSelectorSource), Head: true}},
+	}, pwf.WriteOptions{Producer: paf.Producer{Name: "tclaude", Version: "test"}, CreatedAt: time.Unix(1_700_000_000, 0)})
+	require.NoError(t, err)
+	return buf.Bytes()
+}
+
+func TestSummaryListsRoleSelectors(t *testing.T) {
+	a, err := open(t, writeRoleSelectorBundle(t))
+	require.NoError(t, err)
+	assert.Equal(t, []pwf.Use{{Name: "fixer", Steps: []string{"triage:fix"}}, {Name: "triager", Steps: []string{"triage:sort"}}}, a.Workflow.Roles)
+}
+
+// rewriteWorkflow changes workflow.json and re-lists it in the manifest, as a
+// file really written that way would be.
+func rewriteWorkflow(t *testing.T, data []byte, edit func(w map[string]any)) []byte {
+	t.Helper()
+	var workflow []byte
+	data = rezip(t, data, func(name string, body []byte) ([]byte, bool) {
+		if name == pwf.WorkflowPath {
+			var w map[string]any
+			require.NoError(t, json.Unmarshal(body, &w))
+			edit(w)
+			var err error
+			workflow, err = json.Marshal(w)
+			require.NoError(t, err)
+			return workflow, true
+		}
+		return body, true
+	})
+	return rezip(t, data, func(name string, body []byte) ([]byte, bool) {
+		if name != pwf.ManifestPath {
+			return body, true
+		}
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(body, &m))
+		for _, entry := range m["entries"].([]any) {
+			if e := entry.(map[string]any); e["path"] == pwf.WorkflowPath {
+				sum := sha256.Sum256(workflow)
+				e["bytes"], e["sha256"] = len(workflow), hex.EncodeToString(sum[:])
+			}
+		}
+		out, err := json.Marshal(m)
+		require.NoError(t, err)
+		return out, true
+	})
+}
+
+func TestFilesWrittenBeforeRoleSelectorsWereListedStillOpen(t *testing.T) {
+	old := rewriteWorkflow(t, writeRoleSelectorBundle(t), func(w map[string]any) {
+		w["roles"] = []any{map[string]any{"name": "fixer", "steps": []any{"triage:fix"}}}
+	})
+	a, err := open(t, old)
+	require.NoError(t, err)
+	assert.Equal(t, []pwf.Use{{Name: "fixer", Steps: []string{"triage:fix"}}, {Name: "triager", Steps: []string{"triage:sort"}}}, a.Workflow.Roles,
+		"the review shows every role whichever way the file was written")
+
+	forged := rewriteWorkflow(t, writeRoleSelectorBundle(t), func(w map[string]any) {
+		w["roles"] = []any{}
+	})
+	_, err = open(t, forged)
+	require.ErrorContains(t, err, "workflow.json does not match its templates")
+}
+
+const pathsSource = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: paths
+description: Reads /opt/acme/conf and the /v1/process/templates route, and/or /usr/share/doc, ~5/10 of the time.
+# copied from /home/carol/old.yaml
+start: s
+params:
+  dir:
+    type: string
+    default: /srv/app
+nodes:
+  s:
+    type: start
+    next:
+      pass: run
+  run:
+    type: task
+    performer:
+      kind: program
+      profile: git
+      run: /home/alice/bin/deploy
+      args: ["--config=/etc/acme/x", "/usr/bin/env", "https://example.com/home/nobody/x", "{{ params.dir }}/rel", "s/a/b/", "/tmp/x", "~/x", "/var/tmp/y", "-L/home/alice/lib", "/home/Åsa/bin"]
+    next:
+      pass: ask
+  ask:
+    type: task
+    performer:
+      kind: human
+      ask: 'Is file:///Users/bob/report.txt or /mnt/c/Users/dan/x or C:\Users\erin\x right? See ~/notes.'
+    next:
+      pass: done
+  done:
+    type: end
+`
+
+// The scan names machine-specific paths and where they are, leaves URLs,
+// relative paths and system paths alone, and a reader gets the same list as
+// the writer without it being stored in the file.
+func TestScanPaths(t *testing.T) {
+	_, ref, err := pwf.ParseTemplate([]byte(pathsSource))
+	require.NoError(t, err)
+	b := pwf.Bundle{Root: ref, Templates: []pwf.Template{{Head: true, Source: []byte(pathsSource)}}}
+	paths, err := pwf.ScanPaths(b)
+	require.NoError(t, err)
+
+	type got struct{ where, path, kind string }
+	var seen []got
+	for _, p := range paths {
+		seen = append(seen, got{p.Where, p.Path, p.Kind})
+	}
+	assert.ElementsMatch(t, []got{
+		{"paths: description", "/opt/acme/conf", pwf.PathMachine},
+		{"paths: params.dir.default", "/srv/app", pwf.PathMachine},
+		{"paths: nodes.run.performer.run", "/home/alice/bin/deploy", pwf.PathHome},
+		{"paths: nodes.run.performer.args[0]", "/etc/acme/x", pwf.PathMachine},
+		{"paths: nodes.run.performer.args[6]", "~/x", pwf.PathMachine},
+		{"paths: nodes.run.performer.args[8]", "/home/alice/lib", pwf.PathHome},
+		{"paths: nodes.run.performer.args[9]", "/home/Åsa/bin", pwf.PathHome},
+		{"paths: nodes.ask.performer.ask", "/Users/bob/report.txt", pwf.PathHome},
+		{"paths: nodes.ask.performer.ask", "/mnt/c/Users/dan/x", pwf.PathHome},
+		{"paths: nodes.ask.performer.ask", `C:\Users\erin\x`, pwf.PathHome},
+		{"paths: source", "/home/carol/old.yaml", pwf.PathHome},
+	}, seen)
+
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, b, pwf.WriteOptions{}))
+	a, err := pwf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, paths, a.Paths)
+}
+
+func TestScanPathsCleanWorkflow(t *testing.T) {
+	_, ref, err := pwf.ParseTemplate([]byte(rootSource))
+	require.NoError(t, err)
+	paths, err := pwf.ScanPaths(pwf.Bundle{Root: ref, Templates: []pwf.Template{{Head: true, Source: []byte(rootSource)}}})
+	require.NoError(t, err)
+	assert.Empty(t, paths)
+}
+
+// An author and licence travel with the file, stay optional, and are text
+// like the title.
+func TestAuthorAndLicence(t *testing.T) {
+	_, ref, err := pwf.ParseTemplate([]byte(childSource))
+	require.NoError(t, err)
+	b := pwf.Bundle{Root: ref, Author: " Acme ", Licence: "MIT", Templates: []pwf.Template{{Head: true, Source: []byte(childSource)}}}
+	var buf bytes.Buffer
+	require.NoError(t, pwf.Write(&buf, b, pwf.WriteOptions{}))
+	a, err := pwf.Open(bytes.NewReader(buf.Bytes()), int64(buf.Len()), paf.Limits{})
+	require.NoError(t, err)
+	assert.Equal(t, "Acme", a.Workflow.Author)
+	assert.Equal(t, "MIT", a.Workflow.Licence)
+
+	b.Author = "Acme\x1b[2K"
+	assert.ErrorContains(t, pwf.Write(io.Discard, b, pwf.WriteOptions{}), "author has control characters")
+	b.Author, b.Licence = "", strings.Repeat("x", 201)
+	assert.ErrorContains(t, pwf.Write(io.Discard, b, pwf.WriteOptions{}), "licence exceeds")
+}
+
+// An author line is text the importer reads, so a path in it counts too.
+func TestScanPathsCoversAuthor(t *testing.T) {
+	_, ref, err := pwf.ParseTemplate([]byte(rootSource))
+	require.NoError(t, err)
+	paths, err := pwf.ScanPaths(pwf.Bundle{Root: ref, Author: "/home/alice/team", Templates: []pwf.Template{{Head: true, Source: []byte(rootSource)}}})
+	require.NoError(t, err)
+	assert.Equal(t, []pwf.PathFinding{{Where: "author", Path: "/home/alice/team", Kind: pwf.PathHome}}, paths)
 }

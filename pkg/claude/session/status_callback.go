@@ -34,7 +34,7 @@ const (
 
 func StatusCallbackCmd() *cobra.Command {
 	cmd := boa.CmdT[StatusCallbackParams]{
-		Use:         "status-callback <status>",
+		Use:         "status-callback",
 		Short:       "Update session status (called by Claude hooks)",
 		Long:        "Internal command called by Claude Code hooks to update session status. Not intended for direct use.",
 		ParamEnrich: common.DefaultParamEnricher(),

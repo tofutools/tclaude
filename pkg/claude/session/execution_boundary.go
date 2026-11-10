@@ -151,10 +151,11 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 	preLaunch = spec.Effective.PreLaunch
 	qualifyHarnessPATHResolution(&out.Harness, preLaunch)
 	out.OuterLayerRenderInput = &spec
-	_, _, _, readOnlyBinds, _, plan, err := tclaudeLayerSpecRenderInput(spec)
+	rendered, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return nil, fmt.Errorf("record outer-layer render input: %w", err)
 	}
+	readOnlyBinds, plan := rendered.ReadOnlyBinds, rendered.Plan
 	constructed := tclaudeLayerPlanUsesConstructedRoot(plan)
 	if constructed && runtime.GOOS == "linux" {
 		out.RootMode = "constructed"

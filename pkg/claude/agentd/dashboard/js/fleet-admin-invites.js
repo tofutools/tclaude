@@ -1,13 +1,20 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button, Select } from './ui-components.js';
+import { ProfileCombobox } from './profile-picker.js';
+import { Dialog } from './ui-dialog.js';
 import { fmtAge } from './fleet-model.js';
-import { TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID, tokenState } from './fleet-admin-model.js';
+import { PEER_SLUGS, TOKEN_TTLS, UNRESTRICTED_CONSEQUENCE, joinCommand, shortID, tokenState } from './fleet-admin-model.js';
+import { GroupCombobox } from './group-picker.js';
+import { errText } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
 
-function errText(error) { return error?.message || String(error); }
+// nodeProfileTrust is a node profile's row hint: the trust it grants, when
+// that is unrestricted.
+const nodeProfileTrust = (p) => (p.definition?.trust_level === 'unrestricted' ? 'unrestricted' : '');
 
 function until(iso, now) {
   const t = Date.parse(iso || '');
@@ -19,10 +26,9 @@ function until(iso, now) {
 // dialog's props: closing drops it, and nothing re-reads it from the daemon.
 function TokenDialog({ created, self, copy, toast, onClose }) {
   const onCopy = (text, what) => copy(text).then(() => toast(`${what} copied`, false)).catch(() => toast('Copy failed — select the text instead', true));
-  return html`<${Overlay} id="fleet-token-modal" labelledby="fleet-token-title" onClose=${onClose}>
-    <h3 id="fleet-token-title">Invite token for profile ${created.claims?.profile_name || ''}</h3>
+  return html`<${Dialog} id="fleet-token-modal" onClose=${onClose} title=${html`Invite token for profile ${created.claims?.profile_name || ''}`}>
     <div class="fa-consequence" role="note">Shown once. It is a bearer secret: deliver it privately (not in chat or a ticket), and the joining operator should pass it on stdin.</div>
-    <textarea id="fleet-token-bearer" class="fa-bearer" readonly rows="3" onFocus=${(e) => e.currentTarget.select?.()}>${created.token}</textarea>
+    <textarea data-capture-mask id="fleet-token-bearer" class="fa-bearer" readonly rows="3" onFocus=${(e) => e.currentTarget.select?.()}>${created.token}</textarea>
     <div class="fa-dl">
       <span class="fa-k">Master</span><code class="fa-wrap">${self.id}</code>
       <span class="fa-k">Fingerprint</span><code class="fa-wrap fa-fp-full">${created.master_fingerprint || self.fingerprint}</code>
@@ -31,17 +37,19 @@ function TokenDialog({ created, self, copy, toast, onClose }) {
       <span class="fa-k">On the node</span><code class="fa-wrap">${joinCommand(self.id)}</code>
     </div>
     <div class="modal-buttons">
-      <button type="button" onClick=${() => onCopy(created.token, 'Token')}>Copy token</button>
-      <button type="button" onClick=${() => onCopy(joinCommand(self.id), 'Command')}>Copy command</button>
+      <${Button} onClick=${() => onCopy(created.token, 'Token')}>Copy token</${Button}>
+      <${Button} onClick=${() => onCopy(joinCommand(self.id), 'Command')}>Copy command</${Button}>
       <span class="spacer"></span>
-      <button id="fleet-token-close" type="button" class="primary" onClick=${onClose}>Done</button>
+      <${Button} variant="primary" id="fleet-token-close" onClick=${onClose}>Done</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
-// JoinDialog enrolls this node to a master with a token it received. It
-// previews first: both fingerprints, the profile, expiry and the trust level
-// this node would grant the master, and needs the fingerprint check ticked.
+// JoinDialog enrolls this node to a master with a token it received: it
+// accepts what the master offers and gives the master nothing here beyond
+// restricted trust with no grants. It previews first: both fingerprints, the
+// profile, expiry and the trust the master requests (shown as a request,
+// never applied), and needs the fingerprint check ticked.
 export function JoinDialog({ masters, actions, onClose, onDone }) {
   const [master, setMaster] = useState(masters[0]?.id || '');
   const [token, setToken] = useState('');
@@ -67,12 +75,12 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
     } finally { setBusy(false); }
   };
   const c = preview?.claims || {};
-  return html`<${Overlay} id="fleet-join-modal" labelledby="fleet-join-title" onClose=${onClose} blocked=${busy} dirty=${!!token}>
-    <h3 id="fleet-join-title">Join a master with an invite token</h3>
+  const requested = preview?.requested_trust || c.trust_level || 'restricted';
+  return html`<${Dialog} id="fleet-join-modal" onClose=${onClose} blocked=${busy} dirty=${!!token} title="Join a master with an invite token">
     <label class="cron-create-row"><span class="cron-create-label">Master</span>
-      <select id="fleet-join-master" value=${master} onChange=${(e) => { setMaster(e.currentTarget.value); reset(); }}>
+      <${Select} size="sm" id="fleet-join-master" value=${master} onChange=${(e) => { setMaster(e.currentTarget.value); reset(); }}>
         ${masters.map((m) => html`<option key=${m.id} value=${m.id}>${m.label} · ${shortID(m.id)}</option>`)}
-      </select></label>
+      <//></label>
     <label class="cron-create-row"><span class="cron-create-label">Token</span>
       <input id="fleet-join-token" class="fa-token-input" type="password" autocomplete="off" spellcheck="false" placeholder="tcle1…" value=${token}
         onInput=${(e) => { setToken(e.currentTarget.value); reset(); }}
@@ -83,26 +91,151 @@ export function JoinDialog({ masters, actions, onClose, onDone }) {
       <span class="fa-k">This node</span><code class="fa-wrap">${preview.node_fingerprint}</code>
       <span class="fa-k">Profile</span><span>${c.profile_name} <span class="muted">(${c.profile_id} rev ${c.profile_revision})</span> — your authority on the master</span>
       <span class="fa-k">Expires</span><span>${c.expires_at}</span>
-      <span class="fa-k">You grant it</span><span class=${`fa-level ${c.trust_level}`}>${c.trust_level} trust on this node</span>
+      <span class="fa-k">It gets here</span><span><b>restricted trust, no grants</b></span>
+      <span class="fa-k">It asks for</span><span class=${`fa-level ${requested}`}>${requested} trust (a request; Enroll gives it nothing)</span>
     </div>
-    ${c.trust_level === 'unrestricted' && html`<div class="fa-consequence" role="note"><b>The master gets unrestricted trust here.</b> ${UNRESTRICTED_CONSEQUENCE}</div>`}
+    ${requested === 'unrestricted' && html`<div class="fa-request" role="note">The master asks for unrestricted trust on this node. Enroll gives it nothing beyond restricted. To give it permissions here, use <b>Become a worker node</b>.</div>`}
     ${preview.consent && html`<div class="muted">${preview.consent}</div>`}
     <label class="fa-ack"><input id="fleet-join-ack" type="checkbox" checked=${checked} onChange=${(e) => setChecked(e.currentTarget.checked)} />
       <span>I compared the master fingerprint with its operator over another channel</span></label>`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
       ${preview
-        ? html`<button id="fleet-join-submit" type="button" class=${c.trust_level === 'unrestricted' ? 'danger' : 'primary'} disabled=${busy || !checked} onClick=${enroll}>${busy ? 'Enrolling…' : 'Enroll'}</button>`
-        : html`<button id="fleet-join-preview" type="button" class="primary" disabled=${busy || !master || !token.trim()} onClick=${doPreview}>${busy ? 'Checking…' : 'Preview'}</button>`}
+        ? html`<${Button} id="fleet-join-submit" variant="primary" disabled=${busy || !checked} onClick=${enroll}>${busy ? 'Enrolling…' : 'Enroll'}</${Button}>`
+        : html`<${Button} variant="primary" id="fleet-join-preview" disabled=${busy || !master || !token.trim()} onClick=${doPreview}>${busy ? 'Checking…' : 'Preview'}</${Button}>`}
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
+}
+
+// BECOME_NODE_SLUGS are the permissions become-node gives: every peer grant
+// the picker lists except a gateway's, which takes a policy of its own and is
+// given afterwards with a grant (federation_enrollment.go fedBecomeNodeGrant).
+export const BECOME_NODE_SLUGS = Object.freeze(PEER_SLUGS.filter((r) => !r.gateway));
+
+// EVERY_GROUP is the group choice that gives a group grant unscoped: every
+// group, including future ones. It is chosen explicitly, never defaulted.
+export const EVERY_GROUP = '*';
+
+// becomeNodeGives turns the picked rows (slug -> group name, EVERY_GROUP, or
+// '' while no group is chosen; '' for a node grant) into the request's
+// give_permissions. A group grant without its choice is left out: the dialog
+// does not submit until each has one.
+export function becomeNodeGives(picked) {
+  return Object.entries(picked)
+    .filter(([slug, group]) => group || BECOME_NODE_SLUGS.find((r) => r.slug === slug)?.kind === 'node')
+    .map(([slug, group]) => ({ slug, scope: group && group !== EVERY_GROUP ? `group=${group}` : '' }))
+    .sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+// SPAWN_CAPPED are given with a live cap of 2 (federation grant changes it).
+const SPAWN_CAPPED = new Set(['groups.members.spawn', 'jobs.run']);
+
+function normFP(s) { return String(s || '').replace(/\s+/g, '').toLowerCase(); }
+
+// BecomeNodeDialog enrolls this node as a worker node of a master and GIVES
+// the master exactly the permissions ticked here, or unrestricted trust, on
+// this machine. It is never preselected: nothing is ticked, Unrestricted is
+// off, and it submits only once the master's fingerprint is pasted to match.
+export function BecomeNodeDialog({ masters, groups, actions, onClose, onDone }) {
+  const [master, setMaster] = useState(masters[0]?.id || '');
+  const [token, setToken] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [q, setQ] = useState('');
+  const [picked, setPicked] = useState({});
+  const [unrestricted, setUnrestricted] = useState(false);
+  const [fp, setFP] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const reset = () => { setPreview(null); setError(''); };
+  const doPreview = async () => {
+    if (!master || !token.trim() || busy) return;
+    setBusy(true); reset();
+    try { setPreview(await actions.enrollPreview({ master, token: token.trim() })); } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+  };
+  const gives = becomeNodeGives(picked);
+  const missingGroup = Object.entries(picked).some(([slug, group]) => !group && BECOME_NODE_SLUGS.find((r) => r.slug === slug)?.kind !== 'node');
+  const fpOK = !!preview && normFP(fp) !== '' && normFP(fp) === normFP(preview.master_fingerprint);
+  const ready = !!preview && fpOK && !busy && (unrestricted || (gives.length > 0 && !missingGroup));
+  const submit = async () => {
+    if (!ready) return;
+    setBusy(true); setError('');
+    try {
+      await actions.becomeNode({ master, token: token.trim(), previewToken: preview.preview_token, confirmFingerprint: preview.master_fingerprint, ...(unrestricted ? { unrestricted: true } : { givePermissions: gives }) });
+      onDone(`This node is now a worker node of ${master}`);
+    } catch (e) {
+      setError(errText(e));
+      if (e?.code === 'stale_preview') setPreview(null);
+    } finally { setBusy(false); }
+  };
+  const toggle = (row) => setPicked((cur) => {
+    const next = { ...cur };
+    if (row.slug in next) delete next[row.slug]; else next[row.slug] = '';
+    return next;
+  });
+  const needle = q.trim().toLowerCase();
+  // Ticked rows first, so what is given stays in view as the list scrolls.
+  const rows = BECOME_NODE_SLUGS.filter((r) => !needle || r.slug.includes(needle) || (r.what || '').toLowerCase().includes(needle) || r.slug in picked)
+    .sort((a, b) => Number(b.slug in picked) - Number(a.slug in picked));
+  const c = preview?.claims || {};
+  const requested = preview?.requested_trust || c.trust_level || 'restricted';
+  const masterLabel = masters.find((m) => m.id === master)?.label || shortID(master);
+  const whereText = (slug, group) => {
+    const kind = BECOME_NODE_SLUGS.find((r) => r.slug === slug)?.kind;
+    if (kind === 'node') return 'this node';
+    return group && group !== EVERY_GROUP ? `group ${group}` : 'every group, including future ones';
+  };
+  return html`<${Dialog} id="fleet-become-modal" onClose=${onClose} blocked=${busy} dirty=${!!token || gives.length > 0 || unrestricted} title="Become a worker node of a master">
+    <label class="cron-create-row"><span class="cron-create-label">Master</span>
+      <${Select} size="sm" id="fleet-become-master" value=${master} onChange=${(e) => { setMaster(e.currentTarget.value); reset(); }}>
+        ${masters.map((m) => html`<option key=${m.id} value=${m.id}>${m.label} · ${shortID(m.id)}</option>`)}
+      <//></label>
+    <label class="cron-create-row"><span class="cron-create-label">Token</span>
+      <input id="fleet-become-token" class="fa-token-input" type="password" autocomplete="off" spellcheck="false" placeholder="tcle1…" value=${token}
+        onInput=${(e) => { setToken(e.currentTarget.value); reset(); }} /></label>
+    ${preview && html`<div class="fa-dl">
+      <span class="fa-k">Master fingerprint</span><code class="fa-wrap fa-fp-full">${preview.master_fingerprint}</code>
+      <span class="fa-k">You get</span><span>profile ${c.profile_name} <span class="muted">(${c.profile_id} rev ${c.profile_revision})</span> — your authority on the master</span>
+      <span class="fa-k">It asks for</span><span>${requested} trust <span class="muted">(a request: only what you tick below is given)</span></span>
+    </div>
+    <div class="fa-k">Give the master these permissions on this machine</div>
+    <input id="fleet-become-filter" class="fa-become-filter" type="search" placeholder="Filter permissions…" value=${q} disabled=${unrestricted} onInput=${(e) => setQ(e.currentTarget.value)} />
+    <div class=${`fa-become-perms${unrestricted ? ' off' : ''}`} id="fleet-become-perms">
+      ${rows.map((r) => html`<div key=${r.slug} class="fa-become-perm" data-become-slug=${r.slug}>
+        <input type="checkbox" checked=${r.slug in picked} disabled=${unrestricted} onChange=${() => toggle(r)} />
+        <code>${r.slug}</code>
+        <span>${r.kind !== 'node' && r.slug in picked && html`<${GroupCombobox} attrs=${{ 'data-become-group': r.slug }} value=${picked[r.slug]} noneLabel="choose a group…" floating=${false}
+          groups=${[...(r.kind !== 'scoped' ? [{ value: EVERY_GROUP, label: 'every group, including future ones' }] : []), ...groups]}
+          onChange=${(next) => setPicked({ ...picked, [r.slug]: next })} />`}${r.sensitive && html`<span class="fa-sensitive">Sensitive</span>`}</span>
+        <span class="muted fa-become-what">${r.what}</span>
+      </div>`)}
+    </div>
+    <label class="fa-ack fa-become-unrestricted"><input id="fleet-become-unrestricted" type="checkbox" checked=${unrestricted} onChange=${(e) => setUnrestricted(e.currentTarget.checked)} />
+      <span><b>Unrestricted</b> — give the master everything here (disables the list)</span></label>
+    ${(unrestricted || gives.length > 0) && html`<div class="fa-become-warn" role="alert" id="fleet-become-warning"><b>⚠ You are handing this machine to ${masterLabel}</b>
+      ${unrestricted
+        ? html`<div>${UNRESTRICTED_CONSEQUENCE}</div>`
+        : html`<div>It will be able to, on this machine:</div><ul>${gives.map((g) => { const group = g.scope.replace(/^group=/, ''); const row = BECOME_NODE_SLUGS.find((r) => r.slug === g.slug); return html`<li key=${g.slug}><code>${g.slug}</code> (${whereText(g.slug, group)})${row?.sensitive ? html` <b>Sensitive</b>` : ''}: ${row?.what || ''}${SPAWN_CAPPED.has(g.slug) ? ' (at most 2 live workers; change it with a grant)' : ''}${row?.warning ? html` <b>${row.warning}</b>` : ''}</li>`; })}</ul>`}
+      <div>Take it back any time with Revoke on the Grants page, or untrust.</div></div>`}
+    <label class="cron-create-row"><span class="cron-create-label">Fingerprint</span>
+      <input id="fleet-become-fp" type="text" autocomplete="off" spellcheck="false" placeholder="paste the master's fingerprint, compared with its operator" value=${fp} onInput=${(e) => setFP(e.currentTarget.value)} /></label>
+    ${fp && !fpOK && html`<div class="muted">Does not match the master's fingerprint.</div>`}
+    ${missingGroup && !unrestricted && html`<div class="muted">Choose where each group permission applies: one group, or every group.</div>`}`}
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
+    <div class="modal-buttons">
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
+      <span class="spacer"></span>
+      ${preview
+        ? html`<${Button} id="fleet-become-submit" variant="danger" disabled=${!ready} onClick=${submit}>${busy ? 'Enrolling…' : 'Become a worker node'}</${Button}>`
+        : html`<${Button} variant="primary" id="fleet-become-preview" disabled=${busy || !master || !token.trim()} onClick=${doPreview}>${busy ? 'Checking…' : 'Preview'}</${Button}>`}
+    </div>
+  </${Dialog}>`;
 }
 
 // InvitesPage issues and revokes invite tokens (this node as master), joins
 // a master with a token, and lists completed enrollments.
-export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
+export function InvitesPage({ view, groups = [], actions, confirm, toast, copy, now }) {
   const [profiles, setProfiles] = useState(null);
   const [tokens, setTokens] = useState([]);
   const [enrollments, setEnrollments] = useState([]);
@@ -114,6 +247,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
   const [trustLevel, setTrustLevel] = useState('restricted');
   const [created, setCreated] = useState(null);
   const [joining, setJoining] = useState(false);
+  const [becoming, setBecoming] = useState(false);
 
   useEffect(() => {
     let off = false;
@@ -144,7 +278,7 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
       body: `Whoever holds this token and is on the hub can enroll ${n === 1 ? 'one node' : `up to ${n} nodes`} within ${ttlLabel}. `
         + `Each becomes a trusted peer here with profile ${chosen.name}'s pools, grants and worker defaults, at ${enrolledLevel} trust`
         + `${enrolledLevel === 'unrestricted' ? ` — ${UNRESTRICTED_CONSEQUENCE}` : '.'} `
-        + `The joining node grants this node ${trustLevel} trust${trustLevel === 'unrestricted' ? ' (every peer permission on all its groups, including future ones)' : ''}. `
+        + `The token asks the joining node for ${trustLevel} trust; that is only a request, which its operator gives or not. `
         + 'Revoking the token later stops new enrollments only.',
       okLabel: 'Create token',
       busyLabel: 'Creating…',
@@ -163,45 +297,44 @@ export function InvitesPage({ view, actions, confirm, toast, copy, now }) {
 
   const masters = [...view.waiting, ...view.trusted].filter((r) => r.online);
   return html`<div class="fa-invites">
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     <h4>Invite a node</h4>
     <div class="muted">An invite lets a node already on the hub enroll here with a profile, and trust this node back. It is not a hub invite.</div>
     ${profiles && !list.length
       ? html`<div class="empty">Invites need a node profile: create one with <code>tclaude federation profile</code>.</div>`
       : html`<div class="fa-grant-form">
-        <label><span class="fa-k">Profile</span><select id="fleet-invite-profile" value=${chosen?.name || ''} onChange=${(e) => setProfile(e.currentTarget.value)}>
-          ${list.map((p) => html`<option key=${p.id} value=${p.name}>${p.name}${p.definition?.trust_level === 'unrestricted' ? ' (unrestricted)' : ''}</option>`)}
-        </select></label>
+        <label><span class="fa-k">Profile</span><${ProfileCombobox} id="fleet-invite-profile" value=${chosen?.name || ''} profiles=${list} ariaLabel="Node profile"
+          placeholder="Type to find a node profile…" hint=${nodeProfileTrust} onChange=${setProfile} /></label>
         <label><span class="fa-k">Uses</span><input id="fleet-invite-uses" type="number" min="1" max="10000" value=${uses} style="width:5em" onInput=${(e) => setUses(e.currentTarget.value)} /></label>
-        <label><span class="fa-k">Valid</span><select id="fleet-invite-ttl" value=${String(ttl)} onChange=${(e) => setTTL(Number(e.currentTarget.value))}>
+        <label><span class="fa-k">Valid</span><${Select} size="sm" id="fleet-invite-ttl" value=${String(ttl)} onChange=${(e) => setTTL(Number(e.currentTarget.value))}>
           ${TOKEN_TTLS.map((x) => html`<option key=${x.seconds} value=${String(x.seconds)}>${x.label}</option>`)}
-        </select></label>
-        <label title="The trust the joining node grants this node"><span class="fa-k">Node trusts us</span><select id="fleet-invite-level" value=${trustLevel} onChange=${(e) => setTrustLevel(e.currentTarget.value)}>
+        <//></label>
+        <label title="The trust this node requests of the joining node: a request only, which its operator gives or not (become-node)"><span class="fa-k">Ask the node for</span><${Select} size="sm" id="fleet-invite-level" value=${trustLevel} onChange=${(e) => setTrustLevel(e.currentTarget.value)}>
           <option value="restricted">restricted</option><option value="unrestricted">unrestricted</option>
-        </select></label>
-        <button id="fleet-invite-create" type="button" class="primary" disabled=${!chosen} onClick=${create}>Create invite…</button>
+        <//></label>
+        <${Button} size="sm" variant="primary" id="fleet-invite-create" disabled=${!chosen} onClick=${create}>Create invite…<//>
       </div>`}
-    ${tokens.length > 0 && html`<table class="fa-table" id="fleet-tokens">
-      <thead><tr><th>Token</th><th>Uses</th><th>Expires</th><th>State</th><th></th></tr></thead>
-      <tbody>${tokens.map((t) => { const st = tokenState(t, now); return html`<tr key=${t.id} data-token=${t.id}>
+    ${tokens.length > 0 && html`<${FaTable} id="fleet-tokens" head=${['Token', 'Uses', 'Expires', 'State', '']}>${tokens.map((t) => { const st = tokenState(t, now); return html`<tr key=${t.id} data-token=${t.id}>
         <td><code>${t.id}</code></td><td>${t.used} / ${t.max_uses}</td><td>${until(t.expires_at, now)}</td>
         <td class=${st === 'active' ? '' : 'muted'}>${st}</td>
-        <td class="fa-acts">${st === 'active' ? html`<button type="button" class="fa-danger" data-fa="revoke-token" onClick=${() => revoke(t)}>Revoke…</button>` : ''}</td>
-      </tr>`; })}</tbody>
-    </table>`}
+        <td class="fa-acts">${st === 'active' ? html`<${Button} size="sm" variant="ghost danger" data-fa="revoke-token" onClick=${() => revoke(t)}>Revoke…<//>` : ''}</td>
+      </tr>`; })}<//>`}
     <h4>Join a master</h4>
     <div class="fa-grant-form">
-      <button id="fleet-join-open" type="button" disabled=${!masters.length} onClick=${() => setJoining(true)}>Join with a token…</button>
-      <span class="muted">${masters.length ? 'Enroll this node with an invite token another node issued.' : 'The issuing node must be online on the hub.'}</span>
+      <${Button} size="sm" id="fleet-join-open" disabled=${!masters.length} onClick=${() => setJoining(true)}>Join with a token…<//>
+      <span class="muted">${masters.length ? 'Enroll this node with an invite token another node issued. Gives the master nothing here.' : 'The issuing node must be online on the hub.'}</span>
     </div>
-    ${enrollments.length > 0 && html`<h4>Enrollments</h4><table class="fa-table" id="fleet-enrollments">
-      <thead><tr><th>Direction</th><th>Peer</th><th>Token</th><th>State</th></tr></thead>
-      <tbody>${enrollments.map((e) => html`<tr key=${`${e.direction}|${e.token_id}|${e.peer}`}>
+    <div class="fa-grant-form">
+      <${Button} size="sm" variant="danger" id="fleet-become-open" disabled=${!masters.length} onClick=${() => setBecoming(true)}>Become a worker node…<//>
+      <span class="muted">Enroll and give the master the permissions you pick on this machine: for a worker node of your own fleet.</span>
+    </div>
+    ${enrollments.length > 0 && html`<h4>Enrollments</h4><${FaTable} id="fleet-enrollments" head=${['Direction', 'Peer', 'Token', 'State']}>${enrollments.map((e) => html`<tr key=${`${e.direction}|${e.token_id}|${e.peer}`}>
         <td>${e.direction}</td><td>${peerName(e.peer)}</td><td><code>${e.token_id}</code></td><td class=${e.retired ? 'muted' : ''}>${e.retired ? 'retired' : 'bound'}</td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     ${created && html`<${TokenDialog} created=${created} self=${view.self} copy=${copy} toast=${toast} onClose=${() => setCreated(null)} />`}
     ${joining && html`<${JoinDialog} masters=${masters} actions=${actions} onClose=${() => setJoining(false)}
       onDone=${(msg) => { setJoining(false); toast(msg, false); setTick((x) => x + 1); }} />`}
+    ${becoming && html`<${BecomeNodeDialog} masters=${masters} groups=${groups} actions=${actions} onClose=${() => setBecoming(false)}
+      onDone=${(msg) => { setBecoming(false); toast(msg, false); setTick((x) => x + 1); }} />`}
   </div>`;
 }

@@ -8,6 +8,7 @@
 import { buildProcessNodeTypeCommands } from './process-command-registry.js';
 import { rankCommands } from './palette-score.js';
 import { isWizardActive } from './slop.js';
+import { watchPopover } from './popover-watch.js';
 
 let nextChooserID = 1;
 
@@ -50,11 +51,11 @@ export function openProcessNodeTypeChooser({
     placeholder: wizard ? 'Search runes…' : 'Search node types…',
   });
   const list = h(documentRef, 'div', {
-    class: 'process-node-chooser-list process-scroll-surface', id: listID, role: 'listbox',
+    class: 'process-node-chooser-list', id: listID, role: 'listbox',
     'aria-label': wizard ? 'Available runes' : 'Available node types',
   });
   const empty = h(documentRef, 'p', {
-    class: 'process-node-chooser-empty', text: 'No matching node types.', hidden: '',
+    class: 'process-node-chooser-empty ui-empty', text: 'No matching node types.', hidden: '',
   });
   const cancel = h(documentRef, 'button', {
     class: 'process-node-chooser-cancel', type: 'button', text: 'Cancel',
@@ -70,6 +71,7 @@ export function openProcessNodeTypeChooser({
   let filtered = commands.slice();
   let selected = 0;
   let closed = false;
+  let unwatch = null;
 
   const place = () => {
     const x = Number.isFinite(anchor?.x) ? anchor.x : 0;
@@ -89,7 +91,7 @@ export function openProcessNodeTypeChooser({
   const close = (reason, { focus = true } = {}) => {
     if (closed) return false;
     closed = true;
-    documentRef.removeEventListener('pointerdown', onOutsidePointerDown, true);
+    unwatch?.();
     chooser.remove();
     onClose?.(reason);
     if (focus) restoreFocus?.();
@@ -123,7 +125,7 @@ export function openProcessNodeTypeChooser({
       h(documentRef, 'span', { class: 'process-node-chooser-copy' },
         h(documentRef, 'span', { class: 'process-node-chooser-label', text: command.label }),
         h(documentRef, 'span', {
-          class: 'process-node-chooser-hint',
+          class: 'process-node-chooser-hint ui-hint',
           text: command.enabled === false ? command.disabledReason : command.hint,
         })));
       option.addEventListener('pointermove', () => {
@@ -145,10 +147,6 @@ export function openProcessNodeTypeChooser({
     render();
   };
 
-  function onOutsidePointerDown(event) {
-    if (!chooser.contains(event.target)) close('outside');
-  }
-
   input.addEventListener('input', () => {
     filtered = rankCommands(commands, input.value);
     selected = 0;
@@ -167,12 +165,6 @@ export function openProcessNodeTypeChooser({
       choose(selected);
     }
   });
-  chooser.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    close('escape');
-  });
   cancel.addEventListener('click', () => close('cancel'));
 
   host.append(chooser);
@@ -183,7 +175,11 @@ export function openProcessNodeTypeChooser({
     place();
     input.focus({ preventScroll: true });
   });
-  documentRef.addEventListener('pointerdown', onOutsidePointerDown, true);
+  // A press outside or Escape closes it; the pointer wandering off does not.
+  // A dialog opened over it keeps the focus it took.
+  const dialogOver = () => [...(documentRef.querySelectorAll?.('.modal-overlay.show, .manage-overlay.show') || [])]
+    .some((dialog) => !dialog.contains(chooser));
+  unwatch = watchPopover({ roots: () => chooser, close: (why) => close(why, { focus: !dialogOver() }), hold: () => true, doc: documentRef });
 
   const dispose = ({ focus = false } = {}) => close('dispose', { focus });
   dispose.close = () => close('cancel');

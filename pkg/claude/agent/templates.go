@@ -162,9 +162,14 @@ type templateJSON struct {
 	Rhythms []rhythmJSON `json:"rhythms,omitempty"`
 	// WaveMaxWait caps (seconds) how long each staged-spawn wave waits for the
 	// prior wave to go idle before the next spawns anyway (JOH-244). 0 = default.
-	WaveMaxWait int    `json:"wave_max_wait,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
+	WaveMaxWait int `json:"wave_max_wait,omitempty"`
+	// OwnerScopes narrows what ownership of a group deployed from the template
+	// confers (TCL-1071). It is carried as raw JSON, read and sent back as the
+	// daemon wrote it: `edit` is a full replace, so a field dropped here would
+	// be deleted from the template.
+	OwnerScopes json.RawMessage `json:"owner_scopes,omitempty"`
+	CreatedAt   string          `json:"created_at,omitempty"`
+	UpdatedAt   string          `json:"updated_at,omitempty"`
 }
 
 // ownerNames returns the names of the template's owner agents — effective
@@ -189,7 +194,7 @@ func templatesLsCmd() *cobra.Command {
 		Long:        "Returns every group template, with its agent count and owner(s).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesLs(os.Stdout, os.Stderr))
+			os.Exit(runTemplatesLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -229,14 +234,20 @@ type templatesShowParams struct {
 
 func templatesShowCmd() *cobra.Command {
 	return boa.CmdT[templatesShowParams]{
-		Use:         "show <name>",
+		Use:         "show",
 		Short:       "Show one group template in detail",
 		Long:        "Prints a template's context and per-agent specs. With --json, emits the raw wire JSON — the same shape 'create' / 'edit' accept via --file, so `templates show X --json` is the start of an edit loop.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
+}
+
+// RunTemplatesShow is `tclaude agent templates show <name> [--json]`, as the
+// command runs it, for callers that drive the CLI against a daemon in-process.
+func RunTemplatesShow(name string, jsonOut bool, stdout, stderr io.Writer) int {
+	return runTemplatesShow(&templatesShowParams{Name: name, JSON: jsonOut}, stdout, stderr)
 }
 
 func runTemplatesShow(p *templatesShowParams, stdout, stderr io.Writer) int {
@@ -482,13 +493,13 @@ func templatesCreateCmd() *cobra.Command {
 			"'templates from-group' or by editing another template's --json output.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesCreateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesCreate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesCreate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 func runTemplatesCreate(p *templatesCreateParams, stdin io.Reader, stdout, stderr io.Writer) int {
-	tmpl, rc := loadTemplateFile(p.File, stdin, stderr)
+	tmpl, rc := loadLibraryJSONFile[templateJSON]("template", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -515,7 +526,7 @@ type templatesEditParams struct {
 
 func templatesEditCmd() *cobra.Command {
 	return boa.CmdT[templatesEditParams]{
-		Use:   "edit <name> --file <path>",
+		Use:   "edit --file <path>",
 		Short: "Replace a group template from a JSON file",
 		Long: "Replaces the named template wholesale with the JSON in --file (or --file - for stdin) — it is a " +
 			"full replace, not a field merge, so post the template's complete desired state. The body's `name` " +
@@ -523,9 +534,16 @@ func templatesEditCmd() *cobra.Command {
 			"edit x.json, 'templates edit X --file x.json'.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesEditParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesEdit(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesEdit(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
+}
+
+// RunTemplatesEdit is `tclaude agent templates edit <name> --file <file>`, as
+// the command runs it, for callers that drive the CLI against a daemon
+// in-process.
+func RunTemplatesEdit(name, file string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runTemplatesEdit(&templatesEditParams{Name: name, File: file}, stdin, stdout, stderr)
 }
 
 func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -534,7 +552,7 @@ func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io
 		fmt.Fprintln(stderr, "Error: a template name is required")
 		return rcInvalidArg
 	}
-	tmpl, rc := loadTemplateFile(p.File, stdin, stderr)
+	tmpl, rc := loadLibraryJSONFile[templateJSON]("template", p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -549,32 +567,8 @@ func runTemplatesEdit(p *templatesEditParams, stdin io.Reader, stdout, stderr io
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	if resp.Name != name {
-		fmt.Fprintf(stdout, "Updated template %q → renamed to %q\n", name, resp.Name)
-	} else {
-		fmt.Fprintf(stdout, "Updated template %q\n", resp.Name)
-	}
+	printLibraryUpdated(stdout, "template", name, resp.Name)
 	return rcOK
-}
-
-// loadTemplateFile reads a template JSON file (or stdin for "-") and
-// unmarshals it. A missing --file, an unreadable path, or malformed
-// JSON each surface as a clear error with the matching rc.
-func loadTemplateFile(file string, stdin io.Reader, stderr io.Writer) (*templateJSON, int) {
-	if strings.TrimSpace(file) == "" {
-		fmt.Fprintln(stderr, "Error: --file is required (path to a template JSON file, or - to read stdin)")
-		return nil, rcInvalidArg
-	}
-	raw, rc := resolveBodyInput("", file, "--file", stdin, stderr)
-	if rc != rcOK {
-		return nil, rc
-	}
-	var tmpl templateJSON
-	if err := json.Unmarshal([]byte(raw), &tmpl); err != nil {
-		fmt.Fprintf(stderr, "Error: --file is not valid template JSON: %v\n", err)
-		return nil, rcInvalidArg
-	}
-	return &tmpl, rcOK
 }
 
 // ---- rm ----
@@ -585,12 +579,12 @@ type templatesRmParams struct {
 
 func templatesRmCmd() *cobra.Command {
 	return boa.CmdT[templatesRmParams]{
-		Use:         "rm <name>",
+		Use:         "rm",
 		Short:       "Delete a group template",
 		Long:        "Removes a template blueprint. Groups already instantiated from it are left untouched — only the blueprint is deleted.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesRmParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesRm(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesRm(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -625,7 +619,7 @@ type templatesInstantiateParams struct {
 
 func templatesInstantiateCmd() *cobra.Command {
 	return boa.CmdT[templatesInstantiateParams]{
-		Use:   "instantiate <name> --group <group>",
+		Use:   "instantiate --group <group>",
 		Short: "Create a group from a template and spawn its team",
 		Long: "Creates a fresh group named --group and spawns one agent per template spec, named '<group>-<agent>'. " +
 			"The --task text is folded into the group's shared context, so every spawned agent's startup briefing " +
@@ -639,13 +633,13 @@ func templatesInstantiateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesInstantiateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesInstantiate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesInstantiate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
 
 // instantiateAgentResult / instantiateResponse mirror the daemon's
-// instantiate response (see agentd/templates.go).
+// instantiate response (see agentd/templates_instantiate.go).
 type instantiateAgentResult struct {
 	Name         string   `json:"name"`
 	FinalName    string   `json:"final_name"`
@@ -841,7 +835,7 @@ type templatesReinforceParams struct {
 
 func templatesReinforceCmd() *cobra.Command {
 	return boa.CmdT[templatesReinforceParams]{
-		Use:   "reinforce <name> --group <group>",
+		Use:   "reinforce --group <group>",
 		Short: "Deploy a template's roster INTO an existing group",
 		Long: "Spawns a template's agents into an ALREADY-EXISTING group (the reinforcements verb), instead of " +
 			"creating a fresh one the way 'instantiate' / 'task-force deploy' do. The group's own settings — its " +
@@ -857,7 +851,7 @@ func templatesReinforceCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesReinforceParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesReinforce(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesReinforce(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -947,7 +941,7 @@ type templatesFromGroupParams struct {
 
 func templatesFromGroupCmd() *cobra.Command {
 	return boa.CmdT[templatesFromGroupParams]{
-		Use:   "from-group <group> <template-name>",
+		Use:   "from-group",
 		Short: "Snapshot an existing group into a new (or existing, --update) template",
 		Long: "Captures a live group's structure — its context plus one agent per member (role, descr, owner flag, " +
 			"per-agent permission grants) — into a new template. Per-agent task briefs come through blank: a live " +
@@ -961,7 +955,7 @@ func templatesFromGroupCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *templatesFromGroupParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesFromGroup(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesFromGroup(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1049,19 +1043,19 @@ type templatesExportParams struct {
 
 func templatesExportCmd() *cobra.Command {
 	return boa.CmdT[templatesExportParams]{
-		Use:   "export <name>",
+		Use:   "export",
 		Short: "Export a template as a portable task-force JSON file",
 		Long: "Emits the named template wrapped in a small versioned envelope — a portable blueprint you can share " +
 			"with a friend, a coworker, or your own other machine and re-import with 'templates import'. Writes to " +
 			"stdout by default, or to --file. The file carries no machine-local identity (no DB ids, no conv links); " +
-			"spawn-profile references and permission slugs travel by name and are validated on import.",
+			"the roles, spawn profiles and saved prompts it references are embedded, and import creates the missing ones without overwriting. Permission slugs travel by name and are validated on import.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *templatesExportParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Name).SetAlternativesFunc(completeTemplateNames)
 			return nil
 		},
 		RunFunc: func(p *templatesExportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesExport(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesExport(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1135,7 +1129,7 @@ func templatesImportCmd() *cobra.Command {
 			"tclaude is rejected with an upgrade message.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesImportParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesImport(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesImport(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1261,7 +1255,7 @@ func templatesStartersLsCmd() *cobra.Command {
 		Long:        "Lists every starter tclaude ships, with its agent count and a one-line description. Install one with 'templates starters install <name>'.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesStartersLs(os.Stdout, os.Stderr))
+			os.Exit(runTemplatesStartersLs(cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1295,12 +1289,12 @@ type templatesStartersShowParams struct {
 
 func templatesStartersShowCmd() *cobra.Command {
 	return boa.CmdT[templatesStartersShowParams]{
-		Use:         "show <name>",
+		Use:         "show",
 		Short:       "Show one bundled starter in detail",
 		Long:        "Prints a starter's full blueprint — context, per-agent specs, work pattern, process phases, and rhythms — rendered exactly like 'templates show'. With --json, emits the raw template JSON.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesStartersShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesStartersShow(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesStartersShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -1339,14 +1333,14 @@ type templatesStartersInstallParams struct {
 
 func templatesStartersInstallCmd() *cobra.Command {
 	return boa.CmdT[templatesStartersInstallParams]{
-		Use:   "install <name>",
+		Use:   "install",
 		Short: "Install a bundled starter as a local template",
 		Long: "Installs a starter as a local group template you can then deploy, instantiate, or edit. Idempotent and " +
 			"never clobbers: if a template of the target name already exists, the install is SKIPPED (your edited copy " +
 			"is sacred) — pass --as <name> to install a fresh copy under a different name. Works on a fresh empty DB.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *templatesStartersInstallParams, _ *cobra.Command, _ []string) {
-			os.Exit(runTemplatesStartersInstall(p, os.Stdout, os.Stderr))
+			os.Exit(runTemplatesStartersInstall(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

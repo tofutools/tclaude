@@ -1,0 +1,20 @@
+[
+  "drawing-board-empty-hint",
+  "drawing-board-hint",
+  "companion-cog-hint",
+  "companion-send-hint",
+  "fs-error",
+  "human-notification-hint",
+  "logs-rotated-hint",
+  "mux-drag-out-hint",
+  "mux-tab-status-error",
+  "node-chip-hint",
+  "palette-hint",
+  "pwf-inline-error",
+  "sbx-common-rule-feed-error",
+  "sbx-preview-error",
+  "state-error",
+  "status-dot-error",
+  "vegas-error",
+  "vegas-hint"
+]

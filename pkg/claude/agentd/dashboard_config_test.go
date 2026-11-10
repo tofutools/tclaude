@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/stewardtools"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -501,5 +502,110 @@ func TestDashboardConfigAskSandboxValidatesLibrarySelection(t *testing.T) {
 		w, resp := postConfig(t, "/api/config?dry_run=1", wrapBody(`{"ask":{"sandbox":`+strconv.Quote(setting)+`}}`, ""))
 		require.Equal(t, http.StatusBadRequest, w.Code, resp)
 		require.Contains(t, strings.Join(resp.Errors, " "), "ask.sandbox")
+	}
+}
+
+// Config shows the tool list before the feature is on, and only with Collab on.
+func TestDashboardConfig_ExternalStewardToolList(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	load := func() map[string]any {
+		w := httptest.NewRecorder()
+		serveDashboardConfig(w, dashboardRequest(http.MethodGet, "/api/config", ""))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		return body
+	}
+	shown, ok := load()["external_steward"].(map[string]any)
+	require.True(t, ok, "shown before it is enabled")
+	assert.Equal(t, false, shown["enabled"])
+	var names []string
+	for _, tool := range shown["tools"].([]any) {
+		names = append(names, tool.(map[string]any)["name"].(string))
+	}
+	var want []string
+	for _, tool := range stewardtools.List() {
+		want = append(want, tool.Name)
+	}
+	assert.Equal(t, want, names)
+
+	// Saving replaces what the page loaded, so the save has to carry it as well.
+	w, _ := postConfig(t, "/api/config", wrapBody(`{"steward":{"external_enabled":true}}`, ""))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var saved map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &saved))
+	shown, ok = saved["external_steward"].(map[string]any)
+	require.True(t, ok, w.Body.String())
+	assert.Equal(t, true, shown["enabled"])
+}
+
+func TestDashboardConfig_Keybindings(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w, resp := postConfig(t, "/api/config", wrapBody(`{"dashboard":{"keybindings":{"expose":"Ctrl+Alt+Key<E>"}}}`, ""))
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	assertErrorContains(t, resp.Errors, "dashboard.keybindings")
+
+	w, _ = postConfig(t, "/api/config", wrapBody(`{"dashboard":{"keybindings":{"expose":"Ctrl+Alt+KeyE"}}}`, ""))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"expose": "Ctrl+Alt+KeyE"}, cfg.DashboardKeybindings())
+}
+
+// The Git & forges form saves agent.git_proxy through the same dry-run: a bad
+// GitLab base comes back as an error naming its row, and nothing is written.
+func TestDashboardConfig_DryRunNamesABadGitProxyValue(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w, resp := postConfig(t, "/api/config?dry_run=1", wrapBody(`{"agent":{"git_proxy":{
+		"allowed_remotes":["gitlab.example.com/team"],
+		"gitlab_hosts":{"gitlab.example.com":"http://gitlab.example.com:8929"}}}}`, ""))
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	assertErrorContains(t, resp.Errors, `agent.git_proxy.gitlab_hosts["gitlab.example.com"]`)
+	_, statErr := os.Stat(config.ConfigPath())
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+// protected_refs absent (the default branches) and [] (protection off) mean
+// different things, so both must survive the save's canonical round trip, as
+// must the rest of the block.
+func TestDashboardConfig_GitProxyRoundTripsUnchanged(t *testing.T) {
+	for name, refs := range map[string]string{
+		"absent": ``, "empty": `,"protected_refs":[]`, "listed": `,"protected_refs":["main","release/*"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			setupTestDB(t)
+			withDashboardAuth(t)
+			block := `{"agent":{"git_proxy":{"allowed_remotes":["gitlab.example.com/team"],"allow_force_push":true,` +
+				`"ssh_key":"~/.ssh/id_ed25519","gitlab_hosts":{"gitlab.example.com":"https://gitlab.example.com:8929"},` +
+				`"gitlab_token_file":"~/.config/tclaude/gitlab-token"` + refs + `}}}`
+			w, _ := postConfig(t, "/api/config", wrapBody(block, ""))
+			require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+			_, got := getConfig(t)
+			pw, preview := postConfig(t, "/api/config?dry_run=1", wrapBody(got.Raw, got.Raw))
+			require.Equal(t, http.StatusOK, pw.Code, "body=%s", pw.Body.String())
+			assert.Equal(t, got.Raw, preview.Raw)
+
+			cfg, err := config.Load()
+			require.NoError(t, err)
+			gp := cfg.Agent.GitProxy
+			require.NotNil(t, gp)
+			switch name {
+			case "absent":
+				assert.Nil(t, gp.ProtectedRefs, "absent stays absent, so the default branches stay protected")
+			case "empty":
+				require.NotNil(t, gp.ProtectedRefs)
+				assert.Empty(t, *gp.ProtectedRefs, "an explicit empty list survives: protection off")
+			case "listed":
+				require.NotNil(t, gp.ProtectedRefs)
+				assert.Equal(t, []string{"main", "release/*"}, *gp.ProtectedRefs)
+			}
+			assert.Equal(t, "https://gitlab.example.com:8929", gp.GitLabHosts["gitlab.example.com"])
+		})
 	}
 }

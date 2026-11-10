@@ -60,11 +60,13 @@ first. Like `add`, it then starts a session in the restored directory unless
 ```bash
 tclaude worktree ls        # path / branch / commit table (-v for more)
 tclaude worktree rm feat/my-feature
-tclaude worktree rm feat/my-feature -D    # also delete the branch
+tclaude worktree rm feat/my-feature -D    # also delete the branch, if merged
 ```
 
 `rm` accepts a branch name or a path and refuses to remove a worktree with
-uncommitted changes unless `-f/--force` is passed.
+uncommitted changes unless `-f/--force` is passed. `-f` also skips the
+confirmation and discards those changes, and with `-D` it deletes an unmerged
+branch too.
 
 ## Dashboard cleanup sweep
 
@@ -104,8 +106,12 @@ agents, and live-agent worktrees start unticked. Review the selection before
 removing it: removal is forced, so selecting a dirty worktree discards its
 uncommitted changes. Removing an offline agent's worktree also breaks its
 resume from that directory. **Also delete the feature branch** is checked by
-default and force-deletes removed worktrees' local branches; untick it to keep
-them. `main` and `master` branches are always kept.
+default and deletes removed worktrees' local branches once their commits are
+merged or pushed; untick it to keep them all. A selected branch whose commits
+exist nowhere else, or can't be checked, is kept. The dialog lists those
+branches with their commit counts behind a separate, unticked **Also delete**
+option, which permanently loses the listed commits, and changing the selection
+clears it. `main` and `master` branches are always kept.
 
 The daemon acts only on the selected paths and re-validates them against Git
 and live-agent state at execution time. It refuses the main checkout and any

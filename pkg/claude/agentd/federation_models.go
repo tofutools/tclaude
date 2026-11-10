@@ -15,21 +15,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/stream"
 )
 
-type fedModelAnswer struct {
-	peer, request string
-	payload       proto.ModelAnswerPayload
-}
 type fedModelState struct {
 	leaseWaiters map[string]chan bool
 	leasePeers   map[string]string
-	waiters      map[string]chan fedModelAnswer
+	waiters      map[string]fedAnswerWaiter[proto.ModelAnswerPayload]
 	incoming     map[string]string
 	rates        map[string][]time.Time
 }
 
 func (rt *fedRuntime) modelsLocked() *fedModelState {
 	if rt.models == nil {
-		rt.models = &fedModelState{leaseWaiters: map[string]chan bool{}, leasePeers: map[string]string{}, waiters: map[string]chan fedModelAnswer{}, incoming: map[string]string{}, rates: map[string][]time.Time{}}
+		rt.models = &fedModelState{leaseWaiters: map[string]chan bool{}, leasePeers: map[string]string{}, waiters: map[string]fedAnswerWaiter[proto.ModelAnswerPayload]{}, incoming: map[string]string{}, rates: map[string][]time.Time{}}
 	}
 	return rt.models
 }
@@ -39,14 +35,9 @@ func (rt *fedRuntime) handleModelAnswer(peer *db.FederationPeer, env *proto.Enve
 		return
 	}
 	rt.modelsMu.Lock()
-	ch := rt.modelsLocked().waiters[p.Stream]
+	w := rt.modelsLocked().waiters[p.Stream]
 	rt.modelsMu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- fedModelAnswer{peer.InstanceID, env.InReplyTo, p}:
-		default:
-		}
-	}
+	w.offer(peer.InstanceID, env.InReplyTo, p)
 }
 func (rt *fedRuntime) openModelStream(ctx context.Context, peer *db.FederationPeer, session, name, dialect string, leases ...*db.ModelProxyLease) (*routebroker.FlowStream, error) {
 	var lease *db.ModelProxyLease
@@ -77,20 +68,20 @@ func (rt *fedRuntime) openModelStreamRequest(ctx context.Context, peer *db.Feder
 		p.Lease = lease.ID
 		p.Generation = lease.Generation
 	}
-	ch := make(chan fedModelAnswer, 1)
+	env, err := proto.NewEnvelope(rt.id, proto.KindModelOpen, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: peer.InstanceID}, time.Minute, p)
+	if err != nil {
+		return nil, err
+	}
+	w := newFedAnswerWaiter[proto.ModelAnswerPayload](peer.InstanceID, env.ID)
 	rt.modelsMu.Lock()
 	st := rt.modelsLocked()
 	if len(st.waiters) >= 128 {
 		rt.modelsMu.Unlock()
 		return nil, errors.New("model stream limit")
 	}
-	st.waiters[p.Stream] = ch
+	st.waiters[p.Stream] = w
 	rt.modelsMu.Unlock()
 	defer func() { rt.modelsMu.Lock(); delete(rt.modelsLocked().waiters, p.Stream); rt.modelsMu.Unlock() }()
-	env, err := proto.NewEnvelope(rt.id, proto.KindModelOpen, proto.Endpoint{Name: rt.name}, proto.Endpoint{Instance: peer.InstanceID}, time.Minute, p)
-	if err != nil {
-		return nil, err
-	}
 	sealed, err := proto.Seal(rt.id, env, peer.PubKey)
 	if err != nil {
 		return nil, err
@@ -104,32 +95,27 @@ func (rt *fedRuntime) openModelStreamRequest(ctx context.Context, peer *db.Feder
 	if result.Status != proto.SendDelivered {
 		return nil, errors.New("model gateway peer is offline")
 	}
-	for {
-		select {
-		case <-rt.ctx.Done():
-			return nil, rt.ctx.Err()
-		case <-opening.Done():
-			return nil, opening.Err()
-		case a := <-ch:
-			if a.peer != peer.InstanceID || a.request != env.ID {
-				continue
-			}
-			if !a.payload.OK {
-				return nil, errors.New("model gateway refused")
-			}
-			if probe {
-				return nil, nil
-			}
-			raw, err := rt.joinStream(opening, peer.InstanceID, p.Stream, kp, a.payload.Key, true)
-			if err != nil {
-				return nil, err
-			}
-			flow := routebroker.NewFlowStream(raw)
-			// Runtime cancellation closes active data streams as well as pending opens.
-			stop := context.AfterFunc(rt.ctx, func() { _ = flow.Close() })
-			context.AfterFunc(ctx, func() { stop(); _ = flow.Close() })
-			return flow, nil
+	select {
+	case <-rt.ctx.Done():
+		return nil, rt.ctx.Err()
+	case <-opening.Done():
+		return nil, opening.Err()
+	case a := <-w.answer:
+		if !a.OK {
+			return nil, errors.New("model gateway refused")
 		}
+		if probe {
+			return nil, nil
+		}
+		raw, err := rt.joinStream(opening, peer.InstanceID, p.Stream, kp, a.Key, true)
+		if err != nil {
+			return nil, err
+		}
+		flow := routebroker.NewFlowStream(raw)
+		// Runtime cancellation closes active data streams as well as pending opens.
+		stop := context.AfterFunc(rt.ctx, func() { _ = flow.Close() })
+		context.AfterFunc(ctx, func() { stop(); _ = flow.Close() })
+		return flow, nil
 	}
 }
 func (rt *fedRuntime) acceptModelOpen(peer *db.FederationPeer, env *proto.Envelope) {

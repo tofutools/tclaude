@@ -63,6 +63,9 @@ type ActionContext struct {
 	// several workspaces describes each of them in turn rather than passing a
 	// set, so every check is one workspace against one grant.
 	AWBWorkspace string
+	// Resource is the resource acted on as kind:id (drawing_board:plan,
+	// process_template:release), "" when the action targets no one resource.
+	Resource string
 	// RemotePeer is the trusted instance ID targeted by a federation action.
 	RemotePeer string
 	// RemoteGroup is the target group name from that peer's catalog.
@@ -90,6 +93,10 @@ type ActionContext struct {
 	// Keeping the check inside the evaluator means an uncovered footprint is
 	// still eligible for the ordinary one-shot human approval path.
 	bulkGroupMemberCoverage bool
+	// strictPeerScope admits, for a remote action, only grants whose scope
+	// names a peer: no unscoped grant bound to an unrestricted peer, and no
+	// agent default. An agent's peer view needs an explicit peer= grant.
+	strictPeerScope bool
 	// alternatePermission is an ordinary second slug that may authorize the
 	// same action. Group-wide views use it to preserve a global agent.* grant
 	// while also accepting the dedicated groups.members.* capability.
@@ -119,6 +126,8 @@ func (a ActionContext) value(dim ScopeDim) string {
 		return a.LinearTeam
 	case ScopeDimAWBWorkspace:
 		return a.AWBWorkspace
+	case ScopeDimResource:
+		return a.Resource
 	case ScopeDimPeer:
 		if a.RemotePeer != "" && a.RemoteGroup != "" {
 			return a.RemotePeer + "/" + a.RemoteGroup
@@ -269,7 +278,7 @@ func permissionScopeLiteralMatches(dim ScopeDim, matcher, value string) bool {
 			return err == nil && ok
 		}
 		return matcher == value || (!grouped && strings.HasPrefix(value, peer+"/"))
-	case permissionScopeMatchExact:
+	case permissionScopeMatchExact, permissionScopeMatchResourceRef:
 		return matcher == value
 	case permissionScopeMatchRemotePattern:
 		pattern := strings.Split(strings.ToLower(strings.Trim(matcher, "/")), "/")

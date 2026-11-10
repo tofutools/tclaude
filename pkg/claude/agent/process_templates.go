@@ -110,7 +110,7 @@ func processTemplatesLsCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *processTemplatesLsParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessTemplatesLs(p, os.Stdout, os.Stderr))
+			os.Exit(runProcessTemplatesLs(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -182,7 +182,7 @@ type processTemplatesShowParams struct {
 
 func processTemplatesShowCmd() *cobra.Command {
 	return boa.CmdT[processTemplatesShowParams]{
-		Use:         "show <id>",
+		Use:         "show",
 		Short:       "Emit canonical YAML with CAS metadata",
 		Long:        "Writes valid process-template YAML. The leading YAML comments carry currentRef, sourceHash, and semanticHash for the validate then CAS-save workflow.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -191,7 +191,7 @@ func processTemplatesShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *processTemplatesShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessTemplatesShow(p, os.Stdout, os.Stderr))
+			os.Exit(runProcessTemplatesShow(p, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -242,7 +242,7 @@ func processTemplatesValidateCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *processTemplatesValidateParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessTemplatesValidate(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runProcessTemplatesValidate(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -291,7 +291,7 @@ func processTemplatesSaveCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *processTemplatesSaveParams, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessTemplatesSave(p, os.Stdin, os.Stdout, os.Stderr))
+			os.Exit(runProcessTemplatesSave(p, os.Stdin, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }

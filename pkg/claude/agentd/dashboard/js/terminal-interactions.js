@@ -3,10 +3,13 @@
 
 import { downloadRemoteFile as downloadRemoteFileVia } from './remote-files.js';
 import { trackedUpload } from './transfers.js';
+import { downloadURL } from './download.js';
 import {
   isCommandPaletteShortcut,
   requestCommandPalette,
 } from './command-registry.js';
+import { clipboardFailure, writeClipboard } from './insecure-origin.js';
+import { matchesShortcut, modClickText, withShortcut } from './keybindings.js';
 
 const IMAGE_TYPES = new Map([
   ['image/png', 'png'],
@@ -75,12 +78,11 @@ export function isTerminalClipboardRequestShortcut(event) {
   return copyKey && Boolean(event.ctrlKey || event.metaKey);
 }
 
+// Compose is Ctrl M on every platform: macOS keeps ⌘ M (minimize the window)
+// for itself, so that chord never reaches the page.
 export function isComposeMessageShortcut(event) {
-  if (!event || event.type !== 'keydown' || event.altKey || event.shiftKey ||
-      event.isComposing || event.keyCode === 229) return false;
-  const m = event.code === 'KeyM' ||
-    (typeof event.key === 'string' && event.key.toLowerCase() === 'm');
-  return m && Boolean(event.ctrlKey || event.metaKey);
+  if (!event || event.type !== 'keydown') return false;
+  return matchesShortcut(event, 'compose');
 }
 
 export function claimCommandPaletteShortcut(
@@ -452,29 +454,6 @@ function shortenPathForStatus(path, max = 100) {
   return `${path.slice(0, max - tailLength - 1)}…${path.slice(-tailLength)}`;
 }
 
-function legacyCopy(text) {
-  const area = document.createElement('textarea');
-  area.value = text;
-  area.setAttribute('readonly', '');
-  area.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
-  document.body.append(area);
-  area.select();
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
-  area.remove();
-  return ok;
-}
-
-async function writeClipboard(text) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch (_) { /* insecure context or denied permission: use legacy copy */ }
-  }
-  return legacyCopy(text);
-}
-
 // Arbitrary file paste and drop are for agent terminals only: the agent reads
 // the pasted path as an attachment. A plain shell keeps image paste but takes
 // no other files (agentd enforces the same split).
@@ -632,7 +611,7 @@ export function attachTerminalInteractions({
     copyButton.disabled = false;
     copyButton.dataset.hasSelection = selected ? 'true' : 'false';
     copyButton.setAttribute('aria-label', selected
-      ? 'Copy selected terminal text (Ctrl/Cmd+Shift+C)'
+      ? withShortcut('Copy selected terminal text', 'terminal-copy')
       : `Copy terminal text. ${SELECT_HINT}`);
   }
 
@@ -647,7 +626,7 @@ export function attachTerminalInteractions({
     if (token.timer) clearTimeout(token.timer);
     pendingTmuxCopy = null;
     if (activeTmuxClipboardCopy === token) activeTmuxClipboardCopy = null;
-    flash(token.result ? 'copied' : 'tmux copied; browser clipboard permission denied');
+    flash(token.result ? 'copied' : `tmux copied; ${clipboardFailure('browser clipboard permission denied')}`);
   }
 
   function armTmuxClipboardFromGesture(selection = null) {
@@ -743,7 +722,7 @@ export function attachTerminalInteractions({
       return;
     }
     if (await writeClipboard(selected)) flash('copied');
-    else flash('copy failed — clipboard permission denied');
+    else flash(`copy failed — ${clipboardFailure('clipboard permission denied')}`);
     term.focus();
   }
 
@@ -771,13 +750,7 @@ export function attachTerminalInteractions({
     if (!response?.ok) {
       throw new Error(`download unavailable (${response?.status || 'network error'})`);
     }
-    const anchor = ownerDocument.createElement('a');
-    anchor.href = href;
-    anchor.download = '';
-    anchor.style.display = 'none';
-    ownerDocument.body.append(anchor);
-    anchor.click();
-    anchor.remove();
+    downloadURL(href, { documentRef: ownerDocument });
   }
 
   // downloadRemoteFile fetches a path from the peer through this node's
@@ -809,7 +782,7 @@ export function attachTerminalInteractions({
       const target = link.kind === 'file'
         ? shortenPathForStatus(link.target)
         : shortenForStatus(link.target);
-      flash(`Ctrl/Cmd-click to ${action} ${target}`);
+      flash(`${modClickText()} to ${action} ${target}`);
       return;
     }
     if (link.kind === 'file') {
@@ -839,7 +812,7 @@ export function attachTerminalInteractions({
     const target = link.kind === 'file'
       ? shortenPathForStatus(link.target)
       : shortenForStatus(link.target);
-    setStatus(`Ctrl/Cmd-click ${action} ${target}`);
+    setStatus(`${modClickText()} ${action} ${target}`);
   };
   const clearLinkTarget = () => {
     if (!setStatus) return;
@@ -967,7 +940,7 @@ export function attachTerminalInteractions({
       term.input(input);
       return false;
     }
-    const copyChord = (event.ctrlKey || event.metaKey) && event.shiftKey && event.code === 'KeyC';
+    const copyChord = matchesShortcut(event, 'terminal-copy');
     if (!copyChord) return true;
     event.preventDefault();
     copySelection();
@@ -1102,4 +1075,3 @@ export function attachTerminalInteractions({
     },
   };
 }
-// dashboard-imperative-boundary: browser-io

@@ -20,7 +20,7 @@ func TestDashboardHTML_LogsTabWired(t *testing.T) {
 
 	// The Activity subtab + the panel activity-tab.js toggles (the shared
 	// Activity wiring is pinned by TestDashboardHTML_ActivityTabWired).
-	must(`data-subtab="logs" href="/activity/logs"`, "the Logs subtab")
+	must(`data-subtab="logs" href="/diagnostics/logs"`, "the Logs subtab")
 	must(`id="activity-logs"`, "the Logs panel")
 	must(`id="logs-root"`, "the stable Preact feature host")
 	must(`id="logs-list"`, "the Preact-owned table mount")

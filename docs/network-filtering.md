@@ -45,7 +45,7 @@ and frozen into launch snapshots. The current registry:
 | Pack | Covers |
 |------|--------|
 | `net-local` | Unscoped loopback — local model servers (Ollama, LM Studio, llama.cpp), Codex OSS mode, host-local dev services |
-| `net-anthropic` | Direct Anthropic API-key endpoints (`api.anthropic.com:443`) |
+| `net-anthropic` | Claude Code with an API key or a Claude subscription sign-in (`api.anthropic.com:443`, plus `platform.claude.com:443`, where a subscription login refreshes its token) |
 | `net-openai-codex` | Direct OpenAI API-key endpoints (`api.openai.com:443`) |
 | `net-openai-chatgpt` | ChatGPT-signed-in Codex (`chatgpt.com:443`, `auth.openai.com:443`) |
 | `net-github-copilot` | GitHub Copilot CLI model and auth traffic |
@@ -79,7 +79,7 @@ network; `private` gives the launch its own Linux network namespace routed
 through `pasta` with default-accept — it separates abstract Unix sockets and
 host loopback from the agent without making IP traffic deny-by-default. It is
 supported with tclaude’s sandbox alone on Linux for Claude Code, Codex,
-OpenCode, Copilot, Gemini CLI and pi launches, and refuses elsewhere rather than falling back. A private
+OpenCode, Copilot, Gemini CLI, pi and shell launches, and refuses elsewhere rather than falling back. A private
 namespace in a global or included profile cannot be widened by a child.
 
 The `unix_sockets` axis (`mode: open|closed|list` plus `path`/`path_glob`
@@ -101,6 +101,17 @@ dominates. Unix-socket lists intersect. `network.engine` is the one precedence
 field: most explicit wins (explicit > group > global), with a disclosure when
 composition was overridden.
 
+Because allow lists intersect, a destination is reachable only if **every**
+tier that authors an allow list allows it. A group profile cannot add a host
+that the global profile's list leaves out. When two or more tiers author lists
+and the intersection drops entries, the resolved profile carries a composition
+warning that names, per tier, what was dropped or narrowed. The spawn dialog,
+the profile editor and `tclaude agent sandbox-profiles plan` show it. If the
+dropped entry is the harness's model endpoint, the model-transport refusal
+below names the tier that allowed it and the tier that did not. Fix it in the
+tier that lacks it, or give the global tier no list (`baseline: "allow"` or no
+network policy) so the group list alone decides.
+
 ## The three postures
 
 - **Open baseline** (or omitted / legacy `internet`) → **host-open**: the host
@@ -114,8 +125,8 @@ composition was overridden.
   only with the explicit `TCLAUDE_OFFLINE_MODEL=1` operator assertion. On
   macOS, Seatbelt denies outbound and bind (agentd socket excepted) but
   provides no PID isolation, no constructed root, and — deliberately — no
-  loopback exception. The dashboard spawn dialog's "Allow launch without
-  enforcement" checkbox can widen exactly this closed-network gap for one
+  loopback exception. The dashboard spawn dialog's "Allow launch with
+  unenforced rules" checkbox can widen this closed-network gap for one
   fresh launch, never saved or inherited, recorded as
   `operator_unenforced_launch_override`.
 - **List** → **filtered**, through whichever engine the profile deploys.
@@ -167,10 +178,13 @@ reserved from CIDR or DNS-derived rules, so either kind of rule can also reach
 host loopback on its authored ports — a DNS-rebinding route to host services.
 
 The packet engine is enforced with tclaude’s sandbox alone for **Claude Code,
-Codex, and OpenCode** launches on Linux. When OpenCode supplies a strict explicit-
+Codex, OpenCode, Gemini CLI, pi and shell** launches on Linux. When OpenCode supplies a strict explicit-
 provider configuration, tclaude checks that provider endpoint against the
 authored rules. An OpenCode route tclaude cannot inspect is left to those rules:
 the launch proceeds, and the packet floor allows or blocks the actual request.
+The launch then carries a notice saying the model endpoint was not checked,
+and why resolution stopped; see
+[OpenCode under a filtered network](harnesses.md#opencode-under-a-filtered-network).
 If a prerequisite is missing before enforcement is selected
 — `bwrap`, `pasta`, `nft`, or `nsenter` resolved through trust-walked paths (no
 group/world-writable path component, a regular executable target; ownership is
@@ -187,7 +201,12 @@ fabricates provider resolution or quietly punches a hole:
 - **Claude Code** resolves its route from the launch environment, and inspects
   the cached remote managed settings for provider routing. Claude Code can
   re-route live on its hourly settings poll; a route moved that way is denied
-  fail-closed at the packet floor for new flows.
+  fail-closed at the packet floor for new flows. A Claude subscription login
+  also refreshes its access token at `platform.claude.com:443`. That is not
+  model traffic, so it does not gate the launch: when a subscription-signed-in
+  launch's rules cannot reach it, the launch carries a warning instead, since
+  the model keeps working until the current token (about 8 hours) expires.
+  `net-anthropic` covers both hosts.
 - **Codex** is read through the app-server `config/read` request — including
   the MDM and enterprise cloud-config layers no local file exposes. ChatGPT
   sign-in resolves to `chatgpt_base_url` plus the constant `auth.openai.com`
@@ -251,8 +270,8 @@ local address is reachable.
 
 Enforcement is claimed only where a real harness/platform smoke has proven it.
 The current activation record: **Linux — Claude Code, Codex, OpenCode, Gemini
-CLI; macOS — Claude Code, Codex, OpenCode** (pinned against Claude Code
-2.1.220, Codex 0.145.0, OpenCode 1.18.6, Gemini CLI 0.62.0). Selecting the proxy engine for a non-activated cell
+CLI, pi; macOS — Claude Code, Codex, OpenCode** (pinned against Claude Code
+2.1.220, Codex 0.145.0, OpenCode 1.18.6, Gemini CLI 0.62.0, pi 1.5.0). Selecting the proxy engine for a non-activated cell
 leaves the rules unenforced with a notice. Engine defaults do not flip: unset
 means the packet engine on Linux and historical behavior on macOS.
 
@@ -285,7 +304,7 @@ mind: they document intent, they do not yet enforce it.
 ## Gemini CLI
 
 Gemini CLI launches are enforced by the Linux packet gateway, the same as
-Claude Code and Codex. On Linux the proxy engine works for Gemini too; it is
+Claude Code, Codex, OpenCode, pi and shell. On Linux the proxy engine works for Gemini too; it is
 not yet activated on macOS. Gemini is a Node program, and on current Node its
 model client honours the proxy variables only when `NODE_USE_ENV_PROXY=1` is
 set, so every Gemini launch under tclaude's sandbox exports it. The agent's
@@ -317,8 +336,9 @@ web tools and MCP servers need their own destinations.
 
 ## pi
 
-pi launches are enforced by the Linux packet gateway; the proxy engine is not
-yet offered for pi. tclaude resolves the model route from the model's provider
+pi launches are enforced by the Linux packet gateway, and on Linux the proxy
+engine works for pi too; it is not activated on macOS. Under either engine pi
+runs offline and needs the same model route. tclaude resolves the model route from the model's provider
 (`--model provider/id`, else `defaultProvider` in pi's `settings.json`, and on
 resume the model the session records) and checks it against the authored list:
 `anthropic` needs `net-anthropic`, `openai` needs `net-openai-codex`,
@@ -351,6 +371,7 @@ these were read from pi's source at 1.1.0. Web tools, MCP servers and a first
 | `curl` works but another tool cannot reach anything (proxy engine) | The tool ignores proxy environment variables; proxy-unaware clients are blocked, not filtered |
 | UDP/QUIC traffic silently fails under the proxy engine | By design — only TCP through CONNECT is carried |
 | Launch refused: `unsupported_filtered_model_transport` | The authored list does not cover the resolved provider endpoint — add the matching pack or use network open |
+| Claude Code loses the model hours into a filtered session | A subscription login cannot reach `platform.claude.com:443` to refresh its token; the launch warned about it. Include `net-anthropic` or allow that host |
 | Launch refused over `HTTP_PROXY`/`ALL_PROXY` | A foreign proxy variable in the launch environment; remove it or use network open |
 | Filtered rules silently became host-open (warning recorded) | A packet-engine prerequisite (`bwrap`, `pasta`, `nft`, pidfds) was missing before enforcement was selected |
 | Rules recorded but "not enforced" notice on the launch | Non-activated engine cell — e.g. Copilot, or macOS packet filtering |

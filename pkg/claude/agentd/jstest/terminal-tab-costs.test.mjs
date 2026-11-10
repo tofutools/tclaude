@@ -18,7 +18,7 @@ test('terminal costs follow roster updates and keep a toggle of their own, apart
   const prefKey = 'tclaude.dash.agentCost.hidden';
   prefs.dashPrefs.syncItem(prefKey, '1');
   const unbind = costs.bindCostDisplayToggle();
-  const state = createTerminalShellState({ persistPresentation: false });
+  const state = createTerminalShellState();
   const actions = createTerminalShellActions({
     state, fetchImpl: async () => ({ ok: true }),
     windowRef: harness.window, documentRef: harness.document,

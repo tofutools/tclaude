@@ -62,22 +62,28 @@ const CostIgnoreBilledTo = "billed_to:"
 // conversation gains the reason. The mark is per conversation: one resumed
 // in another session keeps it either way. Spend recorded before a session
 // knows its conversation has no conversation to mark and stays counted.
-func MarkCostConvsBilledElsewhere() error {
+//
+// fromDay limits the rows looked at. The default reads pass the start of what
+// they read: a conversation's first row marks it within a poll, and each
+// opening refresh sweeps everything with "".
+func MarkCostConvsBilledElsewhere(fromDay string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	// The totals read this often: write only when a conversation is new.
-	const unmarked = `FROM session_cost_daily c JOIN model_proxy_launches l ON l.session = c.session_id
-		WHERE c.conv_id <> '' AND NOT EXISTS (SELECT 1 FROM cost_ignored_convs i WHERE i.conv_id = c.conv_id AND i.reason <> '')`
+	// The totals read this often: write only when a conversation is new. CROSS
+	// JOIN pins SQLite to walking the launches, usually none, instead of every
+	// cost row.
+	const unmarked = `FROM model_proxy_launches l CROSS JOIN session_cost_daily c ON c.session_id = l.session
+		WHERE c.day >= ? AND c.conv_id <> '' AND NOT EXISTS (SELECT 1 FROM cost_ignored_convs i WHERE i.conv_id = c.conv_id AND i.reason <> '')`
 	var pending bool
-	if err := d.QueryRow(`SELECT EXISTS (SELECT 1 ` + unmarked + `)`).Scan(&pending); err != nil || !pending {
+	if err := d.QueryRow(`SELECT EXISTS (SELECT 1 `+unmarked+`)`, fromDay).Scan(&pending); err != nil || !pending {
 		return err
 	}
 	_, err = d.Exec(`INSERT INTO cost_ignored_convs (conv_id, ignored_at, reason)
 		SELECT c.conv_id, ?, ? || MIN(l.reference) `+unmarked+` GROUP BY c.conv_id
 		ON CONFLICT(conv_id) DO UPDATE SET reason = excluded.reason WHERE cost_ignored_convs.reason = ''`,
-		dbTime(time.Now()), CostIgnoreBilledTo)
+		dbTime(time.Now()), CostIgnoreBilledTo, fromDay)
 	return err
 }
 

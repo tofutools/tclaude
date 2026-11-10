@@ -22,19 +22,7 @@ func fedPeerReadsNode(peer string) bool {
 	if p, _ := db.GetFederationPeer(peer); p == nil {
 		return false
 	}
-	if db.FederationPeerUnrestricted(peer) {
-		return true
-	}
-	grants, err := db.ListEffectiveFederationPeerGrants(peer)
-	if err != nil {
-		return false
-	}
-	for _, g := range grants {
-		if g.Slug == PermNodeRead && g.Scope == "" {
-			return true
-		}
-	}
-	return false
+	return fedPeerHoldsUnscoped(peer, PermNodeRead)
 }
 func (rt *fedRuntime) wakeNodes() {
 	select {
@@ -98,7 +86,12 @@ func localNodeMetadata() *proto.NodeMetadata {
 	}
 	if cfg.Federation != nil {
 		n.Labels = append([]string{}, cfg.Federation.NodeLabels...)
-		n.MaxLiveAgents = cfg.Federation.MaxLiveAgents
+	}
+	capacity := cfg.ResolvedCapacity()
+	n.MaxLiveAgents = capacity.MaxLiveAgents
+	n.SpawnWhenFull = config.CapacityWhenFullRefuse
+	if capacity.Queue {
+		n.SpawnWhenFull = config.CapacityWhenFullQueue
 	}
 	h := cachedHostStatus()
 	r := proto.NodeResources{Status: h.Status, CPU: proto.NodeCPU{LogicalCores: h.CPU.LogicalCores, LoadAverage: h.CPU.LoadAverage}}
@@ -111,6 +104,9 @@ func localNodeMetadata() *proto.NodeMetadata {
 	}
 	if h.Tclaude != nil {
 		r.Agents = &proto.NodeAgents{LiveAgents: h.Tclaude.LiveAgents, LiveSessions: h.Tclaude.LiveSessions}
+		if queued, err := db.CountActiveSpawnQueue(); err == nil {
+			r.Agents.QueuedSpawns = queued
+		}
 	}
 	workOK, workCount := true, 0
 	for _, d := range h.Disks {

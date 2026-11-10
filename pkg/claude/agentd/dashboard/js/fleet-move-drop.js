@@ -7,9 +7,11 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { Button } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
 import { setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { markInTransit } from './drop-landing.js';
+import { errText } from './cell-format.js';
 
 const html = htm.bind(h);
 
@@ -64,17 +66,14 @@ export function moveProgress(rec) {
   return { phase: 'checking' };
 }
 
-function errText(e) { return e?.message || String(e); }
-
 // MoveDropDialog confirms a dropped move and follows it until it lands, waits
 // for acceptance, or fails. Closing it never stops the move.
 export function MoveDropDialog(props) {
   const okRef = useRef(null);
   const { drop: { agent, target }, onClose } = props;
-  return html`<${Overlay} id="fleetview-move-drop" labelledby="fleetview-move-drop-title" onClose=${onClose} initialFocusRef=${okRef}>
-    <h3 id="fleetview-move-drop-title">Move ${agent.name} to ${target.group} on ${target.name}?</h3>
+  return html`<${Dialog} id="fleetview-move-drop" onClose=${onClose} initialFocusRef=${okRef} title=${html`Move ${agent.name} to ${target.group} on ${target.name}?`}>
     <${MovePanel} ...${props} okRef=${okRef} />
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // MovePanel is the body of a move: the confirm, the flagged-history choice,
@@ -172,13 +171,13 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
     }
   };
 
-  const moves = html`<button type="button" class="fa-link" data-move-drop="moves" onClick=${() => { onClose(); openPage(push ? 'moves' : 'offers'); }}>⚙ Fleet → ${push ? 'Moves' : 'Offers'}</button>`;
+  const moves = html`<${Button} size="sm" variant="link" class="fa-link" data-move-drop="moves" onClick=${() => { onClose(); openPage(push ? 'moves' : 'offers'); }}>⚙ Fleet config → ${push ? 'Moves' : 'Offers'}<//>`;
   const status = !progress ? null
     : progress.phase === 'checking' ? html`<div class="muted" role="status">⏳ Checking whether ${there} takes ${agent.name} in directly…</div>`
-    : progress.phase === 'landed' ? html`<div role="status" data-move-drop-state="landed">✅ ${agent.name} landed in group ${target.group} on ${there}${progress.agent ? html` as <code>${progress.agent}</code>` : ''}${progress.cwd ? html`, starting in <code>${progress.cwd}</code>` : ''}. The original on ${source.name} is being retired; ${push ? html`follow that in ${moves}` : `${source.name}'s ⚙ Fleet → Moves shows when it is done`}.</div>`
-    : progress.phase === 'waiting' ? html`<div role="status" data-move-drop-state="waiting">⏸ ${push ? `${there} did not take it in directly: it is waiting for ${there} to accept it (in ${there}'s ⚙ Fleet → Offers). ${agent.name} keeps running here until then; follow or abandon it in ` : `It is waiting for you to accept it in this node's `}${moves}.</div>`
+    : progress.phase === 'landed' ? html`<div role="status" data-move-drop-state="landed">✅ ${agent.name} landed in group ${target.group} on ${there}${progress.agent ? html` as <code>${progress.agent}</code>` : ''}${progress.cwd ? html`, starting in <code>${progress.cwd}</code>` : ''}. The original on ${source.name} is being retired; ${push ? html`follow that in ${moves}` : `${source.name}'s ⚙ Fleet config → Moves shows when it is done`}.</div>`
+    : progress.phase === 'waiting' ? html`<div role="status" data-move-drop-state="waiting">⏸ ${push ? `${there} did not take it in directly: it is waiting for ${there} to accept it (in ${there}'s ⚙ Fleet config → Offers). ${agent.name} keeps running here until then; follow or abandon it in ` : `It is waiting for you to accept it in this node's `}${moves}.</div>`
     : progress.phase === 'failed' ? html`<div class="fa-danger" role="alert" data-move-drop-state="failed">The move ${progress.state}${progress.error ? `: ${progress.error}` : ''}. ${agent.name} ${push ? 'is still here' : `is still on ${source.name}`}. Details in ${moves}.</div>`
-    : progress.phase === 'relayed' ? html`<div role="status" data-move-drop-state="relayed">✈ ${source.name} is sending ${agent.name} to group ${target.group} on ${target.name}: it lands at once if ${target.name}'s permissions allow, or waits for acceptance there. Follow it in ${source.name}'s ⚙ Fleet → Moves.</div>`
+    : progress.phase === 'relayed' ? html`<div role="status" data-move-drop-state="relayed">✈ ${source.name} is sending ${agent.name} to group ${target.group} on ${target.name}: it lands at once if ${target.name}'s permissions allow, or waits for acceptance there. Follow it in ${source.name}'s ⚙ Fleet config → Moves.</div>`
     : progress.phase === 'slow' ? html`<div class="muted" role="status">Still in progress; follow it in ${moves}.</div>`
     : html`<div class="fa-danger" role="alert">Could not follow the move (${progress.error}). Check ${moves}.</div>`;
 
@@ -199,8 +198,8 @@ export function MovePanel({ drop, plan, actions, peerActions, timers = globalThi
     ${status}
     <div class="modal-buttons"><span class="spacer"></span>
       ${phase === 'progress'
-        ? html`<button type="button" ref=${okRef} id="fleetview-move-drop-close" onClick=${onClose}>${progress?.phase === 'checking' ? 'Close (the move continues)' : 'Close'}</button>`
-        : html`<button type="button" id="fleetview-move-drop-cancel" onClick=${onClose}>Cancel</button>
-          <button type="button" ref=${okRef} class="confirm-danger" id="fleetview-move-drop-ok" disabled=${phase === 'sending' || (!!findings && !allow)} onClick=${send}>${phase === 'sending' ? 'Sending…' : 'Move agent'}</button>`}
+        ? html`<${Button} domRef=${okRef} id="fleetview-move-drop-close" onClick=${onClose}>${progress?.phase === 'checking' ? 'Close (the move continues)' : 'Close'}</${Button}>`
+        : html`<${Button} id="fleetview-move-drop-cancel" onClick=${onClose}>Cancel</${Button}>
+          <${Button} variant="danger" domRef=${okRef} id="fleetview-move-drop-ok" disabled=${phase === 'sending' || (!!findings && !allow)} onClick=${send}>${phase === 'sending' ? 'Sending…' : 'Move agent'}</${Button}>`}
     </div>`;
 }

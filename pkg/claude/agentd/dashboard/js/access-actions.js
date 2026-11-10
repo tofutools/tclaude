@@ -9,7 +9,7 @@ export function createAccessActions({ requestMutation, confirm, notify, openGran
     if (state.mutation.value.busy.has(key)) return false;
     const accepted = await confirm({
       title: 'Revoke sudo grant?',
-      body: 'The agent loses access to this slug immediately. They can request again if needed.',
+      body: `The agent loses access to this slug immediately. They can request again if needed.${grant.carried ? ' It also ends for all future Stewards.' : ''}`,
       meta: `#${grant.id} · ${grant.slug || ''}${grant.conv_title || grant.conv_id ? ' · ' + (grant.conv_title || grant.conv_id) : ''}`,
       okLabel: 'Revoke',
     });

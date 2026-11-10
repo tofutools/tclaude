@@ -320,37 +320,33 @@ test('Config keeps recorded sandbox details default-off with an explicit opt-in'
   await mounted.unmount();
 });
 
-test('Config keeps triggers default-off with an explicit opt-in', async (t) => {
+test('Config drops the graduated processes and triggers flags and keeps the unsigned-workflow policy', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
     harness.importDashboardModule('js/config-state.js'),
     harness.importDashboardModule('js/config-island.js'),
     harness.importDashboardModule('js/config-form-adapter.js'),
   ]);
-  let raw = '{}';
+  const raw = JSON.stringify({
+    features: { processes: true, triggers: false, groups_route_map: true },
+    processes: { refuse_unsigned_imports: true },
+  });
   const state = createConfigState({ activeTab: harness.signals.signal('groups') });
   const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
     fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
   }} />`);
 
   await adapter.loadConfigTab();
-  const checkbox = mounted.container.querySelector('#cfg-feature-triggers');
-  assert.equal(checkbox.checked, false, 'absent key loads as unchecked');
-  assert.equal(adapter.assembleConfig().features?.triggers, undefined,
-    'unchecked default stays omitted');
-
-  raw = JSON.stringify({ features: { triggers: true } });
-  await adapter.loadConfigTab();
-  assert.equal(checkbox.checked, true, 'explicit true loads as checked');
-  assert.equal(adapter.assembleConfig().features.triggers, true,
-    'checked persists the explicit opt-in');
-
-  await harness.act(() => {
-    checkbox.checked = false;
-    harness.fireEvent(checkbox, 'input');
-  });
-  assert.equal(adapter.assembleConfig().features?.triggers, undefined,
-    'unchecking removes the opt-in');
+  assert.equal(mounted.container.querySelector('#cfg-feature-processes'), null, 'no Processes flag');
+  assert.equal(mounted.container.querySelector('#cfg-feature-triggers'), null, 'no Triggers flag');
+  const refuse = mounted.container.querySelector('#cfg-processes-refuse-unsigned');
+  assert.equal(refuse.closest('[data-cfg-panel]')?.dataset.cfgPanel, 'processes', 'the policy lives under Config › Processes');
+  assert.equal(refuse.checked, true);
+  const saved = adapter.assembleConfig();
+  assert.equal(saved.features.processes, undefined, 'the old flag goes on save');
+  assert.equal(saved.features.triggers, undefined, 'the old flag goes on save');
+  assert.equal(saved.features.groups_route_map, true, 'the remaining flags stay');
+  assert.equal(saved.processes.refuse_unsigned_imports, true);
   await mounted.unmount();
 });
 
@@ -475,7 +471,17 @@ test('Config saves live wizard and slop activity-bot selections over their loade
   selectLiveOption('#cfg-dashboard-activity-bots-wizard', 'emoji', 'sprites');
   selectLiveOption('#cfg-dashboard-activity-bots-slop', 'sprites', 'emoji');
 
+  const windowControls = mounted.container.querySelector('#cfg-dashboard-window-controls');
+  assert.deepEqual([...windowControls.querySelectorAll('option')].map((option) => option.textContent), ['Standard', 'Match my OS (opt-in)', 'macOS (opt-in)', 'Windows (opt-in)', 'Linux (opt-in)', 'Classic']);
+  assert.equal(adapter.assembleConfig().dashboard.window_controls, undefined, 'Standard is the default and stays unset');
+  selectLiveOption('#cfg-dashboard-window-controls', 'auto', 'classic');
+  const snapAssist = mounted.container.querySelector('#cfg-dashboard-snap-assist');
+  assert.equal(adapter.assembleConfig().dashboard.no_snap_assist, undefined, 'Snap Assist is on by default and stays unset');
+  snapAssist.checked = false;
+
   const assembled = adapter.assembleConfig();
+  assert.equal(assembled.dashboard.window_controls, 'classic');
+  assert.equal(assembled.dashboard.no_snap_assist, true, 'unchecked turns it off');
   assert.equal(assembled.dashboard.activity_bots.wizard, 'sprites');
   assert.equal(assembled.dashboard.activity_bots.slop, 'emoji');
   await mounted.unmount();
@@ -653,6 +659,96 @@ test('Config list reconciliation preserves unrelated typing and focuses the adde
   await mounted.unmount();
 });
 
+test('Config edits the default Steward permissions with the slug list and drops an empty one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: JSON.stringify({ steward: { name: 'Jeeves' } }) }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  await harness.act(() => {});
+  const steward = adapter.assembleConfig().steward;
+  assert.equal(steward.name, 'Jeeves');
+  assert.equal('source_download' in steward, false, 'asking is the default, so it is not written out');
+  await selectValue(harness, mounted.container.querySelector('#cfg-steward-source-download'), 'each_version');
+  assert.equal(adapter.assembleConfig().steward.source_download, 'each_version');
+  await mounted.unmount();
+});
+
+test('Config edits the Steward start directory by typing or with the directory picker', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: JSON.stringify({ steward: { dir: '~/code' } }) }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  await harness.act(() => {});
+  const dir = mounted.container.querySelector('#cfg-steward-dir');
+  assert.equal(dir.value, '~/code');
+  assert.equal(adapter.assembleConfig().steward.dir, '~/code');
+
+  // The picker hands back a path; the field takes it and the form turns dirty.
+  const picks = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    picks.push({ url: String(url), body: JSON.parse(init.body) });
+    return { ok: true, json: async () => ({ path: '/home/me/repo' }) };
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  await harness.act(async () => {
+    mounted.container.querySelector('#cfg-steward-dir-browse').click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  assert.equal(picks.length, 1);
+  assert.equal(picks[0].url, '/api/pick-directory');
+  assert.equal(picks[0].body.start_dir, '~/code', 'the picker opens where the field points');
+  assert.equal(dir.value, '/home/me/repo');
+  assert.equal(state.view.value.dirty, true);
+  assert.equal(adapter.assembleConfig().steward.dir, '/home/me/repo');
+
+  dir.value = '  ';
+  assert.equal('steward' in adapter.assembleConfig(), false, 'a cleared directory is not written out');
+  await mounted.unmount();
+});
+
+test('Config follows a source choice made outside the form and keeps other edits', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter, { SOURCE_CHOICE_EVENT }] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+    harness.importDashboardModule('js/knowledge-source-island.js'),
+  ]);
+  let onDisk = { steward: { name: 'Jeeves' } };
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: JSON.stringify(onDisk) }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  await harness.act(() => {});
+  const name = mounted.container.querySelector('#cfg-steward-name');
+  name.value = 'Unsaved';
+  onDisk = { steward: { name: 'Jeeves', source_download: 'never' } };
+  await harness.act(async () => {
+    document.dispatchEvent(new CustomEvent(SOURCE_CHOICE_EVENT));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  const steward = adapter.assembleConfig().steward;
+  assert.equal(steward.source_download, 'never');
+  assert.equal(steward.name, 'Unsaved', 'the rest of the form keeps its edits');
+  await mounted.unmount();
+});
+
 test('Config teardown cancels its Preact-owned diff modal', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }] = await Promise.all([
@@ -785,6 +881,9 @@ test('Config search filters individual settings across panels', async (t) => {
   assert.equal(root.querySelector('[data-cfg-hits="terminals"]').textContent, '1');
   assert.match(root.querySelector('#cfg-filter-count').textContent, /^1 matching setting$/);
 
+  await search('steward.name');
+  assert.match(root.querySelector('#cfg-filter-count').textContent, /^1 matching setting$/);
+
   // Keys and folded "More…" guidance are searchable too.
   await search('notifications.delivery');
   assert.equal(rowFor('cfg-notif-delivery').hidden, false);
@@ -802,7 +901,7 @@ test('Config search filters individual settings across panels', async (t) => {
 
   // A matching panel title keeps the whole panel.
   await search('experimental');
-  assert.equal(rowFor('cfg-feature-triggers').hidden, false);
+  assert.equal(rowFor('cfg-feature-groups-route-map').hidden, false);
 
   await search('zzzz-nothing');
   assert.equal(root.querySelector('#cfg-filter-empty').hidden, false);
@@ -815,23 +914,17 @@ test('Config search filters individual settings across panels', async (t) => {
   await mounted.unmount();
 });
 
-test('Config moves the static remote-access certificate panel into Daemon & network and back', async (t) => {
+test('Config renders the remote-access certificate panel in Daemon & network', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }] = await Promise.all([
     harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
   ]);
-  const tab = harness.document.body.appendChild(harness.document.createElement('section'));
-  tab.id = 'tab-config';
-  const host = tab.appendChild(harness.document.createElement('div'));
-  const admin = tab.appendChild(harness.document.createElement('div'));
-  admin.id = 'cfg-remote-admin';
-  admin.className = 'cfg-section';
   const state = createConfigState({ activeTab: harness.signals.signal('groups') });
-  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`, host);
-  assert.equal(admin.parentElement.id, 'cfg-remote-admin-slot');
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  const admin = mounted.container.querySelector('#cfg-remote-admin');
+  assert.ok(admin, 'the panel renders inside the Config form');
   assert.equal(admin.closest('[data-cfg-panel]').getAttribute('data-cfg-panel'), 'daemon');
   await mounted.unmount();
-  assert.equal(admin.parentElement, tab);
 });
 
 test('Config auto-close terminal tabs matrix shows defaults and persists only overrides', async (t) => {
@@ -870,6 +963,38 @@ test('Config auto-close terminal tabs matrix shows defaults and persists only ov
   await mounted.unmount();
 });
 
+test('Config › Keyboard loads rebindings, and a recorded one is saved and marks the section dirty', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  let raw = JSON.stringify({ dashboard: { keybindings: { palette: 'Ctrl+Alt+KeyP' } } });
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  await harness.act(() => {});
+  const row = (id) => mounted.container.querySelector(`[data-cfg-panel="keyboard"] tr[data-shortcut="${id}"]`);
+  assert.match(row('palette').textContent, /changed/, 'a saved rebinding shows as changed');
+  assert.deepEqual(adapter.assembleConfig().dashboard.keybindings, { palette: 'Ctrl+Alt+KeyP' });
+
+  await harness.act(() => harness.fireEvent(row('compose').querySelector('[data-shortcut-change]'), 'click'));
+  const recorder = mounted.container.querySelector('[data-shortcut-recorder="compose"] .shortcut-recorder-keys');
+  await harness.act(() => harness.fireEvent(recorder, 'keydown', { key: 'e', code: 'KeyE', ctrlKey: true, altKey: true }));
+  const use = [...mounted.container.querySelectorAll('[data-shortcut-recorder] button')].find((b) => b.textContent.startsWith('Use'));
+  await harness.act(() => harness.fireEvent(use, 'click'));
+  assert.deepEqual(adapter.assembleConfig().dashboard.keybindings, { palette: 'Ctrl+Alt+KeyP', compose: 'Ctrl+Alt+KeyE' });
+  assert.ok(state.dirtyPanels.value.includes('keyboard'), 'the Keyboard section has unsaved changes');
+
+  await harness.act(() => harness.fireEvent(row('palette').querySelector('[data-shortcut-reset]'), 'click'));
+  await harness.act(() => harness.fireEvent(row('compose').querySelector('[data-shortcut-reset]'), 'click'));
+  assert.equal(adapter.assembleConfig().dashboard?.keybindings, undefined, 'defaults stay sparse');
+  await mounted.unmount();
+});
+
 test('Config ask sandbox defaults to global and round-trips modes and exact library profiles', async (t) => {
   const harness = await createPreactHarness(t);
   t.mock.method(globalThis, 'fetch', async (url) => ({
@@ -901,6 +1026,129 @@ test('Config ask sandbox defaults to global and round-trips modes and exact libr
   await mounted.unmount();
 });
 
+test('Config voice phrases: each has its own switch, and hands-free stays separate', async (t) => {
+  const harness = await createPreactHarness(t);
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => [] }));
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  const el = (id) => mounted.container.querySelector(`#${id}`);
+  const click = (id) => harness.act(() => {
+    el(id).checked = !el(id).checked;
+    el(id).dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  });
+  const voice = () => adapter.assembleConfig().dashboard?.voice;
+
+  adapter.populateConfigForm({});
+  assert.equal(el('cfg-voice-on-send').checked, true);
+  assert.equal(el('cfg-voice-on-wake').checked, false);
+  assert.equal(el('cfg-voice-phrase-send').disabled, false);
+  assert.equal(el('cfg-voice-phrase-wake').disabled, true);
+  assert.equal(el('cfg-voice-phrase-wake').value, 'hey agent');
+  assert.equal(voice(), undefined, 'the defaults store nothing');
+  assert.equal(el('cfg-voice-mark').checked, true, 'dictated messages are marked by default');
+  await click('cfg-voice-mark');
+  assert.deepEqual(voice(), { mark_dictated: false });
+  await click('cfg-voice-mark');
+  assert.equal(voice(), undefined);
+
+  // Unticking keeps the text, disables the field, and re-ticking restores it.
+  await click('cfg-voice-on-send');
+  assert.equal(el('cfg-voice-phrase-send').disabled, true);
+  assert.equal(el('cfg-voice-phrase-send').value, 'send now');
+  assert.deepEqual(voice().phrases, [{ action: 'send', phrase: 'send now', enabled: false }]);
+  await click('cfg-voice-on-send');
+  assert.equal(el('cfg-voice-phrase-send').disabled, false);
+  assert.equal(voice(), undefined);
+
+  // Continuous mode is off, and the stop phrase on, until changed.
+  assert.equal(el('cfg-voice-continuous').checked, false);
+  assert.equal(el('cfg-voice-on-stop').checked, true);
+  assert.equal(el('cfg-voice-phrase-stop').value, 'stop listening');
+  await click('cfg-voice-continuous');
+  assert.deepEqual(voice(), { continuous_enabled: true }, 'the default silence stores nothing');
+  el('cfg-voice-continuous-idle').value = '45';
+  assert.deepEqual(voice(), { continuous_enabled: true, continuous_idle_seconds: 45 });
+  el('cfg-voice-continuous-idle').value = '';
+  await click('cfg-voice-continuous');
+  el('cfg-voice-phrase-stop').value = 'Send  Now';
+  assert.throws(() => adapter.assembleConfig(), /send phrase and the stop phrase must differ/);
+  el('cfg-voice-phrase-stop').value = 'stop listening';
+  assert.equal(voice(), undefined);
+
+  // Pause punctuation is off until asked for, and each mark has its own switch.
+  assert.equal(el('cfg-voice-comma').checked, false);
+  assert.equal(el('cfg-voice-period').checked, false);
+  await click('cfg-voice-comma');
+  await click('cfg-voice-period');
+  assert.deepEqual(voice(), { comma_pause_seconds: 0.7, period_pause_seconds: 1.5 });
+  el('cfg-voice-comma-seconds').value = '1.5';
+  assert.throws(() => adapter.assembleConfig(), /comma pause must be shorter/);
+  el('cfg-voice-comma-seconds').value = '0.5';
+  el('cfg-voice-period-seconds').value = '4';
+  await click('cfg-voice-silence');
+  el('cfg-voice-silence-seconds').value = '3';
+  assert.throws(() => adapter.assembleConfig(), /shorter than send after silence/);
+  await click('cfg-voice-silence');
+  assert.deepEqual(voice(), { comma_pause_seconds: 0.5, period_pause_seconds: 4 });
+  await click('cfg-voice-comma');
+  await click('cfg-voice-period');
+  el('cfg-voice-comma-seconds').value = '';
+  el('cfg-voice-period-seconds').value = '';
+  el('cfg-voice-silence-seconds').value = '';
+  assert.equal(voice(), undefined);
+  adapter.populateConfigForm({ dashboard: { voice: { comma_pause_seconds: 0.9 } } });
+  assert.equal(el('cfg-voice-comma').checked, true);
+  assert.equal(el('cfg-voice-comma-seconds').value, '0.9');
+  adapter.populateConfigForm({});
+
+  // Neither wake setting moves the other; a one-sided combination gets a hint.
+  await click('cfg-voice-wake');
+  assert.equal(el('cfg-voice-on-wake').checked, false);
+  assert.equal(el('cfg-voice-wake-no-phrase').hidden, false);
+  assert.deepEqual(voice(), { wake_enabled: true });
+  await click('cfg-voice-wake');
+  await click('cfg-voice-on-wake');
+  assert.equal(el('cfg-voice-wake').checked, false);
+  assert.equal(el('cfg-voice-wake-no-phrase').hidden, true);
+  assert.equal(el('cfg-voice-wake-no-listener').hidden, false);
+  assert.deepEqual(voice(), { phrases: [{ action: 'wake', phrase: 'hey agent', enabled: true }] });
+
+  // The room warning needs a wake that can really start.
+  await click('cfg-voice-silence');
+  assert.equal(el('cfg-voice-hands-free-warning').hidden, true);
+  await click('cfg-voice-wake');
+  assert.equal(el('cfg-voice-hands-free-warning').hidden, false);
+  await click('cfg-voice-on-wake');
+  assert.equal(el('cfg-voice-hands-free-warning').hidden, true);
+
+  // A wake phrase only clashes with a send phrase that is on, and an empty
+  // phrase can't be on.
+  adapter.populateConfigForm({ dashboard: { voice: { phrases: [{ action: 'wake', phrase: 'send now', enabled: true }] } } });
+  assert.throws(() => adapter.assembleConfig(), /must differ/);
+  await click('cfg-voice-on-send');
+  assert.ok(voice().phrases);
+  el('cfg-voice-phrase-wake').value = ' ';
+  assert.throws(() => adapter.assembleConfig(), /Focused phrase: type a phrase/);
+
+  // The older ways to turn a phrase off read as off, with text to come back to.
+  adapter.populateConfigForm({ dashboard: { dictation_send_phrase: '' } });
+  assert.equal(el('cfg-voice-on-send').checked, false);
+  assert.equal(el('cfg-voice-phrase-send').value, 'send now');
+  adapter.populateConfigForm({ dashboard: { dictation_send_phrase: 'over' } });
+  assert.equal(el('cfg-voice-on-send').checked, true);
+  assert.equal(el('cfg-voice-phrase-send').value, 'over');
+  adapter.populateConfigForm({ dashboard: { voice: { phrases: [{ action: 'send', phrase: '' }] } } });
+  assert.equal(el('cfg-voice-on-send').checked, false);
+  adapter.populateConfigForm({ dashboard: { voice: { phrases: [{ action: 'send', enabled: true }] } } });
+  assert.equal(el('cfg-voice-on-send').checked, false, 'a hand-edited entry with no phrase loads');
+  await mounted.unmount();
+});
+
 test('picking a Config section is a navigation; a history location shows it', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, { CONFIG_PANELS }, core, panel] = await Promise.all([
@@ -908,7 +1156,8 @@ test('picking a Config section is a navigation; a history location shows it', as
     harness.importDashboardModule('js/config-form-markup.js'), harness.importDashboardModule('js/nav-history-core.js'),
     harness.importDashboardModule('js/config-panel.js'),
   ]);
-  assert.deepEqual(new Set(CONFIG_PANELS.map((p) => p.id)), core.KNOWN_SUBTABS.config, 'every section has a route');
+  assert.deepEqual(new Set([...CONFIG_PANELS.map((p) => p.id), ...Object.keys(panel.CONFIG_PANEL_ALIASES)]), core.KNOWN_SUBTABS.config,
+    'every section has a route, and so does every alias');
   const navigated = [];
   const onNav = (e) => navigated.push(e.detail.location);
   harness.document.addEventListener('tclaude:navigated', onNav);
@@ -926,5 +1175,38 @@ test('picking a Config section is a navigation; a history location shows it', as
   assert.equal(link('logs').getAttribute('aria-current'), 'page');
   assert.equal(mounted.container.querySelector('[data-cfg-panel="logs"]').getAttribute('data-cfg-current'), 'true');
   assert.equal(navigated.length, 1);
+  // The retired Service and Updates routes open Installation.
+  for (const alias of ['service', 'updates']) {
+    await harness.act(() => { panel.setConfigPanel(alias); });
+    assert.equal(link('installation').getAttribute('aria-current'), 'page', `/config/${alias} shows Installation`);
+    assert.equal(mounted.container.querySelector('[data-cfg-panel="installation"]').getAttribute('data-cfg-current'), 'true');
+    assert.ok(mounted.container.querySelector(`#cfg-install-${alias}`), `Installation has the ${alias} part to scroll to`);
+  }
+  await mounted.unmount();
+});
+
+test('Config lists an external steward\'s tools from the daemon, and nothing without them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  await harness.act(() => state.lifecycle.loaded({ raw: '{}' }));
+  assert.equal(mounted.container.querySelector('.cfg-tool-list'), null);
+  assert.ok(mounted.container.querySelector('#cfg-steward-external-enabled'), 'the adapter binds to it on every load');
+
+  await harness.act(() => state.lifecycle.loaded({
+    raw: '{}',
+    external_steward: { enabled: true, tools: [
+      { name: 'whoami', description: 'Show its name.', access: 'Always available' },
+      { name: 'notify_human', description: '<b>Tell</b> the human.', access: 'Needs human.notify' },
+    ] },
+  }));
+  const rows = mounted.container.querySelectorAll('.cfg-tool-list tbody tr');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /whoami.*Always available/s);
+  assert.match(rows[1].textContent, /human\.notify/);
+  assert.equal(rows[1].querySelector('b'), null, 'descriptions are text');
   await mounted.unmount();
 });

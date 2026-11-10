@@ -2,6 +2,7 @@ package sandboxpolicy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -106,4 +107,42 @@ func NormalizeImplementation(value string) (Implementation, error) {
 			value, ImplementationHarnessBuiltin, ImplementationTclaudeLayer,
 			ImplementationResourceOnly, ImplementationOff)
 	}
+}
+
+// ValidateProtectedAncestorWriteSupport refuses a harness-native launch with a
+// write rule on an ancestor of a protected root, such as a writable `~`.
+//
+// Hiding the protected root itself is not enough under a writable ancestor:
+// the agent could rename the directory between them (`mv ~/.tclaude ~/x`) and
+// reach the contents at a path no rule names. tclaude's own sandbox pins that
+// chain (a mount point on Linux, an unlink deny on macOS); a harness-native
+// sandbox only receives path lists and has no way to express the pin. The
+// harness-native implementations refuse instead of approximating it. `off` and
+// `resource-only` confine nothing, so a rule there changes nothing either way.
+func ValidateProtectedAncestorWriteSupport(
+	grants []FilesystemGrant,
+	implementation Implementation,
+	goos string,
+) error {
+	if implementation.UsesTclaudeLayer() || implementation.OmitsOSConfinement() ||
+		!slices.ContainsFunc(grants, func(grant FilesystemGrant) bool { return grant.Access == AccessWrite }) {
+		return nil
+	}
+	protected, err := ProtectedPaths()
+	if err != nil {
+		return err
+	}
+	for _, grant := range grants {
+		if grant.Access != AccessWrite {
+			continue
+		}
+		for _, root := range protected {
+			if GuardContainsOrEqual(grant.Path, root) {
+				return fmt.Errorf(
+					"unsupported_sandbox_profile_protected_ancestor_write: sandbox implementation %q on %s cannot apply the write rule for %q; it contains tclaude's protected directory %q, and keeping that directory sealed under a writable parent needs tclaude’s sandbox (tclaude-layer)",
+					implementation, goos, grant.Path, root)
+			}
+		}
+	}
+	return nil
 }

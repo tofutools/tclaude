@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -19,7 +20,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/testutil"
 	"golang.org/x/sys/unix"
 )
 
@@ -240,4 +244,146 @@ func TestRouteHelperSiblingAttachesWithCapability(t *testing.T) {
 	require.NoError(t, stale.Run(), "a revoked capability must be refused")
 	replayed := startSibling(credential, launchGeneration, http.MethodPost, http.StatusUnauthorized)
 	require.NoError(t, replayed.Run(), "a replay of a revoked capability must be refused")
+}
+
+func TestRouteHelperPendingCredentialCannotAuthorize(t *testing.T) {
+	setupTestDB(t)
+	const agentID = "agt_pending_helper"
+	token, generation, err := mintRouteHelperCredential(agentID, "")
+	require.NoError(t, err)
+	defer revokeRouteHelperCredentials("", generation)
+	req, err := http.NewRequest(http.MethodGet, "/v1/routes?host=true", nil)
+	require.NoError(t, err)
+	req.Header.Set(routeHelperCredentialHeader, token)
+	req.Header.Set("X-Tclaude-Route-Conv-ID", "forged-conversation")
+	_, present, valid := routeHelperCredentialForRequest(req)
+	require.True(t, present)
+	require.False(t, valid)
+	rec := httptest.NewRecorder()
+	buildMux().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	identityReq := httptest.NewRequest(http.MethodGet, "/v1/routes/helper-identity", nil)
+	identityReq.Header.Set(routeHelperCredentialHeader, token)
+	rec = httptest.NewRecorder()
+	buildMux().ServeHTTP(rec, identityReq)
+	require.Equal(t, http.StatusUnauthorized, rec.Code, "pending credentials cannot discover an identity")
+	attachRouteHelperConversation(agentID, "forged-conversation", generation)
+	_, _, valid = routeHelperCredentialForRequest(req)
+	require.False(t, valid, "helper headers cannot attach a conversation")
+	_, _, err = db.EnsureAgentForConvWithID("real-conversation", agentID, "test")
+	require.NoError(t, err)
+	attachRouteHelperConversation(agentID, "real-conversation", generation)
+	defer revokeRouteHelperCredentials("real-conversation", generation)
+	capability, _, valid := routeHelperCredentialForRequest(req)
+	require.True(t, valid, "early polling must not revoke an otherwise live pending capability")
+	require.Equal(t, "real-conversation", capability.convID)
+}
+
+func TestRouteHelperExpiredPendingCredentialCannotAttach(t *testing.T) {
+	setupTestDB(t)
+	const agentID = "agt_expired_helper"
+	token, generation, err := mintRouteHelperCredential(agentID, "")
+	require.NoError(t, err)
+	routeHelperCredentials.Lock()
+	capability := routeHelperCredentials.items[token]
+	capability.issuedAt = time.Now().Add(-16 * time.Minute)
+	routeHelperCredentials.items[token] = capability
+	routeHelperCredentials.Unlock()
+	_, _, err = db.EnsureAgentForConvWithID("expired-conversation", agentID, "test")
+	require.NoError(t, err)
+	attachRouteHelperConversation(agentID, "expired-conversation", generation)
+	routeHelperCredentials.RLock()
+	_, exists := routeHelperCredentials.items[token]
+	routeHelperCredentials.RUnlock()
+	require.False(t, exists)
+}
+
+func TestRouteHelperSurvivesRetriedEnrollment(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(SetWaitTimingsForTest(time.Millisecond, 0))
+	const agentID = "agt_retry_helper"
+	token, generation, err := mintRouteHelperCredential(agentID, "")
+	require.NoError(t, err)
+	defer revokeRouteHelperCredentials("", generation)
+	defer revokeRouteHelperCredentials("retry-conversation", generation)
+	params := spawnParams{AgentID: agentID, routeHelperLaunchGeneration: generation, Harness: "codex", Name: "retry-worker"}
+	group := &db.AgentGroup{ID: -1, Name: "missing-group"}
+	require.NotNil(t, finishSpawnEnrollment(group, params, "retry-conversation"))
+	group.ID, err = db.CreateAgentGroup("retry-group", "")
+	require.NoError(t, err)
+	group.Name = "retry-group"
+	require.Nil(t, finishSpawnEnrollment(group, params, "retry-conversation"))
+	req := httptest.NewRequest(http.MethodGet, "/v1/routes/helper-identity", nil)
+	req.Header.Set(routeHelperCredentialHeader, token)
+	rec := httptest.NewRecorder()
+	buildMux().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "retry-conversation")
+	WaitForBackgroundForTest()
+}
+
+type pendingRouteHelperSpawner struct {
+	args            clcommon.SpawnArgs
+	reservationSeen bool
+}
+
+func (s *pendingRouteHelperSpawner) SpawnNew(args clcommon.SpawnArgs) error {
+	s.args = args
+	pending, err := db.GetPendingSpawn(args.Label)
+	s.reservationSeen = err == nil && pending != nil && pending.AgentID == args.RouteHelperAgentID
+	return nil // The wrapper never publishes a conversation within the sync deadline.
+}
+
+func (s *pendingRouteHelperSpawner) SpawnResume(clcommon.SpawnArgs) error { return nil }
+
+func TestRouteHelperSyncTimeoutRemovesReservation(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(SetTclaudeLayerHostAvailabilitiesForTest(func() error { return nil }, func() error { return nil }))
+	groupID, err := db.CreateAgentGroup("sync-routes", "")
+	require.NoError(t, err)
+	spawner := &pendingRouteHelperSpawner{}
+	previous := Spawn
+	Spawn = spawner
+	t.Cleanup(func() { Spawn = previous })
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{Name: "private", NetworkAccess: sandboxpolicy.NetworkAccessNone}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	_, failure := executeSpawn(&db.AgentGroup{ID: groupID, Name: "sync-routes"}, spawnParams{
+		Name: "sync-worker", Harness: "codex", Cwd: testutil.CanonicalTempDir(t), Timeout: time.Millisecond,
+		SandboxImplementation: "tclaude-layer",
+		EffectiveSandbox:      &snapshot,
+	})
+	require.NotNil(t, failure)
+	require.Equal(t, "timeout", failure.Kind, failure.Msg)
+	require.NotEmpty(t, spawner.args.RouteHelperCredential)
+	require.True(t, spawner.reservationSeen, "the staged identity must be reserved before launching")
+	pending, err := db.GetPendingSpawn(spawner.args.Label)
+	require.NoError(t, err)
+	require.Nil(t, pending, "a failed synchronous caller must not leave enrollment intent")
+	req := httptest.NewRequest(http.MethodGet, "/v1/routes/helper-identity", nil)
+	req.Header.Set(routeHelperCredentialHeader, spawner.args.RouteHelperCredential)
+	_, _, valid := routeHelperCredentialForRequest(req)
+	require.False(t, valid)
+}
+
+func TestRouteHelperPredecessorCannotAttachReplacementCredential(t *testing.T) {
+	setupTestDB(t)
+	const agentID = "agt_recovered_helper"
+	_, oldGeneration, err := stageRouteHelperCredential(agentID, "old-launch")
+	require.NoError(t, err)
+	token, newGeneration, err := stageRouteHelperCredential(agentID, "new-launch")
+	require.NoError(t, err)
+	defer revokeRouteHelperCredentials("", newGeneration)
+	defer revokeRouteHelperCredentials("recovered-conversation", newGeneration)
+	_, _, err = db.EnsureAgentForConvWithID("recovered-conversation", agentID, "test")
+	require.NoError(t, err)
+	attachRouteHelperConversation(agentID, "recovered-conversation", oldGeneration)
+	req := httptest.NewRequest(http.MethodGet, "/v1/routes/helper-identity", nil)
+	req.Header.Set(routeHelperCredentialHeader, token)
+	_, _, valid := routeHelperCredentialForRequest(req)
+	require.False(t, valid, "predecessor enrollment must not attach the replacement launch's credential")
+	revokePendingRouteHelperCredentials(agentID, "old-launch")
+	attachRouteHelperConversation(agentID, "recovered-conversation", newGeneration)
+	_, _, valid = routeHelperCredentialForRequest(req)
+	require.True(t, valid)
 }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboPick } from './combobox-helpers.mjs';
 
 const templates = [{
   name: 'builders',
@@ -36,16 +37,6 @@ function deferred() {
 async function flush(harness, turns = 6) {
   await harness.act(async () => {
     for (let turn = 0; turn < turns; turn += 1) await Promise.resolve();
-  });
-}
-
-function choose(select, value) {
-  for (const option of select.options) {
-    if (option.value === value) option.setAttribute('selected', '');
-    else option.removeAttribute('selected');
-  }
-  Object.defineProperty(select, 'value', {
-    configurable: true, writable: true, value,
   });
 }
 
@@ -300,7 +291,7 @@ test('a clone dropped in the fused view lands beside its anchor in the fused ord
 async function mountGroupCreate(
   t,
   actionOverrides = {},
-  snapshot = { templates, groups },
+  snapshot = { templates, groups, group_attachments_mode: 'float' },
   confirmDiscard = async () => false,
 ) {
   const harness = await createPreactHarness(t);
@@ -338,9 +329,7 @@ test('Preact group-create owner renders preset/mirror/pinned paths and reconcile
   assert.match(host.querySelector('#group-create-template-preview').textContent, /‹group›-lead/);
   assert.equal(harness.document.activeElement.id, 'group-create-name');
 
-  const source = host.querySelector('#group-create-source');
-  choose(source, 'alpha');
-  await harness.act(() => harness.fireEvent(source, 'change'));
+  await comboPick(harness, host.querySelector('#group-create-source'), 'alpha');
   assert.equal(host.querySelector('#group-create-cwd').value, '/alpha');
   assert.match(host.querySelector('#group-create-context').value, /Mirrored group context/);
   host.querySelector('#group-create-manage-templates').click();
@@ -371,11 +360,9 @@ test('subgroup entry metadata only prefills later Group and Template choices', a
   state.open('', 'alpha');
   await flush(harness);
 
-  const groupSource = host.querySelector('#group-create-group-source');
-  choose(groupSource, 'beta');
-  await harness.act(() => harness.fireEvent(groupSource, 'change'));
-  choose(host.querySelector('#group-create-placement'), '');
-  await harness.act(() => harness.fireEvent(host.querySelector('#group-create-placement'), 'change'));
+  await comboPick(harness, host.querySelector('#group-create-group-source'), 'beta');
+  await harness.act(() => harness.fireEvent(
+    host.querySelector('#group-create-placement .choice-combobox-clear'), 'click'));
 
   [...host.querySelectorAll('.group-create-origin-options button')][2].click();
   await flush(harness);
@@ -408,7 +395,7 @@ test('Preact group-create switches Blank, Group, and Template in one visible for
 
   [...form.querySelectorAll('.group-create-origin-options button')][2].click();
   await flush(harness);
-  assert.equal(form.querySelector('#group-create-template').dataset.currentValue, 'builders');
+  assert.equal(form.querySelector('#group-create-template').dataset.value, 'builders');
   assert.equal(form.querySelector('#group-create-group-source'), null);
   assert.equal(form.querySelector('#group-create-placement').dataset.currentValue, '');
   await mounted.cleanup();
@@ -507,9 +494,7 @@ test('leaving a clone preset does not silently restore clone semantics', async (
 
   assert.equal(host.querySelector('#group-create-with-agents'), null);
   const model = await harness.importDashboardModule('js/group-create-model.js');
-  const groupSource = host.querySelector('#group-create-group-source');
-  choose(groupSource, 'beta');
-  await harness.act(() => harness.fireEvent(groupSource, 'change'));
+  await comboPick(harness, host.querySelector('#group-create-group-source'), 'beta');
   await harness.input(host.querySelector('#group-create-name'), 'beta-prefill');
 
   let submitted;
@@ -665,4 +650,23 @@ test("group-create on another node, or on a peer's page, locks this machine's fo
   await flush(harness);
   assert.equal(host.querySelector('#group-create-cwd-browse').disabled, true, "a peer's page has no folder picker of its own");
   await mounted.cleanup();
+});
+
+test('the link fields follow the group attachments feature', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createGroupCreateState } = await harness.importDashboardModule('js/group-create-state.js');
+  for (const [mode, shown] of [['off', false], [undefined, false], ['float', true], ['fixed', true]]) {
+    const state = createGroupCreateState({ getSnapshot: () => ({ templates: [], groups: [], group_attachments_mode: mode }) });
+    state.open();
+    assert.equal(state.dialog.value.showAttachment, shown, `new group, mode ${mode}`);
+    state.close();
+  }
+
+  // The setting is this node's, and a peer's snapshot leaves it out.
+  const nodeApi = await harness.importDashboardModule('js/node-api.js');
+  const release = nodeApi.setNodeSnapshotSource((id) => (id === 'inst_forge' ? { templates: [], groups: [{ name: 'build' }] } : null));
+  const state = createGroupCreateState({ getSnapshot: () => ({ templates: [], groups: [], group_attachments_mode: 'float' }) });
+  state.open('', 'build', 'inst_forge');
+  assert.equal(state.dialog.value.showAttachment, true, 'on a peer');
+  release();
 });

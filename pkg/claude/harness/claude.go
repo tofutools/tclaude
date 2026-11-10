@@ -16,7 +16,6 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // init registers the Claude Code harness as the default. Claude Code is
@@ -27,6 +26,7 @@ func init() {
 	Register(&Harness{
 		Name:                      DefaultName,
 		DisplayName:               "Claude Code",
+		MailMidTurn:               true,
 		AvailabilityCredentialEnv: []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"},
 		ModelProxyProtocol:        "anthropic-messages-v1",
 		Spawn:                     claudeSpawner{},
@@ -34,17 +34,16 @@ func init() {
 		OneShotReplay:             OneShotReplayDirect,
 		Models:                    claudeModels{},
 		ModelTransport: staticModelTransport{
-			provider:    "anthropic",
-			template:    "net-anthropic",
-			baseURLHost: "api.anthropic.com",
-			destinations: []sandboxpolicy.NetworkAllowEntry{{
-				Domain: "api.anthropic.com", Ports: []int{443},
-			}},
+			provider:     "anthropic",
+			template:     ClaudeNetworkPack,
+			baseURLHost:  claudeAPIHost,
+			destinations: ClaudeAPIDestinations(),
 		},
 		Life:       claudeLifecycle{},
 		Convs:      claudeConvStore{},
 		History:    jsonlHistory{harness: DefaultName},
 		Transcript: claudeTranscript{},
+		Compaction: claudeCompactionProof{},
 		// Claude Code's OS sandbox lives in settings.json, not a launch flag;
 		// claudeSandbox models a small inherit/on/off tri-state that the
 		// spawner translates to a per-session `--settings` override (the

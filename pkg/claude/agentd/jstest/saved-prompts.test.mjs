@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
+import { comboChoose } from './combobox-helpers.mjs';
 
 async function setup(t, { prompts = [{ name: 'review', body: 'Review this.\n' }], confirmDiscard = async () => true } = {}) {
   const harness = await createPreactHarness(t);
@@ -39,6 +40,12 @@ async function flush(harness) {
 
 async function select(harness, host, label, value) {
   const field = host.querySelector(`[aria-label="${label}"]`);
+  const box = field?.closest('.choice-combobox');
+  if (box) {
+    await comboChoose(harness, box, value);
+    await flush(harness);
+    return;
+  }
   // LinkeDOM does not implement the browser's writable select.value.
   Object.defineProperty(field, 'value', { configurable: true, writable: true, value });
   await harness.act(async () => { harness.fireEvent(field, 'change'); await Promise.resolve(); });
@@ -102,7 +109,7 @@ test('dirty prompt navigation and dismissal require confirmation, with errors re
   await harness.input(host.querySelector('[aria-label="Prompt name"]'), 'draft');
   await select(harness, host, 'Edit saved prompt', 'review');
   assert.equal(host.querySelector('[aria-label="Prompt name"]').value, 'draft');
-  assert.equal(host.querySelector('[aria-label="Edit saved prompt"]').value, '');
+  assert.equal(host.querySelector('#saved-prompts-edit').dataset.value, '', 'the choice stays on the draft until the discard is confirmed');
   t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 403, text: async () => 'write refused' }));
   await harness.input(host.querySelector('[aria-label="Prompt body"]'), 'keep this');
   await harness.act(async () => { harness.getByRole(host, 'button', { name: 'Save prompt' }).click(); await Promise.resolve(); });

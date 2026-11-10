@@ -1,9 +1,15 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { Button, Input, Select } from './ui-components.js';
 import { profileSummary, getDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
-import { pickDirectory } from './helpers.js';
-import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
+import { pickDirectory, shortId } from './helpers.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
+import { GroupCombobox } from './group-picker.js';
+import { ProfileCombobox } from './profile-picker.js';
+import { RoleCombobox, TemplateCombobox } from './registry-picker.js';
+import { BranchCombobox, WorktreeCombobox } from './git-picker.js';
 import { wizWord } from './slop.js';
 import { ProfileChips, useUsageProfileLink } from './usage-rules.js';
 import { usageRulesApi } from './usage-rules-actions.js';
@@ -23,7 +29,8 @@ import {
 } from './template-management-model.js';
 import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
-import { AgentImportPreview, MemberLandings, agentImportParams, historyCutNeedsConfirm, offlineImportBlocker } from './paf-dialogs.js';
+import { keepParams } from './paf-model.js';
+import { AgentImportPreview, CarriedWorkflows, ImportConfirmList, ImportOutcome, ImportWarnings, MemberLandings, agentImportParams, historyCutNeedsConfirm, memberCutsToConfirm, offlineImportBlocker } from './paf-dialogs.js';
 
 const html = htm.bind(h);
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -48,7 +55,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
   );
   const waves = templateWaveCount(template);
   return html`<div
-    class="template-card"
+    class="template-card ui-card"
     data-key=${template.name}
     data-template=${template.name}
   >
@@ -59,7 +66,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
         >${agents.length}
         <${Words}
           plain=${`agent${agents.length === 1 ? '' : 's'}`}
-          wizard=${`familiar${agents.length === 1 ? '' : 's'}`}
+          wizard=${`hero${agents.length === 1 ? '' : 'es'}`}
       /></span>
       ${template.work_pattern?.length > 0 &&
       html`<span
@@ -104,8 +111,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
         >🌊 ${waves} <${Words} plain="waves" wizard="ranks"
       /></span>`}
       <span class="tc-actions"
-        ><button
-          class="primary"
+        ><${Button} size="sm" variant="primary"
           data-tact="deploy"
           data-template=${template.name}
           title=${wizWord(
@@ -114,16 +120,12 @@ function TemplateCard({ template, groups, profiles, actions }) {
           )}
           onClick=${() => actions.openTemplateDeploy(template.name)}
         >
-          <${Words} plain="🚀 deploy" wizard="🧙 summon" /></button
-        ><button
-          class="tool"
+          <${Words} plain="🚀 deploy" wizard="🧙 summon" /><//><${Button} size="sm"
           data-tact="edit"
           data-template=${template.name}
           onClick=${() => actions.openTemplateEditor(template)}
         >
-          edit</button
-        ><button
-          class="tool"
+          edit<//><${Button} size="sm"
           data-tact="duplicate"
           data-template=${template.name}
           title=${wizWord(
@@ -132,9 +134,7 @@ function TemplateCard({ template, groups, profiles, actions }) {
           )}
           onClick=${() => actions.openTemplateDuplicate(template.name)}
         >
-          <${Words} plain="⧉ duplicate" wizard="🪞 mirror" /></button
-        ><button
-          class="tool"
+          <${Words} plain="⧉ duplicate" wizard="🪞 mirror" /><//><${Button} size="sm"
           data-tact="export"
           data-template=${template.name}
           title=${wizWord(
@@ -143,15 +143,13 @@ function TemplateCard({ template, groups, profiles, actions }) {
           )}
           onClick=${() => actions.exportTemplate(template.name)}
         >
-          <${Words} plain="⇪ export" wizard="📜 inscribe" /></button
-        ><button
-          class="tool"
+          <${Words} plain="⇪ export" wizard="📜 inscribe" /><//><${Button} size="sm" variant="ghost danger"
           data-tact="delete"
           data-template=${template.name}
           onClick=${() => actions.removeTemplate(template.name)}
         >
           delete
-        </button></span
+        <//></span
       >
     </div>
     ${agents.length > 0 &&
@@ -205,7 +203,7 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
   const list = filterTemplates(current.templates, current.templateFilter);
   const filtered = !!current.templateFilter.trim();
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'templates-manage-modal',
       manage: true,
@@ -222,13 +220,12 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
       <p class="manage-intro">
         <${Words}
           plain="Reusable blueprints for a working group — a name, shared context and an ordered list of agent specs. Instantiate one to spawn a whole team in a single shot."
-          wizard="Reusable summoning circles for a whole party — a name, shared lore and an ordered roster of familiars. Cast one to summon the entire party in a single rite."
+          wizard="Reusable summoning circles for a whole party — a name, shared lore and an ordered roster of heroes. Cast one to summon the entire party in a single rite."
         />
       </p>
       <div class="filter-bar">
-        <input
+        <${Input}
           id="filter-templates"
-          type="text"
           value=${current.templateFilter}
           onInput=${(event) =>
             state.setTemplateFilter(event.currentTarget.value)}
@@ -240,7 +237,7 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
           >${filtered
             ? `${list.length} / ${current.templates.length}`
             : current.templates.length}</span
-        ><button
+        ><button data-ui-exempt
           class="clear-filter"
           id="filter-templates-clear"
           title="Clear filter"
@@ -248,9 +245,8 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
         >
           ×</button
         ><span class="spacer"></span>
-        <button
+        <${Button}
           id="scribe-templates-open"
-          class="tool"
           title="Summon a chat agent (a scribe) that edits your templates for you — pre-briefed and already holding the templates.manage permission. Tell it what to change in plain words; its edits appear here live."
           onClick=${actions.editTemplatesWithAgent}
         >
@@ -258,39 +254,36 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
             plain="🤖 Edit with agent"
             wizard="📜 Dictate to a scribe"
           />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="template-from-group-open"
-          class="tool"
           title="Snapshot an existing group's structure — roles, owner, per-agent permissions, context — into a new reusable template"
           onClick=${actions.openTemplateFromGroup}
         >
           <${Words} plain="⤓ from a group" wizard="⤓ trace a party" />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="template-import-open"
-          class="tool"
           title="Import a template from a portable .task-force.json file (from ⇪ export) — share task forces between machines or with friends"
           onClick=${actions.openTemplateImport}
         >
           <${Words} plain="⤒ import" wizard="📜 read a scroll" />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="starters-open"
-          class="tool"
           title="Browse bundled starter task forces — copy a curated, ready-to-run team into your own templates list (it does not spawn a team; deploy or edit it afterwards)"
           onClick=${actions.openTemplateStarters}
         >
           <${Words} plain="⭐ starters" wizard="⭐ conjure a preset party" />
-        </button>
-        <button
+        <//>
+        <${Button}
           id="template-create-open"
-          class="primary"
+          variant="primary"
           title="Define a new group template"
           onClick=${() => actions.openTemplateEditor()}
         >
           <${Words} plain="+ new template" wizard="+ chalk a new circle" />
-        </button>
+        <//>
       </div>
       <div id="templates-list">
         ${list.length
@@ -304,7 +297,7 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
                   actions=${actions}
                 />`,
             )
-          : html`<div class="template-empty">
+          : html`<div class="ui-empty-block">
               ${current.templates.length
                 ? html`<${Words}
                     plain="No templates match the filter."
@@ -318,13 +311,12 @@ export function TemplateManager({ current, state, actions, confirmDiscard }) {
       </div>
       <div class="modal-buttons">
         <span class="spacer"></span
-        ><button
+        ><${Button}
           id="templates-manage-close"
-          type="button"
           onClick=${state.closeTemplateManager}
         >
           Close
-        </button>
+        </${Button}>
       </div>
     `,
   );
@@ -361,7 +353,7 @@ export function TemplateDuplicateDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-duplicate-modal',
       labelledby: 'template-duplicate-title',
@@ -370,7 +362,7 @@ export function TemplateDuplicateDialog({
       dirty: name !== `${descriptor.source.name}-copy`,
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-duplicate-title">
         <${Words} plain="Duplicate a template" wizard="🪞 Mirror the circle" />
@@ -383,7 +375,7 @@ export function TemplateDuplicateDialog({
           step, description and default context. Only the name changes.</span
         ><span class="tpl-word-wizard"
           >Chalks an identical twin of <b>the circle</b> under a new name —
-          every familiar, rank, quest chapter, drumbeat, rite, lore and shared
+          every hero, rank, quest chapter, drumbeat, rite, lore and shared
           context. Only the name changes.</span
         >
       </div>
@@ -400,25 +392,23 @@ export function TemplateDuplicateDialog({
           autofocus
           data-select-on-focus
       /></label>
-      <div class="cron-create-error" id="template-duplicate-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="template-duplicate-error" role="alert">
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-duplicate-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-duplicate-submit"
-          class="primary"
           disabled=${busy}
           onClick=${submit}
         >
           ${busy ? 'Duplicating…' : 'Duplicate template'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -450,7 +440,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-import-modal',
       labelledby: 'template-import-title',
@@ -458,7 +448,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
       dirty: !!(file || raw || as || update),
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-import-title">
         <${Words}
@@ -514,25 +504,23 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
           >Overwrite if it already exists</span
         ></label
       >
-      <div class="cron-create-error" id="template-import-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="template-import-error" role="alert">
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-import-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-import-submit"
-          class="primary"
           disabled=${busy}
           onClick=${submit}
         >
           ${busy ? 'Importing…' : 'Import'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -574,9 +562,11 @@ export function TemplateFromGroupDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-from-group-modal',
+      // Update mode re-labels the wizard lever (dashboard.css .tfg-updating).
+      overlayClass: updating ? 'tfg-updating' : '',
       labelledby: 'template-from-group-title',
       onClose: state.closeDialog,
       onSubmitHotkey: busy ? null : submit,
@@ -585,7 +575,7 @@ export function TemplateFromGroupDialog({
         group !== (descriptor.presetGroup || descriptor.groups[0] || ''),
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-from-group-title">
         <${Words}
@@ -596,16 +586,12 @@ export function TemplateFromGroupDialog({
       <label class="cron-create-row"
         ><span class="cron-create-label"
           ><${Words} plain="Group" wizard="Party" /></span
-        ><select
+        ><${GroupCombobox}
           id="template-from-group-group"
           value=${group}
-          onChange=${(event) => setGroup(event.currentTarget.value)}
-        >
-          ${descriptor.groups.map(
-            (value) =>
-              html`<option key=${value} value=${value}>${value}</option>`,
-          )}
-        </select></label
+          groups=${descriptor.groups}
+          onChange=${setGroup}
+        /></label
       ><label class="cron-create-row"
         ><span class="cron-create-label">Template name</span
         ><input
@@ -629,27 +615,25 @@ export function TemplateFromGroupDialog({
       html`<div class="modal-meta" id="template-from-group-update-note">
         <${Words}
           plain=${`⚠ A template “${name.trim()}” already exists — saving re-snapshots it in place; curated per-agent task briefs are kept for matching agents.`}
-          wizard=${`⚠ A circle “${name.trim()}” is already chalked — tracing redraws it in place; curated familiar briefs are kept for matching names.`}
+          wizard=${`⚠ A circle “${name.trim()}” is already chalked — tracing redraws it in place; curated hero briefs are kept for matching names.`}
         />
       </div>`}
       <div
-        class="cron-create-error"
+        class="cron-create-error ui-error-box"
         id="template-from-group-error"
         role="alert"
       >
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-from-group-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-from-group-submit"
-          class="primary"
           disabled=${busy}
           onClick=${submit}
         >
@@ -658,7 +642,7 @@ export function TemplateFromGroupDialog({
             : updating
               ? 'Update template'
               : 'Save as template'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -685,7 +669,7 @@ export function TemplateStartersDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'starters-modal',
       labelledby: 'starters-title',
@@ -699,12 +683,12 @@ export function TemplateStartersDialog({
       <div class="modal-meta">
         <${Words}
           plain="Copies a ready-made team into your own templates list — it does not spawn anything yet. Copying never overwrites a template of the same name."
-          wizard="Copies a ready-made party into your own circles — it summons no familiars yet. Copying never overwrites a circle of the same name."
+          wizard="Copies a ready-made party into your own circles — it summons no heroes yet. Copying never overwrites a circle of the same name."
         />
       </div>
       <div id="starters-list" class="starters-list">
         ${descriptor.request.phase === 'loading'
-          ? html`<div class="template-empty">
+          ? html`<div class="ui-empty-block">
               <${Words} plain="Loading starters…" wizard="Conjuring presets…" />
             </div>`
           : rows.length
@@ -712,7 +696,7 @@ export function TemplateStartersDialog({
                 (starter) =>
                   html`<div
                     key=${starter.name}
-                    class="starter-row"
+                    class="starter-row ui-card"
                     data-starter=${starter.name}
                   >
                     <div class="starter-head">
@@ -737,8 +721,7 @@ export function TemplateStartersDialog({
                       >`}
                     </div>
                     <div class="starter-actions">
-                      <button
-                        class="tool"
+                      <${Button} size="sm"
                         data-sact="install"
                         data-starter=${starter.name}
                         disabled=${!!busy}
@@ -752,30 +735,30 @@ export function TemplateStartersDialog({
                             ? 'Copying…'
                             : '⭐ copy into my circles'}
                         />
-                      </button>
+                      <//>
                     </div>
                   </div>`,
               )
             : descriptor.request.phase === 'ready' &&
-              html`<div class="template-empty">
+              html`<div class="ui-empty-block">
                 <${Words}
                   plain="No starters bundled."
                   wizard="No presets bound."
                 />
               </div>`}
       </div>
-      <div class="cron-create-error" id="starters-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="starters-error" role="alert">
         ${visibleError}
       </div>
       <div class="modal-buttons">
         <span class="spacer"></span
-        ><button
+        ><${Button}
           id="starters-close"
           disabled=${!!busy}
           onClick=${state.closeDialog}
         >
           Close
-        </button>
+        </${Button}>
       </div>`,
   );
 }
@@ -803,7 +786,7 @@ function GroupImportPreview({ inspection, into }) {
     ['Format version', `v${inspection.format_version} — supported`],
   ];
   return html`<div class="group-import-preview" id="group-import-preview">
-    <div class="gi-head">Archive contents</div>
+    <div class="ui-eyebrow gi-head">Archive contents</div>
     ${rows.map(
       ([key, value], index) =>
         html`<div key=${key} class="gi-row">
@@ -813,7 +796,7 @@ function GroupImportPreview({ inspection, into }) {
           >
         </div>`,
     )}
-    <div class="gi-sep gi-head">Collisions on this machine</div>
+    <div class="ui-eyebrow gi-sep gi-head">Collisions on this machine</div>
     ${collisions.length
       ? html`<div class="gi-warn">
             ⚠ ${collisions.length}
@@ -827,7 +810,7 @@ function GroupImportPreview({ inspection, into }) {
                 html`<li key=${collision.conv_id}>
                   ${collision.title || collision.conv_id}
                   <span class="gi-k"
-                    >(${(collision.conv_id || '').slice(0, 8)})</span
+                    >(${shortId(collision.conv_id)})</span
                   >
                 </li>`,
             )}
@@ -862,16 +845,25 @@ function GroupImportPreview({ inspection, into }) {
 // decides whether it previews a group (.zip or group PAF) or an agent (agent
 // PAF or legacy agent bundle). The group path is tried first, since that is
 // what the dialog always imported; anything it refuses is tried as an agent.
-export function GroupImportDialog({ state, actions, confirmDiscard, initialFile = null }) {
+export function GroupImportDialog({ state, actions, confirmDiscard, initialFile = null, landing: performer = null }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [file, setFile] = useState(initialFile);
   const [into, setInto] = useState('');
   const [as, setAs] = useState('');
   const [landing, setLanding] = useState({ harness: '', model: '', members: {} });
-  const [kind, setKind] = useState('');
+  const [confirmCut, setConfirmCut] = useState(false);
+  const [landed, setLanded] = useState(null);
+  // What the human changed on the confirm list; the rest stays as previewed.
+  const [overrides, setOverrides] = useState({});
+  useEffect(() => setOverrides({}), [file]);
+  const reveal = (item) => actions.revealImportValue(file, item);
+  // A new landing choice is a new cut: its confirmation is asked afresh.
+  useEffect(() => setConfirmCut(false), [landing, file]);
+  // A performer picked from a workflow review is an agent from the start.
+  const [kind, setKind] = useState(performer ? 'agent' : '');
   const [inspection, setInspection] = useState(null);
   const [agentPreview, setAgentPreview] = useState(null);
-  const [choices, setChoices] = useState({ name: '', group: '', cwd: '', keepPaths: false, harness: '', model: '', confirmHistoryLoss: false });
+  const [choices, setChoices] = useState({ name: '', group: '', cwd: '', keepPaths: false, harness: '', model: '', confirmHistoryLoss: false, agent: performer?.agent || '', role: performer?.role || '' });
   const [phase, setPhase] = useState('idle');
   const [error, setError] = useState('');
   const request = useRef(0);
@@ -925,7 +917,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
               setPhase('error');
               // An agent PAF the group importer refused: the agent error
               // (say, a harness that is not available here) says more.
-              setError(message(/group PAF/.test(message(err)) ? agentErr : err));
+              setError(message(/group PAF|not a group-export archive/.test(message(err)) ? agentErr : err));
             }
             return;
           }
@@ -947,7 +939,8 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     return () => {
       clearTimeout(timer);
     };
-  }, [file, as, landing, kind === 'agent' ? JSON.stringify({ ...choices, name: '', group: '' }) : '']);
+  // The list depends on the landing group, so a new group previews again.
+  }, [file, as, landing, kind === 'agent' ? JSON.stringify({ ...choices, name: '' }) : '']);
   const pickFile = (next) => {
     setPhase('idle');
     setKind('');
@@ -960,7 +953,8 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     kind === 'group' &&
     inspection?.target_name_valid &&
     !inspection?.group_name_taken &&
-    !!into.trim();
+    !!into.trim() &&
+    (confirmCut || memberCutsToConfirm(inspection?.landings).length === 0);
   const agentReady =
     kind === 'agent' &&
     !!agentPreview &&
@@ -970,13 +964,15 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     // and a large history cut until the importer accepts it.
     (!historyCutNeedsConfirm(agentPreview) || !!choices.confirmHistoryLoss);
   const busy = phase === 'importing' || phase === 'loading' || phase === 'refreshing';
-  const offlineBlocker = kind === 'agent' ? offlineImportBlocker(agentPreview, choices) : '';
+  const offlineBlocker = kind === 'agent' ? offlineImportBlocker(agentPreview) : '';
   const submit = async (start = false) => {
     setError('');
     setPhase('importing');
     try {
-      if (kind === 'agent') await actions.importAgentPAF(file, agentImportParams(choices, true, start));
-      else await actions.importGroup(file, into.trim(), as.trim(), landing);
+      const outcome = kind === 'agent'
+        ? await actions.importAgentPAF(file, { ...agentImportParams(choices, true, start), ...keepParams(agentPreview?.confirm, overrides) })
+        : await actions.importGroup(file, into.trim(), as.trim(), { ...landing, confirmHistoryLoss: confirmCut }, keepParams(inspection?.confirm, overrides));
+      if (outcome?.warnings?.length || outcome?.kept?.length || outcome?.dropped?.length) setLanded(outcome);
     } catch (err) {
       setError(
         kind === 'agent'
@@ -987,8 +983,30 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     }
   };
   const ready = kind === 'agent' ? agentReady : groupReady;
+  if (landed) {
+    return h(
+      Dialog,
+      {
+        id: 'group-import-modal',
+        labelledby: 'group-import-title',
+        onClose: state.closeDialog,
+        onSubmitHotkey: state.closeDialog,
+        dirty: false,
+        confirmDiscard,
+        guard: { requestClose, registerClose },
+      },
+      html`<h3 id="group-import-title">Imported</h3>
+        <div class="modal-meta" id="group-import-result-summary">${landed.summary}</div>
+        <${ImportOutcome} kept=${landed.kept} dropped=${landed.dropped} />
+        <${ImportWarnings} id="group-import-result" title="Check these" warnings=${landed.warnings} />
+        <div class="modal-buttons">
+          <span class="spacer"></span>
+          <${Button} variant="primary" id="group-import-done" onClick=${state.closeDialog}>Done</${Button}>
+        </div>`,
+    );
+  }
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'group-import-modal',
       labelledby: 'group-import-title',
@@ -999,7 +1017,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
       dirty: !!(file || into || as),
       blocked: phase === 'importing',
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="group-import-title">
         <${Words}
@@ -1009,8 +1027,8 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
       </h3>
       <div class="modal-meta">
         ${kind === 'agent'
-          ? 'Imports the agent as a new one (a fork): a new identity, landed on the harness you choose. Its permissions and ownership are advisory only.'
-          : 'Recreates a group exported with ⤓ export — its members, roles, owners, permissions, cron jobs, message history and every conversation. Imported agents land offline. The import is transactional: if anything fails, nothing is written. An agent .paf previews as an agent.'}
+          ? 'Imports the agent as a new one (a fork): a new identity, landed on the harness you choose. You choose below what it keeps of what the file asks for.'
+          : 'Recreates a group exported with ⤓ export — its members, roles, message history and every conversation. You choose below which of its owners, permissions, environment and enabled cron jobs to keep; a sudo grant is never applied. Imported agents land offline. The import is transactional: if anything fails, nothing is written. An agent .paf previews as an agent.'}
       </div>
       <label class="cron-create-row"
         ><span class="cron-create-label">File</span
@@ -1019,7 +1037,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
           type="file"
           accept=".zip,.paf,application/zip,application/vnd.tclaude.paf+zip"
           onChange=${(event) => pickFile(event.currentTarget.files?.[0] || null)}
-          autofocus />${file && initialFile === file && html`<span class="paf-hint" id="group-import-dropped">${file.name}</span>`}</label
+          autofocus />${file && initialFile === file && html`<span class="paf-hint ui-hint" id="group-import-dropped">${file.name}</span>`}</label
       >${kind !== 'agent' && html`<label class="cron-create-row"
         ><span class="cron-create-label">Into dir</span
         ><input
@@ -1042,10 +1060,10 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
           spellcheck="false" /></label
       >`}${phase === 'loading' &&
       html`<div class="group-import-preview" id="group-import-preview">
-        <div class="gi-head">Inspecting file…</div>
+        <div class="ui-eyebrow gi-head">Inspecting file…</div>
       </div>`}${phase === 'error' &&
       html`<div class="group-import-preview" id="group-import-preview">
-        <div class="gi-head">File</div>
+        <div class="ui-eyebrow gi-head">File</div>
         <div class="gi-verdict gi-bad">✗ ${error}</div>
         <div class="gi-bad">
           This file is not an importable group or agent — pick a .zip or .paf
@@ -1053,36 +1071,38 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
         </div>
       </div>`}${kind === 'group' && inspection &&
       html`<${GroupImportPreview} inspection=${inspection} into=${into} />
-        <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} />`}${kind === 'agent' && agentPreview &&
-      html`<${AgentImportPreview} preview=${agentPreview} choices=${choices} setChoices=${setChoices} />`}
-      <div class="cron-create-error" id="group-import-error" role="alert">
+        <${CarriedWorkflows} workflows=${inspection.carried_workflows} file=${file} />
+        <${ImportConfirmList} confirm=${inspection.confirm} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />
+        <${ImportWarnings} id="group-import-warnings" title="This file will not get" warnings=${inspection.confirm?.can_keep && inspection.confirm.items?.length ? inspection.confirm.warnings : inspection.file_warnings} />
+        <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} confirmCut=${confirmCut} setConfirmCut=${setConfirmCut} />`}${kind === 'agent' && agentPreview &&
+      html`<${AgentImportPreview} preview=${agentPreview} choices=${choices} setChoices=${setChoices} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />
+        <${CarriedWorkflows} workflows=${agentPreview.carried_workflows} file=${file} />`}
+      <div class="cron-create-error ui-error-box" id="group-import-error" role="alert">
         ${phase === 'error' ? '' : error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="group-import-cancel"
           disabled=${phase === 'importing'}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
+          Cancel</${Button}><span class="spacer"></span
         >${kind === 'agent' &&
-        html`<button
+        html`<${Button}
           id="agent-import-start"
           disabled=${!ready || busy}
           title="Import the agent and start it now"
           onClick=${() => submit(true)}
         >
           Import & start
-        </button>`}<button
+        </${Button}>`}<${Button} variant="primary"
           id="group-import-submit"
-          class="primary"
           disabled=${!ready || busy || !!offlineBlocker}
           title=${kind === 'agent' && !choices.group ? 'Pick the group the agent joins' : offlineBlocker || (kind === 'agent' ? 'Import the agent offline with its conversation; wake it to start' : '')}
           onClick=${() => submit(false)}
         >
           ${phase === 'importing' ? 'Importing…' : kind === 'agent' ? 'Import (offline)' : 'Import'}
-        </button>
+        </${Button}>
       </div>`,
   );
 }
@@ -1109,7 +1129,7 @@ export function GroupContextDialog({
     }
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'group-context-modal',
       labelledby: 'group-context-title',
@@ -1118,7 +1138,7 @@ export function GroupContextDialog({
       dirty: context !== descriptor.context,
       blocked: busy,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="group-context-title">
         <${Words}
@@ -1129,7 +1149,7 @@ export function GroupContextDialog({
       <div class="modal-meta" id="group-context-meta">
         group: ${descriptor.group}
       </div>
-      <p class="modal-hint">
+      <p class="modal-hint ui-hint">
         Shared guidance auto-injected into every agent spawned into this group,
         right after the spawn welcome. Multi-line is fine. Leave empty to clear
         it.
@@ -1147,25 +1167,23 @@ export function GroupContextDialog({
           autofocus
         />
       </label>
-      <div class="cron-create-error" id="group-context-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="group-context-error" role="alert">
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="group-context-cancel"
           disabled=${busy}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="group-context-submit"
-          class="primary"
           disabled=${busy}
           onClick=${submit}
         >
           ${busy ? 'Saving…' : 'Save'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }
@@ -1207,10 +1225,10 @@ function suggestedGroup(name, groups) {
 
 function DeployRosterPreview({ template, prefix, profiles, defaultProfile }) {
   if (!template?.agents?.length)
-    return html`<span class="tp-empty"
+    return html`<span class="ui-empty"
       ><${Words}
         plain="this template has no agents"
-        wizard="this circle names no familiars"
+        wizard="this circle names no heroes"
     /></span>`;
   const shown = prefix.trim() || '‹group›';
   const fallback = findProfileByHandle(profiles, defaultProfile);
@@ -1250,6 +1268,7 @@ export function TemplateDeployDialog({
 }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const groups = current.templateGroups;
+  const groupNames = useMemo(() => (groups || []).map((group) => group?.name), [groups]);
   const initialTemplate =
     current.templates.find((item) => item.name === descriptor.presetName) ||
     current.templates[0];
@@ -1573,34 +1592,20 @@ export function TemplateDeployDialog({
       setBusy(false);
     }
   };
-  const options = wtData?.is_repo
-    ? [
-        { value: '', label: '(no worktree — use Default cwd above)' },
-        ...(wtData.worktrees || []).map((item) => ({
-          value: `wt:${item.path}`,
-          label: `${item.branch || '(detached)'}${item.is_main ? ' [main]' : ''} — ${item.path}`,
-          branch: item.branch || '',
-        })),
-        { value: WT_NEW, label: '+ create new worktree…' },
-      ]
-    : [
-        {
-          value: '',
-          label:
-            wtPhase === 'loading'
-              ? 'loading…'
-              : repo.trim()
-                ? wtData?.sub_repos?.length
-                  ? '(not a git repo — pick a sub-repo above)'
-                  : '(not a git repo — worktrees unavailable)'
-                : '(enter a CWD to enable worktrees)',
-        },
-      ];
+  const worktreeNoneLabel = wtData?.is_repo
+    ? '(no worktree — use Default cwd above)'
+    : wtPhase === 'loading'
+      ? 'loading…'
+      : repo.trim()
+        ? wtData?.sub_repos?.length
+          ? '(not a git repo — pick a sub-repo above)'
+          : '(not a git repo — worktrees unavailable)'
+        : '(enter a CWD to enable worktrees)';
   const showNew = !worktreesHidden && wtData?.is_repo && worktree === WT_NEW;
   const worktreeLoading =
     !reinforcing && wtPhase === 'loading' && !!(worktree || perAgent);
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-deploy-modal',
       labelledby: 'template-deploy-title',
@@ -1609,14 +1614,14 @@ export function TemplateDeployDialog({
       dirty,
       blocked: busy || worktreeLoading,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
     },
     html`<h3 id="template-deploy-title">
         <${Words} plain="Deploy a task force" wizard="🧙 Summon a hero party" />
       </h3>
       ${dropGroup &&
       html`<div
-        class="deploy-mode"
+        class="deploy-mode ui-card"
         id="template-deploy-mode"
         role="radiogroup"
         aria-label="Drop mode"
@@ -1648,18 +1653,12 @@ export function TemplateDeployDialog({
       </div>`}<label class="cron-create-row"
         ><span class="cron-create-label"
           ><${Words} plain="Template" wizard="Circle" /></span
-        ><select
+        ><${TemplateCombobox}
           id="template-deploy-template"
           value=${templateName}
-          onChange=${(event) => chooseTemplate(event.currentTarget.value)}
-        >
-          ${current.templates.map(
-            (item) =>
-              html`<option key=${item.name} value=${item.name}>
-                ${item.name}
-              </option>`,
-          )}
-        </select></label
+          entries=${current.templates}
+          onChange=${chooseTemplate}
+        /></label
       ><label class="cron-create-row"
         ><span class="cron-create-label"
           ><${Words} plain="Mission" wizard="Quest" /></span
@@ -1699,19 +1698,14 @@ export function TemplateDeployDialog({
         id="template-deploy-source-row"
         hidden=${!!dropGroup}
         ><span class="cron-create-label">Mirror settings</span
-        ><select
+        ><${GroupCombobox}
           id="template-deploy-source"
           value=${source}
-          onChange=${(event) => chooseSource(event.currentTarget.value)}
-        >
-          <option value="">template defaults (top-level)</option>
-          ${groups.map(
-            (group) =>
-              html`<option key=${group.name} value=${group.name}>
-                ${group.name}
-              </option>`,
-          )}
-        </select></label
+          groups=${groupNames}
+          noneLabel="template defaults (top-level)"
+          ariaLabel="Mirror settings from group"
+          onChange=${chooseSource}
+        /></label
       ><label
         class="cron-create-enabled"
         id="template-deploy-parent-row"
@@ -1749,15 +1743,14 @@ export function TemplateDeployDialog({
           placeholder="optional — absolute path (~ OK) the force spawns in"
           autocomplete="off"
           spellcheck="false"
-        /><button
+        /><${Button}
           id="template-deploy-cwd-browse"
-          type="button"
           class="dir-browse-btn"
           title="Browse for a directory"
           onClick=${() => browse('cwd')}
         >
           Browse…
-        </button></label
+        <//></label
       ><label class="cron-create-row" hidden=${worktreesHidden}
         ><span class="cron-create-label">Worktree repo</span
         ><input
@@ -1779,30 +1772,25 @@ export function TemplateDeployDialog({
                 ${item.rel}
               </option>`,
           )}</datalist
-        ><button
+        ><${Button}
           id="template-deploy-wt-repo-browse"
-          type="button"
           class="dir-browse-btn"
           title="Browse for a directory"
           onClick=${() => browse('repo')}
         >
           Browse…
-        </button></label
+        <//></label
       ><label class="cron-create-row" hidden=${worktreesHidden}
         ><span class="cron-create-label">Worktree</span
-        ><select
+        ><${WorktreeCombobox}
           id="template-deploy-worktree"
-          value=${worktree}
+          value=${wtData?.is_repo ? worktree : ''}
+          worktrees=${wtData?.is_repo ? wtData.worktrees || [] : []}
+          newKey=${wtData?.is_repo ? WT_NEW : ''}
+          noneLabel=${worktreeNoneLabel}
           disabled=${!wtData?.is_repo}
-          onChange=${(event) => setWorktree(event.currentTarget.value)}
-        >
-          ${options.map(
-            (item) =>
-              html`<option key=${item.value} value=${item.value}>
-                ${item.label}
-              </option>`,
-          )}
-        </select></label
+          onChange=${setWorktree}
+        /></label
       ><label
         class=${`cron-create-enabled cron-check-aligned${!wtData?.is_repo ? ' disabled' : ''}`}
         id="template-deploy-wt-sync-row"
@@ -1848,16 +1836,12 @@ export function TemplateDeployDialog({
         id="template-deploy-wt-base-row"
         hidden=${!showNew || wtData?.has_commits === false}
         ><span class="cron-create-label">Base branch</span
-        ><select
+        ><${BranchCombobox}
           id="template-deploy-wt-base"
           value=${base}
-          onChange=${(event) => setBase(event.currentTarget.value)}
-        >
-          ${(wtData?.branches || []).map(
-            (value) =>
-              html`<option key=${value} value=${value}>${value}</option>`,
-          )}
-        </select></label
+          branches=${wtData?.branches || []}
+          onChange=${setBase}
+        /></label
       >${showNew &&
       wtData?.has_commits === false &&
       html`<p class="wt-orphan-warn" id="template-deploy-wt-orphan-hint">
@@ -1880,24 +1864,20 @@ export function TemplateDeployDialog({
         /></label
       ><label class="cron-create-row" id="template-deploy-default-profile-row"
         ><span class="cron-create-label">Default profile</span
-        ><select
+        ><${ProfileCombobox}
           id="template-deploy-default-profile"
           value=${findProfileByHandle(current.profiles, defaultProfile)
             ? defaultProfile
             : ''}
-          onChange=${(event) => {
-            setDefaultProfile(event.currentTarget.value);
+          profiles=${current.profiles}
+          aliases=${true}
+          noneLabel="(none — harness default)"
+          ariaLabel="Default profile"
+          onChange=${(name) => {
+            setDefaultProfile(name);
             setProfileEdited(true);
           }}
-        >
-          <option value="">(none — harness default)</option>
-          ${profileChoices(current.profiles).map(
-            (choice) =>
-              html`<option key=${choice.value} value=${choice.value}>
-                ${choice.label}
-              </option>`,
-          )}
-        </select></label
+        /></label
       >
       <div class="cron-create-row">
         <span class="cron-create-label">Preview</span>
@@ -1910,20 +1890,18 @@ export function TemplateDeployDialog({
           />
         </div>
       </div>
-      <div class="cron-create-error" id="template-deploy-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="template-deploy-error" role="alert">
         ${error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-deploy-cancel"
           disabled=${busy || worktreeLoading}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><span class="spacer"></span
-        ><button
+          Cancel</${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-deploy-submit"
-          class="primary"
           disabled=${busy || worktreeLoading}
           onClick=${submit}
         >
@@ -1940,7 +1918,7 @@ export function TemplateDeployDialog({
                 : copying
                   ? 'Create group'
                   : 'Deploy task force'}
-        </button>
+        </${Button}>
       </div>`,
   );
 }
@@ -1991,22 +1969,14 @@ function RoleInspect({ roleName, roles }) {
   </div>`;
 }
 
-function profileOptions(agent, profiles) {
-  const choices = profileChoices(profiles);
-  const names = choices.map((choice) => choice.value);
-  const selected = agent.spawn_profile || '';
+// launchNoneLabel is what an agent row's blank launch profile means: the
+// deploy's default profile, when the agent inherits it, else none.
+function launchNoneLabel(agent, profiles) {
+  const names = profileChoices(profiles).map((choice) => choice.value);
   const preferred = getDashDefaultProfile();
-  const blank =
-    preferred && names.includes(preferred) && agentInheritsDeployDefault(agent)
-      ? `(default → ${preferred})`
-      : '(none)';
-  return [
-    ['', blank],
-    ...choices.map((choice) => [choice.value, choice.label]),
-    ...(selected && !names.includes(selected)
-      ? [[selected, `⚠ ${selected} (missing)`]]
-      : []),
-  ];
+  return preferred && names.includes(preferred) && agentInheritsDeployDefault(agent)
+    ? `(default → ${preferred})`
+    : '(none)';
 }
 
 function ProfileReadback({ agent, profiles }) {
@@ -2019,7 +1989,7 @@ function ProfileReadback({ agent, profiles }) {
       >`;
     return (
       profileSummary(profile) ||
-      html`<span class="ta-profile-summary-empty"
+      html`<span class="ui-empty"
         >(profile sets no launch fields)</span
       >`
     );
@@ -2141,17 +2111,10 @@ function AgentRow({
       },
     );
   };
-  const roleOptions = [
-    '',
-    ...roles.map((role) => role.name),
-    ...(agent.role_ref && !roles.some((role) => role.name === agent.role_ref)
-      ? [agent.role_ref]
-      : []),
-  ];
   return html`<div class="template-agent-row" data-idx=${index}>
     <div class="template-agent-row-head">
       <span class="template-agent-num"
-        ><${Words} plain="Agent" wizard="Familiar" /> ${index + 1}</span
+        ><${Words} plain="Agent" wizard="Hero" /> ${index + 1}</span
       ><label
         class="template-agent-owner"
         title="Mark this agent as an owner of the instantiated group — a group can have several owners. This is unioned with the picked profile's own owner default (either one makes the agent an owner)."
@@ -2163,9 +2126,8 @@ function AgentRow({
             update({ is_owner: event.currentTarget.checked })}
         />
         owner</label
-      ><button
-        type="button"
-        class="tool ta-remove"
+      ><${Button}
+        class="ta-remove"
         title="Remove this agent"
         onClick=${() =>
           setAgents((current) =>
@@ -2173,7 +2135,7 @@ function AgentRow({
           )}
       >
         ✕
-      </button>
+      <//>
     </div>
     <div class="template-agent-grid">
       <input
@@ -2202,22 +2164,14 @@ function AgentRow({
       class="template-agent-roleref"
       title="Reference a role from the library: the agent inherits that role's canonical brief and default permissions. Launch settings remain independent."
       ><span>Role library</span
-      ><select
-        class="ta-role-ref"
-        value=${agent.role_ref}
-        onChange=${(event) => update({ role_ref: event.currentTarget.value })}
-      >
-        ${roleOptions.map(
-          (name) =>
-            html`<option key=${name} value=${name}>
-              ${name
-                ? roles.some((role) => role.name === name)
-                  ? name
-                  : `⚠ ${name} (missing)`
-                : '(none)'}
-            </option>`,
-        )}
-      </select></label
+      ><${RoleCombobox}
+        className="ta-role-ref"
+        value=${agent.role_ref || ''}
+        entries=${roles}
+        noneLabel="(none)"
+        ariaLabel="Role library"
+        onChange=${(value) => update({ role_ref: value })}
+      /></label
     >
     <div class="ta-role-inspect">
       <${RoleInspect} roleName=${agent.role_ref} roles=${roles} />
@@ -2241,35 +2195,29 @@ function AgentRow({
         class="template-agent-roleref ta-launch-pick"
         title="Launch profile: the agent's harness, model, effort, sandbox/approval and birth-time permissions come from the picked spawn profile."
         ><span>Launch profile</span
-        ><select
-          class="ta-profile-select"
+        ><${ProfileCombobox}
+          className="ta-profile-select"
           value=${agent.spawn_profile}
-          onChange=${(event) =>
-            update({ spawn_profile: event.currentTarget.value })}
-        >
-          ${profileOptions(agent, profiles).map(
-            ([value, label]) =>
-              html`<option key=${value} value=${value}>${label}</option>`,
-          )}
-        </select></label
+          profiles=${profiles}
+          aliases=${true}
+          noneLabel=${launchNoneLabel(agent, profiles)}
+          ariaLabel="Launch profile"
+          onChange=${(name) => update({ spawn_profile: name })}
+        /></label
       >
       <div class="ta-launch-actions">
-        <button type="button" class="tool ta-custom-launch" onClick=${custom}>
-          ${agent.profile_inline ? '✎ edit custom…' : '✎ custom…'}</button
-        ><button
-          type="button"
-          class="tool ta-profile-new"
+        <${Button} class="ta-custom-launch" onClick=${custom}>
+          ${agent.profile_inline ? '✎ edit custom…' : '✎ custom…'}<//><${Button}
+          class="ta-profile-new"
           onClick=${newProfile}
         >
-          ＋ new</button
-        ><button
-          type="button"
-          class="tool ta-profile-manage"
+          ＋ new<//><${Button}
+          class="ta-profile-manage"
           hidden=${!!actions.catalogNode}
           onClick=${() => actions.openManager('profiles')}
         >
           ⧉ manage…
-        </button>
+        <//>
       </div>
       <div class="ta-profile-summary">
         <${ProfileReadback} agent=${agent} profiles=${profiles} />
@@ -2279,61 +2227,49 @@ function AgentRow({
         <span class="ta-legacy-text"
           >✎ <${Words} plain="custom" wizard="bespoke" />:
           ${customSummary || '(sets no launch fields)'}</span
-        ><button
-          type="button"
-          class="tool ta-custom-remove"
+        ><${Button}
+          class="ta-custom-remove"
           onClick=${removeCustom}
         >
           ✕
-        </button>
+        <//>
       </div>`}
       ${agentHasLegacyLaunch(agent) &&
       html`<div class="ta-legacy-note">
         <span class="ta-legacy-text"
           >⚠ legacy inline: ${legacy.join(' · ')}</span
-        ><button
-          type="button"
-          class="tool ta-extract-profile"
+        ><${Button}
+          class="ta-extract-profile"
           onClick=${extract}
         >
-          Extract to profile…</button
-        ><button
-          type="button"
-          class="tool ta-legacy-remove"
+          Extract to profile…<//><${Button}
+          class="ta-legacy-remove"
           onClick=${removeLegacy}
         >
           ✕
-        </button>
+        <//>
       </div>`}
     </div>
   </div>`;
 }
 
 function ReorderButtons({ prefix, label, index, count, update }) {
-  return html`<button
-      type="button"
-      class=${`tool ${prefix}-up`}
+  return html`<${Button} size="sm" icon=${true} class=${`${prefix}-up`}
       title=${`Move this ${label} up`}
       disabled=${index === 0}
       onClick=${() => update(-1)}
     >
-      ↑</button
-    ><button
-      type="button"
-      class=${`tool ${prefix}-down`}
+      ↑<//><${Button} size="sm" icon=${true} class=${`${prefix}-down`}
       title=${`Move this ${label} down`}
       disabled=${index === count - 1}
       onClick=${() => update(1)}
     >
-      ↓</button
-    ><button
-      type="button"
-      class=${`tool ${prefix}-remove`}
+      ↓<//><${Button} size="sm" icon=${true} variant="ghost danger" class=${`${prefix}-remove`}
       title=${`Remove this ${label}`}
       onClick=${() => update(0)}
     >
       ✕
-    </button>`;
+    <//>`;
 }
 
 function Concepts() {
@@ -2375,7 +2311,7 @@ function Concepts() {
           group disables them (a later resume re-enables them).
         </li>
       </ul>
-      <table class="tpl-concepts-table">
+      <table class="tpl-concepts-table ui-compact">
         <thead>
           <tr>
             <th></th>
@@ -2421,7 +2357,7 @@ function Concepts() {
         <li>
           <b>Rite of command — the opening whispers.</b> An ordered set of
           whispers spoken <b>once</b>, after the whole party has stood. Each
-          verse reaches one familiar (often the lead, who parcels out the quest)
+          verse reaches one hero (often the lead, who parcels out the quest)
           or the whole party. It sounds once at the summoning and does not echo
           — though a <b>re-brief</b> speaks the circle's <i>current</i> rite to
           the living party again on command.
@@ -2441,7 +2377,7 @@ function Concepts() {
           the ranks stills them (a later resume wakes them again).
         </li>
       </ul>
-      <table class="tpl-concepts-table">
+      <table class="tpl-concepts-table ui-compact">
         <thead>
           <tr>
             <th></th>
@@ -2533,15 +2469,19 @@ export function TemplateEditor({
       }
     }
   };
+  // The editor stays until the scribe's window has opened: the operator may
+  // still decline its grant, and then keeps the editor as it was.
   const handoff = async () => {
     if (saving || (dirty && !(await confirmDiscard()))) return;
-    state.closeTemplateDialog();
-    await actions.editTemplateWithAgent(
+    const handedOff = state.templateDialog.value;
+    const result = await actions.editTemplateWithAgent(
       editing ? descriptor.seed.name : draft.name.trim(),
     );
+    // Only this editor: another one opened meanwhile keeps its draft.
+    if (result?.opened && state.templateDialog.value === handedOff) state.closeTemplateDialog();
   };
   return h(
-    Overlay,
+    Dialog,
     {
       id: 'template-editor-modal',
       labelledby: 'template-editor-title',
@@ -2550,7 +2490,7 @@ export function TemplateEditor({
       dirty,
       blocked: saving,
       confirmDiscard,
-      registerClose,
+      guard: { requestClose, registerClose },
       resizeKey: 'tclaude.dash.modalSize.template-editor',
     },
     html`<h3 id="template-editor-title">
@@ -2619,7 +2559,7 @@ export function TemplateEditor({
             }))} /><span
           ><${Words}
             plain="Give each agent its own worktree by default"
-            wizard="Give each familiar its own enchanted grove by default" /></span
+            wizard="Give each hero its own enchanted grove by default" /></span
       ></label>
       ${usageLinkable && usageLink.loaded
         ? html`<div
@@ -2637,24 +2577,23 @@ export function TemplateEditor({
                 onChange=${setUsageNames}
                 onNew=${() => openUsageRulesManager({ tab: 'profiles', newProfile: true })}
               />
-              <div class="spawn-field-hint">
+              <div class="spawn-field-hint ui-hint">
                 The deployed group's usage profiles. A member's spawn profile can
                 add to them, and an agent's own assignment replaces them.
               </div>
             </div>
           </div>`
         : null}
-      <div class="template-agents-head">
-        <span><${Words} plain="Agents" wizard="Familiars" /></span
-        ><button
-          type="button"
+      <div class="ui-eyebrow template-agents-head">
+        <span><${Words} plain="Agents" wizard="Heroes" /></span
+        ><${Button}
           id="template-editor-add-agent"
-          class="tool"
+         
           onClick=${() =>
             setAgents((agents) => [...agents, blankTemplateAgent()])}
         >
-          <${Words} plain="+ add agent" wizard="+ add familiar" />
-        </button>
+          <${Words} plain="+ add agent" wizard="+ add hero" />
+        <//>
       </div>
       <div id="template-editor-agents">
         ${draft.agents.map(
@@ -2674,14 +2613,13 @@ export function TemplateEditor({
       </div>
       <${Concepts} />
       <div
-        class="template-agents-head"
+        class="ui-eyebrow template-agents-head"
         title="Ordered briefing messages delivered after the whole roster has spawned."
       >
         <span><${Words} plain="Work pattern" wizard="Rite of command" /></span
-        ><button
-          type="button"
+        ><${Button}
           id="template-editor-add-pattern"
-          class="tool"
+         
           onClick=${() =>
             setDraft((old) => ({
               ...old,
@@ -2692,7 +2630,7 @@ export function TemplateEditor({
             }))}
         >
           <${Words} plain="+ add step" wizard="+ add verse" />
-        </button>
+        <//>
       </div>
       <div id="template-editor-pattern">
         ${draft.work_pattern.map((step, index) => {
@@ -2717,7 +2655,7 @@ export function TemplateEditor({
               <span class="template-agent-num"
                 ><${Words} plain="Step" wizard="Verse" /> ${index + 1}</span
               ><label class="template-pattern-sendto"
-                ><${Words} plain="send to" wizard="whisper to" /><select
+                ><${Words} plain="send to" wizard="whisper to" /><${Select}
                   class="tw-sendto"
                   value=${step.send_to}
                   onChange=${(event) =>
@@ -2740,7 +2678,7 @@ export function TemplateEditor({
                             : name}
                       </option>`,
                   )}
-                </select></label
+                <//></label
               ><${ReorderButtons}
                 prefix="tw"
                 label="step"
@@ -2768,12 +2706,11 @@ export function TemplateEditor({
           </div>`;
         })}
       </div>
-      <div class="template-agents-head">
+      <div class="ui-eyebrow template-agents-head">
         <span><${Words} plain="Process" wizard="Quest plan" /></span
-        ><button
-          type="button"
+        ><${Button}
           id="template-editor-add-phase"
-          class="tool"
+         
           onClick=${() =>
             setDraft((old) => ({
               ...old,
@@ -2784,7 +2721,7 @@ export function TemplateEditor({
             }))}
         >
           <${Words} plain="+ add phase" wizard="+ add chapter" />
-        </button>
+        <//>
       </div>
       <div id="template-editor-process">
         ${draft.process.map(
@@ -2856,12 +2793,11 @@ export function TemplateEditor({
             </div>`,
         )}
       </div>
-      <div class="template-agents-head">
+      <div class="ui-eyebrow template-agents-head">
         <span><${Words} plain="Rhythms" wizard="Drumbeats" /></span
-        ><button
-          type="button"
+        ><${Button}
           id="template-editor-add-rhythm"
-          class="tool"
+         
           onClick=${() =>
             setDraft((old) => ({
               ...old,
@@ -2879,7 +2815,7 @@ export function TemplateEditor({
             }))}
         >
           <${Words} plain="+ add rhythm" wizard="+ add drumbeat" />
-        </button>
+        <//>
       </div>
       <div id="template-editor-rhythms">
         ${draft.rhythms.map((rhythm, index) => {
@@ -2977,20 +2913,17 @@ export function TemplateEditor({
               wave_max_wait: event.currentTarget.value,
             }))}
       /></label>
-      <div class="cron-create-error" id="template-editor-error" role="alert">
+      <div class="cron-create-error ui-error-box" id="template-editor-error" role="alert">
         ${current.error}
       </div>
       <div class="modal-buttons">
-        <button
+        <${Button}
           id="template-editor-cancel"
-          type="button"
           disabled=${saving}
           onClick=${() => { void requestClose(); }}
         >
-          Cancel</button
-        ><button
+          Cancel</${Button}><${Button}
           id="scribe-editor-open"
-          type="button"
           hidden=${!!actions.catalogNode}
           disabled=${saving}
           onClick=${handoff}
@@ -2998,17 +2931,14 @@ export function TemplateEditor({
           <${Words}
             plain="🤖 Edit with agent"
             wizard="📜 Dictate to a scribe"
-          /></button
-        ><span class="spacer"></span
-        ><button
+          /></${Button}><span class="spacer"></span
+        ><${Button} variant="primary"
           id="template-editor-submit"
-          class="primary"
-          type="button"
           disabled=${saving}
           onClick=${submit}
         >
           ${saving ? 'Saving…' : 'Save template'}
-        </button>
+        </${Button}>
       </div> `,
   );
 }

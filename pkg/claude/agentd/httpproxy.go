@@ -116,6 +116,7 @@ func handleHTTPProxyGateway(w http.ResponseWriter, r *http.Request) {
 	headers.Del(session.HTTPProxyRuntimeClaimHeader)
 	headers.Del(humanTokenHeader)
 	headers.Del(routeHelperCredentialHeader)
+	headers.Del(agentipc.ExternalStewardCredentialHeader)
 	headers.Del(agentipc.AgentHintHeader)
 	performHTTPProxyRequest(w, r, httpProxyRequest{Name: r.PathValue("name"), Path: path, Method: r.Method, Body: data, requestHeaders: headers}, true)
 }

@@ -18,8 +18,9 @@ import {
 import { lastSnapshot } from './dashboard.js';
 import { discardQueuedSpawn } from './queued-spawns.js';
 import { openCloneAgentDialog } from './action-dialog-controller.js';
-import { clearDropBox, createDndOps, dndGesture, dndNode, markDropBox, targetGroupOf } from './dnd-ops.js';
+import { clearDropBox, createDndOps, dndGesture, dndMember, dndNode, markDropBox, targetGroupOf } from './dnd-ops.js';
 import { markLanded } from './drop-landing.js';
+import { bindRowDragGuard } from './row-drag.js';
 
 // Drag-and-drop: move a member row from group A onto group B's box
 // (anywhere over group B's <details> — header or expanded body) to
@@ -173,53 +174,22 @@ function hideDndTrash() {
 function bindDnd() {
   const removers = [];
   dndGesture.cancelClone = () => { dndCloneHoverTarget = null; };
+  // A task on a board takes an agent row's drag itself (dndMember).
+  dndMember.payload = () => (dndDragActive ? dndSourcePayload : null);
+  dndMember.yieldTo = (e, text) => {
+    dndCloneHoverTarget = null;
+    $$('.dnd-drop-over').forEach(clearDropBox);
+    updateDndPill(e, text ? { text } : null);
+  };
   const listen = (target, type, listener, options) => {
     target.addEventListener(type, listener, options);
     removers.push(() => target.removeEventListener(type, listener, options));
   };
-  // The whole <tr> is draggable="true", so a press on an in-row control
-  // (focus / hide eye, the ⚙ cog and its menu items, the status dot, the
-  // click-to-edit name / cwd / role cells, the promote / reinstate
-  // buttons) plus even a 1px cursor wobble makes the browser start
-  // dragging the ROW instead of firing that control's click — the
-  // focus/unfocus button then silently "does nothing".
-  //
-  // We can't fix this in dragstart: native DnD fires dragstart at the
-  // drag SOURCE NODE — the <tr> itself — so e.target there is always the
-  // row, never the control that was pressed, and a closest('button') test
-  // would never match. pointerdown, by contrast, targets the actual
-  // element under the cursor, and it fires BEFORE the drag is initiated.
-  // So if the press landed on an interactive descendant, turn the row's
-  // draggable OFF for the duration of this gesture so the click lands; a
-  // press on a plain cell (id, last-hook, descr, …) leaves it ON so the
-  // row can still be dragged between groups.
-  //
-  // The suppression is strictly gesture-scoped: pointerup / pointercancel
-  // restore draggability immediately, so the row is never left
-  // un-draggable between gestures (it doesn't have to wait for the next
-  // pointerdown or a later snapshot publish to re-arm). Restoring on pointerup is
-  // safe — the drag-vs-click decision is made during the move BEFORE
-  // pointerup, so re-enabling at gesture end can't trigger an unwanted
-  // drag. dndSuppressedRow remembers which row we touched so we restore
-  // exactly that one (and only when we actually disabled it).
-  let dndSuppressedRow = null;
+  // The whole <tr> is draggable; a press on a control in it is a click
+  // (row-drag.js, shared with resource and task rows).
+  const rowGuard = bindRowDragGuard(document, '.dnd-draggable');
+  removers.push(rowGuard.unbind);
   let activeSourceRow = null;
-  const restoreDraggable = () => {
-    if (!dndSuppressedRow) return;
-    dndSuppressedRow.draggable = true;
-    dndSuppressedRow = null;
-  };
-  listen(document, 'pointerdown', (e) => {
-    const row = e.target.closest('.dnd-draggable');
-    if (!row) return;
-    const ctl = e.target.closest('button, a, input, select, textarea, label, [data-act], [contenteditable]');
-    if (ctl && row.contains(ctl)) {
-      row.draggable = false;
-      dndSuppressedRow = row;
-    }
-  });
-  listen(document, 'pointerup', restoreDraggable);
-  listen(document, 'pointercancel', restoreDraggable);
   listen(document, 'keydown', (e) => {
     if (dndDragActive && e.key === 'Escape') dndCloneHoverTarget = null;
   });
@@ -429,6 +399,8 @@ function bindDnd() {
     // tab is showing, so this is currently unreachable rather than a live bug —
     // the guard keeps the separation explicit instead of resting on that.
     if (e.dataTransfer.types.includes('application/x-tclaude-terminal-tab')) return;
+    // A drawing board or page row drag (resource-dnd.js) moves a resource, never a member.
+    if (e.dataTransfer.types.includes('application/x-tclaude-resource')) return;
     // dragover only accepts (preventDefault) while this document's member
     // drag is live, so an inactive drop is one the macOS release path above
     // already finished — or a stray foreign drop. Never act on it twice.
@@ -552,7 +524,7 @@ function bindDnd() {
     if (cleaned) return;
     cleaned = true;
     for (const remove of removers.splice(0).reverse()) remove();
-    restoreDraggable();
+    rowGuard.restore();
     activeSourceRow?.removeEventListener('dragend', endDndDrag);
     activeSourceRow = null;
     dndDragActive = false;
@@ -580,4 +552,6 @@ const ops = createDndOps({
   land: (target) => markLanded(target),
 });
 
-export { bindDnd, dndDragActive };
+// dndOps are this page's member drop operations, for another drag that drops
+// an agent on a group (the Collab panel's, collab-rail-actions.js).
+export { bindDnd, dndDragActive, ops as dndOps };

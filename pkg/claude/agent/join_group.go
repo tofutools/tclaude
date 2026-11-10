@@ -17,6 +17,14 @@ import (
 
 func init() {
 	session.JoinGroupHandler = RunJoinGroup
+	session.AgentResumeResolver = resolveAgentForResume
+	session.AutomaticGroupMatcher = func(params *session.NewParams) (string, error) {
+		match, err := MatchingDirectoryGroup(launchDir(params))
+		if err != nil || match == nil {
+			return "", err
+		}
+		return match.Name, nil
+	}
 }
 
 // RunJoinGroup implements explicit --join-group and the directory-discovery
@@ -29,7 +37,14 @@ func RunJoinGroup(params *session.NewParams) error {
 		return fmt.Errorf("group joining cannot be combined with --resume (spawn always creates a fresh session)")
 	}
 	if params.Label != "" {
-		return fmt.Errorf("group joining picks its own label; --label is not supported")
+		// The spawn request has no label: agentd mints it, from the agent's
+		// name when agent.spawn_label_from_name is on. -n is the equivalent.
+		return fmt.Errorf("--label names a solo session and can't be used when joining a group; to name the agent, use -n NAME instead (with config agent.spawn_label_from_name on, the name is also its tmux label)")
+	}
+	// Refuse a doubled brief before discovery can create a group.
+	if strings.TrimSpace(params.InitialPrompt) != "" &&
+		(strings.TrimSpace(params.InitialMessage) != "" || strings.TrimSpace(params.File) != "") {
+		return fmt.Errorf("--initial-prompt and %s both set the agent's startup brief on a group launch; pass only one", briefFlag(params))
 	}
 
 	group := strings.TrimSpace(params.JoinGroup)
@@ -45,7 +60,7 @@ func RunJoinGroup(params *session.NewParams) error {
 		}
 	}
 	if !explicitGroup && !DaemonAvailable() {
-		return automaticDaemonFallback(os.Stdin, os.Stderr, term.IsTerminal(int(os.Stdin.Fd())))
+		return automaticDaemonFallback(os.Stdin, cliStderr, term.IsTerminal(int(os.Stdin.Fd())))
 	}
 	if !explicitGroup {
 		canonicalDir, err := canonicalGroupDir(launchDir(params))
@@ -55,9 +70,12 @@ func RunJoinGroup(params *session.NewParams) error {
 		params.Dir = canonicalDir
 	}
 	params.JoinGroup = group
+	// Only now is this a group launch: a directory with no match falls back
+	// to a solo session, where --initial-prompt stays the harness prompt.
+	carryInitialPromptAsBrief(params)
 
 	spawn := spawnParamsForJoinedSession(params, group)
-	resp, rc := RunSpawn(spawn, os.Stdout, os.Stderr, os.Stdin)
+	resp, rc := RunSpawn(spawn, cliStdout, cliStderr, os.Stdin)
 	if rc != rcOK {
 		return fmt.Errorf("spawn into group %q failed (exit %d)", group, rc)
 	}
@@ -65,8 +83,30 @@ func RunJoinGroup(params *session.NewParams) error {
 		return nil
 	}
 
-	fmt.Println("\nAttaching... (Ctrl+B D to detach)")
+	fmt.Fprintln(cliStdout, "\nAttaching... (Ctrl+B D to detach)")
 	return session.AttachToSession(resp.Label, resp.TmuxSession, false)
+}
+
+// carryInitialPromptAsBrief maps --initial-prompt onto the spawn's startup
+// brief (-i/--initial-message), the field the dashboard spawn dialog fills.
+// A group spawn's first-turn prompt slot belongs to agentd (the Claude Code
+// agent welcome, a Codex conv-id seed), so the human's text cannot go there
+// raw; as the brief it is delivered with the welcome instead. RunJoinGroup
+// refuses both together rather than merging them, since neither order is
+// obviously right.
+func carryInitialPromptAsBrief(params *session.NewParams) {
+	if strings.TrimSpace(params.InitialPrompt) == "" {
+		return
+	}
+	params.InitialMessage = params.InitialPrompt
+	params.InitialPrompt = ""
+}
+
+func briefFlag(params *session.NewParams) string {
+	if strings.TrimSpace(params.File) != "" {
+		return "--file"
+	}
+	return "--initial-message"
 }
 
 func automaticDaemonFallback(in io.Reader, out io.Writer, interactive bool) error {
@@ -90,6 +130,9 @@ func confirmSoloWithoutDaemon(in io.Reader, out io.Writer) bool {
 
 func spawnParamsForJoinedSession(params *session.NewParams, group string) *SpawnParams {
 	spawn := &SpawnParams{
+		// The caller attaches to the session at once; waiting in the
+		// capacity queue would leave it nothing to attach to.
+		NoQueue:                true,
 		Group:                  group,
 		Name:                   params.Name,
 		Role:                   params.Role,
@@ -212,7 +255,7 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if rc := RequireDaemonOrExit(os.Stderr); rc != rcOK {
+	if rc := RequireDaemonOrExit(cliStderr); rc != rcOK {
 		return "", fmt.Errorf("daemon required to create directory group %q", name)
 	}
 	var created struct {
@@ -224,7 +267,7 @@ func automaticGroupForDir(params *session.NewParams) (string, error) {
 	}, &created, DaemonOpts{AskHuman: ask}); err != nil {
 		return "", fmt.Errorf("create group %q for %q: %w", name, cwd, err)
 	}
-	fmt.Printf("Created group %q for %s\n", created.Name, cwd)
+	fmt.Fprintf(cliStdout, "Created group %q for %s\n", created.Name, cwd)
 	params.Dir = cwd
 	return created.Name, nil
 }

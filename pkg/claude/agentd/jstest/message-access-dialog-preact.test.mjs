@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { comboPick } from './combobox-helpers.mjs';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
@@ -100,9 +101,9 @@ test('chooser keeps keyboard highlight visible and exposes the active option', a
   scrolled = '';
   const search = host.querySelector('#cron-pick-target-search');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'ArrowDown' }));
-  assert.equal(search.getAttribute('aria-activedescendant'), 'cron-pick-target-option-1');
-  assert.equal(host.querySelector('#cron-pick-target-option-1').getAttribute('aria-selected'), 'true');
-  assert.equal(scrolled, 'cron-pick-target-option-1');
+  assert.equal(search.getAttribute('aria-activedescendant'), 'cron-pick-target-list-option-1');
+  assert.ok(host.querySelector('#cron-pick-target-list-option-1').classList.contains('highlighted'));
+  assert.equal(scrolled, 'cron-pick-target-list-option-1');
   await harness.act(() => harness.fireEvent(search, 'keydown', { key: 'Enter' }));
   assert.equal(await picked, 'agt_01');
   await mounted.unmount();
@@ -201,20 +202,66 @@ test('scoped message follows live-all membership and sends exact group role payl
   await harness.input(body, 'hello live roster');
   await harness.input(host.querySelector('#message-create-subject'), 'status');
   await harness.input(host.querySelector('#message-create-role'), ' reviewer ');
+  await harness.act(() => { host.querySelector('#message-create-members-all').click(); });
 
-  const next = snapshot({ members: [member('a'), member('b'), member('c')] });
+  const next = snapshot({ members: [member('a'), member('b'), { ...member('c'), online: false }] });
   await rerender(next);
   assertSameNode(host.querySelector('#message-create-body'), body, 'snapshot reconciliation keeps the keyed draft node');
   assert.equal(body.value, 'hello live roster');
   assert.equal(host.querySelector('#message-create-members-count').textContent, '3 of 3 selected');
   assert.equal(host.querySelectorAll('#message-create-members input[type="checkbox"]:checked').length, 3,
-    'untouched all follows a newcomer');
+    'all follows a newcomer, offline or not');
 
   await harness.act(async () => { host.querySelector('#message-create-submit').click(); await Promise.resolve(); });
   assert.deepEqual(sent, [{
     from: 'agt_sender', to: 'group:team', subject: 'status', body: 'hello live roster', role: 'reviewer',
-  }], 'untouched all omits members so the daemon reads the live roster');
+  }], 'all omits members so the daemon reads the live roster');
   assert.equal(state.dialog.value, null);
+  await mounted.unmount();
+});
+
+test('scoped message ticks online members by default, follows presence, and quick-picks combine', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  state.openMessage({ from: 'agt_sender', targetMode: 'group', groupName: 'team' });
+  const sent = [];
+  const actions = {
+    sendMessage: async (payload) => { sent.push(payload); },
+    replyHuman: async () => {}, grantSudo: async () => {}, savePermissions: async () => {},
+  };
+  const withPR = (m, checks) => ({ ...m, branch_pr_number: 7, branch_pr_url: `https://github.com/o/r/pull/7${m.title}`, branch_pr_state: 'open', branch_checks: checks });
+  const offline = (m) => ({ ...m, online: false });
+  const roster = (bOnline) => snapshot({ members: [
+    withPR(member('a'), { total: 2, passed: 1, failed: 1, state: 'failing' }),
+    bOnline ? member('b') : offline(member('b')),
+    withPR(offline(member('c')), { total: 1, passed: 1, state: 'passing' }),
+  ] });
+  const { host, mounted, rerender } = await mountDialogs(harness, state, actions, roster(false));
+  const ticked = () => [...host.querySelectorAll('#message-create-members input:checked')].map((input) => input.getAttribute('data-conv'));
+  const badges = () => [...host.querySelectorAll('#message-create-members .cleanup-badge')].map((badge) => badge.textContent);
+  assert.deepEqual(ticked(), ['conv-a'], 'offline members start unticked');
+  assert.deepEqual(badges(), ['online', 'offline', 'offline']);
+  assert.ok(host.querySelector('#message-create-members .ci-badge.ci-failing'), 'a member\'s open PR shows its CI pill');
+  assert.equal(host.querySelector('#message-create-members label .pr-chain'), null,
+    'PR badges sit outside the row label so their hover panels never toggle the recipient');
+
+  await rerender(roster(true));
+  assert.deepEqual(ticked(), ['conv-a', 'conv-b'], 'the default follows live presence');
+
+  await harness.act(() => harness.fireEvent(host.querySelector('#message-create-pick-offline'), 'click', { shiftKey: true }));
+  assert.deepEqual(ticked(), ['conv-a', 'conv-b', 'conv-c'], 'shift-click adds');
+  await harness.act(() => harness.fireEvent(host.querySelector('#message-create-pick-pr'), 'click', { ctrlKey: true }));
+  assert.deepEqual(ticked(), ['conv-a', 'conv-c'], 'ctrl-click narrows');
+  await harness.act(() => harness.fireEvent(host.querySelector('#message-create-pick-ci-failing'), 'click'));
+  assert.deepEqual(ticked(), ['conv-a'], 'a plain click replaces');
+  await harness.act(() => { host.querySelector('#message-create-pick-online').click(); });
+  assert.deepEqual(ticked(), ['conv-a', 'conv-b']);
+
+  await harness.input(host.querySelector('#message-create-body'), 'online only');
+  await harness.act(async () => { host.querySelector('#message-create-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(sent, [{ from: 'agt_sender', to: 'group:team', subject: '', body: 'online only', members: ['agt_a', 'agt_b'] }],
+    'the online default names its recipients so an offline member is never reached');
   await mounted.unmount();
 });
 
@@ -343,33 +390,324 @@ test('a notification on another node is answered through that node, text only', 
   await mounted.unmount();
 });
 
-test('sudo selection excludes blocklisted slugs and preserves a failed draft for retry', async (t) => {
-  const harness = await createPreactHarness(t);
+const sudoSlugs = [
+  { slug: 'agent.stop', description: 'stop agents', countable: true },
+  { slug: 'agent.spawn', description: 'spawn anywhere', scope_dims: ['peer'], countable: true },
+  { slug: 'groups.members.spawn', description: 'spawn', scope_dims: ['group'], countable: true },
+  { slug: 'node.exec', description: 'run commands', risky: true, not_countable_why: 'It runs too often.' },
+  { slug: 'permissions.grant', description: 'grant', risky: true },
+];
+
+function sudoSnapshot(sudo = []) {
+  return {
+    ...snapshot({ groups: [], slugs: sudoSlugs }),
+    agents: [{ agent_id: 'agt_s', conv_id: 'conv-s', title: 'steward-1', online: true }], sudo,
+  };
+}
+
+function sudoActions(extra = {}) {
+  return {
+    sendMessage: async () => {}, replyHuman: async () => {}, savePermissions: async () => {}, grantSudo: async () => {},
+    sudoPolicy: async () => ({ max_seconds: 1800, default_seconds: 600, refused: { 'permissions.grant': 'Refused: it hands out permissions itself.' } }),
+    ...extra,
+  };
+}
+
+async function mountSudo(harness, actions, current = sudoSnapshot()) {
   const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
   const state = createMessageAccessDialogState();
-  state.openSudoGrant({ agentID: 'agt_s' });
+  state.openSudoEditor({ agentID: 'agt_s', label: 'steward-1' });
+  const mounted = await mountDialogs(harness, state, actions, current);
+  await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  return { ...mounted, state };
+}
+
+const sudoRow = (host, slug) => host.querySelector(`.perm-row[data-slug="${slug}"]`);
+const pickSudo = (harness, host, slug) => harness.act(() => { sudoRow(host, slug).querySelector('[data-effect="grant"]').click(); });
+
+test('the sudo variant is the permission editor: areas, risk, refusal with its reason, and the server\'s limits', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, mounted } = await mountSudo(harness, sudoActions());
+  assert.ok(host.querySelector('#perm-edit-modal.show, #perm-edit-modal'), 'the permission editor, not another dialog');
+  assert.equal(host.querySelector('#perm-edit-title').textContent.includes('Grant sudo'), true);
+  assert.deepEqual([...host.querySelectorAll('.perm-area-head')].map((head) => head.textContent), ['Agents', 'Group members', 'Node and host', 'Permissions']);
+  assert.ok(sudoRow(host, 'node.exec').classList.contains('risky'));
+  assert.equal(sudoRow(host, 'agent.stop').classList.contains('risky'), false);
+  const refused = sudoRow(host, 'permissions.grant');
+  assert.equal(refused.querySelector('.perm-tristate'), null);
+  assert.match(refused.textContent, /hands out permissions itself/);
+  assert.equal(sudoRow(host, 'agent.stop').querySelector('[data-effect="deny"]'), null);
+  assert.equal(host.querySelector('#sudo-duration').value, '10m', 'the server default');
+  assert.deepEqual([...host.querySelectorAll('.sudo-presets button')].map((button) => button.textContent), ['5m', '15m', '30m'], 'presets stop at the maximum');
+  await mounted.unmount();
+});
+
+test('the sudo editor\'s Clear selections drops the picks, disables itself, and keeps the filter', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, mounted } = await mountSudo(harness, sudoActions());
+  const reset = () => host.querySelector('#perm-edit-reset');
+  assert.equal(reset().querySelector('.pe-btn-regular').textContent, 'Clear selections');
+  assert.equal(reset().disabled, true, 'nothing picked');
+  await pickSudo(harness, host, 'node.exec');
+  await harness.input(host.querySelector('#perm-edit-filter'), 'node');
+  await harness.act(() => { reset().click(); });
+  assert.match(host.querySelector('#sudo-picked').textContent, /Pick at least one/);
+  assert.equal(host.querySelector('#perm-edit-filter').value, 'node');
+  assert.equal(reset().disabled, true);
+  await mounted.unmount();
+});
+
+test('granting sends the duration, reason and scope, and keeps the draft when it fails', async (t) => {
+  const harness = await createPreactHarness(t);
   const payloads = [];
-  const actions = {
-    sendMessage: async () => {}, replyHuman: async () => {}, savePermissions: async () => {},
-    grantSudo: async (payload) => { payloads.push(payload); if (payloads.length === 1) throw new Error('denied once'); },
-  };
-  const slugs = [
-    { slug: 'groups.members.spawn', description: 'spawn' },
-    { slug: 'permissions.grant', description: 'grant' },
-    { slug: 'permissions.revoke', description: 'revoke' },
-  ];
-  const { host, mounted } = await mountDialogs(harness, state, actions, snapshot({ groups: [], slugs }));
-  const blocked = [...host.querySelectorAll('#sudo-grant-slugs input')].filter((input) => input.disabled);
-  assert.deepEqual(blocked.map((input) => input.value), ['permissions.grant', 'permissions.revoke']);
-  await harness.act(() => { host.querySelector('#sudo-grant-select-all').click(); });
-  await harness.input(host.querySelector('#sudo-grant-duration'), '30m');
-  await harness.input(host.querySelector('#sudo-grant-reason'), 'release');
-  await harness.act(async () => { host.querySelector('#sudo-grant-submit').click(); await Promise.resolve(); });
-  assert.equal(host.querySelector('#sudo-grant-error').textContent, 'denied once');
-  assert.equal(host.querySelector('#sudo-grant-duration').value, '30m');
-  await harness.act(async () => { host.querySelector('#sudo-grant-submit').click(); await Promise.resolve(); });
-  assert.deepEqual(payloads[1], { agentID: 'agt_s', slugs: ['groups.members.spawn'], duration: '30m', reason: 'release', node: '' });
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); if (payloads.length === 1) throw new Error('denied once'); } });
+  const { host, mounted, state } = await mountSudo(harness, actions);
+  const submit = () => host.querySelector('#perm-edit-submit');
+  assert.equal(submit().disabled, true, 'nothing picked yet');
+  await pickSudo(harness, host, 'groups.members.spawn');
+  await pickSudo(harness, host, 'node.exec');
+  assert.match(host.querySelector('#sudo-picked').textContent, /2 picked · 1 risky/);
+  await harness.act(() => { sudoRow(host, 'groups.members.spawn').querySelector('.perm-scope-twisty').click(); });
+  await harness.input(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'dev');
+  await harness.act(() => { host.querySelector('.sudo-presets button:nth-child(2)').click(); });
+  await harness.input(host.querySelector('#sudo-reason'), 'release');
+  assert.equal(submit().textContent, 'Grant 2 for 15m');
+  await harness.act(async () => { submit().click(); await Promise.resolve(); });
+  assert.equal(host.querySelector('#perm-edit-error').textContent, 'denied once');
+  assert.equal(host.querySelector('#sudo-duration').value, '15m');
+  await harness.act(async () => { submit().click(); await Promise.resolve(); });
+  assert.deepEqual(payloads[1], {
+    agentID: 'agt_s', slugs: ['groups.members.spawn', 'node.exec'], duration: '15m', reason: 'release',
+    scopes: { 'groups.members.spawn': { group: ['dev'] } }, node: '',
+  });
   assert.equal(state.dialog.value, null);
+  await mounted.unmount();
+});
+
+test('a slug the agent already holds can be scoped, and the row says that narrows it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const current = { ...sudoSnapshot(), permissions: { defaults: ['groups.members.spawn'], overrides: {} } };
+  const { host, mounted } = await mountSudo(harness, sudoActions(), current);
+  await pickSudo(harness, host, 'groups.members.spawn');
+  const row = () => sudoRow(host, 'groups.members.spawn');
+  assert.ok(row().querySelector('button.perm-scope-twisty'));
+  assert.equal(row().querySelector('.perm-narrows-held'), null, 'no scope, nothing narrows');
+  await harness.act(() => { row().querySelector('.perm-scope-twisty').click(); });
+  await harness.input(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'dev');
+  await harness.act(() => harness.fireEvent(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'keydown', { key: 'Enter' }));
+  assert.match(row().querySelector('.perm-narrows-held').textContent, /replaces its own, group and default access/);
+  await mounted.unmount();
+});
+
+test('a held slug takes no use limit: what it holds is never counted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const current = { ...sudoSnapshot(), permissions: { defaults: ['groups.members.spawn'], overrides: {} } };
+  const { host, mounted } = await mountSudo(harness, sudoActions(), current);
+  await pickSudo(harness, host, 'groups.members.spawn');
+  assert.match(sudoRow(host, 'groups.members.spawn').querySelector('.perm-uses.none').title, /does not use a count/);
+  await mounted.unmount();
+});
+
+test('a peer draft still being typed drops the use limit from the grant', async (t) => {
+  const harness = await createPreactHarness(t);
+  const payloads = [];
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); } });
+  const { host, mounted } = await mountSudo(harness, actions);
+  await pickSudo(harness, host, 'agent.spawn');
+  await harness.input(sudoRow(host, 'agent.spawn').querySelector('.perm-uses input'), '3');
+  await harness.act(() => { sudoRow(host, 'agent.spawn').querySelector('.perm-scope-twisty').click(); });
+  await harness.input(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'inst_peer');
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(payloads[0].uses, undefined);
+  assert.deepEqual(payloads[0].scopes, { 'agent.spawn': { peer: ['inst_peer'] } });
+  await mounted.unmount();
+});
+
+test('a peer-scoped grant says why it takes no use limit, and sends none', async (t) => {
+  const harness = await createPreactHarness(t);
+  const payloads = [];
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); } });
+  const { host, mounted } = await mountSudo(harness, actions);
+  await pickSudo(harness, host, 'agent.spawn');
+  const row = () => sudoRow(host, 'agent.spawn');
+  await harness.input(row().querySelector('.perm-uses input'), '3');
+  await harness.act(() => { row().querySelector('.perm-scope-twisty').click(); });
+  await harness.input(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'inst_peer');
+  await harness.act(() => harness.fireEvent(host.querySelector('.perm-scope-dim input[role="combobox"]'), 'keydown', { key: 'Enter' }));
+  assert.equal(row().querySelector('.perm-uses input'), null);
+  assert.match(row().querySelector('.perm-uses.none').title, /scoped to a peer/);
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(payloads[0].uses, undefined);
+  await mounted.unmount();
+});
+
+test('a duration over the maximum or unreadable says so and cannot be granted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, mounted } = await mountSudo(harness, sudoActions());
+  await pickSudo(harness, host, 'agent.stop');
+  await harness.input(host.querySelector('#sudo-duration'), '2h');
+  assert.match(host.querySelector('#sudo-duration-hint').textContent, /maximum for this agent is 30m/);
+  assert.equal(host.querySelector('#perm-edit-submit').disabled, true);
+  await harness.input(host.querySelector('#sudo-duration'), 'soon');
+  assert.match(host.querySelector('#sudo-duration-hint').textContent, /form like 20m/);
+  assert.equal(host.querySelector('#perm-edit-submit').disabled, true);
+  await harness.input(host.querySelector('#sudo-duration'), '20m');
+  assert.equal(host.querySelector('#perm-edit-submit').disabled, false);
+  await mounted.unmount();
+});
+
+test('active grants show time left and scope, extend by the chosen duration, and revoke', async (t) => {
+  const harness = await createPreactHarness(t);
+  const calls = [];
+  const actions = sudoActions({
+    extendSudo: async (payload) => { calls.push(['extend', payload]); },
+    revokeSudo: async (payload) => { calls.push(['revoke', payload]); },
+  });
+  const inMinutes = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
+  const sudo = [
+    { id: 7, agent_id: 'agt_s', slug: 'agent.stop', expires_at: inMinutes(12), scope_json: '{"group":["dev"]}' },
+    { id: 8, agent_id: 'agt_s', slug: 'node.exec', expires_at: inMinutes(25) },
+    { id: 9, agent_id: 'agt_other', slug: 'agent.stop', expires_at: inMinutes(5) },
+  ];
+  const { host, mounted } = await mountSudo(harness, actions, sudoSnapshot(sudo));
+  const rows = [...host.querySelectorAll('.sudo-active-row')];
+  assert.equal(rows.length, 2, 'this agent\'s grants only');
+  assert.match(rows[0].textContent, /group=dev/);
+  assert.match(rows[0].textContent, /1[12]m\d*s? left|12m left/);
+  assert.ok(sudoRow(host, 'agent.stop').querySelector('.perm-sudo-held'), 'an active slug is extended, not granted twice');
+  assert.equal(rows[0].querySelector('.sudo-extend').textContent, '+10m');
+  assert.equal(rows[1].querySelector('.sudo-extend').disabled, true, '25m + 10m would pass the 30m maximum');
+  await harness.act(async () => { rows[0].querySelector('.sudo-extend').click(); await Promise.resolve(); });
+  await harness.act(async () => { rows[1].querySelector('.sudo-revoke').click(); await Promise.resolve(); });
+  await harness.act(async () => { host.querySelector('#sudo-revoke-all').click(); await Promise.resolve(); });
+  assert.deepEqual(calls, [
+    ['extend', { ids: [7], duration: '10m', node: '' }],
+    ['revoke', { ids: [8], node: '' }],
+    ['revoke', { agentID: 'agt_s', node: '' }],
+  ]);
+  await mounted.unmount();
+});
+
+// The test DOM's select.value has no setter: the selected option decides it.
+async function chooseAllStewards(harness, select) {
+  select.querySelector('option[value="this"]').removeAttribute('selected');
+  select.querySelector('option[value="all"]').setAttribute('selected', '');
+  await harness.act(() => { select.dispatchEvent(new globalThis.Event('change', { bubbles: true })); });
+}
+
+function stewardSnapshot(sudo = []) {
+  return {
+    ...sudoSnapshot(sudo),
+    permissions: { defaults: [], overrides: { 'conv-s': { 'agent.stop': 'grant', 'fleet.read': 'grant', 'node.exec': 'grant' } } },
+    slugs: [...sudoSlugs, { slug: 'fleet.read', description: 'read the fleet' }],
+    steward_access: { convs: ['conv-s'], config: ['fleet.read'], carried: { 'agent.stop': 'grant' } },
+  };
+}
+
+async function mountStewardPermissions(harness, actions, current = stewardSnapshot()) {
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  state.openAgentPermissions({ conv: 'conv-s', label: 'steward-1' });
+  return { ...await mountDialogs(harness, state, actions, current), state };
+}
+
+test('a Steward\'s editor names each grant\'s source and offers carrying it over', async (t) => {
+  const harness = await createPreactHarness(t);
+  const saved = [];
+  const actions = sudoActions({ savePermissions: async (...args) => { saved.push(args); } });
+  const { host, mounted } = await mountStewardPermissions(harness, actions);
+  assert.match(host.querySelector('#perm-steward-note').textContent, /stored and given to each new Steward/);
+  assert.match(sudoRow(host, 'agent.stop').textContent, /all future Stewards/);
+  assert.equal(sudoRow(host, 'agent.stop').querySelector('.perm-carry option[value="all"]').selected, true);
+  assert.equal(sudoRow(host, 'node.exec').querySelector('.perm-carry option[value="this"]').selected, true, 'the default');
+  const config = sudoRow(host, 'fleet.read');
+  assert.match(config.textContent, /Reads and Writes/);
+  assert.equal(!!config.querySelector('.perm-tristate'), true, 'a level grant can be denied');
+  assert.equal(!!config.querySelector('.perm-carry'), false, 'nothing to store until it is denied');
+  await harness.act(async () => { config.querySelector('[data-effect="deny"]').click(); });
+  assert.equal(!!sudoRow(host, 'fleet.read').querySelector('.perm-carry'), true, 'a deny can be stored');
+  await harness.act(async () => { sudoRow(host, 'fleet.read').querySelector('[data-effect="grant"]').click(); });
+  const carry = sudoRow(host, 'node.exec').querySelector('.perm-carry');
+  await chooseAllStewards(harness, carry);
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(saved[0][4], { 'node.exec': true }, 'only what the operator changed');
+  await mounted.unmount();
+});
+
+test('an ordinary agent gets no carry choice, whatever its name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const current = { ...stewardSnapshot(), steward_access: { convs: ['conv-real'], config: [], carried: {}, not_carryable: [] } };
+  const { host, mounted } = await mountStewardPermissions(harness, sudoActions(), current);
+  assert.equal(!!host.querySelector('.perm-carry'), false);
+  assert.equal(!!host.querySelector('#perm-steward-note'), false);
+  await mounted.unmount();
+});
+
+test('sudo on a Steward stays instance-only unless the operator stores it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const payloads = [];
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); } });
+  const expires = new Date(Date.now() + 600000).toISOString();
+  const held = [{ id: 7, agent_id: 'agt_s', slug: 'fleet.read', expires_at: expires, carried: true }];
+  const { host, mounted } = await mountSudo(harness, actions, stewardSnapshot(held));
+  assert.match(host.querySelector('.sudo-active-row').textContent, /all future Stewards: revoking ends it for them too/);
+  assert.match(host.querySelector('.sudo-revoke').title, /all future Stewards/);
+  assert.match(host.querySelector('#sudo-revoke-all').title, /stored for future Stewards/);
+  await pickSudo(harness, host, 'agent.stop');
+  await pickSudo(harness, host, 'node.exec');
+  const carry = sudoRow(host, 'node.exec').querySelector('.perm-carry');
+  assert.equal(carry.querySelector('option[value="this"]').selected, true);
+  await chooseAllStewards(harness, carry);
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(payloads[0].carry, ['node.exec']);
+  await mounted.unmount();
+});
+
+test('a countable slug takes a use limit, sent with the grant and shown beside the time left', async (t) => {
+  const harness = await createPreactHarness(t);
+  const payloads = [];
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); } });
+  const expires = new Date(Date.now() + 600000).toISOString();
+  const held = [{ id: 7, agent_id: 'agt_s', slug: 'agent.stop', expires_at: expires, uses_limit: 5, uses_left: 2 }];
+  const { host, mounted } = await mountSudo(harness, actions, sudoSnapshot(held));
+  assert.match(host.querySelector('.sudo-active-row').textContent, /2 of 5 uses left/);
+
+  await pickSudo(harness, host, 'node.exec');
+  await pickSudo(harness, host, 'groups.members.spawn');
+  assert.equal(sudoRow(host, 'node.exec').querySelector('.perm-uses input'), null, 'nothing to count');
+  assert.equal(sudoRow(host, 'node.exec').querySelector('.perm-uses.none').title, 'It runs too often.');
+  const uses = () => sudoRow(host, 'groups.members.spawn').querySelector('.perm-uses input');
+  await harness.input(uses(), '0');
+  assert.equal(host.querySelector('#perm-edit-submit').disabled, true);
+  assert.match(host.querySelector('#sudo-picked').textContent, /whole number from 1 to 1000/);
+  await harness.input(uses(), '3');
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(payloads[0].uses, { 'groups.members.spawn': 3 });
+  await mounted.unmount();
+});
+
+test('the bundle limit reaches every countable pick, and a row can differ from it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const payloads = [];
+  const actions = sudoActions({ grantSudo: async (payload) => { payloads.push(payload); } });
+  const { host, mounted } = await mountSudo(harness, actions, sudoSnapshot([]));
+  await pickSudo(harness, host, 'node.exec');
+  await pickSudo(harness, host, 'groups.members.spawn');
+  await pickSudo(harness, host, 'agent.stop');
+  await harness.input(host.querySelector('#sudo-uses'), '5');
+  assert.match(host.querySelector('#sudo-uses-hint').textContent, /1 picked takes no limit/);
+  assert.equal(sudoRow(host, 'agent.stop').querySelector('.perm-uses input').placeholder, '5');
+  await harness.input(sudoRow(host, 'agent.stop').querySelector('.perm-uses input'), '2');
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.deepEqual(payloads[0].uses, { 'groups.members.spawn': 5, 'agent.stop': 2 });
+  await mounted.unmount();
+});
+
+test('an older node without the policy route leaves the editor on its defaults', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, mounted } = await mountSudo(harness, sudoActions({ sudoPolicy: async () => { throw new Error('405'); } }));
+  assert.equal(host.querySelector('#sudo-duration').value, '5m');
+  assert.equal(sudoRow(host, 'permissions.grant').querySelector('.perm-tristate'), null);
   await mounted.unmount();
 });
 
@@ -560,9 +898,7 @@ test('terminal message saved prompt inserts into the editable draft without send
   const body = host.querySelector('#operator-message-body');
   await harness.input(body, 'Task: ');
   body.selectionStart = 6; body.selectionEnd = 6;
-  const picker = host.querySelector('[aria-label="Insert saved prompt"]');
-  Object.defineProperty(picker, 'value', { configurable: true, writable: true, value: 'review' });
-  await harness.act(() => harness.fireEvent(picker, 'change'));
+  await comboPick(harness, host.querySelector('[aria-label="Insert saved prompt"]').closest('.choice-combobox'), 'review');
   assert.equal(host.querySelector('#operator-message-body'), body);
   assert.equal(body.value, 'Task: Please review.');
   assert.equal(sent.length, 0);
@@ -616,5 +952,24 @@ test('this node and an unrestricted peer keep every field open, with no lock', a
   const { host, mounted } = await mountDialogs(harness, state, actions, unrestricted);
   assert.equal(host.querySelector('#message-create-from').disabled, false);
   assert.equal(host.querySelector('.lock-why'), null);
+  await mounted.unmount();
+});
+
+test('the future-Stewards editor shows what a new Steward would hold and stores denies', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  const saves = [];
+  const actions = sudoActions({ savePermissions: async (descriptor, selection) => { saves.push(selection); } });
+  const { host, mounted } = await mountDialogs(harness, state, actions, stewardSnapshot());
+  await harness.act(async () => {
+    state.openBufferedPermissions({ stewardLevels: ['fleet.read'], overrides: { 'node.exec': 'grant' } });
+  });
+  assert.match(host.querySelector('#perm-edit-subtitle').textContent, /Future Stewards/);
+  assert.match(sudoRow(host, 'fleet.read').textContent, /✓ Reads and Writes/);
+  assert.match(sudoRow(host, 'node.exec').textContent, /✓ stored/);
+  await harness.act(async () => { sudoRow(host, 'fleet.read').querySelector('[data-effect="deny"]').click(); });
+  await harness.act(async () => { host.querySelector('#perm-edit-submit').click(); await Promise.resolve(); });
+  assert.equal(saves[0]['fleet.read'], 'deny');
   await mounted.unmount();
 });

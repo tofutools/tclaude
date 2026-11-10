@@ -41,21 +41,34 @@ type hubResourceParams struct {
 	MaxEntries   int      `long:"max-entries" optional:"true" help:"Bound the list or log response"`
 }
 
+// hubResourceActions lists what runHubResource accepts for each resource.
+var hubResourceActions = map[string]string{
+	"boards":     "list, set, delete",
+	"admins":     "list, add, remove",
+	"admissions": "list, admit, revoke",
+	"invites":    "list, create, revoke",
+	"spaces":     "list, set",
+	"settings":   "get, set, reset",
+	"identity":   "recover, revoke-old",
+	"logs":       "tail",
+	"audit":      "list",
+}
+
 func hubCmd() *cobra.Command {
 	sub := []*cobra.Command{
 		hubRunCmd(), hubUpdateCmd(), hubStaleCmd(),
 		boa.CmdT[hubClaimParams]{Use: "claim", Short: "Claim hub administration using the host's one-time token", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubClaimParams, _ *cobra.Command, _ []string) {
-			os.Exit(runHubCall("POST", "claim", map[string]any{"token": p.Token}, os.Stdout, os.Stderr))
+			os.Exit(runHubCall("POST", "claim", map[string]any{"token": p.Token}, cliStdout, cliStderr))
 		}}.ToCobra(),
 	}
 	for _, resource := range []string{"status", "health"} {
 		sub = append(sub, boa.CmdT[hubReadParams]{Use: resource, Short: "Read hub " + resource, ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubReadParams, _ *cobra.Command, _ []string) {
-			os.Exit(runHubRead(resource, p, os.Stdout, os.Stderr))
+			os.Exit(runHubRead(resource, p, cliStdout, cliStderr))
 		}}.ToCobra())
 	}
 	for _, resource := range []string{"admins", "admissions", "invites", "spaces", "settings", "identity", "logs", "audit", "boards"} {
-		sub = append(sub, boa.CmdT[hubResourceParams]{Use: resource, Short: "Manage hub " + resource + " (operator only)", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubResourceParams, _ *cobra.Command, _ []string) {
-			os.Exit(runHubResource(resource, p, os.Stdout, os.Stderr))
+		sub = append(sub, boa.CmdT[hubResourceParams]{Use: resource, Short: "Manage hub " + resource + " (operator only)", Long: "Manage hub " + resource + " (operator only). Actions: " + hubResourceActions[resource] + ".", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(p *hubResourceParams, _ *cobra.Command, _ []string) {
+			os.Exit(runHubResource(resource, p, cliStdout, cliStderr))
 		}}.ToCobra())
 	}
 	return boa.CmdT[struct{}]{Use: "hub", Short: "Administer the connected hub with signed operator RPCs", ParamEnrich: common.DefaultParamEnricher(), SubCmds: sub}.ToCobra()

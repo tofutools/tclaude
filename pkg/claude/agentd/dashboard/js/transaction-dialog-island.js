@@ -1,10 +1,9 @@
 import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import {
-  ManagementOverlay as Overlay,
-  useGuardedOverlayClose,
-} from './management-overlay.js';
+import { Button } from './ui-components.js';
+import { useGuardedOverlayClose } from './management-overlay.js';
+import { Dialog } from './ui-dialog.js';
 import { relTime } from './helpers.js';
 import { LockReason, trustLock } from './lock-reason.js';
 import { registerTransactionDialogController } from './transaction-dialog-controller.js';
@@ -27,11 +26,11 @@ export function TransactionDialogFrame({
   error = '',
   primaryLabel,
   busyLabel = primaryLabel,
-  primaryClass = 'confirm-danger',
+  primaryVariant = 'danger',
   submitDisabled = false,
   alternateLabel = '',
   alternateBusyLabel = alternateLabel,
-  alternateClass = 'confirm-danger',
+  alternateVariant = 'danger',
   alternateDisabled = false,
   alternateID = '',
   alternateTitle = '',
@@ -72,7 +71,7 @@ export function TransactionDialogFrame({
     if (!busy) onClose?.();
   };
   return html`
-    <${Overlay}
+    <${Dialog}
       id=${id}
       labelledby=${labelledby}
       onClose=${close}
@@ -83,35 +82,33 @@ export function TransactionDialogFrame({
       guardBackdropDrag=${true}
       initialFocusRef=${submitRef}
       dialogClass=${dialogClass}
-      registerClose=${registerClose}
+      guard=${{ requestClose, registerClose }}
     >
       <h3 id=${labelledby}>${title}</h3>
       ${meta ? html`<div class="modal-meta" id=${metaID || undefined}>${meta}</div>` : null}
       ${children}
-      <div class="cleanup-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
+      <div class="cleanup-error ui-error" id=${errorID || undefined} role=${error ? 'alert' : undefined}>${error}</div>
       <div class="modal-buttons">
-        ${hideCancel ? null : html`<button id=${cancelID || `${baseID}-cancel`} type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>`}
+        ${hideCancel ? null : html`<${Button} id=${cancelID || `${baseID}-cancel`} disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</${Button}>`}
         <span class="spacer"></span>
-        ${alternateLabel ? html`<button
+        ${alternateLabel ? html`<${Button}
           id=${alternateID || `${baseID}-alternate`}
-          class=${alternateClass}
-          type="button"
+          variant=${alternateVariant}
           title=${alternateTitle || undefined}
           disabled=${busy || alternateDisabled}
-          aria-busy=${busy && busyAction === 'alternate' ? 'true' : undefined}
+          busy=${busy && busyAction === 'alternate'}
           onClick=${() => submit('alternate')}
-        >${busy && busyAction === 'alternate' ? alternateBusyLabel : alternateLabel}</button>` : null}
-        <button
-          ref=${submitRef}
+        >${busy && busyAction === 'alternate' ? alternateBusyLabel : alternateLabel}</${Button}>` : null}
+        <${Button}
+          domRef=${submitRef}
           id=${submitID || `${baseID}-submit`}
-          class=${primaryClass}
-          type="button"
+          variant=${primaryVariant}
           disabled=${busy || submitDisabled}
-          aria-busy=${busy && busyAction === 'primary' ? 'true' : undefined}
+          busy=${busy && busyAction === 'primary'}
           onClick=${() => submit('primary')}
-        >${busy && busyAction === 'primary' ? busyLabel : primaryLabel}</button>
+        >${busy && busyAction === 'primary' ? busyLabel : primaryLabel}</${Button}>
       </div>
-    </${Overlay}>
+    </${Dialog}>
   `;
 }
 
@@ -226,28 +223,28 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
       ? `Detach the web terminal panes of the selected running agents in ${where}. The agents keep running — only the terminal views are dismissed.`
       : `Detach the terminal windows of the selected running agents in ${where} so the desktop is decluttered. The agents keep running — only the windows are dismissed.`;
   const wizardHint = direction === 'focus'
-    ? `Conjure a scrying portal for each chosen channeling familiar in ${wizardWhere}.`
-    : `Draw the veil over the chosen familiars' scrying portals in ${wizardWhere} so the desktop is decluttered. The familiars keep channeling — only the portals are dismissed.`;
+    ? `Conjure a scrying portal for each chosen channeling hero in ${wizardWhere}.`
+    : `Draw the veil over the chosen heroes' scrying portals in ${wizardWhere} so the desktop is decluttered. The heroes keep channeling — only the portals are dismissed.`;
   const plainVerb = direction === 'focus' ? 'Focus' : 'Unfocus';
   const wizardVerb = direction === 'focus' ? 'Reveal' : 'Veil';
   const count = selectedCandidates.length;
   return html`<${TransactionDialogFrame}
     id="window-modal"
     labelledby="window-title"
-    title=${html`<span class="window-title-regular">Agent windows</span><span class="window-title-wizard">Familiars' windows</span>`}
+    title=${html`<span class="window-title-regular">Agent windows</span><span class="window-title-wizard">Heroes' windows</span>`}
     dialogClass="cleanup-modal"
     busy=${busy}
     error=${error}
     errorID="window-error"
     primaryLabel=${html`<${Words}
       plain=${`${retrying ? 'Retry ' : ''}${plainVerb} ${count} agent${count === 1 ? '' : 's'}`}
-      wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} familiar${count === 1 ? '' : 's'}`}
+      wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} hero${count === 1 ? '' : 'es'}`}
     />`}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain=${`${plainVerb}ing…`}
       wizard=${`${wizardVerb}ing…`}
     />`}
-    primaryClass="primary"
+    primaryVariant="primary"
     submitDisabled=${count === 0}
     cancelID="window-cancel"
     submitID="window-submit"
@@ -255,15 +252,15 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class="cleanup-hint" id="window-hint"><${Words} plain=${plainHint} wizard=${wizardHint} /></p>
-    <div class="window-direction" id="window-direction" role="radiogroup" aria-label="Window action">
+    <p class="cleanup-hint ui-hint" id="window-hint"><${Words} plain=${plainHint} wizard=${wizardHint} /></p>
+    <div class="window-direction ui-card" id="window-direction" role="radiogroup" aria-label="Window action">
       <label><input
         type="radio" name="window-direction" value="focus"
         checked=${direction === 'focus'} disabled=${busy || locked}
         onChange=${() => setDirection('focus')}
       />
         <span class="window-dir-label-regular">Focus</span><span class="window-dir-label-wizard">👁 Reveal</span>
-        <span class="opt-note"><span class="window-dir-note-regular">— open or focus a terminal for each selected agent</span><span class="window-dir-note-wizard">— conjure a scrying portal for each chosen familiar</span></span>
+        <span class="opt-note"><span class="window-dir-note-regular">— open or focus a terminal for each selected agent</span><span class="window-dir-note-wizard">— conjure a scrying portal for each chosen hero</span></span>
       </label>
       <label><input
         type="radio" name="window-direction" value="unfocus"
@@ -271,12 +268,12 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
         onChange=${() => setDirection('unfocus')}
       />
         <span class="window-dir-label-regular">Unfocus</span><span class="window-dir-label-wizard">🌫 Veil</span>
-        <span class="opt-note"><span class="window-dir-note-regular">— detach the terminal views so the dashboard or desktop is decluttered. Detach-only: a window or tab tclaude opened closes itself, other tabs are untouched. The agents keep running — never the agent process.</span><span class="window-dir-note-wizard">— draw the veil over the chosen familiars' scrying portals so the desktop is decluttered. Veil-only: a window or tab tclaude opened closes itself, other tabs are untouched. The familiars keep channeling — never the familiar itself.</span></span>
+        <span class="opt-note"><span class="window-dir-note-regular">— detach the terminal views so the dashboard or desktop is decluttered. Detach-only: a window or tab tclaude opened closes itself, other tabs are untouched. The agents keep running — never the agent process.</span><span class="window-dir-note-wizard">— draw the veil over the chosen heroes' scrying portals so the desktop is decluttered. Veil-only: a window or tab tclaude opened closes itself, other tabs are untouched. The heroes keep channeling — never the hero itself.</span></span>
       </label>
     </div>
     <div class="cleanup-toolbar">
-      <button type="button" id="window-select-all" disabled=${busy || locked} onClick=${() => updateAll(true)}>select all</button>
-      <button type="button" id="window-select-none" disabled=${busy || locked} onClick=${() => updateAll(false)}>select none</button>
+      <${Button} size="sm" id="window-select-all" disabled=${busy || locked} onClick=${() => updateAll(true)}>select all<//>
+      <${Button} size="sm" id="window-select-none" disabled=${busy || locked} onClick=${() => updateAll(false)}>select none<//>
       <input
         type="search" id="window-search" placeholder="filter title / id…"
         aria-label="Filter agents" value=${query} disabled=${busy || locked}
@@ -291,7 +288,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
         const members = bucketCandidates('groups', key, NO_WINDOW_GROUP);
         const on = members.filter((candidate) => selected.has(candidate.conv_id)).length;
         const stateClass = on === 0 ? '' : on === members.length ? ' on' : ' partial';
-        return html`<button
+        return html`<button data-ui-exempt
           type="button" key=${key} class=${`window-role-chip${stateClass}`}
           data-group-chip=${key} disabled=${busy || locked}
           onClick=${() => updateBucket('groups', key, NO_WINDOW_GROUP)}
@@ -304,7 +301,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
         const members = bucketCandidates('roles', key, NO_WINDOW_ROLE);
         const on = members.filter((candidate) => selected.has(candidate.conv_id)).length;
         const stateClass = on === 0 ? '' : on === members.length ? ' on' : ' partial';
-        return html`<button
+        return html`<button data-ui-exempt
           type="button" key=${key} class=${`window-role-chip${stateClass}`}
           data-role=${key} disabled=${busy || locked}
           onClick=${() => updateBucket('roles', key, NO_WINDOW_ROLE)}
@@ -321,9 +318,9 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
           />
           <span class="title">${candidate.title || '(untitled)'}</span>
           <span class="id">${candidate.conv_id.slice(0, 8)}</span>
-          ${candidate.roles.map((role) => html`<span class="cleanup-badge" key=${role}>${role}</span>`)}
+          ${candidate.roles.map((role) => html`<span class="ui-tag cleanup-badge" key=${role}>${role}</span>`)}
         </label></div>
-      `) : html`<div class="cleanup-empty"><${Words} plain="no agents match the filter" wizard="no familiars match the filter" /></div>`}
+      `) : html`<div class="ui-empty-block"><${Words} plain="no agents match the filter" wizard="no heroes match the filter" /></div>`}
     </div>
   </${TransactionDialogFrame}>`;
 }
@@ -364,12 +361,12 @@ function CleanupResult({ response }) {
   return html`<div class="cleanup-list" id="cleanup-list">
     ${outcomes.length ? outcomes.map((outcome) => html`
       <div class="cleanup-row" key=${outcome.conv_id || outcome.agent_id}>
-        <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
+        <span class=${`ui-tag cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
         <span class="title">${outcome.title || String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${outcome.detail || ''}</span>
       </div>
-    `) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+    `) : html`<div class="ui-empty-block">Nothing to do.</div>`}
   </div>`;
 }
 
@@ -517,7 +514,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     />`;
     hint = html`<${Words}
       plain="Removes the selected confirmed-offline members from this group. Their conversations keep running and stay on disk — only the membership is dropped. Owners are excluded unless you opt in below."
-      wizard="Dismisses the selected confirmed-slumbering familiars from this party. Their conversation scrolls remain on disk — only the party bond is broken. Party owners are excluded unless you opt in below."
+      wizard="Dismisses the selected confirmed-slumbering heroes from this party. Their conversation scrolls remain on disk — only the party bond is broken. Party owners are excluded unless you opt in below."
     />`;
     primaryLabel = html`<${Words}
       plain=${count ? `Remove ${count} from ${descriptor.group}` : 'Remove from group'}
@@ -551,14 +548,14 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
       title=${title}
       dialogClass="cleanup-modal"
       primaryLabel="Done"
-      primaryClass="primary"
+      primaryVariant="primary"
       hideCancel=${true}
       submitID="cleanup-submit"
       onClose=${close}
       onSubmit=${close}
       confirmDiscard=${confirmDiscard}
     >
-      <p class="cleanup-hint" id="cleanup-hint">Cleanup complete — ${resultBits.join(' · ') || 'nothing to do'}.</p>
+      <p class="cleanup-hint ui-hint" id="cleanup-hint">Cleanup complete — ${resultBits.join(' · ') || 'nothing to do'}.</p>
       <${CleanupResult} response=${result} />
       ${(result.warnings || []).length ? html`<div class="cleanup-warn" id="cleanup-warn">
         ⚠ ${(result.warnings || []).join('\n⚠ ')}
@@ -584,7 +581,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     primaryLabel=${primaryLabel}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain="Cleaning up…" wizard="Tidying…" />`}
-    primaryClass=${effectiveTier === 'delete' ? 'primary danger' : 'primary'}
+    primaryVariant=${effectiveTier === 'delete' ? 'danger' : 'primary'}
     submitDisabled=${count === 0}
     cancelID="cleanup-cancel"
     submitID="cleanup-submit"
@@ -592,10 +589,10 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class=${`cleanup-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint">${hint}</p>
+    <p class=${`cleanup-hint ui-hint${effectiveTier === 'delete' ? ' danger' : ''}`} id="cleanup-hint">${hint}</p>
     <div class="cleanup-toolbar" id="cleanup-toolbar">
-      <button type="button" id="cleanup-select-all" disabled=${controlsDisabled} onClick=${selectAll}>select all</button>
-      <button type="button" id="cleanup-select-none" disabled=${controlsDisabled} onClick=${selectNone}>select none</button>
+      <${Button} size="sm" id="cleanup-select-all" disabled=${controlsDisabled} onClick=${selectAll}>select all<//>
+      <${Button} size="sm" id="cleanup-select-none" disabled=${controlsDisabled} onClick=${selectNone}>select none<//>
       <span title="Tick every visible row whose last activity is at least this many hours ago. 0 selects all.">
         inactive ≥ <input
           type="number" id="cleanup-age" min="0" step="1" value=${age}
@@ -630,7 +627,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
         const rows = visibleCandidates.filter((candidate) => candidate.category === category);
         if (!rows.length || (!multiCategory && category !== 'agent')) return null;
         return html`<div class="cleanup-category" key=${category}>
-          ${multiCategory ? html`<div class="cleanup-cat-head">${CLEANUP_CATEGORY_LABEL[category]} <span>(${rows.length})</span></div>` : null}
+          ${multiCategory ? html`<div class="ui-eyebrow cleanup-cat-head">${CLEANUP_CATEGORY_LABEL[category]} <span>(${rows.length})</span></div>` : null}
           ${rows.map((candidate) => {
             const enabled = rowEnabled(candidate);
             return html`<div class=${`cleanup-row${enabled ? '' : ' disabled'}`} key=${candidate.conv_id}>
@@ -642,8 +639,8 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
               />
                 <span class="title">${candidate.title || candidate.conv_id.slice(0, 8)}</span>
                 <span class="id">${candidate.conv_id.slice(0, 8)}</span>
-                ${candidate.owner ? html`<span class="cleanup-badge owner">owner</span>` : null}
-                ${candidate.online ? html`<span class="cleanup-badge online">online</span>` : null}
+                ${candidate.owner ? html`<span class="ui-tag cleanup-badge owner">owner</span>` : null}
+                ${candidate.online ? html`<span class="ui-tag cleanup-badge online">online</span>` : null}
                 <span class="meta">${candidate.category === 'agent'
                   ? candidate.groups.length
                     ? `in: ${candidate.groups.join(', ')}`
@@ -654,7 +651,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
             </div>`;
           })}
         </div>`;
-      }) : html`<div class="cleanup-empty">${candidates.length
+      }) : html`<div class="ui-empty-block">${candidates.length
         ? 'No conversations match the current filters.' : 'Nothing to clean up.'}</div>`}
     </div>
     <div class="cleanup-options" id="cleanup-options">
@@ -668,7 +665,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
           wizard="— also revokes their party-owner mark"
         /></span>
       </label>` : html`
-        <div class="cleanup-tier">
+        <div class="cleanup-tier ui-card">
           ${tierOption('unjoin', 'Unjoin from groups', 'stays an agent — only its group memberships are dropped')}
           ${tierOption('retire', 'Retire (soft-delete)', 'demote to a plain conversation: revokes groups + permissions, keeps the .jsonl, reinstatable')}
           ${tierOption('delete', 'Delete permanently', 'wipes the conversation from disk and every agent row — cannot be undone')}
@@ -694,13 +691,12 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
           disabled=${controlsDisabled || effectiveTier !== 'delete'}
           onChange=${(event) => setDeleteWorktrees(event.currentTarget.checked)}
         /> Delete associated git worktrees <span class="opt-note">— removes the worktree directory; the branch and its commits are kept. The main repo and worktrees shared with another agent are always skipped.</span></label>
-        <div class="cleanup-related"><button
-          type="button" id="cleanup-worktrees-all" disabled=${controlsDisabled}
+        <div class="cleanup-related"><${Button} size="sm" id="cleanup-worktrees-all" disabled=${controlsDisabled}
           onClick=${() => actions.handoffCleanupWorktrees({ group: '' })}
         ><${Words}
           plain="🧹 Review worktrees across all groups…"
           wizard="🍂 Prune stray branches across all parties…"
-        /></button><span class="opt-note"><${Words}
+        /><//><span class="opt-note"><${Words}
           plain="— opens a safe preview of stale worktrees in every group repo"
           wizard="— opens a safe preview of withered branches in every party grove"
         /></span></div>
@@ -737,7 +733,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
       const count = cause.memberErrors;
       return {
         plain: `retire failed for ${count} ${count === 1 ? 'agent' : 'agents'}; group was not deleted`,
-        wizard: `banish failed for ${count} ${count === 1 ? 'familiar' : 'familiars'}; party was not disbanded`,
+        wizard: `banish failed for ${count} ${count === 1 ? 'hero' : 'heroes'}; party was not disbanded`,
       };
     }
     const message = cause?.message || String(cause);
@@ -795,7 +791,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
     wizardBits.push(`${detachTargets.length} detached`);
   }
   const plainHint = `Deleting "${descriptor.group}" drops the group, owner rows, memberships, and group message history. Conversations are kept. ${plainBits.length ? `Preview: ${plainBits.join(', ')}.` : 'The group has no agents.'}`;
-  const wizardHint = `Disbanding "${descriptor.group}" erases the party, owner marks, memberships, and party message history. Conversation scrolls are kept. ${wizardBits.length ? `Preview: ${wizardBits.join(', ')}.` : 'The party has no familiars.'}`;
+  const wizardHint = `Disbanding "${descriptor.group}" erases the party, owner marks, memberships, and party message history. Conversation scrolls are kept. ${wizardBits.length ? `Preview: ${wizardBits.join(', ')}.` : 'The party has no heroes.'}`;
 
   return html`<${TransactionDialogFrame}
     id="delete-group-modal"
@@ -809,20 +805,20 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain="Deleting…" wizard="Disbanding…"
     />`}
-    primaryClass="primary danger"
+    primaryVariant="danger"
     cancelID="delete-group-cancel"
     submitID="delete-group-submit"
     onClose=${actions.close}
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class="cleanup-hint danger" id="delete-group-hint"><${Words}
+    <p class="cleanup-hint ui-hint danger" id="delete-group-hint"><${Words}
       plain=${plainHint} wizard=${wizardHint}
     /></p>
     <div class="cleanup-toolbar">
       <span class="cleanup-count" id="delete-group-count"><${Words}
         plain=${`${members.length} ${members.length === 1 ? 'agent' : 'agents'}: ${retireTargets.length} to retire, ${detachTargets.length} detach`}
-        wizard=${`${members.length} ${members.length === 1 ? 'familiar' : 'familiars'}: ${retireTargets.length} to banish, ${detachTargets.length} detach`}
+        wizard=${`${members.length} ${members.length === 1 ? 'hero' : 'heroes'}: ${retireTargets.length} to banish, ${detachTargets.length} detach`}
       /></span>
     </div>
     <div class="cleanup-list" id="delete-group-list">
@@ -847,16 +843,16 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
           />
           <span class="title">${member.title || '(untitled)'}</span>
           <span class="id">${member.conv_id.slice(0, 8)}</span>
-          <span class="cleanup-badge">${member.status}</span>
-          ${member.role ? html`<span class="cleanup-badge">${member.role}</span>` : null}
-          <span class="cleanup-badge"><${Words}
+          <span class="ui-tag cleanup-badge">${member.status}</span>
+          ${member.role ? html`<span class="ui-tag cleanup-badge">${member.role}</span>` : null}
+          <span class="ui-tag cleanup-badge"><${Words}
             plain=${willRetire ? 'retire + stop' : 'detach only'}
-            wizard=${willRetire ? 'banish familiar + stop' : 'detach only'}
+            wizard=${willRetire ? 'banish hero + stop' : 'detach only'}
           /></span>
           <span class="muted"> <${Words} plain=${plainWhy} wizard=${wizardWhy} /></span>
         </label></div>`;
-      }) : html`<div class="cleanup-empty"><${Words}
-        plain="no agents in this group" wizard="no familiars in this party"
+      }) : html`<div class="ui-empty-block"><${Words}
+        plain="no agents in this group" wizard="no heroes in this party"
       /></div>`}
     </div>
     <label class="delete-agent-wt" id="delete-group-retire-row">
@@ -866,10 +862,10 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
       />
       <span>
         <span class="delete-group-copy-regular">Retire checked agents before deleting the group</span>
-        <span class="delete-group-copy-wizard">Banish checked familiars before disbanding the party</span>
+        <span class="delete-group-copy-wizard">Banish checked heroes before disbanding the party</span>
         <span class="wt-note">
           <span class="delete-group-copy-regular">single-group agents are checked by default; agents also in other groups are unchecked by default and only detached unless you tick them</span>
-          <span class="delete-group-copy-wizard">single-party familiars are checked by default; familiars also in other parties are unchecked by default and only detached unless you tick them</span>
+          <span class="delete-group-copy-wizard">single-party heroes are checked by default; heroes also in other parties are unchecked by default and only detached unless you tick them</span>
         </span>
       </span>
     </label>
@@ -884,15 +880,15 @@ function BulkRetireResult({ descriptor, response }) {
       const status = group ? row.action : row.result;
       const worktree = group ? row.worktree : null;
       return html`<div class="cleanup-row" key=${row.conv_id || row.agent_id}>
-        <span class=${`cleanup-badge ${status || ''}`}>${status || 'unknown'}</span>
+        <span class=${`ui-tag cleanup-badge ${status || ''}`}>${status || 'unknown'}</span>
         <span class="title">${row.title || row.conv_id || '(untitled)'}</span>
         <span class="id">${String(row.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${row.detail || ''}</span>
-        ${worktree ? html`<span class=${`cleanup-badge ${worktree.action || ''}`}>
+        ${worktree ? html`<span class=${`ui-tag cleanup-badge ${worktree.action || ''}`}>
           worktree ${worktree.action || 'unknown'}
         </span><span class="meta">${worktree.detail || ''}</span>` : null}
       </div>`;
-    }) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+    }) : html`<div class="ui-empty-block">Nothing to do.</div>`}
   </div>`;
 }
 
@@ -959,12 +955,12 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
         ? `Retire ${descriptor.status} agents in "Ungrouped"`
         : 'Retire ungrouped agents';
   const wizardTitle = descriptor.kind === 'retire-group-preview'
-    ? `Banish ${descriptor.status} familiars in "${descriptor.group}"`
+    ? `Banish ${descriptor.status} heroes in "${descriptor.group}"`
     : descriptor.kind === 'retire-all-preview'
-      ? `Banish ${descriptor.status} familiars across all parties`
+      ? `Banish ${descriptor.status} heroes across all parties`
       : descriptor.status
-        ? `Banish ${descriptor.status} familiars in "Unbound"`
-        : 'Banish unbound familiars';
+        ? `Banish ${descriptor.status} heroes in "Unbound"`
+        : 'Banish unbound heroes';
 
   const updateVisible = (checked) => {
     if (busy || locked) return;
@@ -1057,20 +1053,20 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
       : descriptor.kind === 'retire-group-preview'
       ? html`<${Words}
         plain=${`These ${descriptor.status} agents in group "${descriptor.group}" will be demoted to plain, reinstatable conversations. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.`}
-        wizard=${`These ${descriptor.status} familiars in party "${descriptor.group}" will return to restorable conversation scrolls. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.`}
+        wizard=${`These ${descriptor.status} heroes in party "${descriptor.group}" will return to restorable conversation scrolls. Status is captured when this preview opens; a checked hero remains selected if its status changes before submit. Each ticked hero is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked heroes are banished.`}
       />`
       : descriptor.kind === 'retire-all-preview'
         ? html`<${Words}
           plain=${`These ${descriptor.status} agents span every group, including Ungrouped. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent will be demoted to a plain, reinstatable conversation, removed from every group, and have its grants revoked. Untick any you want to keep; only the ticked agents are retired.`}
-          wizard=${`These ${descriptor.status} familiars span every party, including the Unbound. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar will return to a restorable conversation scroll, leave every party, and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`}
+          wizard=${`These ${descriptor.status} heroes span every party, including the Unbound. Status is captured when this preview opens; a checked hero remains selected if its status changes before submit. Each ticked hero will return to a restorable conversation scroll, leave every party, and lose its boons. Untick any you want to keep; only the ticked heroes are banished.`}
         />`
         : html`<${Words}
           plain=${descriptor.status
             ? `These ${descriptor.status} agents are in the virtual Ungrouped group. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.`
             : 'These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.'}
           wizard=${descriptor.status
-            ? `These ${descriptor.status} familiars are in the ethereal Unbound party. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`
-            : 'These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.'}
+            ? `These ${descriptor.status} heroes are in the ethereal Unbound party. Status is captured when this preview opens; a checked hero remains selected if its status changes before submit. Each ticked hero will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked heroes are banished.`
+            : 'These unbound heroes belong to no party. Each ticked hero will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked heroes are banished.'}
         />`;
 
   return html`<${TransactionDialogFrame}
@@ -1086,13 +1082,13 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
       plain=${retrying ? 'Retry retire' : selectedCandidates.length === 1
         ? 'Retire 1 agent' : `Retire ${selectedCandidates.length} agents`}
       wizard=${retrying ? 'Retry banishment' : selectedCandidates.length === 1
-        ? 'Banish 1 familiar' : `Banish ${selectedCandidates.length} familiars`}
+        ? 'Banish 1 hero' : `Banish ${selectedCandidates.length} heroes`}
     />`}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain=${result ? 'Refreshing…' : 'Retiring…'}
       wizard=${result ? 'Refreshing…' : 'Banishing…'}
     />`}
-    primaryClass=${result ? 'primary' : 'primary danger'}
+    primaryVariant=${result ? 'primary' : 'danger'}
     submitDisabled=${!result && selectedCandidates.length === 0}
     hideCancel=${!!result}
     cancelID="retire-preview-cancel"
@@ -1101,11 +1097,11 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class="cleanup-hint" id="retire-preview-hint">${hint}</p>
+    <p class="cleanup-hint ui-hint" id="retire-preview-hint">${hint}</p>
     ${result ? html`<${BulkRetireResult} descriptor=${descriptor} response=${result} />` : html`
       <div class="cleanup-toolbar">
-        <button type="button" id="retire-preview-select-all" disabled=${busy || locked} onClick=${() => updateVisible(true)}>select all</button>
-        <button type="button" id="retire-preview-select-none" disabled=${busy || locked} onClick=${() => updateVisible(false)}>select none</button>
+        <${Button} size="sm" id="retire-preview-select-all" disabled=${busy || locked} onClick=${() => updateVisible(true)}>select all<//>
+        <${Button} size="sm" id="retire-preview-select-none" disabled=${busy || locked} onClick=${() => updateVisible(false)}>select none<//>
         <input
           type="search"
           id="retire-preview-search"
@@ -1129,14 +1125,14 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
             />
             <span class="title">${candidate.title || '(untitled)'}</span>
             <span class="id">${candidate.conv_id.slice(0, 8)}</span>
-            <span class="cleanup-badge">${candidate.status}</span>
-            ${candidate.role ? html`<span class="cleanup-badge">${candidate.role}</span>` : null}
+            <span class="ui-tag cleanup-badge">${candidate.status}</span>
+            ${candidate.role ? html`<span class="ui-tag cleanup-badge">${candidate.role}</span>` : null}
             ${descriptor.kind === 'retire-all-preview' ? html`<span class="meta retire-preview-groups"><${Words}
               plain=${candidate.groups?.length ? `in: ${candidate.groups.join(', ')}` : 'in: Ungrouped'}
               wizard=${candidate.groups?.length ? `parties: ${candidate.groups.join(', ')}` : 'in: Unbound'}
             /></span>` : null}
           </label></div>
-        `) : html`<div class="cleanup-empty">no agents match the filter</div>`}
+        `) : html`<div class="ui-empty-block">no agents match the filter</div>`}
       </div>
       <label class="delete-agent-wt" id="retire-preview-shutdown-row">
         <input
@@ -1146,7 +1142,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
           disabled=${busy || locked}
           onChange=${changeShutdown}
         />
-        <span><${Words} plain="Also shut down running sessions" wizard="Also slumber running familiars" />
+        <span><${Words} plain="Also shut down running sessions" wizard="Also slumber running heroes" />
           <span class="wt-note">soft-exits each tmux pane (/exit) — conversations are kept either way</span>
         </span>
       </label>
@@ -1160,7 +1156,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
             if (!busy && !locked && shutdown) setDeleteWorktrees(event.currentTarget.checked);
           }}
         />
-        <span><${Words} plain="Also delete each agent’s git worktree + branch" wizard="Also dissolve each familiar’s git worktree + branch" />
+        <span><${Words} plain="Also delete each agent’s git worktree + branch" wizard="Also dissolve each hero’s git worktree + branch" />
           <span class="wt-note">The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; a branch is deleted with its worktree only if it is merged, so unmerged commits are kept.</span>
         </span>
       </label>
@@ -1180,12 +1176,12 @@ function DeleteRetiredResult({ response }) {
   return html`<div class="cleanup-list" id="delete-retired-list">
     ${outcomes.length ? outcomes.map((outcome) => html`
       <div class="cleanup-row" key=${outcome.conv_id}>
-        <span class=${`cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
+        <span class=${`ui-tag cleanup-badge ${outcome.result || ''}`}>${outcome.result || 'unknown'}</span>
         <span class="title">${outcome.title || String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="id">${String(outcome.conv_id || '').slice(0, 8)}</span>
         <span class="meta">${outcome.detail || ''}</span>
       </div>
-    `) : html`<div class="cleanup-empty">Nothing to do.</div>`}
+    `) : html`<div class="ui-empty-block">Nothing to do.</div>`}
   </div>`;
 }
 
@@ -1320,7 +1316,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
       plain=${result ? 'Refreshing…' : 'Deleting…'}
       wizard=${result ? 'Refreshing…' : 'Dispelling…'}
     />`}
-    primaryClass=${result ? 'primary' : 'primary danger'}
+    primaryVariant=${result ? 'primary' : 'danger'}
     submitDisabled=${!result && visibleSelected.length === 0}
     hideCancel=${!!result}
     cancelID="delete-retired-cancel"
@@ -1329,11 +1325,11 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
     onSubmit=${submit}
     confirmDiscard=${confirmDiscard}
   >
-    <p class=${`cleanup-hint${result ? '' : ' danger'}`} id="delete-retired-hint">${hint}</p>
+    <p class=${`cleanup-hint ui-hint${result ? '' : ' danger'}`} id="delete-retired-hint">${hint}</p>
     ${result ? html`<${DeleteRetiredResult} response=${result} />` : html`
       <div class="cleanup-toolbar">
-        <button type="button" id="delete-retired-select-all" disabled=${busy} onClick=${() => updateVisible(true)}>select all</button>
-        <button type="button" id="delete-retired-select-none" disabled=${busy} onClick=${() => updateVisible(false)}>select none</button>
+        <${Button} size="sm" id="delete-retired-select-all" disabled=${busy} onClick=${() => updateVisible(true)}>select all<//>
+        <${Button} size="sm" id="delete-retired-select-none" disabled=${busy} onClick=${() => updateVisible(false)}>select none<//>
         <span title="Hide retired agents younger than this — only those retired at least this many days ago stay in the list (and so can be deleted). 0 shows them all.">
           retired ≥ <input
             type="number"
@@ -1372,10 +1368,10 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
             <span class="title">${candidate.title || '(untitled)'}</span>
             <span class="id">${candidate.conv_id.slice(0, 8)}</span>
             <span class="seen">${age}</span>
-            ${candidate.online ? html`<span class="cleanup-badge online">online — will skip</span>` : null}
-            ${candidate.retired_by ? html`<span class="cleanup-badge">by ${candidate.retired_by}</span>` : null}
+            ${candidate.online ? html`<span class="ui-tag cleanup-badge online">online — will skip</span>` : null}
+            ${candidate.retired_by ? html`<span class="ui-tag cleanup-badge">by ${candidate.retired_by}</span>` : null}
           </label></div>`;
-        }) : html`<div class="cleanup-empty">no retired agents match the filter</div>`}
+        }) : html`<div class="ui-empty-block">no retired agents match the filter</div>`}
       </div>
       <label class="delete-agent-wt" id="delete-retired-wt-row">
         <input
@@ -1404,7 +1400,7 @@ function RetireWorktreeChoice({ worktree, shutdown, checked, disabled, onChange 
     let reason = html`not removable`;
     if (worktree.kind === 'main') reason = html`the repo’s main worktree, never removed`;
     else if (worktree.shared) {
-      reason = html`<${Words} plain="shared with another agent" wizard="shared with another familiar"/>`;
+      reason = html`<${Words} plain="shared with another agent" wizard="shared with another hero"/>`;
     }
     return html`
       <label class="delete-agent-wt disabled" id="retire-wt-row">
@@ -1441,7 +1437,7 @@ function DeleteWorktreeChoice({ worktree, checked, disabled, onChange }) {
     let reason = html`not removable`;
     if (worktree.kind === 'main') reason = html`the repo’s main worktree, never removed`;
     else if (worktree.shared) {
-      reason = html`<${Words} plain="shared with another agent" wizard="shared with another familiar"/>`;
+      reason = html`<${Words} plain="shared with another agent" wizard="shared with another hero"/>`;
     }
     return html`
       <label class="delete-agent-wt disabled" id="delete-agent-wt-row">
@@ -1569,7 +1565,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
     }
   };
 
-  const title = html`<span class="retire-title-regular">Retire this agent?</span><span class="retire-title-wizard">Banish this familiar?</span>`;
+  const title = html`<span class="retire-title-regular">Retire this agent?</span><span class="retire-title-wizard">Banish this hero?</span>`;
   const retrying = !!submittedChoice;
   const busyLabel = html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
     plain="Retiring…" wizard="Banishing…" />`;
@@ -1593,7 +1589,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
     >
       <p><${Words}
         plain="Demotes the agent to a plain conversation: revokes its group memberships and permission grants so it stops being an agent. The conversation itself stays on disk and can be reinstated later — this is the non-destructive soft-delete."
-        wizard="Returns the familiar to a plain conversation: revokes its party memberships and boons so it stops being a familiar. The conversation scroll stays on disk and can be restored later — banishment is not destruction."
+        wizard="Returns the hero to a plain conversation: revokes its party memberships and boons so it stops being a hero. The conversation scroll stays on disk and can be restored later — banishment is not destruction."
       /></p>
       <label class="delete-agent-wt" id="retire-shutdown-row">
         <input
@@ -1653,7 +1649,7 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
 
   const retrying = !!submittedRequest;
   const forceChoice = submittedRequest?.force === true;
-  const title = html`<${Words} plain="Shut down agent?" wizard="Slumber this familiar?" />`;
+  const title = html`<${Words} plain="Shut down agent?" wizard="Slumber this hero?" />`;
   const softLabel = html`<${Words}
     plain=${retrying && !forceChoice ? 'Retry soft exit' : 'Soft exit'}
     wizard=${retrying && !forceChoice ? 'Retry slumber' : '🌙 Slumber'}
@@ -1676,7 +1672,7 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
       primaryLabel=${softLabel}
       busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
         plain="Soft exiting…" wizard="Slumbering…" />`}
-      primaryClass=""
+      primaryVariant=""
       submitDisabled=${retrying && forceChoice}
       submitID="shutdown-soft"
       alternateLabel=${forceLabel}
@@ -1693,7 +1689,7 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
     >
       <p><${Words}
         plain="Soft exit injects /exit into tmux pane. Conv jsonl is preserved; in-flight tool calls are interrupted."
-        wizard="Gentle slumber whispers /exit into the familiar's tmux pane. Its conversation scroll is preserved; in-flight invocations are interrupted. Force slumber immediately kills the tmux session and should be used only if gentle slumber is stuck."
+        wizard="Gentle slumber whispers /exit into the hero's tmux pane. Its conversation scroll is preserved; in-flight invocations are interrupted. Force slumber immediately kills the tmux session and should be used only if gentle slumber is stuck."
       /></p>
     </${TransactionDialogFrame}>
   `;
@@ -1780,7 +1776,7 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
   };
 
   const retrying = !!submittedRequest;
-  const title = html`<span class="theme-copy-regular">Permanently delete this agent?</span><span class="theme-copy-wizard">Permanently erase this familiar?</span>`;
+  const title = html`<span class="theme-copy-regular">Permanently delete this agent?</span><span class="theme-copy-wizard">Permanently erase this hero?</span>`;
   const initialLabel = html`<span class="theme-copy-regular">Delete forever</span><span class="theme-copy-wizard">Erase forever</span>`;
   return html`
     <${TransactionDialogFrame}
@@ -1803,7 +1799,7 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
     >
       <p><${Words}
         plain="Wipes the conversation history (.jsonl) from disk and drops every group / membership / ownership / permission row for this agent. This cannot be undone."
-        wizard="Burns the conversation scroll (.jsonl) and erases every party membership, ownership mark, and boon bound to this familiar. This cannot be undone."
+        wizard="Burns the conversation scroll (.jsonl) and erases every party membership, ownership mark, and boon bound to this hero. This cannot be undone."
       /></p>
       <${DeleteWorktreeChoice}
         worktree=${worktree}
@@ -1814,12 +1810,11 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
         }}
       />
       ${probeError && !retrying ? html`<div class="transaction-probe-retry">
-        <button
+        <${Button} size="sm"
           id="delete-agent-wt-retry"
-          type="button"
           disabled=${probing || busy}
           onClick=${retryProbe}
-        >Retry worktree check</button>
+        >Retry worktree check<//>
       </div>` : null}
     </${TransactionDialogFrame}>
   `;

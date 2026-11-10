@@ -2,12 +2,14 @@ import { h } from 'preact';
 import { ProfileEditor } from './fleet-admin-profile-editor.js';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
-import { POOL_NAME_RE, UNRESTRICTED_CONSEQUENCE, changeText, grantText, profileSummary } from './fleet-admin-model.js';
+import { Button } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
+import { changeText, grantText, peerLabelFor, POOL_NAME_RE, profileSummary, UNRESTRICTED_CONSEQUENCE } from './fleet-admin-model.js';
+import { PeerCombobox, namedItems } from './registry-picker.js';
+import { errText } from './cell-format.js';
+import { FaTable } from './fa-table.js';
 
 const html = htm.bind(h);
-
-function errText(error) { return error?.message || String(error); }
 
 // ApplyDialog applies a node profile to one trusted peer: it previews the
 // plan (every change, how many are security-relevant, conflicts) and commits
@@ -41,29 +43,28 @@ export function ApplyDialog({ profile, peers, actions, poolNames = new Map(), on
       onDone(`Applied ${profile.name} to ${row.label}`);
     } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
-  return html`<${Overlay} id="fleet-apply-modal" labelledby="fleet-apply-title" onClose=${onClose} blocked=${busy}>
-    <h3 id="fleet-apply-title">Apply profile ${profile.name}</h3>
+  return html`<${Dialog} id="fleet-apply-modal" onClose=${onClose} blocked=${busy} title=${html`Apply profile ${profile.name}`}>
     <label class="cron-create-row"><span class="cron-create-label">To peer</span>
-      <select id="fleet-apply-peer" value=${peer} onChange=${(e) => setPeer(e.currentTarget.value)}>
-        ${peers.map((p) => html`<option key=${p.id} value=${p.id}>${p.label} (${p.level})</option>`)}
-      </select></label>
+      <${PeerCombobox} id="fleet-apply-peer" value=${peer} ariaLabel="To peer"
+        items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label, descr: p.level })))}
+        onChange=${setPeer} /></label>
     ${!plan && !error ? html`<div class="empty">Previewing…</div>` : plan && html`<div class="fa-plan">
       <div>${changes.length ? `${changes.length} change(s), ${plan.security_changes || 0} security-relevant${plan.future_workers_only ? ' (worker defaults apply to future workers only)' : ''}:` : 'No changes: the peer already matches this profile.'}</div>
       ${changes.length > 0 && html`<ul id="fleet-apply-changes">${changes.map((c, i) => html`<li key=${i} class=${c.security ? 'fa-sensitive' : ''}>${changeText(c, poolNames)}</li>`)}</ul>`}
       ${(plan.pools || []).filter((p) => (p.live_grants || []).length).map((p) => html`<div key=${p.id} class="fa-pool-grants">Via pool <b>${p.name}</b> it gets: ${p.live_grants.map((g, i) => html`${i ? ', ' : ''}<span class=${!g.scope && !g.group_name ? 'fa-warn' : ''}>${grantText(g)}</span>`)}</div>`)}
-      ${conflicts.length > 0 && html`<div class="cron-create-error">Conflicts — resolve before applying: ${conflicts.join('; ')}</div>`}
+      ${conflicts.length > 0 && html`<div class="cron-create-error ui-error-box">Conflicts — resolve before applying: ${conflicts.join('; ')}</div>`}
     </div>`}
     ${widens && html`<div class="fa-consequence" role="note"><b>${row.label} becomes unrestricted.</b> ${UNRESTRICTED_CONSEQUENCE}</div>
       <div class="fa-dl"><span class="fa-k">Fingerprint</span><code class="fa-wrap fa-fp-full">${row.fingerprint || '—'}</code></div>
       <label class="fa-ack"><input id="fleet-apply-ack" type="checkbox" checked=${checked} onChange=${(e) => setChecked(e.currentTarget.checked)} />
         <span>I understand, and this is ${row.label}'s fingerprint</span></label>`}
-    <div class="cron-create-error" role="alert">${error}</div>
+    <div class="cron-create-error ui-error-box" role="alert">${error}</div>
     <div class="modal-buttons">
-      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <span class="spacer"></span>
-      <button id="fleet-apply-submit" type="button" class=${widens ? 'danger' : 'primary'} disabled=${busy || !ready || !changes.length} onClick=${apply}>${busy ? 'Applying…' : 'Apply'}</button>
+      <${Button} id="fleet-apply-submit" variant=${widens ? 'danger' : 'primary'} disabled=${busy || !ready || !changes.length} onClick=${apply}>${busy ? 'Applying…' : 'Apply'}</${Button}>
     </div>
-  </${Overlay}>`;
+  </${Dialog}>`;
 }
 
 // ProfilesPage manages node pools (membership carries the pool's grants) and
@@ -94,7 +95,8 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
   const done = (msg) => { toast(msg, false); refresh(); };
   const summaries = profiles ? profiles.map((p) => profileSummary(p, new Map(pools.map((x) => [x.id, x.name])))) : null;
   const fail = (what) => (e) => toast(`${what} failed: ${errText(e)}`, true);
-  const label = (id) => view.trusted.find((r) => r.id === id)?.label || id;
+  const label = (id) => peerLabelFor(view.trusted, id);
+  const cellLabel = (id) => peerLabelFor(view.trusted, id, { short: true });
   const poolGrants = async (name) => {
     try { return await actions.grants(`group:${name}`); } catch (_) { return null; }
   };
@@ -158,50 +160,44 @@ export function ProfilesPage({ view, pools, groups = [], actions, confirm, toast
   }).then((ok) => { if (ok) done(`Deleted profile ${p.name}`); }).catch(fail('Delete profile'));
 
   return html`<div class="fa-profiles">
-    ${error && html`<div class="cron-create-error" role="alert">${error}</div>`}
+    ${error && html`<div class="cron-create-error ui-error-box" role="alert">${error}</div>`}
     <h4>Node pools <span class="muted">${pools.length}</span></h4>
     <div class="muted">A pool's grants apply to every member node — peer grants for a pool are edited on the Peer grants page.</div>
-    ${pools.length > 0 && html`<table class="fa-table" id="fleet-pools">
-      <thead><tr><th>Pool</th><th>Members</th><th>Add member</th><th></th></tr></thead>
-      <tbody>${pools.map((pool) => {
+    ${pools.length > 0 && html`<${FaTable} id="fleet-pools" head=${['Pool', 'Members', 'Add member', '']}>${pools.map((pool) => {
         const ids = (pool.members || []).map((m) => m.instance_id);
         const candidates = view.trusted.filter((r) => !ids.includes(r.id));
         return html`<tr key=${pool.name} data-pool=${pool.name}>
           <td><b>${pool.name}</b></td>
-          <td>${ids.length ? ids.map((id) => html`<span key=${id} class="fa-member">${label(id)} <button type="button" class="fa-link" data-fa="remove-member" title="Remove from the pool" onClick=${() => removeMember(pool, id)}>×</button></span>`) : html`<span class="muted">none</span>`}</td>
-          <td>${candidates.length ? html`<select data-fa="member-pick" value=${adding[pool.name] || ''} onChange=${(e) => setAdding({ ...adding, [pool.name]: e.currentTarget.value })}>
-              <option value="">trusted peer…</option>${candidates.map((r) => html`<option key=${r.id} value=${r.id}>${r.label}</option>`)}
-            </select> <button type="button" data-fa="add-member" disabled=${!adding[pool.name]} onClick=${() => addMember(pool)}>Add…</button>` : html`<span class="muted">—</span>`}</td>
-          <td class="fa-acts"><button type="button" data-fa="pool-grants" onClick=${() => onOpenGrants(`group:${pool.name}`)}>Grants…</button>
-            <button type="button" class="fa-danger" data-fa="delete-pool" onClick=${() => deletePool(pool)}>Delete…</button></td>
+          <td>${ids.length ? ids.map((id) => html`<span key=${id} class="fa-member">${cellLabel(id)} <${Button} size="sm" variant="link" class="fa-link" data-fa="remove-member" title="Remove from the pool" onClick=${() => removeMember(pool, id)}>×<//></span>`) : html`<span class="muted">none</span>`}</td>
+          <td>${candidates.length ? html`<${PeerCombobox} attrs=${{ 'data-fa': 'member-pick' }} value=${adding[pool.name] || ''} noneLabel="trusted peer…" floating=${false}
+              ariaLabel=${`Add a peer to ${pool.name}`} items=${namedItems(candidates.map((r) => ({ name: r.id, label: r.label })))}
+              onChange=${(next) => setAdding({ ...adding, [pool.name]: next })} /> <${Button} size="sm" data-fa="add-member" disabled=${!adding[pool.name]} onClick=${() => addMember(pool)}>Add…<//>` : html`<span class="muted">—</span>`}</td>
+          <td class="fa-acts"><${Button} size="sm" data-fa="pool-grants" onClick=${() => onOpenGrants(`group:${pool.name}`)}>Grants…<//>
+            <${Button} size="sm" variant="ghost danger" data-fa="delete-pool" onClick=${() => deletePool(pool)}>Delete…<//></td>
         </tr>`;
-      })}</tbody>
-    </table>`}
+      })}<//>`}
     <div class="fa-grant-form">
       <input id="fleet-pool-name" type="text" placeholder="new pool name" value=${newPool} autocomplete="off" spellcheck="false" onInput=${(e) => setNewPool(e.currentTarget.value)} />
-      <button id="fleet-pool-create" type="button" disabled=${!newPool.trim()} onClick=${createPool}>Create pool</button>
+      <${Button} size="sm" id="fleet-pool-create" disabled=${!newPool.trim()} onClick=${createPool}>Create pool<//>
     </div>
     <h4>Node profiles <span class="muted">${summaries ? summaries.length : ''}</span></h4>
-    <div class="muted">A profile bundles a trust level, pools, peer grants and worker defaults for a peer. <button id="fleet-profile-new" type="button" class="fa-link" onClick=${() => setEditing({ profile: null })}>New profile…</button> CLI: <code>tclaude federation profile</code>.</div>
+    <div class="muted">A profile bundles a trust level, pools, peer grants and worker defaults for a peer. <${Button} size="sm" variant="link" id="fleet-profile-new" class="fa-link" onClick=${() => setEditing({ profile: null })}>New profile…<//> CLI: <code>tclaude federation profile</code>.</div>
     ${summaries && summaries.length === 0 && html`<div class="empty">No profiles yet.</div>`}
-    ${summaries && summaries.length > 0 && html`<table class="fa-table" id="fleet-profiles">
-      <thead><tr><th>Profile</th><th>Level</th><th>Pools</th><th>Grants</th><th>Labels</th><th></th></tr></thead>
-      <tbody>${summaries.map((p) => html`<tr key=${p.id} data-profile=${p.name}>
-        <td><b>${p.name}</b> <span class="muted">rev ${p.revision}</span>${p.id === defaultID ? html` <span class="fa-badge">default</span>` : ''}</td>
+    ${summaries && summaries.length > 0 && html`<${FaTable} id="fleet-profiles" head=${['Profile', 'Level', 'Pools', 'Grants', 'Labels', '']}>${summaries.map((p) => html`<tr key=${p.id} data-profile=${p.name}>
+        <td><b>${p.name}</b> <span class="muted">rev ${p.revision}</span>${p.id === defaultID ? html` <span class="ui-tag ui-tag-accent fa-badge">default</span>` : ''}</td>
         <td><span class=${`fa-level ${p.level}`}>${p.level}</span></td>
         <td>${p.pools.join(', ') || html`<span class="muted">—</span>`}</td>
         <td>${p.grants}</td>
         <td>${p.labels.join(', ') || html`<span class="muted">—</span>`}</td>
         <td class="fa-acts">
-          <button type="button" data-fa="edit-profile" onClick=${() => setEditing({ profile: (profiles || []).find((x) => x.id === p.id) })}>Edit…</button>
-          <button type="button" data-fa="apply-profile" disabled=${!view.trusted.length} onClick=${() => setApplying(p)}>Apply to peer…</button>
+          <${Button} size="sm" data-fa="edit-profile" onClick=${() => setEditing({ profile: (profiles || []).find((x) => x.id === p.id) })}>Edit…<//>
+          <${Button} size="sm" data-fa="apply-profile" disabled=${!view.trusted.length} onClick=${() => setApplying(p)}>Apply to peer…<//>
           ${p.id === defaultID
-            ? html`<button type="button" data-fa="clear-default" onClick=${() => setDefault(null)}>Clear default…</button>`
-            : html`<button type="button" data-fa="make-default" onClick=${() => setDefault(p)}>Make default…</button>`}
-          <button type="button" class="fa-danger" data-fa="delete-profile" onClick=${() => deleteProfile(p)}>Delete…</button>
+            ? html`<${Button} size="sm" data-fa="clear-default" onClick=${() => setDefault(null)}>Clear default…<//>`
+            : html`<${Button} size="sm" data-fa="make-default" onClick=${() => setDefault(p)}>Make default…<//>`}
+          <${Button} size="sm" variant="ghost danger" data-fa="delete-profile" onClick=${() => deleteProfile(p)}>Delete…<//>
         </td>
-      </tr>`)}</tbody>
-    </table>`}
+      </tr>`)}<//>`}
     ${editing && html`<${ProfileEditor} profile=${editing.profile} pools=${pools} groups=${groups} actions=${actions} confirm=${confirm} toast=${toast}
       onClose=${() => setEditing(null)} onDone=${(msg) => { setEditing(null); done(msg); }} />`}
     ${applying && html`<${ApplyDialog} profile=${applying} peers=${view.trusted} actions=${actions} poolNames=${poolNames} onClose=${() => setApplying(null)}

@@ -79,6 +79,10 @@ func UntrustFederationPeer(instanceID string) (bool, error) {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	// The cron jobs it scheduled here go with it.
+	if err := deletePeerCronJobsTx(tx, instanceID); err != nil {
+		return false, err
+	}
 	for _, q := range []string{
 		`DELETE FROM federation_peer_grants WHERE peer=?`,
 		`DELETE FROM federation_catalogs WHERE peer=?`,
@@ -109,22 +113,15 @@ func ListFederationPeers() ([]FederationPeer, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT instance_id, pubkey, label, name, trusted_at, trust_level FROM federation_peers ORDER BY label, instance_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []FederationPeer
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (FederationPeer, error) {
 		var p FederationPeer
 		var at dbTimestamp
 		if err := rows.Scan(&p.InstanceID, &p.PubKey, &p.Label, &p.Name, &at, &p.TrustLevel); err != nil {
-			return nil, err
+			return FederationPeer{}, err
 		}
 		p.TrustedAt = at.Time()
-		out = append(out, p)
-	}
-	return out, rows.Err()
+		return p, nil
+	}, `SELECT instance_id, pubkey, label, name, trusted_at, trust_level FROM federation_peers ORDER BY label, instance_id`)
 }
 
 // GetFederationPeer returns a trusted peer or nil.
@@ -366,6 +363,21 @@ func FederationEnvelopeSeen(fromInstance, envelopeID string) (bool, error) {
 // (sender, envelope id) returns ErrFederationDuplicate and writes nothing;
 // a full backlog returns *AgentMessageQueueFullError and writes nothing.
 func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expiresAt time.Time, limit int, attachments []AgentMessageAttachment) (int64, error) {
+	return insertFederationInboundMessage(m, in, expiresAt, limit, attachments, 0)
+}
+
+// InsertPeerCronMessage delivers one run of a linked peer's cron job as that
+// peer's inbound mail. Like local cron it keeps only the latest pending tick
+// per recipient: the run replaces the job's earlier still-unread one, so a
+// recurring job never fills the recipient's regular backlog by itself.
+func InsertPeerCronMessage(m *AgentMessage, in FederationInbound, expiresAt time.Time, limit int, cronJobID int64) (int64, error) {
+	if cronJobID <= 0 || m == nil || m.ToConv == "" {
+		return 0, fmt.Errorf("invalid peer cron message")
+	}
+	return insertFederationInboundMessage(m, in, expiresAt, limit, nil, cronJobID)
+}
+
+func insertFederationInboundMessage(m *AgentMessage, in FederationInbound, expiresAt time.Time, limit int, attachments []AgentMessageAttachment, cronJobID int64) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -400,6 +412,21 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 		return 0, ErrFederationDuplicate
 	}
 	m.RegularSend = true
+	if cronJobID > 0 {
+		// A peer's tick is a regular send, so an offline member's flush
+		// discards its nudge (stamping delivered_at) while it stays unread in
+		// the inbox: that one is still pending and is replaced too.
+		if _, err := tx.Exec(`DELETE FROM agent_messages
+			WHERE id IN (
+				SELECT am.id FROM agent_messages am
+				JOIN agent_cron_messages cm ON cm.message_id = am.id
+				WHERE cm.cron_job_id = ? AND am.to_conv = ?
+				  AND (am.delivered_at IS NULL OR am.nudge_discarded_at IS NOT NULL) AND am.read_at IS NULL
+				  AND am.nudge_claimed_at IS NULL AND am.nudge_cancelled_at IS NULL
+			)`, cronJobID, m.ToConv); err != nil {
+			return 0, err
+		}
+	}
 	if limit > 0 {
 		pending, err := countUnprocessedRegularMessageBacklog(tx, m)
 		if err != nil {
@@ -424,6 +451,11 @@ func InsertFederationInboundMessage(m *AgentMessage, in FederationInbound, expir
 	if _, err := tx.Exec(`INSERT INTO federation_inbound(message_id, envelope_id, from_instance, from_agent, from_name, received_at)
 		VALUES(?,?,?,?,?,?)`, id, in.EnvelopeID, in.FromInstance, in.FromAgent, in.FromName, dbTime(time.Now())); err != nil {
 		return 0, err
+	}
+	if cronJobID > 0 {
+		if _, err := tx.Exec(`INSERT INTO agent_cron_messages (message_id, cron_job_id) VALUES (?, ?)`, id, cronJobID); err != nil {
+			return 0, err
+		}
 	}
 	return id, tx.Commit()
 }
@@ -599,6 +631,9 @@ const (
 	FedSpawnLaunching = "launching"
 	FedSpawnApproved  = "approved"
 	FedSpawnDenied    = "denied"
+	// FedSpawnQueued waits in the capacity spawn queue. It holds no capacity
+	// reservation and needs no decision until the queue promotes it to pending.
+	FedSpawnQueued = "queued"
 )
 
 // FederationSpawnRequest is a spawn request a peer sent into an exported
@@ -664,9 +699,9 @@ func (o FederationSpawnOverrides) dbValue() string {
 	return string(raw)
 }
 
-// Expired reports whether a pending request has passed its expiry.
+// Expired reports whether a pending or queued request has passed its expiry.
 func (r *FederationSpawnRequest) Expired(now time.Time) bool {
-	return r.Status == FedSpawnPending && now.After(r.ExpiresAt)
+	return (r.Status == FedSpawnPending || r.Status == FedSpawnQueued) && now.After(r.ExpiresAt)
 }
 
 // InsertFederationSpawnRequest records a pending request. A repeated
@@ -683,6 +718,16 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	id, err := insertFederationSpawnRequestTx(tx, r, FedSpawnPending, pendingLimit)
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
+
+// insertFederationSpawnRequestTx is InsertFederationSpawnRequest's body,
+// inserting with status. Queued requests count toward the sender's limit.
+func insertFederationSpawnRequestTx(tx *sql.Tx, r *FederationSpawnRequest, status string, pendingLimit int) (int64, error) {
 	var n int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM federation_spawn_requests WHERE from_instance=? AND envelope_id=?`,
 		r.FromInstance, r.EnvelopeID).Scan(&n); err != nil {
@@ -692,8 +737,8 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 		return 0, ErrFederationDuplicate
 	}
 	if pendingLimit > 0 {
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM federation_spawn_requests WHERE from_instance=? AND status=? AND expires_at>=?`,
-			r.FromInstance, FedSpawnPending, dbTime(time.Now())).Scan(&n); err != nil {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM federation_spawn_requests WHERE from_instance=? AND status IN (?,?) AND expires_at>=?`,
+			r.FromInstance, FedSpawnPending, FedSpawnQueued, dbTime(time.Now())).Scan(&n); err != nil {
 			return 0, err
 		}
 		if n >= pendingLimit {
@@ -705,15 +750,27 @@ func InsertFederationSpawnRequest(r *FederationSpawnRequest, pendingLimit int) (
 		(from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief, status, created_at, expires_at, placement_version, requirements, credentials, model_lease, requested_profile, launch_overrides)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		r.FromInstance, r.EnvelopeID, r.FromAgent, r.FromName, r.GroupID, r.GroupName, r.Name, r.Role, r.Brief,
-		FedSpawnPending, dbTime(now), dbTime(r.ExpiresAt), r.PlacementVersion, r.Requirements, r.Credentials, r.ModelLease, r.Profile, r.Overrides.dbValue())
+		status, dbTime(now), dbTime(r.ExpiresAt), r.PlacementVersion, r.Requirements, r.Credentials, r.ModelLease, r.Profile, r.Overrides.dbValue())
 	if err != nil {
 		return 0, err
 	}
-	id, err := res.LastInsertId()
+	return res.LastInsertId()
+}
+
+// PromoteQueuedFederationSpawnRequest moves a queued request to pending, where
+// it reserves capacity and waits for its (automatic or human) decision.
+// False when it no longer waits in the queue.
+func PromoteQueuedFederationSpawnRequest(id int64) (bool, error) {
+	d, err := Open()
 	if err != nil {
-		return 0, err
+		return false, err
 	}
-	return id, tx.Commit()
+	res, err := d.Exec(`UPDATE federation_spawn_requests SET status=? WHERE id=? AND status=?`, FedSpawnPending, id, FedSpawnQueued)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 const fedSpawnColumns = `id, from_instance, envelope_id, from_agent, from_name, group_id, group_name, name, role, brief,
@@ -756,20 +813,13 @@ func ListFederationSpawnRequests(limit int) ([]*FederationSpawnRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT `+fedSpawnColumns+` FROM federation_spawn_requests ORDER BY id DESC LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*FederationSpawnRequest
-	for rows.Next() {
+	return queryRows(d, func(rows rowScanner) (*FederationSpawnRequest, error) {
 		r, err := scanFedSpawn(rows.Scan)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+		return r, nil
+	}, `SELECT `+fedSpawnColumns+` FROM federation_spawn_requests ORDER BY id DESC LIMIT ?`, limit)
 }
 
 // DecideFederationSpawnRequest moves a request from status `from` to
@@ -803,4 +853,14 @@ func MarkFederationEnvelopeSeen(fromInstance, envelopeID string, expiresAt time.
 	}
 	n, _ := res.RowsAffected()
 	return n == 1, nil
+}
+
+// deletePeerCronJobsTx removes the cron jobs a linked peer scheduled here.
+// A sparse database with no cron subsystem has none.
+func deletePeerCronJobsTx(tx *sql.Tx, instanceID string) error {
+	if ok, err := txTableExists(tx, "agent_cron_jobs"); err != nil || !ok {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM agent_cron_jobs WHERE owner_peer=?`, instanceID)
+	return err
 }
