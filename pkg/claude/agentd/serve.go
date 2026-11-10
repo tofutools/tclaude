@@ -582,6 +582,7 @@ func runServe(p *serveParams) error {
 			"the terminal UI is the only operator surface")
 	} else {
 		dashPort, dashPortSrc := resolveDashboardPort(p.DashboardPort, cfg)
+		dashboardFixedPort.Store(int64(dashPort))
 		dashBind, dashBindSrc := resolveDashboardBind(p.DashboardBind, cfg)
 		dashboardBindHost = dashBind
 		srv, popupURL, err := startPopupServer(dashBind, dashPort)
@@ -612,6 +613,7 @@ func runServe(p *serveParams) error {
 	persist, useKeychain := resolveOperatorTokenPersistence(
 		p.PersistOperatorToken, p.PersistOperatorTokenKeychain, cfg)
 	operatorTok, tokenSrc := resolveOperatorToken(persist, useKeychain)
+	operatorTokenStore.Store(string(tokenSrc.kind))
 	slog.Info("operator token", "source", tokenSrc.kind, "persisted", tokenSrc.kind != tokenSourceEphemeral)
 
 	// Auto-launch the dashboard in the browser when the human opted in
@@ -942,6 +944,9 @@ func runServe(p *serveParams) error {
 	// After the restart hook: update_on_start may apply and restart.
 	startSelfUpdateScheduler()
 	defer stopSelfUpdateScheduler()
+	// A self-update or a moved binary leaves a managed app launcher naming
+	// the old one; rewrite it now that this binary runs.
+	go refreshStaleAppLauncher(context.Background())
 	// Fleet release metadata polling belongs to the federation runtime
 	// (fleet_metadata.go): a standalone daemon adds no network traffic, and
 	// explicit local update/install requests still work.

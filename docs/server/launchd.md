@@ -114,7 +114,9 @@ in the login keychain, which must be unlocked for the job to read it.
 
 ## Then open the dashboard
 
-At the Mac, `tclaude agent dashboard` opens it. From elsewhere, use an SSH
+At the Mac, `tclaude agent dashboard` opens it. To open it from Spotlight or
+Launchpad, `tclaude service launcher install` adds `~/Applications/tclaude.app`;
+see [App launcher](../dashboard-config.md#app-launcher). From elsewhere, use an SSH
 tunnel to the fixed port, a private network, or `tclaude remote-access`. See
 [Reaching the dashboard](index.md#what-a-headless-box-changes) and
 [Dashboard](../dashboard.md).

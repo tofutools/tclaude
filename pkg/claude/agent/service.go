@@ -107,6 +107,7 @@ func ServiceCmd() *cobra.Command {
 				},
 			}.ToCobra(),
 			serviceLaunchCmd(),
+			serviceLauncherCmd(),
 		},
 	}.ToCobra()
 }

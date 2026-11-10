@@ -633,6 +633,8 @@ func serveNodeServiceLaunch(w http.ResponseWriter, r *http.Request, actor, acces
 		return
 	}
 	recordFederationAudit("node.service.launch", actor, "", "", launchAuditLine(previous, next), http.StatusOK)
+	// The app launcher bakes the profile's flags in; rewrite a managed one.
+	refreshStaleAppLauncher(r.Context())
 	writeJSON(w, http.StatusOK, launchViewFor(nodeServiceLaunchView(), access))
 }
 
