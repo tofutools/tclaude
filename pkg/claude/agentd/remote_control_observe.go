@@ -313,7 +313,7 @@ func isRedRGB(rs, gs, bs string) bool {
 // call uses, so flow tests intercept it via TmuxSim. A dead/missing pane
 // surfaces as a non-nil error (the command exits non-zero).
 func capturePane(paneTarget string) (string, error) {
-	out, err := clcommon.Default.Command("capture-pane", "-p", "-e", "-J", "-t", clcommon.ExactTarget(paneTarget)).Output()
+	out, err := clcommon.TmuxOutput("capture-pane", "-p", "-e", "-J", "-t", clcommon.ExactTarget(paneTarget))
 	if err != nil {
 		return "", err
 	}

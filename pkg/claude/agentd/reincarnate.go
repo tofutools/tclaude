@@ -761,7 +761,7 @@ func stopReincarnationSuccessor(newTmux, label string) {
 	if tmuxToKill == "" {
 		tmuxToKill = label
 	}
-	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
+	if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)); err != nil {
 		slog.Warn("reincarnate: failed successor kill failed", "session", tmuxToKill, "error", err)
 	}
 }
@@ -1437,7 +1437,7 @@ func switchTmuxClients(oldTmux, newTmux string) int {
 }
 
 func tmuxClientTTYs(tmuxSession string) []string {
-	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}").Output()
+	out, err := clcommon.TmuxOutput("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
 	if err != nil {
 		slog.Warn("tmux client handoff: list-clients failed; skipping client switch", "tmux", tmuxSession, "error", err)
 		return nil
@@ -1454,7 +1454,7 @@ func tmuxClientTTYs(tmuxSession string) []string {
 func switchTmuxClientTTYs(clients []string, oldTmux, newTmux string) int {
 	n := 0
 	for _, tty := range clients {
-		if err := clcommon.TmuxCommand("switch-client", "-c", tty, "-t", clcommon.ExactTarget(newTmux)).Run(); err != nil {
+		if err := clcommon.TmuxRun("switch-client", "-c", tty, "-t", clcommon.ExactTarget(newTmux)); err != nil {
 			slog.Warn("tmux client handoff: switch-client failed", "tty", tty, "from", oldTmux, "to", newTmux, "error", err)
 			continue
 		}

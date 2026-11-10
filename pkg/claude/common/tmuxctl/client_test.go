@@ -175,7 +175,7 @@ func TestArgumentsAreQuoted(t *testing.T) {
 	if last != want {
 		t.Fatalf("wire line = %s, want %s", last, want)
 	}
-	if _, err := c.Run("x", "a\nb"); err == nil {
+	if _, err := c.Run("x", "a\nb"); !errors.Is(err, ErrInvalidCommand) {
 		t.Fatal("a line break in an argument must be refused")
 	}
 	if _, err := c.Run("kill-server; x"); err == nil {
@@ -246,7 +246,7 @@ func TestServerExitFailsPending(t *testing.T) {
 	go func() { _, err := c.Run("list-sessions"); errc <- err }()
 	waitCmd(t, srv, "list-sessions")
 	srv.write("%exit")
-	if err := <-errc; !errors.Is(err, ErrNotConnected) {
+	if err := <-errc; !errors.Is(err, ErrConnectionLost) {
 		t.Fatalf("err = %v", err)
 	}
 	if st := waitDisconnected(t, c); !strings.Contains(st.Reason, "server exited") {

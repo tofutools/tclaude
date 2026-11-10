@@ -887,7 +887,7 @@ func enforceExclusiveScribeOverrides(convID string, overrides map[string]db.Perm
 
 func killScribeSession(convID string) {
 	if sess := pickAliveSession(convID); sess != nil {
-		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
+		if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)); err != nil {
 			slog.Error("scribe: failed to kill unsafe capability-reducing scribe", "conv", short8(convID), "error", err)
 		}
 	}

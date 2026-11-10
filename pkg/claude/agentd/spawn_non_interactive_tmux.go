@@ -45,13 +45,13 @@ var launchNonInteractiveTmuxSession = session.LaunchDetachedTmuxSessionID
 
 // The kill and liveness hooks take the launched session's tmux id.
 var killNonInteractiveTmuxSession = func(target string) {
-	_ = clcommon.TmuxCommand("kill-session", "-t", target).Run()
+	_ = clcommon.TmuxRun("kill-session", "-t", target)
 }
 var nonInteractiveTmuxSessionAlive = func(target string) bool {
-	if clcommon.TmuxCommand("has-session", "-t", target).Run() != nil {
+	if clcommon.TmuxRun("has-session", "-t", target) != nil {
 		return false
 	}
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", target, "#{pane_dead}").Output()
+	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", target, "#{pane_dead}")
 	return err != nil || strings.TrimSpace(string(out)) != "1"
 }
 var uniqueNonInteractiveTmuxSessionName = session.UniqueTmuxSessionName

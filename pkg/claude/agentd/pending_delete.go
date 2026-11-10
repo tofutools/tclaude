@@ -104,7 +104,7 @@ func handleDashboardPendingDeleteAPI(w http.ResponseWriter, r *http.Request) {
 	if sess, err := db.LoadSession(label); err == nil && sess != nil && sess.TmuxSession != "" {
 		alive, _ := session.LiveTmuxSessions()
 		if _, ok := alive[sess.TmuxSession]; ok {
-			if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
+			if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)); err != nil {
 				slog.Warn("pending delete: kill-session failed",
 					"label", label, "tmux", sess.TmuxSession, "error", err)
 				if p.CapacityReserved {

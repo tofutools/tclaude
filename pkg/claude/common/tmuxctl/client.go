@@ -53,8 +53,17 @@ func IsPlumbingSession(name string) bool {
 }
 
 var (
-	// ErrNotConnected is returned by Run when no control connection is up.
+	// ErrNotConnected is returned by Run when no control connection is up:
+	// the command was never written.
 	ErrNotConnected = errors.New("tmux control mode: not connected")
+	// ErrConnectionLost is returned when the connection ended after the
+	// command was written and before its reply: tmux may or may not have run
+	// it.
+	ErrConnectionLost = errors.New("tmux control mode: connection lost")
+	// ErrInvalidCommand is returned for a command that cannot be written as
+	// one control-mode line (a line break in an argument, a non-word command
+	// name). It was never sent.
+	ErrInvalidCommand = errors.New("tmux control mode: command not representable")
 	// ErrClosed is returned once the client has been closed for good.
 	ErrClosed = errors.New("tmux control mode: client closed")
 	// ErrTimeout is returned when a reply did not arrive in time. The
@@ -428,11 +437,11 @@ func (c *Client) exitIfAlone() {
 // emitted bare (it must be a plain word); every other argument is quoted.
 func CommandLine(args ...string) (string, error) {
 	if len(args) == 0 {
-		return "", errors.New("tmux control mode: empty command")
+		return "", fmt.Errorf("%w: empty command", ErrInvalidCommand)
 	}
 	for _, r := range args[0] {
 		if (r < 'a' || r > 'z') && r != '-' {
-			return "", fmt.Errorf("tmux control mode: invalid command name %q", args[0])
+			return "", fmt.Errorf("%w: invalid command name %q", ErrInvalidCommand, args[0])
 		}
 	}
 	var b strings.Builder
@@ -455,7 +464,7 @@ func CommandLine(args ...string) (string, error) {
 // refused.
 func Quote(s string) (string, error) {
 	if strings.ContainsAny(s, "\n\r") {
-		return "", fmt.Errorf("tmux control mode: argument contains a line break")
+		return "", fmt.Errorf("%w: argument contains a line break", ErrInvalidCommand)
 	}
 	if !strings.Contains(s, "'") {
 		return "'" + s + "'", nil
@@ -580,7 +589,7 @@ func (cn *conn) fail(err error) {
 	}
 	cn.mu.Unlock()
 	for _, r := range pending {
-		r.done <- result{err: fmt.Errorf("%w: %v", ErrNotConnected, err)}
+		r.done <- result{err: fmt.Errorf("%w: %v", ErrConnectionLost, err)}
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -15,8 +14,8 @@ import (
 )
 
 var codexNativePaneStarts = func() ([]byte, error) {
-	return clcommon.TmuxCommand("list-panes", "-a", "-F",
-		"#{session_name}\t#{pane_dead}\t#{pane_start_command}").Output()
+	return clcommon.TmuxOutput("list-panes", "-a", "-F",
+		"#{session_name}\t#{pane_dead}\t#{pane_start_command}")
 }
 
 var registerCodexNativePermissionProfilesIfInstalled = session.RegisterCodexNativePermissionProfilesIfInstalled
@@ -33,7 +32,7 @@ func init() {
 func adoptLiveCodexProfilesIntoInstalledRegistry() error {
 	raw, err := codexNativePaneStarts()
 	if err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
+		if clcommon.IsTmuxCommandFailure(err) {
 			return nil
 		}
 		return err

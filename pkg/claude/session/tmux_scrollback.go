@@ -37,8 +37,8 @@ func CancelTmuxScrollback(tmuxSession string, h *harness.Harness) {
 	if tmuxSession == "" || !h.WantsTmuxScrollback() {
 		return
 	}
-	_ = clcommon.TmuxCommand("send-keys", "-X", "-t",
-		clcommon.ExactTarget(tmuxSession)+":0.0", "cancel").Run()
+	_ = clcommon.TmuxRun("send-keys", "-X", "-t",
+		clcommon.ExactTarget(tmuxSession)+":0.0", "cancel")
 }
 
 // enableTmuxMouseScrollback is the underlying per-session mouse-mode toggle
@@ -47,5 +47,5 @@ func CancelTmuxScrollback(tmuxSession string, h *harness.Harness) {
 // wants it — a bare shell has no self-managed scrollback of its own, so
 // without tmux mouse mode the wheel does nothing in the pane.
 func enableTmuxMouseScrollback(tmuxSession string) {
-	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "mouse", "on").Run()
+	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "mouse", "on")
 }

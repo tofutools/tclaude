@@ -194,3 +194,73 @@ func TestControlTmuxToleratesPrintingHook(t *testing.T) {
 		t.Fatalf("state = %+v, want one steady connection", st)
 	}
 }
+
+// Stage 3 routing: commands sent through TmuxOutput/TmuxRun over a live
+// control connection give exactly what the exec path gives, including
+// arguments the command-line quoting has to carry intact.
+func TestTmuxRouteMatchesExec(t *testing.T) {
+	ct, command := realControlTmux(t)
+	if out, err := command("new-session", "-d", "-s", "r", "-x", "60", "-y", "5",
+		"printf 'red \\033[31mx\\033[0m tab\\there é\\n'; sleep 300").CombinedOutput(); err != nil {
+		t.Fatalf("new-session: %v %s", err, out)
+	}
+	if _, err := ct.ListSessions(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "control connection", ct.client.Connected)
+	prev := Default
+	Default = ct
+	t.Cleanup(func() { Default = prev })
+
+	waitFor(t, "pane output", func() bool {
+		out, _ := command("capture-pane", "-p", "-t", "=r:").Output()
+		return len(out) > 0 && out[0] == 'r'
+	})
+	for _, args := range [][]string{
+		{"capture-pane", "-p", "-e", "-J", "-t", "=r:"},
+		{"display-message", "-p", "-t", "=r:", "#{session_name}\t#{pane_dead}\t#{window_panes}"},
+		{"list-panes", "-a", "-F", "#{session_name} #{pane_dead}"},
+	} {
+		want, err := command(args...).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := TmuxOutput(args...)
+		if err != nil {
+			t.Fatalf("%q: %v", args, err)
+		}
+		// list-panes -a also lists the hidden session's pane over both paths.
+		if string(got) != string(want) {
+			t.Errorf("%q:\n got %q\nwant %q", args, got, want)
+		}
+	}
+
+	for _, v := range []string{`plain`, `it's`, `a "q" b`, `$HOME ~ \e \\ ; # {x}`, `#{session_name}`, "tab\tx", `'`, `it's $HOME ~ \e \\ "x" ; #{y}`} {
+		if err := TmuxRun("set-option", "-t", "=r:", "@probe", v); err != nil {
+			t.Fatalf("set %q: %v", v, err)
+		}
+		out, err := command("show-options", "-v", "-t", "=r:", "@probe").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != v+"\n" {
+			t.Errorf("round trip %q: got %q", v, out)
+		}
+	}
+
+	if err := TmuxRun("has-session", "-t", "=nope"); !IsTmuxCommandFailure(err) {
+		t.Fatalf("has-session on a missing session: %v", err)
+	}
+	if out, err := TmuxCombinedOutput("kill-session", "-t", "=nope"); err == nil || len(out) == 0 {
+		t.Fatalf("kill-session missing: %q, %v", out, err)
+	}
+	if st := ct.Status(); st.Routed["capture-pane"] == 0 || st.Routed["set-option"] == 0 || st.Routed["has-session"] == 0 {
+		t.Fatalf("not routed over control mode: %v", st.Routed)
+	}
+
+	// An argument with a line break cannot be one control line: it runs over
+	// exec instead and still works.
+	if err := TmuxRun("set-option", "-t", "=r:", "@probe", "two\nlines"); err != nil {
+		t.Fatal(err)
+	}
+}

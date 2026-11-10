@@ -300,14 +300,22 @@ tclaude hides it everywhere it lists sessions. Don't attach to it.
 
 ### Control mode
 
-agentd reads session liveness over one long-lived `tmux -C` control-mode
-connection instead of starting a tmux process for every query. The connection
+agentd sends its tmux queries and commands (session liveness, pane state,
+captures, options, hooks, kills, keystrokes) over one long-lived `tmux -C`
+control-mode connection instead of starting a tmux process for each one. A
+command that would mean something different there stays a tmux process: one
+with no explicit target (it would act on the control client's own session),
+`new-session` (it takes the caller's environment and directory),
+`kill-server`, and key bindings. Terminals you attach are ordinary tmux clients,
+as before, and short-lived `tclaude` commands still run tmux directly. The connection
 attaches to the hidden `__tclaude-control` session. It never starts a tmux
 server: it connects only after a tclaude session exists, and it leaves once its
 own session is the last one, so the server still exits when empty. A
 `kill-server` ends it, and it does not bring the server back. When the
-connection is down or a reply can't be read, each query falls back to its own
-tmux process, as before.
+connection is down or a reply can't be read, a query falls back to its own
+tmux process, as before. A command that changes something (a kill, keystrokes)
+is not repeated if the connection drops after it was sent, because it may
+already have run; the caller sees the error instead.
 
 **Diagnostics › Doctor** shows which path is in use (`tmux control mode is
 connected`, idle, or can't connect, with the reason). State changes are logged

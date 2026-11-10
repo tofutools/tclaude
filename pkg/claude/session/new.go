@@ -997,7 +997,7 @@ func runNew(params *NewParams) error {
 			func() error {
 				return db.ActivateDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration)
 			},
-			func() { _ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run() },
+			func() { _ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession)) },
 		); err != nil {
 			return err
 		}
@@ -1009,7 +1009,7 @@ func runNew(params *NewParams) error {
 	// failure. launchUndo, still uncommitted, then removes the launch-profile
 	// file: a killed pane's shell never reaches its own cleanup trailer.
 	killLaunchPane := func() {
-		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
 		resourceCgroupCleanup()
 	}
 	if err := settleLaunchedPane(launchSettleInput{
@@ -1980,7 +1980,7 @@ func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool,
 	// StartShellSession includes an agentd console sitting in bubbletea's
 	// alternate screen: the diagnostic would overwrite the rendered frame while
 	// the console separately reported the same failure.
-	out, err := clcommon.TmuxCommand(args...).CombinedOutput()
+	out, err := clcommon.TmuxCombinedOutput(args...)
 	if err != nil {
 		// The pane never ran, so the script's self-delete never did either.
 		cleanupScript()
@@ -2124,8 +2124,8 @@ func applyTmuxWindowTitle(tmuxSession, sessionID string) {
 	if !windowTitleEnabledFn() {
 		return
 	}
-	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on").Run()
-	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID)).Run()
+	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on")
+	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID))
 }
 
 // announceAndAttach prints the created-session summary and then either reports

@@ -106,7 +106,7 @@ func probeBwrapInLaunchContext(
 // against a dead server rather than spawning one, so a pure capability question
 // — a dashboard disclosure, a dry run — never leaves a tmux server behind.
 var tmuxServerPID = func() (int, error) {
-	out, err := clcommon.Default.Command("display-message", "-p", "#{pid}").Output()
+	out, err := clcommon.TmuxOutput("display-message", "-p", "#{pid}")
 	if err != nil {
 		return 0, err
 	}

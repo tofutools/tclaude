@@ -995,7 +995,7 @@ func stopCodexAppServerPaneAfterControlFailure(runtime db.CodexAppServerRuntime,
 	}
 	slog.Error("Codex app-server control could not be recovered; stopping unusable pane for durable relaunch",
 		"conv", runtime.ConvID, "launch", runtime.LaunchID, "tmux", row.TmuxSession, "detail", detail)
-	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(row.TmuxSession)).Run(); err != nil {
+	if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(row.TmuxSession)); err != nil {
 		slog.Warn("stop unrecoverable Codex app-server pane", "conv", runtime.ConvID, "error", err)
 	}
 }
@@ -1067,7 +1067,7 @@ func stopFailedCodexAppServerLaunch(convID, launchID, tmuxSession string) {
 	if strings.TrimSpace(tmuxSession) == "" {
 		return
 	}
-	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run(); err != nil {
+	if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession)); err != nil {
 		slog.Warn("stop failed Codex app-server launch", "session", tmuxSession, "error", err)
 	}
 }

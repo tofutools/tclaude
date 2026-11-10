@@ -2,8 +2,10 @@ package agentd
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,6 +51,14 @@ func tmuxControlModeCheck() doctor.Check {
 	st := clcommon.TmuxControlModeStatus()
 	c := doctor.Check{ID: "tmux-control-mode", Category: doctor.CategoryTools, Severity: doctor.SeverityOK}
 	counts := fmt.Sprintf(" %d connect(s), %d request(s), %d failed.", st.Connects, st.Requests, st.Failures)
+	if len(st.Routed) > 0 {
+		names := slices.Sorted(maps.Keys(st.Routed))
+		parts := make([]string, 0, len(names))
+		for _, n := range names {
+			parts = append(parts, fmt.Sprintf("%s %d", n, st.Routed[n]))
+		}
+		counts += " Answered without a tmux process: " + strings.Join(parts, ", ") + "."
+	}
 	switch {
 	case !st.Enabled:
 		c.Severity = doctor.SeverityInfo
@@ -57,7 +67,7 @@ func tmuxControlModeCheck() doctor.Check {
 			" and remove tmux.control_mode=false from the config to turn it on, then restart agentd."
 	case st.Connected:
 		c.Title = "tmux control mode is connected"
-		c.Detail = "Session liveness is read over one tmux -C connection (session " + tmuxctl.SessionName +
+		c.Detail = "agentd's tmux queries and commands go over one tmux -C connection (session " + tmuxctl.SessionName +
 			") since " + st.Since.Format(time.RFC3339) + "." + counts
 	case st.LastConnErr != "":
 		c.Severity = doctor.SeverityInfo

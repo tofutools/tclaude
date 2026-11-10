@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"strings"
@@ -138,6 +139,7 @@ type ControlTmux struct {
 	lastAttempt time.Time
 	lastErr     string
 	lastWarn    time.Time
+	routed      map[string]int64
 	now         func() time.Time
 }
 
@@ -185,6 +187,8 @@ type ControlModeStatus struct {
 	Requests    int64     `json:"requests"`
 	Failures    int64     `json:"failures"`
 	LastConnErr string    `json:"last_connect_error,omitempty"`
+	// Routed counts commands answered over control mode, by tmux command.
+	Routed map[string]int64 `json:"routed,omitempty"`
 }
 
 // Status reports the control connection's state.
@@ -192,9 +196,10 @@ func (t *ControlTmux) Status() ControlModeStatus {
 	st := t.client.State()
 	t.mu.Lock()
 	lastErr := t.lastErr
+	routed := maps.Clone(t.routed)
 	t.mu.Unlock()
 	return ControlModeStatus{Enabled: true, Connected: st.Connected, Reason: st.Reason, Since: st.Since,
-		Connects: st.Connects, Requests: st.Requests, Failures: st.Failures, LastConnErr: lastErr}
+		Connects: st.Connects, Requests: st.Requests, Failures: st.Failures, LastConnErr: lastErr, Routed: routed}
 }
 
 // TmuxControlModeStatus reports how Default answers tmux queries.
@@ -213,6 +218,7 @@ func (t *ControlTmux) ListSessions() (map[string]struct{}, error) {
 		if err == nil {
 			entries, perr := parseSessionList(lines)
 			if perr == nil {
+				t.countRouted("list-sessions")
 				return aliveSessions(entries), nil
 			}
 			// Fall back for this call only: dropping the connection would

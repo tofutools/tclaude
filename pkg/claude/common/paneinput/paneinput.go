@@ -77,7 +77,7 @@ var pasteBufferSequence atomic.Uint64
 
 // DefaultRunner executes against tclaude's tmux server.
 func DefaultRunner(args ...string) error {
-	return clcommon.TmuxCommand(args...).Run()
+	return clcommon.TmuxRun(args...)
 }
 
 func (o Options) resolved() Options {
