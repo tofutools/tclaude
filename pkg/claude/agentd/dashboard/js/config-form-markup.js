@@ -1,6 +1,6 @@
 import { COST_FACTOR_HARNESSES } from './cost-factors.js';
 import { createContext, h } from 'preact';
-import { useContext, useEffect, useState } from 'preact/hooks';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { pickDirectory } from './helpers.js';
@@ -8,6 +8,7 @@ import { browserNotifyPermission, notificationsUnsupportedNote, requestBrowserNo
 import { CLOSE_TAB_EVENTS, CLOSE_TAB_TARGETS } from './terminal-close-tabs.js';
 import { CONFIG_PANEL_ALIASES, configLocation, configPanel, configSection, setConfigPanel } from './config-panel.js';
 import { FormFillBar } from './form-fill-bar.js';
+import { clearSecret, configAccess, keepSecret, panelAccess, panelRowKeys, registerPanelKey, remoteAccess, replaceSecret, rowAccess, secretEdits, secretOf } from './config-access.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { KnowledgeSourceRow } from './knowledge-source-island.js';
 import { ExternalStewardManager } from './config-external-stewards.js';
@@ -249,8 +250,15 @@ function Badge({ kind }) {
 // each control inline. `wide` stacks the controls under the text for lists
 // and tables that need the full width.
 function Setting({ title, summary, more, k, badges = [], forId, wide = false, child = false, children }) {
-  const cls = ['cfg-field', 'cfg-row', wide && 'cfg-row-wide', child && 'cfg-row-child'].filter(Boolean).join(' ');
-  return html`<div class=${cls} data-cfg-key=${k || undefined}>
+  const row = useRowAccess(k);
+  // A row without a key explains itself only when it has controls to grey.
+  const ctl = useRef(null);
+  const [hasControls, setHasControls] = useState(true);
+  useLayoutEffect(() => {
+    if (!k) setHasControls(!!ctl.current?.querySelector('input, select, textarea, button'));
+  });
+  const cls = ['cfg-field', 'cfg-row', wide && 'cfg-row-wide', child && 'cfg-row-child', row.remote && row.access.state !== 'write' && 'cfg-row-readonly'].filter(Boolean).join(' ');
+  return html`<div class=${cls} data-cfg-key=${k || undefined} data-cfg-access=${row.remote ? row.access.state : undefined}>
     <div class="cfg-row-text">
       <div class="cfg-row-title">
         ${forId ? html`<label class="cfg-label" for=${forId}>${title}</label>` : html`<span class="cfg-label">${title}</span>`}
@@ -261,10 +269,112 @@ function Setting({ title, summary, more, k, badges = [], forId, wide = false, ch
         ${k && html`<code class="cfg-key">${k}</code>`}
         ${more && html`<details class="cfg-more"><summary>More…</summary><div class="cfg-hint ui-hint">${more}</div></details>`}
       </div>`}
+      <${RowAccessNote} row=${row} hasControls=${hasControls} />
     </div>
-    <div class="cfg-row-ctl">${children}</div>
+    <${RowControls} row=${row} domRef=${ctl}>${children}<//>
   </div>`;
 }
+
+// useRowAccess is what the viewer may do with the row of config key k on
+// a peer's page (config-access.js); on this node's own page, everything.
+// The panel's own components gate Installation's rows without a key.
+function useRowAccess(k) {
+  const panel = useContext(PanelContext);
+  registerPanelKey(panel, k);
+  const model = configAccess.value;
+  const remote = remoteAccess(model);
+  const access = !k && panel === 'installation' ? { state: 'write', note: '' } : rowAccess(k, model);
+  const secret = secretOf(k, model);
+  const edits = secretEdits.value;
+  const replacing = !!(secret && edits.replace[secret.path]);
+  const clearing = !!(secret && edits.clear[secret.path]);
+  const readOnly = remote && (access.state !== 'write' || (secret && !replacing));
+  return { k, panel, remote, access, secret, replacing, clearing, readOnly };
+}
+
+// RowAccessNote says why a row is read-only, and shows a withheld secret.
+// A row without a config key that has controls says it is not changed from
+// a peer's page; one that only shows a status says nothing.
+function RowAccessNote({ row, hasControls = true }) {
+  const note = row.access.note || (row.remote && row.readOnly && !row.k && hasControls ? 'Not changed from a peer’s page' : '');
+  return html`${note && html`<div class="cfg-access-note ui-hint">🔒 ${note}</div>`}
+    ${row.secret && html`<${SecretState} secret=${row.secret} panel=${row.panel} writable=${row.access.state === 'write'} replacing=${row.replacing} clearing=${row.clearing} />`}`;
+}
+
+// RowControls holds a row's controls in a <fieldset>, so a read-only row
+// disables them all at once: the form's own enable/disable code cannot
+// undo it.
+function RowControls({ row, domRef, children }) {
+  return html`<fieldset class="cfg-row-ctl" ref=${domRef} disabled=${row.readOnly}>${children}</fieldset>`;
+}
+
+// PeerLocalOnly greys a part of the form that acts on this machine itself
+// (remote access setup) on a peer's page.
+function PeerLocalOnly({ children }) {
+  const remote = remoteAccess(configAccess.value);
+  if (!remote) return children;
+  return html`<div class="cfg-access-note ui-hint">🔒 Set up on the node itself</div>
+    <fieldset class="cfg-peer-local-only" disabled>${children}</fieldset>`;
+}
+
+// TerminalAttachRow is dashboard.terminal_attach: the strategy and its
+// timing overrides in one row, gated like a Setting on a peer's page.
+function TerminalAttachRow() {
+  const row = useRowAccess('dashboard.terminal_attach');
+  return html`<div class=${`cfg-field cfg-row cfg-row-wide cfg-terminal-attach-field${row.remote && row.access.state !== 'write' ? ' cfg-row-readonly' : ''}`}
+          data-cfg-key="dashboard.terminal_attach" data-cfg-access=${row.remote ? row.access.state : undefined}>
+          <div class="cfg-row-text">
+            <div class="cfg-row-title"><label class="cfg-label" for="cfg-terminal-attach-mode">Resize strategy</label></div>
+            <div class="cfg-row-summary">Choose how the browser establishes terminal geometry when attaching to tmux.</div>
+            <div class="cfg-row-meta">
+              <code class="cfg-key">dashboard.terminal_attach</code>
+              <details class="cfg-more"><summary>More…</summary>
+                <div class="cfg-hint ui-hint cfg-terminal-attach-hint"><strong>Repair after attach</strong> preserves today's three-step sequence. <strong>Initial resize only</strong> skips the visible nudge and restore. <strong>Resize before attach</strong> waits between sending the fitted grid and starting the tmux attachment. Stored under <code>dashboard.terminal_attach</code>.</div>
+              </details>
+            </div>
+            <${RowAccessNote} row=${row} />
+          </div>
+          <${RowControls} row=${row}>
+            <${ConfigSelect} id="cfg-terminal-attach-mode" aria-label="Web terminal attach resize strategy">
+              <option value="repair">Repair after attach (default)</option>
+              <option value="initial">Initial resize only</option>
+              <option value="pre_attach">Resize before attach</option>
+            </${ConfigSelect}>
+            <div class="cfg-terminal-attach-timings">
+              <strong class="ui-eyebrow ui-eyebrow-section">Timing overrides</strong>
+              <label><span>Before initial resize</span><${ConfigInput} type="number" id="cfg-terminal-attach-initial-delay" min="0" max="10000" placeholder="0" aria-label="Initial terminal resize delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
+              <label><span>Post-attach repair wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-repair-delay" min="0" max="10000" placeholder="250" aria-label="Post-attach terminal repair delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
+              <label><span>Resize-to-attach wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-pre-delay" min="0" max="10000" placeholder="250" aria-label="Resize before attach delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
+              <span class="cfg-terminal-attach-note">Blank uses the shown default; explicit <code>0</code> means no wait.</span>
+            </div>
+          <//>
+        </div>`;
+}
+
+// SecretState is a withheld secret's row on a peer's page: whether it is
+// set, never its value, with Replace and Clear where the viewer may change
+// it. Replacing sends the new value; one left empty keeps the old.
+function SecretState({ secret, panel, writable, replacing, clearing }) {
+  const state = clearing ? 'will be cleared' : replacing ? 'replacing' : secret.set ? 'set' : 'not set';
+  return html`<div class="cfg-secret" data-cfg-secret=${secret.path}>
+    <span class=${`ui-tag cfg-secret-state${secret.set && !clearing ? ' is-set' : ''}`} title="The node withholds this value from every peer">${state}</span>
+    ${writable && html`<span class="cfg-secret-actions">
+      ${!replacing && html`<${Button} size="sm" data-cfg-secret-act="replace" onClick=${() => replaceSecret(secret.path, panel)}>Replace<//>`}
+      ${secret.set && !clearing && html`<${Button} size="sm" data-cfg-secret-act="clear" onClick=${() => clearSecret(secret.path, panel)}>Clear<//>`}
+      ${(replacing || clearing) && html`<${Button} size="sm" data-cfg-secret-act="keep" onClick=${() => keepSecret(secret.path, panel)}>Keep<//>`}
+    </span>`}
+  </div>`;
+}
+
+// PanelAccessTag marks a rail entry the viewer can only partly or not
+// change on a peer's page.
+function PanelAccessTag({ id }) {
+  const state = panelAccess(panelRowKeys(id), configAccess.value);
+  if (!state || state === 'write') return null;
+  return html`<span class=${`ui-tag cfg-rail-access cfg-rail-access-${state}`} title=${state === 'read' ? 'Read-only on this node' : 'Some settings are read-only on this node'}>${state === 'read' ? 'read-only' : 'partial'}</span>`;
+}
+
+const PanelContext = createContext('');
 
 // UpdatesPanel is Config › Installation › Updates: updates.self. The inputs are ordinary
 // uncontrolled Config fields; the notes around them read the daemon's
@@ -429,7 +539,7 @@ function Panel({ id, active, children }) {
       <h2 id=${`cfg-panel-title-${id}`}><span class="cfg-panel-icon" aria-hidden="true">${panel.icon}</span> ${panel.title}</h2>
       <p>${panel.lede}</p>
     </div>
-    ${children}
+    <${PanelContext.Provider} value=${id}>${children}<//>
   </div>`;
 }
 
@@ -463,6 +573,7 @@ function ConfigRail({ active, select, dirtyPanels }) {
         <span class="cfg-rail-icon" aria-hidden="true">${panel.icon}</span>
         <span class="cfg-rail-title">${panel.title}</span>
         <${RailDirtyDot} dirtyPanels=${dirtyPanels} id=${panel.id} />
+        <${PanelAccessTag} id=${panel.id} />
         <span class="cfg-rail-hits" data-cfg-hits=${panel.id}></span>
       </${ConfigButton}>`)}
     </div>
@@ -728,32 +839,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </${Group}>
 
       <${Group} title="Web terminal attachment">
-        <div class="cfg-field cfg-row cfg-row-wide cfg-terminal-attach-field" data-cfg-key="dashboard.terminal_attach">
-          <div class="cfg-row-text">
-            <div class="cfg-row-title"><label class="cfg-label" for="cfg-terminal-attach-mode">Resize strategy</label></div>
-            <div class="cfg-row-summary">Choose how the browser establishes terminal geometry when attaching to tmux.</div>
-            <div class="cfg-row-meta">
-              <code class="cfg-key">dashboard.terminal_attach</code>
-              <details class="cfg-more"><summary>More…</summary>
-                <div class="cfg-hint ui-hint cfg-terminal-attach-hint"><strong>Repair after attach</strong> preserves today's three-step sequence. <strong>Initial resize only</strong> skips the visible nudge and restore. <strong>Resize before attach</strong> waits between sending the fitted grid and starting the tmux attachment. Stored under <code>dashboard.terminal_attach</code>.</div>
-              </details>
-            </div>
-          </div>
-          <div class="cfg-row-ctl">
-            <${ConfigSelect} id="cfg-terminal-attach-mode" aria-label="Web terminal attach resize strategy">
-              <option value="repair">Repair after attach (default)</option>
-              <option value="initial">Initial resize only</option>
-              <option value="pre_attach">Resize before attach</option>
-            </${ConfigSelect}>
-            <div class="cfg-terminal-attach-timings">
-              <strong class="ui-eyebrow ui-eyebrow-section">Timing overrides</strong>
-              <label><span>Before initial resize</span><${ConfigInput} type="number" id="cfg-terminal-attach-initial-delay" min="0" max="10000" placeholder="0" aria-label="Initial terminal resize delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
-              <label><span>Post-attach repair wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-repair-delay" min="0" max="10000" placeholder="250" aria-label="Post-attach terminal repair delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
-              <label><span>Resize-to-attach wait</span><${ConfigInput} type="number" id="cfg-terminal-attach-pre-delay" min="0" max="10000" placeholder="250" aria-label="Resize before attach delay (milliseconds)" /><span class="cfg-terminal-attach-unit">ms</span></label>
-              <span class="cfg-terminal-attach-note">Blank uses the shown default; explicit <code>0</code> means no wait.</span>
-            </div>
-          </div>
-        </div>
+        <${TerminalAttachRow} />
       </${Group}>
 
       <${Group} title="Web terminal tabs">
@@ -1233,7 +1319,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <span class="cfg-remote-status" id="cfg-remote-status"></span>
         </${Setting}>
       </${Group}>
-      <${RemoteAdminPanel} />
+      <${PeerLocalOnly}><${RemoteAdminPanel} /><//>
     </${Panel}>
 
     <${Panel} id="installation" active=${shown}>
