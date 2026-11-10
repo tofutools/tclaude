@@ -294,6 +294,41 @@ tmux -L tclaude ls              # list tclaude sessions
 tmux -L tclaude attach -t abc1  # manual attach
 ```
 
+`tmux -L tclaude ls` also shows `__tclaude-control` while agentd runs and any
+tclaude session exists. That is agentd's tmux control-mode client (see below);
+tclaude hides it everywhere it lists sessions. Don't attach to it.
+
+### Control mode
+
+agentd sends its tmux queries and commands (session liveness, pane state,
+options, hooks, kills, keystrokes) over one long-lived `tmux -C` control-mode
+connection instead of starting a tmux process for each one. Some commands still
+start a tmux process:
+
+- A command with no explicit target, because over control mode it would act on
+  the control client's own session.
+- `new-session`, because it takes the caller's environment and directory.
+- `kill-server` and key bindings.
+- A query whose answer contains text a program in a pane can set (screen
+  captures, the pane title, the current directory). A reply in control mode is
+  framed only by marker lines, so text like that could be made to look like the
+  end of the reply. Terminals you attach are ordinary tmux clients,
+as before, and short-lived `tclaude` commands still run tmux directly. The connection
+attaches to the hidden `__tclaude-control` session. It never starts a tmux
+server: it connects only after a tclaude session exists, and it leaves once its
+own session is the last one, so the server still exits when empty. A
+`kill-server` ends it, and it does not bring the server back. When the
+connection is down or a reply can't be read, a query falls back to its own
+tmux process, as before. A command that changes something (a kill, keystrokes)
+is not repeated if the connection drops after it was sent, because it may
+already have run; the caller sees the error instead.
+
+**Diagnostics › Doctor** shows which path is in use (`tmux control mode is
+connected`, idle, or can't connect, with the reason). State changes are logged
+at INFO with `module=tmuxctl`. To turn control mode off, set
+`"tmux": {"control_mode": false}` in the config or `TCLAUDE_TMUX_CONTROL_MODE=0`
+in agentd's environment (the variable wins), then restart agentd.
+
 For scrollback, either enable tmux mouse mode (`set -g mouse on`) or disable
 the alternate screen to keep your terminal's native scrollbar
 (`set -ga terminal-overrides ',*256color*:smcup@:rmcup@'`) — one or the

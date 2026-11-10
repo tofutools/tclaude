@@ -206,11 +206,11 @@ func startShellSession(params *NewParams) (ShellSession, error) {
 		// Kill the pane like the exit-audit failure path below: leaving it
 		// alive while the launch-row defer rolls the row back would orphan a
 		// live pane tclaude can no longer see.
-		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
 		return ShellSession{}, fmt.Errorf("failed to save session state: %w", err)
 	}
 	if err := exitGuard.release(); err != nil {
-		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
 		return ShellSession{}, fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
 

@@ -244,17 +244,17 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 		cleanupScript()
 		return nil, fmt.Errorf("launch OpenCode server through external tmux: %w: %s", err, stderr.String())
 	}
-	pidOut, err := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(
-		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":0.0", "#{pane_pid}")...).Output()
+	pidOut, err := clcommon.TmuxOutput(session.ExternalTmuxNoStartArgs(
+		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":0.0", "#{pane_pid}")...)
 	if err != nil {
-		_ = clcommon.Default.Command(session.ExternalTmuxNoStartArgs(
-			"kill-session", "-t", clcommon.ExactTarget(tmuxSession))...).Run()
+		_ = clcommon.TmuxRun(session.ExternalTmuxNoStartArgs(
+			"kill-session", "-t", clcommon.ExactTarget(tmuxSession))...)
 		return nil, fmt.Errorf("read OpenCode tmux process root: %w", err)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
 	if err != nil || pid <= 1 {
-		_ = clcommon.Default.Command("-N", "kill-session", "-t",
-			clcommon.ExactTarget(tmuxSession)).Run()
+		_ = clcommon.TmuxRun("-N", "kill-session", "-t",
+			clcommon.ExactTarget(tmuxSession))
 		return nil, fmt.Errorf("external tmux returned invalid OpenCode process root %q", strings.TrimSpace(string(pidOut)))
 	}
 	process := &openCodeProcess{pid: pid, tmuxSession: tmuxSession,
@@ -332,21 +332,21 @@ func openCodeTmuxStartupError(err error, output string) error {
 }
 
 func reclaimOrphanedOpenCodeTmuxSession(tmuxSession string) error {
-	if err := clcommon.Default.Command(
-		"-N", "has-session", "-t", clcommon.ExactTarget(tmuxSession)).Run(); err != nil {
+	if err := clcommon.TmuxRun(
+		"-N", "has-session", "-t", clcommon.ExactTarget(tmuxSession)); err != nil {
 		return nil
 	}
-	if err := clcommon.Default.Command(
-		"-N", "kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run(); err != nil {
+	if err := clcommon.TmuxRun(
+		"-N", "kill-session", "-t", clcommon.ExactTarget(tmuxSession)); err != nil {
 		return fmt.Errorf("reclaim orphaned OpenCode tmux session: %w", err)
 	}
 	return nil
 }
 
 func captureOpenCodeTmuxPane(tmuxSession string) string {
-	out, err := clcommon.Default.Command(
+	out, err := clcommon.TmuxCombinedOutput(
 		"-N", "capture-pane", "-p", "-S", "-200", "-t",
-		clcommon.ExactTarget(tmuxSession)+":0.0").CombinedOutput()
+		clcommon.ExactTarget(tmuxSession)+":0.0")
 	if err != nil {
 		return ""
 	}
@@ -356,8 +356,8 @@ func captureOpenCodeTmuxPane(tmuxSession string) string {
 func watchOpenCodeTmuxProcess(process *openCodeProcess, runtime db.OpenCodeRuntime) {
 	misses := 0
 	for {
-		err := clcommon.Default.Command(
-			"-N", "has-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
+		err := clcommon.TmuxRun(
+			"-N", "has-session", "-t", clcommon.ExactTarget(process.tmuxSession))
 		if err != nil {
 			misses++
 			if misses < openCodeHealthAttempts {
@@ -381,9 +381,9 @@ func watchOpenCodeTmuxProcess(process *openCodeProcess, runtime db.OpenCodeRunti
 }
 
 func openCodeTmuxPanePID(tmuxSession string) int {
-	out, err := clcommon.Default.Command(
+	out, err := clcommon.TmuxOutput(
 		"-N", "display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":0.0",
-		"#{pane_pid}").Output()
+		"#{pane_pid}")
 	if err != nil {
 		return 0
 	}

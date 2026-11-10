@@ -265,8 +265,8 @@ func killLocalSessionPane(tmuxSession string) error {
 	if strings.TrimSpace(tmuxSession) == "" {
 		return fmt.Errorf("no tmux session to kill")
 	}
-	out, err := clcommon.TmuxCommand(
-		"kill-session", "-t", clcommon.ExactTarget(tmuxSession)).CombinedOutput()
+	out, err := clcommon.TmuxCombinedOutput(
+		"kill-session", "-t", clcommon.ExactTarget(tmuxSession))
 	if err != nil {
 		if msg := strings.TrimSpace(string(out)); msg != "" {
 			return fmt.Errorf("%w: %s", err, msg)

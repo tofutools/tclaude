@@ -95,7 +95,7 @@ func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error
 }
 
 func fedPaneIdentity(tmuxName string) (*fedPanePin, error) {
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxName)+":0.0", "#{pane_id}\t#{window_id}\t#{session_id}\t#{session_windows}\t#{window_panes}").Output()
+	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", clcommon.ExactTarget(tmuxName)+":0.0", "#{pane_id}\t#{window_id}\t#{session_id}\t#{session_windows}\t#{window_panes}")
 	if err != nil {
 		return nil, errors.New("target pane unavailable")
 	}
@@ -145,7 +145,7 @@ type fedPaneTerminal struct {
 }
 
 func openFedPaneTerminal(pin *fedPanePin, cols, rows int) (*fedPaneTerminal, error) {
-	version, err := clcommon.TmuxCommand("-V").Output()
+	version, err := clcommon.TmuxOutput("-V")
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +213,7 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 		if batched == 0 {
 			return nil
 		}
-		err := clcommon.TmuxCommand(batch...).Run()
+		err := clcommon.TmuxRun(batch...)
 		batch, batched = batch[:0], 0
 		return err
 	}
@@ -298,10 +298,10 @@ func (s fedPaneMouse) app() bool { return s.standard || s.button || s.all }
 
 func (p *fedPaneTerminal) paneMouse() (fedPaneMouse, error) {
 	var s fedPaneMouse
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", p.pin.pane,
+	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", p.pin.pane,
 		"#{pane_in_mode} #{==:#{pane_mode},copy-mode} #{mouse_any_flag} #{mouse_sgr_flag} #{mouse_utf8_flag} #{mouse} "+
 			"#{pane_left} #{pane_top} #{pane_width} #{pane_height} #{?#{==:#{status-position},top},#{status},off} "+
-			"#{?mouse_standard_flag,1,0} #{?mouse_button_flag,1,0} #{?mouse_all_flag,1,0}").Output()
+			"#{?mouse_standard_flag,1,0} #{?mouse_button_flag,1,0} #{?mouse_all_flag,1,0}")
 	if err != nil {
 		return s, err
 	}
@@ -371,7 +371,7 @@ func (p *fedPaneTerminal) sendMouse(seqs [][]byte) error {
 	if len(args) == 4 {
 		return nil
 	}
-	return clcommon.TmuxCommand(args...).Run()
+	return clcommon.TmuxRun(args...)
 }
 
 // wheel applies count wheel events the way tmux's default WheelUpPane and
@@ -391,7 +391,7 @@ func (p *fedPaneTerminal) wheel(w terminal.Mouse, count int) error {
 	}
 	// tmux's copy-mode wheel binding scrolls five lines per event.
 	scroll := func() error {
-		return clcommon.TmuxCommand("send-keys", "-t", p.pin.pane, "-X", "-N", strconv.Itoa(5*count), dir).Run()
+		return clcommon.TmuxRun("send-keys", "-t", p.pin.pane, "-X", "-N", strconv.Itoa(5*count), dir)
 	}
 	switch {
 	case s.copyMode:
@@ -410,7 +410,7 @@ func (p *fedPaneTerminal) wheel(w terminal.Mouse, count int) error {
 		}
 		return p.sendMouse(seqs)
 	case w.Up() && s.tmuxMouse:
-		if err := clcommon.TmuxCommand("copy-mode", "-e", "-t", p.pin.pane).Run(); err != nil {
+		if err := clcommon.TmuxRun("copy-mode", "-e", "-t", p.pin.pane); err != nil {
 			return err
 		}
 		p.copyMode = true
@@ -461,9 +461,9 @@ func (p *fedPaneTerminal) Close() error {
 			// local operator's keys and automated send-keys. Re-check first so
 			// a copy mode entered by someone since is left alone as far as we
 			// can tell.
-			out, err := clcommon.TmuxCommand("display-message", "-p", "-t", p.pin.pane, "#{==:#{pane_mode},copy-mode}").Output()
+			out, err := clcommon.TmuxOutput("display-message", "-p", "-t", p.pin.pane, "#{==:#{pane_mode},copy-mode}")
 			if err == nil && strings.TrimSpace(string(out)) == "1" {
-				_ = clcommon.TmuxCommand("send-keys", "-t", p.pin.pane, "-X", "cancel").Run()
+				_ = clcommon.TmuxRun("send-keys", "-t", p.pin.pane, "-X", "cancel")
 			}
 		}
 		_ = p.f.Close()
@@ -491,7 +491,7 @@ var fedIndicatorMu sync.Mutex
 var fedIndicators = map[string]*fedIndicator{}
 
 func fedWindowOption(window, name string) (string, bool, error) {
-	out, err := clcommon.TmuxCommand("show-options", "-w", "-q", "-t", window, name).Output()
+	out, err := clcommon.TmuxOutput("show-options", "-w", "-q", "-t", window, name)
 	if err != nil {
 		return "", false, err
 	}
@@ -500,11 +500,11 @@ func fedWindowOption(window, name string) (string, bool, error) {
 		return "", false, nil
 	}
 	// -v returns the exact value, without tmux's display quoting.
-	val, err := clcommon.TmuxCommand("show-options", "-w", "-qv", "-t", window, name).Output()
+	val, err := clcommon.TmuxOutput("show-options", "-w", "-qv", "-t", window, name)
 	return strings.TrimSuffix(string(val), "\n"), true, err
 }
 func setFedWindowOption(window, name, value string) error {
-	return clcommon.TmuxCommand("set-option", "-w", "-t", window, name, value).Run()
+	return clcommon.TmuxRun("set-option", "-w", "-t", window, name, value)
 }
 func setFedIndicator(pin *fedPanePin, id, peer string, readOnly bool) (func(), error) {
 	fedIndicatorMu.Lock()
@@ -533,7 +533,7 @@ func setFedIndicator(pin *fedPanePin, id, peer string, readOnly bool) (func(), e
 
 		// With no non-ignored client tmux falls back to the ignore-size viewers.
 		// No dimensions means atomically pin the window's existing size as manual.
-		if err := clcommon.TmuxCommand("resize-window", "-t", pin.window).Run(); err != nil {
+		if err := clcommon.TmuxRun("resize-window", "-t", pin.window); err != nil {
 			restoreFedIndicator(pin.window, mark.saved)
 			delete(fedIndicators, pin.window)
 			return nil, err
@@ -626,10 +626,10 @@ func restoreFedIndicator(window, saved string) {
 		if o.local {
 			_ = setFedWindowOption(window, o.name, o.val)
 		} else {
-			_ = clcommon.TmuxCommand("set-option", "-wu", "-t", window, o.name).Run()
+			_ = clcommon.TmuxRun("set-option", "-wu", "-t", window, o.name)
 		}
 	}
-	_ = clcommon.TmuxCommand("set-option", "-wu", "-t", window, fedIndicatorOption).Run()
+	_ = clcommon.TmuxRun("set-option", "-wu", "-t", window, fedIndicatorOption)
 }
 func fedIndicatorPresent(window string) bool {
 	fedIndicatorMu.Lock()
@@ -652,7 +652,7 @@ func fedIndicatorPresent(window string) bool {
 func cleanupFedTerminalIndicators() {
 	fedIndicatorMu.Lock()
 	defer fedIndicatorMu.Unlock()
-	out, err := clcommon.TmuxCommand("list-windows", "-a", "-F", "#{window_id}").Output()
+	out, err := clcommon.TmuxOutput("list-windows", "-a", "-F", "#{window_id}")
 	if err != nil {
 		return
 	}
@@ -674,7 +674,7 @@ var _ io.ReadCloser = (*fedPaneTerminal)(nil)
 // only a view that owns the session's size (federation_terminal_owner.go)
 // resizes the window.
 func (pin *fedPanePin) size() (int, int, error) {
-	raw, err := clcommon.TmuxCommand("display-message", "-p", "-t", pin.pane, "#{pane_width} #{pane_height}").Output()
+	raw, err := clcommon.TmuxOutput("display-message", "-p", "-t", pin.pane, "#{pane_width} #{pane_height}")
 	if err != nil {
 		return 0, 0, err
 	}

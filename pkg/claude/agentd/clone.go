@@ -788,7 +788,7 @@ func (r *cloneRun) spawnNoCopy() (spawned cloneSpawnResult, cerr *cloneSpawnErro
 	if tmuxToKill == "" {
 		tmuxToKill = label
 	}
-	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
+	if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)); err != nil {
 		slog.Warn("clone: timed-out no-copy launch kill failed",
 			"session", tmuxToKill, "error", err)
 	}
@@ -995,7 +995,7 @@ func (r *cloneRun) spawnCopy() (spawned cloneSpawnResult, cerr *cloneSpawnError)
 	}
 	if launchEnroll {
 		if newTmux != "" {
-			if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(newTmux)).Run(); err != nil {
+			if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(newTmux)); err != nil {
 				slog.Warn("clone: timed-out copy launch kill failed",
 					"session", newTmux, "error", err)
 			}
@@ -2304,7 +2304,7 @@ func (co *cloneOrchestration) spawn(w http.ResponseWriter) bool {
 		stopped := "; the clone was stopped"
 		if tmuxToKill == "" {
 			stopped = "; the clone's actor was retired, but its pane never registered — check `tclaude session ls` for a stray launch"
-		} else if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
+		} else if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)); err != nil {
 			slog.Warn("clone: stopping failed clone", "session", tmuxToKill, "error", err)
 		}
 		if co.spawned.HandoffMsgID > 0 {

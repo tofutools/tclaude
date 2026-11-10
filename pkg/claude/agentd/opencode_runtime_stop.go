@@ -179,8 +179,8 @@ func joinOpenCodeSSEProjector(
 // server and, if the server does not exit, its process tree. retained reports
 // that the tree survived, so the control authority must be kept.
 func stopTmuxHeldOpenCodeProcess(runtime db.OpenCodeRuntime, process *openCodeProcess) (retained bool) {
-	killErr := clcommon.Default.Command(
-		"-N", "kill-session", "-t", clcommon.ExactTarget(process.tmuxSession)).Run()
+	killErr := clcommon.TmuxRun(
+		"-N", "kill-session", "-t", clcommon.ExactTarget(process.tmuxSession))
 	select {
 	case <-process.done:
 	case <-time.After(openCodeProcessStopWait):
@@ -243,8 +243,8 @@ func stopRecoveredOpenCodeProcess(runtime db.OpenCodeRuntime) (retained bool) {
 			tmuxSession := openCodeManagedTmuxSession(runtime.SessionID)
 			panePID := openCodeTmuxPanePID(tmuxSession)
 			if panePID == runtime.PID {
-				_ = clcommon.Default.Command(
-					"-N", "kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+				_ = clcommon.TmuxRun(
+					"-N", "kill-session", "-t", clcommon.ExactTarget(tmuxSession))
 			} else {
 				killOpenCodePIDs(recordedTree)
 			}

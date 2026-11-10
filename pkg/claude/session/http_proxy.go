@@ -487,11 +487,11 @@ func LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, command, harnessName 
 	guard.bind()
 	state.PID = ParsePIDFromTmux(tmuxSession)
 	if err := SaveSessionState(state); err != nil {
-		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
 		return err
 	}
 	if err := guard.release(); err != nil {
-		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
 		return err
 	}
 	return nil

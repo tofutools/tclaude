@@ -529,8 +529,8 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			// The pane is only an attach client. A dead authoritative server is
 			// a dead session even while that client process still exists.
 			if st.TmuxSession != "" {
-				if err := clcommon.TmuxCommand("kill-session", "-t",
-					clcommon.ExactTarget(st.TmuxSession)).Run(); err != nil {
+				if err := clcommon.TmuxRun("kill-session", "-t",
+					clcommon.ExactTarget(st.TmuxSession)); err != nil {
 					slog.Warn("reaper: failed to stop OpenCode attach pane after server loss",
 						"session", st.ID, "tmux_session", st.TmuxSession, "error", err)
 				}

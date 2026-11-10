@@ -4,7 +4,6 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -22,7 +21,7 @@ var codexApprovalMonitorDebounce = 100 * time.Millisecond
 var codexApprovalCleanupTailRe = regexp.MustCompile(`^; (?:}; )?exit \$tclaude_(?:launch|resume)_status$`)
 
 var codexApprovalPaneStartCommands = func() ([]byte, error) {
-	return clcommon.TmuxCommand("list-panes", "-a", "-F", "#{pane_dead}\t#{pane_start_command}").Output()
+	return clcommon.TmuxOutput("list-panes", "-a", "-F", "#{pane_dead}\t#{pane_start_command}")
 }
 
 type codexApprovalMonitor struct {
@@ -172,7 +171,7 @@ func (m *codexApprovalMonitor) reconcileLiveProfilesAtStartup() {
 func liveCodexApprovalPaneStarts() ([]string, error) {
 	out, err := codexApprovalPaneStartCommands()
 	if err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
+		if clcommon.IsTmuxCommandFailure(err) {
 			return nil, nil // no tmux server or no live panes
 		}
 		return nil, err

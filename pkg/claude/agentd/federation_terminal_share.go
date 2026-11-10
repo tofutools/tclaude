@@ -66,7 +66,7 @@ type fedLocalClient struct {
 // renderers, which attach with ignore-size. A non-empty window keeps only
 // the clients currently showing that window: only they size it.
 func fedLocalClients(tmuxSession, window string) ([]fedLocalClient, error) {
-	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}\t#{client_flags}\t#{client_width}\t#{client_height}\t#{window_id}").Output()
+	out, err := clcommon.TmuxOutput("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}\t#{client_flags}\t#{client_width}\t#{client_height}\t#{window_id}")
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func detachFedLocalClients(tmuxSession string) {
 		return
 	}
 	for _, c := range clients {
-		_ = clcommon.TmuxCommand("detach-client", "-t", c.tty).Run()
+		_ = clcommon.TmuxRun("detach-client", "-t", c.tty)
 	}
 }
 
@@ -108,7 +108,7 @@ const fedWindowFormat = "#{status}\t#{window_width}\t#{window_height}"
 // client of the session (a client's window area is its height minus these),
 // and the window's current size (0 x 0 when unknown).
 func fedWindowState(pane string) (status, cols, rows int) {
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", pane, fedWindowFormat).Output()
+	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", pane, fedWindowFormat)
 	if err != nil {
 		return 0, 0, 0
 	}
@@ -262,7 +262,7 @@ func (rt *fedRuntime) displaceFedClients(pin *fedPanePin, self *fedTerminalView)
 // fedResizeWindow sets window to exactly cols x rows. The window-size option
 // becomes manual, which the indicator already installed and restores.
 func fedResizeWindow(window string, cols, rows int) error {
-	return clcommon.TmuxCommand("resize-window", "-t", window, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)).Run()
+	return clcommon.TmuxRun("resize-window", "-t", window, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows))
 }
 
 // fedResizeSettle is how long size changes are coalesced: a browser drag sends

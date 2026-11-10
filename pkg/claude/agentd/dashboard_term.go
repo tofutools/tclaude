@@ -186,10 +186,10 @@ func ensureShellSession(spec shellSpec) error {
 		}
 		args = append(args, clcommon.BootstrapShellCommandPrefix()+" "+shellSingleQuote(scriptPath))
 	}
-	if out, err := clcommon.TmuxCommand(args...).CombinedOutput(); err != nil && !session.IsTmuxSessionAlive(spec.name) {
+	if out, err := clcommon.TmuxCombinedOutput(args...); err != nil && !session.IsTmuxSessionAlive(spec.name) {
 		return fmt.Errorf("start shell: %s", strings.TrimSpace(string(out)))
 	}
-	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(spec.name)+":", "mouse", "on").Run()
+	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(spec.name)+":", "mouse", "on")
 	return nil
 }
 
@@ -606,7 +606,7 @@ func detachTmuxSession(tmuxSession string) {
 		detachFedLocalClients(tmuxSession)
 		return
 	}
-	_ = clcommon.TmuxCommand("detach-client", "-s", clcommon.ExactTarget(tmuxSession)).Run()
+	_ = clcommon.TmuxRun("detach-client", "-s", clcommon.ExactTarget(tmuxSession))
 }
 
 // detachOwnTmuxClient detaches only the tmux client running on clientTTY,
@@ -630,13 +630,13 @@ func detachOwnTmuxClient(tmuxSession, clientTTY string) {
 		detachTmuxSession(tmuxSession)
 		return
 	}
-	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}").Output()
+	out, err := clcommon.TmuxOutput("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
 	if err != nil {
 		return
 	}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if strings.TrimSpace(line) == clientTTY {
-			_ = clcommon.TmuxCommand("detach-client", "-t", clientTTY).Run()
+			_ = clcommon.TmuxRun("detach-client", "-t", clientTTY)
 			return
 		}
 	}

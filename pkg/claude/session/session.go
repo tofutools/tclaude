@@ -429,8 +429,8 @@ func IsTmuxSessionAlive(sessionName string) bool {
 	if cmd.Run() != nil {
 		return false
 	}
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t",
-		clcommon.ExactTarget(sessionName)+":0.0", "#{pane_dead}").Output()
+	out, err := clcommon.TmuxOutput("display-message", "-p", "-t",
+		clcommon.ExactTarget(sessionName)+":0.0", "#{pane_dead}")
 	return err != nil || strings.TrimSpace(string(out)) != "1"
 }
 
@@ -483,7 +483,7 @@ func DetachSessionClients(sessionName string) (int, error) {
 			continue
 		}
 		// Detach this specific client
-		_ = clcommon.TmuxCommand("detach-client", "-t", client).Run()
+		_ = clcommon.TmuxRun("detach-client", "-t", client)
 		detached++
 	}
 	return detached, nil
@@ -615,7 +615,7 @@ func tmuxSessionNameTaken(name string) bool {
 	if name == "" {
 		return false
 	}
-	return clcommon.TmuxCommand("has-session", "-t", clcommon.ExactTarget(name)).Run() == nil
+	return clcommon.TmuxRun("has-session", "-t", clcommon.ExactTarget(name)) == nil
 }
 
 // sessionHandle is the short, human-facing identifier for a session — its

@@ -26,9 +26,9 @@ func ExternalResourceDelegationDir() string {
 	// agentd sets it on legacy→external and explicitly unsets it on the reverse
 	// transition. If the server cannot answer, retain the inherited value so an
 	// external-mode pane still fails closed with -N.
-	out, err := clcommon.TmuxCommand(
+	out, err := clcommon.TmuxCombinedOutput(
 		"-N", "show-environment", "-g", ResourceDelegationDirEnv,
-	).CombinedOutput()
+	)
 	if err != nil {
 		return inherited
 	}
@@ -95,7 +95,7 @@ func RequireExternalTmuxServer() error {
 }
 
 func requireExternalTmuxServer(dir string) error {
-	out, err := clcommon.TmuxCommand("-N", "display-message", "-p", "#{pid}").CombinedOutput()
+	out, err := clcommon.TmuxCombinedOutput("-N", "display-message", "-p", "#{pid}")
 	if err != nil {
 		detail := strings.TrimSpace(string(out))
 		if detail != "" {
@@ -130,9 +130,9 @@ func PropagateResourceDelegationToTmux() error {
 	if err := requireExternalTmuxServer(dir); err != nil {
 		return err
 	}
-	if out, err := clcommon.TmuxCommand(
+	if out, err := clcommon.TmuxCombinedOutput(
 		"-N", "set-environment", "-g", ResourceDelegationDirEnv, dir,
-	).CombinedOutput(); err != nil {
+	); err != nil {
 		detail := strings.TrimSpace(string(out))
 		if detail != "" {
 			detail = ": " + detail
@@ -147,15 +147,15 @@ func PropagateResourceDelegationToTmux() error {
 // returns to legacy mode. A missing server or missing variable is already the
 // desired state and does not make ordinary agentd startup depend on tmux.
 func ClearResourceDelegationFromTmux() error {
-	out, err := clcommon.TmuxCommand(
+	out, err := clcommon.TmuxCombinedOutput(
 		"-N", "show-environment", "-g", ResourceDelegationDirEnv,
-	).CombinedOutput()
+	)
 	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(out)), ResourceDelegationDirEnv+"=") {
 		return nil
 	}
-	out, err = clcommon.TmuxCommand(
+	out, err = clcommon.TmuxCombinedOutput(
 		"-N", "set-environment", "-gu", ResourceDelegationDirEnv,
-	).CombinedOutput()
+	)
 	if err != nil {
 		detail := strings.TrimSpace(string(out))
 		if detail != "" {

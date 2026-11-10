@@ -40,12 +40,12 @@ func beginAgentRestartTmuxHandoff(oldTmux string) *agentRestartTmuxHandoff {
 		return nil
 	}
 	holding := "restart-" + strings.TrimPrefix(generateSpawnLabel(), "spwn-")
-	if err := clcommon.TmuxCommand(session.ExternalTmuxNoStartArgs(
+	if err := clcommon.TmuxRun(session.ExternalTmuxNoStartArgs(
 		"new-session", "-d", "-s", holding,
 		"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
 		"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight),
 		"sh", "-c", agentRestartHoldingCommand,
-	)...).Run(); err != nil {
+	)...); err != nil {
 		slog.Warn("agent restart: could not create tmux client bridge",
 			"from", oldTmux, "bridge", holding, "error", err)
 		return nil
@@ -53,10 +53,10 @@ func beginAgentRestartTmuxHandoff(oldTmux string) *agentRestartTmuxHandoff {
 	// User tmux configuration can inherit remain-on-exit=on into this pane.
 	// Override it pane-locally so the command's five-minute exit really removes
 	// the bridge even if agentd is no longer around to run kill-session.
-	if err := clcommon.TmuxCommand(
+	if err := clcommon.TmuxRun(
 		"set-option", "-p", "-t", clcommon.ExactTarget(holding)+":",
 		"remain-on-exit", "off",
-	).Run(); err != nil {
+	); err != nil {
 		slog.Warn("agent restart: could not bound tmux client bridge lifetime",
 			"from", oldTmux, "bridge", holding, "error", err)
 		killAgentRestartTmuxBridge(holding)
@@ -97,9 +97,9 @@ func (h *agentRestartTmuxHandoff) finishForConv(convID string) int {
 }
 
 func killAgentRestartTmuxBridge(holding string) {
-	if err := clcommon.TmuxCommand(
+	if err := clcommon.TmuxRun(
 		"kill-session", "-t", clcommon.ExactTarget(holding),
-	).Run(); err != nil {
+	); err != nil {
 		slog.Warn("agent restart: could not remove tmux client bridge",
 			"bridge", holding, "error", err)
 	}

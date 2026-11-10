@@ -9,6 +9,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 )
 
 // tmuxCommandTimeout bounds every tmux subprocess on the nudge path. A tmux
@@ -26,6 +27,10 @@ var startTmuxCommandTimer = func(timeout time.Duration) (<-chan time.Time, func(
 }
 
 func runTmuxCommand(args ...string) error {
+	// Over control mode the reply is bounded by the client's own deadline.
+	if _, err, ok := clcommon.TryTmuxControl(args...); ok {
+		return err
+	}
 	return runCommandWithTimeout(clcommon.TmuxCommand(args...), tmuxCommandTimeout)
 }
 
@@ -33,6 +38,9 @@ func runTmuxCommand(args ...string) error {
 // returns its stdout. The read twin of runTmuxCommand, for the probes the
 // lifecycle paths make while a request is blocked on them.
 func tmuxOutputWithTimeout(args ...string) ([]byte, error) {
+	if out, err, ok := clcommon.TryTmuxControl(args...); ok {
+		return out, err
+	}
 	cmd := clcommon.TmuxCommand(args...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -47,10 +55,14 @@ func tmuxOutputWithTimeout(args ...string) ([]byte, error) {
 // group fan-out) must not fork one has-session command per recipient, and a
 // wedged tmux server must not hold cronAuthorityMu forever.
 func liveTmuxSessionsWithTimeout() (map[string]struct{}, error) {
-	cmd := clcommon.TmuxCommand("list-sessions", "-F", "#{session_name}")
 	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := runCommandWithTimeout(cmd, tmuxCommandTimeout); err != nil {
+	if out, err, ok := clcommon.TryTmuxControl("list-sessions", "-F", "#{session_name}"); ok && err == nil {
+		stdout.Write(out)
+	} else if err := runCommandWithTimeout(func() *exec.Cmd {
+		cmd := clcommon.TmuxCommand("list-sessions", "-F", "#{session_name}")
+		cmd.Stdout = &stdout
+		return cmd
+	}(), tmuxCommandTimeout); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			// tmux exits non-zero when no server exists. That is the normal
@@ -61,7 +73,7 @@ func liveTmuxSessionsWithTimeout() (map[string]struct{}, error) {
 	}
 	alive := map[string]struct{}{}
 	for line := range strings.SplitSeq(stdout.String(), "\n") {
-		if name := strings.TrimSpace(line); name != "" {
+		if name := strings.TrimSpace(line); name != "" && name != tmuxctl.SessionName {
 			alive[name] = struct{}{}
 		}
 	}

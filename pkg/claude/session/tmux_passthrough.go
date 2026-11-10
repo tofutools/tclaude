@@ -11,6 +11,6 @@ import clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 // retain their existing policy. Use on (visible panes), not all (hidden panes).
 // Best-effort keeps launches working on older tmux versions without the option.
 func ConfigureTmuxPassthrough(tmuxSession string) {
-	_ = clcommon.TmuxCommand("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":",
-		"allow-passthrough", "on").Run()
+	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":",
+		"allow-passthrough", "on")
 }

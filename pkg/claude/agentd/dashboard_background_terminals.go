@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -148,7 +149,7 @@ func listBackgroundTmuxSessions() ([]backgroundTmuxSession, error) {
 		// removes itself, and a __tclaude- session is tclaude's own plumbing
 		// (OpenCode's managed `opencode serve`) that no client ever attaches
 		// to. Neither is something the operator left behind.
-		if name == "" || len(fields) < 2 || strings.HasPrefix(name, "restart-") || strings.HasPrefix(name, "__tclaude-") {
+		if name == "" || len(fields) < 2 || strings.HasPrefix(name, "restart-") || tmuxctl.IsPlumbingSession(name) {
 			continue
 		}
 		attached, err := strconv.Atoi(strings.TrimSpace(fields[1]))
