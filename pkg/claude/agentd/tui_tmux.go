@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -121,6 +122,11 @@ func tuiTmuxLiveSessions() (int, tuiTmuxProbe) {
 		// a live session errs toward leaving the server up, which is the safe
 		// direction everywhere else in this file too.
 		if name == "" {
+			continue
+		}
+		// agentd's own control-mode client session is not work: it leaves by
+		// itself once it is alone, and kill-server simply ends it.
+		if name == tmuxctl.SessionName {
 			continue
 		}
 		if ok && dead == "1" {

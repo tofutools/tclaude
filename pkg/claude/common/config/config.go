@@ -16,10 +16,13 @@ type Config struct {
 	LogLevel        string                 `json:"log_level,omitempty"`
 	// StartupTiming enables startup diagnostics without restarting agentd.
 	// Nil falls back to TCLAUDE_STARTUP_TIMING; explicit false overrides it.
-	StartupTiming *bool            `json:"startup_timing,omitempty"`
-	RecordHooks   bool             `json:"record_hooks,omitempty"`
-	RateLimit     *RateLimitConfig `json:"ratelimit,omitempty"`
-	Agent         *AgentConfig     `json:"agent,omitempty"`
+	StartupTiming *bool `json:"startup_timing,omitempty"`
+	RecordHooks   bool  `json:"record_hooks,omitempty"`
+	// Tmux configures how agentd talks to tclaude's tmux server. Absent →
+	// defaults (control mode on). See TmuxConfig.
+	Tmux      *TmuxConfig      `json:"tmux,omitempty"`
+	RateLimit *RateLimitConfig `json:"ratelimit,omitempty"`
+	Agent     *AgentConfig     `json:"agent,omitempty"`
 
 	// ExperimentalHarnesses opts in to registered harnesses whose tclaude
 	// support is still incomplete (Harness.Experimental; none today). Such a

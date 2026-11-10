@@ -448,6 +448,9 @@ func runServe(p *serveParams) error {
 	// decision, the clone cooldown, and the spawn guardrails. Load it once
 	// up front so every startup knob reads the same snapshot.
 	cfg, _ := config.Load()
+	// Before any background loop starts: it swaps clcommon.Default.
+	stopTmuxControlMode := startTmuxControlMode(cfg)
+	defer stopTmuxControlMode()
 
 	listeners, createdSocketPaths, err := listenUnixSockets(sockPath, optionalSockPaths, skipOptionalSocket)
 	if err != nil {

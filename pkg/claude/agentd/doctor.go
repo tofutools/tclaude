@@ -3,9 +3,12 @@ package agentd
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 	"github.com/tofutools/tclaude/pkg/claude/doctor"
 )
 
@@ -32,12 +35,39 @@ func invalidateDoctorChecks() {
 func doctorChecks(refresh bool) []doctor.Check {
 	doctorMu.Lock()
 	defer doctorMu.Unlock()
-	if !refresh && doctorCached != nil && time.Since(doctorCachedAt) < doctorCacheTTL {
-		return doctorCached
+	if refresh || doctorCached == nil || time.Since(doctorCachedAt) >= doctorCacheTTL {
+		doctorCached = append(doctor.Run(doctorProbes()), harnessConfigRepairChecks()...)
+		doctorCachedAt = time.Now()
 	}
-	doctorCached = append(doctor.Run(doctorProbes()), harnessConfigRepairChecks()...)
-	doctorCachedAt = time.Now()
-	return doctorCached
+	// The tmux path check is in-memory state, so it is always live.
+	return append(slices.Clip(doctorCached), tmuxControlModeCheck())
+}
+
+// tmuxControlModeCheck reports which path agentd's tmux queries take, so the
+// operator can see whether control mode is in use and, if not, why.
+func tmuxControlModeCheck() doctor.Check {
+	st := clcommon.TmuxControlModeStatus()
+	c := doctor.Check{ID: "tmux-control-mode", Category: doctor.CategoryTools, Severity: doctor.SeverityOK}
+	counts := fmt.Sprintf(" %d connect(s), %d request(s), %d failed.", st.Connects, st.Requests, st.Failures)
+	switch {
+	case !st.Enabled:
+		c.Severity = doctor.SeverityInfo
+		c.Title = "tmux control mode is off"
+		c.Detail = "Every tmux query forks one tmux process. Unset " + clcommon.ControlModeEnvVar +
+			" and remove tmux.control_mode=false from the config to turn it on, then restart agentd."
+	case st.Connected:
+		c.Title = "tmux control mode is connected"
+		c.Detail = "Session liveness is read over one tmux -C connection (session " + tmuxctl.SessionName +
+			") since " + st.Since.Format(time.RFC3339) + "." + counts
+	case st.LastConnErr != "":
+		c.Severity = doctor.SeverityInfo
+		c.Title = "tmux control mode cannot connect; using one tmux process per query"
+		c.Detail = "Last connect error: " + st.LastConnErr + ". State: " + st.Reason + "." + counts
+	default:
+		c.Title = "tmux control mode is idle; using one tmux process per query"
+		c.Detail = "It connects once a tclaude tmux session exists. State: " + st.Reason + "." + counts
+	}
+	return c
 }
 
 // handleDashboardDoctor answers GET /api/doctor[?refresh=1]. Read-only: every

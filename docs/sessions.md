@@ -294,6 +294,27 @@ tmux -L tclaude ls              # list tclaude sessions
 tmux -L tclaude attach -t abc1  # manual attach
 ```
 
+`tmux -L tclaude ls` also shows `__tclaude-control` while agentd runs and any
+tclaude session exists. That is agentd's tmux control-mode client (see below);
+tclaude hides it everywhere it lists sessions. Don't attach to it.
+
+### Control mode
+
+agentd reads session liveness over one long-lived `tmux -C` control-mode
+connection instead of starting a tmux process for every query. The connection
+attaches to the hidden `__tclaude-control` session. It never starts a tmux
+server: it connects only after a tclaude session exists, and it leaves once its
+own session is the last one, so the server still exits when empty. A
+`kill-server` ends it, and it does not bring the server back. When the
+connection is down or a reply can't be read, each query falls back to its own
+tmux process, as before.
+
+**Diagnostics › Doctor** shows which path is in use (`tmux control mode is
+connected`, idle, or can't connect, with the reason). State changes are logged
+at INFO with `module=tmuxctl`. To turn control mode off, set
+`"tmux": {"control_mode": false}` in the config or `TCLAUDE_TMUX_CONTROL_MODE=0`
+in agentd's environment (the variable wins), then restart agentd.
+
 For scrollback, either enable tmux mouse mode (`set -g mouse on`) or disable
 the alternate screen to keep your terminal's native scrollbar
 (`set -ga terminal-overrides ',*256color*:smcup@:rmcup@'`) — one or the

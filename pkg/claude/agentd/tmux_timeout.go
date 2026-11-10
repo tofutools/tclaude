@@ -9,6 +9,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 )
 
 // tmuxCommandTimeout bounds every tmux subprocess on the nudge path. A tmux
@@ -61,7 +62,7 @@ func liveTmuxSessionsWithTimeout() (map[string]struct{}, error) {
 	}
 	alive := map[string]struct{}{}
 	for line := range strings.SplitSeq(stdout.String(), "\n") {
-		if name := strings.TrimSpace(line); name != "" {
+		if name := strings.TrimSpace(line); name != "" && name != tmuxctl.SessionName {
 			alive[name] = struct{}{}
 		}
 	}
