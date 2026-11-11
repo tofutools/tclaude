@@ -67,7 +67,7 @@ type Service struct {
 	planEnvAt  time.Time
 	planEnvVal []string
 	planEnvErr error
-	env    []string
+	env        []string
 	// revisionOf reads a built binary's vcs.revision and vcs.modified.
 	revisionOf func(string) (string, bool, error)
 	inspect    func(context.Context, string) (buildversion.Info, error)
