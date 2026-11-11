@@ -49,9 +49,10 @@ apt_source_classifier_test microsoft-non-http pass \
 apt_source_classifier_test mixed refuse \
   'Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/ https://archive.ubuntu.com/ubuntu/\nSuites: noble\nComponents: main\n'
 
-# GitHub's generated mirror list currently prefers an intermittently
-# unreachable Azure endpoint. Prove that the workaround removes exactly that
-# runner-image entry while preserving the working fallbacks and lookalikes.
+# GitHub's generated mirror list prefers its Azure endpoint. smoke::apt_update
+# keeps it for the first attempt and drops it only as the fallback after that
+# attempt fails. Prove the fallback filter removes exactly that runner-image
+# entry while preserving the other mirrors and lookalikes.
 cat > "$work/apt-mirrors.input" <<'EOF'
 http://azure.archive.ubuntu.com/ubuntu/	priority:1
 https://archive.ubuntu.com/ubuntu/	priority:2
@@ -102,6 +103,37 @@ if ! cmp -s "$work/apt-update.want" "$apt_update_argv"; then
   diff -u "$work/apt-update.want" "$apt_update_argv" || true
   failures=1
 fi
+
+# smoke::apt_update must try the runner's mirror list as configured first and
+# drop the Azure mirror only after that attempt fails. Stub the update, the
+# mirror rewrite, and the source scan (sudo fails closed, find lists nothing)
+# so this proves the attempt order without sudo, apt, or the host's sources.
+apt_order_case() {
+  local name="$1" first="$2" disable="$3" second="$4" want_status="$5" want_calls="$6"
+  local calls="$work/apt-order-$name.calls" status
+  : > "$calls"
+  (
+    GITHUB_ACTIONS=true
+    RUNNER_TEMP="$work/apt-order-$name-runner"
+    sudo() { return 1; }
+    find() { :; }
+    smoke::run_bounded_apt_update() {
+      printf 'update %s\n' "$1" >> "$calls"
+      case "$1" in 120s) return "$first" ;; *) return "$second" ;; esac
+    }
+    smoke::apt_disable_azure_mirror() { printf 'disable\n' >> "$calls"; return "$disable"; }
+    smoke::apt_update
+  ) > "$work/apt-order-$name.log" 2>&1 && status=0 || status=$?
+  if [[ "$status" != "$want_status" ]] || [[ "$(cat "$calls")" != "$want_calls" ]]; then
+    echo "selftest FAIL: apt_update attempt order ($name): status $status, calls:"
+    cat "$calls"
+    failures=1
+  fi
+}
+apt_order_case first-ok 0 0 0 0 'update 120s'
+apt_order_case fallback-ok 1 0 0 0 $'update 120s\ndisable\nupdate 180s'
+apt_order_case fallback-fails 1 0 1 1 $'update 120s\ndisable\nupdate 180s'
+apt_order_case no-fallback 1 1 0 1 $'update 120s\ndisable'
 
 # The passt Git smart-HTTP response is truncated on hosted runners, so source
 # provisioning uses the official release archive. Prove the helper requests
