@@ -168,6 +168,37 @@ smoke::run_bounded_apt_update() {
     update --quiet
 }
 
+# smoke::apt_mirror_diagnostics — after a failed update, print what each
+# runner mirror looks like from this host: DNS answers and a bounded IPv4 and
+# IPv6 probe of its InRelease. apt's "Ign:" lines carry no cause, so without
+# this a DNS, IPv6 or egress failure is indistinguishable from a dead mirror.
+# Never fails; every probe is time-bounded (about 8s each).
+smoke::apt_mirror_diagnostics() {
+  local mirror_file=/etc/apt/apt-mirrors.txt url host suite family
+  local -a urls=()
+  suite="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")"
+  if [[ -f "$mirror_file" ]]; then
+    while read -r url _; do
+      [[ "$url" =~ ^https?:// ]] && urls+=("$url")
+    done < "$mirror_file"
+  fi
+  [[ " ${urls[*]} " == *" http://azure.archive.ubuntu.com/ubuntu/ "* ]] ||
+    urls+=(http://azure.archive.ubuntu.com/ubuntu/)
+  smoke::log "apt mirror diagnostics (suite: ${suite:-unknown})"
+  for url in "${urls[@]}"; do
+    host="${url#*://}"; host="${host%%/*}"
+    echo "--- $url"
+    echo "DNS $host:"
+    timeout 8s getent ahosts "$host" 2>&1 | awk '{print "  " $1, $2}' | sort -u || true
+    for family in 4 6; do
+      printf '  curl -%s: ' "$family"
+      curl "-$family" -sS -o /dev/null -I -m 8 \
+        -w 'http=%{http_code} ip=%{remote_ip} connect=%{time_connect}s total=%{time_total}s\n' \
+        "${url%/}/dists/${suite:-noble}/InRelease" 2>&1 || true
+    done
+  done
+}
+
 # smoke::apt_disable_azure_mirror — the fallback half of smoke::apt_update:
 # rewrite GitHub's generated /etc/apt/apt-mirrors.txt without its priority-1
 # azure.archive.ubuntu.com entry so a retry goes straight to the remaining
@@ -356,13 +387,15 @@ smoke::apt_update() {
     smoke::log "apt-get update succeeded on attempt 1/2 (runner mirror list as configured)"
     return 0
   fi
-  printf '::warning title=apt update fallback::apt-get update through the runner mirror list failed or timed out; retrying without the Azure mirror\n'
+  smoke::apt_mirror_diagnostics
   if ! smoke::apt_disable_azure_mirror "$backup_dir"; then
     smoke::error "apt-get update failed or exceeded its 120-second deadline after Microsoft-source isolation, and no Azure-mirror fallback applies; inspect the apt output above for the failing configured source"
     return 1
   fi
+  printf '::warning title=apt update fallback::apt-get update through the runner mirror list failed or timed out; retrying without the Azure mirror\n'
   smoke::log "Updating apt indexes for host prerequisites (attempt 2/2: Azure mirror dropped, 180s deadline)"
   if ! smoke::run_bounded_apt_update 180s; then
+    smoke::apt_mirror_diagnostics
     smoke::error "apt-get update failed on both attempts (runner mirror list as configured, then without the Azure mirror); inspect the apt output above for the failing configured source"
     return 1
   fi

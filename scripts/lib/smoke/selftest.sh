@@ -122,6 +122,7 @@ apt_order_case() {
       case "$1" in 120s) return "$first" ;; *) return "$second" ;; esac
     }
     smoke::apt_disable_azure_mirror() { printf 'disable\n' >> "$calls"; return "$disable"; }
+    smoke::apt_mirror_diagnostics() { :; }
     smoke::apt_update
   ) > "$work/apt-order-$name.log" 2>&1 && status=0 || status=$?
   if [[ "$status" != "$want_status" ]] || [[ "$(cat "$calls")" != "$want_calls" ]]; then
