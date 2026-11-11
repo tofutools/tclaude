@@ -628,7 +628,9 @@ func (s *Service) pruneStale(prefixes ...string) {
 		}
 		for _, e := range manifest.Entries {
 			if e.Backup != "" {
-				keep[filepath.Clean(filepath.Dir(e.Backup))] = true
+				// By name: the stored path may spell the updates dir
+				// differently (a symlinked or moved HOME).
+				keep[filepath.Base(filepath.Dir(e.Backup))] = true
 			}
 		}
 	}
@@ -639,7 +641,7 @@ func (s *Service) pruneStale(prefixes ...string) {
 	for _, entry := range entries {
 		name := entry.Name()
 		path := filepath.Join(s.dir, name)
-		if !entry.IsDir() || keep[path] {
+		if !entry.IsDir() || keep[name] {
 			continue
 		}
 		for _, prefix := range prefixes {

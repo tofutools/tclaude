@@ -372,10 +372,7 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 		if !authorize() {
 			return fmt.Errorf("update authority revoked")
 		}
-		ext, err := s.runExternal(ctx, release, job, external, opts)
-		if err != nil {
-			return err
-		}
+		ext, extErr := s.runExternal(ctx, release, job, external, opts)
 		changed = ext
 		for _, e := range customBackups {
 			if hash, err := fileHash(e.Binary.Path); err == nil && hash != e.BeforeHash {
@@ -385,6 +382,16 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 			}
 			// Unchanged: nothing to roll back, so its copy is not kept.
 			_ = os.Remove(e.Backup)
+		}
+		if extErr != nil {
+			// A custom command that failed part way may have replaced some
+			// binaries: keep their backups so a rollback can restore them.
+			if len(manifest.Entries) > 0 {
+				if err := s.persistBackup(backupDir, manifest, &persisted); err != nil {
+					return errors.Join(extErr, err)
+				}
+			}
+			return extErr
 		}
 	}
 	if len(manifest.Entries) == 0 {
@@ -400,18 +407,9 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 		s.status.RollbackAvailable = false
 		s.mu.Unlock()
 	} else if len(manifest.Entries) > 0 {
-		if err := syncDir(backupDir); err != nil {
-			return fmt.Errorf("could not persist backup directory: %w", err)
-		}
-		// Kept even when the write fails late: backup.json may already
-		// point here, and a later prune drops it when it does not.
-		persisted = true
-		if err := writeJSONFile(filepath.Join(s.dir, "backup.json"), manifest); err != nil {
+		if err := s.persistBackup(backupDir, manifest, &persisted); err != nil {
 			return err
 		}
-		s.mu.Lock()
-		s.status.RollbackAvailable = true
-		s.mu.Unlock()
 	}
 	// The previous backup.json's copies are superseded now. Only backups:
 	// this run's stage dir still holds the binaries to install.
@@ -461,6 +459,23 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 		}
 	}
 	job.RestartRequired = changed || len(targets) > 0
+	return nil
+}
+
+// persistBackup makes manifest the backup a rollback restores.
+func (s *Service) persistBackup(backupDir string, manifest backupManifest, persisted *bool) error {
+	if err := syncDir(backupDir); err != nil {
+		return fmt.Errorf("could not persist backup directory: %w", err)
+	}
+	// Kept even when the write fails late: backup.json may already point
+	// here, and a later prune drops it when it does not.
+	*persisted = true
+	if err := writeJSONFile(filepath.Join(s.dir, "backup.json"), manifest); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.status.RollbackAvailable = true
+	s.mu.Unlock()
 	return nil
 }
 

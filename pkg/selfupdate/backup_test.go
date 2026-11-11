@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -128,4 +129,31 @@ func TestPruneKeepsBackupsWhenTheManifestIsUnreadable(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(s.dir, "backup.json"), []byte("{"), 0o600))
 	s.pruneStale("stage-", "backup-", "rollback-")
 	require.DirExists(t, filepath.Join(s.dir, "backup-old"))
+}
+
+// A custom command that fails part way keeps the backups of what it
+// replaced, so a rollback restores the binaries it left mixed.
+func TestFailedCustomCommandKeepsBackupsOfReplacedBinaries(t *testing.T) {
+	s, bins, _ := customFleet(t)
+	h := &fakeHost{path: map[string]string{}, run: func([]string, []string) ([]byte, error) {
+		writeBin(t, bins[0].Path, "v1.1.0")
+		writeBin(t, bins[1].Path, "v1.1.0")
+		return nil, errors.New("exit status 1")
+	}}
+	for _, b := range bins {
+		h.path[b.Name] = b.Path
+	}
+	h.install(t)
+	job := applyCustom(t, s, ApplyOptions{})
+	require.Equal(t, "failed", job.State)
+	require.Contains(t, job.Error, "custom update command failed")
+	require.True(t, s.Status().RollbackAvailable)
+	var manifest backupManifest
+	require.NoError(t, readJSON(filepath.Join(s.dir, "backup.json"), &manifest))
+	require.Len(t, manifest.Entries, 2, "only the replaced binaries are kept")
+
+	rb, err := s.Start(Request{Action: "rollback"}, "operator", func() bool { return true })
+	require.NoError(t, err)
+	require.Equal(t, "restarting", waitJob(t, s, rb.ID).State)
+	requireContents(t, bins, "v1.0.0")
 }
