@@ -167,7 +167,7 @@ func (s *Service) runBranch(ctx context.Context, req Request, job *Job, authoriz
 		return err
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	built, err := s.buildCheckout(ctx, path, dir)
+	built, err := s.buildCheckout(ctx, path, dir, s.toolEnv(ctx, job))
 	if err != nil {
 		return err
 	}

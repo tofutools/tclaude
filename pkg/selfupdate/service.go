@@ -35,6 +35,11 @@ type Hooks struct {
 	Progress    func(Job)
 	Finished    func(Job)
 	Restart     func() error
+	// ToolEnv returns the environment a new terminal would have, for the
+	// custom command and the go builds (launcher.TerminalEnv). nil, or an
+	// error (reported as a job warning), runs them with this process's
+	// environment.
+	ToolEnv func(context.Context) ([]string, error)
 }
 type Service struct {
 	mu           sync.Mutex
@@ -45,11 +50,17 @@ type Service struct {
 	hooks        Hooks
 	release      func(context.Context, string) (Release, error)
 	stageRelease func(context.Context, Release, string, string) (string, error)
-	stageGo      func(context.Context, string, string, string) (string, error)
+	// stageGo, stageCheckout and buildCheckout take the build's
+	// environment last (Service.toolEnv).
+	stageGo func(context.Context, string, string, string, []string) (string, error)
 	// stageCheckout builds every binary from a local checkout into dir.
-	stageCheckout func(context.Context, CheckoutOptions, string, string) (map[string]string, error)
+	stageCheckout func(context.Context, CheckoutOptions, string, string, []string) (map[string]string, error)
 	// buildCheckout builds a checkout path's binaries into a dir (branch mode).
-	buildCheckout func(context.Context, string, string) (map[string]string, error)
+	buildCheckout func(context.Context, string, string, []string) (map[string]string, error)
+	// envJob and env memoize toolEnv for one job, under envMu.
+	envMu  sync.Mutex
+	envJob string
+	env    []string
 	// revisionOf reads a built binary's vcs.revision and vcs.modified.
 	revisionOf func(string) (string, bool, error)
 	inspect    func(context.Context, string) (buildversion.Info, error)

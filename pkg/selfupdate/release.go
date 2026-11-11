@@ -243,9 +243,10 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	b.data = append(b.data, p...)
 	return len(p), nil
 }
-func stageGoInstall(ctx context.Context, name, version, dir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "go", "install", binaryPackages[name]+"@"+version)
-	cmd.Env = append(filteredGoEnv(os.Environ()), "GOBIN="+dir, "GOWORK=off")
+func stageGoInstall(ctx context.Context, name, version, dir string, env []string) (string, error) {
+	env = append(filteredGoEnv(env), "GOBIN="+dir, "GOWORK=off")
+	cmd := exec.CommandContext(ctx, lookPathIn("go", env), "install", binaryPackages[name]+"@"+version)
+	cmd.Env = env
 	cmd.WaitDelay = time.Second
 	// Do not log inherited environment or compiler output, which can contain
 	// private paths and credential-bearing proxy URLs.

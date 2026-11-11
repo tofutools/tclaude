@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -238,10 +239,10 @@ func (s *Service) apply(ctx context.Context, release Release, job *Job, authoriz
 			if opts.Method == "" && b.Method == "source" && pin == "" {
 				version = "latest"
 			}
-			t.staged, err = s.stageGo(ctx, b.Name, version, dir)
+			t.staged, err = s.stageGo(ctx, b.Name, version, dir, s.toolEnv(ctx, job))
 		case MethodSourceCheckout:
 			if checkout == nil {
-				if checkout, err = s.stageCheckout(ctx, opts.Checkout, release.Tag, dir); err != nil {
+				if checkout, err = s.stageCheckout(ctx, opts.Checkout, release.Tag, dir, s.toolEnv(ctx, job)); err != nil {
 					return err
 				}
 			}
@@ -501,7 +502,7 @@ func (s *Service) runExternal(ctx context.Context, release Release, job *Job, bi
 			pairs = append(pairs, b.Name+"="+b.Path)
 		}
 		sort.Strings(pairs)
-		env := append(os.Environ(), "TCLAUDE_UPDATE_VERSION="+release.Tag, "TCLAUDE_UPDATE_CURRENT_VERSION="+job.CurrentVersion, "TCLAUDE_UPDATE_JOB_ID="+job.ID, "TCLAUDE_UPDATE_BINARIES="+strings.Join(pairs, ","))
+		env := append(slices.Clip(s.toolEnv(ctx, job)), "TCLAUDE_UPDATE_VERSION="+release.Tag, "TCLAUDE_UPDATE_CURRENT_VERSION="+job.CurrentVersion, "TCLAUDE_UPDATE_JOB_ID="+job.ID, "TCLAUDE_UPDATE_BINARIES="+strings.Join(pairs, ","))
 		out, err := sys.Run(cctx, []string{"/bin/sh", "-c", opts.CustomCommand}, env)
 		output = out
 		job.Output = tail(output, 4096)
@@ -577,7 +578,7 @@ func (s *Service) runExternal(ctx context.Context, release Release, job *Job, bi
 	return changed, nil
 }
 
-func stageCheckout(ctx context.Context, opts CheckoutOptions, tag, dir string) (map[string]string, error) {
+func stageCheckout(ctx context.Context, opts CheckoutOptions, tag, dir string, env []string) (map[string]string, error) {
 	sys := currentSystem()
 	git := func(args ...string) (string, error) {
 		out, err := sys.Run(ctx, append([]string{"git", "-C", opts.Path}, args...), nil)
@@ -607,13 +608,13 @@ func stageCheckout(ctx context.Context, opts CheckoutOptions, tag, dir string) (
 			}
 		}
 	}
-	return buildCheckout(ctx, opts.Path, dir)
+	return buildCheckout(ctx, opts.Path, dir, env)
 }
 
 // buildCheckout builds every tclaude binary of the checkout at path into dir.
-func buildCheckout(ctx context.Context, path, dir string) (map[string]string, error) {
-	env := append(filteredGoEnv(os.Environ()), "GOBIN="+dir, "GOWORK=off")
-	if out, err := currentSystem().Run(ctx, []string{"go", "-C", path, "install", ".", "./cmd/..."}, env); err != nil {
+func buildCheckout(ctx context.Context, path, dir string, env []string) (map[string]string, error) {
+	env = append(filteredGoEnv(env), "GOBIN="+dir, "GOWORK=off")
+	if out, err := currentSystem().Run(ctx, []string{lookPathIn("go", env), "-C", path, "install", ".", "./cmd/..."}, env); err != nil {
 		return nil, fmt.Errorf("building the checkout failed: %s", tail(out, 1024))
 	}
 	built := map[string]string{}
@@ -748,10 +749,10 @@ func (s *Service) SetFakesForTest(f TestFakes) {
 	}
 	if f.Stage != nil {
 		s.stageRelease = f.Stage
-		s.stageGo = func(ctx context.Context, name, version, dir string) (string, error) {
+		s.stageGo = func(ctx context.Context, name, version, dir string, _ []string) (string, error) {
 			return f.Stage(ctx, Release{Tag: version}, name, dir)
 		}
-		s.buildCheckout = func(ctx context.Context, _ string, dir string) (map[string]string, error) {
+		s.buildCheckout = func(ctx context.Context, _ string, dir string, _ []string) (map[string]string, error) {
 			out := map[string]string{}
 			for _, b := range s.binaries {
 				p, err := f.Stage(ctx, Release{}, b.Name, dir)
@@ -762,7 +763,7 @@ func (s *Service) SetFakesForTest(f TestFakes) {
 			}
 			return out, nil
 		}
-		s.stageCheckout = func(ctx context.Context, _ CheckoutOptions, tag, dir string) (map[string]string, error) {
+		s.stageCheckout = func(ctx context.Context, _ CheckoutOptions, tag, dir string, _ []string) (map[string]string, error) {
 			out := map[string]string{}
 			for _, b := range s.binaries {
 				p, err := f.Stage(ctx, Release{Tag: tag}, b.Name, dir)

@@ -175,3 +175,18 @@ func envLookup(environ []string, key string) string {
 	}
 	return ""
 }
+
+// selfUpdateToolEnv is the environment a new terminal would have, for the
+// self-updater's custom command and go builds: agentd's own may predate a
+// toolchain upgrade. The standalone tclaude-agentd has no shell-env
+// subcommand, so the dump names tclaude itself.
+func selfUpdateToolEnv(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, launcher.ShellEnvTimeout+5*time.Second)
+	defer cancel()
+	name := ""
+	if u, err := user.Current(); err == nil {
+		name = u.Username
+	}
+	return launcher.TerminalEnv(ctx, runtime.GOOS, name, os.Environ(),
+		[]string{clcommon.SelfTclaudePath(), "service", "launcher", "shell-env"}, launcher.ExecRunner)
+}
