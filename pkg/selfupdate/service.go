@@ -61,6 +61,7 @@ type Service struct {
 }
 
 func New(dir string, binaries []Binary, hooks Hooks) (*Service, error) {
+	dir = filepath.Clean(dir)
 	if err := os.MkdirAll(filepath.Join(dir, "jobs"), 0700); err != nil {
 		return nil, err
 	}
@@ -248,8 +249,11 @@ func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOpt
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	var err error
+	if req.Action != "check" {
+		err = s.prepareDir()
+	}
 	branch := false
-	if req.Action != "rollback" && req.Version == "" {
+	if err == nil && req.Action != "rollback" && req.Version == "" {
 		branch, err = s.branchMode(ctx, opts)
 	}
 	switch {
@@ -566,6 +570,11 @@ func writeJSONFile(path string, value any) error {
 	if err != nil {
 		return err
 	}
+	// The updates tree may have been removed while the daemon runs (an
+	// operator clearing it to recover): recreate it rather than fail.
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
 	temp, err := os.CreateTemp(filepath.Dir(path), ".update-json-")
 	if err != nil {
 		return err
@@ -587,6 +596,63 @@ func writeJSONFile(path string, value any) error {
 	}
 	return syncDir(filepath.Dir(path))
 }
+
+// prepareDir readies the updates tree for an apply or rollback: it recreates
+// the tree (an operator may have removed it while agentd runs) and removes
+// what earlier runs left behind, so leftovers never fail a new run.
+func (s *Service) prepareDir() error {
+	if err := os.MkdirAll(filepath.Join(s.dir, "jobs"), 0700); err != nil {
+		return err
+	}
+	s.pruneStale("stage-", "backup-", "rollback-")
+	return nil
+}
+
+// pruneStale removes, best effort, the dirs with the given prefixes (stage-,
+// backup-, rollback-) that no manifest references: an interrupted run's
+// staging, backups superseded by a newer backup.json, a failed run's copies.
+// The dirs backup.json and rollback-undo.json point into are kept, so a
+// rollback (or a supervised restore) still finds them. When a manifest
+// exists but cannot be read, its kind of dir is left alone.
+func (s *Service) pruneStale(prefixes ...string) {
+	keep := map[string]bool{}
+	protect := map[string]bool{}
+	for prefix, name := range map[string]string{"backup-": "backup.json", "rollback-": "rollback-undo.json"} {
+		var manifest backupManifest
+		err := readJSON(filepath.Join(s.dir, name), &manifest)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				protect[prefix] = true
+			}
+			continue
+		}
+		for _, e := range manifest.Entries {
+			if e.Backup != "" {
+				// By name: the stored path may spell the updates dir
+				// differently (a symlinked or moved HOME).
+				keep[filepath.Base(filepath.Dir(e.Backup))] = true
+			}
+		}
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		path := filepath.Join(s.dir, name)
+		if !entry.IsDir() || keep[name] {
+			continue
+		}
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(name, prefix) && !protect[prefix] {
+				_ = os.RemoveAll(path)
+				break
+			}
+		}
+	}
+}
+
 func syncDir(path string) error {
 	dir, err := os.Open(path)
 	if err != nil {
