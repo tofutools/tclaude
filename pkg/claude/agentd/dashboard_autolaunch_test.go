@@ -1,7 +1,11 @@
 package agentd
 
 import (
+	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -153,5 +157,42 @@ func TestAutoLaunchDashboard_NoLoopbackURL(t *testing.T) {
 
 	if called {
 		t.Fatal("autoLaunchDashboard opened a browser with no loopback URL bound")
+	}
+}
+
+// /v1/info says whether agentd opened the dashboard itself, which the
+// desktop launcher reads to open one tab per click rather than two. A
+// browser that did not open does not count: the launcher then opens it.
+func TestAutoLaunchDashboard_ReportedInInfo(t *testing.T) {
+	prevBase := popupBaseURL
+	popupBaseURL = "http://127.0.0.1:54321"
+	prevOpener := dashboardBrowserOpener
+	t.Cleanup(func() {
+		popupBaseURL = prevBase
+		dashboardBrowserOpener = prevOpener
+		dashboardAutoLaunched.Store(false)
+	})
+	info := func() bool {
+		rec := httptest.NewRecorder()
+		handleInfo(rec, httptest.NewRequest(http.MethodGet, "/v1/info", nil))
+		var body struct {
+			AutoLaunched bool `json:"auto_launched_dashboard"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode %q: %v", rec.Body.String(), err)
+		}
+		return body.AutoLaunched
+	}
+
+	dashboardAutoLaunched.Store(false)
+	dashboardBrowserOpener = func(string) error { return errors.New("no browser") }
+	autoLaunchDashboard("", io.Discard)
+	if info() {
+		t.Fatal("info reports an auto-launched dashboard whose browser did not open")
+	}
+	dashboardBrowserOpener = func(string) error { return nil }
+	autoLaunchDashboard("", io.Discard)
+	if !info() {
+		t.Fatal("info does not report the auto-launched dashboard")
 	}
 }

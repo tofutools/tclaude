@@ -210,12 +210,17 @@ type openDeps struct {
 	// Exe is this tclaude binary, which starts agentd when no unit does.
 	Exe string
 	// ServeArgs are the serve flags a detached start uses.
-	ServeArgs  []string
-	DaemonUp   func() bool
-	Dashboard  func(stderr io.Writer) int
-	Autostart  launcher.Autostart
-	Run        launcher.Runner
-	StartServe func(argv, env []string, logFile string) error
+	ServeArgs []string
+	DaemonUp  func() bool
+	Dashboard func(stderr io.Writer) int
+	// AutoLaunched reports whether the running agentd opened the
+	// dashboard in the browser itself when it started (its
+	// --auto-launch-dashboard flag or agent.auto_launch_dashboard). An
+	// agentd that cannot say, being older or not answering, counts as no.
+	AutoLaunched func() bool
+	Autostart    launcher.Autostart
+	Run          launcher.Runner
+	StartServe   func(argv, env []string, logFile string) error
 	// Profile is read for the launch profile's explicit environment; its
 	// flags are already in ServeArgs.
 	Profile func() (*config.LaunchProfile, error)
@@ -252,6 +257,7 @@ func productionOpenDeps() openDeps {
 		Dashboard: func(stderr io.Writer) int {
 			return runDashboard(&dashboardParams{}, io.Discard, stderr)
 		},
+		AutoLaunched: daemonAutoLaunchedDashboard,
 		Autostart: launcher.Autostart{GOOS: runtime.GOOS, UID: os.Getuid(), User: name,
 			Paths: launcher.AutostartPaths(runtime.GOOS, home, os.Getenv("XDG_CONFIG_HOME")),
 			Run:   launcher.ExecRunner, FS: launcher.OSFS{}},
@@ -288,6 +294,15 @@ func productionOpenDeps() openDeps {
 // does not start) as a detached `tclaude agentd serve` with the serve flags
 // the launcher was written with. A failure is shown
 // as a desktop notification too, since a launcher has no terminal.
+//
+// One click opens one tab. An agentd this call started may open the
+// dashboard itself (--auto-launch-dashboard, which the launchd and systemd
+// units usually carry, or agent.auto_launch_dashboard in config.json), so
+// the launcher asks it afterwards and opens its own tab only when it did
+// not. Asking the daemon, rather than reading the unit's arguments or
+// stripping the flag from a detached start, covers the unit, the detached
+// start and the config setting alike. An agentd that was already running
+// opened its tab, if any, long ago, so then the launcher always opens one.
 func runLauncherOpen(startDaemon bool, d openDeps, stdout, stderr io.Writer) int {
 	fail := func(msg string) int {
 		fmt.Fprintln(stderr, "Error:", msg)
@@ -314,6 +329,10 @@ func runLauncherOpen(startDaemon bool, d openDeps, stdout, stderr io.Writer) int
 			}
 			d.Sleep(step)
 		}
+		if d.AutoLaunched != nil && d.AutoLaunched() {
+			fmt.Fprintln(stdout, "agentd opened the dashboard.")
+			return rcOK
+		}
 	}
 	if d.UseKeychainToken != nil {
 		d.UseKeychainToken()
@@ -328,6 +347,25 @@ func runLauncherOpen(startDaemon bool, d openDeps, stdout, stderr io.Writer) int
 		return rc
 	}
 	return rcOK
+}
+
+// daemonAutoLaunchedDashboard asks the running agentd whether it opened
+// the dashboard itself at startup. agentd decides that before its socket
+// starts answering requests, so the answer is final once it answers.
+func daemonAutoLaunchedDashboard() bool {
+	var info struct {
+		AutoLaunchedDashboard bool `json:"auto_launched_dashboard"`
+	}
+	if err := DaemonRequest(http.MethodGet, "/v1/info", nil, &info, DaemonOpts{
+		// The socket accepts a dial before agentd serves it, so this
+		// waits out the rest of its startup; giving up only means a
+		// second tab.
+		Timeout:     30 * time.Second,
+		RetryOutput: io.Discard,
+	}); err != nil {
+		return false
+	}
+	return info.AutoLaunchedDashboard
 }
 
 // startDaemonForLauncher starts agentd and says how.

@@ -35,6 +35,8 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 		"processes":      true,
 		"triggers":       true,
 		"proxy":          gitProxyRoutesEnabled(r),
+		// Whether this agentd opened the dashboard itself at startup.
+		"auto_launched_dashboard": dashboardAutoLaunched.Load(),
 	})
 }
 

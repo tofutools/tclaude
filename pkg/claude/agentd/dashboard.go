@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/agentd/dashboard"
@@ -401,6 +402,14 @@ func handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
 // real browser.
 var dashboardBrowserOpener = openBrowser
 
+// dashboardAutoLaunched records that this process opened the dashboard in
+// the browser at startup, which /v1/info reports as
+// "auto_launched_dashboard". The desktop launcher reads it after starting
+// agentd so a click opens one tab, not one from agentd and one of its own
+// (see runLauncherOpen in pkg/claude/agent). It is set before the socket's
+// HTTP server starts, so any answered /v1/info already carries it.
+var dashboardAutoLaunched atomic.Bool
+
 // shouldAutoLaunchDashboard reports whether `tclaude agentd serve`
 // should open the dashboard at startup. The --auto-launch-dashboard
 // flag (flagSet) and the persistent agent.auto_launch_dashboard config
@@ -445,5 +454,6 @@ func autoLaunchDashboard(theme string, out io.Writer) {
 		fmt.Fprintln(out, url)
 		return
 	}
+	dashboardAutoLaunched.Store(true)
 	fmt.Fprintln(out, "  opening dashboard in your browser…")
 }
