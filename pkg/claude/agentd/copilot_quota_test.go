@@ -13,7 +13,9 @@ import (
 
 func TestRefreshCopilotQuotaStoresFiniteMonthlyAllowance(t *testing.T) {
 	setupTestDB(t)
-	observed := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
+	// From the real clock: the store drops samples older than its retention
+	// window measured against wall time, so a fixed date expires.
+	observed := time.Now().UTC().Truncate(time.Hour)
 	remaining := 41.8
 	var token string
 	deps := copilotQuotaDeps{
@@ -50,7 +52,7 @@ func TestRefreshCopilotQuotaStoresFiniteMonthlyAllowance(t *testing.T) {
 	assert.InDelta(t, 58.2, rows[0].UsedPercent, 1e-9)
 	assert.Equal(t, 582.0, rows[0].UsedUnits)
 	assert.Equal(t, 1000.0, rows[0].LimitUnits)
-	assert.Equal(t, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), rows[0].ResetsAt,
+	assert.Equal(t, time.Date(observed.Year(), observed.Month()+1, 1, 0, 0, 0, 0, time.UTC), rows[0].ResetsAt,
 		"the documented monthly allowance resets on the first day at 00:00 UTC")
 	assert.Equal(t, "account.getQuota", rows[0].Source)
 }
