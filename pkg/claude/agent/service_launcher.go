@@ -357,7 +357,10 @@ func daemonAutoLaunchedDashboard() bool {
 		AutoLaunchedDashboard bool `json:"auto_launched_dashboard"`
 	}
 	if err := DaemonRequest(http.MethodGet, "/v1/info", nil, &info, DaemonOpts{
-		Timeout:     10 * time.Second,
+		// The socket accepts a dial before agentd serves it, so this
+		// waits out the rest of its startup; giving up only means a
+		// second tab.
+		Timeout:     30 * time.Second,
 		RetryOutput: io.Discard,
 	}); err != nil {
 		return false

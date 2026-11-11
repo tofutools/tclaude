@@ -643,6 +643,9 @@ func runServe(p *serveParams) error {
 	// auto_launch_dashboard must not send a browser at a port nobody bound.
 	// The theme re-skins below are the browser's business only — the terminal
 	// console has no theming at all.
+	// This must stay synchronous and before the socket's srv.Serve below: the
+	// desktop launcher reads /v1/info's auto_launched_dashboard as soon as
+	// the socket answers, to decide whether to open a tab of its own.
 	if popupBaseURL != "" && shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
 		// slop and wizard are mutually exclusive re-skins; slop wins if both
 		// flags are set, matching the client's applySlopThemeIfRequested.
