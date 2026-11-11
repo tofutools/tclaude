@@ -1,6 +1,6 @@
 module github.com/tofutools/tclaude/scripts/e2e/drive
 
-go 1.27.3
+go 1.27.4
 
 require github.com/go-rod/rod v0.116.2
 
