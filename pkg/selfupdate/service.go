@@ -35,6 +35,11 @@ type Hooks struct {
 	Progress    func(Job)
 	Finished    func(Job)
 	Restart     func() error
+	// ToolEnv returns the environment a new terminal would have, for the
+	// custom command and the go builds (launcher.TerminalEnv). nil, or an
+	// error (reported as a job warning), runs them with this process's
+	// environment.
+	ToolEnv func(context.Context) ([]string, error)
 }
 type Service struct {
 	mu           sync.Mutex
@@ -45,11 +50,24 @@ type Service struct {
 	hooks        Hooks
 	release      func(context.Context, string) (Release, error)
 	stageRelease func(context.Context, Release, string, string) (string, error)
-	stageGo      func(context.Context, string, string, string) (string, error)
+	// stageGo, stageCheckout and buildCheckout run their tools through
+	// the job's toolRunner (Service.runner).
+	stageGo func(context.Context, string, string, string, toolRunner) (string, error)
 	// stageCheckout builds every binary from a local checkout into dir.
-	stageCheckout func(context.Context, CheckoutOptions, string, string) (map[string]string, error)
+	stageCheckout func(context.Context, CheckoutOptions, string, string, toolRunner) (map[string]string, error)
 	// buildCheckout builds a checkout path's binaries into a dir (branch mode).
-	buildCheckout func(context.Context, string, string) (map[string]string, error)
+	buildCheckout func(context.Context, string, string, toolRunner) (map[string]string, error)
+	// envJob and env memoize toolEnv for one job, under envMu.
+	envMu  sync.Mutex
+	envJob string
+	// planEnv* keep Plan's last login-shell answer for planEnvTTL, under
+	// planEnvMu, so repeated Test method calls (a peer's included) run one
+	// shell at a time and not one per call.
+	planEnvMu  sync.Mutex
+	planEnvAt  time.Time
+	planEnvVal []string
+	planEnvErr error
+	env        []string
 	// revisionOf reads a built binary's vcs.revision and vcs.modified.
 	revisionOf func(string) (string, bool, error)
 	inspect    func(context.Context, string) (buildversion.Info, error)
@@ -248,13 +266,16 @@ func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOpt
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
+	// The job's tool environment is asked for at its first tool and
+	// forgotten with the job: it holds the profile's variables.
+	defer s.dropToolEnv()
 	var err error
 	if req.Action != "check" {
 		err = s.prepareDir()
 	}
 	branch := false
 	if err == nil && req.Action != "rollback" && req.Version == "" {
-		branch, err = s.branchMode(ctx, opts)
+		branch, err = s.branchMode(ctx, &job, opts)
 	}
 	switch {
 	case err != nil:

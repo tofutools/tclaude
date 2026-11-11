@@ -91,10 +91,6 @@ func (s *Service) Plan(ctx context.Context, opts ApplyOptions, po PlanOptions) P
 	}
 
 	sys := currentSystem()
-	look := func(tool string) bool {
-		_, err := sys.LookPath(tool)
-		return err == nil
-	}
 	p.Steps = append(p.Steps, "Ask GitHub for the latest release ("+apiRoot+"/releases/latest).")
 	var external []Binary
 	staged := map[string]bool{}
@@ -141,6 +137,28 @@ func (s *Service) Plan(ctx context.Context, opts ApplyOptions, po PlanOptions) P
 			add(b.Name, state, fmt.Sprintf("Installs to %s, next to %s at %s. %s", route.dest, b.ManagedBy, b.Path, detail))
 		}
 	}
+	// The tools an update would run are looked for, and git asked, in the
+	// environment the update would give them.
+	var env []string
+	look := func(tool string) bool {
+		_, err := sys.LookPath(tool)
+		return err == nil
+	}
+	if staged[MethodGoInstall] || staged[MethodSourceCheckout] || len(external) > 0 {
+		if state, detail, fresh := s.planEnv(ctx, po); detail != "" {
+			add("Environment", state, detail)
+			if fresh != nil {
+				env = fresh
+				look = func(tool string) bool { _, ok := lookPathIn(tool, env); return ok }
+			}
+		}
+	}
+	run := func(ctx context.Context, argv []string, extra ...string) ([]byte, error) {
+		if env == nil {
+			return sys.Run(ctx, argv, nil)
+		}
+		return sys.Run(ctx, argv, withEnv(env, extra))
+	}
 	if staged[MethodGoInstall] || staged[MethodSourceCheckout] {
 		if look("go") {
 			add("Go toolchain", planOK, "go is on PATH.")
@@ -150,7 +168,7 @@ func (s *Service) Plan(ctx context.Context, opts ApplyOptions, po PlanOptions) P
 	}
 	if staged[MethodSourceCheckout] {
 		p.Steps = append(p.Steps, checkoutSteps(opts.Checkout, version)...)
-		state, detail := checkCheckout(ctx, sys, opts.Checkout, look("git"))
+		state, detail := checkCheckout(ctx, run, opts.Checkout, look("git"))
 		add("Checkout", state, detail)
 	}
 	if len(external) > 0 {
@@ -269,7 +287,7 @@ func checkoutSteps(c CheckoutOptions, version string) []string {
 // checkCheckout checks a source checkout's local preconditions: it exists,
 // is a git work tree, and has no uncommitted changes (an update refuses
 // those).
-func checkCheckout(ctx context.Context, sys System, c CheckoutOptions, hasGit bool) (string, string) {
+func checkCheckout(ctx context.Context, run toolRunner, c CheckoutOptions, hasGit bool) (string, string) {
 	switch {
 	case c.Path == "":
 		return planFail, "No checkout path is set (updates.self.source_checkout.path)."
@@ -283,7 +301,7 @@ func checkCheckout(ctx context.Context, sys System, c CheckoutOptions, hasGit bo
 	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := sys.Run(cctx, []string{"git", "-C", c.Path, "status", "--porcelain"}, nil)
+	out, err := run(cctx, []string{"git", "-C", c.Path, "status", "--porcelain"})
 	switch {
 	case err != nil:
 		return planFail, c.Path + " is not a usable git checkout: " + tail(out, 256)
@@ -291,4 +309,32 @@ func checkCheckout(ctx context.Context, sys System, c CheckoutOptions, hasGit bo
 		return planFail, c.Path + " has uncommitted changes; an update refuses until they are committed or stashed."
 	}
 	return planOK, c.Path + " is a clean git checkout."
+}
+
+// planEnvTTL is how long Plan reuses the login shell's answer.
+const planEnvTTL = 30 * time.Second
+
+// planEnv says which environment an update's tools would run with, asking
+// the login shell the way the update would. fresh is that environment, or
+// nil for the fallback; an empty detail means there is nothing to say (no
+// ToolEnv hook). A peer is not told why the shell failed.
+func (s *Service) planEnv(ctx context.Context, po PlanOptions) (state, detail string, fresh []string) {
+	if s.hooks.ToolEnv == nil {
+		return "", "", nil
+	}
+	s.planEnvMu.Lock()
+	if s.planEnvAt.IsZero() || time.Since(s.planEnvAt) > planEnvTTL {
+		s.planEnvVal, s.planEnvErr = s.freshEnv(ctx)
+		s.planEnvAt = time.Now()
+	}
+	env, err := s.planEnvVal, s.planEnvErr
+	s.planEnvMu.Unlock()
+	if err != nil {
+		reason := err.Error()
+		if po.RedactCommand {
+			reason = "withheld from peers"
+		}
+		return planWarn, "Your login shell gave no environment (" + reason + "): the update would run its tools with agentd's environment from when it started, which may point at an old toolchain.", nil
+	}
+	return planOK, "The update runs its tools with a fresh environment from your login shell, as a new terminal would.", env
 }

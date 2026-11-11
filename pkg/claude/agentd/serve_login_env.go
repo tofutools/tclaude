@@ -13,6 +13,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
@@ -174,4 +175,57 @@ func envLookup(environ []string, key string) string {
 		}
 	}
 	return ""
+}
+
+// selfUpdateToolEnv is the environment a new terminal would have, for the
+// self-updater's custom command and go builds: agentd's own may predate a
+// toolchain upgrade. The standalone tclaude-agentd has no shell-env
+// subcommand, so the dump names tclaude itself.
+func selfUpdateToolEnv(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, launcher.ShellEnvTimeout+5*time.Second)
+	defer cancel()
+	name := ""
+	if u, err := user.Current(); err == nil {
+		name = u.Username
+	}
+	environ := os.Environ()
+	env, err := launcher.TerminalEnv(ctx, runtime.GOOS, name, environ,
+		[]string{clcommon.SelfTclaudePath(), "service", "launcher", "shell-env"}, launcher.ExecRunner)
+	if err != nil {
+		return nil, err
+	}
+	cfg, _ := config.Load()
+	return withOwnLaunchEnv(env, environ, currentLauncher(false), cfg.ServiceLaunch()), nil
+}
+
+// withOwnLaunchEnv sets agentd's deliberately configured variables over
+// the login shell's env, on every platform, as at start: the supervisor's
+// own (systemd Environment= and EnvironmentFiles, the LaunchAgent plist's
+// EnvironmentVariables) and the launch profile's explicit and inherited
+// ones. Their values are agentd's (the supervisor's are redacted in info).
+// PATH stays the shell's.
+func withOwnLaunchEnv(env, environ []string, info launcher.Info, profile *config.LaunchProfile) []string {
+	keys := map[string]bool{}
+	for _, e := range info.Env {
+		keys[e.Key] = true
+	}
+	if profile != nil {
+		for _, e := range profile.Env {
+			keys[e.Key] = true
+		}
+		for _, k := range profile.InheritEnv {
+			keys[k] = true
+		}
+	}
+	delete(keys, "PATH")
+	var own []string
+	for _, kv := range environ {
+		if k, _, ok := strings.Cut(kv, "="); ok && keys[k] {
+			own = append(own, kv)
+		}
+	}
+	if len(own) == 0 {
+		return env
+	}
+	return launcher.MergeLoginEnv(env, own)
 }

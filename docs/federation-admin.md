@@ -180,7 +180,15 @@ The recommendation is only a suggestion; your choice wins.
   `TCLAUDE_UPDATE_VERSION` (the latest release),
   `TCLAUDE_UPDATE_CURRENT_VERSION`, `TCLAUDE_UPDATE_JOB_ID` and
   `TCLAUDE_UPDATE_BINARIES` (`name=path,…`); it doesn't have to, and it
-  doesn't need to print anything. Afterwards tclaude checks each binary still
+  doesn't need to print anything. It gets the environment a new terminal
+  would have: tclaude asks your login shell for it at update time, so a
+  toolchain upgraded since agentd started (a new Go, say) is the one used.
+  Every method's tools get the same environment: package managers, the
+  `go install` and source-checkout builds, git, and the post-update setup
+  (a release download runs no tool). If the login shell does not answer
+  within 30 seconds, the update runs with agentd's environment and the job
+  shows a warning. **Test method** shows which one an update would use.
+  Afterwards tclaude checks each binary still
   runs as tclaude and speaks the same federation protocol. Any version is
   accepted: one other than the latest release, a lower one included (a
   branch build), is a warning. A command that leaves the binaries unchanged

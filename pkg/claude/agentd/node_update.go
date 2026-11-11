@@ -47,7 +47,7 @@ func localUpdateService() (*selfupdate.Service, error) {
 		}
 		recordFederationAudit("federation.node.update", job.Actor, "", "", job.Action+" "+job.Version+" job="+job.ID+" "+job.State, status)
 		selfUpdateJobFinished(job)
-	}})
+	}, ToolEnv: selfUpdateToolEnv})
 	if err != nil {
 		return nil, err
 	}
