@@ -39,6 +39,10 @@ type openFixture struct {
 	servedEnv []string
 	notified  []string
 	opened    int
+	// autoLaunched is what the started agentd says about having opened
+	// the dashboard itself; asked counts the questions.
+	autoLaunched bool
+	asked        int
 }
 
 func newOpenFixture(goos string, unit []byte) *openFixture {
@@ -69,6 +73,10 @@ func newOpenFixture(goos string, unit []byte) *openFixture {
 			return false
 		},
 		Dashboard: func(io.Writer) int { f.opened++; return rcOK },
+		AutoLaunched: func() bool {
+			f.asked++
+			return f.autoLaunched
+		},
 		Autostart: launcher.Autostart{GOOS: goos, UID: 501, Paths: paths, Run: run, FS: fs},
 		Run:       run,
 		StartServe: func(argv, env []string, _ string) error {
@@ -299,5 +307,45 @@ func TestLauncherOpenStartsDetachedWithTheLoginShellEnv(t *testing.T) {
 	}
 	if !slices.Contains(f.servedEnv, launcher.LoginEnvErrorVar+"=/bin/zsh did not finish within 10s") {
 		t.Errorf("env %v", f.servedEnv)
+	}
+}
+
+// One click, one tab: an agentd the launcher started that opened the
+// dashboard itself is not followed by a second tab, whether it came up
+// through launchd, systemd or a detached start; one that did not open it,
+// or was already running, gets the launcher's tab.
+func TestLauncherOpenOpensOneTab(t *testing.T) {
+	managedLaunchd := []byte("<!-- " + launcher.ManagedMarker + " -->")
+	managedSystemd := []byte("# " + launcher.ManagedMarker + "\n")
+	for _, tc := range []struct {
+		name         string
+		goos         string
+		unit         []byte
+		running      bool
+		autoLaunched bool
+		wantOpened   int
+		wantAsked    int
+	}{
+		{name: "already running", goos: "darwin", unit: managedLaunchd, running: true, autoLaunched: true, wantOpened: 1},
+		{name: "launchd, agentd opened it", goos: "darwin", unit: managedLaunchd, autoLaunched: true, wantAsked: 1},
+		{name: "launchd, agentd did not", goos: "darwin", unit: managedLaunchd, wantOpened: 1, wantAsked: 1},
+		{name: "systemd, agentd opened it", goos: "linux", unit: managedSystemd, autoLaunched: true, wantAsked: 1},
+		{name: "systemd, agentd did not", goos: "linux", unit: managedSystemd, wantOpened: 1, wantAsked: 1},
+		{name: "detached, agentd opened it", goos: "linux", autoLaunched: true, wantAsked: 1},
+		{name: "detached, agentd did not", goos: "darwin", wantOpened: 1, wantAsked: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOpenFixture(tc.goos, tc.unit)
+			f.up = tc.running
+			f.upAfter = 2
+			f.autoLaunched = tc.autoLaunched
+			if rc := runLauncherOpen(true, f.deps, io.Discard, io.Discard); rc != rcOK {
+				t.Fatal(rc)
+			}
+			if f.opened != tc.wantOpened || f.asked != tc.wantAsked {
+				t.Fatalf("opened %d tabs, asked %d times; want %d, %d (calls %v served %v)",
+					f.opened, f.asked, tc.wantOpened, tc.wantAsked, f.calls, f.served)
+			}
+		})
 	}
 }
