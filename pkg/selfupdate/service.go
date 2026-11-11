@@ -60,6 +60,13 @@ type Service struct {
 	// envJob and env memoize toolEnv for one job, under envMu.
 	envMu  sync.Mutex
 	envJob string
+	// planEnv* keep Plan's last login-shell answer for planEnvTTL, under
+	// planEnvMu, so repeated Test method calls (a peer's included) run one
+	// shell at a time and not one per call.
+	planEnvMu  sync.Mutex
+	planEnvAt  time.Time
+	planEnvVal []string
+	planEnvErr error
 	env    []string
 	// revisionOf reads a built binary's vcs.revision and vcs.modified.
 	revisionOf func(string) (string, bool, error)

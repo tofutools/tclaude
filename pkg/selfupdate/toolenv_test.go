@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/testutil"
@@ -177,9 +178,42 @@ func TestPlanShowsTheToolEnvironment(t *testing.T) {
 
 	s.hooks.ToolEnv = func(context.Context) ([]string, error) { return nil, errors.New("/bin/zsh did not finish within 30s") }
 	c = check(s.Plan(context.Background(), opts, PlanOptions{}))
+	require.Equal(t, planOK, c.State, "a Test method within planEnvTTL reuses the shell's answer")
+	s.planEnvAt = time.Time{}
+	c = check(s.Plan(context.Background(), opts, PlanOptions{}))
 	require.Equal(t, planWarn, c.State)
 	require.Contains(t, c.Detail, "/bin/zsh did not finish within 30s")
 	require.Contains(t, c.Detail, "agentd's environment")
 	c = check(s.Plan(context.Background(), opts, PlanOptions{RedactCommand: true}))
 	require.NotContains(t, c.Detail, "/bin/zsh", "a peer is not told why")
+}
+
+// The new binary's post-update setup, the update's last tool, runs with
+// the fresh environment too.
+func TestPostSetupRunsWithTheFreshEnvironment(t *testing.T) {
+	t.Setenv("GOROOT", "/stale/go")
+	dir := testutil.CanonicalTempDir(t)
+	old := filepath.Join(dir, "Cellar", "tclaude", "1.0", "bin", "tclaude")
+	upgraded := filepath.Join(dir, "Cellar", "tclaude", "1.1", "bin", "tclaude")
+	writeBin(t, old, "v1.0.0")
+	h := &fakeHost{path: map[string]string{"tclaude": old}}
+	h.run = func([]string, []string) ([]byte, error) {
+		writeBin(t, upgraded, "v1.1.0")
+		h.path["tclaude"] = upgraded
+		return nil, nil
+	}
+	h.install(t)
+	s := versionedService(t, dir, []Binary{{Name: "tclaude", Path: old, Version: "v1.0.0", Method: "release", ManagedBy: ManagerHomebrew, Package: HomebrewFormula}}, "v1.1.0")
+	job, err := s.StartWith(Request{Action: "apply"}, "operator", func() bool { return true }, ApplyOptions{Method: MethodHomebrew, PostSetup: []string{"setup", "--yes"}})
+	require.NoError(t, err)
+	require.Equal(t, "restarting", waitJob(t, s, job.ID).State)
+
+	var env []string
+	h.run = func(_, e []string) ([]byte, error) { env = e; return nil, nil }
+	s2 := versionedService(t, dir, []Binary{{Name: "tclaude", Path: upgraded, Version: "v1.1.0", Method: "release", ManagedBy: ManagerHomebrew}}, "v1.1.0")
+	s2.hooks.ToolEnv = func(context.Context) ([]string, error) { return []string{"PATH=/usr/bin", "FRESH=1"}, nil }
+	_, err = s2.RunPostSetup(context.Background(), upgraded)
+	require.NoError(t, err)
+	require.Contains(t, env, "FRESH=1")
+	require.NotContains(t, env, "GOROOT=/stale/go")
 }

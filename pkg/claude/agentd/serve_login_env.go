@@ -13,6 +13,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
@@ -193,19 +194,38 @@ func selfUpdateToolEnv(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The LaunchAgent's own variables win over the shell's, as when agentd
-	// started (adoptLaunchdLoginEnv).
-	if runtime.GOOS == "darwin" && envLookup(environ, "XPC_SERVICE_NAME") == launcher.LaunchdLabel {
-		home, _ := os.UserHomeDir()
-		if data, err := os.ReadFile(launcher.AutostartPaths("darwin", home, "").Unit); err == nil {
-			var own []string
-			for _, e := range launcher.LaunchdUnitEnv(data) {
-				if e.Key != "PATH" {
-					own = append(own, e.Key+"="+e.Value)
-				}
-			}
-			env = launcher.MergeLoginEnv(env, own)
+	cfg, _ := config.Load()
+	return withOwnLaunchEnv(env, environ, currentLauncher(false), cfg.ServiceLaunch()), nil
+}
+
+// withOwnLaunchEnv sets agentd's deliberately configured variables over
+// the login shell's env, on every platform, as at start: the supervisor's
+// own (systemd Environment= and EnvironmentFiles, the LaunchAgent plist's
+// EnvironmentVariables) and the launch profile's explicit and inherited
+// ones. Their values are agentd's (the supervisor's are redacted in info).
+// PATH stays the shell's.
+func withOwnLaunchEnv(env, environ []string, info launcher.Info, profile *config.LaunchProfile) []string {
+	keys := map[string]bool{}
+	for _, e := range info.Env {
+		keys[e.Key] = true
+	}
+	if profile != nil {
+		for _, e := range profile.Env {
+			keys[e.Key] = true
+		}
+		for _, k := range profile.InheritEnv {
+			keys[k] = true
 		}
 	}
-	return env, nil
+	delete(keys, "PATH")
+	var own []string
+	for _, kv := range environ {
+		if k, _, ok := strings.Cut(kv, "="); ok && keys[k] {
+			own = append(own, kv)
+		}
+	}
+	if len(own) == 0 {
+		return env
+	}
+	return launcher.MergeLoginEnv(env, own)
 }

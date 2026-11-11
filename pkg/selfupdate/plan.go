@@ -311,6 +311,9 @@ func checkCheckout(ctx context.Context, run toolRunner, c CheckoutOptions, hasGi
 	return planOK, c.Path + " is a clean git checkout."
 }
 
+// planEnvTTL is how long Plan reuses the login shell's answer.
+const planEnvTTL = 30 * time.Second
+
 // planEnv says which environment an update's tools would run with, asking
 // the login shell the way the update would. fresh is that environment, or
 // nil for the fallback; an empty detail means there is nothing to say (no
@@ -319,7 +322,13 @@ func (s *Service) planEnv(ctx context.Context, po PlanOptions) (state, detail st
 	if s.hooks.ToolEnv == nil {
 		return "", "", nil
 	}
-	env, err := s.freshEnv(ctx)
+	s.planEnvMu.Lock()
+	if s.planEnvAt.IsZero() || time.Since(s.planEnvAt) > planEnvTTL {
+		s.planEnvVal, s.planEnvErr = s.freshEnv(ctx)
+		s.planEnvAt = time.Now()
+	}
+	env, err := s.planEnvVal, s.planEnvErr
+	s.planEnvMu.Unlock()
 	if err != nil {
 		reason := err.Error()
 		if po.RedactCommand {

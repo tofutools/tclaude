@@ -19,6 +19,9 @@ import (
 //
 // A release download runs no tool: it fetches and verifies an archive, and
 // runs only the new tclaude binary itself (its version and flag checks).
+// Detection (Detect, classify's probes) and locate/ShadowWarning stay on
+// agentd's PATH: they ask where agentd itself finds tclaude, not run an
+// update.
 
 // toolRunner runs argv with the job's tool environment, extra (KEY=VALUE)
 // set over it. argv[0] is looked up in that environment's PATH.

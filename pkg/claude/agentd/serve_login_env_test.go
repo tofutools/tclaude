@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
@@ -179,5 +180,24 @@ func TestLaunchdLoginEnvReExecsBeforeServeStarts(t *testing.T) {
 	}
 	if n := strings.Count(text, "adoptLaunchdLoginEnv("); n != 1 {
 		t.Errorf("serve.go calls adoptLaunchdLoginEnv %d times; only serveCmd may, before runServe", n)
+	}
+}
+
+// The update's fresh env keeps what agentd was deliberately configured
+// with, on Linux as on macOS: the unit's own variables and the launch
+// profile's. Nothing else of agentd's env comes back, and PATH stays the
+// shell's.
+func TestSelfUpdateToolEnvKeepsTheOwnLaunchEnv(t *testing.T) {
+	fresh := []string{"PATH=/fresh/bin", "HOME=/h"}
+	environ := []string{"PATH=/stale/bin", "GOROOT=/stale/go", "GOPRIVATE=corp.example", "GIT_SSH_COMMAND=ssh -i k", "ANTHROPIC_BASE_URL=http://p"}
+	info := launcher.Info{Kind: "systemd-user", Env: []launcher.EnvVar{{Key: "GOPRIVATE", Value: launcher.Redacted, From: "/home/u/.config/tclaude/agentd.env"}, {Key: "PATH", Value: "/stale/bin"}}}
+	profile := &config.LaunchProfile{Env: []config.LaunchEnv{{Key: "ANTHROPIC_BASE_URL", Value: "http://p"}}, InheritEnv: []string{"GIT_SSH_COMMAND"}}
+	got := withOwnLaunchEnv(fresh, environ, info, profile)
+	want := []string{"PATH=/fresh/bin", "HOME=/h", "GOPRIVATE=corp.example", "GIT_SSH_COMMAND=ssh -i k", "ANTHROPIC_BASE_URL=http://p"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	if got := withOwnLaunchEnv(fresh, environ, launcher.Info{}, nil); !slices.Equal(got, fresh) {
+		t.Errorf("nothing configured: got %q", got)
 	}
 }
