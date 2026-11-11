@@ -50,13 +50,13 @@ type Service struct {
 	hooks        Hooks
 	release      func(context.Context, string) (Release, error)
 	stageRelease func(context.Context, Release, string, string) (string, error)
-	// stageGo, stageCheckout and buildCheckout take the build's
-	// environment last (Service.toolEnv).
-	stageGo func(context.Context, string, string, string, []string) (string, error)
+	// stageGo, stageCheckout and buildCheckout run their tools through
+	// the job's toolRunner (Service.runner).
+	stageGo func(context.Context, string, string, string, toolRunner) (string, error)
 	// stageCheckout builds every binary from a local checkout into dir.
-	stageCheckout func(context.Context, CheckoutOptions, string, string, []string) (map[string]string, error)
+	stageCheckout func(context.Context, CheckoutOptions, string, string, toolRunner) (map[string]string, error)
 	// buildCheckout builds a checkout path's binaries into a dir (branch mode).
-	buildCheckout func(context.Context, string, string, []string) (map[string]string, error)
+	buildCheckout func(context.Context, string, string, toolRunner) (map[string]string, error)
 	// envJob and env memoize toolEnv for one job, under envMu.
 	envMu  sync.Mutex
 	envJob string
@@ -258,10 +258,13 @@ func (s *Service) run(req Request, job Job, authorize func() bool, opts ApplyOpt
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
+	// The job's tool environment is asked for at its first tool and
+	// forgotten with the job: it holds the profile's variables.
+	defer s.dropToolEnv()
 	var err error
 	branch := false
 	if req.Action != "rollback" && req.Version == "" {
-		branch, err = s.branchMode(ctx, opts)
+		branch, err = s.branchMode(ctx, &job, opts)
 	}
 	switch {
 	case err != nil:

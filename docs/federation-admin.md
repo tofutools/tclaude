@@ -183,9 +183,12 @@ The recommendation is only a suggestion; your choice wins.
   doesn't need to print anything. It gets the environment a new terminal
   would have: tclaude asks your login shell for it at update time, so a
   toolchain upgraded since agentd started (a new Go, say) is the one used.
-  The `go install` and source-checkout builds get the same environment. If
-  the login shell does not answer within 30 seconds, the update runs with
-  agentd's environment and the job shows a warning. Afterwards tclaude checks each binary still
+  Every method's tools get the same environment: package managers, the
+  `go install` and source-checkout builds, git, and the post-update setup
+  (a release download runs no tool). If the login shell does not answer
+  within 30 seconds, the update runs with agentd's environment and the job
+  shows a warning. **Test method** shows which one an update would use.
+  Afterwards tclaude checks each binary still
   runs as tclaude and speaks the same federation protocol. Any version is
   accepted: one other than the latest release, a lower one included (a
   branch build), is a warning. A command that leaves the binaries unchanged

@@ -27,6 +27,21 @@ var sessionSeedVars = map[string]bool{
 	"XDG_RUNTIME_DIR": true, "DBUS_SESSION_BUS_ADDRESS": true,
 }
 
+// seedPrefix keeps the locale, the XDG base directories and the proxy
+// settings: on Linux a terminal gets these from the desktop or PAM
+// session (/etc/environment, environment.d), which a login shell does not
+// read again, and they do not go stale with a toolchain.
+func seedPrefix(k string) bool {
+	if strings.HasPrefix(k, "LC_") || strings.HasPrefix(k, "XDG_") {
+		return true
+	}
+	switch strings.ToLower(k) {
+	case "http_proxy", "https_proxy", "no_proxy", "all_proxy", "ftp_proxy":
+		return true
+	}
+	return false
+}
+
 // SystemPATH is the PATH a new login session starts with before the
 // profile adds to it: macOS's launchd default, and the usual Linux one.
 func SystemPATH(goos string) string {
@@ -37,12 +52,12 @@ func SystemPATH(goos string) string {
 }
 
 // SessionSeed returns the part of environ a new terminal's shell starts
-// with (sessionSeedVars and the LC_* locale), with the system PATH.
+// with (sessionSeedVars and seedPrefix), with the system PATH.
 func SessionSeed(goos string, environ []string) []string {
 	seed := []string{"PATH=" + SystemPATH(goos)}
 	for _, kv := range environ {
 		k, _, ok := strings.Cut(kv, "=")
-		if ok && (sessionSeedVars[k] || strings.HasPrefix(k, "LC_")) {
+		if ok && (sessionSeedVars[k] || seedPrefix(k)) {
 			seed = append(seed, kv)
 		}
 	}

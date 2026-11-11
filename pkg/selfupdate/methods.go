@@ -101,7 +101,15 @@ func SetSystemForTest(s System) func() {
 }
 
 func runFixed(ctx context.Context, argv []string, env []string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	name := argv[0]
+	if env != nil {
+		// Found where the command's environment would find it, not on
+		// this process's PATH (exec.Command's lookup).
+		if p, ok := lookPathIn(name, env); ok {
+			name = p
+		}
+	}
+	cmd := exec.CommandContext(ctx, name, argv[1:]...)
 	if env != nil {
 		cmd.Env = env
 	}

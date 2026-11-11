@@ -14,9 +14,9 @@ import (
 
 func TestSessionSeedKeepsOnlyTheSession(t *testing.T) {
 	environ := []string{"HOME=/Users/u", "USER=u", "SHELL=/opt/homebrew/bin/fish", "LANG=en_US.UTF-8", "LC_CTYPE=UTF-8",
-		"GOROOT=/opt/homebrew/Cellar/go/1.27.3/libexec", "GOTOOLDIR=/x", "PATH=/opt/homebrew/Cellar/go/1.27.3/bin:/usr/bin", "API_KEY=k"}
+		"GOROOT=/opt/homebrew/Cellar/go/1.27.3/libexec", "GOTOOLDIR=/x", "PATH=/opt/homebrew/Cellar/go/1.27.3/bin:/usr/bin", "API_KEY=k", "HTTPS_PROXY=http://p", "no_proxy=.corp", "XDG_CONFIG_HOME=/c"}
 	got := SessionSeed("darwin", environ)
-	want := []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=/Users/u", "USER=u", "SHELL=/opt/homebrew/bin/fish", "LANG=en_US.UTF-8", "LC_CTYPE=UTF-8"}
+	want := []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=/Users/u", "USER=u", "SHELL=/opt/homebrew/bin/fish", "LANG=en_US.UTF-8", "LC_CTYPE=UTF-8", "HTTPS_PROXY=http://p", "no_proxy=.corp", "XDG_CONFIG_HOME=/c"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}

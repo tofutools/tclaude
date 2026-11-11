@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -243,28 +242,11 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	b.data = append(b.data, p...)
 	return len(p), nil
 }
-func stageGoInstall(ctx context.Context, name, version, dir string, env []string) (string, error) {
-	env = append(filteredGoEnv(env), "GOBIN="+dir, "GOWORK=off")
-	cmd := exec.CommandContext(ctx, lookPathIn("go", env), "install", binaryPackages[name]+"@"+version)
-	cmd.Env = env
-	cmd.WaitDelay = time.Second
-	// Do not log inherited environment or compiler output, which can contain
-	// private paths and credential-bearing proxy URLs.
-	var output limitedBuffer
-	output.limit = 64 << 10
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Run(); err != nil {
+func stageGoInstall(ctx context.Context, name, version, dir string, run toolRunner) (string, error) {
+	// The output is not kept: inherited environment and compiler output
+	// can contain private paths and credential-bearing proxy URLs.
+	if _, err := run(ctx, []string{"go", "install", binaryPackages[name] + "@" + version}, "GOBIN="+dir, "GOWORK=off"); err != nil {
 		return "", fmt.Errorf("go install failed: %w", err)
 	}
 	return filepath.Join(dir, name), nil
-}
-func filteredGoEnv(env []string) []string {
-	out := []string{}
-	for _, e := range env {
-		if !strings.HasPrefix(e, "GOBIN=") && !strings.HasPrefix(e, "GOWORK=") {
-			out = append(out, e)
-		}
-	}
-	return out
 }

@@ -187,6 +187,25 @@ func selfUpdateToolEnv(ctx context.Context) ([]string, error) {
 	if u, err := user.Current(); err == nil {
 		name = u.Username
 	}
-	return launcher.TerminalEnv(ctx, runtime.GOOS, name, os.Environ(),
+	environ := os.Environ()
+	env, err := launcher.TerminalEnv(ctx, runtime.GOOS, name, environ,
 		[]string{clcommon.SelfTclaudePath(), "service", "launcher", "shell-env"}, launcher.ExecRunner)
+	if err != nil {
+		return nil, err
+	}
+	// The LaunchAgent's own variables win over the shell's, as when agentd
+	// started (adoptLaunchdLoginEnv).
+	if runtime.GOOS == "darwin" && envLookup(environ, "XPC_SERVICE_NAME") == launcher.LaunchdLabel {
+		home, _ := os.UserHomeDir()
+		if data, err := os.ReadFile(launcher.AutostartPaths("darwin", home, "").Unit); err == nil {
+			var own []string
+			for _, e := range launcher.LaunchdUnitEnv(data) {
+				if e.Key != "PATH" {
+					own = append(own, e.Key+"="+e.Value)
+				}
+			}
+			env = launcher.MergeLoginEnv(env, own)
+		}
+	}
+	return env, nil
 }

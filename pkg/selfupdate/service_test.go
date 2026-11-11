@@ -149,7 +149,7 @@ func TestUpdateValidationAndSourceLatest(t *testing.T) {
 	require.NoError(t, (Request{Action: "apply", Version: "v1.0.0-rc.1"}).Validate())
 	s, binaries := fixture(t)
 	s.binaries[0].Method = "source"
-	s.stageGo = func(_ context.Context, name, version, dir string, _ []string) (string, error) {
+	s.stageGo = func(_ context.Context, name, version, dir string, _ toolRunner) (string, error) {
 		require.Equal(t, "latest", version)
 		return s.stageRelease(context.Background(), Release{}, name, dir)
 	}

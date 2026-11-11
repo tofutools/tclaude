@@ -36,21 +36,20 @@ func binaryRevision(path string) (string, bool, error) {
 	return rev, modified, nil
 }
 
-func checkoutGit(ctx context.Context, path string) func(...string) (string, error) {
-	sys := currentSystem()
+func checkoutGit(ctx context.Context, run toolRunner, path string) func(...string) (string, error) {
 	return func(args ...string) (string, error) {
-		out, err := sys.Run(ctx, append([]string{"git", "-C", path}, args...), nil)
+		out, err := run(ctx, append([]string{"git", "-C", path}, args...))
 		return strings.TrimSpace(string(out)), err
 	}
 }
 
 // branchMode fetches origin and reports whether the checkout ref is a branch
 // there. A tag (or no ref) keeps the release-tag behaviour.
-func (s *Service) branchMode(ctx context.Context, opts ApplyOptions) (bool, error) {
+func (s *Service) branchMode(ctx context.Context, job *Job, opts ApplyOptions) (bool, error) {
 	if opts.Method != MethodSourceCheckout || opts.Checkout.Ref == "" {
 		return false, nil
 	}
-	git := checkoutGit(ctx, opts.Checkout.Path)
+	git := checkoutGit(ctx, s.runner(job), opts.Checkout.Path)
 	_, fetchErr := git("fetch", "--quiet", "--tags", "origin")
 	_, err := git("rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+opts.Checkout.Ref+"^{commit}")
 	if err != nil {
@@ -73,7 +72,7 @@ func shortRev(rev string) string {
 
 func (s *Service) runBranch(ctx context.Context, req Request, job *Job, authorize func() bool, opts ApplyOptions) error {
 	ref, path := opts.Checkout.Ref, opts.Checkout.Path
-	git := checkoutGit(ctx, path)
+	git := checkoutGit(ctx, s.runner(job), path)
 	if err := s.phase(job, "checking_branch"); err != nil {
 		return err
 	}
@@ -167,7 +166,7 @@ func (s *Service) runBranch(ctx context.Context, req Request, job *Job, authoriz
 		return err
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	built, err := s.buildCheckout(ctx, path, dir, s.toolEnv(ctx, job))
+	built, err := s.buildCheckout(ctx, path, dir, s.runner(job))
 	if err != nil {
 		return err
 	}
