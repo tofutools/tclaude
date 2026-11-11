@@ -134,10 +134,11 @@ smoke::apt_source_is_microsoft_only() {
 
 # smoke::apt_mirror_list_without_unreachable_azure FILE — copy a GitHub
 # runner mirror list to stdout while omitting only the exact Ubuntu archive
-# endpoint currently supplied as its priority-1 mirror. The runner's mirror
-# method falls back per index object, so one unreachable mirror can consume a
-# transport timeout for every Packages/Translation/Components object instead
-# of failing over once for the update as a whole.
+# endpoint the image supplies as its priority-1 mirror. This is the FALLBACK
+# path of smoke::apt_update, used only after an update through the runner's
+# own mirror list has failed: the mirror method falls back per index object,
+# so one unreachable mirror can consume a transport timeout for every
+# Packages/Translation/Components object instead of failing over once.
 #
 # Keep this transformation separate from the privileged file replacement so
 # the shared self-test can prove its matching boundary without touching apt.
@@ -149,20 +150,157 @@ smoke::apt_mirror_list_without_unreachable_azure() {
   ' "$mirror_file"
 }
 
-# smoke::run_bounded_apt_update — keep an unreachable runner mirror from
-# occupying a smoke job until GitHub's six-hour ceiling. apt's transport
-# timeout bounds an individual dead connection; the outer timeout also covers
-# mirror-method stalls where apt keeps retrying or waiting without returning.
+# smoke::run_bounded_apt_update [DEADLINE] — keep an unreachable runner
+# mirror from occupying a smoke job until GitHub's six-hour ceiling. apt's
+# transport timeout bounds an individual dead connection; the outer timeout
+# (DEADLINE, default 180s) also covers mirror-method stalls where apt keeps
+# retrying or waiting without returning.
 #
 # Kept as a separate function so the shared self-test can prove the exact
 # command without touching the host's apt state.
 smoke::run_bounded_apt_update() {
-  sudo -n timeout --kill-after=10s 180s \
+  local deadline="${1:-180s}"
+  sudo -n timeout --kill-after=10s "$deadline" \
     apt-get \
     -o Acquire::Retries=2 \
     -o Acquire::http::Timeout=15 \
     -o Acquire::https::Timeout=15 \
     update --quiet
+}
+
+# smoke::apt_mirror_diagnostics — after a failed update, print what each
+# runner mirror looks like from this host: DNS answers and a bounded IPv4 and
+# IPv6 probe of its InRelease. apt's "Ign:" lines carry no cause, so without
+# this a DNS, IPv6 or egress failure is indistinguishable from a dead mirror.
+# Never fails; every probe is time-bounded (about 8s each).
+smoke::apt_mirror_diagnostics() {
+  local mirror_file=/etc/apt/apt-mirrors.txt url host suite family
+  local -a urls=()
+  suite="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")"
+  if [[ -f "$mirror_file" ]]; then
+    while read -r url _; do
+      [[ "$url" =~ ^https?:// ]] && urls+=("$url")
+    done < "$mirror_file"
+  fi
+  [[ " ${urls[*]} " == *" http://azure.archive.ubuntu.com/ubuntu/ "* ]] ||
+    urls+=(http://azure.archive.ubuntu.com/ubuntu/)
+  smoke::log "apt mirror diagnostics (suite: ${suite:-unknown})"
+  for url in "${urls[@]}"; do
+    host="${url#*://}"; host="${host%%/*}"
+    echo "--- $url"
+    echo "DNS $host:"
+    timeout 8s getent ahosts "$host" 2>&1 | awk '{print "  " $1, $2}' | sort -u || true
+    for family in 4 6; do
+      printf '  curl -%s: ' "$family"
+      curl "-$family" -sS -o /dev/null -I -m 8 \
+        -w 'http=%{http_code} ip=%{remote_ip} connect=%{time_connect}s total=%{time_total}s\n' \
+        "${url%/}/dists/${suite:-noble}/InRelease" 2>&1 || true
+    done
+  done
+}
+
+# smoke::apt_mirror_hosts FILE — print the unique host names of the http(s)
+# entries in a GitHub runner mirror list, in list order.
+smoke::apt_mirror_hosts() {
+  awk '
+    $1 ~ /^https?:\/\// {
+      host = $1
+      sub(/^https?:\/\//, "", host)
+      sub(/\/.*/, "", host)
+      if (host != "" && !seen[host]++) print host
+    }
+  ' "$1"
+}
+
+# smoke::doh_resolve_ipv4 HOST — resolve HOST's first IPv4 address through
+# DNS-over-HTTPS (Cloudflare, then Google), addressed by IP so the lookup does
+# not itself depend on the runner's resolver. Prints nothing on failure.
+smoke::doh_resolve_ipv4() {
+  local host="$1" ip endpoint
+  for endpoint in \
+    "https://1.1.1.1/dns-query?name=$host&type=A" \
+    "https://8.8.8.8/resolve?name=$host&type=A"; do
+    ip="$(curl -fsS -m 8 -H 'accept: application/dns-json' "$endpoint" 2>/dev/null |
+      jq -r '[.Answer[]? | select(.type == 1) | .data][0] // empty' 2>/dev/null)"
+    if [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+      printf '%s\n' "$ip"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# smoke::apt_pin_unresolvable_mirror_hosts — DNS preflight for the runner's
+# Ubuntu mirrors. GitHub runners have intermittently been unable to resolve
+# *.ubuntu.com at all while every other host resolved; apt then only prints
+# "Ign:" per index after each lookup times out. For each mirror host the
+# runner's resolver cannot answer within 8s, pin an address obtained over
+# DNS-over-HTTPS into /etc/hosts. Mirror order is unchanged (Azure stays
+# first), and apt still verifies the archive signatures, so a pinned address
+# cannot inject packages. Never fails: an unpinnable host is left to apt.
+smoke::apt_pin_unresolvable_mirror_hosts() {
+  local mirror_file=/etc/apt/apt-mirrors.txt host ip
+  [[ -f "$mirror_file" ]] || return 0
+  while IFS= read -r host; do
+    if timeout 8s getent ahostsv4 "$host" > /dev/null 2>&1; then
+      continue
+    fi
+    if ! ip="$(smoke::doh_resolve_ipv4 "$host")"; then
+      printf '::warning title=apt mirror DNS::%s does not resolve on this runner and DNS-over-HTTPS could not resolve it either\n' "$host"
+      continue
+    fi
+    printf '::warning title=apt mirror DNS::%s does not resolve on this runner; pinning %s from DNS-over-HTTPS in /etc/hosts\n' "$host" "$ip"
+    if ! printf '%s %s # tclaude smoke DoH pin\n' "$ip" "$host" | sudo tee -a /etc/hosts > /dev/null; then
+      smoke::log "could not pin $host in /etc/hosts; leaving it to apt"
+    fi
+  done < <(smoke::apt_mirror_hosts "$mirror_file")
+}
+
+# smoke::apt_disable_azure_mirror — the fallback half of smoke::apt_update:
+# rewrite GitHub's generated /etc/apt/apt-mirrors.txt without its priority-1
+# azure.archive.ubuntu.com entry so a retry goes straight to the remaining
+# fallbacks (archive.ubuntu.com, security.ubuntu.com). Returns 1 when there is
+# nothing to drop or no fallback would remain, so the caller can stop instead
+# of repeating an identical update.
+smoke::apt_disable_azure_mirror() {
+  local backup_dir="$1"
+  local mirror_file=/etc/apt/apt-mirrors.txt
+  local mirror_backup="$backup_dir/apt-mirrors.txt.original"
+  local filtered_mirror_file="$backup_dir/apt-mirrors.txt.filtered"
+
+  if [[ ! -f "$mirror_file" ]]; then
+    smoke::log "No GitHub runner apt mirror list at $mirror_file; no Azure-mirror fallback available"
+    return 1
+  fi
+  if [[ ! -d "$backup_dir" ]] && ! mkdir -p "$backup_dir"; then
+    smoke::error "could not create apt-source diagnostics directory: $backup_dir"
+    return 1
+  fi
+  if ! smoke::apt_mirror_list_without_unreachable_azure "$mirror_file" > "$filtered_mirror_file"; then
+    smoke::error "could not inspect GitHub runner apt mirror list: $mirror_file"
+    return 1
+  fi
+  if cmp -s "$mirror_file" "$filtered_mirror_file"; then
+    smoke::log "GitHub runner apt mirror list has no Azure entry to drop; no fallback available"
+    return 1
+  fi
+  if ! grep -Eq '^[[:space:]]*https?://' "$filtered_mirror_file"; then
+    smoke::error "refusing to remove the Azure apt mirror because no fallback mirror remains in: $mirror_file"
+    return 1
+  fi
+  if [[ -e "$mirror_backup" ]]; then
+    smoke::error "apt mirror-list diagnostics path already exists: $mirror_backup"
+    return 1
+  fi
+  smoke::log "Disabling GitHub runner apt mirror after failed update: http://azure.archive.ubuntu.com/ubuntu/"
+  if ! sudo cp -- "$mirror_file" "$mirror_backup"; then
+    smoke::error "could not save GitHub runner apt mirror list before editing: $mirror_file"
+    return 1
+  fi
+  if ! sudo cp -- "$filtered_mirror_file" "$mirror_file"; then
+    smoke::error "could not disable GitHub runner apt mirror: $mirror_file"
+    return 1
+  fi
 }
 
 # smoke::apt_update — update Ubuntu's package indexes without letting an
@@ -178,9 +316,18 @@ smoke::run_bounded_apt_update() {
 # than disabling the other vendor too. The original files are copied/moved into
 # RUNNER_TEMP for diagnostics; isolation is limited to GitHub Actions because
 # that runner is ephemeral and no restore is needed.
+#
+# Under GitHub Actions the update runs at most twice. Attempt 1 uses the
+# runner's mirror list as GitHub configured it (azure.archive.ubuntu.com
+# first), because that is the intended, normally fastest path; archive.ubuntu.com
+# has itself been unreachable from runners. Only if attempt 1 fails or times
+# out is the Azure entry dropped (smoke::apt_disable_azure_mirror) and the
+# update retried once against the remaining fallbacks. Deadlines are 120s +
+# 180s so the whole step stays bounded at about five minutes.
+# Before attempt 1, any mirror host the runner cannot resolve is pinned from
+# DNS-over-HTTPS (smoke::apt_pin_unresolvable_mirror_hosts).
 smoke::apt_update() {
   local source_file source_name backup_file awk_status grep_status
-  local mirror_file mirror_backup filtered_mirror_file
   local disabled_count=0 mixed_count=0
   local backup_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tclaude-disabled-apt-sources"
   local microsoft_list_re='^[[:space:]]*deb(-src)?[[:space:]].*packages[.]microsoft[.]com([/:[:space:]]|$)'
@@ -194,45 +341,6 @@ smoke::apt_update() {
       return 1
     fi
     return 0
-  fi
-
-  # GitHub's Ubuntu image routes the distro sources through a generated mirror
-  # list whose first choice is azure.archive.ubuntu.com. When that endpoint is
-  # unreachable, apt can fetch the InRelease files from archive.ubuntu.com and
-  # then spend minutes retrying the Azure endpoint separately for the package
-  # indexes. Remove only that image-provided entry on the ephemeral runner;
-  # archive.ubuntu.com and security.ubuntu.com remain configured fallbacks.
-  mirror_file=/etc/apt/apt-mirrors.txt
-  if [[ -f "$mirror_file" ]]; then
-    if [[ ! -d "$backup_dir" ]] && ! mkdir -p "$backup_dir"; then
-      smoke::error "could not create apt-source diagnostics directory: $backup_dir"
-      return 1
-    fi
-    mirror_backup="$backup_dir/apt-mirrors.txt.original"
-    filtered_mirror_file="$backup_dir/apt-mirrors.txt.filtered"
-    if ! smoke::apt_mirror_list_without_unreachable_azure "$mirror_file" > "$filtered_mirror_file"; then
-      smoke::error "could not inspect GitHub runner apt mirror list: $mirror_file"
-      return 1
-    fi
-    if ! cmp -s "$mirror_file" "$filtered_mirror_file"; then
-      if ! grep -Eq '^[[:space:]]*https?://' "$filtered_mirror_file"; then
-        smoke::error "refusing to remove the Azure apt mirror because no fallback mirror remains in: $mirror_file"
-        return 1
-      fi
-      if [[ -e "$mirror_backup" ]]; then
-        smoke::error "apt mirror-list diagnostics path already exists: $mirror_backup"
-        return 1
-      fi
-      smoke::log "Disabling unreachable GitHub runner apt mirror: http://azure.archive.ubuntu.com/ubuntu/"
-      if ! sudo cp -- "$mirror_file" "$mirror_backup"; then
-        smoke::error "could not save GitHub runner apt mirror list before editing: $mirror_file"
-        return 1
-      fi
-      if ! sudo cp -- "$filtered_mirror_file" "$mirror_file"; then
-        smoke::error "could not disable unreachable GitHub runner apt mirror: $mirror_file"
-        return 1
-      fi
-    fi
   fi
 
   if [[ -f /etc/apt/sources.list ]]; then
@@ -330,11 +438,29 @@ smoke::apt_update() {
   else
     smoke::log "Disabled $disabled_count unrelated Microsoft apt source file(s); Ubuntu source and package failures remain fatal"
   fi
-  smoke::log "Updating apt indexes for host prerequisites"
-  if ! smoke::run_bounded_apt_update; then
-    smoke::error "apt-get update failed or exceeded its 180-second deadline after Microsoft-source isolation; inspect the apt output above for the failing configured source"
+  smoke::apt_pin_unresolvable_mirror_hosts
+
+  # First attempt: the runner's mirror list exactly as GitHub configured it,
+  # with its Azure mirror first. A shorter deadline leaves room for one
+  # fallback attempt inside a ~5-minute total budget.
+  smoke::log "Updating apt indexes for host prerequisites (attempt 1/2: runner mirror list as configured, 120s deadline)"
+  if smoke::run_bounded_apt_update 120s; then
+    smoke::log "apt-get update succeeded on attempt 1/2 (runner mirror list as configured)"
+    return 0
+  fi
+  smoke::apt_mirror_diagnostics
+  if ! smoke::apt_disable_azure_mirror "$backup_dir"; then
+    smoke::error "apt-get update failed or exceeded its 120-second deadline after Microsoft-source isolation, and no Azure-mirror fallback applies; inspect the apt output above for the failing configured source"
     return 1
   fi
+  printf '::warning title=apt update fallback::apt-get update through the runner mirror list failed or timed out; retrying without the Azure mirror\n'
+  smoke::log "Updating apt indexes for host prerequisites (attempt 2/2: Azure mirror dropped, 180s deadline)"
+  if ! smoke::run_bounded_apt_update 180s; then
+    smoke::apt_mirror_diagnostics
+    smoke::error "apt-get update failed on both attempts (runner mirror list as configured, then without the Azure mirror); inspect the apt output above for the failing configured source"
+    return 1
+  fi
+  smoke::log "apt-get update succeeded on attempt 2/2 (Azure mirror dropped)"
 }
 
 # smoke::require_command fails early and by name. A smoke that dies because a
