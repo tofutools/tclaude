@@ -74,6 +74,18 @@ if ! cmp -s "$work/apt-mirrors.want" "$work/apt-mirrors.got"; then
   failures=1
 fi
 
+# The DNS preflight pins only the mirror hosts; prove the host extraction keeps
+# list order, de-duplicates, and ignores non-http entries.
+printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2\nhttps://azure.archive.ubuntu.com/ubuntu/\tpriority:3\nfile:/srv/mirror\tpriority:4\nhttps://security.ubuntu.com/ubuntu/\tpriority:5\n' \
+  > "$work/apt-mirror-hosts.input"
+apt_mirror_hosts_got="$(smoke::apt_mirror_hosts "$work/apt-mirror-hosts.input")"
+apt_mirror_hosts_want=$'azure.archive.ubuntu.com\narchive.ubuntu.com\nsecurity.ubuntu.com'
+if [[ "$apt_mirror_hosts_got" != "$apt_mirror_hosts_want" ]]; then
+  echo 'selftest FAIL: apt mirror host extraction'
+  printf '%s\n' "$apt_mirror_hosts_got"
+  failures=1
+fi
+
 # The runner mirror can stop producing output indefinitely while apt's own
 # retry machinery remains alive. Prove that every shared update goes through
 # both the transport limits and an outer deadline, without invoking sudo or apt
@@ -123,6 +135,7 @@ apt_order_case() {
     }
     smoke::apt_disable_azure_mirror() { printf 'disable\n' >> "$calls"; return "$disable"; }
     smoke::apt_mirror_diagnostics() { :; }
+    smoke::apt_pin_unresolvable_mirror_hosts() { :; }
     smoke::apt_update
   ) > "$work/apt-order-$name.log" 2>&1 && status=0 || status=$?
   if [[ "$status" != "$want_status" ]] || [[ "$(cat "$calls")" != "$want_calls" ]]; then

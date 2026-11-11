@@ -199,6 +199,63 @@ smoke::apt_mirror_diagnostics() {
   done
 }
 
+# smoke::apt_mirror_hosts FILE — print the unique host names of the http(s)
+# entries in a GitHub runner mirror list, in list order.
+smoke::apt_mirror_hosts() {
+  awk '
+    $1 ~ /^https?:\/\// {
+      host = $1
+      sub(/^https?:\/\//, "", host)
+      sub(/\/.*/, "", host)
+      if (host != "" && !seen[host]++) print host
+    }
+  ' "$1"
+}
+
+# smoke::doh_resolve_ipv4 HOST — resolve HOST's first IPv4 address through
+# DNS-over-HTTPS (Cloudflare, then Google), addressed by IP so the lookup does
+# not itself depend on the runner's resolver. Prints nothing on failure.
+smoke::doh_resolve_ipv4() {
+  local host="$1" ip endpoint
+  for endpoint in \
+    "https://1.1.1.1/dns-query?name=$host&type=A" \
+    "https://8.8.8.8/resolve?name=$host&type=A"; do
+    ip="$(curl -fsS -m 8 -H 'accept: application/dns-json' "$endpoint" 2>/dev/null |
+      jq -r '[.Answer[]? | select(.type == 1) | .data][0] // empty' 2>/dev/null)"
+    if [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+      printf '%s\n' "$ip"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# smoke::apt_pin_unresolvable_mirror_hosts — DNS preflight for the runner's
+# Ubuntu mirrors. GitHub runners have intermittently been unable to resolve
+# *.ubuntu.com at all while every other host resolved; apt then only prints
+# "Ign:" per index after each lookup times out. For each mirror host the
+# runner's resolver cannot answer within 8s, pin an address obtained over
+# DNS-over-HTTPS into /etc/hosts. Mirror order is unchanged (Azure stays
+# first), and apt still verifies the archive signatures, so a pinned address
+# cannot inject packages. Never fails: an unpinnable host is left to apt.
+smoke::apt_pin_unresolvable_mirror_hosts() {
+  local mirror_file=/etc/apt/apt-mirrors.txt host ip
+  [[ -f "$mirror_file" ]] || return 0
+  while IFS= read -r host; do
+    if timeout 8s getent ahostsv4 "$host" > /dev/null 2>&1; then
+      continue
+    fi
+    if ! ip="$(smoke::doh_resolve_ipv4 "$host")"; then
+      printf '::warning title=apt mirror DNS::%s does not resolve on this runner and DNS-over-HTTPS could not resolve it either\n' "$host"
+      continue
+    fi
+    printf '::warning title=apt mirror DNS::%s does not resolve on this runner; pinning %s from DNS-over-HTTPS in /etc/hosts\n' "$host" "$ip"
+    if ! printf '%s %s # tclaude smoke DoH pin\n' "$ip" "$host" | sudo tee -a /etc/hosts > /dev/null; then
+      smoke::log "could not pin $host in /etc/hosts; leaving it to apt"
+    fi
+  done < <(smoke::apt_mirror_hosts "$mirror_file")
+}
+
 # smoke::apt_disable_azure_mirror — the fallback half of smoke::apt_update:
 # rewrite GitHub's generated /etc/apt/apt-mirrors.txt without its priority-1
 # azure.archive.ubuntu.com entry so a retry goes straight to the remaining
@@ -267,6 +324,8 @@ smoke::apt_disable_azure_mirror() {
 # out is the Azure entry dropped (smoke::apt_disable_azure_mirror) and the
 # update retried once against the remaining fallbacks. Deadlines are 120s +
 # 180s so the whole step stays bounded at about five minutes.
+# Before attempt 1, any mirror host the runner cannot resolve is pinned from
+# DNS-over-HTTPS (smoke::apt_pin_unresolvable_mirror_hosts).
 smoke::apt_update() {
   local source_file source_name backup_file awk_status grep_status
   local disabled_count=0 mixed_count=0
@@ -379,6 +438,8 @@ smoke::apt_update() {
   else
     smoke::log "Disabled $disabled_count unrelated Microsoft apt source file(s); Ubuntu source and package failures remain fatal"
   fi
+  smoke::apt_pin_unresolvable_mirror_hosts
+
   # First attempt: the runner's mirror list exactly as GitHub configured it,
   # with its Azure mirror first. A shorter deadline leaves room for one
   # fallback attempt inside a ~5-minute total budget.
