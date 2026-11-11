@@ -286,11 +286,22 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 	if err := s.phase(job, "backing_up"); err != nil {
 		return err
 	}
-	backupDir := filepath.Join(s.dir, "backup-"+job.ID)
-	if err := os.Mkdir(backupDir, 0700); err != nil {
+	// A fresh dir per run: a leftover of an earlier attempt never collides.
+	backupDir, err := os.MkdirTemp(s.dir, "backup-"+job.ID+"-")
+	if err != nil {
 		return err
 	}
+	persisted := false
+	defer func() {
+		// Copies no backup.json references are never rolled back to.
+		if !persisted {
+			_ = os.RemoveAll(backupDir)
+		}
+	}()
 	manifest := backupManifest{ID: job.ID, Version: release.Tag, Entries: []backupEntry{}}
+	// Copies are numbered as they are made, not by manifest position: the
+	// custom method backs up every binary before any joins the manifest.
+	copies := 0
 	backup := func(b Binary, target, after string) (backupEntry, error) {
 		info, err := os.Lstat(target)
 		if err != nil || !info.Mode().IsRegular() {
@@ -300,7 +311,8 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 		if err != nil {
 			return backupEntry{}, err
 		}
-		path := filepath.Join(backupDir, fmt.Sprint(len(manifest.Entries)))
+		path := filepath.Join(backupDir, fmt.Sprint(copies))
+		copies++
 		if err := copyExclusive(target, path, 0600); err != nil {
 			return backupEntry{}, fmt.Errorf("backup failed: %w", err)
 		}
@@ -360,10 +372,7 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 		if !authorize() {
 			return fmt.Errorf("update authority revoked")
 		}
-		ext, err := s.runExternal(ctx, release, job, external, opts)
-		if err != nil {
-			return err
-		}
+		ext, extErr := s.runExternal(ctx, release, job, external, opts)
 		changed = ext
 		for _, e := range customBackups {
 			if hash, err := fileHash(e.Binary.Path); err == nil && hash != e.BeforeHash {
@@ -373,6 +382,16 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 			}
 			// Unchanged: nothing to roll back, so its copy is not kept.
 			_ = os.Remove(e.Backup)
+		}
+		if extErr != nil {
+			// A custom command that failed part way may have replaced some
+			// binaries: keep their backups so a rollback can restore them.
+			if len(manifest.Entries) > 0 {
+				if err := s.persistBackup(backupDir, manifest, &persisted); err != nil {
+					return errors.Join(extErr, err)
+				}
+			}
+			return extErr
 		}
 	}
 	if len(manifest.Entries) == 0 {
@@ -388,16 +407,13 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 		s.status.RollbackAvailable = false
 		s.mu.Unlock()
 	} else if len(manifest.Entries) > 0 {
-		if err := syncDir(backupDir); err != nil {
-			return fmt.Errorf("could not persist backup directory: %w", err)
-		}
-		if err := writeJSONFile(filepath.Join(s.dir, "backup.json"), manifest); err != nil {
+		if err := s.persistBackup(backupDir, manifest, &persisted); err != nil {
 			return err
 		}
-		s.mu.Lock()
-		s.status.RollbackAvailable = true
-		s.mu.Unlock()
 	}
+	// The previous backup.json's copies are superseded now. Only backups:
+	// this run's stage dir still holds the binaries to install.
+	s.pruneStale("backup-")
 	if len(targets) > 0 {
 		if err := s.phase(job, "replacing"); err != nil {
 			return err
@@ -443,6 +459,23 @@ func (s *Service) install(ctx context.Context, release Release, job *Job, author
 		}
 	}
 	job.RestartRequired = changed || len(targets) > 0
+	return nil
+}
+
+// persistBackup makes manifest the backup a rollback restores.
+func (s *Service) persistBackup(backupDir string, manifest backupManifest, persisted *bool) error {
+	if err := syncDir(backupDir); err != nil {
+		return fmt.Errorf("could not persist backup directory: %w", err)
+	}
+	// Kept even when the write fails late: backup.json may already point
+	// here, and a later prune drops it when it does not.
+	*persisted = true
+	if err := writeJSONFile(filepath.Join(s.dir, "backup.json"), manifest); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.status.RollbackAvailable = true
+	s.mu.Unlock()
 	return nil
 }
 
