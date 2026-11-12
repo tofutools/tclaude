@@ -19465,3 +19465,57 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 .scope-config-node { cursor: pointer; opacity: .65; }
 .scope-config-node.on { opacity: 1; box-shadow: 0 0 0 1px var(--nc); }
 .scope-config-node:disabled { cursor: not-allowed; opacity: .4; }
+
+/* Board options (groups-taskboard-options.js): a side drawer over the board,
+   so the board stays in view while its options change. The standard dialog
+   (focus, Esc, dirty guard) laid out as a full-height panel on the right;
+   the backdrop is light because the board under it is the context. Under
+   900px it takes the whole width. */
+.modal-overlay.tb-opt-overlay { justify-content: flex-end; align-items: stretch; background: rgba(1, 4, 9, 0.35); }
+.cron-create-modal.tb-opt-drawer {
+  position: relative; width: min(760px, 100vw); max-width: 100vw; min-width: 0; height: 100%; max-height: none;
+  box-sizing: border-box; margin: 0; border-radius: 0; border-width: 0 0 0 1px; overflow: hidden;
+  box-shadow: -16px 0 36px rgba(0, 0, 0, .46); animation: tb-opt-in .18s ease;
+}
+@keyframes tb-opt-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .cron-create-modal.tb-opt-drawer { animation: none; } }
+@media (max-width: 900px) { .cron-create-modal.tb-opt-drawer { width: 100vw; border-left-width: 0; } }
+.tb-opt-drawer > h3 { padding-right: 36px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tb-opt-drawer .tb-opt-node { font-weight: normal; font-size: 11px; }
+.tb-opt-drawer .tb-opt-close { position: absolute; top: 14px; right: 16px; }
+.tb-opt-drawer .tb-opt-tabs { align-self: flex-start; }
+.tb-opt-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; padding-right: 4px; }
+.tb-opt-readonly { margin: 0; padding: 6px 10px; border-left: 2px solid var(--ui-warn-text); background: var(--ui-card-inset-bg); color: var(--ui-warn-text); font-size: 12px; }
+.tb-opt-note { margin: 0; padding: 4px 8px; border-left: 2px solid var(--ui-note-edge); background: var(--ui-card-inset-bg); }
+.tb-opt-section { display: flex; flex-direction: column; gap: 8px; }
+.tb-opt-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tb-opt-head .spacer { flex: 1; }
+.tb-opt-switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.ui-tag.tb-opt-state.on { border-color: #2ea043; color: #3fb950; }
+.tb-opt-desc { margin: 0; }
+.tb-opt-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; gap: 8px 14px; align-items: baseline; padding-left: 4px; }
+.tb-opt-grid.muted .tb-opt-label, .tb-opt-grid.muted .tb-opt-ctl { opacity: .6; }
+.tb-opt-label { color: var(--ui-text); font-size: 12.5px; }
+.tb-opt-ctl { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; min-width: 0; }
+.tb-opt-skips { flex-direction: column; gap: 4px; }
+.tb-opt-skip-line { display: inline-flex; align-items: baseline; gap: 6px 10px; flex-wrap: wrap; }
+.tb-opt-grace { width: 7em; }
+.tb-opt-src { display: inline-flex; align-items: center; gap: 4px; color: var(--ui-muted); font-size: 11px; white-space: nowrap; }
+.tb-opt-src.board { color: var(--ui-warn-text); }
+.tb-opt-src.changed .tb-opt-src-text { font-style: italic; }
+.tb-opt-src .tb-opt-reset { min-height: 0; padding: 0 4px; line-height: 1.4; }
+.tb-opt-table-wrap { overflow-x: auto; }
+.tb-opt-events, .tb-opt-columns { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tb-opt-events :is(th, td), .tb-opt-columns :is(th, td) { text-align: left; vertical-align: middle; }
+.tb-opt-events thead th, .tb-opt-columns thead th { color: var(--ui-muted); font-weight: normal; font-size: 11px; }
+.tb-opt-events td:not(:first-child):not(:last-child), .tb-opt-events thead th:not(:nth-child(-n+2)) { text-align: center; }
+.tb-opt-events .ui-check { justify-content: center; }
+.tb-opt-events th.tb-opt-when { font-weight: normal; color: var(--ui-text); }
+.tb-opt-events tr.off th.tb-opt-when, .tb-opt-events tr.off td:not(:first-child):not(:last-child) { opacity: .5; }
+.tb-opt-columns tr.tb-opt-builtin th { font-weight: normal; color: var(--ui-muted); }
+.tb-opt-columns tbody th { font-weight: normal; }
+.tb-opt-columns tr.focus { background: rgba(31, 111, 235, 0.12); }
+.tb-opt-foot { margin: 0; }
+.tb-opt-sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.tb-options-summary { display: inline-flex; gap: 4px; margin-left: 6px; }
+.ui-tag.tb-options-chip { font-size: 11px; }
