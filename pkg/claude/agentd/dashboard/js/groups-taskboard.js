@@ -55,6 +55,8 @@ import {
   useTaskboardEntry,
 } from './taskboard-context.js';
 import { ColGroup } from './table-kit.js';
+import { BoardOptionsButton, BoardOptionsDrawer, BoardOptionsSummary } from './groups-taskboard-options.js';
+import { boardNode, boardOptionsRoute, closeBoardOptions, isBoardOptionsFor } from './groups-taskboard-options-route.js';
 import { EpicBoard, EpicChip, EpicFilterMenu, EpicGroupRow, EpicMark, EpicStrip, NO_EPIC, boardEntry, epicDimmed, epicMoved, epicOf, intoEpic, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
 
 export { RefChip };
@@ -1208,13 +1210,18 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
     setAdding({ kind: what, initial });
   };
   // As Agents and Resources: open, the controls are a toolbar row heading
-  // the section (＋▾, then the view switch); folded, the ＋▾ rides the
-  // section line.
+  // the section (＋▾, then the view switch, ⚙ Board options last); folded,
+  // the ＋▾ and an icon-only ⚙ ride the section line. A board whose node
+  // serves no options (an older linked node) has no ⚙.
+  const node = boardNode(group);
+  const hasOptions = !!entry.options;
   const addMenu = api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`;
   const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} />${
     prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} columns=${entry.columns || []} epics=${epics.epics.length > 0} />`}<${EpicFilterMenu} group=${shown.name} />${
     lanes && html`<${ColumnsMenu} entry=${view} group=${shown.name} />`}${
-    lanes && html`<${HiddenColumnsTag} entry=${view} tally=${hiddenTally(view, laneColumn)} />`}</div>`;
+    lanes && html`<${HiddenColumnsTag} entry=${view} tally=${hiddenTally(view, laneColumn)} />`}${
+    hasOptions && html`<${BoardOptionsButton} group=${group.name} node=${node} wizard=${wizard} />`}</div>`;
+  const closedActions = (addMenu || hasOptions) ? html`${addMenu}${hasOptions && html`<${BoardOptionsButton} group=${group.name} node=${node} wizard=${wizard} iconOnly=${true} />`}` : null;
   const closeAdding = () => setAdding(null);
   const dialog = !api || !adding ? null : adding.kind === 'form' || adding.kind === 'epic'
     ? html`<${NewTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} canAssign=${canAssign(actions)}
@@ -1223,14 +1230,27 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
     : adding.kind === 'ask' ? html`<${AskAgentDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial} onClose=${closeAdding} />`
     : adding.kind === 'import' ? html`<${TrackerTaskDialog} group=${group} entry=${entry} api=${api} wizard=${wizard} initial=${adding.initial}
         onClose=${closeAdding} onDone=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} />` : null;
-  return html`<${EpicBoard.Provider} value=${epics}>${dialog}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
-      summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} />`} auto=${autoOpened.current}
-      closedActions=${addMenu || null} attrs=${{ 'data-fused-taskboard': shown.name }}>
+  const optionsAt = boardOptionsRoute.value;
+  const optionsDrawer = hasOptions && isBoardOptionsFor(optionsAt, group.name, node)
+    ? html`<${BoardOptionsDrawer} group=${group} shownName=${shown.shownName || shown.name} nodeName=${boardNodeName(group)} entry=${entry}
+        api=${api} readApi=${readApi} actions=${api ? actions : null} section=${optionsAt.section} column=${optionsAt.column} wizard=${wizard}
+        onSaved=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} onClose=${closeBoardOptions} />`
+    : null;
+  return html`<${EpicBoard.Provider} value=${epics}>${dialog}${optionsDrawer}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
+      summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} /><${BoardOptionsSummary} options=${entry.options} />`} auto=${autoOpened.current}
+      closedActions=${closedActions} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${TaskboardRows} entry=${lanes ? view : drawn} full=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
       view=${prefs.view} lanesBy=${prefs.by} byEpic=${prefs.listByEpic}
       hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} />
   <//><//>`;
+}
+
+// boardNodeName names that node for the Board options drawer ('' here).
+function boardNodeName(group) {
+  const node = group?.fleet_node;
+  if (node && !node.local) return node.name || node.id;
+  return onPeerPage() ? globalThis.__tclaudeRemoteNode?.name || 'the linked node' : '';
 }
 
 // TaskboardCounts is the section head's total; the columns show the

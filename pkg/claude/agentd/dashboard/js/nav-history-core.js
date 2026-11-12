@@ -173,7 +173,9 @@ export const TAB_PARAMS = {
 //   - manage: the library manager open (MANAGE_KINDS).
 //   - notification: the human-notification reader, as <sender>:<message-id>.
 //   - task: a task's edit form, as <task-id>[@<node>]:<group> (task-route.js).
-export const OVERLAY_PARAMS = ['manage', 'notification', 'task'];
+//   - board-options: a board's Board options drawer, as [<node>:]<group>
+//     (groups-taskboard-options-route.js).
+export const OVERLAY_PARAMS = ['manage', 'notification', 'task', 'board-options'];
 const TASK_ROUTE = /^tk_[0-9a-z]+(@inst_[0-9a-z]+)?:.+$/;
 // A drawing board's focus: four numbers, and up to 200 element ids.
 const FOCUS_NUMBER = '-?\\d+(\\.\\d+)?';

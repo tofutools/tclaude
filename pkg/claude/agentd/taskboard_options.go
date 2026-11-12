@@ -104,7 +104,10 @@ type taskboardOptionsView struct {
 	// Options is what the board itself sets.
 	Options boardopts.Options `json:"options"`
 	// Resolved is what is in force, each value with its source.
-	Resolved  boardopts.Resolved          `json:"resolved"`
+	Resolved boardopts.Resolved `json:"resolved"`
+	// Inherited is what each value would be if the board set nothing: the
+	// value a reset falls back to (the dashboard shows it before saving).
+	Inherited boardopts.Resolved          `json:"inherited"`
 	Globals   taskboardOptionsGlobalsView `json:"globals"`
 	Version   int64                       `json:"version"`
 	UpdatedBy string                      `json:"updated_by,omitempty"`
@@ -121,7 +124,8 @@ func taskboardOptionsViewOf(g *db.AgentGroup) (taskboardOptionsView, error) {
 	globals := taskboardOptionsGlobals()
 	v := taskboardOptionsView{
 		Group: g.Name, Options: o, Resolved: boardopts.Resolve(o, globals, cols),
-		Version: row.Version, UpdatedBy: row.UpdatedBy, UpdatedAt: rfc3339(row.UpdatedAt), Keys: boardopts.Keys,
+		Inherited: boardopts.Resolve(boardopts.Options{}, globals, cols),
+		Version:   row.Version, UpdatedBy: row.UpdatedBy, UpdatedAt: rfc3339(row.UpdatedAt), Keys: boardopts.Keys,
 	}
 	v.Globals.IdleCheck = globals.IdleCheck
 	if globals.IdleGrace != nil {

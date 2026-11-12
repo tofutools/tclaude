@@ -21,6 +21,7 @@ import { Dialog } from './ui-dialog.js';
 import { Button, Input } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
 import { columnStateItems } from './groups-taskboard-colvis.js';
+import { boardNode, openBoardOptions } from './groups-taskboard-options-route.js';
 
 const html = htm.bind(h);
 
@@ -91,13 +92,22 @@ export function columnMenuItems({ column, columns, group, actions, onRename }) {
   ];
 }
 
+// optionsItem is a custom column's "Column in Board options": the board's
+// options drawer at the Columns tab, on that column. A board whose node
+// serves no options (entry.options absent) has none.
+function optionsItem(column, group, entry) {
+  if (!column.custom || !entry?.options) return [];
+  return [{ key: 'options', label: 'Column in Board options ↗', attrs: { 'data-column-menu': 'options', title: `The ${column.label} column in the board's options: whether it is idle-checked` },
+    run: () => openBoardOptions({ group: group.name, node: boardNode(group), section: 'columns', column: column.slug }) }];
+}
+
 // ColumnHeadMenu is a column head's ⋯: a custom column's rename, move and
 // remove, and any hideable column's hide and cordon items
-// (groups-taskboard-colvis.js).
+// (groups-taskboard-colvis.js), then the column in the Board options.
 export function ColumnHeadMenu({ column, columns, group, actions, entry = null, onRename }) {
   const manage = columnMenuItems({ column, columns, group, actions, onRename });
   const state = actions?.busy ? [] : columnStateItems(column, entry);
-  const items = [...manage, ...state];
+  const items = [...manage, ...state, ...optionsItem(column, group, entry)];
   if (!items.length) return null;
   return html`<span class="tb-col-menu"><${RowMenu} label=${`the ${column.label} column`} items=${items} buttonClass="tb-col-more"
     title=${column.custom ? `Rename, move, hide or remove the ${column.label} column` : `Hide the ${column.label} column`} /></span>`;
