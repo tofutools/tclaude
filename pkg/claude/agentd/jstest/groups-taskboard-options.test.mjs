@@ -81,13 +81,13 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 // script sets the property.
 const isOn = (el) => (typeof el.checked === 'boolean' ? el.checked : el.hasAttribute('checked'));
 
-async function mountSection(t, { view = 'list', api, readApi, entry = entryOf(), open = true, group = { name: 'crew', members: [] } } = {}) {
+async function mountSection(t, { view = 'list', by = 'agent', api, readApi, entry = entryOf(), open = true, group = { name: 'crew', members: [] } } = {}) {
   const harness = await createPreactHarness(t);
   const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
   const route = await harness.importDashboardModule('js/groups-taskboard-options-route.js');
   const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
   dashPrefs.setItem(`tclaude.dash.groups.taskboard.view.${group.name}`, view);
-  dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${group.name}`, 'agent');
+  dashPrefs.setItem(`tclaude.dash.groups.taskboard.lanes-by.${group.name}`, by);
   dashPrefs.setItem(`tclaude.dash.groups.fused.taskboard.${group.name}`, open ? '1' : '0');
   const context = harness.signals.signal({ groups: [entry] });
   const source = { context, status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
@@ -312,6 +312,17 @@ test('a board whose node serves no options has no ⚙ and no summary', async (t)
   const old = await mountSection(t, { api: fakeApi(optionsView()), entry: { ...entryOf(), options: undefined } });
   assert.equal(old.c.querySelector('.tb-options-btn'), null, 'no options served: no ⚙');
   assert.equal(old.c.querySelector('[data-tb-options-summary]'), null);
+});
+
+test('in the triage lanes too, a custom column has its ⋯ with Column in Board options', async (t) => {
+  const s = await mountSection(t, { api: fakeApi(optionsView()), view: 'lanes', by: 'triage' });
+  const head = [...s.c.querySelectorAll('.tb-col-more')].find((b) => /In review/.test(b.getAttribute('aria-label') || ''));
+  assert.ok(head, 'the In review head has a ⋯');
+  await s.click(head);
+  const items = [...s.harness.document.querySelectorAll('[data-column-menu]')].map((item) => item.dataset.columnMenu);
+  assert.ok(items.includes('rename') && items.includes('options'), `rename and the options: ${items}`);
+  await s.click(s.harness.document.querySelector('[data-column-menu="options"]'));
+  assert.equal(s.route.boardOptionsRoute.value.column, 'in-review');
 });
 
 test("a custom column's ⋯ opens the drawer at the Columns tab on that column; skip saves with the options", async (t) => {

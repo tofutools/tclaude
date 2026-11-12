@@ -61,22 +61,24 @@ export function BoardOptionsSummary({ options }) {
     class="ui-tag tb-options-chip" data-tb-options-summary=${part.section} title=${part.title}>${part.section === 'idle' ? '⏱ ' : '✉ '}${part.text}</span>`)}</span>`;
 }
 
-// Source is a value's provenance and, where the board sets it, its ↺.
-function Source({ view, draft, saved, keys, canWrite, onReset, label }) {
+// Source is a value's provenance and, where the board sets it, its ↺. A
+// value changed and not yet saved has a dot. compact (the event table) says
+// "set here" for "set on this board".
+function Source({ view, draft, saved, keys, canWrite, onReset, label, compact = false }) {
   const set = keys.filter((key) => Object.hasOwn(draft, key));
-  const changed = changedKeys(Object.fromEntries(keys.filter((k) => Object.hasOwn(saved, k)).map((k) => [k, saved[k]])),
-    Object.fromEntries(set.map((k) => [k, draft[k]]))).length > 0;
+  const pick = (obj) => Object.fromEntries(keys.filter((k) => Object.hasOwn(obj, k)).map((k) => [k, obj[k]]));
+  const changed = changedKeys(pick(saved), pick(draft)).length > 0;
   const inherited = keys.map((key) => inheritedOf(view, key));
   let text;
   if (set.length) {
     const from = inherited[0];
-    text = keys.length === 1 ? `set on this board · ${from.source}: ${valueText(from.value)}` : 'set on this board';
+    text = compact ? 'set here' : keys.length === 1 ? `set on this board · ${from.source}: ${valueText(from.value)}` : 'set on this board';
   } else {
-    const sources = [...new Set(inherited.map((v) => v.source))];
-    text = sources.map(sourceText).join(' · ');
+    text = [...new Set(inherited.map((v) => v.source))].map(sourceText).join(' · ');
   }
   return html`<span class=${`tb-opt-src${set.length ? ' board' : ''}${changed ? ' changed' : ''}`} data-tb-opt-src=${keys.join(' ')}>
-    <span class="tb-opt-src-text">${text}${changed ? ' · unsaved' : ''}</span>
+    ${changed && html`<span class="tb-opt-dot" title="Changed, not saved yet" aria-label="unsaved">●</span>`}
+    <span class="tb-opt-src-text">${text}</span>
     ${set.length > 0 && canWrite && html`<${Button} size="sm" variant="ghost" icon=${true} class="tb-opt-reset"
       aria-label=${`Reset ${label}`} title=${`Inherit it again: ${inherited.map((v) => `${valueText(v.value)} (${sourceText(v.source)})`).join(', ')}`}
       onClick=${() => onReset(keys)}>↺<//>`}
@@ -177,12 +179,12 @@ function EventsSection({ view, draft, saved, canWrite, set, reset, setMany }) {
           return html`<tr key=${name} class=${on ? '' : 'off'} data-tb-opt-event=${name}>
             <td><${Switch} checked=${on} disabled=${!canWrite} aria-label=${`Send the ${label} message`}
               onChange=${(event) => set(eventKey(name, 'enabled'), event.currentTarget.checked)} /></td>
-            <th scope="row" class="tb-opt-when" title=${title}>${label}</th>
+            <td class="tb-opt-when" title=${title}>${label}</td>
             ${EVENT_TO.map((who) => html`<td key=${who}><${Check} checked=${to.includes(who)} disabled=${!canWrite}
               aria-label=${`${label}: ${RECIPIENT_LABEL[who]}`}
               onChange=${(event) => set(eventKey(name, 'to'), event.currentTarget.checked ? [...to, who] : to.filter((r) => r !== who))} /></td>`)}
             <td><${Source} view=${view} draft=${draft} saved=${saved} keys=${[eventKey(name, 'enabled'), eventKey(name, 'to')]}
-              canWrite=${canWrite} onReset=${() => reset([`events.${name}.`])} label=${`the ${label} message`} /></td>
+              canWrite=${canWrite} onReset=${() => reset([`events.${name}.`])} label=${`the ${label} message`} compact=${true} /></td>
           </tr>`;
         })}</tbody>
       </table>
@@ -198,7 +200,7 @@ function EventsSection({ view, draft, saved, canWrite, set, reset, setMany }) {
 function ColumnsTab({ group, view, draft, saved, columns, canWrite, set, reset, actions, focusColumn }) {
   const naming = useColumnNaming(group, canWrite ? actions : null);
   const checked = effectiveOf(view, draft, 'idle.check_columns').value || [];
-  const builtin = (label, idle) => html`<tr class="tb-opt-builtin"><th scope="row">${label}</th><td class="ui-hint">${idle}</td><td class="ui-hint">built-in</td></tr>`;
+  const builtin = (label, idle) => html`<tr class="tb-opt-builtin"><td>${label}</td><td class="ui-hint">${idle}</td><td class="ui-hint">built-in</td></tr>`;
   return html`<section class="tb-opt-section" data-tb-opt-section="columns" aria-label="Columns">
     ${naming.dialog}
     <table class="ui-compact tb-opt-columns">
@@ -207,7 +209,7 @@ function ColumnsTab({ group, view, draft, saved, columns, canWrite, set, reset, 
         ${builtin('Next · Ideas', '—')}
         ${builtin('In progress', 'checked')}
         ${columns.map((column) => html`<tr key=${column.slug} data-tb-opt-column=${column.slug} class=${focusColumn === column.slug ? 'focus' : ''}>
-          <th scope="row">${column.label} <span class="ui-hint">${column.slug}</span></th>
+          <td>${column.label} <span class="ui-hint">${column.slug}</span></td>
           <td><${Check} checked=${!checked.includes(column.slug)} disabled=${!canWrite}
             title=${`Ticked, a task in ${column.label} never stalls: its agent waits on a review or CI`}
             onChange=${(event) => set('idle.check_columns', event.currentTarget.checked ? checked.filter((s) => s !== column.slug) : [...checked, column.slug])}>skip<//></td>
@@ -219,10 +221,13 @@ function ColumnsTab({ group, view, draft, saved, columns, canWrite, set, reset, 
     </table>
     <p class="ui-hint tb-opt-foot">
       ${columns.length} of ${COLUMNS_CAP} custom columns. Adding, renaming, moving and removing a column applies at once
-      (<code>taskboard columns …</code>); removing one moves its tasks back to Next. Skip saves with the options.
+      (<code>taskboard columns …</code>); removing one moves its tasks back to Next. Skip saves with the options.</p>
+    <div class="tb-opt-col-foot">
+      ${canWrite && html`<${AddColumnButton} naming=${naming} columns=${columns} />`}
+      <span class="spacer"></span>
+      <span class="ui-hint">Skip:</span>
       <${Source} view=${view} draft=${draft} saved=${saved} keys=${['idle.check_columns']} canWrite=${canWrite} onReset=${reset} label="the checked columns" />
-    </p>
-    ${canWrite && html`<${AddColumnButton} naming=${naming} columns=${columns} />`}
+    </div>
   </section>`;
 }
 

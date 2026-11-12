@@ -791,7 +791,8 @@ with the board, so a [linked node's board](#across-linked-nodes) has its own
 and they read the same there. A board stores only what it sets. Every value
 it leaves unset is inherited, from the operator's global config where there
 is one, else from the built-in default, and every read says where each value
-comes from.
+comes from. In the dashboard they are the board's
+[⚙ Board options](#board-options-in-the-dashboard) drawer.
 
 ```
 $ tclaude agent taskboard options show crew
@@ -1207,9 +1208,13 @@ dependencies. Deleting a group deletes its board.
 Each group card on the Groups tab has a **Task board** section (in wizard mode,
 the **Quest board**), below its Agents and Resources sections.
 
-- The section line shows the number of live tasks. Open, the ＋▾ add button
-  and the List | Lanes switch sit on a row below it; folded, the ＋▾ moves up
-  onto the section line. The count's tooltip carries the breakdown, for
+- The section line shows the number of live tasks. Open, the ＋▾ add button,
+  the List | Lanes switch and, last, ⚙ *Board options* sit on a row below it;
+  folded, the ＋▾ and an icon-only ⚙ move up onto the section line. Beside the
+  count, the section line says what the board's
+  [options](#board-options-in-the-dashboard) change: *⏱ idle check on* while
+  the idle check runs there, and *✉ 2 messages changed* when the board changes
+  the messages it sends. The count's tooltip carries the breakdown, for
   example `5 · 1 waiting on you · 1 needs you · 1 in progress · 2 next · 1 idea`.
   *Waiting on you* counts the open tasks assigned to the operator, and
   the section line shows it as a tag beside the count. *Needs you* counts the
@@ -1404,6 +1409,43 @@ board.
 With *reduce motion* set in your system, the scroll jumps and the flash only
 fades.
 
+### Board options in the dashboard
+
+⚙ *Board options* opens a drawer on the right, over the board, so the board
+stays in view. It has two tabs:
+
+- **Triggers**: the [idle check](#idle-without-report) (its switch, the grace
+  period, the nudge, who is told, and the custom columns whose tasks are not
+  checked) and the [board's messages](#the-boards-messages), one row per event
+  with its switch and a box per recipient. *all off* turns every message off;
+  *↺ defaults* puts them all back.
+- **Columns**: the board's columns, and for each custom column whether its
+  tasks are skipped by the idle check (`idle.check_columns`). A custom
+  column's ⋯ renames, moves or removes it, and *＋ column* adds one. Those
+  column changes apply at once, as on the board; the rest of the drawer saves
+  with *Save*.
+
+Every value says where it comes from: *default*, *global* (the operator's
+`taskboard.*` config) or *set on this board*, with the value it would inherit
+beside it. ↺ makes a value the board sets inherit again. A change not yet
+saved has a dot, and the footer counts them. *Save* replaces the board's
+options in one change (`options set` and `reset` do the same key by key);
+*Cancel*, Esc, ✕ or a click beside the drawer ask before they drop unsaved
+changes. When the options changed elsewhere while the drawer was open (the
+CLI, another viewer), it says so, and *Save* puts your changes over the newer
+options, for you to check and save again. When `taskboard.idle_grace` is `0`,
+the idle check's switch is greyed and the drawer says the check is off on
+every board.
+
+Without `taskboard.write` on the board, as on a linked node's board that
+granted you only `taskboard.read`, the drawer is read-only and says so, for
+example *Read-only: no taskboard.write on node-b*. A linked node's board reads
+and saves its options through that node, under its grants.
+
+The link `/groups?board-options=<group>` opens the drawer on a board, and
+`#idle`, `#events` or `#columns` after it scrolls to that part. A linked node's
+board is `?board-options=<node-id>:<group>`. Back closes the drawer.
+
 ### A task's link
 
 Every task has its own dashboard link:
@@ -1509,7 +1551,9 @@ A custom column's head has a ⋯ with *Rename…*, *Move left*, *Move right* and
 another. They are `taskboard columns rename`, `move`, `add` and `rm`, and need
 `taskboard.columns`. Every hideable column's ⋯ (custom ones, *Ideas*, *Done*)
 also has *Hide for me*, and for a viewer who manages the columns *Hide on the
-board* and, on a custom column, *Cordon* or *Lift the cordon*. The toolbar's
+board* and, on a custom column, *Cordon* or *Lift the cordon*, then *Column
+in Board options ↗*, which opens the board's options at that column. The
+toolbar's
 *Columns ▾* lists the same choices for every column, and brings a hidden one
 back. See [Hiding and cordoning columns](#hiding-and-cordoning-columns). In the *List*, the *State* says the column, and a row's ⋯
 *Move to…* opens the stage picker, where you can move the task into a column,
@@ -1673,7 +1717,7 @@ those drags aren't accepted in the lanes.
 | `columns add` | `POST /v1/groups/{g}/taskboard/columns {"label","slug"?,"before"?}` |
 | `columns rename` / `move` | `PATCH /v1/groups/{g}/taskboard/columns/{slug} {"label"?,"before"?,"to_end"?}` |
 | `columns rm` | `DELETE /v1/groups/{g}/taskboard/columns/{slug}` → `{group, columns, cap, moved:[tk_…]}` |
-| `options show` | `GET /v1/groups/{g}/taskboard/options` → `{group, options, resolved, globals, version, updated_by, updated_at, keys}`: `options` is what the board sets, `resolved` what is in force, each value as `{value, source}` with source `default`, `global` or `board`; `resolved.events` lists every event as `{name, label, enabled, to}` |
+| `options show` | `GET /v1/groups/{g}/taskboard/options` → `{group, options, resolved, inherited, globals, version, updated_by, updated_at, keys}`: `options` is what the board sets, `resolved` what is in force, each value as `{value, source}` with source `default`, `global` or `board`; `resolved.events` lists every event as `{name, label, enabled, to}`. `inherited` has the shape of `resolved` and is what each value would be if the board set nothing: what a reset falls back to |
 | `options set` / `reset` | `PATCH /v1/groups/{g}/taskboard/options {"set":{"idle.grace":"10m","events.comment.enabled":"off",…},"reset":["idle.tell"\|"idle"\|"all"],"version"?}`: resets first, then sets, in one change |
 | (dashboard) | `PUT /v1/groups/{g}/taskboard/options {"options":{"idle":{…}},"version":n}`: replaces the whole document (an unknown key is a 400); a `version` other than the stored one answers 409 `stale` with the `current` options. A `PATCH` on a document written by a newer tclaude that this one cannot read answers 409 `unreadable` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
@@ -1746,5 +1790,7 @@ forms as `--ref`. The CLI prefixes `--from-awb` ids with `awb:` and
 
 `GET /v1/taskboard/context` is what the dashboard reads. For every group whose
 board the caller can read, it returns the counts, up to 50 live rows (without
-bodies) and the 8 most recently closed tasks. A group the caller cannot read is
+bodies) and the 8 most recently closed tasks, and `options`, a summary of the
+board's options: `{version, idle_active, idle_globally_off, idle_source, set}`,
+where `set` lists the option keys the board sets. A group the caller cannot read is
 left out entirely, not listed as empty.
