@@ -4334,6 +4334,8 @@ details.cost-filter-menu[open] > summary::before { content: none; }
   display: inline-flex; gap: 4px; opacity: 0.4; position: relative;
 }
 tr:hover .row-actions { opacity: 1; }
+/* An open ⋯ menu is never see-through, wherever the pointer is. */
+.row-actions:has([aria-expanded="true"]) { opacity: 1; }
 /* Row buttons are the standard .ui-btn.ui-sm (ui.css), icons .ui-btn-icon;
    a delete is the quiet .ui-btn-ghost.ui-btn-danger, so a red frame doesn't
    repeat down every row. A reversible demotion (retire, disable, pause) is a
@@ -18938,11 +18940,10 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-row .tb-reason { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
 /* The state pill's focus tooltip keeps a multiline block reason's breaks. */
 .tb-state-wrap:focus::after { white-space: pre-line; }
-/* A closed row is dimmed, but not through its title's hover card: opacity
-   on an ancestor would make the card see-through and trap it in that
-   ancestor's stacking context, so the title cell dims around the card. */
-.tb-row.tb-closed > td:not(.tb-title-cell), .tb-row.tb-closed .tb-title-box > :not(.tb-task-hover),
-.tb-row.tb-closed .tb-task-hover > .tb-title { opacity: 0.85; }
+/* A closed row is dimmed by colour, not opacity: opacity on a cell would
+   make its ⋯ menu and its title's hover card see-through, and trap them in
+   that cell's stacking context under the rows below (operator). */
+.tb-row.tb-closed > td, .tb-row.tb-closed .tb-title { color: #7d8590; }
 .tb-closed-table { margin-top: 4px; }
 .tb-history, .tb-more { margin: 6px 8px 0; font-size: 11.5px; color: #7d8590; }
 .tb-history-note { color: #6e7681; }
@@ -19141,6 +19142,9 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-epic-dim { opacity: 0.28; }
 .tb-epic-dim:hover, .tb-epic-dim:focus-within { opacity: 0.6; }
 .tb-epic-dim.tb-dragging { opacity: 0.45; }
+/* A dimmed task with its ⋯ menu open lights fully, so the menu is opaque
+   and not stacked under the tasks after it. */
+.tb-epic-dim:has([aria-expanded="true"]) { opacity: 1; }
 /* The strip of open epics, above the stage columns. */
 .tb-epic-strip { display: flex; gap: 8px; align-items: stretch; margin: 0 0 8px; padding: 7px; border: 1px solid #30363d; border-radius: 6px;
   background: #0f141a; overflow-x: auto; }
