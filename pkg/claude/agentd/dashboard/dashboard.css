@@ -18848,8 +18848,6 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 
 /* ── Group Task board (groups-taskboard.js, docs/taskboard.md) ── */
 .tb-counts { display: inline-flex; align-items: baseline; font-size: 10.5px; color: #6e7681; font-variant-numeric: tabular-nums; white-space: pre; }
-.tb-count-needs-you { color: #e3b341; font-weight: 600; }
-.group-taskboard-chip { font-size: 11px; color: #7d8590; white-space: nowrap; }
 .tb-board { margin: 0 0 6px; }
 .tb-table { font-size: 12.5px; }
 /* A bounded auto-width table (ui.css .ui-table-auto): every column as wide
@@ -19084,7 +19082,6 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-who-operator .tb-who-name { color: #d2a8ff; font-weight: 600; }
 .ui-tag.tb-state-waiting { border-color: #8957e5; color: #d2a8ff; }
 .ui-tag.tb-waiting-tag { margin-left: 6px; border-color: #8957e5; color: #d2a8ff; font-size: 11px; }
-.tb-count-waiting-on-you { color: #d2a8ff; }
 .tb-lane-state-working, .tb-lane-state-awaiting { color: #3fb950; }
 .tb-lane-group { display: flex; align-items: baseline; gap: 8px; min-width: var(--tb-lane-min, 620px); box-sizing: border-box; padding: 4px 10px; border-top: 1px solid #21262d; background: #0d1117; }
 .tb-lane-group .tb-lane-fold { margin-left: auto; font-size: 11px; }

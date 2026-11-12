@@ -1,6 +1,5 @@
 // groups-taskboard.js -- the Task board section of a group card (wizard:
-// Quest board), and its counts on the group's summary line
-// (docs/taskboard.md, tcl-o1tzq6, tcl-n7i6dt). The queue in the operator's
+// Quest board) (docs/taskboard.md, tcl-o1tzq6, tcl-n7i6dt). The queue in the operator's
 // order, then the Ideas band, each row with its ref chip, who holds it, its
 // state, a block reason and its dependencies; under them the burst capture
 // box and a history line that unfolds the recently closed tasks.
@@ -52,7 +51,7 @@ import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } fro
 import { agentLink, jumpToTask } from './cross-links.js';
 import { closeTaskRoute, copyLinkItem, dropTaskRoute, openTaskRoute, sameTask, TaskLink, taskRoute } from './task-route.js';
 import {
-  COLUMN_STATE, actorAgentId, columnLabel, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountParts, taskboardCountsText,
+  COLUMN_STATE, actorAgentId, columnLabel, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountsText,
   useTaskboardEntry,
 } from './taskboard-context.js';
 import { ColGroup } from './table-kit.js';
@@ -1234,30 +1233,13 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   <//><//>`;
 }
 
-// TaskboardCounts is the section head's total; the columns (and the group's
-// summary line) show the breakdown, which the tooltip carries too.
+// TaskboardCounts is the section head's total; the columns show the
+// breakdown, which the tooltip carries too.
 // The tasks waiting on the operator stand out beside it.
 function TaskboardCounts({ counts, who = 'you', columns = [] }) {
   const waiting = counts.waiting_on_you || 0;
   return html`<span class="tb-counts" title=${taskboardCountsText(counts, who, columns)}>
     <span class=${`gf-count${counts.live ? '' : ' zero'}`}>${counts.live || 0}</span>
     ${waiting > 0 && html`<span class="ui-tag tb-waiting-tag" data-tb-waiting=${waiting}>${waiting} waiting on ${who}</span>`}
-  </span>`;
-}
-
-// TaskboardSummaryChip carries the counts on the group's summary line, so a
-// folded group still says what is on its board. Nothing when it is empty.
-export function TaskboardSummaryChip({ group: shown, source: ownSource = taskboardContext, boards = nodeTaskboard }) {
-  const group = ownBoardGroup(shown);
-  const { source } = boardOf(group, ownSource, null, boards);
-  const entry = useTaskboardEntry(group.name, source);
-  if (!entry || !entry.counts?.live) return null;
-  const who = operatorName(group);
-  const parts = taskboardCountParts(entry.counts, who, entry.columns);
-  const wizard = isWizardActive();
-  return html`<span class="group-taskboard-chip" data-taskboard-chip=${shown.name} title=${`${wizard ? 'Quest board' : 'Task board'}: ${taskboardCountsText(entry.counts, who, entry.columns)}`}>
-    ${wizard ? 'quest board' : 'task board'}: ${parts.length
-      ? parts.map((part, i) => html`<span key=${part.key} class=${`tb-count tb-count-${part.key}`}>${i ? ' · ' : ''}${part.text}</span>`)
-      : `${entry.counts.live}`}
   </span>`;
 }

@@ -34,8 +34,8 @@ function fetchWith(body, status = 200) {
   return { calls, fetchImpl };
 }
 
-async function mountSection(harness, { group, context, status = 200, withChip = false }) {
-  const [{ TaskboardSection, TaskboardSummaryChip }, { createTaskboardContextSource }] = await Promise.all([
+async function mountSection(harness, { group, context, status = 200 }) {
+  const [{ TaskboardSection }, { createTaskboardContextSource }] = await Promise.all([
     harness.importDashboardModule('js/groups-taskboard.js'),
     harness.importDashboardModule('js/taskboard-context.js'),
   ]);
@@ -46,7 +46,6 @@ async function mountSection(harness, { group, context, status = 200, withChip = 
   const source = createTaskboardContextSource({ fetchImpl });
   const snapshot = { groups: [group] };
   const mounted = await harness.mount(harness.html`<div>
-    ${withChip && harness.html`<${TaskboardSummaryChip} group=${group} source=${source} />`}
     <${TaskboardSection} group=${group} snapshot=${snapshot} source=${source} />
   </div>`);
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
@@ -58,7 +57,7 @@ const crew = (name) => ({ name, members: [{ agent_id: 'agt_builder', title: 'bui
 test('a board that needs the operator opens, lists the queue then the ideas, and folds to one line', async (t) => {
   const group = crew('tb-open');
   const harness = await createPreactHarness(t);
-  const { container, calls } = await mountSection(harness, { group, context: { groups: [board('tb-open')] }, withChip: true });
+  const { container, calls } = await mountSection(harness, { group, context: { groups: [board('tb-open')] } });
   assert.deepEqual(calls, ['/v1/taskboard/context']);
   const section = container.querySelector('[data-fused-taskboard="tb-open"]');
   assert.ok(section, 'the section is drawn');
@@ -68,8 +67,6 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   assert.equal(section.querySelector('.gf-section-actions'), null, 'open, the title line carries only the label and the total');
   const toolbar = [...section.querySelector('.gf-title-row').querySelectorAll('[data-taskboard-new], .tb-view')];
   assert.ok(toolbar.length >= 2 && toolbar[0].matches('[data-taskboard-new]'), 'the toolbar row: the add button, then the view switch');
-  assert.equal(container.querySelector('[data-taskboard-chip="tb-open"]').textContent.replace(/\s+/g, ' ').trim(),
-    'task board: 1 needs you · 1 in progress · 2 next · 1 idea');
 
   // Auto-open: something needs the operator.
   const titles = [...section.querySelectorAll('tr.tb-row .tb-title')].map((n) => n.textContent);
@@ -147,20 +144,18 @@ test('a quiet board starts folded; the wizard calls it the Quest board', async (
 
 test('the feature off or a hidden group draws nothing', async (t) => {
   const harness = await createPreactHarness(t);
-  const off = await mountSection(harness, { group: crew('tb-off'), context: { error: 'feature_disabled' }, status: 404, withChip: true });
+  const off = await mountSection(harness, { group: crew('tb-off'), context: { error: 'feature_disabled' }, status: 404 });
   assert.equal(off.container.querySelector('[data-fused-taskboard]'), null);
-  assert.equal(off.container.querySelector('[data-taskboard-chip]'), null);
   assert.equal(off.source.status.value, 'unavailable');
 
-  const hidden = await mountSection(harness, { group: crew('tb-hidden'), context: { groups: [board('someone-else')] }, withChip: true });
+  const hidden = await mountSection(harness, { group: crew('tb-hidden'), context: { groups: [board('someone-else')] } });
   assert.equal(hidden.container.querySelector('[data-fused-taskboard]'), null);
-  assert.equal(hidden.container.querySelector('[data-taskboard-chip]'), null);
 
 });
 
 test('a linked node\'s group reads its board from that node, read-only without taskboard.write', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ TaskboardSection, TaskboardSummaryChip, peerWrites }, { createTaskboardContextSource }] = await Promise.all([
+  const [{ TaskboardSection, peerWrites }, { createTaskboardContextSource }] = await Promise.all([
     harness.importDashboardModule('js/groups-taskboard.js'),
     harness.importDashboardModule('js/taskboard-context.js'),
   ]);
@@ -171,14 +166,12 @@ test('a linked node\'s group reads its board from that node, read-only without t
   const remoteSource = createTaskboardContextSource({ fetchImpl: remote.fetchImpl });
   const peer = { ...crew('tb-peer'), fleet_node: { id: 'inst_forge', name: 'forge', local: false } };
   const mounted = await harness.mount(harness.html`<div>
-    <${TaskboardSummaryChip} group=${peer} source=${createTaskboardContextSource({ fetchImpl: local.fetchImpl })} boards=${boards} />
-    <${TaskboardSection} group=${peer} snapshot=${{ groups: [peer] }} boards=${boards} />
+    <${TaskboardSection} group=${peer} snapshot=${{ groups: [peer] }} source=${createTaskboardContextSource({ fetchImpl: local.fetchImpl })} boards=${boards} />
   </div>`);
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.ok(asked.every((node) => node === 'inst_forge') && asked.length > 0, 'the board is read from the group\'s node');
   assert.deepEqual(local.calls, [], 'this node\'s context is not read for a peer group');
   assert.ok(mounted.container.querySelector('[data-fused-taskboard="tb-peer"]'), 'the peer group draws its board');
-  assert.ok(mounted.container.querySelector('[data-taskboard-chip="tb-peer"]'));
   assert.equal(mounted.container.querySelector('[data-taskboard-new]'), null, 'no peer view with taskboard.write: read-only');
 
   assert.equal(peerWrites(null, 'crew'), false);

@@ -10,7 +10,7 @@ import (
 
 // taskboard_context.go is the dashboard's read of every task board the caller
 // can see (tcl-o1tzq6, docs/taskboard.md): per group, the counts its folded
-// section and summary line show and the rows its open section lists. The
+// section shows and the rows its open section lists. The
 // Groups tab polls GET /v1/taskboard/context alongside the snapshot, as it
 // does /v1/process/context.
 //
