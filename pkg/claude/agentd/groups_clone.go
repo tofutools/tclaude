@@ -61,6 +61,9 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		AttachmentLabel *string                           `json:"attachment_label,omitempty"`
 		MaxMembers      *int                              `json:"max_members,omitempty"`
 		RepositoryClone *groupRepositoryClone             `json:"repository_clone,omitempty"`
+		// NoBoardOptions leaves the source board's setup (options, custom
+		// columns) out; by default the clone has it.
+		NoBoardOptions bool `json:"no_board_options,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -430,12 +433,31 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	// The board's setup: options and custom columns, never its tasks.
+	var boardWarnings []string
+	boardCopied := false
+	if !body.NoBoardOptions {
+		if g, err := db.GetAgentGroupByID(newGroupID); err == nil && g != nil {
+			if boardWarnings, err = copyTaskboardSetup(src, g, "clone"); err != nil {
+				slog.Warn("groups clone: copy board setup failed", "group", newName, "error", err)
+				boardWarnings = append(boardWarnings, "board options not copied: "+err.Error())
+			} else if tb, _ := db.GroupTaskboardSetup(newGroupID); tb != nil {
+				boardCopied = true
+			}
+		}
+	}
+
+	out := map[string]any{
 		"group":         newName,
 		"src_group":     src.Name,
 		"members":       results,
 		"owners_copied": ownersCopied,
-	})
+		"board_copied":  boardCopied,
+	}
+	if len(boardWarnings) > 0 {
+		out["board_warnings"] = boardWarnings
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // nextGroupCloneName picks the smallest free `<base>-c-<N>` slot

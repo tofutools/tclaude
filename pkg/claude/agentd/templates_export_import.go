@@ -334,6 +334,10 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 		agents[i] = a
 	}
 	body.Agents = agents
+	// The board setup: what this node's boards cannot take is left out.
+	var boardWarnings []string
+	body.Taskboard, boardWarnings = sanitizeTaskboardSetup(body.Taskboard, nil)
+	warnings = append(warnings, boardWarnings...)
 	return body, warnings
 }
 
@@ -504,6 +508,10 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 	}
 	asName := strings.TrimSpace(r.URL.Query().Get("as"))
 	update := r.URL.Query().Get("update") == "true"
+	// The template's board setup comes along unless left out.
+	if queryFalse(r.URL.Query().Get("board_options")) {
+		env.Template.Taskboard = nil
+	}
 
 	res, existed, fail := importTemplateEnvelope(caller, env, asName, update, httpTemplateOwnerScopesGate(w, r))
 	if fail != nil {

@@ -71,6 +71,10 @@ type GroupTemplate struct {
 	// declare the narrowing once instead of it being re-applied by hand after
 	// every deploy.
 	OwnerScopesJSON string
+	// TaskboardJSON is the board setup (groupexport.Taskboard as JSON) an
+	// instantiated group is born with: its board options and custom
+	// columns, never tasks. "" = none.
+	TaskboardJSON string
 }
 
 // WorkPatternEntry is one routed briefing message in a template's work
@@ -351,10 +355,10 @@ func CreateGroupTemplate(t *GroupTemplate) (int64, error) {
 
 	now := dbTime(time.Now())
 	res, err := tx.Exec(
-		`INSERT INTO group_templates (name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, owner_scopes_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO group_templates (name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, owner_scopes_json, taskboard, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Name, t.Descr, t.DefaultContext, t.PerAgentWorktrees, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
-		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, t.OwnerScopesJSON, now, now)
+		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, t.OwnerScopesJSON, t.TaskboardJSON, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrGroupTemplateNameTaken
@@ -391,10 +395,10 @@ func UpdateGroupTemplate(t *GroupTemplate) error {
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.Exec(
-		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, per_agent_worktrees = ?, work_pattern = ?, process = ?, rhythms = ?, wave_max_wait = ?, owner_scopes_json = ?, updated_at = ?
+		`UPDATE group_templates SET name = ?, descr = ?, default_context = ?, per_agent_worktrees = ?, work_pattern = ?, process = ?, rhythms = ?, wave_max_wait = ?, owner_scopes_json = ?, taskboard = ?, updated_at = ?
 		 WHERE id = ?`,
 		t.Name, t.Descr, t.DefaultContext, t.PerAgentWorktrees, workPatternToJSON(t.WorkPattern), processToJSON(t.Process),
-		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, t.OwnerScopesJSON, dbTime(time.Now()), t.ID)
+		rhythmsToJSON(t.Rhythms), t.WaveMaxWait, t.OwnerScopesJSON, t.TaskboardJSON, dbTime(time.Now()), t.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrGroupTemplateNameTaken
@@ -460,7 +464,7 @@ func GetGroupTemplate(name string) (*GroupTemplate, error) {
 		return nil, err
 	}
 	t, err := scanGroupTemplate(d.QueryRow(
-		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, owner_scopes_json, created_at, updated_at
+		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, owner_scopes_json, taskboard, created_at, updated_at
 		 FROM group_templates WHERE name = ?`, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -481,7 +485,7 @@ func GetGroupTemplateByID(id int64) (*GroupTemplate, error) {
 		return nil, err
 	}
 	t, err := scanGroupTemplate(d.QueryRow(
-		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, owner_scopes_json, created_at, updated_at
+		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, owner_scopes_json, taskboard, created_at, updated_at
 		 FROM group_templates WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -503,7 +507,7 @@ func ListGroupTemplates() ([]*GroupTemplate, error) {
 		return nil, err
 	}
 	rows, err := d.Query(
-		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, owner_scopes_json, created_at, updated_at
+		`SELECT id, name, descr, default_context, per_agent_worktrees, work_pattern, process, rhythms, wave_max_wait, owner_scopes_json, taskboard, created_at, updated_at
 		 FROM group_templates ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -610,7 +614,7 @@ func scanGroupTemplate(s rowScanner) (*GroupTemplate, error) {
 	var t GroupTemplate
 	var workPattern, process, rhythms string
 	var createdAt, updatedAt dbTimestamp
-	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &t.PerAgentWorktrees, &workPattern, &process, &rhythms, &t.WaveMaxWait, &t.OwnerScopesJSON, &createdAt, &updatedAt); err != nil {
+	if err := s.Scan(&t.ID, &t.Name, &t.Descr, &t.DefaultContext, &t.PerAgentWorktrees, &workPattern, &process, &rhythms, &t.WaveMaxWait, &t.OwnerScopesJSON, &t.TaskboardJSON, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	t.CreatedAt = createdAt.Time()

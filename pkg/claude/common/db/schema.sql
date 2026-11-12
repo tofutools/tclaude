@@ -436,7 +436,7 @@ CREATE TABLE "group_templates" (
 			created_at      INTEGER NOT NULL,
 			updated_at      INTEGER NOT NULL
 		, work_pattern TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', rhythms TEXT NOT NULL DEFAULT '', wave_max_wait INTEGER NOT NULL DEFAULT 0, per_agent_worktrees INTEGER NOT NULL DEFAULT 0, owner_scopes_json TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144)) STRICT;
+			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144), taskboard TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TRIGGER usage_profile_assignments_template_gone
 			AFTER DELETE ON group_templates BEGIN

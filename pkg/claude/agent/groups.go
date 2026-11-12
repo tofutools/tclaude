@@ -1346,7 +1346,9 @@ type groupsCloneParams struct {
 	Source   string `pos:"true" help:"Source group to clone"`
 	NewName  string `pos:"true" optional:"true" help:"Optional new group name (defaults to <source>-c-<N>)"`
 	NoAgents bool   `long:"no-agents" help:"Clone only the group's settings + owners — do NOT clone the member agents. The new group comes up with no members."`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	// NoBoardOptions leaves the board's setup out (docs/taskboard.md).
+	NoBoardOptions bool   `long:"no-board-options" help:"Leave the task board's setup (options, custom columns; never tasks) out of the clone; it is copied by default"`
+	AskHuman       string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsCloneCmd() *cobra.Command {
@@ -1364,7 +1366,8 @@ func groupsCloneCmd() *cobra.Command {
 			"Per-conv permissions on each member are copied to the clone (best-effort).\n\n" +
 			"The new group always carries every source setting — default directory, " +
 			"description, startup context, environment, attachment, default profile, max-members cap and the notify " +
-			"switch.\n\n" +
+			"switch, and its task board's setup (options and custom columns, never tasks) unless you pass " +
+			"--no-board-options.\n\n" +
 			"Pass --no-agents to clone only the group's settings + owners and skip the " +
 			"member agents entirely (the new group comes up with no members).",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -1397,6 +1400,9 @@ func runGroupsClone(p *groupsCloneParams, stdout, stderr io.Writer) int {
 	}
 	if p.NoAgents {
 		body["no_clone_members"] = true
+	}
+	if p.NoBoardOptions {
+		body["no_board_options"] = true
 	}
 	var resp struct {
 		Group        string `json:"group"`

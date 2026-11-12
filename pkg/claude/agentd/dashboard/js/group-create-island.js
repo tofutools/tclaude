@@ -338,6 +338,11 @@ function GroupCreateDialog({
           disabled=${disabled} onChange=${(event) => setField('copyOwners', event.currentTarget.checked)} />
         Copy source owners too
       </label>
+      <label class="cron-create-enabled" title="The task board's options and custom columns, never its tasks">
+        <input id="group-create-copy-board" type="checkbox" checked=${draft.copyBoard !== false}
+          disabled=${disabled} onChange=${(event) => setField('copyBoard', event.currentTarget.checked)} />
+        Copy board options
+      </label>
     ` : null}
     <div class="cron-create-row" id="group-create-template-preview-row" hidden=${!templateMode}>
       <span class="cron-create-label"><${Words} plain="Roster" wizard="Party" /></span>

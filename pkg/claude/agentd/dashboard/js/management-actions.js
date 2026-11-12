@@ -133,10 +133,11 @@ export function createManagementActions(deps) {
       if (!response.ok && response.status !== 204)
         throw new Error((await response.text()) || `HTTP ${response.status}`);
     },
-    async importTemplate(raw, { as = '', update = false } = {}) {
+    async importTemplate(raw, { as = '', update = false, board = true } = {}) {
       const query = new URLSearchParams();
       if (as) query.set('as', as);
       if (update) query.set('update', 'true');
+      if (!board) query.set('board_options', 'false');
       const response = await fetch(
         `/api/templates/import${query.size ? `?${query}` : ''}`,
         {
@@ -561,11 +562,13 @@ export function createManagementActions(deps) {
     await refresh();
     return result;
   }
-  async function snapshotTemplateFromGroup(group, name, update, node = '') {
+  async function snapshotTemplateFromGroup(group, name, update, node = '', board = true) {
     const result = await templates.fromGroup({
       group,
       template_name: name,
       update,
+      // The group's board setup rides along unless unticked.
+      ...(board ? {} : { no_board_options: true }),
     }, node);
     state.closeDialog();
     const blank = result.blank_briefs || 0;
@@ -686,8 +689,8 @@ export function createManagementActions(deps) {
     if (!response.ok) throw await pafError(response);
     return response.blob();
   }
-  async function exportGroupArchive(group, format, allowFlagged = false, node = '', workflows = false) {
-    const response = await nodeDownload(node, `/api/groups/${encodeURIComponent(group)}/export${queryString({ format, allow_flagged: allowFlagged, workflows: workflows ? 'own' : '' })}`);
+  async function exportGroupArchive(group, format, allowFlagged = false, node = '', workflows = false, board = true) {
+    const response = await nodeDownload(node, `/api/groups/${encodeURIComponent(group)}/export${queryString({ format, allow_flagged: allowFlagged, workflows: workflows ? 'own' : '', board_options: board ? '' : 'false' })}`);
     if (!response.ok) throw await pafError(response);
     return { blob: await response.blob(), filename: response.headers.get('X-Tclaude-Export-Filename') || dispositionName(response) || `group-${group}.${format}` };
   }
@@ -847,7 +850,7 @@ export function createManagementActions(deps) {
         ...controller,
         snapshots: snapshotsOn(node),
         exportAgentPAF: (choices) => exportAgentPAF(choices, node),
-        exportGroupArchive: (group, format, allowFlagged = false, _node = '', workflows = false) => exportGroupArchive(group, format, allowFlagged, node, workflows),
+        exportGroupArchive: (group, format, allowFlagged = false, _node = '', workflows = false, board = true) => exportGroupArchive(group, format, allowFlagged, node, workflows, board),
       }));
     }
     return nodeActions.get(node);

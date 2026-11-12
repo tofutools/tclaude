@@ -104,7 +104,9 @@ func handleGroupExport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	if !ok {
 		return
 	}
-	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true", classify(peerFromContext(r.Context())) == classHuman, workflows)
+	// The board's setup rides along unless left out (board_options=false).
+	board := !queryFalse(r.URL.Query().Get("board_options"))
+	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true", classify(peerFromContext(r.Context())) == classHuman, workflows, board)
 }
 
 // Archive formats a group export can be written in.
@@ -114,8 +116,8 @@ const (
 )
 
 // serveGroupExport builds the archive and writes it as a file download.
-func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlagged, byHuman bool, workflows []pwf.Bundle) {
-	archive, err := buildGroupExportAs(groupName, format, allowFlagged, byHuman, workflows)
+func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlagged, byHuman bool, workflows []pwf.Bundle, board bool) {
+	archive, err := buildGroupExportAs(groupName, format, allowFlagged, byHuman, workflows, board)
 	if err != nil {
 		if errors.Is(err, db.ErrGroupNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -152,10 +154,14 @@ func serveGroupExport(w http.ResponseWriter, groupName, format string, allowFlag
 // be located is flagged Missing — its DB rows still export.
 // byHuman records allowFlagged as a human's allowance in privacy.json;
 // an agent's allowance passes the export but is not recorded as one.
-func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool, workflows []pwf.Bundle) ([]byte, error) {
+// board carries the board's setup (options, custom columns).
+func buildGroupExportAs(groupName, format string, allowFlagged, byHuman bool, workflows []pwf.Bundle, board bool) ([]byte, error) {
 	exp, err := db.CollectGroupExport(groupName)
 	if err != nil {
 		return nil, err
+	}
+	if !board {
+		exp.Taskboard = nil
 	}
 
 	for i := range exp.Convs {
@@ -522,6 +528,10 @@ type importInspection struct {
 	Confirm *importConfirmation `json:"confirm"`
 	// Findings are this node's own credential scan of the archive.
 	Findings []paf.Finding `json:"findings"`
+	// Taskboard is the board setup the file carries (options, custom
+	// columns), as it would land; absent when it carries none. The import
+	// leaves it out with board_options=false.
+	Taskboard *taskboardSetupView `json:"taskboard,omitempty"`
 }
 
 // convCollision is one imported conversation whose conv-id already
@@ -570,8 +580,13 @@ func inspectGroupImport(archive []byte, asName, into string, landing groupLandin
 	if keep.restrictedPeer {
 		foreignWarnings = append(foreignWarnings, remapImportOperatorMail(exp)...)
 	}
+	// The board's setup is previewed as the file carries it, checked: the
+	// import may still leave it out (board_options=false).
+	board, boardWarnings := sanitizeTaskboardSetup(exp.Taskboard, nil)
+	foreignWarnings = append(foreignWarnings, boardWarnings...)
 
 	insp := &importInspection{
+		Taskboard:        taskboardSetupViewOf(board),
 		CarriedWorkflows: decoded.workflows(),
 		Signatures:       decoded.signatures(),
 		Source:           source,
@@ -856,6 +871,15 @@ func runGroupImport(archive []byte, into, asName, caller string, landing groupLa
 	foreignWarnings = append(foreignWarnings, remapImportForeignSenders(exp, convExistsLocally)...)
 	if keep.restrictedPeer {
 		foreignWarnings = append(foreignWarnings, remapImportOperatorMail(exp)...)
+	}
+	// The board's setup lands checked, or not at all when the import leaves
+	// it out.
+	if keep.noBoard {
+		exp.Taskboard = nil
+	} else {
+		var boardWarnings []string
+		exp.Taskboard, boardWarnings = sanitizeTaskboardSetup(exp.Taskboard, nil)
+		foreignWarnings = append(foreignWarnings, boardWarnings...)
 	}
 
 	targetName := asName

@@ -50,7 +50,7 @@ test('group-create model preserves compatible prefill and clears stale source-ow
     parent: '', descr: '', cwd: '',
     cloneGroup: '', cloneDefaultName: '', clonePlacement: null,
     clonePreset: false,
-    withAgents: false, copyOwners: false,
+    withAgents: false, copyOwners: false, copyBoard: true,
     cwdOrigin: '', workspaceMode: 'existing', repository: '', cloneTransport: 'ssh',
     cloneDestination: '', attachRepository: true, context: '', task: '', maxMembers: '',
     attachmentURL: '', attachmentLabel: '',
@@ -184,6 +184,9 @@ test('group-create model validates and builds exact blank, template, and nested 
       new_name: 'alpha-copy', parent: 'root',
     },
   });
+  // Unticking "Copy board options" leaves the board's setup behind.
+  const bare = model.groupCreateRequest({ ...base, cloneGroup: 'alpha', name: 'alpha-bare', copyBoard: false }, null);
+  assert.equal(bare.body.no_board_options, true);
 });
 
 test('group-create state snapshots each open and invalidates closed generations', async (t) => {

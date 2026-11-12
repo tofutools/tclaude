@@ -15,7 +15,11 @@
 // the bytes on disk — phase 1 ships a zip container.
 package groupexport
 
-import "github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+import (
+	"encoding/json"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+)
 
 // FormatVersion is the current group-export manifest format version. It
 // is written into every export and checked on import: an export whose
@@ -98,6 +102,32 @@ type Export struct {
 	// the group's spawn defaults travel with it. Import creates the missing
 	// ones and never overwrites a local prompt of the same name.
 	SavedPrompts []SavedPrompt `json:"saved_prompts,omitempty"`
+	// Taskboard is the group's board setup (docs/taskboard.md "Board
+	// options"): its options and custom columns, never its tasks. Absent
+	// when the board sets nothing, or the export leaves it out. An older
+	// reader ignores it: losing it widens no authority.
+	Taskboard *Taskboard `json:"taskboard,omitempty"`
+}
+
+// Taskboard is a board's setup: what a group export, a clone and a group
+// template carry of its task board.
+type Taskboard struct {
+	// Options is the board's stored options document (boardopts.Options):
+	// only what the board sets.
+	Options json.RawMessage `json:"options,omitempty"`
+	// Columns are the board's custom columns, in order.
+	Columns []TaskboardColumn `json:"columns,omitempty"`
+	// BuiltinStates are the built-in columns the board hides
+	// ({"ideas":"hidden"}).
+	BuiltinStates map[string]string `json:"builtin_states,omitempty"`
+}
+
+// TaskboardColumn is one custom column of a board.
+type TaskboardColumn struct {
+	Slug  string `json:"slug"`
+	Label string `json:"label"`
+	// State is hidden or cordoned; "" is shown.
+	State string `json:"state,omitempty"`
 }
 
 // SavedPrompt is one saved_prompts row a group's default prompts reference.

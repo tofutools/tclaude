@@ -156,6 +156,7 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [format, setFormat] = useState('paf');
   const [workflows, setWorkflows] = useState(false);
+  const [board, setBoard] = useState(true);
   const [findings, setFindings] = useState(null);
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -165,7 +166,7 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
     setBusy(true);
     setError('');
     try {
-      const { blob, filename } = await actions.exportGroupArchive(descriptor.group, format, !!findings && ack, '', format === 'paf' && workflows);
+      const { blob, filename } = await actions.exportGroupArchive(descriptor.group, format, !!findings && ack, '', format === 'paf' && workflows, board);
       downloadBlob(blob, filename);
       state.closeDialog();
     } catch (e) {
@@ -183,6 +184,8 @@ export function GroupExportDialog({ descriptor, state, actions, confirmDiscard }
       <span>.zip (legacy)<span class="paf-hint ui-hint">For importing into an older tclaude. Conversations on harnesses other than Claude Code export without history.</span></span></label>
     ${format === 'paf' && processesOn() && html`<${Check} id="group-export-workflows" checked=${workflows} disabled=${busy} onChange=${(value) => { setWorkflows(value); setFindings(null); setAck(false); }}
       hint="Its saved processes. An older tclaude cannot import a file that carries workflows.">Carry its workflows</${Check}>`}
+    <${Check} id="group-export-board" checked=${board} disabled=${busy} onChange=${setBoard}
+      hint="Its task board's options and custom columns, never its tasks.">Board options</${Check}>
     ${findings && html`<${FindingsPanel} findings=${findings} />
       <${Check} id="group-export-ack" checked=${ack} onChange=${setAck}>Export anyway; I have checked the findings</${Check}>`}
     <div class="cron-create-error ui-error-box" role="alert">${error}</div>
@@ -269,6 +272,22 @@ export function ImportConfirmList({ confirm, overrides, setOverrides, reveal }) 
         ${shown[item.id]?.error && html`<div class="gi-warn">⚠ ${shown[item.id].error}</div>`}
       </div>`)}
     </div>`)}
+  </div>`;
+}
+
+// BoardSetupPreview shows the task board setup a file or template carries
+// (docs/taskboard.md "Carrying a board's setup") with the one checkbox that
+// leaves it out: its custom columns and the option keys it sets.
+export function BoardSetupPreview({ setup, keep, setKeep, id = 'board-setup-preview', disabled = false }) {
+  if (!setup) return null;
+  const columns = (setup.columns || []).map((c) => c.state && c.state !== 'shown' ? `${c.label} (${c.state})` : c.label);
+  const hidden = Object.entries(setup.builtin_states || {}).map(([slug, state]) => `${slug} ${state}`);
+  return html`<div class="paf-box ui-card ui-inset" id=${id}>
+    <${Check} id=${`${id}-keep`} checked=${keep} disabled=${disabled} onChange=${setKeep}
+      hint="Untick to leave the board as a new board starts.">Board options</${Check}>
+    <div class="gi-row"><span class="gi-k">Columns</span><span class="gi-v">${columns.length ? columns.join(', ') : 'none'}</span></div>
+    ${hidden.length > 0 && html`<div class="gi-row"><span class="gi-k">Built-in</span><span class="gi-v">${hidden.join(', ')}</span></div>`}
+    <div class="gi-row"><span class="gi-k">Options</span><span class="gi-v">${(setup.set || []).length ? setup.set.join(', ') : 'none'}</span></div>
   </div>`;
 }
 

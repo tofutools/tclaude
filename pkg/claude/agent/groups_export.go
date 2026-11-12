@@ -31,6 +31,8 @@ type groupsExportParams struct {
 	Format string `long:"format" optional:"true" alts:"paf,zip" help:"Archive format: paf (the default; a group Portable Agent Format file) or zip (the legacy group export archive, for importing into an older tclaude)"`
 
 	AllowFlagged bool `long:"allow-flagged" help:"Export a PAF even when the credential scan flags suspected credentials; inspect before sharing."`
+	// NoBoardOptions leaves the board's setup out (docs/taskboard.md).
+	NoBoardOptions bool `long:"no-board-options" help:"Leave the task board's setup out: its options and custom columns (never its tasks), which the export carries by default"`
 	CarriedWorkflowParams
 }
 
@@ -78,6 +80,9 @@ func runGroupsExport(p *groupsExportParams, stdout, stderr io.Writer) int {
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/export?format=" + format
 	if p.AllowFlagged {
 		path += "&allow_flagged=true"
+	}
+	if p.NoBoardOptions {
+		path += "&board_options=false"
 	}
 	carried := url.Values{}
 	p.addTo(carried)
@@ -132,6 +137,7 @@ type groupsImportParams struct {
 	MemberModel   []string `long:"member-model" optional:"true" help:"Landing model for one member: member=model (repeatable)"`
 
 	ConfirmHistoryLoss bool `long:"confirm-history-loss" help:"Accept landings that cut 25% or more of a member's conversation to fit its landing model; the full history stays in the file and is saved beside the agent."`
+	NoBoardOptions     bool `long:"no-board-options" help:"Leave the file's task board setup (options, custom columns) out; the import lands it by default"`
 	ImportKeepParams
 }
 
@@ -152,6 +158,9 @@ func (p *groupsImportParams) landingQuery() string {
 	}
 	for _, v := range p.MemberModel {
 		q.Add("member_model", v)
+	}
+	if p.NoBoardOptions {
+		q.Set("board_options", "false")
 	}
 	p.addTo(q)
 	if len(q) == 0 {
@@ -339,6 +348,14 @@ func (l groupLanding) summary() string {
 }
 
 // groupInspection is the daemon's analysis of a group archive.
+// listOrNone joins l, or says none.
+func listOrNone(l []string) string {
+	if len(l) == 0 {
+		return "none"
+	}
+	return strings.Join(l, ", ")
+}
+
 type groupInspection struct {
 	Source          string `json:"source"`
 	SourceGroup     string `json:"source_group"`
@@ -369,6 +386,16 @@ type groupInspection struct {
 	FileWarnings     []string          `json:"file_warnings"`
 	Confirm          *importConfirm    `json:"confirm"`
 	CarriedWorkflows []carriedWorkflow `json:"carried_workflows"`
+	// Taskboard is the board setup the file carries (docs/taskboard.md).
+	Taskboard *struct {
+		Columns []struct {
+			Slug  string `json:"slug"`
+			Label string `json:"label"`
+			State string `json:"state"`
+		} `json:"columns"`
+		BuiltinStates map[string]string `json:"builtin_states"`
+		Set           []string          `json:"set"`
+	} `json:"taskboard"`
 }
 
 // refused says why this node would refuse the import as asked.
@@ -411,6 +438,22 @@ func renderGroupInspection(out io.Writer, insp *groupInspection) {
 	}
 	for _, w := range insp.CarriedWorkflows {
 		fmt.Fprintf(out, "  also carries:   workflow %s, not imported here; review it with process-templates import --workflow %s\n", shown(w.Root), shown(w.Key))
+	}
+	if tb := insp.Taskboard; tb != nil {
+		var cols []string
+		for _, c := range tb.Columns {
+			col := shown(c.Label)
+			if c.State != "" {
+				col += " (" + shown(c.State) + ")"
+			}
+			cols = append(cols, col)
+		}
+		opts := "none"
+		if len(tb.Set) > 0 {
+			opts = shownAll(tb.Set)
+		}
+		fmt.Fprintf(out, "  board setup:    columns %s; options %s (leave it out with --no-board-options)\n",
+			listOrNone(cols), opts)
 	}
 
 	if len(insp.Findings) > 0 {

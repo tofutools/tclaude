@@ -30,7 +30,7 @@ import {
 import { harnessBuiltinModeLabel } from './resolved-defaults.js';
 
 import { keepParams } from './paf-model.js';
-import { AgentImportPreview, CarriedWorkflows, ImportConfirmList, ImportOutcome, ImportWarnings, MemberLandings, agentImportParams, historyCutNeedsConfirm, memberCutsToConfirm, offlineImportBlocker } from './paf-dialogs.js';
+import { AgentImportPreview, BoardSetupPreview, CarriedWorkflows, ImportConfirmList, ImportOutcome, ImportWarnings, MemberLandings, agentImportParams, historyCutNeedsConfirm, memberCutsToConfirm, offlineImportBlocker } from './paf-dialogs.js';
 
 const html = htm.bind(h);
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -419,6 +419,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
   const [file, setFile] = useState(null);
   const [as, setAs] = useState('');
   const [update, setUpdate] = useState(false);
+  const [board, setBoard] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -432,7 +433,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
       } catch (err) {
         throw new Error(`not valid JSON: ${message(err)}`);
       }
-      await actions.importTemplate(source, { as: as.trim(), update });
+      await actions.importTemplate(source, { as: as.trim(), update, board });
     } catch (err) {
       setError(message(err));
     } finally {
@@ -445,7 +446,7 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
       id: 'template-import-modal',
       labelledby: 'template-import-title',
       onClose: state.closeDialog,
-      dirty: !!(file || raw || as || update),
+      dirty: !!(file || raw || as || update || !board),
       blocked: busy,
       confirmDiscard,
       guard: { requestClose, registerClose },
@@ -503,6 +504,17 @@ export function TemplateImportDialog({ initialRaw = '', state, actions, confirmD
         /><span class="cron-create-label" style="flex:0 0 auto"
           >Overwrite if it already exists</span
         ></label
+      ><label class="cron-create-row" style="justify-content:flex-start;gap:6px"
+        title="The task board's options and custom columns a group made from it starts with"
+        ><input
+          id="template-import-board"
+          type="checkbox"
+          checked=${board}
+          onChange=${(event) => setBoard(event.currentTarget.checked)}
+          style="width:auto"
+        /><span class="cron-create-label" style="flex:0 0 auto"
+          >Board options, if the file carries them</span
+        ></label
       >
       <div class="cron-create-error ui-error-box" id="template-import-error" role="alert">
         ${error}
@@ -537,6 +549,7 @@ export function TemplateFromGroupDialog({
     descriptor.presetGroup || descriptor.groups[0] || '',
   );
   const [name, setName] = useState(descriptor.presetGroup || '');
+  const [board, setBoard] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const updating = current.templates.some(
@@ -554,7 +567,7 @@ export function TemplateFromGroupDialog({
     }
     setBusy(true);
     try {
-      await actions.snapshotTemplateFromGroup(group, name.trim(), updating, descriptor.node || '');
+      await actions.snapshotTemplateFromGroup(group, name.trim(), updating, descriptor.node || '', board);
     } catch (err) {
       setError(message(err));
     } finally {
@@ -572,7 +585,8 @@ export function TemplateFromGroupDialog({
       onSubmitHotkey: busy ? null : submit,
       dirty:
         name !== (descriptor.presetGroup || '') ||
-        group !== (descriptor.presetGroup || descriptor.groups[0] || ''),
+        group !== (descriptor.presetGroup || descriptor.groups[0] || '') ||
+        !board,
       blocked: busy,
       confirmDiscard,
       guard: { requestClose, registerClose },
@@ -604,7 +618,19 @@ export function TemplateFromGroupDialog({
           spellcheck="false"
           autofocus
           data-select-on-focus=${!!descriptor.presetGroup}
-      /></label>
+      /></label
+      ><label class="cron-create-row" style="justify-content:flex-start;gap:6px"
+        title="The task board's options and custom columns, never its tasks; a group made from the template starts with them"
+        ><input
+          id="template-from-group-board"
+          type="checkbox"
+          checked=${board}
+          onChange=${(event) => setBoard(event.currentTarget.checked)}
+          style="width:auto"
+        /><span class="cron-create-label" style="flex:0 0 auto"
+          >Board options</span
+        ></label
+      >
       <div class="modal-meta">
         Captures the group's roles, owner, per-agent permission grants and
         shared context. Per-agent task briefs come through blank — ${descriptor.node
@@ -852,6 +878,8 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
   const [as, setAs] = useState('');
   const [landing, setLanding] = useState({ harness: '', model: '', members: {} });
   const [confirmCut, setConfirmCut] = useState(false);
+  const [keepBoard, setKeepBoard] = useState(true);
+  useEffect(() => setKeepBoard(true), [file]);
   const [landed, setLanded] = useState(null);
   // What the human changed on the confirm list; the rest stays as previewed.
   const [overrides, setOverrides] = useState({});
@@ -971,7 +999,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
     try {
       const outcome = kind === 'agent'
         ? await actions.importAgentPAF(file, { ...agentImportParams(choices, true, start), ...keepParams(agentPreview?.confirm, overrides) })
-        : await actions.importGroup(file, into.trim(), as.trim(), { ...landing, confirmHistoryLoss: confirmCut }, keepParams(inspection?.confirm, overrides));
+        : await actions.importGroup(file, into.trim(), as.trim(), { ...landing, confirmHistoryLoss: confirmCut }, { ...keepParams(inspection?.confirm, overrides), ...(keepBoard ? {} : { board_options: 'false' }) });
       if (outcome?.warnings?.length || outcome?.kept?.length || outcome?.dropped?.length) setLanded(outcome);
     } catch (err) {
       setError(
@@ -1072,6 +1100,7 @@ export function GroupImportDialog({ state, actions, confirmDiscard, initialFile 
       </div>`}${kind === 'group' && inspection &&
       html`<${GroupImportPreview} inspection=${inspection} into=${into} />
         <${CarriedWorkflows} workflows=${inspection.carried_workflows} file=${file} />
+        <${BoardSetupPreview} id="group-import-board" setup=${inspection.taskboard} keep=${keepBoard} setKeep=${setKeepBoard} disabled=${busy} />
         <${ImportConfirmList} confirm=${inspection.confirm} overrides=${overrides} setOverrides=${setOverrides} reveal=${reveal} />
         <${ImportWarnings} id="group-import-warnings" title="This file will not get" warnings=${inspection.confirm?.can_keep && inspection.confirm.items?.length ? inspection.confirm.warnings : inspection.file_warnings} />
         <${MemberLandings} landings=${inspection.landings} landing=${landing} setLanding=${setLanding} confirmCut=${confirmCut} setConfirmCut=${setConfirmCut} />`}${kind === 'agent' && agentPreview &&

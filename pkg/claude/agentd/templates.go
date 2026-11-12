@@ -12,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
 )
 
 // Group templates — reusable blueprints for instantiating a working
@@ -157,8 +158,11 @@ type templateJSON struct {
 	// only with the reviewer profile" once, instead of it being re-applied by
 	// hand after every deploy.
 	OwnerScopes map[string]PermissionScope `json:"owner_scopes,omitempty"`
-	CreatedAt   string                     `json:"created_at,omitempty"`
-	UpdatedAt   string                     `json:"updated_at,omitempty"`
+	// Taskboard is the board setup (options, custom columns; never tasks)
+	// a group instantiated from the template is born with. Absent = none.
+	Taskboard *groupexport.Taskboard `json:"taskboard,omitempty"`
+	CreatedAt string                 `json:"created_at,omitempty"`
+	UpdatedAt string                 `json:"updated_at,omitempty"`
 }
 
 // templateToJSON projects a db.GroupTemplate onto the wire shape, with
@@ -175,6 +179,7 @@ func templateToJSON(t *db.GroupTemplate) templateJSON {
 		Rhythms:           []rhythmJSON{},
 		WaveMaxWait:       t.WaveMaxWait,
 		OwnerScopes:       ownerScopesWireOmitEmpty(t.OwnerScopesJSON),
+		Taskboard:         templateTaskboard(t.TaskboardJSON),
 	}
 	for _, e := range t.WorkPattern {
 		out.WorkPattern = append(out.WorkPattern, workPatternEntryJSON{SendTo: e.SendTo, Value: e.Value})
@@ -556,6 +561,23 @@ func buildTemplateFromJSON(body templateJSON) (*db.GroupTemplate, *spawnFailure)
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_owner_scopes", err.Error()}
 		}
 		t.OwnerScopesJSON = canonical
+	}
+
+	// The board setup: checked as a board would take it. A template from
+	// outside (an import) was sanitized first, so what fails here is the
+	// caller's own to fix.
+	if body.Taskboard != nil {
+		clean, warnings := sanitizeTaskboardSetup(body.Taskboard, nil)
+		if len(warnings) > 0 {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_taskboard", strings.Join(warnings, "; ")}
+		}
+		if clean != nil {
+			raw, err := json.Marshal(clean)
+			if err != nil {
+				return nil, &spawnFailure{http.StatusBadRequest, "invalid_taskboard", err.Error()}
+			}
+			t.TaskboardJSON = string(raw)
+		}
 	}
 
 	// Rhythms (JOH-244): recurring nudges materialized as group cron jobs at

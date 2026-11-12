@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"slices"
@@ -51,6 +52,9 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		// explicit Save creates it). A preview never touches the DB — no existing
 		// lookup, no create/update — so Update is irrelevant here and ignored.
 		Preview bool `json:"preview"`
+		// NoBoardOptions leaves the group's board setup (options, custom
+		// columns) out of the snapshot; an update then keeps the template's.
+		NoBoardOptions bool `json:"no_board_options,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -90,6 +94,9 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 	// shape as a real create so the client reads it identically.
 	if body.Preview {
 		t, _, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, nil)
+		if body.NoBoardOptions {
+			t.TaskboardJSON = ""
+		}
 		if err := peerProjectFromGroupTemplate(r, g, t, len(members), true, &observedNotChosen); err != nil {
 			writeError(w, http.StatusForbidden, "permission", err.Error())
 			return
@@ -123,6 +130,12 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		}
 
 		t, tracedByName, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, existing)
+		if body.NoBoardOptions {
+			t.TaskboardJSON = ""
+			if existing != nil {
+				t.TaskboardJSON = existing.TaskboardJSON
+			}
+		}
 		if err := peerProjectFromGroupTemplate(r, g, t, len(members), false, &observedNotChosen); err != nil {
 			writeError(w, http.StatusForbidden, "permission", err.Error())
 			return
@@ -608,6 +621,14 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// strictly MORE authority than the group it was traced from.
 		OwnerScopesJSON: g.OwnerScopesJSON,
 	}
+	// The group's board setup (options, custom columns; never tasks).
+	if tb, err := db.GroupTaskboardSetup(g.ID); err != nil {
+		slog.Warn("template from group: board setup unreadable", "group", g.Name, "error", err)
+	} else if tb != nil {
+		if raw, err := json.Marshal(tb); err == nil {
+			t.TaskboardJSON = string(raw)
+		}
+	}
 	existingNames := map[string]bool{}
 	if existing != nil {
 		for _, a := range existing.Agents {
@@ -869,6 +890,10 @@ func peerProjectFromGroupTemplate(r *http.Request, g *db.AgentGroup, t *db.Group
 		return nil
 	}
 	held := peerGroupPermissionGrants(a.peer, g)
+	// The board setup is carried only for a peer that reads the board.
+	if !fedPeerAllows(a.peer, g.ID, PermTaskboardRead) {
+		t.TaskboardJSON = ""
+	}
 	if !slices.Contains(held, PermGroupsSettingsOwnerScopes) && ownerScopesSet(t.OwnerScopesJSON) {
 		if !preview {
 			return fmt.Errorf("group:%s has owner scopes, which a template of it must carry; snapshotting it takes %s there", g.Name, PermGroupsSettingsOwnerScopes)

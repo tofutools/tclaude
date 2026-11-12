@@ -994,6 +994,14 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		// The template's usage profiles become the new group's layer, before
 		// any member spawns into it. Best-effort like the meta writes above.
 		applyTemplateUsageProfiles(tmpl.ID, gid)
+		// The template's board setup (options, custom columns): the new
+		// group's board is born with it. Best-effort like the meta writes.
+		if tb := templateTaskboard(tmpl.TaskboardJSON); tb != nil {
+			warnings, err := applyTaskboardSetup(g, tb, granter)
+			if err != nil || len(warnings) > 0 {
+				slog.Warn("instantiate: board setup not applied whole", "group", spec.groupName, "warnings", warnings, "error", err)
+			}
+		}
 	}
 
 	// Seeded rhythms (JOH-244): materialize the template's recurring nudges as
