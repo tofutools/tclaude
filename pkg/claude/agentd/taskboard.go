@@ -74,6 +74,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardWriteAccess, handleTaskboardMove))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardOwnGate, handleTaskboardStage))
 	registerTaskboardColumnRoutes(mux)
+	registerTaskboardOptionRoutes(mux)
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/status", handleTaskboardTask(taskboardOwnGate, handleTaskboardStatus))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/reopen", handleTaskboardTask(taskboardOwnGate, handleTaskboardReopen))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/archive", handleTaskboardTask(taskboardOwnGate, handleTaskboardArchive))

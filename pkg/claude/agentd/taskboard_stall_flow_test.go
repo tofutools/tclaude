@@ -16,14 +16,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// newTaskboardStallFlow is the assign flow with the worker live in a pane and
+// newTaskboardStallFlow is the assign flow with the worker live in a pane,
+// the idle check on for every board (taskboard.idle_check) and
 // taskboard.idle_grace set to grace.
 func newTaskboardStallFlow(t *testing.T, grace string) *tbAssignHarness {
 	h := newTaskboardAssignFlow(t)
 	require.NoError(t, config.Save(&config.Config{
 		Features:  &config.FeaturesConfig{Taskboard: new(true)},
 		Agent:     &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfTaskboard}},
-		Taskboard: &config.TaskboardConfig{IdleGrace: grace},
+		Taskboard: &config.TaskboardConfig{IdleGrace: grace, IdleCheck: new(true)},
 	}))
 	h.f.HaveAliveSession(h.worker, "tb-worker-session", "tb-worker-pane", h.f.TestCwd("worker"))
 	return h
@@ -198,7 +199,7 @@ func TestTaskboardIdleWithoutReport(t *testing.T) {
 }
 
 // An operator-assigned stall goes to Messages; idle_grace 0 turns the check
-// off.
+// off, even with taskboard.idle_check on.
 func TestTaskboardIdleOperatorAndOff(t *testing.T) {
 	h := newTaskboardStallFlow(t, "1ms")
 	task := h.add("operator's task", "next")
@@ -221,7 +222,7 @@ func TestTaskboardIdleOperatorAndOff(t *testing.T) {
 	require.NoError(t, config.Save(&config.Config{
 		Features:  &config.FeaturesConfig{Taskboard: new(true)},
 		Agent:     &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfTaskboard}},
-		Taskboard: &config.TaskboardConfig{IdleGrace: "0"},
+		Taskboard: &config.TaskboardConfig{IdleGrace: "0", IdleCheck: new(true)},
 	}))
 	time.Sleep(5 * time.Millisecond)
 	agentd.SweepTaskboardIdleForTest(time.Now())

@@ -250,8 +250,13 @@ type TaskboardConfig struct {
 	RetentionDays int `json:"retention_days,omitempty"`
 	// IdleGrace is how long an assignee may sit idle on an open task without
 	// reporting before the task is marked stalled: a Go duration ("5m",
-	// "90s"). Absent or unparsable means 5m; "0" turns the check off.
+	// "90s"). Absent or unparsable means 5m; "0" turns the check off on every
+	// board, whatever the board's own options say. A board may set its own
+	// grace (docs/taskboard.md "Board options").
 	IdleGrace string `json:"idle_grace,omitempty"`
+	// IdleCheck is the idle check's default for a board that does not turn
+	// it on or off itself. Absent means off: a board opts in.
+	IdleCheck *bool `json:"idle_check,omitempty"`
 }
 
 // DefaultTaskboardIdleGrace is taskboard.idle_grace's default.
@@ -267,6 +272,28 @@ func (c *Config) TaskboardIdleGrace() time.Duration {
 		return DefaultTaskboardIdleGrace
 	}
 	return d
+}
+
+// TaskboardIdleGraceSetting is taskboard.idle_grace as the operator set it:
+// ok is false when it is absent or unparsable (a board then inherits the
+// built-in default), and a zero d turns the idle check off everywhere.
+func (c *Config) TaskboardIdleGraceSetting() (d time.Duration, ok bool) {
+	if c == nil || c.Taskboard == nil || strings.TrimSpace(c.Taskboard.IdleGrace) == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(c.Taskboard.IdleGrace))
+	if err != nil || d < 0 {
+		return 0, false
+	}
+	return d, true
+}
+
+// TaskboardIdleCheck is taskboard.idle_check; nil when unset.
+func (c *Config) TaskboardIdleCheck() *bool {
+	if c == nil || c.Taskboard == nil {
+		return nil
+	}
+	return c.Taskboard.IdleCheck
 }
 
 // Default task board retention, in days.

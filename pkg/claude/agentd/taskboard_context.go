@@ -328,6 +328,9 @@ func registerDashboardTaskboardRoutes(mux *http.ServeMux) {
 	for _, route := range taskboardColumnRoutes {
 		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
 	}
+	for _, route := range taskboardOptionRoutes {
+		mux.HandleFunc(route.pattern, dashboardProcessRoute(route.handler))
+	}
 	// A drawing board's File › Export › Attach to a task… (tk_413bdf5d).
 	// Registered here, not in the table: rendering reaches the peer-view
 	// proxy, whose mux is this one, so a package-level entry would be an

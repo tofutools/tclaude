@@ -50,6 +50,7 @@ func taskboardCmd() *cobra.Command {
 			taskboardAttachmentsCmd(),
 			taskboardMoveCmd(),
 			taskboardColumnsCmd(),
+			taskboardOptionsCmd(),
 			taskboardMoveToGroupCmd(),
 			taskboardStageCmd("promote", "next", "Promote an idea to the end of the queue"),
 			taskboardStageCmd("demote", "idea", "Demote a queued task to the top of the ideas"),

@@ -548,7 +548,8 @@ These keys only exist in `config.json`. The form keeps them when it saves.
 
 - Top level: `status_snapshot`, `host`, `experimental_harnesses`, `conv_watch`,
   `session_watch`, `audit`, `federation`, `updates`, `snapshots`, `routes`,
-  `taskboard` ([Task boards](taskboard.md) retention and `idle_grace`).
+  `taskboard` ([Task boards](taskboard.md) retention, and the idle check's
+  global defaults `idle_check` and `idle_grace`).
 - `features`: `taskboard` (on; `false` turns it off, see [Task boards](taskboard.md)).
 - `agent`: `branch_history_pr_enrichment`, `resource_delegation_dir`, `morph`,
   `spawn_legacy_injection`, `spawn_inline_max_chars`, `message_inline_max_chars`,

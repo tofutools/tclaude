@@ -279,6 +279,8 @@ var auditRoutes = []auditRoute{
 	// and the group in the row.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "taskboard", "tasks"}, verb: "taskboard.add"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "taskboard", "writers"}, verb: "taskboard.writers"},
+	{method: http.MethodPut, segs: []string{"groups", "{name}", "taskboard", "options"}, verb: "taskboard.options"},
+	{method: http.MethodPatch, segs: []string{"groups", "{name}", "taskboard", "options"}, verb: "taskboard.options"},
 	{method: http.MethodPatch, segs: []string{"taskboard", "tasks", "{id}"}, verb: "taskboard.edit"},
 	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "move"}, verb: "taskboard.move"},
 	{method: http.MethodPost, segs: []string{"taskboard", "tasks", "{id}", "stage"}, verb: "taskboard.stage"},

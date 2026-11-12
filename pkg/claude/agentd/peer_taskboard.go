@@ -113,6 +113,11 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	// Columns (taskboard_columns.go): read with the board, changed under
 	// taskboard.columns, which taskboard.manage covers.
 	group("GET /v1/groups/{name}/taskboard/columns", read)
+	// Board options (taskboard_options.go): read with the board, changed
+	// under taskboard.write, as on this node.
+	group("GET /v1/groups/{name}/taskboard/options", read)
+	group("PUT /v1/groups/{name}/taskboard/options", write)
+	group("PATCH /v1/groups/{name}/taskboard/options", write)
 	columns := peerViewRule{feature: "groups.taskboard.columns", requires: PermTaskboardColumns,
 		orGrants: []string{PermTaskboardManage}, group: true}
 	group("POST /v1/groups/{name}/taskboard/columns", columns)

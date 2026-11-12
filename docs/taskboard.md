@@ -93,9 +93,10 @@ tclaude agent taskboard reopen tk_… --stage in-review       # reopen into it
   --stage <column>` starts a new task in one. Either is one write; the add
   records one *created* entry, the reopen its reopen and the move into the
   column.
-- **It never stalls.** A task in a custom column waits on something outside
+- **It does not stall.** A task in a custom column waits on something outside
   its agent's turn, such as a review or CI, so the [idle
-  check](#idle-without-report) skips it.
+  check](#idle-without-report) skips it, unless the board lists the column in
+  `idle.check_columns`.
 - **Removing a column** puts its tasks back in next. Each one's history
   records the change. The history records every move in or out as a `column`
   change.
@@ -740,43 +741,104 @@ either place.
 
 ### Idle without report
 
-An open task is **stalled** when its assignee has sat idle for
-`taskboard.idle_grace` (default 5 minutes) without reporting: its session is
-idle, with no subagents, background shells or monitors running, and has been
-since the later of its last activity and the start of its current stretch of
-work: the assignment, or the task being unblocked or reopened. Time spent
-blocked or closed does not count. Stalled is worked out
-on every read. It is not a status, and it clears as soon as the agent starts a
-new turn or reports.
+The idle check is off unless a board turns it on: it is one of the
+[board's options](#board-options) (`idle.enabled`). With it on, an open task
+is **stalled** when its assignee has sat idle for the board's grace
+(`idle.grace`, else `taskboard.idle_grace`, else 5 minutes) without
+reporting: its session is idle, with no subagents, background shells or
+monitors running, and has been since the later of its last activity and the
+start of its current stretch of work: the assignment, or the task being
+unblocked or reopened. Time spent blocked or closed does not count. Stalled
+is worked out on every read. It is not a status, and it clears as soon as the
+agent starts a new turn or reports.
 
 A sweep every 30 seconds announces each stall once per assignment (an unblock
 or a reopen starts a new stretch, which may be announced again):
 
 - the history records a `stalled` event;
-- the assigner is told,
-  `[taskboard] <agent> went idle without reporting (7m): <group> · tk_… "title"`:
-  an agent by inbox mail, the operator in Messages. A task the agent took for itself has no one else to tell;
-- the assignee gets an inbox nudge with its report commands. It is never sent
-  as keys into the pane.
+- the board's `idle.tell` recipients are told,
+  `[taskboard] <agent> went idle without reporting (7m): <group> · tk_… "title"`.
+  By default that is the assigner: an agent by inbox mail, the operator in
+  Messages. A task the agent took for itself has no one else to tell. The
+  message names the command that turns the check off;
+- unless `idle.nudge` is off, the assignee gets an inbox nudge with its report
+  commands. It is never sent as keys into the pane.
 
 Stalled never fails, blocks or unassigns a task. Ask the agent how it is going,
 or take the task back with `unassign`.
 
-```json
-{ "taskboard": { "idle_grace": "5m" } }
-```
+A **queued** task, one that depends on a task not done yet, never stalls: its
+agent is waiting on that work.
 
-`idle_grace` is a duration (`"90s"`, `"10m"`); `"0"` turns the check off.
-
-A task in a [custom column](#custom-columns), such as *In review*, never
-stalls. Its agent is waiting on a review or CI, not idling on the work. Move
-the task there when you open its PR.
+A task in a [custom column](#custom-columns), such as *In review*, does not
+stall either. Its agent is waiting on a review or CI, not idling on the work.
+Move the task there when you open its PR. A board that wants a column checked
+all the same lists it in `idle.check_columns`.
 
 Stalled and blocked tasks are what the board needs you for. `ls --summary`, the
 dashboard and the context route count them as *needs you*, and
 `tclaude agent fleet` (the Steward's brief) lists every group whose board has
 any, for example `crew board: 2 tasks need you (1 stalled, 1 blocked)`. The
 brief's JSON carries the same counts per group under `taskboards`.
+
+## Board options
+
+Each board has options of its own: how that board behaves. They are stored
+with the board, so a [linked node's board](#across-linked-nodes) has its own
+and they read the same there. A board stores only what it sets. Every value
+it leaves unset is inherited, from the operator's global config where there
+is one, else from the built-in default, and every read says where each value
+comes from.
+
+```
+$ tclaude agent taskboard options show crew
+crew board options (version 2, changed by human:operator 2026-11-12T21:30:00Z)
+idle check: on
+  idle.enabled        on        set on this board
+  idle.grace          10m       set on this board (global: 5m)
+  idle.nudge          on        default
+  idle.tell           assigner  default
+  idle.check_columns  none      default
+$ tclaude agent taskboard options set crew idle.enabled=on idle.grace=10m
+$ tclaude agent taskboard options set crew idle.tell=assigner,owners
+$ tclaude agent taskboard options reset crew idle.grace    # inherit it again
+$ tclaude agent taskboard options reset crew all
+```
+
+| Option | Values | Default |
+|---|---|---|
+| `idle.enabled` | `on` / `off`: the [idle check](#idle-without-report) | `taskboard.idle_check`, else off |
+| `idle.grace` | a duration, `1m` to `168h` | `taskboard.idle_grace`, else `5m` |
+| `idle.nudge` | `on` / `off`: nudge the idle assignee | on |
+| `idle.tell` | any of `assigner`, `owners`, `operator`; `none` for no one | `assigner` |
+| `idle.check_columns` | custom column slugs whose tasks are checked too | none |
+
+`set` takes several `key=value` pairs and applies them as one change; a value
+of `default` is the same as `reset`. `reset` takes keys, the section `idle`,
+or `all`. Recipients are told once each, and never about their own task: an
+owner that also assigned the task hears once. `owners` are the group's owner
+agents; `operator` is the operator's Messages. A column named in
+`idle.check_columns` drops out of it when the column is removed.
+
+The global settings in `~/.tclaude/data/config.json` are what a board
+inherits:
+
+```json
+{ "taskboard": { "idle_check": true, "idle_grace": "5m" } }
+```
+
+`idle_check` turns the check on for every board that does not say otherwise
+(absent means off). `idle_grace` is a duration (`"90s"`, `"10m"`); `"0"` turns
+the check off on **every** board, whatever a board sets, and the board's
+options then read `idle check: off on every board`.
+
+Reading a board's options needs `taskboard.read`; changing them needs
+`taskboard.write`, which the group's owners hold. A linked node reads and
+changes them under the same grants.
+
+Before board options, the idle check ran on every board with
+`taskboard.idle_grace` (default 5 minutes). It is now opt-in: turn it on per
+board, or for every board at once with `taskboard.idle_check: true`.
 
 ## The writer lock
 
@@ -800,8 +862,8 @@ The operator passes every gate. For agents:
 
 | Slug | What it allows | Who has it without a grant |
 |---|---|---|
-| `taskboard.read` | `ls`, `show`, `activity`, `comment ls` | Members and owners of the group |
-| `taskboard.write` | Everything that changes a task: unassigned tasks, imports, `ask`, reordering, and any task's edits and status. Implies read. | Owners of the group. Members only through a grant. |
+| `taskboard.read` | `ls`, `show`, `activity`, `comment ls`, `options show` | Members and owners of the group |
+| `taskboard.write` | Everything that changes a task: unassigned tasks, imports, `ask`, reordering, and any task's edits and status; and the [board's options](#board-options). Implies read. | Owners of the group. Members only through a grant. |
 | `taskboard.own` | Tracking your own work: adding tasks that are assigned to you, changing and closing your own tasks, taking any unassigned task, releasing yours, reporting, and commenting on any task of the board | Members of the group, on their own group's board only |
 | `taskboard.assign` | Assigning another agent, taking a task back, and closing a task assigned to someone else. Scope it with `group` and `target_agent`. | Owners of the group |
 | `taskboard.manage` | The writer lock, the board's columns (it implies `taskboard.columns`), and moving a task you do not hold to another group | Owners of the group |
@@ -926,8 +988,8 @@ tclaude federation grant bob taskboard.manage --scope group=crew
 
 | Peer grant | What the linked node may do on the group's board |
 |---|---|
-| `taskboard.read` | List it, show a task and its activity and comments, see it in the fused view, and count it in the node summary |
-| `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them, and comment (editing and deleting only its own comments) |
+| `taskboard.read` | List it, show a task and its activity and comments, read the [board's options](#board-options), see it in the fused view, and count it in the node summary |
+| `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them, comment (editing and deleting only its own comments), and change the board's options |
 | `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
 | `taskboard.manage` | Set the writer lock, and manage the board's columns |
 | `taskboard.columns` | Add, rename, reorder, remove, hide and cordon the board's columns |
@@ -1561,6 +1623,9 @@ those drags aren't accepted in the lanes.
 | `columns add` | `POST /v1/groups/{g}/taskboard/columns {"label","slug"?,"before"?}` |
 | `columns rename` / `move` | `PATCH /v1/groups/{g}/taskboard/columns/{slug} {"label"?,"before"?,"to_end"?}` |
 | `columns rm` | `DELETE /v1/groups/{g}/taskboard/columns/{slug}` → `{group, columns, cap, moved:[tk_…]}` |
+| `options show` | `GET /v1/groups/{g}/taskboard/options` → `{group, options, resolved, globals, version, updated_by, updated_at, keys}`: `options` is what the board sets, `resolved` what is in force, each value as `{value, source}` with source `default`, `global` or `board` |
+| `options set` / `reset` | `PATCH /v1/groups/{g}/taskboard/options {"set":{"idle.grace":"10m",…},"reset":["idle.tell"\|"idle"\|"all"],"version"?}`: resets first, then sets, in one change |
+| (dashboard) | `PUT /v1/groups/{g}/taskboard/options {"options":{"idle":{…}},"version":n}`: replaces the whole document; a `version` other than the stored one answers 409 `stale` with the `current` options |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
 | `archive` | `POST /v1/taskboard/tasks/{id}/archive {"reason"?}` |
 | `unarchive` | `POST /v1/taskboard/tasks/{id}/unarchive` |
