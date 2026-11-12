@@ -151,3 +151,12 @@ func TestEvents(t *testing.T) {
 	assert.ErrorContains(t, bad.Validate(nil), "not a recipient")
 	assert.Contains(t, Keys, "events.epic_close.to")
 }
+
+// A stored document naming an event this version does not know (a newer
+// tclaude wrote it) does not parse, as an unknown field does not.
+func TestParseRefusesUnknownEvent(t *testing.T) {
+	_, err := Parse(`{"events":{"limit_reached":{"enabled":false}}}`)
+	assert.ErrorContains(t, err, "no event")
+	_, err = Parse(`{"events":{"comment":{"enabled":false}}}`)
+	assert.NoError(t, err)
+}

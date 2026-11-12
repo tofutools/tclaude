@@ -80,13 +80,6 @@ func (n *taskboardNotice) mail(recipient, agentID, conv, subject, body string) b
 	return true
 }
 
-// skip marks an agent as one that must not hear (it heard another way).
-func (n *taskboardNotice) skip(agentID string) {
-	if agentID != "" {
-		n.told[agentID] = true
-	}
-}
-
 func (n *taskboardNotice) send(conv, subject, body string) {
 	if n.r == nil {
 		systemMailTaskboard(n.g, conv, subject, body)

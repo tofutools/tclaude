@@ -53,6 +53,36 @@ func TestTaskboardEventMessages(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, body)
 	assert.Zero(t, count(h.worker, "reassigned by"))
 
+	// unassigned to the owners: a reassign and a release both tell the
+	// lead (owner), with the agent losing the task still told. (With
+	// assigned to the owners too, the lead would hear the reassign once,
+	// as the assigned note.)
+	h.setOptions(h.lead, map[string]string{"events.unassigned.enabled": "on", "events.unassigned.to": "assignee,owners",
+		"events.assigned.to": "assignee"})
+	moved := h.add("moves on", "next")
+	code, body = h.post("", moved.ID, "assign", map[string]any{"to": h.worker})
+	require.Equal(t, http.StatusOK, code, body)
+	leadBefore = count(h.lead, "reassigned from")
+	code, body = h.post("", moved.ID, "assign", map[string]any{"to": h.peer})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Equal(t, leadBefore+1, count(h.lead, "reassigned from"), "the owner hears of the reassign under unassigned")
+	assert.Equal(t, 1, count(h.worker, "reassigned by"))
+	code, body = h.post(h.peer, moved.ID, "unassign", map[string]any{"self": true})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Equal(t, 1, count(h.lead, "released by"))
+	h.setOptions(h.lead, map[string]string{"events.assigned.to": "assignee,owners,operator"})
+
+	// Reopened off: the assignee of a reopened task is not told.
+	h.setOptions(h.lead, map[string]string{"events.reopened.enabled": "off"})
+	reopened := h.add("closes and reopens", "next")
+	code, body = h.post(h.lead, reopened.ID, "assign", map[string]any{"to": h.worker})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = h.post("", reopened.ID, "status", map[string]any{"status": "done"})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body = h.post("", reopened.ID, "reopen", map[string]any{})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Zero(t, count(h.worker, "reopened by"))
+
 	// Comments off: nobody hears.
 	h.setOptions(h.lead, map[string]string{"events.comment.enabled": "off"})
 	code, _ = h.comment("", noted.ID, map[string]any{"body": "first thought"})

@@ -857,7 +857,7 @@ operator, as it always has.
 A recipient the message was written for gets it as before: the assignee its
 brief, the assigner the report. A recipient the board adds gets a short note
 of what happened (`[taskboard] assigned to builder by lead: crew · tk_… "title"`),
-or for a comment and a report, the comment or the report itself. Nobody hears
+or for a comment, a report and the close-epic prompt, the message itself. Nobody hears
 twice. Whoever caused the event gets no note of it.
 
 ```

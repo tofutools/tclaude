@@ -266,6 +266,17 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if before != target {
 		by := taskboardCallerName(r)
 		n := newTaskboardNotice(r, g, out, boardopts.EventAssigned)
+		// A reassign is also the unassigned event of the agent losing the
+		// task. Both notices share who has heard, so nobody hears twice.
+		var gone *taskboardNotice
+		if !take && before != "" {
+			gone = newTaskboardNotice(r, g, t, boardopts.EventUnassigned)
+			gone.told = n.told
+			if conv := activeGroupMember(g, before); conv != "" {
+				gone.mail(boardopts.RecipientAssignee, before, conv, taskboardSubject(g, out, "reassigned by "+by),
+					taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was reassigned by %s. You no longer hold it.\n", out.ID, out.Title, g.Name, by)))
+			}
+		}
 		switch {
 		case take, target == db.OperatorAssignee:
 		case hold != "":
@@ -281,16 +292,11 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		}
 		if before != "" {
 			what += ", from " + taskboardAgentLabel(before)
-			// The agent losing the task hears through unassigned, not here.
-			n.skip(before)
 		}
 		n.others(what, "", boardopts.RecipientAssignee)
-		if !take && before != "" && before != self {
-			gone := newTaskboardNotice(r, g, t, boardopts.EventUnassigned)
-			if conv := activeGroupMember(g, before); conv != "" {
-				gone.mail(boardopts.RecipientAssignee, before, conv, taskboardSubject(g, out, "reassigned by "+by),
-					taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was reassigned by %s. You no longer hold it.\n", out.ID, out.Title, g.Name, by)))
-			}
+		if gone != nil {
+			gone.others(fmt.Sprintf("reassigned from %s to %s by %s", taskboardAgentLabel(before), taskboardAgentLabel(target), by), "",
+				boardopts.RecipientAssignee)
 		}
 	}
 	writeTaskboardTask(w, http.StatusOK, g, out)

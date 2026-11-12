@@ -164,6 +164,13 @@ func Parse(raw string) (Options, error) {
 	if err := dec.Decode(&o); err != nil {
 		return Options{}, fmt.Errorf("board options: %w", err)
 	}
+	// An event this version does not know is a document it cannot read
+	// (one a newer tclaude wrote), as an unknown field is.
+	for name := range o.Events {
+		if _, ok := eventInfo[name]; !ok {
+			return Options{}, fmt.Errorf("board options: no event %q; the events are %s", name, strings.Join(EventNames, ", "))
+		}
+	}
 	return o, nil
 }
 
