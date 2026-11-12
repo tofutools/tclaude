@@ -23,7 +23,8 @@ import (
 // taskboard.idle_grace, else 5 min) since the later of its last activity
 // and the start of its current stretch of work on the task (the assignment,
 // or an unblock or reopen). A task that waits on something outside its
-// agent's turn never stalls: a queued one (a dependency not done yet), or
+// agent's turn never stalls: a queued one (a dependency not done yet; the
+// clock then starts when its last dependency closes), or
 // one in a custom column the board does not list in idle.check_columns.
 // Stalled is derived on every read, never stored, so a new turn clears it; a
 // report ends the assignment and with it the stall. A 30 s sweep announces
@@ -143,10 +144,19 @@ func (s *taskboardStaller) stalled(t *db.GroupTask) (time.Time, bool) {
 			return time.Time{}, false
 		}
 	}
-	// A queued task waits on a dependency that is not done yet.
+	// A queued task waits on a dependency that is not done yet, and the time
+	// it waited is not idling either: the clock starts when the last
+	// dependency was closed.
 	if len(t.DependsOn) > 0 {
-		if queued, err := db.GroupTaskQueuedOnDeps(t.ID); err != nil || queued {
+		queued, readyAt, err := db.GroupTaskDepsWait(t.ID)
+		if err != nil || queued {
 			return time.Time{}, false
+		}
+		if readyAt.After(since) {
+			since = readyAt
+			if s.now.Sub(since) < grace {
+				return time.Time{}, false
+			}
 		}
 	}
 	return since, true

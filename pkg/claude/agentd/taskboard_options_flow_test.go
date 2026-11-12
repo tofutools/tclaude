@@ -154,6 +154,8 @@ func TestTaskboardOptionsReadWriteAndInheritance(t *testing.T) {
 	assert.Equal(t, tbOptValue{[]any{"owners", "operator"}, "board"}, v.Resolved.Idle.Tell)
 	rec = h.call("", http.MethodPut, tbOptionsPath, map[string]any{"options": doc})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "a PUT names its version: %s", rec.Body.String())
+	rec = h.call("", http.MethodPut, tbOptionsPath, map[string]any{"options": map[string]any{"idle": map[string]any{"grase": "10m"}}, "version": 2})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a misspelled key is refused, not dropped: %s", rec.Body.String())
 
 	// A column listed in check_columns drops out when the column is removed.
 	h.columns("", http.MethodPost, "", map[string]any{"label": "In CI"}, http.StatusCreated)
@@ -165,6 +167,11 @@ func TestTaskboardOptionsReadWriteAndInheritance(t *testing.T) {
 	require.NotNil(t, v.Options.Idle)
 	require.NotNil(t, v.Options.Idle.CheckColumns)
 	assert.Empty(t, *v.Options.Idle.CheckColumns)
+	// The removal is written to the stored options too: a new column of the
+	// same slug is not checked.
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In CI"}, http.StatusCreated)
+	v = h.options("", http.MethodGet, nil, http.StatusOK)
+	assert.Equal(t, tbOptValue{[]any{}, "board"}, v.Resolved.Idle.CheckColumns)
 
 	// Reset all: inherited again.
 	v = h.options("", http.MethodPatch, map[string]any{"reset": []string{"all"}}, http.StatusOK)
@@ -260,6 +267,19 @@ func TestTaskboardIdleCheckPerBoard(t *testing.T) {
 	assert.Equal(t, workerBefore, tbCountSubjects(tbInboxSubjects(t, h.worker), "you went idle"), "no nudge")
 	assert.Equal(t, operatorBefore+1, tbOperatorSubjects(t, "went idle without reporting"))
 
+	// Owners only: on a task the operator assigned, the owner hears and the
+	// operator (the assigner) does not.
+	h.setOptions(h.lead, map[string]string{"idle.tell": "owners"})
+	byOperator := h.add("assigned by the operator", "next")
+	code, body := h.post("", byOperator.ID, "assign", map[string]any{"to": h.worker})
+	require.Equal(t, http.StatusOK, code, body)
+	leadBefore = tbCountSubjects(tbInboxSubjects(t, h.lead), "went idle")
+	operatorBefore = tbOperatorSubjects(t, "went idle without reporting")
+	agentd.SweepTaskboardIdleForTest(now.Add(40 * time.Minute))
+	assert.Equal(t, 1, tbStalledEvents(t, byOperator.ID))
+	assert.Equal(t, leadBefore+1, tbCountSubjects(tbInboxSubjects(t, h.lead), "went idle"))
+	assert.Equal(t, operatorBefore, tbOperatorSubjects(t, "went idle without reporting"))
+
 	// Telling no one still marks the task stalled.
 	h.setOptions(h.lead, map[string]string{"idle.tell": "none"})
 	third := h.assigned("third")
@@ -268,17 +288,21 @@ func TestTaskboardIdleCheckPerBoard(t *testing.T) {
 	assert.Equal(t, 1, tbStalledEvents(t, third.ID))
 	assert.Equal(t, leadBefore, tbCountSubjects(tbInboxSubjects(t, h.lead), "went idle"))
 
-	// A queued task (its dependency not done) never stalls; once the
-	// dependency is done it may.
+	// A queued task (its dependency not done) never stalls. Once the
+	// dependency is done the clock starts: the grace runs from then, not
+	// from the assignment.
 	dep := h.add("the dependency", "next")
 	queued := h.assigned("queued work")
 	rec := h.call("", http.MethodPatch, "/v1/taskboard/tasks/"+queued.ID, map[string]any{"add_deps": []string{dep.ID}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	agentd.SweepTaskboardIdleForTest(now.Add(time.Hour))
 	assert.Zero(t, tbStalledEvents(t, queued.ID))
-	code, body := h.post("", dep.ID, "status", map[string]any{"status": "done"})
+	code, body = h.post("", dep.ID, "status", map[string]any{"status": "done"})
 	require.Equal(t, http.StatusOK, code, body)
-	agentd.SweepTaskboardIdleForTest(now.Add(time.Hour))
+	closed := time.Now()
+	agentd.SweepTaskboardIdleForTest(closed.Add(5 * time.Minute))
+	assert.Zero(t, tbStalledEvents(t, queued.ID), "the wait on the dependency is not idling")
+	agentd.SweepTaskboardIdleForTest(closed.Add(15 * time.Minute))
 	assert.Equal(t, 1, tbStalledEvents(t, queued.ID))
 
 	// The global kill switch: taskboard.idle_grace "0" overrules the board.

@@ -1,8 +1,10 @@
 package agentd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -89,16 +91,6 @@ func taskboardOptions(groupID int64) (db.GroupTaskboardOptions, boardopts.Option
 	return row, o, cols, nil
 }
 
-// resolvedTaskboardOptions is the options in force on a board; a read error
-// gives the inherited ones.
-func resolvedTaskboardOptions(groupID int64) boardopts.Resolved {
-	_, o, cols, err := taskboardOptions(groupID)
-	if err != nil {
-		o = boardopts.Options{}
-	}
-	return boardopts.Resolve(o, taskboardOptionsGlobals(), cols)
-}
-
 type taskboardOptionsGlobalsView struct {
 	// IdleCheck is taskboard.idle_check; absent when unset.
 	IdleCheck *bool `json:"idle_check,omitempty"`
@@ -169,19 +161,24 @@ func handleTaskboardOptionsPut(w http.ResponseWriter, r *http.Request, g *db.Age
 		return
 	}
 	var body struct {
-		Options *boardopts.Options `json:"options"`
-		Version *int64             `json:"version"`
+		Options json.RawMessage `json:"options"`
+		Version *int64          `json:"version"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
 		return
 	}
-	if body.Options == nil || body.Version == nil {
+	if len(body.Options) == 0 || string(body.Options) == "null" || body.Version == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "give options and the version they were read at ({} and 0 for a board that sets nothing)")
 		return
 	}
-	next := *body.Options
+	// Strictly: a misspelled key is refused, not dropped.
+	next, err := boardopts.Parse(string(body.Options))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
 	updateTaskboardOptions(w, r, g, *body.Version, func(_ boardopts.Options) (boardopts.Options, error) { return next, nil },
-		"replaced board options")
+		"replaced board options", false)
 }
 
 // PATCH /v1/groups/{name}/taskboard/options {set: {key: value}, reset: [key], version?}
@@ -231,7 +228,7 @@ func handleTaskboardOptionsPatch(w http.ResponseWriter, r *http.Request, g *db.A
 			}
 		}
 		return o, nil
-	}, "board options: "+strings.Join(detail, ", "))
+	}, "board options: "+strings.Join(detail, ", "), true)
 }
 
 // errTaskboardOptionsInvalid wraps a document the board refuses.
@@ -239,10 +236,16 @@ type errTaskboardOptionsInvalid struct{ err error }
 
 func (e errTaskboardOptionsInvalid) Error() string { return e.err.Error() }
 
+// errTaskboardOptionsUnreadable is a stored document this daemon cannot read
+// (one a newer tclaude wrote): a change of single keys would lose the rest.
+var errTaskboardOptionsUnreadable = errors.New("unreadable board options")
+
 // updateTaskboardOptions applies change to g's stored options (pruned of
 // removed columns), validates the result against the board and writes it.
+// merge is set for a change of single keys, which refuses to write over a
+// stored document this daemon cannot read; a whole-document PUT replaces it.
 func updateTaskboardOptions(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, expect int64,
-	change func(boardopts.Options) (boardopts.Options, error), audit string) {
+	change func(boardopts.Options) (boardopts.Options, error), audit string, merge bool) {
 	cols, err := taskboardColumnSlugs(g.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
@@ -251,8 +254,9 @@ func updateTaskboardOptions(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	_, err = db.UpdateGroupTaskboardOptions(g.ID, expect, taskboardActor(r), func(current string) (string, error) {
 		o, err := boardopts.Parse(current)
 		if err != nil {
-			// A document this daemon cannot read is replaced, not merged
-			// into: a PUT says the whole document, and a PATCH starts over.
+			if merge {
+				return "", errTaskboardOptionsUnreadable
+			}
 			o = boardopts.Options{}
 		}
 		o.Prune(cols)
@@ -279,6 +283,10 @@ func updateTaskboardOptions(w http.ResponseWriter, r *http.Request, g *db.AgentG
 			"current": v,
 		})
 		return
+	case errors.Is(err, errTaskboardOptionsUnreadable):
+		writeError(w, http.StatusConflict, "unreadable", "the "+g.Name+
+			" board options were written by a newer tclaude and this daemon cannot read them; change them there, or replace them whole (PUT)")
+		return
 	case errors.As(err, &invalid):
 		writeError(w, http.StatusBadRequest, "invalid_arg", invalid.Error())
 		return
@@ -288,4 +296,24 @@ func updateTaskboardOptions(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	}
 	setAuditDetail(r, audit)
 	writeTaskboardOptions(w, http.StatusOK, g)
+}
+
+// pruneTaskboardOptionsColumn drops a removed column from g's stored
+// options, so a later column of the same slug does not inherit its place
+// in idle.check_columns.
+func pruneTaskboardOptionsColumn(g *db.AgentGroup, actor string) {
+	cols, err := taskboardColumnSlugs(g.ID)
+	if err != nil {
+		return
+	}
+	_, err = db.UpdateGroupTaskboardOptions(g.ID, db.AnyTaskboardOptionsVersion, actor, func(current string) (string, error) {
+		o, err := boardopts.Parse(current)
+		if err != nil || !o.Prune(cols) {
+			return current, nil
+		}
+		return o.Encode()
+	})
+	if err != nil {
+		slog.Warn("taskboard: pruning board options after a column removal failed", "group", g.Name, "error", err)
+	}
 }

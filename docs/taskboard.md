@@ -768,7 +768,8 @@ Stalled never fails, blocks or unassigns a task. Ask the agent how it is going,
 or take the task back with `unassign`.
 
 A **queued** task, one that depends on a task not done yet, never stalls: its
-agent is waiting on that work.
+agent is waiting on that work. That wait does not count as idling either: the
+clock starts when the last dependency is closed.
 
 A task in a [custom column](#custom-columns), such as *In review*, does not
 stall either. Its agent is waiting on a review or CI, not idling on the work.
@@ -830,11 +831,12 @@ inherits:
 `idle_check` turns the check on for every board that does not say otherwise
 (absent means off). `idle_grace` is a duration (`"90s"`, `"10m"`); `"0"` turns
 the check off on **every** board, whatever a board sets, and the board's
-options then read `idle check: off on every board`.
+options then read `idle check: off on every board (taskboard.idle_grace is 0)`.
 
 Reading a board's options needs `taskboard.read`; changing them needs
-`taskboard.write`, which the group's owners hold. A linked node reads and
-changes them under the same grants.
+`taskboard.write`, which the group's owners hold, and passes the
+[writer lock](#the-writer-lock) as any other change of the board does. A
+linked node reads and changes them under the same grants.
 
 Before board options, the idle check ran on every board with
 `taskboard.idle_grace` (default 5 minutes). It is now opt-in: turn it on per
@@ -1625,7 +1627,7 @@ those drags aren't accepted in the lanes.
 | `columns rm` | `DELETE /v1/groups/{g}/taskboard/columns/{slug}` → `{group, columns, cap, moved:[tk_…]}` |
 | `options show` | `GET /v1/groups/{g}/taskboard/options` → `{group, options, resolved, globals, version, updated_by, updated_at, keys}`: `options` is what the board sets, `resolved` what is in force, each value as `{value, source}` with source `default`, `global` or `board` |
 | `options set` / `reset` | `PATCH /v1/groups/{g}/taskboard/options {"set":{"idle.grace":"10m",…},"reset":["idle.tell"\|"idle"\|"all"],"version"?}`: resets first, then sets, in one change |
-| (dashboard) | `PUT /v1/groups/{g}/taskboard/options {"options":{"idle":{…}},"version":n}`: replaces the whole document; a `version` other than the stored one answers 409 `stale` with the `current` options |
+| (dashboard) | `PUT /v1/groups/{g}/taskboard/options {"options":{"idle":{…}},"version":n}`: replaces the whole document (an unknown key is a 400); a `version` other than the stored one answers 409 `stale` with the `current` options. A `PATCH` on a document written by a newer tclaude that this one cannot read answers 409 `unreadable` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
 | `archive` | `POST /v1/taskboard/tasks/{id}/archive {"reason"?}` |
 | `unarchive` | `POST /v1/taskboard/tasks/{id}/unarchive` |

@@ -206,8 +206,7 @@ func TestTaskboardIdleOperatorAndOff(t *testing.T) {
 	code, body := h.post("", task.ID, "assign", map[string]any{"to": h.worker})
 	require.Equal(t, http.StatusOK, code, body)
 	h.f.SetSessionStatus(h.worker, session.StatusIdle)
-	time.Sleep(5 * time.Millisecond)
-	agentd.SweepTaskboardIdleForTest(time.Now())
+	agentd.SweepTaskboardIdleForTest(time.Now().Add(time.Second))
 	msgs, err := db.ListHumanMessagesPage(db.HumanMessageFilter{}, 0, 20)
 	require.NoError(t, err)
 	var found bool
@@ -224,8 +223,7 @@ func TestTaskboardIdleOperatorAndOff(t *testing.T) {
 		Agent:     &config.AgentConfig{DefaultPermissions: []string{agentd.PermSelfTaskboard}},
 		Taskboard: &config.TaskboardConfig{IdleGrace: "0", IdleCheck: new(true)},
 	}))
-	time.Sleep(5 * time.Millisecond)
-	agentd.SweepTaskboardIdleForTest(time.Now())
+	agentd.SweepTaskboardIdleForTest(time.Now().Add(time.Hour))
 	assert.Zero(t, tbStalledEvents(t, other.ID))
 	assert.False(t, h.stallView(other.ID).Stalled)
 }
