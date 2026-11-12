@@ -33,7 +33,9 @@ export const RECIPIENT_TITLE = {
 };
 
 // The board's events in display order, each with a short label for the
-// drawer's table; the daemon's own label is its tooltip.
+// drawer's table; the daemon's own label is its tooltip. The daemon's list
+// (resolved.events) is the authority: an event this table does not know
+// shows under the daemon's label.
 export const EVENTS = [
   ['assigned', 'Assigned'],
   ['started', 'Started'],
@@ -45,7 +47,17 @@ export const EVENTS = [
   ['report_failed', 'Report: failed'],
   ['unblocked', 'Dependency closed'],
   ['epic_close', 'Epic done: close it?'],
+  ['limit_reached', 'Limit reached'],
 ];
+const EVENT_SHORT = Object.fromEntries(EVENTS);
+
+// eventRows are the events the board's node knows, in its order:
+// [{ name, label, title }].
+export function eventRows(view) {
+  const sent = view?.resolved?.events;
+  if (!Array.isArray(sent) || !sent.length) return EVENTS.slice(0, 10).map(([name, label]) => ({ name, label, title: '' }));
+  return sent.map((event) => ({ name: event.name, label: EVENT_SHORT[event.name] || event.label || event.name, title: event.label || '' }));
+}
 
 // EVENT_DEFAULT_TO is each event's built-in recipients. A daemon that sends
 // `inherited` is the authority; this covers a linked node on an older
@@ -54,6 +66,7 @@ export const EVENTS = [
 const EVENT_DEFAULT_TO = {
   assigned: ['assignee'], started: ['assignee'], unassigned: ['assignee'], reopened: ['assignee'], moved_away: ['assignee'],
   comment: ['assignee', 'creator'], report_done: ['assigner'], report_failed: ['assigner'], unblocked: ['assignee'], epic_close: ['creator'],
+  limit_reached: ['assignee', 'assigner'],
 };
 
 export const IDLE_KEYS = ['idle.enabled', 'idle.grace', 'idle.nudge', 'idle.tell', 'idle.check_columns'];

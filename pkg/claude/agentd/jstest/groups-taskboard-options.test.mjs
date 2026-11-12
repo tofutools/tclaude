@@ -150,6 +150,13 @@ test('the model: drafts, provenance, unpinning, changes and rebasing', async (t)
   assert.match(m.graceError('soon'), /duration/);
   assert.match(m.graceError('30s'), /Between 1m and 168h/);
   assert.match(m.graceError('200h'), /Between/);
+  // The node's own event list is the authority: a newer event shows under
+  // its label, an older node's list stays as it is.
+  const nextNode = optionsView();
+  nextNode.resolved.events.push({ name: 'future_event', label: 'Something new happens', enabled: { value: true, source: 'default' }, to: { value: [], source: 'default' } });
+  assert.deepEqual(m.eventRows(nextNode).at(-1), { name: 'future_event', label: 'Something new happens', title: 'Something new happens' });
+  assert.equal(m.eventRows(nextNode).length, 11);
+  assert.equal(m.eventRows({}).length, 10);
   assert.deepEqual(m.draftErrors({ 'idle.grace': '0' }), { 'idle.grace': 'Between 1m and 168h; turn the check off with its switch' });
 });
 

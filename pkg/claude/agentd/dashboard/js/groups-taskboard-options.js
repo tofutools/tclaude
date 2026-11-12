@@ -31,7 +31,7 @@ import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { openBoardOptions } from './groups-taskboard-options-route.js';
 import { AddColumnButton, COLUMNS_CAP, columnMenuItems, useColumnNaming } from './groups-taskboard-columns.js';
 import {
-  EVENTS, EVENT_TO, IDLE_TELL, RECIPIENT_LABEL, RECIPIENT_TITLE, SECTION_TAB, TABS,
+  EVENT_TO, eventRows, IDLE_TELL, RECIPIENT_LABEL, RECIPIENT_TITLE, SECTION_TAB, TABS,
   changedKeys, documentOf, draftErrors, effectiveOf, eventKey, flatOptions, inheritedOf,
   optionsSummary, rebaseDraft, resetOption, setOption, sourceText, valueText,
 } from './groups-taskboard-options-model.js';
@@ -153,7 +153,8 @@ function IdleSection({ view, draft, saved, columns, canWrite, set, reset, errors
 // EventsSection is the Triggers tab's event messages: one row per event, a
 // switch and its recipients.
 function EventsSection({ view, draft, saved, canWrite, set, reset, setMany }) {
-  const anyOn = EVENTS.some(([name]) => effectiveOf(view, draft, eventKey(name, 'enabled')).value);
+  const events = eventRows(view);
+  const anyOn = events.some(({ name }) => effectiveOf(view, draft, eventKey(name, 'enabled')).value);
   const anySet = Object.keys(draft).some((key) => key.startsWith('events.'));
   return html`<section class="tb-opt-section" data-tb-opt-section="events" aria-labelledby="tb-opt-events-title">
     <div class="tb-opt-head">
@@ -161,7 +162,7 @@ function EventsSection({ view, draft, saved, canWrite, set, reset, setMany }) {
       <span class="ui-hint">the defaults are today's behaviour</span>
       <span class="spacer"></span>
       ${canWrite && html`<${Button} size="sm" variant="link" class="tb-opt-all-off" disabled=${!anyOn}
-        title="Turn every event message off on this board" onClick=${() => setMany(EVENTS.map(([name]) => [eventKey(name, 'enabled'), false]))}>all off<//>
+        title="Turn every event message off on this board" onClick=${() => setMany(events.map(({ name }) => [eventKey(name, 'enabled'), false]))}>all off<//>
         <${Button} size="sm" variant="link" class="tb-opt-defaults" disabled=${!anySet}
         title="Every event message back to its default" onClick=${() => reset(['events.'])}>↺ defaults<//>`}
     </div>
@@ -172,10 +173,9 @@ function EventsSection({ view, draft, saved, canWrite, set, reset, setMany }) {
           ${EVENT_TO.map((who) => html`<th key=${who} scope="col" title=${RECIPIENT_TITLE[who]}>${RECIPIENT_LABEL[who]}</th>`)}
           <th scope="col"><span class="tb-opt-sr">Source</span></th>
         </tr></thead>
-        <tbody>${EVENTS.map(([name, label]) => {
+        <tbody>${events.map(({ name, label, title }) => {
           const on = effectiveOf(view, draft, eventKey(name, 'enabled')).value;
           const to = effectiveOf(view, draft, eventKey(name, 'to')).value || [];
-          const title = (view?.resolved?.events || []).find((e) => e.name === name)?.label || '';
           return html`<tr key=${name} class=${on ? '' : 'off'} data-tb-opt-event=${name}>
             <td><${Switch} checked=${on} disabled=${!canWrite} aria-label=${`Send the ${label} message`}
               onChange=${(event) => set(eventKey(name, 'enabled'), event.currentTarget.checked)} /></td>
