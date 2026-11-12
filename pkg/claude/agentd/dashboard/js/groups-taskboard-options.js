@@ -204,6 +204,7 @@ function LimitInput({ view, draft, lane, label, canWrite, set, errors }) {
   const [text, setText] = useState(max > 0 ? String(max) : '');
   // Follow the draft when it changes from elsewhere (a reset, a reread).
   useEffect(() => {
+    if (Number.isNaN(max)) return; // a typo being fixed: keep what was typed
     const shown = text.trim() === '' ? 0 : Number(text);
     if (shown !== max) setText(max > 0 ? String(max) : '');
   }, [max]);
@@ -246,7 +247,7 @@ function LimitsTab({ view, draft, saved, columns, entry, canWrite, set, reset, e
   const src = (keys, label) => html`<${Source} view=${view} draft=${draft} saved=${saved} keys=${keys} canWrite=${canWrite} onReset=${reset} label=${label} />`;
   return html`<section class="tb-opt-section" data-tb-opt-section="limits" aria-label="Limits">
     <p class="tb-opt-desc ui-hint">How many tasks a lane holds at once: In progress, and each custom column. Empty is no limit.
-      Operator moves can always go over a limit, after a confirm; agents follow the rule.</p>
+      When a full lane refuses the operator's change, the dashboard offers to go over it; agents follow the rule.</p>
     <div class="tb-opt-grid">
       ${lanes.map(({ lane, label, sub }) => html`
         <span key=${`l-${lane}`} class="tb-opt-label" data-tb-opt-lane=${lane}>${label} <span class="ui-hint">${sub}</span></span>

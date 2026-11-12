@@ -448,6 +448,7 @@ test('the Limits tab sets the caps, what a full lane does and what a cap counts'
   const max = d.querySelector('input[aria-label="In progress limit"]');
   await s.harness.act(async () => { await s.harness.input(max, 'three'); });
   assert.match(d.querySelector('#tb-opt-max-in_progress-error').textContent, /whole number/);
+  assert.equal(max.value, 'three', 'what was typed stays, to be fixed');
   assert.equal(d.querySelector('#taskboard-options-save').disabled, true);
   await s.harness.act(async () => { await s.harness.input(max, '3'); });
   await s.harness.act(async () => { await s.harness.input(d.querySelector('input[aria-label="In CI limit"]'), '2'); });
@@ -501,6 +502,8 @@ test("In progress's ⋯ Set limit… sets the lane's limit at once", async (t) =
   const head = [...s.c.querySelectorAll('.tb-col-more')].find((b) => /In progress/.test(b.getAttribute('aria-label') || ''));
   assert.ok(head, 'In progress has a ⋯ once the board serves options');
   await s.click(head);
+  assert.deepEqual([...s.harness.document.querySelectorAll('[data-column-menu]')].map((i) => i.dataset.columnMenu), ['limit', 'options'],
+    'In progress is always shown: no hide or cordon items');
   await s.click(s.harness.document.querySelector('[data-column-menu="limit"]'));
   const input = s.harness.document.querySelector('#taskboard-limit-input');
   assert.equal(input.value, '2', 'the limit in force');

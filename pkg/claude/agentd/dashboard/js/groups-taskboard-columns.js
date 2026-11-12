@@ -20,7 +20,7 @@ import htm from 'htm';
 import { Dialog } from './ui-dialog.js';
 import { Button, Input } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
-import { columnStateItems } from './groups-taskboard-colvis.js';
+import { HIDEABLE_BUILTINS, columnStateItems } from './groups-taskboard-colvis.js';
 import { boardNode, openBoardOptions } from './groups-taskboard-options-route.js';
 
 const html = htm.bind(h);
@@ -116,7 +116,9 @@ function optionsItems(column, group, entry, limits) {
 // options. limits is the head's useLimitDialog.
 export function ColumnHeadMenu({ column, columns, group, actions, entry = null, onRename, limits = null }) {
   const manage = columnMenuItems({ column, columns, group, actions, onRename });
-  const state = actions?.busy ? [] : columnStateItems(column, entry);
+  // In progress is always shown: its ⋯ has only the limit items.
+  const hideable = column.custom || HIDEABLE_BUILTINS.some((b) => b.key === column.key);
+  const state = actions?.busy || !hideable ? [] : columnStateItems(column, entry);
   const items = [...manage, ...state, ...optionsItems(column, group, entry, actions?.busy ? null : limits)];
   if (!items.length) return null;
   return html`<span class="tb-col-menu"><${RowMenu} label=${`the ${column.label} column`} items=${items} buttonClass="tb-col-more"
