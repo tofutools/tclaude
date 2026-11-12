@@ -4,12 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -364,23 +364,12 @@ func handleTaskboardCommentDelete(w http.ResponseWriter, r *http.Request, t *db.
 
 // mailTaskboardComment tells the task's assignee of someone else's comment,
 // and its creator too when that is an agent other than the commenter and
-// the assignee.
+// the assignee, as the board sends comment messages (by default to both).
+// On a task the operator holds, the assignee's copy goes to the agent that
+// asked the operator (its assigner).
 func mailTaskboardComment(r *http.Request, g *db.AgentGroup, t *db.GroupTask, c *db.GroupTaskEvent) {
-	self, _ := callerAgentID(r)
-	var to []string
-	if t.AssigneeID != "" && t.AssigneeID != self {
-		to = append(to, t.AssigneeID)
-	}
-	if creator, ok := strings.CutPrefix(t.CreatedBy, "agent:"); ok && creator != self && creator != t.AssigneeID {
-		to = append(to, creator)
-	}
-	// An operator task's comments (the operator's answer, say) reach the
-	// agent that asked.
-	if asker, ok := strings.CutPrefix(t.AssignedBy, "agent:"); ok && t.AssigneeID == db.OperatorAssignee &&
-		asker != self && !slices.Contains(to, asker) {
-		to = append(to, asker)
-	}
-	if len(to) == 0 {
+	n := newTaskboardNotice(r, g, t, boardopts.EventComment)
+	if !n.event.Enabled.Value {
 		return
 	}
 	by := taskboardCallerName(r)
@@ -397,9 +386,22 @@ func mailTaskboardComment(r *http.Request, g *db.AgentGroup, t *db.GroupTask, c 
 		fmt.Fprintf(&b, "Files: %s (tclaude agent taskboard comment ls %s --save <dir>)\n", strings.Join(names, ", "), t.ID)
 	}
 	fmt.Fprintf(&b, "Reply: tclaude agent taskboard comment add %s \"…\"\nThe whole stream: tclaude agent taskboard activity %s\n", t.ID, t.ID)
-	for _, id := range to {
+	subject, body := taskboardSubject(g, t, "comment by "+by), taskboardLinked(g, t, b.String())
+	mail := func(recipient, id string) {
 		if conv, _ := db.CurrentConvForAgent(id); conv != "" {
-			mailTaskboard(r, g, conv, taskboardSubject(g, t, "comment by "+by), taskboardLinked(g, t, b.String()))
+			n.mail(recipient, id, conv, subject, body)
 		}
 	}
+	if t.AssigneeID != "" && t.AssigneeID != db.OperatorAssignee {
+		mail(boardopts.RecipientAssignee, t.AssigneeID)
+	}
+	if creator, ok := strings.CutPrefix(t.CreatedBy, "agent:"); ok {
+		mail(boardopts.RecipientCreator, creator)
+	}
+	// An operator task's comments (the operator's answer, say) reach the
+	// agent that asked.
+	if asker, ok := strings.CutPrefix(t.AssignedBy, "agent:"); ok && t.AssigneeID == db.OperatorAssignee {
+		mail(boardopts.RecipientAssignee, asker)
+	}
+	n.others("comment by "+by, body, boardopts.RecipientAssignee, boardopts.RecipientCreator)
 }

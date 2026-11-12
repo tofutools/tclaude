@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -125,8 +126,8 @@ func mailTaskboardWaiters(r *http.Request, g *db.AgentGroup, t *db.GroupTask, st
 		default:
 			continue
 		}
-		conv := activeGroupMember(g, d.AssigneeID)
-		if conv == "" {
+		n := newTaskboardNotice(r, g, d, boardopts.EventUnblocked).withActor()
+		if !n.event.Enabled.Value {
 			continue
 		}
 		var b strings.Builder
@@ -140,7 +141,9 @@ func mailTaskboardWaiters(r *http.Request, g *db.AgentGroup, t *db.GroupTask, st
 			fmt.Fprintf(&b, "\nYour task stays blocked: %s\nUnblock it: tclaude agent taskboard unblock %s\n", d.BlockReason, d.ID)
 		}
 		fmt.Fprintf(&b, "Read the activity: tclaude agent taskboard activity %s\n", t.ID)
-		mailTaskboard(r, g, conv, taskboardSubject(g, d, what+": "+t.ID+" is "+map[bool]string{true: "done", false: "dropped"}[status == db.GroupTaskDone]), taskboardLinked(g, d, b.String()))
+		subject := taskboardSubject(g, d, what+": "+t.ID+" is "+map[bool]string{true: "done", false: "dropped"}[status == db.GroupTaskDone])
+		n.mail(boardopts.RecipientAssignee, d.AssigneeID, activeGroupMember(g, d.AssigneeID), subject, taskboardLinked(g, d, b.String()))
+		n.others(fmt.Sprintf("%s: %s %q was %s by %s", what, t.ID, t.Title, how, by), "", boardopts.RecipientAssignee)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -103,22 +104,25 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	}
 	setAuditDetail(r, fmt.Sprintf("reopened %s in %s", t.ID, out.Stage))
 	by := taskboardCallerName(r)
+	n := newTaskboardNotice(r, g, out, boardopts.EventReopened)
 	if out.AssigneeID != t.AssigneeID {
 		if out.AssigneeID != "" && out.AssigneeID != self && out.AssigneeID != db.OperatorAssignee && targetConv != "" {
 			setAuditTargetConv(r, targetConv)
-			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "reopened and assigned to you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
+			n.mail(boardopts.RecipientAssignee, out.AssigneeID, targetConv,
+				taskboardSubject(g, out, "reopened and assigned to you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
 		}
 		if t.AssigneeID != "" && t.AssigneeID != self {
 			if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
-				mailTaskboard(r, g, conv, taskboardSubject(g, out, "reopened by "+by),
+				n.mail(boardopts.RecipientAssignee, t.AssigneeID, conv, taskboardSubject(g, out, "reopened by "+by),
 					taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was reopened by %s and no longer assigned to you.\n", out.ID, out.Title, g.Name, by)))
 			}
 		}
 	} else if out.AssigneeID != "" && out.AssigneeID != self && out.AssigneeID != db.OperatorAssignee {
 		if conv := activeGroupMember(g, out.AssigneeID); conv != "" {
-			mailTaskboard(r, g, conv, taskboardSubject(g, out, "reopened by "+by),
+			n.mail(boardopts.RecipientAssignee, out.AssigneeID, conv, taskboardSubject(g, out, "reopened by "+by),
 				taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was reopened by %s and is yours again.\n\n%s", out.ID, out.Title, g.Name, by, taskboardBrief(g, out, by))))
 		}
 	}
+	n.others("reopened by "+by, "", boardopts.RecipientAssignee)
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }

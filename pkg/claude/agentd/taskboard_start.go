@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -49,12 +50,17 @@ func handleTaskboardStart(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 	setAuditDetail(r, verb+t.ID)
 	// Started by someone else: the assignee gets its brief, as on an assign.
 	if start && !t.Started() && t.AssigneeID != db.OperatorAssignee {
-		if self, _ := callerAgentID(r); self != t.AssigneeID {
-			if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
-				by := taskboardCallerName(r)
-				mailTaskboard(r, g, conv, taskboardSubject(g, out, "started for you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
-			}
+		by := taskboardCallerName(r)
+		n := newTaskboardNotice(r, g, out, boardopts.EventStarted)
+		if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
+			n.mail(boardopts.RecipientAssignee, t.AssigneeID, conv,
+				taskboardSubject(g, out, "started for you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
 		}
+		what := "started by " + by
+		if self, _ := callerAgentID(r); self != t.AssigneeID {
+			what = fmt.Sprintf("started for %s by %s", taskboardAgentLabel(t.AssigneeID), by)
+		}
+		n.others(what, "", boardopts.RecipientAssignee)
 	}
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }

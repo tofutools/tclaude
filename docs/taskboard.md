@@ -433,7 +433,9 @@ last edited by, assigned to, and the comment count.
   earlier body as a `comment_edited` entry. A delete leaves a tombstone,
   blanks the earlier bodies, and removes the comment's files.
 - **Mail.** A comment by someone else mails the task's assignee. It also
-  mails the agent that created the task, when an agent did.
+  mails the agent that created the task, when an agent did. A board may change
+  who is mailed, or turn comment mail off ([the board's
+  messages](#the-boards-messages)).
 - Commenting needs `taskboard.write`, or `taskboard.own` on your own group's
   board. Reading the stream needs `taskboard.read`.
 
@@ -800,6 +802,10 @@ idle check: on
   idle.nudge          on        default
   idle.tell           assigner  default
   idle.check_columns  none      default
+messages:
+  events.assigned       on   assignee         default
+  events.comment        off  assignee,creator set on this board
+  …
 $ tclaude agent taskboard options set crew idle.enabled=on idle.grace=10m
 $ tclaude agent taskboard options set crew idle.tell=assigner,owners
 $ tclaude agent taskboard options reset crew idle.grace    # inherit it again
@@ -815,11 +821,54 @@ $ tclaude agent taskboard options reset crew all
 | `idle.check_columns` | custom column slugs whose tasks are checked too | none |
 
 `set` takes several `key=value` pairs and applies them as one change; a value
-of `default` is the same as `reset`. `reset` takes keys, the section `idle`,
-or `all`. Recipients are told once each, and never about their own task: an
-owner that also assigned the task hears once. `owners` are the group's owner
-agents; `operator` is the operator's Messages. A column named in
-`idle.check_columns` drops out of it when the column is removed.
+of `default` is the same as `reset`. `reset` takes keys, an event
+(`events.comment`), a section (`idle`, `events`), or `all`. Recipients are
+told once each, and never about their own task: an owner that also assigned
+the task hears once. `owners` are the group's owner agents; `operator` is the
+operator's Messages. A column named in `idle.check_columns` drops out of it
+when the column is removed.
+
+### The board's messages
+
+The board mails people when things happen to a task. Each of these events is
+an option of the board: `events.<event>.enabled` (`on` / `off`) and
+`events.<event>.to`, who gets it. Every event is on by default and goes where
+it always has.
+
+| Event | When | Default `to` |
+|---|---|---|
+| `assigned` | A task is assigned or reassigned to an agent (also when it is added with an assignee, or taken) | `assignee` |
+| `started` | A held task is started for its assignee | `assignee` |
+| `unassigned` | A task is taken back from its assignee, released, or reassigned away | `assignee` (the one that held it) |
+| `reopened` | A closed task is reopened | `assignee` |
+| `moved_away` | A task is moved to another group or node | `assignee` |
+| `comment` | Someone comments on a task | `assignee`, `creator` |
+| `report_done` | The assignee reports done | `assigner` |
+| `report_failed` | The assignee reports failed | `assigner` |
+| `unblocked` | A task another task waits on is closed (`unblocked` / `still blocked`) | `assignee` (of the waiting task) |
+| `epic_close` | Every task of an epic is closed: close the epic? | `creator` |
+
+`to` is any of `assignee`, `assigner`, `creator`, `owners` and `operator`, or
+`none`. In an event message, `assignee`, `assigner` and `creator` name agents;
+the operator hears only as `operator` (in Messages). On a task the operator
+holds, the `assignee` copy of a comment goes to the agent that asked the
+operator, as it always has.
+
+A recipient the message was written for gets it as before: the assignee its
+brief, the assigner the report. A recipient the board adds gets a short note
+of what happened (`[taskboard] assigned to builder by lead: crew · tk_… "title"`),
+or for a comment, a report and the close-epic prompt, the message itself. Nobody hears
+twice. Whoever caused the event gets no note of it.
+
+```
+$ tclaude agent taskboard options set crew events.comment.enabled=off
+$ tclaude agent taskboard options set crew events.report_failed.to=assigner,owners,operator
+$ tclaude agent taskboard options reset crew events.comment
+```
+
+The answer to an operator question, a task request (`ask`) and the idle
+check's messages are not events: an answer always reaches the agent that
+asked, a request is sent on purpose, and the idle check has its own options.
 
 The global settings in `~/.tclaude/data/config.json` are what a board
 inherits:
@@ -1624,8 +1673,8 @@ those drags aren't accepted in the lanes.
 | `columns add` | `POST /v1/groups/{g}/taskboard/columns {"label","slug"?,"before"?}` |
 | `columns rename` / `move` | `PATCH /v1/groups/{g}/taskboard/columns/{slug} {"label"?,"before"?,"to_end"?}` |
 | `columns rm` | `DELETE /v1/groups/{g}/taskboard/columns/{slug}` → `{group, columns, cap, moved:[tk_…]}` |
-| `options show` | `GET /v1/groups/{g}/taskboard/options` → `{group, options, resolved, globals, version, updated_by, updated_at, keys}`: `options` is what the board sets, `resolved` what is in force, each value as `{value, source}` with source `default`, `global` or `board` |
-| `options set` / `reset` | `PATCH /v1/groups/{g}/taskboard/options {"set":{"idle.grace":"10m",…},"reset":["idle.tell"\|"idle"\|"all"],"version"?}`: resets first, then sets, in one change |
+| `options show` | `GET /v1/groups/{g}/taskboard/options` → `{group, options, resolved, globals, version, updated_by, updated_at, keys}`: `options` is what the board sets, `resolved` what is in force, each value as `{value, source}` with source `default`, `global` or `board`; `resolved.events` lists every event as `{name, label, enabled, to}` |
+| `options set` / `reset` | `PATCH /v1/groups/{g}/taskboard/options {"set":{"idle.grace":"10m","events.comment.enabled":"off",…},"reset":["idle.tell"\|"idle"\|"all"],"version"?}`: resets first, then sets, in one change |
 | (dashboard) | `PUT /v1/groups/{g}/taskboard/options {"options":{"idle":{…}},"version":n}`: replaces the whole document (an unknown key is a 400); a `version` other than the stored one answers 409 `stale` with the `current` options. A `PATCH` on a document written by a newer tclaude that this one cannot read answers 409 `unreadable` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
 | `archive` | `POST /v1/taskboard/tasks/{id}/archive {"reason"?}` |

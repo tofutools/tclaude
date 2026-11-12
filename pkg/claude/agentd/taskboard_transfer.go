@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -113,14 +114,17 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 		writeTaskboardError(w, err)
 		return
 	}
-	// A done task's former assignee has nothing to stop: no mail.
+	// A done task's former assignee has nothing to stop: no mail. The
+	// source board's options decide: the task left it.
+	n := newTaskboardNotice(r, g, t, boardopts.EventMovedAway).withActor()
 	if res.Unassigned != "" && res.Task.Status != db.GroupTaskDone {
 		if conv, _ := db.CurrentConvForAgent(res.Unassigned); conv != "" {
-			mailTaskboard(r, g, conv, taskboardSubject(target, res.Task, "moved away from you"),
+			n.mail(boardopts.RecipientAssignee, res.Unassigned, conv, taskboardSubject(target, res.Task, "moved away from you"),
 				taskboardLinked(target, res.Task, fmt.Sprintf("%s moved task %s %q from %s to %s. You are not a member of %s, so it is no longer assigned to you; stop work on it.\n",
 					taskboardCallerName(r), res.Task.ID, res.Task.Title, g.Name, target.Name, target.Name)))
 		}
 	}
+	n.others(fmt.Sprintf("moved to %s by %s", target.Name, taskboardCallerName(r)), "", boardopts.RecipientAssignee)
 	setAuditDetail(r, fmt.Sprintf("moved %s from %s to %s", t.ID, g.Name, target.Name))
 	writeTaskboardTransfer(w, target, res.Task, taskboardTransferResult{Group: target.Name, From: g.Name,
 		DroppedDeps: res.DroppedDeps, DroppedDependents: res.DroppedDependents, Unassigned: res.Unassigned})
@@ -327,13 +331,15 @@ func handleTaskboardMovedAway(w http.ResponseWriter, r *http.Request, t *db.Grou
 		writeTaskboardError(w, err)
 		return
 	}
+	n := newTaskboardNotice(r, g, t, boardopts.EventMovedAway).withActor()
 	if t.AssigneeID != "" {
 		if conv, _ := db.CurrentConvForAgent(t.AssigneeID); conv != "" {
-			mailTaskboard(r, g, conv, taskboardSubject(g, t, "moved away from you"),
+			n.mail(boardopts.RecipientAssignee, t.AssigneeID, conv, taskboardSubject(g, t, "moved away from you"),
 				taskboardLinked(g, t, fmt.Sprintf("%s moved task %s %q from %s to %s. It is closed here and no longer assigned to you; stop work on it.\n",
 					taskboardCallerName(r), t.ID, t.Title, g.Name, body.To.String())))
 		}
 	}
+	n.others(fmt.Sprintf("moved to %s by %s", body.To.String(), taskboardCallerName(r)), "", boardopts.RecipientAssignee)
 	setAuditDetail(r, fmt.Sprintf("%s %s", t.ID, note))
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }
