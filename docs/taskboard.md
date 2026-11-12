@@ -938,8 +938,9 @@ told of the change anyway (an assign) hears once: its mail says it waits
 (`[taskboard] queued for you, 1st in line for In progress`), not its brief.
 
 The operator may go over any limit: `--over-limit` on `add`, `assign`, `start`,
-`move --stage` and `reopen` (`"over_limit": true` on the wire); the dashboard
-asks first. Agents follow the rule: an agent's `over_limit` is refused (403).
+`move --stage` and `reopen` (`"over_limit": true` on the wire). In the
+dashboard a refused change asks the operator *Go over the limit?* and, on
+*Go over*, sends that change again over the limit. Agents follow the rule: an agent's `over_limit` is refused (403).
 
 ```
 $ tclaude agent taskboard options set crew limits.in_progress.max=3 limits.columns.in-review.max=2
@@ -1491,18 +1492,24 @@ fades.
 ### Board options in the dashboard
 
 ⚙ *Board options* opens a drawer on the right, over the board, so the board
-stays in view. It has two tabs:
+stays in view. It has three tabs:
 
 - **Triggers**: the [idle check](#idle-without-report) (its switch, the grace
   period, the nudge, who is told, and the custom columns whose tasks are not
   checked) and the [board's messages](#the-boards-messages), one row per event
   with its switch and a box per recipient. *all off* turns every message off;
   *↺ defaults* puts them all back.
+- **Limits**: the [work-in-progress limits](#work-in-progress-limits): a
+  limit for In progress and for each custom column (empty for none), with how
+  many tasks the lane holds now; whether a limit counts the whole board or
+  each assignee; and what a full lane does (*Queue*, *Refuse*, *Warn only*).
+  A lane's own choice is on the Columns tab; without one it follows the
+  board's.
 - **Columns**: the board's columns, and for each custom column whether its
   tasks are skipped by the idle check (`idle.check_columns`). A custom
   column's ⋯ renames, moves or removes it, and *＋ column* adds one. Those
   column changes apply at once, as on the board; the rest of the drawer saves
-  with *Save*.
+  with *Save*. Each lane's limit and its own at-limit choice are here too.
 
 Every value says where it comes from: *default*, *global* (the operator's
 `taskboard.*` config) or *set on this board*, with the value it would inherit
@@ -1522,8 +1529,17 @@ granted you only `taskboard.read`, the drawer is read-only and says so, for
 example *Read-only: no taskboard.write on node-b*. A linked node's board reads
 and saves its options through that node, under its grants.
 
+On the board, a limited lane's head says how full it is: `2 / 3`, amber
+with *full* at the limit, red with *over* past it (per assignee, `≤ 3 each`),
+and `⏳ 2` when two tasks wait in line for it. The count is the board's own,
+so a blocked task that keeps its slot counts, though it shows under Blocked.
+A task waiting in line has a `⏳ 1st` chip on its card and in the List, and
+its tooltip says why. The section line lists the limited lanes and how many
+wait. *Set limit…* on In progress's or a custom column's ⋯ sets that lane's
+limit and what it does when full, at once.
+
 The link `/groups?board-options=<group>` opens the drawer on a board, and
-`#idle`, `#events` or `#columns` after it scrolls to that part. A linked node's
+`#idle`, `#events`, `#columns` or `#limits` after it scrolls to that part. A linked node's
 board is `?board-options=<node-id>:<group>`. Back closes the drawer.
 
 ### A task's link
@@ -1875,5 +1891,9 @@ forms as `--ref`. The CLI prefixes `--from-awb` ids with `awb:` and
 board the caller can read, it returns the counts, up to 50 live rows (without
 bodies) and the 8 most recently closed tasks, and `options`, a summary of the
 board's options: `{version, idle_active, idle_globally_off, idle_source, set}`,
-where `set` lists the option keys the board sets. A group the caller cannot read is
+where `set` lists the option keys the board sets. When the board limits a
+lane, `options.limits` is `{per, lanes:[{lane, max, at_limit, count, counts?,
+queued}]}`, one entry per limited lane: `count` is the tasks it holds (per
+assignee, the fullest assignee's; `counts` has each one's), `queued` how many
+wait in line. A group the caller cannot read is
 left out entirely, not listed as empty.

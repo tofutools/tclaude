@@ -92,25 +92,35 @@ export function columnMenuItems({ column, columns, group, actions, onRename }) {
   ];
 }
 
-// optionsItem is a custom column's "Column in Board options": the board's
-// options drawer at the Columns tab, on that column. A board whose node
-// serves no options (entry.options absent) has none.
-function optionsItem(column, group, entry) {
-  if (!column.custom || !entry?.options) return [];
-  return [{ key: 'options', label: 'Column in Board options ↗', attrs: { 'data-column-menu': 'options', title: `The ${column.label} column in the board's options: whether it is idle-checked` },
-    run: () => openBoardOptions({ group: group.name, node: boardNode(group), section: 'columns', column: column.slug }) }];
+// optionsItems are a lane head's limit and options items: "Set limit…"
+// (In progress and each custom column, for a viewer who changes the board)
+// and "Column in Board options", the board's options drawer at the Columns
+// tab, on that column. A board whose node serves no options
+// (entry.options absent) has neither.
+function optionsItems(column, group, entry, limits) {
+  const lane = column.key === 'progress' ? 'in_progress' : column.custom ? column.slug : '';
+  if (!lane || !entry?.options) return [];
+  const items = [];
+  if (limits?.can) {
+    items.push({ key: 'limit', label: 'Set limit…', attrs: { 'data-column-menu': 'limit', title: `How many tasks ${column.label} holds at once (taskboard options set ${group.name} ${lane === 'in_progress' ? 'limits.in_progress.max' : `limits.columns.${lane}.max`}=…)` },
+      run: () => limits.open(lane, column.label) });
+  }
+  items.push({ key: 'options', label: 'Column in Board options ↗', attrs: { 'data-column-menu': 'options', title: `The ${column.label} column in the board's options: its limit and whether it is idle-checked` },
+    run: () => openBoardOptions({ group: group.name, node: boardNode(group), section: 'columns', column: lane }) });
+  return items;
 }
 
 // ColumnHeadMenu is a column head's ⋯: a custom column's rename, move and
 // remove, and any hideable column's hide and cordon items
-// (groups-taskboard-colvis.js), then the column in the Board options.
-export function ColumnHeadMenu({ column, columns, group, actions, entry = null, onRename }) {
+// (groups-taskboard-colvis.js), then its limit and the column in the Board
+// options. limits is the head's useLimitDialog.
+export function ColumnHeadMenu({ column, columns, group, actions, entry = null, onRename, limits = null }) {
   const manage = columnMenuItems({ column, columns, group, actions, onRename });
   const state = actions?.busy ? [] : columnStateItems(column, entry);
-  const items = [...manage, ...state, ...optionsItem(column, group, entry)];
+  const items = [...manage, ...state, ...optionsItems(column, group, entry, actions?.busy ? null : limits)];
   if (!items.length) return null;
   return html`<span class="tb-col-menu"><${RowMenu} label=${`the ${column.label} column`} items=${items} buttonClass="tb-col-more"
-    title=${column.custom ? `Rename, move, hide or remove the ${column.label} column` : `Hide the ${column.label} column`} /></span>`;
+    title=${column.custom ? `Rename, move, hide, limit or remove the ${column.label} column` : `More for the ${column.label} column`} /></span>`;
 }
 
 // useColumnNaming drives the add and rename dialogs: open('add') or

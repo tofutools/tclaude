@@ -23,10 +23,35 @@ type taskboardContextOptions struct {
 	// a column's limit keys (limits.columns.<slug>.max, .at_limit) come
 	// last, in the board's column order.
 	Set []string `json:"set"`
+	// Limits are the board's work-in-progress limits in force, for the
+	// lanes' heads; absent while no lane has one.
+	Limits *taskboardContextLimits `json:"limits,omitempty"`
+}
+
+// taskboardContextLimits are the limited lanes, each with how full it is.
+type taskboardContextLimits struct {
+	// Per is board or assignee: what a limit counts.
+	Per   string                 `json:"per"`
+	Lanes []taskboardContextLane `json:"lanes"`
+}
+
+// taskboardContextLane is one limited lane: in_progress or a column slug.
+type taskboardContextLane struct {
+	Lane    string `json:"lane"`
+	Max     int    `json:"max"`
+	AtLimit string `json:"at_limit"`
+	// Count is how many tasks stand in the lane; per assignee, Counts has
+	// each assignee's (agent id) count, and Count is the fullest one's.
+	Count  int            `json:"count"`
+	Counts map[string]int `json:"counts,omitempty"`
+	// Queued is how many tasks wait in line for the lane.
+	Queued int `json:"queued,omitempty"`
 }
 
 // taskboardContextOptionsOf summarises g's options for its context entry.
-func taskboardContextOptionsOf(g *db.AgentGroup, globals boardopts.Globals) (*taskboardContextOptions, error) {
+// live are the board's live tasks, which the limited lanes are counted
+// from.
+func taskboardContextOptionsOf(g *db.AgentGroup, globals boardopts.Globals, live []*db.GroupTask) (*taskboardContextOptions, error) {
 	row, o, cols, err := taskboardOptions(g.ID)
 	if err != nil {
 		return nil, err
@@ -73,5 +98,44 @@ func taskboardContextOptionsOf(g *db.AgentGroup, globals boardopts.Globals) (*ta
 			}
 		}
 	}
+	out.Limits = taskboardContextLimitsOf(r.Limits, live)
 	return out, nil
+}
+
+// taskboardContextLimitsOf counts the limited lanes; nil when none is.
+func taskboardContextLimitsOf(limits boardopts.ResolvedLimits, live []*db.GroupTask) *taskboardContextLimits {
+	per := limits.PerAssignee()
+	var lanes []taskboardContextLane
+	for _, l := range limits.Lanes {
+		if l.Max.Value <= 0 {
+			continue
+		}
+		lane := taskboardContextLane{Lane: l.Lane, Max: l.Max.Value, AtLimit: l.AtLimit.Value}
+		for _, t := range live {
+			if t.QueuedFor == l.Lane {
+				lane.Queued++
+			}
+			if !t.InGroupTaskLane(l.Lane) {
+				continue
+			}
+			if !per {
+				lane.Count++
+				continue
+			}
+			// Per assignee, a task nobody holds counts against no one.
+			if t.AssigneeID == "" || t.AssigneeID == db.OperatorAssignee {
+				continue
+			}
+			if lane.Counts == nil {
+				lane.Counts = map[string]int{}
+			}
+			lane.Counts[t.AssigneeID]++
+			lane.Count = max(lane.Count, lane.Counts[t.AssigneeID])
+		}
+		lanes = append(lanes, lane)
+	}
+	if len(lanes) == 0 {
+		return nil
+	}
+	return &taskboardContextLimits{Per: limits.Per.Value, Lanes: lanes}
 }

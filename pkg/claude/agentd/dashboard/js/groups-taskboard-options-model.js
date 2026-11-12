@@ -76,8 +76,42 @@ export const eventKey = (name, field) => `events.${name}.${field}`;
 
 // The drawer's tabs and the sections a deep link (#idle) may name. Limits
 // arrives with the per-board limits (tk_68919cad PR 3).
-export const TABS = [['triggers', 'Triggers'], ['columns', 'Columns']];
-export const SECTION_TAB = { idle: 'triggers', events: 'triggers', triggers: 'triggers', columns: 'columns' };
+export const TABS = [['triggers', 'Triggers'], ['limits', 'Limits'], ['columns', 'Columns']];
+export const SECTION_TAB = { idle: 'triggers', events: 'triggers', triggers: 'triggers', limits: 'limits', columns: 'columns' };
+
+// Work-in-progress limits (docs/taskboard.md "Work-in-progress limits"): a
+// cap per lane, In progress (IN_PROGRESS) and each custom column, what a
+// full lane does (AT_LIMITS), and whether a cap counts the whole lane or
+// each assignee's tasks in it (PER).
+export const IN_PROGRESS = 'in_progress';
+export const AT_LIMITS = [
+  ['queue', 'Queue', 'The task waits in line, marked queued; when a slot frees, the first in line goes in and its assignee is told'],
+  ['refuse', 'Refuse', 'The change is refused: the mover is told the lane is full'],
+  ['warn', 'Warn only', 'The task goes in over the limit; the lane shows it over'],
+];
+export const PER = [['board', 'board'], ['assignee', 'assignee']];
+export const MAX_LIMIT = 999;
+
+// laneKey is a lane's option key: limits.in_progress.max,
+// limits.columns.in-review.at_limit.
+export function laneKey(lane, field) {
+  return lane === IN_PROGRESS ? `limits.in_progress.${field}` : `limits.columns.${lane}.${field}`;
+}
+
+// limitKeyParts reads a limits key: { lane, field } for a lane's, { field }
+// for the board's at_limit and per; null for any other key.
+export function limitKeyParts(key) {
+  if (!String(key).startsWith('limits.')) return null;
+  const rest = key.slice('limits.'.length);
+  if (rest === 'at_limit' || rest === 'per') return { lane: '', field: rest };
+  if (rest.startsWith('in_progress.')) return { lane: IN_PROGRESS, field: rest.slice('in_progress.'.length) };
+  if (rest.startsWith('columns.')) {
+    const tail = rest.slice('columns.'.length);
+    const dot = tail.lastIndexOf('.');
+    if (dot > 0) return { lane: tail.slice(0, dot), field: tail.slice(dot + 1) };
+  }
+  return null;
+}
 
 export const DEFAULT_GRACE = '5m';
 const MIN_GRACE_MS = 60_000;
@@ -96,7 +130,31 @@ export function flatOptions(options) {
     if (typeof event.enabled === 'boolean') out[eventKey(name, 'enabled')] = event.enabled;
     if (Array.isArray(event.to)) out[eventKey(name, 'to')] = [...event.to];
   }
+  const limits = options?.limits || {};
+  if (limits.at_limit) out['limits.at_limit'] = limits.at_limit;
+  if (limits.per) out['limits.per'] = limits.per;
+  const lane = (name, limit) => {
+    if (!limit) return;
+    if (limit.max > 0) out[laneKey(name, 'max')] = limit.max;
+    if (limit.at_limit) out[laneKey(name, 'at_limit')] = limit.at_limit;
+  };
+  lane(IN_PROGRESS, limits.in_progress);
+  for (const [slug, limit] of Object.entries(limits.columns || {})) lane(slug, limit);
   return out;
+}
+
+function limitValue(block, key) {
+  const parts = limitKeyParts(key);
+  if (!parts) return undefined;
+  if (!parts.lane) return block?.limits?.[parts.field];
+  return (block?.limits?.lanes || []).find((l) => l.lane === parts.lane)?.[parts.field];
+}
+
+// valueOf is key's { value, source } in a resolved block.
+function valueOf(block, key) {
+  if (key.startsWith('idle.')) return idleValue(block, key);
+  if (key.startsWith('limits.')) return limitValue(block, key);
+  return eventValue(block, key);
 }
 
 function idleValue(block, key) {
@@ -110,14 +168,24 @@ function eventValue(block, key) {
 
 // resolvedOf is the value in force for key, as the daemon read it.
 export function resolvedOf(view, key) {
-  return (key.startsWith('idle.') ? idleValue(view?.resolved, key) : eventValue(view?.resolved, key)) || null;
+  return valueOf(view?.resolved, key) || null;
 }
 
 // inheritedOf is what key falls back to when the board does not set it:
-// { value, source } with source default or global.
-export function inheritedOf(view, key) {
-  const sent = key.startsWith('idle.') ? idleValue(view?.inherited, key) : eventValue(view?.inherited, key);
+// { value, source } with source default or global. A lane's at_limit falls
+// back to the board's, as the draft has it (source "lane-board").
+export function inheritedOf(view, key, draft = null) {
+  const parts = limitKeyParts(key);
+  if (parts?.lane && parts.field === 'at_limit') {
+    return { value: effectiveOf(view, draft || {}, 'limits.at_limit').value, source: 'lane-board' };
+  }
+  const sent = valueOf(view?.inherited, key);
   if (sent) return sent;
+  if (parts) {
+    if (parts.field === 'max') return { value: 0, source: 'default' };
+    if (parts.field === 'per') return { value: 'board', source: 'default' };
+    return { value: 'queue', source: 'default' };
+  }
   const resolved = resolvedOf(view, key);
   if (resolved && resolved.source !== 'board') return resolved;
   const globals = view?.globals || {};
@@ -139,7 +207,7 @@ export function inheritedOf(view, key) {
 // effectiveOf is what key will be once the draft is saved.
 export function effectiveOf(view, draft, key) {
   if (draft && Object.hasOwn(draft, key)) return { value: draft[key], source: 'board' };
-  return inheritedOf(view, key);
+  return inheritedOf(view, key, draft);
 }
 
 function sameValue(a, b) {
@@ -166,7 +234,7 @@ export function setOption(view, saved, draft, key, value, columns = []) {
   else if (key === 'idle.check_columns') next = ordered(value, columns);
   else if (key.endsWith('.to')) next = ordered(value, EVENT_TO);
   const out = { ...draft };
-  if (!Object.hasOwn(saved || {}, key) && sameValue(next, inheritedOf(view, key).value)) delete out[key];
+  if (!Object.hasOwn(saved || {}, key) && sameValue(next, inheritedOf(view, key, draft).value)) delete out[key];
   else out[key] = next;
   return out;
 }
@@ -203,6 +271,8 @@ export function patchOf(saved, draft, columns = null) {
   const set = {};
   const reset = [];
   for (const key of changedKeys(saved, next)) {
+    const lane = limitKeyParts(key)?.lane;
+    if (columns && lane && lane !== IN_PROGRESS && !columns.includes(lane)) continue;
     if (Object.hasOwn(next, key)) set[key] = optionText(next[key]);
     else reset.push(key);
   }
@@ -253,9 +323,21 @@ export function graceError(text) {
   return '';
 }
 
+// limitError is why the daemon would refuse a lane's max, or ''.
+export function limitError(value) {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_LIMIT) return `A whole number up to ${MAX_LIMIT}; empty for no limit`;
+  return '';
+}
+
 // draftErrors are the draft's invalid keys, { key: why }.
 export function draftErrors(draft) {
   const out = {};
+  for (const [key, value] of Object.entries(draft || {})) {
+    if (limitKeyParts(key)?.field === 'max') {
+      const why = limitError(value);
+      if (why) out[key] = why;
+    }
+  }
   if (Object.hasOwn(draft || {}, 'idle.grace')) {
     const why = graceError(draft['idle.grace']);
     if (why) out['idle.grace'] = why;
@@ -267,12 +349,14 @@ export function draftErrors(draft) {
 export function sourceText(source) {
   if (source === 'board') return 'set on this board';
   if (source === 'global') return 'global';
+  if (source === 'lane-board') return "the board's";
   return 'default';
 }
 
 // valueText is a value as the drawer shows it beside its source.
 export function valueText(value) {
   if (Array.isArray(value)) return value.length ? value.join(', ') : 'no one';
+  if (value === 0) return 'no limit';
   if (value === true) return 'on';
   if (value === false) return 'off';
   return String(value ?? '');
@@ -282,7 +366,7 @@ export function valueText(value) {
 // change from the inherited behaviour, from its context entry's options
 // ({ version, idle_active, idle_globally_off, idle_source, set }): one chip
 // per part, each with the section of the drawer it opens.
-export function optionsSummary(options) {
+export function optionsSummary(options, columns = []) {
   if (!options) return [];
   const set = Array.isArray(options.set) ? options.set : [];
   const out = [];
@@ -299,7 +383,49 @@ export function optionsSummary(options) {
     out.push({ section: 'events', text: `${events.size} ${events.size === 1 ? 'message' : 'messages'} changed`,
       title: `This board changes the messages it sends for: ${[...events].join(', ')}` });
   }
-  return out;
+  let queued = 0;
+  for (const lane of options.limits?.lanes || []) {
+    const fill = laneFill(lane);
+    const label = laneLabel(lane.lane, columns);
+    queued += lane.queued || 0;
+    out.push({ section: 'limits', key: `limits-${lane.lane}`, fill, lane: lane.lane,
+      text: options.limits.per === 'assignee' ? `${label} ≤ ${lane.max} each` : `${label} ${lane.count} / ${lane.max}`,
+      title: laneTitle(lane, label, options.limits.per) });
+  }
+  if (queued) out.push({ section: 'limits', key: 'limits-queued', text: `${queued} queued`, title: `${queued} ${queued === 1 ? 'task waits' : 'tasks wait'} in line for a full lane` });
+  return out.map((part) => ({ key: part.section, ...part }));
+}
+
+// laneLabel names a lane: In progress, or the custom column's label.
+export function laneLabel(lane, columns = []) {
+  if (lane === IN_PROGRESS) return 'In progress';
+  return columns.find((c) => c.slug === lane)?.label || lane;
+}
+
+// laneLimit is a lane's limit from a board's context entry
+// (options.limits): { lane, max, at_limit, count, counts, queued, per }, or
+// null when the lane has none.
+export function laneLimit(options, lane) {
+  const found = (options?.limits?.lanes || []).find((l) => l.lane === lane);
+  return found ? { ...found, per: options.limits.per || 'board' } : null;
+}
+
+// laneFill is how full a limited lane is: 'over', 'full' or ''.
+export function laneFill(limit) {
+  if (!limit || !(limit.max > 0)) return '';
+  if (limit.count > limit.max) return 'over';
+  return limit.count >= limit.max ? 'full' : '';
+}
+
+const AT_LIMIT_SAYS = { queue: 'new tasks queue', refuse: 'moves here are refused', warn: 'moves here go over it' };
+
+// laneTitle is a limited lane's tooltip: the limit, how full, what a full
+// lane does, and how many wait.
+export function laneTitle(limit, label, per = 'board') {
+  const parts = [per === 'assignee' ? `${label}: at most ${limit.max} per assignee (the fullest has ${limit.count})` : `${label}: ${limit.count} of at most ${limit.max}`];
+  parts.push(`at the limit, ${AT_LIMIT_SAYS[limit.at_limit] || limit.at_limit}`);
+  if (limit.queued) parts.push(`${limit.queued} queued`);
+  return parts.join('; ');
 }
 
 // A board's options route value: the group as its own node names it, after

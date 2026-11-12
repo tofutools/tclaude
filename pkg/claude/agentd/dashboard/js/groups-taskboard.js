@@ -26,7 +26,7 @@ import { Button, Seg } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
 import { dashPrefs } from './prefs.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
-import { createTaskboardApi, taskboardApi } from './taskboard-actions.js';
+import { createTaskboardApi, localLimitHooks, taskboardApi } from './taskboard-actions.js';
 import { isPageNode, nodeFetch, nodeSnapshot, nodeUpload, onPeerPage } from './node-api.js';
 import { dashboardState } from './snapshot-store.js';
 import { markLanded } from './drop-landing.js';
@@ -56,6 +56,7 @@ import {
 } from './taskboard-context.js';
 import { ColGroup } from './table-kit.js';
 import { BoardOptionsButton, BoardOptionsDrawer, BoardOptionsSummary } from './groups-taskboard-options.js';
+import { QueuedChip } from './groups-taskboard-limits.js';
 import { boardNode, boardOptionsRoute, closeBoardOptions, isBoardOptionsFor } from './groups-taskboard-options-route.js';
 import { EpicBoard, EpicChip, EpicFilterMenu, EpicGroupRow, EpicMark, EpicStrip, NO_EPIC, boardEntry, epicDimmed, epicMoved, epicOf, intoEpic, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
 
@@ -76,7 +77,7 @@ export function nodeTaskboard(node) {
     try { fetchImpl = nodeFetch(node); } catch (_) { fetchImpl = async () => ({ ok: false, status: 404, json: async () => null }); }
     // Files go through this node's staged upload to that node.
     const upload = (path, init) => nodeUpload(node, path, init);
-    board = { source: createTaskboardContextSource({ fetchImpl }), api: createTaskboardApi({ fetchImpl, upload }) };
+    board = { source: createTaskboardContextSource({ fetchImpl }), api: createTaskboardApi({ fetchImpl, upload, limits: localLimitHooks() }) };
     nodeBoards.set(node, board);
   }
   return board;
@@ -228,7 +229,7 @@ function Who({ task, group, snapshot }) {
 // STATE_MEANING is what a state means, for a pill whose tooltip has nothing
 // more to say.
 const STATE_MEANING = {
-  open: 'next in the queue', idea: 'captured, not yet in the queue', queued: 'waits on other tasks',
+  open: 'next in the queue', idea: 'captured, not yet in the queue', queued: 'waits on other tasks, or in line for a full lane',
   'in-progress': 'an agent holds it', waiting: 'the operator holds it: an answer or a step an agent waits on', stalled: 'its agent went idle without reporting', blocked: 'waits on something outside the board',
   done: 'finished', dropped: 'dropped without being done',
 };
@@ -252,6 +253,8 @@ function StatePill({ task, byId, assignee = '', columns = [] }) {
   if (state === 'queued') {
     const waits = (task.unmet || []).map((dep) => byId?.get(dep)?.title || dep);
     if (waits.length) details.push(`waits on ${waits.map((w) => `“${w}”`).join(', ')}`);
+    // In line for a full lane (docs/taskboard.md "Work-in-progress limits").
+    if (task.queued_for && task.queued_reason) details.push(task.queued_reason.split('; ').filter((r) => !r.startsWith('waiting on')).join('; '));
   }
   if (state === 'blocked' && task.block_reason) details.push(`“${task.block_reason.trim()}”`);
   if (custom) details.push('no idle alarm here');
@@ -479,7 +482,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason" title=${task.block_reason}>blocked: “${task.block_reason}”</div>`}
     </div></td>
     <td><${StatePill} task=${task} byId=${byId} columns=${columns} assignee=${task.assignee?.operator ? actorLabel(task.assigned_by, group, snapshot)
-      : task.assignee?.agent_id ? agentLabel(task.assignee.agent_id, group, snapshot) : ''} /></td>
+      : task.assignee?.agent_id ? agentLabel(task.assignee.agent_id, group, snapshot) : ''} /><${QueuedChip} task=${task} /></td>
     <td class="tb-t" title=${task.updated_at || ''}>${task.updated_at ? relTime(task.updated_at) : ''}</td>
     <td class="tb-t" title=${task.created_at || ''}>${task.created_at ? relTime(task.created_at) : ''}</td>
     <td class="tb-who-cell"><${Who} task=${task} group=${group} snapshot=${snapshot} /></td>
@@ -1237,7 +1240,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
         onSaved=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} onClose=${closeBoardOptions} />`
     : null;
   return html`<${EpicBoard.Provider} value=${epics}>${dialog}${optionsDrawer}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
-      summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} /><${BoardOptionsSummary} options=${entry.options} />`} auto=${autoOpened.current}
+      summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} /><${BoardOptionsSummary} options=${entry.options} columns=${entry.columns || []} />`} auto=${autoOpened.current}
       closedActions=${closedActions} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${TaskboardRows} entry=${lanes ? view : drawn} full=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}

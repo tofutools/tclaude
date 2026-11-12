@@ -184,15 +184,6 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 			return entry, err
 		}
 	}
-	if globals != nil {
-		// The summary is a convenience: a board whose options cannot be
-		// read still lists its tasks.
-		if opts, err := taskboardContextOptionsOf(g, *globals); err != nil {
-			slog.Warn("taskboard: reading board options for the context failed", "group", g.Name, "error", err)
-		} else {
-			entry.Options = opts
-		}
-	}
 	tasks, err := db.ListGroupTasks(g.ID, db.GroupTaskListOpts{Closed: true})
 	if err != nil {
 		return entry, err
@@ -212,6 +203,15 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		}
 		if len(closed) < taskboardContextClosedRows {
 			closed = append(closed, t)
+		}
+	}
+	if globals != nil {
+		// The summary is a convenience: a board whose options cannot be
+		// read still lists its tasks.
+		if opts, err := taskboardContextOptionsOf(g, *globals, live); err != nil {
+			slog.Warn("taskboard: reading board options for the context failed", "group", g.Name, "error", err)
+		} else {
+			entry.Options = opts
 		}
 	}
 	liveViews, err := taskboardContextTasks(g.Name, live)

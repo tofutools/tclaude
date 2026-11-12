@@ -30,6 +30,9 @@
 //   column head ⋯ /  columns add|rename|move|rm <group> …
 //   ＋ column
 //   ⚙ Board options  options show <group> · options set|reset <group> …
+//   a full lane      the write's --over-limit, after the operator confirms
+//                    (limitHooks: the board's limit_reached refusal, and
+//                    the queued / over-limit note a write answers with)
 //                    (the drawer saves the whole document at once)
 //
 // Every write carries an idempotency key, so a retried click never applies
@@ -38,6 +41,7 @@
 import { idempotentRequestHeaders } from './request-idempotency.js';
 import { randomUUID } from './insecure-origin.js';
 import { nodeUpload } from './node-api.js';
+import { shellConfirm, shellToast } from './shell-state.js';
 
 export class TaskboardRequestError extends Error {
   constructor(message, { status = 0, code = '', body = null } = {}) {
@@ -136,10 +140,29 @@ export function taskFileLimits(held = 0) {
 // with files: to this node directly, and to another node (the page's own on
 // a peer's page) through this node's staged upload (node-api.js nodeUpload),
 // since a peer view request carries 32 KiB. A node's board passes its own.
-export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), upload = null } = {}) {
-  const call = (method, path, payload) => request(fetchImpl, method, path, payload);
+//
+// limits are the hooks for a full lane (docs/taskboard.md "Work-in-progress
+// limits"): confirm(message) asks whether to go over a limit the board
+// refused at, and the refused request alone is sent again with over_limit;
+// note(limit, task) hears of a write that met a full lane anyway (queued,
+// warned or over).
+export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), upload = null, limits = null } = {}) {
+  const noted = (out) => {
+    if (out?.limit && limits?.note) limits.note(out.limit, out);
+    return out;
+  };
+  const overLimit = async (send, payload) => {
+    try {
+      return noted(await send(payload));
+    } catch (cause) {
+      if (!payload || typeof payload !== 'object' || !canGoOver(cause) || !limits?.confirm) throw cause;
+      if (!(await limits.confirm(limitMessage(cause)))) throw cause;
+      return noted(await send({ ...payload, over_limit: true }));
+    }
+  };
+  const call = (method, path, payload) => overLimit((body) => request(fetchImpl, method, path, body), payload);
   const send = upload || ((path, init) => nodeUpload('', path, init, { fetchImpl }));
-  const post = async (path, task, files) => answer(await send(path, { body: taskForm(task, files) }));
+  const post = (path, task, files) => overLimit(async (body) => answer(await send(path, { body: taskForm(body, files) })), task);
   // importBatches sends a long import in batches of IMPORT_BATCH, one after
   // another, and merges the replies; the results stay in input order. When a
   // later batch fails, the batches already added stand: the merged result
@@ -410,4 +433,39 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
   };
 }
 
-export const taskboardApi = createTaskboardApi();
+// canGoOver says whether a refusal is a full lane the caller may go over:
+// the board says so (only to the operator) in its limit_reached refusal.
+export function canGoOver(cause) {
+  return cause?.status === 409 && cause?.body?.code === 'limit_reached' && /over_limit/.test(cause?.message || '');
+}
+
+// limitMessage is a limit refusal without its hint for the CLI.
+export function limitMessage(cause) {
+  return String(cause?.message || '').replace(/\s*\(go over it with over_limit\)\s*$/, '');
+}
+
+// limitNoteText says what came of a write that met a full lane.
+export function limitNoteText(limit) {
+  const fill = `${limit.label} is full (${limit.count} / ${limit.max}${limit.per === 'assignee' ? ' each' : ''})`;
+  if (limit.action === 'queued') return `Queued: ${fill}; ${ordinal(limit.position || 1)} in line, it goes in when a slot frees`;
+  if (limit.action === 'warned') return `Over the limit: ${fill}, the board warns only`;
+  return `Over the limit: ${fill}`;
+}
+
+// ordinal is 1st, 2nd, 3rd, 4th, … 11th, 12th, 13th, 21st.
+export function ordinal(n) {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
+}
+
+export const taskboardApi = createTaskboardApi({ limits: localLimitHooks() });
+
+// localLimitHooks are this page's: the operator confirms going over a
+// limit, and a write that queued or went over says so in a toast.
+export function localLimitHooks() {
+  return {
+    confirm: (message) => shellConfirm({ title: 'Go over the limit?', body: `${message}. Do it anyway, over the limit?`, okLabel: 'Go over' }),
+    note: (limit) => shellToast(limitNoteText(limit)),
+  };
+}

@@ -24,7 +24,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Dialog, useDialogClose } from './ui-dialog.js';
-import { Button, Check, Input, Switch } from './ui-components.js';
+import { Button, Check, Input, OptionalSelect, Switch } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { RowMenu } from './row-menu.js';
 import { shellConfirmDiscard, shellToast } from './shell-state.js';
@@ -32,7 +32,8 @@ import { openBoardOptions } from './groups-taskboard-options-route.js';
 import { AddColumnButton, COLUMNS_CAP, columnMenuItems, useColumnNaming } from './groups-taskboard-columns.js';
 import {
   EVENT_TO, eventRows, IDLE_TELL, RECIPIENT_LABEL, RECIPIENT_TITLE, SECTION_TAB, TABS,
-  changedKeys, draftErrors, effectiveOf, eventKey, flatOptions, inheritedOf,
+  AT_LIMITS, IN_PROGRESS, PER,
+  changedKeys, draftErrors, effectiveOf, eventKey, flatOptions, inheritedOf, laneKey, laneLimit,
   optionsSummary, patchOf, rebaseDraft, resetOption, setOption, sourceText, valueText,
 } from './groups-taskboard-options-model.js';
 
@@ -54,11 +55,14 @@ export function BoardOptionsButton({ group, node = '', iconOnly = false, wizard 
 // BoardOptionsSummary is the section line's note of what the board's
 // options change from the inherited behaviour (the folded line shows it
 // too). It sits inside the section's toggle, so it is text, not controls.
-export function BoardOptionsSummary({ options }) {
-  const parts = optionsSummary(options);
+const SUMMARY_ICON = { idle: '⏱ ', events: '✉ ', limits: '' };
+
+export function BoardOptionsSummary({ options, columns = [] }) {
+  const parts = optionsSummary(options, columns);
   if (!parts.length) return null;
-  return html`<span class="tb-options-summary">${parts.map((part) => html`<span key=${part.section}
-    class="ui-tag tb-options-chip" data-tb-options-summary=${part.section} title=${part.title}>${part.section === 'idle' ? '⏱ ' : '✉ '}${part.text}</span>`)}</span>`;
+  return html`<span class="tb-options-summary">${parts.map((part) => html`<span key=${part.key}
+    class=${`ui-tag tb-options-chip${part.fill ? ` tb-lane-${part.fill}` : ''}`} data-tb-options-summary=${part.section}
+    data-tb-options-lane=${part.lane} title=${part.title}>${SUMMARY_ICON[part.section] ?? ''}${part.text}</span>`)}</span>`;
 }
 
 // Source is a value's provenance and, where the board sets it, its ↺. A
@@ -68,7 +72,7 @@ function Source({ view, draft, saved, keys, canWrite, onReset, label, compact = 
   const set = keys.filter((key) => Object.hasOwn(draft, key));
   const pick = (obj) => Object.fromEntries(keys.filter((k) => Object.hasOwn(obj, k)).map((k) => [k, obj[k]]));
   const changed = changedKeys(pick(saved), pick(draft)).length > 0;
-  const inherited = keys.map((key) => inheritedOf(view, key));
+  const inherited = keys.map((key) => inheritedOf(view, key, draft));
   let text;
   if (set.length) {
     const from = inherited[0];
@@ -193,23 +197,107 @@ function EventsSection({ view, draft, saved, canWrite, set, reset, setMany }) {
   </section>`;
 }
 
+// LimitInput is a lane's max: a number, empty for no limit.
+function LimitInput({ view, draft, lane, label, canWrite, set, errors }) {
+  const key = laneKey(lane, 'max');
+  const max = effectiveOf(view, draft, key).value;
+  const [text, setText] = useState(max > 0 ? String(max) : '');
+  // Follow the draft when it changes from elsewhere (a reset, a reread).
+  useEffect(() => {
+    const shown = text.trim() === '' ? 0 : Number(text);
+    if (shown !== max) setText(max > 0 ? String(max) : '');
+  }, [max]);
+  const id = `tb-opt-max-${lane}`;
+  return html`<span class="tb-opt-limit">
+    <${Input} id=${id} size="sm" class="tb-opt-max" inputmode="numeric" value=${text} placeholder="—" disabled=${!canWrite}
+      aria-label=${`${label} limit`} invalid=${!!errors[key]} aria-describedby=${errors[key] ? `${id}-error` : undefined}
+      autocomplete="off" onInput=${(event) => {
+        const raw = event.currentTarget.value.trim();
+        setText(event.currentTarget.value);
+        set(key, raw === '' ? 0 : /^\d+$/.test(raw) ? Number(raw) : Number.NaN);
+      }} />
+    ${errors[key] && html`<span id=${`${id}-error`} class="ui-error">${errors[key]}</span>`}
+  </span>`;
+}
+
+// AtLimitSelect is a lane's own at-limit choice, or the board's.
+function AtLimitSelect({ view, draft, lane, label, canWrite, set, reset }) {
+  const key = laneKey(lane, 'at_limit');
+  const board = effectiveOf(view, draft, 'limits.at_limit').value;
+  const own = Object.hasOwn(draft, key) ? draft[key] : '';
+  const name = (value) => AT_LIMITS.find(([k]) => k === value)?.[1].toLowerCase() || value;
+  return html`<${OptionalSelect} size="sm" class="tb-opt-at" value=${own} disabled=${!canWrite} aria-label=${`${label}: at the limit`}
+    unset=${`board (${name(board)})`} options=${AT_LIMITS.map(([k, text]) => [k, text.toLowerCase()])}
+    onChange=${(value) => (value ? set(key, value) : reset([key]))} />`;
+}
+
+// LimitsTab is the board's work-in-progress limits: a cap on In progress
+// and on each custom column, what a full lane does, and whether a cap
+// counts the lane or each assignee in it.
+function LimitsTab({ view, draft, saved, columns, entry, canWrite, set, reset, errors }) {
+  const lanes = [{ lane: IN_PROGRESS, label: 'In progress', sub: 'started tasks of agents' }, ...columns.map((c) => ({ lane: c.slug, label: c.label, sub: c.slug }))];
+  const per = effectiveOf(view, draft, 'limits.per').value;
+  const atLimit = effectiveOf(view, draft, 'limits.at_limit').value;
+  const now = (lane) => {
+    const limit = laneLimit(entry?.options, lane);
+    if (!limit) return '';
+    return per === 'assignee' && limit.per === 'assignee' ? `now ${limit.count} (fullest)` : limit.per === 'board' ? `now ${limit.count}` : '';
+  };
+  const src = (keys, label) => html`<${Source} view=${view} draft=${draft} saved=${saved} keys=${keys} canWrite=${canWrite} onReset=${reset} label=${label} />`;
+  return html`<section class="tb-opt-section" data-tb-opt-section="limits" aria-label="Limits">
+    <p class="tb-opt-desc ui-hint">How many tasks a lane holds at once: In progress, and each custom column. Empty is no limit.
+      Operator moves can always go over a limit, after a confirm; agents follow the rule.</p>
+    <div class="tb-opt-grid">
+      ${lanes.map(({ lane, label, sub }) => html`
+        <span key=${`l-${lane}`} class="tb-opt-label" data-tb-opt-lane=${lane}>${label} <span class="ui-hint">${sub}</span></span>
+        <span key=${`c-${lane}`} class="tb-opt-ctl">
+          <${LimitInput} view=${view} draft=${draft} lane=${lane} label=${label} canWrite=${canWrite} set=${set} errors=${errors} />
+          <span class="ui-hint" data-tb-opt-now=${lane}>${now(lane)}</span>
+        </span>
+        <span key=${`s-${lane}`}>${src([laneKey(lane, 'max')], `the ${label} limit`)}</span>`)}
+
+      <span class="tb-opt-label" id="tb-opt-per-label">Count per</span>
+      <span class="tb-opt-ctl" role="radiogroup" aria-labelledby="tb-opt-per-label">
+        ${PER.map(([value, text]) => html`<${Check} key=${value} type="radio" name="tb-opt-per" checked=${per === value} disabled=${!canWrite}
+          onChange=${() => set('limits.per', value)}>${text}<//>`)}
+        <span class="ui-hint">${per === 'assignee' ? 'each agent has its own N' : 'every task in the lane counts'}</span>
+      </span>
+      ${src(['limits.per'], 'what a limit counts')}
+    </div>
+    <div class="tb-opt-head">
+      <b id="tb-opt-at-title">At the limit</b>
+      <span class="ui-hint">one choice for the board; a lane can override it on the Columns tab</span>
+      <span class="spacer"></span>
+      ${src(['limits.at_limit'], 'what a full lane does')}
+    </div>
+    <div class="tb-opt-at-choices" role="radiogroup" aria-labelledby="tb-opt-at-title">
+      ${AT_LIMITS.map(([value, text, says]) => html`<${Check} key=${value} type="radio" name="tb-opt-at" checked=${atLimit === value} disabled=${!canWrite}
+        labelClass="tb-opt-at-choice" onChange=${() => set('limits.at_limit', value)}><b>${text}</b> <span class="ui-hint">${says}</span><//>`)}
+    </div>
+  </section>`;
+}
+
 // ColumnsTab is the board's columns: the built-in ones, and each custom
 // column with whether it is idle-checked and its ⋯ (rename, move, remove).
 // Column changes apply at once (taskboard columns …, taskboard.columns);
 // the idle-check choice is part of the options draft.
-function ColumnsTab({ group, view, draft, saved, columns, canWrite, set, reset, actions, focusColumn }) {
+function ColumnsTab({ group, view, draft, saved, columns, canWrite, set, reset, actions, focusColumn, errors }) {
   const naming = useColumnNaming(group, canWrite ? actions : null);
   const checked = effectiveOf(view, draft, 'idle.check_columns').value || [];
-  const builtin = (label, idle) => html`<tr class="tb-opt-builtin"><td>${label}</td><td class="ui-hint">${idle}</td><td class="ui-hint">built-in</td></tr>`;
+  const limit = (lane, label) => html`<td><${LimitInput} view=${view} draft=${draft} lane=${lane} label=${label} canWrite=${canWrite} set=${set} errors=${errors} /></td>
+    <td><${AtLimitSelect} view=${view} draft=${draft} lane=${lane} label=${label} canWrite=${canWrite} set=${set} reset=${reset} /></td>`;
+  const builtin = (label, idle) => html`<tr class="tb-opt-builtin"><td>${label}</td><td class="ui-hint">—</td><td></td><td class="ui-hint">${idle}</td><td class="ui-hint">built-in</td></tr>`;
   return html`<section class="tb-opt-section" data-tb-opt-section="columns" aria-label="Columns">
     ${naming.dialog}
     <table class="ui-compact tb-opt-columns">
-      <thead><tr><th scope="col">Column</th><th scope="col">Idle check</th><th scope="col"><span class="tb-opt-sr">Actions</span></th></tr></thead>
+      <thead><tr><th scope="col">Column</th><th scope="col">Limit</th><th scope="col">At limit</th><th scope="col">Idle check</th><th scope="col"><span class="tb-opt-sr">Actions</span></th></tr></thead>
       <tbody>
         ${builtin('Next · Ideas', '—')}
-        ${builtin('In progress', 'checked')}
+        <tr data-tb-opt-column=${IN_PROGRESS} class=${focusColumn === IN_PROGRESS ? 'focus' : ''}>
+          <td>In progress</td>${limit(IN_PROGRESS, 'In progress')}<td class="ui-hint">checked</td><td class="ui-hint">built-in</td></tr>
         ${columns.map((column) => html`<tr key=${column.slug} data-tb-opt-column=${column.slug} class=${focusColumn === column.slug ? 'focus' : ''}>
           <td>${column.label} <span class="ui-hint">${column.slug}</span></td>
+          ${limit(column.slug, column.label)}
           <td><${Check} checked=${!checked.includes(column.slug)} disabled=${!canWrite}
             title=${`Ticked, a task in ${column.label} never stalls: its agent waits on a review or CI`}
             onChange=${(event) => set('idle.check_columns', event.currentTarget.checked ? checked.filter((s) => s !== column.slug) : [...checked, column.slug])}>skip<//></td>
@@ -367,6 +455,7 @@ export function BoardOptionsDrawer({ group, shownName = group.name, nodeName = '
       ${loadError && html`<p class="ui-error-box" role="alert">${loadError}</p>`}
       ${!view && !loadError && html`<p class="ui-hint" aria-busy="true">Reading the board's options…</p>`}
       ${view && tab === 'triggers' && html`<${IdleSection} ...${props} /><${EventsSection} ...${props} />`}
+      ${view && tab === 'limits' && html`<${LimitsTab} ...${props} entry=${entry} />`}
       ${view && tab === 'columns' && html`<${ColumnsTab} group=${group} ...${props} actions=${actions} focusColumn=${column} />`}
     </div>
   <//>`;
