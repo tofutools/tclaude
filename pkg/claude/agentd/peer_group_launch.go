@@ -253,6 +253,9 @@ func peerTemplateTeamFailure(peer string, tmpl *db.GroupTemplate, agentProfiles 
 			t.Agents[i].IsOwner, t.Agents[i].EffectiveIsOwner = false, false
 		}
 	}
+	// The template's board setup is this node's own, checked when it was
+	// stored: deploying it is not the peer writing it.
+	t.Taskboard = nil
 	return peerTemplateLaunchFailure(peer, nil, t)
 }
 

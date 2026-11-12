@@ -501,6 +501,13 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+	// The template's board setup comes along unless left out. A peer's file
+	// carrying one is its own writing, judged as any other field.
+	if queryFalse(r.URL.Query().Get("board_options")) {
+		env.Template.Taskboard = nil
+	}
+	if peerGrantFromRequest(r) != nil {
 		if fail := peerTemplateEditFailure(r, nil, env.Template); fail != nil {
 			writeSpawnFailure(w, fail)
 			return
@@ -508,10 +515,6 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 	}
 	asName := strings.TrimSpace(r.URL.Query().Get("as"))
 	update := r.URL.Query().Get("update") == "true"
-	// The template's board setup comes along unless left out.
-	if queryFalse(r.URL.Query().Get("board_options")) {
-		env.Template.Taskboard = nil
-	}
 
 	res, existed, fail := importTemplateEnvelope(caller, env, asName, update, httpTemplateOwnerScopesGate(w, r))
 	if fail != nil {

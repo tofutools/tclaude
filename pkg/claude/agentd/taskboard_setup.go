@@ -167,3 +167,14 @@ func templateTaskboard(raw string) *groupexport.Taskboard {
 	}
 	return &tb
 }
+
+// tracedSetupJudged is after as a peer's write of it is judged when its board
+// setup was traced from a board the peer reads or kept from the template
+// (before; nil for a new one): the setup is then not the peer's writing.
+func tracedSetupJudged(after templateJSON, before *templateJSON) templateJSON {
+	after.Taskboard = nil
+	if before != nil {
+		after.Taskboard = before.Taskboard
+	}
+	return after
+}

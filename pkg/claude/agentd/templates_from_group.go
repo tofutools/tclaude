@@ -130,19 +130,29 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		}
 
 		t, tracedByName, observedNotChosen := snapshotGroupTemplate(body.TemplateName, g, members, ownerSet, existing)
+		// The board setup is re-traced from the group, unless it is left out
+		// or the peer may not read the board: an update then keeps the
+		// template's own.
+		keepBoard := body.NoBoardOptions
 		if body.NoBoardOptions {
 			t.TaskboardJSON = ""
-			if existing != nil {
-				t.TaskboardJSON = existing.TaskboardJSON
-			}
 		}
+		traced := t.TaskboardJSON
 		if err := peerProjectFromGroupTemplate(r, g, t, len(members), false, &observedNotChosen); err != nil {
 			writeError(w, http.StatusForbidden, "permission", err.Error())
 			return
 		}
+		if traced != "" && t.TaskboardJSON == "" {
+			keepBoard = true
+		}
+		if keepBoard && existing != nil {
+			t.TaskboardJSON = existing.TaskboardJSON
+		}
 
+		// The board setup is traced from a board the peer reads, or kept:
+		// not the peer's own writing, so it is not judged as one.
 		if existing == nil {
-			if fail := peerTemplateEditFailure(r, nil, templateToJSON(t)); fail != nil {
+			if fail := peerTemplateEditFailure(r, nil, tracedSetupJudged(templateToJSON(t), nil)); fail != nil {
 				writeSpawnFailure(w, fail)
 				return
 			}
@@ -254,7 +264,7 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		was := templateToJSON(existing)
-		if fail := peerTemplateEditFailure(r, &was, templateToJSON(t)); fail != nil {
+		if fail := peerTemplateEditFailure(r, &was, tracedSetupJudged(templateToJSON(t), &was)); fail != nil {
 			writeSpawnFailure(w, fail)
 			return
 		}

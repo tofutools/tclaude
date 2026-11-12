@@ -258,3 +258,60 @@ func TestPeerBoardSetupClone(t *testing.T) {
 	require.Equal(t, 200, code, body)
 	requireBoardSetup(t, "crew3")
 }
+
+// A peer that may not read the board re-snapshots a template without taking
+// its stored setup away; one that reads the board gets the setup traced.
+func TestPeerBoardSetupTemplateResnapshot(t *testing.T) {
+	h := peerFromGroupFixture(t)
+	grantLaunch(t, h)
+	_, err := db.SetAgentGroupOwnerScopes("crew", "")
+	require.NoError(t, err)
+	haveBoardSetup(t, h.f, "crew")
+	stored := func(name string) string {
+		tmpl, err := db.GetGroupTemplate(name)
+		require.NoError(t, err)
+		require.NotNil(t, tmpl)
+		return tmpl.TaskboardJSON
+	}
+
+	code, body := fromGroup(h, "peer-copy", false)
+	require.Equal(t, 201, code, body)
+	assert.Empty(t, stored("peer-copy"), "a peer that may not read the board gets no setup")
+
+	rec := fedHuman(t, h.f, http.MethodPost, "/v1/templates/from-group", map[string]any{"group": "crew", "template_name": "curated"})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	curated := stored("curated")
+	require.NotEmpty(t, curated)
+	code, body = h.call("POST", "/api/templates/from-group", map[string]any{"group": "crew", "template_name": "curated", "update": true})
+	require.Equal(t, 200, code, body)
+	assert.Equal(t, curated, stored("curated"), "the re-snapshot keeps the template's setup")
+
+	h.grant(t, agentd.PermTaskboardRead, "group=crew")
+	code, body = fromGroup(h, "peer-read", false)
+	require.Equal(t, 201, code, body)
+	assert.NotEmpty(t, stored("peer-read"), "a peer that reads the board gets the setup")
+}
+
+// A peer deploys a template carrying a board setup as any other: the setup
+// is this node's own, and the new board starts with it.
+func TestPeerBoardSetupTemplateDeploy(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	rec := fedHuman(t, h.f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "boarded", "agents": []any{map[string]any{"name": "dev"}},
+		"taskboard": map[string]any{"columns": []map[string]any{{"slug": "review", "label": "Review"}}},
+	})
+	require.Less(t, rec.Code, 300, rec.Body.String())
+	h.grant(t, agentd.PermTemplatesUse, "")
+	h.grant(t, agentd.PermNodeGroupsCreate, "")
+	h.grant(t, agentd.PermGroupsMembersSpawn, "")
+	code, body := h.call("POST", "/api/templates/boarded/instantiate", map[string]any{"group_name": "boarded-team"})
+	require.Less(t, code, 300, body)
+	agentd.WaitForBackgroundForTest()
+	g, err := db.GetAgentGroupByName("boarded-team")
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	cols, err := db.ListGroupTaskColumns(g.ID)
+	require.NoError(t, err)
+	require.Len(t, cols, 1)
+	assert.Equal(t, "review", cols[0].Slug)
+}

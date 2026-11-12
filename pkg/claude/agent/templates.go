@@ -168,8 +168,12 @@ type templateJSON struct {
 	// daemon wrote it: `edit` is a full replace, so a field dropped here would
 	// be deleted from the template.
 	OwnerScopes json.RawMessage `json:"owner_scopes,omitempty"`
-	CreatedAt   string          `json:"created_at,omitempty"`
-	UpdatedAt   string          `json:"updated_at,omitempty"`
+	// Taskboard is the board setup a group deployed from the template starts
+	// with (docs/taskboard.md "Carrying a board's setup"), raw for the same
+	// reason as OwnerScopes.
+	Taskboard json.RawMessage `json:"taskboard,omitempty"`
+	CreatedAt string          `json:"created_at,omitempty"`
+	UpdatedAt string          `json:"updated_at,omitempty"`
 }
 
 // ownerNames returns the names of the template's owner agents — effective
