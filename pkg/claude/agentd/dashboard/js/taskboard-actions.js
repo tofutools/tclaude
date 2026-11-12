@@ -29,6 +29,8 @@
 //   Move to a column In review; --stage next takes it out)
 //   column head ⋯ /  columns add|rename|move|rm <group> …
 //   ＋ column
+//   ⚙ Board options  options show <group> · options set|reset <group> …
+//                    (the drawer saves the whole document at once)
 //
 // Every write carries an idempotency key, so a retried click never applies
 // twice.
@@ -38,10 +40,13 @@ import { randomUUID } from './insecure-origin.js';
 import { nodeUpload } from './node-api.js';
 
 export class TaskboardRequestError extends Error {
-  constructor(message, { status = 0, code = '' } = {}) {
+  constructor(message, { status = 0, code = '', body = null } = {}) {
     super(message);
     this.status = status;
     this.code = code;
+    // body is the refusal as the route sent it (a stale options save
+    // carries the current options).
+    this.body = body;
   }
 }
 
@@ -60,7 +65,7 @@ async function answer(response) {
   const out = await response.json().catch(() => null);
   if (!response.ok) {
     throw new TaskboardRequestError(out?.message || out?.error || `${response.status} ${response.statusText || ''}`.trim(),
-      { status: response.status, code: out?.error || out?.code || '' });
+      { status: response.status, code: out?.error || out?.code || '', body: out });
   }
   return out;
 }
@@ -312,6 +317,16 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // is a custom column's, or ideas / done.
     setColumnState(group, slug, state) {
       return call('POST', `${columnsPath(group, slug)}/state`, { state });
+    },
+    // The board's options (taskboard options show|set|reset,
+    // docs/taskboard.md "Board options"): read them, or set and reset keys
+    // in one change at the version read. A newer version refuses with 409
+    // code "stale" and the current options in the error's body.current.
+    options(group) {
+      return call('GET', `/v1/groups/${encodeURIComponent(group)}/taskboard/options`);
+    },
+    saveOptions(group, { set = {}, reset = [] }, version) {
+      return call('PATCH', `/v1/groups/${encodeURIComponent(group)}/taskboard/options`, { set, reset, version });
     },
     // force closes an epic whose tasks are not all closed (they stay).
     status(id, status, reason = '', { force = false } = {}) {

@@ -342,12 +342,13 @@ func servePeerTaskboardContext(w http.ResponseWriter, r *http.Request, v *peerVi
 		return
 	}
 	now := time.Now()
+	globals := taskboardOptionsGlobals()
 	view := taskboardContextView{Groups: []taskboardGroupContext{}}
 	for _, g := range all {
 		if g.IsArchived() || !peerTaskboardReads(v.peer.InstanceID, g.ID) {
 			continue
 		}
-		entry, err := buildTaskboardGroupContext(r, g, now)
+		entry, err := buildTaskboardGroupContext(r, g, now, &globals)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return
@@ -377,7 +378,7 @@ func peerSummaryTaskboardCounts(v *peerView) *taskboardCounts {
 		if g.IsArchived() || v != nil && !v.unrestricted() && !peerTaskboardReads(v.peer.InstanceID, g.ID) {
 			continue
 		}
-		entry, err := buildTaskboardGroupContext(nil, g, now)
+		entry, err := buildTaskboardGroupContext(nil, g, now, nil)
 		if err != nil {
 			return nil
 		}

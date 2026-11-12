@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -29,6 +30,7 @@ type tbOptions struct {
 			Tell         *[]string `json:"tell"`
 			CheckColumns *[]string `json:"check_columns"`
 		} `json:"idle"`
+		Events map[string]any `json:"events"`
 	} `json:"options"`
 	Resolved struct {
 		Idle struct {
@@ -41,6 +43,18 @@ type tbOptions struct {
 			CheckColumns tbOptValue `json:"check_columns"`
 		} `json:"idle"`
 	} `json:"resolved"`
+	// Inherited is what a reset falls back to: the board's values were it
+	// to set nothing.
+	Inherited struct {
+		Idle struct {
+			Enabled tbOptValue `json:"enabled"`
+			Grace   tbOptValue `json:"grace"`
+		} `json:"idle"`
+		Events []struct {
+			Name string     `json:"name"`
+			To   tbOptValue `json:"to"`
+		} `json:"events"`
+	} `json:"inherited"`
 	Globals struct {
 		IdleCheck *bool  `json:"idle_check"`
 		IdleGrace string `json:"idle_grace"`
@@ -86,6 +100,22 @@ func saveTaskboardConfig(t *testing.T, tb *config.TaskboardConfig) {
 	}))
 }
 
+// TestTaskboardOptionsInheritedEvents: an event's default recipients stay
+// readable (inherited) once the board sets its own, so the dashboard can
+// show what a reset falls back to before it saves.
+func TestTaskboardOptionsInheritedEvents(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	v := h.setOptions("", map[string]string{"events.comment.to": "operator"})
+	require.Len(t, v.Inherited.Events, len(boardopts.EventNames))
+	for _, e := range v.Inherited.Events {
+		if e.Name == "comment" {
+			assert.Equal(t, tbOptValue{[]any{"assignee", "creator"}, "default"}, e.To)
+		}
+	}
+	assert.NotNil(t, v.Options.Events["comment"])
+}
+
 // A board's options: everything inherited until the board sets it, each
 // value with its source; members read them, owners change them, a write on a
 // stale version is refused, and what is invalid for the board is refused.
@@ -123,6 +153,9 @@ func TestTaskboardOptionsReadWriteAndInheritance(t *testing.T) {
 	assert.False(t, v.Resolved.Idle.Active, "the board's off wins over the global on")
 	assert.Equal(t, tbOptValue{false, "board"}, v.Resolved.Idle.Enabled)
 	assert.Equal(t, tbOptValue{"10m", "board"}, v.Resolved.Idle.Grace)
+	// What a reset would fall back to stays readable beside what is set.
+	assert.Equal(t, tbOptValue{true, "global"}, v.Inherited.Idle.Enabled)
+	assert.Equal(t, tbOptValue{"2m", "global"}, v.Inherited.Idle.Grace)
 
 	// A setting already in force is not a change.
 	v = h.setOptions("", map[string]string{"idle.grace": "10m"})
@@ -443,4 +476,83 @@ func TestPeerTaskboardOptions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "{}", row.Options)
 	assert.Equal(t, v.Version+1, row.Version)
+}
+
+// TestTaskboardOptionsInContext: the dashboard's context carries each board's
+// options summary (its version, whether the idle check runs, and what the
+// board sets), so the section line and the Board options drawer follow a
+// change made elsewhere (the CLI, a linked node) on the next poll.
+func TestTaskboardOptionsInContext(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	type ctxOptions struct {
+		Groups []struct {
+			Group   string `json:"group"`
+			Options *struct {
+				Version         int64    `json:"version"`
+				IdleActive      bool     `json:"idle_active"`
+				IdleGloballyOff bool     `json:"idle_globally_off"`
+				IdleSource      string   `json:"idle_source"`
+				Set             []string `json:"set"`
+			} `json:"options"`
+		} `json:"groups"`
+	}
+	read := func() ctxOptions {
+		t.Helper()
+		rec := h.call("", http.MethodGet, "/v1/taskboard/context", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var out ctxOptions
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		for _, g := range out.Groups {
+			if g.Group == "crew" {
+				require.NotNil(t, g.Options)
+			}
+		}
+		return out
+	}
+	crew := func(c ctxOptions) int {
+		for i, g := range c.Groups {
+			if g.Group == "crew" {
+				return i
+			}
+		}
+		t.Fatal("no crew board in the context")
+		return -1
+	}
+
+	c := read()
+	o := c.Groups[crew(c)].Options
+	assert.Zero(t, o.Version)
+	assert.False(t, o.IdleActive)
+	assert.Equal(t, "default", o.IdleSource)
+	assert.Empty(t, o.Set)
+
+	h.setOptions("", map[string]string{"idle.enabled": "on", "events.comment.enabled": "off", "idle.grace": "10m"})
+	c = read()
+	o = c.Groups[crew(c)].Options
+	assert.Equal(t, int64(1), o.Version)
+	assert.True(t, o.IdleActive)
+	assert.Equal(t, "board", o.IdleSource)
+	assert.Equal(t, []string{"idle.enabled", "idle.grace", "events.comment.enabled"}, o.Set)
+
+	// The limits a board sets: board-wide, In progress's, then each
+	// column's in the board's order.
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In review"}, http.StatusCreated)
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In CI"}, http.StatusCreated)
+	h.setOptions("", map[string]string{"limits.per": "assignee", "limits.in_progress.max": "3",
+		"limits.columns.in-ci.max": "1", "limits.columns.in-review.max": "2", "limits.columns.in-review.at_limit": "refuse"})
+	c = read()
+	o = c.Groups[crew(c)].Options
+	assert.Equal(t, []string{"idle.enabled", "idle.grace", "events.comment.enabled", "limits.per", "limits.in_progress.max",
+		"limits.columns.in-review.max", "limits.columns.in-review.at_limit", "limits.columns.in-ci.max"}, o.Set)
+	h.options("", http.MethodPatch, map[string]any{"reset": []string{"limits"}}, http.StatusOK)
+	c = read()
+	assert.Equal(t, []string{"idle.enabled", "idle.grace", "events.comment.enabled"}, c.Groups[crew(c)].Options.Set)
+
+	// taskboard.idle_grace "0" turns it off on every board.
+	saveTaskboardConfig(t, &config.TaskboardConfig{IdleGrace: "0"})
+	c = read()
+	o = c.Groups[crew(c)].Options
+	assert.False(t, o.IdleActive)
+	assert.True(t, o.IdleGloballyOff)
 }
