@@ -24,8 +24,9 @@ import (
 // and the start of its current stretch of work on the task (the assignment,
 // or an unblock or reopen). A task that waits on something outside its
 // agent's turn never stalls: a queued one (a dependency not done yet; the
-// clock then starts when its last dependency closes), or
-// one in a custom column the board does not list in idle.check_columns.
+// clock then starts when its last dependency closes), one in line for a
+// full lane (docs/taskboard.md "Limits"), or one in a custom column the
+// board does not list in idle.check_columns.
 // Stalled is derived on every read, never stored, so a new turn clears it; a
 // report ends the assignment and with it the stall. A 30 s sweep announces
 // each stall once per assignment: a "stalled" event, a message to the
@@ -110,7 +111,10 @@ func (s *taskboardStaller) board(groupID int64) boardopts.ResolvedIdle {
 // stalled reports whether t is stalled, and since when its assignee has been
 // idle on it.
 func (s *taskboardStaller) stalled(t *db.GroupTask) (time.Time, bool) {
-	if s == nil || t.Status != db.GroupTaskOpen || !t.Started() || t.AssigneeID == db.OperatorAssignee {
+	// A task in line for a full lane (one waiting for a column it is to
+	// move into; one for In progress is held, not started) waits on the
+	// board, not on its agent.
+	if s == nil || t.Status != db.GroupTaskOpen || !t.Started() || t.AssigneeID == db.OperatorAssignee || t.QueuedFor != "" {
 		return time.Time{}, false
 	}
 	board := s.board(t.GroupID)
@@ -162,7 +166,8 @@ func (s *taskboardStaller) stalled(t *db.GroupTask) (time.Time, bool) {
 	return since, true
 }
 
-// startTaskboardIdleSweep runs sweepTaskboardIdle every 30 s.
+// startTaskboardIdleSweep runs sweepTaskboardIdle every 30 s, and with it
+// the queue sweep (taskboard_limits.go).
 func startTaskboardIdleSweep(stop <-chan struct{}) {
 	go func() {
 		t := time.NewTicker(taskboardIdleSweepInterval)
@@ -172,6 +177,7 @@ func startTaskboardIdleSweep(stop <-chan struct{}) {
 			case <-stop:
 				return
 			case <-t.C:
+				sweepTaskboardQueues()
 				sweepTaskboardIdle(time.Now())
 			}
 		}

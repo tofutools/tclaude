@@ -2410,7 +2410,7 @@ CREATE TABLE group_tasks (
 			updated_at   INTEGER NOT NULL,
 			closed_at    INTEGER,
 			archived_at  INTEGER
-		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '', more_refs TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '' CHECK(kind IN ('','epic')), parent_id TEXT REFERENCES group_tasks(id) ON DELETE SET NULL, close_suggested_at INTEGER, close_nudged INTEGER NOT NULL DEFAULT 0) STRICT;
+		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '', more_refs TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '' CHECK(kind IN ('','epic')), parent_id TEXT REFERENCES group_tasks(id) ON DELETE SET NULL, close_suggested_at INTEGER, close_nudged INTEGER NOT NULL DEFAULT 0, queued_for TEXT NOT NULL DEFAULT '', queued_at INTEGER) STRICT;
 
 CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank);
 
@@ -2446,6 +2446,20 @@ CREATE INDEX idx_group_tasks_history ON group_tasks(group_id, closed_at)
 			WHERE archived_at IS NULL AND status IN ('done','dropped');
 
 CREATE INDEX idx_group_tasks_parent ON group_tasks(parent_id) WHERE parent_id IS NOT NULL;
+
+CREATE INDEX idx_group_tasks_queued ON group_tasks(group_id, queued_at) WHERE queued_for <> '';
+
+CREATE TRIGGER group_tasks_queued_clear
+			AFTER UPDATE OF status, group_id, assignee_id, assignee_kind, started_at, column_slug, stage ON group_tasks
+			WHEN NEW.queued_for <> '' AND (
+				NEW.status NOT IN ('open','blocked')
+				OR NEW.group_id <> OLD.group_id
+				OR NEW.assignee_id IS NOT OLD.assignee_id
+				OR NEW.assignee_kind <> OLD.assignee_kind
+				OR NEW.column_slug <> OLD.column_slug
+				OR NEW.stage = 'idea'
+				OR (NEW.started_at IS NOT NULL) <> (OLD.started_at IS NOT NULL))
+			BEGIN UPDATE group_tasks SET queued_for = '', queued_at = NULL WHERE id = NEW.id; END;
 
 CREATE TABLE group_task_deps (
 			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
@@ -2514,6 +2528,10 @@ CREATE TRIGGER group_task_columns_removed
 CREATE TRIGGER group_task_columns_removed_state
 			AFTER DELETE ON group_task_columns
 			BEGIN DELETE FROM group_task_column_states WHERE group_id = OLD.group_id AND slug = OLD.slug; END;
+
+CREATE TRIGGER group_task_columns_removed_queue
+			AFTER DELETE ON group_task_columns
+			BEGIN UPDATE group_tasks SET queued_for = '', queued_at = NULL WHERE group_id = OLD.group_id AND queued_for = OLD.slug; END;
 
 CREATE TABLE federation_peer_questions (
 			peer       TEXT NOT NULL,

@@ -19,7 +19,9 @@ type taskboardContextOptions struct {
 	IdleGloballyOff bool `json:"idle_globally_off,omitempty"`
 	// IdleSource is where idle.enabled comes from: default, global or board.
 	IdleSource string `json:"idle_source"`
-	// Set lists the option keys the board sets, in boardopts.Keys order.
+	// Set lists the option keys the board sets, in boardopts.Keys order;
+	// a column's limit keys (limits.columns.<slug>.max, .at_limit) come
+	// last, in the board's column order.
 	Set []string `json:"set"`
 }
 
@@ -45,9 +47,30 @@ func taskboardContextOptionsOf(g *db.AgentGroup, globals boardopts.Globals) (*ta
 		board["events."+e.Name+".enabled"] = e.Enabled.Source == boardopts.SourceBoard
 		board["events."+e.Name+".to"] = e.To.Source == boardopts.SourceBoard
 	}
+	// The limits as stored: a lane's at_limit reads as the board's in
+	// resolved when only the board-wide one is set.
+	if l := o.Limits; l != nil {
+		board["limits.at_limit"], board["limits.per"] = l.AtLimit != "", l.Per != ""
+		if l.InProgress != nil {
+			board["limits.in_progress.max"], board["limits.in_progress.at_limit"] = l.InProgress.Max > 0, l.InProgress.AtLimit != ""
+		}
+	}
 	for _, k := range boardopts.Keys {
 		if board[k] {
 			out.Set = append(out.Set, k)
+		}
+	}
+	// Each column's limit keys, in the board's column order.
+	if o.Limits != nil {
+		for _, slug := range cols {
+			if c := o.Limits.Columns[slug]; c != nil {
+				if c.Max > 0 {
+					out.Set = append(out.Set, "limits.columns."+slug+".max")
+				}
+				if c.AtLimit != "" {
+					out.Set = append(out.Set, "limits.columns."+slug+".at_limit")
+				}
+			}
 		}
 	}
 	return out, nil

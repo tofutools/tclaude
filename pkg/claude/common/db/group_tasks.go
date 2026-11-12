@@ -124,6 +124,11 @@ type GroupTask struct {
 	// CloseSuggestedAt marks an open epic all of whose children are closed:
 	// the board suggests closing it; zero otherwise.
 	CloseSuggestedAt time.Time
+	// QueuedFor is the full lane the task waits for: QueueLaneInProgress or
+	// a custom column's slug; "" when it waits for none. QueuedAt is when it
+	// got in line.
+	QueuedFor string
+	QueuedAt  time.Time
 	// DependsOn is filled by the single-task reads and by ListGroupTasks.
 	DependsOn []string
 }
@@ -207,19 +212,19 @@ type GroupTaskEvent struct {
 const groupTaskCols = `id, group_id, title, body, stage, status, rank, block_reason, ref_kind, ref_url, ref_label,
 	CASE WHEN assignee_kind = 'operator' THEN 'operator' ELSE COALESCE(assignee_id, '') END, assigned_by, assigned_at,
 	outcome, outcome_note, failures, created_by, created_at, updated_at, closed_at, archived_at, blocked_on,
-	started_at, column_slug, operator_request, more_refs, kind, COALESCE(parent_id, ''), close_suggested_at`
+	started_at, column_slug, operator_request, more_refs, kind, COALESCE(parent_id, ''), close_suggested_at, queued_for, queued_at`
 
 func scanGroupTask(s rowScanner) (*GroupTask, error) {
 	var t GroupTask
-	var assigned, created, updated, closed, archived, started, suggested dbTimestamp
+	var assigned, created, updated, closed, archived, started, suggested, queued dbTimestamp
 	var moreRefs string
 	if err := s.Scan(&t.ID, &t.GroupID, &t.Title, &t.Body, &t.Stage, &t.Status, &t.Rank, &t.BlockReason,
 		&t.RefKind, &t.RefURL, &t.RefLabel, &t.AssigneeID, &t.AssignedBy, &assigned, &t.Outcome, &t.OutcomeNote,
 		&t.Failures, &t.CreatedBy, &created, &updated, &closed, &archived, &t.BlockedOn, &started, &t.Column, &t.OperatorRequest,
-		&moreRefs, &t.Kind, &t.ParentID, &suggested); err != nil {
+		&moreRefs, &t.Kind, &t.ParentID, &suggested, &t.QueuedFor, &queued); err != nil {
 		return nil, err
 	}
-	t.CloseSuggestedAt = suggested.Time()
+	t.CloseSuggestedAt, t.QueuedAt = suggested.Time(), queued.Time()
 	t.MoreRefs = decodeMoreRefs(moreRefs)
 	t.AssignedAt, t.CreatedAt, t.UpdatedAt = assigned.Time(), created.Time(), updated.Time()
 	t.ClosedAt, t.ArchivedAt, t.StartedAt = closed.Time(), archived.Time(), started.Time()

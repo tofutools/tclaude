@@ -17,7 +17,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -28,7 +30,59 @@ type Options struct {
 	Idle *Idle `json:"idle,omitempty"`
 	// Events are the board's automatic messages, by event name (EventNames).
 	Events map[string]*Event `json:"events,omitempty"`
+	// Limits are the board's work-in-progress limits.
+	Limits *Limits `json:"limits,omitempty"`
 }
+
+// Limits caps how many tasks a lane of the board holds at once: In progress
+// (LaneInProgress) and each custom column. A task that would go into a full
+// lane is queued (the default), refused, or let in with a warning.
+type Limits struct {
+	// AtLimit is what happens at a full lane, for every lane that does not
+	// set its own: AtLimitQueue, AtLimitRefuse or AtLimitWarn.
+	AtLimit string `json:"at_limit,omitempty"`
+	// Per is what a limit counts: PerBoard (every task in the lane) or
+	// PerAssignee (each assignee's tasks in the lane on their own).
+	Per        string            `json:"per,omitempty"`
+	InProgress *Limit            `json:"in_progress,omitempty"`
+	Columns    map[string]*Limit `json:"columns,omitempty"`
+}
+
+// Limit is one lane's limit.
+type Limit struct {
+	// Max is how many tasks the lane holds; 0 is no limit.
+	Max int `json:"max,omitempty"`
+	// AtLimit overrides the board's at_limit for this lane.
+	AtLimit string `json:"at_limit,omitempty"`
+}
+
+// What happens when a task would go into a full lane.
+const (
+	// AtLimitQueue keeps the task where it is, queued for the lane: a task
+	// for In progress stays in Next, held; one for a column stays in its
+	// lane. The first in line goes in when a slot frees.
+	AtLimitQueue = "queue"
+	// AtLimitRefuse refuses the change.
+	AtLimitRefuse = "refuse"
+	// AtLimitWarn lets the task in, over the limit, and says so.
+	AtLimitWarn = "warn"
+)
+
+// AtLimits are the at_limit choices.
+var AtLimits = []string{AtLimitQueue, AtLimitRefuse, AtLimitWarn}
+
+// What a limit counts.
+const (
+	PerBoard    = "board"
+	PerAssignee = "assignee"
+)
+
+// LaneInProgress names the In progress lane: started tasks of agents, in no
+// custom column. A custom column's lane is named by its slug.
+const LaneInProgress = "in_progress"
+
+// MaxLimit bounds a lane's limit.
+const MaxLimit = 999
 
 // Event is one automatic message the board sends: whether it is sent, and
 // to whom.
@@ -96,11 +150,12 @@ const (
 	EventReportFailed = "report_failed"
 	EventUnblocked    = "unblocked"
 	EventEpicClose    = "epic_close"
+	EventLimitReached = "limit_reached"
 )
 
 // EventNames are the board's events, in display order.
 var EventNames = []string{EventAssigned, EventStarted, EventUnassigned, EventReopened, EventMovedAway,
-	EventComment, EventReportDone, EventReportFailed, EventUnblocked, EventEpicClose}
+	EventComment, EventReportDone, EventReportFailed, EventUnblocked, EventEpicClose, EventLimitReached}
 
 // eventInfo is an event's description and default recipients: today's
 // messages, each to whom it has always gone.
@@ -118,6 +173,7 @@ var eventInfo = map[string]struct {
 	EventReportFailed: {"The assignee reports failed", []string{RecipientAssigner}},
 	EventUnblocked:    {"A task another task waits on is closed", []string{RecipientAssignee}},
 	EventEpicClose:    {"Every task of an epic is closed: close the epic?", []string{RecipientCreator}},
+	EventLimitReached: {"A task meets a full lane: queued, refused or let in over the limit", []string{RecipientAssignee, RecipientAssigner}},
 }
 
 // EventLabel describes an event.
@@ -147,11 +203,12 @@ var Keys = func() []string {
 	for _, name := range EventNames {
 		keys = append(keys, "events."+name+".enabled", "events."+name+".to")
 	}
-	return keys
+	return append(keys, "limits.at_limit", "limits.per", "limits.in_progress.max", "limits.in_progress.at_limit",
+		"limits.columns.<column>.max", "limits.columns.<column>.at_limit")
 }()
 
 // Sections are what Reset takes besides keys.
-var Sections = []string{"idle", "events", "all"}
+var Sections = []string{"idle", "events", "limits", "all"}
 
 // Parse reads a stored document; "" is no options.
 func Parse(raw string) (Options, error) {
@@ -187,7 +244,7 @@ func (o Options) Encode() (string, error) {
 // IsZero reports whether the board sets nothing.
 func (o Options) IsZero() bool {
 	o.compact()
-	return o.Idle == nil && o.Events == nil
+	return o.Idle == nil && o.Events == nil && o.Limits == nil
 }
 
 // compact drops empty sections, so an options document that sets nothing
@@ -204,6 +261,49 @@ func (o *Options) compact() {
 	if len(o.Events) == 0 {
 		o.Events = nil
 	}
+	if l := o.Limits; l != nil {
+		if l.InProgress != nil && *l.InProgress == (Limit{}) {
+			l.InProgress = nil
+		}
+		for slug, c := range l.Columns {
+			if c == nil || *c == (Limit{}) {
+				delete(l.Columns, slug)
+			}
+		}
+		if len(l.Columns) == 0 {
+			l.Columns = nil
+		}
+		if l.AtLimit == "" && l.Per == "" && l.InProgress == nil && l.Columns == nil {
+			o.Limits = nil
+		}
+	}
+}
+
+// limits is o's limits, made when absent.
+func (o *Options) limits() *Limits {
+	if o.Limits == nil {
+		o.Limits = &Limits{}
+	}
+	return o.Limits
+}
+
+// lane is o's limit for lane (LaneInProgress or a column slug), made when
+// absent.
+func (o *Options) lane(lane string) *Limit {
+	l := o.limits()
+	if lane == LaneInProgress {
+		if l.InProgress == nil {
+			l.InProgress = &Limit{}
+		}
+		return l.InProgress
+	}
+	if l.Columns == nil {
+		l.Columns = map[string]*Limit{}
+	}
+	if l.Columns[lane] == nil {
+		l.Columns[lane] = &Limit{}
+	}
+	return l.Columns[lane]
 }
 
 // event is o's entry for an event, made when absent.
@@ -233,6 +333,9 @@ func (o *Options) Validate(columns []string) error {
 			e.To = &to
 		}
 	}
+	if err := o.Limits.validate(columns); err != nil {
+		return err
+	}
 	if o.Idle == nil {
 		o.compact()
 		return nil
@@ -260,18 +363,69 @@ func (o *Options) Validate(columns []string) error {
 	return nil
 }
 
+func (l *Limits) validate(columns []string) error {
+	if l == nil {
+		return nil
+	}
+	if l.AtLimit != "" && !slices.Contains(AtLimits, l.AtLimit) {
+		return fmt.Errorf("limits.at_limit is %s, not %q", strings.Join(AtLimits, ", "), l.AtLimit)
+	}
+	if l.Per != "" && l.Per != PerBoard && l.Per != PerAssignee {
+		return fmt.Errorf("limits.per is %s or %s, not %q", PerBoard, PerAssignee, l.Per)
+	}
+	check := func(key string, lim *Limit) error {
+		if lim == nil {
+			return nil
+		}
+		if lim.Max < 0 || lim.Max > MaxLimit {
+			return fmt.Errorf("%s.max is between 1 and %d (0 or none for no limit), not %d", key, MaxLimit, lim.Max)
+		}
+		if lim.AtLimit != "" && !slices.Contains(AtLimits, lim.AtLimit) {
+			return fmt.Errorf("%s.at_limit is %s, not %q", key, strings.Join(AtLimits, ", "), lim.AtLimit)
+		}
+		return nil
+	}
+	if err := check("limits.in_progress", l.InProgress); err != nil {
+		return err
+	}
+	for _, slug := range slices.Sorted(maps.Keys(l.Columns)) {
+		if !slices.Contains(columns, slug) {
+			if len(columns) == 0 {
+				return fmt.Errorf("limits.columns: the board has no custom column %q (it has none)", slug)
+			}
+			return fmt.Errorf("limits.columns: the board has no custom column %q; its columns are %s", slug, strings.Join(columns, ", "))
+		}
+		if err := check("limits.columns."+slug, l.Columns[slug]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Prune drops what names a column the board no longer has: a column removed
-// after it was named in check_columns. It reports whether anything changed.
+// after it was named in check_columns or given a limit. It reports whether
+// anything changed.
 func (o *Options) Prune(columns []string) bool {
-	if o.Idle == nil || o.Idle.CheckColumns == nil {
-		return false
+	changed := false
+	if o.Idle != nil && o.Idle.CheckColumns != nil {
+		kept := slices.DeleteFunc(slices.Clone(*o.Idle.CheckColumns), func(s string) bool { return !slices.Contains(columns, s) })
+		if len(kept) != len(*o.Idle.CheckColumns) {
+			o.Idle.CheckColumns = &kept
+			changed = true
+		}
 	}
-	kept := slices.DeleteFunc(slices.Clone(*o.Idle.CheckColumns), func(s string) bool { return !slices.Contains(columns, s) })
-	if len(kept) == len(*o.Idle.CheckColumns) {
-		return false
+	if o.Limits != nil {
+		for slug := range o.Limits.Columns {
+			if !slices.Contains(columns, slug) {
+				delete(o.Limits.Columns, slug)
+				changed = true
+			}
+		}
+		if changed {
+			o.compact()
+		}
 	}
-	o.Idle.CheckColumns = &kept
-	return true
+	return changed
 }
 
 // ParseGrace reads an idle grace: a Go duration between MinIdleGrace and
@@ -365,7 +519,20 @@ func (o *Options) Set(key, value string) error {
 	case "idle.check_columns":
 		l := parseList(value)
 		idle().CheckColumns = &l
+	case "limits.at_limit":
+		if !slices.Contains(AtLimits, value) {
+			return fmt.Errorf("%s is %s, not %q", key, strings.Join(AtLimits, ", "), value)
+		}
+		o.limits().AtLimit = value
+	case "limits.per":
+		if value != PerBoard && value != PerAssignee {
+			return fmt.Errorf("%s is %s or %s, not %q", key, PerBoard, PerAssignee, value)
+		}
+		o.limits().Per = value
 	default:
+		if lane, field, ok := limitKey(key); ok {
+			return o.setLimit(key, lane, field, value)
+		}
 		name, field, ok := eventKey(key)
 		if !ok {
 			return unknownKey(key)
@@ -383,6 +550,51 @@ func (o *Options) Set(key, value string) error {
 		}
 	}
 	return nil
+}
+
+func (o *Options) setLimit(key, lane, field, value string) error {
+	if field == "at_limit" {
+		if !slices.Contains(AtLimits, value) {
+			return fmt.Errorf("%s is %s, not %q", key, strings.Join(AtLimits, ", "), value)
+		}
+		o.lane(lane).AtLimit = value
+		return nil
+	}
+	if strings.EqualFold(value, "none") {
+		value = "0"
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 || n > MaxLimit {
+		return fmt.Errorf("%s is a number of tasks between 1 and %d (0 or none for no limit), not %q", key, MaxLimit, value)
+	}
+	o.lane(lane).Max = n
+	o.compact()
+	return nil
+}
+
+// limitKey splits "limits.in_progress.<field>" and
+// "limits.columns.<slug>.<field>". The slug is checked against the board by
+// Validate.
+func limitKey(key string) (lane, field string, ok bool) {
+	rest, ok := strings.CutPrefix(key, "limits.")
+	if !ok {
+		return "", "", false
+	}
+	if f, ok := strings.CutPrefix(rest, LaneInProgress+"."); ok {
+		lane, field = LaneInProgress, f
+	} else if r, ok := strings.CutPrefix(rest, "columns."); ok {
+		i := strings.LastIndex(r, ".")
+		if i <= 0 {
+			return "", "", false
+		}
+		lane, field = r[:i], r[i+1:]
+	} else {
+		return "", "", false
+	}
+	if field != "max" && field != "at_limit" {
+		return "", "", false
+	}
+	return lane, field, true
 }
 
 // eventKey splits "events.<name>.<field>" for a known event and field.
@@ -411,6 +623,12 @@ func (o *Options) Reset(key string) error {
 	case "events":
 		o.Events = nil
 		return nil
+	case "limits":
+		o.Limits = nil
+		return nil
+	}
+	if done, err := o.resetLimit(key); done || err != nil {
+		return err
 	}
 	if name, ok := strings.CutPrefix(key, "events."); ok {
 		if _, known := eventInfo[name]; known {
@@ -454,9 +672,58 @@ func (o *Options) Reset(key string) error {
 	return nil
 }
 
+// resetLimit is Reset for a limits key: "limits.at_limit", "limits.per", a
+// lane ("limits.in_progress", "limits.columns.<slug>"), every column
+// ("limits.columns"), or one of a lane's fields. done is false for a key
+// outside limits.
+func (o *Options) resetLimit(key string) (done bool, err error) {
+	rest, ok := strings.CutPrefix(key, "limits.")
+	if !ok {
+		return false, nil
+	}
+	defer o.compact()
+	l := o.Limits
+	if l == nil {
+		l = &Limits{}
+	}
+	switch {
+	case rest == "at_limit":
+		l.AtLimit = ""
+	case rest == "per":
+		l.Per = ""
+	case rest == LaneInProgress:
+		l.InProgress = nil
+	case rest == "columns":
+		l.Columns = nil
+	case strings.HasPrefix(rest, "columns.") && !strings.Contains(strings.TrimPrefix(rest, "columns."), "."):
+		delete(l.Columns, strings.TrimPrefix(rest, "columns."))
+	default:
+		lane, field, ok := limitKey(key)
+		if !ok {
+			return true, unknownKey(key)
+		}
+		var lim *Limit
+		if lane == LaneInProgress {
+			lim = l.InProgress
+		} else {
+			lim = l.Columns[lane]
+		}
+		if lim != nil {
+			if field == "max" {
+				lim.Max = 0
+			} else {
+				lim.AtLimit = ""
+			}
+		}
+	}
+	return true, nil
+}
+
 func unknownKey(key string) error {
 	return fmt.Errorf("%w %q; the options are idle.enabled, idle.grace, idle.nudge, idle.tell, idle.check_columns, "+
-		"events.<event>.enabled and events.<event>.to (events: %s), or a section: idle, events, all",
+		"events.<event>.enabled and events.<event>.to (events: %s), limits.at_limit, limits.per, "+
+		"limits.in_progress.max, limits.in_progress.at_limit, limits.columns.<column>.max and limits.columns.<column>.at_limit, "+
+		"or a section: idle, events, limits, all",
 		ErrUnknownKey, key, strings.Join(EventNames, ", "))
 }
 
@@ -505,7 +772,40 @@ type Resolved struct {
 	Idle ResolvedIdle `json:"idle"`
 	// Events are every event, in EventNames order.
 	Events []ResolvedEvent `json:"events"`
+	Limits ResolvedLimits  `json:"limits"`
 }
+
+// ResolvedLimits are the work-in-progress limits in force.
+type ResolvedLimits struct {
+	AtLimit Value[string] `json:"at_limit"`
+	Per     Value[string] `json:"per"`
+	// Lanes are In progress, then each custom column in the board's order.
+	Lanes []ResolvedLane `json:"lanes"`
+}
+
+// ResolvedLane is one lane's limit in force.
+type ResolvedLane struct {
+	// Lane is LaneInProgress or a column slug.
+	Lane string `json:"lane"`
+	// Max is how many tasks the lane holds; 0 is no limit.
+	Max Value[int] `json:"max"`
+	// AtLimit is the lane's own, else the board's.
+	AtLimit Value[string] `json:"at_limit"`
+}
+
+// Lane is the named lane's limit; an unknown lane has none.
+func (r ResolvedLimits) Lane(lane string) ResolvedLane {
+	for _, l := range r.Lanes {
+		if l.Lane == lane {
+			return l
+		}
+	}
+	return ResolvedLane{Lane: lane, Max: Value[int]{0, SourceDefault}, AtLimit: r.AtLimit}
+}
+
+// PerAssignee reports whether the limits count each assignee's tasks on
+// their own.
+func (r ResolvedLimits) PerAssignee() bool { return r.Per.Value == PerAssignee }
 
 // ResolvedEvent is one event's message in force.
 type ResolvedEvent struct {
@@ -638,7 +938,37 @@ func Resolve(o Options, g Globals, columns []string) Resolved {
 		}
 		events = append(events, e)
 	}
-	return Resolved{Idle: r, Events: events}
+	return Resolved{Idle: r, Events: events, Limits: resolveLimits(o.Limits, columns)}
+}
+
+func resolveLimits(in *Limits, columns []string) ResolvedLimits {
+	if in == nil {
+		in = &Limits{}
+	}
+	r := ResolvedLimits{AtLimit: Value[string]{AtLimitQueue, SourceDefault}, Per: Value[string]{PerBoard, SourceDefault}}
+	if in.AtLimit != "" {
+		r.AtLimit = Value[string]{in.AtLimit, SourceBoard}
+	}
+	if in.Per != "" {
+		r.Per = Value[string]{in.Per, SourceBoard}
+	}
+	lane := func(name string, set *Limit) ResolvedLane {
+		l := ResolvedLane{Lane: name, Max: Value[int]{0, SourceDefault}, AtLimit: r.AtLimit}
+		if set != nil {
+			if set.Max > 0 {
+				l.Max = Value[int]{set.Max, SourceBoard}
+			}
+			if set.AtLimit != "" {
+				l.AtLimit = Value[string]{set.AtLimit, SourceBoard}
+			}
+		}
+		return l
+	}
+	r.Lanes = append(r.Lanes, lane(LaneInProgress, in.InProgress))
+	for _, slug := range columns {
+		r.Lanes = append(r.Lanes, lane(slug, in.Columns[slug]))
+	}
+	return r
 }
 
 // Tells reports whether a stall is told to recipient.

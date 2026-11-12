@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -106,7 +107,7 @@ func TestTaskboardOptionsInheritedEvents(t *testing.T) {
 	h := newTaskboardAssignFlow(t)
 	saveTaskboardConfig(t, nil)
 	v := h.setOptions("", map[string]string{"events.comment.to": "operator"})
-	require.Len(t, v.Inherited.Events, 10)
+	require.Len(t, v.Inherited.Events, len(boardopts.EventNames))
 	for _, e := range v.Inherited.Events {
 		if e.Name == "comment" {
 			assert.Equal(t, tbOptValue{[]any{"assignee", "creator"}, "default"}, e.To)
@@ -533,6 +534,20 @@ func TestTaskboardOptionsInContext(t *testing.T) {
 	assert.True(t, o.IdleActive)
 	assert.Equal(t, "board", o.IdleSource)
 	assert.Equal(t, []string{"idle.enabled", "idle.grace", "events.comment.enabled"}, o.Set)
+
+	// The limits a board sets: board-wide, In progress's, then each
+	// column's in the board's order.
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In review"}, http.StatusCreated)
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In CI"}, http.StatusCreated)
+	h.setOptions("", map[string]string{"limits.per": "assignee", "limits.in_progress.max": "3",
+		"limits.columns.in-ci.max": "1", "limits.columns.in-review.max": "2", "limits.columns.in-review.at_limit": "refuse"})
+	c = read()
+	o = c.Groups[crew(c)].Options
+	assert.Equal(t, []string{"idle.enabled", "idle.grace", "events.comment.enabled", "limits.per", "limits.in_progress.max",
+		"limits.columns.in-review.max", "limits.columns.in-review.at_limit", "limits.columns.in-ci.max"}, o.Set)
+	h.options("", http.MethodPatch, map[string]any{"reset": []string{"limits"}}, http.StatusOK)
+	c = read()
+	assert.Equal(t, []string{"idle.enabled", "idle.grace", "events.comment.enabled"}, c.Groups[crew(c)].Options.Set)
 
 	// taskboard.idle_grace "0" turns it off on every board.
 	saveTaskboardConfig(t, &config.TaskboardConfig{IdleGrace: "0"})

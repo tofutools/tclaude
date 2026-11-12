@@ -299,12 +299,14 @@ func updateTaskboardOptions(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		return
 	}
 	setAuditDetail(r, audit)
+	// A limit raised or lifted lets the first in line in.
+	taskboardFillLanes(g)
 	writeTaskboardOptions(w, http.StatusOK, g)
 }
 
 // pruneTaskboardOptionsColumn drops a removed column from g's stored
 // options, so a later column of the same slug does not inherit its place
-// in idle.check_columns.
+// in idle.check_columns or its limit.
 func pruneTaskboardOptionsColumn(g *db.AgentGroup, actor string) {
 	cols, err := taskboardColumnSlugs(g.ID)
 	if err != nil {

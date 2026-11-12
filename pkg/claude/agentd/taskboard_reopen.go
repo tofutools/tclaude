@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -26,6 +27,8 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		// reorder, so it takes taskboard.write, as move does.
 		Before string `json:"before"`
 		After  string `json:"after"`
+		// OverLimit lets the operator reopen the task into a full lane.
+		OverLimit bool `json:"over_limit"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
 		return
@@ -95,6 +98,34 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 			}
 		}
 	}
+	// Reopened assigned (started) or into a column, the task meets the
+	// lane's limit; queued, it comes back short of the lane.
+	defer lockTaskboardLanes(g.ID)()
+	ft, fresh := freshTaskboardTask(w, t)
+	if !fresh {
+		return
+	}
+	t = ft
+	want := *t
+	want.Status, want.Column, want.StartedAt = db.GroupTaskOpen, column, time.Time{}
+	if assignee != db.KeepAssignee {
+		want.AssigneeID = assignee
+	}
+	if want.AssigneeID != "" && want.AssigneeID != db.OperatorAssignee {
+		want.StartedAt = time.Now()
+	}
+	hit, ok := checkTaskboardLimit(w, r, g, t, &want, body.OverLimit)
+	if !ok {
+		return
+	}
+	if hit.queued() && column != "" {
+		// Kept out of the column, an assigned task lands in In progress,
+		// and meets that lane's limit instead.
+		column = ""
+		if hit, ok = recheckTaskboardInProgress(w, r, g, t, &want, hit, body.OverLimit); !ok {
+			return
+		}
+	}
 	actor := taskboardActor(r)
 	out, err := db.ReopenGroupTask(t.ID, db.GroupTaskReopen{Stage: stage, Column: column, Assignee: assignee, AssignedBy: actor, Actor: actor,
 		ExpectAssignee: t.AssigneeID, Position: pos})
@@ -102,14 +133,27 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		writeTaskboardError(w, err)
 		return
 	}
+	out, note := queueTaskboardLimit(r, g, hit, out)
 	setAuditDetail(r, fmt.Sprintf("reopened %s in %s", t.ID, out.Stage))
 	by := taskboardCallerName(r)
 	n := newTaskboardNotice(r, g, out, boardopts.EventReopened)
+	// Back in line for In progress, its assignee hears it waits, not its
+	// brief.
+	queuedFor := func(conv string) bool {
+		if !note.queued() || out.QueuedFor != db.QueueLaneInProgress {
+			return false
+		}
+		subject, text := taskboardQueuedNote(g, out, by, note)
+		n.mail(boardopts.RecipientAssignee, out.AssigneeID, conv, subject, text)
+		return true
+	}
 	if out.AssigneeID != t.AssigneeID {
 		if out.AssigneeID != "" && out.AssigneeID != self && out.AssigneeID != db.OperatorAssignee && targetConv != "" {
 			setAuditTargetConv(r, targetConv)
-			n.mail(boardopts.RecipientAssignee, out.AssigneeID, targetConv,
-				taskboardSubject(g, out, "reopened and assigned to you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
+			if !queuedFor(targetConv) {
+				n.mail(boardopts.RecipientAssignee, out.AssigneeID, targetConv,
+					taskboardSubject(g, out, "reopened and assigned to you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
+			}
 		}
 		if t.AssigneeID != "" && t.AssigneeID != self {
 			if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
@@ -118,11 +162,12 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 			}
 		}
 	} else if out.AssigneeID != "" && out.AssigneeID != self && out.AssigneeID != db.OperatorAssignee {
-		if conv := activeGroupMember(g, out.AssigneeID); conv != "" {
+		if conv := activeGroupMember(g, out.AssigneeID); conv != "" && !queuedFor(conv) {
 			n.mail(boardopts.RecipientAssignee, out.AssigneeID, conv, taskboardSubject(g, out, "reopened by "+by),
 				taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was reopened by %s and is yours again.\n\n%s", out.ID, out.Title, g.Name, by, taskboardBrief(g, out, by))))
 		}
 	}
 	n.others("reopened by "+by, "", boardopts.RecipientAssignee)
-	writeTaskboardTask(w, http.StatusOK, g, out)
+	announceTaskboardLimit(r, g, out, note, n.told)
+	writeTaskboardTaskLimit(w, http.StatusOK, g, out, note)
 }
