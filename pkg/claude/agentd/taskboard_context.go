@@ -99,6 +99,9 @@ type taskboardGroupContext struct {
 	// member holds only through a grant) and pass its lock. A member that
 	// only tracks its own work there (taskboard.own) is not one.
 	Askable []string `json:"askable"`
+	// Options summarises the board's options (taskboard_context_options.go);
+	// absent from the node summary.
+	Options *taskboardContextOptions `json:"options,omitempty"`
 }
 
 type taskboardContextView struct {
@@ -175,6 +178,11 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		if err := taskboardContextAskable(r, g, &entry); err != nil {
 			return entry, err
 		}
+		opts, err := taskboardContextOptionsOf(g, taskboardOptionsGlobals())
+		if err != nil {
+			return entry, err
+		}
+		entry.Options = opts
 	}
 	tasks, err := db.ListGroupTasks(g.ID, db.GroupTaskListOpts{Closed: true})
 	if err != nil {

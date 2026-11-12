@@ -1,0 +1,54 @@
+package agentd
+
+import (
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+)
+
+// taskboardContextOptions is the part of a board's options its section in
+// the Groups tab shows without opening them: the version (the Board options
+// drawer reads the whole document again when it moves), whether the idle
+// check runs, and which keys the board sets (the section line's summary of
+// what differs from the inherited behaviour). The whole document is
+// GET /v1/groups/{name}/taskboard/options (taskboard_options.go).
+type taskboardContextOptions struct {
+	Version int64 `json:"version"`
+	// IdleActive is whether the idle check runs on the board.
+	IdleActive bool `json:"idle_active"`
+	// IdleGloballyOff is taskboard.idle_grace "0": off on every board.
+	IdleGloballyOff bool `json:"idle_globally_off,omitempty"`
+	// IdleSource is where idle.enabled comes from: default, global or board.
+	IdleSource string `json:"idle_source"`
+	// Set lists the option keys the board sets, in boardopts.Keys order.
+	Set []string `json:"set"`
+}
+
+// taskboardContextOptionsOf summarises g's options for its context entry.
+func taskboardContextOptionsOf(g *db.AgentGroup, globals boardopts.Globals) (*taskboardContextOptions, error) {
+	row, o, cols, err := taskboardOptions(g.ID)
+	if err != nil {
+		return nil, err
+	}
+	r := boardopts.Resolve(o, globals, cols)
+	out := &taskboardContextOptions{
+		Version: row.Version, IdleActive: r.Idle.Active, IdleGloballyOff: r.Idle.GloballyOff,
+		IdleSource: r.Idle.Enabled.Source, Set: []string{},
+	}
+	board := map[string]bool{
+		"idle.enabled":       r.Idle.Enabled.Source == boardopts.SourceBoard,
+		"idle.grace":         r.Idle.Grace.Source == boardopts.SourceBoard,
+		"idle.nudge":         r.Idle.Nudge.Source == boardopts.SourceBoard,
+		"idle.tell":          r.Idle.Tell.Source == boardopts.SourceBoard,
+		"idle.check_columns": r.Idle.CheckColumns.Source == boardopts.SourceBoard,
+	}
+	for _, e := range r.Events {
+		board["events."+e.Name+".enabled"] = e.Enabled.Source == boardopts.SourceBoard
+		board["events."+e.Name+".to"] = e.To.Source == boardopts.SourceBoard
+	}
+	for _, k := range boardopts.Keys {
+		if board[k] {
+			out.Set = append(out.Set, k)
+		}
+	}
+	return out, nil
+}
