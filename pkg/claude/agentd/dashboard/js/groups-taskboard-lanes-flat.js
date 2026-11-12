@@ -32,6 +32,7 @@ import { agentLink } from './cross-links.js';
 import { useOpenCells } from './groups-taskboard-lanes-layout.js';
 import { AnswerFor, QuestionCard, answerTarget, askerOf } from './groups-taskboard-answer.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
+import { LaneLimit, useLimitDialog } from './groups-taskboard-limits.js';
 import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
 import { EpicBoard, EpicNudge, EpicProgress, NO_EPIC, epicColour, epicOf, progressParts } from './groups-taskboard-epics.js';
 
@@ -151,6 +152,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   // A column head's ⋯ and the last head's ＋ column, as in the lanes by
   // agent (groups-taskboard-columns.js).
   const naming = useColumnNaming(group, actions);
+  const limits = useLimitDialog(group, entry, actions);
   const custom = entry.columns || [];
   const answerable = canAssign(actions) && typeof actions?.api?.answer === 'function';
   // Triage's You also holds the open questions on the agents' tasks.
@@ -243,7 +245,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const target = answerTarget(answering);
   const answerTask = answering && tasks.find((task) => task.id === target.id);
   return html`<div class="tb-lanes-wrap">
-    ${naming.dialog}
+    ${naming.dialog}${limits.dialog}
     ${answerTask && html`<${AnswerFor} task=${answerTask} n=${target.n} actions=${actions} askedBy=${actorLabel(askerOf(answerTask, target.n), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
@@ -252,8 +254,8 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         onDragLeave=${actions ? drag.leaveGrid : undefined}>
       <div class="tb-lane tb-lane-columns">
         ${triage && html`<div class="ui-eyebrow tb-col-lane">${byEpic ? 'Epic' : 'Who'}</div>`}
-        ${columns.map((column, i) => html`<div key=${column.key} class=${columnClass(column)}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
-          (column.custom || HIDEABLE_KEYS.includes(column.key)) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} />`}${
+        ${columns.map((column, i) => html`<div key=${column.key} class=${columnClass(column)}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span><${LaneLimit} entry=${entry} column=${column} />${
+          (column.custom || HIDEABLE_KEYS.includes(column.key) || (column.key === 'progress' && entry.options)) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} limits=${limits} />`}${
           i === columns.length - 1 && html`<${AddColumnButton} naming=${naming} columns=${custom} />`}</div>`)}
       </div>
       ${rows.map((row) => html`<div key=${row || 'unassigned'} class=${`tb-lane${row === OPERATOR ? ' tb-lane-operator' : ''}${byEpic && row === NO_EPIC && !rowCount(NO_EPIC) && !cells.has(`${NO_EPIC}|done`) ? ' tb-lane-folded' : ''}`} data-board-row-head=${row || 'unassigned'}>

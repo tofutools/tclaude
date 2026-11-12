@@ -19522,3 +19522,15 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 .tb-opt-sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .tb-options-summary { display: inline-flex; gap: 4px; margin-left: 6px; }
 .ui-tag.tb-options-chip { font-size: 11px; }
+
+/* Work-in-progress limits on the board (groups-taskboard-limits.js): a
+   limited lane head's "n / max" tag, amber when the lane is full and red
+   when it is over; a task in line for a full lane has a ⏳ chip. */
+.ui-tag.tb-col-limit { margin-left: 6px; font-size: 10.5px; font-weight: normal; letter-spacing: 0; text-transform: none; }
+.ui-tag.tb-lane-full, .ui-tag.tb-options-chip.tb-lane-full { border-color: #9e6a03; color: var(--ui-warn-text); }
+.ui-tag.tb-lane-over, .ui-tag.tb-options-chip.tb-lane-over { border-color: #da3633; color: var(--ui-danger-text); }
+.ui-tag.tb-queued-chip { margin-left: 6px; border-color: #9e6a03; color: var(--ui-warn-text); font-size: 10.5px; white-space: nowrap; }
+.tb-opt-limit { display: inline-flex; align-items: baseline; gap: 6px; }
+.tb-opt-max { width: 5em; }
+.tb-opt-at { min-width: 9em; }
+.tb-opt-at-choices { display: flex; flex-direction: column; gap: 6px; padding-left: 4px; }

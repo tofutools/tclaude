@@ -1,8 +1,10 @@
 // A board's Board options drawer (groups-taskboard-options.js and its
 // model): the ways in from the Task board section, provenance and reset,
-// the draft and its Save (a PUT of the whole document at the version read,
+// the draft and its Save (a PATCH of the changed keys at the version read,
 // carried onto a newer version when that is refused as stale), the
-// read-only drawer of a board this viewer may not change, and the deep
+// read-only drawer of a board this viewer may not change, the
+// work-in-progress limits (the Limits tab, the lanes' heads, the queued
+// chip, Set limit… and the operator's over-limit confirm), and the deep
 // link's route.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,6 +28,15 @@ function resolve(options = {}, globals = {}) {
       nudge: idle.nudge !== undefined ? v(idle.nudge, 'board') : v(true, 'default'),
       tell: idle.tell ? v(idle.tell, 'board') : v(['assigner'], 'default'),
       check_columns: idle.check_columns ? v(idle.check_columns, 'board') : v([], 'default'),
+    },
+    limits: {
+      at_limit: options.limits?.at_limit ? v(options.limits.at_limit, 'board') : v('queue', 'default'),
+      per: options.limits?.per ? v(options.limits.per, 'board') : v('board', 'default'),
+      lanes: ['in_progress', ...COLUMNS.map((c) => c.slug)].map((lane) => {
+        const own = lane === 'in_progress' ? options.limits?.in_progress : options.limits?.columns?.[lane];
+        return { lane, max: own?.max ? v(own.max, 'board') : v(0, 'default'),
+          at_limit: own?.at_limit ? v(own.at_limit, 'board') : v(options.limits?.at_limit || 'queue', options.limits?.at_limit ? 'board' : 'default') };
+      }),
     },
     events: EVENT_NAMES.map((name) => {
       const set = options.events?.[name] || {};
@@ -396,4 +407,151 @@ test('a link opens the drawer at its section; Back closes it', async (t) => {
   assert.equal(overlayParams()['board-options'], 'crew');
   await s.harness.act(async () => { restoreOverlays({}); await tick(); });
   assert.equal(s.drawer(), null, 'a location without it closes it');
+});
+
+
+test('limits in the model: drafts, a lane following the board, the patch, and the summary', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/groups-taskboard-options-model.js');
+  const doc = { limits: { at_limit: 'refuse', per: 'assignee', in_progress: { max: 3 }, columns: { 'in-ci': { max: 2, at_limit: 'warn' } } } };
+  const flat = m.flatOptions(doc);
+  assert.deepEqual(flat, { 'limits.at_limit': 'refuse', 'limits.per': 'assignee', 'limits.in_progress.max': 3, 'limits.columns.in-ci.max': 2, 'limits.columns.in-ci.at_limit': 'warn' });
+  assert.deepEqual(m.limitKeyParts('limits.columns.in.ci.max'), { lane: 'in.ci', field: 'max' }, 'a slug with dots');
+  const view = optionsView({});
+  // A lane without its own choice follows the board's, as drafted.
+  assert.deepEqual(m.effectiveOf(view, {}, 'limits.in_progress.at_limit'), { value: 'queue', source: 'lane-board' });
+  assert.deepEqual(m.effectiveOf(view, { 'limits.at_limit': 'warn' }, 'limits.in_progress.at_limit'), { value: 'warn', source: 'lane-board' });
+  assert.equal(m.sourceText('lane-board'), "the board's");
+  // Clearing a max the board does not set is no change; one it sets resets to 0.
+  assert.deepEqual(m.setOption(view, {}, { 'limits.in_progress.max': 3 }, 'limits.in_progress.max', 0), {});
+  assert.deepEqual(m.patchOf({ 'limits.in_progress.max': 3 }, { 'limits.in_progress.max': 0 }), { set: { 'limits.in_progress.max': '0' }, reset: [] });
+  // A removed column's limits are left out of a save.
+  assert.deepEqual(m.patchOf({}, { 'limits.columns.gone.max': 2, 'limits.columns.in-ci.max': 1 }, ['in-ci']), { set: { 'limits.columns.in-ci.max': '1' }, reset: [] });
+  assert.match(m.draftErrors({ 'limits.in_progress.max': Number.NaN })['limits.in_progress.max'], /whole number/);
+  assert.match(m.draftErrors({ 'limits.in_progress.max': 1000 })['limits.in_progress.max'], /up to 999/);
+
+  const summary = m.optionsSummary({ set: ['limits.in_progress.max'], limits: { per: 'board', lanes: [
+    { lane: 'in_progress', max: 3, at_limit: 'queue', count: 3, queued: 2 }, { lane: 'in-ci', max: 2, at_limit: 'refuse', count: 3 }] } }, COLUMNS);
+  assert.deepEqual(summary.map((p) => [p.text, p.fill]), [['In progress 3 / 3', 'full'], ['In CI 3 / 2', 'over'], ['2 queued', undefined]]);
+  assert.match(summary[0].title, /new tasks queue; 2 queued/);
+  assert.equal(m.optionsSummary({ set: [], limits: { per: 'assignee', lanes: [{ lane: 'in_progress', max: 2, count: 1 }] } })[0].text, 'In progress ≤ 2 each');
+});
+
+test('the Limits tab sets the caps, what a full lane does and what a cap counts', async (t) => {
+  const api = fakeApi(optionsView({}, { version: 2 }));
+  const entry = entryOf({ version: 2, idle_active: false, idle_source: 'default', set: [], limits: { per: 'board', lanes: [{ lane: 'in_progress', max: 0, at_limit: 'queue', count: 2 }] } });
+  const s = await mountSection(t, { api, entry });
+  await s.click(s.c.querySelector('.tb-options-btn'));
+  const d = s.drawer();
+  await s.click(d.querySelector('[data-tb-opt-tab="limits"]'));
+  assert.ok(d.querySelector('[data-tb-opt-section="limits"]'));
+  const max = d.querySelector('input[aria-label="In progress limit"]');
+  await s.harness.act(async () => { await s.harness.input(max, 'three'); });
+  assert.match(d.querySelector('#tb-opt-max-in_progress-error').textContent, /whole number/);
+  assert.equal(max.value, 'three', 'what was typed stays, to be fixed');
+  assert.equal(d.querySelector('#taskboard-options-save').disabled, true);
+  await s.harness.act(async () => { await s.harness.input(max, '3'); });
+  await s.harness.act(async () => { await s.harness.input(d.querySelector('input[aria-label="In CI limit"]'), '2'); });
+  await s.toggle([...d.querySelectorAll('input[name="tb-opt-at"]')].find((r) => r.closest('label').textContent.includes('Refuse')));
+  await s.toggle([...d.querySelectorAll('input[name="tb-opt-per"]')].find((r) => r.closest('label').textContent.includes('assignee')));
+  await s.click(d.querySelector('#taskboard-options-save'));
+  assert.deepEqual(api.calls.find((c) => c[0] === 'saveOptions'), ['saveOptions', 'crew',
+    { set: { 'limits.in_progress.max': '3', 'limits.columns.in-ci.max': '2', 'limits.at_limit': 'refuse', 'limits.per': 'assignee' }, reset: [] }, 2]);
+});
+
+test("the Columns tab sets a lane's limit and its own at-limit choice", async (t) => {
+  const api = fakeApi(optionsView({ limits: { at_limit: 'warn' } }));
+  const s = await mountSection(t, { api });
+  await s.click(s.c.querySelector('.tb-options-btn'));
+  const d = s.drawer();
+  await s.click(d.querySelector('[data-tb-opt-tab="columns"]'));
+  const at = d.querySelector('select[aria-label="In review: at the limit"]');
+  assert.match(at.options[0].textContent, /board \(warn only\)/, "the board's choice, named");
+  await s.harness.act(async () => { await s.harness.input(d.querySelector('input[aria-label="In review limit"]'), '1'); });
+  await s.harness.act(async () => { [...at.options].forEach((o) => o.removeAttribute('selected')); at.querySelector('option[value="refuse"]').setAttribute('selected', ''); s.harness.fireEvent(at, 'change'); await tick(); });
+  await s.click(d.querySelector('#taskboard-options-save'));
+  assert.deepEqual(api.calls.find((c) => c[0] === 'saveOptions')[2],
+    { set: { 'limits.columns.in-review.max': '1', 'limits.columns.in-review.at_limit': 'refuse' }, reset: [] });
+});
+
+test('the board shows how full a limited lane is and which tasks wait in line', async (t) => {
+  const entry = entryOf({ version: 1, idle_active: false, idle_source: 'default', set: ['limits.in_progress.max'],
+    limits: { per: 'board', lanes: [{ lane: 'in_progress', max: 1, at_limit: 'queue', count: 1, queued: 1 }, { lane: 'in-ci', max: 1, at_limit: 'warn', count: 2 }] } });
+  entry.tasks = [
+    { id: 'tk_00000001', group: 'crew', title: 'building', stage: 'next', status: 'open', depends_on: [], created_at: new Date().toISOString(),
+      assignee: { agent_id: 'agt_b' }, assigned_at: new Date().toISOString() },
+    { id: 'tk_00000002', group: 'crew', title: 'waiting', stage: 'next', status: 'open', depends_on: [], created_at: new Date().toISOString(),
+      assignee: { agent_id: 'agt_c' }, held: true, queued: true, queued_for: 'in_progress', queued_position: 1, queued_reason: 'In progress is full, 1st in line' },
+  ];
+  const s = await mountSection(t, { api: fakeApi(optionsView()), entry, view: 'lanes', by: 'triage' });
+  const head = s.c.querySelector('[data-tb-lane-limit="in_progress"]');
+  assert.equal(head.textContent.trim(), '1 / 1 full · ⏳ 1');
+  assert.equal(head.dataset.tbLaneFill, 'full');
+  assert.match(head.getAttribute('title'), /In progress: 1 of at most 1; at the limit, new tasks queue; 1 queued/);
+  assert.equal(s.c.querySelector('[data-tb-lane-limit="in-ci"]').dataset.tbLaneFill, 'over');
+  const chip = s.c.querySelector('.tb-card[data-task-id="tk_00000002"] [data-tb-queued]');
+  assert.equal(chip.textContent.trim(), '⏳ 1st');
+  assert.match(chip.getAttribute('title'), /In progress is full, 1st in line/);
+  assert.deepEqual([...s.c.querySelectorAll('[data-tb-options-summary="limits"]')].map((c) => c.textContent.trim()), ['In progress 1 / 1', 'In CI 2 / 1', '1 queued']);
+});
+
+test("In progress's ⋯ Set limit… sets the lane's limit at once", async (t) => {
+  const api = fakeApi(optionsView());
+  const entry = entryOf({ version: 1, idle_active: false, idle_source: 'default', set: [], limits: { per: 'board', lanes: [{ lane: 'in_progress', max: 2, at_limit: 'queue', count: 1 }] } });
+  const s = await mountSection(t, { api, entry, view: 'lanes', by: 'triage' });
+  const head = [...s.c.querySelectorAll('.tb-col-more')].find((b) => /In progress/.test(b.getAttribute('aria-label') || ''));
+  assert.ok(head, 'In progress has a ⋯ once the board serves options');
+  await s.click(head);
+  assert.deepEqual([...s.harness.document.querySelectorAll('[data-column-menu]')].map((i) => i.dataset.columnMenu), ['limit', 'options'],
+    'In progress is always shown: no hide or cordon items');
+  await s.click(s.harness.document.querySelector('[data-column-menu="limit"]'));
+  const input = s.harness.document.querySelector('#taskboard-limit-input');
+  assert.equal(input.value, '2', 'the limit in force');
+  await s.harness.act(async () => { await s.harness.input(input, '3'); });
+  const at = s.harness.document.querySelector('#taskboard-limit-at');
+  await s.harness.act(async () => { [...at.options].forEach((o) => o.removeAttribute('selected')); at.querySelector('option[value="refuse"]').setAttribute('selected', ''); s.harness.fireEvent(at, 'change'); await tick(); });
+  await s.click(s.harness.document.querySelector('#taskboard-limit-submit'));
+  const call = api.calls.find((c) => c[0] === 'saveOptions');
+  assert.deepEqual(call.slice(0, 3), ['saveOptions', 'crew', { set: { 'limits.in_progress.max': '3', 'limits.in_progress.at_limit': 'refuse' }, reset: [] }]);
+  assert.equal(call[3], undefined, 'no version: it changes those keys whatever else changed');
+  assert.equal(s.harness.document.querySelector('#taskboard-limit-modal'), null, 'closed');
+});
+
+test('a full lane the operator may go over asks, and only the refused request goes again with over_limit', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createTaskboardApi, limitNoteText, ordinal } = await harness.importDashboardModule('js/taskboard-actions.js');
+  const sent = [];
+  let refuse = 1;
+  const fetchImpl = async (path, init) => {
+    const body = init.body ? JSON.parse(init.body) : null;
+    sent.push([init.method, path, body]);
+    if (refuse > 0 && !body?.over_limit) {
+      refuse -= 1;
+      return { ok: false, status: 409, statusText: 'Conflict',
+        json: async () => ({ code: 'limit_reached', error: 'In CI is full (3 / 3); the board refuses more (go over it with over_limit)' }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ id: 'tk_1', limit: { lane: 'in-ci', label: 'In CI', max: 3, count: 3, per: 'board', action: 'over' } }) };
+  };
+  const asked = [];
+  const notes = [];
+  const api = createTaskboardApi({ fetchImpl, limits: { confirm: async (message) => { asked.push(message); return true; }, note: (limit) => notes.push(limitNoteText(limit)) } });
+  await api.stage('tk_1', 'in-ci');
+  assert.deepEqual(asked, ['In CI is full (3 / 3); the board refuses more'], 'asked, without the CLI hint');
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1][2].over_limit, true, 'the same request, over the limit');
+  assert.deepEqual(notes, ['Over the limit: In CI is full (3 / 3)']);
+
+  // Declined: the refusal stands. An agent's refusal (no hint) never asks.
+  refuse = 1;
+  const no = createTaskboardApi({ fetchImpl, limits: { confirm: async () => false } });
+  await assert.rejects(no.stage('tk_1', 'in-ci'), /refuses more/);
+  const agentFetch = async () => ({ ok: false, status: 409, json: async () => ({ code: 'limit_reached', error: 'In CI is full (3 / 3); the board refuses more' }) });
+  let askedAgent = false;
+  const agentApi = createTaskboardApi({ fetchImpl: agentFetch, limits: { confirm: async () => { askedAgent = true; return true; } } });
+  await assert.rejects(agentApi.stage('tk_1', 'in-ci'));
+  assert.equal(askedAgent, false);
+
+  assert.equal(limitNoteText({ label: 'In progress', count: 3, max: 3, per: 'board', action: 'queued', position: 2 }),
+    'Queued: In progress is full (3 / 3); 2nd in line, it goes in when a slot frees');
+  assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 101].map(ordinal), ['1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '101st']);
 });

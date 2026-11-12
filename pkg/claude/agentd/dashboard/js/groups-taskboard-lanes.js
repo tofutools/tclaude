@@ -47,6 +47,7 @@ import { TaskTitle } from './groups-taskboard-card.js';
 import { copyLinkItem, TaskLink } from './task-route.js';
 import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
+import { LaneLimit, QueuedChip, useLimitDialog } from './groups-taskboard-limits.js';
 import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
 import { AnswerFor, QuestionCard, QuestionTag, answerTarget, askerOf, openQuestions, questionOpen } from './groups-taskboard-answer.js';
 import { EpicBoard, EpicChip, EpicMark, epicColour, epicDimmed, epicMoved, intoEpic, isEpic } from './groups-taskboard-epics.js';
@@ -465,7 +466,7 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
     <div class="tb-card-title"><${TaskTitle} task=${task} api=${api} nameOf=${nameOf} onOpen=${onEdit ? () => onEdit(task.id) : null}
       chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} /></div>
     ${((chip && task.parent_id) || isEpic(task)) && html`<div class="tb-card-epic-line"><${EpicMark} task=${task} />${chip && html`<${EpicChip} task=${task} />`}</div>`}
-    ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} />
+    ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} /><${QueuedChip} task=${task} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} />
       <${QuestionTag} task=${task} askedBy=${nameOf && askerOf(task) ? nameOf(askerOf(task)) : ''} /></div>`}
     ${onAnswer && questionOpen(task) && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
       onClick=${(event) => { event.stopPropagation(); onAnswer(task.id); }}>Answer…<//></div>`}
@@ -801,6 +802,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const order = useLaneOrder(group, groups, by, relayout);
   const resize = useColumnResize(group, relayout, columns);
   const naming = useColumnNaming(group, actions);
+  const limits = useLimitDialog(group, entry, actions);
   const [unfolded, setUnfolded] = useState({});
   const [open, setOpen] = useOpenCells(layoutKey(group), `lanes-${by}`);
   useCellReveal(cells, CELL_SHOWN, setOpen);
@@ -864,7 +866,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const target = answerTarget(answering);
   const answerTask = answering && tasks.find((task) => task.id === target.id);
   return html`<div class="tb-lanes-wrap">
-    ${naming.dialog}
+    ${naming.dialog}${limits.dialog}
     ${answerTask && html`<${AnswerFor} task=${answerTask} n=${target.n} actions=${actions} askedBy=${actorLabel(askerOf(answerTask, target.n), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
@@ -874,8 +876,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
       <div class="tb-lane tb-lane-columns">
         <div class="ui-eyebrow tb-col-lane">Lane<span class="tb-col-resize" ...${resize.handle(0, 'lane')}></span></div>
         ${columns.map((column, i) => html`<div key=${column.key} class=${columnClass(column)} data-col=${column.key}
-            title=${column.cordoned ? 'Cordoned: it takes no new task; its tasks may leave' : undefined}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
-          (column.custom || HIDEABLE_KEYS.includes(column.key)) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} />`}${
+            title=${column.cordoned ? 'Cordoned: it takes no new task; its tasks may leave' : undefined}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span><${LaneLimit} entry=${entry} column=${column} />${
+          (column.custom || HIDEABLE_KEYS.includes(column.key) || (column.key === 'progress' && entry.options)) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} limits=${limits} />`}${
           i === columns.length - 1 && html`<${AddColumnButton} naming=${naming} columns=${custom} />`}${
           i < columns.length - 1 && html`<span class="tb-col-resize" ...${resize.handle(i + 1, column.label)}></span>`}</div>`)}
       </div>
