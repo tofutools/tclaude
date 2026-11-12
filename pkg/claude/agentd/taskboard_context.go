@@ -1,10 +1,12 @@
 package agentd
 
 import (
+	"log/slog"
 	"net/http"
 	"slices"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -118,9 +120,10 @@ func handleTaskboardContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	globals := taskboardOptionsGlobals()
 	view := taskboardContextView{Groups: make([]taskboardGroupContext, 0, len(groups))}
 	for _, g := range groups {
-		entry, err := buildTaskboardGroupContext(r, g, now)
+		entry, err := buildTaskboardGroupContext(r, g, now, &globals)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return
@@ -168,7 +171,9 @@ func taskboardContextGroups(w http.ResponseWriter, r *http.Request) ([]*db.Agent
 	return out, true
 }
 
-func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time) (taskboardGroupContext, error) {
+// globals are the global board options the options summary resolves
+// against, read once per request; nil leaves the summary out.
+func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time, globals *boardopts.Globals) (taskboardGroupContext, error) {
 	entry := taskboardGroupContext{GroupID: g.ID, Group: g.Name, Tasks: []taskboardContextTask{}, Closed: []taskboardContextTask{}}
 	// A nil request wants only the counts (the node summary).
 	if r != nil {
@@ -178,11 +183,15 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		if err := taskboardContextAskable(r, g, &entry); err != nil {
 			return entry, err
 		}
-		opts, err := taskboardContextOptionsOf(g, taskboardOptionsGlobals())
-		if err != nil {
-			return entry, err
+	}
+	if globals != nil {
+		// The summary is a convenience: a board whose options cannot be
+		// read still lists its tasks.
+		if opts, err := taskboardContextOptionsOf(g, *globals); err != nil {
+			slog.Warn("taskboard: reading board options for the context failed", "group", g.Name, "error", err)
+		} else {
+			entry.Options = opts
 		}
-		entry.Options = opts
 	}
 	tasks, err := db.ListGroupTasks(g.ID, db.GroupTaskListOpts{Closed: true})
 	if err != nil {

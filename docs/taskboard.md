@@ -1213,8 +1213,10 @@ the **Quest board**), below its Agents and Resources sections.
   folded, the ＋▾ and an icon-only ⚙ move up onto the section line. Beside the
   count, the section line says what the board's
   [options](#board-options-in-the-dashboard) change: *⏱ idle check on* while
-  the idle check runs there, and *✉ 2 messages changed* when the board changes
-  the messages it sends. The count's tooltip carries the breakdown, for
+  the idle check runs there (*idle check off* when the board sets idle options
+  but the check is off, *idle check off globally* when the board turns it on
+  but `taskboard.idle_grace` is `0`), and *✉ 2 messages changed* when the
+  board changes the messages it sends. The count's tooltip carries the breakdown, for
   example `5 · 1 waiting on you · 1 needs you · 1 in progress · 2 next · 1 idea`.
   *Waiting on you* counts the open tasks assigned to the operator, and
   the section line shows it as a tag beside the count. *Needs you* counts the
@@ -1428,8 +1430,9 @@ stays in view. It has two tabs:
 Every value says where it comes from: *default*, *global* (the operator's
 `taskboard.*` config) or *set on this board*, with the value it would inherit
 beside it. ↺ makes a value the board sets inherit again. A change not yet
-saved has a dot, and the footer counts them. *Save* replaces the board's
-options in one change (`options set` and `reset` do the same key by key);
+saved has a dot, and the footer counts them. *Save* sets and resets the keys
+you changed, in one change, as `options set` and `reset` do; options the
+drawer does not show stay as they are.
 *Cancel*, Esc, ✕ or a click beside the drawer ask before they drop unsaved
 changes. When the options changed elsewhere while the drawer was open (the
 CLI, another viewer), it says so, and *Save* puts your changes over the newer
@@ -1718,8 +1721,8 @@ those drags aren't accepted in the lanes.
 | `columns rename` / `move` | `PATCH /v1/groups/{g}/taskboard/columns/{slug} {"label"?,"before"?,"to_end"?}` |
 | `columns rm` | `DELETE /v1/groups/{g}/taskboard/columns/{slug}` → `{group, columns, cap, moved:[tk_…]}` |
 | `options show` | `GET /v1/groups/{g}/taskboard/options` → `{group, options, resolved, inherited, globals, version, updated_by, updated_at, keys}`: `options` is what the board sets, `resolved` what is in force, each value as `{value, source}` with source `default`, `global` or `board`; `resolved.events` lists every event as `{name, label, enabled, to}`. `inherited` has the shape of `resolved` and is what each value would be if the board set nothing: what a reset falls back to |
-| `options set` / `reset` | `PATCH /v1/groups/{g}/taskboard/options {"set":{"idle.grace":"10m","events.comment.enabled":"off",…},"reset":["idle.tell"\|"idle"\|"all"],"version"?}`: resets first, then sets, in one change |
-| (dashboard) | `PUT /v1/groups/{g}/taskboard/options {"options":{"idle":{…}},"version":n}`: replaces the whole document (an unknown key is a 400); a `version` other than the stored one answers 409 `stale` with the `current` options. A `PATCH` on a document written by a newer tclaude that this one cannot read answers 409 `unreadable` |
+| `options set` / `reset` (and the dashboard's *Save*) | `PATCH /v1/groups/{g}/taskboard/options {"set":{"idle.grace":"10m","events.comment.enabled":"off",…},"reset":["idle.tell"\|"idle"\|"all"],"version"?}`: resets first, then sets, in one change |
+| (whole document) | `PUT /v1/groups/{g}/taskboard/options {"options":{"idle":{…}},"version":n}`: replaces the whole document (an unknown key is a 400); a `version` other than the stored one answers 409 `stale` with the `current` options. A `PATCH` on a document written by a newer tclaude that this one cannot read answers 409 `unreadable` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
 | `archive` | `POST /v1/taskboard/tasks/{id}/archive {"reason"?}` |
 | `unarchive` | `POST /v1/taskboard/tasks/{id}/unarchive` |

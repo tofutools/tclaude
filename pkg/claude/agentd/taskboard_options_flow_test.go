@@ -99,9 +99,6 @@ func saveTaskboardConfig(t *testing.T, tb *config.TaskboardConfig) {
 	}))
 }
 
-// A board's options: everything inherited until the board sets it, each
-// value with its source; members read them, owners change them, a write on a
-// stale version is refused, and what is invalid for the board is refused.
 // TestTaskboardOptionsInheritedEvents: an event's default recipients stay
 // readable (inherited) once the board sets its own, so the dashboard can
 // show what a reset falls back to before it saves.
@@ -118,6 +115,9 @@ func TestTaskboardOptionsInheritedEvents(t *testing.T) {
 	assert.NotNil(t, v.Options.Events["comment"])
 }
 
+// A board's options: everything inherited until the board sets it, each
+// value with its source; members read them, owners change them, a write on a
+// stale version is refused, and what is invalid for the board is refused.
 func TestTaskboardOptionsReadWriteAndInheritance(t *testing.T) {
 	h := newTaskboardAssignFlow(t)
 	saveTaskboardConfig(t, nil)

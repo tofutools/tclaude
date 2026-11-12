@@ -58,9 +58,10 @@ function fakeApi(view, { stale = null } = {}) {
         stale = null;
         throw err;
       }
-      current = optionsView(options, { version: version + 1 });
+      current = optionsView({}, { version: version + 1 });
       return current;
     },
+    setCurrent: (next) => { current = next; },
     addColumn: async () => ({}), changeColumn: async () => ({}), removeColumn: async () => ({}), setColumnState: async () => ({}),
   };
 }
@@ -107,8 +108,13 @@ test('the model: drafts, provenance, unpinning, changes and rebasing', async (t)
   const doc = { idle: { enabled: true, grace: '10m', tell: ['owners'] }, events: { comment: { enabled: false }, report_failed: { to: ['assigner', 'operator'] } } };
   const flat = m.flatOptions(doc);
   assert.deepEqual(flat, { 'idle.enabled': true, 'idle.grace': '10m', 'idle.tell': ['owners'], 'events.comment.enabled': false, 'events.report_failed.to': ['assigner', 'operator'] });
-  assert.deepEqual(m.documentOf(flat), doc, 'a draft writes back the document it came from');
-  assert.deepEqual(m.documentOf({}), {}, 'a board that sets nothing is {}');
+  assert.deepEqual(m.patchOf(flat, flat), { set: {}, reset: [] }, 'an untouched draft changes nothing');
+  // A save sends only the keys it changes, in their text form, so a part of
+  // the options the drawer does not show stays as it is.
+  const edited = { ...m.resetOption(flat, 'idle.tell'), 'idle.nudge': false, 'events.comment.to': [], 'idle.grace': '15m' };
+  assert.deepEqual(m.patchOf(flat, edited), { set: { 'idle.grace': '15m', 'idle.nudge': 'off', 'events.comment.to': 'none' }, reset: ['idle.tell'] });
+  // A column removed while the drawer was open drops out of the checked ones.
+  assert.deepEqual(m.patchOf({}, { 'idle.check_columns': ['in-ci', 'gone'] }, ['in-ci']), { set: { 'idle.check_columns': 'in-ci' }, reset: [] });
 
   const view = optionsView(doc, { globals: { idle_grace: '2m' } });
   assert.deepEqual(m.inheritedOf(view, 'idle.grace'), { value: '2m', source: 'global' });
@@ -216,7 +222,8 @@ test('⚙ Board options opens the drawer from the toolbar; values say where they
   assert.match(d.querySelector('[data-tb-opt-unsaved]').textContent, /3 unsaved changes/);
   await s.click(d.querySelector('#taskboard-options-save'));
   const put = api.calls.find((c) => c[0] === 'saveOptions');
-  assert.deepEqual(put, ['saveOptions', 'crew', { idle: { enabled: true }, events: { comment: { to: ['assignee', 'creator', 'operator'] } } }, 3]);
+  assert.deepEqual(put, ['saveOptions', 'crew', { set: { 'idle.enabled': 'on', 'events.comment.to': 'assignee,creator,operator' }, reset: ['idle.grace'] }, 3],
+    'only the changed keys, at the version read');
   assert.equal(s.drawer(), null, 'a save closes the drawer');
   assert.equal(s.route.boardOptionsRoute.value, null);
 });
@@ -256,7 +263,31 @@ test('a save refused as stale carries the edits onto the newer options', async (
   assert.equal(isOn(d.querySelector('input[aria-label="Idle check"]')), true, 'the edit is kept');
   await s.click(d.querySelector('#taskboard-options-save'));
   const puts = api.calls.filter((c) => c[0] === 'saveOptions');
-  assert.deepEqual(puts[1], ['saveOptions', 'crew', { idle: { enabled: true, grace: '20m' } }, 5], 'saved over the newer version');
+  assert.deepEqual(puts[1], ['saveOptions', 'crew', { set: { 'idle.enabled': 'on' }, reset: [] }, 5], 'saved over the newer version');
+});
+
+test('a change elsewhere rereads a clean drawer, and waits for an edited one until its edits are undone', async (t) => {
+  const api = fakeApi(optionsView({}, { version: 1 }));
+  const s = await mountSection(t, { api, entry: entryOf({ version: 1, idle_active: false, idle_source: 'default', set: [] }) });
+  await s.click(s.c.querySelector('.tb-options-btn'));
+  const d = s.drawer();
+  const bump = async (version, grace) => {
+    api.setCurrent(optionsView({ idle: { grace } }, { version }));
+    await s.harness.act(async () => { s.context.value = { groups: [entryOf({ version, idle_active: false, idle_source: 'default', set: ['idle.grace'] })] }; await tick(); });
+    await s.settle();
+  };
+  await bump(2, '7m');
+  assert.equal(d.querySelector('#tb-opt-grace').value, '7m', 'clean: read again');
+  assert.equal(d.querySelector('[data-tb-opt-stale]'), null);
+
+  await s.toggle(d.querySelector('input[aria-label="Idle check"]'));
+  await bump(3, '9m');
+  assert.ok(d.querySelector('[data-tb-opt-stale]'), 'edited: it says the options moved');
+  assert.equal(d.querySelector('#tb-opt-grace').value, '7m', 'and keeps what the edit was made on');
+  await s.toggle(d.querySelector('input[aria-label="Idle check"]'));
+  await s.settle();
+  assert.equal(d.querySelector('[data-tb-opt-stale]'), null, 'edits undone: read again');
+  assert.equal(d.querySelector('#tb-opt-grace').value, '9m');
 });
 
 test('Cancel with unsaved changes asks first', async (t) => {
@@ -349,7 +380,7 @@ test("a custom column's ⋯ opens the drawer at the Columns tab on that column; 
   assert.equal(isOn(skip), true, 'a custom column is skipped by default');
   await s.toggle(skip);
   await s.click(d.querySelector('#taskboard-options-save'));
-  assert.deepEqual(api.calls.find((c) => c[0] === 'saveOptions')[2], { idle: { check_columns: ['in-ci'] } });
+  assert.deepEqual(api.calls.find((c) => c[0] === 'saveOptions')[2], { set: { 'idle.check_columns': 'in-ci' }, reset: [] });
 });
 
 test('a link opens the drawer at its section; Back closes it', async (t) => {

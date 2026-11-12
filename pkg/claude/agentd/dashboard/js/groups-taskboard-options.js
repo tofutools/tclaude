@@ -5,8 +5,8 @@
 // says where it comes from (default, global, set on this board) and, where
 // the board sets it, has a ↺ that makes it inherit again. Changes are a
 // draft until Save, which replaces the board's options document at the
-// version read (PUT /v1/groups/{g}/taskboard/options, the CLI's
-// `taskboard options set|reset`); Cancel, Esc or the backdrop with unsaved
+// version read (PATCH /v1/groups/{g}/taskboard/options with only the keys
+// it changed, as the CLI's `taskboard options set|reset`); Cancel, Esc or the backdrop with unsaved
 // changes ask first.
 //
 // Ways in: ⚙ Board options in the section's toolbar (list and lanes), the
@@ -32,8 +32,8 @@ import { openBoardOptions } from './groups-taskboard-options-route.js';
 import { AddColumnButton, COLUMNS_CAP, columnMenuItems, useColumnNaming } from './groups-taskboard-columns.js';
 import {
   EVENT_TO, eventRows, IDLE_TELL, RECIPIENT_LABEL, RECIPIENT_TITLE, SECTION_TAB, TABS,
-  changedKeys, documentOf, draftErrors, effectiveOf, eventKey, flatOptions, inheritedOf,
-  optionsSummary, rebaseDraft, resetOption, setOption, sourceText, valueText,
+  changedKeys, draftErrors, effectiveOf, eventKey, flatOptions, inheritedOf,
+  optionsSummary, patchOf, rebaseDraft, resetOption, setOption, sourceText, valueText,
 } from './groups-taskboard-options-model.js';
 
 const html = htm.bind(h);
@@ -274,18 +274,27 @@ export function BoardOptionsDrawer({ group, shownName = group.name, nodeName = '
   // Read on open, and again when the board's options move (the CLI, a
   // linked node): silently while nothing is edited, else the drawer says so
   // and Save carries the edits onto the newer version.
+  // A reread is due when the board's options moved past the version shown,
+  // or when the drawer said so and its edits are gone again.
+  const behind = !!view && version !== undefined && version !== view.version;
+  const clean = changed.length === 0;
   useEffect(() => {
     if (!reader || typeof reader.options !== 'function') {
       setLoadError("This board's node does not serve board options; update tclaude there.");
       return undefined;
     }
-    if (view && version !== undefined && version === view.version) return undefined;
+    if (view && !behind) return undefined;
     if (view && dirtyRef.current) { setStale(true); return undefined; }
     let live = true;
-    reader.options(group.name).then((next) => { if (live) { take(next); setLoadError(''); } })
-      .catch((cause) => { if (live) setLoadError(cause?.status === 404 ? "This board's node does not serve board options; update tclaude there." : cause?.message || String(cause)); });
+    reader.options(group.name).then((next) => {
+      if (!live) return;
+      // Edits begun while it was read win: say the options moved instead.
+      if (view && dirtyRef.current) { setStale(true); return; }
+      take(next);
+      setLoadError('');
+    }).catch((cause) => { if (live) setLoadError(cause?.status === 404 ? "This board's node does not serve board options; update tclaude there." : cause?.message || String(cause)); });
     return () => { live = false; };
-  }, [group.name, version]);
+  }, [group.name, version, behind && clean]);
   // A link or a column's ⋯ names a section: show it.
   useEffect(() => {
     if (section && SECTION_TAB[section]) setTab(SECTION_TAB[section]);
@@ -307,7 +316,7 @@ export function BoardOptionsDrawer({ group, shownName = group.name, nodeName = '
     setBusy(true);
     setError('');
     try {
-      const next = await api.saveOptions(group.name, documentOf(draft), view.version);
+      const next = await api.saveOptions(group.name, patchOf(saved, draft, slugs), view.version);
       take(next);
       shellToast(`Saved ${shownName}'s board options`);
       onSaved?.();

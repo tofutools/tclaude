@@ -8,8 +8,8 @@
 //     inherited,  what each value would be if the board set nothing
 //     globals, version, updated_by, updated_at, keys }
 //
-// and the drawer saves with a PUT of the whole document at the version it
-// read. The drawer edits a flat draft, { key: value }, keyed by the CLI's
+// and the drawer saves with a PATCH of the keys it changed ({set, reset})
+// at the version it read. The drawer edits a flat draft, { key: value }, keyed by the CLI's
 // option keys (idle.grace, events.comment.to, …): a key in the draft is set
 // on the board, a key absent is inherited. Provenance is then where a value
 // comes from: "board" for a drafted key, else the inherited source (default
@@ -99,24 +99,6 @@ export function flatOptions(options) {
   return out;
 }
 
-// documentOf is a draft as the document a PUT replaces the board's with.
-export function documentOf(draft) {
-  const doc = {};
-  for (const [key, value] of Object.entries(draft || {})) {
-    if (key.startsWith('idle.')) {
-      doc.idle ??= {};
-      doc.idle[IDLE_FIELD[key]] = Array.isArray(value) ? [...value] : value;
-      continue;
-    }
-    const [, name, field] = key.split('.');
-    if (!name || !field) continue;
-    doc.events ??= {};
-    doc.events[name] ??= {};
-    doc.events[name][field] = Array.isArray(value) ? [...value] : value;
-  }
-  return doc;
-}
-
 function idleValue(block, key) {
   return block?.idle?.[IDLE_FIELD[key]];
 }
@@ -197,6 +179,34 @@ export function resetOption(draft, key) {
     if (k === key || (key.endsWith('.') && k.startsWith(key))) delete out[k];
   }
   return out;
+}
+
+// optionText is a draft value as the options' text form (the CLI's
+// `options set key=value`): on / off, a comma list or none, a duration.
+export function optionText(value) {
+  if (value === true) return 'on';
+  if (value === false) return 'off';
+  if (Array.isArray(value)) return value.length ? value.join(',') : 'none';
+  return String(value ?? '');
+}
+
+// patchOf is the change a draft makes, as the PATCH the drawer saves with:
+// { set: { key: text }, reset: [key] }. Only the keys the drawer changed are
+// sent, so a part of the board's options it does not show (one a newer node
+// added) stays as it is. columns are the board's custom column slugs now: a
+// column removed while the drawer was open drops out of idle.check_columns.
+export function patchOf(saved, draft, columns = null) {
+  const next = { ...draft };
+  if (columns && Array.isArray(next['idle.check_columns'])) {
+    next['idle.check_columns'] = next['idle.check_columns'].filter((slug) => columns.includes(slug));
+  }
+  const set = {};
+  const reset = [];
+  for (const key of changedKeys(saved, next)) {
+    if (Object.hasOwn(next, key)) set[key] = optionText(next[key]);
+    else reset.push(key);
+  }
+  return { set, reset };
 }
 
 // changedKeys are the keys a draft changes against what was read.

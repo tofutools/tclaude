@@ -318,15 +318,15 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     setColumnState(group, slug, state) {
       return call('POST', `${columnsPath(group, slug)}/state`, { state });
     },
-    // The board's options (taskboard options show|set, docs/taskboard.md
-    // "Board options"): read them, or replace the whole document at the
-    // version read. A newer version refuses with 409 code "stale" and the
-    // current options in the error's body.current.
+    // The board's options (taskboard options show|set|reset,
+    // docs/taskboard.md "Board options"): read them, or set and reset keys
+    // in one change at the version read. A newer version refuses with 409
+    // code "stale" and the current options in the error's body.current.
     options(group) {
       return call('GET', `/v1/groups/${encodeURIComponent(group)}/taskboard/options`);
     },
-    saveOptions(group, options, version) {
-      return call('PUT', `/v1/groups/${encodeURIComponent(group)}/taskboard/options`, { options, version });
+    saveOptions(group, { set = {}, reset = [] }, version) {
+      return call('PATCH', `/v1/groups/${encodeURIComponent(group)}/taskboard/options`, { set, reset, version });
     },
     // force closes an epic whose tasks are not all closed (they stay).
     status(id, status, reason = '', { force = false } = {}) {
