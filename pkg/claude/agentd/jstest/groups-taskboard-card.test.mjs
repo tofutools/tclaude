@@ -136,6 +136,21 @@ test('no ancestor of the hover card is dimmed with opacity, so the card stays op
   }
 });
 
+// A closed (history) row's ⋯ menu sits in its actions cell: opacity there
+// made the menu see-through (operator), so closed rows dim by colour only,
+// and an open menu lights the row actions and a dimmed epic row fully.
+test('a closed row sets no opacity, and an open ⋯ menu is never see-through', async () => {
+  const css = await readFile(new URL('../dashboard/dashboard.css', import.meta.url), 'utf8');
+  const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^}]*)\}/g)].map(([, sel, body]) => [sel.trim(), body]);
+  for (const [sel, body] of rules) {
+    for (const part of sel.split(',').map((x) => x.trim())) {
+      if (/\.tb-closed\b/.test(part)) assert.doesNotMatch(body, /opacity\s*:/, `${part} dims a closed row by colour, not opacity`);
+    }
+  }
+  assert.match(css, /\.row-actions:has\(\[aria-expanded="true"\]\) \{ opacity: 1; \}/, 'an open menu lights its row actions');
+  assert.match(css, /\.tb-epic-dim:has\(\[aria-expanded="true"\]\) \{ opacity: 1; \}/, 'an open menu lights a dimmed epic task');
+});
+
 test('a click on the title opens the task and never pins the card', async (t) => {
   const { harness, c, settle } = await mountBoard(t);
   const title = titleOf(c, 'tk_00000001');
