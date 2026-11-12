@@ -14,3 +14,6 @@ func CollectTaskBlobsForTest(now time.Time) { collectTaskBlobs(now) }
 
 // TaskboardFilesDirForTest is where task files are stored.
 func TaskboardFilesDirForTest() string { return taskboardFilesDir() }
+
+// SweepTaskboardQueuesForTest runs one work-in-progress queue sweep.
+func SweepTaskboardQueuesForTest() { sweepTaskboardQueues() }

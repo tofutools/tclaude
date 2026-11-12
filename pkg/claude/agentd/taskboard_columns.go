@@ -278,6 +278,8 @@ func handleTaskboardColumnState(w http.ResponseWriter, r *http.Request, g *db.Ag
 		return
 	}
 	setAuditDetail(r, "column "+slug+" "+state)
+	// A column no longer cordoned takes the first in line for it.
+	taskboardFillLanes(g)
 	writeTaskboardColumns(w, http.StatusOK, g)
 }
 

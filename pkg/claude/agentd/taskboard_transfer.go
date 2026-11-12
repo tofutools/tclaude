@@ -32,6 +32,8 @@ type taskboardTransferResult struct {
 	DroppedDeps       []string          `json:"dropped_deps,omitempty"`
 	DroppedDependents []string          `json:"dropped_dependents,omitempty"`
 	Unassigned        string            `json:"unassigned,omitempty"`
+	// Limit is the target board's full lane the move met.
+	Limit *taskboardLimitNote `json:"limit,omitempty"`
 }
 
 // POST /v1/taskboard/tasks/{id}/move-to-group {"group": "<name>", "clone":
@@ -41,6 +43,9 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 		Group string `json:"group"`
 		Clone bool   `json:"clone"`
 		Stage string `json:"stage"`
+		// OverLimit lets the operator move a started task into the target
+		// board's full In progress.
+		OverLimit bool `json:"over_limit"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
 		return
@@ -108,6 +113,21 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 	}
 	// The operator holds tasks on every board of this node.
 	keep := t.AssigneeID == db.OperatorAssignee || (t.AssigneeID != "" && activeGroupMember(target, t.AssigneeID) != "")
+	// A started task that keeps its assignee lands in the target board's
+	// In progress and meets its limit there; queued, it lands held, in line.
+	defer lockTaskboardLanes(target.ID)()
+	want := *t
+	want.GroupID, want.Column = target.ID, ""
+	if want.Status != db.GroupTaskDone {
+		want.Status = db.GroupTaskOpen
+	}
+	if !keep {
+		want.AssigneeID = ""
+	}
+	hit, ok := checkTaskboardLimit(w, r, target, t, &want, body.OverLimit)
+	if !ok {
+		return
+	}
 	res, err := db.RegroupGroupTask(t.ID, db.GroupTaskRegroup{ToGroupID: target.ID, FromGroup: g.Name, ToGroup: target.Name,
 		Stage: stage, KeepAssignee: keep, Actor: actor})
 	if err != nil {
@@ -125,9 +145,10 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 		}
 	}
 	n.others(fmt.Sprintf("moved to %s by %s", target.Name, taskboardCallerName(r)), "", boardopts.RecipientAssignee)
+	moved, note := finishTaskboardLimit(r, target, hit, res.Task)
 	setAuditDetail(r, fmt.Sprintf("moved %s from %s to %s", t.ID, g.Name, target.Name))
-	writeTaskboardTransfer(w, target, res.Task, taskboardTransferResult{Group: target.Name, From: g.Name,
-		DroppedDeps: res.DroppedDeps, DroppedDependents: res.DroppedDependents, Unassigned: res.Unassigned})
+	writeTaskboardTransfer(w, target, moved, taskboardTransferResult{Group: target.Name, From: g.Name,
+		DroppedDeps: res.DroppedDeps, DroppedDependents: res.DroppedDependents, Unassigned: res.Unassigned, Limit: note})
 }
 
 // requireTaskboardTransfer gates a move or clone of t (in g) to target.

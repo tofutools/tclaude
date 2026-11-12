@@ -155,8 +155,67 @@ func TestEvents(t *testing.T) {
 // A stored document naming an event this version does not know (a newer
 // tclaude wrote it) does not parse, as an unknown field does not.
 func TestParseRefusesUnknownEvent(t *testing.T) {
-	_, err := Parse(`{"events":{"limit_reached":{"enabled":false}}}`)
+	_, err := Parse(`{"events":{"lane_moved":{"enabled":false}}}`)
 	assert.ErrorContains(t, err, "no event")
 	_, err = Parse(`{"events":{"comment":{"enabled":false}}}`)
 	assert.NoError(t, err)
+}
+
+// Limits: none by default, queue at a full lane, counted per board; a lane
+// overrides the board's at_limit; a removed column's limit drops out.
+func TestLimits(t *testing.T) {
+	r := Resolve(Options{}, Globals{}, []string{"in-review"}).Limits
+	assert.Equal(t, Value[string]{AtLimitQueue, SourceDefault}, r.AtLimit)
+	assert.Equal(t, Value[string]{PerBoard, SourceDefault}, r.Per)
+	require.Len(t, r.Lanes, 2)
+	assert.Equal(t, LaneInProgress, r.Lanes[0].Lane)
+	assert.Equal(t, "in-review", r.Lanes[1].Lane)
+	assert.Zero(t, r.Lane(LaneInProgress).Max.Value)
+
+	var o Options
+	require.NoError(t, o.Set("limits.in_progress.max", "3"))
+	require.NoError(t, o.Set("limits.at_limit", "refuse"))
+	require.NoError(t, o.Set("limits.per", "assignee"))
+	require.NoError(t, o.Set("limits.columns.in-review.max", "2"))
+	require.NoError(t, o.Set("limits.columns.in-review.at_limit", "warn"))
+	require.NoError(t, o.Validate([]string{"in-review"}))
+	enc, err := o.Encode()
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"limits":{"at_limit":"refuse","per":"assignee","in_progress":{"max":3},"columns":{"in-review":{"max":2,"at_limit":"warn"}}}}`, enc)
+	back, err := Parse(enc)
+	require.NoError(t, err)
+	assert.Equal(t, o, back)
+
+	r = Resolve(o, Globals{}, []string{"in-review"}).Limits
+	assert.True(t, r.PerAssignee())
+	assert.Equal(t, Value[int]{3, SourceBoard}, r.Lane(LaneInProgress).Max)
+	assert.Equal(t, Value[string]{AtLimitRefuse, SourceBoard}, r.Lane(LaneInProgress).AtLimit, "the board's choice")
+	assert.Equal(t, Value[string]{AtLimitWarn, SourceBoard}, r.Lane("in-review").AtLimit, "the column's own")
+
+	assert.ErrorContains(t, o.Validate([]string{"in-ci"}), "no custom column")
+	assert.True(t, o.Prune([]string{"in-ci"}))
+	assert.Nil(t, o.Limits.Columns)
+
+	require.NoError(t, o.Set("limits.in_progress.max", "none"))
+	require.NoError(t, o.Reset("limits.at_limit"))
+	require.NoError(t, o.Reset("limits.per"))
+	assert.True(t, o.IsZero(), "nothing left")
+
+	require.NoError(t, o.Set("limits.columns.in-ci.max", "1"))
+	require.NoError(t, o.Reset("limits.columns.in-ci"))
+	assert.True(t, o.IsZero())
+	require.NoError(t, o.Set("limits.in_progress.at_limit", "warn"))
+	require.NoError(t, o.Reset("limits"))
+	assert.True(t, o.IsZero())
+
+	for key, value := range map[string]string{
+		"limits.in_progress.max": "-1", "limits.columns.x.max": "1000", "limits.at_limit": "maybe",
+		"limits.per": "team", "limits.in_progress.at_limit": "drop",
+	} {
+		assert.Error(t, (&Options{}).Set(key, value), key)
+	}
+	assert.ErrorIs(t, (&Options{}).Set("limits.in_progress.color", "1"), ErrUnknownKey)
+	assert.ErrorIs(t, (&Options{}).Set("limits.columns.max", "1"), ErrUnknownKey)
+	assert.ErrorIs(t, (&Options{}).Reset("limits.nope.max"), ErrUnknownKey)
+	assert.Equal(t, []string{RecipientAssignee, RecipientAssigner}, Resolve(Options{}, Globals{}, nil).Event(EventLimitReached).To.Value)
 }

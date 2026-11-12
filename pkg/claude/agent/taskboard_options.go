@@ -54,13 +54,22 @@ const taskboardOptionsLong = "A board's options set how it behaves. They are sto
 	"  events.<event>.enabled  on | off\n" +
 	"  events.<event>.to       any of assignee, assigner, creator, owners, operator; none for no one\n" +
 	"The events: assigned, started, unassigned, reopened, moved_away, comment, report_done, report_failed,\n" +
-	"unblocked, epic_close. Whoever caused an event never hears of it, and nobody hears twice.\n\n" +
+	"unblocked, epic_close, limit_reached. Whoever caused an event never hears of it, and nobody hears twice.\n\n" +
+	"Work-in-progress limits: none by default. A lane is In progress or a custom column:\n" +
+	"  limits.in_progress.max          how many tasks In progress holds  (none or 0 for no limit)\n" +
+	"  limits.columns.<column>.max     how many tasks the column holds\n" +
+	"  limits.at_limit                 queue | refuse | warn            (default queue)\n" +
+	"  limits.in_progress.at_limit     the same, for In progress only\n" +
+	"  limits.columns.<column>.at_limit\n" +
+	"  limits.per                      board | assignee: count the whole lane, or each assignee's tasks in it\n" +
+	"At a full lane, queue keeps the task out of it, in line (one for In progress is held in Next) until a slot\n" +
+	"frees; refuse refuses the change; warn lets it in. The operator goes over a limit with --over-limit.\n\n" +
 	"Reading them needs taskboard.read; changing them taskboard.write (owners hold it)."
 
 func taskboardOptionsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "options",
-		Short:       "Show and change a board's options (idle check, messages)",
+		Short:       "Show and change a board's options (idle check, messages, limits)",
 		Long:        taskboardOptionsLong,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -159,6 +168,30 @@ func printTaskboardOptions(w io.Writer, resp taskboardOptionsResp) {
 			source = boardopts.SourceBoard
 		}
 		fmt.Fprintf(tw, "  events.%s\t%s\t%s\t%s\n", e.Name, onOff[e.Enabled.Value], list(e.To.Value), from(source, ""))
+	}
+	_ = tw.Flush()
+	limits := resp.Resolved.Limits
+	if len(limits.Lanes) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "limits:")
+	tw = tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
+	fmt.Fprintf(tw, "  limits.at_limit\t%s\t%s\n", limits.AtLimit.Value, from(limits.AtLimit.Source, ""))
+	fmt.Fprintf(tw, "  limits.per\t%s\t%s\n", limits.Per.Value, from(limits.Per.Source, ""))
+	for _, l := range limits.Lanes {
+		key := "limits.columns." + l.Lane
+		if l.Lane == boardopts.LaneInProgress {
+			key = "limits." + l.Lane
+		}
+		most := "none"
+		if l.Max.Value > 0 {
+			most = fmt.Sprint(l.Max.Value)
+		}
+		source := l.Max.Source
+		if l.AtLimit.Source == boardopts.SourceBoard && limits.AtLimit.Source != boardopts.SourceBoard {
+			source = boardopts.SourceBoard
+		}
+		fmt.Fprintf(tw, "  %s\tmax %s\t%s\t%s\n", key, most, l.AtLimit.Value, from(source, ""))
 	}
 	_ = tw.Flush()
 }

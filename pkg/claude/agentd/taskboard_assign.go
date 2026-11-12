@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
@@ -192,6 +193,8 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		To    string `json:"to"`
 		Start *bool  `json:"start"`
 		Stage string `json:"stage"`
+		// OverLimit lets the operator start the task in a full In progress.
+		OverLimit bool `json:"over_limit"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
 		return
@@ -243,12 +246,29 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 			return
 		}
 	}
+	// Started, the task enters In progress and meets its limit; queued,
+	// it is assigned held in next and waits in line.
+	defer lockTaskboardLanes(g.ID)()
+	want := *t
+	want.AssigneeID, want.StartedAt = target, time.Time{}
+	if hold == "" {
+		want.StartedAt = time.Now()
+	}
+	hit, ok := checkTaskboardLimit(w, r, g, t, &want, body.OverLimit)
+	if !ok {
+		return
+	}
+	if hit.queued() {
+		hold = db.GroupTaskStageNext
+	}
 	before := t.AssigneeID
 	out, err := db.AssignGroupTaskHeld(t.ID, target, taskboardActor(r), take, hold, taskboardActor(r), before)
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
 	}
+	out, note := queueTaskboardLimit(r, g, hit, out)
+	told := map[string]bool{}
 	setAuditTargetConv(r, targetConv)
 	if take {
 		setAuditDetail(r, "took "+t.ID)
@@ -259,6 +279,7 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if !take && before == target && hold == "" && !t.Started() && target != db.OperatorAssignee && out.Started() {
 		by := taskboardCallerName(r)
 		n := newTaskboardNotice(r, g, out, boardopts.EventStarted)
+		n.told = told
 		n.mail(boardopts.RecipientAssignee, target, targetConv,
 			taskboardSubject(g, out, "started for you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
 		n.others(fmt.Sprintf("started for %s by %s", taskboardAgentLabel(target), by), "", boardopts.RecipientAssignee)
@@ -266,6 +287,7 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if before != target {
 		by := taskboardCallerName(r)
 		n := newTaskboardNotice(r, g, out, boardopts.EventAssigned)
+		n.told = told
 		// A reassign is also the unassigned event of the agent losing the
 		// task. Both notices share who has heard, so nobody hears twice.
 		var gone *taskboardNotice
@@ -279,6 +301,9 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		}
 		switch {
 		case take, target == db.OperatorAssignee:
+		case note.queued():
+			subject, text := taskboardQueuedNote(g, out, by, note)
+			n.mail(boardopts.RecipientAssignee, target, targetConv, subject, text)
 		case hold != "":
 			subject, text := taskboardHeldNote(g, out, by)
 			n.mail(boardopts.RecipientAssignee, target, targetConv, subject, text)
@@ -299,7 +324,8 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 				boardopts.RecipientAssignee)
 		}
 	}
-	writeTaskboardTask(w, http.StatusOK, g, out)
+	announceTaskboardLimit(r, g, out, note, told)
+	writeTaskboardTaskLimit(w, http.StatusOK, g, out, note)
 }
 
 // POST /v1/taskboard/tasks/{id}/unassign — the assignee releases its task, or

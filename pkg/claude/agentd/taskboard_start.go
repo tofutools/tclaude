@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -21,6 +22,8 @@ func handleTaskboardStart(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 	var body struct {
 		Start *bool  `json:"start"`
 		Stage string `json:"stage"`
+		// OverLimit lets the operator start the task in a full In progress.
+		OverLimit bool `json:"over_limit"`
 	}
 	if r.ContentLength != 0 && !decodeTaskboardBody(w, r, &body) {
 		return
@@ -38,18 +41,33 @@ func handleTaskboardStart(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 	if !requireTaskboardHolderAction(w, r, g, t, true) {
 		return
 	}
-	out, err := db.StartGroupTask(t.ID, start, stage, taskboardActor(r), t.AssigneeID)
-	if err != nil {
-		writeTaskboardError(w, err)
+	// A start enters In progress and meets its limit; queued, the task
+	// stays held and waits in line.
+	defer lockTaskboardLanes(g.ID)()
+	want := *t
+	if start {
+		want.StartedAt = time.Now()
+	}
+	hit, ok := checkTaskboardLimit(w, r, g, t, &want, body.OverLimit)
+	if !ok {
 		return
 	}
+	out := t
+	if !hit.queued() {
+		var err error
+		if out, err = db.StartGroupTask(t.ID, start, stage, taskboardActor(r), t.AssigneeID); err != nil {
+			writeTaskboardError(w, err)
+			return
+		}
+	}
+	out, note := finishTaskboardLimit(r, g, hit, out)
 	verb := "started "
 	if !start {
 		verb = "held "
 	}
 	setAuditDetail(r, verb+t.ID)
 	// Started by someone else: the assignee gets its brief, as on an assign.
-	if start && !t.Started() && t.AssigneeID != db.OperatorAssignee {
+	if start && !t.Started() && out.Started() && t.AssigneeID != db.OperatorAssignee {
 		by := taskboardCallerName(r)
 		n := newTaskboardNotice(r, g, out, boardopts.EventStarted)
 		if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
@@ -62,7 +80,7 @@ func handleTaskboardStart(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 		}
 		n.others(what, "", boardopts.RecipientAssignee)
 	}
-	writeTaskboardTask(w, http.StatusOK, g, out)
+	writeTaskboardTaskLimit(w, http.StatusOK, g, out, note)
 }
 
 // taskboardHeldNote is the light mail an agent gets for a task assigned to

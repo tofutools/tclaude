@@ -15,8 +15,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -256,6 +256,11 @@ func handleTaskboardTask(access taskboardAccess, fn func(http.ResponseWriter, *h
 		}
 		setAuditGroup(r, g.Name)
 		fn(w, r, t, g)
+		// A change may have freed a slot in a full lane: let the first in
+		// line in (taskboard_limits.go).
+		if access != taskboardReadAccess {
+			taskboardFillLanes(g)
+		}
 	}
 }
 
@@ -340,8 +345,21 @@ type taskboardTaskView struct {
 	DependsOn []string        `json:"depends_on"`
 	// Unmet lists the dependencies not yet done; an open task with any is
 	// queued.
-	Unmet  []string `json:"unmet,omitempty"`
-	Queued bool     `json:"queued,omitempty"`
+	Unmet []string `json:"unmet,omitempty"`
+	// Queued marks a task that waits: on its dependencies (Unmet), or in
+	// line for a full lane (QueuedFor). QueuedReason says why, for people:
+	// "waiting on tk_…" or "In progress is full, 1st in line".
+	Queued       bool   `json:"queued,omitempty"`
+	QueuedReason string `json:"queued_reason,omitempty"`
+	// QueuedFor is the full lane the task is in line for: in_progress or a
+	// custom column's slug (docs/taskboard.md "Limits"); QueuedPosition its
+	// place in that line, from 1, and QueuedAt when it got in line.
+	QueuedFor      string `json:"queued_for,omitempty"`
+	QueuedPosition int    `json:"queued_position,omitempty"`
+	QueuedAt       string `json:"queued_at,omitempty"`
+	// Limit is set on a write's answer only: the full lane the write met,
+	// and what came of it (queued, warned, over).
+	Limit *taskboardLimitNote `json:"limit,omitempty"`
 	// Assignee is the task's one assignee; absent when unassigned.
 	Assignee   *taskboardAgentRef `json:"assignee,omitempty"`
 	AssignedBy string             `json:"assigned_by,omitempty"`
@@ -506,6 +524,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 	out := make([]taskboardTaskView, 0, len(tasks))
 	now := time.Now()
 	staller := newTaskboardStaller(now)
+	queues := taskboardQueueLines{}
 	var awbBase *string // read once, and only when a url-less awb ref needs it
 	for _, t := range tasks {
 		v := taskboardTaskView{
@@ -543,6 +562,21 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			}
 		}
 		v.Queued = t.Status == db.GroupTaskOpen && len(v.Unmet) > 0
+		var reasons []string
+		if v.Queued {
+			reasons = append(reasons, "waiting on "+strings.Join(v.Unmet, ", "))
+		}
+		if t.QueuedFor != "" && t.Live() {
+			lines := queues.of(t.GroupID)
+			v.Queued, v.QueuedFor, v.QueuedAt = true, t.QueuedFor, rfc3339(t.QueuedAt)
+			v.QueuedPosition = lines.positions[t.ID]
+			reason := lines.label(t.QueuedFor) + " is full"
+			if v.QueuedPosition > 0 {
+				reason += ", " + ordinal(v.QueuedPosition) + " in line"
+			}
+			reasons = append(reasons, reason)
+		}
+		v.QueuedReason = strings.Join(reasons, "; ")
 		switch t.AssigneeID {
 		case "":
 		case db.OperatorAssignee:
@@ -600,15 +634,28 @@ func writeTaskboardTask(w http.ResponseWriter, status int, g *db.AgentGroup, t *
 	writeJSON(w, status, views[0])
 }
 
-// writeTaskboardTaskLinked is writeTaskboardTask with the task's dashboard
-// link, for show and add: a caller on this node gets it, a linked node's
-// does not (its operator opens the task from its own dashboard).
-func writeTaskboardTaskLinked(w http.ResponseWriter, r *http.Request, status int, g *db.AgentGroup, t *db.GroupTask) {
+// writeTaskboardTaskLimit is writeTaskboardTask with the limit the write
+// met.
+func writeTaskboardTaskLimit(w http.ResponseWriter, status int, g *db.AgentGroup, t *db.GroupTask, note *taskboardLimitNote) {
 	views, err := taskboardViews(g.Name, []*db.GroupTask{t})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
+	views[0].Limit = note
+	writeJSON(w, status, views[0])
+}
+
+// writeTaskboardTaskLinked is writeTaskboardTask with the task's dashboard
+// link, for show and add: a caller on this node gets it, a linked node's
+// does not (its operator opens the task from its own dashboard).
+func writeTaskboardTaskLinked(w http.ResponseWriter, r *http.Request, status int, g *db.AgentGroup, t *db.GroupTask, note *taskboardLimitNote) {
+	views, err := taskboardViews(g.Name, []*db.GroupTask{t})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	views[0].Limit = note
 	if taskboardPeerAuthor(r) == "" {
 		views[0].URL = taskboardTaskURL(g.Name, t.ID)
 	}
@@ -997,6 +1044,9 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		// the new task in an epic of the board (`add --parent tk_…`).
 		Kind   string `json:"kind"`
 		Parent string `json:"parent"`
+		// OverLimit lets the operator put the task in a full lane
+		// (docs/taskboard.md "Limits").
+		OverLimit bool `json:"over_limit"`
 	}
 	// A multipart create carries its files beside the JSON (a "task" part);
 	// the task and its files land in one transaction.
@@ -1191,6 +1241,25 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	// A task created in a lane (started for an agent, or in a column) meets
+	// the lane's limit. Queued, it is created short of the lane: held in
+	// next, or out of the column.
+	defer lockTaskboardLanes(g.ID)()
+	want := &db.GroupTask{GroupID: g.ID, Status: firstNonEmpty(status, db.GroupTaskOpen), AssigneeID: assignee, Column: column}
+	if assignee != "" && hold == "" {
+		want.StartedAt = time.Now()
+	}
+	hit, ok := checkTaskboardLimit(w, r, g, nil, want, body.OverLimit)
+	if !ok {
+		return
+	}
+	if hit.queued() {
+		if column != "" {
+			column = ""
+		} else {
+			hold = db.GroupTaskStageNext
+		}
+	}
 	actor := taskboardActor(r)
 	atts, ok := storeTaskUploadsOrFail(w, files, actor)
 	if !ok {
@@ -1208,6 +1277,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		writeTaskboardError(w, err)
 		return
 	}
+	t, note := queueTaskboardLimit(r, g, hit, t)
 	setAuditDetail(r, "created "+t.ID+" in "+g.Name)
 	// Someone else's new task is briefed as an assign is; work logged as
 	// done tells nobody.
@@ -1217,7 +1287,10 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		n := newTaskboardNotice(r, g, t, boardopts.EventAssigned)
 		if assignee != self {
 			setAuditTargetConv(r, assigneeConv)
-			if !t.Started() {
+			if note.queued() && t.QueuedFor == db.QueueLaneInProgress {
+				subject, text := taskboardQueuedNote(g, t, by, note)
+				n.mail(boardopts.RecipientAssignee, assignee, assigneeConv, subject, text)
+			} else if !t.Started() {
 				subject, text := taskboardHeldNote(g, t, by)
 				n.mail(boardopts.RecipientAssignee, assignee, assigneeConv, subject, text)
 			} else {
@@ -1229,13 +1302,16 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 			}
 		}
 		n.others(fmt.Sprintf("added and assigned to %s by %s", taskboardAgentLabel(assignee), by), "", boardopts.RecipientAssignee)
+		announceTaskboardLimit(r, g, t, note, n.told)
+	} else {
+		announceTaskboardLimit(r, g, t, note, nil)
 	}
-	writeTaskboardTaskLinked(w, r, http.StatusCreated, g, t)
+	writeTaskboardTaskLinked(w, r, http.StatusCreated, g, t, note)
 }
 
 func handleTaskboardShow(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	if !t.IsEpic() {
-		writeTaskboardTaskLinked(w, r, http.StatusOK, g, t)
+		writeTaskboardTaskLinked(w, r, http.StatusOK, g, t, nil)
 		return
 	}
 	views, err := taskboardViews(g.Name, []*db.GroupTask{t})
@@ -1452,6 +1528,8 @@ func handleTaskboardMove(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
 		Stage string `json:"stage"`
+		// OverLimit lets the operator move the task into a full lane.
+		OverLimit bool `json:"over_limit"`
 	}
 	if !requireTaskboardTaskChange(w, r, g, t) || !decodeTaskboardBody(w, r, &body) {
 		return
@@ -1459,6 +1537,20 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 	stage := strings.TrimSpace(body.Stage)
 	var out *db.GroupTask
 	var err error
+	// A move into a column, or out of one back to In progress, meets the
+	// lane's limit; queued, the task stays where it is, in line.
+	var hit *taskboardLimitHit
+	toColumn := func(slug string) bool {
+		want := *t
+		want.Column, want.Stage = slug, db.GroupTaskStageNext
+		var ok bool
+		hit, ok = checkTaskboardLimit(w, r, g, t, &want, body.OverLimit)
+		return ok
+	}
+	if !requireTaskboardOverLimit(w, r, body.OverLimit) {
+		return
+	}
+	defer lockTaskboardLanes(g.ID)()
 	switch stage {
 	case "":
 		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea, next or a custom column of the board")
@@ -1466,6 +1558,13 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 	case db.GroupTaskStageNext:
 		// Back to next from a custom column (In progress for a started task).
 		if t.Column != "" {
+			if !toColumn("") {
+				return
+			}
+			if hit.queued() {
+				out = t
+				break
+			}
 			out, err = db.SetGroupTaskColumn(t.ID, "", taskboardActor(r), t.AssigneeID)
 			break
 		}
@@ -1485,14 +1584,22 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 			return
 		}
 		stage = col.Slug
+		if !toColumn(col.Slug) {
+			return
+		}
+		if hit.queued() {
+			out = t
+			break
+		}
 		out, err = db.SetGroupTaskColumn(t.ID, col.Slug, taskboardActor(r), t.AssigneeID)
 	}
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
 	}
+	out, note := finishTaskboardLimit(r, g, hit, out)
 	setAuditDetail(r, t.ID+" to "+stage)
-	writeTaskboardTask(w, http.StatusOK, g, out)
+	writeTaskboardTaskLimit(w, http.StatusOK, g, out, note)
 }
 
 // POST /v1/taskboard/tasks/{id}/status {"status":"blocked","reason":…} |
@@ -1509,6 +1616,9 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		On string `json:"on"`
 		// Force closes an epic as done while children of it are still open.
 		Force bool `json:"force"`
+		// OverLimit lets the operator reopen an assigned task into a full In
+		// progress.
+		OverLimit bool `json:"over_limit"`
 	}
 	if !decodeTaskboardBody(w, r, &body) {
 		return
@@ -1551,16 +1661,31 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if closing {
 		waiters = taskboardWaitersBefore(t)
 	}
+	// Reopened where it was, a started task is back in In progress and
+	// meets its limit; queued, it comes back held, in line.
+	var hit *taskboardLimitHit
+	if body.Status == db.GroupTaskOpen && !t.Live() {
+		defer lockTaskboardLanes(g.ID)()
+		want := *t
+		want.Status = db.GroupTaskOpen
+		var ok bool
+		if hit, ok = checkTaskboardLimit(w, r, g, t, &want, body.OverLimit); !ok {
+			return
+		}
+	} else if !requireTaskboardOverLimit(w, r, body.OverLimit) {
+		return
+	}
 	out, err := db.SetGroupTaskStatusForced(t.ID, body.Status, reason, taskboardActor(r), t.AssigneeID, body.Force)
 	if err != nil {
 		writeTaskboardError(w, err)
 		return
 	}
+	out, note := finishTaskboardLimit(r, g, hit, out)
 	setAuditDetail(r, t.ID+" "+body.Status)
 	if closing && t.Live() {
 		mailTaskboardWaiters(r, g, out, body.Status, reason, waiters, t.AssigneeID == db.OperatorAssignee)
 	}
-	writeTaskboardTask(w, http.StatusOK, g, out)
+	writeTaskboardTaskLimit(w, http.StatusOK, g, out, note)
 }
 
 // taskboardSweepInterval is how often done and dropped tasks are archived and

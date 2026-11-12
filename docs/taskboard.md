@@ -47,7 +47,9 @@ order. Blocking, closing and reopening a task never changes its stage, and
 reopening puts it back where it was. A task can depend on others (`--after`).
 An open task with a dependency that is not yet done shows as `queued`.
 A dropped dependency counts as not done, so the task stays queued until you
-remove the dependency (`edit --rm-dep`) or reopen the dropped task.
+remove the dependency (`edit --rm-dep`) or reopen the dropped task. A task is
+also queued while it waits in line for a full lane, on a board with
+[work-in-progress limits](#work-in-progress-limits).
 
 ### Custom columns
 
@@ -771,7 +773,9 @@ or take the task back with `unassign`.
 
 A **queued** task, one that depends on a task not done yet, never stalls: its
 agent is waiting on that work. That wait does not count as idling either: the
-clock starts when the last dependency is closed.
+clock starts when the last dependency is closed. Nor does a task waiting in
+line for a full lane ([limits](#work-in-progress-limits)): one for In progress
+is held, and one for a column waits on the board, not on its agent.
 
 A task in a [custom column](#custom-columns), such as *In review*, does not
 stall either. Its agent is waiting on a review or CI, not idling on the work.
@@ -822,7 +826,8 @@ $ tclaude agent taskboard options reset crew all
 
 `set` takes several `key=value` pairs and applies them as one change; a value
 of `default` is the same as `reset`. `reset` takes keys, an event
-(`events.comment`), a section (`idle`, `events`), or `all`. Recipients are
+(`events.comment`), a lane's limit (`limits.in_progress`,
+`limits.columns.in-review`), a section (`idle`, `events`, `limits`), or `all`. Recipients are
 told once each, and never about their own task: an owner that also assigned
 the task hears once. `owners` are the group's owner agents; `operator` is the
 operator's Messages. A column named in `idle.check_columns` drops out of it
@@ -847,6 +852,7 @@ it always has.
 | `report_failed` | The assignee reports failed | `assigner` |
 | `unblocked` | A task another task waits on is closed (`unblocked` / `still blocked`) | `assignee` (of the waiting task) |
 | `epic_close` | Every task of an epic is closed: close the epic? | `creator` |
+| `limit_reached` | A task meets a full lane: [queued, refused or let in over the limit](#work-in-progress-limits) | `assignee`, `assigner` |
 
 `to` is any of `assignee`, `assigner`, `creator`, `owners` and `operator`, or
 `none`. In an event message, `assignee`, `assigner` and `creator` name agents;
@@ -890,6 +896,71 @@ linked node reads and changes them under the same grants.
 Before board options, the idle check ran on every board with
 `taskboard.idle_grace` (default 5 minutes). It is now opt-in: turn it on per
 board, or for every board at once with `taskboard.idle_check: true`.
+
+### Work-in-progress limits
+
+A board may cap how many tasks a lane holds at once. The lanes are **In
+progress** (the started tasks of agents, in no custom column) and each
+[custom column](#custom-columns). A board has no limits until it sets one.
+
+| Option | Values | Default |
+|---|---|---|
+| `limits.in_progress.max` | how many tasks In progress holds, `1` to `999`; `none` (or `0`) for no limit | none |
+| `limits.columns.<column>.max` | the same, for one custom column (its slug) | none |
+| `limits.at_limit` | what a full lane does: `queue`, `refuse` or `warn` | `queue` |
+| `limits.in_progress.at_limit`, `limits.columns.<column>.at_limit` | the same, for that lane only | the board's `limits.at_limit` |
+| `limits.per` | `board`: count every task in the lane; `assignee`: count each assignee's tasks in it on their own | `board` |
+
+A change that would put a task into a full lane meets the lane's `at_limit`:
+
+- **queue** — the change is made short of the lane, and the task waits in line
+  for it. A task for In progress (an assign, take, start, reopen, an add with an
+  assignee, a move to this group) is held in Next for its assignee, marked
+  *queued*; a task for a column (`move --stage`, or an add or reopen into it)
+  stays where it is. When a slot frees, the first in line goes in: a task for
+  In progress is started for its assignee, who then gets its brief
+  (`[taskboard] started for you: a slot freed in In progress`); a task for a
+  column moves there. The line is in the order the tasks got in it. A task
+  still waiting on a dependency is passed over and keeps its place.
+- **refuse** — the change is refused, `409 limit_reached`, and nothing changes.
+- **warn** — the task goes in over the limit; the answer says so.
+
+Every time a task meets a full lane the board sends its `limit_reached`
+message (to the assignee and the assigner by default). An assignee that is
+told of the change anyway (an assign) hears once: its mail says it waits
+(`[taskboard] queued for you, 1st in line for In progress`), not its brief.
+
+The operator may go over any limit: `--over-limit` on `add`, `assign`, `start`,
+`move --stage` and `reopen` (`"over_limit": true` on the wire); the dashboard
+asks first. Agents follow the rule: an agent's `over_limit` is refused (403).
+
+```
+$ tclaude agent taskboard options set crew limits.in_progress.max=3 limits.columns.in-review.max=2
+$ tclaude agent taskboard assign tk_… --to builder
+assigned tk_…: …  [next, open]
+  queued: In progress is full (3 of 3); 1st in line, it goes in when a slot frees
+$ tclaude agent taskboard options set crew limits.per=assignee     # three each
+```
+
+A queued task reads `queued` with why: `queued_reason` is `In progress is full,
+1st in line` (or, for a task with a dependency not done, `waiting on tk_…`,
+the two joined when both hold), `queued_for` is the lane (`in_progress` or a
+column slug) and `queued_position` its place in line. A task leaves the line
+when it gets into its lane, and whenever what it waited as changes: it is
+closed, moved to another group, unassigned or reassigned, demoted to the
+ideas, moved to another column, or started or held by hand (the operator
+starting it over the limit, say). The [idle check](#idle-without-report) never stalls a
+queued task.
+
+What counts: a blocked task keeps its slot (it is still the lane's work); a
+held task, an idea and a task the operator holds count in no lane. Per
+assignee, a task nobody holds counts against no one, so an unassigned task
+moves into a column freely. Raising or lifting a limit, removing a column
+(its limit and its line go with it) and uncordoning a column let the line in
+at once; the daemon also looks every 30 seconds, for a slot freed by
+something else (an assignee retired or gone from the group). Removing a
+column puts its tasks back in next, In progress for started ones, even over
+In progress's limit.
 
 ## The writer lock
 
@@ -1673,7 +1744,7 @@ those drags aren't accepted in the lanes.
 | `columns add` | `POST /v1/groups/{g}/taskboard/columns {"label","slug"?,"before"?}` |
 | `columns rename` / `move` | `PATCH /v1/groups/{g}/taskboard/columns/{slug} {"label"?,"before"?,"to_end"?}` |
 | `columns rm` | `DELETE /v1/groups/{g}/taskboard/columns/{slug}` → `{group, columns, cap, moved:[tk_…]}` |
-| `options show` | `GET /v1/groups/{g}/taskboard/options` → `{group, options, resolved, globals, version, updated_by, updated_at, keys}`: `options` is what the board sets, `resolved` what is in force, each value as `{value, source}` with source `default`, `global` or `board`; `resolved.events` lists every event as `{name, label, enabled, to}` |
+| `options show` | `GET /v1/groups/{g}/taskboard/options` → `{group, options, resolved, globals, version, updated_by, updated_at, keys}`: `options` is what the board sets, `resolved` what is in force, each value as `{value, source}` with source `default`, `global` or `board`; `resolved.events` lists every event as `{name, label, enabled, to}`; `resolved.limits` is `{at_limit, per, lanes:[{lane, max, at_limit}]}`, In progress (`in_progress`) first, then each column |
 | `options set` / `reset` | `PATCH /v1/groups/{g}/taskboard/options {"set":{"idle.grace":"10m","events.comment.enabled":"off",…},"reset":["idle.tell"\|"idle"\|"all"],"version"?}`: resets first, then sets, in one change |
 | (dashboard) | `PUT /v1/groups/{g}/taskboard/options {"options":{"idle":{…}},"version":n}`: replaces the whole document (an unknown key is a 400); a `version` other than the stored one answers 409 `stale` with the `current` options. A `PATCH` on a document written by a newer tclaude that this one cannot read answers 409 `unreadable` |
 | `block` / `unblock` / `drop` / `done` | `POST /v1/taskboard/tasks/{id}/status` (`block --on` sends `{"status":"blocked","on":"tk_…"}`) |
@@ -1684,6 +1755,7 @@ those drags aren't accepted in the lanes.
 | `ls --archived` | `GET /v1/groups/{name}/taskboard?archived=1` |
 | `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea"\|"<column slug or label>", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
+| `--over-limit` (operator) | `"over_limit": true` on `add`, `assign`, `start`, `stage`, `reopen`, `status` (a reopen) and `move-to-group`; from an agent, 403. A write that met a full lane answers the task with `limit: {lane, label, max, count, per, action, position?}`, `action` being `queued`, `warned` or `over`; a refused one answers 409 `limit_reached` |
 | `unassign` / `release` | `POST /v1/taskboard/tasks/{id}/unassign` (`release` sends `{"self":true}`) |
 | `assign --idea` / `--next` / `--hold` | `POST /v1/taskboard/tasks/{id}/assign {"to":…,"start":false,"stage"?:"idea"\|"next"}` |
 | `add --assignee X --idea` / `--next` | `POST /v1/groups/{name}/taskboard/tasks {…,"to":"X","start":false,"stage":"idea"\|"next"}` |
@@ -1730,6 +1802,8 @@ group `columns`, `[{slug,label,count}]`, beside its `counts`. Each task carries 
 `{"agent_id":"operator","name":"operator","operator":true}`), `blocked_on`
 when it waits on an operator task, `assigned_by`,
 `assigned_at`, `outcome`, `outcome_note` and `failures` when they are set.
+A queued task carries `queued: true` and `queued_reason`; one in line for a
+full lane also `queued_for`, `queued_position` and `queued_at`.
 Every change is recorded in the audit log as `taskboard.<verb>`, with the
 group, the task id and, for an assignment, the target agent.
 

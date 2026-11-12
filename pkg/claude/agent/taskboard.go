@@ -129,6 +129,8 @@ type taskboardTask struct {
 	DependsOn        []string `json:"depends_on"`
 	Unmet            []string `json:"unmet,omitempty"`
 	Queued           bool     `json:"queued,omitempty"`
+	QueuedReason     string   `json:"queued_reason,omitempty"`
+	QueuedFor        string   `json:"queued_for,omitempty"`
 	CreatedBy        string   `json:"created_by"`
 	CreatedByName    string   `json:"created_by_name,omitempty"`
 	LastEditedBy     string   `json:"last_edited_by,omitempty"`
@@ -165,6 +167,55 @@ type taskboardTask struct {
 	Progress         *taskboardEpicProgress `json:"progress,omitempty"`
 	CloseSuggestedAt string                 `json:"close_suggested_at,omitempty"`
 	Children         []taskboardTask        `json:"children,omitempty"`
+	// Limit is on a write's answer: the full lane it met.
+	Limit *taskboardLimitNote `json:"limit,omitempty"`
+}
+
+// taskboardLimitNote is the full lane a write met (docs/taskboard.md
+// "Limits").
+type taskboardLimitNote struct {
+	Lane     string `json:"lane"`
+	Label    string `json:"label"`
+	Max      int    `json:"max"`
+	Count    int    `json:"count"`
+	Per      string `json:"per"`
+	Action   string `json:"action"`
+	Position int    `json:"position,omitempty"`
+}
+
+// printTaskboardLimit says what a full lane did to a write.
+func printTaskboardLimit(stdout io.Writer, t taskboardTask) {
+	l := t.Limit
+	if l == nil {
+		return
+	}
+	full := fmt.Sprintf("%s is full (%d of %d", l.Label, l.Count, l.Max)
+	if l.Per == "assignee" {
+		full += ", for this assignee"
+	}
+	full += ")"
+	switch l.Action {
+	case "queued":
+		fmt.Fprintf(stdout, "  queued: %s; %s in line, it goes in when a slot frees\n", full, taskboardOrdinal(l.Position))
+	case "warned":
+		fmt.Fprintf(stdout, "  warning: %s; let in over the limit\n", full)
+	case "over":
+		fmt.Fprintf(stdout, "  over the limit: %s\n", full)
+	}
+}
+
+func taskboardOrdinal(n int) string {
+	suffix := "th"
+	switch {
+	case n%100 >= 11 && n%100 <= 13:
+	case n%10 == 1:
+		suffix = "st"
+	case n%10 == 2:
+		suffix = "nd"
+	case n%10 == 3:
+		suffix = "rd"
+	}
+	return fmt.Sprintf("%d%s", n, suffix)
 }
 
 // taskboardEpicProgress counts an epic's children; Total leaves the dropped
@@ -358,6 +409,7 @@ func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON
 		return writeJSONTo(stdout, t)
 	}
 	fmt.Fprintf(stdout, "%s %s: %s  [%s, %s]\n", verb, t.ID, t.Title, t.where(), t.Status)
+	printTaskboardLimit(stdout, t)
 	// Only add's reply carries the link (the daemon's show and add).
 	if t.URL != "" {
 		fmt.Fprintf(stdout, "  link: %s\n", t.URL)
@@ -924,6 +976,7 @@ type taskboardAddParams struct {
 	Idea       bool   `long:"idea" help:"With --assignee or --mine: an idea in their lane for them to triage, not started"`
 	Stage      string `long:"stage" optional:"true" help:"Start it in one of the board's custom columns (slug or label, as move --stage takes it), in the same write; not with --next, --idea or --done"`
 	Mine       bool   `long:"mine" help:"Assign it to yourself as it is created (in progress); what an add under taskboard.own alone always does"`
+	OverLimit  bool   `long:"over-limit" help:"Operator only: go over the board's work-in-progress limit, where a full lane would queue or refuse the new task"`
 	After      string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
 	Top        bool   `long:"top" help:"Place at the top of its stage instead of the end"`
 	Before     string `long:"before" optional:"true" help:"Place just before this task (and in its stage)"`
@@ -1073,6 +1126,9 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	if p.Epic {
 		req["kind"] = "epic"
 	}
+	if p.OverLimit {
+		req["over_limit"] = true
+	}
 	if parent := strings.TrimSpace(p.Parent); parent != "" {
 		req["parent"] = parent
 	}
@@ -1105,6 +1161,7 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 		return writeJSONTo(stdout, t)
 	}
 	fmt.Fprintf(stdout, "added %s: %s  [%s, %s]\n", t.ID, t.Title, t.Stage, t.Status)
+	printTaskboardLimit(stdout, t)
 	if t.URL != "" {
 		fmt.Fprintf(stdout, "  link: %s\n", t.URL)
 	}
@@ -1450,15 +1507,16 @@ func runTaskboardEdit(p *taskboardEditParams, stdin io.Reader, stdout, stderr io
 // ---- move / stage / status ----
 
 type taskboardMoveParams struct {
-	Task     string `pos:"true" help:"Task id (tk_…)"`
-	Top      bool   `long:"top" help:"To the top of its stage"`
-	Bottom   bool   `long:"bottom" help:"To the end of its stage"`
-	Before   string `long:"before" optional:"true" help:"Just before this task (crossing into the other stage promotes or demotes)"`
-	After    string `long:"after" optional:"true" help:"Just after this task (crossing into the other stage promotes or demotes)"`
-	Stage    string `long:"stage" optional:"true" help:"Move it to this stage or column: idea, next, or a custom column of the board (its slug or label, e.g. in-review); next takes it out of a custom column"`
-	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
-	JSON     bool   `long:"json" help:"Output JSON"`
+	Task      string `pos:"true" help:"Task id (tk_…)"`
+	Top       bool   `long:"top" help:"To the top of its stage"`
+	Bottom    bool   `long:"bottom" help:"To the end of its stage"`
+	Before    string `long:"before" optional:"true" help:"Just before this task (crossing into the other stage promotes or demotes)"`
+	After     string `long:"after" optional:"true" help:"Just after this task (crossing into the other stage promotes or demotes)"`
+	Stage     string `long:"stage" optional:"true" help:"Move it to this stage or column: idea, next, or a custom column of the board (its slug or label, e.g. in-review); next takes it out of a custom column"`
+	OverLimit bool   `long:"over-limit" help:"Operator only: go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
+	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
+	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON      bool   `long:"json" help:"Output JSON"`
 }
 
 func taskboardMoveCmd() *cobra.Command {
@@ -1487,8 +1545,16 @@ func runTaskboardMove(p *taskboardMoveParams, stdout, stderr io.Writer) int {
 	if stage != "" && n == 0 {
 		// Into a stage or a custom column: a change of the task, which a
 		// member makes on its own task under taskboard.own.
-		return taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/stage"), map[string]any{"stage": stage},
+		req := map[string]any{"stage": stage}
+		if p.OverLimit {
+			req["over_limit"] = true
+		}
+		return taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/stage"), req,
 			p.AskHuman, p.JSON, "moved", stdout, stderr)
+	}
+	if p.OverLimit {
+		fmt.Fprintln(stderr, "Error: --over-limit is for a move with --stage")
+		return rcInvalidArg
 	}
 	if n != 1 || stage != "" {
 		fmt.Fprintln(stderr, "Error: give exactly one of --top, --bottom, --before, --after, or --stage")
@@ -1814,15 +1880,16 @@ func taskboardBlockCmd() *cobra.Command {
 }
 
 type taskboardReopenParams struct {
-	Task     string `pos:"true" help:"Task id (tk_…) of a done or dropped task"`
-	Next     bool   `long:"next" help:"Reopen it in the queue (next) instead of the stage it had"`
-	Idea     bool   `long:"idea" help:"Reopen it as an idea (an assigned task needs --unassign too)"`
-	Stage    string `long:"stage" optional:"true" help:"Reopen it in one of the board's custom columns (slug or label, as move --stage takes it); not with --next or --idea"`
-	Assignee string `long:"assignee" optional:"true" help:"Reopen it assigned to this member (name or id), or operator; the default keeps whoever held it"`
-	Unassign bool   `long:"unassign" help:"Reopen it with no assignee"`
-	Peer     string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write; taskboard.assign to change the assignee)"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
-	JSON     bool   `long:"json" help:"Output JSON"`
+	Task      string `pos:"true" help:"Task id (tk_…) of a done or dropped task"`
+	Next      bool   `long:"next" help:"Reopen it in the queue (next) instead of the stage it had"`
+	Idea      bool   `long:"idea" help:"Reopen it as an idea (an assigned task needs --unassign too)"`
+	Stage     string `long:"stage" optional:"true" help:"Reopen it in one of the board's custom columns (slug or label, as move --stage takes it); not with --next or --idea"`
+	Assignee  string `long:"assignee" optional:"true" help:"Reopen it assigned to this member (name or id), or operator; the default keeps whoever held it"`
+	Unassign  bool   `long:"unassign" help:"Reopen it with no assignee"`
+	OverLimit bool   `long:"over-limit" help:"Operator only: go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
+	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write; taskboard.assign to change the assignee)"`
+	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON      bool   `long:"json" help:"Output JSON"`
 }
 
 func taskboardReopenCmd() *cobra.Command {
@@ -1872,6 +1939,9 @@ func runTaskboardReopen(p *taskboardReopenParams, stdout, stderr io.Writer) int 
 	if p.Unassign {
 		req["to"] = ""
 	}
+	if p.OverLimit {
+		req["over_limit"] = true
+	}
 	return taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/reopen"), req, p.AskHuman, p.JSON, "reopened", stdout, stderr)
 }
 
@@ -1914,14 +1984,15 @@ func fetchTaskboardMine(stderr io.Writer) ([]taskboardTask, int) {
 }
 
 type taskboardAssignParams struct {
-	Task     string `pos:"true" help:"Task id (tk_…)"`
-	To       string `long:"to" help:"Agent to assign it to (name or id; an active member of the task's group), or operator for the operator of the board's node"`
-	Hold     bool   `long:"hold" help:"Assign it without starting it: it stays in its stage (an idea to triage, or queued) in the assignee's lane; they start it"`
-	Idea     bool   `long:"idea" help:"Hold it as an idea in the assignee's lane (implies --hold)"`
-	Next     bool   `long:"next" help:"Hold it queued in the assignee's lane (implies --hold)"`
-	Peer     string `long:"peer" optional:"true" help:"Assign on a linked node's board, to a member there, under the grants it gave this node (taskboard.assign)"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
-	JSON     bool   `long:"json" help:"Output JSON"`
+	Task      string `pos:"true" help:"Task id (tk_…)"`
+	To        string `long:"to" help:"Agent to assign it to (name or id; an active member of the task's group), or operator for the operator of the board's node"`
+	Hold      bool   `long:"hold" help:"Assign it without starting it: it stays in its stage (an idea to triage, or queued) in the assignee's lane; they start it"`
+	Idea      bool   `long:"idea" help:"Hold it as an idea in the assignee's lane (implies --hold)"`
+	Next      bool   `long:"next" help:"Hold it queued in the assignee's lane (implies --hold)"`
+	OverLimit bool   `long:"over-limit" help:"Operator only: go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
+	Peer      string `long:"peer" optional:"true" help:"Assign on a linked node's board, to a member there, under the grants it gave this node (taskboard.assign)"`
+	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON      bool   `long:"json" help:"Output JSON"`
 }
 
 func taskboardAssignCmd() *cobra.Command {
@@ -1957,6 +2028,9 @@ func taskboardAssignCmd() *cobra.Command {
 					req["stage"] = "next"
 				}
 			}
+			if p.OverLimit {
+				req["over_limit"] = true
+			}
 			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/assign"), req,
 				p.AskHuman, p.JSON, "assigned", cliStdout, cliStderr))
 		},
@@ -1983,20 +2057,32 @@ func taskboardTakeCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+type taskboardStartParams struct {
+	Task      string `pos:"true" help:"Task id (tk_…)"`
+	OverLimit bool   `long:"over-limit" help:"Operator only: start it although In progress is full (where the board would queue or refuse it)"`
+	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
+	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
+	JSON      bool   `long:"json" help:"Output JSON"`
+}
+
 func taskboardStartCmd() *cobra.Command {
-	return boa.CmdT[taskboardTaskParams]{
+	return boa.CmdT[taskboardStartParams]{
 		Use:   "start",
 		Short: "Start an assigned task its assignee holds (an idea to triage, or queued): it goes in progress",
 		Long: "Start a task its assignee holds without having started it: an idea is promoted to the queue, and the task is " +
 			"in progress, with the stall clock running. The assignee starts its own task under taskboard.own; starting " +
 			"someone else's needs taskboard.assign and briefs them, as an assign does.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardTaskParams, _ *cobra.Command) error {
+		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardStartParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
-		RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
-			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/start"), map[string]any{"start": true},
+		RunFunc: func(p *taskboardStartParams, _ *cobra.Command, _ []string) {
+			req := map[string]any{"start": true}
+			if p.OverLimit {
+				req["over_limit"] = true
+			}
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/start"), req,
 				p.AskHuman, p.JSON, "started", cliStdout, cliStderr))
 		},
 	}.ToCobra()
