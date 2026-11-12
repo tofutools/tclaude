@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -13,16 +14,25 @@ import (
 
 // Idle without report (tcl-5jtcbp, docs/taskboard.md).
 //
-// An open task is stalled when its assignee has sat idle, with nothing running
-// in the background, for taskboard.idle_grace (default 5 min, 0 off) since the
-// later of its last activity and the start of its current stretch of work on
-// the task (the assignment, or an unblock or reopen). Stalled is derived on every
-// read, never stored, so a new turn clears it; a report ends the assignment
-// and with it the stall. A 30 s sweep announces each stall once per
-// assignment: a "stalled" event, a message to the assigner (inbox for an
-// agent, Messages for the operator) and an inbox nudge to the assignee with
-// its report commands. It never sends keys, and stalled never fails, blocks
-// or unassigns a task by itself.
+// The idle check is a board's own option (taskboard_options.go): off unless
+// the board turns it on (idle.enabled), or the operator's global
+// taskboard.idle_check does for the boards that leave it unset;
+// taskboard.idle_grace "0" turns it off everywhere. On a board that has it
+// on, an open task is stalled when its assignee has sat idle, with nothing
+// running in the background, for the board's grace (idle.grace, else
+// taskboard.idle_grace, else 5 min) since the later of its last activity
+// and the start of its current stretch of work on the task (the assignment,
+// or an unblock or reopen). A task that waits on something outside its
+// agent's turn never stalls: a queued one (a dependency not done yet; the
+// clock then starts when its last dependency closes), or
+// one in a custom column the board does not list in idle.check_columns.
+// Stalled is derived on every read, never stored, so a new turn clears it; a
+// report ends the assignment and with it the stall. A 30 s sweep announces
+// each stall once per assignment: a "stalled" event, a message to the
+// board's idle.tell recipients (the assigner by default: inbox for an agent,
+// Messages for the operator) and, unless idle.nudge is off, an inbox nudge
+// to the assignee with its report commands. It never sends keys, and stalled
+// never fails, blocks or unassigns a task by itself.
 
 // taskboardIdleSweepInterval is how often the idle sweep looks.
 const taskboardIdleSweepInterval = 30 * time.Second
@@ -70,25 +80,45 @@ func probeTaskboardIdle(agentID string) taskboardIdle {
 }
 
 // taskboardStaller decides stalled for a batch of tasks, probing each
-// assignee once.
+// assignee once and resolving each board's options once.
 type taskboardStaller struct {
-	now   time.Time
-	grace time.Duration
-	seen  map[string]taskboardIdle
+	now     time.Time
+	globals boardopts.Globals
+	boards  map[int64]boardopts.ResolvedIdle
+	seen    map[string]taskboardIdle
 }
 
 func newTaskboardStaller(now time.Time) *taskboardStaller {
-	cfg, _ := config.Load()
-	return &taskboardStaller{now: now, grace: cfg.TaskboardIdleGrace(), seen: map[string]taskboardIdle{}}
+	return &taskboardStaller{now: now, globals: taskboardOptionsGlobals(),
+		boards: map[int64]boardopts.ResolvedIdle{}, seen: map[string]taskboardIdle{}}
+}
+
+// board is the idle check in force on the board of group groupID.
+func (s *taskboardStaller) board(groupID int64) boardopts.ResolvedIdle {
+	if r, ok := s.boards[groupID]; ok {
+		return r
+	}
+	_, o, cols, err := taskboardOptions(groupID)
+	if err != nil {
+		slog.Warn("taskboard idle check: board options unreadable; using the inherited ones", "group", groupID, "error", err)
+	}
+	r := boardopts.Resolve(o, s.globals, cols).Idle
+	s.boards[groupID] = r
+	return r
 }
 
 // stalled reports whether t is stalled, and since when its assignee has been
 // idle on it.
 func (s *taskboardStaller) stalled(t *db.GroupTask) (time.Time, bool) {
+	if s == nil || t.Status != db.GroupTaskOpen || !t.Started() || t.AssigneeID == db.OperatorAssignee {
+		return time.Time{}, false
+	}
+	board := s.board(t.GroupID)
 	// A task in a custom column (In review, In CI, …) waits on something
-	// outside the agent's turn, so its agent's idling is not a stall.
-	if s == nil || s.grace <= 0 || t.Status != db.GroupTaskOpen || !t.Started() ||
-		t.AssigneeID == db.OperatorAssignee || t.Column != "" {
+	// outside the agent's turn, so its agent's idling is not a stall, unless
+	// the board checks that column too.
+	grace := board.Grace.Value.Duration()
+	if !board.Active || grace <= 0 || !board.Checks(t.Column) {
 		return time.Time{}, false
 	}
 	idle, ok := s.seen[t.AssigneeID]
@@ -103,15 +133,30 @@ func (s *taskboardStaller) stalled(t *db.GroupTask) (time.Time, bool) {
 	if t.StartedAt.After(since) {
 		since = t.StartedAt
 	}
-	if since.IsZero() || s.now.Sub(since) < s.grace {
+	if since.IsZero() || s.now.Sub(since) < grace {
 		return time.Time{}, false
 	}
 	// Time spent blocked or closed is not idling on the task: the clock
 	// restarts when it comes back to open. Read only for a candidate.
 	if work, err := db.GroupTaskWorkSince(t.ID); err == nil && work.After(since) {
 		since = work
-		if s.now.Sub(since) < s.grace {
+		if s.now.Sub(since) < grace {
 			return time.Time{}, false
+		}
+	}
+	// A queued task waits on a dependency that is not done yet, and the time
+	// it waited is not idling either: the clock starts when the last
+	// dependency was closed.
+	if len(t.DependsOn) > 0 {
+		queued, readyAt, err := db.GroupTaskDepsWait(t.ID)
+		if err != nil || queued {
+			return time.Time{}, false
+		}
+		if readyAt.After(since) {
+			since = readyAt
+			if s.now.Sub(since) < grace {
+				return time.Time{}, false
+			}
 		}
 	}
 	return since, true
@@ -137,7 +182,10 @@ func startTaskboardIdleSweep(stop <-chan struct{}) {
 // while features.taskboard is off or taskboard.idle_grace is 0.
 func sweepTaskboardIdle(now time.Time) {
 	cfg, _ := config.Load()
-	if !cfg.TaskboardEnabled() || cfg.TaskboardIdleGrace() <= 0 {
+	if !cfg.TaskboardEnabled() {
+		return
+	}
+	if d, ok := cfg.TaskboardIdleGraceSetting(); ok && d <= 0 {
 		return
 	}
 	tasks, err := db.ListOpenAssignedGroupTasks()
@@ -165,12 +213,14 @@ func sweepTaskboardIdle(now time.Time) {
 		if err != nil || g == nil {
 			continue
 		}
-		announceTaskboardStall(g, t, idleFor)
+		announceTaskboardStall(g, t, idleFor, s.board(t.GroupID))
 	}
 }
 
-// announceTaskboardStall tells the assigner and nudges the assignee.
-func announceTaskboardStall(g *db.AgentGroup, t *db.GroupTask, idleFor string) {
+// announceTaskboardStall tells the board's idle.tell recipients and, unless
+// idle.nudge is off, nudges the assignee. Each recipient hears once, and
+// never about its own task.
+func announceTaskboardStall(g *db.AgentGroup, t *db.GroupTask, idleFor string, board boardopts.ResolvedIdle) {
 	who := taskboardAgentName(t.AssigneeID)
 	if who == "" {
 		who = t.AssigneeID
@@ -178,20 +228,54 @@ func announceTaskboardStall(g *db.AgentGroup, t *db.GroupTask, idleFor string) {
 	tail := fmt.Sprintf("%s went idle without reporting (%s)", who, idleFor)
 	text := fmt.Sprintf("Task %s %q in %s: %s went idle %s ago without reporting.\n"+
 		"It stays assigned; nothing has failed. Ask %s how it is going, or take the task back with\n"+
-		"  tclaude agent taskboard unassign %s\n", t.ID, t.Title, g.Name, who, idleFor, who, t.ID)
-	assigner, byAgent := strings.CutPrefix(t.AssignedBy, "agent:")
-	switch {
-	case byAgent && assigner == t.AssigneeID:
-		// A task the agent took for itself has no one else to tell.
-	case byAgent:
-		if conv := activeTaskboardAgentConv(assigner); conv != "" {
-			systemMailTaskboard(g, conv, taskboardSubject(g, t, tail), taskboardLinked(g, t, text))
+		"  tclaude agent taskboard unassign %s\n\n"+
+		"This board's idle check is on (grace %s). Change it or turn it off:\n"+
+		"  tclaude agent taskboard options set %s idle.enabled=off\n",
+		t.ID, t.Title, g.Name, who, idleFor, who, t.ID, board.Grace.Value, g.Name)
+	subject, body := taskboardSubject(g, t, tail), taskboardLinked(g, t, text)
+	told := map[string]bool{t.AssigneeID: true}
+	tellAgent := func(agentID string) {
+		if agentID == "" || told[agentID] {
+			return
 		}
-	default:
+		told[agentID] = true
+		if conv := activeTaskboardAgentConv(agentID); conv != "" {
+			systemMailTaskboard(g, conv, subject, body)
+		}
+	}
+	operatorTold := false
+	tellOperator := func() {
+		if operatorTold {
+			return
+		}
+		operatorTold = true
 		if _, err := db.InsertHumanMessage(&db.HumanMessage{FromTitle: "Task board", GroupName: g.Name,
-			Subject: taskboardSubject(g, t, tail), Body: taskboardLinked(g, t, text)}); err != nil {
+			Subject: subject, Body: body}); err != nil {
 			slog.Warn("taskboard: operator message failed", "task", t.ID, "error", err)
 		}
+	}
+	if board.Tells(boardopts.RecipientAssigner) {
+		// A task the agent took for itself has no one else to tell.
+		if assigner, byAgent := strings.CutPrefix(t.AssignedBy, "agent:"); byAgent {
+			tellAgent(assigner)
+		} else {
+			tellOperator()
+		}
+	}
+	if board.Tells(boardopts.RecipientOwners) {
+		owners, err := db.ListAgentGroupOwners(g.ID)
+		if err != nil {
+			slog.Warn("taskboard: owners unreadable", "group", g.Name, "error", err)
+		}
+		for _, o := range owners {
+			tellAgent(o.AgentID)
+		}
+	}
+	if board.Tells(boardopts.RecipientOperator) {
+		tellOperator()
+	}
+	if !board.Nudge.Value {
+		return
 	}
 	if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
 		var b strings.Builder

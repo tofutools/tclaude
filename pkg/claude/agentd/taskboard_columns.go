@@ -371,6 +371,7 @@ func handleTaskboardColumnRemove(w http.ResponseWriter, r *http.Request, g *db.A
 		writeTaskboardColumnError(w, err, true)
 		return
 	}
+	pruneTaskboardOptionsColumn(g, taskboardActor(r))
 	setAuditDetail(r, fmt.Sprintf("removed column %s (%d tasks back to next)", slug, len(moved)))
 	cols, err := taskboardColumnViews(g)
 	if err != nil {

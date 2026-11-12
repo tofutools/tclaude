@@ -2552,3 +2552,11 @@ CREATE TABLE group_task_column_states (
 			state    TEXT NOT NULL CHECK (state IN ('hidden', 'cordoned')),
 			PRIMARY KEY (group_id, slug)
 		) STRICT;
+
+CREATE TABLE group_taskboard_options (
+			group_id   INTEGER PRIMARY KEY REFERENCES agent_groups(id) ON DELETE CASCADE,
+			options    TEXT NOT NULL DEFAULT '{}',
+			version    INTEGER NOT NULL DEFAULT 0,
+			updated_by TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL
+		) STRICT;

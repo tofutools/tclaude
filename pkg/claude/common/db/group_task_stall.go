@@ -7,7 +7,7 @@ import (
 )
 
 // Idle without report (docs/taskboard.md). A task is stalled when it is open
-// and assigned and its assignee has sat idle past taskboard.idle_grace. The
+// and assigned and its assignee has sat idle past its board's idle grace. The
 // state is derived from the assignee's session, never stored; the store keeps
 // only the one "stalled" event per assignment that the sweep writes when it
 // tells the assigner. Stalled never fails, blocks or unassigns a task.
@@ -157,4 +157,25 @@ func countGroupTasksWhere(where string) (map[int64]int, error) {
 		out[gid] = n
 	}
 	return out, rows.Err()
+}
+
+// GroupTaskDepsWait reports whether the task is queued: it depends on a task
+// that is not done yet. A queued task waits on that work, so its assignee's
+// idling is not a stall. When it is not queued, readyAt is when its last
+// dependency was closed (zero without any): the wait ended then, so the
+// idle clock starts no earlier.
+func GroupTaskDepsWait(id string) (queued bool, readyAt time.Time, err error) {
+	d, err := Open()
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	var at dbTimestamp
+	err = d.QueryRow(`SELECT EXISTS (SELECT 1 FROM group_task_deps dep JOIN group_tasks t ON t.id = dep.depends_on
+			WHERE dep.task_id = ? AND t.status <> 'done'),
+		(SELECT MAX(t.closed_at) FROM group_task_deps dep JOIN group_tasks t ON t.id = dep.depends_on
+			WHERE dep.task_id = ?)`, id, id).Scan(&queued, &at)
+	if err != nil || queued {
+		return queued, time.Time{}, err
+	}
+	return false, at.Time(), nil
 }
