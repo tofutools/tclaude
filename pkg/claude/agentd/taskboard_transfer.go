@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
@@ -116,8 +117,22 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 	// A started task that keeps its assignee lands in the target board's
 	// In progress and meets its limit there; queued, it lands held, in line.
 	defer lockTaskboardLanes(target.ID)()
+	ft, fresh := freshTaskboardTask(w, t)
+	if !fresh {
+		return
+	}
+	t = ft
 	want := *t
-	want.GroupID, want.Column = target.ID, ""
+	// The task keeps its column when the target board has one of that slug
+	// that takes tasks, as the move itself does.
+	want.GroupID = target.ID
+	if want.Column != "" {
+		slugs, _ := taskboardColumnSlugs(target.ID)
+		states, _ := db.ListGroupTaskColumnStates(target.ID)
+		if !slices.Contains(slugs, want.Column) || states[want.Column] == db.GroupTaskColumnCordoned {
+			want.Column = ""
+		}
+	}
 	if want.Status != db.GroupTaskDone {
 		want.Status = db.GroupTaskOpen
 	}
@@ -127,6 +142,11 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 	hit, ok := checkTaskboardLimit(w, r, target, t, &want, body.OverLimit)
 	if !ok {
 		return
+	}
+	// The move keeps the task in its column; there is no short of it to
+	// queue it in, so a full column takes it over the limit.
+	if hit.queued() && hit.note.Lane != db.QueueLaneInProgress {
+		hit.note.Action = taskboardLimitWarned
 	}
 	res, err := db.RegroupGroupTask(t.ID, db.GroupTaskRegroup{ToGroupID: target.ID, FromGroup: g.Name, ToGroup: target.Name,
 		Stage: stage, KeepAssignee: keep, Actor: actor})

@@ -249,6 +249,11 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	// Started, the task enters In progress and meets its limit; queued,
 	// it is assigned held in next and waits in line.
 	defer lockTaskboardLanes(g.ID)()
+	ft, fresh := freshTaskboardTask(w, t)
+	if !fresh {
+		return
+	}
+	t = ft
 	want := *t
 	want.AssigneeID, want.StartedAt = target, time.Time{}
 	if hold == "" {
@@ -258,7 +263,9 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	if !ok {
 		return
 	}
-	if hit.queued() {
+	// Only a task for In progress waits held; one for a column has no
+	// short of it to wait in (checkTaskboardLimit lets it in, warned).
+	if hit.queued() && hit.note.Lane == db.QueueLaneInProgress {
 		hold = db.GroupTaskStageNext
 	}
 	before := t.AssigneeID

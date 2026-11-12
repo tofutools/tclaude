@@ -920,8 +920,14 @@ A change that would put a task into a full lane meets the lane's `at_limit`:
   stays where it is. When a slot frees, the first in line goes in: a task for
   In progress is started for its assignee, who then gets its brief
   (`[taskboard] started for you: a slot freed in In progress`); a task for a
-  column moves there. The line is in the order the tasks got in it. A task
-  still waiting on a dependency is passed over and keeps its place.
+  column moves there. The line is in the order the tasks got in it, and a
+  slot that frees while tasks wait is theirs: a newcomer joins the line
+  behind them. A task still waiting on a dependency is passed over and keeps
+  its place. A task a full column keeps out that would land in In progress
+  instead (an add or reopen with an assignee) meets In progress's limit, and
+  waits there when it is full too. A task already in a column never waits for
+  it: handed to an assignee whose column is full (per assignee), or moved to
+  another group into a full column of the same slug, it stays, over the limit.
 - **refuse** — the change is refused, `409 limit_reached`, and nothing changes.
 - **warn** — the task goes in over the limit; the answer says so.
 
@@ -948,8 +954,8 @@ the two joined when both hold), `queued_for` is the lane (`in_progress` or a
 column slug) and `queued_position` its place in line. A task leaves the line
 when it gets into its lane, and whenever what it waited as changes: it is
 closed, moved to another group, unassigned or reassigned, demoted to the
-ideas, moved to another column, or started or held by hand (the operator
-starting it over the limit, say). The [idle check](#idle-without-report) never stalls a
+ideas, moved to another column, or started or held by hand: `hold` takes a
+task out of the line, so it does not start when a slot frees. The [idle check](#idle-without-report) never stalls a
 queued task.
 
 What counts: a blocked task keeps its slot (it is still the lane's work); a

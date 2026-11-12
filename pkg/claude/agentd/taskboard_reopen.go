@@ -101,6 +101,11 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	// Reopened assigned (started) or into a column, the task meets the
 	// lane's limit; queued, it comes back short of the lane.
 	defer lockTaskboardLanes(g.ID)()
+	ft, fresh := freshTaskboardTask(w, t)
+	if !fresh {
+		return
+	}
+	t = ft
 	want := *t
 	want.Status, want.Column, want.StartedAt = db.GroupTaskOpen, column, time.Time{}
 	if assignee != db.KeepAssignee {
@@ -114,7 +119,12 @@ func handleTaskboardReopen(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		return
 	}
 	if hit.queued() && column != "" {
+		// Kept out of the column, an assigned task lands in In progress,
+		// and meets that lane's limit instead.
 		column = ""
+		if hit, ok = recheckTaskboardInProgress(w, r, g, t, &want, hit, body.OverLimit); !ok {
+			return
+		}
 	}
 	actor := taskboardActor(r)
 	out, err := db.ReopenGroupTask(t.ID, db.GroupTaskReopen{Stage: stage, Column: column, Assignee: assignee, AssignedBy: actor, Actor: actor,

@@ -355,3 +355,172 @@ func TestTaskboardLimitsCLI(t *testing.T) {
 	require.Equal(t, 0, rc, errOut)
 	assert.Contains(t, out, "queued: In progress is full (2 of 1); 1st in line")
 }
+
+// A full column keeps a new task out; started for its assignee, it would
+// land in In progress, so a full In progress decides: it waits there, held.
+func TestTaskboardLimitColumnAddMeetsInProgress(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In review"}, http.StatusCreated)
+	h.setOptions(h.lead, map[string]string{"limits.in_progress.max": "1", "limits.columns.in-review.max": "1"})
+	reviewed := h.assigned("in review")
+	code, body := h.post(h.worker, reviewed.ID, "stage", map[string]any{"stage": "in-review"})
+	require.Equal(t, http.StatusOK, code, body)
+	h.assigned("busy")
+
+	rec := h.call(h.lead, http.MethodPost, "/v1/groups/crew/taskboard/tasks",
+		map[string]any{"title": "straight to review", "to": h.peer, "stage": "in-review"})
+	got := tbDecodeLimit(t, rec.Code, rec.Body.String(), http.StatusCreated)
+	require.NotNil(t, got.Limit)
+	assert.Equal(t, "in_progress", got.Limit.Lane)
+	assert.Equal(t, "in_progress", got.QueuedFor)
+	assert.Empty(t, got.Column)
+	assert.False(t, got.started(), "held, not a second task in a full In progress")
+	assert.Equal(t, 1, h.contextCounts()["in_progress"])
+}
+
+// Per assignee, handing a task in a column to an agent whose column is full
+// keeps it there, over the limit: there is nowhere short of the column.
+func TestTaskboardLimitColumnReassignInPlace(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In review"}, http.StatusCreated)
+	h.setOptions(h.lead, map[string]string{"limits.per": "assignee", "limits.columns.in-review.max": "1"})
+	mine, theirs := h.assigned("worker's review"), h.add("peer's review", "next")
+	code, body := h.limitAssign(h.lead, theirs.ID, h.peer, nil)
+	require.Equal(t, http.StatusOK, code, body)
+	for _, id := range []string{mine.ID, theirs.ID} {
+		v := h.limitView(id)
+		code, body = h.post("", id, "stage", map[string]any{"stage": "in-review"})
+		require.Equal(t, http.StatusOK, code, body, v.ID)
+	}
+	code, body = h.limitAssign(h.lead, theirs.ID, h.worker, nil)
+	got := tbDecodeLimit(t, code, body, http.StatusOK)
+	require.NotNil(t, got.Limit)
+	assert.Equal(t, "warned", got.Limit.Action)
+	assert.Equal(t, "in-review", got.Column)
+	assert.Empty(t, got.QueuedFor, "never queued for the column it is in")
+}
+
+// A slot no route saw free is the line's: a newcomer gets in line behind
+// the task already waiting, and the sweep lets the first in.
+func TestTaskboardLimitLineKeepsItsPlace(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	h.setOptions(h.lead, map[string]string{"limits.in_progress.max": "1"})
+	busy := h.assigned("busy")
+	first := h.add("first in line", "next")
+	code, body := h.limitAssign(h.lead, first.ID, h.peer, nil)
+	require.Equal(t, "queued", tbDecodeLimit(t, code, body, http.StatusOK).Limit.Action)
+
+	_, err := db.SetGroupTaskStatus(busy.ID, db.GroupTaskDone, "", "test")
+	require.NoError(t, err)
+	late := h.add("newcomer", "next")
+	code, body = h.limitAssign(h.lead, late.ID, h.worker, nil)
+	got := tbDecodeLimit(t, code, body, http.StatusOK)
+	require.NotNil(t, got.Limit, "the free slot is the line's")
+	assert.Equal(t, 2, got.Limit.Position)
+
+	// The write's own fill already let the first in.
+	assert.True(t, h.limitView(first.ID).started())
+	assert.False(t, h.limitView(late.ID).started())
+}
+
+// A move to a group keeps the task's column when the target has one of that
+// slug: the target column's limit is the one met.
+func TestTaskboardLimitMoveToGroupColumn(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	h.f.HaveGroup("ops")
+	h.f.HaveMember("ops", h.worker)
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In review"}, http.StatusCreated)
+	rec := h.call("", http.MethodPost, "/v1/groups/ops/taskboard/columns", map[string]any{"label": "In review"})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = h.call("", http.MethodPatch, "/v1/groups/ops/taskboard/options",
+		map[string]any{"set": map[string]string{"limits.columns.in-review.max": "1", "limits.in_progress.max": "1"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = h.call("", http.MethodPost, "/v1/groups/ops/taskboard/tasks", map[string]any{"title": "ops review", "to": h.worker, "stage": "in-review"})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	moving := h.assigned("moves in review")
+	code, body := h.post(h.worker, moving.ID, "stage", map[string]any{"stage": "in-review"})
+	require.Equal(t, http.StatusOK, code, body)
+	code, out, raw := h.transfer("", moving.ID, map[string]any{"group": "ops"})
+	require.Equal(t, http.StatusOK, code, raw)
+	assert.Contains(t, raw, `"lane":"in-review"`, "the column's limit, not In progress's")
+	assert.Contains(t, raw, `"action":"warned"`)
+	assert.Equal(t, "ops", out.Group)
+}
+
+// One fill pass lets in what the pass itself frees: a task moving from In
+// progress into its column frees In progress for the task in line there.
+func TestTaskboardLimitFillCascades(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	h.columns("", http.MethodPost, "", map[string]any{"label": "In review"}, http.StatusCreated)
+	h.setOptions(h.lead, map[string]string{"limits.in_progress.max": "1", "limits.columns.in-review.max": "1"})
+	reviewed := h.assigned("in review")
+	code, body := h.post(h.worker, reviewed.ID, "stage", map[string]any{"stage": "in-review"})
+	require.Equal(t, http.StatusOK, code, body)
+	working := h.assigned("working")
+
+	waiting := h.add("waits for In progress", "next")
+	code, body = h.limitAssign(h.lead, waiting.ID, h.peer, nil)
+	require.Equal(t, "in_progress", tbDecodeLimit(t, code, body, http.StatusOK).QueuedFor)
+	code, body = h.post(h.worker, working.ID, "stage", map[string]any{"stage": "in-review"})
+	require.Equal(t, "in-review", tbDecodeLimit(t, code, body, http.StatusOK).QueuedFor)
+
+	// Review done: working moves into review, and waiting into In progress.
+	code, body = h.post(h.worker, reviewed.ID, "report", map[string]any{"outcome": "done", "note": "ok"})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Equal(t, "in-review", h.limitView(working.ID).Column)
+	assert.True(t, h.limitView(waiting.ID).started(), "the slot working freed")
+}
+
+// Held by hand, a task leaves the line: a freed slot does not start it.
+func TestTaskboardLimitHoldLeavesLine(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	h.setOptions(h.lead, map[string]string{"limits.in_progress.max": "1"})
+	busy := h.assigned("busy")
+	waiting := h.add("waits", "next")
+	code, body := h.limitAssign(h.lead, waiting.ID, h.peer, nil)
+	require.Equal(t, "in_progress", tbDecodeLimit(t, code, body, http.StatusOK).QueuedFor)
+
+	code, body = h.post(h.peer, waiting.ID, "start", map[string]any{"start": false, "stage": "next"})
+	got := tbDecodeLimit(t, code, body, http.StatusOK)
+	assert.Empty(t, got.QueuedFor)
+	assert.False(t, got.Queued)
+	code, body = h.post(h.worker, busy.ID, "report", map[string]any{"outcome": "done", "note": "ok"})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.False(t, h.limitView(waiting.ID).started(), "held by hand, it stays held")
+}
+
+// Starts racing for the one free slot never put a started task back in
+// line: each decides on the task as it is under the lane lock.
+func TestTaskboardLimitConcurrentStarts(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	h.setOptions(h.lead, map[string]string{"limits.in_progress.max": "1"})
+	for range 5 {
+		task := h.add("held", "next")
+		code, body := h.limitAssign(h.lead, task.ID, h.worker, map[string]any{"start": false})
+		require.Equal(t, http.StatusOK, code, body)
+		done := make(chan int, 4)
+		for range 4 {
+			go func() {
+				code, _ := h.post(h.worker, task.ID, "start", nil)
+				done <- code
+			}()
+		}
+		for range 4 {
+			assert.Equal(t, http.StatusOK, <-done)
+		}
+		v := h.limitView(task.ID)
+		assert.True(t, v.started(), "started once, it stays started")
+		assert.Empty(t, v.QueuedFor)
+		assert.NotContains(t, tbEventKinds(t, task.ID), db.GroupTaskEventQueued, "never put back in line")
+		code, body = h.post(h.worker, task.ID, "report", map[string]any{"outcome": "done", "note": "ok"})
+		require.Equal(t, http.StatusOK, code, body)
+	}
+}

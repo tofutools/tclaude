@@ -1253,12 +1253,16 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if !ok {
 		return
 	}
-	if hit.queued() {
-		if column != "" {
-			column = ""
-		} else {
-			hold = db.GroupTaskStageNext
+	if hit.queued() && column != "" {
+		// Kept out of the column, a task started for its assignee lands in
+		// In progress, and meets that lane's limit instead.
+		column = ""
+		if hit, ok = recheckTaskboardInProgress(w, r, g, nil, want, hit, body.OverLimit); !ok {
+			return
 		}
+	}
+	if hit.queued() && hit.note.Lane == db.QueueLaneInProgress {
+		hold = db.GroupTaskStageNext
 	}
 	actor := taskboardActor(r)
 	atts, ok := storeTaskUploadsOrFail(w, files, actor)
@@ -1551,6 +1555,11 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 		return
 	}
 	defer lockTaskboardLanes(g.ID)()
+	ft, fresh := freshTaskboardTask(w, t)
+	if !fresh {
+		return
+	}
+	t = ft
 	switch stage {
 	case "":
 		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea, next or a custom column of the board")
@@ -1666,6 +1675,11 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	var hit *taskboardLimitHit
 	if body.Status == db.GroupTaskOpen && !t.Live() {
 		defer lockTaskboardLanes(g.ID)()
+		ft, fresh := freshTaskboardTask(w, t)
+		if !fresh {
+			return
+		}
+		t = ft
 		want := *t
 		want.Status = db.GroupTaskOpen
 		var ok bool

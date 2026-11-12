@@ -95,6 +95,23 @@ func taskboardLaneLabel(groupID int64, lane string) string {
 	return lane
 }
 
+// freshTaskboardTask re-reads t once the board's lane lock is held: a lane
+// decision is made on the task as it is now, not as the route read it before
+// another writer changed it. A task that changed hands meanwhile is refused,
+// as the write itself would refuse it (assignee_changed).
+func freshTaskboardTask(w http.ResponseWriter, t *db.GroupTask) (*db.GroupTask, bool) {
+	fresh, err := db.GetGroupTask(t.ID)
+	if err != nil {
+		writeTaskboardError(w, err)
+		return nil, false
+	}
+	if fresh.AssigneeID != t.AssigneeID {
+		writeError(w, http.StatusConflict, "assignee_changed", "task "+t.ID+" changed hands meanwhile; look again and retry")
+		return nil, false
+	}
+	return fresh, true
+}
+
 // requireTaskboardOverLimit refuses over_limit from anyone but the operator:
 // agents follow the board's limits.
 func requireTaskboardOverLimit(w http.ResponseWriter, r *http.Request, over bool) bool {
@@ -158,6 +175,11 @@ func checkTaskboardLimit(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return nil, false
 	}
+	// In queue mode the tasks already in line for the lane hold their
+	// places: a slot not yet filled is theirs, not a newcomer's.
+	if count < l.Max.Value && l.AtLimit.Value == boardopts.AtLimitQueue {
+		count += taskboardWaitingFor(g.ID, lane, assignee, was)
+	}
 	if count < l.Max.Value {
 		return nil, true
 	}
@@ -168,23 +190,62 @@ func checkTaskboardLimit(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 	case over:
 		hit.note.Action = taskboardLimitOver
 	case l.AtLimit.Value == boardopts.AtLimitRefuse:
-		subject := want
+		// A refused add made no task to write about: the caller has the 409.
 		if was != nil {
-			subject = was
+			taskboardLimitReached(r, g, want, fmt.Sprintf("refused: %s", full), nil)
 		}
-		taskboardLimitReached(r, g, subject, fmt.Sprintf("refused: %s", full), nil)
 		msg := full + "; the board refuses more"
 		if taskboardCallerIsOperator(r) {
 			msg += " (go over it with over_limit)"
 		}
 		writeError(w, http.StatusConflict, "limit_reached", msg)
 		return nil, false
-	case l.AtLimit.Value == boardopts.AtLimitWarn:
+	case l.AtLimit.Value == boardopts.AtLimitWarn,
+		// Already in the column (per assignee, changing hands): there is no
+		// "short of the lane" to keep it in, so it stays, over the limit.
+		lane != db.QueueLaneInProgress && was != nil && was.GroupID == want.GroupID && was.InGroupTaskLane(lane):
 		hit.note.Action = taskboardLimitWarned
 	default:
 		hit.note.Action = taskboardLimitQueued
 	}
 	return hit, true
+}
+
+// recheckTaskboardInProgress checks In progress for a task a full column
+// keeps out (want, as it was to be): started for an agent, it lands there
+// instead. A full In progress decides; otherwise the column's queue stands.
+func recheckTaskboardInProgress(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, was, want *db.GroupTask,
+	column *taskboardLimitHit, over bool) (*taskboardLimitHit, bool) {
+	landed := *want
+	landed.Column = ""
+	hit, ok := checkTaskboardLimit(w, r, g, was, &landed, over)
+	if !ok {
+		return nil, false
+	}
+	if hit != nil {
+		return hit, true
+	}
+	return column, true
+}
+
+// taskboardWaitingFor counts the tasks in line for lane (that assignee's,
+// with one) that are ready to go in: none waits on a dependency. was, the
+// task being changed, is not counted.
+func taskboardWaitingFor(groupID int64, lane, assignee string, was *db.GroupTask) int {
+	queue, err := db.ListGroupTaskQueue(groupID)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, t := range queue {
+		if t.QueuedFor != lane || (assignee != "" && t.AssigneeID != assignee) || (was != nil && t.ID == was.ID) {
+			continue
+		}
+		if waits, _, err := db.GroupTaskDepsWait(t.ID); err == nil && !waits {
+			n++
+		}
+	}
+	return n
 }
 
 // fullText is "In progress is full (3 of 3)", or per assignee "builder's In
@@ -370,6 +431,28 @@ func taskboardFillLanes(g *db.AgentGroup) {
 	}
 	limits := boardopts.Resolve(o, taskboardOptionsGlobals(), cols).Limits
 	states, _ := db.ListGroupTaskColumnStates(g.ID)
+	// A task let in may free a slot of a lane passed over earlier (one
+	// moving from In progress into its column): look again until a pass
+	// lets none in.
+	for range len(queue) {
+		if !taskboardFillPass(g, limits, cols, states) {
+			return
+		}
+	}
+}
+
+// taskboardFillPass lets in, in line order, each task in line whose lane has
+// room, and reports whether it let any in.
+func taskboardFillPass(g *db.AgentGroup, limits boardopts.ResolvedLimits, cols []string, states map[string]string) bool {
+	queue, err := db.ListGroupTaskQueue(g.ID)
+	if err != nil {
+		return false
+	}
+	let := false
+	// A line found full stays shut for the rest of the pass, so a slot it
+	// frees later in the pass goes to its first in line, on the next pass.
+	type line struct{ lane, assignee string }
+	shut := map[line]bool{}
 	for _, t := range queue {
 		lane := t.QueuedFor
 		if lane != db.QueueLaneInProgress && (!slices.Contains(cols, lane) || states[lane] == db.GroupTaskColumnCordoned) {
@@ -379,21 +462,29 @@ func taskboardFillLanes(g *db.AgentGroup) {
 			continue
 		}
 		if most := limits.Lane(lane).Max.Value; most > 0 {
-			assignee := ""
+			k := line{lane: lane}
 			if limits.PerAssignee() {
-				assignee = t.AssigneeID
+				k.assignee = t.AssigneeID
 			}
-			count, err := db.GroupTaskLaneCount(g.ID, lane, assignee)
+			if shut[k] {
+				continue
+			}
+			count, err := db.GroupTaskLaneCount(g.ID, lane, k.assignee)
 			if err != nil || count >= most {
+				shut[k] = true
 				continue
 			}
 		}
-		taskboardLetIn(g, t, lane)
+		if taskboardLetIn(g, t, lane) {
+			let = true
+		}
 	}
+	return let
 }
 
-// taskboardLetIn moves t, first in line, into lane.
-func taskboardLetIn(g *db.AgentGroup, t *db.GroupTask, lane string) {
+// taskboardLetIn moves t, first in line, into lane, and reports whether it
+// did.
+func taskboardLetIn(g *db.AgentGroup, t *db.GroupTask, lane string) bool {
 	const actor = "system"
 	label := taskboardLaneLabel(g.ID, lane)
 	out := t
@@ -410,10 +501,16 @@ func taskboardLetIn(g *db.AgentGroup, t *db.GroupTask, lane string) {
 	}
 	if err != nil {
 		slog.Warn("taskboard: letting a queued task in failed", "task", t.ID, "lane", lane, "error", err)
-		return
+		return false
+	}
+	// In its lane, it is out of the line, whatever the triggers saw.
+	if out.QueuedFor != "" {
+		if err := db.ClearGroupTaskQueue(out.ID); err != nil {
+			slog.Warn("taskboard: clearing a queued task's place failed", "task", t.ID, "error", err)
+		}
 	}
 	if lane != db.QueueLaneInProgress || out.AssigneeID == db.OperatorAssignee {
-		return
+		return true
 	}
 	// Started for its assignee: the brief, as a start by someone else.
 	what := "a slot freed in " + label
@@ -423,6 +520,7 @@ func taskboardLetIn(g *db.AgentGroup, t *db.GroupTask, lane string) {
 			taskboardLinked(g, out, taskboardBrief(g, out, "the board ("+what+")")))
 	}
 	n.others(fmt.Sprintf("started for %s: %s", taskboardAgentLabel(out.AssigneeID), what), "", boardopts.RecipientAssignee)
+	return true
 }
 
 // sweepTaskboardQueues fills every board's lanes that has a task in line:

@@ -44,6 +44,11 @@ func handleTaskboardStart(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 	// A start enters In progress and meets its limit; queued, the task
 	// stays held and waits in line.
 	defer lockTaskboardLanes(g.ID)()
+	ft, fresh := freshTaskboardTask(w, t)
+	if !fresh {
+		return
+	}
+	t = ft
 	want := *t
 	if start {
 		want.StartedAt = time.Now()
@@ -58,6 +63,17 @@ func handleTaskboardStart(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 		if out, err = db.StartGroupTask(t.ID, start, stage, taskboardActor(r), t.AssigneeID); err != nil {
 			writeTaskboardError(w, err)
 			return
+		}
+	}
+	// Held by hand, a task waiting for In progress leaves the line: its
+	// holder means it to wait, not to start when a slot frees.
+	if !start && out.QueuedFor != "" {
+		if err := db.ClearGroupTaskQueue(out.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "db", err.Error())
+			return
+		}
+		if again, err := db.GetGroupTask(out.ID); err == nil {
+			out = again
 		}
 	}
 	out, note := finishTaskboardLimit(r, g, hit, out)

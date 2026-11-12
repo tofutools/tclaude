@@ -106,6 +106,16 @@ func QueueGroupTask(id, lane, detail, actor, expectAssignee string) (*GroupTask,
 	})
 }
 
+// ClearGroupTaskQueue takes task id out of line.
+func ClearGroupTaskQueue(id string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE group_tasks SET queued_for = '', queued_at = NULL WHERE id = ?`, id)
+	return err
+}
+
 // ListGroupTaskQueue is group's tasks in line for a lane, first in line
 // first: by when each got in line.
 func ListGroupTaskQueue(groupID int64) ([]*GroupTask, error) {
