@@ -26,6 +26,18 @@ import (
 // empty, for Grace) means inherited.
 type Options struct {
 	Idle *Idle `json:"idle,omitempty"`
+	// Events are the board's automatic messages, by event name (EventNames).
+	Events map[string]*Event `json:"events,omitempty"`
+}
+
+// Event is one automatic message the board sends: whether it is sent, and
+// to whom.
+type Event struct {
+	// Enabled sends the message. Every event is on by default.
+	Enabled *bool `json:"enabled,omitempty"`
+	// To is who gets it: any of the event recipients (EventRecipients). An
+	// empty list sends it to no one.
+	To *[]string `json:"to,omitempty"`
 }
 
 // Idle is the idle check (taskboard_stall.go): an assigned, started task
@@ -58,6 +70,59 @@ const (
 	RecipientOperator = "operator"
 )
 
+// More recipients of a board message, relative to the task it is about.
+const (
+	// RecipientAssignee is the agent that holds the task (for an unassign,
+	// the one that held it).
+	RecipientAssignee = "assignee"
+	// RecipientCreator is the agent that created the task.
+	RecipientCreator = "creator"
+)
+
+// EventRecipients are the recipients an event message may go to, in the
+// order they are listed. In an event message, assignee, assigner and
+// creator name agents; the operator is told only as operator.
+var EventRecipients = []string{RecipientAssignee, RecipientAssigner, RecipientCreator, RecipientOwners, RecipientOperator}
+
+// The board's events, each with its message.
+const (
+	EventAssigned     = "assigned"
+	EventStarted      = "started"
+	EventUnassigned   = "unassigned"
+	EventReopened     = "reopened"
+	EventMovedAway    = "moved_away"
+	EventComment      = "comment"
+	EventReportDone   = "report_done"
+	EventReportFailed = "report_failed"
+	EventUnblocked    = "unblocked"
+	EventEpicClose    = "epic_close"
+)
+
+// EventNames are the board's events, in display order.
+var EventNames = []string{EventAssigned, EventStarted, EventUnassigned, EventReopened, EventMovedAway,
+	EventComment, EventReportDone, EventReportFailed, EventUnblocked, EventEpicClose}
+
+// eventInfo is an event's description and default recipients: today's
+// messages, each to whom it has always gone.
+var eventInfo = map[string]struct {
+	label string
+	to    []string
+}{
+	EventAssigned:     {"A task is assigned (or reassigned) to an agent", []string{RecipientAssignee}},
+	EventStarted:      {"A held task is started for its assignee", []string{RecipientAssignee}},
+	EventUnassigned:   {"A task is taken back from its assignee, or reassigned away", []string{RecipientAssignee}},
+	EventReopened:     {"A closed task is reopened", []string{RecipientAssignee}},
+	EventMovedAway:    {"A task is moved to another group or node", []string{RecipientAssignee}},
+	EventComment:      {"Someone comments on a task", []string{RecipientAssignee, RecipientCreator}},
+	EventReportDone:   {"The assignee reports done", []string{RecipientAssigner}},
+	EventReportFailed: {"The assignee reports failed", []string{RecipientAssigner}},
+	EventUnblocked:    {"A task another task waits on is closed", []string{RecipientAssignee}},
+	EventEpicClose:    {"Every task of an epic is closed: close the epic?", []string{RecipientCreator}},
+}
+
+// EventLabel describes an event.
+func EventLabel(name string) string { return eventInfo[name].label }
+
 // idleTellRecipients are the recipients a stall may be told to, in the
 // order they are listed.
 var idleTellRecipients = []string{RecipientAssigner, RecipientOwners, RecipientOperator}
@@ -77,7 +142,16 @@ const (
 )
 
 // Keys are every key Set and Reset take, in display order.
-var Keys = []string{"idle.enabled", "idle.grace", "idle.nudge", "idle.tell", "idle.check_columns"}
+var Keys = func() []string {
+	keys := []string{"idle.enabled", "idle.grace", "idle.nudge", "idle.tell", "idle.check_columns"}
+	for _, name := range EventNames {
+		keys = append(keys, "events."+name+".enabled", "events."+name+".to")
+	}
+	return keys
+}()
+
+// Sections are what Reset takes besides keys.
+var Sections = []string{"idle", "events", "all"}
 
 // Parse reads a stored document; "" is no options.
 func Parse(raw string) (Options, error) {
@@ -106,7 +180,7 @@ func (o Options) Encode() (string, error) {
 // IsZero reports whether the board sets nothing.
 func (o Options) IsZero() bool {
 	o.compact()
-	return o.Idle == nil
+	return o.Idle == nil && o.Events == nil
 }
 
 // compact drops empty sections, so an options document that sets nothing
@@ -115,13 +189,45 @@ func (o *Options) compact() {
 	if o.Idle != nil && *o.Idle == (Idle{}) {
 		o.Idle = nil
 	}
+	for name, e := range o.Events {
+		if e == nil || *e == (Event{}) {
+			delete(o.Events, name)
+		}
+	}
+	if len(o.Events) == 0 {
+		o.Events = nil
+	}
+}
+
+// event is o's entry for an event, made when absent.
+func (o *Options) event(name string) *Event {
+	if o.Events == nil {
+		o.Events = map[string]*Event{}
+	}
+	if o.Events[name] == nil {
+		o.Events[name] = &Event{}
+	}
+	return o.Events[name]
 }
 
 // Validate checks a document and puts it in canonical form (lists deduped
 // and ordered). columns are the board's custom column slugs; a column named
 // in check_columns must be one of them.
 func (o *Options) Validate(columns []string) error {
+	for name, e := range o.Events {
+		if _, ok := eventInfo[name]; !ok {
+			return fmt.Errorf("events: no event %q; the events are %s", name, strings.Join(EventNames, ", "))
+		}
+		if e != nil && e.To != nil {
+			to, err := canonicalRecipients("events."+name+".to", *e.To, EventRecipients)
+			if err != nil {
+				return err
+			}
+			e.To = &to
+		}
+	}
 	if o.Idle == nil {
+		o.compact()
 		return nil
 	}
 	if g := o.Idle.Grace; g != "" {
@@ -253,13 +359,40 @@ func (o *Options) Set(key, value string) error {
 		l := parseList(value)
 		idle().CheckColumns = &l
 	default:
-		return unknownKey(key)
+		name, field, ok := eventKey(key)
+		if !ok {
+			return unknownKey(key)
+		}
+		switch field {
+		case "enabled":
+			b, err := parseBool(key, value)
+			if err != nil {
+				return err
+			}
+			o.event(name).Enabled = &b
+		case "to":
+			l := parseList(value)
+			o.event(name).To = &l
+		}
 	}
 	return nil
 }
 
-// Reset drops one option, or a whole section ("idle"), or everything ("all"),
-// so it is inherited again.
+// eventKey splits "events.<name>.<field>" for a known event and field.
+func eventKey(key string) (name, field string, ok bool) {
+	rest, ok := strings.CutPrefix(key, "events.")
+	if !ok {
+		return "", "", false
+	}
+	name, field, ok = strings.Cut(rest, ".")
+	if _, known := eventInfo[name]; !ok || !known || (field != "enabled" && field != "to") {
+		return "", "", false
+	}
+	return name, field, true
+}
+
+// Reset drops one option, an event ("events.comment"), a whole section
+// ("idle", "events"), or everything ("all"), so it is inherited again.
 func (o *Options) Reset(key string) error {
 	switch key {
 	case "all":
@@ -267,6 +400,29 @@ func (o *Options) Reset(key string) error {
 		return nil
 	case "idle":
 		o.Idle = nil
+		return nil
+	case "events":
+		o.Events = nil
+		return nil
+	}
+	if name, ok := strings.CutPrefix(key, "events."); ok {
+		if _, known := eventInfo[name]; known {
+			delete(o.Events, name)
+			o.compact()
+			return nil
+		}
+		name, field, ok := eventKey(key)
+		if !ok {
+			return unknownKey(key)
+		}
+		if e := o.Events[name]; e != nil {
+			if field == "enabled" {
+				e.Enabled = nil
+			} else {
+				e.To = nil
+			}
+		}
+		o.compact()
 		return nil
 	}
 	if !slices.Contains(Keys, key) {
@@ -292,7 +448,9 @@ func (o *Options) Reset(key string) error {
 }
 
 func unknownKey(key string) error {
-	return fmt.Errorf("%w %q; the options are %s (or a section: idle, all)", ErrUnknownKey, key, strings.Join(Keys, ", "))
+	return fmt.Errorf("%w %q; the options are idle.enabled, idle.grace, idle.nudge, idle.tell, idle.check_columns, "+
+		"events.<event>.enabled and events.<event>.to (events: %s), or a section: idle, events, all",
+		ErrUnknownKey, key, strings.Join(EventNames, ", "))
 }
 
 func parseBool(key, s string) (bool, error) {
@@ -338,6 +496,31 @@ type Value[T any] struct {
 // Resolved is the options in force on a board.
 type Resolved struct {
 	Idle ResolvedIdle `json:"idle"`
+	// Events are every event, in EventNames order.
+	Events []ResolvedEvent `json:"events"`
+}
+
+// ResolvedEvent is one event's message in force.
+type ResolvedEvent struct {
+	Name    string          `json:"name"`
+	Label   string          `json:"label"`
+	Enabled Value[bool]     `json:"enabled"`
+	To      Value[[]string] `json:"to"`
+}
+
+// Sends reports whether the event's message goes to recipient.
+func (e ResolvedEvent) Sends(recipient string) bool {
+	return e.Enabled.Value && slices.Contains(e.To.Value, recipient)
+}
+
+// Event is the named event in force; an unknown name is off.
+func (r Resolved) Event(name string) ResolvedEvent {
+	for _, e := range r.Events {
+		if e.Name == name {
+			return e
+		}
+	}
+	return ResolvedEvent{Name: name}
 }
 
 // ResolvedIdle is the idle check in force.
@@ -433,7 +616,22 @@ func Resolve(o Options, g Globals, columns []string) Resolved {
 	}
 	r.GloballyOff = g.IdleGrace != nil && *g.IdleGrace <= 0
 	r.Active = r.Enabled.Value && !r.GloballyOff
-	return Resolved{Idle: r}
+	events := make([]ResolvedEvent, 0, len(EventNames))
+	for _, name := range EventNames {
+		info := eventInfo[name]
+		e := ResolvedEvent{Name: name, Label: info.label,
+			Enabled: Value[bool]{true, SourceDefault}, To: Value[[]string]{slices.Clone(info.to), SourceDefault}}
+		if set := o.Events[name]; set != nil {
+			if set.Enabled != nil {
+				e.Enabled = Value[bool]{*set.Enabled, SourceBoard}
+			}
+			if set.To != nil {
+				e.To = Value[[]string]{slices.Clone(*set.To), SourceBoard}
+			}
+		}
+		events = append(events, e)
+	}
+	return Resolved{Idle: r, Events: events}
 }
 
 // Tells reports whether a stall is told to recipient.

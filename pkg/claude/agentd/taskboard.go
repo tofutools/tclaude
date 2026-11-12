@@ -16,6 +16,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -1210,20 +1211,24 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	setAuditDetail(r, "created "+t.ID+" in "+g.Name)
 	// Someone else's new task is briefed as an assign is; work logged as
 	// done tells nobody.
-	if self, _ := callerAgentID(r); assignee != "" && assignee != self && assignee != db.OperatorAssignee && t.Status != db.GroupTaskDone {
-		setAuditTargetConv(r, assigneeConv)
+	if assignee != "" && assignee != db.OperatorAssignee && t.Status != db.GroupTaskDone {
+		self, _ := callerAgentID(r)
 		by := taskboardCallerName(r)
-		if !t.Started() {
-			subject, text := taskboardHeldNote(g, t, by)
-			mailTaskboard(r, g, assigneeConv, subject, text)
-			writeTaskboardTaskLinked(w, r, http.StatusCreated, g, t)
-			return
+		n := newTaskboardNotice(r, g, t, boardopts.EventAssigned)
+		if assignee != self {
+			setAuditTargetConv(r, assigneeConv)
+			if !t.Started() {
+				subject, text := taskboardHeldNote(g, t, by)
+				n.mail(boardopts.RecipientAssignee, assignee, assigneeConv, subject, text)
+			} else {
+				brief := taskboardBrief(g, t, by)
+				if t.Status == db.GroupTaskBlocked {
+					brief = "It starts blocked: " + t.BlockReason + "\n" + brief
+				}
+				n.mail(boardopts.RecipientAssignee, assignee, assigneeConv, taskboardSubject(g, t, "assigned to you by "+by), taskboardLinked(g, t, brief))
+			}
 		}
-		brief := taskboardBrief(g, t, by)
-		if t.Status == db.GroupTaskBlocked {
-			brief = "It starts blocked: " + t.BlockReason + "\n" + brief
-		}
-		mailTaskboard(r, g, assigneeConv, taskboardSubject(g, t, "assigned to you by "+by), taskboardLinked(g, t, brief))
+		n.others(fmt.Sprintf("added and assigned to %s by %s", taskboardAgentLabel(assignee), by), "", boardopts.RecipientAssignee)
 	}
 	writeTaskboardTaskLinked(w, r, http.StatusCreated, g, t)
 }

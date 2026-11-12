@@ -104,3 +104,50 @@ func TestDurationText(t *testing.T) {
 		assert.Equal(t, want, DurationString(in).String())
 	}
 }
+
+// Every event is on by default, to today's recipients; a board switches
+// one off or names its recipients, and a reset inherits again.
+func TestEvents(t *testing.T) {
+	r := Resolve(Options{}, Globals{}, nil)
+	require.Len(t, r.Events, len(EventNames))
+	comment := r.Event(EventComment)
+	assert.Equal(t, Value[bool]{true, SourceDefault}, comment.Enabled)
+	assert.Equal(t, []string{RecipientAssignee, RecipientCreator}, comment.To.Value)
+	assert.True(t, comment.Sends(RecipientCreator))
+	assert.False(t, comment.Sends(RecipientOwners))
+	assert.Equal(t, []string{RecipientAssigner}, r.Event(EventReportFailed).To.Value)
+	assert.NotEmpty(t, comment.Label)
+	assert.False(t, r.Event("nope").Enabled.Value)
+
+	var o Options
+	require.NoError(t, o.Set("events.comment.enabled", "off"))
+	require.NoError(t, o.Set("events.report_failed.to", "operator,owners,assigner"))
+	require.NoError(t, o.Validate(nil))
+	assert.Equal(t, []string{RecipientAssigner, RecipientOwners, RecipientOperator}, *o.Events[EventReportFailed].To)
+	r = Resolve(o, Globals{}, nil)
+	assert.Equal(t, Value[bool]{false, SourceBoard}, r.Event(EventComment).Enabled)
+	assert.False(t, r.Event(EventComment).Sends(RecipientAssignee), "off sends to no one")
+	assert.Equal(t, SourceBoard, r.Event(EventReportFailed).To.Source)
+	assert.Equal(t, SourceDefault, r.Event(EventReportFailed).Enabled.Source)
+
+	enc, err := o.Encode()
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"events":{"comment":{"enabled":false},"report_failed":{"to":["assigner","owners","operator"]}}}`, enc)
+
+	require.NoError(t, o.Reset("events.comment.enabled"))
+	assert.NotContains(t, o.Events, EventComment, "an event that sets nothing drops out")
+	require.NoError(t, o.Reset("events.report_failed"))
+	assert.True(t, o.IsZero())
+	require.NoError(t, o.Set("events.unblocked.to", "none"))
+	require.NoError(t, o.Reset("events"))
+	assert.True(t, o.IsZero())
+
+	assert.ErrorIs(t, (&Options{}).Set("events.nope.enabled", "on"), ErrUnknownKey)
+	assert.ErrorIs(t, (&Options{}).Set("events.comment.color", "red"), ErrUnknownKey)
+	assert.ErrorIs(t, (&Options{}).Reset("events.nope"), ErrUnknownKey)
+	bad := Options{Events: map[string]*Event{"nope": {Enabled: ptr(true)}}}
+	assert.ErrorContains(t, bad.Validate(nil), "no event")
+	bad = Options{Events: map[string]*Event{EventComment: {To: &[]string{"everyone"}}}}
+	assert.ErrorContains(t, bad.Validate(nil), "not a recipient")
+	assert.Contains(t, Keys, "events.epic_close.to")
+}

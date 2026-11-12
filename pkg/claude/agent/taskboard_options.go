@@ -50,12 +50,17 @@ const taskboardOptionsLong = "A board's options set how it behaves. They are sto
 	"  idle.nudge          on | off: nudge the assignee   (default on)\n" +
 	"  idle.tell           assigner, owners, operator     (default assigner; none for no one)\n" +
 	"  idle.check_columns  custom column slugs            (default none)\n\n" +
+	"The automatic messages: every event's message is on by default and goes where it always has. Each has\n" +
+	"  events.<event>.enabled  on | off\n" +
+	"  events.<event>.to       any of assignee, assigner, creator, owners, operator; none for no one\n" +
+	"The events: assigned, started, unassigned, reopened, moved_away, comment, report_done, report_failed,\n" +
+	"unblocked, epic_close. Whoever caused an event never hears of it, and nobody hears twice.\n\n" +
 	"Reading them needs taskboard.read; changing them taskboard.write (owners hold it)."
 
 func taskboardOptionsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "options",
-		Short:       "Show and change a board's options (idle check, …)",
+		Short:       "Show and change a board's options (idle check, messages)",
 		Long:        taskboardOptionsLong,
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -143,6 +148,19 @@ func printTaskboardOptions(w io.Writer, resp taskboardOptionsResp) {
 	fmt.Fprintf(tw, "  idle.tell\t%s\t%s\n", list(idle.Tell.Value), from(idle.Tell.Source, ""))
 	fmt.Fprintf(tw, "  idle.check_columns\t%s\t%s\n", list(idle.CheckColumns.Value), from(idle.CheckColumns.Source, ""))
 	_ = tw.Flush()
+	if len(resp.Resolved.Events) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "messages:")
+	tw = tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
+	for _, e := range resp.Resolved.Events {
+		source := e.Enabled.Source
+		if e.To.Source == boardopts.SourceBoard {
+			source = boardopts.SourceBoard
+		}
+		fmt.Fprintf(tw, "  events.%s\t%s\t%s\t%s\n", e.Name, onOff[e.Enabled.Value], list(e.To.Value), from(source, ""))
+	}
+	_ = tw.Flush()
 }
 
 type taskboardOptionsShowParams struct {
@@ -179,7 +197,7 @@ func taskboardOptionsSetCmd() *cobra.Command {
 	return boa.CmdT[taskboardOptionsSetParams]{
 		Use:         "set",
 		Short:       "Set board options: key=value … (needs taskboard.write)",
-		Long:        "Set one or more options in one change. The keys:\n\n" + strings.Join(boardopts.Keys, "\n"),
+		Long:        "Set one or more options in one change, e.g. idle.enabled=on events.comment.enabled=off events.report_failed.to=assigner,owners. The keys:\n\n" + strings.Join(boardopts.Keys, "\n"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardOptionsSetParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -197,7 +215,7 @@ func taskboardOptionsSetCmd() *cobra.Command {
 			for _, kv := range pairs {
 				k, v, ok := strings.Cut(kv, "=")
 				if !ok || strings.TrimSpace(k) == "" {
-					fmt.Fprintf(cliStderr, "Error: %q is not key=value; the keys are %s\n", kv, strings.Join(boardopts.Keys, ", "))
+					fmt.Fprintf(cliStderr, "Error: %q is not key=value, e.g. idle.enabled=on (the keys: tclaude agent taskboard options set --help)\n", kv)
 					taskboardExit(rcInvalidArg)
 					return
 				}
@@ -211,7 +229,7 @@ func taskboardOptionsSetCmd() *cobra.Command {
 
 type taskboardOptionsResetParams struct {
 	Group    string   `pos:"true" help:"Group whose board to change"`
-	Keys     []string `pos:"true" help:"Options to inherit again: keys, a section (idle) or all"`
+	Keys     []string `pos:"true" help:"Options to inherit again: keys, an event (events.comment), a section (idle, events) or all"`
 	Peer     string   `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.write)"`
 	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool     `long:"json" help:"Output JSON"`

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -29,17 +30,18 @@ func mailEpicCloseSuggested(epicID string) {
 	if err != nil {
 		return
 	}
-	creator, ok := strings.CutPrefix(epic.CreatedBy, "agent:")
-	if !ok {
-		return
-	}
-	conv, _ := db.CurrentConvForAgent(creator)
 	g, err := db.GetAgentGroupByID(epic.GroupID)
-	if conv == "" || err != nil || g == nil {
+	if err != nil || g == nil {
 		return
 	}
+	n := newTaskboardNotice(nil, g, epic, boardopts.EventEpicClose)
 	text := fmt.Sprintf("Every task in epic %s %q in %s is closed. Close the epic when its work is done:\n"+
 		"  tclaude agent taskboard done %s\n"+
 		"or add the work still missing to it (taskboard add --parent %s).\n", epic.ID, epic.Title, g.Name, epic.ID, epic.ID)
-	systemMailTaskboard(g, conv, taskboardSubject(g, epic, "close epic?"), taskboardLinked(g, epic, text))
+	subject, body := taskboardSubject(g, epic, "close epic?"), taskboardLinked(g, epic, text)
+	if creator, ok := strings.CutPrefix(epic.CreatedBy, "agent:"); ok {
+		conv, _ := db.CurrentConvForAgent(creator)
+		n.mail(boardopts.RecipientCreator, creator, conv, subject, body)
+	}
+	n.others("close epic?", body, boardopts.RecipientCreator)
 }

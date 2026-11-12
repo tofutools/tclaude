@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -256,24 +257,38 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 	}
 	// Re-assigning a task its assignee held starts it: brief them, as start does.
 	if !take && before == target && hold == "" && !t.Started() && target != db.OperatorAssignee && out.Started() {
-		if self != target {
-			by := taskboardCallerName(r)
-			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "started for you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
-		}
-	}
-	if !take && before != target {
 		by := taskboardCallerName(r)
+		n := newTaskboardNotice(r, g, out, boardopts.EventStarted)
+		n.mail(boardopts.RecipientAssignee, target, targetConv,
+			taskboardSubject(g, out, "started for you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
+		n.others(fmt.Sprintf("started for %s by %s", taskboardAgentLabel(target), by), "", boardopts.RecipientAssignee)
+	}
+	if before != target {
+		by := taskboardCallerName(r)
+		n := newTaskboardNotice(r, g, out, boardopts.EventAssigned)
 		switch {
-		case target == db.OperatorAssignee:
+		case take, target == db.OperatorAssignee:
 		case hold != "":
 			subject, text := taskboardHeldNote(g, out, by)
-			mailTaskboard(r, g, targetConv, subject, text)
+			n.mail(boardopts.RecipientAssignee, target, targetConv, subject, text)
 		default:
-			mailTaskboard(r, g, targetConv, taskboardSubject(g, out, "assigned to you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
+			n.mail(boardopts.RecipientAssignee, target, targetConv,
+				taskboardSubject(g, out, "assigned to you by "+by), taskboardLinked(g, out, taskboardBrief(g, out, by)))
 		}
-		if before != "" && before != self {
+		what := fmt.Sprintf("assigned to %s by %s", taskboardAgentLabel(target), by)
+		if take {
+			what = "taken by " + taskboardAgentLabel(target)
+		}
+		if before != "" {
+			what += ", from " + taskboardAgentLabel(before)
+			// The agent losing the task hears through unassigned, not here.
+			n.skip(before)
+		}
+		n.others(what, "", boardopts.RecipientAssignee)
+		if !take && before != "" && before != self {
+			gone := newTaskboardNotice(r, g, t, boardopts.EventUnassigned)
 			if conv := activeGroupMember(g, before); conv != "" {
-				mailTaskboard(r, g, conv, taskboardSubject(g, out, "reassigned by "+by),
+				gone.mail(boardopts.RecipientAssignee, before, conv, taskboardSubject(g, out, "reassigned by "+by),
 					taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was reassigned by %s. You no longer hold it.\n", out.ID, out.Title, g.Name, by)))
 			}
 		}
@@ -320,13 +335,17 @@ func handleTaskboardUnassign(w http.ResponseWriter, r *http.Request, t *db.Group
 	conv, _ := db.CurrentConvForAgent(t.AssigneeID)
 	setAuditTargetConv(r, conv)
 	setAuditDetail(r, "unassigned "+t.ID+" from "+t.AssigneeID)
+	by := taskboardCallerName(r)
+	n := newTaskboardNotice(r, g, t, boardopts.EventUnassigned)
+	what := "released by " + taskboardAgentLabel(t.AssigneeID)
 	if !release {
+		what = fmt.Sprintf("taken back from %s by %s", taskboardAgentLabel(t.AssigneeID), by)
 		if conv := activeGroupMember(g, t.AssigneeID); conv != "" {
-			by := taskboardCallerName(r)
-			mailTaskboard(r, g, conv, taskboardSubject(g, out, "unassigned by "+by),
+			n.mail(boardopts.RecipientAssignee, t.AssigneeID, conv, taskboardSubject(g, out, "unassigned by "+by),
 				taskboardLinked(g, out, fmt.Sprintf("Task %s %q in %s was taken back by %s. You no longer hold it.\n", out.ID, out.Title, g.Name, by)))
 		}
 	}
+	n.others(what, "", boardopts.RecipientAssignee)
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }
 
@@ -399,19 +418,11 @@ func handleTaskboardReport(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 }
 
 // taskboardNotifyAssigner tells the agent that assigned the task about the
-// report, when that was an agent other than the reporter.
+// report, when that was an agent other than the reporter, and anyone else
+// the board sends report messages to.
 func taskboardNotifyAssigner(r *http.Request, g *db.AgentGroup, before *db.GroupTask, rep *db.GroupTaskReport, outcome, note string) {
-	assigner, ok := strings.CutPrefix(before.AssignedBy, "agent:")
-	if !ok || assigner == before.AssigneeID {
-		return
-	}
-	conv, err := db.CurrentConvForAgent(assigner)
-	if err != nil || conv == "" {
-		return
-	}
-	if state, err := db.AgentState(conv); err != nil || state == db.AgentStateRetired {
-		return
-	}
+	event := map[string]string{db.GroupTaskOutcomeSucceeded: boardopts.EventReportDone, db.GroupTaskOutcomeFailed: boardopts.EventReportFailed}[outcome]
+	n := newTaskboardNotice(r, g, before, event)
 	who := taskboardCallerName(r)
 	tail := who + " reported " + map[string]string{db.GroupTaskOutcomeSucceeded: "done", db.GroupTaskOutcomeFailed: "failed"}[outcome]
 	text := fmt.Sprintf("Task %s %q in %s: %s.\n", before.ID, before.Title, g.Name, tail)
@@ -421,7 +432,11 @@ func taskboardNotifyAssigner(r *http.Request, g *db.AgentGroup, before *db.Group
 	if rep.Blocked {
 		text += "\nThe task is now blocked after " + fmt.Sprint(rep.Task.Failures) + " failed attempts.\n"
 	}
-	mailTaskboard(r, g, conv, taskboardSubject(g, before, tail), taskboardLinked(g, before, text))
+	subject, body := taskboardSubject(g, before, tail), taskboardLinked(g, before, text)
+	if assigner, ok := strings.CutPrefix(before.AssignedBy, "agent:"); ok && assigner != before.AssigneeID {
+		n.mail(boardopts.RecipientAssigner, assigner, activeTaskboardAgentConv(assigner), subject, body)
+	}
+	n.others(tail, body, boardopts.RecipientAssigner)
 }
 
 // GET /v1/taskboard/mine — the live tasks assigned to the calling agent, in
