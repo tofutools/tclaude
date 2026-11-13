@@ -19,7 +19,7 @@
 //     holds); NewClient puts the verbs on any other.
 //
 // Nothing outside this package calls a transport, starts a tmux process, or
-// spells a tmux command line. TestNothingTalksToTmuxAroundTheVerbs enforces
+// spells a tmux command line. TestNothingTalksToTmuxAroundTheVerbs (package treeguards) enforces
 // that, with the few named exceptions it lists. The one verb that hands back
 // a command instead of running it is AttachCommand, because attaching needs a
 // terminal the caller holds.

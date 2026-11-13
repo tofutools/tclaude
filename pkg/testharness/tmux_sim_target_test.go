@@ -239,22 +239,21 @@ func TestTmuxSim_NewSessionRefusesANameItStillLists(t *testing.T) {
 	}
 }
 
-// A target the simulated server does not know is reported the way tmux
-// reports it, so production's error classification (tmuxcmd.ErrNotFound) is
-// exercised in flow tests rather than only against canned text.
-func TestTmuxSim_MissingTargetsReadAsNotFound(t *testing.T) {
+// A session the simulated server does not know fails has-session and
+// kill-session the way tmux does, with tmux's message, so production's error
+// classification (tmuxcmd.ErrNotFound) runs in flow tests.
+func TestTmuxSim_MissingSessionReadsAsNotFound(t *testing.T) {
 	sim := newTmuxSim()
 	prev := clcommon.Default
 	clcommon.Default = sim
 	t.Cleanup(func() { clcommon.Default = prev })
 
-	_, err := tmuxcmd.Local().PaneStatus(tmuxcmd.Session("gone").ActivePane())
-	require.ErrorIs(t, err, tmuxcmd.ErrNotFound)
-	assert.ErrorContains(t, err, "can't find session: gone")
-
 	exists, err := tmuxcmd.Local().HasSession(tmuxcmd.Session("gone"))
 	require.NoError(t, err)
 	assert.False(t, exists)
+
+	_, err = sim.Exec("has-session", "-t", "=gone")
+	assert.ErrorContains(t, err, "can't find session: gone")
 
 	sim.MarkAlive("here")
 	st, err := tmuxcmd.Local().PaneStatus(tmuxcmd.Session("here").ActivePane())

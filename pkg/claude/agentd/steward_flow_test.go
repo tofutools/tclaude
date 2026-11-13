@@ -982,7 +982,9 @@ func TestSteward_ReconcileAddsANewSlugAndKeepsRemovalsAndDenies(t *testing.T) {
 	c := newStewardCarryFlow(t)
 	conv := c.summon()
 	accessMail := func() []*db.AgentMessage {
-		messages, err := db.ListUndeliveredAgentMessagesFor(conv)
+		// Every message to the Steward, typed into its pane or not: whether
+		// the nudge has landed yet is a race this scenario is not about.
+		messages, err := db.ListAgentMessagesForConv(conv, 100)
 		require.NoError(t, err)
 		var out []*db.AgentMessage
 		for _, message := range messages {

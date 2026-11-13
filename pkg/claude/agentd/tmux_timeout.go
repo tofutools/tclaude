@@ -58,10 +58,9 @@ func liveTmuxSessionsWithTimeout() (map[string]struct{}, error) {
 	return alive, nil
 }
 
-// runCommandWithTimeout is deliberately expressed over *exec.Cmd rather than
-// exec.CommandContext: the injected clcommon.Tmux boundary constructs the
-// command (real tmux in production, TmuxSim in flows). Killing the process on
-// timeout preserves that boundary and, critically, lets cmd.Wait reap it.
+// runCommandWithTimeout runs a subprocess that is not tmux (tmux goes through
+// boundedTmux) under a deadline. It kills the process on timeout and waits
+// for it, so the child is reaped before the caller moves on.
 func runCommandWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {
 	return runCommandWithTimeoutTimer(cmd, timeout, startTmuxCommandTimer)
 }

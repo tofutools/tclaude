@@ -40,7 +40,14 @@ func Local() Client { return Client{} }
 // as -N. A command tmux ran and rejected is reported as *Error or
 // *clcommon.TmuxCommandError carrying tmux's message; any other error means
 // the command could not be delivered or its outcome is unknown. Run returns
-// promptly once ctx is done, having stopped whatever it started.
+// promptly once ctx is done, having stopped whatever it started; what it
+// returns then, its own error, ctx.Err() or a *clcommon.TmuxAbortedError
+// (whose Stderr is quoted in the timeout), is reported to the caller as
+// ErrTimeout when the client's timeout is what ended ctx.
+//
+// A runner implements this and, to offer terminals, Attacher. clcommon.Tmux
+// is the same seam as the local server's transports spell it, with the
+// session listing agentd's liveness snapshot reads added.
 type Transport interface {
 	Run(ctx context.Context, args []string) (stdout []byte, err error)
 }

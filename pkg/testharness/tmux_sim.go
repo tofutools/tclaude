@@ -242,7 +242,11 @@ func (t *TmuxSim) Run(ctx context.Context, args []string) ([]byte, error) {
 // AttachArgv satisfies clcommon.Tmux. Nothing in a flow test has a terminal
 // to attach, so the "client" is a process that exits at once.
 func (t *TmuxSim) AttachArgv(args []string) ([]string, error) {
-	if args, err := tmuxCommandArgs(args); err == nil && len(args) > 0 {
+	args, err := tmuxCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) > 0 {
 		t.mu.Lock()
 		t.commandCounts[args[0]]++
 		t.mu.Unlock()
@@ -727,10 +731,12 @@ func (t *TmuxSim) displayMessage(args []string) simReply {
 	s, ok := t.sessions[name]
 	if !ok {
 		t.mu.Unlock()
-		// tmux before 3.7 says so; 3.7 answers with every field empty
-		// instead. The typed verbs handle both; the simulator models the
-		// older, explicit form.
-		return simFail("can't find session: ", strings.TrimPrefix(strings.SplitN(target, ":", 2)[0], "="))
+		// A bare failure, with no message: flows written against the
+		// simulator model "the probe failed and cannot say why" this way
+		// (the brokered-proof refusal tests depend on it). Real tmux names
+		// the missing session before 3.7 and answers with empty fields
+		// since; tmuxcmd's own tests cover both.
+		return simFail()
 	}
 	// Only a read of the dead-pane status itself advances the settle, so an
 	// unrelated probe cannot reap the pane on the caller's behalf.

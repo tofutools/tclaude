@@ -84,9 +84,10 @@ func (LiveTmux) AttachArgv(args []string) ([]string, error) {
 	return append([]string{path}, TmuxArgs(args...)...), nil
 }
 
-// tmuxClientWaitDelay bounds how long a killed tmux client is waited for
-// when something it started still holds its output pipes open.
-const tmuxClientWaitDelay = 2 * time.Second
+// tmuxClientWaitDelay bounds how long a tmux client that has exited or been
+// killed is waited for when something it started still holds its output
+// pipes open. A variable so a test can shorten it.
+var tmuxClientWaitDelay = 2 * time.Second
 
 // RunTmuxClient runs a prepared tmux client process to completion for a Tmux
 // implementation and reports its outcome in the seam's error model: stdout
@@ -106,7 +107,9 @@ func RunTmuxClient(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	go func() { done <- cmd.Wait() }()
 	select {
 	case err := <-done:
-		if err == nil {
+		// A client that exited cleanly has answered, even if something it
+		// started kept its output pipes open past the wait delay.
+		if err == nil || errors.Is(err, exec.ErrWaitDelay) {
 			return stdout.Bytes(), nil
 		}
 		var exitErr *exec.ExitError

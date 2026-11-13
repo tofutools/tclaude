@@ -97,7 +97,7 @@ the code tree and focused docs as the source of truth.
   `pkg/claude/common/tmuxcmd` (`tmuxcmd.Local().KillSession(...)`). Do not
   build a tmux argv, start a tmux process, or call the transport
   (`clcommon.Default.Run`) elsewhere: a command that goes around the verbs is
-  one a remote runner cannot carry. A guard test in that package enforces it;
+  one a remote runner cannot carry. A guard test in `pkg/treeguards` enforces it;
   add a verb when one is missing.
 - Platform-specific code should use Go build tags such as `_linux.go`,
   `_darwin.go`, and `_unix.go`. Treat old `_windows.go` files as vestigial

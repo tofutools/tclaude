@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 )
@@ -14,14 +15,31 @@ import (
 // for everything else and for every call while the connection is down.
 //
 // Over control mode the reply is bounded by the connection's own deadline;
-// ctx bounds the forked client.
+// ctx bounds the forked client, which gets the whole of the caller's time
+// budget even when a control attempt came first. A control connection that
+// has stopped answering is exactly when the fallback matters, and it must not
+// start with the time the wedged attempt already used up.
 func (t *ControlTmux) Run(ctx context.Context, args []string) ([]byte, error) {
-	if t.client.Connected() {
-		if out, err, ok := t.run(args); ok {
-			return out, err
-		}
+	if !t.client.Connected() {
+		return t.exec.Run(ctx, args)
 	}
+	started := t.now()
+	if out, err, ok := t.run(args); ok {
+		return out, err
+	}
+	ctx, cancel := freshBudget(ctx, started, t.now())
+	defer cancel()
 	return t.exec.Run(ctx, args)
+}
+
+// freshBudget returns a context that allows, from now, the time ctx allowed
+// at started. A ctx with no deadline is returned as it is.
+func freshBudget(ctx context.Context, started, now time.Time) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return ctx, func() {}
+	}
+	return context.WithDeadline(context.WithoutCancel(ctx), now.Add(deadline.Sub(started)))
 }
 
 // AttachArgv is the exec transport's: an attach needs a terminal of its own.
