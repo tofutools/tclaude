@@ -372,7 +372,7 @@ export function optionsSummary(options, columns = []) {
   const out = [];
   const idleSet = set.filter((key) => key.startsWith('idle.'));
   if (options.idle_globally_off && set.includes('idle.enabled')) {
-    out.push({ section: 'idle', text: 'idle check off globally', title: 'This board turns the idle check on, but taskboard.idle_grace "0" turns it off on every board' });
+    out.push({ section: 'idle', text: 'idle check off globally', title: 'taskboard.idle_grace "0" turns the idle check off on every board, whatever this board sets' });
   } else if (options.idle_active === false) {
     // The check is on by default, so a board where it does not run is the
     // one worth a chip.
