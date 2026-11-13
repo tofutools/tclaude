@@ -3,6 +3,7 @@
 package agentd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -66,8 +67,11 @@ func runRelaunch(mode, exe string, argv []string) int {
 			}
 			if forwarded == 0 {
 				// A restart: like a fresh start, with the login shell's
-				// environment as it is now.
-				env = relaunchRestartEnviron(launchEnviron)
+				// environment as it is now. A signal while the shell is
+				// asked stops instead, as one during the restart does.
+				env, forwarded = relaunchFreshEnviron(sigs)
+			}
+			if forwarded == 0 {
 				continue
 			}
 			sig = forwarded
@@ -85,7 +89,32 @@ func runRelaunch(mode, exe string, argv []string) int {
 
 // relaunchRestartEnviron is the environment the waiting helper starts
 // agentd with again after a hand-back; tests swap it.
-var relaunchRestartEnviron = daemonRestartEnviron
+var relaunchRestartEnviron = func(ctx context.Context, environ []string) []string {
+	env, _ := daemonRestartEnviron(ctx, environ)
+	return env
+}
+
+// relaunchFreshEnviron asks for relaunchRestartEnviron, and returns the
+// signal that arrived on sigs meanwhile (0 for none), which ends the wait.
+func relaunchFreshEnviron(sigs <-chan os.Signal) ([]string, syscall.Signal) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan syscall.Signal, 1)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case s := <-sigs:
+			ss, _ := s.(syscall.Signal)
+			got <- ss
+			cancel()
+		case <-done:
+			got <- 0
+		}
+	}()
+	env := relaunchRestartEnviron(ctx, launchEnviron)
+	close(done)
+	return env, <-got
+}
 
 // relaunchCommand builds the agentd process: env (the helper's launch
 // environment, which the old daemon built for it, or a fresh one after a

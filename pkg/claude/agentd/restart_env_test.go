@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package agentd
 
 import (
@@ -11,6 +13,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -50,6 +53,8 @@ func captureSlog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
+func first[A, B any](a A, _ B) A { return a }
+
 func envMap(env []string) map[string]string {
 	out := map[string]string{}
 	for _, kv := range env {
@@ -77,11 +82,11 @@ func TestRestartEnvironRefreshesFromTheLoginShell(t *testing.T) {
 	logs := captureSlog(t)
 	environ := []string{
 		"HOME=/h", "PATH=/opt/go-1.27.3/bin:/usr/bin", "GOROOT=/opt/go-1.27.3",
-		"TMUX=/tmp/tmux-1/default,1,0", "SHLVL=2", "TERM_PROGRAM=iTerm.app",
+		"TMUX=/tmp/tmux-1/default,1,0", "SHLVL=2", "TERM_PROGRAM=iTerm.app", "TMUX_TMPDIR=/run/user/1/tc",
 		"TCLAUDE_HUMAN_TOKEN=tok", "TCLAUDE_CONFIG_DIR=/c", "ANTHROPIC_BASE_URL=http://p",
 	}
 	profile := &config.LaunchProfile{Env: []config.LaunchEnv{{Key: "ANTHROPIC_BASE_URL", Value: "http://p"}}}
-	got := envMap(restartEnviron(context.Background(), environ, launcher.Info{Kind: launcher.KindShell}, profile))
+	got := envMap(first(restartEnviron(context.Background(), environ, launcher.Info{Kind: launcher.KindShell}, profile)))
 	if *asked != 1 {
 		t.Fatalf("login shell asked %d times", *asked)
 	}
@@ -90,7 +95,7 @@ func TestRestartEnvironRefreshesFromTheLoginShell(t *testing.T) {
 	}
 	for k, want := range map[string]string{
 		"EDITOR": "vim",
-		"TMUX":   "/tmp/tmux-1/default,1,0", "SHLVL": "2", "TERM_PROGRAM": "iTerm.app",
+		"TMUX":   "/tmp/tmux-1/default,1,0", "SHLVL": "2", "TERM_PROGRAM": "iTerm.app", "TMUX_TMPDIR": "/run/user/1/tc",
 		"TCLAUDE_HUMAN_TOKEN": "tok", "TCLAUDE_CONFIG_DIR": "/c", "ANTHROPIC_BASE_URL": "http://p",
 	} {
 		if got[k] != want {
@@ -112,7 +117,7 @@ func TestRestartEnvironRefreshesFromTheLoginShell(t *testing.T) {
 func TestRestartEnvironKeepsTheLaunchdJob(t *testing.T) {
 	swapTerminalLoginEnv(t, []string{"PATH=/fresh/bin"}, nil)
 	environ := []string{"PATH=/usr/bin", "XPC_SERVICE_NAME=" + launcher.LaunchdLabel, "XPC_FLAGS=0x0"}
-	got := envMap(restartEnviron(context.Background(), environ, launcher.Info{Kind: launcher.KindLaunchd}, nil))
+	got := envMap(first(restartEnviron(context.Background(), environ, launcher.Info{Kind: launcher.KindLaunchd}, nil)))
 	if got["XPC_SERVICE_NAME"] != launcher.LaunchdLabel || got["XPC_FLAGS"] != "0x0" || got[loginEnvAppliedVar] != "1" || !strings.HasPrefix(got["PATH"], "/fresh/bin:") {
 		t.Errorf("env %v", got)
 	}
@@ -124,8 +129,8 @@ func TestRestartEnvironKeepsTheSystemdUnitsEnvironment(t *testing.T) {
 	for _, kind := range []string{launcher.KindSystemdUser, launcher.KindSystemdSystem} {
 		asked := swapTerminalLoginEnv(t, []string{"PATH=/fresh/bin"}, nil)
 		environ := []string{"PATH=/usr/bin", "INVOCATION_ID=abc"}
-		if got := restartEnviron(context.Background(), environ, launcher.Info{Kind: kind}, nil); !slices.Equal(got, environ) || *asked != 0 {
-			t.Errorf("%s: got %q, asked %d", kind, got, *asked)
+		if got, refreshed := restartEnviron(context.Background(), environ, launcher.Info{Kind: kind}, nil); !slices.Equal(got, environ) || refreshed || *asked != 0 {
+			t.Errorf("%s: got %q, refreshed %v, asked %d", kind, got, refreshed, *asked)
 		}
 	}
 }
@@ -137,9 +142,9 @@ func TestRestartEnvironFallsBackWhenTheLoginShellFails(t *testing.T) {
 	swapTerminalLoginEnv(t, nil, errors.New("/bin/zsh did not finish within 30s"))
 	logs := captureSlog(t)
 	environ := []string{"PATH=/old/bin", "GOROOT=/old/go"}
-	got := restartEnviron(context.Background(), environ, launcher.Info{Kind: launcher.KindDetached}, nil)
+	got, refreshed := restartEnviron(context.Background(), environ, launcher.Info{Kind: launcher.KindDetached}, nil)
 	want := append(slices.Clone(environ), launcher.LoginEnvErrorVar+"=restarting: /bin/zsh did not finish within 30s")
-	if !slices.Equal(got, want) {
+	if !slices.Equal(got, want) || refreshed {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
 	if !strings.Contains(logs.String(), "could not get a fresh environment from the login shell") ||
@@ -148,7 +153,7 @@ func TestRestartEnvironFallsBackWhenTheLoginShellFails(t *testing.T) {
 	}
 	// An empty answer is a failure too.
 	swapTerminalLoginEnv(t, nil, nil)
-	if got := envMap(restartEnviron(context.Background(), environ, launcher.Info{}, nil)); got["PATH"] != "/old/bin" || got[launcher.LoginEnvErrorVar] == "" {
+	if got := envMap(first(restartEnviron(context.Background(), environ, launcher.Info{}, nil))); got["PATH"] != "/old/bin" || got[launcher.LoginEnvErrorVar] == "" {
 		t.Errorf("empty answer: %v", got)
 	}
 }
@@ -178,7 +183,18 @@ func TestRestartedDaemonEnvProcess(t *testing.T) {
 // token.
 func TestDaemonRestartRunsWithTheLoginShellsEnvironment(t *testing.T) {
 	home := testutil.CanonicalTempDir(t)
+	// No real ~/.tclaude: the launch profile is read from here.
+	t.Setenv("HOME", home)
 	swapTerminalLoginEnv(t, []string{"HOME=" + home, "PATH=/opt/go-1.27.4/bin:/usr/bin"}, nil)
+	nodeUpdates.Lock()
+	prevService := nodeUpdates.service
+	nodeUpdates.service = nil
+	nodeUpdates.Unlock()
+	t.Cleanup(func() {
+		nodeUpdates.Lock()
+		nodeUpdates.service = prevService
+		nodeUpdates.Unlock()
+	})
 
 	prevEnviron, prevExec, prevExit := launchEnviron, execSelfUpdate, restartExit
 	launcherState.Lock()
@@ -236,5 +252,47 @@ func TestDaemonRestartRunsWithTheLoginShellsEnvironment(t *testing.T) {
 	}
 	if _, ok := spawn["TCLAUDE_HUMAN_TOKEN"]; ok || strings.Contains(got.PaneExports, "operator-secret") {
 		t.Error("the operator token leaked into an agent's environment")
+	}
+}
+
+// A Ctrl+C or SIGTERM while a restart asks the login shell stops agentd:
+// it does not come back once the shell answers.
+func TestDaemonRestartStopsOnASignalWhileAskingTheLoginShell(t *testing.T) {
+	t.Setenv("HOME", testutil.CanonicalTempDir(t))
+	prevProbe, prevExec, prevExit := terminalLoginEnv, execSelfUpdate, restartExit
+	launcherState.Lock()
+	prevInfo := launcherState.info
+	launcherState.info = &launcher.Info{Kind: launcher.KindShell, RestartMethod: launcher.RestartExec}
+	launcherState.Unlock()
+	updateRestartState.Lock()
+	prevRequested, prevPath, prevStart, prevPlan := updateRestartState.requested, updateRestartState.path, updateRestartState.startPath, updateRestartState.plan
+	updateRestartState.requested, updateRestartState.path, updateRestartState.startPath, updateRestartState.plan = true, "/bin/tclaude", "/bin/tclaude", restartPlan{}
+	updateRestartState.Unlock()
+	t.Cleanup(func() {
+		terminalLoginEnv, execSelfUpdate, restartExit = prevProbe, prevExec, prevExit
+		launcherState.Lock()
+		launcherState.info = prevInfo
+		launcherState.Unlock()
+		updateRestartState.Lock()
+		updateRestartState.requested, updateRestartState.path, updateRestartState.startPath, updateRestartState.plan = prevRequested, prevPath, prevStart, prevPlan
+		updateRestartState.Unlock()
+	})
+	terminalLoginEnv = func(ctx context.Context, _ []string) ([]string, error) {
+		// The operator presses Ctrl+C while the shell is slow to answer.
+		_ = syscall.Kill(os.Getpid(), syscall.SIGINT)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	execSelfUpdate = func(string, []string, []string) error {
+		t.Fatal("agentd restarted after the signal")
+		return nil
+	}
+	exited, code := false, -1
+	restartExit = func(c int) { exited, code = true, c }
+	if err := performSelfUpdateRestart(); err != nil {
+		t.Fatal(err)
+	}
+	if !exited || code != 0 {
+		t.Fatalf("exited=%v code=%d, want a clean exit", exited, code)
 	}
 }

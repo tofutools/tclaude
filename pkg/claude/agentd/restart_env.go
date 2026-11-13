@@ -56,6 +56,9 @@ var restartKeepsEnv = map[string]bool{
 	"TMUX": true, "TMUX_PANE": true, "STY": true, "WINDOW": true, "WINDOWID": true,
 	"TERM_PROGRAM": true, "TERM_PROGRAM_VERSION": true, "TERM_SESSION_ID": true, "ITERM_SESSION_ID": true,
 	"COLORTERM": true, "SHLVL": true, "XAUTHORITY": true,
+	// Where the agents' tmux server has its socket: a different one would
+	// strand every running agent and start new ones on a second server.
+	"TMUX_TMPDIR": true,
 	"SSH_CONNECTION": true, "SSH_CLIENT": true, "SSH_TTY": true, "SSH_AGENT_PID": true,
 }
 
@@ -80,11 +83,12 @@ func restartRefreshesEnv(info launcher.Info) bool {
 // unit and profile ones, restartKeepsVar's) and environ's PATH kept last as
 // a fallback. Under systemd, or when the shell does not answer, it is
 // environ; the failure is logged and handed to the restarted daemon, which
-// tells the operator (reportLoginEnvFailure).
-func restartEnviron(ctx context.Context, environ []string, info launcher.Info, profile *config.LaunchProfile) []string {
+// tells the operator (reportLoginEnvFailure). refreshed reports whether the
+// login shell's environment was taken.
+func restartEnviron(ctx context.Context, environ []string, info launcher.Info, profile *config.LaunchProfile) (env []string, refreshed bool) {
 	environ = slices.Clip(environ)
 	if !restartRefreshesEnv(info) {
-		return environ
+		return environ, false
 	}
 	fresh, err := terminalLoginEnv(ctx, environ)
 	if err == nil && len(fresh) == 0 {
@@ -92,9 +96,9 @@ func restartEnviron(ctx context.Context, environ []string, info launcher.Info, p
 	}
 	if err != nil {
 		slog.Warn("agentd restart: could not get a fresh environment from the login shell; restarting with the environment agentd started with", "error", err)
-		return append(environ, launcher.LoginEnvErrorVar+"=restarting: "+err.Error())
+		return append(environ, launcher.LoginEnvErrorVar+"=restarting: "+err.Error()), false
 	}
-	env := withOwnLaunchEnv(fresh, environ, info, profile)
+	env = withOwnLaunchEnv(fresh, environ, info, profile)
 	var keep []string
 	for _, kv := range environ {
 		if k, _, ok := strings.Cut(kv, "="); ok && restartKeepsVar(k) {
@@ -112,7 +116,7 @@ func restartEnviron(ctx context.Context, environ []string, info launcher.Info, p
 	} else {
 		slog.Info("agentd restart: refreshed the environment from the login shell; PATH unchanged")
 	}
-	return env
+	return env, true
 }
 
 // overlayEnv sets each KEY=VALUE of over in env, in place of env's own.
@@ -141,8 +145,8 @@ func (e loginEnvError) Error() string { return string(e) }
 const errEmptyLoginEnv = loginEnvError("the login shell printed an empty environment")
 
 // daemonRestartEnviron is restartEnviron for this process: its launcher
-// and launch profile.
-func daemonRestartEnviron(environ []string) []string {
+// and launch profile. ctx ends the login shell's wait early (a Ctrl+C).
+func daemonRestartEnviron(ctx context.Context, environ []string) ([]string, bool) {
 	cfg, _ := config.Load()
-	return restartEnviron(context.Background(), environ, currentLauncher(false), cfg.ServiceLaunch())
+	return restartEnviron(ctx, environ, currentLauncher(false), cfg.ServiceLaunch())
 }

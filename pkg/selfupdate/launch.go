@@ -137,6 +137,10 @@ var volatileEnv = map[string]bool{
 	"LaunchInstanceID": true,
 }
 
+// loginEnvAppliedVar is agentd's marker for a daemon that has the login
+// shell's environment; a refreshing restart may add it.
+const loginEnvAppliedVar = "TCLAUDE_AGENTD_LOGIN_ENV"
+
 // ignoredEnv reports a key the comparison skips: volatile per-start values
 // and the markers the updater itself sets for the commands it runs.
 func ignoredEnv(key string) bool {
@@ -258,9 +262,10 @@ func CompareLaunch(before LaunchSnapshot, argv, environ []string, kind, unit, re
 		}
 	}
 	for _, key := range unionKeys(before.Env, after.Env) {
-		if before.EnvRefreshed && !strings.HasPrefix(key, "TCLAUDE_") {
+		if before.EnvRefreshed && (!strings.HasPrefix(key, "TCLAUDE_") || key == loginEnvAppliedVar) {
 			// Asked afresh from the login shell on purpose: a changed
-			// PATH or profile variable is the point, not a difference.
+			// PATH or profile variable is the point, not a difference,
+			// nor the marker saying the daemon has the login environment.
 			continue
 		}
 		bv, inB := before.Env[key]

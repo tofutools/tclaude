@@ -220,7 +220,7 @@ func TestCompareLaunchAfterARefreshSaysSo(t *testing.T) {
 	before, err := CaptureLaunch(argv, []string{"PATH=/a", "TCLAUDE_X=1"}, "shell", "", "exec")
 	require.NoError(t, err)
 	before.EnvRefreshed = true
-	check := CompareLaunch(before, argv, []string{"PATH=/b", "NEW=1", "TCLAUDE_X=1"}, "shell", "", "exec", nil)
+	check := CompareLaunch(before, argv, []string{"PATH=/b", "NEW=1", "TCLAUDE_X=1", "TCLAUDE_AGENTD_LOGIN_ENV=1"}, "shell", "", "exec", nil)
 	assert.Equal(t, "identical", check.State, check.Differences)
 	assert.Contains(t, check.Summary(), "refreshed from the login shell")
 }
