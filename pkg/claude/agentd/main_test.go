@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,6 +76,11 @@ func TestMain(m *testing.M) {
 	agentd.DisableFleetMetadataForTest()
 	// The test process is every socket peer here, and is not an agent the daemon runs.
 	agentd.SetExternalDaemonPIDForTest(-1)
+	// The board never runs the operator's awb CLI to learn its server;
+	// tests that need one swap SetAWBCLIStatusForTest.
+	agentd.SetAWBCLIStatusForTest(func(context.Context) ([]byte, error) {
+		return nil, errors.New("agentd tests: no awb CLI")
+	})
 	agentd.SetOpenTerminalForTest(func(string) error {
 		return errors.New("agentd tests: terminal spawn suppressed by default (TCL-584); swap agentd.SetOpenTerminalForTest to observe the open path")
 	})

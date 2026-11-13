@@ -59,31 +59,42 @@ export function prOfRef(ref) {
   return { url: ref.url, number, state, title, checks, reviews };
 }
 
+// REF_KIND_NAME is a tracker kind as its badge names it.
+const REF_KIND_NAME = { awb: 'awb', linear: 'Linear', github: 'GitHub', gitlab: 'GitLab' };
+
+// refKindName is the badge of a ref's tracker, '' for a plain link.
+export const refKindName = (kind) => (kind && kind !== 'url' ? REF_KIND_NAME[kind] || kind : '');
+
+// notLinkedText is a link-less ref's tooltip tail: why the board's node has
+// no link for it (link_note), or just that it has none.
+export const notLinkedText = (ref) => (ref.link_note ? `not linked: ${ref.link_note}` : 'not linked');
+
 // OneRef is one ref, shown by its kind with the richest display tclaude has:
 // a GitHub/GitLab PR is the agent rows' PRChain (#N, CI, review, with their
-// hover cards); an awb, Linear or GitHub issue is its id, with its status
-// and title from its last lookup; anything else is a link.
+// hover cards); an awb, Linear or GitHub issue is its tracker's badge and its
+// id as a link, with its status and title from its last lookup; anything
+// else is a link. A ref the board's node could not link says why in its
+// tooltip.
 export function OneRef({ of: ref }) {
   const pr = prOfRef(ref);
   if (pr) return html`<${PRChain} pr=${pr} className="tb-ref-pr" />`;
   const label = ref.label || ref.url || ref.kind;
   const tracker = ref.tracker;
-  const title = [tracker?.title, `${ref.kind}${ref.url ? ` · ${ref.url}` : ''}`].filter(Boolean).join(' — ');
+  const kindName = refKindName(ref.kind);
+  const title = [tracker?.title, `${kindName || ref.kind}${ref.url ? ` · ${ref.url}` : ''}`].filter(Boolean).join(' — ');
   // The store only keeps http(s) URLs; check again before making a link.
   const linked = ref.url && /^https?:\/\//i.test(ref.url);
-  if (tracker || ref.kind === 'awb' || ref.kind === 'linear') {
+  if (tracker || ref.kind === 'awb' || ref.kind === 'linear' || ref.kind === 'github') {
     const id = linked
       ? html`<a class="tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>${label}</a>`
-      : html`<span class="tb-ref" title=${`${title} · not linked`}>${label}</span>`;
-    return html`<span class="tb-ref-issue">${ref.kind !== 'url' && html`<span class="tb-ref-kind">${ref.kind}</span>`}${id}${tracker?.status
+      : html`<span class="tb-ref tb-ref-unlinked" title=${`${title} · ${notLinkedText(ref)}`}>${label}</span>`;
+    return html`<span class="tb-ref-issue">${kindName && html`<span class="tb-ref-kind" data-kind=${ref.kind}>${kindName}</span>`}${id}${tracker?.status
       && html`<span class=${`ui-tag tb-ref-status ${trackerStatusClass(tracker.status)}`.trim()}>${tracker.status}</span>`}</span>`;
   }
   if (linked) {
     return html`<a class="ui-tag ui-tag-accent tb-ref" href=${ref.url} target="_blank" rel="noopener noreferrer" title=${title}>🔗 ${label}</a>`;
   }
-  // A bare tracker id with no link yet (no awb server configured, or a
-  // Linear id not looked up): `edit --resolve-ref` links it.
-  return html`<span class="ui-tag ui-tag-accent tb-ref" title=${`${title} · not linked`}>🔗 ${label}</span>`;
+  return html`<span class="ui-tag ui-tag-accent tb-ref tb-ref-unlinked" title=${`${title} · ${notLinkedText(ref)}`}>🔗 ${label}</span>`;
 }
 
 // RefChip is a task's refs, each by its kind (OneRef): every one on a Lanes

@@ -318,6 +318,10 @@ type taskboardRef struct {
 	// its own awb server.
 	Local bool   `json:"local,omitempty"`
 	ID    string `json:"id,omitempty"`
+	// LinkNote says why a ref has no link (no awb server configured, a
+	// Linear workspace not yet known): set only when URL is empty
+	// (taskboard_reflinks.go).
+	LinkNote string `json:"link_note,omitempty"`
 	// PR is a GitHub pull request's or GitLab merge request's status, as
 	// the agent rows show it, from the same caches (taskboard_refs.go).
 	PR *taskboardRefPR `json:"pr,omitempty"`
@@ -338,6 +342,9 @@ type taskboardTaskView struct {
 	// --blocks): closing it as done reopens this one.
 	BlockedOn string        `json:"blocked_on,omitempty"`
 	Ref       *taskboardRef `json:"ref,omitempty"`
+	// ResolveNotes are why a resolve_ref in this write linked a ref not:
+	// "<id>: <reason>" each (an add's or an edit's answer only).
+	ResolveNotes []string `json:"resolve_notes,omitempty"`
 	// Refs are all of the task's refs, Ref first (tk_01ad0884); [] without
 	// one, never absent: a node from before sends no refs at all, and that
 	// is how the dashboard tells it takes one ref only.
@@ -525,7 +532,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 	now := time.Now()
 	staller := newTaskboardStaller(now)
 	queues := taskboardQueueLines{}
-	var awbBase *string // read once, and only when a url-less awb ref needs it
+	var linker taskRefLinker // links the refs that have none stored
 	for _, t := range tasks {
 		v := taskboardTaskView{
 			ID: t.ID, Group: group, Title: t.Title, Body: t.Body, Stage: t.Stage, Status: t.Status, Rank: t.Rank,
@@ -542,15 +549,10 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 				continue
 			}
 			ref := &taskboardRef{Kind: stored.Kind, URL: stored.URL, Label: stored.Label}
-			// An awb ref stored before refs were linked on write (its label
-			// the id) is linked as it is read, so every awb chip can be followed.
-			if ref.Kind == "awb" {
-				if awbBase == nil {
-					b := awbBaseURL()
-					awbBase = &b
-				}
-				linkLocalAWBRef(ref, *awbBase)
-			}
+			// A ref stored without a link (an awb id from before its server
+			// was known, a Linear id never looked up) is linked as it is read
+			// whenever its tracker's link can be known, and says why not.
+			linker.add(ref)
 			if i == 0 {
 				v.Ref = ref
 			}
@@ -621,6 +623,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 		v.LastEditedByName, v.CreatedByName = actorName(a.LastEditedBy), actorName(t.CreatedBy)
 		out = append(out, v)
 	}
+	linker.finish()
 	stampTaskRefStatus(out)
 	return out, nil
 }
@@ -656,6 +659,7 @@ func writeTaskboardTaskLinked(w http.ResponseWriter, r *http.Request, status int
 		return
 	}
 	views[0].Limit = note
+	views[0].ResolveNotes = refResolveNotes(r)
 	if taskboardPeerAuthor(r) == "" {
 		views[0].URL = taskboardTaskURL(g.Name, t.ID)
 	}
@@ -789,14 +793,10 @@ func parseTaskRef(raw, label string) (kind, refURL, refLabel string, err error) 
 	return "awb", awbIssueURL(norm), firstNonEmpty(label, norm), nil
 }
 
-// awbBaseURL is the configured awb server's web base, or "" when none is
-// configured; a variable so a test can point it somewhere.
-var awbBaseURL = func() string {
-	cfg, _ := config.Load()
-	base, fault := validateAWBBaseURL(cfg.ResolvedAWBProxy().URL)
-	if fault != nil {
-		return ""
-	}
+// awbBaseURL is the awb server's web base, or "" when none is known: the
+// configured awb proxy's, or the awb CLI's (awbLinkBase).
+func awbBaseURL() string {
+	base, _ := awbLinkBase()
 	return base
 }
 
@@ -999,6 +999,7 @@ func handleTaskboardListOwnGroup(w http.ResponseWriter, r *http.Request) {
 // stays the one given). {refs:[…]} and/or {lines:[…]} (with an optional stage)
 // import a batch instead; see handleTaskboardImport.
 func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	r = withRefNotes(r) // a resolve_ref that links nothing says why
 	if !taskboardEnabled(w) {
 		return
 	}
@@ -1352,6 +1353,7 @@ func handleTaskboardEvents(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 // rm_refs names one, moves that ref to the front after the others apply:
 // the first ref is what --ref and the List show (tk_39630a0f).
 func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
+	r = withRefNotes(r) // a resolve_ref that links nothing says why
 	var body struct {
 		Title      *string  `json:"title"`
 		Body       *string  `json:"body"`
@@ -1433,6 +1435,8 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 					if refURL != "" {
 						edit.RefURL = &refURL
 					}
+				} else {
+					noteRefResolve(r, t.RefLabel, "only an awb or Linear id is resolved")
 				}
 			}
 		case body.RefLabel != nil:
@@ -1500,7 +1504,13 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 		return
 	}
 	setAuditDetail(r, "edited "+t.ID)
-	writeTaskboardTask(w, http.StatusOK, g, out)
+	views, err := taskboardViews(g.Name, []*db.GroupTask{out})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db", err.Error())
+		return
+	}
+	views[0].ResolveNotes = refResolveNotes(r)
+	writeJSON(w, http.StatusOK, views[0])
 }
 
 // POST /v1/taskboard/tasks/{id}/move {top|bottom|before|after} — crossing the
