@@ -262,10 +262,17 @@ func TestPeerTaskboardLimitUnrestricted(t *testing.T) {
 	code, body = h.assign(t, task, h.second, map[string]any{"over_limit": true})
 	assert.Equal(t, "over", tbDecodeLimit(t, code, body, http.StatusOK).Limit.Action)
 
+	// Its agent is served under the peer grants, not as the operator: with
+	// the assign grant (and the say over the options), only the limit
+	// refuses it.
+	for _, slug := range []string{agentd.PermTaskboardAssign, agentd.PermTaskboardOptionsWrite} {
+		h.grant(t, slug, "group=crew")
+	}
 	worker := &proto.PeerViewAgent{ID: "agt_bobworker000000000000000", Name: "bob-worker"}
 	reply := agentPeerViewExchange(t, h.peer, worker, http.MethodPost, "/v1/taskboard/tasks/"+h.add(t, "agent's")+"/assign",
 		map[string]any{"to": h.first, "over_limit": true})
 	assert.Equal(t, http.StatusForbidden, reply.Status, string(reply.Body))
+	assert.Contains(t, string(reply.Body), "an agent follows it")
 }
 
 // The CLI's --over-limit with --peer, end to end through this node's sender
