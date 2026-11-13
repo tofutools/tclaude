@@ -118,6 +118,23 @@ tclaude agent page dom landing 'button.pay' --styles      # read-only: --text (d
   from the page, not from the operator; only the note is the operator's words.
 - `snapshot` needs Chrome or Chromium on the host (or `TCLAUDE_CHROME`); it
   never downloads one. Look at the PNG with your image-reading tool.
+- `snapshot` waits for the page to finish loading (calm: no request loading,
+  text and element count steady) for up to 10s, and says how the wait went.
+- For a single-page app (it shows a loading curtain, fetches, then paints,
+  as the tclaude dashboard does), watch it load and choose the moment
+  yourself:
+
+  ```bash
+  tclaude agent page snapshot landing --watch --for 30s -o /tmp/landing.png   # as a background run
+  # its first line names the session; each line: t=… calm=… still=… changed=… net=… dom=… text=… title=…
+  tclaude agent page snapshot landing --session <id> -o /tmp/landing.png      # capture now; ends the watch
+  ```
+
+  `calm` is how long the page has been done loading (a clock or a poll does
+  not break it); `still` is how long nothing changed at all. The capture is of
+  the page you watched, not a fresh load. `--frames DIR` writes a PNG per
+  tick, `--keep-watching` with `--session` takes one frame and lets it run,
+  and the watch captures by itself at `--for` (at most 60s).
 - `dom` reads through the operator's open view of the page; with none open it
   says so.
 - A snapshot renders only your page's own origin: a page that redirects or

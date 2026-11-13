@@ -157,11 +157,65 @@ type PageSnapshotJobForTest struct {
 // token, so a test can check the job carries it.
 func SetPageSnapshotRenderForTest(render func(PageSnapshotJobForTest) ([]byte, error)) func() {
 	prev := pageSnapshotRender
-	pageSnapshotRender = func(_ context.Context, j pageSnapshotJob) ([]byte, error) {
-		return render(PageSnapshotJobForTest{URL: j.URL, Origin: j.Origin, Token: j.Token, Width: j.Width, Height: j.Height,
-			ScrollX: j.ScrollX, ScrollY: j.ScrollY, Overlay: j.OverlaySV, Patches: j.Patches})
+	pageSnapshotRender = func(_ context.Context, j pageSnapshotJob) ([]byte, pageSettle, error) {
+		png, err := render(pageSnapshotJobForTest(j))
+		return png, pageSettle{WaitedMS: 1, Settled: true}, err
 	}
 	return func() { pageSnapshotRender = prev }
+}
+
+func pageSnapshotJobForTest(j pageSnapshotJob) PageSnapshotJobForTest {
+	return PageSnapshotJobForTest{URL: j.URL, Origin: j.Origin, Token: j.Token, Width: j.Width, Height: j.Height,
+		ScrollX: j.ScrollX, ScrollY: j.ScrollY, Overlay: j.OverlaySV, Patches: j.Patches}
+}
+
+// PageProbeForTest is one look at a watched page, as a stand-in browser
+// answers it.
+type PageProbeForTest struct {
+	Loaded                        bool
+	InFlight, Requests, Mutations int
+	Text, Layout, Pixels          string
+	Title, Path                   string
+}
+
+// PageBrowserForTest stands in for one page open in headless Chrome.
+type PageBrowserForTest interface {
+	Probe() (PageProbeForTest, error)
+	Frame(scale float64) ([]byte, error)
+	Final() ([]byte, error)
+	Close()
+}
+
+type pageBrowserForTest struct{ b PageBrowserForTest }
+
+func (f pageBrowserForTest) Probe(_ context.Context, pixels bool) (pageProbe, error) {
+	p, err := f.b.Probe()
+	out := pageProbe{Loaded: p.Loaded, ReadyState: "complete", InFlight: p.InFlight, Requests: p.Requests, Mutations: p.Mutations,
+		TextHash: p.Text, TextLen: len(p.Text), Layout: p.Layout, Title: p.Title, Path: p.Path}
+	if pixels {
+		out.Pixels = p.Pixels
+	}
+	return out, err
+}
+func (f pageBrowserForTest) Frame(_ context.Context, scale float64) ([]byte, error) {
+	return f.b.Frame(scale)
+}
+func (f pageBrowserForTest) Final(context.Context) ([]byte, error) { return f.b.Final() }
+func (f pageBrowserForTest) Close()                                { f.b.Close() }
+
+// SetPageSnapshotBrowserForTest stands in for opening a page in headless
+// Chrome, for watches and the default snapshot's wait alike (the default
+// snapshot reaches it only once SetPageSnapshotRenderForTest is undone).
+func SetPageSnapshotBrowserForTest(open func(PageSnapshotJobForTest) (PageBrowserForTest, error)) func() {
+	prev := pageSnapshotOpen
+	pageSnapshotOpen = func(_ context.Context, j pageSnapshotJob) (pageSnapshotBrowser, error) {
+		b, err := open(pageSnapshotJobForTest(j))
+		if err != nil {
+			return nil, err
+		}
+		return pageBrowserForTest{b}, nil
+	}
+	return func() { pageSnapshotOpen = prev }
 }
 
 // PageSnapshotTokenForTest is a page's snapshot token, by page id.
@@ -287,3 +341,7 @@ func RestartLivePagesForTest() {
 	CloseAllLivePagesForTest()
 	closeSavedPagesAtStart()
 }
+
+// ErrPageLeftOriginForTest is what a stand-in browser answers for a page
+// that left its own origin.
+var ErrPageLeftOriginForTest = errPageLeftOrigin

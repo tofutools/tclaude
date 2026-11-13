@@ -257,6 +257,7 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"pages", "{id}", "marks"}, verb: "page.marks"},
 	// An agent's page snapshot starts a browser on the host (/v1/pages/{name}/snapshot).
 	{method: http.MethodPost, segs: []string{"pages", "{id}", "snapshot"}, verb: "page.snapshot"},
+	{method: http.MethodPost, segs: []string{"pages", "{id}", "snapshot", "watch"}, verb: "page.snapshot.watch"},
 	// An agent's live patches and evals change what the operator's open view
 	// of its page shows, and an eval runs the agent's script there (tcl-14z3fq).
 	{method: http.MethodPost, segs: []string{"pages", "{id}", "patches"}, verb: "page.patch"},

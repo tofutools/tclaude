@@ -471,6 +471,7 @@ Known limits of the boundary:
 ```bash
 tclaude agent page marks <name> [--since N]       # the batches the operator sent
 tclaude agent page snapshot <name> -o page.png    # the page as a PNG, with the marks
+tclaude agent page snapshot <name> --watch        # watch it load, tick by tick, then capture
 tclaude agent page dom <name> <selector> [--text|--html|--styles]
 ```
 
@@ -490,7 +491,48 @@ tclaude agent page dom <name> <selector> [--text|--html|--styles]
   page that tries to leave its origin gets an error instead of a picture. The
   page's snapshot token goes only on the page's own document requests. A page
   the operator allowed to load other hosts is not rendered for the agent.
-  One snapshot runs at a time per agent.
+  One snapshot or watch runs at a time per agent.
+- **A snapshot waits for the page to go calm.** A single-page app such as the
+  tclaude dashboard loads its script, fetches its data and only then paints;
+  until then it shows a loading curtain. So after the page loads, the snapshot
+  probes it every 100ms and captures once it has been calm for 0.5s: no request
+  loading, the same title and path, and its visible text and element count
+  within 5% of where they were. A ticking clock, a poll that re-renders or a
+  spinner does not break the calm; a curtain giving way to the app does. The
+  wait is at least 300ms after the load and at most 10s. The command says how
+  it went: still (nothing changed at all), calm (done loading, but something on
+  the page still changes), or not calm at the cap, and why.
+- **`page snapshot --watch`** lets the agent watch the page load and choose
+  when to capture, rather than trusting the wait. It opens the page once and
+  prints one line per tick (`--every`, default 500ms):
+
+  ```text
+  t=1.4s #4 calm=0.0s still=0.0s changed=net,dom,text,layout,pixels doc=complete net=4/645 dom=+462 text=00f9db9aabe6/2114 els=1375 layout=3e11e0eef462 px=8f419669e65c path=/ title="tclaude" (not calm: 4 requests were still loading)
+  t=1.8s #6 calm=0.2s still=0.2s changed=pixels doc=complete net=0/645 dom=+0 text=00f9db9aabe6/2114 els=1827 layout=40afce3fdd7b px=89ae31436c22 path=/ title="tclaude"
+  t=2.1s #7 calm=0.5s still=0.0s changed=dom,pixels doc=complete net=0/645 dom=+61 text=00f9db9aabe6/2114 els=1827 layout=40afce3fdd7b px=86a64799cdcd path=/ title="tclaude"
+  ```
+
+  Each line has the time, how long the page has been calm and still, what
+  changed since the last tick (`load`, `net`, `dom`, `text`, `layout`,
+  `pixels`, `title`, `path`), the document's ready state, requests loading now
+  (`+Nlong` for event streams and requests open over 8s, which do not count) out of
+  all so far, DOM mutations since the last tick, hashes of the visible text
+  (with its length), the element count, a hash of the layout (elements an
+  animation moves are left out) and of the pixels, the path and the title.
+  `--json` prints the same as one JSON object per line. Above, the tclaude
+  dashboard: still fetching at 1.4s, painted and calm from 1.6s, while its
+  once-a-second refresh keeps resetting `still`.
+
+  `--frames DIR` writes a PNG per tick (`--frame-every N` for every Nth,
+  `--frame-scale 0.25` for thumbnails). The watch ends with a final capture,
+  with the patches and marks, into `--out`: at `--for` (default 10s, at most
+  60s), or sooner when the agent asks. The first line names the watch's
+  session. Run the watch in the background, read its lines, and when the page
+  looks done run `page snapshot <name> --session <id>`: it captures the very
+  page that was watched, as it is, not a fresh load, and ends the watch.
+  `--keep-watching` takes a frame instead and lets it run. A line typed on the
+  watch's own stdin (a terminal or a pipe) does the same (`frame` for a frame).
+  A watch holds a browser, so it counts as the agent's one snapshot.
 - **`page dom`** reads up to 10 elements matching a selector in the operator's
   open view of the page: their text, outer HTML or computed styles. It is
   read-only, and needs the page open in the dashboard (it is read through that

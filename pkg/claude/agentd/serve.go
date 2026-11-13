@@ -1452,6 +1452,8 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/pages/{name}/marks", handlePageMarks)
 	mux.HandleFunc("POST /v1/pages/{name}/dom", handlePageDOM)
 	mux.HandleFunc("POST /v1/pages/{name}/snapshot", handlePageSnapshot)
+	mux.HandleFunc("POST /v1/pages/{name}/snapshot/watch", handlePageSnapshotWatch)
+	mux.HandleFunc("POST /v1/pages/{name}/snapshot/watch/{session}/capture", handlePageSnapshotCapture)
 	mux.HandleFunc("GET /v1/pages/{name}/patches", handlePagePatches)
 	mux.HandleFunc("POST /v1/pages/{name}/patches", handlePagePatch)
 	mux.HandleFunc("DELETE /v1/pages/{name}/patches", handlePagePatchesReset)

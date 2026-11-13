@@ -2,8 +2,10 @@ package agentd
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,4 +68,105 @@ func TestPageMarksSVGEscapesText(t *testing.T) {
 	assert.Contains(t, svg, "&lt;script&gt;")
 	assert.NotContains(t, svg, "onload", "an unchecked colour falls back")
 	assert.Contains(t, svg, `points="1,2 3,4"`)
+}
+
+func TestDefaultSnapshotWaitsForThePageToGoCalmAfterItLoads(t *testing.T) {
+	ms := func(n int) time.Duration { return time.Duration(n) * time.Millisecond }
+	curtain := pageProbe{InFlight: 1, Requests: 2, TextHash: "c", TextLen: 10, Elements: 3, Layout: "c"}
+	loaded := curtain
+	loaded.Loaded = true
+	painted := pageProbe{Loaded: true, Requests: 2, Mutations: 30, TextHash: "p", TextLen: 900, Elements: 200, Layout: "p"}
+	quiet := painted
+	quiet.Mutations = 0
+
+	var w pageSettleWait
+	for _, step := range []struct {
+		p  pageProbe
+		at int
+	}{{curtain, 0}, {loaded, 100}, {loaded, 1400}, {painted, 1500}, {quiet, 1600}, {quiet, 1900}} {
+		capture, _ := w.observe(step.p, ms(step.at))
+		require.False(t, capture, "at %dms: the data is still loading, or the page has just painted", step.at)
+	}
+	capture, s := w.observe(quiet, ms(2000))
+	assert.True(t, capture, "calm for 500ms after it painted")
+	assert.True(t, s.Settled)
+	assert.True(t, s.Still, "nothing changed since 1500ms")
+	assert.EqualValues(t, 2000, s.WaitedMS)
+
+	// A clock ticking on a painted page keeps it from being still, not calm.
+	var clock pageSettleWait
+	for i := 0; ; i++ {
+		p := quiet
+		p.TextHash, p.TextLen, p.Mutations = strconv.Itoa(i), 900+i%3, 4
+		capture, s = clock.observe(p, ms(100*i))
+		if capture {
+			break
+		}
+		require.Less(t, i, 20)
+	}
+	assert.True(t, s.Settled)
+	assert.False(t, s.Still)
+
+	// A long-poll does not keep the page from going still.
+	var lp pageSettleWait
+	poll := quiet
+	poll.InFlight, poll.LongLived = 1, 1
+	lp.observe(poll, 0)
+	capture, _ = lp.observe(poll, ms(400))
+	assert.False(t, capture, "at least pageSnapshotSettle after the load, and still for pageSnapshotQuiet")
+	capture, s = lp.observe(poll, ms(500))
+	assert.True(t, capture)
+	assert.True(t, s.Settled)
+
+	// A page that never goes calm is captured at the cap, saying why.
+	var busy pageSettleWait
+	var at time.Duration
+	for i := 0; ; i++ {
+		p := painted
+		p.TextHash, p.TextLen = strconv.Itoa(i), 100+800*(i%2)
+		capture, s = busy.observe(p, at)
+		if capture {
+			break
+		}
+		at += pageSnapshotProbeTick
+		require.Less(t, at, 2*pageSnapshotSettleMax)
+	}
+	assert.False(t, s.Settled)
+	assert.Equal(t, pageSnapshotSettleMax, at)
+	assert.Contains(t, s.Why, "its text kept changing")
+
+	// Before the load nothing is captured, however still the page looks.
+	var never pageSettleWait
+	for at := time.Duration(0); at < 2*pageSnapshotSettleMax; at += time.Second {
+		capture, _ := never.observe(curtain, at)
+		require.False(t, capture)
+	}
+}
+
+func TestChangeTrackerSaysWhatChangedAndForHowLongNothingHas(t *testing.T) {
+	var tr pageChangeTracker
+	a := pageProbe{Loaded: true, Requests: 3, TextHash: "a", Layout: "a", Pixels: "a", Title: "t", Path: "/"}
+	tr.observe(a, 0)
+	assert.Empty(t, tr.observe(a, time.Second))
+	assert.Equal(t, time.Second, tr.still(time.Second))
+	b := a
+	b.Pixels, b.Requests = "b", 4
+	assert.Equal(t, []string{"net", "pixels"}, tr.observe(b, 2*time.Second))
+	assert.Zero(t, tr.still(2*time.Second))
+	c := b
+	c.Pixels = "" // not asked: no change
+	assert.Empty(t, tr.observe(c, 3*time.Second))
+	d := c
+	d.Pixels = "x"
+	tr.observe(d, 4*time.Second)
+	e := d
+	e.Pixels = "y"
+	assert.Equal(t, []string{"pixels"}, tr.observe(e, 5*time.Second))
+	assert.Equal(t, 3*time.Second, tr.still(5*time.Second), "an animation moving pixels is not the page changing")
+	assert.Equal(t, 5*time.Second, tr.calm(5*time.Second), "calm since the first loaded, idle probe")
+	f := e
+	f.InFlight = 1
+	tr.observe(f, 6*time.Second)
+	assert.Zero(t, tr.calm(6*time.Second))
+	assert.Equal(t, "1 requests were still loading", tr.unsettled)
 }
