@@ -197,9 +197,11 @@ func (f pageBrowserForTest) Probe(_ context.Context, pixels bool) (pageProbe, er
 	}
 	return out, err
 }
-func (f pageBrowserForTest) Frame(_ context.Context, scale float64) ([]byte, error) { return f.b.Frame(scale) }
-func (f pageBrowserForTest) Final(context.Context) ([]byte, error)                 { return f.b.Final() }
-func (f pageBrowserForTest) Close()                                                 { f.b.Close() }
+func (f pageBrowserForTest) Frame(_ context.Context, scale float64) ([]byte, error) {
+	return f.b.Frame(scale)
+}
+func (f pageBrowserForTest) Final(context.Context) ([]byte, error) { return f.b.Final() }
+func (f pageBrowserForTest) Close()                                { f.b.Close() }
 
 // SetPageSnapshotBrowserForTest stands in for opening a page in headless
 // Chrome, for watches and the default snapshot's wait alike (the default

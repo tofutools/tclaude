@@ -75,6 +75,15 @@ type watchEvent struct {
 	Title     string   `json:"title"`
 	Changed   []string `json:"changed"`
 	StillMS   int64    `json:"still_ms"`
+	CalmMS    int64    `json:"calm_ms"`
+	Unsettled string   `json:"unsettled"`
+	Requests  int      `json:"requests"`
+	LongLived int      `json:"long_lived"`
+	TextLen   int      `json:"text_len"`
+	Elements  int      `json:"elements"`
+	Layout    string   `json:"layout_hash"`
+	Ready     string   `json:"ready_state"`
+	Path      string   `json:"path"`
 	Frame     string   `json:"frame"`
 	PNG       string   `json:"png"`
 	Reason    string   `json:"reason"`

@@ -114,13 +114,13 @@ func pageCmd() *cobra.Command {
 				Long: "Renders the page in a headless Chrome on the host, at the operator's viewport and scroll, with the latest batch " +
 					"of marks drawn on top (or --seq N, or none with --no-marks), and writes a PNG. Needs Chrome or Chromium on the host " +
 					"(or TCLAUDE_CHROME); tclaude never downloads one.\n\n" +
-					"A plain snapshot waits for the page to go still after it loads: no request loading, no DOM change and the same text " +
-					"and layout for 0.5s, for at most 10s; it says how the wait went.\n\n" +
+					"A plain snapshot waits for the page to go calm after it loads: no request loading, and its visible text and element " +
+					"count steady (within 5%) for 0.5s, for at most 10s; it says how the wait went.\n\n" +
 					"For a single-page app (a page that loads, then fetches its data, then paints, as the tclaude dashboard does), " +
-					"--watch keeps the page open and prints one line per tick (--every, default 500ms): the time, how long it has been still, " +
-					"what changed, requests loading, DOM mutations, hashes of the visible text, layout and pixels, and the title. " +
+					"--watch keeps the page open and prints one line per tick (--every, default 500ms): the time, how long it has been calm " +
+					"(done loading: a ticking clock does not count) and still (nothing changed at all), what changed, requests loading, DOM mutations, hashes of the visible text, layout and pixels, and the title. " +
 					"--frames DIR writes a PNG per tick (--frame-every N, --frame-scale 0.25 for thumbnails). The watch captures at --for " +
-					"(default 10s, at most 60s). To capture sooner, run it in the background and, once the lines show the page still, " +
+					"(default 10s, at most 60s). To capture sooner, run it in the background and, once the lines show the page calm, " +
 					"run `page snapshot <name> --session <id>` with the session its first line names: that captures the very page you " +
 					"watched, as it is, and ends the watch (--keep-watching takes a frame instead). A line on the watch's stdin does the same.",
 				Args:        cobra.ExactArgs(1),
@@ -548,11 +548,15 @@ func runPageSnapshot(p *pageSnapshotParams, name string, stdin io.Reader, stdout
 	fmt.Fprintf(stdout, "Wrote %s: %s at %dx%d, scrolled to %d,%d, %s.\n", p.Out, resp.Path, resp.Width, resp.Height, resp.ScrollX, resp.ScrollY,
 		pageSnapshotMarks(resp.MarksSeq, resp.Patches))
 	if s := resp.Settle; s != nil {
-		if s.Settled {
+		switch {
+		case s.Settled && s.Still:
 			fmt.Fprintf(stdout, "The page went still %s after it opened.\n", secs(s.WaitedMS))
-		} else {
-			fmt.Fprintf(stdout, "The page did not go still within %s (%s): captured anyway. For a single-page app, "+
-				"--watch shows it settle and lets you choose when to capture.\n", secs(s.WaitedMS), s.Why)
+		case s.Settled:
+			fmt.Fprintf(stdout, "The page went calm %s after it opened: done loading, though something on it still changes "+
+				"(a clock, a poll); --watch shows what.\n", secs(s.WaitedMS))
+		default:
+			fmt.Fprintf(stdout, "The page did not go calm within %s (%s): captured anyway. "+
+				"--watch shows it change and lets you choose when to capture.\n", secs(s.WaitedMS), s.Why)
 		}
 	}
 	return rcOK

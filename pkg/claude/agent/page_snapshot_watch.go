@@ -51,10 +51,13 @@ type pageWatchEventWire struct {
 	Mutations  int      `json:"mutations"`
 	TextHash   string   `json:"text_hash,omitempty"`
 	TextLen    int      `json:"text_len"`
+	Elements   int      `json:"elements"`
 	LayoutHash string   `json:"layout_hash,omitempty"`
 	PixelHash  string   `json:"pixel_hash,omitempty"`
 	Changed    []string `json:"changed"`
 	StillMS    int64    `json:"still_ms"`
+	CalmMS     int64    `json:"calm_ms"`
+	Unsettled  string   `json:"unsettled,omitempty"`
 	Frame      string   `json:"frame,omitempty"`
 	FrameFile  string   `json:"frame_file,omitempty"`
 	Note       string   `json:"note,omitempty"`
@@ -77,10 +80,12 @@ type pageSnapshotWire struct {
 	Settle   *struct {
 		WaitedMS int64  `json:"waited_ms"`
 		Settled  bool   `json:"settled"`
+		Still    bool   `json:"still,omitempty"`
 		Why      string `json:"why,omitempty"`
 	} `json:"settle,omitempty"`
 	WatchMS  int64  `json:"watch_ms,omitempty"`
 	StillMS  *int64 `json:"still_ms,omitempty"`
+	CalmMS   *int64 `json:"calm_ms,omitempty"`
 	Captured string `json:"captured,omitempty"`
 }
 
@@ -249,8 +254,8 @@ func runPageSnapshotWatch(p *pageSnapshotParams, name string, stdin io.Reader, s
 				emitJSON(ev)
 				return rcOK
 			}
-			printf("Wrote %s at t=%s, the watch's end (the page had not changed for %s): %s at %dx%d, %s.\n", p.Out, secs(ev.ElapsedMS),
-				secs(ev.StillMS), start.Path, start.Width, start.Height, pageSnapshotMarks(start.MarksSeq, start.Patches))
+			printf("Wrote %s at t=%s, the watch's end (the page had been calm for %s, still for %s): %s at %dx%d, %s.\n", p.Out, secs(ev.ElapsedMS),
+				secs(ev.CalmMS), secs(ev.StillMS), start.Path, start.Width, start.Height, pageSnapshotMarks(start.MarksSeq, start.Patches))
 			return rcOK
 		case "end":
 			captures.Wait()
@@ -286,7 +291,7 @@ func pageWatchTickLine(ev pageWatchEventWire) string {
 	if len(ev.Changed) > 0 {
 		changed = strings.Join(ev.Changed, ",")
 	}
-	fmt.Fprintf(&sb, "t=%s #%d still=%s changed=%s", secs(ev.ElapsedMS), ev.N, secs(ev.StillMS), changed)
+	fmt.Fprintf(&sb, "t=%s #%d calm=%s still=%s changed=%s", secs(ev.ElapsedMS), ev.N, secs(ev.CalmMS), secs(ev.StillMS), changed)
 	doc := ev.ReadyState
 	if doc == "" {
 		doc = "-"
@@ -303,7 +308,7 @@ func pageWatchTickLine(ev pageWatchEventWire) string {
 		fmt.Fprintf(&sb, " dom=+%d", ev.Mutations)
 	}
 	if ev.TextHash != "" {
-		fmt.Fprintf(&sb, " text=%s/%d layout=%s", ev.TextHash, ev.TextLen, ev.LayoutHash)
+		fmt.Fprintf(&sb, " text=%s/%d els=%d layout=%s", ev.TextHash, ev.TextLen, ev.Elements, ev.LayoutHash)
 	}
 	if ev.PixelHash != "" {
 		fmt.Fprintf(&sb, " px=%s", ev.PixelHash)
@@ -317,6 +322,9 @@ func pageWatchTickLine(ev pageWatchEventWire) string {
 	}
 	if ev.Note != "" {
 		fmt.Fprintf(&sb, " (%s)", ev.Note)
+	}
+	if ev.CalmMS == 0 && ev.Unsettled != "" {
+		fmt.Fprintf(&sb, " (not calm: %s)", ev.Unsettled)
 	}
 	return sb.String()
 }
@@ -352,19 +360,22 @@ func runPageSnapshotCapture(name, session string, keep bool, out string, asJSON 
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return rcIOFailure
 	}
-	var still int64
+	var still, calm int64
 	if resp.StillMS != nil {
 		still = *resp.StillMS
 	}
+	if resp.CalmMS != nil {
+		calm = *resp.CalmMS
+	}
 	if asJSON {
-		return writeDrawingBoardJSON(stdout, map[string]any{"file": out, "captured": resp.Captured, "watch_ms": resp.WatchMS, "still_ms": still,
+		return writeDrawingBoardJSON(stdout, map[string]any{"file": out, "captured": resp.Captured, "watch_ms": resp.WatchMS, "still_ms": still, "calm_ms": calm,
 			"width": resp.Width, "height": resp.Height, "scroll_x": resp.ScrollX, "scroll_y": resp.ScrollY, "path": resp.Path, "marks_seq": resp.MarksSeq})
 	}
 	what := "the final capture; the watch has ended"
 	if resp.Captured == "frame" {
 		what = "a frame (no patches or marks drawn); the watch goes on"
 	}
-	fmt.Fprintf(stdout, "Wrote %s at t=%s of the watch (the page had not changed for %s), %s: %s at %dx%d, %s.\n", out, secs(resp.WatchMS),
-		secs(still), what, resp.Path, resp.Width, resp.Height, pageSnapshotMarks(resp.MarksSeq, resp.Patches))
+	fmt.Fprintf(stdout, "Wrote %s at t=%s of the watch (the page had been calm for %s, still for %s), %s: %s at %dx%d, %s.\n", out, secs(resp.WatchMS),
+		secs(calm), secs(still), what, resp.Path, resp.Width, resp.Height, pageSnapshotMarks(resp.MarksSeq, resp.Patches))
 	return rcOK
 }

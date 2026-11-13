@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -20,7 +19,7 @@ import (
 // (tk_83873896). The page is opened once and then probed: each probe reads
 // what is changing (requests in flight, DOM mutations, hashes of the visible
 // text, the layout and the pixels), so a snapshot waits for the page to go
-// still, or the agent watches it and chooses when to capture. Final draws the
+// calm, or the agent watches it and chooses when to capture. Final draws the
 // operator's patches and marks and captures; nothing is probed after it.
 
 // pageSnapshotBrowser is one page open in Chrome. A var-backed opener
@@ -52,7 +51,8 @@ type pageProbe struct {
 	Mutations int // DOM mutation records since the last probe (-1: unknown)
 	TextHash  string
 	TextLen   int
-	Layout    string // a hash of the boxes of the visible elements
+	Elements  int    // visible elements
+	Layout    string // a hash of the boxes of the visible elements, but those an animation moves
 	Pixels    string // a hash of a small screenshot ("" when not asked)
 	Note      string // why a probe read nothing (the page is between documents)
 }
@@ -83,13 +83,21 @@ const pageProbeJS = `(function(){
     return ('0000000' + (a >>> 0).toString(16)).slice(-8) + ('000' + (b >>> 0).toString(16)).slice(-4);
   }
   var body = document.body, text = body ? body.innerText || '' : '';
-  var boxes = [], els = body ? body.getElementsByTagName('*') : [], n = Math.min(els.length, 5000);
+  // An element a CSS animation or transition is moving (or inside one) is
+  // left out of the layout: a spinner is not the page changing.
+  var moving = new Set();
+  try { document.getAnimations().forEach(function(a){ if (a.playState === 'running' && a.effect && a.effect.target) moving.add(a.effect.target); }); } catch (e) {}
+  function still(el) { for (; el; el = el.parentElement) { if (moving.has(el)) return false; } return true; }
+  var boxes = [], seen = 0, els = body ? body.getElementsByTagName('*') : [], n = Math.min(els.length, 5000);
   for (var i = 0; i < n; i++) {
     var r = els[i].getBoundingClientRect();
-    if (r.width || r.height) boxes.push(Math.round(r.x) + ',' + Math.round(r.y) + ',' + Math.round(r.width) + ',' + Math.round(r.height));
+    if (!r.width && !r.height) continue;
+    seen++;
+    if (moving.size && !still(els[i])) continue;
+    boxes.push(Math.round(r.x) + ',' + Math.round(r.y) + ',' + Math.round(r.width) + ',' + Math.round(r.height));
   }
   return JSON.stringify({m: m, rs: document.readyState, o: location.origin, p: location.pathname + location.search + location.hash,
-    t: document.title, th: h(text), tl: text.length, lh: h(boxes.join(';')), sx: Math.round(scrollX), sy: Math.round(scrollY),
+    t: document.title, th: h(text), tl: text.length, lh: h(boxes.join(';')), ne: seen, sx: Math.round(scrollX), sy: Math.round(scrollY),
     vw: innerWidth, vh: innerHeight});
 })()`
 
@@ -385,6 +393,7 @@ func (p *chromePage) Probe(ctx context.Context, pixels bool) (pageProbe, error) 
 		TH string `json:"th"`
 		TL int    `json:"tl"`
 		LH string `json:"lh"`
+		NE int    `json:"ne"`
 		SX int    `json:"sx"`
 		SY int    `json:"sy"`
 		VW int    `json:"vw"`
@@ -402,7 +411,7 @@ func (p *chromePage) Probe(ctx context.Context, pixels bool) (pageProbe, error) 
 		return out, nil
 	}
 	out.Mutations, out.ReadyState, out.Path, out.Title = v.M, v.RS, v.P, v.T
-	out.TextHash, out.TextLen, out.Layout = v.TH, v.TL, v.LH
+	out.TextHash, out.TextLen, out.Layout, out.Elements = v.TH, v.TL, v.LH, v.NE
 	if pixels {
 		png, err := p.shot(ctx, 0.25, v.SX, v.SY, v.VW, v.VH)
 		if err != nil {
@@ -541,25 +550,40 @@ func (p *chromePage) Final(ctx context.Context) ([]byte, error) {
 	return png, p.why(ctx, err)
 }
 
-// ---- deciding the page is still ----
+// ---- deciding the page is still, or calm ----
 
-// The default snapshot waits for the page to go still: loaded, then no
-// loading request in flight, no DOM mutation and the same text and layout for
-// pageSnapshotQuiet, at least pageSnapshotSettle after the load, and at most
-// pageSnapshotSettleMax. A page that never goes still (an animation driven by
-// script, a ticking clock) is captured at the cap, and the answer says why.
+// Two clocks follow a page from probe to probe:
+//
+//   - still: nothing changed at all (requests, DOM, text, layout, title,
+//     path). A live page (a ticking clock, a poll that re-renders) is never
+//     still for long.
+//   - calm: the page has stopped loading. No request is loading, the title
+//     and path hold, and the visible text and element count stay within
+//     pageCalmTolerance of where they were: a clock or a counter ticking does
+//     not break it; a curtain giving way to the app does.
+//
+// Pixels are reported but count for neither: an animation moves them.
+//
+// The default snapshot waits for the page to go calm after it loads: calm for
+// pageSnapshotQuiet, at least pageSnapshotSettle after the load and at most
+// pageSnapshotSettleMax. A page that never goes calm is captured at the cap,
+// and the answer says why.
 const (
 	pageSnapshotSettle    = 300 * time.Millisecond
 	pageSnapshotQuiet     = 500 * time.Millisecond
 	pageSnapshotSettleMax = 10 * time.Second
 	pageSnapshotProbeTick = 100 * time.Millisecond
+	pageCalmTolerance     = 0.05
 )
 
-// pageChangeTracker follows a page from probe to probe: what changed since
-// the last one, and since when nothing has.
 type pageChangeTracker struct {
 	prev       *pageProbe
 	lastChange time.Duration
+	// calmRef is the probe the page has been calm since, at calmSince.
+	calmRef   *pageProbe
+	calmSince time.Duration
+	// unsettled is what last broke the calm.
+	unsettled string
 }
 
 // observe takes a probe made at `at` (since the page opened) and says what
@@ -576,8 +600,9 @@ func (t *pageChangeTracker) observe(p pageProbe, at time.Duration) []string {
 	if prev == nil {
 		prev = &pageProbe{}
 	}
+	loading := p.InFlight - p.LongLived
 	add("load", p.Loaded != prev.Loaded)
-	add("net", p.InFlight-p.LongLived > 0 || p.Requests != prev.Requests)
+	add("net", loading > 0 || p.Requests != prev.Requests)
 	add("dom", p.Mutations != 0)
 	add("text", p.TextHash != prev.TextHash)
 	add("layout", p.Layout != prev.Layout)
@@ -587,11 +612,45 @@ func (t *pageChangeTracker) observe(p pageProbe, at time.Duration) []string {
 	if p.Note != "" {
 		changed = append(changed, "busy")
 	}
-	if len(changed) > 0 || t.prev == nil {
+	if t.prev == nil || len(changed) > 1 || (len(changed) == 1 && changed[0] != "pixels") {
 		t.lastChange = at
 	}
 	t.prev = &p
+
+	ref := t.calmRef
+	why := ""
+	switch {
+	case !p.Loaded:
+		why = "it had not loaded"
+	case p.Note != "":
+		why = "it was " + p.Note
+	case loading > 0:
+		why = fmt.Sprintf("%d requests were still loading", loading)
+	case ref == nil:
+		why = "it had just finished loading"
+	case p.Title != ref.Title || p.Path != ref.Path:
+		why = "its title or path changed"
+	case !near(p.TextLen, ref.TextLen):
+		why = fmt.Sprintf("its text kept changing (%d to %d characters)", ref.TextLen, p.TextLen)
+	case !near(p.Elements, ref.Elements):
+		why = fmt.Sprintf("its elements kept changing (%d to %d)", ref.Elements, p.Elements)
+	}
+	if why != "" {
+		t.calmRef, t.calmSince, t.unsettled = &p, at, why
+		if !p.Loaded || p.Note != "" || loading > 0 {
+			t.calmRef = nil // calm starts only once the page is loaded and idle
+		}
+	}
 	return changed
+}
+
+// near says b is within pageCalmTolerance of a (and at least one unit).
+func near(a, b int) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return float64(d) <= max(float64(a)*pageCalmTolerance, 1)
 }
 
 // still is how long nothing has changed, as of at.
@@ -602,11 +661,21 @@ func (t *pageChangeTracker) still(at time.Duration) time.Duration {
 	return at - t.lastChange
 }
 
+// calm is how long the page has been calm, as of at.
+func (t *pageChangeTracker) calm(at time.Duration) time.Duration {
+	if t.calmRef == nil {
+		return 0
+	}
+	return at - t.calmSince
+}
+
 // pageSettle is how the default wait went.
 type pageSettle struct {
 	WaitedMS int64 `json:"waited_ms"`
 	Settled  bool  `json:"settled"`
-	// Why says what kept the page from going still, when it did not.
+	// Still says the page had stopped changing altogether, not only calmed.
+	Still bool `json:"still,omitempty"`
+	// Why says what kept the page from going calm, when it did not.
 	Why string `json:"why,omitempty"`
 }
 
@@ -615,14 +684,11 @@ type pageSettleWait struct {
 	track  pageChangeTracker
 	loadAt time.Duration
 	loaded bool
-	last   []string
-	probe  pageProbe
 }
 
 // observe takes a probe made at `at` and says whether to capture now.
 func (w *pageSettleWait) observe(p pageProbe, at time.Duration) (capture bool, out pageSettle) {
-	w.last = w.track.observe(p, at)
-	w.probe = p
+	w.track.observe(p, at)
 	if p.Loaded && !w.loaded {
 		w.loaded, w.loadAt = true, at
 	}
@@ -631,39 +697,19 @@ func (w *pageSettleWait) observe(p pageProbe, at time.Duration) (capture bool, o
 		return false, out
 	}
 	since := at - w.loadAt
-	if since >= pageSnapshotSettle && w.track.still(at) >= pageSnapshotQuiet {
-		out.Settled = true
+	if since >= pageSnapshotSettle && w.track.calm(at) >= pageSnapshotQuiet {
+		out.Settled, out.Still = true, w.track.still(at) >= pageSnapshotQuiet
 		return true, out
 	}
 	if since >= pageSnapshotSettleMax {
-		out.Why = w.why()
+		out.Why = w.track.unsettled
 		return true, out
 	}
 	return false, out
 }
 
-func (w *pageSettleWait) why() string {
-	var parts []string
-	for _, c := range w.last {
-		switch c {
-		case "net":
-			parts = append(parts, fmt.Sprintf("%d requests still loading", w.probe.InFlight-w.probe.LongLived))
-		case "dom":
-			parts = append(parts, "the DOM kept changing")
-		case "text", "layout":
-			parts = append(parts, "its "+c+" kept changing")
-		default:
-			parts = append(parts, c+" changed")
-		}
-	}
-	if len(parts) == 0 {
-		return "it was still for less than " + pageSnapshotQuiet.String()
-	}
-	return strings.Join(parts, ", ")
-}
-
 // renderPageSnapshot is the default snapshot: open the page, wait for it to
-// go still (capped), capture.
+// go calm (capped), capture.
 func renderPageSnapshot(ctx context.Context, job pageSnapshotJob) ([]byte, pageSettle, error) {
 	b, err := pageSnapshotOpen(ctx, job)
 	if err != nil {

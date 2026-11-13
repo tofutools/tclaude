@@ -69,7 +69,7 @@ type pageSnapshotJob struct {
 	pageID    string // the page's id, for the watch registry
 }
 
-// pageSnapshotRender renders a job to PNG bytes once the page has gone still
+// pageSnapshotRender renders a job to PNG bytes once the page has gone calm
 // (capped). A var so flow tests can stand in for Chrome.
 var pageSnapshotRender = renderPageSnapshot
 
@@ -88,19 +88,21 @@ type pageSnapshotResponse struct {
 	MarksSeq int64  `json:"marks_seq,omitempty"`
 	// Patches is how many live patches the page was rendered with.
 	Patches int `json:"patches,omitempty"`
-	// Settle is how the wait for the page to go still went.
+	// Settle is how the wait for the page to go calm went.
 	Settle *pageSettle `json:"settle,omitempty"`
 	// WatchMS is how long the page had been watched, for a watch's capture.
 	WatchMS int64 `json:"watch_ms,omitempty"`
 	// StillMS is how long the page had not changed, for a watch's capture.
 	StillMS *int64 `json:"still_ms,omitempty"`
+	// CalmMS is how long the page had been calm, for a watch's capture.
+	CalmMS *int64 `json:"calm_ms,omitempty"`
 	// Captured is final (the capture that ended a watch) or frame (a frame
 	// of a watch, which goes on), for a watch's capture.
 	Captured string `json:"captured,omitempty"`
 }
 
 // POST /v1/pages/{name}/snapshot — {seq?, no_marks?}: the page as a PNG with
-// the latest (or the given) batch of marks, once it has gone still (capped).
+// the latest (or the given) batch of marks, once it has gone calm (capped).
 func handlePageSnapshot(w http.ResponseWriter, r *http.Request) {
 	var req pageSnapshotRequest
 	t, ok := pageSnapshotPrepare(w, r, &req)

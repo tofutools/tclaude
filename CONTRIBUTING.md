@@ -361,9 +361,11 @@ A bare `&` works only in a shell that stays alive. A tool call's shell exits
 when the command returns, and its orphaned jobs leave your process tree.
 
 The operator then sees the seeded dashboard, live, in their own. This works
-for the `full` fixture and the other docshots fixtures, but not `page`. `tclaude
-agent page snapshot` renders the page only 300ms after it loads, before the
-dashboard has painted. To see it yourself, use Playwright on the URL.
+for the `full` fixture and the other docshots fixtures, but not `page`. To see
+it yourself, `tclaude agent page snapshot sandbox` waits for the dashboard to
+finish loading before it captures, and `page snapshot sandbox --watch` shows it
+go from the loading curtain to painted, tick by tick (see "Marks, snapshots and
+DOM reads" in `docs/live-page.md`). Playwright on the URL works too.
 
 **Say so in the PR.** Say what you looked at and how: for example, "checked
 the Task board edit form in the sandbox with Playwright; `ui.sh tour`

@@ -21,7 +21,7 @@ import (
 // pixels, the title, and what changed. A tick may carry a frame. The watch
 // ends with a final capture of the page as it is then: at --for, or when the
 // agent asks (`page snapshot --session ID`, or a line on the watch's stdin).
-// The capture is of the same open page the agent saw go still, never a
+// The capture is of the same open page the agent saw settle, never a
 // fresh load.
 
 const (
@@ -71,11 +71,14 @@ type pageWatchEvent struct {
 	Mutations  int      `json:"mutations"`
 	TextHash   string   `json:"text_hash,omitempty"`
 	TextLen    int      `json:"text_len"`
+	Elements   int      `json:"elements"`
 	LayoutHash string   `json:"layout_hash,omitempty"`
 	PixelHash  string   `json:"pixel_hash,omitempty"`
 	Changed    []string `json:"changed"`
 	StillMS    int64    `json:"still_ms"`
-	Frame      string   `json:"frame,omitempty"` // a PNG, base64
+	CalmMS     int64    `json:"calm_ms"`
+	Unsettled  string   `json:"unsettled,omitempty"` // what last broke the calm
+	Frame      string   `json:"frame,omitempty"`     // a PNG, base64
 	Note       string   `json:"note,omitempty"`
 
 	// final
@@ -107,6 +110,7 @@ type pageCaptureReply struct {
 	png     []byte
 	elapsed time.Duration
 	still   time.Duration
+	calm    time.Duration
 	err     error
 }
 
@@ -217,7 +221,7 @@ func handlePageSnapshotWatch(w http.ResponseWriter, r *http.Request) {
 				fail(err)
 				return
 			}
-			emit(pageWatchEvent{Type: "final", Reason: "for", StillMS: track.still(at).Milliseconds(), PNG: base64.StdEncoding.EncodeToString(png)})
+			emit(pageWatchEvent{Type: "final", Reason: "for", StillMS: track.still(at).Milliseconds(), CalmMS: track.calm(at).Milliseconds(), PNG: base64.StdEncoding.EncodeToString(png)})
 			return
 		}
 		p, err := b.Probe(ctx, true)
@@ -228,12 +232,12 @@ func handlePageSnapshotWatch(w http.ResponseWriter, r *http.Request) {
 		at = time.Since(start)
 		ev := pageWatchEvent{Type: "tick", N: n, Loaded: p.Loaded, ReadyState: p.ReadyState, Path: p.Path, Title: p.Title,
 			InFlight: p.InFlight, LongLived: p.LongLived, Requests: p.Requests, Mutations: p.Mutations,
-			TextHash: p.TextHash, TextLen: p.TextLen, LayoutHash: p.Layout, PixelHash: p.Pixels, Note: p.Note}
+			TextHash: p.TextHash, TextLen: p.TextLen, Elements: p.Elements, LayoutHash: p.Layout, PixelHash: p.Pixels, Note: p.Note}
 		ev.Changed = track.observe(p, at)
 		if ev.Changed == nil {
 			ev.Changed = []string{}
 		}
-		ev.StillMS = track.still(at).Milliseconds()
+		ev.StillMS, ev.CalmMS, ev.Unsettled = track.still(at).Milliseconds(), track.calm(at).Milliseconds(), track.unsettled
 		if req.FrameEvery > 0 && (n-1)%req.FrameEvery == 0 && p.Note == "" {
 			if frames < pageWatchMaxFrames {
 				if png, err := b.Frame(ctx, scale); err == nil {
@@ -263,7 +267,7 @@ func handlePageSnapshotWatch(w http.ResponseWriter, r *http.Request) {
 				return
 			case c := <-watch.reqs:
 				at := time.Since(start)
-				reply := pageCaptureReply{elapsed: at, still: track.still(at)}
+				reply := pageCaptureReply{elapsed: at, still: track.still(at), calm: track.calm(at)}
 				if c.keep {
 					reply.png, reply.err = b.Frame(ctx, 1)
 					c.reply <- reply
@@ -279,7 +283,7 @@ func handlePageSnapshotWatch(w http.ResponseWriter, r *http.Request) {
 					fail(reply.err)
 					return
 				}
-				emit(pageWatchEvent{Type: "end", Reason: "captured", StillMS: reply.still.Milliseconds()})
+				emit(pageWatchEvent{Type: "end", Reason: "captured", StillMS: reply.still.Milliseconds(), CalmMS: reply.calm.Milliseconds()})
 				return
 			}
 		}
@@ -342,10 +346,10 @@ func handlePageSnapshotCapture(w http.ResponseWriter, r *http.Request) {
 		writePageSnapshotError(w, reply.err)
 		return
 	}
-	still := reply.still.Milliseconds()
+	still, calm := reply.still.Milliseconds(), reply.calm.Milliseconds()
 	resp := watch.resp
 	resp.PNG = base64.StdEncoding.EncodeToString(reply.png)
-	resp.WatchMS, resp.StillMS = reply.elapsed.Milliseconds(), &still
+	resp.WatchMS, resp.StillMS, resp.CalmMS = reply.elapsed.Milliseconds(), &still, &calm
 	resp.Captured = "final"
 	if req.Keep {
 		// A frame is the page as it is: no patches or marks drawn.

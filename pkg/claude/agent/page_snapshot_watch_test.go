@@ -42,10 +42,10 @@ func TestPageSnapshotWatchPrintsTicksWritesFramesAndTheFinalCapture(t *testing.T
 	sent := fakeWatch(t,
 		map[string]any{"type": "start", "session": "wabc", "every_ms": 250, "for_ms": 3000, "width": 1280, "height": 800, "path": "/", "marks_seq": 2},
 		map[string]any{"type": "tick", "n": 1, "elapsed_ms": 40, "in_flight": 2, "requests": 2, "mutations": 12, "text_hash": "aaa", "text_len": 10,
-			"layout_hash": "lll", "pixel_hash": "ppp", "title": "loading", "path": "/", "ready_state": "loading", "changed": []string{"net", "dom"}, "still_ms": 0, "frame": b64("f1")},
+			"layout_hash": "lll", "pixel_hash": "ppp", "title": "loading", "path": "/", "ready_state": "loading", "changed": []string{"net", "dom"}, "still_ms": 0, "unsettled": "it had not loaded", "frame": b64("f1")},
 		map[string]any{"type": "tick", "n": 2, "elapsed_ms": 290, "loaded": true, "in_flight": 1, "long_lived": 1, "requests": 3, "mutations": 0, "text_hash": "bbb", "text_len": 99,
-			"layout_hash": "mmm", "pixel_hash": "qqq", "title": "ready", "path": "/", "ready_state": "complete", "changed": []string{}, "still_ms": 1250},
-		map[string]any{"type": "final", "elapsed_ms": 3000, "reason": "for", "still_ms": 1500, "png": b64("PNG")},
+			"layout_hash": "mmm", "pixel_hash": "qqq", "title": "ready", "path": "/", "ready_state": "complete", "changed": []string{}, "still_ms": 1250, "calm_ms": 900, "elements": 42},
+		map[string]any{"type": "final", "elapsed_ms": 3000, "reason": "for", "still_ms": 1500, "calm_ms": 2500, "png": b64("PNG")},
 	)
 	out := filepath.Join(dir, "app.png")
 	var stdout, stderr bytes.Buffer
@@ -62,10 +62,11 @@ func TestPageSnapshotWatchPrintsTicksWritesFramesAndTheFinalCapture(t *testing.T
 	assert.Contains(t, lines[1], "tclaude agent page snapshot app --session wabc")
 	assert.NotContains(t, lines[1], "a line here", "no stdin to type into")
 	frame := filepath.Join(dir, "frames", "frame-001.png")
-	assert.Equal(t, `t=0.0s #1 still=0.0s changed=net,dom doc=loading(not loaded) net=2/2 dom=+12 text=aaa/10 layout=lll px=ppp path=/ title="loading" frame=`+frame, lines[2])
-	assert.Equal(t, `t=0.3s #2 still=1.2s changed=- doc=complete net=0+1long/3 dom=+0 text=bbb/99 layout=mmm px=qqq path=/ title="ready"`, lines[3])
+	assert.Equal(t, `t=0.0s #1 calm=0.0s still=0.0s changed=net,dom doc=loading(not loaded) net=2/2 dom=+12 text=aaa/10 els=0 layout=lll px=ppp path=/ title="loading" frame=`+frame+
+		` (not calm: it had not loaded)`, lines[2])
+	assert.Equal(t, `t=0.3s #2 calm=0.9s still=1.2s changed=- doc=complete net=0+1long/3 dom=+0 text=bbb/99 els=42 layout=mmm px=qqq path=/ title="ready"`, lines[3])
 	assert.Contains(t, lines[4], "Wrote "+out+" at t=3.0s")
-	assert.Contains(t, lines[4], "had not changed for 1.5s")
+	assert.Contains(t, lines[4], "calm for 2.5s, still for 1.5s")
 	assert.Contains(t, lines[4], "marks of batch 2")
 	got, err := os.ReadFile(frame)
 	require.NoError(t, err)
