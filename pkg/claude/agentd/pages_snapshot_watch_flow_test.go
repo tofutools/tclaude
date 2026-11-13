@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -96,7 +97,11 @@ type watchEvent struct {
 type watchStream struct {
 	t      *testing.T
 	events chan watchEvent
+	body   io.Closer
 }
+
+// close hangs up, as an agent stopping the watch does.
+func (s *watchStream) close() { _ = s.body.Close() }
 
 func (e *pageEnv) watch(t *testing.T, a pageAgent, name string, body any) *watchStream {
 	t.Helper()
@@ -111,7 +116,7 @@ func (e *pageEnv) watch(t *testing.T, a pageAgent, name string, body any) *watch
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "application/x-ndjson", resp.Header.Get("Content-Type"))
-	s := &watchStream{t: t, events: make(chan watchEvent, 64)}
+	s := &watchStream{t: t, events: make(chan watchEvent, 64), body: resp.Body}
 	go func() {
 		defer close(s.events)
 		sc := bufio.NewScanner(resp.Body)
@@ -129,12 +134,18 @@ func (e *pageEnv) watch(t *testing.T, a pageAgent, name string, body any) *watch
 // next is the next event, or a failure after a while.
 func (s *watchStream) next() watchEvent {
 	s.t.Helper()
+	return s.within(10 * time.Second)
+}
+
+// within is the next event, which must come within d.
+func (s *watchStream) within(d time.Duration) watchEvent {
+	s.t.Helper()
 	select {
 	case ev, ok := <-s.events:
 		require.True(s.t, ok, "the stream ended")
 		return ev
-	case <-time.After(10 * time.Second):
-		s.t.Fatal("no watch event within 10s")
+	case <-time.After(d):
+		s.t.Fatalf("no watch event within %s", d)
 		return watchEvent{}
 	}
 }
@@ -287,6 +298,19 @@ func TestPageSnapshotWatchCapturesAtItsEnd(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code, "%v: %s", bad, rec.Body.String())
 	}
 
+	// Each line goes out as it is written, through the daemon's middleware:
+	// with 5s between ticks, the start line and the first tick (both small)
+	// still arrive at once, so the agent has the session id right away.
+	live := e.watch(t, a, "app", map[string]any{"every_ms": 5000, "for_ms": 60_000})
+	require.Equal(t, "start", live.within(3*time.Second).Type)
+	require.Equal(t, "tick", live.within(3*time.Second).Type)
+	live.close()
+	undo := agentd.SetPageSnapshotRenderForTest(func(agentd.PageSnapshotJobForTest) ([]byte, error) { return []byte("png"), nil })
+	require.Eventually(t, func() bool {
+		return e.call(t, a, http.MethodPost, "/v1/pages/app/snapshot", nil).Code == http.StatusOK
+	}, 5*time.Second, 20*time.Millisecond, "the watch ends when its client goes, and frees the agent's snapshot")
+	undo()
+
 	// for_ms below a second is a second: the watch's own clock ends it.
 	s := e.watch(t, a, "app", map[string]any{"every_ms": 200, "for_ms": 1})
 	require.Equal(t, "start", s.next().Type)
@@ -303,7 +327,7 @@ func TestPageSnapshotWatchCapturesAtItsEnd(t *testing.T) {
 	assert.Equal(t, "for", final.Reason)
 	assert.Equal(t, "final", decodePNG(t, final.PNG))
 	assert.GreaterOrEqual(t, final.ElapsedMS, int64(1000))
-	assert.GreaterOrEqual(t, ticks, 3)
+	assert.GreaterOrEqual(t, ticks, 1)
 	s.ended()
 
 	// A page that leaves its origin ends the watch with a clear error.

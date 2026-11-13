@@ -128,11 +128,14 @@ func handlePageSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func writePageSnapshotError(w http.ResponseWriter, err error) {
-	code := "snapshot_failed"
-	if errors.Is(err, errNoChrome) {
+	code, status := "snapshot_failed", http.StatusServiceUnavailable
+	switch {
+	case errors.Is(err, errNoChrome):
 		code = "no_chrome"
+	case errors.Is(err, errPageNotLoaded):
+		code, status = "not_loaded", http.StatusConflict
 	}
-	writeError(w, http.StatusServiceUnavailable, code, err.Error())
+	writeError(w, status, code, err.Error())
 }
 
 // pageSnapshotTarget is what a snapshot renders, and for whom.
@@ -385,7 +388,7 @@ func chromeArgs(profile string) []string {
 		"--headless=new", "--remote-debugging-pipe",
 		"--user-data-dir=" + profile, "--no-first-run", "--no-default-browser-check",
 		"--disable-background-networking", "--disable-component-update", "--disable-sync",
-		"--disable-extensions", "--disable-default-apps", "--disable-features=Translate,OptimizationHints,MediaRouter",
+		"--disable-extensions", "--disable-default-apps", "--block-new-web-contents", "--disable-features=Translate,OptimizationHints,MediaRouter",
 		"--no-proxy-server", "--mute-audio", "--hide-scrollbars", "--password-store=basic", "--use-mock-keychain",
 		"about:blank",
 	}

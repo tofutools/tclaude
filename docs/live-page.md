@@ -515,7 +515,7 @@ tclaude agent page dom <name> <selector> [--text|--html|--styles]
   Each line has the time, how long the page has been calm and still, what
   changed since the last tick (`load`, `net`, `dom`, `text`, `layout`,
   `pixels`, `title`, `path`), the document's ready state, requests loading now
-  (`+Nlong` for long-polls and streams open over 3s, which do not count) out of
+  (`+Nlong` for event streams and requests open over 8s, which do not count) out of
   all so far, DOM mutations since the last tick, hashes of the visible text
   (with its length), the element count, a hash of the layout (elements an
   animation moves are left out) and of the pixels, the path and the title.

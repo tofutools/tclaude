@@ -3,9 +3,12 @@ package agentd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -111,4 +114,50 @@ func TestChromeProbesFollowASlowAppFromCurtainToPainted(t *testing.T) {
 	png, err := b.Final(ctx)
 	require.NoError(t, err)
 	assert.Greater(t, len(png), len(frame), "the final capture is full size")
+}
+
+// What a page starts beyond itself (a popup, a worker, a service worker) is
+// held to the same filter as the page: it never reaches another host.
+func TestChromeKeepsAPagesWorkersAndPopupsOnItsOrigin(t *testing.T) {
+	chromeForTest(t)
+	var hits atomic.Int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		t.Logf("elsewhere was reached: %s", r.URL.Path)
+	}))
+	t.Cleanup(elsewhere.Close)
+	reached := make(chan string, 8)
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sw.js", "/worker.js":
+			w.Header().Set("Content-Type", "text/javascript")
+			_, _ = fmt.Fprintf(w, "fetch(%q).catch(function(){}); fetch(%q);", elsewhere.URL+r.URL.Path, strings.TrimSuffix(r.URL.Path, ".js")+"-ran")
+		case "/sw-ran", "/worker-ran":
+			reached <- r.URL.Path
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = fmt.Fprintf(w, `<!doctype html><title>x</title><body>page<script>
+try { window.open(%[1]q); } catch (e) {}
+new Worker('/worker.js');
+navigator.serviceWorker && navigator.serviceWorker.register('/sw.js').catch(function(){});
+</script></body>`, elsewhere.URL+"/popup")
+		}
+	}))
+	t.Cleanup(page.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), pageSnapshotTimeout)
+	defer cancel()
+	b, err := openPageSnapshotChrome(ctx, pageSnapshotJob{URL: page.URL + "/", Origin: page.URL, Width: 800, Height: 600})
+	require.NoError(t, err)
+	defer b.Close()
+	// A worker runs (and reaches the page's own origin)...
+	select {
+	case p := <-reached:
+		t.Logf("%s reached the page", p)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the worker did not run")
+	}
+	// ...and every request they or a popup made elsewhere was refused.
+	_, err = b.Final(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, hits.Load(), "nothing the page started reached another host")
 }

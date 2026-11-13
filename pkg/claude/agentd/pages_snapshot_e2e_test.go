@@ -42,9 +42,7 @@ func TestPageSnapshotWatchesARealSinglePageApp(t *testing.T) {
 	require.NoError(t, os.MkdirAll(out, 0o755))
 	u, err := url.Parse(upstream)
 	require.NoError(t, err)
-	proxy := httputil.NewSingleHostReverseProxy(u)
-	inner := proxy.Director
-	proxy.Director = func(r *http.Request) { inner(r); r.Host = u.Host }
+	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(u) }}
 	srv := httptest.NewServer(proxy)
 	t.Cleanup(srv.Close)
 	port := srv.Listener.Addr().(*net.TCPAddr).Port

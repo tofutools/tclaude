@@ -58,8 +58,9 @@ type pageProbe struct {
 }
 
 // pageSnapshotLongRequest is how long a request may be open before it counts
-// as long-lived (a long-poll or a stream) rather than as loading.
-const pageSnapshotLongRequest = 3 * time.Second
+// as long-lived (a long-poll or a stream) rather than as loading. Generous: a
+// slow data fetch behind a loading curtain must keep counting as loading.
+const pageSnapshotLongRequest = 8 * time.Second
 
 var pageSnapshotOpen = openPageSnapshotChrome
 
@@ -96,7 +97,7 @@ const pageProbeJS = `(function(){
     if (moving.size && !still(els[i])) continue;
     boxes.push(Math.round(r.x) + ',' + Math.round(r.y) + ',' + Math.round(r.width) + ',' + Math.round(r.height));
   }
-  return JSON.stringify({m: m, rs: document.readyState, o: location.origin, p: location.pathname + location.search + location.hash,
+  return JSON.stringify({m: m, rs: document.readyState, p: location.pathname + location.search + location.hash,
     t: document.title, th: h(text), tl: text.length, lh: h(boxes.join(';')), ne: seen, sx: Math.round(scrollX), sy: Math.round(scrollY),
     vw: innerWidth, vh: innerHeight});
 })()`
@@ -118,6 +119,7 @@ type chromePage struct {
 	once    sync.Once
 
 	loaderID string
+	targetID string
 
 	mu       sync.Mutex
 	loadedBy map[string]bool
@@ -223,7 +225,7 @@ func (p *chromePage) open(ctx context.Context) error {
 		return err
 	}
 	s := attached.SessionID
-	p.s = s
+	p.s, p.targetID = s, target.TargetID
 
 	// The pump runs from before the first command that can pause a request:
 	// every request pauses (redirect hops pause again), and the page's own go
@@ -236,7 +238,12 @@ func (p *chromePage) open(ctx context.Context) error {
 		method string
 		params any
 	}{
-		{"Fetch.enable", map[string]any{"patterns": []map[string]any{{"urlPattern": "*", "requestStage": "Request"}}}},
+		{"Fetch.enable", map[string]any{"patterns": pageSnapshotFetchPatterns}},
+		// What the page starts beyond itself (a worker, a service worker, a
+		// popup) is held at its start until the pump has put it under the
+		// same request filter, or closed it: otherwise its requests would go
+		// anywhere the daemon's network reaches.
+		{"Target.setAutoAttach", map[string]any{"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true}},
 		{"Network.enable", map[string]any{}},
 		{"Page.enable", map[string]any{}},
 		{"Page.setLifecycleEventsEnabled", map[string]any{"enabled": true}},
@@ -246,6 +253,11 @@ func (p *chromePage) open(ctx context.Context) error {
 		if err := c.call(ctx, s, step.method, step.params, nil); err != nil {
 			return err
 		}
+	}
+	// The browser's own auto-attach catches what the page's does not: a
+	// service worker, a shared worker, a new window.
+	if err := c.call(ctx, "", "Target.setAutoAttach", map[string]any{"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true}, nil); err != nil {
+		return err
 	}
 	var nav struct {
 		LoaderID  string `json:"loaderId"`
@@ -272,6 +284,7 @@ func (p *chromePage) open(ctx context.Context) error {
 func (p *chromePage) runPump(ctx context.Context) {
 	defer close(p.pump)
 	c := p.conn
+	others := map[string]bool{} // sessions of what the page started, under the filter
 	for {
 		select {
 		case <-ctx.Done():
@@ -279,9 +292,18 @@ func (p *chromePage) runPump(ctx context.Context) {
 		case <-c.done:
 			return
 		case ev := <-c.events:
-			if ev.SessionID == "" || ev.SessionID != p.s {
+			if ev.Method == "Target.attachedToTarget" && (ev.SessionID == "" || ev.SessionID == p.s || others[ev.SessionID]) {
+				p.adopt(ctx, ev.Params, others)
 				continue
 			}
+			// The page's own session reports everything; what the page
+			// started reports only its paused requests.
+			fromPage := ev.SessionID != "" && ev.SessionID == p.s
+			fromOther := others[ev.SessionID] && ev.Method == "Fetch.requestPaused"
+			if !fromPage && !fromOther {
+				continue
+			}
+			session := ev.SessionID
 			switch ev.Method {
 			case "Fetch.requestPaused":
 				var e struct {
@@ -310,7 +332,7 @@ func (p *chromePage) runPump(ctx context.Context) {
 				case h != nil:
 					params["headers"] = h
 				}
-				go func() { _ = c.call(ctx, p.s, method, params, nil) }()
+				go func() { _ = c.call(ctx, session, method, params, nil) }()
 			case "Network.requestWillBeSent":
 				var e struct {
 					RequestID string `json:"requestId"`
@@ -351,6 +373,50 @@ func (p *chromePage) runPump(ctx context.Context) {
 	}
 }
 
+var pageSnapshotFetchPatterns = []map[string]any{{"urlPattern": "*", "requestStage": "Request"}}
+
+// adopt handles a target Chrome attached: another page (a popup) is closed;
+// a worker, a service worker or a frame is put under the page's request
+// filter before it runs. The page's own target is left alone.
+func (p *chromePage) adopt(ctx context.Context, raw json.RawMessage, others map[string]bool) {
+	var e struct {
+		SessionID  string `json:"sessionId"`
+		TargetInfo struct {
+			TargetID string `json:"targetId"`
+			Type     string `json:"type"`
+		} `json:"targetInfo"`
+		Waiting bool `json:"waitingForDebugger"`
+	}
+	if json.Unmarshal(raw, &e) != nil || e.SessionID == "" {
+		return
+	}
+	c := p.conn
+	resume := func() {
+		if e.Waiting {
+			_ = c.call(ctx, e.SessionID, "Runtime.runIfWaitingForDebugger", map[string]any{}, nil)
+		}
+	}
+	switch {
+	case e.TargetInfo.TargetID == p.targetID, e.TargetInfo.Type == "tab", e.TargetInfo.Type == "browser":
+		go resume()
+	case e.TargetInfo.Type == "page":
+		go func() {
+			_ = c.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": e.TargetInfo.TargetID}, nil)
+		}()
+	default:
+		others[e.SessionID] = true
+		go func() {
+			if c.call(ctx, e.SessionID, "Fetch.enable", map[string]any{"patterns": pageSnapshotFetchPatterns}, nil) != nil {
+				// Not under the filter: it does not run.
+				_ = c.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": e.TargetInfo.TargetID}, nil)
+				return
+			}
+			_ = c.call(ctx, e.SessionID, "Target.setAutoAttach", map[string]any{"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true}, nil)
+			resume()
+		}()
+	}
+}
+
 func (p *chromePage) Probe(ctx context.Context, pixels bool) (pageProbe, error) {
 	p.mu.Lock()
 	out := pageProbe{Loaded: p.loadedBy[p.loaderID], InFlight: len(p.inflight), Requests: p.requests, Mutations: -1}
@@ -387,7 +453,6 @@ func (p *chromePage) Probe(ctx context.Context, pixels bool) (pageProbe, error) 
 	var v struct {
 		M  int    `json:"m"`
 		RS string `json:"rs"`
-		O  string `json:"o"`
 		P  string `json:"p"`
 		T  string `json:"t"`
 		TH string `json:"th"`
@@ -403,12 +468,11 @@ func (p *chromePage) Probe(ctx context.Context, pixels bool) (pageProbe, error) 
 		out.Note = "the page did not answer the probe"
 		return out, nil
 	}
-	if v.O != p.job.Origin {
-		if out.Loaded {
-			return out, errPageLeftOrigin
-		}
+	if err := p.checkOrigin(ctx); errors.Is(err, errPageNotLoaded) {
 		out.Note = "not yet on the page" // still about:blank
 		return out, nil
+	} else if err != nil {
+		return out, err
 	}
 	out.Mutations, out.ReadyState, out.Path, out.Title = v.M, v.RS, v.P, v.T
 	out.TextHash, out.TextLen, out.Layout, out.Elements = v.TH, v.TL, v.LH, v.NE
@@ -461,28 +525,56 @@ func (p *chromePage) shot(ctx context.Context, scale float64, sx, sy, vw, vh int
 // onOrigin checks the page is still the page: its own origin, no document
 // from elsewhere blocked.
 func (p *chromePage) onOrigin(ctx context.Context) (sx, sy, vw, vh int, err error) {
+	if err := p.checkOrigin(ctx); err != nil {
+		return 0, 0, 0, 0, err
+	}
 	var where struct {
 		Result struct {
 			Value string `json:"value"`
 		} `json:"result"`
 	}
 	if err := p.conn.call(ctx, p.s, "Runtime.evaluate", map[string]any{
-		"expression": "JSON.stringify([location.origin, Math.round(scrollX), Math.round(scrollY), innerWidth, innerHeight])", "returnByValue": true,
+		"expression": "JSON.stringify([Math.round(scrollX), Math.round(scrollY), innerWidth, innerHeight])", "returnByValue": true,
 	}, &where); err != nil {
 		return 0, 0, 0, 0, p.why(ctx, err)
 	}
-	var v []any
-	if json.Unmarshal([]byte(where.Result.Value), &v) != nil || len(v) != 5 {
+	var v []int
+	if json.Unmarshal([]byte(where.Result.Value), &v) != nil || len(v) != 4 {
 		return 0, 0, 0, 0, errors.New("could not read where the page is")
 	}
-	p.mu.Lock()
-	left := p.left
-	p.mu.Unlock()
-	if o, _ := v[0].(string); o != p.job.Origin || left {
-		return 0, 0, 0, 0, errPageLeftOrigin
+	return v[0], v[1], v[2], v[3], nil
+}
+
+// errPageNotLoaded: a capture asked for before the page's first document
+// arrived. Nothing is lost: ask again.
+var errPageNotLoaded = errors.New("the page has not loaded its first document yet: ask again in a moment")
+
+// checkOrigin checks the page is still the page: its own origin, no
+// document from elsewhere blocked. The origin is read on its own, by value:
+// location.origin cannot be overridden by the page's script, as a helper
+// such as JSON.stringify can.
+func (p *chromePage) checkOrigin(ctx context.Context) error {
+	var where struct {
+		Result struct {
+			Value string `json:"value"`
+		} `json:"result"`
 	}
-	num := func(x any) int { f, _ := x.(float64); return int(f) }
-	return num(v[1]), num(v[2]), num(v[3]), num(v[4]), nil
+	if err := p.conn.call(ctx, p.s, "Runtime.evaluate", map[string]any{"expression": "location.origin", "returnByValue": true}, &where); err != nil {
+		return p.why(ctx, err)
+	}
+	p.mu.Lock()
+	left, loaded := p.left, p.loadedBy[p.loaderID]
+	p.mu.Unlock()
+	switch {
+	case left:
+		return errPageLeftOrigin
+	case where.Result.Value == p.job.Origin:
+		return nil
+	case !loaded && where.Result.Value == "null": // still about:blank
+		return errPageNotLoaded
+	default:
+		return errPageLeftOrigin
+	}
 }
 
 func (p *chromePage) Frame(ctx context.Context, scale float64) ([]byte, error) {
@@ -495,13 +587,13 @@ func (p *chromePage) Frame(ctx context.Context, scale float64) ([]byte, error) {
 }
 
 func (p *chromePage) Final(ctx context.Context) ([]byte, error) {
+	// The page may have navigated itself; only its own origin is captured.
+	if err := p.checkOrigin(ctx); err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	p.final = true
 	p.mu.Unlock()
-	// The page may have navigated itself; only its own origin is captured.
-	if _, _, _, _, err := p.onOrigin(ctx); err != nil {
-		return nil, err
-	}
 	job := p.job
 	overlay, _ := json.Marshal(job.OverlaySV)
 	patches := job.Patches

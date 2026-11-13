@@ -170,7 +170,9 @@ func handlePageSnapshotWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
-	flusher, _ := w.(http.Flusher)
+	// Through the daemon's middleware wrappers (they Unwrap): each line goes
+	// out as it is written, so the agent reads the session id and every tick live.
+	flush := http.NewResponseController(w)
 	start := time.Now()
 	emit := func(ev pageWatchEvent) bool {
 		if ev.Type != "start" {
@@ -179,9 +181,7 @@ func handlePageSnapshotWatch(w http.ResponseWriter, r *http.Request) {
 		if enc.Encode(ev) != nil {
 			return false
 		}
-		if flusher != nil {
-			flusher.Flush()
-		}
+		_ = flush.Flush()
 		return true
 	}
 	fail := func(err error) {
@@ -279,6 +279,9 @@ func handlePageSnapshotWatch(w http.ResponseWriter, r *http.Request) {
 				}
 				reply.png, reply.err = b.Final(ctx)
 				c.reply <- reply
+				if errors.Is(reply.err, errPageNotLoaded) {
+					continue // nothing was drawn on it: the watch goes on, and the agent may ask again
+				}
 				if reply.err != nil {
 					fail(reply.err)
 					return
