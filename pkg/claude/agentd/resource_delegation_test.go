@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -41,6 +43,15 @@ func (f *openCodeTmuxProbeFake) Command(args ...string) *exec.Cmd {
 		return exec.Command("true")
 	}
 	return exec.Command("false")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (f *openCodeTmuxProbeFake) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, f.Command(args...))
+}
+
+func (f *openCodeTmuxProbeFake) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(f.Command(args...))
 }
 
 func (f *openCodeTmuxProbeFake) ListSessions() (map[string]struct{}, error) {

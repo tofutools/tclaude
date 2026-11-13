@@ -1,8 +1,10 @@
 package agentd
 
 import (
+	"context"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"io"
 	"os/exec"
 	"testing"
@@ -41,8 +43,16 @@ func (m *indicatorTmux) Command(a ...string) *exec.Cmd {
 		}
 		return exec.Command("true")
 	}
-	return m.Tmux.Command(a...)
+	return nil // not modelled here: the wrapped transport answers
 }
+
+func (m *indicatorTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	if cmd := m.Command(args...); cmd != nil {
+		return tmuxtest.Run(ctx, cmd)
+	}
+	return m.Tmux.Run(ctx, args)
+}
+
 func TestFederationTerminalIndicatorCrashRecoveryPreservesOperatorEdits(t *testing.T) {
 	old := clcommon.Default
 	m := &indicatorTmux{Tmux: old, options: map[string]string{"pane-border-format": "original"}}

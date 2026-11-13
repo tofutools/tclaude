@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // recordingTmux is a clcommon.Tmux fake that records the final argument
@@ -41,6 +43,15 @@ func (r *commandRecordingTmux) Command(args ...string) *exec.Cmd {
 	r.commands = append(r.commands, append([]string(nil), args...))
 	r.mu.Unlock()
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (r *commandRecordingTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, r.Command(args...))
+}
+
+func (r *commandRecordingTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(r.Command(args...))
 }
 
 func (r *commandRecordingTmux) ListSessions() (map[string]struct{}, error) {
@@ -114,6 +125,15 @@ func (r *recordingTmux) Command(args ...string) *exec.Cmd {
 		<-r.releaseFirstText
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (r *recordingTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, r.Command(args...))
+}
+
+func (r *recordingTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(r.Command(args...))
 }
 
 func (r *recordingTmux) ListSessions() (map[string]struct{}, error) {
@@ -289,6 +309,15 @@ func (b *barrierTmux) Command(args ...string) *exec.Cmd {
 		b.onText()
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (b *barrierTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, b.Command(args...))
+}
+
+func (b *barrierTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(b.Command(args...))
 }
 
 func (b *barrierTmux) ListSessions() (map[string]struct{}, error) {

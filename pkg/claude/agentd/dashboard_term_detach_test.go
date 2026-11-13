@@ -1,11 +1,13 @@
 package agentd
 
 import (
+	"context"
 	"os/exec"
 	"slices"
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // detachRecTmux records the tmux argv it is asked to run and returns a harmless
@@ -16,6 +18,15 @@ type detachRecTmux struct{ calls [][]string }
 func (d *detachRecTmux) Command(args ...string) *exec.Cmd {
 	d.calls = append(d.calls, append([]string(nil), args...))
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (d *detachRecTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, d.Command(args...))
+}
+
+func (d *detachRecTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(d.Command(args...))
 }
 
 func (d *detachRecTmux) ListSessions() (map[string]struct{}, error) {

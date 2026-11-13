@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"slices"
@@ -14,6 +15,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -40,6 +42,15 @@ func (f *stopPinTmux) Command(args ...string) *exec.Cmd {
 		return f.reply(args)
 	}
 	return exec.Command("false")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (f *stopPinTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, f.Command(args...))
+}
+
+func (f *stopPinTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(f.Command(args...))
 }
 
 func (f *stopPinTmux) ListSessions() (map[string]struct{}, error) { return nil, nil }

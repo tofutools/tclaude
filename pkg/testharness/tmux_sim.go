@@ -1,9 +1,10 @@
 package testharness
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -11,36 +12,47 @@ import (
 	"sync"
 	"time"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
-// has-session liveness flows through cmd.Run()==nil (see
-// session.IsTmuxSessionAlive), so the sim answers it with an exit-0 /
-// exit-1 process. A bare exec.Command("true") PATH-resolves at Run()
-// time — under `env -i` (empty PATH) LookPath fails and EVERY live
-// session reads as dead, wedging the whole flow-test suite. Resolving
-// true/false to ABSOLUTE paths once at init keeps the truthiness
-// hermetic: exec.Command skips LookPath when the name contains a
-// separator, so cmd.Path is taken verbatim regardless of $PATH.
-var (
-	trueBin  = resolveCoreutil("true")
-	falseBin = resolveCoreutil("false")
-	// echoBin backs the `display-message -p '#{pane_pid}'` query: the sim
-	// answers it with `echo <pane-pid>` so the caller's .Output() reads the
-	// pid back, the same hermetic-absolute-path discipline as true/false.
-	echoBin = resolveCoreutil("echo")
-	// sleepBin lets a flow test model a tmux client process that starts but
-	// never answers promptly. Production callers must bound that subprocess;
-	// otherwise one stuck has-session/send-keys holds a per-target delivery
-	// worker forever. As with true/false/echo, keep the path hermetic.
-	sleepBin = resolveCoreutil("sleep")
-)
+// simReply is what the simulated tmux server answers one command with. The
+// simulator never starts a process: a reply is data, handed back through Run
+// in the same error model the real transports use.
+type simReply struct {
+	// out is what tmux would print on stdout.
+	out string
+	// failed marks a command tmux rejects; message is its error text.
+	failed  bool
+	message string
+	// err is a failure to run the command at all.
+	err error
+	// hang keeps the command unanswered for this long, or until the caller
+	// gives up.
+	hang time.Duration
+}
+
+// simOK is a command that succeeds and prints nothing.
+func simOK() simReply { return simReply{} }
+
+// simPrint is a command that succeeds and prints one line, as tmux does for
+// display-message and the list commands.
+func simPrint(line string) simReply { return simReply{out: line + "\n"} }
+
+// simFail is a command tmux rejects, with tmux's own message when the
+// simulator models one.
+func simFail(message ...string) simReply {
+	return simReply{failed: true, message: strings.Join(message, "")}
+}
+
+// attachBin stands in for the tmux client an attach would run: a process
+// that exits at once. An absolute path keeps it independent of $PATH, which
+// some tests clear.
+var attachBin = resolveCoreutil("true")
 
 // resolveCoreutil returns an absolute path to the named coreutil from a
-// fixed candidate list, independent of $PATH. Falls back to the bare
-// name (the legacy PATH-resolved behaviour) only when no candidate
-// exists, so platforms without /usr/bin|/bin coreutils are no worse off
-// than before.
+// fixed candidate list, independent of $PATH. Falls back to the bare name
+// only when no candidate exists.
 func resolveCoreutil(name string) string {
 	for _, dir := range []string{"/usr/bin", "/bin"} {
 		p := filepath.Join(dir, name)
@@ -202,15 +214,60 @@ func newTmuxSim() *TmuxSim {
 	}
 }
 
-// Command satisfies the clcommon.Tmux interface. Returns a no-op
-// exit-0 / exit-1 exec.Cmd (absolute-path true/false, hermetic under
-// empty PATH — see trueBin/falseBin) whose Run() exits with the
-// appropriate status; for verbs that mutate state (send-keys,
-// kill-session), the mutation happens here before the cmd is returned.
-func (t *TmuxSim) Command(args ...string) *exec.Cmd {
+// Run satisfies clcommon.Tmux: it answers one tmux command from the
+// simulated server's state. A rejected command comes back as
+// *clcommon.TmuxCommandError, like the real client's non-zero exit.
+func (t *TmuxSim) Run(ctx context.Context, args []string) ([]byte, error) {
+	reply := t.dispatch(args)
+	switch {
+	case reply.hang > 0:
+		// A tmux client that connects and never answers: only the caller's
+		// own deadline ends it.
+		timer := time.NewTimer(reply.hang)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil, nil
+		case <-ctx.Done():
+			return nil, &clcommon.TmuxAbortedError{Cause: context.Cause(ctx)}
+		}
+	case reply.err != nil:
+		return nil, reply.err
+	case reply.failed:
+		return nil, clcommon.NewTmuxExitError(errors.New("exit status 1"), reply.message)
+	}
+	return []byte(reply.out), nil
+}
+
+// AttachArgv satisfies clcommon.Tmux. Nothing in a flow test has a terminal
+// to attach, so the "client" is a process that exits at once.
+func (t *TmuxSim) AttachArgv(args []string) ([]string, error) {
+	args, err := tmuxCommandArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) > 0 {
+		t.mu.Lock()
+		t.commandCounts[args[0]]++
+		t.mu.Unlock()
+	}
+	return []string{attachBin}, nil
+}
+
+// Exec runs one tmux command against the simulator and returns what it
+// printed. It is for tests of the simulator itself; production reaches the
+// simulator through the typed verbs of package tmuxcmd.
+func (t *TmuxSim) Exec(args ...string) ([]byte, error) {
+	return t.Run(context.Background(), args)
+}
+
+// dispatch applies one tmux command to the simulated server and returns its
+// reply. For commands that change state (send-keys, kill-session) the change
+// happens here.
+func (t *TmuxSim) dispatch(args []string) simReply {
 	// -V is a client flag to the parser below, but it is the whole invocation.
 	if len(args) == 1 && args[0] == "-V" {
-		return exec.Command(echoBin, "tmux 3.7b")
+		return simPrint("tmux 3.7b")
 	}
 	// Client-level options precede the command word. The real tmux client
 	// consumes them before dispatching (external mode currently adds -N), so
@@ -219,9 +276,7 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	var parseErr error
 	args, parseErr = tmuxCommandArgs(args)
 	if parseErr != nil {
-		cmd := exec.Command(falseBin)
-		cmd.Err = parseErr
-		return cmd
+		return simReply{err: parseErr}
 	}
 	if len(args) > 0 {
 		t.mu.Lock()
@@ -229,16 +284,16 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		t.mu.Unlock()
 		if fault, ok := t.takeCommandFault(args[0]); ok {
 			if fault.fail {
-				return exec.Command(falseBin)
+				return simFail()
 			}
-			return exec.Command(sleepBin, strconv.FormatFloat(fault.hang.Seconds(), 'f', 3, 64))
+			return simReply{hang: fault.hang}
 		}
 	}
 	switch {
 	case len(args) >= 4 && args[0] == "new-session":
 		name := tmuxArgValue(args, "-s")
 		if name == "" {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		// tmux refuses a name it still lists, and a remain-on-exit CORPSE is
 		// still listed even though its pane is dead. Modelling only the live
@@ -246,18 +301,18 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		// picked its name by asking "is an agent alive there?" gets back a
 		// name new-session then rejects with "duplicate session".
 		if t.hasSession(name) {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		t.MarkAlive(name)
 		t.mu.Lock()
 		t.sessions[name].remainOnExit = t.newSessionRemainOnExit
 		t.mu.Unlock()
-		return exec.Command(trueBin)
+		return simOK()
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":
 		if name := t.resolveTarget(args[2], false); name != "" && t.hasSession(name) {
-			return exec.Command(trueBin)
+			return simOK()
 		}
-		return exec.Command(falseBin)
+		return simFail("can't find session: ", strings.TrimPrefix(args[2], "="))
 	case len(args) >= 1 && args[0] == "list-sessions":
 		// The bounded production snapshot uses Command + Output rather than
 		// the unbounded ListSessions interface. Like real tmux, this lists every
@@ -279,17 +334,17 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 				names[i] = t.renderSessionFormat(args[2], name)
 			}
 		}
-		return exec.Command(echoBin, strings.Join(names, "\n"))
+		return simPrint(strings.Join(names, "\n"))
 	case len(args) >= 4 && args[0] == "send-keys" && args[1] == "-t":
 		if strings.HasPrefix(args[2], "=%") {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		if args[3] == "-X" {
 			// A copy-mode command, not a keystroke, so it is not typed
 			// into the pane. The sim has no copy mode; real tmux rejects
 			// the command outside a mode, and production's callers treat
 			// that as the no-op it is.
-			return exec.Command(trueBin)
+			return simOK()
 		}
 		t.routeSendKeys(args[2], args[3])
 	case len(args) >= 5 && args[0] == "send-keys" && args[1] == "-l" && args[2] == "-t":
@@ -297,7 +352,7 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		// interpreted as tmux key names. The pane simulator already treats
 		// routed text literally; account for the extra production flag here.
 		if strings.HasPrefix(args[3], "=%") {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		// Production ends the flags with "--" and escapes a trailing ';',
 		// which the real client removes again before the pane sees the text.
@@ -309,14 +364,14 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		// pane: =%N") — same parity guard as send-keys, so a production
 		// regression that re-mangles pane IDs fails instead of no-oping.
 		if hasExactPinnedPaneTarget(args[1:]) {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		t.pasteBuffer(args[1:])
 	case len(args) >= 3 && args[0] == "kill-session" && args[1] == "-t":
 		// Real tmux: "can't find session: %N" — the '=' pin makes the pane
 		// ID parse as an (invalid) exact session name.
 		if strings.HasPrefix(args[2], "=%") {
-			return exec.Command(falseBin)
+			return simFail("can't find session: ", strings.TrimPrefix(args[2], "="))
 		}
 		t.recordMutationTarget("kill-session", args[2])
 		t.killSession(args[2])
@@ -332,31 +387,31 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		}
 		t.mu.Unlock()
 		sort.Strings(ttys)
-		return exec.Command(echoBin, strings.Join(ttys, "\n"))
+		return simPrint(strings.Join(ttys, "\n"))
 	case len(args) >= 1 && args[0] == "switch-client":
 		tty := tmuxArgValue(args, "-c")
 		target := tmuxArgValue(args, "-t")
 		name := t.resolveTarget(target, false)
 		if tty == "" || name == "" || !t.IsAlive(name) {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		t.mu.Lock()
 		if _, ok := t.clients[tty]; !ok {
 			t.mu.Unlock()
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		t.clients[tty] = name
 		t.mu.Unlock()
-		return exec.Command(trueBin)
+		return simOK()
 	case len(args) >= 3 && args[0] == "kill-pane" && args[1] == "-t":
 		// Real tmux: "can't find pane: =%N".
 		if strings.HasPrefix(args[2], "=%") {
-			return exec.Command(falseBin)
+			return simFail("can't find pane: ", args[2])
 		}
 		t.recordMutationTarget("kill-pane", args[2])
 		t.killSession(args[2])
 	case len(args) >= 1 && args[0] == "show-hooks":
-		return exec.Command(echoBin, "pane-died")
+		return simPrint("pane-died")
 	case len(args) >= 2 && args[0] == "display-message" && args[1] == "-p":
 		return t.displayMessage(args)
 	case len(args) >= 1 && args[0] == "capture-pane":
@@ -364,18 +419,18 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	case len(args) >= 6 && args[0] == "set-option" && args[1] == "-p" && args[2] == "-u" && args[3] == "-t":
 		name := t.resolveTarget(args[4], true)
 		if name == "" {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		t.mu.Lock()
 		if s := t.sessions[name]; s != nil && args[5] == "@tclaude_exit_generation" {
 			s.exitGeneration = ""
 		}
 		t.mu.Unlock()
-		return exec.Command(trueBin)
+		return simOK()
 	case len(args) >= 6 && args[0] == "set-option" && args[1] == "-p" && args[2] == "-t":
 		name := t.resolveTarget(args[3], true)
 		if name == "" {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		t.mu.Lock()
 		if s := t.sessions[name]; s != nil && args[4] == "remain-on-exit" {
@@ -384,29 +439,29 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 			s.exitGeneration = args[5]
 		}
 		t.mu.Unlock()
-		return exec.Command(trueBin)
+		return simOK()
 	case len(args) >= 6 && args[0] == "set-hook" && args[1] == "-p" && args[2] == "-t":
 		name := t.resolveTarget(args[3], true)
 		if name == "" || args[4] != "pane-died" {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		t.mu.Lock()
 		if s := t.sessions[name]; s != nil {
 			s.paneDiedHook = args[5]
 		}
 		t.mu.Unlock()
-		return exec.Command(trueBin)
+		return simOK()
 	case len(args) >= 6 && args[0] == "set-hook" && args[1] == "-p" && args[2] == "-u" && args[3] == "-t":
 		name := t.resolveTarget(args[4], true)
 		if name == "" || args[5] != "pane-died" {
-			return exec.Command(falseBin)
+			return simFail()
 		}
 		t.mu.Lock()
 		if s := t.sessions[name]; s != nil {
 			s.paneDiedHook = ""
 		}
 		t.mu.Unlock()
-		return exec.Command(trueBin)
+		return simOK()
 	case len(args) >= 3 && args[0] == "set-option" && args[1] == "-t":
 		// Pane-typed like the real command, so the production set-option
 		// sites' ExactTarget(name)+":" form is exercised through the same
@@ -415,15 +470,15 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		// resolveTarget). The option itself isn't modelled; only whether
 		// the target resolves.
 		if name := t.resolveTarget(args[2], true); name != "" && t.IsAlive(name) {
-			return exec.Command(trueBin)
+			return simOK()
 		}
-		return exec.Command(falseBin)
+		return simFail()
 	case len(args) >= 3 && args[0] == "list-panes" && args[1] == "-t":
 		return t.listPanes(args[2])
 	case len(args) >= 4 && args[0] == "list-panes" && args[1] == "-a" && args[2] == "-F":
 		return t.listAllPanes(args[3])
 	}
-	return exec.Command(trueBin)
+	return simOK()
 }
 
 // tmuxCommandArgs drops client-level options and returns the command plus its
@@ -560,15 +615,15 @@ func (t *TmuxSim) takeCommandFault(verb string) (tmuxCommandFault, bool) {
 // rules — deliberately stricter than real list-panes (window-typed, whose
 // colon-less '=name' would still prefix-fall-back onto the session table
 // un-pinned), so only a session-exact target form passes.
-func (t *TmuxSim) listPanes(target string) *exec.Cmd {
+func (t *TmuxSim) listPanes(target string) simReply {
 	name := t.resolveTarget(target, true)
 	t.mu.Lock()
 	s, ok := t.sessions[name]
 	t.mu.Unlock()
 	if !ok || (s.pane != nil && !s.pane.IsAlive()) {
-		return exec.Command(falseBin)
+		return simFail()
 	}
-	return exec.Command(echoBin, strconv.Itoa(s.panePID))
+	return simPrint(strconv.Itoa(s.panePID))
 }
 
 // brokerPaneListFormat is the list-panes format production's AllPanes sends.
@@ -578,9 +633,9 @@ var brokerPaneListFormat = tmuxcmd.AllPanesFormat()
 // sessions: one line per registered session, in the one format production
 // asks for. Like real tmux, a killed session is absent, while a
 // remain-on-exit corpse is listed with pane_dead=1.
-func (t *TmuxSim) listAllPanes(format string) *exec.Cmd {
+func (t *TmuxSim) listAllPanes(format string) simReply {
 	if format != brokerPaneListFormat {
-		return exec.Command(falseBin)
+		return simFail()
 	}
 	t.mu.Lock()
 	names := make([]string, 0, len(t.sessions))
@@ -602,7 +657,7 @@ func (t *TmuxSim) listAllPanes(format string) *exec.Cmd {
 		lines = append(lines, name+"|"+s.paneID+"|"+strconv.Itoa(s.panePID)+"|"+deadValue+"|"+s.exitGeneration)
 	}
 	t.mu.Unlock()
-	return exec.Command(echoBin, strings.Join(lines, "\n"))
+	return simPrint(strings.Join(lines, "\n"))
 }
 
 // paneRenderer is the optional capability a PaneSim implements to answer
@@ -622,7 +677,7 @@ type paneRenderer interface {
 // no-longer-alive pane exits non-zero (falseBin) — exactly how real tmux fails
 // the capture on a dead target — which observeRemoteControl reads as
 // "unknown". A pane that doesn't implement paneRenderer echoes empty content.
-func (t *TmuxSim) capturePane(args []string) *exec.Cmd {
+func (t *TmuxSim) capturePane(args []string) simReply {
 	target := ""
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-t" {
@@ -642,15 +697,15 @@ func (t *TmuxSim) capturePane(args []string) *exec.Cmd {
 	// works at all. Without this the simulator could only ever model a capture
 	// that fails.
 	if dead && deadOutput != "" {
-		return exec.Command(echoBin, deadOutput)
+		return simPrint(deadOutput)
 	}
 	if !ok || s.pane == nil || !s.pane.IsAlive() {
-		return exec.Command(falseBin)
+		return simFail()
 	}
 	if r, isRenderer := s.pane.(paneRenderer); isRenderer {
-		return exec.Command(echoBin, r.RenderPane())
+		return simPrint(r.RenderPane())
 	}
-	return exec.Command(echoBin, "")
+	return simPrint("")
 }
 
 // displayMessage models the pane_pid and pane_current_path formats used by
@@ -663,7 +718,7 @@ func deadPaneStatusFormat(format string) bool {
 	return strings.Contains(format, "#{pane_dead_status}")
 }
 
-func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
+func (t *TmuxSim) displayMessage(args []string) simReply {
 	target := ""
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-t" {
@@ -676,7 +731,12 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 	s, ok := t.sessions[name]
 	if !ok {
 		t.mu.Unlock()
-		return exec.Command(falseBin)
+		// A bare failure, with no message: flows written against the
+		// simulator model "the probe failed and cannot say why" this way
+		// (the brokered-proof refusal tests depend on it). Real tmux names
+		// the missing session before 3.7 and answers with empty fields
+		// since; tmuxcmd's own tests cover both.
+		return simFail()
 	}
 	// Only a read of the dead-pane status itself advances the settle, so an
 	// unrelated probe cannot reap the pane on the caller's behalf.
@@ -691,16 +751,16 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 	exitStatus, exitSignal, exitGeneration := s.exitStatus, s.exitSignal, s.exitGeneration
 	t.mu.Unlock()
 	if dead && !remainOnExit {
-		return exec.Command(falseBin)
+		return simFail()
 	}
 	if format == "#{pane_current_path}" {
-		return exec.Command(echoBin, cwd)
+		return simPrint(cwd)
 	}
 	if format == "#{pane_dead}" {
 		if dead {
-			return exec.Command(echoBin, "1")
+			return simPrint("1")
 		}
-		return exec.Command(echoBin, "0")
+		return simPrint("0")
 	}
 	if format == "#{session_attached}" {
 		attached := 0
@@ -711,33 +771,33 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 			}
 		}
 		t.mu.Unlock()
-		return exec.Command(echoBin, strconv.Itoa(attached))
+		return simPrint(strconv.Itoa(attached))
 	}
 	if format == "#{pane_id}" {
-		return exec.Command(echoBin, paneID)
+		return simPrint(paneID)
 	}
 	if format == "#{pane_dead}|#{pane_pid}" {
 		deadValue := "0"
 		if dead {
 			deadValue = "1"
 		}
-		return exec.Command(echoBin, deadValue+"|"+strconv.Itoa(panePID))
+		return simPrint(deadValue + "|" + strconv.Itoa(panePID))
 	}
 	if format == "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}" {
 		deadValue := "0"
 		if dead {
 			deadValue = "1"
 		}
-		return exec.Command(echoBin, name+"|"+paneID+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
+		return simPrint(name + "|" + paneID + "|" + deadValue + "|" + exitStatus + "|" + exitSignal + "|" + exitGeneration)
 	}
 	if format == tmuxcmd.PaneStatusFormat() {
 		deadValue := "0"
 		if dead {
 			deadValue = "1"
 		}
-		return exec.Command(echoBin, name+"|"+paneID+"|"+strconv.Itoa(panePID)+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
+		return simPrint(name + "|" + paneID + "|" + strconv.Itoa(panePID) + "|" + deadValue + "|" + exitStatus + "|" + exitSignal + "|" + exitGeneration)
 	}
-	return exec.Command(echoBin, strconv.Itoa(panePID))
+	return simPrint(strconv.Itoa(panePID))
 }
 
 func (t *TmuxSim) sessionPaneAlive(s *tmuxSession) bool {

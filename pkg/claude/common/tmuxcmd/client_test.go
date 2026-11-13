@@ -1,6 +1,7 @@
 package tmuxcmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // scriptedTmux is a clcommon.Tmux whose every command runs the given shell
@@ -24,6 +26,15 @@ type scriptedTmux struct {
 func (s *scriptedTmux) Command(args ...string) *exec.Cmd {
 	s.calls = append(s.calls, args)
 	return exec.Command("/bin/sh", "-c", s.script)
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (s *scriptedTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, s.Command(args...))
+}
+
+func (s *scriptedTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(s.Command(args...))
 }
 
 func (s *scriptedTmux) ListSessions() (map[string]struct{}, error) { return nil, nil }
@@ -99,6 +110,15 @@ type missingBinaryTmux struct{}
 
 func (missingBinaryTmux) Command(...string) *exec.Cmd {
 	return exec.Command("/nonexistent/tclaude-test-tmux")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (x missingBinaryTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, x.Command(args...))
+}
+
+func (x missingBinaryTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(x.Command(args...))
 }
 func (missingBinaryTmux) ListSessions() (map[string]struct{}, error) { return nil, nil }
 
@@ -195,7 +215,7 @@ func TestTimeoutDoesNotChangeAPromptAnswer(t *testing.T) {
 // A command answered over control mode reports through the same error model
 // as a forked client.
 func TestWrapErrorForControlMode(t *testing.T) {
-	rejected := wrapError("kill-session", "", clcommon.NewTmuxCommandError("can't find session: repo"))
+	rejected := wrapError("kill-session", clcommon.NewTmuxCommandError("can't find session: repo"))
 	require.True(t, Rejected(rejected))
 	require.ErrorIs(t, rejected, ErrNotFound)
 	assert.Equal(t, "tmux: can't find session: repo", rejected.Error(), "tmux's text is not repeated")
@@ -204,13 +224,13 @@ func TestWrapErrorForControlMode(t *testing.T) {
 	assert.Equal(t, "kill-session", tmuxErr.Command)
 	assert.Equal(t, "can't find session: repo", tmuxErr.Message)
 
-	timedOut := wrapError("kill-session", "", fmt.Errorf("send: %w", tmuxctl.ErrTimeout))
+	timedOut := wrapError("kill-session", fmt.Errorf("send: %w", tmuxctl.ErrTimeout))
 	require.ErrorIs(t, timedOut, ErrTimeout, "one timeout sentinel on every path")
 	assert.False(t, Rejected(timedOut))
 
 	broken := errors.New("control connection closed")
-	assert.Same(t, broken, wrapError("kill-session", "", broken), "a transport failure passes through")
-	assert.NoError(t, wrapError("kill-session", "", nil))
+	assert.Same(t, broken, wrapError("kill-session", broken), "a transport failure passes through")
+	assert.NoError(t, wrapError("kill-session", nil))
 }
 
 // tmux reads an empty -t as "the current session, pane or client", so an

@@ -1,6 +1,9 @@
 package common
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -8,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/perfstats"
 )
@@ -15,11 +19,31 @@ import (
 // TmuxSocketName is the named socket for tclaude's independent tmux server.
 const TmuxSocketName = "tclaude"
 
-// Tmux is the boundary surface flow tests inject through. The default
-// LiveTmux runs the real tmux binary; tests assign a fake to Default
-// at setup and restore via t.Cleanup.
+// Tmux is how a tmux command reaches a tmux server and how its reply comes
+// back: the transport under the typed verbs of package tmuxcmd. The default
+// LiveTmux forks the local tmux client; agentd swaps in ControlTmux, flow
+// tests the simulator, and a runner on another host will provide its own.
+//
+// Call sites do not use it directly. They go through tmuxcmd, which owns what
+// is said to tmux; this interface only carries it. The one caller of Run and
+// AttachArgv outside this package is tmuxcmd, and a guard test keeps it so.
 type Tmux interface {
-	Command(args ...string) *exec.Cmd
+	// Run carries one tmux command to the server and returns what it printed
+	// on stdout. args is the command as the tmux client takes it after the
+	// socket flags: the command word and its arguments, preceded by any
+	// client-level flag (-N, -T …).
+	//
+	// A command tmux ran and rejected fails with *TmuxCommandError carrying
+	// tmux's message. A command stopped because ctx ended fails with
+	// *TmuxAbortedError, and its outcome is unknown. Any other error means
+	// the command could not be delivered.
+	Run(ctx context.Context, args []string) (stdout []byte, err error)
+	// AttachArgv returns the argv of a process that, given a terminal, runs
+	// the tmux client with args (an attach-session). It is the one
+	// exec-shaped part of the seam: attaching is a long-lived interactive
+	// process that owns a TTY, not a command with a reply, so the caller has
+	// to start it on a terminal it holds.
+	AttachArgv(args []string) ([]string, error)
 	// ListSessions returns the set of session names currently alive on
 	// the tclaude tmux server, in ONE call. Snapshot-shaped callers
 	// (dashboard poll, group/peer list handlers) fetch this once and
@@ -33,22 +57,92 @@ type Tmux interface {
 	ListSessions() (map[string]struct{}, error)
 }
 
-// Default is the package-wide Tmux instance every caller hits via the
-// TmuxCommand facade. Production starts on LiveTmux; tests overwrite
-// during their setup. Single global var = goroutine-unsafe across
-// parallel tests on the same package — flow tests don't t.Parallel.
+// Default is the package-wide Tmux instance every tmuxcmd verb goes through.
+// Production starts on LiveTmux; tests overwrite it during their setup.
+// Single global var = goroutine-unsafe across parallel tests on the same
+// package — flow tests don't t.Parallel.
 var Default Tmux = LiveTmux{}
 
-// LiveTmux is the production impl: forks `tmux -L tclaude <args>`.
+// LiveTmux is the production impl: forks `tmux -u -L tclaude <args>`.
 // Exported so tests can wrap it (e.g., a recording proxy that
 // forwards to LiveTmux for some calls and to a fake for others).
 type LiveTmux struct{}
 
-// Command builds an exec.Cmd that invokes the real tmux binary.
-func (LiveTmux) Command(args ...string) *exec.Cmd {
+// Run forks the tmux client for one command.
+func (LiveTmux) Run(ctx context.Context, args []string) ([]byte, error) {
 	perfstats.CountSubprocess(tmuxCounterKey(args))
-	return exec.Command("tmux", TmuxArgs(args...)...)
+	return RunTmuxClient(ctx, exec.Command("tmux", TmuxArgs(args...)...))
 }
+
+// AttachArgv is the local tmux client itself.
+func (LiveTmux) AttachArgv(args []string) ([]string, error) {
+	perfstats.CountSubprocess(tmuxCounterKey(args))
+	path, err := exec.LookPath("tmux")
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{path}, TmuxArgs(args...)...), nil
+}
+
+// tmuxClientWaitDelay bounds how long a tmux client that has exited or been
+// killed is waited for when something it started still holds its output
+// pipes open. A variable so a test can shorten it.
+var tmuxClientWaitDelay = 2 * time.Second
+
+// RunTmuxClient runs a prepared tmux client process to completion for a Tmux
+// implementation and reports its outcome in the seam's error model: stdout
+// on success, *TmuxCommandError (with tmux's stderr) when the client exits
+// non-zero, *TmuxAbortedError when ctx ends first. A client stopped by ctx is
+// killed and reaped before this returns, so a caller can release what it
+// holds knowing no child of its own is still running.
+func RunTmuxClient(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.WaitDelay = tmuxClientWaitDelay
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		// A client that exited cleanly has answered, even if something it
+		// started kept its output pipes open past the wait delay.
+		if err == nil || errors.Is(err, exec.ErrWaitDelay) {
+			return stdout.Bytes(), nil
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, NewTmuxExitError(exitErr, stderr.String())
+		}
+		return nil, err
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-done
+		return nil, &TmuxAbortedError{Cause: context.Cause(ctx), Stderr: strings.TrimSpace(stderr.String())}
+	}
+}
+
+// TmuxAbortedError is a command that was stopped because its context ended
+// before tmux answered. Whether tmux acted on it is unknown.
+type TmuxAbortedError struct {
+	// Cause is why the context ended.
+	Cause error
+	// Stderr is what the tmux client had printed by then, if anything.
+	Stderr string
+}
+
+func (e *TmuxAbortedError) Error() string {
+	if e.Stderr != "" {
+		return fmt.Sprintf("tmux command stopped: %v: %s", e.Cause, e.Stderr)
+	}
+	return fmt.Sprintf("tmux command stopped: %v", e.Cause)
+}
+
+func (e *TmuxAbortedError) Unwrap() error { return e.Cause }
 
 // tmuxListWarned holds the tmux failures already logged, so a poll loop
 // logs each distinct one once.
@@ -89,13 +183,6 @@ func tmuxCounterKey(args []string) string {
 		return "tmux"
 	}
 	return "tmux " + args[0]
-}
-
-// TmuxCommand is a thin facade over Default.Command. Kept so the
-// 48 existing call sites don't need to be rewritten in this diff;
-// new code is welcome to call clcommon.Default.Command directly.
-func TmuxCommand(args ...string) *exec.Cmd {
-	return Default.Command(args...)
 }
 
 // TmuxUTF8Flag makes a tmux client handle its I/O as UTF-8 whatever its
@@ -190,7 +277,7 @@ func NativeTmuxClientFeatureArgs(term string) []string {
 	}) {
 		return nil
 	}
-	version, err := Default.Command("-V").Output()
+	version, err := Default.Run(context.Background(), []string{"-V"})
 	if err != nil || !TmuxVersionAtLeast(string(version), 3, 4) {
 		return nil
 	}

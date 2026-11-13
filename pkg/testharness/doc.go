@@ -3,9 +3,11 @@
 // subprocesses, tmux servers, or sockets.
 //
 // The harness mocks at exactly two boundaries:
-//   - clcommon.TmuxCommand — replaced by TmuxSim, which owns a
-//     sessions table, routes send-keys to the attached CCSim, and
-//     answers has-session against the alive flag.
+//   - clcommon.Default, the tmux transport — replaced by TmuxSim, which
+//     owns a sessions table, routes send-keys to the attached CCSim, and
+//     answers has-session against the alive flag. It answers tmux commands
+//     from memory, so production's typed verbs (package tmuxcmd), their
+//     argv and their reply parsing all run for real.
 //   - agentd.SpawnDetachedTclaude{New,Resume} — replaced by helpers
 //     that build a CCSim, write its initial summary turn, register it
 //     in TmuxSim, and write the SessionRow the daemon's poll loop
@@ -26,7 +28,7 @@
 //   - CCSim — behavior-accurate Claude Code simulator: writes real
 //     .jsonl turns in response to keystrokes (summary on start,
 //     custom-title on /rename, user turn on plain text, etc.).
-//   - TmuxSim — replacement for clcommon.TmuxCommand; routes
+//   - TmuxSim — the simulated tmux server behind clcommon.Default; routes
 //     send-keys to the attached CCSim's Receive.
 //   - SandboxLayerSim — deterministic tclaude-layer capability approval or
 //     refusal, with interactive/server boundary call recording.

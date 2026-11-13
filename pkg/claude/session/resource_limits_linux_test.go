@@ -4,6 +4,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // fakeCurrentResourceCgroup fakes the launching process's own cgroup and returns
@@ -906,6 +908,15 @@ func (c *paneScriptCapturingTmux) Command(args ...string) *exec.Cmd {
 		}
 	}
 	return c.launchRecordingTmux.Command(args...)
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (c *paneScriptCapturingTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, c.Command(args...))
+}
+
+func (c *paneScriptCapturingTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(c.Command(args...))
 }
 
 // The operator asked for a boundary this host cannot create. A fresh launch is a

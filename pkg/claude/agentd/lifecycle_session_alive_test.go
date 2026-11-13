@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // listSessionsTmux swaps only what lifecycleSessionAlive touches: a
@@ -22,6 +24,15 @@ func (l listSessionsTmux) Command(args ...string) *exec.Cmd {
 		return l.script()
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (l listSessionsTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, l.Command(args...))
+}
+
+func (l listSessionsTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(l.Command(args...))
 }
 
 func (listSessionsTmux) ListSessions() (map[string]struct{}, error) {

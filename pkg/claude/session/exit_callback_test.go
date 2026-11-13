@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 type exitCallbackTmux struct {
@@ -77,6 +79,15 @@ func (f *exitCallbackTmux) Command(args ...string) *exec.Cmd {
 		return exec.Command("false")
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (f *exitCallbackTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, f.Command(args...))
+}
+
+func (f *exitCallbackTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(f.Command(args...))
 }
 
 func (f *exitCallbackTmux) ListSessions() (map[string]struct{}, error) { return nil, nil }

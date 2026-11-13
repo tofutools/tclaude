@@ -26,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -378,7 +379,7 @@ func startDarwinRouteSmokeLaunch(t *testing.T, home, helper, role, convID, agent
 	t.Cleanup(func() {
 		_ = os.WriteFile(out.stop, []byte("cleanup"), 0o600)
 		if out.tmux != "" {
-			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(out.tmux)).Run()
+			_ = tmuxcmd.Local().KillSession(tmuxcmd.Session(out.tmux))
 		}
 	})
 	return out

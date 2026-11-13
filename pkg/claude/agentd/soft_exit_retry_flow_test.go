@@ -903,7 +903,7 @@ func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *test
 		if attempt == 2 {
 			// The delivered /exit has taken effect between retries: the
 			// session is gone, so the probe errors.
-			_ = f.World.Tmux.Command("kill-session", "-t", "="+tmuxSes).Run()
+			_, _ = f.World.Tmux.Exec("kill-session", "-t", "="+tmuxSes)
 			goneOnce.Do(func() { close(sessionGone) })
 		}
 	}))

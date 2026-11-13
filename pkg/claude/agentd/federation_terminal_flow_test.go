@@ -1,8 +1,10 @@
 package agentd_test
 
 import (
+	"context"
 	"fmt"
 	"github.com/gorilla/websocket"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/testharness"
 	"net/http"
 	"net/http/httptest"
@@ -133,7 +135,22 @@ func (m *terminalTmux) Command(args ...string) *exec.Cmd {
 		}
 
 	}
-	return m.Tmux.Command(args...)
+	return nil // not modelled here: the wrapped transport answers
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (m *terminalTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	if cmd := m.Command(args...); cmd != nil {
+		return tmuxtest.Run(ctx, cmd)
+	}
+	return m.Tmux.Run(ctx, args)
+}
+
+func (m *terminalTmux) AttachArgv(args []string) ([]string, error) {
+	if cmd := m.Command(args...); cmd != nil {
+		return tmuxtest.Argv(cmd)
+	}
+	return m.Tmux.AttachArgv(args)
 }
 func (m *terminalTmux) snapshot() (map[string]string, []byte, []string) {
 	m.mu.Lock()

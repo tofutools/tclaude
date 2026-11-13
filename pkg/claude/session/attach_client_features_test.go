@@ -3,11 +3,13 @@
 package session
 
 import (
+	"context"
 	"os/exec"
 	"slices"
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // The dashboard's web terminals reach tmux through `tclaude session attach`
@@ -73,6 +75,15 @@ func (r *versionedRecordingTmux) Command(args ...string) *exec.Cmd {
 		return exec.Command("echo", r.version)
 	}
 	return r.recordingTmux.Command(args...)
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (r *versionedRecordingTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, r.Command(args...))
+}
+
+func (r *versionedRecordingTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(r.Command(args...))
 }
 
 // A native terminal gets OSC 8 from its own TERM, with no env var involved, so a

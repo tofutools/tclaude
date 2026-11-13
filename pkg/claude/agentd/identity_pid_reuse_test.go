@@ -14,6 +14,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // TCL-771. The DIRECT CLI identity path — convIDForPID steps 2 and 3, which
@@ -43,6 +44,15 @@ const (
 type stubTmux struct{ alive map[string]struct{} }
 
 func (s stubTmux) Command(...string) *exec.Cmd { return exec.Command("true") }
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (s stubTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, s.Command(args...))
+}
+
+func (s stubTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(s.Command(args...))
+}
 
 func (s stubTmux) ListSessions() (map[string]struct{}, error) { return s.alive, nil }
 

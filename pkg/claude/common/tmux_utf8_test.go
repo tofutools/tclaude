@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,10 +41,10 @@ func TestListSessionsWithoutALocale(t *testing.T) {
 		}
 	}
 	tmux := LiveTmux{}
-	if out, err := tmux.Command("new-session", "-d", "-s", "abc123", "sleep", "60").CombinedOutput(); err != nil {
-		t.Fatalf("new-session: %v: %s", err, out)
+	if _, err := tmux.Run(context.Background(), []string{"new-session", "-d", "-s", "abc123", "sleep", "60"}); err != nil {
+		t.Fatalf("new-session: %v", err)
 	}
-	t.Cleanup(func() { _ = tmux.Command("kill-server").Run() })
+	t.Cleanup(func() { _, _ = tmux.Run(context.Background(), []string{"kill-server"}) })
 
 	alive, err := tmux.ListSessions()
 	if err != nil {

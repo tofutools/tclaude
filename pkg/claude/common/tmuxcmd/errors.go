@@ -33,9 +33,10 @@ type Error struct {
 	Command string
 	// Message is tmux's own error text, trimmed; empty when tmux gave none.
 	Message string
-	// Err is the transport's own error, when it has one: an *exec.ExitError
-	// from a forked client, a *clcommon.TmuxCommandError from control mode.
-	// A transport that only learns tmux's message leaves it nil.
+	// Err is the transport's own error, when it has one: the
+	// *clcommon.TmuxCommandError of the local server (which unwraps to the
+	// client's *exec.ExitError when a tmux client was forked). A transport
+	// that only learns tmux's message leaves it nil.
 	Err error
 }
 
