@@ -6,19 +6,21 @@ import "strings"
 // or UnsetHook call addresses, and whose.
 type OptionScope struct {
 	set, unset []string
-	// unnamed marks a scope built from an empty target; see ErrInvalidTarget.
-	unnamed bool
+	// named is set by the constructors for a scope whose target is not
+	// empty. The zero OptionScope is not a scope: sent as it is, tmux would
+	// apply it to whatever session is current. See ErrInvalidTarget.
+	named bool
 }
 
 // PaneScope addresses one pane's own options and hooks (-p). A pane-local
 // value overrides what the pane would inherit from its window or the server.
 func PaneScope(p PaneTarget) OptionScope {
-	return OptionScope{set: []string{"-p", "-t", p.spec}, unset: []string{"-p", "-u", "-t", p.spec}, unnamed: p.spec == ""}
+	return OptionScope{set: []string{"-p", "-t", p.spec}, unset: []string{"-p", "-u", "-t", p.spec}, named: p.spec != ""}
 }
 
 // WindowScope addresses one window's options (-w).
 func WindowScope(w WindowTarget) OptionScope {
-	return OptionScope{set: []string{"-w", "-t", w.spec}, unset: []string{"-wu", "-t", w.spec}, unnamed: w.spec == ""}
+	return OptionScope{set: []string{"-w", "-t", w.spec}, unset: []string{"-wu", "-t", w.spec}, named: w.spec != ""}
 }
 
 // SessionScope addresses a session, leaving it to tmux to pick the table the
@@ -26,17 +28,17 @@ func WindowScope(w WindowTarget) OptionScope {
 // session, a window option (allow-passthrough) on its current window.
 func SessionScope(s SessionTarget) OptionScope {
 	t := s.ActivePane().spec
-	return OptionScope{set: []string{"-t", t}, unset: []string{"-u", "-t", t}, unnamed: t == ""}
+	return OptionScope{set: []string{"-t", t}, unset: []string{"-u", "-t", t}, named: t != ""}
 }
 
 // GlobalScope addresses the server-wide defaults (-g).
 func GlobalScope() OptionScope {
-	return OptionScope{set: []string{"-g"}, unset: []string{"-gu"}}
+	return OptionScope{set: []string{"-g"}, unset: []string{"-gu"}, named: true}
 }
 
 // SetOption sets a tmux option in the scope.
 func (c Client) SetOption(scope OptionScope, name, value string) error {
-	if scope.unnamed {
+	if !scope.named {
 		return named("set-option", "")
 	}
 	_, err := c.run(join("set-option", scope.set, name, value)...)
@@ -46,7 +48,7 @@ func (c Client) SetOption(scope OptionScope, name, value string) error {
 // UnsetOption removes the scope's own value for an option, so the scope
 // inherits it again.
 func (c Client) UnsetOption(scope OptionScope, name string) error {
-	if scope.unnamed {
+	if !scope.named {
 		return named("set-option", "")
 	}
 	_, err := c.run(join("set-option", scope.unset, name)...)
@@ -77,7 +79,7 @@ func (c Client) ShowWindowOption(w WindowTarget, name string) (value string, set
 // SetHook makes tmux run a tmux command when the named hook fires in the
 // scope. command is tmux command text, not a shell command.
 func (c Client) SetHook(scope OptionScope, hook, command string) error {
-	if scope.unnamed {
+	if !scope.named {
 		return named("set-hook", "")
 	}
 	_, err := c.run(join("set-hook", scope.set, hook, command)...)
@@ -86,7 +88,7 @@ func (c Client) SetHook(scope OptionScope, hook, command string) error {
 
 // UnsetHook removes the scope's own handler for a hook.
 func (c Client) UnsetHook(scope OptionScope, hook string) error {
-	if scope.unnamed {
+	if !scope.named {
 		return named("set-hook", "")
 	}
 	_, err := c.run(join("set-hook", scope.unset, hook)...)

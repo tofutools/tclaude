@@ -224,7 +224,9 @@ func externalCallerUnderTclaude(pid int) bool {
 		ours[runtime.PID] = true
 	}
 	for _, pane := range panes {
-		ours[pane.PID] = true
+		if pane.PID > 0 {
+			ours[pane.PID] = true
+		}
 	}
 	const maxHops = 256
 	for range maxHops {

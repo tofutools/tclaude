@@ -166,6 +166,8 @@ func TestEmptyPaneAndScopeTargetsAreRefused(t *testing.T) {
 	require.ErrorIs(t, c.ClearPaneDiedHook(PaneID("")), ErrInvalidTarget)
 	require.ErrorIs(t, c.SetOption(SessionScope(Session("")), "mouse", "on"), ErrInvalidTarget)
 	require.ErrorIs(t, c.UnsetOption(WindowScope(WindowID("")), "x"), ErrInvalidTarget)
+	require.ErrorIs(t, c.SetOption(OptionScope{}, "mouse", "on"), ErrInvalidTarget, "the zero scope is not a scope")
+	require.ErrorIs(t, c.UnsetHook(OptionScope{}, HookPaneDied), ErrInvalidTarget)
 	_, err = c.ListPanes(Session("").CurrentWindow(), "#{pane_pid}")
 	require.ErrorIs(t, err, ErrInvalidTarget)
 	assert.Empty(t, fake.calls)
