@@ -9,6 +9,9 @@ type SessionTarget struct{ spec string }
 // Session targets the session with exactly this name. tmux otherwise falls
 // back to prefix matching, so a dead "repo" would resolve to a live "repo-2".
 func Session(name string) SessionTarget {
+	if name == "" {
+		return SessionTarget{}
+	}
 	return SessionTarget{spec: clcommon.ExactTarget(name)}
 }
 

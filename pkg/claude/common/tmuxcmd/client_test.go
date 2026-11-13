@@ -2,6 +2,7 @@ package tmuxcmd
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 )
 
 // scriptedTmux is a clcommon.Tmux whose every command runs the given shell
@@ -188,4 +190,45 @@ func TestTimeoutDoesNotChangeAPromptAnswer(t *testing.T) {
 	exists, err := Local().WithTimeout(time.Minute).HasSession(Session("repo"))
 	require.NoError(t, err)
 	assert.False(t, exists)
+}
+
+// A command answered over control mode reports through the same error model
+// as a forked client.
+func TestWrapErrorForControlMode(t *testing.T) {
+	rejected := wrapError("kill-session", "", clcommon.NewTmuxCommandError("can't find session: repo"))
+	require.True(t, Rejected(rejected))
+	require.ErrorIs(t, rejected, ErrNotFound)
+	assert.Equal(t, "tmux: can't find session: repo", rejected.Error(), "tmux's text is not repeated")
+	var tmuxErr *Error
+	require.ErrorAs(t, rejected, &tmuxErr)
+	assert.Equal(t, "kill-session", tmuxErr.Command)
+	assert.Equal(t, "can't find session: repo", tmuxErr.Message)
+
+	timedOut := wrapError("kill-session", "", fmt.Errorf("send: %w", tmuxctl.ErrTimeout))
+	require.ErrorIs(t, timedOut, ErrTimeout, "one timeout sentinel on every path")
+	assert.False(t, Rejected(timedOut))
+
+	broken := errors.New("control connection closed")
+	assert.Same(t, broken, wrapError("kill-session", "", broken), "a transport failure passes through")
+	assert.NoError(t, wrapError("kill-session", "", nil))
+}
+
+// tmux reads an empty -t as "the current session, pane or client", so an
+// empty target must never be sent.
+func TestEmptyTargetIsRefusedBeforeAnythingIsSent(t *testing.T) {
+	fake := script(t, "exit 0")
+	c := Local()
+	exists, err := c.HasSession(Session(""))
+	require.NoError(t, err, "a session with no name does not exist")
+	assert.False(t, exists)
+	require.ErrorIs(t, c.KillSession(SessionID("")), ErrInvalidTarget)
+	require.ErrorIs(t, c.KillPane(PaneID("")), ErrInvalidTarget)
+	require.ErrorIs(t, c.DetachClient(ClientTTY("")), ErrInvalidTarget)
+	require.ErrorIs(t, c.DetachSessionClients(Session("")), ErrInvalidTarget)
+	require.ErrorIs(t, c.SwitchClient(ClientTTY(""), Session("next")), ErrInvalidTarget)
+	require.ErrorIs(t, c.SwitchClient(ClientTTY("/dev/pts/1"), Session("")), ErrInvalidTarget)
+	_, err = c.ClientTTYs(Session(""))
+	require.ErrorIs(t, err, ErrInvalidTarget)
+	assert.Empty(t, fake.calls)
+	assert.False(t, Rejected(err), "tmux was never asked")
 }

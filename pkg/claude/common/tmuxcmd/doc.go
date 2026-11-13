@@ -32,4 +32,11 @@
 // tmux server is running). Anything else (tmux missing, a broken connection,
 // ErrTimeout) is a failure to ask, not an answer, and callers that fail
 // closed must treat it as "unknown" rather than "gone".
+//
+// A verb handed an empty target fails with ErrInvalidTarget without sending
+// anything: tmux would read the empty -t as "whatever is current".
+//
+// Deadlines are a property of the Client (WithTimeout), not a parameter of
+// each verb. The transport underneath takes the context a remote runner
+// needs; a verb's caller only chooses how long it is willing to wait.
 package tmuxcmd

@@ -60,6 +60,13 @@ type TmuxCommandError struct {
 	lines []string
 }
 
+// NewTmuxCommandError builds the error for a command tmux rejected, from the
+// lines of tmux's reply. It is how a transport other than exec reports "tmux
+// ran this and said no".
+func NewTmuxCommandError(lines ...string) *TmuxCommandError {
+	return &TmuxCommandError{lines: lines}
+}
+
 // IsTmuxCommandFailure reports whether err says tmux ran and rejected the
 // command, on either path: an *exec.ExitError from a tmux process, or a
 // *TmuxCommandError from control mode.

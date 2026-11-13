@@ -15,9 +15,14 @@ var (
 	// server there are no sessions, so for a liveness question this is a
 	// definite "not there", not a failure to ask.
 	ErrNoServer = errors.New("no tmux server running")
-	// ErrTimeout: the command did not answer within the client's timeout.
-	// The outcome is unknown: a mutation may or may not have happened.
+	// ErrTimeout: the command did not answer in time, whichever way it was
+	// sent. The outcome is unknown: a mutation may or may not have happened.
 	ErrTimeout = errors.New("tmux command timeout")
+	// ErrInvalidTarget: a verb was handed an empty target. tmux reads an
+	// empty -t as "the current or most recent session, pane or client", so
+	// sending it would act on something the caller never named. Nothing is
+	// sent.
+	ErrInvalidTarget = errors.New("empty tmux target")
 )
 
 // Error is a command tmux ran and rejected. It is an answer from tmux, as
@@ -56,7 +61,11 @@ func (e *Error) Is(target error) bool {
 }
 
 // Rejected reports whether err is tmux's own refusal of a command, as opposed
-// to a failure to run it or a timeout.
+// to a failure to run it or a timeout. It is true for every non-zero exit of
+// the tmux client, which includes the client failing to connect for a reason
+// other than "no server" (a socket it may not open, a server of another
+// version). Use errors.Is with ErrNotFound or ErrNoServer where only those
+// two answers are acceptable.
 func Rejected(err error) bool {
 	var e *Error
 	return errors.As(err, &e)

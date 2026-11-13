@@ -9,6 +9,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 )
 
 // Client issues tmux commands. The zero value and Local() talk to tclaude's
@@ -34,6 +35,10 @@ func Local() Client { return Client{} }
 // answer (a request handler, a per-agent delivery worker, a held lock) an
 // unbounded command turns that into a permanent stall. A command that
 // overruns fails with ErrTimeout. d <= 0 means no deadline.
+//
+// The timeout governs a forked tmux client. A command answered over agentd's
+// control-mode connection is bounded by that connection's own reply deadline
+// instead, and reports ErrTimeout the same way.
 func (c Client) WithTimeout(d time.Duration) Client {
 	c.timeout = d
 	return c
@@ -124,10 +129,24 @@ func wrapError(command, stderr string, err error) error {
 		return &Error{Command: command, Message: strings.TrimSpace(cmdErr.Message()), Err: err}
 	}
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && !errors.Is(err, ErrTimeout) {
+	if errors.As(err, &exitErr) {
 		return &Error{Command: command, Message: strings.TrimSpace(stderr), Err: err}
 	}
+	if errors.Is(err, tmuxctl.ErrTimeout) && !errors.Is(err, ErrTimeout) {
+		// One timeout sentinel, whichever way the command was sent.
+		return fmt.Errorf("%w: %w", ErrTimeout, err)
+	}
 	return err
+}
+
+// named rejects an empty target before anything is sent; see ErrInvalidTarget.
+func named(command string, specs ...string) error {
+	for _, spec := range specs {
+		if spec == "" {
+			return fmt.Errorf("tmux %s: %w", command, ErrInvalidTarget)
+		}
+	}
+	return nil
 }
 
 // lines splits a reply into its non-empty lines.
