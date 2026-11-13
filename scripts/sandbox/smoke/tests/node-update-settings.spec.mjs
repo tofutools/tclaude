@@ -19,7 +19,9 @@ test('the local node update dialog edits and saves its auto-update settings', as
   await page.goto('/fleet-admin/setup');
   await page.locator('#fleet-node-update-open').click();
   const block = page.locator('#fleet-node-update-settings');
-  await expect(block.getByText('Auto-update settings')).toBeVisible();
+  // The settings form has loaded (the block's heading names the update
+  // state, e.g. "Updates Off", so it is not a stable anchor).
+  await expect(block.locator('#fleet-nus-method')).toBeVisible();
   const save = page.locator('#fleet-nus-save');
   await expect(save).toBeDisabled();
 
@@ -27,7 +29,12 @@ test('the local node update dialog edits and saves its auto-update settings', as
   await page.locator('#fleet-nus-on-start').check();
   await expect(save).toBeEnabled();
   await expect(page.locator('#fleet-nus-unchosen')).toBeVisible();
-  await save.click();
+  // Save is disabled while its request is in flight too, so wait for the
+  // write itself before reading the settings back.
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/node/update/settings') && r.request().method() !== 'GET'),
+    save.click(),
+  ]);
   await expect(save).toBeDisabled();
   await expect(page.locator('#fleet-node-update-settings-error')).toHaveCount(0);
 
