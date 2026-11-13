@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // The soft-exit escalation ladder.
@@ -404,11 +405,11 @@ const (
 // yield "", never an error that could block the ladder. Lines are joined with
 // " | " so the capture stays a single log line for line-based log tooling.
 func capturePaneScreenTail(paneID string) string {
-	out, err := tmuxOutputWithTimeout("capture-pane", "-p", "-J", "-t", paneID)
+	screen, err := boundedTmux().CapturePane(tmuxcmd.PaneID(paneID), tmuxcmd.CaptureOptions{})
 	if err != nil {
 		return ""
 	}
-	return formatPaneScreenTail(string(out))
+	return formatPaneScreenTail(screen)
 }
 
 func formatPaneScreenTail(screen string) string {

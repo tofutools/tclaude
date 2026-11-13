@@ -29,9 +29,6 @@ func TestKeyboardFixedNamesLiteralTextAndPartialEscapes(t *testing.T) {
 	keys, dropped = k.Flush()
 	require.Empty(t, keys)
 	require.Equal(t, 1, dropped)
-	require.Equal(t, "hello\\;", TmuxLiteralArg("hello;"))
-	require.Equal(t, "\\\\;", TmuxLiteralArg("\\;"))
-	require.Equal(t, "; kill-server", TmuxLiteralArg("; kill-server"))
 	_, err := Encode(Frame{Kind: Report, Data: []byte("\x1b[?1c")})
 	require.ErrorIs(t, err, ErrProtocol, "terminal reports cannot be wire frames")
 }

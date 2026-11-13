@@ -4,7 +4,7 @@ import (
 	"os"
 	"runtime"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // ConfigureTmuxKeybindings sets up keybindings on the tclaude tmux server
@@ -29,8 +29,8 @@ func ConfigureTmuxKeybindings() {
 
 	// Prefix-less (-n): Shift+Arrow to switch sessions
 	// #{session_name} is expanded by tmux to the current session name
-	_ = clcommon.TmuxRun("bind-key", "-n", "S-Right",
+	_ = tmuxcmd.Local().BindRootKey("S-Right",
 		"run-shell", "-b", "TCLAUDE_SESSION_ID=#{session_name} tclaude session goto next 2>/dev/null")
-	_ = clcommon.TmuxRun("bind-key", "-n", "S-Left",
+	_ = tmuxcmd.Local().BindRootKey("S-Left",
 		"run-shell", "-b", "TCLAUDE_SESSION_ID=#{session_name} tclaude session goto prev 2>/dev/null")
 }

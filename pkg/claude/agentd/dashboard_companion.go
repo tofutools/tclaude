@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // GET /api/companion/{agent}/peek — the dashboard companion's hover preview
@@ -30,8 +31,7 @@ const (
 // capturePaneText is swapped by tests; production reads the pane through
 // tmux under the shared subprocess deadline.
 var capturePaneText = func(target string) (string, error) {
-	out, err := tmuxOutputWithTimeout("capture-pane", "-p", "-J", "-t", target)
-	return string(out), err
+	return boundedTmux().CapturePane(tmuxcmd.PaneFromSpec(target), tmuxcmd.CaptureOptions{})
 }
 
 func handleDashboardCompanionPeek(w http.ResponseWriter, r *http.Request) {

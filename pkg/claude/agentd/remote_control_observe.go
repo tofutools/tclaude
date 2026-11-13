@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // Remote-control READBACK (the observe path). Claude Code exposes no
@@ -309,15 +309,10 @@ func isRedRGB(rs, gs, bs string) bool {
 // capturePane snapshots the visible content of a tmux pane target
 // ("session:0.0"), preserving escape sequences (-e, for colour + the OSC 8
 // hyperlink) and joining wrapped lines (-J, so the pill/link isn't split across
-// a soft wrap). Goes through the same clcommon.Default seam every other tmux
-// call uses, so flow tests intercept it via TmuxSim. A dead/missing pane
+// a soft wrap). A dead/missing pane
 // surfaces as a non-nil error (the command exits non-zero).
 func capturePane(paneTarget string) (string, error) {
-	out, err := clcommon.TmuxOutput("capture-pane", "-p", "-e", "-J", "-t", clcommon.ExactTarget(paneTarget))
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
+	return tmuxcmd.Local().CapturePane(tmuxcmd.PaneFromSpec(paneTarget), tmuxcmd.CaptureOptions{Escapes: true})
 }
 
 // observeRemoteControl captures the target pane on demand and scans its footer

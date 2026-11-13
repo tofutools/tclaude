@@ -2,6 +2,7 @@ package tmuxcmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -17,9 +18,10 @@ import (
 // methods return a modified copy and never change the receiver, so a
 // configured Client can be shared freely.
 type Client struct {
-	timeout time.Duration
-	timer   Timer
-	noStart bool
+	transport Transport
+	timeout   time.Duration
+	timer     Timer
+	noStart   bool
 }
 
 // Timer starts a deadline timer: it returns the channel that fires when the
@@ -29,6 +31,30 @@ type Timer func(time.Duration) (fired <-chan time.Time, stop func())
 
 // Local returns the client for the tmux server on this host.
 func Local() Client { return Client{} }
+
+// Transport carries one tmux command to a tmux server and brings back what
+// it printed. It is the single method a new way of reaching tmux (a runner
+// on another host, a pod, a test double) has to provide; every verb is built
+// on it.
+//
+// args is the command as tmux's own client takes it after the socket flags:
+// the command word and its arguments, preceded by any client-level flag such
+// as -N. A command tmux ran and rejected is reported as *Error carrying
+// tmux's message; any other error means the command could not be delivered
+// or its outcome is unknown. Run returns promptly once ctx is done.
+type Transport interface {
+	Run(ctx context.Context, args []string) (stdout []byte, err error)
+}
+
+// TransportFunc adapts a function to Transport.
+type TransportFunc func(ctx context.Context, args []string) ([]byte, error)
+
+// Run calls f.
+func (f TransportFunc) Run(ctx context.Context, args []string) ([]byte, error) { return f(ctx, args) }
+
+// NewClient returns a client that sends its commands through t instead of to
+// the tmux server on this host.
+func NewClient(t Transport) Client { return Client{transport: t} }
 
 // WithTimeout bounds every command the returned client issues. A tmux client
 // can connect and then never return; on any path where something waits on the
@@ -66,6 +92,9 @@ func (c Client) run(args ...string) ([]byte, error) {
 	if c.noStart {
 		full = append([]string{"-N"}, args...)
 	}
+	if c.transport != nil {
+		return c.runVia(c.transport, full)
+	}
 	// Over control mode the reply is bounded by the connection's own deadline.
 	if out, err, ok := clcommon.TryTmuxControl(full...); ok {
 		return out, wrapError(args[0], "", err)
@@ -78,6 +107,22 @@ func (c Client) run(args ...string) ([]byte, error) {
 		return nil, wrapError(args[0], stderr.String(), err)
 	}
 	return stdout.Bytes(), nil
+}
+
+// runVia sends one command through a transport other than the local one,
+// turning the client's timeout into the context's deadline.
+func (c Client) runVia(t Transport, args []string) ([]byte, error) {
+	ctx := context.Background()
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
+	}
+	out, err := t.Run(ctx, args)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && !errors.Is(err, ErrTimeout) {
+		return nil, fmt.Errorf("%w after %s: %w", ErrTimeout, c.timeout, err)
+	}
+	return out, err
 }
 
 // wait runs cmd to completion, killing and reaping it if the client's timeout

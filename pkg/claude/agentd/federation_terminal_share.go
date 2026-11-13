@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
@@ -263,7 +262,7 @@ func (rt *fedRuntime) displaceFedClients(pin *fedPanePin, self *fedTerminalView)
 // fedResizeWindow sets window to exactly cols x rows. The window-size option
 // becomes manual, which the indicator already installed and restores.
 func fedResizeWindow(window string, cols, rows int) error {
-	return clcommon.TmuxRun("resize-window", "-t", window, "-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows))
+	return tmuxcmd.Local().ResizeWindow(tmuxcmd.WindowID(window), cols, rows)
 }
 
 // fedResizeSettle is how long size changes are coalesced: a browser drag sends

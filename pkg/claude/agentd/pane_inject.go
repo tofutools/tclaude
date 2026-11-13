@@ -486,16 +486,16 @@ func injectSignalExitSerializedBy(lockTarget, tmuxTarget string, keys []string) 
 	}
 	defer mu.Unlock()
 	return paneinput.WithLock(tmuxTarget, paneinput.Options{
-		Run:         runTmuxCommand,
+		Tmux:        boundedTmux(),
 		CapturePane: captureInputPane,
 		LockTimeout: paneInjectLockTimeout,
 		LockID:      lockTarget,
-	}, func(run paneinput.Runner, target string) error {
+	}, func(in paneinput.Input) error {
 		for i, key := range keys {
 			if i > 0 {
 				time.Sleep(signalExitKeyGap)
 			}
-			if err := run("send-keys", "-t", target, key); err != nil {
+			if err := in.Keys(key); err != nil {
 				if i == 0 {
 					return fmt.Errorf("send-keys %s: %w", key, err)
 				}
@@ -513,7 +513,7 @@ func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBr
 	}
 	defer mu.Unlock()
 	return paneinput.InjectTextAndSubmit(tmuxTarget, text, paneinput.Options{
-		Run:                 runTmuxCommand,
+		Tmux:                boundedTmux(),
 		CapturePane:         captureInputPane,
 		SettleDelay:         injectSettleDelay,
 		SettleDelaySet:      true,
@@ -564,15 +564,15 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 	}
 	defer mu.Unlock()
 	return paneinput.WithLock(tmuxTarget, paneinput.Options{
-		Run:         runTmuxCommand,
+		Tmux:        boundedTmux(),
 		CapturePane: captureInputPane,
 		LockTimeout: paneInjectLockTimeout,
-	}, func(run paneinput.Runner, target string) error {
-		if err := run("send-keys", "-t", target, toggle); err != nil {
+	}, func(in paneinput.Input) error {
+		if err := in.Keys(toggle); err != nil {
 			return fmt.Errorf("send-keys toggle: %w", err)
 		}
 		time.Sleep(injectSettleDelay)
-		if err := run("send-keys", "-t", target, "Enter"); err != nil {
+		if err := in.Keys("Enter"); err != nil {
 			return fmt.Errorf("send-keys submit: %w", err)
 		}
 		// Let the confirm menu render before moving its highlight.
@@ -581,7 +581,7 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 			if i > 0 {
 				time.Sleep(stepDelay)
 			}
-			if err := run("send-keys", "-t", target, key); err != nil {
+			if err := in.Keys(key); err != nil {
 				return fmt.Errorf("send-keys menu key %q: %w", key, err)
 			}
 		}

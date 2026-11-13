@@ -225,7 +225,7 @@ func controlRoute(args []string) routeKind {
 	var hasT, hasG, hasA, hasC, hasS, hasP bool
 	for _, a := range args[1:] {
 		// A ";" ends a command on tmux's argv path, and a trailing "\;" is
-		// how a literal one is spelled there (terminal.TmuxLiteralArg);
+		// how a literal one is spelled there (tmuxcmd.SendKeySequence);
 		// quoted over control mode either would be typed as written.
 		if a == ";" || strings.HasSuffix(a, `\;`) {
 			return routeExec

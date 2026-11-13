@@ -22,14 +22,44 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
-// Runner executes one tmux command (without the leading tmux binary/socket
-// arguments). Agentd supplies its timeout-bounded runner; other processes use
-// DefaultRunner.
-type Runner func(args ...string) error
+// Input is the channel a WithLock callback types into its pane through. Every
+// send re-checks that the pane is not waiting on a human (see Options), so a
+// dialog raised in the middle of a sequence stops the rest of it.
+type Input struct {
+	tmux  tmuxcmd.Client
+	pane  tmuxcmd.PaneTarget
+	guard func() error
+}
+
+// Keys presses keys by tmux key name ("Enter", "C-c"). A press of only C-c
+// and Escape is always allowed: cancelling cannot accept a dialog's default,
+// and stop/interrupt must stay usable while a human is being asked.
+func (in Input) Keys(keys ...string) error {
+	if !cancelOnlyKeys(keys) {
+		if err := in.guard(); err != nil {
+			return err
+		}
+	}
+	return in.tmux.SendKeys(in.pane, keys...)
+}
+
+// Literal types text exactly as written.
+func (in Input) Literal(text string) error {
+	if err := in.guard(); err != nil {
+		return err
+	}
+	return in.tmux.SendLiteral(in.pane, text)
+}
+
+// Paste delivers text as one bracketed paste.
+func (in Input) Paste(text string) error {
+	buffer := fmt.Sprintf("tclaude-inject-%d-%d", os.Getpid(), pasteBufferSequence.Add(1))
+	return in.tmux.PasteText(in.pane, buffer, text, in.guard)
+}
 
 // Options selects the command boundary and timing policy for one injection.
 // Zero values use the production defaults.
@@ -38,8 +68,11 @@ type Options struct {
 	// answer (agentd auto-permit). Lifecycle/message injection never sets it.
 	AnswerHumanInput bool
 	// CapturePane optionally checks a known modal UI before an async hook lands.
-	CapturePane    func(target string) (string, error)
-	Run            Runner
+	CapturePane func(target string) (string, error)
+	// Tmux is the client the input is sent through. Agentd supplies its
+	// timeout-bounded client; the zero value is the local tmux server with no
+	// deadline, which is what other processes use.
+	Tmux           tmuxcmd.Client
 	SettleDelay    time.Duration
 	SettleDelaySet bool
 	LockTimeout    time.Duration
@@ -75,15 +108,7 @@ const (
 
 var pasteBufferSequence atomic.Uint64
 
-// DefaultRunner executes against tclaude's tmux server.
-func DefaultRunner(args ...string) error {
-	return clcommon.TmuxRun(args...)
-}
-
 func (o Options) resolved() Options {
-	if o.Run == nil {
-		o.Run = DefaultRunner
-	}
 	if !o.SettleDelaySet {
 		o.SettleDelay = defaultSettleDelay
 	} else if o.SettleDelay < 0 {
@@ -99,8 +124,8 @@ func (o Options) resolved() Options {
 }
 
 // WithLock single-files fn with every cooperating tclaude process targeting
-// the same pane. fn receives the exact-match tmux pane target.
-func WithLock(tmuxTarget string, opts Options, fn func(run Runner, exactTarget string) error) error {
+// the same pane. fn types through the Input it is handed.
+func WithLock(tmuxTarget string, opts Options, fn func(in Input) error) error {
 	opts = opts.resolved()
 	exactTarget := ExactInputTarget(tmuxTarget)
 	lockTarget := exactTarget
@@ -125,34 +150,35 @@ func WithLock(tmuxTarget string, opts Options, fn func(run Runner, exactTarget s
 		return fmt.Errorf("%w after %s", ErrLockTimeout, opts.LockTimeout)
 	}
 	defer func() { _ = fileLock.Unlock() }()
-	run := func(args ...string) error {
-		if len(args) > 0 && (args[0] == "send-keys" || args[0] == "paste-buffer") && !opts.AnswerHumanInput && !cancelOnlyKeys(args) {
-			if err := CheckHumanInput(lockTarget); err != nil {
-				return err
+	guard := func() error {
+		if opts.AnswerHumanInput {
+			return nil
+		}
+		if err := CheckHumanInput(lockTarget); err != nil {
+			return err
+		}
+		if opts.CapturePane != nil {
+			screen, err := opts.CapturePane(exactTarget)
+			if err != nil {
+				return fmt.Errorf("check pane input: %w", err)
 			}
-			if opts.CapturePane != nil {
-				screen, err := opts.CapturePane(exactTarget)
-				if err != nil {
-					return fmt.Errorf("check pane input: %w", err)
-				}
-				if ScreenAwaitsHumanInput(screen) {
-					return ErrAwaitingHumanInput
-				}
+			if ScreenAwaitsHumanInput(screen) {
+				return ErrAwaitingHumanInput
 			}
 		}
-		return opts.Run(args...)
+		return nil
 	}
-	return fn(run, exactTarget)
+	return fn(Input{tmux: opts.Tmux, pane: tmuxcmd.PaneFromSpec(exactTarget), guard: guard})
 }
 
 // A signal-only cancellation cannot accept a dialog's default selection.
 // Keep stop/interrupt usable while human input is pending; text and Enter
 // always pass the shared guard, including after a soft-exit prefix.
-func cancelOnlyKeys(args []string) bool {
-	if len(args) < 4 || args[0] != "send-keys" || args[1] != "-t" {
+func cancelOnlyKeys(keys []string) bool {
+	if len(keys) == 0 {
 		return false
 	}
-	for _, key := range args[3:] {
+	for _, key := range keys {
 		if key != "C-c" && key != "Escape" {
 			return false
 		}
@@ -168,11 +194,7 @@ func cancelOnlyKeys(args []string) bool {
 // serialization (agentd's pane-inject mutexes) can key on the very same
 // canonical identity as this package's cross-process advisory file lock.
 func ExactInputTarget(tmuxTarget string) string {
-	target := strings.TrimPrefix(tmuxTarget, "=")
-	if strings.HasPrefix(target, "%") {
-		return target
-	}
-	return clcommon.ExactTarget(target)
+	return tmuxcmd.PaneFromSpec(tmuxTarget).String()
 }
 
 // InjectTextAndSubmit delivers one complete prompt turn. Multiline/tabbed
@@ -182,10 +204,10 @@ func ExactInputTarget(tmuxTarget string) string {
 // long-standing paste-coalescing workaround.
 func InjectTextAndSubmit(tmuxTarget, text string, opts Options) error {
 	opts = opts.resolved()
-	return WithLock(tmuxTarget, opts, func(run Runner, target string) error {
+	return WithLock(tmuxTarget, opts, func(in Input) error {
 		if len(opts.PrefixKeys) > 0 {
 			for _, key := range opts.PrefixKeys {
-				if err := run("send-keys", "-t", target, key); err != nil {
+				if err := in.Keys(key); err != nil {
 					return fmt.Errorf("send-keys prefix %q: %w", key, err)
 				}
 			}
@@ -195,25 +217,20 @@ func InjectTextAndSubmit(tmuxTarget, text string, opts Options) error {
 			time.Sleep(opts.SettleDelay)
 		}
 		if opts.ForceBracketedPaste || strings.ContainsAny(text, "\n\t") {
-			buffer := fmt.Sprintf("tclaude-inject-%d-%d", os.Getpid(), pasteBufferSequence.Add(1))
-			if err := run("set-buffer", "-b", buffer, text); err != nil {
-				return fmt.Errorf("set-buffer text: %w", err)
+			if err := in.Paste(text); err != nil {
+				return err
 			}
-			if err := run("paste-buffer", "-d", "-p", "-r", "-b", buffer, "-t", target); err != nil {
-				_ = run("delete-buffer", "-b", buffer)
-				return fmt.Errorf("paste-buffer text: %w", err)
-			}
-		} else if err := run("send-keys", "-l", "-t", target, text); err != nil {
+		} else if err := in.Literal(text); err != nil {
 			return fmt.Errorf("send-keys text: %w", err)
 		}
 		time.Sleep(opts.SettleDelay)
-		if err := run("send-keys", "-t", target, "Enter"); err != nil {
+		if err := in.Keys("Enter"); err != nil {
 			return fmt.Errorf("send-keys submit: %w", err)
 		}
 		time.Sleep(opts.SettleDelay)
 		// The first Enter already submitted. A dialog raised by that turn
 		// suppresses this workaround Enter, but must not cause full-text retry.
-		_ = run("send-keys", "-t", target, "Enter")
+		_ = in.Keys("Enter")
 		return nil
 	})
 }
@@ -221,10 +238,8 @@ func InjectTextAndSubmit(tmuxTarget, text string, opts Options) error {
 // SendKeys serializes a single non-text tmux key operation (for example the
 // Enter that accepts a plan dialog) with message and lifecycle input streams.
 func SendKeys(tmuxTarget string, opts Options, keys ...string) error {
-	return WithLock(tmuxTarget, opts, func(run Runner, target string) error {
-		args := []string{"send-keys", "-t", target}
-		args = append(args, keys...)
-		return run(args...)
+	return WithLock(tmuxTarget, opts, func(in Input) error {
+		return in.Keys(keys...)
 	})
 }
 

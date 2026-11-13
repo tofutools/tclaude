@@ -274,12 +274,3 @@ func (k *Keyboard) parse(flush bool) (out []Key, dropped int) {
 	}
 	return
 }
-
-// TmuxLiteralArg escapes only tmux's argv-level command separator syntax.
-// tmux removes this one escape before delivering the literal argument.
-func TmuxLiteralArg(s string) string {
-	if strings.HasSuffix(s, ";") {
-		return s[:len(s)-1] + "\\;"
-	}
-	return s
-}

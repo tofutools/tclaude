@@ -284,6 +284,11 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		if strings.HasPrefix(args[2], "=%") {
 			return exec.Command(falseBin)
 		}
+		if args[3] == "-X" {
+			// A copy-mode command, not a keystroke. The sim has no copy
+			// mode, so like real tmux outside a mode there is nothing to do.
+			return exec.Command(trueBin)
+		}
 		t.routeSendKeys(args[2], args[3])
 	case len(args) >= 5 && args[0] == "send-keys" && args[1] == "-l" && args[2] == "-t":
 		// Literal mode prevents text such as "Enter" or "C-c" from being
