@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/federation/hub"
 	"github.com/tofutools/tclaude/pkg/noderun"
 	"github.com/tofutools/tclaude/pkg/selfupdate"
+	"github.com/tofutools/tclaude/pkg/testharness"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -33,6 +34,34 @@ func TestFleetJourneyInstance(t *testing.T) {
 	if os.Getenv("TCLAUDE_FLEET_JOURNEY_CHILD") != "1" {
 		t.Skip("fixture process for TestFleetJourney")
 	}
+	serveFleetFixtureInstance(t, func(f *testharness.Flow) {
+		for _, name := range []string{"shared", "hidden", "receiver"} {
+			f.HaveGroup(name)
+		}
+		for i, name := range []string{"worker", "retiring", "traveler", "secret", "boundary"} {
+			conv := fmt.Sprintf("019fe740-43a4-7023-b8ae-1ee64459f2a%d", i+1)
+			f.HaveConvWithTitle(conv, name)
+			f.HaveAliveSession(conv, name, name+"-pane", testutil.CanonicalTempDir(t))
+			group := "shared"
+			if name == "secret" {
+				group = "hidden"
+			}
+			f.HaveMember(group, conv)
+			if name == "boundary" {
+				f.HaveMember("hidden", conv)
+			}
+			cc := f.World.CCs.GetByConvID(conv)
+			require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: conv, CustomTitle: name, FullPath: cc.JsonlPath, ProjectPath: cc.Cwd, ProjectDir: filepath.Dir(cc.JsonlPath), Harness: "claude", IndexedAt: time.Now()}))
+		}
+	})
+}
+
+// serveFleetFixtureInstance is the body of a fleet fixture child process: an
+// isolated flow world, seeded by seed, served on a loopback port it prints as
+// FLEET_JOURNEY_READY <url>. It serves until the parent closes its stdin.
+// TestFleetJourneyInstance and TestSandboxPeerInstance share it.
+func serveFleetFixtureInstance(t *testing.T, seed func(f *testharness.Flow)) {
+	t.Helper()
 	f := newFlow(t)
 	agentd.ResetFederationForTest()
 	t.Cleanup(agentd.ResetFederationForTest)
@@ -42,24 +71,7 @@ func TestFleetJourneyInstance(t *testing.T) {
 	binDir := testutil.CanonicalTempDir(t)
 	require.NoError(t, os.Symlink(git, filepath.Join(binDir, "git")))
 	t.Setenv("PATH", binDir)
-	for _, name := range []string{"shared", "hidden", "receiver"} {
-		f.HaveGroup(name)
-	}
-	for i, name := range []string{"worker", "retiring", "traveler", "secret", "boundary"} {
-		conv := fmt.Sprintf("019fe740-43a4-7023-b8ae-1ee64459f2a%d", i+1)
-		f.HaveConvWithTitle(conv, name)
-		f.HaveAliveSession(conv, name, name+"-pane", testutil.CanonicalTempDir(t))
-		group := "shared"
-		if name == "secret" {
-			group = "hidden"
-		}
-		f.HaveMember(group, conv)
-		if name == "boundary" {
-			f.HaveMember("hidden", conv)
-		}
-		cc := f.World.CCs.GetByConvID(conv)
-		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: conv, CustomTitle: name, FullPath: cc.JsonlPath, ProjectPath: cc.Cwd, ProjectDir: filepath.Dir(cc.JsonlPath), Harness: "claude", IndexedAt: time.Now()}))
-	}
+	seed(f)
 	cleanup, err := agentd.SetNodeRunExecutorForTest(func(_ context.Context, path, _ string, _ int64) noderun.Result {
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -109,21 +121,48 @@ func startJourneyNode(t *testing.T) *journeyNode {
 
 func startFleetFixtureNode(t *testing.T, testName, childEnv string) *journeyNode {
 	t.Helper()
-	binary, err := os.Executable()
-	require.NoError(t, err)
 	// Allow race-instrumented SQLite migrations in both isolated children;
 	// the normal complete journey runs in about five seconds.
-	cmd := exec.Command(binary, "-test.run=^"+testName+"$", "-test.timeout=180s")
-	cmd.Env = append(os.Environ(), childEnv)
+	return startFixtureNode(t, fixtureNodeOptions{testName: testName, env: []string{childEnv}, timeout: "180s"})
+}
+
+// fixtureNodeOptions configures startFixtureNode.
+type fixtureNodeOptions struct {
+	testName string
+	env      []string
+	// timeout is the child's -test.timeout ("0": none, for a long-lived server).
+	timeout string
+	// logPath receives the child's output (empty: a file in a temp dir).
+	logPath string
+	// onStart, if set, sees the child's pid once it runs.
+	onStart func(pid int)
+}
+
+// startFixtureNode runs one test of this binary as a separate daemon process
+// and returns a client for the URL it prints. Closing its stdin at cleanup
+// stops it; a parent that dies closes the pipe too, so the child never
+// outlives it.
+func startFixtureNode(t *testing.T, o fixtureNodeOptions) *journeyNode {
+	t.Helper()
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.Command(binary, "-test.run=^"+o.testName+"$", "-test.timeout="+o.timeout)
+	cmd.Env = append(os.Environ(), o.env...)
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
-	logPath := filepath.Join(testutil.CanonicalTempDir(t), "instance.log")
+	logPath := o.logPath
+	if logPath == "" {
+		logPath = filepath.Join(testutil.CanonicalTempDir(t), "instance.log")
+	}
 	log, err := os.Create(logPath)
 	require.NoError(t, err)
 	cmd.Stderr = log
 	require.NoError(t, cmd.Start())
+	if o.onStart != nil {
+		o.onStart(cmd.Process.Pid)
+	}
 	ready := make(chan string, 1)
 	go func() {
 		scanner := bufio.NewScanner(stdout)

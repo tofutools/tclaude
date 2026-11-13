@@ -321,11 +321,14 @@ browser. `scripts/sandbox/ui.sh` serves the real dashboard and daemon API from
 your working tree, over seeded data that fills every page and tab. It runs
 under a throwaway HOME with tmux simulated, so it never touches `~/.tclaude`,
 your daemon or your tmux. See `scripts/sandbox/README.md` for what the data
-covers and what it cannot show (live terminals, a live federation peer).
+covers and what it cannot show (live terminals). For Fleet and federation
+work, `--peer` links a live second node through a hub.
 
 ```bash
 scripts/sandbox/ui.sh up            # build, seed, print the URL (about 5s warm)
+scripts/sandbox/ui.sh up --peer     # plus a live federation peer and hub
 scripts/sandbox/ui.sh tour          # every route: no errors, no empty pages
+scripts/sandbox/ui.sh tour --peer   # the same, plus the live peer's pages
 scripts/sandbox/ui.sh smoke [NAME]  # the Playwright smoke tests
 scripts/sandbox/ui.sh down          # stop it and delete its data
 ```

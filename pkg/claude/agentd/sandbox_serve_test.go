@@ -41,6 +41,8 @@ const sandboxFullFixture = "full"
 // full; any docshots fixture works too), serves it on 127.0.0.1 at
 // TCLAUDE_SANDBOX_PORT (default: a random port), writes the URL to
 // <TCLAUDE_SANDBOX_SERVE>/url and serves until a file named stop appears there.
+// With TCLAUDE_SANDBOX_PEER set it links a live federation peer first
+// (sandbox_peer_test.go).
 func TestSandboxServe(t *testing.T) {
 	dir := os.Getenv("TCLAUDE_SANDBOX_SERVE")
 	if dir == "" {
@@ -59,6 +61,9 @@ func TestSandboxServe(t *testing.T) {
 		}
 	}
 	mux, page := seedDocFixture(t, fixture)
+	if sandboxLivePeer() {
+		seedSandboxLivePeer(t, dir, mux)
+	}
 	serveDocFixture(t, dir, sandboxLogFailures(t, sandboxStageReferer(mux)), page, ln)
 }
 
@@ -233,7 +238,9 @@ func seedSandboxFull(t *testing.T, f *testharness.Flow) {
 	seedSandboxAutomations(s)
 	seedSandboxProcessRuns(s)
 	seedSandboxAccess(t)
-	seedSandboxFederation(t)
+	if !sandboxLivePeer() {
+		seedSandboxFederation(t)
+	}
 	seedSandboxUsageLimit(s)
 	seedSandboxPlugin(s)
 	seedSandboxLog(t)
@@ -443,10 +450,14 @@ func seedSandboxAccess(t *testing.T) {
 	}
 }
 
+// sandboxLivePeer reports `ui.sh up --peer`: a live peer replaces the
+// unreachable one seedSandboxFederation trusts.
+func sandboxLivePeer() bool { return os.Getenv("TCLAUDE_SANDBOX_PEER") != "" }
+
 // seedSandboxFederation trusts one peer node, so the map and the fleet pages
 // list it. There is no hub and nothing answers on its side, so it shows as
-// unreachable and the hub-backed fleet pages stay empty: a live peer needs a
-// second daemon process and a hub, as TestFleetJourney runs.
+// unreachable and the hub-backed fleet pages stay empty; `ui.sh up --peer`
+// links a live one instead (seedSandboxLivePeer).
 func seedSandboxFederation(t *testing.T) {
 	t.Helper()
 	peer, err := proto.NewIdentity()
