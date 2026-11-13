@@ -335,6 +335,22 @@ from the running daemon.
   foreground job there, so Ctrl+C still stops it. There a small helper
   process keeps the job and starts each new agentd, so `ps` shows one helper
   however often agentd restarts, and the old icon leaves the menu bar.
+
+  A restart behaves like a fresh start. Without a supervisor, and under
+  launchd, the restarted agentd asks your login shell for its environment
+  again (`$SHELL -l -i`, as the app launcher does), instead of keeping the
+  one it started with. A toolchain or profile change since then (a new Go,
+  a new `PATH` entry) reaches agentd, and the agents and panes it starts
+  after the restart. What belongs to the launch itself stays: the launch
+  profile's and the unit's variables, the `TCLAUDE_*` ones, and those of the
+  terminal, tmux pane or SSH session agentd runs in. The old `PATH` stays on
+  the end as a fallback. If the shell gives no answer within 30 seconds, or
+  fails, agentd restarts with its old environment. `output.log` has a
+  warning line, and a notice in Messages says so. A systemd unit is the
+  exception: a fresh start of a unit uses the unit's environment, never your
+  login shell, so every restart of it keeps that (see
+  [systemd](server/systemd.md#path-and-environment)). Agents already
+  running keep their environment until they are restarted.
 - **Launch profile** is what agentd should be started with: serve flags, and
   environment variables, each either set to a value or inherited from
   agentd's own environment when the unit is written. It is kept in

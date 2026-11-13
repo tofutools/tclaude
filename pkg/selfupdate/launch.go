@@ -55,6 +55,10 @@ type LaunchSnapshot struct {
 	Unit       string            `json:"unit,omitempty"`
 	// RestartMethod is how the restart was expected to happen.
 	RestartMethod string `json:"restart_method,omitempty"`
+	// EnvRefreshed says the restart starts the daemon with a fresh
+	// environment from the login shell (MarkLaunchEnvRefreshed), not the
+	// one snapshotted: only tclaude's own variables are then compared.
+	EnvRefreshed bool `json:"env_refreshed,omitempty"`
 }
 
 // LaunchCheck is what an update job reports about the daemon's flags and
@@ -80,6 +84,9 @@ type LaunchCheck struct {
 	// configured to run with (the launch profile, or a unit tclaude did not
 	// write), when there is one. Keys only, never values.
 	Expected *ExpectedLaunch `json:"expected,omitempty"`
+	// EnvRefreshed: the restart took a fresh environment from the login
+	// shell, so only tclaude's own variables (TCLAUDE_*) were compared.
+	EnvRefreshed bool `json:"env_refreshed,omitempty"`
 }
 
 // ExpectedLaunch is the restarted daemon against its configured launch.
@@ -129,6 +136,10 @@ var volatileEnv = map[string]bool{
 	// launchd: a fresh UUID for every launch of the job.
 	"LaunchInstanceID": true,
 }
+
+// loginEnvAppliedVar is agentd's marker for a daemon that has the login
+// shell's environment; a refreshing restart may add it.
+const loginEnvAppliedVar = "TCLAUDE_AGENTD_LOGIN_ENV"
 
 // ignoredEnv reports a key the comparison skips: volatile per-start values
 // and the markers the updater itself sets for the commands it runs.
@@ -229,6 +240,7 @@ func CompareLaunch(before LaunchSnapshot, argv, environ []string, kind, unit, re
 	check := *before.Check()
 	now := time.Now().UTC()
 	check.ComparedAt = &now
+	check.EnvRefreshed = before.EnvRefreshed
 	diffs := []LaunchDifference{}
 	b, a := shapeOf(before.Argv, before.ArgvHashes), shapeOf(after.Argv, after.ArgvHashes)
 	if len(before.ArgvHashes) > 0 && len(after.ArgvHashes) > 0 && before.ArgvHashes[0] != after.ArgvHashes[0] && !relocated(b.binary, a.binary, relocations) {
@@ -250,6 +262,12 @@ func CompareLaunch(before LaunchSnapshot, argv, environ []string, kind, unit, re
 		}
 	}
 	for _, key := range unionKeys(before.Env, after.Env) {
+		if before.EnvRefreshed && (!strings.HasPrefix(key, "TCLAUDE_") || key == loginEnvAppliedVar) {
+			// Asked afresh from the login shell on purpose: a changed
+			// PATH or profile variable is the point, not a difference,
+			// nor the marker saying the daemon has the login environment.
+			continue
+		}
 		bv, inB := before.Env[key]
 		av, inA := after.Env[key]
 		switch {
@@ -301,6 +319,9 @@ func (c *LaunchCheck) Summary() string {
 	switch c.State {
 	case "identical":
 		out = "Kept flags and environment."
+		if c.EnvRefreshed {
+			out = "Kept flags and tclaude's own environment variables; the rest of the environment was refreshed from the login shell."
+		}
 	case "differs":
 		parts := make([]string, 0, len(c.Differences))
 		for _, d := range c.Differences {
@@ -473,6 +494,32 @@ func (s *Service) CompareLaunch(argv, environ []string, kind, unit, restartMetho
 	// The hashes are no longer needed once compared.
 	_ = os.Remove(s.launchPath(job.ID))
 	return &job, nil
+}
+
+// MarkLaunchEnvRefreshed records on the running job's snapshot that the
+// restart starts the daemon with a fresh login-shell environment, so the
+// restarted daemon's comparison does not report the refresh itself as
+// differences. Nothing to mark (no job, no snapshot, already compared) is
+// not an error.
+func (s *Service) MarkLaunchEnvRefreshed() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.Job == nil || s.status.Job.Launch == nil || s.status.Job.Launch.State != "recorded" {
+		return nil
+	}
+	path := s.launchPath(s.status.Job.ID)
+	var snap LaunchSnapshot
+	if err := readJSON(path, &snap); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if snap.EnvRefreshed {
+		return nil
+	}
+	snap.EnvRefreshed = true
+	return writeJSONFile(path, snap)
 }
 
 // RecordExpectedLaunch adds the comparison with the configured launch to

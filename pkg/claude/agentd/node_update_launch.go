@@ -14,9 +14,11 @@ import (
 // launchEnviron is the environment this process was started with, captured
 // before anything in it runs: the CLI entry prepends the managed-harness
 // directory to PATH and serve exports the socket and resource-delegation
-// paths. An in-place restart hands the new binary this environment, so it
-// starts as this one was started, and the update's before/after comparison
-// reads the same thing on both sides.
+// paths. A restart builds the new binary's environment from this one
+// (restartEnviron: the login shell's afresh, with the launch's own
+// variables from here, or this one as it is under systemd or when the
+// shell fails), and the update's before/after comparison reads this on
+// both sides.
 // A login-shell failure the launcher handed over is reported once, by the
 // daemon it started, not again after every in-place restart. The relaunch
 // helper's PID (relaunchHelperVar) is this process's own, not a launch

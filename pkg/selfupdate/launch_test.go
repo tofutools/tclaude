@@ -186,3 +186,41 @@ func TestRestartedServiceComparesWithTheDurableSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, again, "compared once")
 }
+
+// A restart that refreshed the environment from the login shell on purpose
+// compares only tclaude's own variables: a new PATH or profile variable is
+// the refresh, not a difference, while a lost tclaude marker still is.
+func TestRestartedServiceComparesOnlyTclaudesEnvAfterARefresh(t *testing.T) {
+	dir := testutil.CanonicalTempDir(t)
+	bin := filepath.Join(dir, "bin", "tclaude")
+	writeBin(t, bin, "v1.0.0")
+	s := versionedService(t, dir, []Binary{{Name: "tclaude", Path: bin, Version: "v1.0.0", Method: "release"}}, "v1.1.0")
+	s.hooks.Restart = func() error { return nil }
+	argv := []string{bin, "agentd", "serve"}
+	snap, err := CaptureLaunch(argv, []string{"PATH=/go-1.27.3/bin", "GOROOT=/go-1.27.3", "TCLAUDE_A=1", "TCLAUDE_B=1"}, "shell", "", "exec")
+	require.NoError(t, err)
+	job, err := s.StartWith(Request{Action: "apply"}, "operator", func() bool { return true }, ApplyOptions{Launch: &LaunchPlan{Snapshot: snap, Binary: "tclaude", Args: [][]string{argv[1:]}}})
+	require.NoError(t, err)
+	job = waitJob(t, s, job.ID)
+	require.Equal(t, "restarting", job.State, job.Error)
+	require.NoError(t, s.MarkLaunchEnvRefreshed())
+	require.NoError(t, s.MarkLaunchEnvRefreshed(), "marking twice is harmless")
+
+	restarted, err := New(filepath.Join(dir, "updates"), []Binary{{Name: "tclaude", Path: bin, Version: "v1.1.0", Method: "release"}}, Hooks{})
+	require.NoError(t, err)
+	done, err := restarted.CompareLaunch(argv, []string{"PATH=/go-1.27.4/bin", "EDITOR=vim", "TCLAUDE_A=1"}, "shell", "", "exec")
+	require.NoError(t, err)
+	require.NotNil(t, done)
+	assert.True(t, done.Launch.EnvRefreshed)
+	assert.Equal(t, []LaunchDifference{{Kind: "env", Change: "removed", Name: "TCLAUDE_B"}}, done.Launch.Differences)
+}
+
+func TestCompareLaunchAfterARefreshSaysSo(t *testing.T) {
+	argv := []string{"/usr/bin/tclaude", "agentd", "serve"}
+	before, err := CaptureLaunch(argv, []string{"PATH=/a", "TCLAUDE_X=1"}, "shell", "", "exec")
+	require.NoError(t, err)
+	before.EnvRefreshed = true
+	check := CompareLaunch(before, argv, []string{"PATH=/b", "NEW=1", "TCLAUDE_X=1", "TCLAUDE_AGENTD_LOGIN_ENV=1"}, "shell", "", "exec", nil)
+	assert.Equal(t, "identical", check.State, check.Differences)
+	assert.Contains(t, check.Summary(), "refreshed from the login shell")
+}

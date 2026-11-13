@@ -100,7 +100,10 @@ gives no answer, or fails, agentd still starts, with the plist's
 environment. `output.log` has an error line, and a notice in the
 dashboard's Messages says agents may not start or may show offline, and how
 to check (`time $SHELL -l -i -c true`). A plist you wrote yourself, under another label, is
-left as it is.
+left as it is. Every restart tclaude starts (the dashboard's **Restart
+agentd…**, an update) asks the login shell again, also when agentd restarts
+in a new process instead of through launchd, so a toolchain or profile
+change since agentd started reaches it and the agents it starts next.
 
 **Restarts.** `KeepAlive` with `SuccessfulExit` set to false restarts
 `agentd` when it crashes, but not after a clean exit. `AbandonProcessGroup`

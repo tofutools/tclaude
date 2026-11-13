@@ -3,6 +3,7 @@
 package agentd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 	"slices"
 	"strconv"
 	"syscall"
+
+	"github.com/tofutools/tclaude/pkg/launcher"
 )
 
 // relaunchSignals are forwarded from the waiting helper to agentd. The
@@ -33,8 +36,14 @@ func runRelaunch(mode, exe string, argv []string) int {
 		}
 		defer signal.Stop(sigs)
 	}
+	env := launchEnviron
+	if msg, ok := os.LookupEnv(launcher.LoginEnvErrorVar); ok {
+		// The restart that started this helper could not refresh the
+		// environment: the agentd it starts tells the operator.
+		env = append(slices.Clip(env), launcher.LoginEnvErrorVar+"="+msg)
+	}
 	for {
-		cmd := relaunchCommand(mode, exe, argv)
+		cmd := relaunchCommand(mode, exe, argv, env)
 		if err := cmd.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "Restart failed: %v\n", err)
 			return 1
@@ -57,6 +66,12 @@ func runRelaunch(mode, exe string, argv []string) int {
 				}
 			}
 			if forwarded == 0 {
+				// A restart: like a fresh start, with the login shell's
+				// environment as it is now. A signal while the shell is
+				// asked stops instead, as one during the restart does.
+				env, forwarded = relaunchFreshEnviron(sigs)
+			}
+			if forwarded == 0 {
 				continue
 			}
 			sig = forwarded
@@ -72,14 +87,42 @@ func runRelaunch(mode, exe string, argv []string) int {
 	}
 }
 
-// relaunchCommand builds the agentd process: the helper's launch
-// environment (the old daemon's, captured before startup changed anything)
-// and stdio, in its own session when
+// relaunchRestartEnviron is the environment the waiting helper starts
+// agentd with again after a hand-back; tests swap it.
+var relaunchRestartEnviron = func(ctx context.Context, environ []string) []string {
+	env, _ := daemonRestartEnviron(ctx, environ)
+	return env
+}
+
+// relaunchFreshEnviron asks for relaunchRestartEnviron, and returns the
+// signal that arrived on sigs meanwhile (0 for none), which ends the wait.
+func relaunchFreshEnviron(sigs <-chan os.Signal) ([]string, syscall.Signal) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan syscall.Signal, 1)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case s := <-sigs:
+			ss, _ := s.(syscall.Signal)
+			got <- ss
+			cancel()
+		case <-done:
+			got <- 0
+		}
+	}()
+	env := relaunchRestartEnviron(ctx, launchEnviron)
+	close(done)
+	return env, <-got
+}
+
+// relaunchCommand builds the agentd process: env (the helper's launch
+// environment, which the old daemon built for it, or a fresh one after a
+// hand-back) and stdio, in its own session when
 // detached, otherwise in the helper's process group, so Ctrl+C and job
 // control reach it as before. A waited-for agentd is told the helper's
 // PID, so its next restart hands back here (relaunchHandBack).
-func relaunchCommand(mode, exe string, argv []string) *exec.Cmd {
-	env := launchEnviron
+func relaunchCommand(mode, exe string, argv, env []string) *exec.Cmd {
 	if mode == relaunchDetach {
 		// Nothing waits for a detached daemon to hand back.
 		env = slices.Clip(env)

@@ -187,7 +187,12 @@ The recommendation is only a suggestion; your choice wins.
   `go install` and source-checkout builds, git, and the post-update setup
   (a release download runs no tool). If the login shell does not answer
   within 30 seconds, the update runs with agentd's environment and the job
-  shows a warning. **Test method** shows which one an update would use.
+  shows a warning. The restart after the update asks your login shell again,
+  so the restarted agentd runs with the new environment too (a systemd unit
+  keeps its own; see [systemd](server/systemd.md#path-and-environment)).
+  The update's before/after comparison then checks only the `TCLAUDE_*`
+  variables, since the rest changed on purpose.
+  **Test method** shows which one an update would use.
   Afterwards tclaude checks each binary still
   runs as tclaude and speaks the same federation protocol. Any version is
   accepted: one other than the latest release, a lower one included (a

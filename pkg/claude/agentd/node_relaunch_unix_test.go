@@ -4,6 +4,7 @@ package agentd
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/launcher"
 	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
@@ -153,6 +155,9 @@ func TestRelaunchWaitKeepsSignalsIgnoredAtStart(t *testing.T) {
 
 func TestRelaunchWaitStartsAgentdAgainOnHandBack(t *testing.T) {
 	sh := shellPath(t)
+	prevFresh := relaunchRestartEnviron
+	t.Cleanup(func() { relaunchRestartEnviron = prevFresh })
+	relaunchRestartEnviron = func(_ context.Context, environ []string) []string { return environ }
 	dir := testutil.CanonicalTempDir(t)
 	runs := filepath.Join(dir, "runs")
 	// The first agentd hands back (as relaunchHandBack makes it); the one
@@ -214,11 +219,11 @@ func TestRelaunchCommandTellsOnlyAWaitedForAgentdTheHelper(t *testing.T) {
 		}
 		return out
 	}
-	wait := relaunchCommand(relaunchWait, "/x", []string{"x"})
+	wait := relaunchCommand(relaunchWait, "/x", []string{"x"}, launchEnviron)
 	if got, want := helperVars(wait.Env), []string{relaunchHelperVar + "=" + strconv.Itoa(os.Getpid())}; !slices.Equal(got, want) {
 		t.Errorf("wait env helper vars = %q, want %q", got, want)
 	}
-	if got := helperVars(relaunchCommand(relaunchDetach, "/x", []string{"x"}).Env); len(got) != 0 {
+	if got := helperVars(relaunchCommand(relaunchDetach, "/x", []string{"x"}, launchEnviron).Env); len(got) != 0 {
 		t.Errorf("a detached agentd has nothing to hand back to, got %q", got)
 	}
 	if !slices.Equal(launchEnviron, []string{"HOME=/h"}) {
@@ -275,5 +280,58 @@ func TestRelaunchRestartHandsBackToItsHelper(t *testing.T) {
 	}
 	if !exited || code != relaunchHandBackExit {
 		t.Fatalf("exited=%v code=%d, want an exit with %d (hand back, no second helper)", exited, code, relaunchHandBackExit)
+	}
+}
+
+// The waiting helper starts agentd again after a hand-back the way a fresh
+// start would: with the login shell's environment as it is now, not the
+// one the helper was started with. The first start carries a refresh
+// failure the restart that started the helper handed it.
+func TestRelaunchWaitStartsAgentdWithAFreshEnvironmentOnHandBack(t *testing.T) {
+	sh := shellPath(t)
+	runs := filepath.Join(testutil.CanonicalTempDir(t), "runs")
+	prevEnviron, prevFresh := launchEnviron, relaunchRestartEnviron
+	t.Cleanup(func() { launchEnviron, relaunchRestartEnviron = prevEnviron, prevFresh })
+	launchEnviron = []string{"PATH=/old/bin:/usr/bin:/bin"}
+	t.Setenv(launcher.LoginEnvErrorVar, "restarting: no answer")
+	refreshed := 0
+	relaunchRestartEnviron = func(_ context.Context, environ []string) []string {
+		refreshed++
+		if !slices.Equal(environ, launchEnviron) {
+			t.Errorf("refreshed from %q, want the helper's launch environment", environ)
+		}
+		return []string{"PATH=/fresh/bin:/usr/bin:/bin"}
+	}
+	script := `echo "$PATH ${` + launcher.LoginEnvErrorVar + `:-none}" >> "$1"; [ "$(wc -l < "$1")" -ge 2 ] && exit 5; exit ` + strconv.Itoa(relaunchHandBackExit)
+	if code := runRelaunch(relaunchWait, sh, []string{"sh", "-c", script, "sh", runs}); code != 5 {
+		t.Fatalf("exit status = %d, want 5", code)
+	}
+	data, err := os.ReadFile(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/old/bin:/usr/bin:/bin restarting: no answer", "/fresh/bin:/usr/bin:/bin none"}
+	if got := strings.Split(strings.TrimSpace(string(data)), "\n"); !slices.Equal(got, want) || refreshed != 1 {
+		t.Fatalf("runs = %q (refreshed %d), want %q", got, refreshed, want)
+	}
+}
+
+// A Ctrl+C while the helper asks the login shell after a hand-back stops
+// it, instead of starting agentd again once the shell answers.
+func TestRelaunchFreshEnvironStopsOnASignal(t *testing.T) {
+	prevFresh := relaunchRestartEnviron
+	t.Cleanup(func() { relaunchRestartEnviron = prevFresh })
+	relaunchRestartEnviron = func(ctx context.Context, environ []string) []string {
+		<-ctx.Done() // a slow shell, until the signal ends the wait
+		return environ
+	}
+	sigs := make(chan os.Signal, 1)
+	sigs <- syscall.SIGINT
+	if _, sig := relaunchFreshEnviron(sigs); sig != syscall.SIGINT {
+		t.Fatalf("signal = %v, want SIGINT", sig)
+	}
+	relaunchRestartEnviron = func(_ context.Context, environ []string) []string { return environ }
+	if _, sig := relaunchFreshEnviron(make(chan os.Signal)); sig != 0 {
+		t.Fatalf("signal = %v without one", sig)
 	}
 }

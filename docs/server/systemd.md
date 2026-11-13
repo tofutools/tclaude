@@ -138,6 +138,16 @@ file. Keep secrets out of it unless the file is 0600.
 After the unit is up, `tclaude harness ls` lists what the daemon actually
 finds on its `PATH`.
 
+A restart keeps the unit's environment too, however tclaude restarts it (the
+dashboard's **Restart agentd…**, `tclaude service restart`, an update): it
+never asks your login shell, because a fresh start of the unit does not
+either. So when your toolchain moves (a new Go, a new harness location),
+change the `PATH` in the `EnvironmentFile` or in a drop-in
+(`systemctl --user edit tclaude-agentd.service`, `Environment=PATH=...`),
+then restart the unit. agentd started any other way (a terminal, the app
+launcher, launchd) takes your login shell's environment afresh on every
+restart.
+
 ## Restarts, and whether the agents survive them
 
 The agents live in the tclaude tmux server, not in `agentd`. A new `agentd`

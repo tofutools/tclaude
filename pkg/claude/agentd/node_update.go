@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"os/signal"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -270,6 +272,21 @@ func requestSelfUpdateRestart() error {
 	_, err := requestDaemonRestart("self-update", relocated)
 	return err
 }
+
+// markLaunchEnvRefreshed tells the running update job, if any, that the
+// restart refreshes the environment.
+func markLaunchEnvRefreshed() {
+	nodeUpdates.Lock()
+	service := nodeUpdates.service
+	nodeUpdates.Unlock()
+	if service == nil {
+		return
+	}
+	if err := service.MarkLaunchEnvRefreshed(); err != nil {
+		slog.Warn("self-update: could not record that the restart refreshes the environment", "error", err)
+	}
+}
+
 func performSelfUpdateRestart() error {
 	updateRestartState.Lock()
 	requested, path, startPath, plan := updateRestartState.requested, updateRestartState.path, updateRestartState.startPath, updateRestartState.plan
@@ -292,13 +309,16 @@ func performSelfUpdateRestart() error {
 		restartExit(exitCode)
 		return nil
 	}
-	// The environment this process started with, not os.Environ(): what
-	// startup exported into it is derived again from the same flags.
 	argv := os.Args
 	if plan.relaunch && relaunchHandBack(path, startPath) {
 		// The waiting helper that started this daemon starts it again; a
 		// helper of our own would nest a second one in the shell job.
-		// Exiting also takes the tray icon down with this PID.
+		// Exiting also takes the tray icon down with this PID. The helper
+		// refreshes the environment (runRelaunch), which the update's
+		// launch comparison expects rather than reports.
+		if restartRefreshesEnv(currentLauncher(false)) {
+			markLaunchEnvRefreshed()
+		}
 		slog.Info("agentd restart: handing back to the relaunch helper", "helper_pid", relaunchHelperPID)
 		restartExit(relaunchHandBackExit)
 		return nil
@@ -320,7 +340,25 @@ func performSelfUpdateRestart() error {
 		// of the shell job.
 		releaseTrayStatusItem()
 	}
-	err := execSelfUpdate(path, argv, launchEnviron)
+	// A restart starts like a fresh one, with a fresh environment from the
+	// login shell, built from the environment this process started with,
+	// not os.Environ(): what startup exported into it is derived again
+	// from the same flags. A Ctrl+C or SIGTERM while the shell is asked
+	// stops agentd instead: it was meant to.
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	env, refreshed := daemonRestartEnviron(sigCtx, launchEnviron)
+	signaled := sigCtx.Err() != nil
+	stopSignals()
+	if signaled {
+		slog.Info("agentd restart: stopped by a signal while asking the login shell; not restarting")
+		restartExit(0)
+		return nil
+	}
+	if refreshed {
+		// The update's launch comparison expects it rather than reports it.
+		markLaunchEnvRefreshed()
+	}
+	err := execSelfUpdate(path, argv, env)
 	if err != nil {
 		nodeUpdates.Lock()
 		service := nodeUpdates.service
