@@ -60,20 +60,22 @@ func awbLinkBase() (base, note string) {
 
 // awbCLIStatus runs `awb status --json` the way the operator would, so awb
 // reads its own configuration (AWB_CONFIG_FILE, its user and local config
-// files); a variable so tests never run the operator's awb.
-var awbCLIStatus = func(ctx context.Context) ([]byte, error) {
+// files). Tests swap it with SetAWBCLIStatusForTest, under the cache's lock,
+// so they never run the operator's awb. Its error is what a board shows,
+// also to linked nodes, so awb's own output stays in this node's log.
+func awbCLIStatus(ctx context.Context) ([]byte, error) {
 	path, err := exec.LookPath("awb")
 	if err != nil {
 		return nil, errAWBCLIMissing
 	}
-	cmd := exec.CommandContext(ctx, path, "status", "--json", "--no-color")
-	out, err := cmd.Output()
+	out, err := exec.CommandContext(ctx, path, "status", "--json", "--no-color").Output()
 	if err != nil {
 		var exit *exec.ExitError
-		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
-			return nil, fmt.Errorf("awb status failed: %s", guideText(strings.TrimSpace(string(exit.Stderr)), 160))
+		if errors.As(err, &exit) {
+			slog.Info("taskboard: awb status failed", "error", err,
+				"stderr", guideText(strings.TrimSpace(string(exit.Stderr)), 300), "module", "agentd")
 		}
-		return nil, fmt.Errorf("awb status failed: %v", err)
+		return nil, errors.New("awb status failed (see the daemon log)")
 	}
 	return out, nil
 }
@@ -88,67 +90,110 @@ const (
 	awbCLIBaseRetry = time.Minute
 	// awbCLIProbeTimeout bounds one `awb status`; it asks its server too.
 	awbCLIProbeTimeout = 4 * time.Second
+	// awbCLIFirstWait is how long the first reads wait for the first answer;
+	// past it they go on without a server until it lands.
+	awbCLIFirstWait = 1500 * time.Millisecond
 )
 
-// awbCLIBaseCache keeps what awb last said, so a board read runs awb once in
-// awbCLIBaseTTL at most. gen tells a refresh started before a reset (a test
-// swapping awbCLIStatus) that its answer is no longer wanted.
-var awbCLIBaseCache struct {
+// awbCLICache keeps what awb last said, so awb runs once in awbCLIBaseTTL
+// at most, always off the lock. gen tells a probe started before a reset (a
+// test swapping the probe) that its answer is not wanted.
+type awbCLICache struct {
 	mu         sync.Mutex
-	loaded     bool
+	probe      func(context.Context) ([]byte, error) // nil: awbCLIStatus
+	started    bool
+	ready      chan struct{} // closed when the first answer lands
 	refreshing bool
 	gen        int
 	base, note string
 	at         time.Time
 }
 
+var awbCLIBaseCache awbCLICache
+
 // awbCLIBase is the web base of the awb server the awb CLI is configured
-// for, and why there is none. The first call asks awb and waits for it;
-// after that a stale answer is served while a fresh one is read.
+// for, and why there is none. The first call starts asking awb and waits up
+// to awbCLIFirstWait for it; after that a stale answer is served while a
+// fresh one is read.
 func awbCLIBase() (string, string) {
 	c := &awbCLIBaseCache
 	c.mu.Lock()
+	if !c.started {
+		c.started = true
+		c.ready = make(chan struct{})
+		c.startProbeLocked()
+	}
+	ready := c.ready
+	c.mu.Unlock()
+	select {
+	case <-ready:
+	case <-time.After(awbCLIFirstWait):
+	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.loaded {
-		c.base, c.note = probeAWBCLIBase()
-		c.at, c.loaded = time.Now(), true
-		return c.base, c.note
+	if c.ready != ready || !closed(ready) {
+		return "", "still asking the awb CLI for its server"
 	}
 	ttl := awbCLIBaseTTL
 	if c.base == "" {
 		ttl = awbCLIBaseRetry
 	}
 	if time.Since(c.at) > ttl && !c.refreshing {
-		c.refreshing = true
-		gen := c.gen
-		go func() {
-			base, note := probeAWBCLIBase()
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if c.gen != gen {
-				return
-			}
-			c.base, c.note, c.at, c.refreshing = base, note, time.Now(), false
-		}()
+		c.startProbeLocked()
 	}
 	return c.base, c.note
 }
 
-// resetAWBCLIBase forgets what awb said, so the next read asks again.
-func resetAWBCLIBase() {
+func closed(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// startProbeLocked asks awb in the background, with the probe taken under
+// c.mu (held by the caller); the answer is kept only if no reset came since.
+func (c *awbCLICache) startProbeLocked() {
+	c.refreshing = true
+	probe, gen, ready := c.probe, c.gen, c.ready
+	if probe == nil {
+		probe = awbCLIStatus
+	}
+	go func() {
+		base, note := probeAWBCLIBase(probe)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.gen != gen {
+			return
+		}
+		c.base, c.note, c.at, c.refreshing = base, note, time.Now(), false
+		if !closed(ready) {
+			close(ready)
+		}
+	}()
+}
+
+// setAWBCLIProbe swaps the probe (nil: awbCLIStatus) and forgets what the
+// last one said, so the next read asks again.
+func setAWBCLIProbe(fn func(context.Context) ([]byte, error)) (prev func(context.Context) ([]byte, error)) {
 	c := &awbCLIBaseCache
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.loaded, c.refreshing, c.base, c.note = false, false, "", ""
+	prev = c.probe
+	c.probe = fn
+	c.started, c.refreshing, c.base, c.note, c.ready = false, false, "", "", nil
 	c.gen++
+	return prev
 }
 
 // probeAWBCLIBase asks awb once: a remote connection's server is the base
 // its issue links are on (awb's issue_link is <server>#/issues/<id>).
-func probeAWBCLIBase() (string, string) {
+func probeAWBCLIBase(probe func(context.Context) ([]byte, error)) (string, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), awbCLIProbeTimeout)
 	defer cancel()
-	out, err := awbCLIStatus(ctx)
+	out, err := probe(ctx)
 	if err != nil {
 		return "", err.Error()
 	}
@@ -174,8 +219,10 @@ func probeAWBCLIBase() (string, string) {
 // ---- Linear ----
 
 // A Linear issue's link is https://linear.app/<workspace>/issue/<ID>, and an
-// id alone does not say the workspace. It is learned per team from any link
-// the board sees: one Linear returned on a lookup, or one a ref was given.
+// id alone does not say the workspace. It is learned per team from Linear's
+// own answer to a lookup (resolve_ref, an import, the dashboard's ref
+// lookup) — never from a link someone stored on a ref, which any board
+// writer (a linked node too) could point at another workspace.
 
 // linearWorkspaceCacheKey is the git cache key of a team's workspace base.
 func linearWorkspaceCacheKey(team string) string {
@@ -250,7 +297,6 @@ type taskRefLinker struct {
 	awbRead          bool
 	awbBase, awbNote string
 	linear           map[string][]*taskboardRef // team -> refs waiting for its workspace
-	learned          map[string]bool            // Linear links already learned from in this read
 }
 
 func (l *taskRefLinker) add(ref *taskboardRef) {
@@ -272,13 +318,6 @@ func (l *taskRefLinker) add(ref *taskboardRef) {
 		}
 	case "linear":
 		if ref.URL != "" {
-			if base, team, ok := linearWorkspaceOf(ref.URL); ok && !l.learned[team+" "+base] {
-				if l.learned == nil {
-					l.learned = map[string]bool{}
-				}
-				l.learned[team+" "+base] = true
-				learnLinearWorkspace(ref.URL)
-			}
 			return
 		}
 		team := linearTeamOf(ref.Label)

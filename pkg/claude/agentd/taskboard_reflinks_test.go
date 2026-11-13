@@ -17,9 +17,7 @@ func TestProbeAWBCLIBaseReadsTheRemoteServer(t *testing.T) {
 		{"garbage", `nope`, "", "no JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			restore := SetAWBCLIStatusForTest(func(context.Context) ([]byte, error) { return []byte(tc.out), nil })
-			defer restore()
-			base, note := probeAWBCLIBase()
+			base, note := probeAWBCLIBase(func(context.Context) ([]byte, error) { return []byte(tc.out), nil })
 			assert.Equal(t, tc.base, base)
 			assert.Contains(t, note, tc.note)
 		})

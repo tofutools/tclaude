@@ -115,24 +115,32 @@ func TestTaskboardAWBRefLinkedFromTheAWBCLI(t *testing.T) {
 	assert.Equal(t, "https://awb.example/awb/#/issues/tcl-8ab4sp", refs[0].URL, "the resolved link was stored")
 }
 
-// A Linear id has no link until its team's workspace is known; any link of
-// one of the team's issues teaches it, and then every link-less ref of that
-// team is linked on read.
+// A Linear id has no link until its team's workspace is known. Linear's
+// answer to a lookup teaches it, and then every link-less ref of that team
+// is linked on read; a link someone stored on a ref teaches nothing.
 func TestTaskboardLinearRefLinkedOnceItsWorkspaceIsKnown(t *testing.T) {
-	h := newTaskboardFlow(t)
-	h.f.HaveGroup("crew")
+	const member = "tb-linlinks-1111"
+	h := newTaskboardImportFlow(t, member)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	require.NoError(t, db.GrantAgentPermission(member, agentd.PermLinearRead, "test"))
 
 	bare := h.linkTask(http.MethodPost, "/v1/groups/crew/taskboard/tasks",
 		map[string]any{"title": "checkout", "ref": "LIN-12"}, http.StatusCreated)
 	require.Len(t, bare.Refs, 1)
 	assert.Empty(t, bare.Refs[0].URL)
 	assert.Contains(t, bare.Refs[0].LinkNote, "Linear workspace of team LIN is not known yet")
-
 	other := h.linkTask(http.MethodPost, "/v1/groups/crew/taskboard/tasks",
 		map[string]any{"title": "other team", "ref": "SHOP-3"}, http.StatusCreated)
 
+	// A stored link is not trusted to say where a team lives.
 	h.linkTask(http.MethodPost, "/v1/groups/crew/taskboard/tasks",
-		map[string]any{"title": "cart", "ref": "https://linear.app/acme/issue/LIN-7/cart-total"}, http.StatusCreated)
+		map[string]any{"title": "elsewhere", "ref": "https://linear.app/evil/issue/LIN-9"}, http.StatusCreated)
+	assert.Empty(t, h.boardRefs()[bare.ID][0].URL)
+
+	// Linear's answer to a lookup is.
+	rec := h.call(member, http.MethodPost, "/v1/groups/crew/taskboard/tasks",
+		map[string]any{"title": "cart", "ref": "LIN-7", "resolve_ref": true})
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 	refs := h.boardRefs()
 	assert.Equal(t, "https://linear.app/acme/issue/LIN-12", refs[bare.ID][0].URL)
 	assert.Empty(t, refs[bare.ID][0].LinkNote)

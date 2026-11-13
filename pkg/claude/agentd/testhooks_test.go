@@ -2844,11 +2844,6 @@ func SeedPRCachesForTest(rawURL, state, title string, passed, total int, decisio
 // board the awb CLI's server (taskboard_reflinks.go), and forgets what the
 // last one said. Returns a restore function for t.Cleanup.
 func SetAWBCLIStatusForTest(fn func(context.Context) ([]byte, error)) func() {
-	prev := awbCLIStatus
-	awbCLIStatus = fn
-	resetAWBCLIBase()
-	return func() {
-		awbCLIStatus = prev
-		resetAWBCLIBase()
-	}
+	prev := setAWBCLIProbe(fn)
+	return func() { setAWBCLIProbe(prev) }
 }
