@@ -57,6 +57,7 @@ import {
 import { ColGroup } from './table-kit.js';
 import { BoardOptionsButton, BoardOptionsDrawer, BoardOptionsSummary } from './groups-taskboard-options.js';
 import { QueuedChip } from './groups-taskboard-limits.js';
+import { applyPendingMove, onOrderKey, orderItems } from './groups-taskboard-order.js';
 import { boardNode, boardOptionsRoute, closeBoardOptions, isBoardOptionsFor } from './groups-taskboard-options-route.js';
 import { EpicBoard, EpicChip, EpicFilterMenu, EpicGroupRow, EpicMark, EpicStrip, NO_EPIC, boardEntry, epicDimmed, epicMoved, epicOf, intoEpic, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
 
@@ -306,8 +307,21 @@ function StatePill({ task, byId, assignee = '', columns = [] }) {
 // useBoardActions runs a write and then re-reads the board, also after a
 // refusal (a write may have half-landed); a refusal is a toast naming the
 // action, and the result is false.
+//
+// reorder(task, position) is a hand move (groups-taskboard-order.js): the
+// views draw it at once (pending, applyPendingMove) and the refreshed board
+// replaces it; a refused one snaps back with the toast.
 function useBoardActions(source, api) {
   const [busy, setBusy] = useState('');
+  const [pending, setPending] = useState(null);
+  const reorder = async (task, position, label = 'Move') => {
+    setPending({ id: task.id, ...position });
+    try {
+      return await run(`${task.id}:move`, label, (a) => a.move(task.id, position));
+    } finally {
+      setPending(null);
+    }
+  };
   const run = async (key, label, fn) => {
     setBusy(key);
     try {
@@ -322,7 +336,7 @@ function useBoardActions(source, api) {
     }
   };
   const refresh = () => Promise.resolve(source.refresh?.()).catch(() => {});
-  return { busy, run, api, refresh };
+  return { busy, run, api, refresh, pending, reorder: typeof api?.move === 'function' ? reorder : null };
 }
 
 // canAssign says whether the viewer may assign on this board. The api may
@@ -349,7 +363,7 @@ export function canClose(task, actions) {
 // focus/retire/⚙ cluster: the one action the row's state calls for (✓ Done,
 // ✓ Next on an idea, ↺ Reopen in history), ✎ Edit, and ⋯ for the rest
 // (rowMenu). Each names its CLI verb in its title.
-function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
+function RowActions({ task, group, tasks, actions, onForm, columns = [], peers = null, where = '' }) {
   const board = useContext(TaskLink);
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
@@ -365,15 +379,15 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [] }) {
   else if (canClose(task, actions)) first = icon('done', '✓', 'Done: taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done')), 'tb-act-ok');
   else first = slot('done');
   const edit = icon('edit', '✎', 'Edit: title, brief, ref, where it is, assignee, dependencies and files', () => onForm('edit'));
-  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns, board })}
-    glyph="⋯" buttonClass="icon-btn tb-act tb-act-more" keepSlot=${true} title="More: assign, block, move or clone to a group, drop, archive (or right-click the row)" /></span>`;
+  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns, board, peers, where })}
+    glyph="⋯" buttonClass="icon-btn tb-act tb-act-more" keepSlot=${true} title="More: move up or down, assign, block, move or clone to a group, drop, archive (or right-click the row)" /></span>`;
 }
 
 // rowMenu is a row's ⋯ items (row-menu.js): assign (to a member), block or
 // unblock, unassign, move or clone to another group (the groups a drag
 // could reach, this node's or a linked one's, with a drop's confirmation)
 // and drop.
-function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = null }) {
+function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = null, peers = null, where = '' }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   // An epic is no work of its own: no assign, block, column, start or hold
@@ -383,6 +397,9 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = nu
   const item = (key, label, title, rest) => ({ label, attrs: { 'data-task-menu': key, title }, ...rest });
   const items = [];
   if (actions.busy) return items;
+  // Move to top / up / down / to bottom among the rows it is listed with
+  // (groups-taskboard-order.js), Alt+Home/↑/↓/End on the row.
+  if (peers) items.push(...orderItems(task, peers, actions, where));
   if (canAnswer(task, actions)) {
     items.push(item('answer', 'Answer…', 'taskboard answer: pick an option and/or answer in words; the agent that asked gets it', { run: () => onForm('answer') }));
   }
@@ -490,7 +507,7 @@ const DRAG_TITLE = 'Drag to reorder, onto an agent to assign, or onto another gr
 // URL drag, not the task's.
 const linkDrag = (event) => event.target !== event.currentTarget && !!event.target?.closest?.('a[href]');
 
-function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, onForm, columns = [], chip = true }) {
+function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, onForm, columns = [], chip = true, peers = null, where = '' }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const over = drag?.over?.id !== task.id ? '' : drag.over.where === 'before' ? ' tb-drop-before' : ' tb-drop-after';
@@ -507,9 +524,10 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
       draggable=${draggable ? 'true' : undefined} data-dnd-task=${draggable ? task.id : undefined} title=${draggable ? (closed ? REOPEN_DRAG_TITLE : DRAG_TITLE) : undefined}
       onDragStart=${draggable ? (event) => { if (!linkDrag(event)) drag.start(event, task); } : undefined} onDragEnd=${draggable ? drag.end : undefined}
       onContextMenu=${actions ? (event) => openRowMenu(event, '.tb-row-actions .tb-act-more') : undefined}
+      onKeyDown=${actions && peers ? (event) => onOrderKey(event, task, peers, actions) : undefined}
       onDragOver=${closed ? undefined : (event) => drag?.overRow(event, task)} onDrop=${closed ? undefined : (event) => drag?.dropOnRow(event, task)}>
     <td class="tb-ic">${actions && html`<span class="tb-handle" aria-hidden="true">⋮⋮</span><${RowActions} task=${task} group=${group} tasks=${tasks}
-        actions=${actions} columns=${columns} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
+        actions=${actions} columns=${columns} peers=${peers} where=${where} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
     <td class="tb-title-cell"><div class="ui-fit tb-title-box">
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
@@ -1032,10 +1050,11 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
       <tbody>
         ${grouped ? grouped.map(({ id, rows }) => html`<${EpicGroupRow} key=${`epic-${id}`} epic=${id === NO_EPIC ? null : epicBoard.byId.get(id)} count=${rows.length}
             colspan=${TABLE_COLS} folded=${!!folded[id]} onFold=${(on) => setFolded({ ...folded, [id]: on })} onOpen=${actions ? openEdit : null} />
-          ${!folded[id] && rows.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} chip=${false} />`)}`)
-          : queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
+          ${!folded[id] && rows.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} chip=${false}
+            peers=${rows} where=${id === NO_EPIC ? 'No epic' : `epic ${epicBoard.byId.get(id)?.title || id}`} />`)}`)
+          : queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} peers=${queue} where=${wizard ? 'the quest line' : 'the queue'} />`)}
         ${ideasBand}
-        ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
+        ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} peers=${ideas} where=${wizard ? 'the visions' : 'the ideas'} />`)}
         ${historyLine}
         ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
       </tbody>
@@ -1222,8 +1241,9 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // linked node's group), which is unique across nodes.
   const group = ownBoardGroup(shown);
   const { source, api, readApi, optionsApi } = boardOf(group, ownSource, ownApi, boards);
-  const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
+  // A hand move in flight is drawn where it goes (groups-taskboard-order.js).
+  const entry = applyPendingMove(useTaskboardEntry(group.name, source), actions.pending);
   // adding is the open "+ New task" dialog: { kind: 'form' | 'ask' | 'import',
   // initial } (initial pre-fills the form, from a lanes cell's "+").
   const [adding, setAdding] = useState(null);

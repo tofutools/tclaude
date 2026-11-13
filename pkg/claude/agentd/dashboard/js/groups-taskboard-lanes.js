@@ -50,6 +50,7 @@ import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskb
 import { LaneLimit, QueuedChip, useLimitDialog } from './groups-taskboard-limits.js';
 import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
 import { AnswerFor, QuestionCard, QuestionTag, answerTarget, askerOf, openQuestions, questionOpen } from './groups-taskboard-answer.js';
+import { dropSide, onOrderKey, orderItems, orderPeers } from './groups-taskboard-order.js';
 import { EpicBoard, EpicChip, EpicMark, epicColour, epicDimmed, epicMoved, intoEpic, isEpic } from './groups-taskboard-epics.js';
 
 const html = htm.bind(h);
@@ -450,14 +451,18 @@ function cardHint(task) {
 // menu, when given, is the card's ⋯ items (Archive): its ⋯ shows on hover,
 // and a right-click opens it. onAnswer, when given, puts Answer… on a
 // question still to answer.
-export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu: given = null, onAnswer = null, chip = true }) {
+// dropAt is 'before' or 'after' while a drag points at the slot on that side
+// of the card; onKey takes the card's key presses (Alt+↑/↓/Home/End moves it,
+// groups-taskboard-order.js).
+export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = null, marker = null, menu: given = null, onAnswer = null, chip = true, dropAt = '', onKey = null }) {
   const done = task.status === 'done';
   const dim = epicDimmed(useContext(EpicBoard), task);
   // An editable card on a board has ⋯ Copy link (task-route.js), beside its own items.
   const board = useContext(TaskLink);
   const menu = board && onEdit ? [...(given || []), copyLinkItem(task.id, board)] : given;
-  return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}${isEpic(task) ? ` tb-card-epic tb-epic-c${epicColour(task.id)}` : ''}${dim ? ' tb-epic-dim' : ''}`}
+  return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}${isEpic(task) ? ` tb-card-epic tb-epic-c${epicColour(task.id)}` : ''}${dim ? ' tb-epic-dim' : ''}${dropAt ? ` tb-drop-${dropAt}` : ''}`}
       data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
+      onKeyDown=${onKey || undefined}
       onDblClick=${onEdit ? (event) => { if (event.target?.closest?.('.ui-popover')) return; event.preventDefault(); onEdit(task.id); } : undefined}
       onContextMenu=${menu?.length ? (event) => openRowMenu(event, '.tb-card-more') : undefined}
       onDragStart=${drag ? (event) => drag.start(event, task) : undefined} onDragEnd=${drag ? drag.end : undefined}>
@@ -522,6 +527,70 @@ export function useCellReveal(cells, limit, setOpen) {
   }, [want?.seq]);
 }
 
+// cellName names a cell for the move items' tooltips: "Next", or
+// "builder · In progress" in an agent's lane.
+export function cellName(lane, column) {
+  const label = column.label || column.key;
+  return lane?.id && lane.name ? `${lane.name} · ${label}` : label;
+}
+
+const liveTask = (task) => task?.status === 'open' || task?.status === 'blocked';
+
+// sameCell reports whether a drag from `from` points back into its own cell
+// (the same lane, column and, in the epic rows, epic).
+function sameCell(from, to) {
+  if (from.lane !== to.lane || from.column !== to.column) return false;
+  return to.epic === undefined || (from.epic || '') === to.epic;
+}
+
+// dropSlot is the slot a drag of task points at in a cell drawing list: the
+// card under the pointer, and before or after it ({ anchor, where }); null
+// off the cards, or on the dragged card itself.
+export function dropSlot(event, task, list) {
+  const el = event?.target?.closest?.('[data-task-id]');
+  if (!el || !list) return null;
+  const anchor = list.find((t) => t.id === el.getAttribute('data-task-id'));
+  if (!anchor || anchor.id === task.id || !liveTask(anchor)) return null;
+  return { anchor, where: dropSide(event, el) };
+}
+
+const short = (title) => (title.length > 32 ? `${title.slice(0, 31)}…` : title);
+
+// reorderDrop is a drag of task back into its own cell: before or after the
+// card it points at, among the cards of its stage, or after the last of them
+// off the cards. null where it would not move; inert in Done, whose order is
+// when each task closed.
+export function reorderDrop(task, slot, to, actions) {
+  if (to.column === 'done') return { kind: 'derived', inert: true, label: 'Done is ordered by when tasks closed' };
+  if (typeof actions?.reorder !== 'function') return null;
+  // By id: a refresh during the drag draws new task objects.
+  const at = (id) => (peers || []).findIndex((t) => t.id === id);
+  const peers = orderPeers(to.list, task);
+  const i = at(task.id);
+  if (i < 0) return null;
+  let anchor = slot?.anchor;
+  let where = slot?.where;
+  if (!slot) { anchor = peers[peers.length - 1]; where = 'after'; }
+  const j = at(anchor.id);
+  if (j < 0 || j === i || (where === 'before' && j === i + 1) || (where === 'after' && j === i - 1)) return null;
+  return { kind: 'reorder', label: `Move ${where} “${short(anchor.title)}”`,
+    position: { [where]: anchor.id, stage: anchor.stage }, slot: { id: anchor.id, where } };
+}
+
+// slotted is a drop into another cell that also puts the task at the slot
+// pointed at, when the drop lands it in the anchor's stage (Ideas: idea;
+// Next, In progress and the custom columns: next). A drop that asks a reason
+// (Blocked), or onto Blocked or Done, which mix stages or order by time,
+// keeps its own place.
+export function slotted(drop, task, to, slot, actions) {
+  if (!drop || drop.reason || !slot || typeof actions?.reorder !== 'function') return drop;
+  const stage = to.column === 'ideas' ? 'idea' : (to.column === 'blocked' || to.column === 'done') ? '' : 'next';
+  if (!stage || slot.anchor.stage !== stage) return drop;
+  const { anchor, where } = slot;
+  return { ...drop, kind: `${drop.kind}+order`, label: `${drop.label} · ${where} “${short(anchor.title)}”`,
+    run: twoStep(drop.run, (api) => api.move(task.id, { [where]: anchor.id, stage })), slot: { id: anchor.id, where } };
+}
+
 // useLaneDrag drives the card drags. A drop target `to` names its lane, or
 // carries resolve(fromLane) instead: the lane a drop from fromLane means
 // there, or null where the cell takes none (triage's Agents row and one row,
@@ -547,8 +616,16 @@ export function useLaneDrag(actions, group, tasks = []) {
     const from = dragged.current;
     const lane = from && to.resolve ? to.resolve(from.lane) : to.lane;
     if (lane === null || lane === undefined) return null;
-    const drop = from && epicDrop(from, { ...to, lane }, laneDrop(from.task, from, { ...to, lane }, { assign }));
+    const at = { ...to, lane };
+    const slot = from ? dropSlot(event, from.task, to.list) : null;
+    // Within its own cell a card is reordered; elsewhere the drop does what
+    // the cell means, then puts the task at the slot when it lands in the
+    // anchor's stage.
+    const drop = from && (sameCell(from, at) ? reorderDrop(from.task, slot, at, actions)
+      : slotted(epicDrop(from, at, laneDrop(from.task, from, at, { assign })), from.task, at, slot, actions));
     if (!drop) return null;
+    // A cell whose order is derived says so, and takes nothing.
+    if (drop.inert) return drop;
     event.preventDefault();
     event.stopPropagation();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
@@ -571,17 +648,21 @@ export function useLaneDrag(actions, group, tasks = []) {
     overCell(event, to) {
       const drop = hit(event, to);
       const key = drop ? to.key || `${to.lane}|${to.column}` : '';
-      if ((over?.key || '') !== key) setOver(drop ? { key, label: drop.label } : null);
+      const slot = drop?.slot ? `${drop.slot.id}|${drop.slot.where}` : '';
+      if ((over?.key || '') !== key || (over?.slotKey || '') !== slot || (over?.label || '') !== (drop?.label || '')) {
+        setOver(drop ? { key, label: drop.label, slot: drop.slot || null, slotKey: slot, inert: !!drop.inert } : null);
+      }
     },
     leaveGrid(event) {
       if (dragged.current && !event.currentTarget.contains(event.relatedTarget)) setOver(null);
     },
     async dropCell(event, to) {
       const drop = hit(event, to);
-      if (!drop) return;
+      if (!drop || drop.inert) { if (drop) clear(); return; }
       const { task } = dragged.current;
       clear();
       if (drop.reason) { setBlocking({ task, drop }); return; }
+      if (drop.kind === 'reorder') { await actions.reorder(task, drop.position); return; }
       const ok = await actions.run(`${task.id}:lane`, drop.label, (api) => drop.run(api));
       if (ok && drop.epicMove) epicMoved(actions, task, drop.label);
       if (ok && drop.kind === 'assign') markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
@@ -831,20 +912,23 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     const list = cells.get(key) || [];
     const stripe = striped(lane.id, column.key);
     const assignable = lane.id === UNASSIGNED || lane.id === OPERATOR || !!lane.member;
-    const target = { lane: lane.id, column: column.key, columnLabel: column.label, columns: custom, name: lane.name, member: assignable };
+    const target = { lane: lane.id, column: column.key, columnLabel: column.label, columns: custom, name: lane.name, member: assignable, list };
     const over = drag.over?.key === key;
+    const slot = over ? drag.over.slot : null;
+    const where = cellName(lane, column);
     // A cordoned column takes no new task; a card already in it may still
     // move within it (reorder, or another lane's hands).
     const takes = actions && (!column.cordoned || byId.get(drag.dragging)?.column === column.slug);
     const add = actions && !column.cordoned && onNewTask && cellAdd(lane.id, column.key, { assign: canAssign(actions), member: assignable });
-    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${cellClass(column)}${over ? ' tb-cell-over' : ''}${add ? ' tb-cell-addable' : ''}`}
+    return html`<div key=${key} class=${`tb-cell${stripe ? ' tb-cell-striped' : ''}${cellClass(column)}${over ? (drag.over.inert ? ' tb-cell-inert' : ' tb-cell-over') : ''}${add ? ' tb-cell-addable' : ''}`}
         data-lane=${lane.id || 'unassigned'} data-column=${column.key} data-tb-drop=${over ? drag.over.label : undefined}
         onDragOver=${takes ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${takes ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
       <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
-          menu=${archiveItems(task, actions)} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null} />`} />
+          menu=${[...orderItems(task, list, actions, where), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null}
+          dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, list, actions) : null} />`} />
       ${lane.id === OPERATOR && column.key === 'progress' && model.questions.map(({ task, question }) => html`<${QuestionCard} key=${`${task.id}#${question.n}`}
         task=${task} question=${question} askedBy=${actorLabel(question.asked_by, group, snapshot)} onOpen=${actions ? onEdit : null}
         onAnswer=${answerable ? (id, n) => setAnswering(`${id}#${n}`) : null} />`)}
@@ -876,7 +960,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
       <div class="tb-lane tb-lane-columns">
         <div class="ui-eyebrow tb-col-lane">Lane<span class="tb-col-resize" ...${resize.handle(0, 'lane')}></span></div>
         ${columns.map((column, i) => html`<div key=${column.key} class=${columnClass(column)} data-col=${column.key}
-            title=${column.cordoned ? 'Cordoned: it takes no new task; its tasks may leave' : undefined}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span><${LaneLimit} entry=${entry} column=${column} />${
+            title=${column.cordoned ? 'Cordoned: it takes no new task; its tasks may leave' : undefined}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
+          column.key === 'done' && html`<span class="tb-col-note" title="Ordered by when each task closed, newest first: not by hand">by close time</span>`}<${LaneLimit} entry=${entry} column=${column} />${
           (column.custom || HIDEABLE_KEYS.includes(column.key) || (column.key === 'progress' && entry.options)) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} limits=${limits} />`}${
           i === columns.length - 1 && html`<${AddColumnButton} naming=${naming} columns=${custom} />`}${
           i < columns.length - 1 && html`<span class="tb-col-resize" ...${resize.handle(i + 1, column.label)}></span>`}</div>`)}
