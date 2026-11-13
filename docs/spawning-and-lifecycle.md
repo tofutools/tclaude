@@ -532,6 +532,10 @@ anything changes.
 
 - `auto` (the default) installs the translated history natively. If that
   fails, the new conversation points the agent at the history saved as files.
+- `summary` always asks the source agent for a summary of the earlier work
+  first, as a large cut does automatically.
+- `truncate` cuts without a summary, whatever the size of the cut; the
+  carried notice names what was cut and where the full transcript is.
 - `context-file` always uses the files.
 - `handoff` first asks the agent, through its inbox, to write a handoff for its
   successor and submit it with `tclaude agent morph-handoff -f <file>`. The morph
@@ -543,6 +547,22 @@ anything changes.
 A history tclaude cannot read leaves the handoff as the only option, so a live
 agent is asked for one automatically. An offline agent with an unreadable
 history cannot be moved.
+
+`--target-window`, `--history-budget`, `--keep` and `--cut-first` override how
+much history is carried and what is shortened first (see
+[carry-over overrides](harnesses.md#cross-harness-history-translation)). The
+dashboard's Morph dialog has the same choices under *History carry-over*.
+
+`--backup` keeps the agent's current form as a separate agent before the morph
+applies: a clone on the same harness, model and profile with the history as it
+stands, named `<name> (pre-morph backup)` and stopped. It is standalone, with
+no group memberships, permission overrides or group ownerships: two live
+identities in the same groups would both receive group mail and could both act
+on the same work. Wake it to use it, and add it to groups by hand if wanted. A
+backup needs a live agent, because the clone is copied from the running one,
+and if it cannot be made the morph does not go ahead. An agent asking for a
+backup also needs clone authority over the target (`self.clone` for itself,
+`agent.clone` or `groups.members.clone` for another agent).
 
 `--trust-dir`, or `trust_dir` on the destination spawn profile, seeds the new harness's folder-trust
 record for the working directory, so the relaunched pane does not stop on that
