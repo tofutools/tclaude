@@ -18913,6 +18913,7 @@ a.tb-ref:hover { color: #79c0ff; }
 .tb-ref-issue { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; white-space: nowrap; max-width: 100%; }
 .tb-ref-issue .tb-ref { color: #79c0ff; overflow: hidden; text-overflow: ellipsis; }
 .tb-ref-kind { font: 600 9px/1 system-ui, sans-serif; letter-spacing: .04em; color: #8b949e; border: 1px solid #30363d; border-radius: 3px; padding: 2px 3px; text-transform: uppercase; }
+.tb-ref-issue .tb-ref-unlinked, .tb-ref.tb-ref-unlinked { color: #8b949e; cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
 .tb-edit-refs { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 0; }
 .tb-refs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .tb-ref-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid #2a3340; border-radius: 6px; }

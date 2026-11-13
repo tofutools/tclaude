@@ -355,15 +355,34 @@ func resolveTaskboardRefLink(r *http.Request, kind, refURL, label string) string
 	if refURL != "" || (kind != "awb" && kind != "linear") {
 		return refURL
 	}
+	if kind == "awb" {
+		// An awb link is its server's base and the id: nothing to look up.
+		if u := awbIssueURL(label); u != "" {
+			return u
+		}
+		_, note := awbLinkBase()
+		noteRefResolve(r, label, firstNonEmpty(note, "not an awb issue id"))
+		return refURL
+	}
 	budget := taskboardImportLookupBudget
 	if taskboardPeerAuthor(r) != "" {
 		budget = taskboardImportPeerLookupBudget
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), budget)
 	defer cancel()
-	if _, resolved, _ := lookupTaskboardRef(r.WithContext(ctx), kind, refURL, label); resolved != "" {
+	_, resolved, note := lookupTaskboardRef(r.WithContext(ctx), kind, refURL, label)
+	if resolved != "" {
 		return resolved
 	}
+	// The lookup gave no link: one its team's workspace already gives will do.
+	linker := taskRefLinker{}
+	ref := &taskboardRef{Kind: kind, Label: label}
+	linker.add(ref)
+	linker.finish()
+	if ref.URL != "" {
+		return ref.URL
+	}
+	noteRefResolve(r, label, firstNonEmpty(note, ref.LinkNote, "the lookup gave no link"))
 	return refURL
 }
 
@@ -408,6 +427,10 @@ func readTaskboardRefTitle(r *http.Request, kind, path string, body any, repo, f
 	}
 	if resolvedURL == "" && kind == "linear" && validateTaskRefURL(issue.URL) == nil {
 		resolvedURL = issue.URL
+	}
+	if kind == "linear" {
+		// The link says the team's workspace: its link-less refs link there.
+		learnLinearWorkspace(issue.URL)
 	}
 	return t, resolvedURL, trackerStatus(issue.Status, issue.State), ""
 }

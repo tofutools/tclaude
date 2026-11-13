@@ -2839,3 +2839,11 @@ func SeedPRCachesForTest(rawURL, state, title string, passed, total int, decisio
 	savePRChecks(rawURL, prChecksInfo{PRState: state, Checks: checks, FetchedAt: now, Summary: summarizePRChecks(checks, now)})
 	savePRReviewObservation(rawURL, prReviewObservation{Decision: decision}, now)
 }
+
+// SetAWBCLIStatusForTest swaps the `awb status --json` run that tells the
+// board the awb CLI's server (taskboard_reflinks.go), and forgets what the
+// last one said. Returns a restore function for t.Cleanup.
+func SetAWBCLIStatusForTest(fn func(context.Context) ([]byte, error)) func() {
+	prev := setAWBCLIProbe(fn)
+	return func() { setAWBCLIProbe(prev) }
+}

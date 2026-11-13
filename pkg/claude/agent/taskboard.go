@@ -118,7 +118,9 @@ type taskboardTask struct {
 	ID string `json:"id"`
 	// URL is the task's dashboard link, on show and add (the daemon's
 	// dashboard listener; absent from a linked node).
-	URL              string   `json:"url,omitempty"`
+	URL string `json:"url,omitempty"`
+	// ResolveNotes are why a --resolve-ref linked a ref not (add, edit).
+	ResolveNotes     []string `json:"resolve_notes,omitempty"`
 	Group            string   `json:"group"`
 	Title            string   `json:"title"`
 	Body             string   `json:"body,omitempty"`
@@ -258,7 +260,9 @@ type taskboardRef struct {
 	Label string `json:"label,omitempty"`
 	Local bool   `json:"local,omitempty"`
 	ID    string `json:"id,omitempty"`
-	PR    *struct {
+	// LinkNote is why the ref has no link, as the board's node says it.
+	LinkNote string `json:"link_note,omitempty"`
+	PR       *struct {
 		Number int    `json:"number,omitempty"`
 		State  string `json:"state,omitempty"`
 		Title  string `json:"title,omitempty"`
@@ -406,6 +410,7 @@ func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON
 	if rc := refsKept(body, t, stderr); rc != rcOK {
 		return rc
 	}
+	printResolveNotes(stderr, t)
 	if asJSON {
 		return writeJSONTo(stdout, t)
 	}
@@ -416,6 +421,14 @@ func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON
 		fmt.Fprintf(stdout, "  link: %s\n", t.URL)
 	}
 	return rcOK
+}
+
+// printResolveNotes says, on stderr, which refs a --resolve-ref could not
+// link and why: a resolve never fails silently.
+func printResolveNotes(stderr io.Writer, t taskboardTask) {
+	for _, note := range t.ResolveNotes {
+		fmt.Fprintf(stderr, "warning: ref not linked: %s\n", note)
+	}
 }
 
 // where is the task's stage, or the custom column it stands in.
@@ -887,6 +900,9 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 			head = "           "
 		}
 		fmt.Fprintf(stdout, "%s%s\n", head, ref.line())
+		if ref.URL == "" && ref.LinkNote != "" {
+			fmt.Fprintf(stdout, "             not linked: %s\n", ref.LinkNote)
+		}
 	}
 	if a := t.assigneeText(); a != "" {
 		fmt.Fprintf(stdout, "  assigned: %s (by %s)\n", a, t.AssignedBy)
@@ -1158,6 +1174,7 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	if rc := refsKept(req, t, stderr); rc != rcOK {
 		return rc
 	}
+	printResolveNotes(stderr, t)
 	if p.JSON {
 		return writeJSONTo(stdout, t)
 	}

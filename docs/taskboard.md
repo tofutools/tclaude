@@ -202,15 +202,30 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   id. Prefix the id with `awb:` or `linear:` to say which one you mean. A
   ref's URL is what it is: the board shows it under a short label (the awb
   or Linear id, `owner/repo#12`) as a link.
-  - An awb id is linked on the configured awb server
-    (`agent.awb_proxy.url`, as `<url>/#/issues/<id>`) wherever it is given:
-    `add`, `edit`, an import, a move to another group. An awb ref stored with no
-    link before that is linked as the board reads it.
-  - A Linear id has no link until it is looked up: pass `--resolve-ref` to
-    `add` or `edit`, and it is looked up through the Linear proxy, as an
-    import does. The title stays yours. An import (below) always looks it up.
-    `edit <task> --resolve-ref` with no `--ref` links the task's own ref.
-  - A ref with no link shows as a plain chip ("not linked" in its tooltip).
+  - An awb id is linked on this node's awb server, as `<server>/#/issues/<id>`.
+    The server is the configured awb proxy's (`agent.awb_proxy.url`) or, without
+    one, the server the operator's own `awb` CLI is configured for (what
+    `awb status` shows, read from `AWB_CONFIG_FILE` or awb's config files; the
+    daemon asks it at most every few minutes). The link is stored wherever the
+    id is given: `add`, `edit`, an import, a move to another group.
+  - A Linear id is linked in its team's Linear workspace
+    (`https://linear.app/<workspace>/issue/<id>`). The workspace is learned from
+    any link of one of the team's issues: a Linear lookup, or a ref given by its
+    URL. Until then the id has no link: pass `--resolve-ref` to `add` or `edit`,
+    and it is looked up through the Linear proxy, as an import does. The title
+    stays yours. An import (below) always looks it up. `edit <task>
+    --resolve-ref` with no `--ref` links the task's own ref.
+  - A ref stored without a link is linked as the board is read, whenever its
+    tracker's link is known by then. The link is derived again on every read and
+    not written back, so a server configured later links every old ref. A stored
+    link always wins. `--resolve-ref` stores the link.
+  - A ref that still has no link says why (`link_note`): no awb server is
+    configured, the Linear team's workspace is not known yet, and so on. `show`
+    prints it under the ref, and the dashboard shows it in the ref's tooltip. A
+    `--resolve-ref` that links nothing prints why on stderr (`resolve_notes` in
+    the JSON answer).
+  - A linked node's board shows its refs as that node links them, with its own
+    awb server and Linear workspaces.
 - A task can have several refs, at most 10: its tracker issue and the pull
   request that does it, say. `--ref` is always the task's first ref, so
   everything that reads one ref keeps reading that one.
@@ -242,8 +257,9 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
     `--resolve-ref`, an import, and the dashboard's ref lookup. A board read
     asks no tracker. A ref never looked up has none.
   - In the dashboard each ref shows by its kind. A pull request is the agent
-    rows' chain: #N, CI and review, with their hover cards. An issue is its
-    id, its status and (in the tooltip) its title. Anything else is a link. A
+    rows' chain: #N, CI and review, with their hover cards. An awb, Linear or
+    GitHub issue is its tracker's badge, its id as a link that opens in a new
+    tab, its status and (in the tooltip) its title. Anything else is a link. A
     lanes card shows every ref; the List's *Ref* column shows the first and
     `+n`. The edit form's *Refs* row has one line per ref, with its title;
     ↑ makes it the first and ✕ takes it off, on Save. Its add box adds one

@@ -28,8 +28,14 @@ export function draftRefs(draft) {
 // before that sends no `refs`, and would drop add_refs unsaid.
 export const multiRefs = (task) => Array.isArray(task?.refs);
 
-// refSub is a ref's kind and where it lives, under its title in the form.
+// refSub is a ref's kind and where it lives, under its title in the form,
+// and why it has no link when its node could not link it.
 function refSub(ref) {
+  const sub = refKindSub(ref);
+  return !ref.url && ref.link_note ? `${sub} · not linked: ${ref.link_note}` : sub;
+}
+
+function refKindSub(ref) {
   if (ref.pr) return `${/gitlab/i.test(ref.url || '') ? 'GitLab merge request' : 'GitHub pull request'}${repoOf(ref.url)}`;
   switch (ref.kind) {
     case 'awb': return 'awb issue';
