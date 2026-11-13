@@ -1,7 +1,6 @@
 package session
 
 import (
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -38,8 +37,7 @@ func CancelTmuxScrollback(tmuxSession string, h *harness.Harness) {
 	if tmuxSession == "" || !h.WantsTmuxScrollback() {
 		return
 	}
-	_ = clcommon.TmuxRun("send-keys", "-X", "-t",
-		clcommon.ExactTarget(tmuxSession)+":0.0", "cancel")
+	_ = tmuxcmd.Local().CopyModeCommand(tmuxcmd.Session(tmuxSession).FirstPane(), "cancel", 1)
 }
 
 // enableTmuxMouseScrollback is the underlying per-session mouse-mode toggle

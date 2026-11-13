@@ -732,11 +732,11 @@ func DeadPaneDiagnostic(paneID string) string {
 // error stays separate from the empty string here; DeadPaneDiagnostic is where
 // the two are rendered apart.
 func captureDeadPaneDiagnostic(paneID string) (string, error) {
-	out, err := clcommon.TmuxOutput("capture-pane", "-p", "-J", "-S", "-40", "-t", paneID)
+	out, err := tmuxcmd.Local().CapturePane(tmuxcmd.PaneID(paneID), tmuxcmd.CaptureOptions{History: 40})
 	if err != nil {
 		return "", err
 	}
-	return boundDeadPaneDiagnostic(out), nil
+	return boundDeadPaneDiagnostic([]byte(out)), nil
 }
 
 func boundDeadPaneDiagnostic(out []byte) string {

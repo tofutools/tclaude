@@ -206,16 +206,13 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 	if dropped > 0 {
 		slog.Debug("federation: discarded unknown keyboard sequences", "count", dropped)
 	}
-	// Keystrokes batch into one tmux exec as a chain of send-keys commands: a
-	// paste or a fast typist then costs one fork, not one per key.
-	var batch []string
-	batched := 0
+	// Keystrokes batch into one tmux command: a paste or a fast typist then
+	// costs one round trip, not one per key.
+	pane := tmuxcmd.PaneID(p.pin.pane)
+	var batch []tmuxcmd.Key
 	flush := func() error {
-		if batched == 0 {
-			return nil
-		}
-		err := clcommon.TmuxRun(batch...)
-		batch, batched = batch[:0], 0
+		err := tmuxcmd.Local().SendKeySequence(pane, batch)
+		batch = batch[:0]
 		return err
 	}
 	for i := 0; i < len(keys); i++ {
@@ -255,19 +252,11 @@ func (p *fedPaneTerminal) sendKeys(keys []terminal.Key, dropped int) error {
 			}
 			continue
 		}
-		if batched > 0 {
-			batch = append(batch, ";")
-		}
-		batch = append(batch, "send-keys", "-t", p.pin.pane)
-		if key.Name != "" {
-			batch = append(batch, key.Name)
-		} else {
-			batch = append(batch, "-l", "--", terminal.TmuxLiteralArg(key.Literal))
-		}
 		// Names come only from the fixed keyboard table. User-controlled text is
-		// exclusively a -l argument, escaped for tmux's argv separator grammar,
-		// so it can never become the ";" that chains the next command.
-		if batched++; batched == fedSendKeysBatch {
+		// exclusively a literal, which SendKeySequence escapes so it can never
+		// become the separator that chains the next command.
+		batch = append(batch, tmuxcmd.Key{Name: key.Name, Literal: key.Literal})
+		if len(batch) == fedSendKeysBatch {
 			if err := flush(); err != nil {
 				return err
 			}
@@ -363,16 +352,11 @@ func (s fedPaneMouse) encode(m terminal.Mouse, x, y int) []byte {
 }
 
 func (p *fedPaneTerminal) sendMouse(seqs [][]byte) error {
-	args := []string{"send-keys", "-t", p.pin.pane, "-H"}
+	var data []byte
 	for _, seq := range seqs {
-		for _, b := range seq {
-			args = append(args, fmt.Sprintf("%02x", b))
-		}
+		data = append(data, seq...)
 	}
-	if len(args) == 4 {
-		return nil
-	}
-	return clcommon.TmuxRun(args...)
+	return tmuxcmd.Local().SendBytes(tmuxcmd.PaneID(p.pin.pane), data)
 }
 
 // wheel applies count wheel events the way tmux's default WheelUpPane and
@@ -392,7 +376,7 @@ func (p *fedPaneTerminal) wheel(w terminal.Mouse, count int) error {
 	}
 	// tmux's copy-mode wheel binding scrolls five lines per event.
 	scroll := func() error {
-		return clcommon.TmuxRun("send-keys", "-t", p.pin.pane, "-X", "-N", strconv.Itoa(5*count), dir)
+		return tmuxcmd.Local().CopyModeCommand(tmuxcmd.PaneID(p.pin.pane), dir, 5*count)
 	}
 	switch {
 	case s.copyMode:
@@ -411,7 +395,7 @@ func (p *fedPaneTerminal) wheel(w terminal.Mouse, count int) error {
 		}
 		return p.sendMouse(seqs)
 	case w.Up() && s.tmuxMouse:
-		if err := clcommon.TmuxRun("copy-mode", "-e", "-t", p.pin.pane); err != nil {
+		if err := tmuxcmd.Local().EnterCopyMode(tmuxcmd.PaneID(p.pin.pane)); err != nil {
 			return err
 		}
 		p.copyMode = true
@@ -464,7 +448,7 @@ func (p *fedPaneTerminal) Close() error {
 			// can tell.
 			out, err := tmuxcmd.Local().Display(tmuxcmd.PaneID(p.pin.pane), "#{==:#{pane_mode},copy-mode}")
 			if err == nil && strings.TrimSpace(string(out)) == "1" {
-				_ = clcommon.TmuxRun("send-keys", "-t", p.pin.pane, "-X", "cancel")
+				_ = tmuxcmd.Local().CopyModeCommand(tmuxcmd.PaneID(p.pin.pane), "cancel", 1)
 			}
 		}
 		_ = p.f.Close()
@@ -524,7 +508,7 @@ func setFedIndicator(pin *fedPanePin, id, peer string, readOnly bool) (func(), e
 
 		// With no non-ignored client tmux falls back to the ignore-size viewers.
 		// No dimensions means atomically pin the window's existing size as manual.
-		if err := clcommon.TmuxRun("resize-window", "-t", pin.window); err != nil {
+		if err := tmuxcmd.Local().PinWindowSize(tmuxcmd.WindowID(pin.window)); err != nil {
 			restoreFedIndicator(pin.window, mark.saved)
 			delete(fedIndicators, pin.window)
 			return nil, err

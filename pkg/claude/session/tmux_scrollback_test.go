@@ -91,7 +91,7 @@ func TestCancelTmuxScrollback_CodexTargetsExactPane(t *testing.T) {
 
 	CancelTmuxScrollback("sess-codex", codex)
 
-	want := [][]string{{"send-keys", "-X", "-t", "=sess-codex:0.0", "cancel"}}
+	want := [][]string{{"send-keys", "-t", "=sess-codex:0.0", "-X", "cancel"}}
 	if !reflect.DeepEqual(rec.calls, want) {
 		t.Fatalf("codex detach cleanup = %v, want %v", rec.calls, want)
 	}

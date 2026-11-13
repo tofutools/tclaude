@@ -340,13 +340,12 @@ func reclaimOrphanedOpenCodeTmuxSession(tmuxSession string) error {
 }
 
 func captureOpenCodeTmuxPane(tmuxSession string) string {
-	out, err := clcommon.TmuxCombinedOutput(
-		"-N", "capture-pane", "-p", "-S", "-200", "-t",
-		clcommon.ExactTarget(tmuxSession)+":0.0")
+	out, err := tmuxcmd.Local().NoStart().CapturePane(
+		tmuxcmd.Session(tmuxSession).FirstPane(), tmuxcmd.CaptureOptions{History: 200, Wrapped: true})
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(out)
 }
 
 func watchOpenCodeTmuxProcess(process *openCodeProcess, runtime db.OpenCodeRuntime) {

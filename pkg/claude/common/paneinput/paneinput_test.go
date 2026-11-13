@@ -3,6 +3,7 @@ package paneinput
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -23,9 +24,9 @@ func TestInjectTextAndSubmitSerializesIndependentCallers(t *testing.T) {
 		}
 		return nil
 	}
-	opts := func(run Runner) Options {
+	opts := func(run func(args ...string) error) Options {
 		return Options{
-			Run: run, SettleDelay: 0, SettleDelaySet: true,
+			Tmux: viaRunner(run), SettleDelay: 0, SettleDelaySet: true,
 			LockTimeout: time.Second, LockRetry: time.Millisecond,
 		}
 	}
@@ -62,14 +63,14 @@ func TestInjectTextAndSubmitUsesLiteralModeForSingleLineText(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var commands [][]string
 	err := InjectTextAndSubmit("pane-literal:0.0", "Enter", Options{
-		Run: func(args ...string) error {
+		Tmux: viaRunner(func(args ...string) error {
 			commands = append(commands, append([]string(nil), args...))
 			return nil
-		},
+		}),
 		SettleDelay: 0, SettleDelaySet: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"send-keys", "-l", "-t", "=pane-literal:0.0", "Enter"}, commands[0])
+	require.Equal(t, []string{"send-keys", "-l", "-t", "=pane-literal:0.0", "--", "Enter"}, commands[0])
 }
 
 func TestInjectTextAndSubmitCanForceBracketedPasteForSingleLineText(t *testing.T) {
@@ -77,10 +78,10 @@ func TestInjectTextAndSubmitCanForceBracketedPasteForSingleLineText(t *testing.T
 	var commands [][]string
 	const text = "[system: new agent message #42; delivery: inline] hello"
 	err := InjectTextAndSubmit("pane-paste:0.0", text, Options{
-		Run: func(args ...string) error {
+		Tmux: viaRunner(func(args ...string) error {
 			commands = append(commands, append([]string(nil), args...))
 			return nil
-		},
+		}),
 		SettleDelay: 0, SettleDelaySet: true,
 		ForceBracketedPaste: true,
 	})
@@ -96,14 +97,14 @@ func TestInjectTextAndSubmitPreservesExactPaneID(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var commands [][]string
 	err := InjectTextAndSubmit("%42", "/exit", Options{
-		Run: func(args ...string) error {
+		Tmux: viaRunner(func(args ...string) error {
 			commands = append(commands, append([]string(nil), args...))
 			return nil
-		},
+		}),
 		SettleDelay: 0, SettleDelaySet: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"send-keys", "-l", "-t", "%42", "/exit"}, commands[0])
+	require.Equal(t, []string{"send-keys", "-l", "-t", "%42", "--", "/exit"}, commands[0])
 }
 
 func TestPaneLockPathUsesPrivateDataDirectory(t *testing.T) {
@@ -142,9 +143,9 @@ func TestInjectTextAndSubmitLockIDSerializesPaneIDWithSessionStream(t *testing.T
 		}
 		return nil
 	}
-	opts := func(run Runner) Options {
+	opts := func(run func(args ...string) error) Options {
 		return Options{
-			Run: run, SettleDelay: 0, SettleDelaySet: true,
+			Tmux: viaRunner(run), SettleDelay: 0, SettleDelaySet: true,
 			LockTimeout: time.Second, LockRetry: time.Millisecond,
 		}
 	}
@@ -173,7 +174,7 @@ func TestInjectTextAndSubmitLockIDSerializesPaneIDWithSessionStream(t *testing.T
 	require.NoError(t, <-firstDone)
 	released := opts(func(args ...string) error {
 		if args[0] == "send-keys" || args[0] == "paste-buffer" {
-			require.Equal(t, "%41", args[len(args)-2],
+			require.Equal(t, "%41", args[slices.Index(args, "-t")+1],
 				"LockID changes only the serialization identity, never the send target")
 		}
 		secondCalled = true

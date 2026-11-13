@@ -195,7 +195,7 @@ func pressAutoPermitAccept(convID string, accept session.AutoPermitAccept, toolN
 		return
 	}
 	if err := paneinput.SendKeys(target, paneinput.Options{
-		Run:              runTmuxCommand,
+		Tmux:             boundedTmux(),
 		AnswerHumanInput: true, // Explicit operator auto-permit authorization above.
 		LockTimeout:      paneInjectLockTimeout,
 		LockID:           target,

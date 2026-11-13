@@ -36,17 +36,8 @@ func boundedTmux() tmuxcmd.Client {
 	})
 }
 
-func runTmuxCommand(args ...string) error {
-	// Over control mode the reply is bounded by the client's own deadline.
-	if _, err, ok := clcommon.TryTmuxControl(args...); ok {
-		return err
-	}
-	return runCommandWithTimeout(clcommon.TmuxCommand(args...), tmuxCommandTimeout)
-}
-
 // tmuxOutputWithTimeout runs a tmux command under tmuxCommandTimeout and
-// returns its stdout. The read twin of runTmuxCommand, for the probes the
-// lifecycle paths make while a request is blocked on them.
+// returns its stdout, for the raw commands that have no typed verb yet.
 func tmuxOutputWithTimeout(args ...string) ([]byte, error) {
 	if out, err, ok := clcommon.TryTmuxControl(args...); ok {
 		return out, err

@@ -284,6 +284,13 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		if strings.HasPrefix(args[2], "=%") {
 			return exec.Command(falseBin)
 		}
+		if args[3] == "-X" {
+			// A copy-mode command, not a keystroke, so it is not typed
+			// into the pane. The sim has no copy mode; real tmux rejects
+			// the command outside a mode, and production's callers treat
+			// that as the no-op it is.
+			return exec.Command(trueBin)
+		}
 		t.routeSendKeys(args[2], args[3])
 	case len(args) >= 5 && args[0] == "send-keys" && args[1] == "-l" && args[2] == "-t":
 		// Literal mode prevents text such as "Enter" or "C-c" from being
@@ -292,7 +299,9 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		if strings.HasPrefix(args[3], "=%") {
 			return exec.Command(falseBin)
 		}
-		t.routeSendKeys(args[3], args[4])
+		// Production ends the flags with "--" and escapes a trailing ';',
+		// which the real client removes again before the pane sees the text.
+		t.routeSendKeys(args[3], literalText(args[4:]))
 	case len(args) >= 3 && args[0] == "set-buffer":
 		t.setBuffer(args[1:])
 	case len(args) >= 3 && args[0] == "paste-buffer":
@@ -753,10 +762,26 @@ func (t *TmuxSim) setBuffer(args []string) {
 		}
 	}
 	// The data is the final positional argument.
-	data := args[len(args)-1]
+	data := literalText(args[len(args)-1:])
 	t.mu.Lock()
 	t.buffers[name] = data
 	t.mu.Unlock()
+}
+
+// literalText returns the text a literal argument delivers: what follows an
+// optional "--", with the client's one escape, a trailing `\;`, undone.
+func literalText(args []string) string {
+	if len(args) > 1 && args[0] == "--" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return ""
+	}
+	text := args[0]
+	if strings.HasSuffix(text, `\;`) {
+		text = text[:len(text)-2] + ";"
+	}
+	return text
 }
 
 // pasteBuffer models `tmux paste-buffer [-dpr] -b <name> -t <target>`.

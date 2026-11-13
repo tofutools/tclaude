@@ -5,12 +5,12 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func captureInputPane(target string) (string, error) {
-	out, err := tmuxOutputWithTimeout("capture-pane", "-p", "-J", "-t", target)
-	return string(out), err
+	return boundedTmux().CapturePane(tmuxcmd.PaneFromSpec(target), tmuxcmd.CaptureOptions{})
 }
 
 func renameInputBlocked(convID string) bool {
