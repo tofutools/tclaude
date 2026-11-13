@@ -206,12 +206,15 @@ is explicit about what does not map 1:1:
     When a Claude profile pins an auto-compact window above a model without
     `[1m]`, the detected window says that the pin has no effect.
   - `--history-budget auto|all|N` sets how much is carried: 60% of the window,
-    everything (no cut), or a token count.
+    a token count, or `all`: every turn, and every tool record whole rather
+    than stubbed (unless `--keep` names a share). A single over-long tool
+    record is still clipped, with a pointer to its full text.
   - `--keep tool-output=25,tool-calls=50,chat=100` keeps that share of each
     category whole, newest first; the older rest becomes one-line stubs
     pointing at numbered entries in the full transcript. A category not named
     keeps the automatic rule (tool records of the last three turns, all chat).
-    The original task and the latest instructions are never shortened.
+    Under a share, a record whose stub would be larger stays whole. The
+    original task and the latest instructions are never shortened.
     Reasoning and harness-injected context have no share: they are never
     carried.
   - `--cut-first tool-output|tool-calls|chat` makes that category give way

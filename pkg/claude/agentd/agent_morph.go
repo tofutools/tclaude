@@ -810,7 +810,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			history = "summary"
 			handoffRequired = true
 		}
-		if req.History == "truncate" && report.NeedsSummary && !report.PinnedExternalized {
+		if req.History == "truncate" && report.NeedsSummary {
 			// The operator chose the cut without a summary; the carried
 			// notice names what was cut and points at the full transcript.
 			report.NeedsSummary = false
@@ -850,9 +850,12 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			return
 		}
 		if history == "truncate" {
-			report.Fallback = "native"
-			if report.Count(transcript.LossTruncatedBudget) > 0 {
+			// Only the native rung is renamed: a context-file rung the
+			// preview chose stays what the apply will use.
+			if (report.Fallback == "native" || report.Fallback == "native_summary") && report.Count(transcript.LossTruncatedBudget) > 0 {
 				report.Fallback = "native_truncated"
+			} else if report.Fallback == "native_summary" {
+				report.Fallback = "native"
 			}
 		} else if history != "" && history != "summary" {
 			report.Fallback = history
@@ -958,21 +961,27 @@ func morphOrDefer(agentID, convID string, pending db.AgentPendingMorph, now, sel
 // holds resumeLaunchLock(convID) and has checked the generation. A form for
 // another harness takes the cross-harness path instead.
 func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow) morphOutcome {
-	// The backup is taken first, from the agent as it is now. Without it
+	// The backup is taken from the agent as it is now, once the checks that
+	// need no stop have passed and before the agent is stopped. Without it
 	// the morph does not go ahead: the operator asked for a way back.
 	var backup *morphBackup
-	if pending.Backup {
-		var err error
-		if backup, err = spawnMorphBackup(convID); err != nil {
+	takeBackup := func() *morphOutcome {
+		if !pending.Backup {
+			return nil
+		}
+		b, err := spawnMorphBackup(convID)
+		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, errMorphBackupOffline) {
 				status = http.StatusConflict
 			}
-			return morphOutcome{status: status, code: "backup_failed",
+			return &morphOutcome{status: status, code: "backup_failed",
 				detail: "the pre-morph backup could not be made, so the agent was not morphed: " + err.Error()}
 		}
+		backup = b
+		return nil
 	}
-	out := applyMorphFormUnderLaunchLock(agentID, convID, pending, live)
+	out := applyMorphFormUnderLaunchLock(agentID, convID, pending, live, takeBackup)
 	if backup != nil {
 		out.backup = backup
 		if out.status != http.StatusOK {
@@ -983,9 +992,9 @@ func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMo
 }
 
 // applyMorphFormUnderLaunchLock applies the form itself.
-func applyMorphFormUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow) morphOutcome {
+func applyMorphFormUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow, takeBackup func() *morphOutcome) morphOutcome {
 	if isCrossHarnessTarget(convID, pending.Target) {
-		return applyCrossHarnessMorphUnderLaunchLock(agentID, convID, pending, live)
+		return applyCrossHarnessMorphUnderLaunchLock(agentID, convID, pending, live, takeBackup)
 	}
 	// A same-harness form never moves the sandbox or the harness.
 	pending.Target.Harness, pending.Target.HarnessBuiltinMode = "", nil
@@ -995,6 +1004,9 @@ func applyMorphFormUnderLaunchLock(agentID, convID string, pending db.AgentPendi
 	if live == nil {
 		if _, err := durableRelaunchConfigForConvWith(convID, pending.Target.ApplyTo); err != nil {
 			return fail(http.StatusConflict, "relaunch_profile", "the new form cannot be launched: "+err.Error())
+		}
+		if out := takeBackup(); out != nil {
+			return *out
 		}
 		previous, err := db.ApplyAgentMorphForConv(convID, pending.Target, pending.Back)
 		if err != nil {
@@ -1014,6 +1026,9 @@ func applyMorphFormUnderLaunchLock(agentID, convID string, pending db.AgentPendi
 		if err := claudeSubscriptionRelaunchBlocked(agentID); err != nil {
 			return fail(http.StatusConflict, claudeSubscriptionLostCode, err.Error())
 		}
+	}
+	if out := takeBackup(); out != nil {
+		return *out
 	}
 	clientHandoff := beginAgentRestartTmuxHandoff(live.TmuxSession)
 	defer clientHandoff.finishForConv(convID)

@@ -116,3 +116,40 @@ func TestCarryAllAndStatedBudget(t *testing.T) {
 	assert.Equal(t, "auto", auto.Report.BudgetSource)
 	assert.Contains(t, auto.Briefing(), "Cut during conversion, automatically", "the automatic tool stubs are named too")
 }
+
+// A stub can outgrow a small record. Under a share such a record stays
+// whole, so cutting tool calls first is never worse than the oldest-first cut.
+func TestCarryCutFirstNeverWorseWhenStubsOutgrowRecords(t *testing.T) {
+	tr := New(Source{Harness: "copilot"})
+	tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text("TASK")}})
+	for i := range 60 {
+		id := fmt.Sprintf("c%d", i)
+		tr.Append(Entry{Role: RoleAssistant, Origin: OriginAgent, Blocks: []Block{{Kind: BlockToolCall, CallID: id, Name: "ls", Input: []byte(`{}`)}}})
+		tr.Append(Entry{Role: RoleUser, Origin: OriginTool, Blocks: []Block{{Kind: BlockToolResult, CallID: id, Text: strings.Repeat("r", 230)}}})
+		tr.Append(Entry{Role: RoleUser, Origin: OriginHuman, Blocks: []Block{Text(fmt.Sprintf("go on %d", i))}})
+	}
+	base := Options{Target: "claude", ContextWindowTokens: 20_000, TranscriptPath: "/m/transcript.md"}
+	oldest := NewPlan(tr, base)
+	cut := base
+	cut.CutFirst = CategoryToolCalls
+	p := NewPlan(tr, cut)
+	assert.LessOrEqual(t, p.Report.Count(LossTruncatedBudget), oldest.Report.Count(LossTruncatedBudget))
+	u := usageOf(p.Report, CategoryToolCalls)
+	assert.LessOrEqual(t, u.CarriedTokens, usageOf(oldest.Report, CategoryToolCalls).CarriedTokens, "cutting calls first never carries more of them")
+
+	keep := base
+	keep.Keep = map[Category]int{CategoryToolCalls: 0}
+	k := usageOf(NewPlan(tr, keep).Report, CategoryToolCalls)
+	assert.Zero(t, k.Shortened, "stubs bigger than the calls are not used")
+}
+
+func TestCarryAllKeepsEveryRecordWhole(t *testing.T) {
+	tr := toolTurns(10)
+	p := NewPlan(tr, Options{Target: "claude", ContextWindowTokens: 1_000_000, TranscriptPath: "/m/transcript.md", CarryAll: true})
+	for _, c := range Categories {
+		assert.Zerof(t, usageOf(p.Report, c).Shortened, "%s is carried whole", c)
+	}
+	assert.Contains(t, p.Briefing(), "OUTPUT0 "+strings.Repeat("o", 300))
+	shared := NewPlan(tr, Options{Target: "claude", ContextWindowTokens: 1_000_000, TranscriptPath: "/m/transcript.md", CarryAll: true, Keep: map[Category]int{CategoryToolOutput: 10}})
+	assert.Positive(t, usageOf(shared.Report, CategoryToolOutput).Shortened, "a named share still applies")
+}

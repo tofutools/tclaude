@@ -144,7 +144,19 @@ type planEntry struct {
 // NewPlan applies target policy to a transcript. It never mutates t.
 func NewPlan(t *Transcript, opts Options) *Plan {
 	costs := categoryCosts(t)
-	cut := resolveCutoffs(t, costs, opts.Keep)
+	keep := opts.Keep
+	if opts.CarryAll {
+		// Carrying everything means everything whole: a category keeps its
+		// automatic stubs only when the operator names a share for it.
+		keep = map[Category]int{}
+		for _, c := range Categories {
+			keep[c] = 100
+		}
+		for c, v := range opts.Keep {
+			keep[c] = v
+		}
+	}
+	cut := resolveCutoffs(t, costs, keep)
 	if _, explicit := opts.Keep[opts.CutFirst]; !ValidCategory(opts.CutFirst) || explicit {
 		return newPlan(t, opts, cut, nil)
 	}
@@ -164,9 +176,15 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		return best
 	}
 	lo, hi := 0, 99
-	best = build(0)
-	if best.Report.Count(LossTruncatedBudget) > 0 {
+	if none := build(0); none.Report.Count(LossTruncatedBudget) > 0 {
+		// Even shortening all of it does not fit: carry whichever omits
+		// less, so cut-first is never worse than the oldest-first cut.
+		if none.Report.Count(LossTruncatedBudget) < best.Report.Count(LossTruncatedBudget) {
+			return none
+		}
 		return best
+	} else {
+		best = none
 	}
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
@@ -240,6 +258,13 @@ func newPlan(t *Transcript, opts Options, cut cutoffs, cutFirstPct *int) *Plan {
 		for c, n := range m {
 			usage[c].SourceTokens += n
 		}
+	}
+	// Under a share (set by the operator or found by CutFirst) a record is
+	// stubbed only when the stub is smaller, so a lower share never carries
+	// more. The automatic rule keeps stubbing every older tool record: the
+	// stub is the agent's pointer into the full transcript.
+	shrinks := func(c Category, stub string, fullLen int) bool {
+		return usage[c].KeepPercent == nil || len(stub) < fullLen
 	}
 	shorten := func(c Category, full, stub string) {
 		usage[c].Shortened++
@@ -322,14 +347,17 @@ func newPlan(t *Transcript, opts Options, cut cutoffs, cutFirstPct *int) *Plan {
 					status := "interrupted"
 					if found {
 						status = toolStatus(result)
-					} else {
-						report.Add(LossInterruptedCall, 1, "")
 					}
-					stub := toolStub(b.Name, input, status, result.Text, opts.TranscriptPath, index)
-					shorten(CategoryToolCalls, b.Name+input, stub)
-					add(CategoryToolCalls, Text(stub))
-					report.Add(LossToolRecordsStubbed, 1, "")
-					continue
+					// A stub of a small call can outgrow it; keep such a call whole.
+					if stub := toolStub(b.Name, input, status, result.Text, opts.TranscriptPath, index); shrinks(CategoryToolCalls, stub, len(b.Name)+len(input)+32) {
+						if !found {
+							report.Add(LossInterruptedCall, 1, "")
+						}
+						shorten(CategoryToolCalls, b.Name+input, stub)
+						add(CategoryToolCalls, Text(stub))
+						report.Add(LossToolRecordsStubbed, 1, "")
+						continue
+					}
 				}
 				text := fmt.Sprintf("%stool call · %s%s", markOpen, b.Name, markClose)
 				if input != "" {
@@ -350,9 +378,13 @@ func newPlan(t *Transcript, opts Options, cut cutoffs, cutFirstPct *int) *Plan {
 				}
 				status := toolStatus(b)
 				text := fmt.Sprintf("%stool result · %s · %s%s", markOpen, name, status, markClose)
+				stub := ""
 				if stubbed(CategoryToolOutput) {
-					text = toolStub(name, "", status, b.Text, opts.TranscriptPath, index)
-					shorten(CategoryToolOutput, b.Text, text)
+					stub = toolStub(name, "", status, b.Text, opts.TranscriptPath, index)
+				}
+				if stub != "" && shrinks(CategoryToolOutput, stub, len(text)+len(b.Text)) {
+					shorten(CategoryToolOutput, b.Text, stub)
+					text = stub
 					report.Add(LossToolRecordsStubbed, 1, "")
 				} else if b.Text != "" {
 					recentOpts := opts

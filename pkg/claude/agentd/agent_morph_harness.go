@@ -528,7 +528,7 @@ func (cm *crossMorph) installHistory(agentID, convID string, pending db.AgentPen
 // the agent onto it with the destination profiles in one transaction, then
 // resume it. Until the rebind commits, a failure resumes the source
 // conversation unchanged.
-func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow) morphOutcome {
+func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow, takeBackup func() *morphOutcome) morphOutcome {
 	dst, err := harness.Resolve(pending.Target.Harness)
 	if err != nil {
 		return morphOutcome{status: http.StatusBadRequest, code: "invalid_form", detail: err.Error()}
@@ -548,6 +548,9 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 		if !pending.ProceedWithoutSummary && ((needsSummary && !pending.ConfirmHistoryLoss) || ((needsSummary || preflight.Count(transcript.LossEncryptedSummary) > 0) && (pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == ""))) {
 			return morphOutcome{status: http.StatusConflict, code: "history_confirmation_required", detail: "history grew beyond the confirmed budget or its required summary is missing; source remains unchanged"}
 		}
+	}
+	if out := takeBackup(); out != nil {
+		return *out
 	}
 	var clientHandoff *agentRestartTmuxHandoff
 	restoreSource := func() string { return "" }
