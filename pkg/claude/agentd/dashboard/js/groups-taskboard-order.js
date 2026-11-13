@@ -94,11 +94,11 @@ export function onOrderKey(event, task, list, actions) {
   return true;
 }
 
-// refocusTask focuses the task's card or row again (its first focusable
-// control), after a redraw that moved it.
+// refocusTask focuses the task's card or row again (its title, which the
+// keys are pressed on), after a redraw that moved it.
 export function refocusTask(doc, id) {
   const host = doc?.querySelector?.(`[data-task-id="${id}"], tr[data-dnd-task="${id}"]`);
-  const target = host?.querySelector?.('button, [tabindex]') || host;
+  const target = host?.querySelector?.('.tb-title') || host;
   if (target && doc.activeElement !== target) target.focus?.({ preventScroll: true });
 }
 

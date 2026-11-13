@@ -167,7 +167,7 @@ test('a card\'s ⋯ moves it within its cell, and Alt+↑ does the same from the
   await click(card('tk_00000001').querySelector('.tb-card-more'));
 
   api.calls.length = 0;
-  await harness.act(async () => { harness.fireEvent(card('tk_00000005').querySelector('.tb-card-title button') || card('tk_00000005'), 'keydown', { key: 'ArrowUp', altKey: true }); });
+  await harness.act(async () => { harness.fireEvent(card('tk_00000005').querySelector('.tb-title'), 'keydown', { key: 'ArrowUp', altKey: true }); });
   await settle();
   assert.deepEqual(api.calls, [['move', 'tk_00000005', { before: 'tk_00000004', stage: 'idea' }]]);
 });
