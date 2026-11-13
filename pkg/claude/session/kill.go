@@ -7,6 +7,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -130,8 +131,7 @@ func killMultiple(params *KillParams) error {
 func killSession(state *SessionState) error {
 	// Kill tmux session if alive
 	if IsTmuxSessionAlive(state.TmuxSession) {
-		cmd := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(state.TmuxSession))
-		if err := cmd.Run(); err != nil {
+		if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(state.TmuxSession)); err != nil {
 			return fmt.Errorf("failed to kill tmux session: %w", err)
 		}
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -788,7 +789,7 @@ func (r *cloneRun) spawnNoCopy() (spawned cloneSpawnResult, cerr *cloneSpawnErro
 	if tmuxToKill == "" {
 		tmuxToKill = label
 	}
-	if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)); err != nil {
+	if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxToKill)); err != nil {
 		slog.Warn("clone: timed-out no-copy launch kill failed",
 			"session", tmuxToKill, "error", err)
 	}
@@ -995,7 +996,7 @@ func (r *cloneRun) spawnCopy() (spawned cloneSpawnResult, cerr *cloneSpawnError)
 	}
 	if launchEnroll {
 		if newTmux != "" {
-			if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(newTmux)); err != nil {
+			if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(newTmux)); err != nil {
 				slog.Warn("clone: timed-out copy launch kill failed",
 					"session", newTmux, "error", err)
 			}
@@ -2304,7 +2305,7 @@ func (co *cloneOrchestration) spawn(w http.ResponseWriter) bool {
 		stopped := "; the clone was stopped"
 		if tmuxToKill == "" {
 			stopped = "; the clone's actor was retired, but its pane never registered — check `tclaude session ls` for a stray launch"
-		} else if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)); err != nil {
+		} else if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxToKill)); err != nil {
 			slog.Warn("clone: stopping failed clone", "session", tmuxToKill, "error", err)
 		}
 		if co.spawned.HandoffMsgID > 0 {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
@@ -66,12 +67,12 @@ type fedLocalClient struct {
 // renderers, which attach with ignore-size. A non-empty window keeps only
 // the clients currently showing that window: only they size it.
 func fedLocalClients(tmuxSession, window string) ([]fedLocalClient, error) {
-	out, err := clcommon.TmuxOutput("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}\t#{client_flags}\t#{client_width}\t#{client_height}\t#{window_id}")
+	rows, err := tmuxcmd.Local().ListClients(tmuxcmd.Session(tmuxSession), "#{client_tty}\t#{client_flags}\t#{client_width}\t#{client_height}\t#{window_id}")
 	if err != nil {
 		return nil, err
 	}
 	var clients []fedLocalClient
-	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range rows {
 		f := strings.Split(line, "\t")
 		if len(f) < 2 || !strings.HasPrefix(f[0], "/dev/") || slices.Contains(strings.Split(f[1], ","), "ignore-size") {
 			continue
@@ -97,7 +98,7 @@ func detachFedLocalClients(tmuxSession string) {
 		return
 	}
 	for _, c := range clients {
-		_ = clcommon.TmuxRun("detach-client", "-t", c.tty)
+		_ = tmuxcmd.Local().DetachClient(tmuxcmd.ClientTTY(c.tty))
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/common/tuistyle"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -1753,8 +1754,7 @@ func (m *watchModel) deleteConversation(conv *SessionEntry) error {
 
 func (m *watchModel) stopSession(state *session.SessionState) error {
 	if session.IsTmuxSessionAlive(state.TmuxSession) {
-		cmd := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(state.TmuxSession))
-		if err := cmd.Run(); err != nil {
+		if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(state.TmuxSession)); err != nil {
 			return fmt.Errorf("failed to kill tmux session: %w", err)
 		}
 	}

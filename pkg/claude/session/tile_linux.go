@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // Linux window tiling — two backends, mirroring the focus path's split
@@ -134,15 +134,11 @@ func tileNativeLinuxWindows(specs []TileSpec, opts TileOptions) {
 // session, or "" when none is attached. Same query focusLinuxTmuxSession
 // makes.
 func linuxTmuxClientTTY(tmuxSession string) string {
-	out, err := clcommon.TmuxOutput("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
-	if err != nil {
+	ttys, err := tmuxcmd.Local().ClientTTYs(tmuxcmd.Session(tmuxSession))
+	if err != nil || len(ttys) == 0 {
 		return ""
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return ""
-	}
-	return lines[0]
+	return ttys[0]
 }
 
 // linuxWindowIDForTTY resolves the window id owning a tty by walking the

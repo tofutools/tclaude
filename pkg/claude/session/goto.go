@@ -8,7 +8,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -54,14 +54,13 @@ func runGoto(params *GotoParams) error {
 	}
 
 	// Single tmux call to get all attached clients with their session and TTY
-	cmd := clcommon.TmuxCommand("list-clients", "-F", "#{session_name} #{client_tty}")
-	output, err := cmd.Output()
+	rows, err := tmuxcmd.Local().ListAllClients("#{session_name} #{client_tty}")
 	if err != nil {
 		return fmt.Errorf("failed to list tmux clients: %w", err)
 	}
 
 	var clients []tmuxClient
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+	for _, line := range rows {
 		parts := strings.SplitN(line, " ", 2)
 		if len(parts) == 2 {
 			clients = append(clients, tmuxClient{session: parts[0], tty: parts[1]})

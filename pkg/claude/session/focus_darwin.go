@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // TryFocusAttachedSession attempts to focus the terminal window that has the session attached.
@@ -111,16 +111,11 @@ func FocusTmuxSession(tmuxSession, sessionID string) bool {
 
 // getTmuxClientTTY gets the tty of a client attached to a tmux session.
 func getTmuxClientTTY(tmuxSession string) string {
-	cmd := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
-	output, err := cmd.Output()
-	if err != nil {
+	ttys, err := tmuxcmd.Local().ClientTTYs(tmuxcmd.Session(tmuxSession))
+	if err != nil || len(ttys) == 0 {
 		return ""
 	}
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		return ""
-	}
-	return lines[0]
+	return ttys[0]
 }
 
 // focusITermTabByTTY focuses the iTerm2 tab that owns a specific tty.

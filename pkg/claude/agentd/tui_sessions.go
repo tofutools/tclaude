@@ -22,8 +22,8 @@ import (
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -265,15 +265,8 @@ func killLocalSessionPane(tmuxSession string) error {
 	if strings.TrimSpace(tmuxSession) == "" {
 		return fmt.Errorf("no tmux session to kill")
 	}
-	out, err := clcommon.TmuxCombinedOutput(
-		"kill-session", "-t", clcommon.ExactTarget(tmuxSession))
-	if err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("%w: %s", err, msg)
-		}
-		return err
-	}
-	return nil
+	// The error carries tmux's own message, which the console shows.
+	return tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxSession))
 }
 
 func tuiKillSessionCmd(row tuiSessionRow) tea.Cmd {

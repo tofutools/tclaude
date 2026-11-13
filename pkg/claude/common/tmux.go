@@ -78,6 +78,10 @@ func tmuxNoServer(msg string) bool {
 		(strings.HasPrefix(msg, "error connecting to ") && strings.HasSuffix(msg, "(No such file or directory)"))
 }
 
+// TmuxNoServerMessage reports whether msg, tmux's error text for a failed
+// command, says only that no server is running.
+func TmuxNoServerMessage(msg string) bool { return tmuxNoServer(strings.TrimSpace(msg)) }
+
 // tmuxCounterKey names a tmux invocation by its subcommand for the perfstats
 // subprocess table ("tmux list-sessions"), so hot polling paths stand out.
 func tmuxCounterKey(args []string) string {

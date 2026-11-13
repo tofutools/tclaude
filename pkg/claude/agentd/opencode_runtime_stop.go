@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -179,8 +179,7 @@ func joinOpenCodeSSEProjector(
 // server and, if the server does not exit, its process tree. retained reports
 // that the tree survived, so the control authority must be kept.
 func stopTmuxHeldOpenCodeProcess(runtime db.OpenCodeRuntime, process *openCodeProcess) (retained bool) {
-	killErr := clcommon.TmuxRun(
-		"-N", "kill-session", "-t", clcommon.ExactTarget(process.tmuxSession))
+	killErr := tmuxcmd.Local().NoStart().KillSession(tmuxcmd.Session(process.tmuxSession))
 	select {
 	case <-process.done:
 	case <-time.After(openCodeProcessStopWait):
@@ -243,8 +242,7 @@ func stopRecoveredOpenCodeProcess(runtime db.OpenCodeRuntime) (retained bool) {
 			tmuxSession := openCodeManagedTmuxSession(runtime.SessionID)
 			panePID := openCodeTmuxPanePID(tmuxSession)
 			if panePID == runtime.PID {
-				_ = clcommon.TmuxRun(
-					"-N", "kill-session", "-t", clcommon.ExactTarget(tmuxSession))
+				_ = tmuxcmd.Local().NoStart().KillSession(tmuxcmd.Session(tmuxSession))
 			} else {
 				killOpenCodePIDs(recordedTree)
 			}

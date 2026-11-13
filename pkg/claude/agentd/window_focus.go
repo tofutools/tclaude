@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -191,11 +191,10 @@ var (
 )
 
 // tmuxSessionHasClient reports whether the tmux session has at least one
-// attached client — i.e. its terminal window exists. Goes through the
-// clcommon tmux seam like every other tmux call.
+// attached client — i.e. its terminal window exists.
 func tmuxSessionHasClient(tmuxSession string) bool {
-	out, err := clcommon.TmuxOutput("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
-	return err == nil && strings.TrimSpace(string(out)) != ""
+	ttys, err := tmuxcmd.Local().ClientTTYs(tmuxcmd.Session(tmuxSession))
+	return err == nil && len(ttys) > 0
 }
 
 // waitForFocusedWindows blocks until every target session has an attached

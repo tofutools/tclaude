@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -97,9 +98,7 @@ func (h *agentRestartTmuxHandoff) finishForConv(convID string) int {
 }
 
 func killAgentRestartTmuxBridge(holding string) {
-	if err := clcommon.TmuxRun(
-		"kill-session", "-t", clcommon.ExactTarget(holding),
-	); err != nil {
+	if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(holding)); err != nil {
 		slog.Warn("agent restart: could not remove tmux client bridge",
 			"bridge", holding, "error", err)
 	}

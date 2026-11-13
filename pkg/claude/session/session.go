@@ -21,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -425,8 +426,7 @@ func MaxUpdatedAt() (time.Time, error) {
 // live "-N" namesake and report a dead name as alive, which upstream turns
 // into wrong-session attaches and kills.
 func IsTmuxSessionAlive(sessionName string) bool {
-	cmd := clcommon.TmuxCommand("has-session", "-t", clcommon.ExactTarget(sessionName))
-	if cmd.Run() != nil {
+	if exists, _ := tmuxcmd.Local().HasSession(tmuxcmd.Session(sessionName)); !exists {
 		return false
 	}
 	out, err := clcommon.TmuxOutput("display-message", "-p", "-t",
@@ -469,21 +469,16 @@ func IsTmuxSessionAttached(sessionName string) bool {
 // session had no window open: a clean no-op.
 func DetachSessionClients(sessionName string) (int, error) {
 	// Get list of clients attached to this session
-	cmd := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(sessionName), "-F", "#{client_tty}")
-	output, err := cmd.Output()
+	clients, err := tmuxcmd.Local().ClientTTYs(tmuxcmd.Session(sessionName))
 	if err != nil {
 		return 0, err
 	}
 
 	// Detach each client
 	detached := 0
-	clients := strings.Split(strings.TrimSpace(string(output)), "\n")
 	for _, client := range clients {
-		if client == "" {
-			continue
-		}
 		// Detach this specific client
-		_ = clcommon.TmuxRun("detach-client", "-t", client)
+		_ = tmuxcmd.Local().DetachClient(tmuxcmd.ClientTTY(client))
 		detached++
 	}
 	return detached, nil
@@ -615,7 +610,8 @@ func tmuxSessionNameTaken(name string) bool {
 	if name == "" {
 		return false
 	}
-	return clcommon.TmuxRun("has-session", "-t", clcommon.ExactTarget(name)) == nil
+	taken, _ := tmuxcmd.Local().HasSession(tmuxcmd.Session(name))
+	return taken
 }
 
 // sessionHandle is the short, human-facing identifier for a session — its

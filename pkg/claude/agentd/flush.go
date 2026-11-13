@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -544,19 +544,17 @@ func probeNudgeSession(convID string) (*db.SessionRow, nudgeSessionProbe) {
 // session.IsTmuxSessionAlive's exact target, but runs under the same deadline
 // as send-keys so a stuck has-session cannot hold nudgeState.running forever.
 func probeNudgeTmuxSession(sessionName string) nudgeSessionProbe {
-	err := runTmuxCommand("has-session", "-t", clcommon.ExactTarget(sessionName))
-	if err == nil {
+	exists, err := boundedTmux().HasSession(tmuxcmd.Session(sessionName))
+	switch {
+	case exists:
 		return nudgeSessionAlive
-	}
-	if errors.Is(err, errTmuxCommandTimeout) {
-		slog.Warn("nudge liveness probe timed out", "tmux", sessionName, "error", err)
-		return nudgeSessionIndeterminate
-	}
-	// tmux ran has-session and said no: an exit status over exec, a %error
-	// over control mode.
-	if clcommon.IsTmuxCommandFailure(err) {
+	case err == nil:
+		// tmux answered, and said no.
 		return nudgeSessionOffline
+	case errors.Is(err, tmuxcmd.ErrTimeout):
+		slog.Warn("nudge liveness probe timed out", "tmux", sessionName, "error", err)
+	default:
+		slog.Warn("nudge liveness probe failed", "tmux", sessionName, "error", err)
 	}
-	slog.Warn("nudge liveness probe failed", "tmux", sessionName, "error", err)
 	return nudgeSessionIndeterminate
 }

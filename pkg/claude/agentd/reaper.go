@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -529,8 +529,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			// The pane is only an attach client. A dead authoritative server is
 			// a dead session even while that client process still exists.
 			if st.TmuxSession != "" {
-				if err := clcommon.TmuxRun("kill-session", "-t",
-					clcommon.ExactTarget(st.TmuxSession)); err != nil {
+				if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(st.TmuxSession)); err != nil {
 					slog.Warn("reaper: failed to stop OpenCode attach pane after server loss",
 						"session", st.ID, "tmux_session", st.TmuxSession, "error", err)
 				}

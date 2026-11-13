@@ -11,6 +11,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 )
 
@@ -463,19 +464,17 @@ func focusLinuxTmuxSession(tmuxSession string) focusLinuxResult {
 	}
 
 	// Get the client TTY for this tmux session
-	cmd := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
-	output, err := cmd.Output()
+	ttys, err := tmuxcmd.Local().ClientTTYs(tmuxcmd.Session(tmuxSession))
 	if err != nil {
 		slog.Debug(fmt.Sprintf("Failed to get tmux client tty: %v", err), "module", "focus")
 		return focusLinuxTryFailed
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
+	if len(ttys) == 0 {
 		slog.Debug("No clients attached to tmux session", "module", "focus")
 		return focusLinuxNoClients
 	}
-	tty := lines[0]
+	tty := ttys[0]
 	slog.Debug(fmt.Sprintf("Found client TTY: %s (tool=%s)", tty, tool), "module", "focus")
 
 	// Find the terminal window by walking the process tree from TTY

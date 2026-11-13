@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -606,7 +607,7 @@ func detachTmuxSession(tmuxSession string) {
 		detachFedLocalClients(tmuxSession)
 		return
 	}
-	_ = clcommon.TmuxRun("detach-client", "-s", clcommon.ExactTarget(tmuxSession))
+	_ = tmuxcmd.Local().DetachSessionClients(tmuxcmd.Session(tmuxSession))
 }
 
 // detachOwnTmuxClient detaches only the tmux client running on clientTTY,
@@ -630,13 +631,13 @@ func detachOwnTmuxClient(tmuxSession, clientTTY string) {
 		detachTmuxSession(tmuxSession)
 		return
 	}
-	out, err := clcommon.TmuxOutput("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
+	ttys, err := tmuxcmd.Local().ClientTTYs(tmuxcmd.Session(tmuxSession))
 	if err != nil {
 		return
 	}
-	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-		if strings.TrimSpace(line) == clientTTY {
-			_ = clcommon.TmuxRun("detach-client", "-t", clientTTY)
+	for _, tty := range ttys {
+		if strings.TrimSpace(tty) == clientTTY {
+			_ = tmuxcmd.Local().DetachClient(tmuxcmd.ClientTTY(clientTTY))
 			return
 		}
 	}
