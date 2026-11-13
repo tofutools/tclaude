@@ -11,6 +11,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -21,7 +22,8 @@ var codexApprovalMonitorDebounce = 100 * time.Millisecond
 var codexApprovalCleanupTailRe = regexp.MustCompile(`^; (?:}; )?exit \$tclaude_(?:launch|resume)_status$`)
 
 var codexApprovalPaneStartCommands = func() ([]byte, error) {
-	return clcommon.TmuxOutput("list-panes", "-a", "-F", "#{pane_dead}\t#{pane_start_command}")
+	rows, err := tmuxcmd.Local().ListAllPanes("#{pane_dead}\t#{pane_start_command}")
+	return []byte(strings.Join(rows, "\n")), err
 }
 
 type codexApprovalMonitor struct {

@@ -9,16 +9,18 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 func TestParseBrokerPaneList(t *testing.T) {
-	out := "spwn-a|%1|75501|0|gen-a\n" +
-		"spwn-dead|%2|100|1|gen-dead\n" +
-		"multi|%3|200|0|gen-m\n" +
-		"multi|%4|201|0|gen-m\n" +
-		"garbage\n" +
-		"|%5|1|0|x\n"
-	table := parseBrokerPaneList(out)
+	// "garbage" and the row with no session are dropped by AllPanes' parser,
+	// which pkg/claude/common/tmuxcmd tests.
+	table := brokerPaneTable([]tmuxcmd.PaneInfo{
+		{Session: "spwn-a", PaneID: "%1", PID: 75501, ExitGeneration: "gen-a"},
+		{Session: "spwn-dead", PaneID: "%2", PID: 100, Dead: true, ExitGeneration: "gen-dead"},
+		{Session: "multi", PaneID: "%3", PID: 200, ExitGeneration: "gen-m"},
+		{Session: "multi", PaneID: "%4", PID: 201, ExitGeneration: "gen-m"},
+	})
 	require.Len(t, table, 3)
 	assert.Equal(t, brokerPaneEntry{paneID: "%1", panePID: 75501, generation: "gen-a", panes: 1}, table["spwn-a"])
 	assert.True(t, table["spwn-dead"].dead)

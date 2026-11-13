@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // has-session liveness flows through cmd.Run()==nil (see
@@ -560,9 +562,8 @@ func (t *TmuxSim) listPanes(target string) *exec.Cmd {
 	return exec.Command(echoBin, strconv.Itoa(s.panePID))
 }
 
-// brokerPaneListFormat mirrors agentd's list-panes format for the brokered
-// proof's shared pane cache. Keep the two in step.
-const brokerPaneListFormat = "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{@tclaude_exit_generation}"
+// brokerPaneListFormat is the list-panes format production's AllPanes sends.
+var brokerPaneListFormat = tmuxcmd.AllPanesFormat()
 
 // listAllPanes models `tmux list-panes -a -F <format>` for the sim's one-pane
 // sessions: one line per registered session, in the one format production
@@ -692,6 +693,17 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 		}
 		return exec.Command(echoBin, "0")
 	}
+	if format == "#{session_attached}" {
+		attached := 0
+		t.mu.Lock()
+		for _, session := range t.clients {
+			if session == name {
+				attached++
+			}
+		}
+		t.mu.Unlock()
+		return exec.Command(echoBin, strconv.Itoa(attached))
+	}
 	if format == "#{pane_id}" {
 		return exec.Command(echoBin, paneID)
 	}
@@ -709,7 +721,7 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 		}
 		return exec.Command(echoBin, name+"|"+paneID+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
 	}
-	if format == "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}" {
+	if format == tmuxcmd.PaneStatusFormat() {
 		deadValue := "0"
 		if dead {
 			deadValue = "1"

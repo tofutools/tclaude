@@ -547,35 +547,29 @@ func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
 // that conv. The loop's own deadline bounds the polling, not the subprocess
 // inside it — only this does that.
 func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
-	format := "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}"
-	out, err := tmuxOutputWithTimeout(
-		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", format)
-	if err != nil {
-		if strings.Contains(err.Error(), "can't find session") {
-			err = fmt.Errorf("tmux session %q %w (%v)", tmuxSession, errTmuxSessionNotFound, err)
-		}
+	st, err := boundedTmux().PaneStatus(tmuxcmd.Session(tmuxSession).ActivePane())
+	switch {
+	case errors.Is(err, tmuxcmd.ErrNotFound):
+		// tmux does not know the session, whichever way its version says so
+		// (an error before 3.7, an all-empty reply since). A caller can then
+		// tell "gone" from a garbled probe.
+		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("tmux session %q %w (%v)", tmuxSession, errTmuxSessionNotFound, err)
+	case errors.Is(err, tmuxcmd.ErrMalformedReply):
+		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane probe")
+	case err != nil:
 		return lifecyclePaneProbe{state: paneProbeUnknown}, err
 	}
-	parts := strings.Split(strings.TrimSpace(string(out)), "|")
-	if len(parts) == 7 && parts[0] == "" && parts[1] == "" {
-		// tmux 3.7 no longer fails display-message for a target that does
-		// not exist: it exits 0 and expands every field empty. Older tmux
-		// errored with "can't find session" (handled above). Both report
-		// errTmuxSessionNotFound, so a caller can tell "gone" from a
-		// garbled probe whatever the tmux version.
-		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("tmux session %q %w", tmuxSession, errTmuxSessionNotFound)
-	}
-	if len(parts) != 7 || parts[0] != tmuxSession || !validLifecyclePaneID(parts[1]) {
+	if st.Session != tmuxSession || !validLifecyclePaneID(st.PaneID) {
 		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane probe")
 	}
-	pid, pidErr := strconv.Atoi(parts[2])
-	if pidErr != nil || pid <= 0 {
+	if st.PID <= 0 {
 		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane pid")
 	}
-	if parts[3] == "1" {
-		return lifecyclePaneProbe{state: paneProbeDead, paneID: parts[1], panePID: pid, generation: parts[6]}, nil
+	state := paneProbeLive
+	if st.Dead {
+		state = paneProbeDead
 	}
-	return lifecyclePaneProbe{state: paneProbeLive, paneID: parts[1], panePID: pid, generation: parts[6]}, nil
+	return lifecyclePaneProbe{state: state, paneID: st.PaneID, panePID: st.PID, generation: st.ExitGeneration}, nil
 }
 
 // errTmuxSessionNotFound is what probeLifecyclePane reports when tmux does
@@ -924,14 +918,14 @@ func lifecycleProbeMatchesTarget(probe lifecyclePaneProbe, target *lifecycleTarg
 // all-offline state; this is the same call, made distinguishable from a
 // transient failure so the unknown contract stays intact for real faults.
 func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {
-	out, err := tmuxOutputWithTimeout("list-sessions", "-F", "#{session_name}")
+	names, err := boundedTmux().ListSessions("#{session_name}")
 	if err != nil {
 		if tmuxServerNotRunning(err) {
 			return false, true
 		}
 		return false, false
 	}
-	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, name := range names {
 		if name == tmuxSession {
 			return true, true
 		}
@@ -951,6 +945,10 @@ func tmuxServerNotRunning(err error) bool {
 	if err == nil || errors.Is(err, errTmuxCommandTimeout) {
 		return false
 	}
+	if errors.Is(err, tmuxcmd.ErrNoServer) {
+		return true
+	}
+	// Errors from the raw subprocess helpers carry tmux's text only.
 	msg := err.Error()
 	return strings.Contains(msg, "no server running") ||
 		strings.Contains(msg, "error connecting to")
@@ -1252,11 +1250,11 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd stri
 // signal the soft-exit retry needs to avoid re-injecting into a resumed
 // pane that reused the tmux name.
 func livePanePID(tmuxSession string) int {
-	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", "#{pane_dead}|#{pane_pid}")
+	out, err := tmuxcmd.Local().Display(tmuxcmd.Session(tmuxSession).ActivePane(), "#{pane_dead}|#{pane_pid}")
 	if err != nil {
 		return 0
 	}
-	parts := strings.Split(strings.TrimSpace(string(out)), "|")
+	parts := strings.Split(strings.TrimSpace(out), "|")
 	if len(parts) != 2 || parts[0] == "1" {
 		return 0
 	}

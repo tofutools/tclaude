@@ -9,13 +9,14 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 var codexNativePaneStarts = func() ([]byte, error) {
-	return clcommon.TmuxOutput("list-panes", "-a", "-F",
-		"#{session_name}\t#{pane_dead}\t#{pane_start_command}")
+	rows, err := tmuxcmd.Local().ListAllPanes("#{session_name}\t#{pane_dead}\t#{pane_start_command}")
+	return []byte(strings.Join(rows, "\n")), err
 }
 
 var registerCodexNativePermissionProfilesIfInstalled = session.RegisterCodexNativePermissionProfilesIfInstalled

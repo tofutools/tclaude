@@ -1,10 +1,10 @@
 package agentd
 
 import (
-	"strconv"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // --- shared pane-facts cache for the brokered proof ---
@@ -30,10 +30,6 @@ import (
 // proof, because a dead pane shell's children are reparented and the pane
 // pid is then not an ancestor of the caller. A stale "absent" or "dead" for
 // a live pane is exactly the fallback case.
-
-// brokerPaneListFormat is the list-panes format the cache reads. Change it
-// together with the simulator's model of it in pkg/testharness.
-const brokerPaneListFormat = "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{@tclaude_exit_generation}"
 
 // brokerPaneCacheTTL bounds how stale the shared table may be. Within it a
 // long-lived pane's facts do not change; a new pane misses and is probed.
@@ -65,32 +61,27 @@ var brokerPaneCache struct {
 }
 
 func listBrokerPanes() (map[string]brokerPaneEntry, error) {
-	out, err := tmuxOutputWithTimeout("list-panes", "-a", "-F", brokerPaneListFormat)
+	panes, err := boundedTmux().AllPanes()
 	if err != nil {
 		return nil, err
 	}
-	return parseBrokerPaneList(string(out)), nil
+	return brokerPaneTable(panes), nil
 }
 
-// parseBrokerPaneList parses brokerPaneListFormat lines. A session with
+// brokerPaneTable indexes the server's panes by session. A session with
 // several panes keeps its first pane's facts and a panes count above one,
 // which cachedBrokerPane treats as a miss.
-func parseBrokerPaneList(out string) map[string]brokerPaneEntry {
+func brokerPaneTable(panes []tmuxcmd.PaneInfo) map[string]brokerPaneEntry {
 	table := map[string]brokerPaneEntry{}
-	for _, line := range strings.Split(out, "\n") {
-		parts := strings.Split(strings.TrimSpace(line), "|")
-		if len(parts) != 5 || parts[0] == "" {
-			continue
-		}
-		e, seen := table[parts[0]]
+	for _, p := range panes {
+		e, seen := table[p.Session]
 		if seen {
 			e.panes++
-			table[parts[0]] = e
+			table[p.Session] = e
 			continue
 		}
-		pid, _ := strconv.Atoi(parts[2])
-		table[parts[0]] = brokerPaneEntry{
-			paneID: parts[1], panePID: pid, dead: parts[3] == "1", generation: parts[4], panes: 1,
+		table[p.Session] = brokerPaneEntry{
+			paneID: p.PaneID, panePID: p.PID, dead: p.Dead, generation: p.ExitGeneration, panes: 1,
 		}
 	}
 	return table

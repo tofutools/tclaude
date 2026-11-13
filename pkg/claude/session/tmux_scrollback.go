@@ -2,6 +2,7 @@ package session
 
 import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -47,5 +48,5 @@ func CancelTmuxScrollback(tmuxSession string, h *harness.Harness) {
 // wants it — a bare shell has no self-managed scrollback of its own, so
 // without tmux mouse mode the wheel does nothing in the pane.
 func enableTmuxMouseScrollback(tmuxSession string) {
-	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "mouse", "on")
+	_ = tmuxcmd.Local().SetOption(tmuxcmd.SessionScope(tmuxcmd.Session(tmuxSession)), "mouse", "on")
 }

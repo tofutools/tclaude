@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -66,16 +65,9 @@ func tmuxOutputWithTimeout(args ...string) ([]byte, error) {
 // group fan-out) must not fork one has-session command per recipient, and a
 // wedged tmux server must not hold cronAuthorityMu forever.
 func liveTmuxSessionsWithTimeout() (map[string]struct{}, error) {
-	var stdout bytes.Buffer
-	if out, err, ok := clcommon.TryTmuxControl("list-sessions", "-F", "#{session_name}"); ok && err == nil {
-		stdout.Write(out)
-	} else if err := runCommandWithTimeout(func() *exec.Cmd {
-		cmd := clcommon.TmuxCommand("list-sessions", "-F", "#{session_name}")
-		cmd.Stdout = &stdout
-		return cmd
-	}(), tmuxCommandTimeout); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+	names, err := boundedTmux().ListSessions("#{session_name}")
+	if err != nil {
+		if tmuxcmd.Rejected(err) {
 			// tmux exits non-zero when no server exists. That is the normal
 			// all-offline state, matching common.LiveTmux.ListSessions.
 			return map[string]struct{}{}, nil
@@ -83,7 +75,7 @@ func liveTmuxSessionsWithTimeout() (map[string]struct{}, error) {
 		return nil, err
 	}
 	alive := map[string]struct{}{}
-	for line := range strings.SplitSeq(stdout.String(), "\n") {
+	for _, line := range names {
 		if name := strings.TrimSpace(line); name != "" && name != tmuxctl.SessionName {
 			alive[name] = struct{}{}
 		}
