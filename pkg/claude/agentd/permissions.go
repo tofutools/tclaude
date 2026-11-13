@@ -807,7 +807,7 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug: PermTaskboardWrite, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
-		Description: "Change a group's task board: add unassigned tasks, import, ask a member for tasks, and edit, move, promote/demote, block/unblock, drop and close any task (tclaude agent taskboard add/edit/move/...). Implies taskboard.read. Scope with group=<name>. Conferred by ownership of the group, not by membership: a member tracks its own work under taskboard.own. A group grant of it, scoped to the group itself, gives every member the broad rights back. Never default-granted.",
+		Description: "Change a group's task board: add unassigned tasks, import, ask a member for tasks, and edit, move, promote/demote, block/unblock, drop and close any task (tclaude agent taskboard add/edit/move/...). Implies taskboard.read. The board's options are taskboard.options.write's, not this slug's. Scope with group=<name>. Conferred by ownership of the group, not by membership: a member tracks its own work under taskboard.own. A group grant of it, scoped to the group itself, gives every member the broad rights back. Never default-granted.",
 	},
 	{
 		Slug: PermTaskboardOwn, ScopeDims: []ScopeDim{ScopeDimGroup}, MemberImplied: true,
@@ -823,11 +823,27 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug: PermTaskboardManage, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
-		Description: "Manage a group's task board as a whole: its writer lock (tclaude agent groups set-taskboard-writers) and its columns (implies taskboard.columns). Scope with group=<name>. Conferred by ownership of the group, not by membership; never default-granted.",
+		Description: "Manage a group's task board as a whole: its writer lock (tclaude agent groups set-taskboard-writers), its columns (implies taskboard.columns) and its options (implies taskboard.options.write). Scope with group=<name>. Conferred by ownership of the group, not by membership; never default-granted.",
 	},
 	{
 		Slug: PermTaskboardColumns, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
 		Description: "Manage a group's task board columns: add, rename, reorder and remove its custom columns, and hide, show, cordon or uncordon a column for the whole board (tclaude agent taskboard columns ...). Moving a task in or out of a column stays taskboard.write / taskboard.own; a cordoned column takes no new task from anyone. Scope with group=<name>. Implied by taskboard.manage; conferred by ownership of the group, not by membership; never default-granted.",
+	},
+	{
+		Slug: PermTaskboardOptionsOwnRead, ScopeDims: []ScopeDim{ScopeDimGroup}, MemberImplied: true,
+		Description: "Read the options of the task board of a group you are an active member of: its idle check, event messages and work-in-progress limits (tclaude agent taskboard options show). Never reaches a group you are not an active member of, whatever its scope. Conferred by active membership; implied by taskboard.options.own.write.",
+	},
+	{
+		Slug: PermTaskboardOptionsOwnWrite, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Change the options of the task board of a group you are an active member of: its idle check, event messages and work-in-progress limits, a column's limit included (tclaude agent taskboard options set/reset). Never reaches a group you are not an active member of, whatever its scope, so it can be a default permission without reaching other boards. Implies taskboard.options.own.read. Narrowed by the writer lock; an explicit grant scoped to the group passes it. Not conferred by membership; never default-granted.",
+	},
+	{
+		Slug: PermTaskboardOptionsRead, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
+		Description: "Read a group's task board options: its idle check, event messages and work-in-progress limits (tclaude agent taskboard options show), and the board's setup a group export, clone or template snapshot carries. Scope with group=<name>; unscoped reaches every group. Implied by taskboard.options.write; conferred by ownership of the group. A member reads its own group's board options under taskboard.options.own.read. Never default-granted.",
+	},
+	{
+		Slug: PermTaskboardOptionsWrite, ScopeDims: []ScopeDim{ScopeDimGroup}, OwnerImplied: true,
+		Description: "Change a group's task board options: its idle check, event messages and work-in-progress limits, a column's limit included (tclaude agent taskboard options set/reset). Adding, renaming and removing columns stays taskboard.columns, and taskboard.write alone does not change options. Implies taskboard.options.read; implied by taskboard.manage. Scope with group=<name>; unscoped reaches every group. Narrowed by the writer lock; an explicit grant scoped to the group passes it. Conferred by ownership of the group, not by membership; never default-granted.",
 	},
 	{Slug: PermGroupsSettings, Description: "Federation peer grant (group-scoped): change the group's ordinary settings from the peer's dashboard — description, startup context, member cap, notifications, remote-control policy, attachment, name and nesting (under a group this node shows the peer). What every spawn into the group inherits also needs the matching spawn grant: its default directory groups.members.spawn.cwd, its default saved prompts groups.members.spawn.prompts, its sandbox profile groups.members.spawn.sandbox, and a default profile must be one the peer may pick for a spawn there. Its environment needs groups.settings.environment. Unrestricted trust holds it."},
 	{Slug: PermNodeSpawnRead, Description: "Read the spawn dialog's catalogs on this node, so a peer's remote spawn dialog shows what this node would apply and offers its profiles and prompts: spawn profiles and the default, launch defaults, saved prompts, roles, sandbox profiles and defaults, spawn harness policies, the default model. Read-only; spawn and sandbox profiles carry their environment values (often tokens) and paths. Default off; instance-wide peer grant."},

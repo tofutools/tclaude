@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/boardopts"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -113,11 +114,16 @@ func addPeerTaskboardRules(rules map[string]peerViewRule) {
 	// Columns (taskboard_columns.go): read with the board, changed under
 	// taskboard.columns, which taskboard.manage covers.
 	group("GET /v1/groups/{name}/taskboard/columns", read)
-	// Board options (taskboard_options.go): read with the board, changed
-	// under taskboard.write, as on this node.
-	group("GET /v1/groups/{name}/taskboard/options", read)
-	group("PUT /v1/groups/{name}/taskboard/options", write)
-	group("PATCH /v1/groups/{name}/taskboard/options", write)
+	// Board options (taskboard_options_access.go): read under
+	// taskboard.options.read, changed under taskboard.options.write;
+	// taskboard.manage covers both.
+	optionsRead := peerViewRule{feature: "groups.taskboard.options", requires: PermTaskboardOptionsRead,
+		orGrants: []string{PermTaskboardOptionsWrite, PermTaskboardManage}, group: true}
+	optionsWrite := peerViewRule{feature: "groups.taskboard.options.write", requires: PermTaskboardOptionsWrite,
+		orGrants: []string{PermTaskboardManage}, group: true}
+	group("GET /v1/groups/{name}/taskboard/options", optionsRead)
+	group("PUT /v1/groups/{name}/taskboard/options", optionsWrite)
+	group("PATCH /v1/groups/{name}/taskboard/options", optionsWrite)
 	columns := peerViewRule{feature: "groups.taskboard.columns", requires: PermTaskboardColumns,
 		orGrants: []string{PermTaskboardManage}, group: true}
 	group("POST /v1/groups/{name}/taskboard/columns", columns)
@@ -226,16 +232,28 @@ func servePeerTaskboardGroup(w http.ResponseWriter, r *http.Request, v *peerView
 // peerTaskboardSlugs are the board's peer grants that let the peer read the
 // group's board. taskboard.transfer is not one: moving tasks into a group
 // does not show its board.
-var peerTaskboardSlugs = []string{PermTaskboardRead, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage, PermTaskboardColumns}
+var peerTaskboardSlugs = []string{PermTaskboardRead, PermTaskboardWrite, PermTaskboardAssign, PermTaskboardManage, PermTaskboardColumns,
+	PermTaskboardOptionsRead, PermTaskboardOptionsWrite}
 
 // peerTaskboardImpliedGates: a peer that writes, assigns on or manages a
 // group's board also reads it, so the board's read gate opens to those
-// grants.
+// grants. taskboard.manage covers the board's columns and options, and
+// changing the options covers reading them.
 func peerTaskboardImpliedGates(peer string, g *db.AgentGroup) []string {
+	var out []string
 	if peerTaskboardReads(peer, g.ID) {
-		return []string{PermTaskboardRead}
+		out = append(out, PermTaskboardRead)
 	}
-	return nil
+	if fedPeerAllows(peer, g.ID, PermTaskboardManage) {
+		out = append(out, PermTaskboardColumns)
+	}
+	if peerReadsTaskboardOptions(peer, g.ID) {
+		out = append(out, PermTaskboardOptionsRead)
+	}
+	if peerWritesTaskboardOptions(peer, g.ID) {
+		out = append(out, PermTaskboardOptionsWrite)
+	}
+	return out
 }
 
 // peerTaskboardReads reports whether peer reads group's board: any of its
@@ -348,7 +366,11 @@ func servePeerTaskboardContext(w http.ResponseWriter, r *http.Request, v *peerVi
 		if g.IsArchived() || !peerTaskboardReads(v.peer.InstanceID, g.ID) {
 			continue
 		}
-		entry, err := buildTaskboardGroupContext(r, g, now, &globals)
+		var opts *boardopts.Globals
+		if peerReadsTaskboardOptions(v.peer.InstanceID, g.ID) {
+			opts = &globals
+		}
+		entry, err := buildTaskboardGroupContext(r, g, now, opts)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return

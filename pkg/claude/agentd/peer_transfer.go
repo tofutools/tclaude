@@ -35,6 +35,24 @@ var peerStageGates = map[string]peerStageGate{
 // it and it is staged.
 var peerStageRewrites = map[string]func(v *peerView, sub *http.Request){
 	"GET /api/config-bundle/export": peerConfigExportSkips,
+	"GET /api/groups/{name}/export":  peerGroupExportBoard,
+}
+
+// peerGroupExportBoard leaves the board's setup (its options and custom
+// columns) out of a group export for a peer that may not read the board's
+// options.
+func peerGroupExportBoard(v *peerView, sub *http.Request) {
+	_, matched := peerStageMatch(sub)
+	if matched == nil {
+		return
+	}
+	g, err := db.GetAgentGroupByName(matched.PathValue("name"))
+	if err != nil || g == nil || peerReadsTaskboardOptions(v.peer.InstanceID, g.ID) {
+		return
+	}
+	q := sub.URL.Query()
+	q.Set("board_options", "false")
+	sub.URL.RawQuery = q.Encode()
 }
 
 func addPeerTransferRules(rules map[string]peerViewRule) {
@@ -163,7 +181,7 @@ func peerGroupExportGate(v *peerView, r *http.Request) (int, string, string) {
 	if err != nil || g == nil || g.IsArchived() || !fedPeerGroupVisible(v.peer.InstanceID, g.ID) {
 		return http.StatusNotFound, "not_found", "object not found"
 	}
-	if status, code, msg := peerQueryWithin(r, "format"); status != 0 {
+	if status, code, msg := peerQueryWithin(r, "format", "board_options"); status != 0 {
 		return status, code, msg
 	}
 	need := []string{PermGroupsExport, PermSessionsFilesRead}

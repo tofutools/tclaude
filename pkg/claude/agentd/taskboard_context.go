@@ -123,7 +123,14 @@ func handleTaskboardContext(w http.ResponseWriter, r *http.Request) {
 	globals := taskboardOptionsGlobals()
 	view := taskboardContextView{Groups: make([]taskboardGroupContext, 0, len(groups))}
 	for _, g := range groups {
-		entry, err := buildTaskboardGroupContext(r, g, now, &globals)
+		// The options summary is the board's settings: only for a caller
+		// that reads them (taskboard_options_access.go). A task's own queue
+		// position is a task fact and reads with the board.
+		var opts *boardopts.Globals
+		if callerReadsTaskboardOptions(r, g) {
+			opts = &globals
+		}
+		entry, err := buildTaskboardGroupContext(r, g, now, opts)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return

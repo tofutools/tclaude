@@ -86,6 +86,17 @@ func permissionUmbrellaFor(slug string) string {
 	if slug == PermTaskboardColumns {
 		return PermTaskboardManage
 	}
+	// Board options: changing them covers reading them, and managing the
+	// board covers changing them; a member's own-board write covers its
+	// own-board read (taskboard_options_access.go).
+	switch slug {
+	case PermTaskboardOptionsRead:
+		return PermTaskboardOptionsWrite
+	case PermTaskboardOptionsWrite:
+		return PermTaskboardManage
+	case PermTaskboardOptionsOwnRead:
+		return PermTaskboardOptionsOwnWrite
+	}
 	return resourceUmbrellaFor(slug)
 }
 

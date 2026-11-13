@@ -59,6 +59,9 @@ var pinnedPeerGroupGates = map[string][]string{
 	PermTaskboardManage:   {"taskboard.manage"},
 	PermTaskboardColumns:  {"taskboard.columns"},
 	PermTaskboardTransfer: {"taskboard.transfer"},
+	// Board options; taskboard.manage covers them through the route too.
+	PermTaskboardOptionsRead:  {"taskboard.options.read"},
+	PermTaskboardOptionsWrite: {"taskboard.options.write"},
 	// A deployed group's re-brief (peer_group_launch.go).
 	PermTemplatesUse: {"templates.instantiate"},
 }

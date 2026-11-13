@@ -1,10 +1,13 @@
 package agentd_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -242,7 +245,8 @@ func TestBoardSetupTemplateImportChecked(t *testing.T) {
 }
 
 // A restricted peer's clone copies the board setup only when the peer reads
-// the source's board (taskboard.read there).
+// the source board's options (taskboard.options.read there); reading its
+// tasks is not enough.
 func TestPeerBoardSetupClone(t *testing.T) {
 	h := newPeerProcessHarness(t)
 	haveBoardSetup(t, h.f, "crew")
@@ -256,7 +260,12 @@ func TestPeerBoardSetupClone(t *testing.T) {
 	h.grant(t, agentd.PermTaskboardRead, "group=crew")
 	code, body = h.call("POST", "/api/groups/crew/clone", map[string]any{"new_name": "crew3", "no_clone_members": true})
 	require.Equal(t, 200, code, body)
-	requireBoardSetup(t, "crew3")
+	requireBareBoard(t, "crew3")
+
+	h.grant(t, agentd.PermTaskboardOptionsRead, "group=crew")
+	code, body = h.call("POST", "/api/groups/crew/clone", map[string]any{"new_name": "crew4", "no_clone_members": true})
+	require.Equal(t, 200, code, body)
+	requireBoardSetup(t, "crew4")
 }
 
 // A peer that may not read the board re-snapshots a template without taking
@@ -287,9 +296,14 @@ func TestPeerBoardSetupTemplateResnapshot(t *testing.T) {
 	assert.Equal(t, curated, stored("curated"), "the re-snapshot keeps the template's setup")
 
 	h.grant(t, agentd.PermTaskboardRead, "group=crew")
+	code, body = fromGroup(h, "peer-tasks", false)
+	require.Equal(t, 201, code, body)
+	assert.Empty(t, stored("peer-tasks"), "reading the board's tasks is not reading its options")
+
+	h.grant(t, agentd.PermTaskboardOptionsRead, "group=crew")
 	code, body = fromGroup(h, "peer-read", false)
 	require.Equal(t, 201, code, body)
-	assert.NotEmpty(t, stored("peer-read"), "a peer that reads the board gets the setup")
+	assert.NotEmpty(t, stored("peer-read"), "a peer that reads the board's options gets the setup")
 }
 
 // A peer deploys a template carrying a board setup as any other: the setup
@@ -314,4 +328,82 @@ func TestPeerBoardSetupTemplateDeploy(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cols, 1)
 	assert.Equal(t, "review", cols[0].Slug)
+}
+
+// peerDownloadAll stages path for the peer and reads the whole file back.
+func peerDownloadAll(t *testing.T, h *peerProcessHarness, path string) []byte {
+	t.Helper()
+	code, body := h.stage(t, path)
+	require.Equal(t, http.StatusOK, code, body)
+	id := stagedID(t, body)
+	var out []byte
+	for {
+		code, body = h.call("GET", "/api/peer-downloads/"+id+"?offset="+strconv.Itoa(len(out)), nil)
+		require.Equal(t, http.StatusOK, code, body)
+		var chunk struct {
+			Size int64  `json:"size"`
+			Data []byte `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &chunk))
+		require.NotEmpty(t, chunk.Data, "a chunk short of the end carries data")
+		out = append(out, chunk.Data...)
+		if int64(len(out)) >= chunk.Size {
+			return out
+		}
+	}
+}
+
+// A restricted peer's group export carries the board setup only when the
+// peer reads the board's options; reading its tasks is not enough.
+func TestPeerBoardSetupGroupExport(t *testing.T) {
+	h := newPeerProcessHarness(t)
+	haveBoardSetup(t, h.f, "crew")
+	h.grant(t, agentd.PermGroupsExport, "group=crew")
+	h.grant(t, agentd.PermSessionsFilesRead, "group=crew")
+	h.grant(t, agentd.PermTaskboardRead, "group=crew")
+	carries := func() bool {
+		t.Helper()
+		archive := peerDownloadAll(t, h, "/api/groups/crew/export?format=zip")
+		zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+		require.NoError(t, err)
+		for _, f := range zr.File {
+			rc, err := f.Open()
+			require.NoError(t, err)
+			data, err := io.ReadAll(rc)
+			_ = rc.Close()
+			require.NoError(t, err)
+			if bytes.Contains(data, []byte(`"taskboard":`)) {
+				return true
+			}
+		}
+		return false
+	}
+	assert.False(t, carries(), "taskboard.read alone carries no board setup")
+	h.grant(t, agentd.PermTaskboardOptionsRead, "group=crew")
+	assert.True(t, carries(), "taskboard.options.read carries it")
+}
+
+// A local agent's copy of a board's setup follows its read of the board's
+// options: a member reads its own group's (taskboard.options.own.read), an
+// agent that only may clone another group does not.
+func TestAgentBoardSetupCarry(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	haveBoardSetup(t, h.f, "crew")
+	const outsider = "tb-out-4444"
+	h.agent(t, outsider)
+	for _, conv := range []string{h.worker, outsider} {
+		require.NoError(t, db.GrantAgentPermissionWithScope(conv, agentd.PermGroupsClone, "", "test"))
+	}
+	clone := func(conv, name string) {
+		t.Helper()
+		rec := h.call(conv, http.MethodPost, "/v1/groups/crew/clone", map[string]any{"new_name": name, "no_clone_members": true, "no_copy_conv": true})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	clone(h.worker, "by-member")
+	requireBoardSetup(t, "by-member")
+	clone(outsider, "by-outsider")
+	requireBareBoard(t, "by-outsider")
+	require.NoError(t, db.GrantAgentPermissionWithScope(outsider, agentd.PermTaskboardOptionsRead, `{"group":["crew"]}`, "test"))
+	clone(outsider, "by-reader")
+	requireBoardSetup(t, "by-reader")
 }

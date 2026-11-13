@@ -328,8 +328,8 @@ func servePeerGroupClone(w http.ResponseWriter, r *http.Request, v *peerView, ru
 		}
 	}
 	// The source board's setup (options, custom columns) is copied only for
-	// a peer that reads that board.
-	if !fedPeerAllows(peer, src.ID, PermTaskboardRead) {
+	// a peer that reads that board's options.
+	if !peerReadsTaskboardOptions(peer, src.ID) {
 		body["no_board_options"] = json.RawMessage("true")
 	}
 	peerServeAsLocal(w, r, body)

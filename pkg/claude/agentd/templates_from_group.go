@@ -75,6 +75,11 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such group "+body.Group)
 		return
 	}
+	// The board setup is the board's options: an agent that may not read
+	// them snapshots without it (an update keeps the template's own).
+	if !agentCarriesTaskboardSetup(r, g) {
+		body.NoBoardOptions = true
+	}
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -900,8 +905,9 @@ func peerProjectFromGroupTemplate(r *http.Request, g *db.AgentGroup, t *db.Group
 		return nil
 	}
 	held := peerGroupPermissionGrants(a.peer, g)
-	// The board setup is carried only for a peer that reads the board.
-	if !fedPeerAllows(a.peer, g.ID, PermTaskboardRead) {
+	// The board setup is carried only for a peer that reads the board's
+	// options.
+	if !peerReadsTaskboardOptions(a.peer, g.ID) {
 		t.TaskboardJSON = ""
 	}
 	if !slices.Contains(held, PermGroupsSettingsOwnerScopes) && ownerScopesSet(t.OwnerScopesJSON) {

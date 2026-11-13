@@ -255,9 +255,9 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"DELETE /v1/groups/{name}/taskboard/columns/{slug}":     {slugs: []string{PermTaskboardColumns}, target: agentViewGroup},
 	"POST /v1/groups/{name}/taskboard/columns/{slug}/state": {slugs: []string{PermTaskboardColumns}, target: agentViewGroup},
 	// Board options.
-	"GET /v1/groups/{name}/taskboard/options":   {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
-	"PUT /v1/groups/{name}/taskboard/options":   {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
-	"PATCH /v1/groups/{name}/taskboard/options": {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
+	"GET /v1/groups/{name}/taskboard/options":   {slugs: []string{PermTaskboardOptionsRead}, target: agentViewGroup},
+	"PUT /v1/groups/{name}/taskboard/options":   {slugs: []string{PermTaskboardOptionsWrite}, target: agentViewGroup},
+	"PATCH /v1/groups/{name}/taskboard/options": {slugs: []string{PermTaskboardOptionsWrite}, target: agentViewGroup},
 }
 
 // agentPeerViewSlugs lists the sender slugs agentPeerViewRoutes uses, which
