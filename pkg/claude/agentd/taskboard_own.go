@@ -115,3 +115,29 @@ func taskboardMemberWrites(r *http.Request, g *db.AgentGroup, conv string) bool 
 	ok, err := taskboardLockPasses(alone, g, conv)
 	return err == nil && ok
 }
+
+// requireTaskboardMove gates a reorder of t: taskboard.write, or, for the
+// task's own assignee under taskboard.own, a place before or after another
+// live task it also holds (handleTaskboardMove). Both are narrowed by the
+// writer lock. A refusal writes the error.
+func requireTaskboardMove(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, t *db.GroupTask, pos db.GroupTaskPosition) bool {
+	self, conv := callerAgentID(r)
+	if self == "" || t.AssigneeID != self || agentWritesTaskboard(r, conv, g) || !agentOwnsTaskboard(r, conv, g) {
+		return requireTaskboard(w, r, g, true)
+	}
+	anchorID := pos.Before
+	if anchorID == "" {
+		anchorID = pos.After
+	}
+	ownRule := PermTaskboardOwn + " orders only your own tasks among themselves: move it --before or --after another task you hold; anything else needs " + PermTaskboardWrite
+	if anchorID == "" {
+		writeError(w, http.StatusForbidden, "permission", ownRule)
+		return false
+	}
+	anchor, err := db.GetGroupTask(anchorID)
+	if err != nil || anchor.GroupID != g.ID || anchor.AssigneeID != self {
+		writeError(w, http.StatusForbidden, "permission", ownRule)
+		return false
+	}
+	return requireTaskboardOwn(w, r, g, true)
+}

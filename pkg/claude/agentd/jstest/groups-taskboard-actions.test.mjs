@@ -72,6 +72,10 @@ async function mountBoard(t, name, { api = fakeApi(), context = null } = {}) {
   return { harness, c, api, source, group, rowOf, button, cluster, menu, pick, click, refreshes: () => refreshes };
 }
 
+// MOVES are a live row's ⋯ order items (groups-taskboard-order.js), first
+// in its menu when it shares its rows with another task of its stage.
+const MOVES = ['Move to top', 'Move up', 'Move down', 'Move to bottom'];
+
 test('row actions map to the CLI verbs and re-read the board', async (t) => {
   const { harness, c, api, rowOf, button, cluster, menu, pick, click, refreshes } = await mountBoard(t, 'tba-rows');
   assert.ok(c.querySelector('[data-fused-taskboard]'), 'blocked work opens the section');
@@ -79,9 +83,9 @@ test('row actions map to the CLI verbs and re-read the board', async (t) => {
   assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
   assert.deepEqual(cluster('tk_00000003'), ['Done', 'Edit']);
   assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
-  assert.deepEqual(await menu('tk_00000001'), ['Assign ›', 'Block…', 'Drop…', 'Copy link']);
-  assert.deepEqual(await menu('tk_00000002'), ['Assign ›', 'Block…', 'Unassign', 'Drop…', 'Copy link']);
-  assert.deepEqual(await menu('tk_00000003'), ['Unblock', 'Drop…', 'Copy link']);
+  assert.deepEqual(await menu('tk_00000001'), [...MOVES, 'Assign ›', 'Block…', 'Drop…', 'Copy link']);
+  assert.deepEqual(await menu('tk_00000002'), [...MOVES, 'Assign ›', 'Block…', 'Unassign', 'Drop…', 'Copy link']);
+  assert.deepEqual(await menu('tk_00000003'), [...MOVES, 'Unblock', 'Drop…', 'Copy link']);
   assert.deepEqual(await menu('tk_00000004'), ['Assign ›', 'Block…', 'Drop…', 'Copy link']);
 
   await click(button('tk_00000004', 'Next'));
@@ -391,11 +395,11 @@ test('a board whose api cannot assign draws no assign controls', async (t) => {
   api.can = { assign: false };
   const { cluster, menu } = await mountBoard(t, 'tba-noassign', { api });
   assert.deepEqual(cluster('tk_00000001'), ['Done', 'Edit']);
-  assert.deepEqual(await menu('tk_00000001'), ['Block…', 'Drop…', 'Copy link']);
+  assert.deepEqual(await menu('tk_00000001'), [...MOVES, 'Block…', 'Drop…', 'Copy link']);
   // Closing someone's task is the assignee's or an assigner's (the status
   // route refuses it otherwise): no Done or Drop on an assigned row.
   assert.deepEqual(cluster('tk_00000002'), ['Edit']);
-  assert.deepEqual(await menu('tk_00000002'), ['Block…', 'Copy link']);
+  assert.deepEqual(await menu('tk_00000002'), [...MOVES, 'Block…', 'Copy link']);
   assert.deepEqual(cluster('tk_00000004'), ['Next', 'Edit']);
   assert.deepEqual(await menu('tk_00000004'), ['Block…', 'Drop…', 'Copy link']);
 });

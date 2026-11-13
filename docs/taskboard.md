@@ -196,7 +196,14 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   read, for example `crew: 9 · 2 needs you (1 stalled, 1 blocked) · 2 in progress · 6 next · 3 ideas`.
   These are the counts the dashboard section shows.
 - If `move --before` or `move --after` names a task in the other stage, the
-  moved task is promoted or demoted in the same write.
+  moved task is promoted or demoted in the same write. Through the API a
+  move may also name the stage it expects (`"stage":"next"`): if the task
+  it is placed beside has crossed to the other stage meanwhile, the move is
+  refused as `stale` (409) and nothing changes. The dashboard always sends
+  it.
+- A run of moves of one task by the same actor, less than ten minutes apart,
+  is one `moved` entry in its history, saying where the last one put it. A
+  move mails nobody.
 - `--ref` takes an `http(s)` URL, `owner/repo#12` for GitHub, or a bare tracker
   id. `LIN-123` is read as a Linear id, and a lower-case `tcl-a1b2c3` as an awb
   id. Prefix the id with `awb:` or `linear:` to say which one you mean. A
@@ -1147,11 +1154,16 @@ whatever a grant's scope says. Under it an agent may:
   blocked or done with `--blocked` / `--done`;
 - edit, promote, demote, block, unblock, reopen, close and report on the tasks
   assigned to it;
+- order the tasks assigned to it among themselves: `move` one of them
+  `--before` or `--after` another one of them. That orders its own lane:
+  the task always lands beside one of its own (passing any others' tasks
+  between them). `--top` and `--bottom` are of the whole stage, so they take
+  `taskboard.write`;
 - take any open, unassigned task, an idea included, and release its own;
 - comment on any task of the board.
 
 It may not add an unassigned task or import, ask a member for tasks, reorder
-the board, or change a task that is someone else's or nobody's. Those need
+the board beyond its own tasks, or change a task that is someone else's or nobody's. Those need
 `taskboard.write`. Taking a task from someone else needs `taskboard.assign`.
 The [writer lock](#the-writer-lock) narrows `taskboard.own`, except a report.
 
@@ -1173,8 +1185,9 @@ membership. They now hold `taskboard.read` and `taskboard.own`. Owners keep
 - `add` assigns the task to the member (in progress). `--next`, ideas,
   imports and `ask` need `taskboard.write`.
 - Editing, promoting, demoting, blocking, unblocking and reopening work only on
-  the member's own tasks. Reordering (`move`) and closing an unassigned task
-  need `taskboard.write`.
+  the member's own tasks. Reordering (`move`) needs `taskboard.write`, apart
+  from ordering the member's own tasks among themselves, and so does closing
+  an unassigned task.
 - Moving a task you hold to another group needs `taskboard.write` on the
   source.
 - A plain member can no longer be asked for tasks (`ask`, and *Ask an agent*
@@ -1480,6 +1493,7 @@ a CLI verb:
 | *+ New task › From a tracker…*, several ids | `add <group> --from-awb …` / `--from-linear …` / `--from-github …` |
 | *+* in a lanes cell (opens the add menu; the choice starts from the cell) | as the menu's items, with the cell's column and the lane's agent |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
+| ⋯ *Move to top* / *Move up* / *Move down* / *Move to bottom* on a row or a lanes card, or Alt+Home / Alt+↑ / Alt+↓ / Alt+End on it | `move <task> --before … / --after …`, among the rows or the cell it is in |
 | Drag a queued task onto the Ideas line | `demote <task>` |
 | ✓ *Next* on an idea | `promote <task>` |
 | ⋯ *Block…* (asks the reason in a dialog) / ⋯ *Unblock* | `block <task> --reason …` / `unblock <task>` |
@@ -1875,6 +1889,35 @@ A drag to another lane and another column at once runs both writes in that
 order, the lane first. A move the board cannot make in one step, such as
 unassigning and closing a task, is not accepted.
 
+#### Ordering the cards
+
+A cell lists its cards in the board's order, top first: what to do next is
+on top. You can change it in every cell where the order means something:
+
+- **Drag** a card up or down in its own cell. A blue line shows the slot
+  it will land in, and the cell says *Move before “…”*. The card moves at
+  once; if the board refuses (someone moved the card next to it to the
+  other stage meanwhile), it goes back and a toast says why.
+- **Drop at a slot in another cell.** Where a drag into another cell lands
+  the task in Ideas, Next, In progress or a custom column, the line shows
+  there too, and the task is put at that slot after the drop's own write
+  (a promote, an assign, a move into the column), as `move --before` /
+  `--after`. A drop onto *Blocked* or *Done* keeps the task's place.
+- **⋯ Move to top / Move up / Move down / Move to bottom** on a card, or
+  **Alt+Home / Alt+↑ / Alt+↓ / Alt+End** with the card's title focused. The
+  top and bottom are of the cell you see the card in (this lane's Next, an
+  epic's lane), not of the whole stage. Items that would not move it are
+  greyed. The List's rows have the same items and keys, among the rows
+  they are listed with (the queue, an epic's rows, or the ideas).
+
+A task's order is its place among the live tasks of its stage, Ideas or
+Next; In progress and the custom columns are Next's tasks, in Next's order.
+In *Blocked*, which holds blocked tasks from both stages, a card moves among
+the cards of its own stage only, so reordering never promotes or demotes
+it; an unblocked task goes back to its place. *Done this week* is ordered
+by when each task closed, newest first (its head says *by close time*): its
+cards have no move items, and a drag inside it says so and does nothing.
+
 Each cell that a new task can start in has a small grey **+** in its
 lower-right corner, which brightens when you hover the cell. That is every
 cell but the striped ones. An agent's lanes show no **+** unless you may
@@ -1889,8 +1932,7 @@ the cell:
   request to.
 - *From a tracker…* imports into the queue from a Next cell or an
   agent's lane. An import lands in Ideas or Next only, so you assign, block or
-  close the tasks on the board afterwards. Order within the queue is set in the
-*List* view.
+  close the tasks on the board afterwards.
 
 #### Triage and one row
 
@@ -1940,7 +1982,7 @@ those drags aren't accepted in the lanes.
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`; `--add-ref` sends `"add_refs":[…]`, `--rm-ref` sends `"rm_refs":[…]`, `--first-ref` sends `"first_ref"`, `--clear-ref` sends `"clear_ref":true,"clear_refs":true`) |
-| `move` | `POST /v1/taskboard/tasks/{id}/move` |
+| `move` | `POST /v1/taskboard/tasks/{id}/move {"top"\|"bottom"\|"before"\|"after", "stage"?: "idea"\|"next"}`: with `stage`, a place that would land the task in the other stage answers 409 `stale` |
 | `epics` | `GET /v1/groups/{g}/taskboard?kind=epic[&all=1]`. Each epic carries `kind:"epic"`, `progress:{total,done,dropped,blocked,in_progress,in_column,columns,next,ideas}` and, once all of its tasks are closed, `close_suggested_at` |
 | `ls --epic tk_…` | `GET /v1/groups/{g}/taskboard?parent=tk_…` (a task in an epic carries `parent_id`) |
 | `add --epic` / `--parent` | `POST /v1/groups/{g}/taskboard/tasks {…,"kind":"epic"}` / `{…,"parent":"tk_…"}` |
