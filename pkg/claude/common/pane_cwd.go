@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 // directory. It follows the cwd inode the pane actually entered rather than a
 // launch pathname whose symlink may have been retargeted later.
 func LivePaneCwd(tmuxSession string) (string, error) {
-	out, err := TmuxOutput("display-message", "-p", "-t", ExactTarget(tmuxSession)+":", "#{pane_current_path}")
+	out, err := Default.Run(context.Background(), []string{"display-message", "-p", "-t", ExactTarget(tmuxSession) + ":", "#{pane_current_path}"})
 	if err != nil {
 		return "", fmt.Errorf("query live pane working directory: %w", err)
 	}

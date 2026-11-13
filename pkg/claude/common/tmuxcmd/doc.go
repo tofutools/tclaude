@@ -10,10 +10,19 @@
 // # Layers
 //
 //   - This package owns WHAT is said to tmux: verbs, targets, the tclaude
-//     option and hook names, reply parsing and error classification.
-//   - Package common (clcommon) owns HOW a command reaches the server: the
-//     Tmux seam, control-mode routing and the socket. Nothing outside this
-//     package should call that layer's raw-argv functions directly.
+//     option and hook names, reply parsing and error classification. It is
+//     one implementation, shared by every way of reaching tmux.
+//   - A Transport owns HOW a command reaches a server: one method, Run, that
+//     carries a tmux command and brings back its reply. clcommon.Tmux is the
+//     transport of the local server (a forked client, agentd's control-mode
+//     connection, or the flow-test simulator, whichever clcommon.Default
+//     holds); NewClient puts the verbs on any other.
+//
+// Nothing outside this package calls a transport, starts a tmux process, or
+// spells a tmux command line. TestNothingTalksToTmuxAroundTheVerbs enforces
+// that, with the few named exceptions it lists. The one verb that hands back
+// a command instead of running it is AttachCommand, because attaching needs a
+// terminal the caller holds.
 //
 // # Targets
 //

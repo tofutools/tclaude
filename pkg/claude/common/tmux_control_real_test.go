@@ -1,6 +1,8 @@
 package common
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,7 +30,7 @@ func realControlTmux(t *testing.T) (*ControlTmux, func(args ...string) *exec.Cmd
 	command := func(args ...string) *exec.Cmd {
 		return exec.Command("tmux", append(append([]string(nil), base...), args...)...)
 	}
-	ct := newControlTmux(command, tmuxctl.Config{
+	ct := newControlTmux(commandTmux(command), tmuxctl.Config{
 		BaseArgs:      base,
 		ExitWhenAlone: true,
 		Timeout:       5 * time.Second,
@@ -40,6 +42,24 @@ func realControlTmux(t *testing.T) (*ControlTmux, func(args ...string) *exec.Cmd
 		_ = os.Remove(socket)
 	})
 	return ct, command
+}
+
+// commandTmux is a Tmux that forks the process a function builds, so the
+// control client's exec fallback reaches the private test server.
+type commandTmux func(args ...string) *exec.Cmd
+
+func (c commandTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return RunTmuxClient(ctx, c(args...))
+}
+func (c commandTmux) AttachArgv(args []string) ([]string, error) { return c(args...).Args, nil }
+func (c commandTmux) ListSessions() (map[string]struct{}, error) {
+	entries, err := execListSessionEntries(c)
+	return aliveSessions(entries), err
+}
+
+// runDefault sends one command through Default, as tmuxcmd does.
+func runDefault(args ...string) ([]byte, error) {
+	return Default.Run(context.Background(), args)
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {
@@ -195,7 +215,7 @@ func TestControlTmuxToleratesPrintingHook(t *testing.T) {
 	}
 }
 
-// Stage 3 routing: commands sent through TmuxOutput/TmuxRun over a live
+// Stage 3 routing: commands sent through Default.Run over a live
 // control connection give exactly what the exec path gives, including
 // arguments the command-line quoting has to carry intact.
 func TestTmuxRouteMatchesExec(t *testing.T) {
@@ -225,7 +245,7 @@ func TestTmuxRouteMatchesExec(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := TmuxOutput(args...)
+		got, err := runDefault(args...)
 		if err != nil {
 			t.Fatalf("%q: %v", args, err)
 		}
@@ -236,7 +256,7 @@ func TestTmuxRouteMatchesExec(t *testing.T) {
 	}
 
 	for _, v := range []string{`plain`, `~/start`, `~`, `it's`, `a "q" b`, `$HOME ~ \e \\ ; # {x}`, `#{session_name}`, "tab\tx", `'`, `it's $HOME ~ \e \\ "x" ; #{y}`} {
-		if err := TmuxRun("set-option", "-t", "=r:", "@probe", v); err != nil {
+		if _, err := runDefault("set-option", "-t", "=r:", "@probe", v); err != nil {
 			t.Fatalf("set %q: %v", v, err)
 		}
 		out, err := command("show-options", "-v", "-t", "=r:", "@probe").Output()
@@ -248,11 +268,12 @@ func TestTmuxRouteMatchesExec(t *testing.T) {
 		}
 	}
 
-	if err := TmuxRun("has-session", "-t", "=nope"); !IsTmuxCommandFailure(err) {
+	if _, err := runDefault("has-session", "-t", "=nope"); !IsTmuxCommandFailure(err) {
 		t.Fatalf("has-session on a missing session: %v", err)
 	}
-	if out, err := TmuxCombinedOutput("kill-session", "-t", "=nope"); err == nil || len(out) == 0 {
-		t.Fatalf("kill-session missing: %q, %v", out, err)
+	var rejected *TmuxCommandError
+	if _, err := runDefault("kill-session", "-t", "=nope"); !errors.As(err, &rejected) || rejected.Message() == "" {
+		t.Fatalf("kill-session missing: %v", err)
 	}
 	if st := ct.Status(); st.Routed["display-message"] == 0 || st.Routed["set-option"] == 0 || st.Routed["has-session"] == 0 {
 		t.Fatalf("not routed over control mode: %v", st.Routed)
@@ -260,7 +281,7 @@ func TestTmuxRouteMatchesExec(t *testing.T) {
 
 	// An argument with a line break cannot be one control line: it runs over
 	// exec instead and still works.
-	if err := TmuxRun("set-option", "-t", "=r:", "@probe", "two\nlines"); err != nil {
+	if _, err := runDefault("set-option", "-t", "=r:", "@probe", "two\nlines"); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -948,7 +948,8 @@ func tmuxServerNotRunning(err error) bool {
 	if errors.Is(err, tmuxcmd.ErrNoServer) {
 		return true
 	}
-	// Errors from the raw subprocess helpers carry tmux's text only.
+	// Wider than ErrNoServer on purpose, as it has always been here: any
+	// "error connecting to", whatever the reason given, reads as no server.
 	msg := err.Error()
 	return strings.Contains(msg, "no server running") ||
 		strings.Contains(msg, "error connecting to")

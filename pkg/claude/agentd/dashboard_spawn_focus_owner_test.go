@@ -14,6 +14,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // aliveTmux reports every session as alive with a live pane.
@@ -24,6 +25,15 @@ func (aliveTmux) Command(args ...string) *exec.Cmd {
 		return exec.Command("echo", "0")
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (x aliveTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, x.Command(args...))
+}
+
+func (x aliveTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(x.Command(args...))
 }
 
 func (aliveTmux) ListSessions() (map[string]struct{}, error) { return map[string]struct{}{}, nil }

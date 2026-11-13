@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
@@ -97,5 +98,12 @@ func TestTmuxVersionAtLeast(t *testing.T) {
 type fakeVersionTmux struct{}
 
 func (fakeVersionTmux) Command(...string) *exec.Cmd { return exec.Command("echo", "tmux 3.7b") }
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (x fakeVersionTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return RunTmuxClient(ctx, x.Command(args...))
+}
+
+func (x fakeVersionTmux) AttachArgv(args []string) ([]string, error) { return nil, nil }
 
 func (fakeVersionTmux) ListSessions() (map[string]struct{}, error) { return nil, nil }

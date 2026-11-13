@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os/exec"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -92,6 +94,15 @@ func (r *tuiTmuxRec) Command(args ...string) *exec.Cmd {
 		return exec.Command("false")
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (r *tuiTmuxRec) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, r.Command(args...))
+}
+
+func (r *tuiTmuxRec) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(r.Command(args...))
 }
 
 // ListSessions satisfies clcommon.Tmux. The --tui lifecycle deliberately does

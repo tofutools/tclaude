@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -235,4 +237,28 @@ func TestTmuxSim_NewSessionRefusesANameItStillLists(t *testing.T) {
 	if err := sim.Command("new-session", "-d", "-s", "fresh", "-c", "/tmp").Run(); err != nil {
 		t.Errorf("once the corpse is gone the name is free again: %v", err)
 	}
+}
+
+// A target the simulated server does not know is reported the way tmux
+// reports it, so production's error classification (tmuxcmd.ErrNotFound) is
+// exercised in flow tests rather than only against canned text.
+func TestTmuxSim_MissingTargetsReadAsNotFound(t *testing.T) {
+	sim := newTmuxSim()
+	prev := clcommon.Default
+	clcommon.Default = sim
+	t.Cleanup(func() { clcommon.Default = prev })
+
+	_, err := tmuxcmd.Local().PaneStatus(tmuxcmd.Session("gone").ActivePane())
+	require.ErrorIs(t, err, tmuxcmd.ErrNotFound)
+	assert.ErrorContains(t, err, "can't find session: gone")
+
+	exists, err := tmuxcmd.Local().HasSession(tmuxcmd.Session("gone"))
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	sim.MarkAlive("here")
+	st, err := tmuxcmd.Local().PaneStatus(tmuxcmd.Session("here").ActivePane())
+	require.NoError(t, err)
+	assert.Equal(t, "here", st.Session)
+	assert.False(t, st.Dead)
 }

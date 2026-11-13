@@ -1,6 +1,7 @@
 package tmuxcmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // privateRealTmux is a real tmux server on a socket of its own, so a test can
@@ -21,6 +23,15 @@ type privateRealTmux struct{ socket string }
 
 func (t privateRealTmux) Command(args ...string) *exec.Cmd {
 	return exec.Command("tmux", append([]string{"-u", "-S", t.socket, "-f", "/dev/null"}, args...)...)
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (t privateRealTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, t.Command(args...))
+}
+
+func (t privateRealTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(t.Command(args...))
 }
 
 func (t privateRealTmux) ListSessions() (map[string]struct{}, error) { return nil, nil }

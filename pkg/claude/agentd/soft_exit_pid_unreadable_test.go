@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"os/exec"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -40,6 +42,15 @@ func (r *pidUnreadableTmux) Command(args ...string) *exec.Cmd {
 		r.sendsSeen++
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (r *pidUnreadableTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, r.Command(args...))
+}
+
+func (r *pidUnreadableTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(r.Command(args...))
 }
 
 func (r *pidUnreadableTmux) ListSessions() (map[string]struct{}, error) {

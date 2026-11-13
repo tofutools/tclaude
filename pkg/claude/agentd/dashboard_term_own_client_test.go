@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // socketTmux points every tclaude tmux call at a private tmux server, so a
@@ -25,6 +27,15 @@ type socketTmux struct{ bin, socket string }
 
 func (s socketTmux) Command(args ...string) *exec.Cmd {
 	return exec.Command(s.bin, append([]string{"-S", s.socket}, args...)...)
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (s socketTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, s.Command(args...))
+}
+
+func (s socketTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(s.Command(args...))
 }
 
 func (s socketTmux) ListSessions() (map[string]struct{}, error) {

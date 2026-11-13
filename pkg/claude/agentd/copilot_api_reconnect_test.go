@@ -22,6 +22,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/claude/copilotapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -101,6 +102,15 @@ func (r *crashRecordingTmux) Command(args ...string) *exec.Cmd {
 	}
 }
 
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (r *crashRecordingTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, r.Command(args...))
+}
+
+func (r *crashRecordingTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(r.Command(args...))
+}
+
 func (r *crashRecordingTmux) ListSessions() (map[string]struct{}, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -124,6 +134,15 @@ func (r *paneReportingTmux) Command(args ...string) *exec.Cmd {
 		return exec.Command("printf", fmt.Sprintf("0|%d", r.panePID))
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (r *paneReportingTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, r.Command(args...))
+}
+
+func (r *paneReportingTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(r.Command(args...))
 }
 
 func (r *paneReportingTmux) ListSessions() (map[string]struct{}, error) {

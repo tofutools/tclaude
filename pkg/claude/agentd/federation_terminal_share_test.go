@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 )
 
@@ -48,6 +49,15 @@ func (m *shareTmux) Command(args ...string) *exec.Cmd {
 		}
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (m *shareTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, m.Command(args...))
+}
+
+func (m *shareTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(m.Command(args...))
 }
 func (m *shareTmux) ListSessions() (map[string]struct{}, error) { return map[string]struct{}{}, nil }
 func (m *shareTmux) commands(name string) [][]string {

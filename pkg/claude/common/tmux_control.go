@@ -1,12 +1,12 @@
 package common
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -130,8 +130,8 @@ const controlReconnectBackoff = 2 * time.Second
 // starts a tmux server (see tmuxctl), and it closes itself again once its own
 // session is the last one, so the server still exits when empty.
 type ControlTmux struct {
-	// exec builds the fallback tmux subprocesses (LiveTmux in production).
-	exec   func(args ...string) *exec.Cmd
+	// exec is the fallback that forks a tmux client (LiveTmux in production).
+	exec   Tmux
 	client *tmuxctl.Client
 
 	mu          sync.Mutex
@@ -159,16 +159,12 @@ func (t *ControlTmux) warnUnreadable(err error) {
 
 // NewControlTmux returns a ControlTmux over the tclaude socket.
 func NewControlTmux() *ControlTmux {
-	return newControlTmux(LiveTmux{}.Command, tmuxctl.Config{BaseArgs: TmuxArgs(), ExitWhenAlone: true})
+	return newControlTmux(LiveTmux{}, tmuxctl.Config{BaseArgs: TmuxArgs(), ExitWhenAlone: true})
 }
 
-func newControlTmux(execCmd func(args ...string) *exec.Cmd, cfg tmuxctl.Config) *ControlTmux {
-	return &ControlTmux{exec: execCmd, client: tmuxctl.New(cfg), now: time.Now}
+func newControlTmux(execTmux Tmux, cfg tmuxctl.Config) *ControlTmux {
+	return &ControlTmux{exec: execTmux, client: tmuxctl.New(cfg), now: time.Now}
 }
-
-// Command builds an exec.Cmd for the tmux binary: everything that is not
-// migrated to control mode keeps forking one tmux process per call.
-func (t *ControlTmux) Command(args ...string) *exec.Cmd { return t.exec(args...) }
 
 // Client exposes the control client, for notification subscribers.
 func (t *ControlTmux) Client() *tmuxctl.Client { return t.client }
@@ -276,22 +272,22 @@ func (t *ControlTmux) maybeConnect() {
 // "every session is offline". An output line that is not in the expected
 // format is an error, not an empty set.
 func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
-	entries, err := execListSessionEntries(l.Command)
+	entries, err := execListSessionEntries(l)
 	if err != nil {
 		return nil, err
 	}
 	return aliveSessions(entries), nil
 }
 
-func execListSessionEntries(command func(args ...string) *exec.Cmd) ([]sessionListEntry, error) {
-	out, err := command("list-sessions", "-F", listSessionsFormat).Output()
+func execListSessionEntries(tmux Tmux) ([]sessionListEntry, error) {
+	out, err := tmux.Run(context.Background(), []string{"list-sessions", "-F", listSessionsFormat})
 	if err != nil {
 		// `tmux ls` exits non-zero when there is no server. Treat that
 		// as the empty set rather than an error — it is the normal
 		// "nothing is running" state, not a probe failure.
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			warnTmuxListFailure(string(exitErr.Stderr))
+		var cmdErr *TmuxCommandError
+		if errors.As(err, &cmdErr) {
+			warnTmuxListFailure(cmdErr.Message())
 			return nil, nil
 		}
 		warnTmuxListFailure(err.Error())

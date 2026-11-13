@@ -1,11 +1,13 @@
 package session
 
 import (
+	"context"
 	"os/exec"
 	"reflect"
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -20,6 +22,15 @@ type recordingTmux struct {
 func (r *recordingTmux) Command(args ...string) *exec.Cmd {
 	r.calls = append(r.calls, append([]string(nil), args...))
 	return exec.Command("")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (r *recordingTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, r.Command(args...))
+}
+
+func (r *recordingTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(r.Command(args...))
 }
 
 func (r *recordingTmux) ListSessions() (map[string]struct{}, error) { return nil, nil }

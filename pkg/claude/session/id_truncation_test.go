@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // The session row's primary key must carry the full identity, never an 8-char
@@ -153,6 +155,15 @@ func (f fakeTmux) Command(args ...string) *exec.Cmd {
 		return exec.Command("true")
 	}
 	return exec.Command("false")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (f fakeTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, f.Command(args...))
+}
+
+func (f fakeTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(f.Command(args...))
 }
 
 func (f fakeTmux) ListSessions() (map[string]struct{}, error) {

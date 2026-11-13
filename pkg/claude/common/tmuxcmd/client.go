@@ -1,11 +1,9 @@
 package tmuxcmd
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -35,13 +33,14 @@ func Local() Client { return Client{} }
 // Transport carries one tmux command to a tmux server and brings back what
 // it printed. It is the single method a new way of reaching tmux (a runner
 // on another host, a pod, a test double) has to provide; every verb is built
-// on it.
+// on it. clcommon.Tmux, the transport of the local server, satisfies it.
 //
 // args is the command as tmux's own client takes it after the socket flags:
 // the command word and its arguments, preceded by any client-level flag such
-// as -N. A command tmux ran and rejected is reported as *Error carrying
-// tmux's message; any other error means the command could not be delivered
-// or its outcome is unknown. Run returns promptly once ctx is done.
+// as -N. A command tmux ran and rejected is reported as *Error or
+// *clcommon.TmuxCommandError carrying tmux's message; any other error means
+// the command could not be delivered or its outcome is unknown. Run returns
+// promptly once ctx is done, having stopped whatever it started.
 type Transport interface {
 	Run(ctx context.Context, args []string) (stdout []byte, err error)
 }
@@ -62,17 +61,16 @@ func NewClient(t Transport) Client { return Client{transport: t} }
 // unbounded command turns that into a permanent stall. A command that
 // overruns fails with ErrTimeout. d <= 0 means no deadline.
 //
-// The timeout governs a forked tmux client. A command answered over agentd's
-// control-mode connection is bounded by that connection's own reply deadline
-// instead, and reports ErrTimeout the same way.
+// The timeout is handed to the transport as its context's deadline. A command
+// answered over agentd's control-mode connection is bounded by that
+// connection's own reply deadline instead, and reports ErrTimeout the same
+// way.
 func (c Client) WithTimeout(d time.Duration) Client {
 	c.timeout = d
 	return c
 }
 
-// WithTimer replaces how the timeout's timer is started, for the local tmux
-// server only (a client built with NewClient takes its deadline from the
-// context). Tests only.
+// WithTimer replaces how the timeout's timer is started. Tests only.
 func (c Client) WithTimer(t Timer) Client {
 	c.timer = t
 	return c
@@ -94,95 +92,84 @@ func (c Client) run(args ...string) ([]byte, error) {
 	if c.noStart {
 		full = append([]string{"-N"}, args...)
 	}
-	if c.transport != nil {
-		return c.runVia(c.transport, full)
-	}
-	// Over control mode the reply is bounded by the connection's own deadline.
-	if out, err, ok := clcommon.TryTmuxControl(full...); ok {
-		return out, wrapError(args[0], "", err)
-	}
-	cmd := clcommon.TmuxCommand(full...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := c.wait(cmd, &stderr); err != nil {
-		return nil, wrapError(args[0], stderr.String(), err)
-	}
-	return stdout.Bytes(), nil
-}
-
-// runVia sends one command through a transport other than the local one,
-// turning the client's timeout into the context's deadline.
-func (c Client) runVia(t Transport, args []string) ([]byte, error) {
 	ctx := context.Background()
 	if c.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.timeout)
-		defer cancel()
+		var stop func()
+		ctx, stop = c.deadline(ctx)
+		defer stop()
 	}
-	out, err := t.Run(ctx, args)
+	out, err := c.via().Run(ctx, full)
 	if err == nil {
 		return out, nil
 	}
+	err = wrapError(args[0], err)
 	// An answer from tmux stays an answer even if it arrived late: an error
 	// must not read as both "tmux said no" and "we do not know".
-	if !Rejected(err) && errors.Is(ctx.Err(), context.DeadlineExceeded) && !errors.Is(err, ErrTimeout) {
+	if !Rejected(err) && errors.Is(context.Cause(ctx), errDeadline) && !errors.Is(err, ErrTimeout) {
+		var aborted *clcommon.TmuxAbortedError
+		if errors.As(err, &aborted) {
+			if aborted.Stderr != "" {
+				return nil, fmt.Errorf("%w after %s: %s", ErrTimeout, c.timeout, aborted.Stderr)
+			}
+			return nil, fmt.Errorf("%w after %s", ErrTimeout, c.timeout)
+		}
 		return nil, fmt.Errorf("%w after %s: %w", ErrTimeout, c.timeout, err)
 	}
 	return nil, err
 }
 
-// wait runs cmd to completion, killing and reaping it if the client's timeout
-// passes first. Reaping before returning matters: callers release latches and
-// locks on return, and must not do so while the child still runs.
-func (c Client) wait(cmd *exec.Cmd, stderr *bytes.Buffer) error {
-	if c.timeout <= 0 {
-		return cmd.Run()
+// via is the transport this client's commands go through.
+func (c Client) via() Transport {
+	if c.transport != nil {
+		return c.transport
 	}
-	if err := cmd.Start(); err != nil {
-		return err
+	// Resolved per command, not when the client is built: tests and agentd's
+	// startup replace clcommon.Default after clients exist.
+	return clcommon.Default
+}
+
+// errDeadline is the cancellation cause of a context whose client timeout
+// passed, which tells that apart from any other reason a transport stopped.
+var errDeadline = errors.New("tmux client timeout passed")
+
+// deadline derives the context one command runs under from the client's
+// timeout. The transport stops, and reaps whatever it started, when the
+// context ends; callers release latches and locks on return and must not do
+// so while a child of theirs still runs.
+func (c Client) deadline(ctx context.Context) (context.Context, func()) {
+	if c.timer == nil {
+		return context.WithTimeoutCause(ctx, c.timeout, errDeadline)
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	startTimer := c.timer
-	if startTimer == nil {
-		startTimer = realTimer
-	}
-	fired, stop := startTimer(c.timeout)
-	defer stop()
-	select {
-	case err := <-done:
-		return err
-	case <-fired:
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+	ctx, cancel := context.WithCancelCause(ctx)
+	fired, stopTimer := c.timer(c.timeout)
+	finished := make(chan struct{})
+	go func() {
+		select {
+		case <-fired:
+			cancel(errDeadline)
+		case <-finished:
 		}
-		<-done
-		if detail := strings.TrimSpace(stderr.String()); detail != "" {
-			return fmt.Errorf("%w after %s: %s", ErrTimeout, c.timeout, detail)
-		}
-		return fmt.Errorf("%w after %s", ErrTimeout, c.timeout)
+	}()
+	return ctx, func() {
+		close(finished)
+		stopTimer()
+		cancel(nil)
 	}
 }
 
-func realTimer(d time.Duration) (<-chan time.Time, func()) {
-	t := time.NewTimer(d)
-	return t.C, func() { _ = t.Stop() }
-}
-
-// wrapError turns a transport error into the package's error model: tmux's
-// own refusal becomes *Error, everything else passes through unchanged.
-func wrapError(command, stderr string, err error) error {
+// wrapError turns a transport's error into the package's error model: tmux's
+// own refusal becomes *Error, a control-mode reply timeout becomes
+// ErrTimeout, everything else passes through unchanged.
+func wrapError(command string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if Rejected(err) {
+		return err
 	}
 	var cmdErr *clcommon.TmuxCommandError
 	if errors.As(err, &cmdErr) {
 		return &Error{Command: command, Message: strings.TrimSpace(cmdErr.Message()), Err: err}
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return &Error{Command: command, Message: strings.TrimSpace(stderr), Err: err}
 	}
 	if errors.Is(err, tmuxctl.ErrTimeout) && !errors.Is(err, ErrTimeout) {
 		// One timeout sentinel, whichever way the command was sent.

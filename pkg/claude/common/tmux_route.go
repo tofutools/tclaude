@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"strings"
@@ -8,57 +9,46 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 )
 
-// TmuxOutput runs a tmux command and returns its stdout, like
-// TmuxCommand(args...).Output(). TmuxRun and TmuxCombinedOutput are the Run
-// and CombinedOutput twins.
+// Run answers a command over control mode when the connection is up and the
+// command means the same there (see controlRoute), and forks the tmux client
+// for everything else and for every call while the connection is down.
 //
-// When agentd's control-mode connection is up and the command is one that
-// means the same over it (see controlRoute), it is sent there instead of
-// forking tmux. Everything else, and every call while the connection is
-// down, takes the exec path through Default.Command, so the flow-test seam is
-// unchanged.
-//
-// The error differs by path. Exec returns *exec.ExitError (tmux's stderr is
-// in ExitError.Stderr for TmuxOutput, and in the output for
-// TmuxCombinedOutput); control mode returns *TmuxCommandError, whose message
-// carries tmux's text. A caller that needs to tell the two apart, or reads
-// ExitError, must keep using TmuxCommand.
-func TmuxOutput(args ...string) ([]byte, error) {
-	if out, err, ok := routeControl(args); ok {
-		return out, err
-	}
-	return Default.Command(args...).Output()
-}
-
-// TmuxRun runs a tmux command for its effect, like TmuxCommand(args...).Run().
-func TmuxRun(args ...string) error {
-	if _, err, ok := routeControl(args); ok {
-		return err
-	}
-	return Default.Command(args...).Run()
-}
-
-// TmuxCombinedOutput runs a tmux command and returns stdout and stderr, like
-// TmuxCommand(args...).CombinedOutput(). Over control mode a rejected
-// command's message is the output.
-func TmuxCombinedOutput(args ...string) ([]byte, error) {
-	if out, err, ok := routeControl(args); ok {
-		var cmdErr *TmuxCommandError
-		if errors.As(err, &cmdErr) {
-			return []byte(cmdErr.Message() + "\n"), err
+// Over control mode the reply is bounded by the connection's own deadline;
+// ctx bounds the forked client.
+func (t *ControlTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	if t.client.Connected() {
+		if out, err, ok := t.run(args); ok {
+			return out, err
 		}
-		return out, err
 	}
-	return Default.Command(args...).CombinedOutput()
+	return t.exec.Run(ctx, args)
 }
 
-// TmuxCommandError is a command tmux rejected over control mode (its %error
-// reply). Error() reads like the exec path's "exit status 1: <stderr>" detail
-// so callers matching tmux's text ("can't find session", "no such window")
-// keep working.
+// AttachArgv is the exec transport's: an attach needs a terminal of its own.
+func (t *ControlTmux) AttachArgv(args []string) ([]string, error) { return t.exec.AttachArgv(args) }
+
+// TmuxCommandError is a command tmux ran and rejected: the tmux client's
+// non-zero exit with what it printed on stderr, or a control-mode %error
+// reply. It is how every Tmux implementation says "tmux said no".
 type TmuxCommandError struct {
 	lines []string
+	// exit is the client process's exit error on the exec path, nil
+	// elsewhere.
+	exit error
 }
+
+// NewTmuxExitError builds the rejection of a tmux client process: its exit
+// error and what it printed on stderr.
+func NewTmuxExitError(exit error, stderr string) *TmuxCommandError {
+	e := &TmuxCommandError{exit: exit}
+	if stderr = strings.TrimSpace(stderr); stderr != "" {
+		e.lines = strings.Split(stderr, "\n")
+	}
+	return e
+}
+
+// Unwrap is the client's exit error, when there was a client process.
+func (e *TmuxCommandError) Unwrap() error { return e.exit }
 
 // NewTmuxCommandError builds the error for a command tmux rejected, from the
 // lines of tmux's reply. It is how a transport other than exec reports "tmux
@@ -68,8 +58,7 @@ func NewTmuxCommandError(lines ...string) *TmuxCommandError {
 }
 
 // IsTmuxCommandFailure reports whether err says tmux ran and rejected the
-// command, on either path: an *exec.ExitError from a tmux process, or a
-// *TmuxCommandError from control mode.
+// command, on any path.
 func IsTmuxCommandFailure(err error) bool {
 	var exitErr *exec.ExitError
 	var cmdErr *TmuxCommandError
@@ -79,24 +68,15 @@ func IsTmuxCommandFailure(err error) bool {
 // Message is tmux's own error text.
 func (e *TmuxCommandError) Message() string { return strings.Join(e.lines, "\n") }
 
-func (e *TmuxCommandError) Error() string { return "tmux: " + strings.Join(e.lines, "; ") }
-
-// TryTmuxControl sends args over control mode when the connection is up and
-// the command routes there; ok=false means the caller should run it over
-// exec as it otherwise would. It is for callers that wrap exec themselves
-// (a deadline, their own stderr handling).
-func TryTmuxControl(args ...string) (out []byte, err error, ok bool) {
-	return routeControl(args)
-}
-
-// routeControl sends args over control mode when that is possible and
-// equivalent. ok=false means "use exec".
-func routeControl(args []string) ([]byte, error, bool) {
-	ct, isControl := Default.(*ControlTmux)
-	if !isControl || !ct.client.Connected() {
-		return nil, nil, false
+func (e *TmuxCommandError) Error() string {
+	switch {
+	case e.exit == nil:
+		return "tmux: " + strings.Join(e.lines, "; ")
+	case len(e.lines) == 0:
+		return e.exit.Error()
+	default:
+		return e.exit.Error() + ": " + strings.Join(e.lines, "; ")
 	}
-	return ct.run(args)
 }
 
 func (t *ControlTmux) run(args []string) ([]byte, error, bool) {

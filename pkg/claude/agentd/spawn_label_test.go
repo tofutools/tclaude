@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // fakeAliveTmux reports a fixed set of live tmux session names, so the label
@@ -18,6 +20,15 @@ import (
 type fakeAliveTmux struct{ alive map[string]struct{} }
 
 func (f fakeAliveTmux) Command(_ ...string) *exec.Cmd { return exec.Command("true") }
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (f fakeAliveTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, f.Command(args...))
+}
+
+func (f fakeAliveTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(f.Command(args...))
+}
 
 func (f fakeAliveTmux) ListSessions() (map[string]struct{}, error) { return f.alive, nil }
 

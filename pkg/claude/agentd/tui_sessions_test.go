@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -373,6 +375,15 @@ type aliveTmuxStub struct{ alive map[string]struct{} }
 
 func (s *aliveTmuxStub) Command(args ...string) *exec.Cmd {
 	return exec.Command("false", args...)
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (s *aliveTmuxStub) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, s.Command(args...))
+}
+
+func (s *aliveTmuxStub) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(s.Command(args...))
 }
 
 func (s *aliveTmuxStub) ListSessions() (map[string]struct{}, error) {

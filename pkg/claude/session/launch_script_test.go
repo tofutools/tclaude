@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -86,6 +88,15 @@ func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
 		return exec.Command("printf", "123\\n")
 	}
 	return exec.Command("true")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (r *launchRecordingTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, r.Command(args...))
+}
+
+func (r *launchRecordingTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(r.Command(args...))
 }
 
 func TestLaunchExternalDelegationRefusesToAutoSpawnTmuxServer(t *testing.T) {

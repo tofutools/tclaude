@@ -4,8 +4,6 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 // SessionSpec describes a session for NewSession to create.
@@ -78,6 +76,15 @@ func (c Client) NewSession(spec SessionSpec) (id string, err error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// Attacher is the part of a transport that can put a terminal on a session.
+// A transport that cannot (one that only relays commands) leaves it out, and
+// AttachCommand then fails with ErrCannotAttach.
+type Attacher interface {
+	// AttachArgv returns the argv of a process that, given a terminal, runs
+	// the tmux client with args.
+	AttachArgv(args []string) ([]string, error)
+}
+
 // ErrCannotAttach: the client's transport has no way to attach a terminal.
 var ErrCannotAttach = errors.New("tmux transport cannot attach a terminal")
 
@@ -104,17 +111,12 @@ type AttachOptions struct {
 // the caller holds. Everything else goes through the verbs.
 //
 // The argv is whatever reaches this client's server from here: the local tmux
-// binary today, and a remote shell or exec command for a runner elsewhere.
+// binary today, and a remote shell or exec command for a runner elsewhere
+// (the transport decides, through Attacher).
 // tmux exits with status 1 on an ordinary detach.
 func (c Client) AttachCommand(s SessionTarget, opts AttachOptions) ([]string, error) {
 	if err := named("attach-session", s.spec); err != nil {
 		return nil, err
-	}
-	if c.transport != nil {
-		// Only the local server's client can be described so far; handing
-		// back the local argv for another transport would attach the
-		// terminal to the wrong server.
-		return nil, ErrCannotAttach
 	}
 	var args []string
 	if c.noStart {
@@ -129,9 +131,9 @@ func (c Client) AttachCommand(s SessionTarget, opts AttachOptions) ([]string, er
 		args = append(args, "-f", "ignore-size")
 	}
 	args = append(args, "-t", s.spec)
-	cmd := clcommon.TmuxCommand(args...)
-	if cmd.Err != nil {
-		return nil, cmd.Err
+	attacher, ok := c.via().(Attacher)
+	if !ok {
+		return nil, ErrCannotAttach
 	}
-	return append([]string{cmd.Path}, cmd.Args[1:]...), nil
+	return attacher.AttachArgv(args)
 }

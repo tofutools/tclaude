@@ -3,6 +3,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 // stubTmuxProbeContext replaces both halves of the round trip and restores them
@@ -423,6 +425,15 @@ func (p *probeJobTmux) Command(args ...string) *exec.Cmd {
 		return exec.Command("/bin/echo", "4242")
 	}
 	return exec.Command("/bin/false")
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (p *probeJobTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, p.Command(args...))
+}
+
+func (p *probeJobTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(p.Command(args...))
 }
 
 func (p *probeJobTmux) ListSessions() (map[string]struct{}, error) {

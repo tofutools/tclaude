@@ -93,6 +93,12 @@ the code tree and focused docs as the source of truth.
   Lifecycle command tokens must be compile-time constants from the harness
   lifecycle, never interpolated user input. User-controlled titles or text sent
   toward these paths must pass the existing charset/length gates.
+- tmux is reached only through the typed verbs in
+  `pkg/claude/common/tmuxcmd` (`tmuxcmd.Local().KillSession(...)`). Do not
+  build a tmux argv, start a tmux process, or call the transport
+  (`clcommon.Default.Run`) elsewhere: a command that goes around the verbs is
+  one a remote runner cannot carry. A guard test in that package enforces it;
+  add a verb when one is missing.
 - Platform-specific code should use Go build tags such as `_linux.go`,
   `_darwin.go`, and `_unix.go`. Treat old `_windows.go` files as vestigial
   unless the task explicitly concerns them.
@@ -116,7 +122,8 @@ Unit tests live next to the code they cover. Flow tests live under
 Flow tests exercise production paths through the daemon HTTP mux. Only the
 external subprocess boundaries are swapped:
 
-- `clcommon.Default` for tmux.
+- `clcommon.Default` for tmux (the transport under the `tmuxcmd` verbs; the
+  simulator answers tmux commands from memory).
 - `agentd.Spawn` for `tclaude session new`.
 - `agentd.runPluginShell` for plugin shell execution when needed.
 - `session.SetCodexEffectiveConfigProbeForTest` for the `codex app-server`

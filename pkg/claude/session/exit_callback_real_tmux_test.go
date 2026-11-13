@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxtest"
 )
 
 const (
@@ -29,6 +31,15 @@ type isolatedRealTmux struct{ socket string }
 
 func (t isolatedRealTmux) Command(args ...string) *exec.Cmd {
 	return exec.Command("tmux", append([]string{"-S", t.socket}, args...)...)
+}
+
+// Run and AttachArgv make the exec-shaped fake above a clcommon.Tmux.
+func (t isolatedRealTmux) Run(ctx context.Context, args []string) ([]byte, error) {
+	return tmuxtest.Run(ctx, t.Command(args...))
+}
+
+func (t isolatedRealTmux) AttachArgv(args []string) ([]string, error) {
+	return tmuxtest.Argv(t.Command(args...))
 }
 
 func (t isolatedRealTmux) ListSessions() (map[string]struct{}, error) {
