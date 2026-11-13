@@ -13,8 +13,8 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -399,7 +399,7 @@ func handleDashboardBackgroundTerminalKill(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusConflict, "not_killable", "a running "+row.Kind+" is stopped with shutdown, not killed here")
 		return
 	}
-	if _, err := tmuxOutputWithTimeout("kill-session", "-t", clcommon.ExactTarget(row.TmuxSession)); err != nil {
+	if err := boundedTmux().KillSession(tmuxcmd.Session(row.TmuxSession)); err != nil {
 		writeError(w, http.StatusInternalServerError, "tmux", "kill-session: "+err.Error())
 		return
 	}
@@ -455,7 +455,7 @@ func handleDashboardShellKill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_shell", name+" is no known agent's or group's shell")
 		return
 	}
-	if _, err := tmuxOutputWithTimeout("kill-session", "-t", clcommon.ExactTarget(name)); err != nil {
+	if err := boundedTmux().KillSession(tmuxcmd.Session(name)); err != nil {
 		writeError(w, http.StatusInternalServerError, "tmux", "kill-session: "+err.Error())
 		return
 	}
@@ -510,7 +510,7 @@ func reapOrphanedTerminalShells() {
 		default:
 			continue
 		}
-		if _, err := tmuxOutputWithTimeout("kill-session", "-t", clcommon.ExactTarget(t.TmuxSession)); err != nil {
+		if err := boundedTmux().KillSession(tmuxcmd.Session(t.TmuxSession)); err != nil {
 			slog.Warn("reaper: kill orphaned web shell failed", "tmux_session", t.TmuxSession, "error", err)
 			continue
 		}

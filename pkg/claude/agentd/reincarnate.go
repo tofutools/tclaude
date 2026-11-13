@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
@@ -761,7 +762,7 @@ func stopReincarnationSuccessor(newTmux, label string) {
 	if tmuxToKill == "" {
 		tmuxToKill = label
 	}
-	if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)); err != nil {
+	if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxToKill)); err != nil {
 		slog.Warn("reincarnate: failed successor kill failed", "session", tmuxToKill, "error", err)
 	}
 }
@@ -1437,16 +1438,10 @@ func switchTmuxClients(oldTmux, newTmux string) int {
 }
 
 func tmuxClientTTYs(tmuxSession string) []string {
-	out, err := clcommon.TmuxOutput("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}")
+	clients, err := tmuxcmd.Local().ClientTTYs(tmuxcmd.Session(tmuxSession))
 	if err != nil {
 		slog.Warn("tmux client handoff: list-clients failed; skipping client switch", "tmux", tmuxSession, "error", err)
 		return nil
-	}
-	var clients []string
-	for _, tty := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if tty != "" {
-			clients = append(clients, tty)
-		}
 	}
 	return clients
 }
@@ -1454,7 +1449,7 @@ func tmuxClientTTYs(tmuxSession string) []string {
 func switchTmuxClientTTYs(clients []string, oldTmux, newTmux string) int {
 	n := 0
 	for _, tty := range clients {
-		if err := clcommon.TmuxRun("switch-client", "-c", tty, "-t", clcommon.ExactTarget(newTmux)); err != nil {
+		if err := tmuxcmd.Local().SwitchClient(tmuxcmd.ClientTTY(tty), tmuxcmd.Session(newTmux)); err != nil {
 			slog.Warn("tmux client handoff: switch-client failed", "tty", tty, "from", oldTmux, "to", newTmux, "error", err)
 			continue
 		}

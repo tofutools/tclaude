@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // ResourceDelegationDirEnv carries agentd's external cgroup delegation root
@@ -54,6 +55,15 @@ func ExternalTmuxNoStartArgs(args ...string) []string {
 		return args
 	}
 	return append([]string{"-N"}, args...)
+}
+
+// ExternalTmux is the typed-verb counterpart of ExternalTmuxNoStartArgs: the
+// local tmux client, refusing to start a server in external mode.
+func ExternalTmux() tmuxcmd.Client {
+	if ExternalResourceDelegationDir() == "" && !insideTclaudeTmuxServer() {
+		return tmuxcmd.Local()
+	}
+	return tmuxcmd.Local().NoStart()
 }
 
 // ExternalTmuxNoStartFlag is the shell-rendering counterpart used by the

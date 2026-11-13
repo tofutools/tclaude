@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -45,10 +46,10 @@ var launchNonInteractiveTmuxSession = session.LaunchDetachedTmuxSessionID
 
 // The kill and liveness hooks take the launched session's tmux id.
 var killNonInteractiveTmuxSession = func(target string) {
-	_ = clcommon.TmuxRun("kill-session", "-t", target)
+	_ = tmuxcmd.Local().KillSession(tmuxcmd.SessionID(target))
 }
 var nonInteractiveTmuxSessionAlive = func(target string) bool {
-	if clcommon.TmuxRun("has-session", "-t", target) != nil {
+	if exists, _ := tmuxcmd.Local().HasSession(tmuxcmd.SessionID(target)); !exists {
 		return false
 	}
 	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", target, "#{pane_dead}")

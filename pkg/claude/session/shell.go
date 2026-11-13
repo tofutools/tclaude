@@ -10,6 +10,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // ShellHarnessName names both the lightweight direct shell-session sentinel
@@ -206,11 +207,11 @@ func startShellSession(params *NewParams) (ShellSession, error) {
 		// Kill the pane like the exit-audit failure path below: leaving it
 		// alive while the launch-row defer rolls the row back would orphan a
 		// live pane tclaude can no longer see.
-		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
+		_ = tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxSession))
 		return ShellSession{}, fmt.Errorf("failed to save session state: %w", err)
 	}
 	if err := exitGuard.release(); err != nil {
-		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
+		_ = tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxSession))
 		return ShellSession{}, fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
 

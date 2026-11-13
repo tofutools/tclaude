@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -604,7 +605,7 @@ func killLifecycleTarget(t *lifecycleTarget) error {
 	}
 	// Bounded: the escalation ladder runs this from inside a waiting stop's
 	// request goroutine, under the launch lock.
-	if err := runTmuxCommand("kill-pane", "-t", t.paneID); err != nil {
+	if err := boundedTmux().KillPane(tmuxcmd.PaneID(t.paneID)); err != nil {
 		logLifecycleStopFailure("kill", t.paneID, t.sessionID, err)
 		return err
 	}

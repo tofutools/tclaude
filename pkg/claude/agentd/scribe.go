@@ -16,9 +16,9 @@ import (
 	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -887,7 +887,7 @@ func enforceExclusiveScribeOverrides(convID string, overrides map[string]db.Perm
 
 func killScribeSession(convID string) {
 	if sess := pickAliveSession(convID); sess != nil {
-		if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)); err != nil {
+		if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(sess.TmuxSession)); err != nil {
 			slog.Error("scribe: failed to kill unsafe capability-reducing scribe", "conv", short8(convID), "error", err)
 		}
 	}

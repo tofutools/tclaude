@@ -21,6 +21,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
@@ -995,7 +996,7 @@ func stopCodexAppServerPaneAfterControlFailure(runtime db.CodexAppServerRuntime,
 	}
 	slog.Error("Codex app-server control could not be recovered; stopping unusable pane for durable relaunch",
 		"conv", runtime.ConvID, "launch", runtime.LaunchID, "tmux", row.TmuxSession, "detail", detail)
-	if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(row.TmuxSession)); err != nil {
+	if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(row.TmuxSession)); err != nil {
 		slog.Warn("stop unrecoverable Codex app-server pane", "conv", runtime.ConvID, "error", err)
 	}
 }
@@ -1067,7 +1068,7 @@ func stopFailedCodexAppServerLaunch(convID, launchID, tmuxSession string) {
 	if strings.TrimSpace(tmuxSession) == "" {
 		return
 	}
-	if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession)); err != nil {
+	if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxSession)); err != nil {
 		slog.Warn("stop failed Codex app-server launch", "session", tmuxSession, "error", err)
 	}
 }

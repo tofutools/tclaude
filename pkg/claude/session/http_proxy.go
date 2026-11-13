@@ -26,6 +26,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common/harnesspath"
 )
@@ -487,11 +488,11 @@ func LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, command, harnessName 
 	guard.bind()
 	state.PID = ParsePIDFromTmux(tmuxSession)
 	if err := SaveSessionState(state); err != nil {
-		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
+		_ = tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxSession))
 		return err
 	}
 	if err := guard.release(); err != nil {
-		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
+		_ = tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxSession))
 		return err
 	}
 	return nil

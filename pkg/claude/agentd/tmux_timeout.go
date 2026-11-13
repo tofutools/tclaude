@@ -9,6 +9,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 )
 
@@ -19,11 +20,21 @@ import (
 // still turning a wedged client into a visible, retryable failure.
 var tmuxCommandTimeout = 5 * time.Second
 
-var errTmuxCommandTimeout = errors.New("tmux command timeout")
+// errTmuxCommandTimeout is the one timeout sentinel for both the typed tmux
+// verbs and the raw subprocess helpers below, so a caller matches either.
+var errTmuxCommandTimeout = tmuxcmd.ErrTimeout
 
 var startTmuxCommandTimer = func(timeout time.Duration) (<-chan time.Time, func()) {
 	timer := time.NewTimer(timeout)
 	return timer.C, func() { _ = timer.Stop() }
+}
+
+// boundedTmux is the tmux client for every path where something waits on the
+// answer: each command is bounded by tmuxCommandTimeout.
+func boundedTmux() tmuxcmd.Client {
+	return tmuxcmd.Local().WithTimeout(tmuxCommandTimeout).WithTimer(func(d time.Duration) (<-chan time.Time, func()) {
+		return startTmuxCommandTimer(d)
+	})
 }
 
 func runTmuxCommand(args ...string) error {

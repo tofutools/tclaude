@@ -14,6 +14,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
@@ -247,14 +248,12 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 	pidOut, err := clcommon.TmuxOutput(session.ExternalTmuxNoStartArgs(
 		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":0.0", "#{pane_pid}")...)
 	if err != nil {
-		_ = clcommon.TmuxRun(session.ExternalTmuxNoStartArgs(
-			"kill-session", "-t", clcommon.ExactTarget(tmuxSession))...)
+		_ = session.ExternalTmux().KillSession(tmuxcmd.Session(tmuxSession))
 		return nil, fmt.Errorf("read OpenCode tmux process root: %w", err)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
 	if err != nil || pid <= 1 {
-		_ = clcommon.TmuxRun("-N", "kill-session", "-t",
-			clcommon.ExactTarget(tmuxSession))
+		_ = tmuxcmd.Local().NoStart().KillSession(tmuxcmd.Session(tmuxSession))
 		return nil, fmt.Errorf("external tmux returned invalid OpenCode process root %q", strings.TrimSpace(string(pidOut)))
 	}
 	process := &openCodeProcess{pid: pid, tmuxSession: tmuxSession,
@@ -332,12 +331,10 @@ func openCodeTmuxStartupError(err error, output string) error {
 }
 
 func reclaimOrphanedOpenCodeTmuxSession(tmuxSession string) error {
-	if err := clcommon.TmuxRun(
-		"-N", "has-session", "-t", clcommon.ExactTarget(tmuxSession)); err != nil {
+	if exists, _ := tmuxcmd.Local().NoStart().HasSession(tmuxcmd.Session(tmuxSession)); !exists {
 		return nil
 	}
-	if err := clcommon.TmuxRun(
-		"-N", "kill-session", "-t", clcommon.ExactTarget(tmuxSession)); err != nil {
+	if err := tmuxcmd.Local().NoStart().KillSession(tmuxcmd.Session(tmuxSession)); err != nil {
 		return fmt.Errorf("reclaim orphaned OpenCode tmux session: %w", err)
 	}
 	return nil
@@ -356,9 +353,7 @@ func captureOpenCodeTmuxPane(tmuxSession string) string {
 func watchOpenCodeTmuxProcess(process *openCodeProcess, runtime db.OpenCodeRuntime) {
 	misses := 0
 	for {
-		err := clcommon.TmuxRun(
-			"-N", "has-session", "-t", clcommon.ExactTarget(process.tmuxSession))
-		if err != nil {
+		if exists, _ := tmuxcmd.Local().NoStart().HasSession(tmuxcmd.Session(process.tmuxSession)); !exists {
 			misses++
 			if misses < openCodeHealthAttempts {
 				time.Sleep(openCodeTmuxProbeInterval)
