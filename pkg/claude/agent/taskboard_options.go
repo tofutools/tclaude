@@ -64,7 +64,9 @@ const taskboardOptionsLong = "A board's options set how it behaves. They are sto
 	"  limits.per                      board | assignee: count the whole lane, or each assignee's tasks in it\n" +
 	"At a full lane, queue keeps the task out of it, in line (one for In progress is held in Next) until a slot\n" +
 	"frees; refuse refuses the change; warn lets it in. The operator goes over a limit with --over-limit.\n\n" +
-	"Reading them needs taskboard.read; changing them taskboard.write (owners hold it)."
+	"Reading them needs taskboard.options.read, or taskboard.options.own.read, which every member holds on its own group's " +
+	"board; changing them needs taskboard.options.write (owners hold it, and taskboard.manage implies it), or\n" +
+	"taskboard.options.own.write on your own group's board. taskboard.read / taskboard.write cover the tasks, not the options."
 
 func taskboardOptionsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
@@ -198,7 +200,7 @@ func printTaskboardOptions(w io.Writer, resp taskboardOptionsResp) {
 
 type taskboardOptionsShowParams struct {
 	Group string `pos:"true" help:"Group whose board's options to show"`
-	Peer  string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.read)"`
+	Peer  string `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.options.read)"`
 	JSON  bool   `long:"json" help:"Output JSON: what the board sets (options), what is in force (resolved) and the version"`
 }
 
@@ -221,7 +223,7 @@ func taskboardOptionsShowCmd() *cobra.Command {
 type taskboardOptionsSetParams struct {
 	Group    string   `pos:"true" help:"Group whose board to change"`
 	Settings []string `pos:"true" help:"key=value pairs, e.g. idle.enabled=on idle.grace=10m idle.tell=assigner,owners (value default: inherit again)"`
-	Peer     string   `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.write)"`
+	Peer     string   `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.options.write)"`
 	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool     `long:"json" help:"Output JSON"`
 }
@@ -229,7 +231,7 @@ type taskboardOptionsSetParams struct {
 func taskboardOptionsSetCmd() *cobra.Command {
 	return boa.CmdT[taskboardOptionsSetParams]{
 		Use:         "set",
-		Short:       "Set board options: key=value … (needs taskboard.write)",
+		Short:       "Set board options: key=value … (needs taskboard.options.write)",
 		Long:        "Set one or more options in one change, e.g. idle.enabled=on events.comment.enabled=off events.report_failed.to=assigner,owners. The keys:\n\n" + strings.Join(boardopts.Keys, "\n"),
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardOptionsSetParams, _ *cobra.Command) error {
@@ -263,7 +265,7 @@ func taskboardOptionsSetCmd() *cobra.Command {
 type taskboardOptionsResetParams struct {
 	Group    string   `pos:"true" help:"Group whose board to change"`
 	Keys     []string `pos:"true" help:"Options to inherit again: keys, an event (events.comment), a section (idle, events) or all"`
-	Peer     string   `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.write)"`
+	Peer     string   `long:"peer" optional:"true" help:"A linked node's board instead, under the grants it gave this node (taskboard.options.write)"`
 	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool     `long:"json" help:"Output JSON"`
 }
@@ -271,7 +273,7 @@ type taskboardOptionsResetParams struct {
 func taskboardOptionsResetCmd() *cobra.Command {
 	return boa.CmdT[taskboardOptionsResetParams]{
 		Use:         "reset",
-		Short:       "Drop board options so they are inherited again (needs taskboard.write)",
+		Short:       "Drop board options so they are inherited again (needs taskboard.options.write)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardOptionsResetParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)

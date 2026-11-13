@@ -320,7 +320,7 @@ test('Cancel with unsaved changes asks first', async (t) => {
   assert.equal(s.drawer(), null, 'discarded and closed');
 });
 
-test('without taskboard.write the drawer is read-only and says why; a peer board reads through its node', async (t) => {
+test('without taskboard.options.write the drawer is read-only and says why; a peer board reads through its node', async (t) => {
   const reader = fakeApi(optionsView({ idle: { enabled: true } }));
   const peer = { name: 'crew@node-b', fleet_node: { id: 'inst_b', name: 'node-b', local: false }, members: [] };
   const s = await mountSection(t, { api: null, readApi: reader, group: peer });
@@ -330,7 +330,7 @@ test('without taskboard.write the drawer is read-only and says why; a peer board
   assert.deepEqual(s.route.boardOptionsRoute.value, { group: 'crew', node: 'inst_b', section: '', column: '' }, 'the route names the board as its node does');
   assert.deepEqual(reader.calls[0], ['options', 'crew'], "read under the group's own name on that node");
   assert.match(d.querySelector('h3').textContent, /node-b/);
-  assert.match(d.querySelector('[data-tb-opt-readonly]').textContent, /no taskboard.write on node-b/);
+  assert.match(d.querySelector('[data-tb-opt-readonly]').textContent, /no taskboard.options.write on node-b/);
   assert.equal(d.querySelector('#taskboard-options-save'), null, 'no Save');
   assert.equal(d.querySelector('.tb-opt-reset'), null, 'no ↺');
   assert.ok([...d.querySelectorAll('input')].every((input) => input.disabled), 'every control is read-only');
@@ -557,4 +557,28 @@ test('a full lane the operator may go over asks, and only the refused request go
   assert.equal(limitNoteText({ label: 'In progress', count: 3, max: 3, per: 'board', action: 'queued', position: 2 }),
     'Queued: In progress is full (3 / 3); 2nd in line, it goes in when a slot frees');
   assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 101].map(ordinal), ['1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '101st']);
+});
+
+test("a linked node's board: options and column writes follow their own grants, not taskboard.write", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { peerBoardClients } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const client = { saveOptions() {}, options() {}, addColumn() {}, changeColumn() {}, removeColumn() {}, setColumnState() {}, create() {} };
+  const view = (held) => ({ level: 'restricted', groups: { crew: held } });
+  let c = peerBoardClients(client, view(['taskboard.write']), 'crew');
+  assert.ok(c.api, 'taskboard.write writes tasks');
+  assert.equal(typeof c.api.saveOptions, 'undefined', 'but not the options');
+  assert.equal(typeof c.api.addColumn, 'undefined', 'nor the columns');
+  assert.equal(c.optionsApi, null);
+  c = peerBoardClients(client, view(['taskboard.options.write']), 'crew');
+  assert.equal(c.api, null, 'no task writes');
+  assert.equal(c.optionsApi, client, 'options.write changes the options alone');
+  c = peerBoardClients(client, view(['taskboard.write', 'taskboard.columns']), 'crew');
+  assert.equal(typeof c.api.addColumn, 'function', 'taskboard.columns changes the columns');
+  assert.equal(typeof c.api.saveOptions, 'undefined');
+  c = peerBoardClients(client, view(['taskboard.write', 'taskboard.manage']), 'crew');
+  assert.equal(typeof c.api.addColumn, 'function', 'manage covers the columns');
+  assert.equal(typeof c.api.saveOptions, 'function', 'and the options');
+  assert.equal(c.optionsApi, client);
+  c = peerBoardClients(client, { level: 'unrestricted' }, 'crew');
+  assert.equal(typeof c.api.saveOptions, 'function', 'unrestricted trust holds everything');
 });

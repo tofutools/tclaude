@@ -222,6 +222,12 @@ message with the task ids.
   `taskboard.manage` for someone else's. `--clone` needs only read on the
   source. A move drops the task's dependencies and unassigns an assignee who
   is not a member of the new group.
+- A board's options (`taskboard options show|set|reset`: the idle check,
+  messages and limits) have their own slugs. Members read their own group's
+  (`taskboard.options.own.read`); changing them needs
+  `taskboard.options.write`, which owners have (`taskboard.manage` implies
+  it), or `taskboard.options.own.write` on your own group's board.
+  `taskboard.write` does not change them.
 - Another group's board needs `taskboard.read` / `taskboard.write`, scoped with
   `--scope group=<name>`. Without access, a task id from that group is reported
   as not found.

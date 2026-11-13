@@ -15,9 +15,12 @@
 // node's board: inst_…:<group>), which is an overlay route, so Back closes
 // the drawer.
 //
-// Reading needs taskboard.read; without taskboard.write (a linked node's
-// board this node may only read) every control is read-only and the drawer
-// says why. A linked node's board reads and saves through that node's peer
+// Reading needs taskboard.options.read (a member's own board:
+// taskboard.options.own.read); without taskboard.options.write (a linked
+// node's board this node may only read) every option is read-only and the
+// drawer says why. The Columns tab's column actions (add, rename, move,
+// remove, hide, cordon) follow taskboard.columns instead, apart from the
+// options: either may be read-only while the other is not. A linked node's board reads and saves through that node's peer
 // view, as the rest of its board does.
 
 import { h } from 'preact';
@@ -283,7 +286,7 @@ function LimitsTab({ view, draft, saved, columns, entry, canWrite, set, reset, e
 // Column changes apply at once (taskboard columns …, taskboard.columns);
 // the idle-check choice is part of the options draft.
 function ColumnsTab({ group, view, draft, saved, columns, canWrite, set, reset, actions, focusColumn, errors }) {
-  const naming = useColumnNaming(group, canWrite ? actions : null);
+  const naming = useColumnNaming(group, actions);
   const checked = effectiveOf(view, draft, 'idle.check_columns').value || [];
   const limit = (lane, label) => html`<td><${LimitInput} view=${view} draft=${draft} lane=${lane} label=${label} canWrite=${canWrite} set=${set} errors=${errors} /></td>
     <td><${AtLimitSelect} view=${view} draft=${draft} lane=${lane} label=${label} canWrite=${canWrite} set=${set} reset=${reset} /></td>`;
@@ -302,7 +305,7 @@ function ColumnsTab({ group, view, draft, saved, columns, canWrite, set, reset, 
           <td><${Check} checked=${!checked.includes(column.slug)} disabled=${!canWrite}
             title=${`Ticked, a task in ${column.label} never stalls: its agent waits on a review or CI`}
             onChange=${(event) => set('idle.check_columns', event.currentTarget.checked ? checked.filter((s) => s !== column.slug) : [...checked, column.slug])}>skip<//></td>
-          <td>${canWrite && actions && html`<${RowMenu} label=${`the ${column.label} column`} buttonClass="tb-col-more"
+          <td>${actions && html`<${RowMenu} label=${`the ${column.label} column`} buttonClass="tb-col-more"
             items=${columnMenuItems({ column, columns, group, actions, onRename: (c) => naming.open('rename', c) })} />`}</td>
         </tr>`)}
         ${builtin('Blocked · Done · Dropped', '—')}
@@ -312,7 +315,7 @@ function ColumnsTab({ group, view, draft, saved, columns, canWrite, set, reset, 
       ${columns.length} of ${COLUMNS_CAP} custom columns. Adding, renaming, moving and removing a column applies at once
       (<code>taskboard columns …</code>); removing one moves its tasks back to Next. Skip saves with the options.</p>
     <div class="tb-opt-col-foot">
-      ${canWrite && html`<${AddColumnButton} naming=${naming} columns=${columns} />`}
+      ${actions && html`<${AddColumnButton} naming=${naming} columns=${columns} />`}
       <span class="spacer"></span>
       <span class="ui-hint">Skip:</span>
       <${Source} view=${view} draft=${draft} saved=${saved} keys=${['idle.check_columns']} canWrite=${canWrite} onReset=${reset} label="the checked columns" />
@@ -330,9 +333,10 @@ function DrawerClose() {
 
 // BoardOptionsDrawer is the drawer itself. group is the board's own name,
 // shownName the name the view shows (name@node in the fused view); api is
-// the write client (null without taskboard.write) and readApi the read one;
-// entry is the board's context entry, whose options.version moving rereads
-// the options; actions are the board's column actions.
+// the options' write client (null without taskboard.options.write) and
+// readApi the read one; entry is the board's context entry, whose
+// options.version moving rereads the options; actions are the board's
+// column actions (null without taskboard.columns).
 export function BoardOptionsDrawer({ group, shownName = group.name, nodeName = '', entry, api = null, readApi = null, actions = null,
   section = '', column = '', wizard = false, onSaved = null, onClose }) {
   const canWrite = !!api && typeof api.saveOptions === 'function';
@@ -433,7 +437,7 @@ export function BoardOptionsDrawer({ group, shownName = group.name, nodeName = '
   const title = `${wizard ? 'Quest board' : 'Board'} options · ${shownName}`;
   const where = nodeName || 'this node';
   const readOnly = !canWrite && html`<p class="tb-opt-readonly" role="note" data-tb-opt-readonly="">
-    Read-only: ${nodeName ? `no taskboard.write on ${nodeName}` : 'you cannot change this board (taskboard.write)'}.</p>`;
+    Read-only: ${nodeName ? `no taskboard.options.write on ${nodeName}` : "you cannot change this board's options (taskboard.options.write)"}.</p>`;
   const count = changed.length;
   const footerStart = count
     ? html`<span class="ui-hint tb-opt-unsaved" data-tb-opt-unsaved=${count}>${count} unsaved ${count === 1 ? 'change' : 'changes'}</span>`
