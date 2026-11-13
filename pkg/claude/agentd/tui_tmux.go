@@ -27,10 +27,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os/exec"
+	"strconv"
 	"strings"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -43,17 +43,6 @@ import (
 // that do apply, and refusing to start over it would be worse than ignoring it.
 func tmuxServerOwnershipRequested(p *serveParams) bool {
 	return p.TUI && p.OwnTmuxServer
-}
-
-// tuiTmuxServerArgs is the single tmux invocation that starts the server and
-// pins it there. Both commands deliberately run on ONE client connection: a
-// bare `start-server` in its own process leaves a server holding no sessions
-// with tmux's default `exit-empty on`, which exits again the moment that client
-// disconnects — before a second process could set the option. tmux only
-// considers the empty-exit once no clients remain, so setting exit-empty off
-// while the same client is still attached closes that window.
-func tuiTmuxServerArgs() []string {
-	return []string{"start-server", ";", "set-option", "-g", "exit-empty", "off"}
 }
 
 // What the probe below managed to establish. The three states exist because
@@ -78,6 +67,16 @@ const (
 // running on /tmp/tmux-1000/tclaude"). It is the one failure this code is
 // willing to interpret; anything else it does not recognise stays Unknown.
 const tmuxNoServerStderr = "no server running"
+
+// tuiTmuxNoServer reports whether a probe failed because tmux said no server
+// is running. It deliberately reads only that one message and not the wider
+// tmuxcmd.ErrNoServer: every other failure, including a socket that cannot be
+// reached, must stay "unknown" here, because "none" is what lets this daemon
+// start a server and later shut it down.
+func tuiTmuxNoServer(err error) bool {
+	var tmuxErr *tmuxcmd.Error
+	return errors.As(err, &tmuxErr) && strings.Contains(tmuxErr.Message, tmuxNoServerStderr)
+}
 
 // tuiTmuxLiveSessions counts the sessions on the tclaude tmux server that still
 // have something running in them, with the same three-state discipline as the
@@ -105,18 +104,15 @@ const tmuxNoServerStderr = "no server running"
 // `-N` keeps the probe from starting the very server it is asking about, and
 // stdout is read on its own so a warning on stderr cannot be parsed as panes.
 func tuiTmuxLiveSessions() (int, tuiTmuxProbe) {
-	out, err := clcommon.Default.Command(
-		"-N", "list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}").Output()
+	rows, err := tmuxcmd.Local().NoStart().ListAllPanes("#{session_name}\t#{pane_dead}")
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) &&
-			strings.Contains(string(exitErr.Stderr), tmuxNoServerStderr) {
+		if tuiTmuxNoServer(err) {
 			return 0, tuiTmuxProbeNone
 		}
 		return 0, tuiTmuxProbeUnknown
 	}
 	live := map[string]struct{}{}
-	for line := range strings.SplitSeq(string(out), "\n") {
+	for _, line := range rows {
 		name, dead, ok := strings.Cut(strings.TrimSpace(line), "\t")
 		// A line we cannot split is a format we do not recognise. Counting it as
 		// a live session errs toward leaving the server up, which is the safe
@@ -152,10 +148,16 @@ func tuiTmuxLiveSessions() (int, tuiTmuxProbe) {
 // EMPTY server exit, so it cannot cost a session. Failure is logged and ignored —
 // there is nothing better to do from a process that is on its way out.
 func releaseTUITmuxExitEmpty(pid string) {
-	if out, err := clcommon.Default.Command("set-option", "-gu", "exit-empty").CombinedOutput(); err != nil {
+	err := tmuxcmd.Local().UnsetOption(tmuxcmd.GlobalScope(), "exit-empty")
+	if err != nil && !tmuxcmd.Rejected(err) {
+		// The command may have been sent over the daemon's control
+		// connection, which is being torn down around us. Unsetting an option
+		// is safe to repeat, and a second attempt forks a client of its own.
+		err = tmuxcmd.Local().UnsetOption(tmuxcmd.GlobalScope(), "exit-empty")
+	}
+	if err != nil {
 		slog.Warn("tui: could not restore exit-empty on the tclaude tmux server",
-			"error", err, "output", strings.TrimSpace(string(out)),
-			"server_pid", pid, "module", "agentd")
+			"error", err, "server_pid", pid, "module", "agentd")
 	}
 }
 
@@ -163,33 +165,18 @@ func releaseTUITmuxExitEmpty(pid string) {
 // `-N` is what makes this a probe rather than a launch: without it the client
 // would start the very server it is asking about.
 //
-// stdout is read on its own (not CombinedOutput) so a warning line on stderr
-// cannot corrupt the pid, and the pid is charset-checked because it is later
-// compared against the one we started: anything that is not a bare decimal pid
-// is Unknown rather than trusted.
+// The verb reads stdout on its own, so a warning line on stderr cannot corrupt
+// the pid, and accepts only a bare positive decimal: the pid is later compared
+// against the one we started, so anything else is Unknown rather than trusted.
 func tuiTmuxServerPID() (string, tuiTmuxProbe) {
-	// Output() collects stderr into ExitError.Stderr as long as Stderr is unset,
-	// which is what lets the "no server" case be recognised without merging that
-	// text into the pid.
-	out, err := clcommon.Default.Command("-N", "display-message", "-p", "#{pid}").Output()
+	pid, err := tmuxcmd.Local().NoStart().ServerPID()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) &&
-			strings.Contains(string(exitErr.Stderr), tmuxNoServerStderr) {
+		if tuiTmuxNoServer(err) {
 			return "", tuiTmuxProbeNone
 		}
 		return "", tuiTmuxProbeUnknown
 	}
-	pid := strings.TrimSpace(string(out))
-	if pid == "" {
-		return "", tuiTmuxProbeUnknown
-	}
-	for _, r := range pid {
-		if r < '0' || r > '9' {
-			return "", tuiTmuxProbeUnknown
-		}
-	}
-	return pid, tuiTmuxProbeRunning
+	return strconv.Itoa(pid), tuiTmuxProbeRunning
 }
 
 // startTUITmuxServer starts the console's tmux server, if there is not already
@@ -252,9 +239,9 @@ func startTUITmuxServer(notify io.Writer) (stop func(), owned bool) {
 		return noop, false
 	}
 
-	if out, err := clcommon.Default.Command(tuiTmuxServerArgs()...).CombinedOutput(); err != nil {
+	if err := tmuxcmd.Local().StartPersistentServer(); err != nil {
 		slog.Warn("tui: could not start the tclaude tmux server",
-			"error", err, "output", strings.TrimSpace(string(out)), "module", "agentd")
+			"error", err, "module", "agentd")
 		return noop, false
 	}
 	// The pid of what we just started. It is the teardown's proof of identity:
@@ -341,9 +328,9 @@ func startTUITmuxServer(notify io.Writer) (stop func(), owned bool) {
 			releaseTUITmuxExitEmpty(pid)
 			return
 		}
-		if out, err := clcommon.Default.Command("kill-server").CombinedOutput(); err != nil {
+		if err := tmuxcmd.Local().KillServer(); err != nil {
 			slog.Warn("tui: could not shut down the tclaude tmux server",
-				"error", err, "output", strings.TrimSpace(string(out)), "module", "agentd")
+				"error", err, "module", "agentd")
 			fmt.Fprintf(notify, "tmux server could not be shut down: %v\n", err)
 			// A kill that failed still leaves us walking away from our own server,
 			// so it needs the same release as the branches above — and here it is

@@ -3,14 +3,11 @@
 package session
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // tclaudeLayerProbeCommand is the capability probe as a subcommand, so tmux can
@@ -106,15 +104,7 @@ func probeBwrapInLaunchContext(
 // against a dead server rather than spawning one, so a pure capability question
 // — a dashboard disclosure, a dry run — never leaves a tmux server behind.
 var tmuxServerPID = func() (int, error) {
-	out, err := clcommon.TmuxOutput("display-message", "-p", "#{pid}")
-	if err != nil {
-		return 0, err
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil || pid <= 0 {
-		return 0, fmt.Errorf("tmux reported unusable server pid %q", strings.TrimSpace(string(out)))
-	}
-	return pid, nil
+	return tmuxcmd.Local().ServerPID()
 }
 
 type bwrapProbeKey struct {
@@ -249,7 +239,12 @@ func probeBwrapViaTmuxServerForIdentity(
 	// is the wrong one. The overhead is for tmux job scheduling and one tclaude
 	// process start, not for the probe.
 	deadline := time.Now().Add(bwrapProbeTimeout + tclaudeLayerProbeRoundTripOverhead)
-	runErr := runBoundedTmuxCommand(clcommon.Default.Command("run-shell", command), deadline)
+	// The client gives up at the deadline, so a hung server cannot hold the
+	// caller. The tmux JOB keeps running on the server after that; nothing
+	// here can stop it, and nothing needs to. Its only output is a file under
+	// a directory the caller removes, so a late writer writes into a path
+	// that no longer exists.
+	runErr := tmuxcmd.Local().WithTimeout(max(time.Until(deadline), time.Millisecond)).RunShell(command)
 
 	// Read the verdict BEFORE deciding what a failed client means. run-shell
 	// hands the job's exit status to its client, so a job that published a
@@ -400,30 +395,6 @@ func tclaudeLayerProbeShellCommand(
 // nobody would think to look for.
 func escapeTmuxFormat(command string) string {
 	return strings.ReplaceAll(command, "#", "##")
-}
-
-// runBoundedTmuxCommand runs a tmux command and gives up on it at deadline,
-// killing the client so a hung server cannot hold the caller.
-//
-// The tmux JOB keeps running on the server after that; nothing here can stop
-// it, and nothing needs to. Its only output is a file under a directory the
-// caller removes, so a late writer writes into a path that no longer exists.
-func runBoundedTmuxCommand(cmd *exec.Cmd, deadline time.Time) error {
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
-	defer cancel()
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- cmd.Wait() }()
-	select {
-	case err := <-waitCh:
-		return err
-	case <-ctx.Done():
-		_ = cmd.Process.Kill()
-		<-waitCh
-		return ctx.Err()
-	}
 }
 
 // parseTclaudeLayerProbeResult turns the job's published line back into a

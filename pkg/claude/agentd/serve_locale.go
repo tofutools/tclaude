@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
 
@@ -55,26 +56,19 @@ func productionLocaleDeps() localeDeps {
 // agentd: one an earlier, locale-less agentd started (or one an external
 // unit owns) would otherwise start every new agent without a locale. No
 // server running: nothing to do, the one agentd starts inherits its env.
-func syncTmuxServerLocale(environ []string, run func(args ...string) ([]byte, error)) {
+func syncTmuxServerLocale(environ []string, tmux tmuxcmd.Client) {
 	value, key := launcherEffectiveLocale(environ)
 	if value == "" || !strings.Contains(strings.ToLower(strings.ReplaceAll(value, "-", "")), "utf8") {
 		return
 	}
-	out, err := run("show-environment", "-g")
+	server, err := tmux.GlobalEnvironment()
 	if err != nil {
 		return // no server
-	}
-	var server []string
-	for _, line := range strings.Split(string(out), "\n") {
-		// "-NAME" marks a variable removed from the environment.
-		if line != "" && !strings.HasPrefix(line, "-") {
-			server = append(server, line)
-		}
 	}
 	if v, _ := launcherEffectiveLocale(server); v != "" {
 		return // the server has a locale; it was chosen for it
 	}
-	if _, err := run("set-environment", "-g", key, value); err != nil {
+	if err := tmux.SetGlobalEnvironment(key, value); err != nil {
 		slog.Info("agentd: could not give the tmux server a locale", "error", err)
 		return
 	}

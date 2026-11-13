@@ -1,11 +1,13 @@
 package agentd
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/launcher"
 )
 
@@ -64,7 +66,8 @@ func TestSyncTmuxServerLocale(t *testing.T) {
 			sets = append(sets, strings.Join(args, " "))
 			return nil, nil
 		}
-		syncTmuxServerLocale(tc.environ, run)
+		syncTmuxServerLocale(tc.environ, tmuxcmd.NewClient(tmuxcmd.TransportFunc(
+			func(_ context.Context, args []string) ([]byte, error) { return run(args...) })))
 		if !slices.Equal(sets, tc.want) {
 			t.Errorf("%s: %v, want %v", tc.name, sets, tc.want)
 		}

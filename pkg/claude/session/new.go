@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/launchundo"
 	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -1010,7 +1010,7 @@ func runNew(params *NewParams) error {
 				})
 				return err
 			},
-			func() { _ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession)) },
+			func() { _ = tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxSession)) },
 		); err != nil {
 			return err
 		}
@@ -1022,7 +1022,7 @@ func runNew(params *NewParams) error {
 	// failure. launchUndo, still uncommitted, then removes the launch-profile
 	// file: a killed pane's shell never reaches its own cleanup trailer.
 	killLaunchPane := func() {
-		_ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession))
+		_ = tmuxcmd.Local().KillSession(tmuxcmd.Session(tmuxSession))
 		resourceCgroupCleanup()
 	}
 	if err := settleLaunchedPane(launchSettleInput{
@@ -1967,18 +1967,17 @@ func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool,
 	// shell join/quoting layer. The explicit -x/-y pin the pane to the
 	// canonical size (TCL-1136) instead of tmux's default-size, which the
 	// operator's tmux.conf can change out from under every harness.
-	args := []string{"new-session", "-d"}
-	if printID {
-		args = append(args, "-P", "-F", "#{session_id}")
+	spec := tmuxcmd.SessionSpec{
+		Name: tmuxSession, Dir: cwd, PrintID: printID,
+		Width: clcommon.CanonicalAgentPaneWidth, Height: clcommon.CanonicalAgentPaneHeight,
 	}
-	args = append(args, "-s", tmuxSession, "-c", cwd,
-		"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
-		"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight))
-	args = append(args, clcommon.BootstrapShellArgv()...)
-	args = append(args, scriptPath)
-	args = append(args, markerArgs...)
-	args = ExternalTmuxNoStartArgs(args...)
-	if n := tmuxArgvBytes(args); n > tmuxClientArgvLimit {
+	spec.Command = append(spec.Command, clcommon.BootstrapShellArgv()...)
+	spec.Command = append(spec.Command, scriptPath)
+	spec.Command = append(spec.Command, markerArgs...)
+	// One client for the measurement and the launch, so what is measured is
+	// what is sent.
+	tmux := ExternalTmux()
+	if n := tmuxArgvBytes(tmux.NewSessionArgs(spec)); n > tmuxClientArgvLimit {
 		cleanupScript()
 		return "", fmt.Errorf("tmux launch argv is %d bytes, over tclaude's %d-byte pre-flight bound "+
 			"(tmux's client rejects ~16KB with an opaque \"command too long\"): "+
@@ -1994,16 +1993,13 @@ func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool,
 	// StartShellSession includes an agentd console sitting in bubbletea's
 	// alternate screen: the diagnostic would overwrite the rendered frame while
 	// the console separately reported the same failure.
-	out, err := clcommon.TmuxCombinedOutput(args...)
+	id, err := tmux.NewSession(spec)
 	if err != nil {
 		// The pane never ran, so the script's self-delete never did either.
 		cleanupScript()
-		if detail := strings.TrimSpace(string(out)); detail != "" {
-			return "", fmt.Errorf("failed to create tmux session: %w: %s", err, detail)
-		}
 		return "", fmt.Errorf("failed to create tmux session: %w", err)
 	}
-	return string(out), nil
+	return id, nil
 }
 
 // isValidSpawnCwdProofToken accepts the daemon's challenge token alphabet
@@ -2138,8 +2134,9 @@ func applyTmuxWindowTitle(tmuxSession, sessionID string) {
 	if !windowTitleEnabledFn() {
 		return
 	}
-	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on")
-	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID))
+	scope := tmuxcmd.SessionScope(tmuxcmd.Session(tmuxSession))
+	_ = tmuxcmd.Local().SetOption(scope, "set-titles", "on")
+	_ = tmuxcmd.Local().SetOption(scope, "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID))
 }
 
 // announceAndAttach prints the created-session summary and then either reports

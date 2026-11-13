@@ -1,10 +1,10 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -27,17 +27,12 @@ func ExternalResourceDelegationDir() string {
 	// agentd sets it on legacy→external and explicitly unsets it on the reverse
 	// transition. If the server cannot answer, retain the inherited value so an
 	// external-mode pane still fails closed with -N.
-	out, err := clcommon.TmuxCombinedOutput(
-		"-N", "show-environment", "-g", ResourceDelegationDirEnv,
-	)
+	value, set, err := tmuxcmd.Local().NoStart().GlobalEnvironmentVariable(ResourceDelegationDirEnv)
 	if err != nil {
 		return inherited
 	}
-	value := strings.TrimSpace(string(out))
-	prefix := ResourceDelegationDirEnv + "="
-	if strings.HasPrefix(value, prefix) {
-		dir := strings.TrimSpace(strings.TrimPrefix(value, prefix))
-		if dir != "" {
+	if set {
+		if dir := strings.TrimSpace(value); dir != "" {
 			_ = os.Setenv(ResourceDelegationDirEnv, dir)
 			return dir
 		}
@@ -105,19 +100,19 @@ func RequireExternalTmuxServer() error {
 }
 
 func requireExternalTmuxServer(dir string) error {
-	out, err := clcommon.TmuxCombinedOutput("-N", "display-message", "-p", "#{pid}")
+	pid, err := tmuxcmd.Local().NoStart().ServerPID()
+	if errors.Is(err, tmuxcmd.ErrMalformedReply) {
+		return fmt.Errorf("external tmux runtime %s returned an invalid server PID: %w",
+			externalTmuxRuntimeName(), err)
+	}
 	if err != nil {
-		detail := strings.TrimSpace(string(out))
-		if detail != "" {
-			detail = ": " + detail
+		detail := ""
+		var tmuxErr *tmuxcmd.Error
+		if errors.As(err, &tmuxErr) && tmuxErr.Message != "" {
+			detail = ": " + tmuxErr.Message
 		}
 		return fmt.Errorf("external tmux runtime %s is unavailable; start or restart that unit before starting agentd or creating sessions%s",
 			externalTmuxRuntimeName(), detail)
-	}
-	pid, parseErr := strconv.Atoi(strings.TrimSpace(string(out)))
-	if parseErr != nil || pid <= 0 {
-		return fmt.Errorf("external tmux runtime %s returned an invalid server PID %q",
-			externalTmuxRuntimeName(), strings.TrimSpace(string(out)))
 	}
 	if err := ValidateExternalTmuxServerCgroup(pid, dir); err != nil {
 		return fmt.Errorf("external tmux runtime %s is not running in the configured delegation: %w",
@@ -140,15 +135,9 @@ func PropagateResourceDelegationToTmux() error {
 	if err := requireExternalTmuxServer(dir); err != nil {
 		return err
 	}
-	if out, err := clcommon.TmuxCombinedOutput(
-		"-N", "set-environment", "-g", ResourceDelegationDirEnv, dir,
-	); err != nil {
-		detail := strings.TrimSpace(string(out))
-		if detail != "" {
-			detail = ": " + detail
-		}
-		return fmt.Errorf("configure external tmux runtime %s environment%s: %w",
-			externalTmuxRuntimeName(), detail, err)
+	if err := tmuxcmd.Local().NoStart().SetGlobalEnvironment(ResourceDelegationDirEnv, dir); err != nil {
+		return fmt.Errorf("configure external tmux runtime %s environment: %w",
+			externalTmuxRuntimeName(), err)
 	}
 	return nil
 }
@@ -157,21 +146,12 @@ func PropagateResourceDelegationToTmux() error {
 // returns to legacy mode. A missing server or missing variable is already the
 // desired state and does not make ordinary agentd startup depend on tmux.
 func ClearResourceDelegationFromTmux() error {
-	out, err := clcommon.TmuxCombinedOutput(
-		"-N", "show-environment", "-g", ResourceDelegationDirEnv,
-	)
-	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(out)), ResourceDelegationDirEnv+"=") {
+	tmux := tmuxcmd.Local().NoStart()
+	if _, set, err := tmux.GlobalEnvironmentVariable(ResourceDelegationDirEnv); err != nil || !set {
 		return nil
 	}
-	out, err = clcommon.TmuxCombinedOutput(
-		"-N", "set-environment", "-gu", ResourceDelegationDirEnv,
-	)
-	if err != nil {
-		detail := strings.TrimSpace(string(out))
-		if detail != "" {
-			detail = ": " + detail
-		}
-		return fmt.Errorf("clear stale tmux resource delegation environment%s: %w", detail, err)
+	if err := tmux.UnsetGlobalEnvironment(ResourceDelegationDirEnv); err != nil {
+		return fmt.Errorf("clear stale tmux resource delegation environment: %w", err)
 	}
 	return nil
 }

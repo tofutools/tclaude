@@ -2,13 +2,13 @@ package agentd
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // tuiAttachToPane hands this terminal to the tmux session named by target,
@@ -34,19 +34,21 @@ func (m tuiModel) attachCmd(agentName, convID, tmuxSession string) tea.Cmd {
 //     the terminal, tmux owns it until the operator detaches, and the console
 //     repaints itself afterwards.
 func realTUIAttachToPane(agentName, tmuxSession string, inTmux bool) tea.Cmd {
-	target := clcommon.ExactTarget(tmuxSession)
+	target := tmuxcmd.Session(tmuxSession)
 	if inTmux {
 		return func() tea.Msg {
-			out, err := clcommon.TmuxCommand("switch-client", "-t", target).CombinedOutput()
-			if err != nil {
-				err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-			}
+			// The error carries tmux's own message.
+			err := tmuxcmd.Local().SwitchCurrentClient(target)
 			return tuiAttachedMsg{agent: agentName, session: tmuxSession, err: err}
 		}
 	}
-	args := append(clcommon.NativeTmuxClientFeatureArgs(os.Getenv("TERM")), "attach-session", "-t", target)
-	cmd := clcommon.TmuxCommand(args...)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+	argv, err := tmuxcmd.Local().AttachCommand(target, tmuxcmd.AttachOptions{
+		ClientFlags: clcommon.NativeTmuxClientFeatureArgs(os.Getenv("TERM")),
+	})
+	if err != nil {
+		return func() tea.Msg { return tuiAttachedMsg{agent: agentName, session: tmuxSession, err: err} }
+	}
+	return tea.ExecProcess(exec.Command(argv[0], argv[1:]...), func(err error) tea.Msg {
 		// tmux exits 1 on a plain detach, which is not a failure — the same
 		// reading session.attachToSessionWithFlags applies.
 		var exitErr *exec.ExitError
