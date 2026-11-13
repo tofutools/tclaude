@@ -632,16 +632,27 @@ func sessionHandle(s *SessionState) string {
 // orphan) the live session that already owns the label, reintroducing the very
 // conflation JOH-248 removes. A row owned only by a *dead* session returns nil:
 // recreating over an exited row is fine. See JOH-248.
-func liveSessionOwningID(sessionID string) *SessionState {
+//
+// A local database fault reads as "no live owner", as it always has. A
+// brokered launch is different: there the read is a request to agentd, and an
+// unanswered request must fail the launch rather than wave it through over a
+// session that may be live.
+func liveSessionOwningID(sessionID string) (*SessionState, error) {
 	loaded, err := opLoadSessionState.call(launchSession(sessionID))
+	if err != nil {
+		if launchReadsLeaveThisProcess() {
+			return nil, fmt.Errorf("check whether session %q is live: %w", sessionID, err)
+		}
+		return nil, nil
+	}
 	existing := loaded.State
-	if err != nil || existing == nil {
-		return nil
+	if existing == nil {
+		return nil, nil
 	}
 	if IsTmuxSessionAlive(existing.TmuxSession) {
-		return existing
+		return existing, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // liveOwnerConflict runs the PK-collision guard both launch paths share
@@ -651,7 +662,10 @@ func liveSessionOwningID(sessionID string) *SessionState {
 // can craft its context-specific message (a resumed conversation vs a plain
 // shell), and returns (nil, nil) when the PK is free. See JOH-248/JOH-332.
 func liveOwnerConflict(sessionID, label string) (*SessionState, error) {
-	owner := liveSessionOwningID(sessionID)
+	owner, err := liveSessionOwningID(sessionID)
+	if err != nil {
+		return nil, err
+	}
 	if owner == nil {
 		return nil, nil
 	}
@@ -685,16 +699,26 @@ func LiveSessionForConv(convID string) *SessionState {
 	if convID == "" {
 		return nil
 	}
+	owner, _ := liveSessionForConv(convID)
+	return owner
+}
+
+// liveSessionForConv is LiveSessionForConv with the one error a launch must
+// not ignore: a brokered read agentd did not answer. See liveSessionOwningID.
+func liveSessionForConv(convID string) (*SessionState, error) {
 	found, err := opSessionsForConv.call(launchResumedConvArgs{ConvID: convID})
 	if err != nil {
-		return nil
+		if launchReadsLeaveThisProcess() {
+			return nil, fmt.Errorf("check whether conversation %s has a live session: %w", convID, err)
+		}
+		return nil, nil
 	}
 	for _, state := range found.States {
 		if IsTmuxSessionAlive(state.TmuxSession) {
-			return state
+			return state, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // FormatDuration formats a duration in a human-readable way

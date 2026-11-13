@@ -59,14 +59,23 @@ func claimDarwinRouteLaunch(params *NewParams, harnessName string, outerLayer bo
 	}
 	register := route
 	register.Slots = reservation.Slots()
-	if _, err := opDarwinRegisterRoute.call(register); err != nil {
-		return reservation, fmt.Errorf("register Darwin route launch contract: %w", err)
-	}
-	undo.Add(func() {
+	deleteClaim := func() {
 		if _, err := opDarwinDeleteRoute.call(route); err != nil {
 			slog.Warn("Darwin route launch cleanup failed", "conv", rowConvID, "error", err)
 		}
-	})
+	}
+	// A brokered claim can commit in agentd and still fail here, when the
+	// answer is lost, so its removal is registered first.
+	brokered := LaunchIsBrokered()
+	if brokered {
+		undo.Add(deleteClaim)
+	}
+	if _, err := opDarwinRegisterRoute.call(register); err != nil {
+		return reservation, fmt.Errorf("register Darwin route launch contract: %w", err)
+	}
+	if !brokered {
+		undo.Add(deleteClaim)
+	}
 	return reservation, nil
 }
 

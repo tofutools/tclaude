@@ -16,12 +16,16 @@ type launchConvArgs struct {
 	ConvID string `json:"conv_id"`
 }
 
+func (a launchConvArgs) launchConvRef() string { return a.ConvID }
+
 type launchConvTitleArgs struct {
 	launchSessionArgs
 	ConvID  string `json:"conv_id"`
 	Title   string `json:"title"`
 	Harness string `json:"harness"`
 }
+
+func (a launchConvTitleArgs) launchConvRef() string { return a.ConvID }
 
 // launchResumedConvArgs keys a read by the conversation a launch resumes.
 type launchResumedConvArgs struct {
@@ -55,6 +59,8 @@ type launchCodexProfileArgs struct {
 	OwnerConvID string `json:"owner_conv_id,omitempty"`
 }
 
+func (a launchCodexProfileArgs) launchConvRef() string { return a.OwnerConvID }
+
 type launchCodexProfileResult struct {
 	// NativeGeneration is "" when no registry is installed on the host.
 	NativeGeneration string `json:"native_generation,omitempty"`
@@ -86,6 +92,8 @@ type launchDarwinRouteArgs struct {
 	ConvID  string `json:"conv_id"`
 	Slots   []int  `json:"slots,omitempty"`
 }
+
+func (a launchDarwinRouteArgs) launchConvRef() string { return a.ConvID }
 
 // codexLaunchNativeGeneration is the registry generation of the profile an
 // ordinary launch generates: derived from the launch generation, so an

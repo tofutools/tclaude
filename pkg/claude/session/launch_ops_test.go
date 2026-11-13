@@ -37,6 +37,8 @@ type fakeLaunchDaemon struct {
 	lacks map[string]bool
 	// convID is the conversation the daemon is resuming with this launch.
 	convID string
+	// refuse names operations this daemon answers with a refusal.
+	refuse map[string]bool
 }
 
 func (d *fakeLaunchDaemon) offers() []string {
@@ -97,6 +99,10 @@ func (d *fakeLaunchDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Like agentd, what the daemon itself knows about the launch is not the
 	// launcher's to say.
+	if d.refuse[req.Op] {
+		http.Error(w, "refused", http.StatusForbidden)
+		return
+	}
 	bound := d.bound
 	bound.ConvID = d.convID
 	result, err := ApplyBrokeredLaunchOp(req.Op, req.Args, bound)
@@ -356,4 +362,74 @@ func TestSessionStateSurvivesTheBrokerWire(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &decodedPosture))
 	assert.Equal(t, posture, decodedPosture.Posture)
 	assert.Equal(t, "s", decodedPosture.launchSessionID())
+}
+
+// The two guards that keep a launch off a live session are reads. Brokered,
+// an unanswered read is not "nothing found": the launch fails rather than
+// write over a session that may be live. Locally a database fault still reads
+// as "free", as it always has.
+func TestBrokeredLaunchGuardsFailClosedWhenTheDaemonDoesNotAnswer(t *testing.T) {
+	isolateCacheAndDB(t)
+	const conv = "c0ffee00-1111-4111-8111-111111111111"
+	daemon := brokerThisLaunch(t)
+	daemon.convID = conv
+	daemon.refuse = map[string]bool{opLoadSessionState.name: true, opSessionsForConv.name: true}
+
+	_, err := liveOwnerConflict("spwn-guarded", "spwn-guarded")
+	require.ErrorContains(t, err, "check whether session")
+	release, reject := ReserveConvForLaunch(conv)
+	require.ErrorContains(t, reject, "has a live session")
+	assert.Nil(t, release)
+	assert.Nil(t, LiveSessionForConv(conv), "the public form keeps its best-effort answer")
+
+	daemon.refuse = nil
+	owner, err := liveOwnerConflict("spwn-guarded", "spwn-guarded")
+	require.NoError(t, err)
+	assert.Nil(t, owner)
+	release, reject = ReserveConvForLaunch(conv)
+	require.NoError(t, reject)
+	release()
+}
+
+// Operations served before a ticket is bound are authorized by the ticket
+// alone, so that set stays exactly the reads a launch needs to settle its
+// identity. Adding to it is a decision, not a side effect.
+func TestOnlyTheIdentityReadsRunBeforeALaunchIsBound(t *testing.T) {
+	var preBind []string
+	for name, op := range launchOpRegistry {
+		if op.fence == fenceTicketOnly {
+			preBind = append(preBind, name)
+		}
+	}
+	assert.ElementsMatch(t, []string{opLoadSessionState.name, opSessionsForConv.name}, preBind)
+}
+
+// A launch names only its own conversation: the one agentd resumes with it or
+// told it to create.
+func TestApplyBrokeredLaunchOpBindsTheConversation(t *testing.T) {
+	isolateCacheAndDB(t)
+	args := func(v any) json.RawMessage {
+		raw, err := json.Marshal(v)
+		require.NoError(t, err)
+		return raw
+	}
+	title := func(conv string) json.RawMessage {
+		return args(launchConvTitleArgs{launchSessionArgs: launchSession("spwn-conv"), ConvID: conv, Title: "t", Harness: "gemini"})
+	}
+	resumed := LaunchBinding{SessionID: "spwn-conv", Generation: "gen", ConvID: "conv-resumed"}
+	_, err := ApplyBrokeredLaunchOp(opSetConvTitle.name, title("conv-of-another-agent"), resumed)
+	require.ErrorIs(t, err, ErrLaunchOpForeignSession)
+	_, err = ApplyBrokeredLaunchOp(opSetConvTitle.name, title("conv-resumed"), resumed)
+	require.NoError(t, err)
+
+	preset := LaunchBinding{SessionID: "spwn-conv", Generation: "gen", PresetConvID: "conv-preset"}
+	_, err = ApplyBrokeredLaunchOp(opAgentIDForConv.name, args(launchConv("spwn-conv", "conv-of-another-agent")), preset)
+	require.ErrorIs(t, err, ErrLaunchOpForeignSession)
+	_, err = ApplyBrokeredLaunchOp(opAgentIDForConv.name, args(launchConv("spwn-conv", "conv-preset")), preset)
+	require.NoError(t, err)
+
+	// agentd named no conversation: the launcher mints its own.
+	own := LaunchBinding{SessionID: "spwn-conv", Generation: "gen"}
+	_, err = ApplyBrokeredLaunchOp(opSetConvTitle.name, title("conv-the-launcher-minted"), own)
+	require.NoError(t, err)
 }

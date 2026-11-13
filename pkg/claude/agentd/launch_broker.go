@@ -38,8 +38,10 @@ import (
 //     launcher's first call to that session and one launch generation; it
 //     can never be re-bound;
 //   - every operation must name that session, an operation that carries a
-//     generation must carry that one, and one that names a Codex app-server
-//     runtime must name the one the daemon started for this launch;
+//     generation must carry that one, one that names a conversation must
+//     name the one the daemon is resuming or told it to create, and one that
+//     names a Codex app-server runtime must name the one the daemon started
+//     for this launch;
 //   - before the bind it serves only the few reads the launcher needs to
 //     settle its identity, and only for the session it was minted for;
 //   - it is revoked when the launcher process exits, and expires regardless.
@@ -63,17 +65,25 @@ const launchTicketTTL = time.Hour
 // launchTicketBytes is the size of a ticket before hex encoding.
 const launchTicketBytes = 32
 
-type launchTicket struct {
-	mu sync.Mutex
-	// sessionID is the session the daemon minted the ticket for, or "" when
-	// the launcher derives it (a fresh launch given neither label nor
-	// conversation).
+// launchTicketScope is what the daemon knows about the launch it mints a
+// ticket for. None of it is the launcher's to say; operations are checked
+// against it.
+type launchTicketScope struct {
+	// sessionID is the session being launched, or "" when the launcher
+	// derives it (a fresh launch given neither label nor conversation).
 	sessionID string
-	// codexAppServerGeneration is the Codex app-server runtime the daemon
-	// minted for this launch, or "".
+	// convID is the conversation the launch resumes, or "".
+	convID string
+	// presetConvID is the conversation id chosen for a fresh launch, or "".
+	presetConvID string
+	// codexAppServerGeneration is the Codex app-server runtime started for
+	// this launch, or "".
 	codexAppServerGeneration string
-	// convID is the conversation this launch resumes, or "".
-	convID  string
+}
+
+type launchTicket struct {
+	mu      sync.Mutex
+	scope   launchTicketScope
 	bound   session.LaunchBinding
 	expires time.Time
 }
@@ -95,9 +105,9 @@ func launchOpLock(sessionID string) *sync.Mutex {
 	return &launchOpLocks[h.Sum32()%uint32(len(launchOpLocks))]
 }
 
-// mintLaunchTicket issues the ticket for the launch of sessionID. The daemon
-// keeps only its hash. revoke is idempotent.
-func mintLaunchTicket(sessionID, convID, codexAppServerGeneration string) (ticket string, revoke func(), err error) {
+// mintLaunchTicket issues the ticket for the launch scope describes. The
+// daemon keeps only its hash. revoke is idempotent.
+func mintLaunchTicket(scope launchTicketScope) (ticket string, revoke func(), err error) {
 	var raw [launchTicketBytes]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", nil, err
@@ -111,10 +121,7 @@ func mintLaunchTicket(sessionID, convID, codexAppServerGeneration string) (ticke
 			delete(launchTickets.byHash, k)
 		}
 	}
-	launchTickets.byHash[key] = &launchTicket{
-		sessionID: sessionID, convID: convID, codexAppServerGeneration: codexAppServerGeneration,
-		expires: now.Add(launchTicketTTL),
-	}
+	launchTickets.byHash[key] = &launchTicket{scope: scope, expires: now.Add(launchTicketTTL)}
 	launchTickets.Unlock()
 	return ticket, func() {
 		launchTickets.Lock()
@@ -158,10 +165,10 @@ func validLaunchBindingField(v string) bool {
 func (t *launchTicket) bind(b session.LaunchBinding) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.sessionID != "" && b.SessionID != t.sessionID {
+	if t.scope.sessionID != "" && b.SessionID != t.scope.sessionID {
 		return false
 	}
-	b.CodexAppServerGeneration, b.ConvID = "", ""
+	b.CodexAppServerGeneration, b.ConvID, b.PresetConvID = "", "", ""
 	if t.bound == (session.LaunchBinding{}) {
 		t.bound = b
 		return true
@@ -177,10 +184,10 @@ func (t *launchTicket) binding() session.LaunchBinding {
 	defer t.mu.Unlock()
 	bound := t.bound
 	if bound.SessionID == "" {
-		bound.SessionID = t.sessionID
+		bound.SessionID = t.scope.sessionID
 	}
-	bound.CodexAppServerGeneration = t.codexAppServerGeneration
-	bound.ConvID = t.convID
+	bound.CodexAppServerGeneration = t.scope.codexAppServerGeneration
+	bound.ConvID, bound.PresetConvID = t.scope.convID, t.scope.presetConvID
 	return bound
 }
 

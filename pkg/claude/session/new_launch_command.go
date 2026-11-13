@@ -61,6 +61,9 @@ func TclaudeLayerAgentPrivateWriteDirs(sessionID, convID string) (dirs []Tclaude
 					Parent: common.MorphArtifactsBase(), Current: dir,
 				})
 			}
+		} else if launchReadsLeaveThisProcess() {
+			slog.Warn("could not resolve the agent of this conversation; its morph artifacts directory is not granted",
+				"session_id", sessionID, "conv", convID, "error", err)
 		}
 	}
 	return dirs, createdAttachmentDir, nil

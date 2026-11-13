@@ -67,6 +67,14 @@ func prepareCodexAgentProfile(
 		}
 	} else {
 		launch := launchGenerationOf(sessionID, exitGeneration)
+		unregister := func() { _, _ = opCodexUnregisterLaunchProfile.call(launch) }
+		// A brokered registration can commit in agentd and still fail here,
+		// when the answer is lost. Its undo is therefore registered first;
+		// unregistering a generation that was never registered is a no-op.
+		brokered := LaunchIsBrokered()
+		if brokered {
+			undo.Add(unregister)
+		}
 		registered, err := opCodexRegisterLaunchProfile.call(launchCodexProfileArgs{
 			launchGenerationArgs: launch, ProfileName: profileName,
 			ProfileTOML: string(profileTOML), OwnerConvID: ownerConvID,
@@ -75,7 +83,9 @@ func prepareCodexAgentProfile(
 			return codexAgentProfile{}, err
 		}
 		if registered.NativeGeneration != "" {
-			undo.Add(func() { _, _ = opCodexUnregisterLaunchProfile.call(launch) })
+			if !brokered {
+				undo.Add(unregister)
+			}
 			profile.nativeGeneration = registered.NativeGeneration
 		}
 	}

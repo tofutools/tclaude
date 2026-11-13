@@ -29,7 +29,7 @@ func TestHandLaunchTicketToReachesTheChildOnAPipeOnly(t *testing.T) {
 	ticket := out.String()
 	issued := lookupLaunchTicket(ticket)
 	require.NotNil(t, issued, "the child read the ticket the daemon minted")
-	assert.Equal(t, "spwn-handoff", issued.sessionID, "minted for the session the launcher will derive: its label")
+	assert.Equal(t, "spwn-handoff", issued.scope.sessionID, "minted for the session the launcher will derive: its label")
 	for _, arg := range cmd.Args {
 		assert.NotContains(t, arg, ticket)
 	}

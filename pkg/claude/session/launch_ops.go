@@ -96,6 +96,20 @@ type LaunchBinding struct {
 	// Daemon-set like the runtime above; a read keyed by conversation that
 	// runs before the bind is only served for this one.
 	ConvID string `json:"-"`
+	// PresetConvID is the conversation id agentd chose for a fresh launch,
+	// or "". Daemon-set as well.
+	PresetConvID string `json:"-"`
+}
+
+// ownsConv reports whether convID is a conversation this launch may name in
+// an operation: the one it resumes or the one it was told to create. A launch
+// agentd gave neither chooses its conversation itself, and is not constrained
+// here. An operation that names no conversation is always fine.
+func (b LaunchBinding) ownsConv(convID string) bool {
+	if convID == "" || (b.ConvID == "" && b.PresetConvID == "") {
+		return true
+	}
+	return convID == b.ConvID || convID == b.PresetConvID
 }
 
 // BrokeredLaunchRequest is the body of a brokered launch operation.
@@ -169,6 +183,12 @@ type launchConvKeyedArgs interface {
 	launchConvKey() string
 }
 
+// launchConvRefArgs is implemented by arguments that name a conversation the
+// operation acts on, next to the session.
+type launchConvRefArgs interface {
+	launchConvRef() string
+}
+
 type registeredLaunchOp struct {
 	fence launchFence
 	apply func(raw json.RawMessage, bound LaunchBinding) (any, error)
@@ -213,6 +233,9 @@ func defineLaunchOp[A launchOpArgs, R any](name string, fence launchFence, run f
 				return nil, ErrLaunchOpForeignSession
 			}
 			if g := args.launchGeneration(); g != "" && g != bound.Generation {
+				return nil, ErrLaunchOpForeignSession
+			}
+			if ref, ok := any(args).(launchConvRefArgs); ok && !bound.ownsConv(ref.launchConvRef()) {
 				return nil, ErrLaunchOpForeignSession
 			}
 			if runtime, ok := any(args).(launchCodexRuntimeArgs); ok &&
@@ -304,6 +327,14 @@ var brokeredLaunch atomic.Pointer[launchBroker]
 // LaunchIsBrokered reports whether this process hands its launch operations
 // to agentd.
 func LaunchIsBrokered() bool { return brokeredLaunch.Load() != nil }
+
+// launchReadsLeaveThisProcess reports whether a launch read is answered by
+// agentd rather than the local database: once this process holds a ticket,
+// bound or not. A failed read then means "the daemon did not answer", which a
+// guard must not mistake for "nothing found".
+func launchReadsLeaveThisProcess() bool {
+	return brokeredLaunch.Load() != nil || pendingLaunchTicket.Load() != nil
+}
 
 // adoptLaunchTicket is the first thing a launch does: it takes the launch
 // ticket off the descriptor agentd handed over and closes that descriptor, so

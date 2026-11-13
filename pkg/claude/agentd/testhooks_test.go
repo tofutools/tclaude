@@ -2852,7 +2852,9 @@ func MintLaunchTicketForTest(t testing.TB, sessionID string) (ticket string, rev
 // resumes convID and/or was given a Codex app-server runtime.
 func MintLaunchTicketForLaunchTest(t testing.TB, sessionID, convID, codexAppServerGeneration string) (ticket string, revoke func()) {
 	t.Helper()
-	ticket, revoke, err := mintLaunchTicket(sessionID, convID, codexAppServerGeneration)
+	ticket, revoke, err := mintLaunchTicket(launchTicketScope{
+		sessionID: sessionID, convID: convID, codexAppServerGeneration: codexAppServerGeneration,
+	})
 	if err != nil {
 		t.Fatalf("mint launch ticket: %v", err)
 	}

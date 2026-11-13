@@ -219,7 +219,10 @@ var openGuard atomic.Pointer[func() error]
 //
 // It exists for processes that must not touch the database at all: a launch
 // brokered through agentd runs where there may be no database, and Open
-// would create and migrate an empty one there rather than fail.
+// would create and migrate an empty one there rather than fail. Today only a
+// test installs one, to prove a brokered launch makes no such access; the
+// brokered entry points install their own once all of them are brokered.
+// Guards nest: restore them in reverse order of installation.
 func SetOpenGuard(guard func() error) (restore func()) {
 	var next *func() error
 	if guard != nil {
