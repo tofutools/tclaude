@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -43,7 +42,6 @@ const (
 	pageSnapshotDefaultH    = 800
 	pageSnapshotMinSide     = 200
 	pageSnapshotMaxSide     = 2560
-	pageSnapshotSettle      = 300 * time.Millisecond
 	pageSnapshotMaxBody     = 4096
 	pageSnapshotMaxInFlight = 2
 )
@@ -68,11 +66,12 @@ type pageSnapshotJob struct {
 	ScrollY   int
 	OverlaySV string // an SVG of the marks, in document coordinates ("" for none)
 	Patches   string // the page's replayed live patches, a JSON array (tcl-14z3fq)
+	pageID    string // the page's id, for the watch registry
 }
 
-// pageSnapshotRender renders a job to PNG bytes. A var so flow tests can
-// stand in for Chrome.
-var pageSnapshotRender = renderPageSnapshotChrome
+// pageSnapshotRender renders a job to PNG bytes once the page has gone still
+// (capped). A var so flow tests can stand in for Chrome.
+var pageSnapshotRender = renderPageSnapshot
 
 type pageSnapshotRequest struct {
 	Seq     int64 `json:"seq"`
@@ -89,49 +88,109 @@ type pageSnapshotResponse struct {
 	MarksSeq int64  `json:"marks_seq,omitempty"`
 	// Patches is how many live patches the page was rendered with.
 	Patches int `json:"patches,omitempty"`
+	// Settle is how the wait for the page to go still went.
+	Settle *pageSettle `json:"settle,omitempty"`
+	// WatchMS is how long the page had been watched, for a watch's capture.
+	WatchMS int64 `json:"watch_ms,omitempty"`
+	// StillMS is how long the page had not changed, for a watch's capture.
+	StillMS *int64 `json:"still_ms,omitempty"`
+	// Captured is final (the capture that ended a watch) or frame (a frame
+	// of a watch, which goes on), for a watch's capture.
+	Captured string `json:"captured,omitempty"`
 }
 
 // POST /v1/pages/{name}/snapshot — {seq?, no_marks?}: the page as a PNG with
-// the latest (or the given) batch of marks.
+// the latest (or the given) batch of marks, once it has gone still (capped).
 func handlePageSnapshot(w http.ResponseWriter, r *http.Request) {
-	p, ok := pageFor(w, r, PermGroupsPagesRead)
+	var req pageSnapshotRequest
+	t, ok := pageSnapshotPrepare(w, r, &req)
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, pageSnapshotMaxBody)
-	var req pageSnapshotRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid request: "+err.Error())
+	job, resp := t.job, t.resp
+	release, ok := pageSnapshotAcquire(w, t.owner)
+	if !ok {
 		return
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(r.Context(), pageSnapshotTimeout)
+	defer cancel()
+	png, settle, err := pageSnapshotRender(ctx, job)
+	if err != nil {
+		writePageSnapshotError(w, err)
+		return
+	}
+	resp.PNG = base64.StdEncoding.EncodeToString(png)
+	resp.Settle = &settle
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func writePageSnapshotError(w http.ResponseWriter, err error) {
+	code := "snapshot_failed"
+	if errors.Is(err, errNoChrome) {
+		code = "no_chrome"
+	}
+	writeError(w, http.StatusServiceUnavailable, code, err.Error())
+}
+
+// pageSnapshotTarget is what a snapshot renders, and for whom.
+type pageSnapshotTarget struct {
+	job    pageSnapshotJob
+	resp   pageSnapshotResponse
+	owner  string // the page's agent
+	caller string // the agent asking (a group member, for a shared page)
+}
+
+// pageSnapshotPrepare reads the request into req and works out what to
+// render: the page, its path, viewport, scroll, marks and patches. It writes
+// the error itself when it says no.
+func pageSnapshotPrepare(w http.ResponseWriter, r *http.Request, req any) (t pageSnapshotTarget, ok bool) {
+	p, _, caller, ok := pageForAs(w, r, PermGroupsPagesRead)
+	if !ok {
+		return t, false
+	}
+	var job pageSnapshotJob
+	var resp pageSnapshotResponse
+	r.Body = http.MaxBytesReader(w, r.Body, pageSnapshotMaxBody)
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid request: "+err.Error())
+		return t, false
+	}
+	var base pageSnapshotRequest
+	switch v := req.(type) {
+	case *pageSnapshotRequest:
+		base = *v
+	case *pageWatchRequest:
+		base = v.pageSnapshotRequest
 	}
 	livePages.mu.Lock()
 	stage, startPath, kind, owner := p.stage, p.path, p.kind, p.owner
 	livePages.mu.Unlock()
 	if err := pageReadBackAllowed(kind, stage, false); err != nil {
 		writeError(w, http.StatusConflict, "static_source", err.Error())
-		return
+		return t, false
 	}
 	if stage.otherHostsAllowed() {
 		writeError(w, http.StatusConflict, "other_hosts", "this page may load other hosts (the operator allowed it), so it is not rendered for you: "+
 			"a snapshot would show what the daemon's network reaches")
-		return
+		return t, false
 	}
 	origin := stageListenOrigin(stage)
 	if origin == "" {
 		writeError(w, http.StatusServiceUnavailable, "no_stage", "the dashboard is not listening, so the page has no origin to render")
-		return
+		return t, false
 	}
 
 	view, latest := latestPageView(p.id)
 	batch := latest
-	if req.Seq > 0 {
-		batch = pageMarkBatchBySeq(p.id, req.Seq)
+	if base.Seq > 0 {
+		batch = pageMarkBatchBySeq(p.id, base.Seq)
 		if batch == nil {
-			writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no batch %d of marks is kept for this page", req.Seq))
-			return
+			writeError(w, http.StatusNotFound, "not_found", fmt.Sprintf("no batch %d of marks is kept for this page", base.Seq))
+			return t, false
 		}
 	}
-	if req.NoMarks {
+	if base.NoMarks {
 		batch = nil
 	}
 	// Marks are drawn where they were drawn: at their batch's path, viewport
@@ -139,7 +198,7 @@ func handlePageSnapshot(w http.ResponseWriter, r *http.Request) {
 	if batch != nil {
 		view = pageViewReport{VW: batch.Viewport.W, VH: batch.Viewport.H, X: batch.Scroll.X, Y: batch.Scroll.Y, Path: batch.Path}
 	}
-	job := pageSnapshotJob{
+	job = pageSnapshotJob{
 		Origin: origin, Token: stage.snapshotToken,
 		Width: clampSnapshotSide(view.VW, pageSnapshotDefaultW), Height: clampSnapshotSide(view.VH, pageSnapshotDefaultH),
 		ScrollX: view.X, ScrollY: view.Y,
@@ -152,47 +211,41 @@ func handlePageSnapshot(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 	job.URL = origin + path
-	resp := pageSnapshotResponse{Width: job.Width, Height: job.Height, ScrollX: job.ScrollX, ScrollY: job.ScrollY, Path: path}
+	resp = pageSnapshotResponse{Width: job.Width, Height: job.Height, ScrollX: job.ScrollX, ScrollY: job.ScrollY, Path: path}
 	if batch != nil {
 		job.OverlaySV = pageMarksSVG(batch.Marks)
 		resp.MarksSeq = batch.Seq
 	}
 	// The page as the operator sees it: with its live patches.
 	job.Patches, resp.Patches = pagePatchesForSnapshot(p.id)
+	job.pageID = p.id
+	return pageSnapshotTarget{job: job, resp: resp, owner: owner, caller: caller}, true
+}
 
+// pageSnapshotAcquire takes the page owner's one render and one of the
+// host's few, or writes why not.
+func pageSnapshotAcquire(w http.ResponseWriter, owner string) (release func(), ok bool) {
 	pageSnapshotBusy.mu.Lock()
 	if pageSnapshotBusy.by[owner] {
 		pageSnapshotBusy.mu.Unlock()
-		writeError(w, http.StatusServiceUnavailable, "busy", "your previous page snapshot is still rendering")
-		return
+		writeError(w, http.StatusServiceUnavailable, "busy", "your previous page snapshot (or a watch) is still running")
+		return nil, false
 	}
 	pageSnapshotBusy.by[owner] = true
 	pageSnapshotBusy.mu.Unlock()
-	defer func() {
+	free := func() {
 		pageSnapshotBusy.mu.Lock()
 		delete(pageSnapshotBusy.by, owner)
 		pageSnapshotBusy.mu.Unlock()
-	}()
+	}
 	select {
 	case pageSnapshotSlots <- struct{}{}:
-		defer func() { <-pageSnapshotSlots }()
+		return func() { <-pageSnapshotSlots; free() }, true
 	default:
+		free()
 		writeError(w, http.StatusServiceUnavailable, "busy", "another page snapshot is rendering; try again")
-		return
+		return nil, false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), pageSnapshotTimeout)
-	defer cancel()
-	png, err := pageSnapshotRender(ctx, job)
-	if err != nil {
-		code := "snapshot_failed"
-		if errors.Is(err, errNoChrome) {
-			code = "no_chrome"
-		}
-		writeError(w, http.StatusServiceUnavailable, code, err.Error())
-		return
-	}
-	resp.PNG = base64.StdEncoding.EncodeToString(png)
-	writeJSON(w, http.StatusOK, resp)
 }
 
 func clampSnapshotSide(v, def int) int {
@@ -336,68 +389,6 @@ func chromeArgs(profile string) []string {
 	}
 }
 
-func renderPageSnapshotChrome(ctx context.Context, job pageSnapshotJob) ([]byte, error) {
-	bin, err := findChrome()
-	if err != nil {
-		return nil, err
-	}
-	profile, err := os.MkdirTemp("", "tclaude-snapshot-")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = os.RemoveAll(profile) }()
-
-	// fd 3: Chrome reads commands; fd 4: Chrome writes answers and events.
-	toChrome, chromeIn, err := os.Pipe()
-	if err != nil {
-		return nil, err
-	}
-	chromeOut, fromChrome, err := os.Pipe()
-	if err != nil {
-		_ = toChrome.Close()
-		_ = chromeIn.Close()
-		return nil, err
-	}
-	cmd := exec.Command(bin, chromeArgs(profile)...)
-	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+filepath.Join(profile, "xdg-config"), "XDG_CACHE_HOME="+filepath.Join(profile, "xdg-cache"))
-	cmd.ExtraFiles = []*os.File{toChrome, fromChrome}
-	chromeProcessGroup(cmd)
-	err = cmd.Start()
-	_ = toChrome.Close()
-	_ = fromChrome.Close()
-	if err != nil {
-		_ = chromeIn.Close()
-		_ = chromeOut.Close()
-		return nil, fmt.Errorf("starting Chrome (%s): %w", bin, err)
-	}
-	exited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(exited) }()
-	conn := newCDPConn(chromeIn, chromeOut)
-	defer func() {
-		conn.close()
-		killChrome(cmd)
-		<-exited
-	}()
-	go func() {
-		select {
-		case <-ctx.Done():
-			killChrome(cmd)
-		case <-exited:
-		}
-	}()
-	png, err := conn.screenshot(ctx, job)
-	if err != nil {
-		select {
-		case <-exited:
-			if ctx.Err() == nil {
-				return nil, fmt.Errorf("chrome exited during the snapshot (under a sandbox it may need --no-sandbox: point TCLAUDE_CHROME at a wrapper): %w", err)
-			}
-		default:
-		}
-	}
-	return png, err
-}
-
 // ---- a minimal DevTools protocol client, over Chrome's pipe ----
 
 type cdpMessage struct {
@@ -423,17 +414,23 @@ type cdpConn struct {
 	pending map[int64]chan cdpMessage
 	events  chan cdpMessage
 	done    chan struct{}
+	quit    chan struct{} // closed by close: an undelivered event is dropped
+	once    sync.Once
 }
 
 func newCDPConn(in io.WriteCloser, out io.ReadCloser) *cdpConn {
-	c := &cdpConn{in: in, out: out, pending: map[int64]chan cdpMessage{}, events: make(chan cdpMessage, 256), done: make(chan struct{})}
+	c := &cdpConn{in: in, out: out, pending: map[int64]chan cdpMessage{}, events: make(chan cdpMessage, 1024),
+		done: make(chan struct{}), quit: make(chan struct{})}
 	go c.read()
 	return c
 }
 
 func (c *cdpConn) close() {
-	_ = c.in.Close()
-	_ = c.out.Close()
+	c.once.Do(func() {
+		close(c.quit)
+		_ = c.in.Close()
+		_ = c.out.Close()
+	})
 }
 
 // read takes Chrome's NUL-separated JSON messages off the pipe.
@@ -469,9 +466,12 @@ func (c *cdpConn) read() {
 			}
 			continue
 		}
+		// Every event is delivered: the page's request count and its paused
+		// requests both depend on it. The pump drains them for the page's life.
 		select {
 		case c.events <- m:
-		default: // nobody needs a flood of events; the ones we wait on are few
+		case <-c.quit:
+			return
 		}
 	}
 }
@@ -535,221 +535,4 @@ func snapshotRequest(requestURL, resourceType, origin, token string, headers map
 		out = append(out, map[string]string{"name": k, "value": v})
 	}
 	return true, append(out, map[string]string{"name": stageSnapshotHeader, "value": token})
-}
-
-func (c *cdpConn) screenshot(ctx context.Context, job pageSnapshotJob) ([]byte, error) {
-	var target struct {
-		TargetID string `json:"targetId"`
-	}
-	if err := c.call(ctx, "", "Target.createTarget", map[string]any{"url": "about:blank"}, &target); err != nil {
-		return nil, err
-	}
-	var attached struct {
-		SessionID string `json:"sessionId"`
-	}
-	if err := c.call(ctx, "", "Target.attachToTarget", map[string]any{"targetId": target.TargetID, "flatten": true}, &attached); err != nil {
-		return nil, err
-	}
-	s := attached.SessionID
-
-	// Every request pauses here (redirect hops pause again): the page's own
-	// go on, its documents with the token; anything else is failed.
-	if err := c.call(ctx, s, "Fetch.enable", map[string]any{"patterns": []map[string]any{
-		{"urlPattern": "*", "requestStage": "Request"},
-	}}, nil); err != nil {
-		return nil, err
-	}
-	for _, step := range []struct {
-		method string
-		params any
-	}{
-		{"Page.enable", map[string]any{}},
-		{"Page.setLifecycleEventsEnabled", map[string]any{"enabled": true}},
-		{"Emulation.setDeviceMetricsOverride", map[string]any{"width": job.Width, "height": job.Height, "deviceScaleFactor": 1, "mobile": false}},
-	} {
-		if err := c.call(ctx, s, step.method, step.params, nil); err != nil {
-			return nil, err
-		}
-	}
-
-	// The navigation's own "load" lifecycle event ends the wait, matched by
-	// loader id: a late event from about:blank must not. Events can come
-	// before Page.navigate answers, so the pump records them.
-	var loadMu sync.Mutex
-	loadedBy := map[string]bool{}
-	loadSignal := make(chan struct{}, 1)
-	// A document the page tried to load from elsewhere ends the snapshot
-	// at once: the page is leaving its origin.
-	blocked := make(chan string, 1)
-	pump := make(chan struct{})
-	pumpCtx, stopPump := context.WithCancel(ctx)
-	defer func() { stopPump(); <-pump }()
-	go func() {
-		defer close(pump)
-		for {
-			select {
-			case <-pumpCtx.Done():
-				return
-			case <-c.done:
-				return
-			case ev := <-c.events:
-				if ev.SessionID != s {
-					continue
-				}
-				switch ev.Method {
-				case "Fetch.requestPaused":
-					var p struct {
-						RequestID    string `json:"requestId"`
-						ResourceType string `json:"resourceType"`
-						Request      struct {
-							URL     string            `json:"url"`
-							Headers map[string]string `json:"headers"`
-						} `json:"request"`
-					}
-					if json.Unmarshal(ev.Params, &p) != nil {
-						continue
-					}
-					params := map[string]any{"requestId": p.RequestID}
-					method := "Fetch.continueRequest"
-					allow, h := snapshotRequest(p.Request.URL, p.ResourceType, job.Origin, job.Token, p.Request.Headers)
-					switch {
-					case !allow:
-						method = "Fetch.failRequest"
-						params["errorReason"] = "BlockedByClient"
-						if p.ResourceType == "Document" {
-							select {
-							case blocked <- p.ResourceType:
-							default:
-							}
-						}
-					case h != nil:
-						params["headers"] = h
-					}
-					go func() { _ = c.call(pumpCtx, s, method, params, nil) }()
-				case "Page.lifecycleEvent":
-					var p struct {
-						LoaderID string `json:"loaderId"`
-						Name     string `json:"name"`
-					}
-					if json.Unmarshal(ev.Params, &p) != nil || p.Name != "load" {
-						continue
-					}
-					loadMu.Lock()
-					loadedBy[p.LoaderID] = true
-					loadMu.Unlock()
-					select {
-					case loadSignal <- struct{}{}:
-					default:
-					}
-				}
-			}
-		}
-	}()
-
-	var nav struct {
-		LoaderID  string `json:"loaderId"`
-		ErrorText string `json:"errorText"`
-	}
-	if err := c.call(ctx, s, "Page.navigate", map[string]any{"url": job.URL}, &nav); err != nil {
-		return nil, err
-	}
-	if nav.ErrorText == "net::ERR_BLOCKED_BY_CLIENT" {
-		return nil, errPageLeftOrigin
-	}
-	if nav.ErrorText != "" {
-		return nil, fmt.Errorf("chrome could not load the page: %s", nav.ErrorText)
-	}
-	for {
-		loadMu.Lock()
-		done := loadedBy[nav.LoaderID]
-		loadMu.Unlock()
-		if done {
-			break
-		}
-		select {
-		case <-loadSignal:
-		case <-blocked:
-			return nil, errPageLeftOrigin
-		case <-ctx.Done():
-			return nil, fmt.Errorf("the page did not finish loading: %w", ctx.Err())
-		}
-	}
-	select {
-	case <-time.After(pageSnapshotSettle):
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-
-	// The page may have navigated itself; only its own origin is captured.
-	var where struct {
-		Result struct {
-			Value string `json:"value"`
-		} `json:"result"`
-	}
-	if err := c.call(ctx, s, "Runtime.evaluate", map[string]any{"expression": "location.origin", "returnByValue": true}, &where); err != nil {
-		return nil, err
-	}
-	if where.Result.Value != job.Origin {
-		return nil, errPageLeftOrigin
-	}
-	select {
-	case <-blocked:
-		return nil, errPageLeftOrigin
-	default:
-	}
-
-	overlay, _ := json.Marshal(job.OverlaySV)
-	patches := job.Patches
-	if patches == "" {
-		patches = "[]"
-	}
-	expr := fmt.Sprintf(`(function(){
-  %s
-  var patches = %s;
-  for (var i = 0; i < patches.length; i++) {
-    try { tclaudeApplyPatch(document, patches[i]); } catch (e) { /* as in the operator's view: a patch that fails is skipped */ }
-  }
-  window.scrollTo(%d, %d);
-  var svg = %s;
-  if (svg) {
-    var host = document.createElement('div');
-    host.setAttribute('data-tclaude-marks', '');
-    host.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:2147483647;pointer-events:none';
-    host.innerHTML = svg;
-    document.documentElement.appendChild(host);
-  }
-  return new Promise(function(r){ requestAnimationFrame(function(){ requestAnimationFrame(function(){ r(true); }); }); });
-})()`, stagePatchJS, patches, job.ScrollX, job.ScrollY, overlay)
-	var evaluated struct {
-		ExceptionDetails *struct {
-			Text      string `json:"text"`
-			Exception *struct {
-				Description string `json:"description"`
-			} `json:"exception"`
-		} `json:"exceptionDetails"`
-	}
-	if err := c.call(ctx, s, "Runtime.evaluate", map[string]any{"expression": expr, "awaitPromise": true}, &evaluated); err != nil {
-		return nil, err
-	}
-	if d := evaluated.ExceptionDetails; d != nil {
-		why := d.Text
-		if d.Exception != nil && d.Exception.Description != "" {
-			why = d.Exception.Description
-		}
-		if len(why) > 200 {
-			why = why[:200]
-		}
-		return nil, fmt.Errorf("could not draw the marks on the page (its CSP may forbid it): %s", why)
-	}
-	var shot struct {
-		Data string `json:"data"`
-	}
-	if err := c.call(ctx, s, "Page.captureScreenshot", map[string]any{"format": "png"}, &shot); err != nil {
-		return nil, err
-	}
-	png, err := base64.StdEncoding.DecodeString(shot.Data)
-	if err != nil {
-		return nil, fmt.Errorf("chrome sent an unreadable screenshot: %w", err)
-	}
-	return png, nil
 }

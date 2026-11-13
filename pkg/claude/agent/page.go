@@ -110,14 +110,23 @@ func pageCmd() *cobra.Command {
 			}.ToCobra(),
 			boa.CmdT[pageSnapshotParams]{
 				Use:   "snapshot <name>",
-				Short: "Render one of your pages to a PNG, with the operator's marks",
+				Short: "Render one of your pages to a PNG, with the operator's marks, or watch it settle",
 				Long: "Renders the page in a headless Chrome on the host, at the operator's viewport and scroll, with the latest batch " +
 					"of marks drawn on top (or --seq N, or none with --no-marks), and writes a PNG. Needs Chrome or Chromium on the host " +
-					"(or TCLAUDE_CHROME); tclaude never downloads one.",
+					"(or TCLAUDE_CHROME); tclaude never downloads one.\n\n" +
+					"A plain snapshot waits for the page to go still after it loads: no request loading, no DOM change and the same text " +
+					"and layout for 0.5s, for at most 10s; it says how the wait went.\n\n" +
+					"For a single-page app (a page that loads, then fetches its data, then paints, as the tclaude dashboard does), " +
+					"--watch keeps the page open and prints one line per tick (--every, default 500ms): the time, how long it has been still, " +
+					"what changed, requests loading, DOM mutations, hashes of the visible text, layout and pixels, and the title. " +
+					"--frames DIR writes a PNG per tick (--frame-every N, --frame-scale 0.25 for thumbnails). The watch captures at --for " +
+					"(default 10s, at most 60s). To capture sooner, run it in the background and, once the lines show the page still, " +
+					"run `page snapshot <name> --session <id>` with the session its first line names: that captures the very page you " +
+					"watched, as it is, and ends the watch (--keep-watching takes a frame instead). A line on the watch's stdin does the same.",
 				Args:        cobra.ExactArgs(1),
 				ParamEnrich: common.DefaultParamEnricher(),
 				RunFunc: func(p *pageSnapshotParams, _ *cobra.Command, args []string) {
-					os.Exit(runPageSnapshot(p, args[0], cliStdout, cliStderr))
+					os.Exit(runPageSnapshot(p, args[0], stdinLines(), cliStdout, cliStderr))
 				},
 			}.ToCobra(),
 			boa.CmdT[pageDOMParams]{
@@ -359,10 +368,18 @@ type pageMarksParams struct {
 }
 
 type pageSnapshotParams struct {
-	Out     string `short:"o" long:"out" optional:"true" help:"The PNG file to write (default: <name>.png in the current directory)"`
-	Seq     int64  `long:"seq" optional:"true" help:"Draw this batch of marks (default: the latest)"`
-	NoMarks bool   `long:"no-marks" help:"Render the page without marks"`
-	JSON    bool   `long:"json" help:"Output JSON (without the image)"`
+	Out        string  `short:"o" long:"out" optional:"true" help:"The PNG file to write (default: <name>.png in the current directory)"`
+	Seq        int64   `long:"seq" optional:"true" help:"Draw this batch of marks (default: the latest)"`
+	NoMarks    bool    `long:"no-marks" help:"Render the page without marks"`
+	JSON       bool    `long:"json" help:"Output JSON (without the image); with --watch, one JSON event per line"`
+	Watch      bool    `long:"watch" help:"Keep the page open and report what changes, tick by tick; capture at --for or when you ask"`
+	Every      string  `long:"every" optional:"true" help:"With --watch: the time between ticks (default 500ms, 100ms to 5s)"`
+	For        string  `long:"for" optional:"true" help:"With --watch: how long to watch before the final capture (default 10s, at most 60s)"`
+	Frames     string  `long:"frames" optional:"true" help:"With --watch: write a frame for every tick into this directory"`
+	FrameEvery int     `long:"frame-every" optional:"true" help:"With --frames: a frame every N ticks only"`
+	FrameScale float64 `long:"frame-scale" optional:"true" help:"With --frames: scale frames down, 0.1 to 1 (0.25 for thumbnails)"`
+	Session    string  `long:"session" optional:"true" help:"Capture a running watch now, by the session its first line names (this ends it)"`
+	Keep       bool    `long:"keep-watching" help:"With --session: take a frame and let the watch go on"`
 }
 
 type pageDOMParams struct {
@@ -477,23 +494,39 @@ func pageMarkWhere(m pageMarkWire) string {
 	return fmt.Sprintf("from %d,%d to %d,%d (%d points)", a[0], a[1], b[0], b[1], len(m.Points))
 }
 
-func runPageSnapshot(p *pageSnapshotParams, name string, stdout, stderr io.Writer) int {
-	if strings.TrimSpace(p.Out) == "" {
-		base := name
-		if _, n, ok := strings.Cut(name, "/"); ok {
-			base = n
+func runPageSnapshot(p *pageSnapshotParams, name string, stdin io.Reader, stdout, stderr io.Writer) int {
+	base := name
+	if _, n, ok := strings.Cut(name, "/"); ok {
+		base = n
+	}
+	if p.Session != "" {
+		if p.Watch || p.Seq != 0 || p.NoMarks || p.Every != "" || p.For != "" || p.Frames != "" || p.FrameEvery != 0 || p.FrameScale != 0 {
+			fmt.Fprintln(stderr, "error: --session captures a running watch: it takes only --out, --keep-watching and --json")
+			return rcInvalidArg
 		}
+		if strings.TrimSpace(p.Out) == "" {
+			p.Out = base + ".png"
+			if p.Keep {
+				p.Out = base + "-frame-" + time.Now().Format("150405.000") + ".png"
+			}
+		}
+		return runPageSnapshotCapture(name, p.Session, p.Keep, p.Out, p.JSON, stdout, stderr)
+	}
+	if p.Keep {
+		fmt.Fprintln(stderr, "error: --keep-watching goes with --session")
+		return rcInvalidArg
+	}
+	if strings.TrimSpace(p.Out) == "" {
 		p.Out = base + ".png"
 	}
-	var resp struct {
-		PNG      string `json:"png"`
-		Width    int    `json:"width"`
-		Height   int    `json:"height"`
-		ScrollX  int    `json:"scroll_x"`
-		ScrollY  int    `json:"scroll_y"`
-		Path     string `json:"path"`
-		MarksSeq int64  `json:"marks_seq,omitempty"`
+	if p.Watch {
+		return runPageSnapshotWatch(p, name, stdin, stdout, stderr)
 	}
+	if p.Every != "" || p.For != "" || p.Frames != "" || p.FrameEvery != 0 || p.FrameScale != 0 {
+		fmt.Fprintln(stderr, "error: --every, --for and --frames go with --watch")
+		return rcInvalidArg
+	}
+	var resp pageSnapshotWire
 	body := map[string]any{"seq": p.Seq, "no_marks": p.NoMarks}
 	if err := DaemonRequest(http.MethodPost, pageAPIPath(name, "/snapshot", nil), body, &resp, DaemonOpts{Timeout: 60 * time.Second}); err != nil {
 		return drawingBoardErr(stderr, err)
@@ -510,13 +543,18 @@ func runPageSnapshot(p *pageSnapshotParams, name string, stdout, stderr io.Write
 	resp.PNG = ""
 	if p.JSON {
 		return writeDrawingBoardJSON(stdout, map[string]any{"file": p.Out, "width": resp.Width, "height": resp.Height,
-			"scroll_x": resp.ScrollX, "scroll_y": resp.ScrollY, "path": resp.Path, "marks_seq": resp.MarksSeq})
+			"scroll_x": resp.ScrollX, "scroll_y": resp.ScrollY, "path": resp.Path, "marks_seq": resp.MarksSeq, "settle": resp.Settle})
 	}
-	marks := "no marks"
-	if resp.MarksSeq > 0 {
-		marks = fmt.Sprintf("marks of batch %d", resp.MarksSeq)
+	fmt.Fprintf(stdout, "Wrote %s: %s at %dx%d, scrolled to %d,%d, %s.\n", p.Out, resp.Path, resp.Width, resp.Height, resp.ScrollX, resp.ScrollY,
+		pageSnapshotMarks(resp.MarksSeq, resp.Patches))
+	if s := resp.Settle; s != nil {
+		if s.Settled {
+			fmt.Fprintf(stdout, "The page went still %s after it opened.\n", secs(s.WaitedMS))
+		} else {
+			fmt.Fprintf(stdout, "The page did not go still within %s (%s): captured anyway. For a single-page app, "+
+				"--watch shows it settle and lets you choose when to capture.\n", secs(s.WaitedMS), s.Why)
+		}
 	}
-	fmt.Fprintf(stdout, "Wrote %s: %s at %dx%d, scrolled to %d,%d, %s.\n", p.Out, resp.Path, resp.Width, resp.Height, resp.ScrollX, resp.ScrollY, marks)
 	return rcOK
 }
 
