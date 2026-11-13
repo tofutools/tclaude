@@ -401,7 +401,7 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	}
 	h, _ := harness.Get(sess.Harness)
 	runPTYOverWS(w, r, webTerminalAttachCmd(attach), sess.TmuxSession, sess.TmuxSession, h, config.TerminalTabAgentWindow,
-		func() bool { return agentTerminalStarting(convID, "") })
+		func() bool { return agentTerminalReplaced(convID, sess) })
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
@@ -468,7 +468,7 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 	}
 	h, _ := harness.Get(sess.Harness)
 	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession, sess.TmuxSession, h, config.TerminalTabAgentWindow,
-		func() bool { return labelTerminalStarting(label, agentID) })
+		func() bool { return labelTerminalReplaced(label, sess) })
 }
 
 // waitForDashboardSpawnFocusSession bridges the one spawn shape where the
@@ -828,11 +828,10 @@ func webTerminalAttachCmd(attachCommand string) string {
 // when the PTY's command exits on its own (see terminalExitClose); "" (the TUI
 // page, tests) skips that decision and closes the socket plainly.
 //
-// starting, for an agent terminal, reports whether the agent has a launch in
-// progress. A client whose session ended while one is (a relaunch replacing the
-// pane, or an attach that raced a pane being set up) closes with
-// termCloseStarting instead of "session ended", so the browser waits for the
-// new pane and attaches to it.
+// starting, for an agent terminal, reports whether a launch has replaced the
+// attached one. A client whose session ended because of that (a relaunch
+// replacing the pane) closes with termCloseStarting instead of "session
+// ended", so the browser waits for the new pane and attaches to it.
 func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, detachSession, cleanupSession string, cleanupHarness *harness.Harness, exitTarget config.TerminalTabTarget, starting ...func() bool) {
 	hook := termWSTestHook
 	if hook != nil && hook.RewriteCommand != nil {

@@ -62,11 +62,7 @@ func pendingSpawnLaunching(agentID string, now time.Time) bool {
 	if err != nil || pending == nil {
 		return false
 	}
-	if pending.Launching {
-		return true
-	}
-	created, err := time.Parse(time.RFC3339Nano, pending.CreatedAt)
-	return err == nil && now.Sub(created) < terminalStartWindow
+	return pendingReservationLive(pending, now)
 }
 
 // agentTerminalStarting reports whether the agent behind convID (or agentID,
@@ -100,10 +96,57 @@ func labelTerminalStarting(label, agentID string) bool {
 	}
 	if pending, err := db.GetPendingSpawn(label); err == nil && pending != nil {
 		if agentID == "" || pending.AgentID == "" || pending.AgentID == agentID {
-			return true
+			return pendingReservationLive(pending, now)
 		}
 	}
 	return pendingSpawnLaunching(agentID, now)
+}
+
+// pendingReservationLive reports whether a pending spawn is still a launch in
+// progress: marked launching, or reserved inside the start window.
+func pendingReservationLive(pending *db.PendingSpawn, now time.Time) bool {
+	if pending.Launching {
+		return true
+	}
+	created, err := time.Parse(time.RFC3339Nano, pending.CreatedAt)
+	return err == nil && now.Sub(created) < terminalStartWindow
+}
+
+// agentTerminalReplaced reports, for a client whose attached session just
+// ended, whether a launch has replaced it: a launching row of the agent that is
+// not the attached launch (another row, or the same row relaunched since), or
+// a pending spawn. A young session that simply ended is not one: it keeps its
+// "session ended" answer.
+func agentTerminalReplaced(convID string, attached *db.SessionRow) bool {
+	now := terminalNow()
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if sessionRowLaunching(row, now) && isReplacement(row, attached) {
+			return true
+		}
+	}
+	agentID, _ := db.AgentIDForConv(convID)
+	return pendingSpawnLaunching(agentID, now)
+}
+
+// labelTerminalReplaced is agentTerminalReplaced for a label-keyed terminal.
+func labelTerminalReplaced(label string, attached *db.SessionRow) bool {
+	now := terminalNow()
+	if row, err := db.LoadSession(label); err == nil && sessionRowLaunching(row, now) && isReplacement(row, attached) {
+		return true
+	}
+	if pending, err := db.GetPendingSpawn(label); err == nil && pending != nil {
+		return pendingReservationLive(pending, now)
+	}
+	return false
+}
+
+// isReplacement reports whether row is a launch other than attached.
+func isReplacement(row, attached *db.SessionRow) bool {
+	return attached == nil || row.ID != attached.ID || row.CreatedAt.After(attached.CreatedAt)
 }
 
 // selectorAgentID returns selector when it names an active agent, for an

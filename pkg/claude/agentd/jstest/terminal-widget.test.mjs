@@ -1380,3 +1380,54 @@ test('a remote terminal waits for a starting agent and redials an unreachable pe
   assert.equal(widget.reconnectAvailable(), false, 'a final refusal offers no Reconnect');
   assert.equal(widget.waiting(), null);
 });
+
+test('after the first attach a dropped terminal never falls back to a forcing initial retry', async (t) => {
+  // Initial retries belong to the first attach only: a quiet redial that hears
+  // "detached" from another client, or drops fast, must not be redialled by a
+  // retry that takes the session (no reattach=1).
+  const { fakes, widget, state } = await mountWaitingWidget(t, { initialRetry: true, initialRetryStabilityMs: 1000 });
+  await widget.connect();
+  fakes.sockets[0].open();
+  fakes.sockets[0].onmessage({ data: 'screen' });
+  state.clock = 60000;
+  closeWith(fakes.sockets[0]);
+  await state.fire();
+  assert.match(fakes.sockets[1].url, /reattach=1$/);
+  fakes.sockets[1].open();
+  closeWith(fakes.sockets[1], 4004); // another client holds it; close-tab config on
+  assert.equal(state.statuses.at(-1), 'detached');
+  assert.equal(fakes.sockets.length, 2, 'no forcing retry follows');
+  assert.deepEqual(state.disconnects.at(-1), { closeTab: false },
+    'a quiet redial\'s detach never closes the tab: it may be this browser\'s own stale client');
+
+  // A quiet redial that drops fast keeps redialling quietly.
+  await widget.connect();
+  fakes.sockets.at(-1).open();
+  fakes.sockets.at(-1).onmessage({ data: 'screen' });
+  state.clock += 5000;
+  closeWith(fakes.sockets.at(-1));
+  await state.fire();
+  fakes.sockets.at(-1).open();
+  closeWith(fakes.sockets.at(-1)); // inside the stability window
+  await state.fire();
+  assert.match(fakes.sockets.at(-1).url, /reattach=1$/);
+});
+
+test('a terminal that draws and dies at once runs out of quiet redials', async (t) => {
+  const { fakes, widget, state } = await mountWaitingWidget(t, { initialRetryStabilityMs: 1000 });
+  await widget.connect();
+  fakes.sockets[0].open();
+  fakes.sockets[0].onmessage({ data: 'screen' });
+  state.clock = 60000;
+  closeWith(fakes.sockets[0]);
+  for (let i = 0; i < 3; i += 1) {
+    await state.fire();
+    const socket = fakes.sockets.at(-1);
+    socket.open();
+    socket.onmessage({ data: 'error output' });
+    closeWith(socket); // at once: not a connection that stayed up
+  }
+  assert.equal(state.statuses.at(-1), 'disconnected');
+  assert.equal(widget.reconnectAvailable(), true);
+  assert.equal(fakes.sockets.length, 4, 'three quiet redials, then the manual Reconnect');
+});

@@ -96,7 +96,7 @@ func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error
 	// node's browser retries instead of settling on a final denial.
 	now := terminalNow()
 	for _, r := range rows {
-		if sessionRowLaunching(r, now) && !session.IsTmuxSessionAlive(r.TmuxSession) {
+		if r.ID == p.Session && sessionRowLaunching(r, now) && !session.IsTmuxSessionAlive(r.TmuxSession) {
 			return nil, errFedPaneStarting
 		}
 	}

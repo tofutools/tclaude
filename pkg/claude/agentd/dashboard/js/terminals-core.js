@@ -829,12 +829,15 @@ export function mountTerminalWidget({
   }
 
   // attached marks the moment the terminal proved it is attached (its first
-  // output): the start wait and the quiet redials are spent, so a later drop
-  // starts both afresh.
+  // output): the start wait is over, and the initial retries, which belong to
+  // the first attach only, are spent — a later drop is the quiet redials' to
+  // handle, which never take the session back (reattach=1). Their budget is
+  // restored only by a connection that then stays up (see onclose), so a
+  // command that draws and dies at once cannot redial forever.
   function attached() {
     startingSince = null;
     startIndex = 0;
-    transientIndex = 0;
+    retryIndex = initialRetryDelays.length;
     setWaiting(null);
   }
 
@@ -941,6 +944,8 @@ export function mountTerminalWidget({
       if (disposed || mine !== generation || ws !== socket) return;
       cancelPostAttachResize();
       cancelInitialResize();
+      // A connection that drew and stayed up earns a fresh set of quiet redials.
+      if (firstOutputSeen && openedAt !== null && now() - openedAt >= initialRetryStabilityMs) transientIndex = 0;
       const starting = remote ? remoteState.closed?.reason === 'starting' : event?.code === TERMINAL_STARTING;
       if (starting) {
         if (scheduleStartRetry()) return;
@@ -957,7 +962,10 @@ export function mountTerminalWidget({
       if (exit && (openedAt === null || now() - openedAt < initialRetryStabilityMs) && scheduleInitialRetry()) return;
       if (exit) {
         settle(exit.text);
-        onDisconnect({ closeTab: exit.closeTab });
+        // A quiet redial's "detached" may only be this browser's own stale
+        // client (a half-open socket agentd has not noticed yet): it never
+        // closes the tab, and Reconnect stays to take the session by hand.
+        onDisconnect({ closeTab: exit.closeTab && !reattach });
         return;
       }
       if (remote) {
