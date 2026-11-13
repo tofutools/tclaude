@@ -745,8 +745,10 @@ either place.
 
 ### Idle without report
 
-The idle check is off unless a board turns it on: it is one of the
-[board's options](#board-options) (`idle.enabled`). With it on, an open task
+The idle check is on unless a board turns it off: it is one of the
+[board's options](#board-options) (`idle.enabled`), and
+`taskboard.idle_check: false` turns it off for every board that does not
+turn it on itself. With it on, an open task
 is **stalled** when its assignee has sat idle for the board's grace
 (`idle.grace`, else `taskboard.idle_grace`, else 5 minutes) without
 reporting: its session is idle, with no subagents, background shells or
@@ -819,7 +821,7 @@ $ tclaude agent taskboard options reset crew all
 
 | Option | Values | Default |
 |---|---|---|
-| `idle.enabled` | `on` / `off`: the [idle check](#idle-without-report) | `taskboard.idle_check`, else off |
+| `idle.enabled` | `on` / `off`: the [idle check](#idle-without-report) | `taskboard.idle_check`, else on |
 | `idle.grace` | a duration, `1m` to `168h` | `taskboard.idle_grace`, else `5m` |
 | `idle.nudge` | `on` / `off`: nudge the idle assignee | on |
 | `idle.tell` | any of `assigner`, `owners`, `operator`; `none` for no one | `assigner` |
@@ -881,11 +883,12 @@ The global settings in `~/.tclaude/data/config.json` are what a board
 inherits:
 
 ```json
-{ "taskboard": { "idle_check": true, "idle_grace": "5m" } }
+{ "taskboard": { "idle_check": false, "idle_grace": "5m" } }
 ```
 
-`idle_check` turns the check on for every board that does not say otherwise
-(absent means off). `idle_grace` is a duration (`"90s"`, `"10m"`); `"0"` turns
+`idle_check` is the check's default for every board that does not say
+otherwise (absent means on): `false` turns it off fleet-wide, and a board can
+still turn it on for itself. `idle_grace` is a duration (`"90s"`, `"10m"`); `"0"` turns
 the check off on **every** board, whatever a board sets, and the board's
 options then read `idle check: off on every board (taskboard.idle_grace is 0)`.
 
@@ -895,8 +898,12 @@ Reading a board's options needs `taskboard.read`; changing them needs
 linked node reads and changes them under the same grants.
 
 Before board options, the idle check ran on every board with
-`taskboard.idle_grace` (default 5 minutes). It is now opt-in: turn it on per
-board, or for every board at once with `taskboard.idle_check: true`.
+`taskboard.idle_grace` (default 5 minutes). Board options first made it
+opt-in; it is on by default again, now that a task waiting on purpose never
+stalls: a queued task (on a dependency or in line for a full lane), a blocked
+task, and a task in a custom column the board does not check. Turn it off per
+board (`idle.enabled=off`), or for every board at once with
+`taskboard.idle_check: false`.
 
 ### Work-in-progress limits
 

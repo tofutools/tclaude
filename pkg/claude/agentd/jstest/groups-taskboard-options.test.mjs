@@ -19,7 +19,7 @@ function resolve(options = {}, globals = {}) {
   const idle = options.idle || {};
   const v = (value, source) => ({ value, source });
   const enabled = idle.enabled !== undefined ? v(idle.enabled, 'board')
-    : globals.idle_check !== undefined ? v(globals.idle_check, 'global') : v(false, 'default');
+    : globals.idle_check !== undefined ? v(globals.idle_check, 'global') : v(true, 'default');
   const grace = idle.grace ? v(idle.grace, 'board') : globals.idle_grace && globals.idle_grace !== '0' ? v(globals.idle_grace, 'global') : v('5m', 'default');
   const globallyOff = globals.idle_grace === '0';
   return {
@@ -77,7 +77,7 @@ function fakeApi(view, { stale = null } = {}) {
   };
 }
 
-function entryOf(options = { version: 0, idle_active: false, idle_source: 'default', set: [] }) {
+function entryOf(options = { version: 0, idle_active: true, idle_source: 'default', set: [] }) {
   return {
     group: 'crew', group_id: 1,
     counts: { live: 1, needs_you: 0, next: 1 },
@@ -180,12 +180,15 @@ test('the model: drafts, provenance, unpinning, changes and rebasing', async (t)
 test('the section line summarises what a board changes, and the route names a board', async (t) => {
   const harness = await createPreactHarness(t);
   const m = await harness.importDashboardModule('js/groups-taskboard-options-model.js');
-  assert.deepEqual(m.optionsSummary({ idle_active: false, idle_source: 'default', set: [] }), [], 'nothing changed: nothing said');
+  assert.deepEqual(m.optionsSummary({ idle_active: true, idle_source: 'default', set: [] }), [], 'nothing changed: nothing said');
   assert.deepEqual(m.optionsSummary({ idle_active: true, idle_source: 'board', set: ['idle.enabled', 'events.comment.enabled', 'events.comment.to', 'events.report_failed.to'] })
     .map((p) => [p.section, p.text]), [['idle', 'idle check on'], ['events', '2 messages changed']]);
-  assert.deepEqual(m.optionsSummary({ idle_active: true, idle_source: 'global', set: [] }).map((p) => p.text), ['idle check on'], 'on everywhere is said too');
+  assert.deepEqual(m.optionsSummary({ idle_active: true, idle_source: 'global', set: [] }), [], 'on everywhere is the default: nothing said');
+  assert.deepEqual(m.optionsSummary({ idle_active: false, idle_source: 'board', set: ['idle.enabled'] }).map((p) => p.text), ['idle check off'], 'a board that turns it off says so');
+  assert.deepEqual(m.optionsSummary({ idle_active: false, idle_source: 'global', set: [] }).map((p) => p.text), ['idle check off'], 'off everywhere is said too');
   assert.deepEqual(m.optionsSummary({ idle_active: false, idle_globally_off: true, idle_source: 'board', set: ['idle.enabled'] }).map((p) => p.text), ['idle check off globally']);
-  assert.deepEqual(m.optionsSummary({ idle_active: false, idle_source: 'default', set: ['idle.grace'] }).map((p) => p.text), ['idle check off']);
+  assert.deepEqual(m.optionsSummary({ idle_active: false, idle_globally_off: true, idle_source: 'default', set: [] }).map((p) => p.text), ['idle check off']);
+  assert.deepEqual(m.optionsSummary({ idle_active: true, idle_source: 'default', set: ['idle.grace'] }).map((p) => p.text), ['idle check on'], 'a board that tunes the check says so');
 
   assert.equal(m.formatBoardOptionsRoute({ group: 'crew' }), 'crew');
   assert.equal(m.formatBoardOptionsRoute({ group: 'crew', node: 'inst_ab12' }), 'inst_ab12:crew');
@@ -203,7 +206,7 @@ test('the section line summarises what a board changes, and the route names a bo
 test('⚙ Board options opens the drawer from the toolbar; values say where they come from; Save sends the document at its version', async (t) => {
   const view = optionsView({ idle: { grace: '10m' } }, { globals: { idle_grace: '2m' }, version: 3 });
   const api = fakeApi(view);
-  const s = await mountSection(t, { api, entry: entryOf({ version: 3, idle_active: false, idle_source: 'default', set: ['idle.grace'] }) });
+  const s = await mountSection(t, { api, entry: entryOf({ version: 3, idle_active: true, idle_source: 'default', set: ['idle.grace'] }) });
   const button = [...s.c.querySelectorAll('.tb-toolbar .tb-options-btn')];
   assert.equal(button.length, 1, 'the toolbar has one ⚙ Board options');
   assert.match(button[0].textContent, /Board options/);
@@ -223,7 +226,7 @@ test('⚙ Board options opens the drawer from the toolbar; values say where they
   assert.equal(d.querySelector('#tb-opt-grace').value, '10m');
   assert.equal(d.querySelector('#taskboard-options-save').disabled, true, 'nothing to save yet');
 
-  // Turn the idle check on, put the grace back to inherited, and send the
+  // Turn the idle check off (it is on by default), put the grace back to inherited, and send the
   // comment message to the operator too.
   await s.toggle(d.querySelector('input[aria-label="Idle check"]'));
   await s.click(src('idle.grace').querySelector('.tb-opt-reset'));
@@ -233,7 +236,7 @@ test('⚙ Board options opens the drawer from the toolbar; values say where they
   assert.match(d.querySelector('[data-tb-opt-unsaved]').textContent, /3 unsaved changes/);
   await s.click(d.querySelector('#taskboard-options-save'));
   const put = api.calls.find((c) => c[0] === 'saveOptions');
-  assert.deepEqual(put, ['saveOptions', 'crew', { set: { 'idle.enabled': 'on', 'events.comment.to': 'assignee,creator,operator' }, reset: ['idle.grace'] }, 3],
+  assert.deepEqual(put, ['saveOptions', 'crew', { set: { 'idle.enabled': 'off', 'events.comment.to': 'assignee,creator,operator' }, reset: ['idle.grace'] }, 3],
     'only the changed keys, at the version read');
   assert.equal(s.drawer(), null, 'a save closes the drawer');
   assert.equal(s.route.boardOptionsRoute.value, null);
@@ -263,7 +266,7 @@ test('a bad grace is refused before Save, and the event table turns messages off
 test('a save refused as stale carries the edits onto the newer options', async (t) => {
   const newer = optionsView({ idle: { grace: '20m' } }, { version: 5 });
   const api = fakeApi(optionsView({}, { version: 4 }), { stale: newer });
-  const s = await mountSection(t, { api, entry: entryOf({ version: 4, idle_active: false, idle_source: 'default', set: [] }) });
+  const s = await mountSection(t, { api, entry: entryOf({ version: 4, idle_active: true, idle_source: 'default', set: [] }) });
   await s.click(s.c.querySelector('.tb-options-btn'));
   const d = s.drawer();
   await s.toggle(d.querySelector('input[aria-label="Idle check"]'));
@@ -271,20 +274,20 @@ test('a save refused as stale carries the edits onto the newer options', async (
   assert.ok(s.drawer(), 'the drawer stays open');
   assert.match(d.querySelector('[role="alert"]').textContent, /changed elsewhere/);
   assert.equal(d.querySelector('#tb-opt-grace').value, '20m', 'the newer value shows');
-  assert.equal(isOn(d.querySelector('input[aria-label="Idle check"]')), true, 'the edit is kept');
+  assert.equal(isOn(d.querySelector('input[aria-label="Idle check"]')), false, 'the edit is kept');
   await s.click(d.querySelector('#taskboard-options-save'));
   const puts = api.calls.filter((c) => c[0] === 'saveOptions');
-  assert.deepEqual(puts[1], ['saveOptions', 'crew', { set: { 'idle.enabled': 'on' }, reset: [] }, 5], 'saved over the newer version');
+  assert.deepEqual(puts[1], ['saveOptions', 'crew', { set: { 'idle.enabled': 'off' }, reset: [] }, 5], 'saved over the newer version');
 });
 
 test('a change elsewhere rereads a clean drawer, and waits for an edited one until its edits are undone', async (t) => {
   const api = fakeApi(optionsView({}, { version: 1 }));
-  const s = await mountSection(t, { api, entry: entryOf({ version: 1, idle_active: false, idle_source: 'default', set: [] }) });
+  const s = await mountSection(t, { api, entry: entryOf({ version: 1, idle_active: true, idle_source: 'default', set: [] }) });
   await s.click(s.c.querySelector('.tb-options-btn'));
   const d = s.drawer();
   const bump = async (version, grace) => {
     api.setCurrent(optionsView({ idle: { grace } }, { version }));
-    await s.harness.act(async () => { s.context.value = { groups: [entryOf({ version, idle_active: false, idle_source: 'default', set: ['idle.grace'] })] }; await tick(); });
+    await s.harness.act(async () => { s.context.value = { groups: [entryOf({ version, idle_active: true, idle_source: 'default', set: ['idle.grace'] })] }; await tick(); });
     await s.settle();
   };
   await bump(2, '7m');
@@ -439,7 +442,7 @@ test('limits in the model: drafts, a lane following the board, the patch, and th
 
 test('the Limits tab sets the caps, what a full lane does and what a cap counts', async (t) => {
   const api = fakeApi(optionsView({}, { version: 2 }));
-  const entry = entryOf({ version: 2, idle_active: false, idle_source: 'default', set: [], limits: { per: 'board', lanes: [{ lane: 'in_progress', max: 0, at_limit: 'queue', count: 2 }] } });
+  const entry = entryOf({ version: 2, idle_active: true, idle_source: 'default', set: [], limits: { per: 'board', lanes: [{ lane: 'in_progress', max: 0, at_limit: 'queue', count: 2 }] } });
   const s = await mountSection(t, { api, entry });
   await s.click(s.c.querySelector('.tb-options-btn'));
   const d = s.drawer();
@@ -475,7 +478,7 @@ test("the Columns tab sets a lane's limit and its own at-limit choice", async (t
 });
 
 test('the board shows how full a limited lane is and which tasks wait in line', async (t) => {
-  const entry = entryOf({ version: 1, idle_active: false, idle_source: 'default', set: ['limits.in_progress.max'],
+  const entry = entryOf({ version: 1, idle_active: true, idle_source: 'default', set: ['limits.in_progress.max'],
     limits: { per: 'board', lanes: [{ lane: 'in_progress', max: 1, at_limit: 'queue', count: 1, queued: 1 }, { lane: 'in-ci', max: 1, at_limit: 'warn', count: 2 }] } });
   entry.tasks = [
     { id: 'tk_00000001', group: 'crew', title: 'building', stage: 'next', status: 'open', depends_on: [], created_at: new Date().toISOString(),
@@ -497,7 +500,7 @@ test('the board shows how full a limited lane is and which tasks wait in line', 
 
 test("In progress's ⋯ Set limit… sets the lane's limit at once", async (t) => {
   const api = fakeApi(optionsView());
-  const entry = entryOf({ version: 1, idle_active: false, idle_source: 'default', set: [], limits: { per: 'board', lanes: [{ lane: 'in_progress', max: 2, at_limit: 'queue', count: 1 }] } });
+  const entry = entryOf({ version: 1, idle_active: true, idle_source: 'default', set: [], limits: { per: 'board', lanes: [{ lane: 'in_progress', max: 2, at_limit: 'queue', count: 1 }] } });
   const s = await mountSection(t, { api, entry, view: 'lanes', by: 'triage' });
   const head = [...s.c.querySelectorAll('.tb-col-more')].find((b) => /In progress/.test(b.getAttribute('aria-label') || ''));
   assert.ok(head, 'In progress has a ⋯ once the board serves options');

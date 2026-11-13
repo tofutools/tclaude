@@ -111,7 +111,7 @@ function IdleSection({ view, draft, saved, columns, canWrite, set, reset, errors
     ${globallyOff && html`<p class="tb-opt-note ui-hint" role="note" data-tb-opt-globally-off="">
       Idle check disabled globally: <code>taskboard.idle_grace</code> is 0, which turns it off on every board whatever a board sets.</p>`}
     <p class="tb-opt-desc ui-hint">When an assigned, started task's agent sits idle without reporting for the grace period, nudge it and tell
-      the recipients below. Off by default on every board.</p>
+      the recipients below. On by default on every board.</p>
     <div class=${`tb-opt-grid${muted ? ' muted' : ''}`}>
       <label class="tb-opt-label" for="tb-opt-grace">Grace period</label>
       <span class="tb-opt-ctl">

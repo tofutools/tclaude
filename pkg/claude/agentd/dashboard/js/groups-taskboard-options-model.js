@@ -191,7 +191,7 @@ export function inheritedOf(view, key, draft = null) {
   const globals = view?.globals || {};
   switch (key) {
     case 'idle.enabled':
-      return typeof globals.idle_check === 'boolean' ? { value: globals.idle_check, source: 'global' } : { value: false, source: 'default' };
+      return typeof globals.idle_check === 'boolean' ? { value: globals.idle_check, source: 'global' } : { value: true, source: 'default' };
     case 'idle.grace':
       return globals.idle_grace && globals.idle_grace !== '0' ? { value: globals.idle_grace, source: 'global' } : { value: DEFAULT_GRACE, source: 'default' };
     case 'idle.nudge': return { value: true, source: 'default' };
@@ -373,10 +373,14 @@ export function optionsSummary(options, columns = []) {
   const idleSet = set.filter((key) => key.startsWith('idle.'));
   if (options.idle_globally_off && set.includes('idle.enabled')) {
     out.push({ section: 'idle', text: 'idle check off globally', title: 'This board turns the idle check on, but taskboard.idle_grace "0" turns it off on every board' });
-  } else if (options.idle_active) {
-    out.push({ section: 'idle', text: 'idle check on', title: `The idle check runs on this board (${options.idle_source === 'board' ? 'set on this board' : sourceText(options.idle_source)})` });
+  } else if (options.idle_active === false) {
+    // The check is on by default, so a board where it does not run is the
+    // one worth a chip.
+    out.push({ section: 'idle', text: 'idle check off', title: options.idle_globally_off
+      ? 'taskboard.idle_grace "0" turns the idle check off on every board'
+      : `The idle check is off on this board (${options.idle_source === 'board' ? 'set on this board' : sourceText(options.idle_source)})` });
   } else if (idleSet.length) {
-    out.push({ section: 'idle', text: 'idle check off', title: 'This board sets idle check options: ' + idleSet.join(', ') });
+    out.push({ section: 'idle', text: 'idle check on', title: 'This board sets idle check options: ' + idleSet.join(', ') });
   }
   const events = new Set(set.filter((key) => key.startsWith('events.')).map((key) => key.split('.')[1]));
   if (events.size) {
