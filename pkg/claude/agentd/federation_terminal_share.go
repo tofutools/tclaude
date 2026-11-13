@@ -109,11 +109,11 @@ const fedWindowFormat = "#{status}\t#{window_width}\t#{window_height}"
 // client of the session (a client's window area is its height minus these),
 // and the window's current size (0 x 0 when unknown).
 func fedWindowState(pane string) (status, cols, rows int) {
-	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", pane, fedWindowFormat)
+	out, err := tmuxcmd.Local().Display(tmuxcmd.PaneID(pane), fedWindowFormat)
 	if err != nil {
 		return 0, 0, 0
 	}
-	f := strings.Split(strings.TrimSpace(string(out)), "\t")
+	f := strings.Split(strings.TrimSpace(out), "\t")
 	switch f[0] {
 	case "on":
 		status = 1

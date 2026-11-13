@@ -245,16 +245,15 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 		cleanupScript()
 		return nil, fmt.Errorf("launch OpenCode server through external tmux: %w: %s", err, stderr.String())
 	}
-	pidOut, err := clcommon.TmuxOutput(session.ExternalTmuxNoStartArgs(
-		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":0.0", "#{pane_pid}")...)
+	pidOut, err := session.ExternalTmux().Display(tmuxcmd.Session(tmuxSession).FirstPane(), "#{pane_pid}")
 	if err != nil {
 		_ = session.ExternalTmux().KillSession(tmuxcmd.Session(tmuxSession))
 		return nil, fmt.Errorf("read OpenCode tmux process root: %w", err)
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
+	pid, err := strconv.Atoi(strings.TrimSpace(pidOut))
 	if err != nil || pid <= 1 {
 		_ = tmuxcmd.Local().NoStart().KillSession(tmuxcmd.Session(tmuxSession))
-		return nil, fmt.Errorf("external tmux returned invalid OpenCode process root %q", strings.TrimSpace(string(pidOut)))
+		return nil, fmt.Errorf("external tmux returned invalid OpenCode process root %q", strings.TrimSpace(pidOut))
 	}
 	process := &openCodeProcess{pid: pid, tmuxSession: tmuxSession,
 		done: make(chan error, 1), convID: runtime.ConvID}
@@ -376,12 +375,6 @@ func watchOpenCodeTmuxProcess(process *openCodeProcess, runtime db.OpenCodeRunti
 }
 
 func openCodeTmuxPanePID(tmuxSession string) int {
-	out, err := clcommon.TmuxOutput(
-		"-N", "display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":0.0",
-		"#{pane_pid}")
-	if err != nil {
-		return 0
-	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	pid, _ := tmuxcmd.Local().NoStart().PanePID(tmuxcmd.Session(tmuxSession).FirstPane())
 	return pid
 }

@@ -52,8 +52,8 @@ var nonInteractiveTmuxSessionAlive = func(target string) bool {
 	if exists, _ := tmuxcmd.Local().HasSession(tmuxcmd.SessionID(target)); !exists {
 		return false
 	}
-	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", target, "#{pane_dead}")
-	return err != nil || strings.TrimSpace(string(out)) != "1"
+	dead, err := tmuxcmd.Local().Display(tmuxcmd.SessionID(target).ActivePane(), "#{pane_dead}")
+	return err != nil || strings.TrimSpace(dead) != "1"
 }
 var uniqueNonInteractiveTmuxSessionName = session.UniqueTmuxSessionName
 

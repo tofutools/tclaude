@@ -17,6 +17,7 @@ import (
 	"github.com/creack/pty"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/federation/terminal"
@@ -95,11 +96,11 @@ func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error
 }
 
 func fedPaneIdentity(tmuxName string) (*fedPanePin, error) {
-	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", clcommon.ExactTarget(tmuxName)+":0.0", "#{pane_id}\t#{window_id}\t#{session_id}\t#{session_windows}\t#{window_panes}")
+	out, err := tmuxcmd.Local().Display(tmuxcmd.Session(tmuxName).FirstPane(), "#{pane_id}\t#{window_id}\t#{session_id}\t#{session_windows}\t#{window_panes}")
 	if err != nil {
 		return nil, errors.New("target pane unavailable")
 	}
-	f := strings.Split(strings.TrimSpace(string(out)), "\t")
+	f := strings.Split(strings.TrimSpace(out), "\t")
 	if len(f) != 5 || !validTmuxObject(f[0], '%') || !validTmuxObject(f[1], '@') || !validTmuxObject(f[2], '$') {
 		return nil, errors.New("cannot resolve exact target pane")
 	}
@@ -298,7 +299,7 @@ func (s fedPaneMouse) app() bool { return s.standard || s.button || s.all }
 
 func (p *fedPaneTerminal) paneMouse() (fedPaneMouse, error) {
 	var s fedPaneMouse
-	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", p.pin.pane,
+	out, err := tmuxcmd.Local().Display(tmuxcmd.PaneID(p.pin.pane),
 		"#{pane_in_mode} #{==:#{pane_mode},copy-mode} #{mouse_any_flag} #{mouse_sgr_flag} #{mouse_utf8_flag} #{mouse} "+
 			"#{pane_left} #{pane_top} #{pane_width} #{pane_height} #{?#{==:#{status-position},top},#{status},off} "+
 			"#{?mouse_standard_flag,1,0} #{?mouse_button_flag,1,0} #{?mouse_all_flag,1,0}")
@@ -461,7 +462,7 @@ func (p *fedPaneTerminal) Close() error {
 			// local operator's keys and automated send-keys. Re-check first so
 			// a copy mode entered by someone since is left alone as far as we
 			// can tell.
-			out, err := clcommon.TmuxOutput("display-message", "-p", "-t", p.pin.pane, "#{==:#{pane_mode},copy-mode}")
+			out, err := tmuxcmd.Local().Display(tmuxcmd.PaneID(p.pin.pane), "#{==:#{pane_mode},copy-mode}")
 			if err == nil && strings.TrimSpace(string(out)) == "1" {
 				_ = clcommon.TmuxRun("send-keys", "-t", p.pin.pane, "-X", "cancel")
 			}
@@ -491,20 +492,10 @@ var fedIndicatorMu sync.Mutex
 var fedIndicators = map[string]*fedIndicator{}
 
 func fedWindowOption(window, name string) (string, bool, error) {
-	out, err := clcommon.TmuxOutput("show-options", "-w", "-q", "-t", window, name)
-	if err != nil {
-		return "", false, err
-	}
-	line := strings.TrimSuffix(string(out), "\n")
-	if line == "" {
-		return "", false, nil
-	}
-	// -v returns the exact value, without tmux's display quoting.
-	val, err := clcommon.TmuxOutput("show-options", "-w", "-qv", "-t", window, name)
-	return strings.TrimSuffix(string(val), "\n"), true, err
+	return tmuxcmd.Local().ShowWindowOption(tmuxcmd.WindowID(window), name)
 }
 func setFedWindowOption(window, name, value string) error {
-	return clcommon.TmuxRun("set-option", "-w", "-t", window, name, value)
+	return tmuxcmd.Local().SetOption(tmuxcmd.WindowScope(tmuxcmd.WindowID(window)), name, value)
 }
 func setFedIndicator(pin *fedPanePin, id, peer string, readOnly bool) (func(), error) {
 	fedIndicatorMu.Lock()
@@ -626,10 +617,10 @@ func restoreFedIndicator(window, saved string) {
 		if o.local {
 			_ = setFedWindowOption(window, o.name, o.val)
 		} else {
-			_ = clcommon.TmuxRun("set-option", "-wu", "-t", window, o.name)
+			_ = tmuxcmd.Local().UnsetOption(tmuxcmd.WindowScope(tmuxcmd.WindowID(window)), o.name)
 		}
 	}
-	_ = clcommon.TmuxRun("set-option", "-wu", "-t", window, fedIndicatorOption)
+	_ = tmuxcmd.Local().UnsetOption(tmuxcmd.WindowScope(tmuxcmd.WindowID(window)), fedIndicatorOption)
 }
 func fedIndicatorPresent(window string) bool {
 	fedIndicatorMu.Lock()
@@ -652,11 +643,11 @@ func fedIndicatorPresent(window string) bool {
 func cleanupFedTerminalIndicators() {
 	fedIndicatorMu.Lock()
 	defer fedIndicatorMu.Unlock()
-	out, err := clcommon.TmuxOutput("list-windows", "-a", "-F", "#{window_id}")
+	windows, err := tmuxcmd.Local().ListAllWindows("#{window_id}")
 	if err != nil {
 		return
 	}
-	for _, window := range strings.Fields(string(out)) {
+	for _, window := range strings.Fields(strings.Join(windows, "\n")) {
 		if !validTmuxObject(window, '@') {
 			continue
 		}
@@ -674,7 +665,7 @@ var _ io.ReadCloser = (*fedPaneTerminal)(nil)
 // only a view that owns the session's size (federation_terminal_owner.go)
 // resizes the window.
 func (pin *fedPanePin) size() (int, int, error) {
-	raw, err := clcommon.TmuxOutput("display-message", "-p", "-t", pin.pane, "#{pane_width} #{pane_height}")
+	raw, err := tmuxcmd.Local().Display(tmuxcmd.PaneID(pin.pane), "#{pane_width} #{pane_height}")
 	if err != nil {
 		return 0, 0, err
 	}

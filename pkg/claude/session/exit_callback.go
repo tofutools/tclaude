@@ -19,6 +19,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -28,7 +29,7 @@ const (
 	exitLaunchBarrierWindow  = 30 * time.Second
 	exitLaunchStaleAfter     = 2 * exitLaunchBarrierWindow
 	exitLaunchArtifactPrefix = "barrier-"
-	paneExitGenerationOption = "@tclaude_exit_generation"
+	paneExitGenerationOption = tmuxcmd.OptionExitGeneration
 )
 
 type exitLaunchGuard struct {
@@ -172,22 +173,21 @@ func (g *exitLaunchGuard) armPaneHook() {
 		return
 	}
 	hook := g.hookCommand()
-	target := clcommon.ExactTarget(g.tmuxSession) + ":0.0"
-	if err := clcommon.TmuxRun("set-option", "-p", "-t", target,
-		paneExitGenerationOption, g.generation); err != nil {
+	tmux, pane := tmuxcmd.Local(), tmuxcmd.Session(g.tmuxSession).FirstPane()
+	if err := tmux.SetPaneExitGeneration(pane, g.generation); err != nil {
 		slog.Warn("tmux exit audit unavailable; pane launch identity unsupported",
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "pane_id", paneID, "error", err)
 		return
 	}
-	if err := clcommon.TmuxRun("set-hook", "-p", "-t", target, "pane-died", hook); err != nil {
-		_ = clcommon.TmuxRun("set-option", "-p", "-u", "-t", target, paneExitGenerationOption)
+	if err := tmux.SetPaneDiedHook(pane, hook); err != nil {
+		_ = tmux.ClearPaneExitGeneration(pane)
 		slog.Warn("tmux exit audit unavailable; pane-local hook unsupported",
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "pane_id", paneID, "error", err)
 		return
 	}
-	if err := clcommon.TmuxRun("set-option", "-p", "-t", target, "remain-on-exit", "on"); err != nil {
-		_ = clcommon.TmuxRun("set-hook", "-p", "-u", "-t", target, "pane-died")
-		_ = clcommon.TmuxRun("set-option", "-p", "-u", "-t", target, paneExitGenerationOption)
+	if err := tmux.SetPaneRemainOnExit(pane, true); err != nil {
+		_ = tmux.ClearPaneDiedHook(pane)
+		_ = tmux.ClearPaneExitGeneration(pane)
 		slog.Warn("tmux exit audit unavailable; remain-on-exit unsupported",
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "pane_id", paneID, "error", err)
 		return
@@ -197,16 +197,7 @@ func (g *exitLaunchGuard) armPaneHook() {
 }
 
 func nativePaneDiedHookAvailable() bool {
-	out, err := clcommon.TmuxOutput("show-hooks", "-g", "pane-died")
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == "pane-died" {
-			return true
-		}
-	}
-	return false
+	return tmuxcmd.Local().PaneDiedHookSupported()
 }
 
 func (g *exitLaunchGuard) hookCommand() string {
@@ -396,10 +387,10 @@ func (g *exitLaunchGuard) disarmPaneHook() {
 	if g == nil || !g.callbackEnabled || g.tmuxSession == "" {
 		return
 	}
-	target := clcommon.ExactTarget(g.tmuxSession) + ":0.0"
-	_ = clcommon.TmuxRun("set-hook", "-p", "-u", "-t", target, "pane-died")
-	_ = clcommon.TmuxRun("set-option", "-p", "-u", "-t", target, paneExitGenerationOption)
-	_ = clcommon.TmuxRun("set-option", "-p", "-t", target, "remain-on-exit", "off")
+	tmux, pane := tmuxcmd.Local(), tmuxcmd.Session(g.tmuxSession).FirstPane()
+	_ = tmux.ClearPaneDiedHook(pane)
+	_ = tmux.ClearPaneExitGeneration(pane)
+	_ = tmux.SetPaneRemainOnExit(pane, false)
 	g.callbackEnabled = false
 }
 
@@ -424,12 +415,11 @@ func cleanupStaleExitLaunchArtifacts(dir string, now time.Time) {
 }
 
 func livePaneIdentity(tmuxSession string) (string, error) {
-	out, err := clcommon.TmuxOutput("display-message", "-p", "-t",
-		clcommon.ExactTarget(tmuxSession)+":0.0", "#{pane_id}")
+	out, err := tmuxcmd.Local().Display(tmuxcmd.Session(tmuxSession).FirstPane(), "#{pane_id}")
 	if err != nil {
 		return "", err
 	}
-	paneID := strings.TrimSpace(string(out))
+	paneID := strings.TrimSpace(out)
 	if !validCallbackPaneID(paneID) {
 		return "", fmt.Errorf("invalid pane id")
 	}
@@ -804,13 +794,12 @@ func InspectDeadTmuxSessionPane(tmuxSession string) (PaneExitEvidence, error) {
 	if !validExitLaunchIdentifier(tmuxSession, 64) {
 		return PaneExitEvidence{}, fmt.Errorf("invalid tmux session")
 	}
-	const format = "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}"
-	out, err := clcommon.TmuxOutput("display-message", "-p", "-t",
-		clcommon.ExactTarget(tmuxSession)+":0.0", format)
+	const format = "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{" + paneExitGenerationOption + "}"
+	out, err := tmuxcmd.Local().Display(tmuxcmd.Session(tmuxSession).FirstPane(), format)
 	if err != nil {
 		return PaneExitEvidence{}, err
 	}
-	dead, err := parseDeadTmuxPane(strings.TrimSpace(string(out)), "")
+	dead, err := parseDeadTmuxPane(strings.TrimSpace(out), "")
 	if err != nil {
 		return PaneExitEvidence{}, err
 	}
@@ -839,7 +828,7 @@ func CleanupDeadTmuxPane(evidence PaneExitEvidence) error {
 	for attempt := 0; attempt < 3; attempt++ {
 		current, err := InspectDeadTmuxSessionPane(evidence.TmuxSession)
 		if err != nil {
-			if clcommon.TmuxRun("has-session", "-t", clcommon.ExactTarget(evidence.TmuxSession)) != nil {
+			if exists, _ := tmuxcmd.Local().HasSession(tmuxcmd.Session(evidence.TmuxSession)); !exists {
 				return nil
 			}
 			return fmt.Errorf("refuse cleanup without current dead-pane proof: %w", err)
@@ -850,7 +839,7 @@ func CleanupDeadTmuxPane(evidence PaneExitEvidence) error {
 		// Pane IDs are already exact tmux targets. The leading '=' marker is
 		// only parsed from session/window target parts; "=%N" is invalid in
 		// real tmux and leaves the retained pane behind.
-		lastErr = clcommon.TmuxRun("kill-pane", "-t", evidence.PaneID)
+		lastErr = tmuxcmd.Local().KillPane(tmuxcmd.PaneID(evidence.PaneID))
 		if lastErr == nil {
 			return nil
 		}
@@ -859,8 +848,8 @@ func CleanupDeadTmuxPane(evidence PaneExitEvidence) error {
 	if err != nil || !samePaneExitEvidence(current, evidence) {
 		return fmt.Errorf("dead pane cleanup failed safely: %w", lastErr)
 	}
-	if err := clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(evidence.TmuxSession)); err != nil {
-		if clcommon.TmuxRun("has-session", "-t", clcommon.ExactTarget(evidence.TmuxSession)) != nil {
+	if err := tmuxcmd.Local().KillSession(tmuxcmd.Session(evidence.TmuxSession)); err != nil {
+		if exists, _ := tmuxcmd.Local().HasSession(tmuxcmd.Session(evidence.TmuxSession)); !exists {
 			return nil
 		}
 		return fmt.Errorf("dead pane cleanup fallback failed: %w", err)
@@ -884,12 +873,12 @@ func inspectDeadTmuxPane(paneID string) (deadTmuxPane, error) {
 	if !validCallbackPaneID(paneID) {
 		return deadTmuxPane{}, fmt.Errorf("invalid pane id")
 	}
-	const format = "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}"
-	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", paneID, format)
+	const format = "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{" + paneExitGenerationOption + "}"
+	out, err := tmuxcmd.Local().Display(tmuxcmd.PaneID(paneID), format)
 	if err != nil {
 		return deadTmuxPane{}, err
 	}
-	return parseDeadTmuxPane(strings.TrimSpace(string(out)), paneID)
+	return parseDeadTmuxPane(strings.TrimSpace(out), paneID)
 }
 
 func parseDeadTmuxPane(output, expectedPaneID string) (deadTmuxPane, error) {

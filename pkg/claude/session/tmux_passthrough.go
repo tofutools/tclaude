@@ -1,6 +1,6 @@
 package session
 
-import clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+import "github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 
 // ConfigureTmuxPassthrough lets applications deliver terminal control sequences
 // wrapped in tmux's DCS passthrough envelope, including OSC 52 clipboard writes.
@@ -11,6 +11,5 @@ import clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 // retain their existing policy. Use on (visible panes), not all (hidden panes).
 // Best-effort keeps launches working on older tmux versions without the option.
 func ConfigureTmuxPassthrough(tmuxSession string) {
-	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":",
-		"allow-passthrough", "on")
+	_ = tmuxcmd.Local().SetOption(tmuxcmd.SessionScope(tmuxcmd.Session(tmuxSession)), "allow-passthrough", "on")
 }

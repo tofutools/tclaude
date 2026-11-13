@@ -429,9 +429,8 @@ func IsTmuxSessionAlive(sessionName string) bool {
 	if exists, _ := tmuxcmd.Local().HasSession(tmuxcmd.Session(sessionName)); !exists {
 		return false
 	}
-	out, err := clcommon.TmuxOutput("display-message", "-p", "-t",
-		clcommon.ExactTarget(sessionName)+":0.0", "#{pane_dead}")
-	return err != nil || strings.TrimSpace(string(out)) != "1"
+	dead, err := tmuxcmd.Local().Display(tmuxcmd.Session(sessionName).FirstPane(), "#{pane_dead}")
+	return err != nil || strings.TrimSpace(dead) != "1"
 }
 
 // LiveTmuxSessions returns the set of session names currently alive
@@ -448,12 +447,11 @@ func LiveTmuxSessions() (map[string]struct{}, error) {
 // GetTmuxSessionAttachedCount returns the number of clients attached to a tmux session
 // Returns 0 if session doesn't exist or on error
 func GetTmuxSessionAttachedCount(sessionName string) int {
-	cmd := clcommon.TmuxCommand("display-message", "-t", clcommon.ExactTarget(sessionName)+":", "-p", "#{session_attached}")
-	output, err := cmd.Output()
+	output, err := tmuxcmd.Local().Display(tmuxcmd.Session(sessionName).ActivePane(), "#{session_attached}")
 	if err != nil {
 		return 0
 	}
-	count, _ := strconv.Atoi(strings.TrimSpace(string(output)))
+	count, _ := strconv.Atoi(strings.TrimSpace(output))
 	return count
 }
 
@@ -754,12 +752,11 @@ func RefreshSessionStatus(state *SessionState) {
 
 // ParsePIDFromTmux gets the PID of the main process in a tmux session
 func ParsePIDFromTmux(sessionName string) int {
-	cmd := clcommon.TmuxCommand("list-panes", "-t", clcommon.ExactTarget(sessionName)+":", "-F", "#{pane_pid}")
-	output, err := cmd.Output()
-	if err != nil {
+	pids, err := tmuxcmd.Local().ListPanes(tmuxcmd.Session(sessionName).CurrentWindow(), "#{pane_pid}")
+	if err != nil || len(pids) != 1 {
 		return 0
 	}
-	pid, _ := strconv.Atoi(string(output[:len(output)-1])) // trim newline
+	pid, _ := strconv.Atoi(pids[0])
 	return pid
 }
 

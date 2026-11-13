@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -212,7 +211,7 @@ var externalDaemonPID = os.Getpid
 // a peer that has already exited, whose ancestry is gone: this check only ever
 // refuses.
 func externalCallerUnderTclaude(pid int) bool {
-	out, err := tmuxOutputWithTimeout("list-panes", "-a", "-F", brokerPaneListFormat)
+	panes, err := boundedTmux().AllPanes()
 	if err != nil && !externalNoTmuxPanes(err) {
 		return true
 	}
@@ -224,14 +223,8 @@ func externalCallerUnderTclaude(pid int) bool {
 	for _, runtime := range runtimes {
 		ours[runtime.PID] = true
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		parts := strings.Split(strings.TrimSpace(line), "|")
-		if len(parts) != 5 {
-			continue
-		}
-		if panePID, err := strconv.Atoi(parts[2]); err == nil {
-			ours[panePID] = true
-		}
+	for _, pane := range panes {
+		ours[pane.PID] = true
 	}
 	const maxHops = 256
 	for range maxHops {

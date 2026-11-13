@@ -48,14 +48,14 @@ func (c *shellTimesCache) get() map[string]shellTimes {
 }
 
 func probeShellTimes() map[string]shellTimes {
-	raw, err := tmuxOutputWithTimeout("list-sessions", "-F", shellTimesFormat)
+	rows, err := boundedTmux().ListSessions(shellTimesFormat)
 	if err != nil {
 		if !tmuxServerNotRunning(err) {
 			slog.Debug("group resources: shell times unavailable", "error", err)
 		}
 		return map[string]shellTimes{}
 	}
-	return parseShellTimes(string(raw))
+	return parseShellTimes(strings.Join(rows, "\n"))
 }
 
 // parseShellTimes reads shellTimesFormat lines; a missing window field

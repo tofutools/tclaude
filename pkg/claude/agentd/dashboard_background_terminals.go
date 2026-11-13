@@ -134,7 +134,7 @@ func backgroundDrawingBoardRows() []backgroundTerminal {
 // listBackgroundTmuxSessions returns the sessions no client is attached to. A
 // missing tmux server is the normal nothing-running state.
 func listBackgroundTmuxSessions() ([]backgroundTmuxSession, error) {
-	out, err := tmuxOutputWithTimeout("list-sessions", "-F", backgroundTmuxFormat)
+	rows, err := boundedTmux().ListSessions(backgroundTmuxFormat)
 	if err != nil {
 		if tmuxServerNotRunning(err) {
 			return nil, nil
@@ -142,7 +142,7 @@ func listBackgroundTmuxSessions() ([]backgroundTmuxSession, error) {
 		return nil, err
 	}
 	var sessions []backgroundTmuxSession
-	for line := range strings.SplitSeq(string(out), "\n") {
+	for _, line := range rows {
 		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
 		name := strings.TrimSpace(fields[0])
 		// A restart bridge only holds a client across an agent restart and

@@ -190,7 +190,7 @@ func ensureShellSession(spec shellSpec) error {
 	if out, err := clcommon.TmuxCombinedOutput(args...); err != nil && !session.IsTmuxSessionAlive(spec.name) {
 		return fmt.Errorf("start shell: %s", strings.TrimSpace(string(out)))
 	}
-	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(spec.name)+":", "mouse", "on")
+	_ = tmuxcmd.Local().SetOption(tmuxcmd.SessionScope(tmuxcmd.Session(spec.name)), "mouse", "on")
 	return nil
 }
 
