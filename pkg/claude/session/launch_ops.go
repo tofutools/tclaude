@@ -87,6 +87,29 @@ var (
 type LaunchBinding struct {
 	SessionID  string `json:"session_id"`
 	Generation string `json:"generation"`
+	// CodexAppServerGeneration is the Codex app-server runtime agentd minted
+	// for this launch, or "". It is set by the daemon from what it is
+	// launching, never by the launcher, and it is the only runtime the
+	// launch's operations may name.
+	CodexAppServerGeneration string `json:"-"`
+	// ConvID is the conversation agentd is resuming with this launch, or "".
+	// Daemon-set like the runtime above; a read keyed by conversation that
+	// runs before the bind is only served for this one.
+	ConvID string `json:"-"`
+	// PresetConvID is the conversation id agentd chose for a fresh launch,
+	// or "". Daemon-set as well.
+	PresetConvID string `json:"-"`
+}
+
+// ownsConv reports whether convID is a conversation this launch may name in
+// an operation: the one it resumes or the one it was told to create. A launch
+// agentd gave neither chooses its conversation itself, and is not constrained
+// here. An operation that names no conversation is always fine.
+func (b LaunchBinding) ownsConv(convID string) bool {
+	if convID == "" || (b.ConvID == "" && b.PresetConvID == "") {
+		return true
+	}
+	return convID == b.ConvID || convID == b.PresetConvID
 }
 
 // BrokeredLaunchRequest is the body of a brokered launch operation.
@@ -124,10 +147,15 @@ func LaunchOpNames() []string {
 type launchFence int
 
 const (
+	// fenceTicketOnly: the op may run before the launch is bound, because the
+	// launcher needs its answer to decide the launch's identity. It is a read
+	// of the session the ticket was minted for (any session, for a ticket
+	// minted for none), authorized by the ticket alone.
+	fenceTicketOnly launchFence = iota
 	// fenceSessionOnly: the op must name the bound session. Used by the op
 	// that establishes the generation, by reads, and by ops whose statement
 	// is conditional on the generation they carry.
-	fenceSessionOnly launchFence = iota
+	fenceSessionOnly
 	// fenceCurrentGeneration: additionally, the session row must still carry
 	// the bound generation.
 	fenceCurrentGeneration
@@ -143,7 +171,26 @@ type launchOpArgs interface {
 	launchGeneration() string
 }
 
+// launchCodexRuntimeArgs is implemented by arguments that name a Codex
+// app-server runtime generation.
+type launchCodexRuntimeArgs interface {
+	launchCodexRuntime() string
+}
+
+// launchConvKeyedArgs is implemented by the arguments of a read keyed by
+// conversation rather than by session.
+type launchConvKeyedArgs interface {
+	launchConvKey() string
+}
+
+// launchConvRefArgs is implemented by arguments that name a conversation the
+// operation acts on, next to the session.
+type launchConvRefArgs interface {
+	launchConvRef() string
+}
+
 type registeredLaunchOp struct {
+	fence launchFence
 	apply func(raw json.RawMessage, bound LaunchBinding) (any, error)
 }
 
@@ -152,7 +199,10 @@ var launchOpRegistry = map[string]registeredLaunchOp{}
 // launchOp is one database operation of a launch.
 type launchOp[A launchOpArgs, R any] struct {
 	name string
-	run  func(A) (R, error)
+	// preBind: brokered as soon as this process holds a ticket, not only once
+	// the launch is bound.
+	preBind bool
+	run     func(A) (R, error)
 }
 
 // defineLaunchOp registers an op. Called from package-level initializers
@@ -162,15 +212,34 @@ func defineLaunchOp[A launchOpArgs, R any](name string, fence launchFence, run f
 		panic("duplicate launch op " + name)
 	}
 	launchOpRegistry[name] = registeredLaunchOp{
+		fence: fence,
 		apply: func(raw json.RawMessage, bound LaunchBinding) (any, error) {
 			var args A
 			if err := json.Unmarshal(raw, &args); err != nil {
 				return nil, fmt.Errorf("decode %s arguments: %w", name, err)
 			}
+			if fence == fenceTicketOnly {
+				if keyed, ok := any(args).(launchConvKeyedArgs); ok {
+					if bound.ConvID == "" || keyed.launchConvKey() != bound.ConvID {
+						return nil, ErrLaunchOpForeignSession
+					}
+				} else if args.launchSessionID() == "" ||
+					(bound.SessionID != "" && args.launchSessionID() != bound.SessionID) {
+					return nil, ErrLaunchOpForeignSession
+				}
+				return run(args)
+			}
 			if args.launchSessionID() != bound.SessionID {
 				return nil, ErrLaunchOpForeignSession
 			}
 			if g := args.launchGeneration(); g != "" && g != bound.Generation {
+				return nil, ErrLaunchOpForeignSession
+			}
+			if ref, ok := any(args).(launchConvRefArgs); ok && !bound.ownsConv(ref.launchConvRef()) {
+				return nil, ErrLaunchOpForeignSession
+			}
+			if runtime, ok := any(args).(launchCodexRuntimeArgs); ok &&
+				(bound.CodexAppServerGeneration == "" || runtime.launchCodexRuntime() != bound.CodexAppServerGeneration) {
 				return nil, ErrLaunchOpForeignSession
 			}
 			if fence == fenceCurrentGeneration {
@@ -181,7 +250,7 @@ func defineLaunchOp[A launchOpArgs, R any](name string, fence launchFence, run f
 			return run(args)
 		},
 	}
-	return launchOp[A, R]{name: name, run: run}
+	return launchOp[A, R]{name: name, preBind: fence == fenceTicketOnly, run: run}
 }
 
 // requireCurrentLaunchGeneration refuses when the session row is gone or
@@ -210,6 +279,11 @@ func requireCurrentLaunchGeneration(bound LaunchBinding) error {
 // brokered.
 func (op launchOp[A, R]) call(args A) (R, error) {
 	broker := brokeredLaunch.Load()
+	if broker == nil && op.preBind {
+		if ticket := pendingLaunchTicket.Load(); ticket != nil {
+			broker = &launchBroker{ticket: *ticket}
+		}
+	}
 	if broker == nil {
 		return op.run(args)
 	}
@@ -226,7 +300,7 @@ func ApplyBrokeredLaunchOp(name string, raw json.RawMessage, bound LaunchBinding
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownLaunchOp, name)
 	}
-	if bound.SessionID == "" || bound.Generation == "" {
+	if op.fence != fenceTicketOnly && (bound.SessionID == "" || bound.Generation == "") {
 		return nil, ErrLaunchOpForeignSession
 	}
 	result, err := op.apply(raw, bound)
@@ -253,6 +327,14 @@ var brokeredLaunch atomic.Pointer[launchBroker]
 // LaunchIsBrokered reports whether this process hands its launch operations
 // to agentd.
 func LaunchIsBrokered() bool { return brokeredLaunch.Load() != nil }
+
+// launchReadsLeaveThisProcess reports whether a launch read is answered by
+// agentd rather than the local database: once this process holds a ticket,
+// bound or not. A failed read then means "the daemon did not answer", which a
+// guard must not mistake for "nothing found".
+func launchReadsLeaveThisProcess() bool {
+	return brokeredLaunch.Load() != nil || pendingLaunchTicket.Load() != nil
+}
 
 // adoptLaunchTicket is the first thing a launch does: it takes the launch
 // ticket off the descriptor agentd handed over and closes that descriptor, so
@@ -318,10 +400,16 @@ func beginBrokeredLaunch(sessionID, generation string) error {
 	return nil
 }
 
+func errLaunchOpUnknownToDaemon(op string) error {
+	return fmt.Errorf("%s: the running agentd does not know this launch operation; "+
+		"it is older than this tclaude — restart agentd", op)
+}
+
 func (b *launchBroker) post(op string, args, result any) error {
-	if op != LaunchBeginOp && !b.ops[op] {
-		return fmt.Errorf("%s: the running agentd does not know this launch operation; "+
-			"it is older than this tclaude — restart agentd", op)
+	// b.ops is nil before the launch is bound; the daemon's own refusal of an
+	// unknown operation is translated below instead.
+	if op != LaunchBeginOp && b.ops != nil && !b.ops[op] {
+		return errLaunchOpUnknownToDaemon(op)
 	}
 	rawArgs, err := json.Marshal(args)
 	if err != nil {
@@ -333,8 +421,13 @@ func (b *launchBroker) post(op string, args, result any) error {
 	}
 	var out BrokeredLaunchResponse
 	if err := agentipc.PostToBroker(LaunchOpPath, body, launchOpTimeout, &out); err != nil {
-		if statusErr, ok := errors.AsType[*agentipc.BrokerStatusError](err); ok && statusErr.Status == http.StatusConflict {
-			return fmt.Errorf("%s: %w (%w)", op, ErrStaleLaunchGeneration, err)
+		if statusErr, ok := errors.AsType[*agentipc.BrokerStatusError](err); ok {
+			switch statusErr.Status {
+			case http.StatusConflict:
+				return fmt.Errorf("%s: %w (%w)", op, ErrStaleLaunchGeneration, err)
+			case http.StatusNotImplemented:
+				return errLaunchOpUnknownToDaemon(op)
+			}
 		}
 		return fmt.Errorf("%s: %w", op, err)
 	}

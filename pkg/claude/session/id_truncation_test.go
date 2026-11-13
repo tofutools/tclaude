@@ -195,8 +195,15 @@ func TestLiveSessionOwningID_GuardsLivePKReuse(t *testing.T) {
 	clcommon.Default = fakeTmux{alive: map[string]bool{"live-label": true, "d0e9fa14": true}}
 	t.Cleanup(func() { clcommon.Default = prevTmux })
 
+	// The lookup's error only matters to a brokered launch; these are local.
+	liveOwner := func(sessionID string) *SessionState {
+		owner, err := liveSessionOwningID(sessionID)
+		require.NoError(t, err)
+		return owner
+	}
+
 	// Free PK — nothing to collide with.
-	assert.Nil(t, liveSessionOwningID("free-label"),
+	assert.Nil(t, liveOwner("free-label"),
 		"a PK with no existing row is free to use")
 
 	// --label PK owned by a LIVE session — must report the collision so the
@@ -204,7 +211,7 @@ func TestLiveSessionOwningID_GuardsLivePKReuse(t *testing.T) {
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID: "live-label", ConvID: "conv-aaaa", TmuxSession: "live-label", Status: StatusIdle,
 	}))
-	owner := liveSessionOwningID("live-label")
+	owner := liveOwner("live-label")
 	require.NotNil(t, owner, "a live session already holding the label must block reuse")
 	assert.Equal(t, "live-label", owner.ID)
 
@@ -214,7 +221,7 @@ func TestLiveSessionOwningID_GuardsLivePKReuse(t *testing.T) {
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID: convUUID, ConvID: convUUID, TmuxSession: "d0e9fa14", Status: StatusIdle,
 	}))
-	owner = liveSessionOwningID(convUUID)
+	owner = liveOwner(convUUID)
 	require.NotNil(t, owner, "a live session already resuming this conv must block a relaunch")
 	assert.Equal(t, convUUID, owner.ID)
 
@@ -223,7 +230,7 @@ func TestLiveSessionOwningID_GuardsLivePKReuse(t *testing.T) {
 	require.NoError(t, SaveSessionState(&SessionState{
 		ID: "dead-label", ConvID: "conv-bbbb", TmuxSession: "dead-label", Status: StatusExited,
 	}))
-	assert.Nil(t, liveSessionOwningID("dead-label"),
+	assert.Nil(t, liveOwner("dead-label"),
 		"an exited row sharing the PK does not block a fresh launch")
 }
 

@@ -438,7 +438,7 @@ func TestOrdinaryGeneratedCodexProfileParticipatesOnlyWhenRegistryInstalled(t *t
 		Generation: "launch:ordinary", ProfileName: name, OwnerAgentID: "agent",
 		OwnerConvID: "conv", LaunchID: "launch", LaunchReady: false,
 	}
-	registered, err := registerCodexNativePermissionProfileIfInstalled(opts, profile, path)
+	registered, err := registerCodexNativePermissionProfileIfInstalled(opts, profile, path, "")
 	require.NoError(t, err)
 	require.True(t, registered)
 	assert.Equal(t, 1, adoptions, "every installed-registry ordinary publisher protects existing live profiles first")
@@ -454,7 +454,7 @@ func TestOrdinaryGeneratedCodexProfileParticipatesOnlyWhenRegistryInstalled(t *t
 	require.NoError(t, os.WriteFile(skippedPath,
 		[]byte(nativeProfile(skippedName, "/workspace/skipped")), 0o600))
 	registered, err = registerCodexNativePermissionProfileIfInstalled(opts,
-		db.CodexNativePermissionProfile{Generation: "launch:skipped", ProfileName: skippedName}, skippedPath)
+		db.CodexNativePermissionProfile{Generation: "launch:skipped", ProfileName: skippedName}, skippedPath, "")
 	require.NoError(t, err)
 	assert.False(t, registered, "missing optional registry must not block an ordinary launch")
 	assert.Equal(t, 1, adoptions, "an absent registry must skip without broadening launch preflight")

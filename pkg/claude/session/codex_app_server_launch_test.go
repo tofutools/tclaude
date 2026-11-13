@@ -37,7 +37,7 @@ func TestVerifyCodexAppServerLaunchVersionProbesExactLaunchExecutable(t *testing
 	const pinned = "/strict-home/staged/codex"
 	err := verifyCodexAppServerLaunchVersion(&NewParams{
 		CodexAppServer: true, CodexAppServerGeneration: generation,
-	}, pinned, home, []sandboxpolicy.EnvironmentEntry{{Name: "PATH", Value: "/agentd-path-must-not-win"}})
+	}, "spwn-version", pinned, home, []sandboxpolicy.EnvironmentEntry{{Name: "PATH", Value: "/agentd-path-must-not-win"}})
 	require.NoError(t, err)
 	assert.Equal(t, pinned, probed)
 	runtime, err := db.GetCodexAppServerRuntime(generation)
@@ -66,7 +66,7 @@ func TestVerifyCodexAppServerLaunchVersionFailsClosedAndMarksUnavailable(t *test
 
 	err := verifyCodexAppServerLaunchVersion(&NewParams{
 		CodexAppServer: true, CodexAppServerGeneration: generation,
-	}, "/pinned/codex", home, nil)
+	}, "spwn-version", "/pinned/codex", home, nil)
 	require.Error(t, err)
 	runtime, getErr := db.GetCodexAppServerRuntime(generation)
 	require.NoError(t, getErr)

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -209,10 +210,37 @@ func migrationQuarantineSuffix() string {
 	return fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102T150405.000000000Z"), os.Getpid())
 }
 
+// openGuard, when set, is asked before every Open. See SetOpenGuard.
+var openGuard atomic.Pointer[func() error]
+
+// SetOpenGuard installs a function that is asked before every Open — every
+// database access of this process goes through Open — and whose error
+// refuses it. restore puts the previous guard back.
+//
+// It exists for processes that must not touch the database at all: a launch
+// brokered through agentd runs where there may be no database, and Open
+// would create and migrate an empty one there rather than fail. Today only a
+// test installs one, to prove a brokered launch makes no such access; the
+// brokered entry points install their own once all of them are brokered.
+// Guards nest: restore them in reverse order of installation.
+func SetOpenGuard(guard func() error) (restore func()) {
+	var next *func() error
+	if guard != nil {
+		next = &guard
+	}
+	previous := openGuard.Swap(next)
+	return func() { openGuard.Store(previous) }
+}
+
 // Open returns the singleton database connection, creating and migrating
 // the database on first call. Concurrent callers block until the first
 // initialization completes, then share its result (or its error).
 func Open() (*sql.DB, error) {
+	if guard := openGuard.Load(); guard != nil {
+		if err := (*guard)(); err != nil {
+			return nil, err
+		}
+	}
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	if dbReady {
