@@ -454,6 +454,19 @@ func TestPeerTaskboardOptions(t *testing.T) {
 	code, body := call(http.MethodGet, nil)
 	assert.NotEqual(t, http.StatusOK, code, body)
 
+	// The options grants alone read no tasks: the board's context leaves
+	// the group out.
+	h.grant(t, agentd.PermTaskboardOptionsRead, "group=crew")
+	rec := testharness.Serve(view, testharness.JSONRequest(t, http.MethodGet, "/v1/taskboard/context", nil))
+	var ctx struct {
+		Groups []struct {
+			Group string `json:"group"`
+		} `json:"groups"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ctx))
+	assert.Empty(t, ctx.Groups, "options.read shows no board's tasks")
+	h.revoke(t, agentd.PermTaskboardOptionsRead, "group=crew")
+
 	h.grant(t, agentd.PermTaskboardRead, "group=crew")
 	h.grant(t, agentd.PermTaskboardWrite, "group=crew")
 	code, body = call(http.MethodGet, nil)

@@ -913,9 +913,16 @@ tclaude agent permissions slugs | grep taskboard.options
 ```
 
 - The operator passes every gate.
-- A change passes the [writer lock](#the-writer-lock) as any other change of
-  the board does: the owners, the listed writers and a grant whose scope the
-  group satisfies pass it.
+- On a locked board ([the writer lock](#the-writer-lock)), a change of the
+  options passes only for the group's owners, its listed writers, and an
+  explicit `taskboard.options.write` or `taskboard.options.own.write` grant
+  (the agent's own, a group grant or a sudo) whose scope names the group.
+  An unscoped grant or a default permission does not pass it, and nor do the
+  task slugs (`taskboard.write`, `taskboard.assign`, `taskboard.own`).
+- An explicit deny of `taskboard.options.read` or `taskboard.options.write`
+  also denies the matching `taskboard.options.own.read` or `.own.write`: the
+  deny wins, for members and owners alike, and a copy of the board's setup
+  leaves it out.
 - A column's limit and its idle-check choice are options. Adding, renaming,
   moving, removing, hiding and cordoning a column stay
   [`taskboard.columns`](#custom-columns).
@@ -928,9 +935,11 @@ tclaude agent permissions slugs | grep taskboard.options
   leaves the setup out. See [Carrying a board's setup](#carrying-a-boards-setup).
 - A linked node reads and changes them under the peer grants
   `taskboard.options.read` and `taskboard.options.write`, or
-  `taskboard.manage` (see [Across linked nodes](#across-linked-nodes)). A
-  local agent acts on a linked node's board options with the same slugs
-  scoped `peer=<node>/<group>`.
+  `taskboard.manage` (see [Across linked nodes](#across-linked-nodes)).
+  These grants read no tasks. A local agent acts on a linked node's board
+  options with the same slugs scoped `peer=<node>/<group>`. Reading a linked
+  node's board context, the agent gets a board's options summary only where
+  it also holds `taskboard.options.read` for that node and group.
 
 **Changed in this release.** `taskboard.write` used to change a board's
 options and `taskboard.read` used to read them. They no longer do, and there
@@ -1217,7 +1226,7 @@ tclaude federation grant bob taskboard.options.write --scope group=crew
 | `taskboard.columns` | Add, rename, reorder, remove, hide and cordon the board's columns |
 | `taskboard.transfer` | Move or clone a task into the group from another group of this node. A move also needs `taskboard.manage` on the source group, and a clone needs only a read of it |
 
-- Any of these grants also lets the node read the board.
+- Any of these grants, except the options grants, also lets the node read the board.
 - A grant covers only the groups in its scope. A task in another group answers
   404, so its existence does not leak.
 - Unrestricted trust acts as this node's operator does.

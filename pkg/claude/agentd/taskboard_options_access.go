@@ -1,7 +1,10 @@
 package agentd
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
+	"slices"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -24,9 +27,10 @@ import (
 //     Owner-implied. Implies taskboard.options.read; taskboard.manage, which
 //     manages the board as a whole, implies it (permissionUmbrellaFor).
 //
-// The operator always passes. A change is narrowed by the writer lock as any
-// change of the board is: the group's owners, its listed writers and an
-// explicit options grant whose scope the group alone satisfies pass it.
+// The operator always passes. A change is narrowed by the writer lock: the
+// group's owners, its listed writers and an explicit options grant whose
+// scope names the group pass it (taskboardOptionsLockPasses). An explicit
+// deny of the general slug also denies the matching own-board slug.
 //
 // A board's columns (adding, renaming, removing, hiding, cordoning) stay
 // taskboard.columns; a column's limit is an option. A task's own queue
@@ -65,19 +69,11 @@ func agentReadsTaskboardOptions(r *http.Request, conv string, g *db.AgentGroup) 
 	if agentAllowsOn(r, conv, PermTaskboardOptionsRead, g) {
 		return true
 	}
-	return agentIsActiveMember(conv, g) && agentAllowsOn(r, conv, PermTaskboardOptionsOwnRead, g)
-}
-
-// agentWritesTaskboardOptions reports, silently, whether the agent behind
-// conv holds a slug that changes g's options (the writer lock aside).
-func agentWritesTaskboardOptions(r *http.Request, conv string, g *db.AgentGroup) bool {
-	if conv == "" || g == nil {
+	// An explicit deny of the general slug denies the own-board one too.
+	if taskboardSlugDenied(r, conv, PermTaskboardOptionsRead) {
 		return false
 	}
-	if agentAllowsOn(r, conv, PermTaskboardOptionsWrite, g) {
-		return true
-	}
-	return agentIsActiveMember(conv, g) && agentAllowsOn(r, conv, PermTaskboardOptionsOwnWrite, g)
+	return agentIsActiveMember(conv, g) && agentAllowsOn(r, conv, PermTaskboardOptionsOwnRead, g)
 }
 
 // requireTaskboardOptionsRead gates a read of g's options. A confirmed agent
@@ -99,7 +95,7 @@ func requireTaskboardOptionsChange(w http.ResponseWriter, r *http.Request, g *db
 	clearAuthorizedPermission(r)
 	conv := confirmedAgentConv(r)
 	if conv != "" && agentIsActiveMember(conv, g) && !agentAllowsOn(r, conv, PermTaskboardOptionsWrite, g) &&
-		agentAllowsOn(r, conv, PermTaskboardOptionsOwnWrite, g) {
+		!taskboardSlugDenied(r, conv, PermTaskboardOptionsWrite) && agentAllowsOn(r, conv, PermTaskboardOptionsOwnWrite, g) {
 		recordAuthorizedPermission(r, PermTaskboardOptionsOwnWrite, 0)
 	} else if _, ok := requireGroupPermission(w, r, PermTaskboardOptionsWrite, g); !ok {
 		return false
@@ -121,18 +117,39 @@ func requireTaskboardOptionsChange(w http.ResponseWriter, r *http.Request, g *db
 }
 
 // taskboardOptionsLockPasses reports whether the agent behind conv passes
-// g's writer lock for a change of its options: as for any change of the
-// board (taskboardLockPasses), or through an explicit options grant whose
-// scope the group alone satisfies.
+// g's writer lock for a change of its options: the board is open, or the
+// agent is a listed writer, an owner of the group, or holds an explicit
+// options grant (taskboard.options.write or .own.write, or what implies
+// them) whose scope names the group and that comes from its own grants, a
+// group grant or a sudo, not the defaults list. The task slugs
+// (taskboard.write, .assign, .own) do not pass it for the options, and an
+// unscoped grant or a default permission is what the lock narrows.
 func taskboardOptionsLockPasses(r *http.Request, g *db.AgentGroup, conv string) (bool, error) {
-	passes, err := taskboardLockPasses(r, g, conv)
-	if err != nil || passes {
-		return passes, err
+	lock, err := db.GetTaskboardLock(g.ID)
+	if err != nil {
+		return false, err
+	}
+	if !lock.Locked {
+		return true, nil
+	}
+	if agentID, err := db.AgentIDForConv(conv); err == nil && agentID != "" && slices.Contains(lock.Writers, agentID) {
+		return true, nil
+	}
+	if owner, err := db.IsAgentGroupOwner(g.ID, conv); err == nil && owner {
+		return true, nil
 	}
 	ctx := ActionContext{Group: g.Name}
 	for _, slug := range []string{PermTaskboardOptionsWrite, PermTaskboardOptionsOwnWrite} {
 		v := resolvePermissionVerdictForRequest(r, conv, slug)
-		if v.Resolution == permAllow && evalPermissionScope(v, conv, ctx).Satisfied {
+		if v.Resolution != permAllow {
+			continue
+		}
+		switch v.Source {
+		case permSourceOverride, permSourceGroup, permSourceSudo:
+		default:
+			continue
+		}
+		if eval := evalPermissionScope(v, conv, ctx); eval.Satisfied && !eval.Unscoped {
 			return true, nil
 		}
 	}
@@ -198,4 +215,95 @@ func peerWritesTaskboardOptions(peer string, groupID int64) bool {
 func agentCarriesTaskboardSetup(r *http.Request, g *db.AgentGroup) bool {
 	conv := confirmedAgentConv(r)
 	return conv == "" || agentReadsTaskboardOptions(r, conv, g)
+}
+
+// agentPeerContextRoute is the board context an agent reads through an
+// agent peer view.
+const agentPeerContextRoute = "GET /v1/taskboard/context"
+
+// peerContextOptionsFilter holds back a linked node's board context, for an
+// agent peer view, until finish drops the options summary of each group the
+// agent does not read the options of. The linked node includes the summary
+// on its grants to this node as a whole; the agent's own peer= grants are
+// this node's to apply. A task's own queue facts stay.
+type peerContextOptionsFilter struct {
+	w      http.ResponseWriter
+	header http.Header
+	code   int
+	body   bytes.Buffer
+}
+
+func newPeerContextOptionsFilter(w http.ResponseWriter) *peerContextOptionsFilter {
+	return &peerContextOptionsFilter{w: w, header: http.Header{}}
+}
+
+func (f *peerContextOptionsFilter) Header() http.Header { return f.header }
+
+func (f *peerContextOptionsFilter) WriteHeader(code int) {
+	if f.code == 0 {
+		f.code = code
+	}
+}
+
+func (f *peerContextOptionsFilter) Write(b []byte) (int, error) {
+	if f.code == 0 {
+		f.code = http.StatusOK
+	}
+	return f.body.Write(b)
+}
+
+// finish writes the held response, each group's options summary dropped
+// unless reads(group). A body it cannot read loses every summary it could
+// carry: none is passed on unchecked.
+func (f *peerContextOptionsFilter) finish(reads func(group string) bool) {
+	body := f.body.Bytes()
+	if f.code == http.StatusOK {
+		body = stripContextOptions(body, reads)
+	}
+	for k, v := range f.header {
+		if k == "Content-Length" {
+			continue
+		}
+		f.w.Header()[k] = v
+	}
+	if f.code == 0 {
+		f.code = http.StatusOK
+	}
+	f.w.WriteHeader(f.code)
+	_, _ = f.w.Write(body)
+}
+
+// stripContextOptions drops "options" from each entry of a board context's
+// groups unless reads(its group).
+func stripContextOptions(body []byte, reads func(group string) bool) []byte {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return []byte(`{"groups":[]}`)
+	}
+	var groups []map[string]json.RawMessage
+	if raw, ok := doc["groups"]; ok {
+		if err := json.Unmarshal(raw, &groups); err != nil {
+			return []byte(`{"groups":[]}`)
+		}
+	}
+	for _, g := range groups {
+		if _, ok := g["options"]; !ok {
+			continue
+		}
+		var name string
+		_ = json.Unmarshal(g["group"], &name)
+		if name == "" || !reads(name) {
+			delete(g, "options")
+		}
+	}
+	raw, err := json.Marshal(groups)
+	if err != nil {
+		return []byte(`{"groups":[]}`)
+	}
+	doc["groups"] = raw
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return []byte(`{"groups":[]}`)
+	}
+	return out
 }

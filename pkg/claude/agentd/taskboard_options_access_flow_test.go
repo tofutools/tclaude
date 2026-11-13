@@ -129,6 +129,25 @@ func TestTaskboardOptionsWriterLock(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, "an owner passes: %s", body)
 }
 
+// An unscoped own.write (the default-permission shape) is narrowed by the
+// lock; one scoped to the group passes it.
+func TestTaskboardOptionsWriterLockUnscoped(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	tbGrant(t, h.worker, agentd.PermTaskboardOptionsOwnWrite, "")
+	code, body := h.optionsCode(h.worker, "crew", http.MethodPatch, tbOptionsOff)
+	require.Equal(t, http.StatusOK, code, "an open board: %s", body)
+
+	rec := h.call(h.lead, http.MethodPost, "/v1/groups/crew/taskboard/writers", map[string]any{"agents": []string{h.peer}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	code, body = h.optionsCode(h.worker, "crew", http.MethodPatch, map[string]any{"reset": []string{"all"}})
+	require.Equal(t, http.StatusForbidden, code, "an unscoped grant does not pass the lock: %s", body)
+	assert.Contains(t, body, "taskboard_locked")
+	tbGrant(t, h.worker, agentd.PermTaskboardOptionsOwnWrite, "crew")
+	code, body = h.optionsCode(h.worker, "crew", http.MethodPatch, map[string]any{"reset": []string{"all"}})
+	require.Equal(t, http.StatusOK, code, "a grant scoped to the group does: %s", body)
+}
+
 // The board context carries the options summary only for a caller that
 // reads the options; a task's own queue facts read with the board.
 func TestTaskboardContextOptionsSummaryGated(t *testing.T) {
@@ -178,4 +197,62 @@ func TestTaskboardContextOptionsSummaryGated(t *testing.T) {
 	assert.False(t, summary, "a reader of tasks only gets no options summary")
 	assert.Equal(t, true, task["queued"], "but still sees that a task waits for a slot")
 	assert.NotEmpty(t, task["queued_reason"])
+}
+
+// The options lock passes only owners, listed writers and an explicit
+// options grant scoped to the group: a task slug does not pass it for the
+// options, nor does an unscoped options.write.
+func TestTaskboardOptionsWriterLockGrants(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	rec := h.call(h.lead, http.MethodPost, "/v1/groups/crew/taskboard/writers", map[string]any{"agents": []string{h.peer}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// A member holding an explicit scoped taskboard.write passes the lock for
+	// tasks, not for options it changes under an unscoped own.write.
+	tbGrant(t, h.worker, agentd.PermTaskboardWrite, "crew")
+	tbGrant(t, h.worker, agentd.PermTaskboardOptionsOwnWrite, "")
+	code, body := h.optionsCode(h.worker, "crew", http.MethodPatch, tbOptionsOff)
+	require.Equal(t, http.StatusForbidden, code, "a task slug does not pass the options lock: %s", body)
+	assert.Contains(t, body, "taskboard_locked")
+
+	const other = "tb-other-5555"
+	h.agent(t, other)
+	tbGrant(t, other, agentd.PermTaskboardOptionsWrite, "")
+	code, body = h.optionsCode(other, "crew", http.MethodPatch, tbOptionsOff)
+	require.Equal(t, http.StatusForbidden, code, "an unscoped options.write does not pass it: %s", body)
+	assert.Contains(t, body, "taskboard_locked")
+	tbGrant(t, other, agentd.PermTaskboardOptionsWrite, "crew")
+	code, body = h.optionsCode(other, "crew", http.MethodPatch, tbOptionsOff)
+	require.Equal(t, http.StatusOK, code, "one scoped to the group does: %s", body)
+}
+
+// An explicit deny of taskboard.options.read / .write also denies the
+// matching own-board slug: deny wins, for owners and members alike, and a
+// copy of the board's setup follows the read.
+func TestTaskboardOptionsDenyWinsOverOwn(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	saveTaskboardConfig(t, nil)
+	haveBoardSetup(t, h.f, "crew")
+
+	require.NoError(t, db.SetAgentPermissionOverride(h.worker, agentd.PermTaskboardOptionsRead, db.PermEffectDeny, "test"))
+	code, body := h.optionsCode(h.worker, "crew", http.MethodGet, nil)
+	require.Equal(t, http.StatusForbidden, code, "a denied options.read denies the member's own.read: %s", body)
+	require.NoError(t, db.GrantAgentPermissionWithScope(h.worker, agentd.PermGroupsClone, "", "test"))
+	rec := h.call(h.worker, http.MethodPost, "/v1/groups/crew/clone", map[string]any{"new_name": "denied-copy", "no_clone_members": true, "no_copy_conv": true})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	requireBareBoard(t, "denied-copy")
+
+	tbGrant(t, h.peer, agentd.PermTaskboardOptionsOwnWrite, "crew")
+	code, body = h.optionsCode(h.peer, "crew", http.MethodPatch, tbOptionsOff)
+	require.Equal(t, http.StatusOK, code, body)
+	require.NoError(t, db.SetAgentPermissionOverride(h.peer, agentd.PermTaskboardOptionsWrite, db.PermEffectDeny, "test"))
+	code, body = h.optionsCode(h.peer, "crew", http.MethodPatch, map[string]any{"reset": []string{"all"}})
+	require.Equal(t, http.StatusForbidden, code, "a denied options.write denies own.write: %s", body)
+
+	// The owner, a member of the group as well here, is denied too.
+	h.f.HaveMember("crew", h.lead)
+	require.NoError(t, db.SetAgentPermissionOverride(h.lead, agentd.PermTaskboardOptionsRead, db.PermEffectDeny, "test"))
+	code, body = h.optionsCode(h.lead, "crew", http.MethodGet, nil)
+	require.Equal(t, http.StatusForbidden, code, "a denied owner reads nothing: %s", body)
 }
