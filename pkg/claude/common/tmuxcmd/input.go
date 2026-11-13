@@ -12,8 +12,10 @@ import (
 // name pinned, so it cannot fall back onto a namesake session. A leading '='
 // is accepted and means the same.
 //
-// It is for targets that arrive as text (a stored target, a lock identity).
-// New code should build a target from a session name or pane id instead.
+// It is for targets that arrive as text (a stored target, a lock identity)
+// and name a pane by id or by session name. A session id ("$3") is not
+// understood here. New code should build a target from a session name or
+// pane id instead.
 func PaneFromSpec(spec string) PaneTarget {
 	spec = strings.TrimPrefix(spec, "=")
 	if spec == "" || strings.HasPrefix(spec, "%") {
@@ -34,12 +36,13 @@ func (c Client) SendKeys(p PaneTarget, keys ...string) error {
 }
 
 // SendLiteral types text into the pane exactly as written: nothing in it is
-// read as a key name, so "Enter" types the word.
+// read as a key name, so "Enter" types the word, and nothing in it is read as
+// tmux syntax, so text may start with '-' or end with ';'.
 func (c Client) SendLiteral(p PaneTarget, text string) error {
 	if err := named("send-keys", p.spec); err != nil {
 		return err
 	}
-	_, err := c.run("send-keys", "-l", "-t", p.spec, text)
+	_, err := c.run("send-keys", "-l", "-t", p.spec, "--", literalArg(text))
 	return err
 }
 
@@ -100,8 +103,10 @@ func (c Client) SendKeySequence(p PaneTarget, keys []Key) error {
 }
 
 // literalArg escapes the one thing tmux's argv parser treats specially in an
-// argument: a trailing ';' ends the command. A backslash before it keeps it
-// part of the text.
+// argument: a trailing ';' ends the command, and tmux drops it. A backslash
+// before it keeps it part of the text. The other half of passing text
+// verbatim is the "--" its callers put in front: without it tmux reads text
+// that starts with '-' as flags and rejects the command.
 func literalArg(s string) string {
 	if strings.HasSuffix(s, ";") {
 		return s[:len(s)-1] + `\;`
@@ -145,7 +150,7 @@ func (c Client) PasteText(p PaneTarget, buffer, text string, beforePaste func() 
 	if err := named("paste-buffer", p.spec, buffer); err != nil {
 		return err
 	}
-	if _, err := c.run("set-buffer", "-b", buffer, text); err != nil {
+	if _, err := c.run("set-buffer", "-b", buffer, "--", literalArg(text)); err != nil {
 		return fmt.Errorf("set-buffer text: %w", err)
 	}
 	err := error(nil)

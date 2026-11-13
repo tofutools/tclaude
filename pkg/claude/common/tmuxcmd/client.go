@@ -70,7 +70,9 @@ func (c Client) WithTimeout(d time.Duration) Client {
 	return c
 }
 
-// WithTimer replaces how the timeout's timer is started. Tests only.
+// WithTimer replaces how the timeout's timer is started, for the local tmux
+// server only (a client built with NewClient takes its deadline from the
+// context). Tests only.
 func (c Client) WithTimer(t Timer) Client {
 	c.timer = t
 	return c
@@ -119,10 +121,15 @@ func (c Client) runVia(t Transport, args []string) ([]byte, error) {
 		defer cancel()
 	}
 	out, err := t.Run(ctx, args)
-	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && !errors.Is(err, ErrTimeout) {
+	if err == nil {
+		return out, nil
+	}
+	// An answer from tmux stays an answer even if it arrived late: an error
+	// must not read as both "tmux said no" and "we do not know".
+	if !Rejected(err) && errors.Is(ctx.Err(), context.DeadlineExceeded) && !errors.Is(err, ErrTimeout) {
 		return nil, fmt.Errorf("%w after %s: %w", ErrTimeout, c.timeout, err)
 	}
-	return out, err
+	return nil, err
 }
 
 // wait runs cmd to completion, killing and reaping it if the client's timeout

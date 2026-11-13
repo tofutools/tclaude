@@ -3,6 +3,7 @@ package paneinput
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -69,7 +70,7 @@ func TestInjectTextAndSubmitUsesLiteralModeForSingleLineText(t *testing.T) {
 		SettleDelay: 0, SettleDelaySet: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"send-keys", "-l", "-t", "=pane-literal:0.0", "Enter"}, commands[0])
+	require.Equal(t, []string{"send-keys", "-l", "-t", "=pane-literal:0.0", "--", "Enter"}, commands[0])
 }
 
 func TestInjectTextAndSubmitCanForceBracketedPasteForSingleLineText(t *testing.T) {
@@ -103,7 +104,7 @@ func TestInjectTextAndSubmitPreservesExactPaneID(t *testing.T) {
 		SettleDelay: 0, SettleDelaySet: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"send-keys", "-l", "-t", "%42", "/exit"}, commands[0])
+	require.Equal(t, []string{"send-keys", "-l", "-t", "%42", "--", "/exit"}, commands[0])
 }
 
 func TestPaneLockPathUsesPrivateDataDirectory(t *testing.T) {
@@ -173,7 +174,7 @@ func TestInjectTextAndSubmitLockIDSerializesPaneIDWithSessionStream(t *testing.T
 	require.NoError(t, <-firstDone)
 	released := opts(func(args ...string) error {
 		if args[0] == "send-keys" || args[0] == "paste-buffer" {
-			require.Equal(t, "%41", args[len(args)-2],
+			require.Equal(t, "%41", args[slices.Index(args, "-t")+1],
 				"LockID changes only the serialization identity, never the send target")
 		}
 		secondCalled = true

@@ -31,7 +31,11 @@ func TestInputVerbArgv(t *testing.T) {
 		{"keys by name", func(c Client) { _ = c.SendKeys(pane, "Escape", "C-c") },
 			[][]string{{"send-keys", "-t", "%7", "Escape", "C-c"}}},
 		{"literal text is never a key name", func(c Client) { _ = c.SendLiteral(Session("repo").FirstPane(), "Enter") },
-			[][]string{{"send-keys", "-l", "-t", "=repo:0.0", "Enter"}}},
+			[][]string{{"send-keys", "-l", "-t", "=repo:0.0", "--", "Enter"}}},
+		{"literal text may start with a dash and end with a semicolon", func(c Client) { _ = c.SendLiteral(PaneID("%7"), "- done;") },
+			[][]string{{"send-keys", "-l", "-t", "%7", "--", `- done\;`}}},
+		{"pasted text likewise", func(c Client) { _ = c.PasteText(PaneID("%7"), "buf", "- a\n- b;", nil) },
+			[][]string{{"set-buffer", "-b", "buf", "--", "- a\n- b\\;"}, {"paste-buffer", "-d", "-p", "-r", "-b", "buf", "-t", "%7"}}},
 		{"raw bytes as hex", func(c Client) { _ = c.SendBytes(pane, []byte{0x1b, '[', 'M'}) },
 			[][]string{{"send-keys", "-t", "%7", "-H", "1b", "5b", "4d"}}},
 		{"no bytes sends nothing", func(c Client) { _ = c.SendBytes(pane, nil) }, nil},
@@ -60,7 +64,7 @@ func TestInputVerbArgv(t *testing.T) {
 		{"root key binding", func(c Client) { _ = c.BindRootKey("S-Right", "run-shell", "-b", "x") },
 			[][]string{{"bind-key", "-n", "S-Right", "run-shell", "-b", "x"}}},
 		{"paste", func(c Client) { _ = c.PasteText(pane, "buf", "a\nb", nil) },
-			[][]string{{"set-buffer", "-b", "buf", "a\nb"}, {"paste-buffer", "-d", "-p", "-r", "-b", "buf", "-t", "%7"}}},
+			[][]string{{"set-buffer", "-b", "buf", "--", "a\nb"}, {"paste-buffer", "-d", "-p", "-r", "-b", "buf", "-t", "%7"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,7 +97,7 @@ func TestPasteTextRemovesItsBufferWhenThePasteDoesNotHappen(t *testing.T) {
 	var calls [][]string
 	err := recorder(&calls, nil).PasteText(PaneID("%7"), "buf", "text", func() error { return refused })
 	require.ErrorIs(t, err, refused)
-	assert.Equal(t, [][]string{{"set-buffer", "-b", "buf", "text"}, {"delete-buffer", "-b", "buf"}}, calls,
+	assert.Equal(t, [][]string{{"set-buffer", "-b", "buf", "--", "text"}, {"delete-buffer", "-b", "buf"}}, calls,
 		"the check runs after staging and before the paste")
 
 	calls = nil
@@ -159,4 +163,22 @@ func TestLiteralArgEscapesOnlyTheCommandSeparator(t *testing.T) {
 	assert.Equal(t, `\\;`, literalArg(`\;`))
 	assert.Equal(t, "; kill-server", literalArg("; kill-server"))
 	assert.Equal(t, "", literalArg(""))
+}
+
+func TestErrorWithoutATransportErrorStillReadsWell(t *testing.T) {
+	assert.Equal(t, "tmux kill-session: can't find session: repo",
+		(&Error{Command: "kill-session", Message: "can't find session: repo"}).Error())
+	assert.Equal(t, "tmux kill-session: rejected", (&Error{Command: "kill-session"}).Error())
+}
+
+// An answer that arrives after the deadline is still tmux's answer, not both
+// "tmux said no" and "we do not know".
+func TestLateRejectionIsNotATimeout(t *testing.T) {
+	c := NewClient(TransportFunc(func(ctx context.Context, _ []string) ([]byte, error) {
+		<-ctx.Done()
+		return nil, &Error{Command: "kill-session", Message: "can't find session: repo"}
+	}))
+	err := c.WithTimeout(time.Millisecond).KillSession(Session("repo"))
+	require.ErrorIs(t, err, ErrNotFound)
+	assert.NotErrorIs(t, err, ErrTimeout)
 }

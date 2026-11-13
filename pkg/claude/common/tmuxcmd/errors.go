@@ -33,12 +33,20 @@ type Error struct {
 	Command string
 	// Message is tmux's own error text, trimmed; empty when tmux gave none.
 	Message string
-	// Err is the transport's error: an *exec.ExitError from a forked client
-	// or a *clcommon.TmuxCommandError from control mode.
+	// Err is the transport's own error, when it has one: an *exec.ExitError
+	// from a forked client, a *clcommon.TmuxCommandError from control mode.
+	// A transport that only learns tmux's message leaves it nil.
 	Err error
 }
 
 func (e *Error) Error() string {
+	if e.Err == nil {
+		// A transport that knows only what tmux said.
+		if e.Message == "" {
+			return "tmux " + e.Command + ": rejected"
+		}
+		return "tmux " + e.Command + ": " + e.Message
+	}
 	var cmdErr *clcommon.TmuxCommandError
 	if errors.As(e.Err, &cmdErr) || e.Message == "" {
 		// The control-mode error already reads "tmux: <message>".
