@@ -105,11 +105,30 @@ type LossReport struct {
 	ContextWindowTokens    int64  `json:"context_window_tokens"`
 	ContextWindowSource    string `json:"context_window_source"`
 	BudgetTokens           int64  `json:"budget_tokens"`
-	Source                 string `json:"source"`
-	Target                 string `json:"target,omitempty"`
-	SourceEntries          int    `json:"source_entries"`
-	Carried                int    `json:"carried_entries"`
-	Items                  []Loss `json:"items"`
+	// BudgetSource says where the budget came from: "auto" (a share of the
+	// window), "stated" (the operator's token count) or "all" (no cut;
+	// BudgetTokens is then 0).
+	BudgetSource string `json:"budget_source,omitempty"`
+	CarryAll     bool   `json:"carry_all,omitempty"`
+	// WindowStated marks a window the operator stated; DetectedWindow* is
+	// what detection found, shown beside it.
+	WindowStated         bool   `json:"window_stated,omitempty"`
+	DetectedWindowTokens int64  `json:"detected_window_tokens,omitempty"`
+	DetectedWindowSource string `json:"detected_window_source,omitempty"`
+	// OverWindow: the carried history alone exceeds the window. OverHeadroom:
+	// an operator override leaves less than the usual headroom. Both warn;
+	// neither blocks.
+	OverWindow   bool `json:"over_window,omitempty"`
+	OverHeadroom bool `json:"over_headroom,omitempty"`
+	// CutFirst is the category a budget cut shortened first ("" = oldest
+	// turns), and Categories what each adjustable category weighed.
+	CutFirst      Category        `json:"cut_first,omitempty"`
+	Categories    []CategoryUsage `json:"categories,omitempty"`
+	Source        string          `json:"source"`
+	Target        string          `json:"target,omitempty"`
+	SourceEntries int             `json:"source_entries"`
+	Carried       int             `json:"carried_entries"`
+	Items         []Loss          `json:"items"`
 	// Fallback is the delivery rung: "native", "context_file" or "handoff".
 	Fallback string `json:"fallback,omitempty"`
 	// TranscriptPath is the full neutral transcript written beside the morph.
@@ -197,4 +216,11 @@ func (r *LossReport) Summary() string {
 		b.WriteString("\nFull transcript: " + r.TranscriptPath)
 	}
 	return b.String()
+}
+
+// OverBudget reports whether the carried history overflows its budget, so
+// native delivery cannot be trusted and the context-file rung is used. A
+// carry-all policy has no budget to overflow.
+func (r *LossReport) OverBudget() bool {
+	return !r.CarryAll && r.CarriedEstimatedTokens > r.BudgetTokens
 }

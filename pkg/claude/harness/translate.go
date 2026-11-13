@@ -116,6 +116,12 @@ func PlanTranscript(t *transcript.Transcript, dst *Harness, opts TranslateOption
 	if policy.ContextWindowTokens <= 0 || (!strings.HasPrefix(source, "unknown model") && resolved < policy.ContextWindowTokens) {
 		policy.ContextWindowTokens, policy.ContextWindowSource = resolved, source
 	}
+	// An operator-stated window is the operator's knowledge of the target,
+	// so detection neither caps nor replaces it; the report shows both.
+	if policy.StatedWindowTokens > 0 {
+		policy.DetectedWindowTokens, policy.DetectedWindowSource = policy.ContextWindowTokens, policy.ContextWindowSource
+		policy.ContextWindowTokens, policy.ContextWindowSource = policy.StatedWindowTokens, "stated by the operator"
+	}
 	policy.InlineMedia = dst.Transcript.InlineMedia()
 	if opts.ArtifactDir != "" {
 		policy.MediaDir = filepath.Join(opts.ArtifactDir, "media")
@@ -133,7 +139,7 @@ func PreviewTranslation(src, dst *Harness, convID, cwd string, opts TranslateOpt
 		return nil, err
 	}
 	var buf bytes.Buffer
-	if plan.Report.CarriedEstimatedTokens > plan.Report.BudgetTokens {
+	if plan.Report.OverBudget() {
 		plan.Report.Fallback = "context_file"
 		return plan.Report, nil
 	}
@@ -171,7 +177,7 @@ func TranslateHistory(src, dst *Harness, convID, cwd string, opts TranslateOptio
 			return fail(err)
 		}
 	}
-	if plan.Report.CarriedEstimatedTokens > plan.Report.BudgetTokens {
+	if plan.Report.OverBudget() {
 		opts.ContextFile = true
 	}
 	if opts.ContextFile {

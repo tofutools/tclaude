@@ -47,6 +47,7 @@ func TestMorphKnownWindowsAndUnknownAliases(t *testing.T) {
 		want     int64
 	}{
 		{DefaultName, "sonnet", 200000}, {DefaultName, "opus[1m]", 1000000},
+		{DefaultName, "claude-fable-5-2", 200000}, {DefaultName, "claude-fable-5-2[1m]", 1000000}, {DefaultName, "claude bogus", 32000},
 		{GeminiName, "gemini-2.5-pro", 1048576}, {GeminiName, "gemma-4-31b-it", 256000},
 		{GeminiName, "custom-small", 32000}, {GeminiName, "auto", 32000},
 	}

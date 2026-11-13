@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 )
@@ -24,7 +25,9 @@ func MorphContextWindow(h *Harness, model string) (int64, string) {
 		if strings.HasSuffix(model, "[1m]") {
 			return 1_000_000, "Claude extended-context selection"
 		}
-		if slices.Contains(h.Models.Models(), model) && model != "" {
+		// A full model id ("claude-fable-5-2") is as standard as its alias;
+		// only [1m] selects the extended window.
+		if model != "" && (slices.Contains(h.Models.Models(), model) || (strings.HasPrefix(model, "claude-") && clcommon.IsValidModel(model))) {
 			return 200_000, "Claude standard context"
 		}
 	case GeminiName:
