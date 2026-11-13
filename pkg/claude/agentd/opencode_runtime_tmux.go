@@ -229,21 +229,18 @@ func startOpenCodeProcessThroughTmux(runtime *db.OpenCodeRuntime, command string
 	if err := reclaimOrphanedOpenCodeTmuxSession(tmuxSession); err != nil {
 		return nil, err
 	}
-	tmuxArgs := []string{"new-session", "-d", "-s", tmuxSession, "-c", runtime.Cwd,
-		"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
-		"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight)}
 	launchArgs, cleanupScript, err := openCodeTmuxLaunchArgs(
 		*runtime, command, args, serverEnvironment, handshake)
 	if err != nil {
 		return nil, err
 	}
-	tmuxArgs = append(tmuxArgs, launchArgs...)
-	stderr := newSpawnStderrCapture()
-	launch := clcommon.Default.Command(session.ExternalTmuxNoStartArgs(tmuxArgs...)...)
-	launch.Stderr = stderr
-	if err := launch.Run(); err != nil {
+	if _, err := session.ExternalTmux().NewSession(tmuxcmd.SessionSpec{
+		Name: tmuxSession, Dir: runtime.Cwd,
+		Width: clcommon.CanonicalAgentPaneWidth, Height: clcommon.CanonicalAgentPaneHeight,
+		Command: launchArgs,
+	}); err != nil {
 		cleanupScript()
-		return nil, fmt.Errorf("launch OpenCode server through external tmux: %w: %s", err, stderr.String())
+		return nil, fmt.Errorf("launch OpenCode server through external tmux: %w", err)
 	}
 	pidOut, err := session.ExternalTmux().Display(tmuxcmd.Session(tmuxSession).FirstPane(), "#{pane_pid}")
 	if err != nil {

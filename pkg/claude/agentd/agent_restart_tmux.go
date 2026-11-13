@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"log/slog"
-	"strconv"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -41,12 +40,11 @@ func beginAgentRestartTmuxHandoff(oldTmux string) *agentRestartTmuxHandoff {
 		return nil
 	}
 	holding := "restart-" + strings.TrimPrefix(generateSpawnLabel(), "spwn-")
-	if err := clcommon.TmuxRun(session.ExternalTmuxNoStartArgs(
-		"new-session", "-d", "-s", holding,
-		"-x", strconv.Itoa(clcommon.CanonicalAgentPaneWidth),
-		"-y", strconv.Itoa(clcommon.CanonicalAgentPaneHeight),
-		"sh", "-c", agentRestartHoldingCommand,
-	)...); err != nil {
+	if _, err := session.ExternalTmux().NewSession(tmuxcmd.SessionSpec{
+		Name:  holding,
+		Width: clcommon.CanonicalAgentPaneWidth, Height: clcommon.CanonicalAgentPaneHeight,
+		Command: []string{"sh", "-c", agentRestartHoldingCommand},
+	}); err != nil {
 		slog.Warn("agent restart: could not create tmux client bridge",
 			"from", oldTmux, "bridge", holding, "error", err)
 		return nil

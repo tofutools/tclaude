@@ -3,7 +3,6 @@
 package session
 
 import (
-	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -559,14 +558,6 @@ func TestAwaitTclaudeLayerProbeResultReturnsAnAlreadyWrittenVerdict(t *testing.T
 	raw, err := awaitTclaudeLayerProbeResult(resultPath, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, "ok", raw)
-}
-
-func TestRunBoundedTmuxCommandKillsACommandThatOutlivesItsDeadline(t *testing.T) {
-	start := time.Now()
-	err := runBoundedTmuxCommand(
-		exec.Command("/bin/sh", "-c", "sleep 30"), start.Add(100*time.Millisecond))
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Less(t, time.Since(start), 5*time.Second)
 }
 
 func TestTclaudeLayerStartRefusalNamesADeniedExecAsARefusal(t *testing.T) {

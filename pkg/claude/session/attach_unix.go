@@ -8,6 +8,7 @@ import (
 	"os/exec"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // attachClientFeatureArgs picks the tmux client flags for this attach. A caller
@@ -25,19 +26,18 @@ func attachClientFeatureArgs() []string {
 // If force is true, uses -d to detach other clients.
 // Runs tmux as a subprocess so we return when the user detaches.
 func attachToSessionWithFlags(tmuxSession string, force bool) error {
-	args := []string{"attach-session", "-t", clcommon.ExactTarget(tmuxSession)}
-	if force {
-		args = []string{"attach-session", "-d", "-t", clcommon.ExactTarget(tmuxSession)}
+	argv, err := tmuxcmd.Local().AttachCommand(tmuxcmd.Session(tmuxSession), tmuxcmd.AttachOptions{
+		DetachOthers: force, ClientFlags: attachClientFeatureArgs(),
+	})
+	if err != nil {
+		return fmt.Errorf("tmux attach failed: %w", err)
 	}
-	// Client feature flags belong before the command word.
-	args = append(attachClientFeatureArgs(), args...)
-
-	cmd := clcommon.TmuxCommand(args...)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		// Exit status 1 typically means session ended or detached - not an error
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {

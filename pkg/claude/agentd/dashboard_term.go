@@ -3,6 +3,7 @@ package agentd
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -179,16 +180,20 @@ func ensureShellSession(spec shellSpec) error {
 	if err := session.RequireExternalTmuxServer(); err != nil {
 		return err
 	}
-	args := []string{"new-session", "-d", "-s", spec.name, "-c", spec.dir}
+	shell := tmuxcmd.SessionSpec{Name: spec.name, Dir: spec.dir}
 	if len(spec.environment) > 0 {
 		scriptPath, _, err := session.WriteLaunchScript(groupTerminalBootstrap(spec.environment))
 		if err != nil {
 			return fmt.Errorf("prepare terminal: %w", err)
 		}
-		args = append(args, clcommon.BootstrapShellCommandPrefix()+" "+shellSingleQuote(scriptPath))
+		shell.Command = []string{clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)}
 	}
-	if out, err := clcommon.TmuxCombinedOutput(args...); err != nil && !session.IsTmuxSessionAlive(spec.name) {
-		return fmt.Errorf("start shell: %s", strings.TrimSpace(string(out)))
+	if _, err := tmuxcmd.Local().NewSession(shell); err != nil && !session.IsTmuxSessionAlive(spec.name) {
+		var tmuxErr *tmuxcmd.Error
+		if errors.As(err, &tmuxErr) {
+			return fmt.Errorf("start shell: %s", tmuxErr.Message)
+		}
+		return fmt.Errorf("start shell: %w", err)
 	}
 	_ = tmuxcmd.Local().SetOption(tmuxcmd.SessionScope(tmuxcmd.Session(spec.name)), "mouse", "on")
 	return nil

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/common/tmuxctl"
 )
@@ -34,21 +33,6 @@ func boundedTmux() tmuxcmd.Client {
 	return tmuxcmd.Local().WithTimeout(tmuxCommandTimeout).WithTimer(func(d time.Duration) (<-chan time.Time, func()) {
 		return startTmuxCommandTimer(d)
 	})
-}
-
-// tmuxOutputWithTimeout runs a tmux command under tmuxCommandTimeout and
-// returns its stdout, for the raw commands that have no typed verb yet.
-func tmuxOutputWithTimeout(args ...string) ([]byte, error) {
-	if out, err, ok := clcommon.TryTmuxControl(args...); ok {
-		return out, err
-	}
-	cmd := clcommon.TmuxCommand(args...)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := runCommandWithTimeout(cmd, tmuxCommandTimeout); err != nil {
-		return nil, err
-	}
-	return stdout.Bytes(), nil
 }
 
 // liveTmuxSessionsWithTimeout returns one batch liveness snapshot under the

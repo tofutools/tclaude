@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 )
 
 // IsProcessAlive checks if a process with the given PID is still running
@@ -181,10 +181,9 @@ func GetCurrentTmuxSession() string {
 	if os.Getenv("TMUX") == "" {
 		return ""
 	}
-	cmd := clcommon.TmuxCommand("display-message", "-p", "#{session_name}")
-	output, err := cmd.Output()
+	name, err := tmuxcmd.Local().CurrentSession()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return name
 }

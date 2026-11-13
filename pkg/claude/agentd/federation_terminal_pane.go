@@ -146,16 +146,22 @@ type fedPaneTerminal struct {
 }
 
 func openFedPaneTerminal(pin *fedPanePin, cols, rows int) (*fedPaneTerminal, error) {
-	version, err := clcommon.TmuxOutput("-V")
+	version, err := tmuxcmd.Local().Version()
 	if err != nil {
 		return nil, err
 	}
-	if !clcommon.TmuxVersionAtLeast(string(version), 3, 2) {
+	if !clcommon.TmuxVersionAtLeast(version, 3, 2) {
 		return nil, errors.New("remote attach requires tmux 3.2 or newer (ignore-size client support)")
 	}
 	// The renderer's output crosses the hub in arbitrary chunks, so ask tmux
 	// for synchronized redraws (xterm.js honors DEC 2026).
-	cmd := clcommon.TmuxCommand("-T", clcommon.TmuxSyncFeature, "attach-session", "-f", "ignore-size", "-t", clcommon.ExactTarget(pin.tmux))
+	argv, err := tmuxcmd.Local().AttachCommand(tmuxcmd.Session(pin.tmux), tmuxcmd.AttachOptions{
+		IgnoreSize: true, ClientFlags: []string{"-T", clcommon.TmuxSyncFeature},
+	})
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	// Nested clients must not inherit TMUX: attach to the server explicitly.
 	env := cmd.Env[:0]

@@ -23,6 +23,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
+	"github.com/tofutools/tclaude/pkg/claude/common/tmuxcmd"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -143,20 +144,10 @@ func runInTmux(cwd, taskDir string, detached, watch, excludeTaskFiles bool) erro
 		}
 	}
 
-	tmuxArgs := []string{
-		"new-session",
-		"-d",
-		"-s", tmuxSession,
-		"-c", cwd,
-		"sh", "-c", runnerCmd,
-	}
-	tmuxArgs = session.ExternalTmuxNoStartArgs(tmuxArgs...)
-
-	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
-	tmuxCmd.Stdout = os.Stdout
-	tmuxCmd.Stderr = os.Stderr
-
-	if err := tmuxCmd.Run(); err != nil {
+	// tmux's own explanation of a failure travels in the error.
+	if _, err := session.ExternalTmux().NewSession(tmuxcmd.SessionSpec{
+		Name: tmuxSession, Dir: cwd, Command: []string{"sh", "-c", runnerCmd},
+	}); err != nil {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
