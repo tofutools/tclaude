@@ -66,7 +66,8 @@ func TestTaskboardOwnTracksOwnWork(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, body)
 	code, body = h.post(h.worker, mine.ID, "status", map[string]any{"status": "open"})
 	require.Equal(t, http.StatusOK, code, body)
-	// Reordering is a write, even of its own task.
+	// Reordering against the whole stage (--top) is a write, even of its own
+	// task (taskboard_reorder_flow_test.go has its own-lane order).
 	code, body = h.post(h.worker, mine.ID, "move", map[string]any{"top": true})
 	assert.Equal(t, http.StatusForbidden, code, body)
 

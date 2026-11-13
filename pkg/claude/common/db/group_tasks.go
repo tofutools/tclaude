@@ -248,14 +248,19 @@ func IsGroupTaskID(s string) bool {
 	return err == nil && strings.ToLower(s) == s
 }
 
-// GroupTaskPosition places a task within its stage. At most one field is set;
-// none means the end of the stage. Before and After name a task in the same
-// group, and the task takes that task's stage.
+// GroupTaskPosition places a task within its stage. At most one of Top,
+// Bottom, Before and After is set; none means the end of the stage. Before
+// and After name a task in the same group, and the task takes that task's
+// stage.
 type GroupTaskPosition struct {
 	Top    bool
 	Bottom bool
 	Before string
 	After  string
+	// Stage, when set, is the stage the caller expects the task to land in:
+	// a placement that would land it in another (the anchor was promoted or
+	// demoted meanwhile) is refused as stale instead of moving it across.
+	Stage string
 }
 
 // NewGroupTask is a create.
@@ -404,8 +409,28 @@ func neighbourRank(q taskTx, groupID int64, stage, rank, exclude string, before 
 }
 
 // placeTask resolves pos to (stage, rank) for task self (empty for a new
-// task) of groupID, whose stage is stage unless pos names an anchor.
+// task) of groupID, whose stage is stage unless pos names an anchor. A key
+// past taskRankMaxLen renumbers the stage first (renumberStageRanksTx), so
+// keys stay short however often tasks move between the same neighbours.
 func placeTask(q taskTx, groupID int64, stage, self string, pos GroupTaskPosition) (string, string, error) {
+	gotStage, rank, err := placeTaskOnce(q, groupID, stage, self, pos)
+	if err != nil {
+		return "", "", err
+	}
+	if pos.Stage != "" && gotStage != pos.Stage {
+		return "", "", taskConflict("stale", "the board changed meanwhile: the task would land in %s, not %s; reload and try again", gotStage, pos.Stage)
+	}
+	if len(rank) <= taskRankMaxLen {
+		return gotStage, rank, nil
+	}
+	if err := renumberStageRanksTx(q, groupID, gotStage); err != nil {
+		return "", "", err
+	}
+	return placeTaskOnce(q, groupID, stage, self, pos)
+}
+
+// placeTaskOnce is placeTask without the renumbering.
+func placeTaskOnce(q taskTx, groupID int64, stage, self string, pos GroupTaskPosition) (string, string, error) {
 	anchorID, before := pos.Before, true
 	if anchorID == "" && pos.After != "" {
 		anchorID, before = pos.After, false
@@ -1039,7 +1064,7 @@ func MoveGroupTask(id string, pos GroupTaskPosition, actor string) (*GroupTask, 
 		if _, err := tx.Exec(`UPDATE group_tasks SET stage = ?, rank = ? WHERE id = ?`, stage, rank, id); err != nil {
 			return err
 		}
-		if err := addGroupTaskEventTx(tx, id, actor, GroupTaskEventMoved, describePosition(pos), now); err != nil {
+		if err := addGroupTaskMovedEventTx(tx, id, actor, describePosition(pos), now); err != nil {
 			return err
 		}
 		return stageChangeEvent(tx, t, stage, actor, "on move", now)
@@ -1356,4 +1381,28 @@ func GroupTaskStatuses(ids []string) (map[string]string, error) {
 		out[p[0]] = p[1]
 	}
 	return out, nil
+}
+
+// taskMovedCoalesce is how long a run of moves by one actor stays one
+// activity entry: a burst of drags or "move up" clicks is one reorder in the
+// history, not one line per step.
+const taskMovedCoalesce = 10 * time.Minute
+
+// addGroupTaskMovedEventTx records a reorder: it updates the task's latest
+// entry in place when that is a reorder by the same actor less than
+// taskMovedCoalesce ago, and adds one otherwise.
+func addGroupTaskMovedEventTx(q taskTx, taskID, actor, detail string, at time.Time) error {
+	var id int64
+	var kind, by string
+	var when dbTimestamp
+	err := q.QueryRow(`SELECT id, kind, actor, at FROM group_task_events WHERE task_id = ? ORDER BY id DESC LIMIT 1`, taskID).
+		Scan(&id, &kind, &by, &when)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil && kind == GroupTaskEventMoved && by == actor && at.Sub(when.Time()) < taskMovedCoalesce {
+		_, err = q.Exec(`UPDATE group_task_events SET at = ?, detail = ? WHERE id = ?`, dbTime(at), truncateUTF8(detail, GroupTaskEventDetailMax), id)
+		return err
+	}
+	return addGroupTaskEventTx(q, taskID, actor, GroupTaskEventMoved, detail, at)
 }

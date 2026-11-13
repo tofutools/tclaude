@@ -72,7 +72,7 @@ func registerTaskboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardReadAccess, handleTaskboardShow))
 	mux.HandleFunc("GET /v1/taskboard/tasks/{id}/events", handleTaskboardTask(taskboardReadAccess, handleTaskboardEvents))
 	mux.HandleFunc("PATCH /v1/taskboard/tasks/{id}", handleTaskboardTask(taskboardOwnGate, handleTaskboardEdit))
-	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardWriteAccess, handleTaskboardMove))
+	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/move", handleTaskboardTask(taskboardOwnGate, handleTaskboardMove))
 	mux.HandleFunc("POST /v1/taskboard/tasks/{id}/stage", handleTaskboardTask(taskboardOwnGate, handleTaskboardStage))
 	registerTaskboardColumnRoutes(mux)
 	registerTaskboardOptionRoutes(mux)
@@ -863,6 +863,10 @@ type taskboardPositionBody struct {
 	Bottom bool   `json:"bottom,omitempty"`
 	Before string `json:"before,omitempty"`
 	After  string `json:"after,omitempty"`
+	// Stage, on a move, is the stage the caller expects the task to land
+	// in (idea or next): a move whose anchor has since crossed to the other
+	// stage answers 409 stale instead of promoting or demoting the task.
+	Stage string `json:"stage,omitempty"`
 }
 
 func (p taskboardPositionBody) position() (db.GroupTaskPosition, error) {
@@ -875,8 +879,12 @@ func (p taskboardPositionBody) position() (db.GroupTaskPosition, error) {
 	if n > 1 {
 		return db.GroupTaskPosition{}, errors.New("give at most one of top, bottom, before, after")
 	}
+	stage := strings.TrimSpace(p.Stage)
+	if stage != "" && stage != db.GroupTaskStageIdea && stage != db.GroupTaskStageNext {
+		return db.GroupTaskPosition{}, errors.New("stage is idea or next")
+	}
 	return db.GroupTaskPosition{Top: p.Top, Bottom: p.Bottom,
-		Before: strings.TrimSpace(p.Before), After: strings.TrimSpace(p.After)}, nil
+		Before: strings.TrimSpace(p.Before), After: strings.TrimSpace(p.After), Stage: stage}, nil
 }
 
 func cleanTaskIDs(ids []string) ([]string, error) {
@@ -1503,8 +1511,15 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }
 
-// POST /v1/taskboard/tasks/{id}/move {top|bottom|before|after} — crossing the
-// ideas divider (before/after a task of the other stage) promotes or demotes.
+// POST /v1/taskboard/tasks/{id}/move {top|bottom|before|after, stage?} —
+// crossing the ideas divider (before/after a task of the other stage)
+// promotes or demotes, unless stage says where the caller expects it.
+//
+// Reordering is a board write (taskboard.write). An agent with only
+// taskboard.own orders its own tasks among themselves: it moves a task it
+// holds before or after another task it holds, which reorders its own lane
+// without reaching past anyone else's tasks; top and bottom are of the whole
+// stage, so they stay a write.
 func handleTaskboardMove(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body taskboardPositionBody
 	if !decodeTaskboardBody(w, r, &body) {
@@ -1516,6 +1531,9 @@ func handleTaskboardMove(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
+	if !requireTaskboardMove(w, r, g, t, pos) {
 		return
 	}
 	out, err := db.MoveGroupTask(t.ID, pos, taskboardActor(r))
