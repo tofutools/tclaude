@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -23,6 +24,39 @@ const HookBrokerEnvVar = "TCLAUDE_HOOK_BROKER"
 
 // HookBrokerAgentd is the only recognised value of HookBrokerEnvVar.
 const HookBrokerAgentd = "agentd"
+
+// HookBrokerFallbackEnvVar marks a brokered launch whose pane can still reach
+// the database, and so may apply an event itself when agentd cannot be
+// reached at all. Without it such a launch would lose its status for the
+// length of every daemon restart, which it never did while it wrote directly.
+//
+// It is a bridge, not a destination: the pane-local outbox that replaces it
+// lets every brokered launch survive a daemon restart without touching the
+// database, and this marker goes away with it. A launch behind tclaude's
+// sandbox never gets it — its database is out of reach either way.
+const HookBrokerFallbackEnvVar = "TCLAUDE_HOOK_BROKER_FALLBACK"
+
+// HookBrokerFallbackDirect is the only recognised value of
+// HookBrokerFallbackEnvVar.
+const HookBrokerFallbackDirect = "direct"
+
+// BrokerUnreachableFallsBackToDirect reports whether err is a failure to
+// reach agentd at all, for a launch that may then write for itself.
+//
+// Only a failed connection qualifies. A daemon that answered — a refusal, a
+// stale-generation drop, a timeout part-way through applying — has decided
+// or may already have acted, and applying the same event again here would
+// either overrule it or apply it twice.
+func BrokerUnreachableFallsBackToDirect(err error) bool {
+	if err == nil || os.Getenv(HookBrokerFallbackEnvVar) != HookBrokerFallbackDirect {
+		return false
+	}
+	if _, answered := errors.AsType[*agentipc.BrokerStatusError](err); answered {
+		return false
+	}
+	opErr, ok := errors.AsType[*net.OpError](err)
+	return ok && opErr.Op == "dial"
+}
 
 // hookBrokerTimeout bounds a brokered hook round-trip. Hooks run in the
 // harness's critical path, so a wedged daemon must not hold the agent's
@@ -159,7 +193,7 @@ type BrokeredHookResponse struct {
 	AckToken string `json:"ack_token,omitempty"`
 }
 
-// brokerHookEvent hands one parsed event to agentd and relays the
+// brokerHookEventOrFallBack hands one parsed event to agentd and relays the
 // daemon's hook stdout (the PreCompact decision, when there is one) to
 // this process's stdout, so Claude Code sees the same bytes it would have
 // seen from a direct callback.
@@ -169,17 +203,28 @@ type BrokeredHookResponse struct {
 // this event's telemetry and nothing else. This is strictly better than
 // the interim behaviour it replaces, where a tclaude-layer launch dropped
 // every event unconditionally.
-func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
-	brokerHookEventIfDelivered(input, stdout)
-	return nil
+//
+// It reports true when the event is this process's to apply after all: agentd
+// could not be reached and this launch may write for itself (see
+// HookBrokerFallbackEnvVar).
+func brokerHookEventOrFallBack(input HookCallbackInput, stdout io.Writer) (applyLocally bool) {
+	_, err := brokerHookEventResult(input, stdout)
+	return BrokerUnreachableFallsBackToDirect(err)
 }
 
-// brokerHookEventIfDelivered is brokerHookEvent with the one fact its callers
+// brokerHookEventIfDelivered is the broker hand-off with the one fact its callers
 // on the ORDINARY (unbrokered) path need: whether the daemon actually applied
 // the event. A launch that hands over a single event — rather than all of them
 // — must apply it itself when the daemon did not take it, or the event would be
 // lost outright. Every failure remains soft; only the answer changes.
 func brokerHookEventIfDelivered(input HookCallbackInput, stdout io.Writer) bool {
+	delivered, _ := brokerHookEventResult(input, stdout)
+	return delivered
+}
+
+// brokerHookEventResult also returns why an event was not delivered, for the
+// one caller that acts on it.
+func brokerHookEventResult(input HookCallbackInput, stdout io.Writer) (bool, error) {
 	req := BrokeredHookRequest{
 		Input:             input,
 		ClaimedSessionID:  os.Getenv("TCLAUDE_SESSION_ID"),
@@ -189,7 +234,7 @@ func brokerHookEventIfDelivered(input HookCallbackInput, stdout io.Writer) bool 
 	body, err := json.Marshal(req)
 	if err != nil {
 		slog.Warn("hook broker: failed to encode event", "error", err, "module", "hooks")
-		return false
+		return false, nil
 	}
 	body = trimOversizedHookBody(req, body)
 
@@ -210,17 +255,30 @@ func brokerHookEventIfDelivered(input HookCallbackInput, stdout io.Writer) bool 
 			// always-brokered case below describes.
 			slog.Debug("hook broker: daemon did not take this event; applying it locally",
 				"event", input.HookEventName, "error", err, "module", "hooks")
-			return false
+			return false, err
+		}
+		if errors.Is(err, errHookBrokerStale) {
+			// The daemon dropped it on purpose: this process belongs to a
+			// launch the session has since replaced. Nothing to report and
+			// nothing to retry.
+			slog.Debug("hook broker: agentd dropped an event from a superseded launch",
+				"event", input.HookEventName, "error", err, "module", "hooks")
+			return false, err
+		}
+		if BrokerUnreachableFallsBackToDirect(err) {
+			slog.Debug("hook broker: agentd unreachable; applying this event locally",
+				"event", input.HookEventName, "error", err, "module", "hooks")
+			return false, err
 		}
 		if errors.Is(err, errHookBrokerRefused) {
 			slog.Error("hook broker: agentd refused this session's hook events; "+
 				"the agent's status, ledgers and directory tracking will not update",
 				"event", input.HookEventName, "error", err, "module", "hooks")
-			return false
+			return false, err
 		}
 		slog.Warn("hook broker: agentd unreachable, dropping event",
 			"event", input.HookEventName, "error", err, "module", "hooks")
-		return false
+		return false, err
 	}
 	if resp.Stdout != "" {
 		if _, err := io.WriteString(stdout, resp.Stdout); err != nil {
@@ -233,7 +291,7 @@ func brokerHookEventIfDelivered(input HookCallbackInput, stdout io.Writer) bool 
 			slog.Warn("hook broker: failed to relay hook decision to stdout",
 				"error", err, "module", "hooks")
 			// The daemon DID apply the event; only the reply was lost.
-			return true
+			return true, nil
 		}
 	}
 	if resp.AckToken != "" {
@@ -246,12 +304,13 @@ func brokerHookEventIfDelivered(input HookCallbackInput, stdout io.Writer) bool 
 				"error", err, "module", "hooks")
 		}
 	}
-	return true
+	return true, nil
 }
 
 func acknowledgeBrokeredHook(token string, delivered bool) error {
 	body, err := json.Marshal(BrokeredHookRequest{
 		ClaimedSessionID: os.Getenv("TCLAUDE_SESSION_ID"),
+		ExitGeneration:   os.Getenv("TCLAUDE_EXIT_GENERATION"),
 		AckToken:         token,
 		RelayFailed:      !delivered,
 	})
@@ -326,12 +385,20 @@ func truncateForBroker(s string) string {
 // branch in brokerHookEvent.
 var errHookBrokerRefused = errors.New("agentd refused the brokered hook event")
 
+// errHookBrokerStale marks an event the daemon dropped because the caller's
+// launch generation is no longer the session's.
+var errHookBrokerStale = errors.New("agentd dropped a hook event from a superseded launch")
+
 func postHookToDaemon(body []byte) (*BrokeredHookResponse, error) {
 	var out BrokeredHookResponse
 	err := agentipc.PostToBroker("/v1/whoami/hook", body, hookBrokerTimeout, &out)
-	if statusErr, ok := errors.AsType[*agentipc.BrokerStatusError](err); ok &&
-		(statusErr.Status == http.StatusForbidden || statusErr.Status == http.StatusUnauthorized) {
-		return nil, fmt.Errorf("%w: %w", errHookBrokerRefused, err)
+	if statusErr, ok := errors.AsType[*agentipc.BrokerStatusError](err); ok {
+		switch statusErr.Status {
+		case http.StatusForbidden, http.StatusUnauthorized:
+			return nil, fmt.Errorf("%w: %w", errHookBrokerRefused, err)
+		case http.StatusConflict:
+			return nil, fmt.Errorf("%w: %w", errHookBrokerStale, err)
+		}
 	}
 	if err != nil {
 		return nil, err

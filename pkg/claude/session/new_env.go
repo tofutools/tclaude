@@ -84,15 +84,22 @@ func baseLaunchEnv(
 			additionalEnv[entry.Name] = entry.Value
 		}
 	}
-	if outerLayer || harness.HooksRunInsideBuiltinSandbox(h, harnessBuiltinMode) {
-		// Hook callbacks write private SQLite state, which this launch's own
-		// namespace hides (or, for Gemini's Seatbelt mode, its profile makes
-		// read-only). Route them through agentd instead, which applies
-		// them host-side on the caller's behalf (TCL-754). Apply after the
-		// profile environment so policy cannot unset the marker for an
-		// outer-layer launch and silently send the pane's telemetry into the
-		// throwaway database behind the wall.
+	databaseHidden := outerLayer || harness.HooksRunInsideBuiltinSandbox(h, harnessBuiltinMode)
+	if databaseHidden || params.ManagedLaunch {
+		// Hook callbacks and status-line renders write private SQLite state.
+		// A launch behind tclaude's sandbox cannot: its own namespace hides
+		// that state (or, for Gemini's Seatbelt mode, its profile makes it
+		// read-only). A launch agentd manages must not, whatever it can
+		// reach: the pane may run where there is no database at all. Both
+		// route them through agentd instead, which applies them host-side on
+		// the caller's behalf (TCL-754). Apply after the profile environment
+		// so policy cannot unset the marker for an outer-layer launch and
+		// silently send the pane's telemetry into the throwaway database
+		// behind the wall.
 		additionalEnv[HookBrokerEnvVar] = HookBrokerAgentd
+	}
+	if params.ManagedLaunch && !databaseHidden {
+		additionalEnv[HookBrokerFallbackEnvVar] = HookBrokerFallbackDirect
 	}
 	if err := ApplyGeminiSeatbeltLaunchEnv(h, harnessBuiltinMode, effectiveSandbox, cwd, params.TrustDir, additionalEnv); err != nil {
 		return nil, err

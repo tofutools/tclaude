@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -32,6 +33,39 @@ type brokerCaller struct {
 	row        *db.SessionRow
 	harnessPID int
 	timing     *brokerTiming
+}
+
+// brokerDropStaleGeneration answers a brokered event whose launch generation
+// is not the session's current one, and reports whether it did.
+//
+// Identity says WHOSE event this is; the generation says which LAUNCH of that
+// session produced it. A session row is reused across launches — a resume, a
+// relaunch under the same label — and a process of the launch it replaced
+// can still be alive and still report. Its events describe a launch that is
+// over, so applying them would let an old launch move the status, ledgers or
+// conversation of the new one. They are dropped, with 409, and logged: an old
+// event never completes a newer attempt.
+//
+// A caller that carries no generation is not fenced. That is a launch older
+// than the generation, or one that never had one (an unmanaged resume without
+// an HTTP proxy), and there is nothing to compare.
+func brokerDropStaleGeneration(w http.ResponseWriter, endpoint string, row *db.SessionRow, claimedGeneration, event string) bool {
+	claimed := strings.TrimSpace(claimedGeneration)
+	if claimed == "" || row == nil {
+		return false
+	}
+	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
+	if err != nil || identity.Generation == "" || identity.Generation == claimed {
+		// A row that vanished or cannot be read is the apply step's to
+		// report; it is not evidence of a newer launch.
+		return false
+	}
+	slog.Warn("broker: dropped an event from a superseded launch",
+		"endpoint", endpoint, "session", row.ID, "event", event,
+		"event_generation", claimed, "current_generation", identity.Generation, "module", "hooks")
+	writeError(w, http.StatusConflict, "stale_launch",
+		"this process belongs to a launch the session has since replaced")
+	return true
 }
 
 // brokerAuthenticate runs the identity sequence of a brokered endpoint up to

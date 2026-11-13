@@ -90,6 +90,11 @@ type BrokeredRenderRequest struct {
 	// agentd proves against the socket peer PID and generation-bound live pane.
 	ClaimedSessionID string `json:"claimed_session_id,omitempty"`
 
+	// ExitGeneration is the pane's TCLAUDE_EXIT_GENERATION: the launch this
+	// render belongs to. agentd drops a render from a launch the session has
+	// since replaced.
+	ExitGeneration string `json:"exit_generation,omitempty"`
+
 	// RenderConvID is Claude Code's session_id from the payload: the
 	// conversation this render describes. It is the input to the
 	// attribution gate, which the DAEMON runs.
@@ -176,6 +181,7 @@ func brokeredHostState(req renderRequest) renderFacts {
 
 	resp, err := postRenderToDaemon(BrokeredRenderRequest{
 		ClaimedSessionID: req.EnvSessionID,
+		ExitGeneration:   os.Getenv("TCLAUDE_EXIT_GENERATION"),
 		RenderConvID:     req.RenderConvID,
 		EnvPinnedWindow:  req.EnvPinnedWindow,
 		Payload:          req.Payload,
@@ -183,6 +189,13 @@ func brokeredHostState(req renderRequest) renderFacts {
 		ApplyWrites:      writesChanged,
 		WantUsage:        req.WantUsage,
 	})
+	if session.BrokerUnreachableFallsBackToDirect(err) {
+		// agentd is not there and this launch can still write for itself
+		// (see session.HookBrokerFallbackEnvVar): render as an unbrokered
+		// launch does, so a daemon restart does not cost the agent its
+		// context snapshot.
+		return directHostState(req)
+	}
 	if err != nil {
 		// Fail soft, and keep coasting on whatever was last known. A
 		// status bar that errors out is a visible defect in the agent's

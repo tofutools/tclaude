@@ -37,7 +37,23 @@ func TestBaseLaunchEnvCarriesTheLaunchKeysAndBrokersWalledHooks(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "spwn-env", env["TCLAUDE_SESSION_ID"])
 	assert.Equal(t, "gen-1", env["TCLAUDE_EXIT_GENERATION"])
-	assert.NotContains(t, env, HookBrokerEnvVar, "hooks outside any wall write their own state")
+	assert.NotContains(t, env, HookBrokerEnvVar, "an unmanaged launch outside any wall writes its own state")
+	assert.NotContains(t, env, HookBrokerFallbackEnvVar)
+
+	// A launch agentd manages brokers whatever it could reach: its pane may
+	// run where there is no database. While it can still reach one it may
+	// write for itself when agentd is not there at all.
+	managed := &NewParams{ManagedLaunch: true}
+	env, err = baseLaunchEnv(managed, claude, "", nil, false, "spwn-env", "gen-1", t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, HookBrokerAgentd, env[HookBrokerEnvVar], "a managed launch routes hooks through agentd")
+	assert.Equal(t, HookBrokerFallbackDirect, env[HookBrokerFallbackEnvVar])
+
+	// Behind the wall there is no database to fall back to.
+	env, err = baseLaunchEnv(managed, claude, "", nil, true, "spwn-env", "gen-1", t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, HookBrokerAgentd, env[HookBrokerEnvVar])
+	assert.NotContains(t, env, HookBrokerFallbackEnvVar, "a walled launch cannot write for itself")
 
 	env, err = baseLaunchEnv(&NewParams{}, claude, "", nil, true, "spwn-env", "gen-1", t.TempDir())
 	require.NoError(t, err)

@@ -160,6 +160,9 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	timing := caller.timing
 	defer timing.finish()
 	row, harnessPID := caller.row, caller.harnessPID
+	if brokerDropStaleGeneration(w, "/v1/whoami/hook", row, req.ExitGeneration, req.Input.HookEventName) {
+		return
+	}
 	if req.AckToken != "" {
 		if !resolveHookAck(row.ID, req.AckToken, !req.RelayFailed) {
 			writeError(w, http.StatusConflict, "ack",
