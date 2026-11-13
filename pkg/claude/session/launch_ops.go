@@ -1,11 +1,16 @@
 package session
 
 import (
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -30,7 +35,7 @@ import (
 //   - brokered: the launcher POSTs the op's name and arguments to agentd,
 //     which runs the SAME function. This is what a managed launch (one
 //     agentd forked, `--managed-launch`) uses, authenticated by the launch
-//     ticket below.
+//     ticket below, from the moment the launch binds that ticket.
 //
 // One function per op, run on either side, is the point: there is no second
 // implementation that has to be kept in agreement with the first.
@@ -43,11 +48,16 @@ import (
 // row. Ops whose statement is already conditional on the generation carry it
 // in their arguments instead, and it must be the bound one.
 
-// LaunchTicketEnvVar carries the launch ticket from agentd to the
-// `tclaude session new` it forks. It is a bearer secret for one launch, so it
-// travels in the environment rather than argv, and the launcher removes it
-// from its own environment before it starts anything (see adoptLaunchTicket).
-const LaunchTicketEnvVar = "TCLAUDE_LAUNCH_TICKET"
+// LaunchTicketFDEnvVar names the inherited descriptor agentd wrote the launch
+// ticket to for the `tclaude session new` it forks. The ticket is a bearer
+// secret for one launch, so it travels over a pipe: argv and the environment
+// are both readable by other processes of the same user for as long as the
+// launcher lives (/proc/<pid>/cmdline, /proc/<pid>/environ — unsetting a
+// variable does not change the latter). See adoptLaunchTicket.
+const LaunchTicketFDEnvVar = "TCLAUDE_LAUNCH_TICKET_FD"
+
+// launchTicketHexLen is the length of a ticket: 32 random bytes, hex encoded.
+const launchTicketHexLen = 64
 
 // LaunchOpPath is agentd's endpoint for brokered launch operations.
 const LaunchOpPath = "/v1/launch/op"
@@ -89,6 +99,25 @@ type BrokeredLaunchRequest struct {
 // BrokeredLaunchResponse carries an operation's result back.
 type BrokeredLaunchResponse struct {
 	Result json.RawMessage `json:"result,omitempty"`
+}
+
+// LaunchBeginResult is what agentd answers LaunchBeginOp with: the
+// operations it can run. The launcher and the daemon are separate binaries
+// and are not always the same version — the daemon keeps running across an
+// upgrade of the tclaude on PATH — so the launcher checks an operation
+// against this list and fails with a restart hint instead of a bare refusal.
+type LaunchBeginResult struct {
+	Ops []string `json:"ops"`
+}
+
+// LaunchOpNames lists the registered operations, for LaunchBeginResult.
+func LaunchOpNames() []string {
+	names := make([]string, 0, len(launchOpRegistry))
+	for name := range launchOpRegistry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // launchFence says how the daemon fences a brokered op.
@@ -156,11 +185,22 @@ func defineLaunchOp[A launchOpArgs, R any](name string, fence launchFence, run f
 }
 
 // requireCurrentLaunchGeneration refuses when the session row is gone or
-// belongs to another launch. agentd serializes the operations of one session,
-// so the answer cannot change under the op that follows.
+// belongs to another launch.
+//
+// agentd serializes the brokered operations of one session, so no other
+// brokered launch can change the answer under the op that follows. Processes
+// that still write the row directly — an unmanaged launch of the same label —
+// are outside that lock, so against those this is a check, not a transaction;
+// the statements that matter most are conditional on the generation as well.
 func requireCurrentLaunchGeneration(bound LaunchBinding) error {
 	identity, err := db.GetSessionExitLaunchIdentity(bound.SessionID)
-	if err != nil || identity.Generation != bound.Generation {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrStaleLaunchGeneration
+	case err != nil:
+		// A database fault is not a superseded launch; report it as itself.
+		return fmt.Errorf("read launch generation: %w", err)
+	case identity.Generation != bound.Generation:
 		return ErrStaleLaunchGeneration
 	}
 	return nil
@@ -197,10 +237,14 @@ func ApplyBrokeredLaunchOp(name string, raw json.RawMessage, bound LaunchBinding
 }
 
 // launchBroker is the brokered side's client state: the one ticket this
-// process was started with.
+// process was started with, and what the daemon it reached can do.
 type launchBroker struct {
 	ticket string
+	ops    map[string]bool
 }
+
+// pendingLaunchTicket holds an adopted ticket until the launch binds it.
+var pendingLaunchTicket atomic.Pointer[string]
 
 // brokeredLaunch is nil in every process except a managed
 // `tclaude session new`, which sets it once before it does anything else.
@@ -210,39 +254,75 @@ var brokeredLaunch atomic.Pointer[launchBroker]
 // to agentd.
 func LaunchIsBrokered() bool { return brokeredLaunch.Load() != nil }
 
-// adoptLaunchTicket is the first thing a launch does. It takes the launch
-// ticket out of the environment — unconditionally, because the first
-// `tmux new-session` on a host starts the tmux server, and a server started
-// with the ticket in its environment would hand it to every pane it ever
-// creates — and, for a managed launch that was given one, switches this
-// process to brokered operations.
+// adoptLaunchTicket is the first thing a launch does: it takes the launch
+// ticket off the descriptor agentd handed over and closes that descriptor, so
+// nothing this process starts — tmux, and through a freshly started tmux
+// server every pane it ever creates — can inherit either.
 //
-// A managed launch without a ticket stays direct. That is what a tclaude
+// The ticket is only kept for a managed launch. It becomes this process's
+// authority when the launch binds it (beginBrokeredLaunch); a launch that
+// never binds, such as the lightweight shell path, stays direct.
+//
+// A managed launch without a ticket stays direct too. That is what a tclaude
 // newer than its daemon looks like for the length of an upgrade, and it is
 // exactly the behaviour the older daemon expects.
 func adoptLaunchTicket(managed bool) {
-	ticket := strings.TrimSpace(os.Getenv(LaunchTicketEnvVar))
-	_ = os.Unsetenv(LaunchTicketEnvVar)
-	if managed && ticket != "" {
-		brokeredLaunch.Store(&launchBroker{ticket: ticket})
+	raw := strings.TrimSpace(os.Getenv(LaunchTicketFDEnvVar))
+	_ = os.Unsetenv(LaunchTicketFDEnvVar)
+	pendingLaunchTicket.Store(nil)
+	if raw == "" {
+		return
 	}
+	fd, err := strconv.Atoi(raw)
+	if err != nil || fd < 3 {
+		return
+	}
+	file := os.NewFile(uintptr(fd), "launch-ticket")
+	if file == nil {
+		return
+	}
+	// The daemon wrote the ticket and closed its end before it forked, so
+	// this read ends at once; the limit only bounds a descriptor that is not
+	// what the variable said it was.
+	data, _ := io.ReadAll(io.LimitReader(file, launchTicketHexLen+1))
+	_ = file.Close()
+	ticket := strings.TrimSpace(string(data))
+	if !managed || len(ticket) != launchTicketHexLen {
+		return
+	}
+	if _, err := hex.DecodeString(ticket); err != nil {
+		return
+	}
+	pendingLaunchTicket.Store(&ticket)
 }
 
 // beginBrokeredLaunch binds this process's ticket to its session and launch
-// generation. Every later operation is fenced against that binding. A direct
-// launch has nothing to bind.
+// generation and switches the process to brokered operations. Every later
+// operation is fenced against that binding. A launch with no ticket has
+// nothing to bind and stays direct.
 func beginBrokeredLaunch(sessionID, generation string) error {
-	broker := brokeredLaunch.Load()
-	if broker == nil {
+	ticket := pendingLaunchTicket.Swap(nil)
+	if ticket == nil {
 		return nil
 	}
-	if err := broker.post(LaunchBeginOp, LaunchBinding{SessionID: sessionID, Generation: generation}, nil); err != nil {
+	broker := &launchBroker{ticket: *ticket}
+	var begun LaunchBeginResult
+	if err := broker.post(LaunchBeginOp, LaunchBinding{SessionID: sessionID, Generation: generation}, &begun); err != nil {
 		return fmt.Errorf("register launch with agentd: %w", err)
 	}
+	broker.ops = make(map[string]bool, len(begun.Ops))
+	for _, name := range begun.Ops {
+		broker.ops[name] = true
+	}
+	brokeredLaunch.Store(broker)
 	return nil
 }
 
 func (b *launchBroker) post(op string, args, result any) error {
+	if op != LaunchBeginOp && !b.ops[op] {
+		return fmt.Errorf("%s: the running agentd does not know this launch operation; "+
+			"it is older than this tclaude — restart agentd", op)
+	}
 	rawArgs, err := json.Marshal(args)
 	if err != nil {
 		return fmt.Errorf("encode %s arguments: %w", op, err)

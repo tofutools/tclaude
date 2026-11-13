@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -29,6 +32,37 @@ type fakeLaunchDaemon struct {
 	ticket string
 	bound  LaunchBinding
 	ops    []string
+	// lacks names operations this daemon does not know, the way a daemon
+	// older than the launcher does not.
+	lacks map[string]bool
+}
+
+func (d *fakeLaunchDaemon) offers() []string {
+	var names []string
+	for _, name := range LaunchOpNames() {
+		if !d.lacks[name] {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// handTicketOnPipe hands ticket to this process the way agentd hands it to
+// the launcher it forks: written to a pipe whose read end is named by
+// LaunchTicketFDEnvVar.
+func handTicketOnPipe(t *testing.T, ticket string) {
+	t.Helper()
+	read, write, err := os.Pipe()
+	require.NoError(t, err)
+	_, err = write.WriteString(ticket)
+	require.NoError(t, err)
+	require.NoError(t, write.Close())
+	// adoptLaunchTicket owns and closes the descriptor it is given, so give
+	// it one no *os.File here will close a second time.
+	fd, err := syscall.Dup(int(read.Fd()))
+	require.NoError(t, err)
+	require.NoError(t, read.Close())
+	t.Setenv(LaunchTicketFDEnvVar, strconv.Itoa(fd))
 }
 
 func (d *fakeLaunchDaemon) seen() []string {
@@ -55,7 +89,8 @@ func (d *fakeLaunchDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad binding", http.StatusBadRequest)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(BrokeredLaunchResponse{})
+		ops, _ := json.Marshal(LaunchBeginResult{Ops: d.offers()})
+		_ = json.NewEncoder(w).Encode(BrokeredLaunchResponse{Result: ops})
 		return
 	}
 	result, err := ApplyBrokeredLaunchOp(req.Op, req.Args, d.bound)
@@ -81,16 +116,19 @@ func brokerThisLaunch(t *testing.T) *fakeLaunchDaemon {
 	sock := filepath.Join(dir, "agentd.sock")
 	listener, err := net.Listen("unix", sock)
 	require.NoError(t, err)
-	daemon := &fakeLaunchDaemon{ticket: "ticket-for-this-launch"}
+	daemon := &fakeLaunchDaemon{ticket: strings.Repeat("5a", 32)}
 	server := &http.Server{Handler: daemon, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 
 	t.Setenv(agentipc.SocketEnv, sock)
-	t.Setenv(LaunchTicketEnvVar, daemon.ticket)
-	t.Cleanup(func() { brokeredLaunch.Store(nil) })
+	handTicketOnPipe(t, daemon.ticket)
+	t.Cleanup(func() {
+		brokeredLaunch.Store(nil)
+		pendingLaunchTicket.Store(nil)
+	})
 	adoptLaunchTicket(true)
-	require.True(t, LaunchIsBrokered())
+	require.False(t, LaunchIsBrokered(), "a launch is direct until it binds its ticket")
 	return daemon
 }
 
@@ -100,10 +138,11 @@ func brokerThisLaunch(t *testing.T) *fakeLaunchDaemon {
 func TestBrokeredLaunchRowGoesThroughTheDaemon(t *testing.T) {
 	isolateCacheAndDB(t)
 	daemon := brokerThisLaunch(t)
-	_, inEnv := os.LookupEnv(LaunchTicketEnvVar)
-	assert.False(t, inEnv, "the ticket must not stay in the environment tmux and the pane inherit")
+	_, inEnv := os.LookupEnv(LaunchTicketFDEnvVar)
+	assert.False(t, inEnv, "nothing the launcher starts is told about the ticket descriptor")
 
 	require.NoError(t, beginBrokeredLaunch("spwn-brokered", "gen-brokered"))
+	require.True(t, LaunchIsBrokered())
 	var undo launchundo.Undo
 	paneCommand := ""
 	state, err := createLaunchRow(testLaunchRowInput("spwn-brokered", "gen-brokered", &paneCommand), &undo)
@@ -212,19 +251,52 @@ func TestApplyBrokeredLaunchOpFencesToItsLaunch(t *testing.T) {
 	require.NoError(t, err, "fenced operations pass once the row carries the bound generation")
 }
 
-// Only a managed launch brokers, and the ticket is removed either way.
-func TestAdoptLaunchTicketOnlyBrokersAManagedLaunch(t *testing.T) {
-	t.Cleanup(func() { brokeredLaunch.Store(nil) })
+// Only a managed launch keeps the ticket, the descriptor is consumed either
+// way, and a launch that never binds stays direct.
+func TestAdoptLaunchTicketOnlyServesAManagedLaunchThatBinds(t *testing.T) {
+	t.Cleanup(func() {
+		brokeredLaunch.Store(nil)
+		pendingLaunchTicket.Store(nil)
+	})
+	ticket := strings.Repeat("c3", 32)
 
-	t.Setenv(LaunchTicketEnvVar, "inherited-by-accident")
+	handTicketOnPipe(t, ticket)
+	fd, err := strconv.Atoi(os.Getenv(LaunchTicketFDEnvVar))
+	require.NoError(t, err)
 	adoptLaunchTicket(false)
-	assert.False(t, LaunchIsBrokered(), "a launch the daemon did not fork stays direct")
-	_, inEnv := os.LookupEnv(LaunchTicketEnvVar)
+	assert.Nil(t, pendingLaunchTicket.Load(), "a launch the daemon did not fork keeps no ticket")
+	_, inEnv := os.LookupEnv(LaunchTicketFDEnvVar)
 	assert.False(t, inEnv)
+	assert.Error(t, syscall.Close(fd), "the descriptor was closed, so nothing can inherit it")
 
-	t.Setenv(LaunchTicketEnvVar, "")
 	adoptLaunchTicket(true)
-	assert.False(t, LaunchIsBrokered(), "a managed launch from a daemon that issues no ticket stays direct")
+	assert.Nil(t, pendingLaunchTicket.Load(), "a managed launch from a daemon that issues no ticket stays direct")
+
+	handTicketOnPipe(t, "not-a-ticket")
+	adoptLaunchTicket(true)
+	assert.Nil(t, pendingLaunchTicket.Load(), "only a well-formed ticket is kept")
+
+	handTicketOnPipe(t, ticket)
+	adoptLaunchTicket(true)
+	require.NotNil(t, pendingLaunchTicket.Load())
+	assert.False(t, LaunchIsBrokered(), "holding a ticket is not being brokered: the shell path never binds")
+	isolateCacheAndDB(t)
+	_, err = opLaunchRowExists.call(launchSession("spwn-unbound"))
+	require.NoError(t, err, "operations run directly until the launch binds")
+}
+
+// The launcher and the daemon are separate binaries. A launcher that needs an
+// operation the running daemon does not have says so, rather than failing on
+// a bare refusal.
+func TestBrokeredLaunchNamesADaemonOlderThanTheLauncher(t *testing.T) {
+	isolateCacheAndDB(t)
+	daemon := brokerThisLaunch(t)
+	daemon.lacks = map[string]bool{opSeedModel.name: true}
+	require.NoError(t, beginBrokeredLaunch("spwn-old-daemon", "gen-old-daemon"))
+
+	_, err := opSeedModel.call(launchString("spwn-old-daemon", "m"))
+	require.ErrorContains(t, err, "restart agentd")
+	assert.Equal(t, []string{LaunchBeginOp}, daemon.seen(), "the unknown operation was never sent")
 }
 
 // A session state must survive the trip to the daemon: what the daemon
@@ -240,6 +312,9 @@ func TestSessionStateSurvivesTheBrokerWire(t *testing.T) {
 	state.ResumeProvenance = "provenance"
 	state.OSSandboxState, state.OSSandboxSource, state.OSSandboxUnverified = "on", "probe", true
 	state.EffectiveSandbox = &sandboxpolicy.Snapshot{}
+	state.Subagents = db.ParseSubagentSet(`{"sub-1":"2026-01-02T03:04:05Z"}`)
+	state.BgShells = db.ParseBgShellSet(`{"bg-1":{"command":"sleep 1"}}`)
+	state.Monitors = db.ParseMonitorSet(`{"mon-1":{"command":"tail -f x"}}`)
 
 	raw, err := json.Marshal(launchStateArgs{State: state})
 	require.NoError(t, err)
@@ -254,4 +329,18 @@ func TestSessionStateSurvivesTheBrokerWire(t *testing.T) {
 		*pair[0], *pair[1] = time.Time{}, time.Time{}
 	}
 	assert.Equal(t, want, got)
+
+	// A posture distinguishes "resolved to zero" from "not resolved"; both
+	// must arrive as sent.
+	zero, yes := int64(0), true
+	posture := LaunchPosture{
+		AutoMemory: true, ContextFeatures: map[string]string{"feature": "on"}, FastMode: "auto",
+		ContextWindowMax: &zero, CopilotAPI: &yes, CodexAppServer: nil,
+	}
+	raw, err = json.Marshal(launchPostureArgs{launchSessionArgs: launchSession("s"), Harness: "claude", Posture: posture})
+	require.NoError(t, err)
+	var decodedPosture launchPostureArgs
+	require.NoError(t, json.Unmarshal(raw, &decodedPosture))
+	assert.Equal(t, posture, decodedPosture.Posture)
+	assert.Equal(t, "s", decodedPosture.launchSessionID())
 }

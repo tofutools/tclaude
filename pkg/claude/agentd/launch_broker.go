@@ -32,8 +32,11 @@ import (
 // random bearer secret handed to the one process it forks, and that ticket is
 // the launch's whole authority:
 //
-//   - it is bound, by the launcher's first call, to one session id and one
-//     launch generation, and can never be re-bound;
+//   - it is handed over on a pipe, never in argv or the environment, which
+//     other processes of the same user can read;
+//   - it is minted for the session the daemon is launching, and bound by the
+//     launcher's first call to that session and one launch generation; it
+//     can never be re-bound;
 //   - every operation must name that session, and an operation that carries
 //     a generation must carry that one;
 //   - it is revoked when the launcher process exits, and expires regardless.
@@ -58,9 +61,13 @@ const launchTicketTTL = time.Hour
 const launchTicketBytes = 32
 
 type launchTicket struct {
-	mu      sync.Mutex
-	bound   session.LaunchBinding
-	expires time.Time
+	mu sync.Mutex
+	// sessionID is the session the daemon minted the ticket for, or "" when
+	// the launcher derives it (a fresh launch given neither label nor
+	// conversation).
+	sessionID string
+	bound     session.LaunchBinding
+	expires   time.Time
 }
 
 var launchTickets = struct {
@@ -80,9 +87,9 @@ func launchOpLock(sessionID string) *sync.Mutex {
 	return &launchOpLocks[h.Sum32()%uint32(len(launchOpLocks))]
 }
 
-// mintLaunchTicket issues the ticket for one launch. The daemon keeps only
-// its hash. revoke is idempotent.
-func mintLaunchTicket() (ticket string, revoke func(), err error) {
+// mintLaunchTicket issues the ticket for the launch of sessionID. The daemon
+// keeps only its hash. revoke is idempotent.
+func mintLaunchTicket(sessionID string) (ticket string, revoke func(), err error) {
 	var raw [launchTicketBytes]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", nil, err
@@ -96,7 +103,7 @@ func mintLaunchTicket() (ticket string, revoke func(), err error) {
 			delete(launchTickets.byHash, k)
 		}
 	}
-	launchTickets.byHash[key] = &launchTicket{expires: now.Add(launchTicketTTL)}
+	launchTickets.byHash[key] = &launchTicket{sessionID: sessionID, expires: now.Add(launchTicketTTL)}
 	launchTickets.Unlock()
 	return ticket, func() {
 		launchTickets.Lock()
@@ -140,6 +147,9 @@ func validLaunchBindingField(v string) bool {
 func (t *launchTicket) bind(b session.LaunchBinding) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.sessionID != "" && b.SessionID != t.sessionID {
+		return false
+	}
 	if t.bound == (session.LaunchBinding{}) {
 		t.bound = b
 		return true
@@ -197,7 +207,12 @@ func handleLaunchOp(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "ticket", "launch ticket is bound to another launch")
 			return
 		}
-		writeJSON(w, http.StatusOK, session.BrokeredLaunchResponse{})
+		ops, err := json.Marshal(session.LaunchBeginResult{Ops: session.LaunchOpNames()})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "launch", "could not encode the launch operation list")
+			return
+		}
+		writeJSON(w, http.StatusOK, session.BrokeredLaunchResponse{Result: ops})
 		return
 	}
 	bound := ticket.binding()
@@ -207,6 +222,12 @@ func handleLaunchOp(w http.ResponseWriter, r *http.Request) {
 	}
 	lock := launchOpLock(bound.SessionID)
 	lock.Lock()
+	// A launcher that gave up while this waited has started unwinding;
+	// applying its operation now would write behind its rollback.
+	if r.Context().Err() != nil {
+		lock.Unlock()
+		return
+	}
 	result, err := session.ApplyBrokeredLaunchOp(req.Op, req.Args, bound)
 	lock.Unlock()
 	switch {

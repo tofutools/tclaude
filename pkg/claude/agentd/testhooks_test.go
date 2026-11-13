@@ -2843,9 +2843,9 @@ func SeedPRCachesForTest(rawURL, state, title string, passed, total int, decisio
 // MintLaunchTicketForTest issues a launch ticket the way the spawn wrapper
 // does for the `tclaude session new` it forks, and revokes it with the test
 // unless the test revokes it first.
-func MintLaunchTicketForTest(t testing.TB) (ticket string, revoke func()) {
+func MintLaunchTicketForTest(t testing.TB, sessionID string) (ticket string, revoke func()) {
 	t.Helper()
-	ticket, revoke, err := mintLaunchTicket()
+	ticket, revoke, err := mintLaunchTicket(sessionID)
 	if err != nil {
 		t.Fatalf("mint launch ticket: %v", err)
 	}

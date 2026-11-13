@@ -41,12 +41,16 @@ func beginLaunch(t *testing.T, f *testharness.Flow, ticket, sessionID, generatio
 	code, body := launchOp(t, f, ticket, session.LaunchBeginOp,
 		session.LaunchBinding{SessionID: sessionID, Generation: generation})
 	require.Equal(t, http.StatusOK, code, "begin: %v", body)
+	// The daemon tells the launcher what it can run, so a launcher newer
+	// than the daemon can say so instead of failing on a refusal.
+	result, _ := body["result"].(map[string]any)
+	assert.Contains(t, result["ops"], "session.save_launch_row")
 }
 
 func launchRowArgs(sessionID, generation string, pid int) map[string]any {
 	args := map[string]any{"state": &session.SessionState{
 		ID: sessionID, TmuxSession: sessionID, Cwd: "/work", Status: session.StatusIdle,
-		Harness: "claude", PID: pid,
+		Harness: "copilot", PID: pid, ConvID: "c0000000-" + sessionID,
 	}}
 	if generation != "" {
 		args["generation"] = generation
@@ -59,8 +63,8 @@ func launchRowArgs(sessionID, generation string, pid int) map[string]any {
 // the launcher's behalf.
 func TestLaunchBroker_WritesTheLaunchRowForItsLauncher(t *testing.T) {
 	f := newFlow(t)
-	ticket, _ := agentd.MintLaunchTicketForTest(t)
 	const id, gen = "spwn-launch-broker", "0123456789abcdef0123456789abcdef"
+	ticket, _ := agentd.MintLaunchTicketForTest(t, id)
 	ref := map[string]any{"session_id": id, "generation": gen}
 
 	code, _ := launchOp(t, f, ticket, "session.row_exists", map[string]any{"session_id": id})
@@ -73,6 +77,7 @@ func TestLaunchBroker_WritesTheLaunchRowForItsLauncher(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, "%v", body)
 	assert.Equal(t, map[string]any{"exists": false}, body["result"])
 
+	copilotAPI := true
 	for _, step := range []struct {
 		op   string
 		args any
@@ -87,8 +92,8 @@ func TestLaunchBroker_WritesTheLaunchRowForItsLauncher(t *testing.T) {
 		{"session.set_resume_provenance", map[string]any{"session_id": id, "value": "provenance-v1"}},
 		{"session.seed_model", map[string]any{"session_id": id, "value": "launch-model"}},
 		{"session.record_launch_posture", map[string]any{
-			"session_id": id, "harness": "claude",
-			"posture": session.LaunchPosture{RemoteControl: true},
+			"session_id": id, "harness": "copilot",
+			"posture": session.LaunchPosture{CopilotAPI: &copilotAPI, FastMode: "on"},
 		}},
 		{"exit.mark_releasing", ref},
 		{"exit.mark_released", ref},
@@ -109,6 +114,14 @@ func TestLaunchBroker_WritesTheLaunchRowForItsLauncher(t *testing.T) {
 	code, body = launchOp(t, f, ticket, "session.row_exists", map[string]any{"session_id": id})
 	require.Equal(t, http.StatusOK, code)
 	assert.Equal(t, map[string]any{"exists": true}, body["result"])
+
+	// The launch posture is what a later relaunch reads. A brokered launch
+	// that lost it would relaunch a Copilot API agent as a send-keys one.
+	posture, err := db.RecordedLaunchPostureForConv("c0000000-" + id)
+	require.NoError(t, err)
+	require.NotNil(t, posture)
+	require.NotNil(t, posture.CopilotAPI, "the brokered launch recorded its Copilot API posture")
+	assert.True(t, *posture.CopilotAPI)
 }
 
 // A ticket speaks for one launch only: not for another session, not under a
@@ -119,11 +132,20 @@ func TestLaunchBroker_ATicketOnlySpeaksForItsOwnLaunch(t *testing.T) {
 	victimBefore, err := db.LoadSession("spwn-launch-victim")
 	require.NoError(t, err)
 
-	ticket, revoke := agentd.MintLaunchTicketForTest(t)
 	const id, gen = "spwn-launch-own", "fedcba9876543210fedcba9876543210"
+	// Minted for no particular session: the launcher derives the id itself
+	// when it is given neither a label nor a conversation.
+	ticket, revoke := agentd.MintLaunchTicketForTest(t, "")
 	beginLaunch(t, f, ticket, id, gen)
 
-	code, _ := launchOp(t, f, ticket, "session.save_launch_row", launchRowArgs("spwn-launch-victim", gen, 666))
+	// Minted for a session: it cannot be bound to any other, so a ticket
+	// that escaped its launcher could not be pointed at a third session.
+	pinned, _ := agentd.MintLaunchTicketForTest(t, "spwn-launch-pinned")
+	code, _ := launchOp(t, f, pinned, session.LaunchBeginOp,
+		session.LaunchBinding{SessionID: "spwn-launch-victim", Generation: gen})
+	assert.Equal(t, http.StatusForbidden, code, "a ticket binds only to the session it was minted for")
+
+	code, _ = launchOp(t, f, ticket, "session.save_launch_row", launchRowArgs("spwn-launch-victim", gen, 666))
 	assert.Equal(t, http.StatusForbidden, code, "another session's row")
 	code, _ = launchOp(t, f, ticket, "session.delete_launch_row",
 		map[string]any{"session_id": "spwn-launch-victim", "generation": gen})
@@ -156,8 +178,8 @@ func TestLaunchBroker_ATicketOnlySpeaksForItsOwnLaunch(t *testing.T) {
 func TestLaunchBroker_DropsOperationsFromASupersededLaunch(t *testing.T) {
 	f := newFlow(t)
 	const id, oldGen, newGen = "spwn-launch-raced", "00000000000000000000000000000001", "00000000000000000000000000000002"
-	oldTicket, _ := agentd.MintLaunchTicketForTest(t)
-	newTicket, _ := agentd.MintLaunchTicketForTest(t)
+	oldTicket, _ := agentd.MintLaunchTicketForTest(t, id)
+	newTicket, _ := agentd.MintLaunchTicketForTest(t, id)
 
 	beginLaunch(t, f, oldTicket, id, oldGen)
 	code, _ := launchOp(t, f, oldTicket, "session.save_launch_row", launchRowArgs(id, oldGen, 0))
@@ -174,8 +196,8 @@ func TestLaunchBroker_DropsOperationsFromASupersededLaunch(t *testing.T) {
 	assert.Equal(t, "stale_launch", body["code"])
 	code, _ = launchOp(t, f, oldTicket, "session.seed_model", map[string]any{"session_id": id, "value": "old-model"})
 	assert.Equal(t, http.StatusConflict, code)
-	// The gate statements are conditional on the generation they carry, so
-	// the old launcher's fail rather than touch the newer launch's gate.
+	// The gate operations are fenced too, so the old launcher's are dropped
+	// the same way rather than failing on their generation-conditional SQL.
 	code, _ = launchOp(t, f, oldTicket, "exit.mark_pending", map[string]any{"session_id": id, "generation": oldGen})
 	assert.Equal(t, http.StatusConflict, code)
 	code, _ = launchOp(t, f, oldTicket, "session.delete_launch_row", map[string]any{"session_id": id, "generation": oldGen})
@@ -194,7 +216,7 @@ func TestLaunchBroker_DropsOperationsFromASupersededLaunch(t *testing.T) {
 // dashboard's network listener) is refused before its ticket is looked at.
 func TestLaunchBroker_RefusesACallerWithNoPeerProcess(t *testing.T) {
 	f := newFlow(t)
-	ticket, _ := agentd.MintLaunchTicketForTest(t)
+	ticket, _ := agentd.MintLaunchTicketForTest(t, "spwn-launch-net")
 	raw, err := json.Marshal(session.LaunchBinding{SessionID: "spwn-launch-net", Generation: "g"})
 	require.NoError(t, err)
 	req := testharness.JSONRequest(t, http.MethodPost, session.LaunchOpPath,
