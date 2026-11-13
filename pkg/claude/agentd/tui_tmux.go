@@ -148,7 +148,14 @@ func tuiTmuxLiveSessions() (int, tuiTmuxProbe) {
 // EMPTY server exit, so it cannot cost a session. Failure is logged and ignored —
 // there is nothing better to do from a process that is on its way out.
 func releaseTUITmuxExitEmpty(pid string) {
-	if err := tmuxcmd.Local().UnsetOption(tmuxcmd.GlobalScope(), "exit-empty"); err != nil {
+	err := tmuxcmd.Local().UnsetOption(tmuxcmd.GlobalScope(), "exit-empty")
+	if err != nil && !tmuxcmd.Rejected(err) {
+		// The command may have been sent over the daemon's control
+		// connection, which is being torn down around us. Unsetting an option
+		// is safe to repeat, and a second attempt forks a client of its own.
+		err = tmuxcmd.Local().UnsetOption(tmuxcmd.GlobalScope(), "exit-empty")
+	}
+	if err != nil {
 		slog.Warn("tui: could not restore exit-empty on the tclaude tmux server",
 			"error", err, "server_pid", pid, "module", "agentd")
 	}
@@ -158,14 +165,10 @@ func releaseTUITmuxExitEmpty(pid string) {
 // `-N` is what makes this a probe rather than a launch: without it the client
 // would start the very server it is asking about.
 //
-// stdout is read on its own (not CombinedOutput) so a warning line on stderr
-// cannot corrupt the pid, and the pid is charset-checked because it is later
-// compared against the one we started: anything that is not a bare decimal pid
-// is Unknown rather than trusted.
+// The verb reads stdout on its own, so a warning line on stderr cannot corrupt
+// the pid, and accepts only a bare positive decimal: the pid is later compared
+// against the one we started, so anything else is Unknown rather than trusted.
 func tuiTmuxServerPID() (string, tuiTmuxProbe) {
-	// Output() collects stderr into ExitError.Stderr as long as Stderr is unset,
-	// which is what lets the "no server" case be recognised without merging that
-	// text into the pid.
 	pid, err := tmuxcmd.Local().NoStart().ServerPID()
 	if err != nil {
 		if tuiTmuxNoServer(err) {

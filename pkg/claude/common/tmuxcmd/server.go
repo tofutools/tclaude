@@ -56,6 +56,10 @@ func (c Client) KillServer() error {
 // environment, cgroup and sandbox rather than the caller's, which is the
 // point: it is how a question is asked from where panes actually start.
 //
+// tmux expands its own format syntax in the command before running it: a '#'
+// starts a format, so a literal one must be written "##". The caller escapes
+// what it interpolates.
+//
 // With a client timeout the wait is abandoned at the deadline (ErrTimeout);
 // the command itself keeps running on the server.
 func (c Client) RunShell(command string) error {

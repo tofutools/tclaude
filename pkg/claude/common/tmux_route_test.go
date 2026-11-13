@@ -9,7 +9,17 @@ func TestControlRoute(t *testing.T) {
 	}{
 		{[]string{"has-session", "-t", "=a"}, routeQuery},
 		{[]string{"display-message", "-p", "-t", "=a:", "#{pane_dead}"}, routeQuery},
-		{[]string{"display-message", "-p", "#{pid}"}, routeExec},                     // no target: would read the control session
+		{[]string{"display-message", "-p", "#{pid}"}, routeExec}, // no target: would read the control session
+		// Server ownership and launch must never be answered from the control
+		// client's own point of view (its hidden session, its environment).
+		{[]string{"display-message", "-p", "#{session_name}"}, routeExec},
+		{[]string{"switch-client", "-t", "=a"}, routeExec},
+		{[]string{"new-session", "-d", "-s", "a", "-c", "/w", "sh", "x"}, routeExec},
+		{[]string{"start-server", ";", "set-option", "-g", "exit-empty", "off"}, routeExec},
+		{[]string{"kill-server"}, routeExec},
+		{[]string{"run-shell", "true"}, routeExec},
+		{[]string{"-V"}, routeExec},
+		{[]string{"-T", "sync", "attach-session", "-t", "=a"}, routeExec},
 		{[]string{"display-message", "-t", "=a:", "hi"}, routeExec},                  // no -p: status-line message
 		{[]string{"display-message", "-p", "-t", "=a:", "#{client_tty}"}, routeExec}, // client_* = the control client
 		{[]string{"list-clients", "-t", "=a", "-F", "#{client_tty}"}, routeQuery},    // client_* of the listed clients

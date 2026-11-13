@@ -1,6 +1,7 @@
 package tmuxcmd
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
@@ -44,12 +45,28 @@ func (s SessionSpec) Args() []string {
 	return append(args, s.Command...)
 }
 
+// NewSessionArgs is the whole command this client would send for the spec,
+// including the client's own flags: exactly the bytes NewSession hands to
+// tmux, for a caller that must bound them first.
+func (c Client) NewSessionArgs(spec SessionSpec) []string {
+	if c.noStart {
+		return append([]string{"-N"}, spec.Args()...)
+	}
+	return spec.Args()
+}
+
 // NewSession creates a detached session running the spec's command and
 // returns its id when the spec asks for one.
 //
-// The pane's process is started by the tmux server, so it inherits the
-// server's environment, not the caller's. A failure carries tmux's own
-// explanation ("duplicate session", "bad session name") in the error.
+// The pane's process is a child of the tmux server and gets the server's
+// global environment. What it takes from the side that sends the command is
+// narrow but real, and a transport must reproduce it: the working directory
+// when the spec has none, the variables in tmux's update-environment, and,
+// when this command is what starts the server, the whole environment. For
+// that reason it is never sent over agentd's control connection.
+//
+// A failure carries tmux's own explanation ("duplicate session", "bad session
+// name") in the error.
 func (c Client) NewSession(spec SessionSpec) (id string, err error) {
 	if err := named("new-session", spec.Name); err != nil {
 		return "", err
@@ -60,6 +77,9 @@ func (c Client) NewSession(spec SessionSpec) (id string, err error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// ErrCannotAttach: the client's transport has no way to attach a terminal.
+var ErrCannotAttach = errors.New("tmux transport cannot attach a terminal")
 
 // AttachOptions shapes the client AttachCommand describes.
 type AttachOptions struct {
@@ -89,6 +109,12 @@ type AttachOptions struct {
 func (c Client) AttachCommand(s SessionTarget, opts AttachOptions) ([]string, error) {
 	if err := named("attach-session", s.spec); err != nil {
 		return nil, err
+	}
+	if c.transport != nil {
+		// Only the local server's client can be described so far; handing
+		// back the local argv for another transport would attach the
+		// terminal to the wrong server.
+		return nil, ErrCannotAttach
 	}
 	var args []string
 	if c.noStart {

@@ -1967,7 +1967,10 @@ func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool,
 	spec.Command = append(spec.Command, clcommon.BootstrapShellArgv()...)
 	spec.Command = append(spec.Command, scriptPath)
 	spec.Command = append(spec.Command, markerArgs...)
-	if n := tmuxArgvBytes(ExternalTmuxNoStartArgs(spec.Args()...)); n > tmuxClientArgvLimit {
+	// One client for the measurement and the launch, so what is measured is
+	// what is sent.
+	tmux := ExternalTmux()
+	if n := tmuxArgvBytes(tmux.NewSessionArgs(spec)); n > tmuxClientArgvLimit {
 		cleanupScript()
 		return "", fmt.Errorf("tmux launch argv is %d bytes, over tclaude's %d-byte pre-flight bound "+
 			"(tmux's client rejects ~16KB with an opaque \"command too long\"): "+
@@ -1983,7 +1986,7 @@ func launchDetachedTmuxSessionOutput(tmuxSession, cwd, cmd string, printID bool,
 	// StartShellSession includes an agentd console sitting in bubbletea's
 	// alternate screen: the diagnostic would overwrite the rendered frame while
 	// the console separately reported the same failure.
-	id, err := ExternalTmux().NewSession(spec)
+	id, err := tmux.NewSession(spec)
 	if err != nil {
 		// The pane never ran, so the script's self-delete never did either.
 		cleanupScript()

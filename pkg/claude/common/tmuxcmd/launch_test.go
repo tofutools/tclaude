@@ -51,6 +51,9 @@ func TestNewSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "$7", id)
 	assert.Equal(t, "-N", calls[0][0], "no-start goes before the command word")
+	spec := SessionSpec{Name: "job", PrintID: true}
+	assert.Equal(t, calls[0], NewClient(nil).NoStart().NewSessionArgs(spec), "NewSessionArgs is what NewSession sends")
+	assert.Equal(t, spec.Args(), Local().NewSessionArgs(spec))
 
 	duplicate := &Error{Command: "new-session", Message: "duplicate session: job"}
 	_, err = replying(&calls, "", duplicate).NewSession(SessionSpec{Name: "job"})
@@ -77,6 +80,17 @@ func TestAttachCommand(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, [][]string{{"-T", "sync", "attach-session", "-d", "-f", "ignore-size", "-t", "=repo"}}, fake.calls,
 		"client flags go before the command word")
+
+	fake = script(t, "exit 0")
+	_, err = Local().NoStart().AttachCommand(Session("repo"), AttachOptions{ClientFlags: []string{"-T", "sync"}})
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"-N", "-T", "sync", "attach-session", "-t", "=repo"}}, fake.calls)
+
+	// A client on another transport must not hand back the local server's
+	// command: the terminal would attach to the wrong server.
+	var calls [][]string
+	_, err = replying(&calls, "", nil).AttachCommand(Session("repo"), AttachOptions{})
+	require.ErrorIs(t, err, ErrCannotAttach)
 
 	fake = script(t, "exit 0")
 	_, err = Local().AttachCommand(Session(""), AttachOptions{})
