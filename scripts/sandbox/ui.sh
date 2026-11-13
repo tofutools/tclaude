@@ -27,7 +27,7 @@
 # --peer adds a second daemon (a child process of the server, with its own
 # throwaway HOME) and a tclaude-hub inside the server, links the two as trusted
 # peers and seeds the peer, so the Fleet map, the peer's pages and the
-# hub-backed Fleet pages show real peer data. It adds a few seconds to the start.
+# hub-backed Fleet pages show real peer data. It adds about two seconds to the start.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

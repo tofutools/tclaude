@@ -139,12 +139,16 @@ func seedSandboxLivePeer(t *testing.T, dir string, mux http.Handler) {
 	self := httptest.NewServer(sandboxStageReferer(mux))
 	t.Cleanup(self.Close)
 	local := &journeyNode{url: self.URL, client: &http.Client{Timeout: 10 * time.Second}}
+	// Registered first so it runs after the peer's own cleanup has waited for
+	// it: a stale pid must not send ui.sh down after a recycled one.
+	pidPath := filepath.Join(dir, "peer.pid")
+	t.Cleanup(func() { _ = os.Remove(pidPath) })
 	peer := startFixtureNode(t, fixtureNodeOptions{
 		testName: "TestSandboxPeerInstance", env: []string{"TCLAUDE_SANDBOX_PEER_CHILD=1"}, timeout: "0",
 		// ui.sh keeps the log and waits for the pid at down.
 		logPath: filepath.Join(dir, "peer.log"),
 		onStart: func(pid int) {
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "peer.pid"), []byte(strconv.Itoa(pid)), 0o600))
+			require.NoError(t, os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o600))
 		},
 	})
 
@@ -155,19 +159,22 @@ func seedSandboxLivePeer(t *testing.T, dir string, mux http.Handler) {
 		node.call(t, "POST", "/api/federation/config", map[string]any{"enabled": true, "hub_url": hubURL, "invite": invite}, 200)
 	}
 	localID := local.call(t, "GET", "/api/federation/status", nil, 200)["instance_id"].(string)
-	// The sandbox's operator runs the hub too: it claims the hub's admin, as
-	// `tclaude-hub admin claim` sets up, so the Hub page and hub runs work.
-	claim, err := store.PrepareAdminClaim(false, time.Now())
-	require.NoError(t, err)
-	// A new claim token changes the admin generation: status learns it (409) first.
-	local.status(t, "GET", "/api/federation/hub/status", nil)
-	local.call(t, "GET", "/api/federation/hub/status", nil, 200)
-	local.call(t, "POST", "/api/federation/hub/claim", map[string]any{"token": claim}, 200)
 	peerID := peer.call(t, "GET", "/api/federation/status", nil, 200)["instance_id"].(string)
 	journeyAwait(t, "both nodes on the hub", func() bool {
 		return len(journeyRows(t, local.call(t, "GET", "/api/federation/status", nil, 200)["peers"])) == 1 &&
 			len(journeyRows(t, peer.call(t, "GET", "/api/federation/status", nil, 200)["peers"])) == 1
 	})
+
+	// The sandbox's operator runs the hub too: it claims the hub's admin, as
+	// `tclaude-hub admin claim` sets up, so the Hub page and hub runs work. A
+	// new claim token changes the admin generation, so hub status answers 409
+	// until it has learned it (503 while the link is still coming up).
+	claim, err := store.PrepareAdminClaim(false, time.Now())
+	require.NoError(t, err)
+	journeyAwait(t, "hub status as the sandbox", func() bool {
+		return local.status(t, "GET", "/api/federation/hub/status", nil) == http.StatusOK
+	})
+	local.call(t, "POST", "/api/federation/hub/claim", map[string]any{"token": claim}, 200)
 
 	// The peer enrolls with the sandbox on a node profile, which trusts both
 	// ways at the restricted level, as `tclaude federation enroll` does.
