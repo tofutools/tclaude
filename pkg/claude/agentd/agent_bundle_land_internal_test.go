@@ -27,8 +27,11 @@ func TestLandsOnSmallerWindow(t *testing.T) {
 	assert.True(t, landsOnSmallerWindow(claude, origin(std+"[1m]"), std), "1M onto 200k is the same model with a smaller window")
 	assert.False(t, landsOnSmallerWindow(claude, origin(std), std+"[1m]"), "a larger window keeps native fidelity")
 	assert.False(t, landsOnSmallerWindow(claude, origin(std), std), "an equal window keeps native fidelity")
-	assert.False(t, landsOnSmallerWindow(claude, origin("claude-unlisted"), "claude-unlisted"), "the same model with an unknown window keeps native fidelity")
-	assert.True(t, landsOnSmallerWindow(claude, origin("claude-unlisted"), std), "a different model from an unknown window is budgeted")
+	assert.False(t, landsOnSmallerWindow(claude, origin("unlisted-model"), "unlisted-model"), "the same model with an unknown window keeps native fidelity")
+	assert.True(t, landsOnSmallerWindow(claude, origin("unlisted-model"), std), "a different model from an unknown window is budgeted")
+	// A full Claude model id has the standard window, like its alias.
+	assert.False(t, landsOnSmallerWindow(claude, origin("claude-fable-5-2"), std), "a full id onto a standard alias is the same window")
+	assert.True(t, landsOnSmallerWindow(claude, origin("claude-fable-5-2[1m]"), std), "a full 1M id onto a standard alias is budgeted")
 }
 
 // A relaunch profile records a blank implementation as harness-builtin, which
