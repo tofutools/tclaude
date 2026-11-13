@@ -812,7 +812,9 @@ func runNew(params *NewParams) error {
 	// from: the conversation index. Best effort — a failed write leaves an
 	// unnamed conversation, never a failed launch.
 	if h.Name == harness.GeminiName && params.Name != "" && fullConvID == "" && rowConvID != "" {
-		if err := db.SetConvIndexCustomTitle(rowConvID, params.Name, h.Name); err != nil {
+		if _, err := opSetConvTitle.call(launchConvTitleArgs{
+			launchSessionArgs: launchSession(sessionID), ConvID: rowConvID, Title: params.Name, Harness: h.Name,
+		}); err != nil {
 			slog.Warn("could not record the Gemini launch name", "conv", rowConvID, "error", err)
 		}
 	}
@@ -822,7 +824,7 @@ func runNew(params *NewParams) error {
 			_ = darwinRouteReservation.Release()
 		}
 	}()
-	darwinRouteReservation, err = claimDarwinRouteLaunch(params, h.Name, outerLayer, rowConvID, exitGeneration, &launchUndo)
+	darwinRouteReservation, err = claimDarwinRouteLaunch(params, h.Name, outerLayer, sessionID, rowConvID, exitGeneration, &launchUndo)
 	if err != nil {
 		return err
 	}
@@ -1002,7 +1004,11 @@ func runNew(params *NewParams) error {
 	if darwinRouteReservation != nil {
 		if err := handOffDarwinRouteAtLaunch(darwinRouteReservation,
 			func() error {
-				return db.ActivateDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration)
+				_, err := opDarwinActivateRoute.call(launchDarwinRouteArgs{
+					launchGenerationArgs: launchGenerationOf(sessionID, exitGeneration),
+					AgentID:              params.DarwinRouteAgentID, ConvID: rowConvID,
+				})
+				return err
 			},
 			func() { _ = clcommon.TmuxRun("kill-session", "-t", clcommon.ExactTarget(tmuxSession)) },
 		); err != nil {
@@ -1024,7 +1030,8 @@ func runNew(params *NewParams) error {
 		tmuxSession: tmuxSession, sessionID: sessionID, params: params, h: h, state: state,
 		model: model, effort: effort, autoMemory: autoMemory, remoteControl: remoteControl,
 		contextFeatures: contextFeatures, autoCompactWindow: autoCompactWindow,
-		ordinaryNativeGeneration: ordinaryNativeGeneration, executionBoundaryJSON: executionBoundaryJSON,
+		ordinaryNativeGeneration: ordinaryNativeGeneration, exitGeneration: exitGeneration,
+		executionBoundaryJSON: executionBoundaryJSON,
 	}); err != nil {
 		return err
 	}

@@ -65,7 +65,12 @@ func ReserveConvForLaunch(convID string) (release func(), reject error) {
 	if !acquired {
 		return nil, fmt.Errorf("another launch is already starting for this conversation; retry in a moment")
 	}
-	if owner := LiveSessionForConv(convID); owner != nil {
+	owner, err := liveSessionForConv(convID)
+	if err != nil {
+		rel()
+		return nil, err
+	}
+	if owner != nil {
 		rel()
 		return nil, fmt.Errorf("session %s already exists for this conversation; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
 	}

@@ -20,7 +20,7 @@ import (
 //
 // The reservation is returned even alongside an error once it was taken, so
 // the caller's deferred Release still frees it.
-func claimDarwinRouteLaunch(params *NewParams, harnessName string, outerLayer bool, rowConvID, exitGeneration string, undo *launchundo.Undo) (reservation *DarwinRouteSlotReservation, err error) {
+func claimDarwinRouteLaunch(params *NewParams, harnessName string, outerLayer bool, sessionID, rowConvID, exitGeneration string, undo *launchundo.Undo) (reservation *DarwinRouteSlotReservation, err error) {
 	if !params.DarwinRouteCapable {
 		return nil, nil
 	}
@@ -33,7 +33,8 @@ func claimDarwinRouteLaunch(params *NewParams, harnessName string, outerLayer bo
 	if rowConvID == "" {
 		return reservation, fmt.Errorf("darwin route-capable launch requires a conversation generation")
 	}
-	resolvedAgentID, resolveErr := db.AgentIDForConv(rowConvID)
+	resolved, resolveErr := opAgentIDForConv.call(launchConv(sessionID, rowConvID))
+	resolvedAgentID := resolved.AgentID
 	if resolveErr != nil {
 		return reservation, fmt.Errorf("resolve Darwin route agent identity: %w", resolveErr)
 	}
@@ -52,15 +53,29 @@ func claimDarwinRouteLaunch(params *NewParams, harnessName string, outerLayer bo
 	// rendered. The normalized DB claims are the logical exclusion that
 	// survives reservation-FD closure; every later rendering/launch step
 	// is therefore downstream of one pending exact-generation claim.
-	if err := db.RegisterDarwinRouteLaunch(
-		params.DarwinRouteAgentID, rowConvID, exitGeneration, reservation.Slots()); err != nil {
-		return reservation, fmt.Errorf("register Darwin route launch contract: %w", err)
+	route := launchDarwinRouteArgs{
+		launchGenerationArgs: launchGenerationOf(sessionID, exitGeneration),
+		AgentID:              params.DarwinRouteAgentID, ConvID: rowConvID,
 	}
-	undo.Add(func() {
-		if err := db.DeleteDarwinRouteLaunch(params.DarwinRouteAgentID, rowConvID, exitGeneration); err != nil {
+	register := route
+	register.Slots = reservation.Slots()
+	deleteClaim := func() {
+		if _, err := opDarwinDeleteRoute.call(route); err != nil {
 			slog.Warn("Darwin route launch cleanup failed", "conv", rowConvID, "error", err)
 		}
-	})
+	}
+	// A brokered claim can commit in agentd and still fail here, when the
+	// answer is lost, so its removal is registered first.
+	brokered := LaunchIsBrokered()
+	if brokered {
+		undo.Add(deleteClaim)
+	}
+	if _, err := opDarwinRegisterRoute.call(register); err != nil {
+		return reservation, fmt.Errorf("register Darwin route launch contract: %w", err)
+	}
+	if !brokered {
+		undo.Add(deleteClaim)
+	}
 	return reservation, nil
 }
 

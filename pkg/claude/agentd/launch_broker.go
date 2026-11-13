@@ -37,8 +37,13 @@ import (
 //   - it is minted for the session the daemon is launching, and bound by the
 //     launcher's first call to that session and one launch generation; it
 //     can never be re-bound;
-//   - every operation must name that session, and an operation that carries
-//     a generation must carry that one;
+//   - every operation must name that session, an operation that carries a
+//     generation must carry that one, one that names a conversation must
+//     name the one the daemon is resuming or told it to create, and one that
+//     names a Codex app-server runtime must name the one the daemon started
+//     for this launch;
+//   - before the bind it serves only the few reads the launcher needs to
+//     settle its identity, and only for the session it was minted for;
 //   - it is revoked when the launcher process exits, and expires regardless.
 //
 // A ticket therefore cannot be used to report for another session, which is
@@ -60,14 +65,27 @@ const launchTicketTTL = time.Hour
 // launchTicketBytes is the size of a ticket before hex encoding.
 const launchTicketBytes = 32
 
-type launchTicket struct {
-	mu sync.Mutex
-	// sessionID is the session the daemon minted the ticket for, or "" when
-	// the launcher derives it (a fresh launch given neither label nor
-	// conversation).
+// launchTicketScope is what the daemon knows about the launch it mints a
+// ticket for. None of it is the launcher's to say; operations are checked
+// against it.
+type launchTicketScope struct {
+	// sessionID is the session being launched, or "" when the launcher
+	// derives it (a fresh launch given neither label nor conversation).
 	sessionID string
-	bound     session.LaunchBinding
-	expires   time.Time
+	// convID is the conversation the launch resumes, or "".
+	convID string
+	// presetConvID is the conversation id chosen for a fresh launch, or "".
+	presetConvID string
+	// codexAppServerGeneration is the Codex app-server runtime started for
+	// this launch, or "".
+	codexAppServerGeneration string
+}
+
+type launchTicket struct {
+	mu      sync.Mutex
+	scope   launchTicketScope
+	bound   session.LaunchBinding
+	expires time.Time
 }
 
 var launchTickets = struct {
@@ -87,9 +105,9 @@ func launchOpLock(sessionID string) *sync.Mutex {
 	return &launchOpLocks[h.Sum32()%uint32(len(launchOpLocks))]
 }
 
-// mintLaunchTicket issues the ticket for the launch of sessionID. The daemon
-// keeps only its hash. revoke is idempotent.
-func mintLaunchTicket(sessionID string) (ticket string, revoke func(), err error) {
+// mintLaunchTicket issues the ticket for the launch scope describes. The
+// daemon keeps only its hash. revoke is idempotent.
+func mintLaunchTicket(scope launchTicketScope) (ticket string, revoke func(), err error) {
 	var raw [launchTicketBytes]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", nil, err
@@ -103,7 +121,7 @@ func mintLaunchTicket(sessionID string) (ticket string, revoke func(), err error
 			delete(launchTickets.byHash, k)
 		}
 	}
-	launchTickets.byHash[key] = &launchTicket{sessionID: sessionID, expires: now.Add(launchTicketTTL)}
+	launchTickets.byHash[key] = &launchTicket{scope: scope, expires: now.Add(launchTicketTTL)}
 	launchTickets.Unlock()
 	return ticket, func() {
 		launchTickets.Lock()
@@ -147,9 +165,10 @@ func validLaunchBindingField(v string) bool {
 func (t *launchTicket) bind(b session.LaunchBinding) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.sessionID != "" && b.SessionID != t.sessionID {
+	if t.scope.sessionID != "" && b.SessionID != t.scope.sessionID {
 		return false
 	}
+	b.CodexAppServerGeneration, b.ConvID, b.PresetConvID = "", "", ""
 	if t.bound == (session.LaunchBinding{}) {
 		t.bound = b
 		return true
@@ -157,10 +176,19 @@ func (t *launchTicket) bind(b session.LaunchBinding) bool {
 	return t.bound == b
 }
 
+// binding is the launch the ticket serves. Before the launcher has bound it,
+// that is only the session it was minted for, which is all an operation that
+// may run before the bind is checked against.
 func (t *launchTicket) binding() session.LaunchBinding {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.bound
+	bound := t.bound
+	if bound.SessionID == "" {
+		bound.SessionID = t.scope.sessionID
+	}
+	bound.CodexAppServerGeneration = t.scope.codexAppServerGeneration
+	bound.ConvID, bound.PresetConvID = t.scope.convID, t.scope.presetConvID
+	return bound
 }
 
 // handleLaunchOp runs one database operation on behalf of a launch.
@@ -215,11 +243,9 @@ func handleLaunchOp(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, session.BrokeredLaunchResponse{Result: ops})
 		return
 	}
+	// An unbound ticket gets through to the registry, which serves it only
+	// the operations that may run before the bind.
 	bound := ticket.binding()
-	if bound == (session.LaunchBinding{}) {
-		writeError(w, http.StatusForbidden, "ticket", "launch ticket is not bound to a launch yet")
-		return
-	}
 	lock := launchOpLock(bound.SessionID)
 	lock.Lock()
 	// A launcher that gave up while this waited has started unwinding;
@@ -242,7 +268,9 @@ func handleLaunchOp(w http.ResponseWriter, r *http.Request) {
 			"session", bound.SessionID, "op", req.Op, "module", "launch")
 		writeError(w, http.StatusForbidden, "ticket", "operation does not belong to this ticket's launch")
 	case errors.Is(err, session.ErrUnknownLaunchOp):
-		writeError(w, http.StatusBadRequest, "op", "unknown launch operation")
+		// 501 so the launcher can tell "this daemon is older than me" from a
+		// malformed request.
+		writeError(w, http.StatusNotImplemented, "op", "unknown launch operation")
 	default:
 		// The caller is the daemon's own launcher and reports this on the
 		// stderr the daemon captures, so the cause travels with it.

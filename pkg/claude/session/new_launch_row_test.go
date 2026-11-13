@@ -16,7 +16,7 @@ import (
 func TestClaimDarwinRouteLaunchIgnoresAnOrdinaryLaunch(t *testing.T) {
 	var undo launchundo.Undo
 	params := &NewParams{DarwinRouteAgentID: "agt_keep"}
-	reservation, err := claimDarwinRouteLaunch(params, harness.DefaultName, true, "conv-1", "gen-1", &undo)
+	reservation, err := claimDarwinRouteLaunch(params, harness.DefaultName, true, "spwn-1", "conv-1", "gen-1", &undo)
 	require.NoError(t, err)
 	assert.Nil(t, reservation)
 	assert.Equal(t, "agt_keep", params.DarwinRouteAgentID)
@@ -28,12 +28,12 @@ func TestClaimDarwinRouteLaunchRefusesUnmetPreconditions(t *testing.T) {
 	var undo launchundo.Undo
 	params := &NewParams{DarwinRouteCapable: true}
 	if runtime.GOOS != "darwin" {
-		reservation, err := claimDarwinRouteLaunch(params, harness.DefaultName, true, "conv-1", "gen-1", &undo)
+		reservation, err := claimDarwinRouteLaunch(params, harness.DefaultName, true, "spwn-1", "conv-1", "gen-1", &undo)
 		require.ErrorContains(t, err, "requires macOS")
 		assert.Nil(t, reservation)
 		return
 	}
-	reservation, err := claimDarwinRouteLaunch(params, harness.DefaultName, false, "conv-1", "gen-1", &undo)
+	reservation, err := claimDarwinRouteLaunch(params, harness.DefaultName, false, "spwn-1", "conv-1", "gen-1", &undo)
 	require.ErrorContains(t, err, "requires the pane tclaude")
 	assert.Nil(t, reservation)
 }

@@ -35,6 +35,10 @@ type fakeLaunchDaemon struct {
 	// lacks names operations this daemon does not know, the way a daemon
 	// older than the launcher does not.
 	lacks map[string]bool
+	// convID is the conversation the daemon is resuming with this launch.
+	convID string
+	// refuse names operations this daemon answers with a refusal.
+	refuse map[string]bool
 }
 
 func (d *fakeLaunchDaemon) offers() []string {
@@ -93,7 +97,15 @@ func (d *fakeLaunchDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(BrokeredLaunchResponse{Result: ops})
 		return
 	}
-	result, err := ApplyBrokeredLaunchOp(req.Op, req.Args, d.bound)
+	// Like agentd, what the daemon itself knows about the launch is not the
+	// launcher's to say.
+	if d.refuse[req.Op] {
+		http.Error(w, "refused", http.StatusForbidden)
+		return
+	}
+	bound := d.bound
+	bound.ConvID = d.convID
+	result, err := ApplyBrokeredLaunchOp(req.Op, req.Args, bound)
 	switch {
 	case errors.Is(err, ErrStaleLaunchGeneration):
 		http.Error(w, "stale", http.StatusConflict)
@@ -104,9 +116,26 @@ func (d *fakeLaunchDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// startFakeLaunchDaemon serves a fake launch daemon on a unix socket at sock
+// and stops it with the test.
+func startFakeLaunchDaemon(t *testing.T, sock string) *fakeLaunchDaemon {
+	t.Helper()
+	listener, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	daemon := &fakeLaunchDaemon{ticket: strings.Repeat("5a", 32)}
+	server := &http.Server{Handler: daemon, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	t.Cleanup(func() {
+		brokeredLaunch.Store(nil)
+		pendingLaunchTicket.Store(nil)
+	})
+	return daemon
+}
+
 // brokerThisLaunch makes the test process a managed launcher talking to a
-// fake daemon, exactly the way a real one becomes brokered: a ticket in the
-// environment, adopted at the top of the launch.
+// fake daemon, exactly the way a real one becomes brokered: a ticket on an
+// inherited pipe, adopted at the top of the launch.
 func brokerThisLaunch(t *testing.T) *fakeLaunchDaemon {
 	t.Helper()
 	// A unix socket path has a short length limit, which TMPDIR can exceed.
@@ -114,19 +143,9 @@ func brokerThisLaunch(t *testing.T) *fakeLaunchDaemon {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "agentd.sock")
-	listener, err := net.Listen("unix", sock)
-	require.NoError(t, err)
-	daemon := &fakeLaunchDaemon{ticket: strings.Repeat("5a", 32)}
-	server := &http.Server{Handler: daemon, ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close() })
-
+	daemon := startFakeLaunchDaemon(t, sock)
 	t.Setenv(agentipc.SocketEnv, sock)
 	handTicketOnPipe(t, daemon.ticket)
-	t.Cleanup(func() {
-		brokeredLaunch.Store(nil)
-		pendingLaunchTicket.Store(nil)
-	})
 	adoptLaunchTicket(true)
 	require.False(t, LaunchIsBrokered(), "a launch is direct until it binds its ticket")
 	return daemon
@@ -343,4 +362,74 @@ func TestSessionStateSurvivesTheBrokerWire(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &decodedPosture))
 	assert.Equal(t, posture, decodedPosture.Posture)
 	assert.Equal(t, "s", decodedPosture.launchSessionID())
+}
+
+// The two guards that keep a launch off a live session are reads. Brokered,
+// an unanswered read is not "nothing found": the launch fails rather than
+// write over a session that may be live. Locally a database fault still reads
+// as "free", as it always has.
+func TestBrokeredLaunchGuardsFailClosedWhenTheDaemonDoesNotAnswer(t *testing.T) {
+	isolateCacheAndDB(t)
+	const conv = "c0ffee00-1111-4111-8111-111111111111"
+	daemon := brokerThisLaunch(t)
+	daemon.convID = conv
+	daemon.refuse = map[string]bool{opLoadSessionState.name: true, opSessionsForConv.name: true}
+
+	_, err := liveOwnerConflict("spwn-guarded", "spwn-guarded")
+	require.ErrorContains(t, err, "check whether session")
+	release, reject := ReserveConvForLaunch(conv)
+	require.ErrorContains(t, reject, "has a live session")
+	assert.Nil(t, release)
+	assert.Nil(t, LiveSessionForConv(conv), "the public form keeps its best-effort answer")
+
+	daemon.refuse = nil
+	owner, err := liveOwnerConflict("spwn-guarded", "spwn-guarded")
+	require.NoError(t, err)
+	assert.Nil(t, owner)
+	release, reject = ReserveConvForLaunch(conv)
+	require.NoError(t, reject)
+	release()
+}
+
+// Operations served before a ticket is bound are authorized by the ticket
+// alone, so that set stays exactly the reads a launch needs to settle its
+// identity. Adding to it is a decision, not a side effect.
+func TestOnlyTheIdentityReadsRunBeforeALaunchIsBound(t *testing.T) {
+	var preBind []string
+	for name, op := range launchOpRegistry {
+		if op.fence == fenceTicketOnly {
+			preBind = append(preBind, name)
+		}
+	}
+	assert.ElementsMatch(t, []string{opLoadSessionState.name, opSessionsForConv.name}, preBind)
+}
+
+// A launch names only its own conversation: the one agentd resumes with it or
+// told it to create.
+func TestApplyBrokeredLaunchOpBindsTheConversation(t *testing.T) {
+	isolateCacheAndDB(t)
+	args := func(v any) json.RawMessage {
+		raw, err := json.Marshal(v)
+		require.NoError(t, err)
+		return raw
+	}
+	title := func(conv string) json.RawMessage {
+		return args(launchConvTitleArgs{launchSessionArgs: launchSession("spwn-conv"), ConvID: conv, Title: "t", Harness: "gemini"})
+	}
+	resumed := LaunchBinding{SessionID: "spwn-conv", Generation: "gen", ConvID: "conv-resumed"}
+	_, err := ApplyBrokeredLaunchOp(opSetConvTitle.name, title("conv-of-another-agent"), resumed)
+	require.ErrorIs(t, err, ErrLaunchOpForeignSession)
+	_, err = ApplyBrokeredLaunchOp(opSetConvTitle.name, title("conv-resumed"), resumed)
+	require.NoError(t, err)
+
+	preset := LaunchBinding{SessionID: "spwn-conv", Generation: "gen", PresetConvID: "conv-preset"}
+	_, err = ApplyBrokeredLaunchOp(opAgentIDForConv.name, args(launchConv("spwn-conv", "conv-of-another-agent")), preset)
+	require.ErrorIs(t, err, ErrLaunchOpForeignSession)
+	_, err = ApplyBrokeredLaunchOp(opAgentIDForConv.name, args(launchConv("spwn-conv", "conv-preset")), preset)
+	require.NoError(t, err)
+
+	// agentd named no conversation: the launcher mints its own.
+	own := LaunchBinding{SessionID: "spwn-conv", Generation: "gen"}
+	_, err = ApplyBrokeredLaunchOp(opSetConvTitle.name, title("conv-the-launcher-minted"), own)
+	require.NoError(t, err)
 }

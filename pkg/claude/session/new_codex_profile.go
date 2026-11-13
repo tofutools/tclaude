@@ -52,20 +52,41 @@ func prepareCodexAgentProfile(
 		ownerConvID = params.SessionID
 	}
 	mandatoryNative := params.CodexAppServerSocket != "" && !outerLayer
+	// The registry takes the definition as content, so the same call works
+	// whether the registry is updated in this process or by agentd.
+	profileTOML, err := os.ReadFile(profilePath)
+	if err != nil {
+		return codexAgentProfile{}, fmt.Errorf("read generated Codex permission profile: %w", err)
+	}
 	if mandatoryNative {
-		if err := RegisterCodexNativePermissionProfile(
-			params.CodexAppServerGeneration, profileName, profilePath,
-		); err != nil {
+		if _, err := opCodexRegisterAppServerProfile.call(launchCodexRuntimeProfileArgs{
+			launchSessionArgs: launchSession(sessionID), RuntimeGeneration: params.CodexAppServerGeneration,
+			ProfileName: profileName, ProfileTOML: string(profileTOML),
+		}); err != nil {
 			return codexAgentProfile{}, fmt.Errorf("register managed Codex app-server profile: %w", err)
 		}
 	} else {
-		generation, err := RegisterCodexLaunchNativeProfile(exitGeneration, profileName, profilePath, ownerConvID, sessionID)
+		launch := launchGenerationOf(sessionID, exitGeneration)
+		unregister := func() { _, _ = opCodexUnregisterLaunchProfile.call(launch) }
+		// A brokered registration can commit in agentd and still fail here,
+		// when the answer is lost. Its undo is therefore registered first;
+		// unregistering a generation that was never registered is a no-op.
+		brokered := LaunchIsBrokered()
+		if brokered {
+			undo.Add(unregister)
+		}
+		registered, err := opCodexRegisterLaunchProfile.call(launchCodexProfileArgs{
+			launchGenerationArgs: launch, ProfileName: profileName,
+			ProfileTOML: string(profileTOML), OwnerConvID: ownerConvID,
+		})
 		if err != nil {
 			return codexAgentProfile{}, err
 		}
-		if generation != "" {
-			undo.Add(func() { _ = UnregisterCodexNativePermissionProfile(generation) })
-			profile.nativeGeneration = generation
+		if registered.NativeGeneration != "" {
+			if !brokered {
+				undo.Add(unregister)
+			}
+			profile.nativeGeneration = registered.NativeGeneration
 		}
 	}
 	if params.CodexAppServerSocket != "" {
