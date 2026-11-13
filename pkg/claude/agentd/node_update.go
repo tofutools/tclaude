@@ -270,6 +270,21 @@ func requestSelfUpdateRestart() error {
 	_, err := requestDaemonRestart("self-update", relocated)
 	return err
 }
+
+// markLaunchEnvRefreshed tells the running update job, if any, that the
+// restart refreshes the environment.
+func markLaunchEnvRefreshed() {
+	nodeUpdates.Lock()
+	service := nodeUpdates.service
+	nodeUpdates.Unlock()
+	if service == nil {
+		return
+	}
+	if err := service.MarkLaunchEnvRefreshed(); err != nil {
+		slog.Warn("self-update: could not record that the restart refreshes the environment", "error", err)
+	}
+}
+
 func performSelfUpdateRestart() error {
 	updateRestartState.Lock()
 	requested, path, startPath, plan := updateRestartState.requested, updateRestartState.path, updateRestartState.startPath, updateRestartState.plan
@@ -292,8 +307,12 @@ func performSelfUpdateRestart() error {
 		restartExit(exitCode)
 		return nil
 	}
-	// The environment this process started with, not os.Environ(): what
-	// startup exported into it is derived again from the same flags.
+	// A restart starts like a fresh one, with a fresh environment from the
+	// login shell (restartEnviron), and the update's launch comparison
+	// expects that rather than report it.
+	if restartRefreshesEnv(currentLauncher(false)) {
+		markLaunchEnvRefreshed()
+	}
 	argv := os.Args
 	if plan.relaunch && relaunchHandBack(path, startPath) {
 		// The waiting helper that started this daemon starts it again; a
@@ -320,7 +339,10 @@ func performSelfUpdateRestart() error {
 		// of the shell job.
 		releaseTrayStatusItem()
 	}
-	err := execSelfUpdate(path, argv, launchEnviron)
+	// Built from the environment this process started with, not
+	// os.Environ(): what startup exported into it is derived again from
+	// the same flags.
+	err := execSelfUpdate(path, argv, daemonRestartEnviron(launchEnviron))
 	if err != nil {
 		nodeUpdates.Lock()
 		service := nodeUpdates.service

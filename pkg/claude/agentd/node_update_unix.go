@@ -4,4 +4,6 @@ package agentd
 
 import "syscall"
 
-func execSelfUpdate(path string, args, env []string) error { return syscall.Exec(path, args, env) }
+// execSelfUpdate replaces this process with the restarted daemon; tests
+// swap it.
+var execSelfUpdate = func(path string, args, env []string) error { return syscall.Exec(path, args, env) }

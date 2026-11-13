@@ -130,7 +130,8 @@ func loginEnvFailureMessage(msg string) *db.HumanMessage {
 		Subject: "agentd started without your login shell's environment",
 		Body: fmt.Sprintf("agentd asked your login shell for its environment (PATH, locale, TMUX_TMPDIR, your profile's variables), "+
 			"and it did not answer within %s: %s.\n\n"+
-			"agentd started anyway, with the bare environment it was given. Agents may not start, or may show offline.\n\n"+
+			"agentd started anyway, with the environment it was given: the bare one a launcher or launchd gives, or, after a restart, the one it had before, "+
+			"which may point at an old toolchain. Agents may not start, may show offline, or may build with stale tools.\n\n"+
 			"To check, time your shell's startup in a terminal: `time $SHELL -l -i -c true`. It should finish in a few seconds, "+
 			"without asking anything. Then see ~/.tclaude/data/output.log, and ~/.tclaude/data/launcher-agentd.log when the app launcher started agentd. "+
 			"Restart agentd once the shell answers quickly.", launcher.ShellEnvTimeout, msg),
@@ -182,15 +183,8 @@ func envLookup(environ []string, key string) string {
 // toolchain upgrade. The standalone tclaude-agentd has no shell-env
 // subcommand, so the dump names tclaude itself.
 func selfUpdateToolEnv(ctx context.Context) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, launcher.ShellEnvTimeout+5*time.Second)
-	defer cancel()
-	name := ""
-	if u, err := user.Current(); err == nil {
-		name = u.Username
-	}
 	environ := os.Environ()
-	env, err := launcher.TerminalEnv(ctx, runtime.GOOS, name, environ,
-		[]string{clcommon.SelfTclaudePath(), "service", "launcher", "shell-env"}, launcher.ExecRunner)
+	env, err := terminalLoginEnv(ctx, environ)
 	if err != nil {
 		return nil, err
 	}
