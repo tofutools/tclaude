@@ -796,7 +796,7 @@ func (o Options) SetKeys(columns []string) []string {
 // (~/.tclaude/data/config.json, taskboard.*). A nil field is unset.
 type Globals struct {
 	// IdleCheck is taskboard.idle_check: the idle check's default for every
-	// board that does not set its own.
+	// board that does not set its own. Unset means on.
 	IdleCheck *bool
 	// IdleGrace is taskboard.idle_grace. Zero turns the idle check off on
 	// every board, whatever the board sets.
@@ -940,7 +940,7 @@ func Resolve(o Options, g Globals, columns []string) Resolved {
 	case g.IdleCheck != nil:
 		r.Enabled = Value[bool]{*g.IdleCheck, SourceGlobal}
 	default:
-		r.Enabled = Value[bool]{false, SourceDefault}
+		r.Enabled = Value[bool]{true, SourceDefault}
 	}
 	r.Grace = Value[DurationString]{DurationString(DefaultIdleGrace), SourceDefault}
 	if g.IdleGrace != nil && *g.IdleGrace > 0 {

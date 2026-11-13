@@ -255,7 +255,8 @@ type TaskboardConfig struct {
 	// grace (docs/taskboard.md "Board options").
 	IdleGrace string `json:"idle_grace,omitempty"`
 	// IdleCheck is the idle check's default for a board that does not turn
-	// it on or off itself. Absent means off: a board opts in.
+	// it on or off itself. Absent means on: false turns it off on every board
+	// that does not turn it on itself.
 	IdleCheck *bool `json:"idle_check,omitempty"`
 }
 

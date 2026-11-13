@@ -123,13 +123,13 @@ func TestTaskboardOptionsReadWriteAndInheritance(t *testing.T) {
 	h := newTaskboardAssignFlow(t)
 	saveTaskboardConfig(t, nil)
 
-	// Nothing set: the idle check is off, by default.
+	// Nothing set: the idle check is on, by default.
 	v := h.options(h.worker, http.MethodGet, nil, http.StatusOK)
 	assert.Equal(t, "crew", v.Group)
 	assert.Zero(t, v.Version)
 	assert.Nil(t, v.Options.Idle)
-	assert.False(t, v.Resolved.Idle.Active)
-	assert.Equal(t, tbOptValue{false, "default"}, v.Resolved.Idle.Enabled)
+	assert.True(t, v.Resolved.Idle.Active)
+	assert.Equal(t, tbOptValue{true, "default"}, v.Resolved.Idle.Enabled)
 	assert.Equal(t, tbOptValue{"5m", "default"}, v.Resolved.Idle.Grace)
 	assert.Equal(t, tbOptValue{[]any{"assigner"}, "default"}, v.Resolved.Idle.Tell)
 	assert.Contains(t, v.Keys, "idle.grace")
@@ -254,20 +254,22 @@ func tbCountSubjects(subjects []string, contains string) int {
 	return n
 }
 
-// The idle check is a board's own choice: off unless the board opts in, on
-// with the board's grace and recipients, overruled only by the global
-// kill switch; and a queued task never stalls.
+// The idle check is a board's own choice: on by default, off fleet-wide
+// with taskboard.idle_check false unless the board turns it on, with the
+// board's grace and recipients, overruled only by the global kill switch;
+// and a queued task never stalls.
 func TestTaskboardIdleCheckPerBoard(t *testing.T) {
 	h := newTaskboardIdleBoardFlow(t)
 	now := time.Now()
 
-	// Off by default: an idle hour is not a stall.
+	// Off for every board that leaves it unset: an idle hour is not a stall.
+	saveTaskboardConfig(t, &config.TaskboardConfig{IdleCheck: new(false)})
 	off := h.assigned("left alone")
 	agentd.SweepTaskboardIdleForTest(now.Add(time.Hour))
 	assert.Zero(t, tbStalledEvents(t, off.ID))
 	assert.Zero(t, tbCountSubjects(tbInboxSubjects(t, h.lead), "went idle"))
 
-	// On, with a 10 minute grace: not at 5 minutes, at 15.
+	// The board turns it on, with a 10 minute grace: not at 5 minutes, at 15.
 	h.setOptions(h.lead, map[string]string{"idle.enabled": "on", "idle.grace": "10m"})
 	agentd.SweepTaskboardIdleForTest(now.Add(5 * time.Minute))
 	assert.Zero(t, tbStalledEvents(t, off.ID))
@@ -373,17 +375,14 @@ func TestTaskboardIdleCheckColumns(t *testing.T) {
 }
 
 // The board read path derives stalled from the same options: on a board
-// that opts in with the global grace, the task shows as stalled and is
-// counted; turning the check off clears it.
+// that leaves the check on by default, with the global grace, the task
+// shows as stalled and is counted; turning the check off clears it.
 func TestTaskboardIdleCheckReadPath(t *testing.T) {
 	h := newTaskboardIdleBoardFlow(t)
 	saveTaskboardConfig(t, &config.TaskboardConfig{IdleGrace: "1ms"})
 	task := h.assigned("watched")
-	assert.False(t, h.stallView(task.ID).Stalled, "off by default")
-
-	h.setOptions("", map[string]string{"idle.enabled": "on"})
 	require.Eventually(t, func() bool { return h.stallView(task.ID).Stalled }, 5*time.Second, 5*time.Millisecond,
-		"an idle assignee past the inherited 1ms grace stalls its task")
+		"on by default: an idle assignee past the inherited 1ms grace stalls its task")
 	assert.Equal(t, 1, h.contextCounts()["stalled"])
 
 	h.setOptions("", map[string]string{"idle.enabled": "off"})
@@ -406,7 +405,8 @@ func TestTaskboardOptionsCLI(t *testing.T) {
 	rc, out, errOut := run("options", "show", "crew")
 	require.Equal(t, 0, rc, errOut)
 	assert.Contains(t, out, "crew board options (all inherited)")
-	assert.Contains(t, out, "idle check: off")
+	assert.Contains(t, out, "idle check: on")
+	assert.Regexp(t, `idle.enabled\s+on\s+default`, out)
 	assert.Regexp(t, `idle.grace\s+3m\s+global`, out)
 
 	rc, out, errOut = run("options", "set", "crew", "idle.enabled=on", "idle.grace=10m", "idle.tell=assigner,operator")
@@ -541,7 +541,7 @@ func TestTaskboardOptionsInContext(t *testing.T) {
 	c := read()
 	o := c.Groups[crew(c)].Options
 	assert.Zero(t, o.Version)
-	assert.False(t, o.IdleActive)
+	assert.True(t, o.IdleActive, "on by default")
 	assert.Equal(t, "default", o.IdleSource)
 	assert.Empty(t, o.Set)
 
