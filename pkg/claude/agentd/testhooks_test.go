@@ -2845,7 +2845,14 @@ func SeedPRCachesForTest(rawURL, state, title string, passed, total int, decisio
 // unless the test revokes it first.
 func MintLaunchTicketForTest(t testing.TB, sessionID string) (ticket string, revoke func()) {
 	t.Helper()
-	ticket, revoke, err := mintLaunchTicket(sessionID)
+	return MintLaunchTicketForLaunchTest(t, sessionID, "", "")
+}
+
+// MintLaunchTicketForLaunchTest is MintLaunchTicketForTest for a launch that
+// resumes convID and/or was given a Codex app-server runtime.
+func MintLaunchTicketForLaunchTest(t testing.TB, sessionID, convID, codexAppServerGeneration string) (ticket string, revoke func()) {
+	t.Helper()
+	ticket, revoke, err := mintLaunchTicket(sessionID, convID, codexAppServerGeneration)
 	if err != nil {
 		t.Fatalf("mint launch ticket: %v", err)
 	}

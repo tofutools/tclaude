@@ -307,7 +307,7 @@ func handLaunchTicketTo(cmd *exec.Cmd, a clcommon.SpawnArgs) (closePipe, revoke 
 	if sessionID == "" {
 		sessionID = a.ConvID
 	}
-	ticket, revoke, err := mintLaunchTicket(sessionID)
+	ticket, revoke, err := mintLaunchTicket(sessionID, a.ConvID, a.CodexAppServerGeneration)
 	if err != nil {
 		return nil, nil, fmt.Errorf("mint launch ticket: %w", err)
 	}

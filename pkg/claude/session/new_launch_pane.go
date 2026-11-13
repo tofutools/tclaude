@@ -89,6 +89,7 @@ type launchSettleInput struct {
 	contextFeatures           map[string]string
 	autoCompactWindow         string
 	ordinaryNativeGeneration  string
+	exitGeneration            string
 	executionBoundaryJSON     []byte
 }
 
@@ -146,7 +147,7 @@ func settleLaunchedPane(in launchSettleInput) error {
 	// readiness only at this final boundary: any earlier failure unregisters
 	// this generation and cannot prune a still-resumable predecessor.
 	if in.ordinaryNativeGeneration != "" {
-		if err := ActivateCodexNativePermissionProfile(in.ordinaryNativeGeneration); err != nil {
+		if _, err := opCodexActivateLaunchProfile.call(launchGenerationOf(in.sessionID, in.exitGeneration)); err != nil {
 			in.killLaunchPane()
 			return fmt.Errorf("activate generated Codex permission profile: %w", err)
 		}

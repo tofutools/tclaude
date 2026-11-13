@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/codexappserver"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
@@ -100,7 +99,7 @@ func hexComponent(value string) bool {
 
 func verifyCodexAppServerLaunchVersion(
 	params *NewParams,
-	executable, cwd string,
+	sessionID, executable, cwd string,
 	environment []sandboxpolicy.EnvironmentEntry,
 ) error {
 	if params == nil || !params.CodexAppServer {
@@ -110,32 +109,37 @@ func verifyCodexAppServerLaunchVersion(
 	if strings.TrimSpace(executable) == "" {
 		resolved, err := codexEffectiveConfigLookPath(cwd, launchEnvironment["PATH"])
 		if err != nil {
-			return markCodexAppServerVersionFailure(params,
+			return markCodexAppServerVersionFailure(params, sessionID,
 				fmt.Errorf("locate exact codex launch executable: %w", err))
 		}
 		executable = resolved
 	}
 	output, err := codexAppServerVersionProbe(executable, cwd, launchEnvironment)
 	if err != nil {
-		return markCodexAppServerVersionFailure(params,
+		return markCodexAppServerVersionFailure(params, sessionID,
 			fmt.Errorf("probe exact codex launch executable %q: %w", executable, err))
 	}
 	version := strings.TrimSpace(string(output))
 	if err := codexappserver.CheckVersion(version); err != nil {
-		return markCodexAppServerVersionFailure(params,
+		return markCodexAppServerVersionFailure(params, sessionID,
 			fmt.Errorf("exact codex launch executable %q: %w", executable, err))
 	}
 	version = strings.TrimSpace(strings.TrimPrefix(version, "codex-cli "))
-	if err := db.SetCodexAppServerRuntimeVersion(params.CodexAppServerGeneration, version); err != nil {
-		return markCodexAppServerVersionFailure(params,
+	if _, err := opCodexSetAppServerVersion.call(launchCodexRuntimeValueArgs{
+		launchSessionArgs: launchSession(sessionID), RuntimeGeneration: params.CodexAppServerGeneration, Value: version,
+	}); err != nil {
+		return markCodexAppServerVersionFailure(params, sessionID,
 			fmt.Errorf("persist exact codex launch version: %w", err))
 	}
 	return nil
 }
 
-func markCodexAppServerVersionFailure(params *NewParams, cause error) error {
+func markCodexAppServerVersionFailure(params *NewParams, sessionID string, cause error) error {
 	if params != nil && params.CodexAppServerGeneration != "" {
-		_ = db.MarkCodexAppServerRuntimeUnavailable(params.CodexAppServerGeneration, cause.Error())
+		_, _ = opCodexMarkAppServerUnavailable.call(launchCodexRuntimeValueArgs{
+			launchSessionArgs: launchSession(sessionID), RuntimeGeneration: params.CodexAppServerGeneration,
+			Value: cause.Error(),
+		})
 	}
 	return cause
 }

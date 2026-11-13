@@ -35,6 +35,8 @@ type fakeLaunchDaemon struct {
 	// lacks names operations this daemon does not know, the way a daemon
 	// older than the launcher does not.
 	lacks map[string]bool
+	// convID is the conversation the daemon is resuming with this launch.
+	convID string
 }
 
 func (d *fakeLaunchDaemon) offers() []string {
@@ -93,7 +95,11 @@ func (d *fakeLaunchDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(BrokeredLaunchResponse{Result: ops})
 		return
 	}
-	result, err := ApplyBrokeredLaunchOp(req.Op, req.Args, d.bound)
+	// Like agentd, what the daemon itself knows about the launch is not the
+	// launcher's to say.
+	bound := d.bound
+	bound.ConvID = d.convID
+	result, err := ApplyBrokeredLaunchOp(req.Op, req.Args, bound)
 	switch {
 	case errors.Is(err, ErrStaleLaunchGeneration):
 		http.Error(w, "stale", http.StatusConflict)
@@ -104,9 +110,26 @@ func (d *fakeLaunchDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// startFakeLaunchDaemon serves a fake launch daemon on a unix socket at sock
+// and stops it with the test.
+func startFakeLaunchDaemon(t *testing.T, sock string) *fakeLaunchDaemon {
+	t.Helper()
+	listener, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	daemon := &fakeLaunchDaemon{ticket: strings.Repeat("5a", 32)}
+	server := &http.Server{Handler: daemon, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	t.Cleanup(func() {
+		brokeredLaunch.Store(nil)
+		pendingLaunchTicket.Store(nil)
+	})
+	return daemon
+}
+
 // brokerThisLaunch makes the test process a managed launcher talking to a
-// fake daemon, exactly the way a real one becomes brokered: a ticket in the
-// environment, adopted at the top of the launch.
+// fake daemon, exactly the way a real one becomes brokered: a ticket on an
+// inherited pipe, adopted at the top of the launch.
 func brokerThisLaunch(t *testing.T) *fakeLaunchDaemon {
 	t.Helper()
 	// A unix socket path has a short length limit, which TMPDIR can exceed.
@@ -114,19 +137,9 @@ func brokerThisLaunch(t *testing.T) *fakeLaunchDaemon {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "agentd.sock")
-	listener, err := net.Listen("unix", sock)
-	require.NoError(t, err)
-	daemon := &fakeLaunchDaemon{ticket: strings.Repeat("5a", 32)}
-	server := &http.Server{Handler: daemon, ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close() })
-
+	daemon := startFakeLaunchDaemon(t, sock)
 	t.Setenv(agentipc.SocketEnv, sock)
 	handTicketOnPipe(t, daemon.ticket)
-	t.Cleanup(func() {
-		brokeredLaunch.Store(nil)
-		pendingLaunchTicket.Store(nil)
-	})
 	adoptLaunchTicket(true)
 	require.False(t, LaunchIsBrokered(), "a launch is direct until it binds its ticket")
 	return daemon

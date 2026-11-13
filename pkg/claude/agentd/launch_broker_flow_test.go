@@ -156,7 +156,7 @@ func TestLaunchBroker_ATicketOnlySpeaksForItsOwnLaunch(t *testing.T) {
 		session.LaunchBinding{SessionID: "spwn-launch-victim", Generation: gen})
 	assert.Equal(t, http.StatusForbidden, code, "a ticket cannot be re-bound")
 	code, _ = launchOp(t, f, ticket, "session.drop_everything", map[string]any{"session_id": id})
-	assert.Equal(t, http.StatusBadRequest, code, "an operation the registry does not hold")
+	assert.Equal(t, http.StatusNotImplemented, code, "an operation the registry does not hold")
 	code, _ = launchOp(t, f, "not-a-ticket", "session.row_exists", map[string]any{"session_id": id})
 	assert.Equal(t, http.StatusForbidden, code, "no ticket, no authority")
 
@@ -223,4 +223,63 @@ func TestLaunchBroker_RefusesACallerWithNoPeerProcess(t *testing.T) {
 		session.BrokeredLaunchRequest{Ticket: ticket, Op: session.LaunchBeginOp, Args: raw})
 	rec := testharness.Serve(f.Mux, agentd.AsAgentPeerWithPID(req, "", 0))
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// Before a launch has a generation the launcher has to settle its identity,
+// which takes two reads. A ticket serves those, and only those, before it is
+// bound, and only for the session and conversation the daemon minted it for.
+func TestLaunchBroker_UnboundTicketServesOnlyItsOwnIdentityReads(t *testing.T) {
+	f := newFlow(t)
+	const victimConv = "5ac10000-dddd-eeee-ffff-444444444444"
+	f.HaveAliveSession(victimConv, "spwn-launch-prebind-victim", "tmux-launch-prebind-victim", f.World.HomeDir)
+	const id, conv = "spwn-launch-prebind", "c0000000-dddd-eeee-ffff-444444444444"
+	f.HaveAliveSession(conv, id, "tmux-launch-prebind", f.World.HomeDir)
+	ticket, _ := agentd.MintLaunchTicketForLaunchTest(t, id, conv, "")
+
+	code, body := launchOp(t, f, ticket, "session.load_state", map[string]any{"session_id": id})
+	require.Equal(t, http.StatusOK, code, "%v", body)
+	state, _ := body["result"].(map[string]any)["state"].(map[string]any)
+	assert.Equal(t, "tmux-launch-prebind", state["tmuxSession"], "the launcher learns who owns its label")
+	code, body = launchOp(t, f, ticket, "session.for_resumed_conv", map[string]any{"conv_id": conv})
+	require.Equal(t, http.StatusOK, code, "%v", body)
+	states, _ := body["result"].(map[string]any)["states"].([]any)
+	assert.Len(t, states, 1, "and whether the conversation it resumes already has a pane")
+
+	code, _ = launchOp(t, f, ticket, "session.load_state", map[string]any{"session_id": "spwn-launch-prebind-victim"})
+	assert.Equal(t, http.StatusForbidden, code, "not another session's row")
+	code, _ = launchOp(t, f, ticket, "session.for_resumed_conv", map[string]any{"conv_id": victimConv})
+	assert.Equal(t, http.StatusForbidden, code, "not another conversation's sessions")
+	code, _ = launchOp(t, f, ticket, "session.save_launch_row", launchRowArgs(id, "0123456789abcdef0123456789abcdef", 0))
+	assert.Equal(t, http.StatusForbidden, code, "and no write before the bind")
+
+	fresh, _ := agentd.MintLaunchTicketForTest(t, "spwn-launch-prebind-fresh")
+	code, _ = launchOp(t, f, fresh, "session.for_resumed_conv", map[string]any{"conv_id": conv})
+	assert.Equal(t, http.StatusForbidden, code, "a launch that resumes nothing reads no conversation's sessions")
+}
+
+// The Codex app-server runtime a launch may report on is the one the daemon
+// started for it; a launcher cannot mark another agent's runtime.
+func TestLaunchBroker_CodexRuntimeOperationsAreBoundToTheLaunchRuntime(t *testing.T) {
+	f := newFlow(t)
+	const id, gen = "spwn-launch-codex", "abcdefabcdefabcdefabcdefabcdefab"
+	ticket, _ := agentd.MintLaunchTicketForLaunchTest(t, id, "", "runtime-of-this-launch")
+	beginLaunch(t, f, ticket, id, gen)
+	code, _ := launchOp(t, f, ticket, "session.save_launch_row", launchRowArgs(id, gen, 0))
+	require.Equal(t, http.StatusOK, code)
+
+	code, _ = launchOp(t, f, ticket, "codex.mark_app_server_unavailable", map[string]any{
+		"session_id": id, "runtime_generation": "runtime-of-another-agent", "value": "forged",
+	})
+	assert.Equal(t, http.StatusForbidden, code)
+	code, _ = launchOp(t, f, ticket, "codex.set_app_server_version", map[string]any{
+		"session_id": id, "runtime_generation": "runtime-of-another-agent", "value": "0.0.0",
+	})
+	assert.Equal(t, http.StatusForbidden, code)
+
+	noRuntime, _ := agentd.MintLaunchTicketForTest(t, "spwn-launch-codex-none")
+	beginLaunch(t, f, noRuntime, "spwn-launch-codex-none", gen)
+	code, _ = launchOp(t, f, noRuntime, "codex.mark_app_server_unavailable", map[string]any{
+		"session_id": "spwn-launch-codex-none", "runtime_generation": "runtime-of-this-launch", "value": "forged",
+	})
+	assert.Equal(t, http.StatusForbidden, code, "a launch given no runtime may name none")
 }

@@ -246,6 +246,18 @@ func validateNativeRegistryFile(path string, uid uint32, marker string) error {
 }
 
 func RegisterCodexNativePermissionProfile(generation, profileName, profilePath string) error {
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		return fmt.Errorf("read generated Codex permission profile: %w", err)
+	}
+	return registerCodexAppServerProfileTOML(generation, profileName, string(data))
+}
+
+// registerCodexAppServerProfileTOML is RegisterCodexNativePermissionProfile
+// for a definition already in hand. The launch operation uses it: the
+// launcher reads the profile it generated and sends the content, so the
+// daemon never opens a path the launcher names.
+func registerCodexAppServerProfileTOML(generation, profileName, profileTOML string) error {
 	runtime, err := db.GetCodexAppServerRuntime(generation)
 	if err != nil {
 		return err
@@ -258,7 +270,11 @@ func RegisterCodexNativePermissionProfile(generation, profileName, profilePath s
 	if err != nil {
 		return err
 	}
-	return registerCodexNativePermissionProfileFromPath(opts, profile, profilePath, true)
+	if err := validateStoredNativeProfile(profile.ProfileName, profileTOML); err != nil {
+		return err
+	}
+	profile.ProfileTOML = profileTOML
+	return registerCodexNativePermissionProfileOwned(opts, profile)
 }
 
 // RegisterCodexNativePermissionProfileIfInstalled opportunistically joins an
@@ -270,7 +286,7 @@ func RegisterCodexNativePermissionProfileIfInstalled(profile db.CodexNativePermi
 	if err != nil {
 		return false, nil
 	}
-	return registerCodexNativePermissionProfileIfInstalled(opts, profile, profilePath)
+	return registerCodexNativePermissionProfileIfInstalled(opts, profile, profilePath, "")
 }
 
 // RegisterCodexLaunchNativeProfile joins an ordinary generated launch profile
@@ -280,15 +296,25 @@ func RegisterCodexNativePermissionProfileIfInstalled(profile db.CodexNativePermi
 // the caller activates the generation once the launch is durable, and
 // unregisters it when the pane never starts.
 func RegisterCodexLaunchNativeProfile(profileLaunchID, profileName, profilePath, ownerConvID, launchID string) (string, error) {
+	return registerCodexLaunchNativeProfile(profileLaunchID, profileName, profilePath, "", ownerConvID, launchID)
+}
+
+// registerCodexLaunchNativeProfile takes the definition as content when
+// profileTOML is set, and reads profilePath otherwise.
+func registerCodexLaunchNativeProfile(profileLaunchID, profileName, profilePath, profileTOML, ownerConvID, launchID string) (string, error) {
 	ownerAgentID, err := db.AgentIDForConv(ownerConvID)
 	if err != nil {
 		return "", fmt.Errorf("resolve generated Codex profile owner: %w", err)
 	}
 	generation := "launch:" + profileLaunchID
-	registered, err := RegisterCodexNativePermissionProfileIfInstalled(db.CodexNativePermissionProfile{
+	profile := db.CodexNativePermissionProfile{
 		Generation: generation, ProfileName: profileName,
 		OwnerAgentID: ownerAgentID, OwnerConvID: ownerConvID, LaunchID: launchID,
-	}, profilePath)
+	}
+	registered := false
+	if opts, optsErr := defaultCodexNativeRegistryOptions(); optsErr == nil {
+		registered, err = registerCodexNativePermissionProfileIfInstalled(opts, profile, profilePath, profileTOML)
+	}
 	if err != nil {
 		return "", fmt.Errorf("join installed Codex permission registry: %w", err)
 	}
@@ -303,6 +329,9 @@ func RegisterCodexLaunchNativeProfile(profileLaunchID, profileName, profilePath,
 type CodexNativePermissionProfileRegistration struct {
 	Profile     db.CodexNativePermissionProfile
 	ProfilePath string
+	// ProfileTOML, when set, is the definition itself and ProfilePath is not
+	// read.
+	ProfileTOML string
 }
 
 var codexNativeRegistryBeforeOrdinaryPublish func() error
@@ -329,7 +358,7 @@ func RegisterCodexNativePermissionProfilesIfInstalled(registrations []CodexNativ
 }
 
 func registerCodexNativePermissionProfileIfInstalled(
-	opts CodexNativeRegistryOptions, profile db.CodexNativePermissionProfile, profilePath string,
+	opts CodexNativeRegistryOptions, profile db.CodexNativePermissionProfile, profilePath, profileTOML string,
 ) (bool, error) {
 	if validateCodexNativeRegistrySetup(opts) != nil {
 		return false, nil
@@ -340,7 +369,7 @@ func registerCodexNativePermissionProfileIfInstalled(
 		}
 	}
 	return registerCodexNativePermissionProfilesIfInstalled(opts, []CodexNativePermissionProfileRegistration{{
-		Profile: profile, ProfilePath: profilePath,
+		Profile: profile, ProfilePath: profilePath, ProfileTOML: profileTOML,
 	}})
 }
 
@@ -352,15 +381,19 @@ func registerCodexNativePermissionProfilesIfInstalled(
 	}
 	profiles := make([]db.CodexNativePermissionProfile, 0, len(registrations))
 	for _, registration := range registrations {
-		data, err := os.ReadFile(registration.ProfilePath)
-		if err != nil {
-			return false, fmt.Errorf("read generated Codex permission profile: %w", err)
+		definition := registration.ProfileTOML
+		if definition == "" {
+			data, err := os.ReadFile(registration.ProfilePath)
+			if err != nil {
+				return false, fmt.Errorf("read generated Codex permission profile: %w", err)
+			}
+			definition = string(data)
 		}
 		profile := registration.Profile
-		if err := validateStoredNativeProfile(profile.ProfileName, string(data)); err != nil {
+		if err := validateStoredNativeProfile(profile.ProfileName, definition); err != nil {
 			return false, err
 		}
-		profile.ProfileTOML = string(data)
+		profile.ProfileTOML = definition
 		profiles = append(profiles, profile)
 	}
 	if len(profiles) == 0 {
@@ -417,23 +450,6 @@ func ActivateCodexNativePermissionProfile(generation string) error {
 		}
 		return reconcileCodexNativePermissionRegistryLocked(opts)
 	})
-}
-
-func registerCodexNativePermissionProfileFromPath(
-	opts CodexNativeRegistryOptions, profile db.CodexNativePermissionProfile, profilePath string, required bool,
-) error {
-	if !required && validateCodexNativeRegistrySetup(opts) != nil {
-		return nil
-	}
-	data, err := os.ReadFile(profilePath)
-	if err != nil {
-		return fmt.Errorf("read generated Codex permission profile: %w", err)
-	}
-	if err := validateStoredNativeProfile(profile.ProfileName, string(data)); err != nil {
-		return err
-	}
-	profile.ProfileTOML = string(data)
-	return registerCodexNativePermissionProfileOwned(opts, profile)
 }
 
 func registerCodexNativePermissionProfile(

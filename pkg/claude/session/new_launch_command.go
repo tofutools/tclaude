@@ -7,7 +7,6 @@ import (
 	"os"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/launchundo"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -56,8 +55,8 @@ func TclaudeLayerAgentPrivateWriteDirs(sessionID, convID string) (dirs []Tclaude
 	// A cross-harness morph left this agent's translated history there,
 	// and the agent is pointed at it on every later launch.
 	if convID != "" {
-		if agentID, err := db.AgentIDForConv(convID); err == nil {
-			if dir := common.ExistingMorphArtifactsDir(agentID); dir != "" {
+		if owner, err := opAgentIDForConv.call(launchConv(sessionID, convID)); err == nil {
+			if dir := common.ExistingMorphArtifactsDir(owner.AgentID); dir != "" {
 				dirs = append(dirs, TclaudeLayerPrivateWriteDir{
 					Parent: common.MorphArtifactsBase(), Current: dir,
 				})
@@ -170,7 +169,7 @@ func assembleLaunchPaneCommand(in launchPaneCommandInput) (string, []byte, error
 	}
 	in.timing("sandbox_and_command_prepared")
 	if err := verifyCodexAppServerLaunchVersion(
-		in.params, versionProbeExecutable, in.cwd, versionEnvironment); err != nil {
+		in.params, in.sessionID, versionProbeExecutable, in.cwd, versionEnvironment); err != nil {
 		return "", nil, err
 	}
 	in.timing("codex_version_checked")

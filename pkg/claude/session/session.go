@@ -633,7 +633,8 @@ func sessionHandle(s *SessionState) string {
 // conflation JOH-248 removes. A row owned only by a *dead* session returns nil:
 // recreating over an exited row is fine. See JOH-248.
 func liveSessionOwningID(sessionID string) *SessionState {
-	existing, err := LoadSessionState(sessionID)
+	loaded, err := opLoadSessionState.call(launchSession(sessionID))
+	existing := loaded.State
 	if err != nil || existing == nil {
 		return nil
 	}
@@ -684,13 +685,13 @@ func LiveSessionForConv(convID string) *SessionState {
 	if convID == "" {
 		return nil
 	}
-	rows, err := db.FindSessionsByConvID(convID)
+	found, err := opSessionsForConv.call(launchResumedConvArgs{ConvID: convID})
 	if err != nil {
 		return nil
 	}
-	for _, row := range rows {
-		if row != nil && IsTmuxSessionAlive(row.TmuxSession) {
-			return fromRow(row)
+	for _, state := range found.States {
+		if IsTmuxSessionAlive(state.TmuxSession) {
+			return state
 		}
 	}
 	return nil
