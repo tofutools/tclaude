@@ -300,7 +300,7 @@ func servePeerTaskboardTask(w http.ResponseWriter, r *http.Request, v *peerView,
 		return
 	}
 	a := &peerGrantAuthority{peer: peer, group: g, gates: peerGrantGates(peer, g.ID), author: peerFollowUpAuthor(v, peer),
-		principal: peerPrincipal(v, peer)}
+		principal: peerPrincipal(v, peer), operator: v.agent == nil}
 	for _, slug := range peerTaskboardImpliedGates(peer, g) {
 		a.gates[slug] = true
 	}

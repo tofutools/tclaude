@@ -182,7 +182,7 @@ func TestTaskboardLimitRefuseWarnAndOverride(t *testing.T) {
 
 	code, body = h.limitAssign(h.lead, task.ID, h.peer, map[string]any{"over_limit": true})
 	assert.Equal(t, http.StatusForbidden, code, "agents follow the limit")
-	assert.Contains(t, body, "only the operator")
+	assert.Contains(t, body, "only an operator")
 
 	code, body = h.limitAssign("", task.ID, h.peer, map[string]any{"over_limit": true})
 	got := tbDecodeLimit(t, code, body, http.StatusOK)

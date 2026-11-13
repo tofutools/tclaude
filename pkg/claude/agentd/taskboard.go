@@ -1551,7 +1551,7 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 		hit, ok = checkTaskboardLimit(w, r, g, t, &want, body.OverLimit)
 		return ok
 	}
-	if !requireTaskboardOverLimit(w, r, body.OverLimit) {
+	if !requireTaskboardOverLimit(w, r, g, body.OverLimit) {
 		return
 	}
 	defer lockTaskboardLanes(g.ID)()
@@ -1686,7 +1686,7 @@ func handleTaskboardStatus(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		if hit, ok = checkTaskboardLimit(w, r, g, t, &want, body.OverLimit); !ok {
 			return
 		}
-	} else if !requireTaskboardOverLimit(w, r, body.OverLimit) {
+	} else if !requireTaskboardOverLimit(w, r, g, body.OverLimit) {
 		return
 	}
 	out, err := db.SetGroupTaskStatusForced(t.ID, body.Status, reason, taskboardActor(r), t.AssigneeID, body.Force)

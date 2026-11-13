@@ -63,6 +63,10 @@ type peerGrantAuthority struct {
 	// principal is who acts by stable ids (peerPrincipal), for what keys on
 	// authorship, such as a task comment's.
 	principal string
+	// operator is set when the peer's operator acts (its dashboard or CLI
+	// through the node-level view), never for one of its agents. What only
+	// an operator may do (going over a board's limit) asks it.
+	operator bool
 }
 
 func peerGrantFromRequest(r *http.Request) *peerGrantAuthority {
@@ -203,7 +207,7 @@ func servePeerInvoke(w http.ResponseWriter, r *http.Request, v *peerView, rule p
 		return
 	}
 	a := &peerGrantAuthority{peer: v.peer.InstanceID, group: g, gates: peerGrantGates(v.peer.InstanceID, g.ID),
-		author: peerFollowUpAuthor(v, v.peer.InstanceID)}
+		author: peerFollowUpAuthor(v, v.peer.InstanceID), operator: v.agent == nil}
 	if rule.invoke.extra != nil {
 		for _, slug := range rule.invoke.extra(v.peer.InstanceID, g) {
 			a.gates[slug] = true

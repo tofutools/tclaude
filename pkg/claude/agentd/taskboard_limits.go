@@ -27,7 +27,8 @@ import (
 //   - warn: the task goes in over the limit, and the answer says so.
 //
 // The operator may go over any limit with over_limit (after a confirm in the
-// dashboard); an agent follows the rule. Each time a task meets a full lane
+// dashboard), and so may a linked node's operator that may change the board's
+// options; an agent, local or a linked node's, follows the rule. Each time a task meets a full lane
 // the board's limit_reached message is sent.
 //
 // A blocked task keeps its slot: it is still the lane's work.
@@ -112,11 +113,16 @@ func freshTaskboardTask(w http.ResponseWriter, t *db.GroupTask) (*db.GroupTask, 
 	return fresh, true
 }
 
-// requireTaskboardOverLimit refuses over_limit from anyone but the operator:
-// agents follow the board's limits.
-func requireTaskboardOverLimit(w http.ResponseWriter, r *http.Request, over bool) bool {
-	if over && !taskboardCallerIsOperator(r) {
-		writeError(w, http.StatusForbidden, "permission", "only the operator goes over a board's limit (over_limit)")
+// requireTaskboardOverLimit refuses over_limit from anyone who may not go
+// over g's limits (taskboardCallerMayGoOver): agents follow the board's
+// limits.
+func requireTaskboardOverLimit(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, over bool) bool {
+	if over && !taskboardCallerMayGoOver(r, g) {
+		msg := "only an operator goes over a board's limit (over_limit): this node's, or a linked node's that may change the board's options"
+		if taskboardPeerAgent(r) {
+			msg = "only an operator goes over a board's limit (over_limit); an agent follows it"
+		}
+		writeError(w, http.StatusForbidden, "permission", msg)
 		return false
 	}
 	return true
@@ -128,13 +134,47 @@ func taskboardCallerIsOperator(r *http.Request) bool {
 	return confirmedAgentConv(r) == "" && callerIsHuman(r) && taskboardPeerAuthor(r) == ""
 }
 
+// taskboardCallerMayGoOver reports whether the caller may go over g's
+// limits: this node's operator, or a linked node's operator (its dashboard
+// or CLI, never one of its agents) that may change g's board options
+// (taskboard.options.write, or taskboard.manage) — whoever may change the
+// limit may also exceed it once. Unrestricted trust acts as this node's
+// operator does.
+func taskboardCallerMayGoOver(r *http.Request, g *db.AgentGroup) bool {
+	if taskboardCallerIsOperator(r) {
+		return true
+	}
+	if g == nil || taskboardPeerAgent(r) {
+		return false
+	}
+	if a := peerGrantFromRequest(r); a != nil {
+		return a.operator && peerWritesTaskboardOptions(a.peer, g.ID)
+	}
+	// An unrestricted peer's request runs as this node's operator, its
+	// author attached (peerTaskboardAsLocal).
+	if id, _ := r.Context().Value(taskboardPeerIDKey{}).(string); id != "" {
+		return peerWritesTaskboardOptions(id, g.ID)
+	}
+	return false
+}
+
+// taskboardPeerAgent reports whether the caller is an agent of a linked node
+// (through an agent peer view).
+func taskboardPeerAgent(r *http.Request) bool {
+	if a := peerGrantFromRequest(r); a != nil {
+		return !a.operator
+	}
+	p, _ := r.Context().Value(taskboardPeerPrincipalKey{}).(string)
+	return strings.Contains(p, "/agent:")
+}
+
 // checkTaskboardLimit checks a change that leaves a task as want (on g's
 // board) against the board's limits; was is the task before it (nil for a
 // new one). It answers nil when the task meets no full lane: it enters
 // none, or one with room. A refused change has been answered (ok false).
 // Hold the board's lane lock from the check through the write.
 func checkTaskboardLimit(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, was, want *db.GroupTask, over bool) (hit *taskboardLimitHit, ok bool) {
-	if !requireTaskboardOverLimit(w, r, over) {
+	if !requireTaskboardOverLimit(w, r, g, over) {
 		return nil, false
 	}
 	lane := want.GroupTaskLane()
@@ -195,7 +235,7 @@ func checkTaskboardLimit(w http.ResponseWriter, r *http.Request, g *db.AgentGrou
 			taskboardLimitReached(r, g, want, fmt.Sprintf("refused: %s", full), nil)
 		}
 		msg := full + "; the board refuses more"
-		if taskboardCallerIsOperator(r) {
+		if taskboardCallerMayGoOver(r, g) {
 			msg += " (go over it with over_limit)"
 		}
 		writeError(w, http.StatusConflict, "limit_reached", msg)
@@ -297,7 +337,11 @@ func announceTaskboardLimit(r *http.Request, g *db.AgentGroup, t *db.GroupTask, 
 	what := ""
 	switch note.Action {
 	case taskboardLimitOver:
-		what = "let in over the limit by the operator: " + full
+		by := "the operator"
+		if author := taskboardPeerAuthor(r); author != "" {
+			by = "peer: " + author
+		}
+		what = "let in over the limit by " + by + ": " + full
 	case taskboardLimitWarned:
 		what = "let in over the limit: " + full
 	default:
