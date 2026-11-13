@@ -253,6 +253,9 @@ func peerTemplateTeamFailure(peer string, tmpl *db.GroupTemplate, agentProfiles 
 			t.Agents[i].IsOwner, t.Agents[i].EffectiveIsOwner = false, false
 		}
 	}
+	// The template's board setup is this node's own, checked when it was
+	// stored: deploying it is not the peer writing it.
+	t.Taskboard = nil
 	return peerTemplateLaunchFailure(peer, nil, t)
 }
 
@@ -323,6 +326,11 @@ func servePeerGroupClone(w http.ResponseWriter, r *http.Request, v *peerView, ru
 			writeError(w, http.StatusForbidden, "permission", "copying the group's owners takes unrestricted trust; set copy_owners to false")
 			return
 		}
+	}
+	// The source board's setup (options, custom columns) is copied only for
+	// a peer that reads that board.
+	if !fedPeerAllows(peer, src.ID, PermTaskboardRead) {
+		body["no_board_options"] = json.RawMessage("true")
 	}
 	peerServeAsLocal(w, r, body)
 }

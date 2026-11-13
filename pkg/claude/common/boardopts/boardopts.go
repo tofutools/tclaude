@@ -750,6 +750,48 @@ func parseList(s string) []string {
 	return out
 }
 
+// SetKeys lists the keys o sets, in Keys order; a column's limit keys
+// (limits.columns.<slug>.max, .at_limit) come last, in the order of
+// columns.
+func (o Options) SetKeys(columns []string) []string {
+	set := map[string]bool{}
+	if i := o.Idle; i != nil {
+		set["idle.enabled"], set["idle.grace"], set["idle.nudge"] = i.Enabled != nil, i.Grace != "", i.Nudge != nil
+		set["idle.tell"], set["idle.check_columns"] = i.Tell != nil, i.CheckColumns != nil
+	}
+	for name, e := range o.Events {
+		if e != nil {
+			set["events."+name+".enabled"], set["events."+name+".to"] = e.Enabled != nil, e.To != nil
+		}
+	}
+	l := o.Limits
+	if l != nil {
+		set["limits.at_limit"], set["limits.per"] = l.AtLimit != "", l.Per != ""
+		if l.InProgress != nil {
+			set["limits.in_progress.max"], set["limits.in_progress.at_limit"] = l.InProgress.Max > 0, l.InProgress.AtLimit != ""
+		}
+	}
+	out := []string{}
+	for _, k := range Keys {
+		if set[k] {
+			out = append(out, k)
+		}
+	}
+	if l != nil {
+		for _, slug := range columns {
+			if c := l.Columns[slug]; c != nil {
+				if c.Max > 0 {
+					out = append(out, "limits.columns."+slug+".max")
+				}
+				if c.AtLimit != "" {
+					out = append(out, "limits.columns."+slug+".at_limit")
+				}
+			}
+		}
+	}
+	return out
+}
+
 // Globals are the operator's global task board settings a board inherits
 // (~/.tclaude/data/config.json, taskboard.*). A nil field is unset.
 type Globals struct {

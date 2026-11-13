@@ -35,7 +35,8 @@ Other verbs:
 
 - `from-group <group>` snapshots a live group into a template
   (`--update` refreshes an existing one) — build the team by hand once,
-  then keep it as a blueprint.
+  then keep it as a blueprint. It keeps the group's task board setup
+  (options and custom columns) unless you pass `--no-board-options`.
 - `export` / `import` produce a portable `.task-force.json` that embeds any
   referenced roles and profiles; on import, embedded roles/profiles are
   created only if missing, never overwritten.

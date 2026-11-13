@@ -334,6 +334,10 @@ func sanitizeImportedTemplate(body templateJSON) (templateJSON, []string) {
 		agents[i] = a
 	}
 	body.Agents = agents
+	// The board setup: what this node's boards cannot take is left out.
+	var boardWarnings []string
+	body.Taskboard, boardWarnings = sanitizeTaskboardSetup(body.Taskboard, nil)
+	warnings = append(warnings, boardWarnings...)
 	return body, warnings
 }
 
@@ -497,6 +501,13 @@ func handleTemplateImport(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+	// The template's board setup comes along unless left out. A peer's file
+	// carrying one is its own writing, judged as any other field.
+	if queryFalse(r.URL.Query().Get("board_options")) {
+		env.Template.Taskboard = nil
+	}
+	if peerGrantFromRequest(r) != nil {
 		if fail := peerTemplateEditFailure(r, nil, env.Template); fail != nil {
 			writeSpawnFailure(w, fail)
 			return

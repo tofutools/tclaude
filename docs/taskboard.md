@@ -970,6 +970,40 @@ something else (an assignee retired or gone from the group). Removing a
 column puts its tasks back in next, In progress for started ones, even over
 In progress's limit.
 
+### Carrying a board's setup
+
+A board's setup is its options, its custom columns, and the columns it hides
+or cordons. It travels with its group, but its tasks never do:
+
+- A group export carries it, and the import lands it. Before the import, the
+  preview shows the columns and the option keys the file sets.
+- A clone copies it.
+- A group template made from a group keeps it, through the template's export
+  and import too, and a group deployed from the template starts with it.
+
+Each of these can leave the setup out, and the new board then starts as any
+new board does. In the dashboard, untick *Board options* in the export,
+import, clone, save-as-template or template-import dialog. In the CLI, pass
+`--no-board-options` to `groups export`, `groups import`, `groups clone`,
+`templates from-group` or `templates import`. Over the API, it is
+`board_options=false` on an export or an import, or `"no_board_options": true`
+in a clone's or a from-group's body. Re-snapshotting a template
+(`from-group --update`) with `--no-board-options` keeps the setup the
+template already has.
+
+A setup from a file or a template is checked before it lands, and the import
+says what it leaves out:
+
+- a column with a bad slug or label, one the board already has, or one past
+  the board's cap of columns;
+- a state other than hidden or cordoned;
+- a hidden built-in column other than Ideas or Done;
+- options this tclaude cannot read.
+
+Options for a column that doesn't land are dropped. A peer clones the setup
+only when it holds `taskboard.read` on the source group, and the same goes for
+a template a peer makes from a group.
+
 ## The writer lock
 
 By default, every member of a group may track its own work on its board

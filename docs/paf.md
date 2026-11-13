@@ -473,6 +473,8 @@ In the dashboard, *import workflow* accepts a `.paf`. Its review lists the
 agents the file ships, each with *Land it…*, and the agent import dialog offers
 *Review workflows…* for a file that carries them. Both export dialogs offer
 *Carry its workflows*. Shipping performers is on the command line for now.
+A group export also carries the task board's setup unless *Board options* is
+unticked (see [Carrying a board's setup](taskboard.md#carrying-a-boards-setup)).
 
 ### What sharing does to a carried workflow
 

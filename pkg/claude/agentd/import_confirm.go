@@ -153,6 +153,9 @@ type importKeep struct {
 	digest    string
 	// ignored is a selection from a caller who may not make one.
 	ignored bool
+	// noBoard leaves the file's board setup out (board_options=false). It
+	// keeps nothing, so anyone may ask for it.
+	noBoard bool
 	// restrictedPeer is a federation peer importing under its grants
 	// (peer_import.go): its file's operator mail must not land as this node's
 	// operator's (remapImportOperatorMail).
@@ -188,6 +191,7 @@ func parseImportKeep(q url.Values, human bool) importKeep {
 		human: human, all: q.Get("keep_all") == "true", none: q.Get("keep_none") == "true",
 		defaults: q.Get("keep_defaults") == "true",
 		ids:      map[string]bool{}, digest: strings.TrimSpace(q.Get("keep_digest")),
+		noBoard: queryFalse(q.Get("board_options")),
 	}
 	for _, id := range q["keep"] {
 		k.ids[id] = true

@@ -111,6 +111,7 @@ export function createGroupCreateDraft({
     parent: text(placement?.parent ?? parentGroup),
     withAgents: false,
     copyOwners: false,
+    copyBoard: true,
     descr: prefill.descr,
     cwd: prefill.cwd,
     cwdOrigin: prefill.cwdOrigin,
@@ -257,7 +258,7 @@ export function reconcileGroupCreateTemplates(draft, options = {}) {
 export function groupCreateDraftIsDirty(draft, baseline) {
   const keys = [
     'origin', 'template', 'name', 'source', 'nested', 'parent', 'descr', 'cwd',
-    'withAgents', 'copyOwners',
+    'withAgents', 'copyOwners', 'copyBoard',
     'workspaceMode', 'repository', 'cloneTransport', 'cloneDestination',
     'attachRepository',
     'attachmentURL', 'attachmentLabel',
@@ -293,6 +294,8 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
     const body = {
       no_clone_members: !draft.withAgents,
       copy_owners: !!draft.copyOwners,
+      // The board's setup rides along unless unticked (docs/taskboard.md).
+      ...(draft.copyBoard === false ? { no_board_options: true } : {}),
       descr: text(draft.descr).trim(),
       default_cwd: text(draft.workspaceMode === 'clone' ? draft.cloneDestination : draft.cwd).trim(),
       default_context: text(draft.context),

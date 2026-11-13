@@ -168,8 +168,12 @@ type templateJSON struct {
 	// daemon wrote it: `edit` is a full replace, so a field dropped here would
 	// be deleted from the template.
 	OwnerScopes json.RawMessage `json:"owner_scopes,omitempty"`
-	CreatedAt   string          `json:"created_at,omitempty"`
-	UpdatedAt   string          `json:"updated_at,omitempty"`
+	// Taskboard is the board setup a group deployed from the template starts
+	// with (docs/taskboard.md "Carrying a board's setup"), raw for the same
+	// reason as OwnerScopes.
+	Taskboard json.RawMessage `json:"taskboard,omitempty"`
+	CreatedAt string          `json:"created_at,omitempty"`
+	UpdatedAt string          `json:"updated_at,omitempty"`
 }
 
 // ownerNames returns the names of the template's owner agents — effective
@@ -937,6 +941,8 @@ type templatesFromGroupParams struct {
 	Group        string `pos:"true" help:"Existing group to snapshot."`
 	TemplateName string `pos:"true" help:"Name for the new template."`
 	Update       bool   `help:"Re-snapshot into an existing template of this name, in place: roster, owner flags, permissions and context are re-traced from the group; curated per-agent task briefs are kept for matching agent names. Creates the template if it doesn't exist."`
+	// NoBoardOptions leaves the group's board setup out of the template.
+	NoBoardOptions bool `long:"no-board-options" help:"Leave the group's task board setup (options, custom columns) out; the template carries it by default and a group made from it starts with it"`
 }
 
 func templatesFromGroupCmd() *cobra.Command {
@@ -971,6 +977,9 @@ func runTemplatesFromGroup(p *templatesFromGroupParams, stdout, stderr io.Writer
 		return rc
 	}
 	body := map[string]any{"group": group, "template_name": tmplName, "update": p.Update}
+	if p.NoBoardOptions {
+		body["no_board_options"] = true
+	}
 	// The update-mode response embeds the template flat and adds a
 	// roster-diff report; the create response is the bare template, so
 	// the extra fields simply stay zero.
@@ -1115,6 +1124,8 @@ type templatesImportParams struct {
 	File   string `long:"file" short:"f" help:"Path to a task-force JSON file ('-' reads stdin) produced by 'templates export'."`
 	As     string `long:"as" optional:"true" help:"Import under this name instead of the name in the file (sidesteps a collision, or just renames)."`
 	Update bool   `long:"update" optional:"true" help:"Overwrite an existing template of the target name in place. Without it, a name collision is an error."`
+	// NoBoardOptions drops the file's board setup.
+	NoBoardOptions bool `long:"no-board-options" optional:"true" help:"Leave the file's task board setup (options, custom columns) out of the stored template"`
 }
 
 func templatesImportCmd() *cobra.Command {
@@ -1160,6 +1171,9 @@ func runTemplatesImport(p *templatesImportParams, stdin io.Reader, stdout, stder
 	}
 	if p.Update {
 		q.Set("update", "true")
+	}
+	if p.NoBoardOptions {
+		q.Set("board_options", "false")
 	}
 	if enc := q.Encode(); enc != "" {
 		path += "?" + enc

@@ -116,6 +116,10 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 			exp.SavedPrompts = append(exp.SavedPrompts, groupexport.SavedPrompt{Name: p.Name, Body: p.Body})
 		}
 	}
+	// The board's setup (options, custom columns), never its tasks.
+	if exp.Taskboard, err = groupTaskboardSetupTx(d, g.ID); err != nil {
+		return nil, fmt.Errorf("collect board setup: %w", err)
+	}
 	exp.Group.CreatedAt = exportTimestamp(groupCreatedAt)
 	exp.Group.ArchivedAt = exportTimestamp(groupArchivedAt)
 	if exp.Group.Permissions, err = collectGroupPermissions(d, g.ID); err != nil {
@@ -817,6 +821,12 @@ func (c *importCtx) rl(s string) string {
 	return s
 }
 
+// taskboard gives the new group the file's board setup, which the daemon
+// checked (or took out, when the import leaves it out).
+func (c *importCtx) taskboard() error {
+	return applyGroupTaskboardSetupTx(c.tx, c.newGroupID, c.exp.Taskboard, "import", time.Now())
+}
+
 func (c *importCtx) run() error {
 	// Re-check the target name inside the transaction — closes the
 	// window between the daemon's pre-flight check and this insert.
@@ -837,7 +847,7 @@ func (c *importCtx) run() error {
 		c.workdirs, c.headAliases, c.successions,
 		c.spawnHist, c.cloneHist, c.cronJobsAndRuns, c.messages,
 		c.transferLog, c.backfillAgentCompanions, c.scrubRetiredActorAuthority,
-		c.memberPostures,
+		c.memberPostures, c.taskboard,
 	} {
 		if err := step(); err != nil {
 			return err

@@ -80,3 +80,18 @@ func TestInlineProfileTag_RendersAccessBits(t *testing.T) {
 	assert.Empty(t, inlineProfileTag(nil), "absent profile renders nothing")
 	assert.Equal(t, "custom-launch=(empty)", inlineProfileTag(json.RawMessage(`{}`)))
 }
+
+// The board setup rides the show --json -> edit --file loop untouched.
+func TestTemplateJSON_TaskboardRoundTrips(t *testing.T) {
+	daemonWire := `{"name": "crew", "agents": [], "taskboard": {"columns": [{"slug": "review", "label": "Review", "state": "cordoned"}], "options": {"idle": {"enabled": true}}}}`
+	var tj templateJSON
+	require.NoError(t, json.Unmarshal([]byte(daemonWire), &tj))
+	out, err := json.Marshal(tj)
+	require.NoError(t, err)
+	var back map[string]any
+	require.NoError(t, json.Unmarshal(out, &back))
+	tb, ok := back["taskboard"].(map[string]any)
+	require.True(t, ok, "taskboard survives the re-marshal: %s", out)
+	assert.Contains(t, tb, "columns")
+	assert.Contains(t, tb, "options")
+}

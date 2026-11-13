@@ -61,6 +61,8 @@ export function templateDraft(template = null) {
     // The editor has no owner-scope controls, but a save is a full replace,
     // so the template's owner scopes ride along untouched (tcl-cnua7d).
     owner_scopes: template?.owner_scopes ? clone(template.owner_scopes) : null,
+    // Likewise its board setup (options, custom columns; docs/taskboard.md).
+    taskboard: template?.taskboard ? clone(template.taskboard) : null,
   };
 }
 
@@ -108,6 +110,7 @@ export function templatePayload(draft) {
     })),
     wave_max_wait: Number.parseInt(draft.wave_max_wait, 10) || 0,
     ...(draft.owner_scopes ? { owner_scopes: clone(draft.owner_scopes) } : {}),
+    ...(draft.taskboard ? { taskboard: clone(draft.taskboard) } : {}),
   };
 }
 
