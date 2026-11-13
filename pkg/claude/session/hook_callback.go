@@ -677,7 +677,16 @@ func runHookCallback() error {
 	// agentd, which runs this same dispatch host-side on the caller's
 	// behalf. Every other launch keeps writing directly, unchanged.
 	if brokerHookEvents() {
-		return brokerHookEvent(input, cliStdout)
+		if !brokerHookEventOrFallBack(input, cliStdout) {
+			return nil
+		}
+		// agentd is not there and this launch can still write for itself:
+		// apply the event here, exactly as an unbrokered launch does.
+		if err := DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), cliStdout); err != nil {
+			return err
+		}
+		MaybeRequestAutoName(input)
+		return nil
 	}
 
 	// An ordinary launch applies its own hooks, but a permission prompt

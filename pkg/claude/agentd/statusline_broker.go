@@ -59,6 +59,9 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	timing := caller.timing
 	defer timing.finish()
 	row := caller.row
+	if brokerDropStaleGeneration(w, "/v1/whoami/statusline", row, req.ExitGeneration, "") {
+		return
+	}
 	if !safeBrokeredConvID(req.RenderConvID) {
 		// Same reasoning as the hook endpoint: a conv-id is not merely
 		// stored, and a caller-controlled one that is not a single
