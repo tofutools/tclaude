@@ -456,6 +456,32 @@ body.hide-costs .mux-cost-toggle { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .mux-terminal-disconnect-card { animation: none; }
 }
+/* While the terminal redials on its own (an agent still starting, or a quick
+   reconnect) nothing has failed: a calm card, no curtain over the last frame
+   beyond a light dim, and no control to press. */
+.mux-terminal-waiting-overlay {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(13, 17, 23, 0.45);
+  pointer-events: none;
+}
+/* Painted by .ui-card; this keeps the layout. */
+.mux-terminal-waiting-card {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 12px 18px;
+  font-size: 14px;
+}
+.mux-terminal-waiting-spinner {
+  width: 14px; height: 14px; flex: none;
+  border: 2px solid #30363d; border-top-color: #58a6ff;
+  border-radius: 50%;
+  animation: mux-terminal-waiting-spin 0.9s linear infinite;
+}
+@keyframes mux-terminal-waiting-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .mux-terminal-waiting-spinner { animation: none; }
+}
 
 /* Wizard terminal chrome. This lives in the shared widget sheet so a
    terminal popped into its own browser tab keeps the same portal frame. The

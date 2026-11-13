@@ -91,8 +91,25 @@ func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error
 		pin.agent, pin.conv, pin.session, pin.tmux, pin.group, pin.created, pin.incarnation = p.Agent, a.CurrentConvID, r.ID, r.TmuxSession, g.ID, r.CreatedAt, incarnation
 		return pin, nil
 	}
+	// A launch in progress (a resume or relaunch replacing the pane, or a pane
+	// not created yet) is a wait, not a refusal: say so, and the requesting
+	// node's browser retries instead of settling on a final denial.
+	now := terminalNow()
+	for _, r := range rows {
+		if sessionRowLaunching(r, now) && !session.IsTmuxSessionAlive(r.TmuxSession) {
+			return nil, errFedPaneStarting
+		}
+	}
 	return nil, errors.New("advertised session is no longer live; list sessions again")
 }
+
+// fedPaneStartingReason is the refusal a peer gives while the target agent's
+// launch is in progress. The requesting node matches it by text
+// (handleFederationTerminal), as it does the "limit" refusals: an older peer
+// never sends it and its refusals keep their old meaning.
+const fedPaneStartingReason = "the agent is starting"
+
+var errFedPaneStarting = errors.New(fedPaneStartingReason)
 
 func fedPaneIdentity(tmuxName string) (*fedPanePin, error) {
 	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", clcommon.ExactTarget(tmuxName)+":0.0", "#{pane_id}\t#{window_id}\t#{session_id}\t#{session_windows}\t#{window_panes}")

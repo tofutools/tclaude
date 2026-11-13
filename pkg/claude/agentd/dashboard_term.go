@@ -353,14 +353,28 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	}
 	res, _, err := agent.ResolveSelector(convSelector)
 	if err != nil {
+		// A just-spawned agent can be reserved before its conversation is
+		// bound, so its id does not resolve yet: that is still a start.
+		if agentID := selectorAgentID(convSelector); agentID != "" && agentTerminalStarting("", agentID) {
+			closeTerminalBeforeAttach(w, r, termCloseStarting, "the agent is starting")
+			return
+		}
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
 	sess := pickAliveSession(res.ConvID)
 	if sess == nil {
-		http.Error(w, "no live tmux session for "+short8(res.ConvID), http.StatusNotFound)
+		// The launch writes its session row before the pane exists, so an
+		// attach right after a spawn, resume or relaunch lands here. Say so,
+		// and the browser waits for the pane instead of giving up.
+		if agentTerminalStarting(res.ConvID, res.AgentID) {
+			closeTerminalBeforeAttach(w, r, termCloseStarting, "the agent is starting")
+			return
+		}
+		closeTerminalBeforeAttach(w, r, termCloseNotRunning, "the agent is not running")
 		return
 	}
+	convID := res.ConvID
 	// Force the attach (tmux `attach-session -d`): it atomically detaches any
 	// client already on this session before attaching ours. Without --force,
 	// `tclaude session attach` sees the session still "attached in another
@@ -375,8 +389,19 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	// When the displaced client is ANOTHER web window on this session, `-d`
 	// detaches it and its runPTYOverWS exits; that teardown detaches only its
 	// own client (detachOwnTmuxClient), so the window we just attached stays.
+	//
+	// A browser's quiet redial after a dropped socket (?reattach=1) is the
+	// exception: it must not take back a terminal the operator has since
+	// opened somewhere else. Unforced, the attach bails when another client
+	// holds the session, and the exit reads as "detached" — a settled answer
+	// the browser does not redial.
+	attach := openAttachCmdForce(sess.ID)
+	if r.URL.Query().Get("reattach") == "1" {
+		attach = openAttachCmd(sess.ID)
+	}
 	h, _ := harness.Get(sess.Harness)
-	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession, sess.TmuxSession, h, config.TerminalTabAgentWindow)
+	runPTYOverWS(w, r, webTerminalAttachCmd(attach), sess.TmuxSession, sess.TmuxSession, h, config.TerminalTabAgentWindow,
+		func() bool { return agentTerminalStarting(convID, "") })
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
@@ -431,11 +456,19 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sess == nil {
+		// The wait above is bounded; a launch still in progress past it (a
+		// slow sandbox setup, a pane that is being replaced) keeps the
+		// browser waiting rather than failing.
+		if labelTerminalStarting(label, agentID) {
+			closeTerminalBeforeAttach(w, r, termCloseStarting, "the agent is starting")
+			return
+		}
 		http.Error(w, "no tmux pane for "+label, http.StatusNotFound)
 		return
 	}
 	h, _ := harness.Get(sess.Harness)
-	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession, sess.TmuxSession, h, config.TerminalTabAgentWindow)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession, sess.TmuxSession, h, config.TerminalTabAgentWindow,
+		func() bool { return labelTerminalStarting(label, agentID) })
 }
 
 // waitForDashboardSpawnFocusSession bridges the one spawn shape where the
@@ -794,7 +827,13 @@ func webTerminalAttachCmd(attachCommand string) string {
 // exitTarget names the dashboard terminal kind for the close-tab decision made
 // when the PTY's command exits on its own (see terminalExitClose); "" (the TUI
 // page, tests) skips that decision and closes the socket plainly.
-func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, detachSession, cleanupSession string, cleanupHarness *harness.Harness, exitTarget config.TerminalTabTarget) {
+//
+// starting, for an agent terminal, reports whether the agent has a launch in
+// progress. A client whose session ended while one is (a relaunch replacing the
+// pane, or an attach that raced a pane being set up) closes with
+// termCloseStarting instead of "session ended", so the browser waits for the
+// new pane and attaches to it.
+func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, detachSession, cleanupSession string, cleanupHarness *harness.Harness, exitTarget config.TerminalTabTarget, starting ...func() bool) {
 	hook := termWSTestHook
 	if hook != nil && hook.RewriteCommand != nil {
 		shellCommand, detachSession = hook.RewriteCommand(shellCommand, detachSession)
@@ -1027,6 +1066,13 @@ initialSize:
 				// clean exit is a settled answer, though — see cleanExit.
 				if !closing.Load() && cleanExit(exited, &exitState) && !closing.Load() {
 					if code, reason, ok := terminalExitClose(hook, detachSession, exitTarget); ok {
+						if code == termCloseSessionEndedKeep || code == termCloseSessionEndedClose {
+							for _, probe := range starting {
+								if probe != nil && probe() {
+									code, reason = termCloseStarting, "the agent is starting"
+								}
+							}
+						}
 						_ = conn.WriteControl(websocket.CloseMessage,
 							websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
 					}

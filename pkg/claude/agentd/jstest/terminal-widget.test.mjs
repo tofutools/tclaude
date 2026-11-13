@@ -527,6 +527,8 @@ test('initial retry covers failed and briefly unstable sockets, then yields to m
     initialRetry: true,
     initialRetryDelays: [10, 20],
     initialRetryStabilityMs: 100,
+    // The quiet redials of a stable connection have their own test below.
+    transientRetryDelays: [],
     postAttachResizeDelayMs: -1,
     setTimeoutImpl(handler, delay) {
       const timer = { handler, delay, cleared: false };
@@ -1184,4 +1186,197 @@ test('settled waits for parsed output and a quiet gap or the busy cap, or gives 
   await Promise.resolve();
   assert.equal(busy, true, 'still streaming, but past the busy cap: settled');
   await streaming;
+});
+
+// mountWaitingWidget mounts a widget on fake timers and a fake clock, for the
+// start wait and the quiet redials.
+async function mountWaitingWidget(t, options = {}) {
+  const harness = await createPreactHarness(t);
+  const core = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const state = { statuses: [], reconnect: [], waiting: [], disconnects: [], timers: [], clock: 0 };
+  const widget = core.mountTerminalWidget({
+    host: harness.document.body.appendChild(harness.document.createElement('div')),
+    wsPath: '/api/open-window-ws/agt_one',
+    agentLabel: 'worker',
+    authenticate: false,
+    restartWatcher: null,
+    postAttachResizeDelayMs: -1,
+    setTimeoutImpl(handler, delay) {
+      const timer = { handler, delay, cleared: false };
+      state.timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl(timer) { if (timer) timer.cleared = true; },
+    requestAnimationFrameImpl: null,
+    now: () => state.clock,
+    onStatus: (value) => state.statuses.push(value),
+    onReconnectChange: (value) => state.reconnect.push(value),
+    onWaitingChange: (value) => state.waiting.push(value),
+    onDisconnect: (info) => state.disconnects.push(info),
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+    ...options,
+  });
+  t.after(() => widget.dispose());
+  // fire runs the newest pending redial and lets its dial create the socket.
+  state.fire = async () => {
+    const timer = state.timers.filter((x) => !x.cleared && !x.fired).at(-1);
+    assert.ok(timer, 'a redial is pending');
+    timer.fired = true;
+    timer.handler();
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+  return { core, fakes, widget, state };
+}
+
+function closeWith(socket, code) {
+  socket.readyState = 3;
+  socket.onclose?.(code === undefined ? undefined : { code });
+}
+
+test('a starting agent is waited for with backoff and attaches when its pane is up', async (t) => {
+  const { core, fakes, widget, state } = await mountWaitingWidget(t);
+  await widget.connect();
+  const delays = [];
+  for (let i = 0; i < 5; i += 1) {
+    const socket = fakes.sockets.at(-1);
+    socket.open();
+    closeWith(socket, core.TERMINAL_STARTING);
+    assert.equal(state.statuses.at(-1), 'waiting for worker to start…');
+    assert.deepEqual(widget.waiting(), { kind: 'starting', text: 'Waiting for worker to start…' });
+    assert.equal(widget.reconnectAvailable(), false, 'no manual Reconnect while waiting');
+    delays.push(state.timers.at(-1).delay);
+    state.clock += 1000;
+    await state.fire();
+  }
+  assert.deepEqual(delays, [250, 500, 1000, 2000, 2000], 'the backoff grows to 2 s and stays there');
+  assert.equal(state.statuses.at(-1), 'waiting for worker to start…', 'a redial keeps saying what it waits for');
+
+  // The pane is up: the socket opens and the attach draws its first screen.
+  const socket = fakes.sockets.at(-1);
+  socket.open();
+  assert.equal(widget.waiting()?.kind, 'starting', 'an open socket alone does not end the wait');
+  socket.onmessage({ data: 'screen' });
+  assert.equal(state.statuses.at(-1), 'connected');
+  assert.equal(widget.waiting(), null);
+  assert.equal(state.waiting.at(-1), null, 'the shell is told the wait is over');
+  assert.deepEqual(state.disconnects, [], 'waiting is never a disconnect');
+});
+
+test('a start wait that runs out settles on Disconnected with the reason', async (t) => {
+  const { core, fakes, widget, state } = await mountWaitingWidget(t, { startWaitMs: 5000 });
+  await widget.connect();
+  fakes.sockets[0].open();
+  closeWith(fakes.sockets[0], core.TERMINAL_STARTING);
+  state.clock = 4000;
+  await state.fire();
+  // A plain failure inside the wait keeps waiting: agentd may be busy.
+  closeWith(fakes.sockets[1]);
+  assert.equal(widget.waiting()?.kind, 'starting');
+  state.clock = 5000;
+  await state.fire();
+  fakes.sockets[2].open();
+  closeWith(fakes.sockets[2], core.TERMINAL_STARTING);
+  assert.equal(state.statuses.at(-1), 'worker did not start in time');
+  assert.equal(widget.reconnectAvailable(), true);
+  assert.equal(widget.waiting(), null);
+  assert.equal(state.disconnects.length, 1);
+  assert.equal(state.timers.filter((x) => !x.cleared && !x.fired).length, 0, 'no redial is left pending');
+
+  // Reconnect starts a fresh wait.
+  await widget.connect();
+  fakes.sockets.at(-1).open();
+  closeWith(fakes.sockets.at(-1), core.TERMINAL_STARTING);
+  assert.equal(widget.waiting()?.kind, 'starting');
+});
+
+test('an agent that is not running settles at once with the reason', async (t) => {
+  const { fakes, widget, state } = await mountWaitingWidget(t);
+  await widget.connect();
+  fakes.sockets[0].open();
+  closeWith(fakes.sockets[0], 4006);
+  assert.equal(state.statuses.at(-1), 'the agent is not running');
+  assert.equal(widget.reconnectAvailable(), true);
+  assert.deepEqual(state.disconnects, [{ closeTab: false }]);
+  assert.equal(fakes.sockets.length, 1);
+});
+
+test('a live terminal that drops is redialled quietly a few times, then offers Reconnect', async (t) => {
+  const { fakes, widget, state } = await mountWaitingWidget(t);
+  await widget.connect();
+  fakes.sockets[0].open();
+  fakes.sockets[0].onmessage({ data: 'screen' });
+  state.clock = 60000;
+  closeWith(fakes.sockets[0]);
+  const delays = [];
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal(state.statuses.at(-1), 'reconnecting…');
+    assert.deepEqual(widget.waiting(), { kind: 'reconnecting', text: 'Reconnecting…' });
+    assert.equal(widget.reconnectAvailable(), false);
+    assert.deepEqual(state.disconnects, []);
+    delays.push(state.timers.at(-1).delay);
+    await state.fire();
+    closeWith(fakes.sockets.at(-1)); // the daemon is still away
+  }
+  assert.deepEqual(delays, [500, 1500, 3000]);
+  assert.equal(state.statuses.at(-1), 'disconnected');
+  assert.equal(widget.reconnectAvailable(), true);
+  assert.equal(state.disconnects.length, 1);
+
+  // A redial that gets through ends the quiet state and restores the budget.
+  await widget.connect();
+  fakes.sockets.at(-1).open();
+  fakes.sockets.at(-1).onmessage({ data: 'screen' });
+  closeWith(fakes.sockets.at(-1));
+  await state.fire();
+  fakes.sockets.at(-1).open();
+  fakes.sockets.at(-1).onmessage({ data: 'screen' });
+  assert.equal(state.statuses.at(-1), 'connected');
+  assert.equal(widget.waiting(), null);
+});
+
+test('a terminal-exit close is a settled answer and never redials quietly', async (t) => {
+  const { fakes, widget, state } = await mountWaitingWidget(t);
+  await widget.connect();
+  fakes.sockets[0].open();
+  fakes.sockets[0].onmessage({ data: 'screen' });
+  state.clock = 60000;
+  closeWith(fakes.sockets[0], 4003);
+  assert.equal(state.statuses.at(-1), 'detached');
+  assert.equal(fakes.sockets.length, 1, 'a terminal moved elsewhere is never dragged back');
+  assert.equal(state.waiting.filter(Boolean).length, 0);
+});
+
+test('a remote terminal waits for a starting agent and redials an unreachable peer, but not a refusal', async (t) => {
+  const { fakes, widget, state } = await mountWaitingWidget(t, {
+    wsPath: '/api/federation/terminal?peer=inst_peer1&agent=agt_one&mode=watch',
+  });
+  const closed = (socket, reason) => {
+    socket.onmessage({ data: JSON.stringify({ type: 'closed', reason }) });
+    closeWith(socket, 1000);
+  };
+  await widget.connect();
+  fakes.sockets[0].open();
+  closed(fakes.sockets[0], 'starting');
+  assert.equal(widget.waiting()?.kind, 'starting');
+  await state.fire();
+  fakes.sockets[1].open();
+  fakes.sockets[1].onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 80, rows: 24 }) });
+  assert.equal(widget.waiting(), null, 'the peer\'s hello ends the wait');
+
+  closed(fakes.sockets[1], 'offline');
+  assert.equal(widget.waiting()?.kind, 'reconnecting', 'an unreachable peer earns the quiet redials');
+  await state.fire();
+  fakes.sockets[2].open();
+  closed(fakes.sockets[2], 'denied');
+  assert.match(state.statuses.at(-1), /^closed: the peer does not share/);
+  assert.equal(widget.reconnectAvailable(), false, 'a final refusal offers no Reconnect');
+  assert.equal(widget.waiting(), null);
 });

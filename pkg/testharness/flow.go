@@ -398,6 +398,14 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 		s.w.Tmux.MarkPaneDead(label, &code, "")
 		return nil
 	}
+	if held := s.w.SpawnPaneHeld; held != nil {
+		s.w.CCs.Set(label, cc)
+		go func() {
+			<-held
+			s.w.Tmux.Register(label, cc.Cwd, cc)
+		}()
+		return nil
+	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
 	return nil

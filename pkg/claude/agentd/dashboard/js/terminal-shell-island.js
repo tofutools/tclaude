@@ -259,6 +259,7 @@ function OpaqueTerminalHost({
   widgetFactory,
   onStatus,
   onReconnectChange,
+  onWaitingChange,
   onSelectionChange,
   onComposeMessage,
   onDisconnect,
@@ -279,6 +280,8 @@ function OpaqueTerminalHost({
       active,
       onStatus,
       onReconnectChange,
+      onWaitingChange,
+      agentLabel: descriptor.label || '',
       onSelectionChange,
       onComposeMessage,
       applicationClipboardShortcuts: descriptor.seed.harness === 'copilot',
@@ -352,6 +355,23 @@ function TerminalDisconnectNotice({ status, onReconnect }) {
   `;
 }
 
+// TerminalWaitingNotice is the quiet state while the terminal redials on its
+// own: an agent still starting ("Waiting for worker to start…"), or a live
+// terminal that dropped ("Reconnecting…"). It is deliberately calm — nothing
+// has failed yet — and offers no control: the widget attaches by itself, and
+// the Disconnected card replaces it only once the wait is over.
+export function TerminalWaitingNotice({ waiting }) {
+  if (!waiting?.text) return null;
+  return html`
+    <div class="mux-terminal-waiting-overlay" data-waiting=${waiting.kind} role="status" aria-live="polite">
+      <div class="ui-card mux-terminal-waiting-card">
+        <span class="mux-terminal-waiting-spinner" aria-hidden="true"></span>
+        <span class="mux-terminal-waiting-text">${waiting.text}</span>
+      </div>
+    </div>
+  `;
+}
+
 // RemoteSharedNotice explains a shared remote terminal: the peer's session is
 // also attached elsewhere, and the smallest attached terminal sets the size.
 // When the peer granted sessions.takeover, taking it over disconnects the
@@ -392,6 +412,7 @@ function TerminalPane({
 }) {
   const [status, setStatus] = useState('disconnected');
   const [reconnect, setReconnect] = useState(false);
+  const [waiting, setWaiting] = useState(null);
   const [hasSelection, setHasSelection] = useState(false);
   const [remote, setRemote] = useState(null);
   const [files, setFiles] = useState(false);
@@ -518,13 +539,15 @@ function TerminalPane({
         widgetFactory=${widgetFactory}
         onStatus=${setStatus}
         onReconnectChange=${setReconnect}
+        onWaitingChange=${setWaiting}
         onSelectionChange=${setHasSelection}
         onRemoteChange=${setRemote}
         initialFontSize=${readTerminalFont('tab', pane.key)}
         onFontChange=${onFontChange}
         onDisconnect=${(info) => { actions.paneDisconnected?.(pane.key); if (info?.closeTab) void actions.closePane(pane.key, { skipDetach: true }); }}
         onComposeMessage=${composeMessage}
-        disconnectNotice=${reconnect ? html`<${TerminalDisconnectNotice} status=${status} onReconnect=${reconnectPane} />` : null}
+        disconnectNotice=${reconnect ? html`<${TerminalDisconnectNotice} status=${status} onReconnect=${reconnectPane} />`
+          : waiting ? html`<${TerminalWaitingNotice} waiting=${waiting} />` : null}
       />
     </div>
   `;
