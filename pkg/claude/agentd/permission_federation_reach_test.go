@@ -79,6 +79,8 @@ var pinnedFederationPeerSlugs = map[string]string{
 	PermTaskboardAssign:                 "taskboard_assign",
 	PermTaskboardManage:                 "taskboard_manage",
 	PermTaskboardColumns:                "taskboard_columns",
+	PermTaskboardOptionsRead:            "taskboard_options_read",
+	PermTaskboardOptionsWrite:           "taskboard_options_write",
 	PermTaskboardTransfer:               "taskboard_transfer",
 	PermGroupsMessagesSchedule:          "messages_schedule",
 	PermGroupsMembersSchedule:           "member_schedule",

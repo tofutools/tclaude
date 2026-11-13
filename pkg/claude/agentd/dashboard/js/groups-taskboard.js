@@ -99,19 +99,44 @@ export function peerWrites(peerView, groupName) {
   return peerHolds(peerView, groupName, 'taskboard.write');
 }
 
+// peerHoldsAny reports whether the linked node's view holds any of slugs on
+// the group's board.
+function peerHoldsAny(peerView, groupName, slugs) {
+  return slugs.some((slug) => peerHolds(peerView, groupName, slug));
+}
+
+// OPTIONS_WRITE / COLUMNS_WRITE are the grants that change a board's options
+// and its columns; taskboard.manage covers both.
+const OPTIONS_WRITE = ['taskboard.options.write', 'taskboard.manage'];
+const COLUMNS_WRITE = ['taskboard.columns', 'taskboard.manage'];
+
 // peerApis keeps one write client per (client, can) pair, so a peer group's
 // api is the same object from render to render.
 const peerApis = new WeakMap();
 
+// COLUMN_WRITES / OPTION_WRITES are the client's column and options writes,
+// which a linked node's grants may not reach.
+const COLUMN_WRITES = ['addColumn', 'changeColumn', 'removeColumn', 'setColumnState'];
+const OPTION_WRITES = ['saveOptions'];
+
 // peerApi is api for a linked node's group: null without taskboard.write,
-// else api with can.assign set from taskboard.assign there.
+// else api with can.assign set from taskboard.assign there, and without the
+// column writes (taskboard.columns) or the options writes
+// (taskboard.options.write) its grants there do not cover; the views offer
+// a control only where its write is there.
 function peerApi(api, peerView, groupName) {
   if (!api || !peerWrites(peerView, groupName)) return null;
   const assign = peerHolds(peerView, groupName, 'taskboard.assign');
+  const columns = peerHoldsAny(peerView, groupName, COLUMNS_WRITE);
+  const options = peerHoldsAny(peerView, groupName, OPTIONS_WRITE);
   let byCan = peerApis.get(api);
   if (!byCan) { byCan = new Map(); peerApis.set(api, byCan); }
-  const key = assign ? 'assign' : 'none';
-  if (!byCan.has(key)) byCan.set(key, { ...api, can: { ...(api.can || {}), assign } });
+  const key = `${assign}|${columns}|${options}`;
+  if (!byCan.has(key)) {
+    const client = { ...api, can: { ...(api.can || {}), assign } };
+    for (const name of [...(columns ? [] : COLUMN_WRITES), ...(options ? [] : OPTION_WRITES)]) delete client[name];
+    byCan.set(key, client);
+  }
   return byCan.get(key);
 }
 
@@ -125,20 +150,32 @@ export function ownBoardGroup(group) {
   return { ...group, name: group.name.slice(0, -at.length), shownName: group.name };
 }
 
+// peerBoardClients are a linked node's board's clients, from what its
+// peer_view grants this node on groupName (boardOf).
+export function peerBoardClients(client, peerView, groupName) {
+  return {
+    api: peerApi(client, peerView, groupName), readApi: client,
+    optionsApi: client && peerHoldsAny(peerView, groupName, OPTIONS_WRITE) ? client : null,
+  };
+}
+
 // boardOf picks the source and write client for group: this node's own, or
 // the linked node's it lives on (api null where its grants allow no writes).
 // readApi is the same client unfiltered, for reads (a task card's brief and
 // comments), which taskboard.read allows without taskboard.write.
+// optionsApi is the client for the board's options: null where the grants
+// do not change them (taskboard.options.write, or taskboard.manage), which
+// need no taskboard.write; this node's operator changes them.
 function boardOf(group, source, api, boards) {
   const node = group?.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
   if (node) {
     const board = boards(node);
-    return { source: board.source, api: peerApi(board.api, nodeSnapshot(node)?.peer_view, group.name), readApi: board.api };
+    return { source: board.source, ...peerBoardClients(board.api, nodeSnapshot(node)?.peer_view, group.name) };
   }
   if (onPeerPage()) {
-    return { source, api: peerApi(api, dashboardState.snapshot.value?.peer_view, group.name), readApi: api };
+    return { source, ...peerBoardClients(api, dashboardState.snapshot.value?.peer_view, group.name) };
   }
-  return { source, api, readApi: api };
+  return { source, api, readApi: api, optionsApi: api };
 }
 
 // agentLabel names an agent from the snapshot: the group's own members
@@ -1184,7 +1221,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   // section's fold and hooks keep the name the view shows (name@node for a
   // linked node's group), which is unique across nodes.
   const group = ownBoardGroup(shown);
-  const { source, api, readApi } = boardOf(group, ownSource, ownApi, boards);
+  const { source, api, readApi, optionsApi } = boardOf(group, ownSource, ownApi, boards);
   const entry = useTaskboardEntry(group.name, source);
   const actions = useBoardActions(source, api);
   // adding is the open "+ New task" dialog: { kind: 'form' | 'ask' | 'import',
@@ -1236,7 +1273,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const optionsAt = boardOptionsRoute.value;
   const optionsDrawer = hasOptions && isBoardOptionsFor(optionsAt, group.name, node)
     ? html`<${BoardOptionsDrawer} group=${group} shownName=${shown.shownName || shown.name} nodeName=${boardNodeName(group)} entry=${entry}
-        api=${api} readApi=${readApi} actions=${api ? actions : null} section=${optionsAt.section} column=${optionsAt.column} wizard=${wizard}
+        api=${optionsApi} readApi=${readApi} actions=${api ? actions : null} section=${optionsAt.section} column=${optionsAt.column} wizard=${wizard}
         onSaved=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} onClose=${closeBoardOptions} />`
     : null;
   return html`<${EpicBoard.Provider} value=${epics}>${dialog}${optionsDrawer}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}

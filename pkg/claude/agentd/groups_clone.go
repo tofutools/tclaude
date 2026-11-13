@@ -436,7 +436,9 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 	// The board's setup: options and custom columns, never its tasks.
 	var boardWarnings []string
 	boardCopied := false
-	if !body.NoBoardOptions {
+	// It is the source board's options: an agent copies it only when it
+	// reads them.
+	if !body.NoBoardOptions && agentCarriesTaskboardSetup(r, src) {
 		if g, err := db.GetAgentGroupByID(newGroupID); err == nil && g != nil {
 			if boardWarnings, err = copyTaskboardSetup(src, g, "clone"); err != nil {
 				slog.Warn("groups clone: copy board setup failed", "group", newName, "error", err)

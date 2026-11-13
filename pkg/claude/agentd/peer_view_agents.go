@@ -255,9 +255,9 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"DELETE /v1/groups/{name}/taskboard/columns/{slug}":     {slugs: []string{PermTaskboardColumns}, target: agentViewGroup},
 	"POST /v1/groups/{name}/taskboard/columns/{slug}/state": {slugs: []string{PermTaskboardColumns}, target: agentViewGroup},
 	// Board options.
-	"GET /v1/groups/{name}/taskboard/options":   {slugs: []string{PermTaskboardRead}, target: agentViewGroup},
-	"PUT /v1/groups/{name}/taskboard/options":   {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
-	"PATCH /v1/groups/{name}/taskboard/options": {slugs: []string{PermTaskboardWrite}, target: agentViewGroup},
+	"GET /v1/groups/{name}/taskboard/options":   {slugs: []string{PermTaskboardOptionsRead}, target: agentViewGroup},
+	"PUT /v1/groups/{name}/taskboard/options":   {slugs: []string{PermTaskboardOptionsWrite}, target: agentViewGroup},
+	"PATCH /v1/groups/{name}/taskboard/options": {slugs: []string{PermTaskboardOptionsWrite}, target: agentViewGroup},
 }
 
 // agentPeerViewSlugs lists the sender slugs agentPeerViewRoutes uses, which
@@ -597,7 +597,21 @@ func servePeerViewForAgent(w http.ResponseWriter, r *http.Request, caller, node 
 		asked = &peerQuestionCapture{ResponseWriter: rec}
 		out = asked
 	}
+	// A board context's options summary is the boards' options: only for
+	// the groups the agent also reads them on (taskboard_options_access.go).
+	var summary *peerContextOptionsFilter
+	if pattern == agentPeerContextRoute {
+		summary = newPeerContextOptionsFilter(out)
+		out = summary
+	}
 	servePeerViewProxyWith(out, r.WithContext(withPeerViewPrincipal(r.Context(), principal)), false)
+	if summary != nil {
+		summary.finish(func(group string) bool {
+			actx := ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: group, strictPeerScope: true}
+			allowed, _, err := permissionAllowsAction(r, caller, PermTaskboardOptionsRead, actx)
+			return err == nil && allowed
+		})
+	}
 	status = rec.code()
 	if asked != nil && status == http.StatusCreated {
 		recordPeerQuestion(peer.InstanceID, agentID, asked.body.Bytes())

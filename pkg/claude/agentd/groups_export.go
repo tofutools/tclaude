@@ -104,8 +104,9 @@ func handleGroupExport(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	if !ok {
 		return
 	}
-	// The board's setup rides along unless left out (board_options=false).
-	board := !queryFalse(r.URL.Query().Get("board_options"))
+	// The board's setup rides along unless left out (board_options=false),
+	// or the calling agent may not read the board's options.
+	board := !queryFalse(r.URL.Query().Get("board_options")) && agentCarriesTaskboardSetup(r, g)
 	serveGroupExport(w, g.Name, format, r.URL.Query().Get("allow_flagged") == "true", classify(peerFromContext(r.Context())) == classHuman, workflows, board)
 }
 

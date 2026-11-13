@@ -435,8 +435,9 @@ func TestTaskboardOptionsCLI(t *testing.T) {
 	assert.Equal(t, int64(2), v.Version)
 }
 
-// A linked node reads a board's options under taskboard.read and changes
-// them under taskboard.write, as a local caller does.
+// A linked node reads a board's options under taskboard.options.read and
+// changes them under taskboard.options.write (taskboard.manage covers both),
+// as a local caller does; its task grants reach neither.
 func TestPeerTaskboardOptions(t *testing.T) {
 	fh := newFedHarness(t)
 	saveTaskboardConfig(t, nil)
@@ -448,25 +449,55 @@ func TestPeerTaskboardOptions(t *testing.T) {
 		rec := testharness.Serve(view, testharness.JSONRequest(t, method, tbOptionsPath, body))
 		return rec.Code, rec.Body.String()
 	}
-	patch := map[string]any{"set": map[string]string{"idle.enabled": "on"}}
+	patch := map[string]any{"set": map[string]string{"idle.enabled": "off"}}
 
 	code, body := call(http.MethodGet, nil)
 	assert.NotEqual(t, http.StatusOK, code, body)
 
+	// The options grants alone read no tasks: the board's context leaves
+	// the group out.
+	h.grant(t, agentd.PermTaskboardOptionsRead, "group=crew")
+	rec := testharness.Serve(view, testharness.JSONRequest(t, http.MethodGet, "/v1/taskboard/context", nil))
+	var ctx struct {
+		Groups []struct {
+			Group string `json:"group"`
+		} `json:"groups"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ctx))
+	assert.Empty(t, ctx.Groups, "options.read shows no board's tasks")
+	h.revoke(t, agentd.PermTaskboardOptionsRead, "group=crew")
+
 	h.grant(t, agentd.PermTaskboardRead, "group=crew")
+	h.grant(t, agentd.PermTaskboardWrite, "group=crew")
+	code, body = call(http.MethodGet, nil)
+	assert.Equal(t, http.StatusForbidden, code, "reading tasks is not reading options: %s", body)
+	assert.Contains(t, body, agentd.PermTaskboardOptionsRead)
+	code, body = call(http.MethodPatch, patch)
+	assert.Equal(t, http.StatusForbidden, code, "writing tasks is not changing options: %s", body)
+
+	h.grant(t, agentd.PermTaskboardOptionsRead, "group=crew")
 	code, body = call(http.MethodGet, nil)
 	require.Equal(t, http.StatusOK, code, body)
 	assert.Contains(t, body, `"resolved"`)
 	code, body = call(http.MethodPatch, patch)
 	assert.Equal(t, http.StatusForbidden, code, "read does not write: %s", body)
 
-	h.grant(t, agentd.PermTaskboardWrite, "group=crew")
+	h.grant(t, agentd.PermTaskboardOptionsWrite, "group=crew")
 	code, body = call(http.MethodPatch, patch)
 	require.Equal(t, http.StatusOK, code, body)
 	var v tbOptions
 	require.NoError(t, json.Unmarshal([]byte(body), &v))
-	assert.True(t, v.Resolved.Idle.Active)
+	assert.False(t, v.Resolved.Idle.Active)
 	assert.Contains(t, v.UpdatedBy, "peer:", "the change is recorded as the peer's")
+
+	// taskboard.manage alone reads and changes them.
+	h.revoke(t, agentd.PermTaskboardOptionsWrite, "group=crew")
+	h.revoke(t, agentd.PermTaskboardOptionsRead, "group=crew")
+	code, body = call(http.MethodGet, nil)
+	require.Equal(t, http.StatusForbidden, code, body)
+	h.grant(t, agentd.PermTaskboardManage, "group=crew")
+	code, body = call(http.MethodGet, nil)
+	require.Equal(t, http.StatusOK, code, body)
 	code, body = call(http.MethodPut, map[string]any{"options": map[string]any{}, "version": v.Version})
 	require.Equal(t, http.StatusOK, code, body)
 

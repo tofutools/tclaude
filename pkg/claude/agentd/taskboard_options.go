@@ -21,14 +21,16 @@ import (
 // built-in default, and every read carries the values in force with where
 // each came from.
 //
-//	GET   /v1/groups/{name}/taskboard/options   stored + resolved (taskboard.read)
+//	GET   /v1/groups/{name}/taskboard/options   stored + resolved (taskboard.options.read)
 //	PUT   /v1/groups/{name}/taskboard/options   {options, version}: replace the
 //	      whole document; version is the one read, a newer one is 409 stale
 //	PATCH /v1/groups/{name}/taskboard/options   {set: {key: value}, reset: [key]}:
 //	      change single keys atomically (the CLI's options set / reset)
 //
-// Changing them is taskboard.write (owners hold it); a linked node reads and
-// changes them under the same grants (peer_taskboard.go).
+// Reading them is taskboard.options.read (or .own.read, which every member
+// holds on its own group's board), changing them taskboard.options.write (or
+// .own.write); owners hold both. A linked node reads and changes them under
+// the same peer grants (peer_taskboard.go). See taskboard_options_access.go.
 
 func registerTaskboardOptionRoutes(mux *http.ServeMux) {
 	for _, route := range taskboardOptionRoutes {
@@ -148,15 +150,16 @@ func writeTaskboardOptions(w http.ResponseWriter, status int, g *db.AgentGroup) 
 
 // GET /v1/groups/{name}/taskboard/options
 func handleTaskboardOptionsGet(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	if !taskboardEnabled(w) || !requireTaskboard(w, r, g, false) {
+	if !taskboardEnabled(w) || !requireTaskboardOptionsRead(w, r, g) {
 		return
 	}
 	writeTaskboardOptions(w, http.StatusOK, g)
 }
 
-// requireTaskboardOptionsWrite gates a change of g's options.
+// requireTaskboardOptionsWrite gates a change of g's options
+// (taskboard_options_access.go).
 func requireTaskboardOptionsWrite(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) bool {
-	return taskboardEnabled(w) && requireTaskboard(w, r, g, true) && requireGroupActive(w, g)
+	return taskboardEnabled(w) && requireTaskboardOptionsChange(w, r, g) && requireGroupActive(w, g)
 }
 
 // PUT /v1/groups/{name}/taskboard/options {options, version}

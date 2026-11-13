@@ -32,6 +32,7 @@ func taskboardCmd() *cobra.Command {
 			"is assigned to it, and it edits, blocks, closes and reports on its own tasks, and takes any unassigned one. " +
 			"Owners change everything (taskboard.write); anyone else needs taskboard.read / taskboard.write, " +
 			"scoped with --scope group=<name> or unscoped, and a group grant of taskboard.write gives every member of a group the broad rights. A task in a group you cannot read is reported as not found. " +
+			"The board's options have slugs of their own (taskboard.options.read / .write, and .own.read / .own.write for your own group's board; see `taskboard options --help`). " +
 			"On by default; features.taskboard false turns it off.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
