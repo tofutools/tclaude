@@ -1139,9 +1139,10 @@ whatever a grant's scope says. Under it an agent may:
 - edit, promote, demote, block, unblock, reopen, close and report on the tasks
   assigned to it;
 - order the tasks assigned to it among themselves: `move` one of them
-  `--before` or `--after` another one of them. That orders its own lane
-  without reaching past anyone else's task; `--top` and `--bottom` are of
-  the whole stage, so they take `taskboard.write`;
+  `--before` or `--after` another one of them. That orders its own lane:
+  the task always lands beside one of its own (passing any others' tasks
+  between them). `--top` and `--bottom` are of the whole stage, so they take
+  `taskboard.write`;
 - take any open, unassigned task, an idea included, and release its own;
 - comment on any task of the board.
 

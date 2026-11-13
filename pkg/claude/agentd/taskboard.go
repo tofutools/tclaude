@@ -1517,9 +1517,10 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 //
 // Reordering is a board write (taskboard.write). An agent with only
 // taskboard.own orders its own tasks among themselves: it moves a task it
-// holds before or after another task it holds, which reorders its own lane
-// without reaching past anyone else's tasks; top and bottom are of the whole
-// stage, so they stay a write.
+// holds before or after another task it holds. That reorders its own lane;
+// in the stage's order the task may pass others' tasks that sit between its
+// own, but it never lands anywhere but beside one of its own. Top and bottom
+// are of the whole stage, so they stay a write.
 func handleTaskboardMove(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body taskboardPositionBody
 	if !decodeTaskboardBody(w, r, &body) {

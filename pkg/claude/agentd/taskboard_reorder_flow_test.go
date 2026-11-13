@@ -38,10 +38,17 @@ func TestTaskboardOwnReordersOwnLane(t *testing.T) {
 	code, body = h.post(h.worker, others.ID, "move", map[string]any{"before": first.ID})
 	assert.Equal(t, http.StatusForbidden, code, "someone else's task: %s", body)
 
+	// Beside its own task across someone else's: allowed, it lands next to
+	// its own (the own rule is about where it lands, not what it passes).
+	third := mine("third")
+	code, body = h.post(h.worker, third.ID, "move", map[string]any{"before": second.ID})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Equal(t, []string{"third", "second", "first", "the operator's"}, h.list("", "/v1/groups/crew/taskboard"))
+
 	// The writer still moves anything anywhere.
 	code, body = h.post(h.lead, others.ID, "move", map[string]any{"top": true})
 	require.Equal(t, http.StatusOK, code, body)
-	assert.Equal(t, []string{"the operator's", "second", "first"}, h.list("", "/v1/groups/crew/taskboard"))
+	assert.Equal(t, []string{"the operator's", "third", "second", "first"}, h.list("", "/v1/groups/crew/taskboard"))
 }
 
 // A move that names the stage it expects is refused as stale, and changes

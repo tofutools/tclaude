@@ -545,12 +545,14 @@ function sameCell(from, to) {
 
 // dropSlot is the slot a drag of task points at in a cell drawing list: the
 // card under the pointer, and before or after it ({ anchor, where }); null
-// off the cards, or on the dragged card itself.
+// off the cards; { self: true } on the dragged card itself, where a drop
+// leaves it be.
 export function dropSlot(event, task, list) {
   const el = event?.target?.closest?.('[data-task-id]');
   if (!el || !list) return null;
+  if (el.getAttribute('data-task-id') === task.id) return { self: true };
   const anchor = list.find((t) => t.id === el.getAttribute('data-task-id'));
-  if (!anchor || anchor.id === task.id || !liveTask(anchor)) return null;
+  if (!anchor || !liveTask(anchor)) return null;
   return { anchor, where: dropSide(event, el) };
 }
 
@@ -562,7 +564,7 @@ const short = (title) => (title.length > 32 ? `${title.slice(0, 31)}…` : title
 // when each task closed.
 export function reorderDrop(task, slot, to, actions) {
   if (to.column === 'done') return { kind: 'derived', inert: true, label: 'Done is ordered by when tasks closed' };
-  if (typeof actions?.reorder !== 'function') return null;
+  if (typeof actions?.reorder !== 'function' || slot?.self) return null;
   // By id: a refresh during the drag draws new task objects.
   const at = (id) => (peers || []).findIndex((t) => t.id === id);
   const peers = orderPeers(to.list, task);
@@ -583,12 +585,12 @@ export function reorderDrop(task, slot, to, actions) {
 // (Blocked), or onto Blocked or Done, which mix stages or order by time,
 // keeps its own place.
 export function slotted(drop, task, to, slot, actions) {
-  if (!drop || drop.reason || !slot || typeof actions?.reorder !== 'function') return drop;
+  if (!drop || drop.reason || !slot || slot.self || typeof actions?.reorder !== 'function') return drop;
   const stage = to.column === 'ideas' ? 'idea' : (to.column === 'blocked' || to.column === 'done') ? '' : 'next';
   if (!stage || slot.anchor.stage !== stage) return drop;
   const { anchor, where } = slot;
   return { ...drop, kind: `${drop.kind}+order`, label: `${drop.label} · ${where} “${short(anchor.title)}”`,
-    run: twoStep(drop.run, (api) => api.move(task.id, { [where]: anchor.id, stage })), slot: { id: anchor.id, where } };
+    run: twoStep(drop.run, (api) => api.move(task.id, { [where]: anchor.id, stage })), slot: { id: anchor.id, where }, baseKind: drop.baseKind || drop.kind };
 }
 
 // useLaneDrag drives the card drags. A drop target `to` names its lane, or
@@ -665,7 +667,7 @@ export function useLaneDrag(actions, group, tasks = []) {
       if (drop.kind === 'reorder') { await actions.reorder(task, drop.position); return; }
       const ok = await actions.run(`${task.id}:lane`, drop.label, (api) => drop.run(api));
       if (ok && drop.epicMove) epicMoved(actions, task, drop.label);
-      if (ok && drop.kind === 'assign') markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
+      if (ok && (drop.baseKind || drop.kind) === 'assign') markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     },
   };
 }

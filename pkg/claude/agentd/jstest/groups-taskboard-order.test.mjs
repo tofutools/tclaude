@@ -120,6 +120,12 @@ test('a lanes card drags to a slot in its own cell: one move, the slot marked wh
   assert.match(out.marked, /tb-drop-before/);
   assert.deepEqual(api.calls, [['move', 'tk_00000003', { before: 'tk_00000001', stage: 'next' }]]);
 
+  // Released on itself (a drag given up, or a twitch), the card stays put.
+  api.calls.length = 0;
+  const self = await dragTo('tk_00000001', 'unassigned', 'next', { on: 'tk_00000001', where: 'before' });
+  assert.equal(self.taken, false);
+  assert.deepEqual(api.calls, [], 'no move to the bottom');
+
   // A drop where the card already is takes nothing.
   api.calls.length = 0;
   const still = await dragTo('tk_00000002', 'unassigned', 'next', { on: 'tk_00000001', where: 'after' });
