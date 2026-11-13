@@ -1001,6 +1001,17 @@ The operator may go over any limit: `--over-limit` on `add`, `assign`, `start`,
 dashboard a refused change asks the operator *Go over the limit?* and, on
 *Go over*, sends that change again over the limit. Agents follow the rule: an agent's `over_limit` is refused (403).
 
+A linked node's operator may go over a limit on this node's board too, from
+its dashboard or with `--peer <node> --over-limit`, when the linked node may
+change that board's options: it holds the peer grant
+`taskboard.options.write` or `taskboard.manage` on the group, or unrestricted
+trust. Whoever may change the limit may also exceed it once. Without it the
+linked node's `over_limit` is refused (403), and its dashboard is not offered
+*Go over the limit?*: a refusal offers it only to a caller who may go over.
+A linked node's agent follows the rule whatever its node holds. The board's
+`limit_reached` message names who went over (`let in over the limit by peer:
+the operator of <node>`).
+
 ```
 $ tclaude agent taskboard options set crew limits.in_progress.max=3 limits.columns.in-review.max=2
 $ tclaude agent taskboard assign tk_… --to builder
@@ -1220,7 +1231,7 @@ tclaude federation grant bob taskboard.options.write --scope group=crew
 | `taskboard.read` | List it, show a task and its activity and comments, see it in the fused view, and count it in the node summary |
 | `taskboard.write` | Add and import tasks, ask this node's members for tasks, edit, move, promote, demote, block, unblock, drop and close them, and comment (editing and deleting only its own comments) |
 | `taskboard.options.read` | Read the [board's options](#board-options), and carry its setup in a clone, an export or a template it makes from the group |
-| `taskboard.options.write` | Change the board's options. Implies `taskboard.options.read` |
+| `taskboard.options.write` | Change the board's options, and let its operator [go over a limit](#work-in-progress-limits). Implies `taskboard.options.read` |
 | `taskboard.assign` | Assign tasks to this node's members of the group, unassign them, and close a task someone else holds |
 | `taskboard.manage` | Set the writer lock, and manage the board's columns and options |
 | `taskboard.columns` | Add, rename, reorder, remove, hide and cordon the board's columns |
@@ -1231,6 +1242,15 @@ tclaude federation grant bob taskboard.options.write --scope group=crew
   404, so its existence does not leak.
 - Unrestricted trust acts as this node's operator does.
 - Taking, releasing and reporting stay with this node's own agents.
+- A linked node's changes meet the board's
+  [work-in-progress limits](#work-in-progress-limits) as a local caller's
+  do: a full lane queues, refuses or warns, and a slot the linked node frees
+  lets the first in line in, its assignee briefed. A task's queue facts
+  (`queued_reason`, `queued_for`, `queued_position`) read under
+  `taskboard.read`. How full each lane is, in the board's context, is part of
+  the options summary, so it needs `taskboard.options.read`. Going over a
+  limit takes the linked node's operator and `taskboard.options.write` (or
+  `taskboard.manage`) on the group.
 - The [writer lock](#the-writer-lock) does not apply to a linked node. Its
   peer grant is an explicit grant, like a local agent's scoped
   `taskboard.write` grant, which the lock does not narrow either. To stop a

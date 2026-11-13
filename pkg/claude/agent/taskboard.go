@@ -977,7 +977,7 @@ type taskboardAddParams struct {
 	Idea       bool   `long:"idea" help:"With --assignee or --mine: an idea in their lane for them to triage, not started"`
 	Stage      string `long:"stage" optional:"true" help:"Start it in one of the board's custom columns (slug or label, as move --stage takes it), in the same write; not with --next, --idea or --done"`
 	Mine       bool   `long:"mine" help:"Assign it to yourself as it is created (in progress); what an add under taskboard.own alone always does"`
-	OverLimit  bool   `long:"over-limit" help:"Operator only: go over the board's work-in-progress limit, where a full lane would queue or refuse the new task"`
+	OverLimit  bool   `long:"over-limit" help:"Operator only (with --peer, the linked node must let this node change that board's options): go over the board's work-in-progress limit, where a full lane would queue or refuse the new task"`
 	After      string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
 	Top        bool   `long:"top" help:"Place at the top of its stage instead of the end"`
 	Before     string `long:"before" optional:"true" help:"Place just before this task (and in its stage)"`
@@ -1514,7 +1514,7 @@ type taskboardMoveParams struct {
 	Before    string `long:"before" optional:"true" help:"Just before this task (crossing into the other stage promotes or demotes)"`
 	After     string `long:"after" optional:"true" help:"Just after this task (crossing into the other stage promotes or demotes)"`
 	Stage     string `long:"stage" optional:"true" help:"Move it to this stage or column: idea, next, or a custom column of the board (its slug or label, e.g. in-review); next takes it out of a custom column"`
-	OverLimit bool   `long:"over-limit" help:"Operator only: go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
+	OverLimit bool   `long:"over-limit" help:"Operator only (with --peer, the linked node must let this node change that board's options): go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
 	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON      bool   `long:"json" help:"Output JSON"`
@@ -1887,7 +1887,7 @@ type taskboardReopenParams struct {
 	Stage     string `long:"stage" optional:"true" help:"Reopen it in one of the board's custom columns (slug or label, as move --stage takes it); not with --next or --idea"`
 	Assignee  string `long:"assignee" optional:"true" help:"Reopen it assigned to this member (name or id), or operator; the default keeps whoever held it"`
 	Unassign  bool   `long:"unassign" help:"Reopen it with no assignee"`
-	OverLimit bool   `long:"over-limit" help:"Operator only: go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
+	OverLimit bool   `long:"over-limit" help:"Operator only (with --peer, the linked node must let this node change that board's options): go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
 	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.write; taskboard.assign to change the assignee)"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON      bool   `long:"json" help:"Output JSON"`
@@ -1990,7 +1990,7 @@ type taskboardAssignParams struct {
 	Hold      bool   `long:"hold" help:"Assign it without starting it: it stays in its stage (an idea to triage, or queued) in the assignee's lane; they start it"`
 	Idea      bool   `long:"idea" help:"Hold it as an idea in the assignee's lane (implies --hold)"`
 	Next      bool   `long:"next" help:"Hold it queued in the assignee's lane (implies --hold)"`
-	OverLimit bool   `long:"over-limit" help:"Operator only: go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
+	OverLimit bool   `long:"over-limit" help:"Operator only (with --peer, the linked node must let this node change that board's options): go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
 	Peer      string `long:"peer" optional:"true" help:"Assign on a linked node's board, to a member there, under the grants it gave this node (taskboard.assign)"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON      bool   `long:"json" help:"Output JSON"`
@@ -2060,7 +2060,7 @@ func taskboardTakeCmd() *cobra.Command {
 
 type taskboardStartParams struct {
 	Task      string `pos:"true" help:"Task id (tk_…)"`
-	OverLimit bool   `long:"over-limit" help:"Operator only: start it although In progress is full (where the board would queue or refuse it)"`
+	OverLimit bool   `long:"over-limit" help:"Operator only (with --peer, the linked node must let this node change that board's options): start it although In progress is full (where the board would queue or refuse it)"`
 	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON      bool   `long:"json" help:"Output JSON"`
