@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
@@ -184,13 +183,13 @@ func recordLaunchPostureAndSeeds(
 	// validated launch choices immediately; their telemetry paths can replace
 	// these values after an in-session model/effort change.
 	if h.Name == harness.CodexName || h.Name == harness.OpenCodeName {
-		if err := db.UpdateSessionModel(sessionID, model); err != nil {
+		if _, err := opSeedModel.call(launchString(sessionID, model)); err != nil {
 			slog.Warn("failed to seed session model", "harness", h.Name, "session_id", sessionID, "error", err)
 		}
-		if err := db.UpdateSessionModelID(sessionID, model); err != nil {
+		if _, err := opSeedModelID.call(launchString(sessionID, model)); err != nil {
 			slog.Warn("failed to seed session model id", "harness", h.Name, "session_id", sessionID, "error", err)
 		}
-		if err := db.UpdateSessionEffort(sessionID, effort); err != nil {
+		if _, err := opSeedEffort.call(launchString(sessionID, effort)); err != nil {
 			slog.Warn("failed to seed session effort", "harness", h.Name, "session_id", sessionID, "error", err)
 		}
 	}
@@ -198,7 +197,7 @@ func recordLaunchPostureAndSeeds(
 	// call lands. Until then show the launch choice; the usage refresh replaces
 	// it with the observed model. Display only: the relaunch model is unchanged.
 	if h.Name == harness.GeminiName && model != "" {
-		if err := db.UpdateSessionModel(sessionID, model); err != nil {
+		if _, err := opSeedModel.call(launchString(sessionID, model)); err != nil {
 			slog.Warn("failed to seed session model", "harness", h.Name, "session_id", sessionID, "error", err)
 		}
 	}

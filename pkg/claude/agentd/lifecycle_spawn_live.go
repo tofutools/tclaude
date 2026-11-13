@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -266,6 +267,22 @@ func startSpawnWrapper(a clcommon.SpawnArgs, argv func(clcommon.SpawnArgs) []str
 	if a.OpenCodeStateIsolation != "" {
 		cmd.Env = append(cmd.Env,
 			clcommon.OpenCodeStateIsolationEnv+"="+a.OpenCodeStateIsolation)
+	}
+	// The launcher's whole authority over the database: see launch_broker.go.
+	// Revoked with the snapshot handoff, which every caller releases once the
+	// launcher has exited.
+	ticket, revokeTicket, err := mintLaunchTicket()
+	if err != nil {
+		routeCredentialCleanup()
+		cleanup()
+		onFail()
+		return nil, fmt.Errorf("mint launch ticket: %w", err)
+	}
+	cmd.Env = append(cmd.Env, session.LaunchTicketEnvVar+"="+ticket)
+	releaseSnapshot := cleanup
+	cleanup = func() {
+		revokeTicket()
+		releaseSnapshot()
 	}
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {

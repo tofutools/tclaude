@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -20,7 +19,7 @@ func newLaunchExitGuard(sessionID, tmuxSession, exitGeneration string) *exitLaun
 		slog.Warn("exit audit: private launch setup unavailable; continuing without callback",
 			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
 		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
-	} else if err := db.MarkSessionExitLaunchPending(sessionID, exitGeneration); err != nil {
+	} else if _, err := opExitMarkPending.call(launchGenerationOf(sessionID, exitGeneration)); err != nil {
 		slog.Warn("exit audit: launch gate state unavailable; continuing without callback",
 			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
 		exitGuard.abort()
@@ -122,7 +121,7 @@ func settleLaunchedPane(in launchSettleInput) error {
 	in.state.PID = pid
 	in.state.ResumeProvenance = resumeProvenance
 
-	if err := SaveSessionState(in.state); err != nil {
+	if _, err := opSaveLaunchedState.call(launchStateArgs{State: in.state}); err != nil {
 		// Kill the pane like the sibling failure paths below: leaving it alive
 		// while the launch-row defer rolls the row back would orphan a live
 		// pane tclaude can no longer see.
@@ -133,7 +132,7 @@ func settleLaunchedPane(in launchSettleInput) error {
 		// SessionStart may have inserted this row before the launch parent got
 		// here. SaveSession deliberately never updates provenance on conflict;
 		// the launch boundary therefore owns this explicit post-upsert write.
-		if err := db.SetSessionResumeProvenance(in.sessionID, resumeProvenance); err != nil {
+		if _, err := opSetResumeProvenance.call(launchString(in.sessionID, resumeProvenance)); err != nil {
 			in.killLaunchPane()
 			return fmt.Errorf("persist managed launch resume provenance: %w", err)
 		}
@@ -156,7 +155,7 @@ func settleLaunchedPane(in launchSettleInput) error {
 		// Publish only at the same successful launch-commit boundary as the row.
 		// Until here a relaunch retains its predecessor's last-known-good record;
 		// any persistence failure tears down this pane and leaves that record intact.
-		if err := db.SetSessionExecutionBoundary(in.sessionID, string(in.executionBoundaryJSON)); err != nil {
+		if _, err := opSetExecutionBoundary.call(launchString(in.sessionID, string(in.executionBoundaryJSON))); err != nil {
 			slog.Warn("could not persist launch execution boundary",
 				"session_id", in.sessionID, "error", err)
 		}
