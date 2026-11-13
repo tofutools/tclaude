@@ -19541,8 +19541,7 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 .lt-carry-over .lt-row { align-items: center; flex-wrap: wrap; gap: 4px 8px; }
 .lt-carry-over .lt-row > .lt-k { flex: 0 0 100%; padding-top: 0; }
 .lt-carry-over .ui-tabs-seg { flex: 0 1 auto; }
-.lt-chip { font-weight: 400; font-size: 11px; color: #8b949e; border: 1px solid #30363d; border-radius: 10px; padding: 0 7px; margin-left: 6px; }
-.lt-chip-ov { color: #f2cc60; border-color: #d29922; }
+.ui-tag.lt-carry-tag { font-weight: 400; margin-left: 6px; }
 .lt-carry-num { flex: 0 0 96px !important; width: 96px; }
 .lt-carry-note { color: #8b949e; font-size: 11.5px; }
 .lt-carry-adv { margin: 6px 0; border: 1px solid #21262d; border-radius: 6px; padding: 4px 8px; }

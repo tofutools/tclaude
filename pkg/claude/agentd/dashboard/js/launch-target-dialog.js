@@ -247,6 +247,9 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
   const [advanced, setAdvanced] = useState(false);
   const [backup, setBackup] = useState(false);
   const carryKey = JSON.stringify(carryBody(carry));
+  // The preview answers one carry-over choice; OK waits for the current one.
+  const wantKey = `${profile}|${carryKey}|${backup}`;
+  const [previewKey, setPreviewKey] = useState('');
   useEffect(() => { onPhase?.(busy ? 'busy' : 'confirm'); }, [busy]);
   useEffect(() => {
     let live = true;
@@ -265,18 +268,23 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
   useEffect(() => { setPreview(null); setCarry(null); setCarryChoice(emptyCarry()); setAdvanced(false); }, [profile]);
   // Every preview is the daemon's dry run of the same plan the morph applies;
   // a carry-over edit re-runs it after a short pause in typing.
+  // The backup rides along so an offline agent is refused here, not at apply.
+  // A changed carry-over choice needs its loss confirmed again.
+  useEffect(() => { setConfirmCut(false); setProceedWithoutSummary(false); }, [carryKey, backup]);
   useEffect(() => {
-    if (!profile || carryInvalid(carry)) return undefined;
+    if (!profile) return undefined;
+    if (carryInvalid(carry)) { setError(''); return undefined; }
     let live = true;
     const run = () => {
       setError('');
-      api.morph(agent.conv || agent.id, { profile, ...carryBody(carry), dry_run: true })
-        .then((r) => { if (live) setPreview(r); })
+      api.morph(agent.conv || agent.id, { profile, ...carryBody(carry), ...(backup ? { backup: true } : {}), dry_run: true })
+        .then((r) => { if (live) { setPreview(r); setPreviewKey(wantKey); } })
         .catch((e) => { if (live) setError(errText(e)); });
     };
     const timer = setTimeout(run, carryKey === '{}' ? 0 : 350);
     return () => { live = false; clearTimeout(timer); };
-  }, [profile, carryKey]);
+  }, [profile, carryKey, backup]);
+  const stale = previewKey !== wantKey;
   useEffect(() => { setCarry(preview ? { ...preview, backupRequested: backup } : null); }, [preview, backup]);
   const cross = !!(preview?.history?.target && preview.history.source !== preview.history.target);
   // An explicit summary choice is its own confirmation.
@@ -312,13 +320,13 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     if (!proceedWithoutSummary || !targetProfile || busy) return;
     setBusy(true); setError('');
     try {
-      await api.morph(agent.id, {profile:targetProfile, proceed_without_summary:true, now:true});
+      await api.morph(agent.id, {profile:targetProfile, ...(cross ? carryBody(carry) : {}), ...(backup ? { backup: true } : {}), proceed_without_summary:true, now:true});
       toast('Morphing with readable history only; the full transcript is saved.'); onClose();
     } catch(e) { setError(errText(e)); }
     finally { setBusy(false); }
   };
   const apply = async () => {
-    if (!profile || !preview || busy || carryInvalid(carry) || (needsConfirm && !confirmCut && !proceedWithoutSummary)) return;
+    if (!profile || !preview || stale || busy || carryInvalid(carry) || (needsConfirm && !confirmCut && !proceedWithoutSummary)) return;
     setBusy(true); setError('');
     let done;
     try { done = await api.morph(agent.conv || agent.id, { profile, ...(cross ? carryBody(carry) : {}), ...(backup ? { backup: true } : {}), ...(now && !waitsForSource ? { now: true } : {}), ...(confirmCut ? { confirm_history_loss: true } : {}), ...(proceedWithoutSummary ? { proceed_without_summary: true } : {}) }); } catch (e) { setError(errText(e)); setBusy(false); return; }
@@ -350,7 +358,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} id="lt-cancel" onClick=${onClose}>Cancel</${Button}>
-      <${Button} variant="primary" domRef=${okRef} id="lt-ok" disabled=${!preview || busy || !!waiting || !!carryInvalid(carry) || (needsConfirm && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_handoff || (cross && carry.method === 'handoff') ? 'Request handoff and morph' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</${Button}></div>`;
+      <${Button} variant="primary" domRef=${okRef} id="lt-ok" disabled=${!preview || stale || busy || !!waiting || !!carryInvalid(carry) || (needsConfirm && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_handoff || (cross && carry.method === 'handoff') ? 'Request handoff and morph' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</${Button}></div>`;
 }
 
 export function formLine(v) {

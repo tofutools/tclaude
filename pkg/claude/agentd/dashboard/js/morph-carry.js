@@ -36,8 +36,9 @@ export function parseTokens(raw) {
   if (!s) return null;
   const m = /^(\d+(?:\.\d+)?)([km]?)$/.exec(s);
   if (!m) return NaN;
-  const n = Number(m[1]) * (m[2] === 'k' ? 1e3 : m[2] === 'm' ? 1e6 : 1);
-  return Number.isInteger(n) ? n : NaN;
+  if (!m[2]) return m[1].includes('.') ? NaN : Number(m[1]);
+  // "4.1m" is 4099999.999… in floating point, so round the scaled value.
+  return Math.round(Number(m[1]) * (m[2] === 'k' ? 1e3 : 1e6));
 }
 
 // carryInvalid names the first field the daemon would refuse, or ''.
@@ -95,7 +96,7 @@ export function carryRows(hist) {
   if (hist.carried_estimated_tokens > 0) text += `; ~${fmtTokens(hist.carried_estimated_tokens)} of ~${fmtTokens(hist.source_estimated_tokens)} tokens`;
   if (hist.context_window_tokens > 0) {
     text += hist.window_stated
-      ? `; window ${fmtTokens(hist.context_window_tokens)} (stated; detected ${fmtTokens(hist.detected_window_tokens)})`
+      ? `; window ${fmtTokens(hist.context_window_tokens)} (stated${hist.detected_window_tokens > 0 ? `; detected ${fmtTokens(hist.detected_window_tokens)}` : ''})`
       : `; window ${fmtTokens(hist.context_window_tokens)} (${hist.context_window_source})`;
     text += hist.carry_all ? ', no budget cut' : `, budget ${fmtTokens(hist.budget_tokens)}${hist.budget_source === 'stated' ? ' (stated)' : ''}`;
   }
@@ -125,7 +126,7 @@ function Estimate({ hist }) {
   const pct = (n) => `${Math.min(100, (100 * n) / scale).toFixed(2)}%`;
   const budget = !hist.carry_all && hist.budget_tokens > 0 && hist.budget_tokens < scale;
   return html`<div class="lt-carry-est" data-lt-carry-estimate="">
-    <div class="lt-carry-est-line"><b>Estimate</b> (dry run): ~${fmtTokens(carried)} of ~${fmtTokens(hist.source_estimated_tokens)} carried · ${hist.carry_all ? 'everything' : `budget ${fmtTokens(hist.budget_tokens)}`} · window ${fmtTokens(window)}</div>
+    <div class="lt-carry-est-line"><b>Estimate</b> (dry run): ~${fmtTokens(carried)} of ~${fmtTokens(hist.source_estimated_tokens)} carried · ${hist.carry_all ? 'everything' : `budget ${fmtTokens(hist.budget_tokens)}`}${window > 0 ? ` · window ${fmtTokens(window)}` : ' · window unknown'}</div>
     <div class="lt-carry-bar" role="img" aria-label=${`~${fmtTokens(carried)} tokens carried of a ${fmtTokens(window)} window`}>
       ${cats.map((u) => html`<span key=${u.category} class=${`lt-cat-${u.category}`} style=${`width:${pct(u.carried_tokens)}`}></span>`)}
       ${budget && html`<i class="lt-carry-budget" style=${`left:${pct(hist.budget_tokens)}`} title="budget"></i>`}
@@ -150,7 +151,7 @@ export function CarryOver({ carry, onChange, hist, disabled, advanced, onAdvance
   const invalid = carryInvalid(carry);
   const overridden = Object.keys(carryBody(carry)).length > 0;
   return html`<details class="lt-carry-over" open data-lt-carry-over="">
-    <summary>History carry-over <span class=${`lt-chip${overridden ? ' lt-chip-ov' : ''}`}>${overridden ? 'overridden' : hist ? `auto: ${hist.kept_percent ?? 100}% kept` : 'auto'}</span></summary>
+    <summary>History carry-over <span class=${`ui-tag lt-carry-tag${overridden ? ' ui-tag-warn' : ''}`}>${overridden ? 'overridden' : hist ? `auto: ${hist.kept_percent ?? 100}% kept` : 'auto'}</span></summary>
     <label class="lt-row"><span class="lt-k">Target window</span>
       <${Input} size="sm" id="lt-carry-window" class="lt-carry-num" value=${carry.window} disabled=${disabled}
         placeholder=${detected ? fmtTokens(detected) : 'tokens'} aria-label="Target context window in tokens"

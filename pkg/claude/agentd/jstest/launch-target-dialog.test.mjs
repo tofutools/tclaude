@@ -234,6 +234,9 @@ test('history carry-over overrides re-run the dry run, warn without blocking, an
   await s.harness.act(() => s.harness.fireEvent(backup, 'change'));
   await s.settle();
   assert.match(s.q('[data-lt-carries]').textContent, /Backupa stopped clone on copilot · gpt-6-astra/);
+  assert.equal(s.q('#lt-ok').disabled, true, 'OK waits for the dry run of the current choice');
+  await s.until(() => isDeepStrictEqual(calls.at(-1), { ...want, backup: true }), 'the dry run checks the backup too');
+  await s.until(() => !s.q('#lt-ok').disabled, 'OK once the preview matches');
   await s.click(s.q('#lt-ok'));
   const { dry_run: _dry, ...applied } = want;
   assert.deepEqual(calls.at(-1), { ...applied, backup: true }, 'the morph sends the previewed carry-over and the backup');
