@@ -40,7 +40,7 @@ var copilotAPIPostureWriters = []struct {
 	// conversation it launched.
 	{"copilot_api_launch.go", "recordCopilotAPIPosture", "SetConversationCopilotAPI"},
 	// The launched process, recording its own posture against its session row.
-	{"relaunch_carryover.go", "RecordLaunchPosture", "SetSessionCopilotAPI"},
+	{"relaunch_carryover.go", "writeLaunchPosture", "SetSessionCopilotAPI"},
 	// Enrollment composes and writes the agent profile. This is the primary
 	// posture write for every spawned agent.
 	{"lifecycle_spawn_enroll.go", "enrollSpawnedConv", "SetAgentRelaunchProfile"},

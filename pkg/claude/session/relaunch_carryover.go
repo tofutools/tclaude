@@ -634,6 +634,16 @@ func RecordLaunchPosture(sessionID string, h *harness.Harness, posture LaunchPos
 	if h == nil {
 		return
 	}
+	if _, err := opRecordLaunchPosture.call(launchPostureArgs{
+		launchSessionArgs: launchSession(sessionID), Harness: h.Name, Posture: posture,
+	}); err != nil {
+		slog.Warn("failed to record session launch posture", "session_id", sessionID, "error", err)
+	}
+}
+
+// writeLaunchPosture is RecordLaunchPosture's database half, run wherever the
+// launch operation runs.
+func writeLaunchPosture(sessionID string, h *harness.Harness, posture LaunchPosture) {
 	if h.SupportsAutoMemory() {
 		if err := db.SetSessionAutoMemory(sessionID, posture.AutoMemory); err != nil {
 			slog.Warn("failed to record session auto-memory posture",

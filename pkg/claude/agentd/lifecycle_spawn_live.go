@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -267,14 +268,68 @@ func startSpawnWrapper(a clcommon.SpawnArgs, argv func(clcommon.SpawnArgs) []str
 		cmd.Env = append(cmd.Env,
 			clcommon.OpenCodeStateIsolationEnv+"="+a.OpenCodeStateIsolation)
 	}
+	// The launcher's whole authority over the database: see launch_broker.go.
+	// Revoked with the snapshot handoff, which every caller releases once the
+	// launcher has exited.
+	closeTicketPipe, revokeTicket, err := handLaunchTicketTo(cmd, a)
+	if err != nil {
+		routeCredentialCleanup()
+		cleanup()
+		onFail()
+		return nil, err
+	}
+	releaseSnapshot := cleanup
+	cleanup = func() {
+		revokeTicket()
+		releaseSnapshot()
+	}
 	detachSpawn(cmd)
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	closeTicketPipe()
+	if err != nil {
 		routeCredentialCleanup()
 		cleanup()
 		onFail()
 		return nil, err
 	}
 	return &spawnWrapper{cmd: cmd, stderr: stderr, cleanup: cleanup, routeCredentialCleanup: routeCredentialCleanup}, nil
+}
+
+// handLaunchTicketTo mints the launch ticket for the session cmd will launch
+// and hands it over on an inherited pipe, already written and closed on the
+// daemon's side so the launcher's read cannot block. closePipe releases the
+// daemon's copy of the read end and must run once cmd has started (or failed
+// to).
+func handLaunchTicketTo(cmd *exec.Cmd, a clcommon.SpawnArgs) (closePipe, revoke func(), err error) {
+	// The session id the launcher will derive: its label, else the
+	// conversation it resumes. See resolveLaunchIdentity in pkg/claude/session.
+	sessionID := a.Label
+	if sessionID == "" {
+		sessionID = a.ConvID
+	}
+	ticket, revoke, err := mintLaunchTicket(sessionID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("mint launch ticket: %w", err)
+	}
+	read, write, err := os.Pipe()
+	if err != nil {
+		revoke()
+		return nil, nil, fmt.Errorf("open launch ticket pipe: %w", err)
+	}
+	_, writeErr := write.WriteString(ticket)
+	if closeErr := write.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		_ = read.Close()
+		revoke()
+		return nil, nil, fmt.Errorf("write launch ticket: %w", writeErr)
+	}
+	// ExtraFiles[i] is descriptor 3+i in the child.
+	fd := 3 + len(cmd.ExtraFiles)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, read)
+	cmd.Env = append(cmd.Env, session.LaunchTicketFDEnvVar+"="+strconv.Itoa(fd))
+	return func() { _ = read.Close() }, revoke, nil
 }
 
 // prepareRouteHelperResumeArgs restores the namespace-local helper for every

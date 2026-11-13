@@ -1,8 +1,6 @@
 package session
 
 import (
-	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
@@ -125,11 +123,11 @@ func createLaunchRow(in launchRowInput, undo *launchundo.Undo) (*SessionState, e
 	// bug). Only a row this launch CREATED is deleted — a resume/relaunch
 	// reuses its existing row (same PK) and keeps its prior state on failure,
 	// exactly as before.
-	priorRow, err := db.LoadSession(in.sessionID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	prior, err := opLaunchRowExists.call(launchSession(in.sessionID))
+	if err != nil {
 		return nil, fmt.Errorf("check for existing session row: %w", err)
 	}
-	launchRowOwned := priorRow == nil
+	launchRowOwned := !prior.Exists
 	// The pane command is assigned by the caller once it is fully assembled,
 	// so the rollback below reads it through in.paneCommand at unwind time and
 	// reports what this launch actually tried to run.
@@ -162,12 +160,14 @@ func createLaunchRow(in launchRowInput, undo *launchundo.Undo) (*SessionState, e
 		// Generation-conditional: a concurrent same-label launch that re-wrote
 		// the row after us must keep it — only the exact row THIS launch wrote
 		// (still stamped with our exit generation) is rolled back.
-		if derr := db.DeleteSessionForLaunchGeneration(in.sessionID, in.exitGeneration); derr != nil {
+		if _, derr := opDeleteLaunchRow.call(launchGenerationOf(in.sessionID, in.exitGeneration)); derr != nil {
 			slog.Warn("launch failed; could not remove its session row",
 				"session_id", in.sessionID, "error", derr)
 		}
 	})
-	if err := SaveSessionStateForLaunch(state, in.exitGeneration, db.SessionExitGateUngated); err != nil {
+	if _, err := opSaveLaunchRow.call(launchStateArgs{
+		State: state, Generation: in.exitGeneration, GateState: db.SessionExitGateUngated,
+	}); err != nil {
 		return nil, fmt.Errorf("prepare managed pane exit identity: %w", err)
 	}
 	return state, nil

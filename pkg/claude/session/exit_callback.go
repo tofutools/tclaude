@@ -253,14 +253,17 @@ func (g *exitLaunchGuard) bind() {
 	}
 	var bindErr error
 	if g.callbackEnabled {
-		bindErr = db.SetSessionExitLaunchBinding(g.sessionID, g.generation, g.tokenHash, g.paneID)
+		_, bindErr = opExitSetBinding.call(launchExitBindingArgs{
+			launchGenerationArgs: launchGenerationOf(g.sessionID, g.generation),
+			TokenHash:            g.tokenHash, PaneID: g.paneID,
+		})
 	}
 	g.token = ""
 	if bindErr != nil {
 		// Audit persistence must never prevent the established launch. Remove any
 		// partial authority, release the private gate, and let the reaper remain
 		// the behavior-preserving fallback.
-		_ = db.ClearSessionExitLaunchBinding(g.sessionID, g.generation)
+		_, _ = opExitClearBinding.call(launchGenerationOf(g.sessionID, g.generation))
 		g.disarmPaneHook()
 		slog.Warn("exit audit: launch binding unavailable; continuing without callback",
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", bindErr)
@@ -272,9 +275,9 @@ func (g *exitLaunchGuard) release() error {
 		return nil
 	}
 	releasingDurable := true
-	if err := db.MarkSessionExitLaunchReleasing(g.sessionID, g.generation); err != nil {
+	if _, err := opExitMarkReleasing.call(launchGenerationOf(g.sessionID, g.generation)); err != nil {
 		releasingDurable = false
-		if fallbackErr := db.MarkSessionExitLaunchUngated(g.sessionID, g.generation); fallbackErr != nil {
+		if _, fallbackErr := opExitMarkUngated.call(launchGenerationOf(g.sessionID, g.generation)); fallbackErr != nil {
 			slog.Warn("exit audit: launch releasing state unavailable; continuing launch",
 				"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
 		}
@@ -290,13 +293,13 @@ func (g *exitLaunchGuard) release() error {
 		return fmt.Errorf("confirm exit-launch barrier release: %w", err)
 	}
 	if releasingDurable {
-		if err := db.MarkSessionExitLaunchReleased(g.sessionID, g.generation); err != nil {
-			if fallbackErr := db.MarkSessionExitLaunchUngated(g.sessionID, g.generation); fallbackErr != nil {
+		if _, err := opExitMarkReleased.call(launchGenerationOf(g.sessionID, g.generation)); err != nil {
+			if _, fallbackErr := opExitMarkUngated.call(launchGenerationOf(g.sessionID, g.generation)); fallbackErr != nil {
 				slog.Warn("exit audit: acknowledged launch release state unavailable; continuing launch",
 					"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
 			}
 		}
-	} else if err := db.MarkSessionExitLaunchUngated(g.sessionID, g.generation); err != nil {
+	} else if _, err := opExitMarkUngated.call(launchGenerationOf(g.sessionID, g.generation)); err != nil {
 		slog.Warn("exit audit: acknowledged ungated launch state unavailable",
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
 	}
@@ -374,7 +377,7 @@ func (g *exitLaunchGuard) waitForPaneGateAck() error {
 }
 
 func (g *exitLaunchGuard) restorePreHarnessState() {
-	if err := db.MarkSessionExitLaunchPending(g.sessionID, g.generation); err != nil {
+	if _, err := opExitMarkPending.call(launchGenerationOf(g.sessionID, g.generation)); err != nil {
 		slog.Warn("exit audit: could not restore pre-harness state after gate release failure",
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
 	}

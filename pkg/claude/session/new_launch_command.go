@@ -186,7 +186,7 @@ func assembleLaunchPaneCommand(in launchPaneCommandInput) (string, []byte, error
 	if err != nil {
 		return "", nil, err
 	}
-	if err := db.RecordSessionModelProxy(in.sessionID, in.params.ModelProxy); err != nil {
+	if _, err := opRecordModelProxy.call(launchString(in.sessionID, in.params.ModelProxy)); err != nil {
 		return "", nil, fmt.Errorf("record model gateway launch choice: %w", err)
 	}
 	boundaryInput := ExecutionBoundaryInput{

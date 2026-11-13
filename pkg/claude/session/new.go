@@ -515,6 +515,8 @@ var JoinGroupHandler func(*NewParams) error
 var ErrNoAutomaticGroupMatch = errors.New("no automatic group match")
 
 func runNew(params *NewParams) error {
+	// Before anything else, and before tmux in particular: see adoptLaunchTicket.
+	adoptLaunchTicket(params.ManagedLaunch)
 	timing := config.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
 	defer timing("return")
 	if params.HelpContextFeatures {
@@ -665,6 +667,11 @@ func runNew(params *NewParams) error {
 	}
 	if routeHelper != nil {
 		exitGeneration = routeHelper.LaunchGeneration
+	}
+	// The generation is final: bind a brokered launch to it before the first
+	// database operation, all of which follow.
+	if err := beginBrokeredLaunch(sessionID, exitGeneration); err != nil {
+		return err
 	}
 	additionalEnv, err := baseLaunchEnv(params, h, harnessBuiltinMode, effectiveSandbox, outerLayer, sessionID, exitGeneration, cwd)
 	if err != nil {
