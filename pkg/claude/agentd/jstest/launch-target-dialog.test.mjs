@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { isDeepStrictEqual } from 'node:util';
 import { createPreactHarness } from './preact-harness.mjs';
 import { comboKeys, comboPick } from './combobox-helpers.mjs';
 
@@ -164,8 +165,8 @@ test('morph previews the change with a dry run, then applies it at the next idle
   assert.deepEqual(calls[0], ['conv_b1', { profile: 'codex-high', dry_run: true }]);
   assert.match(s.q('.lt-morph-preview').textContent, /was claude · opus.*now codex · gpt-5 · effort high/);
   assert.match(s.q('[data-lt-carries]').textContent, /translated claude → codex: 8 of 10/);
-  assert.match(s.q('[data-lt-carries]').textContent, /window 32000.*unknown model, assumed 32k.*budget 19200/);
-  assert.match(s.q('[data-lt-carries]').textContent, /estimated tokens: 81495 source → 4980 carried/);
+  assert.match(s.q('[data-lt-carries]').textContent, /window 32k.*unknown model, assumed 32k.*budget 19k/);
+  assert.match(s.q('[data-lt-carries]').textContent, /~5k of ~81k tokens/);
   const carried = s.q('[data-lt-carries]').textContent;
   assert.match(carried, /tclaude sandbox\s*on \(profile strict\), unchanged/, 'tclaude\'s own sandbox is named, so "danger-full-access" does not read as off');
   assert.match(carried, /Harness sandbox\s*codex danger-full-access, stood down inside the tclaude sandbox/);
@@ -175,6 +176,70 @@ test('morph previews the change with a dry run, then applies it at the next idle
   assert.deepEqual(calls[1], ['conv_b1', { profile: 'codex-high' }]);
   assert.equal(s.closed(), 1, 'a submitted morph closes the dialog');
   assert.match(s.toasts[0], /morphs to codex-high when it next goes idle/);
+});
+
+test('history carry-over overrides re-run the dry run, warn without blocking, and ride the morph with a backup', async (t) => {
+  const calls = [];
+  const hist = (body) => ({
+    source: 'copilot', target: 'claude', source_entries: 267, carried_entries: body.history_budget === 'all' ? 267 : 59,
+    context_window_tokens: body.target_window_tokens || 200000, context_window_source: body.target_window_tokens ? 'stated by the operator' : 'Claude standard context',
+    window_stated: !!body.target_window_tokens, detected_window_tokens: body.target_window_tokens ? 200000 : 0, detected_window_source: 'Claude standard context',
+    budget_tokens: body.history_budget === 'all' ? 0 : 120000, budget_source: body.history_budget === 'all' ? 'all' : 'auto', carry_all: body.history_budget === 'all',
+    source_estimated_tokens: 245215, carried_estimated_tokens: body.history_budget === 'all' ? 148000 : 76498,
+    over_window: body.history_budget === 'all' && (body.target_window_tokens || 200000) < 148000,
+    needs_summary: body.history_budget !== 'all' && body.history !== 'truncate', budget_warning: body.history_budget !== 'all', dropped_percent: 78, kept_percent: 22,
+    categories: [
+      { category: 'chat', source_tokens: 96000, carried_tokens: 96000 },
+      { category: 'tool_calls', source_tokens: 38000, carried_tokens: 19000, shortened: 211, keep_percent: body.history_keep?.tool_calls },
+      { category: 'tool_output', source_tokens: 104000, carried_tokens: 26000, shortened: 388 },
+    ],
+    items: [{ kind: 'reasoning_dropped', count: 4 }],
+  });
+  const api = {
+    status: async () => ({}),
+    profiles: async () => [{ name: 'fable-wide', harness: 'claude' }],
+    morph: async (id, body) => {
+      calls.push(body);
+      if (body.dry_run) return { result: 'dry_run', before: { harness: 'copilot', model: 'gpt-6-astra' }, after: { harness: 'claude', model: 'fable' }, history: hist(body) };
+      return { result: 'pending', backup: null };
+    },
+  };
+  const s = await mountDialog(t, { initialMode: 'morph', api, actions: {} });
+  await s.pickProfile('fable-wide');
+  await s.until(() => s.q('[data-lt-carry-over]'), 'the carry-over section');
+  assert.match(s.q('[data-lt-carry-over]').textContent, /detected · Claude standard context/);
+  assert.equal(s.q('#lt-ok').disabled, true, 'a large automatic cut still needs its confirmation');
+
+  // State the window, carry everything, and keep half the tool calls.
+  const input = async (el, value) => { s.setValue(el, value); await s.harness.act(() => s.harness.fireEvent(el, 'input')); await s.settle(); };
+  await input(s.q('#lt-carry-window'), '100k');
+
+  await s.click(s.q('[data-lt-carry-over] [data-tab-key="all"]'));
+  await input(s.q('[data-lt-keep="tool_calls"]'), '50');
+  await s.change(s.q('#lt-carry-method'), 'truncate');
+  const want = { profile: 'fable-wide', target_window_tokens: 100000, history_budget: 'all', history_keep: { tool_calls: 50 }, history: 'truncate', dry_run: true };
+  await s.until(() => isDeepStrictEqual(calls.at(-1), want), 'the debounced dry run with every override');
+  await s.until(() => s.q('.lt-carry-warn'), 'the over-window warning');
+  assert.match(s.q('.lt-carry-warn').textContent, /more than the 100k window.*Not blocked/);
+  assert.match(s.q('[data-lt-carry-over] summary').textContent, /overridden/);
+  assert.match(s.q('[data-lt-carry-estimate]').textContent, /~148k of ~245k carried · everything · window 100k/);
+  const carried = s.q('[data-lt-carries]').textContent;
+  assert.match(carried, /window 100k \(stated; detected 200k\), no budget cut/);
+  assert.match(carried, /Tool callsnewest 50% whole; 211 older shortened to one-line stubs/);
+  assert.match(carried, /Reasoningnot carried/);
+  assert.equal(s.q('#lt-ok').disabled, false, 'warnings never block');
+
+  const backup = s.q('#lt-morph-backup');
+  Object.defineProperty(backup, 'checked', { configurable: true, writable: true, value: true });
+  await s.harness.act(() => s.harness.fireEvent(backup, 'change'));
+  await s.settle();
+  assert.match(s.q('[data-lt-carries]').textContent, /Backupa stopped clone on copilot · gpt-6-astra/);
+  assert.equal(s.q('#lt-ok').disabled, true, 'OK waits for the dry run of the current choice');
+  await s.until(() => isDeepStrictEqual(calls.at(-1), { ...want, backup: true }), 'the dry run checks the backup too');
+  await s.until(() => !s.q('#lt-ok').disabled, 'OK once the preview matches');
+  await s.click(s.q('#lt-ok'));
+  const { dry_run: _dry, ...applied } = want;
+  assert.deepEqual(calls.at(-1), { ...applied, backup: true }, 'the morph sends the previewed carry-over and the backup');
 });
 
 test('a refused morph preview says why and keeps the button off', async (t) => {

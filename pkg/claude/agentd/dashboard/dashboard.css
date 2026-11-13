@@ -19534,3 +19534,31 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 .tb-opt-max { width: 5em; }
 .tb-opt-at { min-width: 9em; }
 .tb-opt-at-choices { display: flex; flex-direction: column; gap: 6px; padding-left: 4px; }
+
+/* Morph dialog: history carry-over (morph-carry.js). */
+.lt-carry-over { border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; margin: 8px 0; font-size: 12px; }
+.lt-carry-over > summary { cursor: pointer; font-weight: 600; color: #c9d1d9; }
+.lt-carry-over .lt-row { align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.lt-carry-over .lt-row > .lt-k { flex: 0 0 100%; padding-top: 0; }
+.lt-carry-over .ui-tabs-seg { flex: 0 1 auto; }
+.ui-tag.lt-carry-tag { font-weight: 400; margin-left: 6px; }
+.lt-carry-num { flex: 0 0 96px !important; width: 96px; }
+.lt-carry-note { color: #8b949e; font-size: 11.5px; }
+.lt-carry-adv { margin: 6px 0; border: 1px solid #21262d; border-radius: 6px; padding: 4px 8px; }
+.lt-carry-adv > summary { cursor: pointer; color: #c9d1d9; }
+.lt-cat-row { display: grid; grid-template-columns: 88px minmax(80px, 1fr) 40px; gap: 2px 8px; align-items: center; margin: 6px 0; }
+.lt-cat-row > .lt-cat-t { grid-column: 2 / -1; }
+.lt-cat-fixed { grid-template-columns: 88px 1fr; color: #6e7681; }
+.lt-cat-fixed > span + span { grid-column: auto; }
+.lt-cat-v { text-align: right; }
+.lt-cat-t { color: #8b949e; font-size: 11.5px; }
+.lt-carry-range { width: 100%; }
+.lt-carry-est { margin-top: 8px; }
+.lt-carry-bar { position: relative; display: flex; height: 12px; border: 1px solid #30363d; border-radius: 4px; overflow: hidden; margin: 4px 0 2px; }
+.lt-carry-bar > span { height: 100%; }
+.lt-carry-bar > i { position: absolute; top: 0; bottom: 0; width: 2px; background: #e6edf3; }
+.lt-carry-bar > i.lt-carry-window { background: #f85149; }
+.lt-carry-legend { display: flex; gap: 10px; flex-wrap: wrap; color: #8b949e; font-size: 11px; }
+.lt-carry-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.lt-cat-chat { background: #58a6ff; } .lt-cat-tool_calls { background: #a371f7; } .lt-cat-tool_output { background: #3fb950; }
+.lt-carry-warn { border: 1px solid #d29922; background: rgba(210, 153, 34, 0.1); color: #f2cc60; border-radius: 6px; padding: 5px 8px; margin: 6px 0; }

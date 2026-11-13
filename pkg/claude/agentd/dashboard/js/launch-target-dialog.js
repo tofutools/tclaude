@@ -21,6 +21,7 @@ import { unrestrictedOn } from './node-trust.js';
 import { markInTransit } from './drop-landing.js';
 import { modelAccessOptions, ownGateways } from './teleport-model-access.js';
 import { requestJSON } from './request-json.js';
+import { CarryOver, carryBody, carryInvalid, carryRows, emptyCarry } from './morph-carry.js';
 
 const html = htm.bind(h);
 
@@ -141,12 +142,9 @@ export function carries(mode, { node = 'the target', home = 'its home', morph = 
     case 'morph': {
       const rows = [['✓', 'Identity', 'same agent_id, inbox, groups and permissions']];
       const hist = morph?.history;
-      if (hist && hist.target && hist.source !== hist.target) {
-        const lost = (hist.items || []).map((i) => `${i.kind} ×${i.count}`).join(', ');
-        const estimates = hist.carried_estimated_tokens > 0 ? `; estimated tokens: ${hist.source_estimated_tokens ?? '?'} source → ${hist.carried_estimated_tokens} carried` : '';
-        const window = hist.context_window_tokens > 0 ? `; window ${hist.context_window_tokens} (${hist.context_window_source}), budget ${hist.budget_tokens}` : '';
-        rows.push(['≈', 'History', `translated ${hist.source} → ${hist.target}: ${hist.carried_entries ?? '?'} of ${hist.source_entries ?? '?'} entries carried${estimates}${window}${lost ? ` (${lost})` : ''}`]);
-      } else rows.push(['✓', 'History', 'kept: it resumes the same conversation']);
+      if (hist && hist.target && hist.source !== hist.target) rows.push(...carryRows(hist));
+      else rows.push(['✓', 'History', 'kept: it resumes the same conversation']);
+      if (morph?.backupRequested) rows.push(['✓', 'Backup', `a stopped clone on ${formLine(morph.before) || 'its current form'}, without groups or permissions`]);
       // Both layers, as the daemon resolves them for the launch: the harness's
       // own mode alone reads as "off" for an agent tclaude's sandbox wraps.
       const sb = morph?.sandbox;
@@ -245,6 +243,13 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [carry, setCarryChoice] = useState(emptyCarry);
+  const [advanced, setAdvanced] = useState(false);
+  const [backup, setBackup] = useState(false);
+  const carryKey = JSON.stringify(carryBody(carry));
+  // The preview answers one carry-over choice; OK waits for the current one.
+  const wantKey = `${profile}|${carryKey}|${backup}`;
+  const [previewKey, setPreviewKey] = useState('');
   useEffect(() => { onPhase?.(busy ? 'busy' : 'confirm'); }, [busy]);
   useEffect(() => {
     let live = true;
@@ -259,16 +264,33 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     }).catch(() => {});
     return () => { live = false; };
   }, []);
+  // A new profile starts from the automatic carry-over.
+  useEffect(() => { setPreview(null); setCarry(null); setCarryChoice(emptyCarry()); setAdvanced(false); }, [profile]);
+  // Every preview is the daemon's dry run of the same plan the morph applies;
+  // a carry-over edit re-runs it after a short pause in typing.
+  // The backup rides along so an offline agent is refused here, not at apply.
+  // A changed carry-over choice needs its loss confirmed again.
+  useEffect(() => { setConfirmCut(false); setProceedWithoutSummary(false); }, [carryKey, backup]);
   useEffect(() => {
-    setPreview(null); setCarry(null);
     if (!profile) return undefined;
+    if (carryInvalid(carry)) { setError(''); return undefined; }
     let live = true;
-    setError('');
-    api.morph(agent.conv || agent.id, { profile, dry_run: true })
-      .then((r) => { if (live) { setPreview(r); setCarry(r); } })
-      .catch((e) => { if (live) setError(errText(e)); });
-    return () => { live = false; };
-  }, [profile]);
+    const run = () => {
+      setError('');
+      api.morph(agent.conv || agent.id, { profile, ...carryBody(carry), ...(backup ? { backup: true } : {}), dry_run: true })
+        .then((r) => { if (live) { setPreview(r); setPreviewKey(wantKey); } })
+        .catch((e) => { if (live) setError(errText(e)); });
+    };
+    const timer = setTimeout(run, carryKey === '{}' ? 0 : 350);
+    return () => { live = false; clearTimeout(timer); };
+  }, [profile, carryKey, backup]);
+  const stale = previewKey !== wantKey;
+  useEffect(() => { setCarry(preview ? { ...preview, backupRequested: backup } : null); }, [preview, backup]);
+  const cross = !!(preview?.history?.target && preview.history.source !== preview.history.target);
+  // An explicit summary choice is its own confirmation.
+  const needsConfirm = !!preview?.history?.needs_summary && carry.method !== 'summary';
+  // A summary or handoff needs the agent to take a turn first, so no --now.
+  const waitsForSource = !!(preview?.history?.needs_summary || preview?.history?.needs_handoff || (cross && (carry.method === 'summary' || carry.method === 'handoff')));
 
   useEffect(() => {
     if (!waiting) return undefined;
@@ -298,16 +320,16 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     if (!proceedWithoutSummary || !targetProfile || busy) return;
     setBusy(true); setError('');
     try {
-      await api.morph(agent.id, {profile:targetProfile, proceed_without_summary:true, now:true});
+      await api.morph(agent.id, {profile:targetProfile, ...(cross ? carryBody(carry) : {}), ...(backup ? { backup: true } : {}), proceed_without_summary:true, now:true});
       toast('Morphing with readable history only; the full transcript is saved.'); onClose();
     } catch(e) { setError(errText(e)); }
     finally { setBusy(false); }
   };
   const apply = async () => {
-    if (!profile || !preview || busy || (preview.history?.needs_summary && !confirmCut && !proceedWithoutSummary)) return;
+    if (!profile || !preview || stale || busy || carryInvalid(carry) || (needsConfirm && !confirmCut && !proceedWithoutSummary)) return;
     setBusy(true); setError('');
     let done;
-    try { done = await api.morph(agent.conv || agent.id, { profile, ...(now && !preview.history?.needs_summary && !preview.history?.needs_handoff ? { now: true } : {}), ...(confirmCut ? { confirm_history_loss: true } : {}), ...(proceedWithoutSummary ? { proceed_without_summary: true } : {}) }); } catch (e) { setError(errText(e)); setBusy(false); return; }
+    try { done = await api.morph(agent.conv || agent.id, { profile, ...(cross ? carryBody(carry) : {}), ...(backup ? { backup: true } : {}), ...(now && !waitsForSource ? { now: true } : {}), ...(confirmCut ? { confirm_history_loss: true } : {}), ...(proceedWithoutSummary ? { proceed_without_summary: true } : {}) }); } catch (e) { setError(errText(e)); setBusy(false); return; }
     if (done?.result === 'pending' && done?.pending_morph?.history === 'summary') {
       setWaiting(done.pending_morph); setRemaining(Math.max(0,Math.ceil((Date.parse(done.pending_morph.expires_at)-Date.now())/1000))); setBusy(false); return;
     }
@@ -315,7 +337,7 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     // its new terminal); the toast keeps the result.
     toast(`${done?.result === 'pending'
       ? `${agent.name} morphs to ${profile} when it next goes idle (within 30 minutes, or the request lapses).${agent.node ? '' : ' Its row shows the pending morph.'}`
-      : `${agent.name} is now ${profile}. It got a short inbox note saying what changed.`}${done?.detail ? ` ${done.detail}` : ''}`);
+      : `${agent.name} is now ${profile}. It got a short inbox note saying what changed.`}${done?.backup ? ` Backup kept: ${done.backup.name}, stopped.${done.backup.warning ? ` (${done.backup.warning})` : ''}` : ''}${done?.detail ? ` ${done.detail}` : ''}`);
     onClose();
   };
   return html`
@@ -329,12 +351,14 @@ function MorphPanel({ agent, api, onClose, setCarry, okRef, onPhase, toast = she
     ${preview && html`<div class="lt-morph-preview"><div><span class="lt-k">was</span> ${formLine(preview.before)}</div><div><span class="lt-k">now</span> ${formLine(preview.after)}</div></div>`}
     ${preview?.history?.needs_handoff && html`<div role="status">Compaction summary unreadable. Ask ${agent.name} for a handoff, carried beside its readable tail. If the source cannot answer, explicitly confirm readable-history-only continuation below.</div>`}
     ${preview?.history?.budget_warning && html`<div role="status">${preview.history.kept_percent}% kept · ${preview.history.dropped_percent}% dropped from inline history. ${preview.history.selection_reason}</div>`}
-    ${preview?.history?.needs_summary && html`<label key="summary-confirm" class="lt-check"><input id="lt-confirm-cut" type="checkbox" checked=${confirmCut} disabled=${!!waiting} onChange=${(e) => setConfirmCut(e.currentTarget.checked)} /> Drop ${preview.history.dropped_percent}% of inline history, carry a source-written summary. Original task and latest instructions stay available.</label>`}
-    <label class="lt-check"><input id="lt-morph-now" type="checkbox" checked=${now} disabled=${!!waiting || preview?.history?.needs_summary || preview?.history?.needs_handoff} onChange=${(e) => setNow(e.currentTarget.checked)} /> now: stop it even if it is busy, and resume it from its last saved history</label>
+    ${cross && !waiting && html`<${CarryOver} carry=${carry} onChange=${setCarryChoice} hist=${preview.history} disabled=${busy} advanced=${advanced} onAdvanced=${setAdvanced} />`}
+    ${needsConfirm && html`<label key="summary-confirm" class="lt-check"><input id="lt-confirm-cut" type="checkbox" checked=${confirmCut} disabled=${!!waiting} onChange=${(e) => setConfirmCut(e.currentTarget.checked)} /> Drop ${preview.history.dropped_percent}% of inline history, carry a source-written summary. Original task and latest instructions stay available.</label>`}
+    ${preview && !waiting && html`<label key="backup" class="lt-check"><input id="lt-morph-backup" type="checkbox" checked=${backup} disabled=${busy} onChange=${(e) => setBackup(e.currentTarget.checked)} /> Keep a backup: clone ${agent.name} as it is now (${formLine(preview.before)}) as “${agent.name} (pre-morph backup)”, stopped, with no groups or permissions. Wake it to go back.</label>`}
+    <label class="lt-check"><input id="lt-morph-now" type="checkbox" checked=${now} disabled=${!!waiting || waitsForSource} onChange=${(e) => setNow(e.currentTarget.checked)} /> now: stop it even if it is busy, and resume it from its last saved history</label>
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="modal-buttons"><span class="spacer"></span>
       <${Button} id="lt-cancel" onClick=${onClose}>Cancel</${Button}>
-      <${Button} variant="primary" domRef=${okRef} id="lt-ok" disabled=${!preview || busy || !!waiting || (preview?.history?.needs_summary && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_handoff ? 'Request handoff and morph' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</${Button}></div>`;
+      <${Button} variant="primary" domRef=${okRef} id="lt-ok" disabled=${!preview || stale || busy || !!waiting || !!carryInvalid(carry) || (needsConfirm && !confirmCut && !proceedWithoutSummary)} onClick=${apply}>${busy ? 'Morphing…' : preview?.history?.needs_handoff || (cross && carry.method === 'handoff') ? 'Request handoff and morph' : preview?.history?.needs_summary ? 'Request summary and morph' : now ? 'Morph now' : 'Morph at next idle turn'}</${Button}></div>`;
 }
 
 export function formLine(v) {

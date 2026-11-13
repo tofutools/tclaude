@@ -334,7 +334,11 @@ To send an agent elsewhere without dragging, use the **send elsewhere** section 
 its row's ⚙ menu (single-node and fused views). Each item opens one dialog with
 a mode bar: **Move** to a group on another node, **Clone** (here, continuing in
 the clone dialog), **Morph** into another spawn profile (a dry run previews the
-change and what happens to the history), **Teleport** to another node (its home
+change and what happens to the history; for another harness, its *History
+carry-over* section sets the target window, the budget, what is cut first, how
+a large cut is handled and, under Advanced, how much of each category is kept,
+with a live estimate from the dry run; *Keep a backup* leaves a stopped clone of
+the agent's current form), **Teleport** to another node (its home
 keeps a placeholder), and **Recall home** (from the placeholder at home, or ⌂
 `⌂ recall home…` where it runs: straight to its origin, retaking its home identity). Another
 node's agent offers **move here** and **clone** (on that node), plus **Morph** when that
