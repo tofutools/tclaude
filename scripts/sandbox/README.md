@@ -8,9 +8,10 @@ dashboard change in a real browser before you open the PR.
 scripts/sandbox/ui.sh up               # build, seed the full fixture, print the URL
 scripts/sandbox/ui.sh up --port 7790   # a fixed port, on 127.0.0.1 only
 scripts/sandbox/ui.sh up --foreground  # the same, serving until stopped (for agent show)
+scripts/sandbox/ui.sh up --peer        # plus a live federation peer and hub
 scripts/sandbox/ui.sh down             # stop it and delete its data
-scripts/sandbox/ui.sh tour             # the route tour on a fresh sandbox
-scripts/sandbox/ui.sh smoke [NAME]     # every Playwright test, or one file
+scripts/sandbox/ui.sh tour [--peer]    # the route tour on a fresh sandbox
+scripts/sandbox/ui.sh smoke [--peer] [NAME]  # every Playwright test, or one file
 ```
 
 The server is `TestSandboxServe` in `pkg/claude/agentd/sandbox_serve_test.go`:
@@ -63,18 +64,48 @@ production routes wherever one exists.
 - **Usage:** a spend limit.
 - **Diagnostics:** log lines in Diagnostics → Logs.
 - **Federation:** one trusted peer node, plus the Steward with a decision for you.
+  It has no node behind it, so it shows as unreachable; `--peer` links a live
+  one instead (below).
 
 `ui.sh up --fixture NAME` serves a docshots fixture instead (`fleet`, `collab`,
 `steward`, `learn`, `page`, `collab-fleet`, `collab-quiet`).
+
+## A live federation peer (`--peer`)
+
+Without `--peer` the sandbox is one node. Its trusted peer has nothing behind
+it, so the map shows it unreachable and the hub-backed Fleet pages show their
+empty states. `ui.sh up --peer` (and `tour --peer`, `smoke --peer`) links a
+live one, the way `TestFleetJourney` runs two nodes and a hub:
+
+- **A hub.** A `tclaude-hub` runs inside the sandbox server, on its own
+  loopback port. The sandbox claims its admin, so the Hub page and hub runs
+  work.
+- **The peer `ci-runner` (`ci@runner`).** It is a second daemon:
+  `TestSandboxPeerInstance`, a child process of the server, with its own
+  throwaway HOME. It holds two groups, four agents and a task board on
+  `ci-fleet`.
+- **Trust.** The peer enrolls with the sandbox on the node profile
+  `ci-runners`, so the two trust each other at the restricted level. The peer
+  grants the sandbox roster, presence and task board reads on `ci-fleet`, the
+  roster of `release-checks`, and its harness list.
+- **A stranger.** `guest@laptop` is on the hub but not trusted, so Fleet
+  config → Peers has an instance waiting to be trusted.
+
+So the map shows a reachable peer card with its counts and both trust
+directions. `/groups?node=<id>` is the peer's own Groups page, read through
+the hub, and Profiles and Audit have rows. The peer's id and seeded names
+land under `peer` in `sandbox-out/ui/fixture.json`. Spawns, models, sharing,
+offers, remote jobs and moves stay empty: nothing has used them yet.
+
+`--peer` adds about two seconds to the start. `down` stops all three: the
+server stops the hub with itself, and the peer when its stdin closes. A peer
+that is still running gets TERM like the server. The peer's log is kept as
+`sandbox-out/<name>-peer-last.log`.
 
 ## What it cannot show
 
 - **Terminals.** A live terminal needs a real tmux and pty, so the Collab view
   lists the simulated sessions but cannot attach to them.
-- **A live federation peer.** There is no hub, and nothing answers for the
-  trusted peer. The map shows it unreachable, and the hub-backed Fleet pages
-  show their empty states: peers on the hub, spawns, invites, models, sharing,
-  profiles, offers, remote jobs, moves and federation audit.
 - **Performance captures.** A CPU capture needs a busy live daemon.
 
 ## The smoke tests
@@ -98,6 +129,13 @@ page error, a console error, a failed request, a page with almost no content,
 or an empty state. A page added later is toured automatically. It fails until
 the fixture fills that page or the tour's `ALLOW` list says why it stays empty.
 Every allow entry carries its reason.
+
+With `--peer` the tour also opens the map, Fleet config → Peers and
+Harnesses, and the peer's Groups page and task. Each must show the peer's
+seeded names. The allow entries a live peer makes wrong (`peer: false`) no
+longer apply there: the map card's "Unreachable.", and the empty Peers,
+Invites, Profiles and Audit pages. A restricted peer refuses the views it did
+not grant, so its 403s are allowed, and only under `--peer`.
 
 The tests use `@playwright/test` with the system Chrome (`channel: 'chrome'`),
 so nothing is downloaded. Set `SANDBOX_CHROME` to use another binary. The

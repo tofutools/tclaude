@@ -5,7 +5,11 @@
 // toured automatically (the list comes from the router), so it fails here until
 // the fixture seeds it or ALLOW says why it stays empty.
 //
-//   scripts/sandbox/ui.sh tour
+// With a live federation peer (ui.sh tour --peer) it also opens the peer's
+// pages, and the Fleet pages a linked peer fills must show it, not their empty
+// states.
+//
+//   scripts/sandbox/ui.sh tour [--peer]
 import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 
@@ -14,6 +18,8 @@ import { test, expect } from '@playwright/test';
 const fixture = process.env.SANDBOX_FIXTURE_JSON
   ? JSON.parse(readFileSync(process.env.SANDBOX_FIXTURE_JSON, 'utf8'))
   : null;
+// The live peer (ui.sh tour --peer), or null.
+const peer = fixture?.peer ?? null;
 
 // Tabs the tour skips, each with its reason.
 const SKIP_TABS = {
@@ -23,22 +29,26 @@ const SKIP_TABS = {
 // Empty states that are expected in the sandbox, by route (the path the tour
 // visits) and a pattern of the empty state's text. Each needs a reason; keep
 // this list short, since every entry is a page the sandbox cannot show.
+// An entry marked peer: false holds only without a live peer: linking one
+// (--peer) fills that page, so there the empty state is a failure.
 const NO_HUB = 'the sandbox has no federation hub and its one peer has no live node behind it';
+const NOT_DONE = 'nothing in the sandbox has used this federation feature yet, live peer or not';
 const ALLOW = [
   // Exactly this: a peer never seen has no date (tk_7dcf4f84).
-  { route: '/map', text: /^Unreachable\.$/, why: NO_HUB },
-  { route: '/fleet-admin/peers', text: /No other instances visible on the hub/, why: NO_HUB },
-  { route: '/fleet-admin/spawns', text: /No open spawn requests from peers|Nothing sent yet/, why: NO_HUB },
-  { route: '/fleet-admin/invites', text: /Invites need a node profile/, why: NO_HUB },
-  { route: '/fleet-admin/models', text: /No model gateways yet|No leases|No model requests on/, why: NO_HUB },
-  { route: '/fleet-admin/sharing', text: /Federation is off|You share no model gateway/, why: NO_HUB },
-  { route: '/fleet-admin/profiles', text: /No profiles yet/, why: NO_HUB },
-  { route: '/fleet-admin/offers', text: /No offers (from peers|sent)/, why: NO_HUB },
-  { route: '/fleet-admin/jobs', text: /No remote jobs|No repositories allowed/, why: NO_HUB },
-  { route: '/fleet-admin/moves', text: /No agent moves or teleports/, why: NO_HUB },
-  { route: '/fleet-admin/audit', text: /No federation activity in this window/, why: NO_HUB },
+  { route: '/map', text: /^Unreachable\.$/, why: NO_HUB, peer: false },
+  { route: '/fleet-admin/peers', text: /No other instances visible on the hub/, why: NO_HUB, peer: false },
+  { route: '/fleet-admin/spawns', text: /No open spawn requests from peers|Nothing sent yet/, why: NOT_DONE },
+  { route: '/fleet-admin/invites', text: /Invites need a node profile/, why: NO_HUB, peer: false },
+  { route: '/fleet-admin/models', text: /No model gateways yet|No leases|No model requests on/, why: NOT_DONE },
+  { route: '/fleet-admin/sharing', text: /Federation is off/, why: NO_HUB, peer: false },
+  { route: '/fleet-admin/sharing', text: /No peer shares usage with you|You share no model gateway/, why: NOT_DONE },
+  { route: '/fleet-admin/profiles', text: /No profiles yet/, why: NO_HUB, peer: false },
+  { route: '/fleet-admin/offers', text: /No offers (from peers|sent)/, why: NOT_DONE },
+  { route: '/fleet-admin/jobs', text: /No remote jobs|No repositories allowed/, why: NOT_DONE },
+  { route: '/fleet-admin/moves', text: /No agent moves or teleports/, why: NOT_DONE },
+  { route: '/fleet-admin/audit', text: /No federation activity in this window/, why: NO_HUB, peer: false },
   { route: '/diagnostics/performance', text: /No captures yet/, why: 'a CPU capture needs a busy live daemon; the sandbox serves from a test binary' },
-];
+].filter((a) => !peer || a.peer !== false);
 
 // Console messages that are not the page's fault, each with its reason.
 const ALLOW_CONSOLE = [
@@ -48,10 +58,11 @@ const ALLOW_CONSOLE = [
 // Failed requests (status 400 and up) that are expected in the sandbox, by a
 // pattern of "<status> <path>", each with its reason.
 const ALLOW_HTTP = [
-  { text: /^409 \/api\/federation\/(away|boards)$/, why: NO_HUB },
-  { text: /^502 \/api\/peer\/inst_[a-z0-9]+\//, why: NO_HUB },
+  { text: /^409 \/api\/federation\/(away|boards)$/, why: NO_HUB, peer: false },
+  { text: /^502 \/api\/peer\/inst_[a-z0-9]+\//, why: NO_HUB, peer: false },
+  { text: /^403 \/api\/peer\/inst_[a-z0-9]+\//, why: 'the live peer trusts the sandbox at the restricted level; the dashboard asks for views it did not grant and shows the refusal', peer: true },
   { text: /^429 \/api\/companion\/presence$/, why: 'every route is a fresh page load, faster than the 32-tab presence table ages tabs out' },
-];
+].filter((a) => (a.peer === undefined) || a.peer === !!peer);
 
 // Routes the router sends elsewhere on purpose, each with its reason. A route
 // that lands on its own default sub-view (/config → /config/appearance) needs
@@ -68,7 +79,7 @@ const EMPTY_SELECTOR = '.empty, .ui-empty, .ui-empty-block';
 
 async function routes(page) {
   await page.goto('/');
-  return page.evaluate(async ({ skip, fx }) => {
+  return page.evaluate(async ({ skip, fx, peer }) => {
     const nav = await import('/static/js/nav-history-core.js');
     const out = [];
     for (const tab of nav.KNOWN_TABS) {
@@ -88,19 +99,39 @@ async function routes(page) {
         { path: nav.toPath({ tab: 'processes', subtab: 'templates', selection: fx.template }), expect: 'Record outcome' },
       );
     }
+    // The live peer: the Fleet pages name it, and its own pages (?node=) show
+    // what it shares, read through the hub.
+    if (peer) {
+      const node = `node=${encodeURIComponent(peer.id)}`;
+      out.push(
+        { path: '/map', expect: peer.label },
+        { path: nav.toPath({ tab: 'fleet-admin', subtab: 'peers' }), expect: 'guest@laptop' },
+        { path: nav.toPath({ tab: 'fleet-admin', subtab: 'harnesses' }), expect: peer.label },
+        { path: `/groups?${node}`, expect: peer.group },
+        { path: `/?${node}&task=${peer.task}:${peer.group}`, expect: peer.taskTitle },
+      );
+    }
     return out;
-  }, { skip: Object.keys(SKIP_TABS), fx: fixture });
+  }, { skip: Object.keys(SKIP_TABS), fx: fixture, peer });
 }
 
-// settle waits until the active section's text stops changing: the dashboard
-// fills in over several polls, and it never goes network-idle.
+// settle waits until the active section's text stops changing and no visible
+// placeholder still says it is loading: the dashboard fills in over several
+// polls, it never goes network-idle, and a slow read (a peer's summary through
+// the hub) keeps its "Loading…" text unchanged until it answers.
 async function settle(page) {
   let last = -1;
   let stable = 0;
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    const len = await page.evaluate(() => document.querySelector('section[id^="tab-"].active')?.innerText.length ?? -1);
-    stable = len === last && len > 0 ? stable + 1 : 0;
+    const { len, loading } = await page.evaluate((selector) => {
+      const section = document.querySelector('section[id^="tab-"].active');
+      if (!section) return { len: -1, loading: false };
+      const loading = [...section.querySelectorAll(selector)]
+        .some((el) => el.offsetParent !== null && /^Loading\b/.test(el.innerText.trim()));
+      return { len: section.innerText.length, loading };
+    }, EMPTY_SELECTOR);
+    stable = len === last && len > 0 && !loading ? stable + 1 : 0;
     if (stable >= 3) return;
     last = len;
     await page.waitForTimeout(250);

@@ -8,10 +8,11 @@
 #   scripts/sandbox/ui.sh up --foreground [...]            the same, serving until stopped
 #                                                         (run it as a background job of
 #                                                         your shell to `tclaude agent show` it)
+#   scripts/sandbox/ui.sh up --peer [...]                  also a live federation peer and hub
 #   scripts/sandbox/ui.sh url | status                     the running sandbox
 #   scripts/sandbox/ui.sh down                             stop it, delete its data
-#   scripts/sandbox/ui.sh smoke [NAME]                     Playwright tests on a fresh sandbox
-#   scripts/sandbox/ui.sh tour                             the route tour (smoke tour)
+#   scripts/sandbox/ui.sh smoke [--peer] [NAME]            Playwright tests on a fresh sandbox
+#   scripts/sandbox/ui.sh tour [--peer]                    the route tour (smoke tour)
 #
 # Fixtures: full (the default: every page and tab has data), or any docshots
 # fixture (fleet, collab, steward, learn, page, collab-fleet, collab-quiet).
@@ -22,6 +23,11 @@
 # real tmux server. The clock is live and the API is writable (the operator's
 # login is implied), so tasks, drags, drawings and messages all work. Terminals
 # show the simulated panes only: there is no real tmux to attach to.
+#
+# --peer adds a second daemon (a child process of the server, with its own
+# throwaway HOME) and a tclaude-hub inside the server, links the two as trusted
+# peers and seeds the peer, so the Fleet map, the peer's pages and the
+# hub-backed Fleet pages show real peer data. It adds about two seconds to the start.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -35,10 +41,11 @@ usage() {
   exit 2
 }
 
-# start NAME FIXTURE PORT: build and start a sandbox whose state lives in
-# $state_root/NAME; prints nothing, leaves its URL in $state_root/NAME/url.
+# start NAME FIXTURE PORT [PEER]: build and start a sandbox whose state lives
+# in $state_root/NAME; prints nothing, leaves its URL in $state_root/NAME/url.
+# PEER non-empty links a live federation peer (--peer).
 start() {
-  local name="$1" fixture="$2" port="$3"
+  local name="$1" fixture="$2" port="$3" peer="${4:-}"
   local state="$state_root/$name"
   if [[ -f "$state/pid" ]] && kill -0 "$(cat "$state/pid")" 2>/dev/null; then
     die "sandbox '$name' is already up at $(cat "$state/url" 2>/dev/null) (ui.sh down first)"
@@ -54,7 +61,7 @@ start() {
   local t0=$SECONDS
   echo "building the sandbox server from $root ..." >&2
   (cd "$root" && go test -c -o "$work/agentd.test" ./pkg/claude/agentd/) || die "build failed"
-  echo "built in $((SECONDS - t0))s; seeding fixture '$fixture' ..." >&2
+  echo "built in $((SECONDS - t0))s; seeding fixture '$fixture'${peer:+ and a live peer} ..." >&2
 
   # The server sees only the throwaway directory: HOME, TMPDIR and every XDG
   # dir point inside it. It runs from the package directory, as go test does.
@@ -76,7 +83,7 @@ start() {
       XDG_DATA_HOME="$work/xdg/data" XDG_STATE_HOME="$work/xdg/state" \
       XDG_RUNTIME_DIR="$work/xdg/runtime" \
       TCLAUDE_SANDBOX_SERVE="$work/serve" TCLAUDE_SANDBOX_FIXTURE="$fixture" \
-      TCLAUDE_SANDBOX_PORT="$port" \
+      TCLAUDE_SANDBOX_PORT="$port" TCLAUDE_SANDBOX_PEER="$peer" \
       ${detach[@]+"${detach[@]}"} "$work/agentd.test" -test.run '^TestSandboxServe$' -test.timeout 0 -test.v
   ) > "$state/server.log" 2>&1 < /dev/null &
   echo $! > "$state/pid"
@@ -106,18 +113,25 @@ stop() {
   if [[ -n "$work" && -d "$work/serve" ]]; then
     touch "$work/serve/stop"
   fi
-  if [[ -n "$pid" ]]; then
+  # The live peer (--peer) is the server's child: it stops when the server
+  # closes its stdin, or dies.
+  local peer_pid=""
+  [[ -n "$work" && -f "$work/serve/peer.pid" ]] && peer_pid="$(cat "$work/serve/peer.pid")"
+  local p
+  for p in "$pid" "$peer_pid"; do
+    [[ -n "$p" ]] || continue
     # The server returns on the stop file and runs its cleanup; give it time,
     # then TERM it and wait again, so its files are not deleted under it.
-    for _ in $(seq 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
-      kill -9 "$pid" 2>/dev/null || true
+    for _ in $(seq 100); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
+    if kill -0 "$p" 2>/dev/null; then
+      kill "$p" 2>/dev/null || true
+      for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
+      kill -9 "$p" 2>/dev/null || true
     fi
-  fi
+  done
   # Keep the server's log: it says why a sandbox failed or what it refused.
   [[ -f "$state/server.log" ]] && cp "$state/server.log" "$state_root/$1-last.log"
+  [[ -n "$work" && -f "$work/serve/peer.log" ]] && cp "$work/serve/peer.log" "$state_root/$1-peer-last.log"
   # Only ever delete the directory this script made.
   if [[ -n "$work" && "$work" == */tclaude-sandbox.* && -d "$work" ]]; then
     rm -rf "$work"
@@ -152,18 +166,19 @@ cmd="${1:-}"
 shift
 case "$cmd" in
   up)
-    fixture=full port="" foreground=""
+    fixture=full port="" foreground="" peer=""
     while (( $# )); do
       case "$1" in
         --fixture) fixture="${2:?--fixture needs a name}"; shift ;;
         --port) port="${2:?--port needs a number}"; shift ;;
         --foreground) foreground=1 ;;
+        --peer) peer=1 ;;
         *) usage ;;
       esac
       shift
     done
     [[ -z "$port" || "$port" =~ ^[0-9]+$ ]] || die "--port must be a number"
-    start ui "$fixture" "$port"
+    start ui "$fixture" "$port" "$peer"
     cat "$state_root/ui/url"; echo
     if [[ -n "$foreground" ]]; then
       # Only now: a start that failed (one already up, say) must not stop it.
@@ -182,7 +197,9 @@ case "$cmd" in
     ;;
   status)
     if [[ -f "$state_root/ui/pid" ]] && kill -0 "$(cat "$state_root/ui/pid")" 2>/dev/null; then
-      echo "up: $(cat "$state_root/ui/url") (pid $(cat "$state_root/ui/pid"), data in $(cat "$state_root/ui/work"))"
+      peer_note=""
+      [[ -f "$(cat "$state_root/ui/work")/serve/peer.pid" ]] && peer_note=", with a live peer"
+      echo "up: $(cat "$state_root/ui/url") (pid $(cat "$state_root/ui/pid"), data in $(cat "$state_root/ui/work")$peer_note)"
     else
       echo "down"
     fi
@@ -191,10 +208,12 @@ case "$cmd" in
     stop ui
     ;;
   smoke|tour)
-    [[ "$cmd" == tour ]] && set -- tour
+    peer=""
+    if [[ "${1:-}" == --peer ]]; then peer=1; shift; fi
+    [[ "$cmd" == tour ]] && { (( $# == 0 )) || usage; set -- tour; }
     name="smoke-$$" foreground=""
     trap 'stop "$name"' EXIT
-    start "$name" full ""
+    start "$name" full "" "$peer"
     run_smoke "$name" "$@"
     echo "results and screenshots: $state_root/results-$name" >&2
     ;;
