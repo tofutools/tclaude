@@ -376,6 +376,12 @@ func planCrossHarnessMorph(convID string, dst *harness.Harness, target db.AgentM
 				if cap < opts.Policy.ContextWindowTokens {
 					opts.Policy.ContextWindowTokens = cap
 					opts.Policy.ContextWindowSource = "Claude auto-compact ceiling"
+				} else if window == 0 && cap > opts.Policy.ContextWindowTokens && model != "" {
+					// A profile named for a large window whose model lacks
+					// [1m] runs at the standard window: Claude Code caps
+					// the auto-compact window there, so say why.
+					opts.Policy.ContextWindowSource += fmt.Sprintf("; %s without [1m], so auto-compact %s has no effect",
+						model, harness.FormatAutoCompactWindow(compact))
 				}
 			}
 		}
@@ -386,6 +392,24 @@ func planCrossHarnessMorph(convID string, dst *harness.Harness, target db.AgentM
 		sandboxBefore: current.Sandbox, sandboxAfter: dstMode,
 		sandbox: viewMorphSandbox(convID, implementation, dst, dstMode),
 	}, nil
+}
+
+// applyCarry folds the operator's carry-over policy into the translation,
+// so the preview and the applied morph plan the history the same way.
+func (cm *crossMorph) applyCarry(c *db.AgentMorphCarry) {
+	if c == nil {
+		return
+	}
+	p := &cm.opts.Policy
+	p.StatedWindowTokens, p.BudgetTokens, p.CarryAll = c.WindowTokens, c.BudgetTokens, c.All
+	p.CutFirst = transcript.Category(c.CutFirst)
+	p.Keep = nil
+	for k, v := range c.Keep {
+		if p.Keep == nil {
+			p.Keep = map[transcript.Category]int{}
+		}
+		p.Keep[transcript.Category(k)] = v
+	}
 }
 
 func stringPtrValue(v string) *string { return &v }
@@ -504,7 +528,7 @@ func (cm *crossMorph) installHistory(agentID, convID string, pending db.AgentPen
 // the agent onto it with the destination profiles in one transaction, then
 // resume it. Until the rebind commits, a failure resumes the source
 // conversation unchanged.
-func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow) morphOutcome {
+func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow, takeBackup func() *morphOutcome) morphOutcome {
 	dst, err := harness.Resolve(pending.Target.Harness)
 	if err != nil {
 		return morphOutcome{status: http.StatusBadRequest, code: "invalid_form", detail: err.Error()}
@@ -513,14 +537,20 @@ func applyCrossHarnessMorphUnderLaunchLock(agentID, convID string, pending db.Ag
 	if fail != nil {
 		return morphOutcome{status: fail.Status, code: fail.Kind, detail: fail.Msg}
 	}
+	cm.applyCarry(pending.Carry)
 	if pending.History != "handoff" {
 		preflight, err := cm.preview(convID)
 		if err != nil {
 			return morphOutcome{status: http.StatusConflict, code: "history_unreadable", detail: err.Error()}
 		}
-		if !pending.ProceedWithoutSummary && ((preflight.NeedsSummary && !pending.ConfirmHistoryLoss) || ((preflight.NeedsSummary || preflight.Count(transcript.LossEncryptedSummary) > 0) && (pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == ""))) {
+		// A truncate morph was chosen to cut without a summary.
+		needsSummary := preflight.NeedsSummary && pending.History != "truncate"
+		if !pending.ProceedWithoutSummary && ((needsSummary && !pending.ConfirmHistoryLoss) || ((needsSummary || preflight.Count(transcript.LossEncryptedSummary) > 0) && (pending.Handoff == nil || strings.TrimSpace(pending.Handoff.Body) == ""))) {
 			return morphOutcome{status: http.StatusConflict, code: "history_confirmation_required", detail: "history grew beyond the confirmed budget or its required summary is missing; source remains unchanged"}
 		}
+	}
+	if out := takeBackup(); out != nil {
+		return *out
 	}
 	var clientHandoff *agentRestartTmuxHandoff
 	restoreSource := func() string { return "" }

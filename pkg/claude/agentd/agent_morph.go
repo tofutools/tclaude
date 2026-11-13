@@ -44,15 +44,34 @@ type morphRequest struct {
 	AskTimeout            *string `json:"ask_timeout,omitempty"`
 	AutoCompactWindow     *string `json:"auto_compact_window,omitempty"`
 	TrustDir              *bool   `json:"trust_dir,omitempty"`
-	// History picks the delivery rung of a cross-harness morph: "" or
-	// "auto" (native, else a context file, else a handoff), "context_file",
-	// or "handoff" (the agent writes a handoff for its successor first).
+	// History picks how a cross-harness morph delivers the history: "" or
+	// "auto" (native, with a source-written summary when a large cut needs
+	// one, else a context file, else a handoff), "summary" (always ask the
+	// source for a summary), "truncate" (cut without a summary; the full
+	// transcript is pointed at), "context_file" (a native conversation
+	// that points at the saved history), or "handoff" (the agent writes a
+	// handoff for its successor first).
 	History             string `json:"history,omitempty"`
 	HistoryWindowTokens *int64 `json:"history_window_tokens,omitempty"`
-	Now                 bool   `json:"now,omitempty"`
-	Back                bool   `json:"back,omitempty"`
-	Cancel              bool   `json:"cancel,omitempty"`
-	DryRun              bool   `json:"dry_run,omitempty"`
+	// Carry-over overrides for a cross-harness morph. TargetWindowTokens
+	// states the destination window (detection neither caps nor replaces
+	// it); HistoryBudget is "auto", "all" or a token count ("300000",
+	// "300k"); HistoryCutFirst is oldest, chat, tool_calls or tool_output;
+	// HistoryKeep is a 0-100 share per category kept whole, newest first.
+	TargetWindowTokens *int64         `json:"target_window_tokens,omitempty"`
+	HistoryBudget      string         `json:"history_budget,omitempty"`
+	HistoryCutFirst    string         `json:"history_cut_first,omitempty"`
+	HistoryKeep        map[string]int `json:"history_keep,omitempty"`
+	// Backup clones the agent in its current form, stopped and without
+	// groups or permissions, just before the morph applies.
+	Backup bool `json:"backup,omitempty"`
+	Now    bool `json:"now,omitempty"`
+	Back   bool `json:"back,omitempty"`
+	Cancel bool `json:"cancel,omitempty"`
+	DryRun bool `json:"dry_run,omitempty"`
+
+	// carry is the decoded carry-over policy; nil when none was given.
+	carry *db.AgentMorphCarry
 }
 
 var morphRefusedFields = map[string]string{
@@ -98,11 +117,17 @@ func decodeMorphRequest(w http.ResponseWriter, r *http.Request) (morphRequest, b
 	switch req.History = strings.ReplaceAll(strings.TrimSpace(req.History), "-", "_"); req.History {
 	case "", "auto":
 		req.History = ""
-	case "context_file", "handoff":
+	case "context_file", "handoff", "summary", "truncate":
 	default:
-		writeError(w, http.StatusBadRequest, "invalid_arg", "history must be auto, context_file or handoff")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "history must be auto, summary, truncate, context_file or handoff")
 		return req, false
 	}
+	carry, err := decodeMorphCarry(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return req, false
+	}
+	req.carry = carry
 	modes := 0
 	for _, on := range []bool{req.Back, req.Cancel, req.hasForm()} {
 		if on {
@@ -119,6 +144,56 @@ func decodeMorphRequest(w http.ResponseWriter, r *http.Request) (morphRequest, b
 		return req, false
 	}
 	return req, true
+}
+
+// decodeMorphCarry validates the carry-over fields into the persisted
+// policy, or nil when none was given.
+func decodeMorphCarry(req morphRequest) (*db.AgentMorphCarry, error) {
+	var c db.AgentMorphCarry
+	set := false
+	if req.TargetWindowTokens != nil {
+		if *req.TargetWindowTokens < 1024 || *req.TargetWindowTokens > 10_000_000 {
+			return nil, errors.New("target_window_tokens must be between 1024 and 10000000")
+		}
+		c.WindowTokens, set = *req.TargetWindowTokens, true
+	}
+	switch budget := strings.ToLower(strings.TrimSpace(req.HistoryBudget)); budget {
+	case "", "auto":
+	case "all":
+		c.All, set = true, true
+	default:
+		n, err := harness.ParseAutoCompactWindow(budget)
+		if err != nil {
+			return nil, fmt.Errorf("history_budget must be auto, all, or a token count such as 300000 or 300k (%d-%d)",
+				harness.MinAutoCompactWindow, harness.MaxAutoCompactWindow)
+		}
+		c.BudgetTokens, set = harness.AutoCompactWindowTokens(n), true
+	}
+	switch cut := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(req.HistoryCutFirst)), "-", "_"); cut {
+	case "", "oldest":
+	default:
+		if !transcript.ValidCategory(transcript.Category(cut)) {
+			return nil, errors.New("history_cut_first must be oldest, chat, tool_calls or tool_output")
+		}
+		c.CutFirst, set = cut, true
+	}
+	for k, v := range req.HistoryKeep {
+		key := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(k)), "-", "_")
+		if !transcript.ValidCategory(transcript.Category(key)) {
+			return nil, fmt.Errorf("history_keep: unknown category %q (want chat, tool_calls or tool_output)", k)
+		}
+		if v < 0 || v > 100 {
+			return nil, fmt.Errorf("history_keep: %s must be 0-100", key)
+		}
+		if c.Keep == nil {
+			c.Keep = map[string]int{}
+		}
+		c.Keep[key], set = v, true
+	}
+	if !set {
+		return nil, nil
+	}
+	return &c, nil
 }
 
 func readLimitedBody(r *http.Request) ([]byte, error) {
@@ -359,6 +434,8 @@ type morphResponse struct {
 	History *transcript.LossReport `json:"history,omitempty"`
 	// Sandbox is the cross-harness posture after the morph, both layers.
 	Sandbox *morphSandboxView `json:"sandbox,omitempty"`
+	// Backup is the stopped pre-morph clone, once the morph applied.
+	Backup *morphBackup `json:"backup,omitempty"`
 }
 
 // morphOutcome is the result of applying one morph.
@@ -369,6 +446,7 @@ type morphOutcome struct {
 	// convID is the agent's conversation after a cross-harness morph.
 	convID  string
 	history *transcript.LossReport
+	backup  *morphBackup
 }
 
 func handleWhoamiMorph(w http.ResponseWriter, r *http.Request) {
@@ -618,7 +696,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			}
 		}
 	}
-	if !cross && req.History != "" {
+	if !cross && (req.History != "" || req.carry != nil) {
 		writeError(w, http.StatusBadRequest, "invalid_form",
 			"history: only a cross-harness morph translates the history")
 		return
@@ -650,6 +728,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			writeSpawnFailure(w, fail)
 			return
 		}
+		cm.applyCarry(req.carry)
 		target = cm.target
 		resp.Before.Sandbox = cm.sandboxBefore
 		resp.After = viewMorphForm(dst.Name, target)
@@ -671,6 +750,29 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			writeError(w, failure.Status, failure.Kind, strings.Replace(failure.Msg, "may not spawn a", "may not morph an agent into a", 1))
 			return
 		}
+	}
+
+	// A backup is a new agent, so an agent asking for one needs the clone
+	// authority over the target as well as the morph authority.
+	if req.Backup && caller != "" {
+		if self {
+			if _, ok := requirePermission(w, r, PermSelfClone); !ok {
+				return
+			}
+		} else {
+			groups, err := cloneAuthorizationGroups(targetConv)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", "snapshot clone authorization groups: "+err.Error())
+				return
+			}
+			if _, ok := requireCrossAgentPermission(w, r, PermAgentClone, targetConv, ActionContext{affectedGroups: groups}); !ok {
+				return
+			}
+		}
+	}
+	if req.Backup && pickAliveSession(targetConv) == nil {
+		writeError(w, http.StatusConflict, "backup_offline", errMorphBackupOffline.Error())
+		return
 	}
 
 	if existing, _ := db.PendingMorphForAgent(agentID); existing != nil {
@@ -708,9 +810,19 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 			history = "summary"
 			handoffRequired = true
 		}
+		if req.History == "truncate" && report.NeedsSummary {
+			// The operator chose the cut without a summary; the carried
+			// notice names what was cut and points at the full transcript.
+			report.NeedsSummary = false
+			report.SelectionReason = "large history cut without a summary, as chosen; the full transcript is pointed at"
+		}
+		if req.History == "summary" && !report.NeedsSummary {
+			report.NeedsSummary = true
+			report.SelectionReason = "source-written summary requested"
+		}
 		if report.NeedsSummary {
 			report.Fallback = "native_summary"
-			if !req.DryRun && !req.ConfirmHistoryLoss && !req.ProceedWithoutSummary {
+			if !req.DryRun && !req.ConfirmHistoryLoss && !req.ProceedWithoutSummary && req.History != "summary" {
 				writeError(w, http.StatusConflict, "history_confirmation_required", fmt.Sprintf("drop %d%% of inline history, carry a source-written summary; confirm_history_loss is required", report.DroppedPercent))
 				return
 			}
@@ -737,7 +849,15 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 				"a handoff morph cannot use now: the agent has to take a turn to write the handoff")
 			return
 		}
-		if history != "" && history != "summary" {
+		if history == "truncate" {
+			// Only the native rung is renamed: a context-file rung the
+			// preview chose stays what the apply will use.
+			if (report.Fallback == "native" || report.Fallback == "native_summary") && report.Count(transcript.LossTruncatedBudget) > 0 {
+				report.Fallback = "native_truncated"
+			} else if report.Fallback == "native_summary" {
+				report.Fallback = "native"
+			}
+		} else if history != "" && history != "summary" {
 			report.Fallback = history
 		}
 		resp.History = report
@@ -755,8 +875,8 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 		actorLabel = auditConvLabel(caller)
 	}
 	pending := db.AgentPendingMorph{
-		ConfirmHistoryLoss: req.ConfirmHistoryLoss || req.ProceedWithoutSummary, ProceedWithoutSummary: req.ProceedWithoutSummary, Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv, History: history,
-		HandoffRequired: handoffRequired,
+		ConfirmHistoryLoss: req.ConfirmHistoryLoss || req.ProceedWithoutSummary || req.History == "summary", ProceedWithoutSummary: req.ProceedWithoutSummary, Target: target, Back: req.Back, ActorConv: caller, Actor: actorLabel, ConvID: targetConv, History: history,
+		HandoffRequired: handoffRequired, Carry: req.carry, Backup: req.Backup,
 	}
 	if resp.History != nil && resp.History.NeedsHandoff {
 		pending.HandoffReason = "encrypted_compaction_summary"
@@ -773,6 +893,7 @@ func handleMorph(w http.ResponseWriter, r *http.Request, targetConv string, self
 	if out.history != nil {
 		resp.History = out.history
 	}
+	resp.Backup = out.backup
 	if out.result == "pending" {
 		resp.PendingMorph, _ = db.PendingMorphForAgent(agentID)
 	}
@@ -840,8 +961,40 @@ func morphOrDefer(agentID, convID string, pending db.AgentPendingMorph, now, sel
 // holds resumeLaunchLock(convID) and has checked the generation. A form for
 // another harness takes the cross-harness path instead.
 func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow) morphOutcome {
+	// The backup is taken from the agent as it is now, once the checks that
+	// need no stop have passed and before the agent is stopped. Without it
+	// the morph does not go ahead: the operator asked for a way back.
+	var backup *morphBackup
+	takeBackup := func() *morphOutcome {
+		if !pending.Backup {
+			return nil
+		}
+		b, err := spawnMorphBackup(convID)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errMorphBackupOffline) {
+				status = http.StatusConflict
+			}
+			return &morphOutcome{status: status, code: "backup_failed",
+				detail: "the pre-morph backup could not be made, so the agent was not morphed: " + err.Error()}
+		}
+		backup = b
+		return nil
+	}
+	out := applyMorphFormUnderLaunchLock(agentID, convID, pending, live, takeBackup)
+	if backup != nil {
+		out.backup = backup
+		if out.status != http.StatusOK {
+			out.detail += "; the pre-morph backup " + backup.Name + " was kept"
+		}
+	}
+	return out
+}
+
+// applyMorphFormUnderLaunchLock applies the form itself.
+func applyMorphFormUnderLaunchLock(agentID, convID string, pending db.AgentPendingMorph, live *db.SessionRow, takeBackup func() *morphOutcome) morphOutcome {
 	if isCrossHarnessTarget(convID, pending.Target) {
-		return applyCrossHarnessMorphUnderLaunchLock(agentID, convID, pending, live)
+		return applyCrossHarnessMorphUnderLaunchLock(agentID, convID, pending, live, takeBackup)
 	}
 	// A same-harness form never moves the sandbox or the harness.
 	pending.Target.Harness, pending.Target.HarnessBuiltinMode = "", nil
@@ -851,6 +1004,9 @@ func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMo
 	if live == nil {
 		if _, err := durableRelaunchConfigForConvWith(convID, pending.Target.ApplyTo); err != nil {
 			return fail(http.StatusConflict, "relaunch_profile", "the new form cannot be launched: "+err.Error())
+		}
+		if out := takeBackup(); out != nil {
+			return *out
 		}
 		previous, err := db.ApplyAgentMorphForConv(convID, pending.Target, pending.Back)
 		if err != nil {
@@ -870,6 +1026,9 @@ func applyMorphUnderLaunchLock(agentID, convID string, pending db.AgentPendingMo
 		if err := claudeSubscriptionRelaunchBlocked(agentID); err != nil {
 			return fail(http.StatusConflict, claudeSubscriptionLostCode, err.Error())
 		}
+	}
+	if out := takeBackup(); out != nil {
+		return *out
 	}
 	clientHandoff := beginAgentRestartTmuxHandoff(live.TmuxSession)
 	defer clientHandoff.finishForConv(convID)

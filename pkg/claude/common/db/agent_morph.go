@@ -68,6 +68,29 @@ type AgentPendingMorph struct {
 	// dropped at expiry instead of falling back to the context-file rung.
 	HandoffRequired bool   `json:"handoff_required,omitempty"`
 	HandoffReason   string `json:"handoff_reason,omitempty"`
+	// Carry is the operator's history carry-over policy for a cross-harness
+	// morph; nil is the automatic policy.
+	Carry *AgentMorphCarry `json:"carry,omitempty"`
+	// Backup clones the agent in its current form, stopped, just before
+	// the morph applies.
+	Backup bool `json:"backup,omitempty"`
+}
+
+// AgentMorphCarry shapes how much history a cross-harness morph carries.
+// Zero fields keep the automatic policy.
+type AgentMorphCarry struct {
+	// WindowTokens is the destination window as the operator states it;
+	// detection neither caps nor replaces it.
+	WindowTokens int64 `json:"window_tokens,omitempty"`
+	// BudgetTokens replaces the window-derived budget; All carries the
+	// whole history with no budget cut.
+	BudgetTokens int64 `json:"budget_tokens,omitempty"`
+	All          bool  `json:"all,omitempty"`
+	// CutFirst is the category a budget cut shortens before it omits whole
+	// turns: chat, tool_calls or tool_output; "" is the oldest turns.
+	CutFirst string `json:"cut_first,omitempty"`
+	// Keep is the share (0-100) of a category kept whole, newest first.
+	Keep map[string]int `json:"keep,omitempty"`
 }
 
 // AgentMorphHandoff is the handoff an agent submits for the agent that

@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/harness/transcript"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -23,7 +25,12 @@ type morphParams struct {
 	Agent                 string `pos:"true" optional:"true" help:"Agent to morph: title, agent_id, conv-id or prefix, or group:<name> for every other member of a group. Default: yourself"`
 	Profile               string `long:"profile" short:"p" optional:"true" help:"Take the new launch form from this spawn profile; a profile for another harness makes it a cross-harness morph. Explicit flags override it"`
 	Harness               string `long:"harness" optional:"true" help:"Morph into another harness: the history is translated into a new conversation of that harness. Needs --ask-for-approval (or a profile that sets one); an agent caller must use --profile"`
-	History               string `long:"history" optional:"true" help:"Cross-harness only: how the conversation is carried. auto (native history, else saved to files the agent reads) | context-file | handoff (the agent first writes a handoff for its successor; needs a live agent)"`
+	History               string `long:"history" optional:"true" help:"Cross-harness only: how the conversation is carried. auto (native history; a source-written summary when a large cut needs one; else saved to files the agent reads) | summary (always ask the source for a summary first) | truncate (cut without a summary; the full transcript is pointed at) | context-file | handoff (the agent first writes a handoff for its successor; needs a live agent)"`
+	TargetWindow          string `long:"target-window" optional:"true" help:"Cross-harness only: the destination's context window as you know it (600000, 600k, 1m). Replaces the detected window instead of being capped by it; carrying more than it warns, never blocks"`
+	HistoryBudget         string `long:"history-budget" optional:"true" help:"Cross-harness only: how much history to carry: auto (60% of the window) | all (no cut) | a token count (300000, 300k)"`
+	CutFirst              string `long:"cut-first" optional:"true" help:"Cross-harness only: what a budget cut shortens first: oldest (omit the oldest turns; the default) | tool-output | tool-calls | chat (older records become one-line stubs pointing at the full transcript)"`
+	Keep                  string `long:"keep" optional:"true" help:"Cross-harness only: share of each category kept whole, newest first, e.g. tool-output=25,tool-calls=50,chat=100; the older rest becomes stubs pointing at the full transcript"`
+	Backup                bool   `long:"backup" help:"Before the morph applies, clone the agent in its current form as '<name> (pre-morph backup)', stopped, with no groups or permissions. Needs a live agent; an agent caller also needs clone authority over the target"`
 	Model                 string `long:"model" optional:"true" help:"New model (validated for the agent's harness)"`
 	Effort                string `long:"effort" optional:"true" help:"New reasoning effort (per-harness; Gemini has none)"`
 	Approval              string `long:"ask-for-approval" optional:"true" help:"New launch approval posture (per-harness values, as for spawn). An agent caller may not grant a posture broader than its own"`
@@ -117,6 +124,15 @@ type morphResult struct {
 	PendingMorph *db.AgentPendingMorph  `json:"pending_morph,omitempty"`
 	History      *transcript.LossReport `json:"history,omitempty"`
 	Sandbox      *morphSandbox          `json:"sandbox,omitempty"`
+	Backup       *morphBackup           `json:"backup,omitempty"`
+}
+
+// morphBackup is the stopped pre-morph clone a --backup morph left.
+type morphBackup struct {
+	AgentID string `json:"agent_id,omitempty"`
+	ConvID  string `json:"conv_id"`
+	Name    string `json:"name"`
+	Warning string `json:"warning,omitempty"`
 }
 
 // morphSandbox is how the agent is confined after a cross-harness morph:
@@ -148,6 +164,11 @@ func (p *morphParams) body() map[string]any {
 	if p.HistoryWindowTokens != 0 {
 		body["history_window_tokens"] = p.HistoryWindowTokens
 	}
+	set("history_budget", p.HistoryBudget)
+	set("history_cut_first", p.CutFirst)
+	if p.Backup {
+		body["backup"] = true
+	}
 	set("model", p.Model)
 	set("effort", p.Effort)
 	set("approval", p.Approval)
@@ -160,6 +181,31 @@ func (p *morphParams) body() map[string]any {
 		}
 	}
 	return body
+}
+
+// carryBody adds the flags that need parsing: the stated window and the
+// per-category keep shares.
+func (p *morphParams) carryBody(body map[string]any) error {
+	if v := strings.TrimSpace(p.TargetWindow); v != "" {
+		n, err := harness.ParseAutoCompactWindow(v)
+		if err != nil {
+			return fmt.Errorf("--target-window: want a token count such as 600000, 600k or 1m")
+		}
+		body["target_window_tokens"] = harness.AutoCompactWindowTokens(n)
+	}
+	if v := strings.TrimSpace(p.Keep); v != "" {
+		keep := map[string]int{}
+		for _, part := range strings.Split(v, ",") {
+			k, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(val), "%"))
+			if !ok || err != nil {
+				return fmt.Errorf("--keep: want category=percent pairs such as tool-output=25,chat=100")
+			}
+			keep[strings.TrimSpace(k)] = n
+		}
+		body["history_keep"] = keep
+	}
+	return nil
 }
 
 func runMorph(p *morphParams, stdout, stderr io.Writer) int {
@@ -190,6 +236,10 @@ func runMorph(p *morphParams, stdout, stderr io.Writer) int {
 		}
 	}
 	body := p.body()
+	if err := p.carryBody(body); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	results := make([]morphResult, 0, len(targets))
 	rc := rcOK
 	for _, target := range targets {
@@ -246,6 +296,12 @@ func runMorph(p *morphParams, stdout, stderr io.Writer) int {
 				fmt.Fprintf(stdout, "  warning: %s\n", sb.Warning)
 			}
 		}
+		if b := res.Backup; b != nil {
+			fmt.Fprintf(stdout, "  backup: %s (%s), stopped\n", b.Name, shortAgentID(b.AgentID, b.ConvID))
+			if b.Warning != "" {
+				fmt.Fprintf(stdout, "  backup warning: %s\n", b.Warning)
+			}
+		}
 		if res.Result == "dry_run" && res.Authority != "" {
 			fmt.Fprintf(stdout, "  allowed by: %s\n", res.Authority)
 		}
@@ -264,7 +320,38 @@ func printMorphHistory(w io.Writer, r *transcript.LossReport) {
 	}
 	fmt.Fprintf(w, "  history: %d of %d entries carried, %s\n", r.Carried, r.SourceEntries, rung)
 	if r.ContextWindowTokens > 0 {
-		fmt.Fprintf(w, "  history window: %d tokens (%s), budget %d\n", r.ContextWindowTokens, r.ContextWindowSource, r.BudgetTokens)
+		budget := fmt.Sprintf("budget %d", r.BudgetTokens)
+		switch r.BudgetSource {
+		case "all":
+			budget = "budget: all (no cut)"
+		case "stated":
+			budget += " (stated)"
+		}
+		fmt.Fprintf(w, "  history window: %d tokens (%s), %s\n", r.ContextWindowTokens, r.ContextWindowSource, budget)
+		if r.WindowStated && r.DetectedWindowTokens > 0 {
+			fmt.Fprintf(w, "  detected window: %d tokens (%s)\n", r.DetectedWindowTokens, r.DetectedWindowSource)
+		}
+	}
+	for _, u := range r.Categories {
+		if u.SourceTokens == 0 {
+			continue
+		}
+		line := fmt.Sprintf("  %s: ~%d → ~%d tokens", strings.ReplaceAll(string(u.Category), "_", " "), u.SourceTokens, u.CarriedTokens)
+		if u.KeepPercent != nil {
+			line += fmt.Sprintf(", newest %d%% kept whole", *u.KeepPercent)
+		}
+		if u.Shortened > 0 {
+			line += fmt.Sprintf(", %d shortened to stubs", u.Shortened)
+		}
+		if r.CutFirst == u.Category {
+			line += " (cut first)"
+		}
+		fmt.Fprintln(w, line)
+	}
+	if r.OverWindow {
+		fmt.Fprintln(w, "  warning: the carried history is larger than the target window; the agent may fail or compact at once")
+	} else if r.OverHeadroom {
+		fmt.Fprintln(w, "  warning: the carried history leaves less than the usual headroom; the agent may compact soon")
 	}
 	if r.CarriedEstimatedTokens > 0 {
 		fmt.Fprintf(w, "  estimated history tokens: %d source → %d carried\n", r.SourceEstimatedTokens, r.CarriedEstimatedTokens)

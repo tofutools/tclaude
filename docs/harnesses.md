@@ -197,6 +197,38 @@ is explicit about what does not map 1:1:
   loss-confirmation checkbox instead carries readable history with its full
   transcript pointer. The destination is warned that earlier context may be
   missing. The fallback never runs without that confirmation. The budget is checked again before applying the morph.
+- **Carry-over overrides.** When the operator knows better than the detected
+  limits, the morph can be told how to carry the history (CLI flags, the
+  `history_*` and `target_window_tokens` request fields, and the dashboard's
+  *History carry-over* section):
+  - `--target-window N` states the destination's window. It replaces the
+    detected window instead of being capped by it; the preview shows both.
+    When a Claude profile pins an auto-compact window above a model without
+    `[1m]`, the detected window says that the pin has no effect.
+  - `--history-budget auto|all|N` sets how much is carried: 60% of the window,
+    a token count, or `all`: every turn, and every tool record whole rather
+    than stubbed (unless `--keep` names a share). A single over-long tool
+    record is still clipped, with a pointer to its full text.
+  - `--keep tool-output=25,tool-calls=50,chat=100` keeps that share of each
+    category whole, newest first; the older rest becomes one-line stubs
+    pointing at numbered entries in the full transcript. A category not named
+    keeps the automatic rule (tool records of the last three turns, all chat).
+    Under a share, a record whose stub would be larger stays whole. The
+    original task and the latest instructions are never shortened.
+    Reasoning and harness-injected context have no share: they are never
+    carried.
+  - `--cut-first tool-output|tool-calls|chat` makes that category give way
+    before whole turns are omitted: its share becomes the largest with which
+    the rest fits the budget. The default, `oldest`, omits the oldest turns.
+  - `--history summary` always asks the source for a summary first;
+    `--history truncate` cuts without one, whatever the size of the cut.
+
+  The preview reports each category's estimated tokens before and after, and
+  warns (never blocks) when the carried history exceeds the window or leaves
+  less than the usual headroom. A carry-all morph is delivered natively even
+  then. The carried notice tells the receiving agent what the conversion
+  shortened or omitted, per category, with rough token counts and the path of
+  the full transcript.
 - **Resets and rewinds** carry only the active native history. Gemini compression
   snapshots are labelled as summaries; clear/checkpoint, OpenCode revert and
   Codex/Copilot rewind boundaries are applied before carrying turns. Removed

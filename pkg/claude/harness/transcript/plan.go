@@ -50,9 +50,39 @@ type Options struct {
 	// TranscriptPath is the full transcript file, named in omission and
 	// clipping markers so the target agent can read what was cut.
 	TranscriptPath string
+
+	// Operator carry-over overrides. All zero is the automatic policy.
+	//
+	// StatedWindowTokens is the destination window as the operator states
+	// it. It replaces the detected window instead of being capped by it.
+	StatedWindowTokens int64
+	// DetectedWindowTokens and DetectedWindowSource are the window the
+	// policy would have used without StatedWindowTokens, for the report.
+	DetectedWindowTokens int64
+	DetectedWindowSource string
+	// BudgetTokens replaces the window-derived budget (window ×
+	// BudgetPercent). CarryAll carries the whole history: no budget cut.
+	BudgetTokens int64
+	CarryAll     bool
+	// Keep is the share of each category kept at full fidelity, newest
+	// first; the older rest is shortened to stubs that point at the full
+	// transcript. A category not named keeps the automatic rule.
+	Keep map[Category]int
+	// CutFirst is the category a budget cut shortens before it omits whole
+	// turns: its keep share becomes the largest that fits the budget. ""
+	// omits the oldest turns first.
+	CutFirst Category
+}
+
+// operatorCarry reports whether any carry-over override is set.
+func (o Options) operatorCarry() bool {
+	return o.StatedWindowTokens > 0 || o.BudgetTokens > 0 || o.CarryAll || len(o.Keep) > 0 || o.CutFirst != ""
 }
 
 func (o Options) budgetTokens() int64 {
+	if o.BudgetTokens > 0 {
+		return o.BudgetTokens
+	}
 	window := o.ContextWindowTokens
 	if window <= 0 {
 		window = DefaultContextWindowTokens
@@ -107,10 +137,67 @@ type planEntry struct {
 	// cut for the budget.
 	turn    bool
 	summary bool
+	// cats is the estimated cost of each category this entry carries.
+	cats map[Category]int64
 }
 
 // NewPlan applies target policy to a transcript. It never mutates t.
 func NewPlan(t *Transcript, opts Options) *Plan {
+	costs := categoryCosts(t)
+	keep := opts.Keep
+	if opts.CarryAll {
+		// Carrying everything means everything whole: a category keeps its
+		// automatic stubs only when the operator names a share for it.
+		keep = map[Category]int{}
+		for _, c := range Categories {
+			keep[c] = 100
+		}
+		for c, v := range opts.Keep {
+			keep[c] = v
+		}
+	}
+	cut := resolveCutoffs(t, costs, keep)
+	if _, explicit := opts.Keep[opts.CutFirst]; !ValidCategory(opts.CutFirst) || explicit {
+		return newPlan(t, opts, cut, nil)
+	}
+	// The cut-first category gives way first: keep the largest share of it
+	// with which the rest fits the budget without omitting whole turns.
+	// Each probe is a full plan, so the estimate is the one applied.
+	build := func(pct int) *Plan {
+		c := cutoffs{}
+		for k, v := range cut {
+			c[k] = v
+		}
+		c[opts.CutFirst] = keepCutoff(costs, opts.CutFirst, pct)
+		return newPlan(t, opts, c, &pct)
+	}
+	best := build(100)
+	if opts.CarryAll || best.Report.Count(LossTruncatedBudget) == 0 {
+		return best
+	}
+	lo, hi := 0, 99
+	if none := build(0); none.Report.Count(LossTruncatedBudget) > 0 {
+		// Even shortening all of it does not fit: carry whichever omits
+		// less, so cut-first is never worse than the oldest-first cut.
+		if none.Report.Count(LossTruncatedBudget) < best.Report.Count(LossTruncatedBudget) {
+			return none
+		}
+		return best
+	} else {
+		best = none
+	}
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if p := build(mid); p.Report.Count(LossTruncatedBudget) == 0 {
+			lo, best = mid, p
+		} else {
+			hi = mid - 1
+		}
+	}
+	return best
+}
+
+func newPlan(t *Transcript, opts Options, cut cutoffs, cutFirstPct *int) *Plan {
 	report := &LossReport{Source: t.Source.Harness, Target: opts.Target, SourceEntries: len(t.Entries), BudgetTokens: opts.budgetTokens()}
 	if t.Losses != nil {
 		report.Items = append(report.Items, t.Losses.Items...)
@@ -128,12 +215,61 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		}
 	}
 	report.BudgetTokens = opts.budgetTokens()
+	report.CarryAll = opts.CarryAll
+	if opts.CarryAll {
+		report.BudgetTokens = 0
+	}
+	report.BudgetSource = "auto"
+	switch {
+	case opts.CarryAll:
+		report.BudgetSource = "all"
+	case opts.BudgetTokens > 0:
+		report.BudgetSource = "stated"
+	}
+	report.WindowStated = opts.StatedWindowTokens > 0
+	report.DetectedWindowTokens, report.DetectedWindowSource = opts.DetectedWindowTokens, opts.DetectedWindowSource
+	report.CutFirst = opts.CutFirst
 	p := &Plan{Source: t.Source, Target: opts.Target, TargetModel: opts.TargetModel, Title: t.Source.Title, Report: report}
 	if opts.TranscriptPath != "" {
 		report.TranscriptPath = opts.TranscriptPath
 	}
 
-	recentStart := recentToolStart(t.Entries)
+	// The original task and the latest instructions are never shortened.
+	firstTurn, lastTurn := -1, -1
+	for i, e := range t.Entries {
+		if inputTurn(e) && !daemonControlTurn(e) {
+			if firstTurn < 0 {
+				firstTurn = i
+			}
+			lastTurn = i
+		}
+	}
+	usage := map[Category]*CategoryUsage{}
+	for _, c := range Categories {
+		usage[c] = &CategoryUsage{Category: c}
+		if pct, ok := opts.Keep[c]; ok {
+			usage[c].KeepPercent = &pct
+		}
+	}
+	if cutFirstPct != nil {
+		usage[opts.CutFirst].KeepPercent = cutFirstPct
+	}
+	for _, m := range categoryCosts(t) {
+		for c, n := range m {
+			usage[c].SourceTokens += n
+		}
+	}
+	// Under a share (set by the operator or found by CutFirst) a record is
+	// stubbed only when the stub is smaller, so a lower share never carries
+	// more. The automatic rule keeps stubbing every older tool record: the
+	// stub is the agent's pointer into the full transcript.
+	shrinks := func(c Category, stub string, fullLen int) bool {
+		return usage[c].KeepPercent == nil || len(stub) < fullLen
+	}
+	shorten := func(c Category, full, stub string) {
+		usage[c].Shortened++
+		usage[c].ShortenedTokens += max(0, textTokens(full)-textTokens(stub))
+	}
 	results := map[string]Block{}
 	calls := map[string]string{}
 	for _, e := range t.Entries {
@@ -154,6 +290,12 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 			out.Role = RoleUser
 		}
 		summary := false
+		cats := map[Category]int64{}
+		add := func(c Category, b Block) {
+			out.Blocks = append(out.Blocks, b)
+			cats[c] += textTokens(b.Text)
+		}
+		stubbed := func(c Category) bool { return index < cut[c] && opts.TranscriptPath != "" }
 		for _, b := range e.Blocks {
 			switch b.Kind {
 			case BlockText:
@@ -182,7 +324,13 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 						text = fmt.Sprintf("%suntrusted input (origin %s), not from the operator%s\n%s", markOpen, e.Origin, markClose, text)
 					}
 				}
-				out.Blocks = append(out.Blocks, Text(text))
+				if stubbed(CategoryChat) && index != firstTurn && index != lastTurn {
+					if stub := chatStub(out.Role, text, opts.TranscriptPath, index); len(stub) < len(text) {
+						shorten(CategoryChat, text, stub)
+						text = stub
+					}
+				}
+				add(CategoryChat, Text(text))
 			case BlockThinking:
 				report.Add(LossReasoningDropped, 1, "")
 			case BlockSummary:
@@ -194,17 +342,22 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				if !b.Freeform {
 					input = compactJSON(b.Input)
 				}
-				if index < recentStart && opts.TranscriptPath != "" {
+				if stubbed(CategoryToolCalls) {
 					result, found := results[b.CallID]
 					status := "interrupted"
 					if found {
 						status = toolStatus(result)
-					} else {
-						report.Add(LossInterruptedCall, 1, "")
 					}
-					out.Blocks = append(out.Blocks, Text(toolStub(b.Name, input, status, result.Text, opts.TranscriptPath, index)))
-					report.Add(LossToolRecordsStubbed, 1, "")
-					continue
+					// A stub of a small call can outgrow it; keep such a call whole.
+					if stub := toolStub(b.Name, input, status, result.Text, opts.TranscriptPath, index); shrinks(CategoryToolCalls, stub, len(b.Name)+len(input)+32) {
+						if !found {
+							report.Add(LossInterruptedCall, 1, "")
+						}
+						shorten(CategoryToolCalls, b.Name+input, stub)
+						add(CategoryToolCalls, Text(stub))
+						report.Add(LossToolRecordsStubbed, 1, "")
+						continue
+					}
 				}
 				text := fmt.Sprintf("%stool call · %s%s", markOpen, b.Name, markClose)
 				if input != "" {
@@ -214,7 +367,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 					report.Add(LossInterruptedCall, 1, "")
 					text += "\n" + markOpen + "no result was recorded for this call (interrupted before the morph)" + markClose
 				}
-				out.Blocks = append(out.Blocks, Text(text))
+				add(CategoryToolCalls, Text(text))
 			case BlockToolResult:
 				name := b.Name
 				if name == "" {
@@ -225,8 +378,13 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 				}
 				status := toolStatus(b)
 				text := fmt.Sprintf("%stool result · %s · %s%s", markOpen, name, status, markClose)
-				if index < recentStart && opts.TranscriptPath != "" {
-					text = toolStub(name, "", status, b.Text, opts.TranscriptPath, index)
+				stub := ""
+				if stubbed(CategoryToolOutput) {
+					stub = toolStub(name, "", status, b.Text, opts.TranscriptPath, index)
+				}
+				if stub != "" && shrinks(CategoryToolOutput, stub, len(text)+len(b.Text)) {
+					shorten(CategoryToolOutput, b.Text, stub)
+					text = stub
 					report.Add(LossToolRecordsStubbed, 1, "")
 				} else if b.Text != "" {
 					recentOpts := opts
@@ -235,7 +393,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 					}
 					text += "\n" + p.clipText(b.Text, recentOpts, report)
 				}
-				out.Blocks = append(out.Blocks, Text(text))
+				add(CategoryToolOutput, Text(text))
 				for _, m := range b.Media {
 					out.Blocks = append(out.Blocks, p.media(m, out.Role, opts, report)...)
 				}
@@ -248,7 +406,7 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		if len(out.Blocks) == 0 {
 			continue
 		}
-		entries = append(entries, planEntry{entry: out, sources: 1, turn: inputTurn(e) && !daemonControlTurn(e), summary: summary})
+		entries = append(entries, planEntry{entry: out, sources: 1, turn: inputTurn(e) && !daemonControlTurn(e), summary: summary, cats: cats})
 	}
 
 	entries = coalesce(entries)
@@ -258,6 +416,10 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 	if report.TranscriptPath != "" {
 		notice += " Full tool output: " + report.TranscriptPath + "."
 	}
+	for _, c := range Categories {
+		report.Categories = append(report.Categories, *usage[c])
+	}
+	notice += cutNote(report, opts.operatorCarry())
 	if opts.SummaryUnavailable {
 		report.Add(LossNotCarried, 1, "source could not write a history summary; explicitly continued with readable history and the full-transcript pointer")
 		report.SelectionReason = "source could not write a summary; readable history only, full transcript saved"
@@ -280,6 +442,16 @@ func NewPlan(t *Transcript, opts Options) *Plan {
 		report.Carried += e.sources
 		p.Entries = append(p.Entries, e.entry)
 		report.CarriedEstimatedTokens += estimateTokens(e.entry)
+		for i := range report.Categories {
+			report.Categories[i].CarriedTokens += e.cats[report.Categories[i].Category]
+		}
+	}
+	report.OverWindow = report.CarriedEstimatedTokens > report.ContextWindowTokens
+	if pct := opts.BudgetPercent; report.BudgetSource != "auto" || report.WindowStated {
+		if pct <= 0 || pct > 100 {
+			pct = DefaultBudgetPercent
+		}
+		report.OverHeadroom = report.CarriedEstimatedTokens > report.ContextWindowTokens*int64(pct)/100
 	}
 	for _, e := range t.Entries {
 		report.SourceEstimatedTokens += estimateTokens(e)
@@ -469,6 +641,14 @@ func coalesce(in []planEntry) []planEntry {
 			last := &out[n-1]
 			last.entry.Blocks = append(last.entry.Blocks, e.entry.Blocks...)
 			last.sources += e.sources
+			if len(e.cats) > 0 {
+				if last.cats == nil {
+					last.cats = map[Category]int64{}
+				}
+				for c, n := range e.cats {
+					last.cats[c] += n
+				}
+			}
 			last.summary = last.summary || e.summary
 			last.turn = last.turn || e.turn
 			if last.entry.Model == "" {
@@ -506,8 +686,12 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 		total += estimateTokens(e.entry)
 	}
 	report.KeptPercent = 100
-	if total <= available && opts.Summary == "" {
+	if (total <= available || opts.CarryAll) && opts.Summary == "" {
 		return entries
+	}
+	if opts.CarryAll {
+		// Everything is carried; only the summary is added in front.
+		available = max(available, total+estimateTokens(Entry{Blocks: []Block{Text(opts.Summary)}})+1024)
 	}
 
 	first, last := -1, -1
@@ -529,6 +713,7 @@ func (p *Plan) fitBudget(entries []planEntry, opts Options, report *LossReport) 
 				label = "latest user instructions"
 			}
 			e.entry.Blocks = []Block{Text("⟦Read the full " + label + " in " + opts.TranscriptPath + " before continuing; it is too large to inline safely.⟧")}
+			e.cats = nil
 			report.PinnedExternalized = true
 		}
 		return e
