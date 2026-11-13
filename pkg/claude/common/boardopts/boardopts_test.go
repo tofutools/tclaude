@@ -10,11 +10,11 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
-// A board that sets nothing inherits: off, with the global grace or 5m.
+// A board that sets nothing inherits: on, with the global grace or 5m.
 func TestResolveInherits(t *testing.T) {
 	r := Resolve(Options{}, Globals{}, nil).Idle
-	assert.False(t, r.Active)
-	assert.Equal(t, Value[bool]{false, SourceDefault}, r.Enabled)
+	assert.True(t, r.Active, "the idle check is on by default")
+	assert.Equal(t, Value[bool]{true, SourceDefault}, r.Enabled)
 	assert.Equal(t, DefaultIdleGrace, r.Grace.Value.Duration())
 	assert.Equal(t, SourceDefault, r.Grace.Source)
 	assert.Equal(t, Value[bool]{true, SourceDefault}, r.Nudge)
@@ -26,6 +26,14 @@ func TestResolveInherits(t *testing.T) {
 	assert.Equal(t, Value[bool]{true, SourceGlobal}, r.Enabled)
 	assert.Equal(t, 2*time.Minute, r.Grace.Value.Duration())
 	assert.Equal(t, SourceGlobal, r.Grace.Source)
+
+	r = Resolve(Options{}, Globals{IdleCheck: ptr(false)}, nil).Idle
+	assert.False(t, r.Active, "taskboard.idle_check false turns it off for the boards that leave it unset")
+	assert.Equal(t, Value[bool]{false, SourceGlobal}, r.Enabled)
+
+	r = Resolve(Options{}, Globals{IdleGrace: ptr(time.Duration(0))}, nil).Idle
+	assert.False(t, r.Active, "taskboard.idle_grace 0 stays the kill switch")
+	assert.True(t, r.GloballyOff)
 }
 
 // A board's own values win over the globals, except a global grace of 0,

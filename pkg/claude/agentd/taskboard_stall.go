@@ -14,9 +14,9 @@ import (
 
 // Idle without report (tcl-5jtcbp, docs/taskboard.md).
 //
-// The idle check is a board's own option (taskboard_options.go): off unless
-// the board turns it on (idle.enabled), or the operator's global
-// taskboard.idle_check does for the boards that leave it unset;
+// The idle check is a board's own option (taskboard_options.go): on unless
+// the board turns it off (idle.enabled), or the operator's global
+// taskboard.idle_check false does for the boards that leave it unset;
 // taskboard.idle_grace "0" turns it off everywhere. On a board that has it
 // on, an open task is stalled when its assignee has sat idle, with nothing
 // running in the background, for the board's grace (idle.grace, else

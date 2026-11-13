@@ -41,11 +41,11 @@ const taskboardOptionsLong = "A board's options set how it behaves. They are sto
 	"on a linked node's board (--peer). A board stores only what it sets; every other value is inherited from the " +
 	"global config (taskboard.idle_check, taskboard.idle_grace in ~/.tclaude/data/config.json) or the built-in " +
 	"default, and `show` says where each value comes from.\n\n" +
-	"The idle check (off by default): with it on, an assigned, started task whose agent sits idle without reporting " +
+	"The idle check (on by default): with it on, an assigned, started task whose agent sits idle without reporting " +
 	"for the grace period is marked stalled, the assignee is nudged and the board tells who it is set to tell. A queued " +
-	"task (waiting on a dependency that is not done) and a task in a custom column never stall, unless the column is " +
+	"task (waiting on a dependency that is not done, or in line for a full lane), a blocked task and a task in a custom column never stall, unless the column is " +
 	"listed in idle.check_columns. taskboard.idle_grace \"0\" turns the check off on every board.\n\n" +
-	"  idle.enabled        on | off                       (default off, or taskboard.idle_check)\n" +
+	"  idle.enabled        on | off                       (default on, or taskboard.idle_check)\n" +
 	"  idle.grace          a duration, 1m to 168h         (default taskboard.idle_grace, else 5m)\n" +
 	"  idle.nudge          on | off: nudge the assignee   (default on)\n" +
 	"  idle.tell           assigner, owners, operator     (default assigner; none for no one)\n" +
