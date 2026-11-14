@@ -91,7 +91,7 @@ export function TerminalWindow({ instance, overlay, focusRef, strip, more = null
         ${status !== 'connected' && html`<div class="companion-floating-anchor"><div class="companion-term-status" role="status">${canReconnect
           ? html`${status || 'disconnected'}. <${Button} size="sm" variant="link" onClick=${() => setGeneration((n) => n + 1)}>Reconnect<//>`
           : status}</div></div>`}
-        <${Terminal} key=${instance.paneKey} agent=${{ agentId: instance.paneKey, harness: '' }} wsPath=${instance.ws} generation=${generation}
+        <${Terminal} key=${instance.paneKey} agent=${{ agentId: instance.paneKey, harness: '', name: instance.label || '' }} wsPath=${instance.ws} generation=${generation}
           widgetFactory=${widgetFactory} loadRuntime=${loadRuntime} focusToken=${focusToken} widgetRef=${widgetRef}
           fontSize=${() => readTerminalFont('companion', instance.paneKey, prefs)} onFontChange=${onFontChange}
           onStatus=${onStatus} onReconnectChange=${setCanReconnect} onDisconnect=${(info) => { if (info?.closeTab) leave(); }} />`}

@@ -44,6 +44,12 @@ type World struct {
 	// caller which then decommissions something (reincarnate archives and
 	// /exit-s the predecessor), so the simulator has to be able to produce it.
 	SpawnPaneDiesAtLaunch bool
+	// SpawnPaneHeld, when non-nil, holds a CC spawn's tmux pane back until it
+	// is closed: the session row lands first, as production's `session new`
+	// writes it before it creates the pane, and the pane registers once the
+	// channel closes. It models the window an attach right after a spawn can
+	// race (see the dashboard terminal's starting state).
+	SpawnPaneHeld chan struct{}
 
 	// SpawnPaneStatusSettlesAfterReads, when > 0 alongside
 	// SpawnPaneDiesAtLaunch, retains the corpse with NO exit status until its

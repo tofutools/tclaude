@@ -372,6 +372,57 @@ test('every settled loss that offers Reconnect gets the terminal-area notice, no
   assert.equal(badgeHost.childElementCount, 0);
 });
 
+test('a terminal waiting on its own shows a quiet notice, then the Disconnected card once the wait is over', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, badgeHost } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({ widgetFactory: fake.factory });
+
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/early', key: 'early', label: 'worker', agent: 'agt_early' });
+    await Promise.resolve();
+  });
+  const pane = host.querySelector('.mux-pane.active');
+  assert.equal(fake.widgets[0].options.agentLabel, 'worker', 'the widget knows whom it waits for');
+
+  await harness.act(() => {
+    fake.widgets[0].options.onStatus('waiting for worker to start…');
+    fake.widgets[0].options.onWaitingChange({ kind: 'starting', text: 'Waiting for worker to start…' });
+  });
+  const waiting = pane.querySelector('.mux-terminal-waiting-overlay');
+  assert.ok(waiting, 'a starting agent gets the waiting notice in the terminal area');
+  assert.equal(waiting.textContent.trim(), 'Waiting for worker to start…');
+  assert.equal(waiting.getAttribute('role'), 'status');
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'), 'waiting is not a disconnect');
+  assertAbsent(waiting.querySelector('button'), 'the wait needs nothing from the operator');
+
+  await harness.act(() => {
+    fake.widgets[0].options.onWaitingChange({ kind: 'reconnecting', text: 'Reconnecting…' });
+  });
+  assert.equal(pane.querySelector('.mux-terminal-waiting-overlay').dataset.waiting, 'reconnecting');
+
+  await harness.act(() => {
+    fake.widgets[0].options.onWaitingChange(null);
+    fake.widgets[0].options.onStatus('worker did not start in time');
+    fake.widgets[0].options.onReconnectChange(true);
+  });
+  assertAbsent(pane.querySelector('.mux-terminal-waiting-overlay'));
+  const notice = pane.querySelector('.mux-terminal-disconnect-overlay');
+  assert.match(notice.querySelector('.mux-terminal-disconnect-body').textContent, /\(worker did not start in time\)/);
+
+  await harness.act(() => {
+    fake.widgets[0].options.onReconnectChange(false);
+    fake.widgets[0].options.onWaitingChange(null);
+    fake.widgets[0].options.onStatus('connected');
+  });
+  assertAbsent(pane.querySelector('.mux-terminal-waiting-overlay'));
+  assertAbsent(pane.querySelector('.mux-terminal-disconnect-overlay'));
+  cleanup();
+  assert.equal(badgeHost.childElementCount, 0);
+});
+
 test('background pane open and focus leave the current dashboard tab visible', async (t) => {
   const harness = await createPreactHarness(t);
   const { host, badgeHost, terminals } = installHosts(harness);

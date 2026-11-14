@@ -56,6 +56,11 @@ func handleDashboardFederationTerminal(w http.ResponseWriter, r *http.Request) {
 		reason = "denied"
 	case 429:
 		reason = "limit"
+	case 409:
+		// The peer is launching the agent: the browser waits and retries.
+		if body.Code == "starting" {
+			reason = "starting"
+		}
 	case 502, 503, 504:
 		reason = "offline"
 	}

@@ -112,3 +112,54 @@ func dialTerminalCommand(t *testing.T, command string, target config.TerminalTab
 		}
 	}
 }
+
+// A client whose session ended while the agent has a launch in progress (a
+// relaunch replacing the pane, an attach that raced its setup) says
+// "starting", so the browser waits for the new pane instead of settling. A
+// detach, or an ended session with nothing starting, keeps its exit code.
+func TestBrowserTerminalEndedDuringLaunchClosesStarting(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		alive    bool
+		starting bool
+		want     int
+	}{
+		{"ended while starting", false, true, termCloseStarting},
+		{"ended with nothing starting", false, false, termCloseSessionEndedKeep},
+		{"detached while starting", true, true, termCloseDetachedKeep},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := termWSTestHook
+			termWSTestHook = &TermWSHook{SessionAlive: func(string) bool { return tc.alive }}
+			t.Cleanup(func() { termWSTestHook = previous })
+			done := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer close(done)
+				runPTYOverWS(w, r, "printf 'BYE\\n'", "tclaude-term-test", "", nil, config.TerminalTabAgentWindow,
+					func() bool { return tc.starting })
+			}))
+			t.Cleanup(func() { server.Close(); <-done })
+			conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"resize","cols":80,"rows":24}`)); err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					var closeErr *websocket.CloseError
+					if !errors.As(err, &closeErr) {
+						t.Fatalf("read: %v", err)
+					}
+					if closeErr.Code != tc.want {
+						t.Fatalf("close code = %d, want %d", closeErr.Code, tc.want)
+					}
+					return
+				}
+			}
+		})
+	}
+}

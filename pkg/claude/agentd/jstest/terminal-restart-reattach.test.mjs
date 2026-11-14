@@ -1,6 +1,9 @@
 // The widget half of restart repair: a terminal remembers which agentd its
 // socket was attached to, and when that socket settles dead it asks to be told
-// if the daemon is ever a different process. Nothing else redials it.
+// if the daemon is ever a different process. Before it settles, a dropped
+// socket gets a few quiet redials (TRANSIENT_RETRY_DELAYS_MS) that never take a
+// terminal back from another client (reattach=1, last test); the rest of this
+// suite runs without them, at the point where they are spent.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
@@ -71,6 +74,7 @@ async function mountWidget(harness, { watcher, fetchImpl, ...overrides } = {}) {
     onStatus: (value) => statuses.push(value),
     fetchImpl: fetchImpl || (async () => ({ ok: true })),
     restartWatcher: watcher,
+    transientRetryDelays: [],
     TerminalCtor: fakes.FakeTerminal,
     FitAddonCtor: fakes.FakeFitAddon,
     WebSocketCtor: fakes.FakeWebSocket,
@@ -329,4 +333,53 @@ test('disposal releases the watch', async (t) => {
 
   widget.dispose();
   assert.equal(watcher.watches[0].cancelled, 1);
+});
+
+test('a quiet redial never takes back a terminal another client now holds', async (t) => {
+  const harness = await createPreactHarness(t);
+  const watcher = recordingWatcher('agentd-1');
+  const timers = [];
+  const { widget, fakes, statuses } = await mountWidget(harness, {
+    watcher,
+    wsPath: '/api/open-window-ws/agt_one',
+    transientRetryDelays: [500],
+    setTimeoutImpl: (handler, delay) => { const timer = { handler, delay }; timers.push(timer); return timer; },
+    clearTimeoutImpl: () => {},
+    requestAnimationFrameImpl: null,
+    postAttachResizeDelayMs: -1,
+  });
+
+  await widget.connect();
+  fakes.sockets[0].open();
+  fakes.sockets[0].onmessage({ data: 'screen' });
+  await settle();
+  assert.equal(fakes.sockets[0].url, 'wss://dashboard.test/api/open-window-ws/agt_one',
+    'the operator\'s own attach takes the session as before');
+
+  // The socket drops with agentd alive: a hiccup, or the operator moved the
+  // terminal. The quiet redial asks agentd to reattach only if nobody else
+  // holds the session.
+  fakes.sockets[0].drop();
+  await settle();
+  assert.equal(statuses.at(-1), 'reconnecting…');
+  timers.find((x) => x.delay === 500).handler();
+  await settle();
+  assert.equal(fakes.sockets[1].url, 'wss://dashboard.test/api/open-window-ws/agt_one?reattach=1');
+
+  // Somebody else holds it: agentd's unforced attach answers "detached".
+  fakes.sockets[1].open();
+  fakes.sockets[1].readyState = 3;
+  fakes.sockets[1].onclose({ code: 4003 });
+  await settle();
+  assert.equal(statuses.at(-1), 'detached');
+  assert.equal(widget.reconnectAvailable(), true);
+  assert.equal(watcher.watches.length, 0, 'a settled answer watches for nothing');
+  watcher.live = 'agentd-2';
+  await settle();
+  assert.equal(fakes.sockets.length, 2, 'nothing takes the terminal back later either');
+
+  // A hand Reconnect is the operator asking for it here: it takes it.
+  await widget.connect();
+  assert.equal(fakes.sockets[2].url, 'wss://dashboard.test/api/open-window-ws/agt_one');
+  widget.dispose();
 });
