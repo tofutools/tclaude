@@ -1,5 +1,5 @@
 // groups-taskboard-lanes.js -- the Task board's swim lanes (docs/taskboard.md):
-// the stage columns Ideas → Next → In progress → Blocked · needs you → Done
+// the stage columns Ideas → Next → In progress → Blocked → Done
 // this week, one lane per agent (grouped by role, by subgroup, or not at
 // all) under an Unassigned lane. Every drag is one route, the one its CLI
 // verb uses:
@@ -60,7 +60,7 @@ export const LANE_COLUMNS = [
   { key: 'ideas', label: 'Ideas', wizard: 'Visions' },
   { key: 'next', label: 'Next', wizard: 'Next' },
   { key: 'progress', label: 'In progress', wizard: 'Underway' },
-  { key: 'blocked', label: 'Blocked · needs you', wizard: 'Blocked · needs you' },
+  { key: 'blocked', label: 'Blocked', wizard: 'Blocked' },
   { key: 'done', label: 'Done this week', wizard: 'Fulfilled this week' },
 ];
 
@@ -169,7 +169,10 @@ export function laneModel(entry, group, by = 'agent', snapshot = null, now = Dat
     lane.holds = holds.get(lane.id) || 0;
   }
   const questions = operatorQuestions(entry);
-  const operatorHolds = ['progress', 'next'].reduce((sum, column) => sum + (cells.get(`${OPERATOR}|${column}`) || []).length, 0) + questions.length;
+  // The operator's lane holds what waits on it in any column (tk_3cb51ce0):
+  // all but its ideas and what is done.
+  const operatorHolds = [...cells.entries()].filter(([key]) => key.startsWith(`${OPERATOR}|`) && !['ideas', 'done'].includes(key.slice(OPERATOR.length + 1)))
+    .reduce((sum, [, tasks]) => sum + tasks.length, 0) + questions.length;
   return { cells, questions, groups: laneGroups(lanes, group, by, snapshot), operatorHolds };
 }
 

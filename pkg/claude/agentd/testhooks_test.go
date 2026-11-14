@@ -934,6 +934,18 @@ func SetTermWSHookForTest(hook *TermWSHook) func() {
 	return func() { termWSTestHook = prev }
 }
 
+// SetTerminalNowForTest pins the clock the agent terminal's starting checks
+// read (terminalStartWindow). Returns a restore function for t.Cleanup.
+func SetTerminalNowForTest(now func() time.Time) func() {
+	prev := terminalNow
+	terminalNow = now
+	return func() { terminalNow = prev }
+}
+
+// TerminalStartWindowForTest is how long after a launch an agent terminal
+// still reports a missing pane as starting.
+const TerminalStartWindowForTest = terminalStartWindow
+
 // SetOpenTerminalForTest swaps the terminal-spawning seam so flow
 // tests can assert the `dir` endpoints' open path without popping a
 // real window (and without failing on CI hosts that have no terminal

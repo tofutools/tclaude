@@ -246,9 +246,19 @@ Windows created before passthrough support need `tmux -L tclaude set-option -w
 
 ## When a terminal drops
 
-Reconnecting is deliberately careful. The terminal retries a few times, then only
-reattaches on its own after a proven `agentd` restart. Otherwise you get a
-**Reconnect** button.
+An agent you open right after spawning, resuming or relaunching it may not have
+its pane yet. The terminal then shows **Waiting for <agent> to start…** and
+attaches by itself once the pane is up. If the agent has not started within about
+30 seconds, the pane says so and offers **Reconnect**.
+
+Reconnecting is deliberately careful. A terminal that drops shows
+**Reconnecting…** and redials a few times. A redial never takes the session back
+from a terminal you have since opened somewhere else; that one keeps it, and this
+pane says **detached**. After that, it only reattaches on its own after a proven
+`agentd` restart. Otherwise you get a **Reconnect** button.
+
+`tclaude session attach` waits the same way: right after a launch it prints
+`Waiting for session … to start...` and attaches once the pane is up.
 
 When the tmux client goes away, the pane says why: **session ended** (the shell or
 agent exited) or **detached** (the session lives on). By default, shell tabs close

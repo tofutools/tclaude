@@ -129,7 +129,8 @@ func TestTaskboardIdleWithoutReport(t *testing.T) {
 		}
 	}
 
-	// The context route counts it as needing the operator.
+	// The context route counts it as stalled; it does not need the
+	// operator (tk_3cb51ce0): its assigner was told above.
 	rec = h.call("", http.MethodGet, "/v1/taskboard/context", nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var ctx struct {
@@ -141,10 +142,11 @@ func TestTaskboardIdleWithoutReport(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ctx))
 	require.Len(t, ctx.Groups, 1)
 	assert.Equal(t, 1, ctx.Groups[0].Counts["stalled"])
-	assert.Equal(t, 1, ctx.Groups[0].Counts["needs_you"])
+	assert.Equal(t, 0, ctx.Groups[0].Counts["needs_you"])
 	assert.Equal(t, 0, ctx.Groups[0].Counts["in_progress"])
 
-	// So does the fleet brief, with blocked tasks alongside.
+	// The fleet brief counts it with the blocked tasks, and raises neither:
+	// nothing on the board is assigned to the operator.
 	blocked := h.add("needs a decision", "next")
 	code, body = h.post("", blocked.ID, "status", map[string]any{"status": "blocked", "reason": "which API?"})
 	require.Equal(t, http.StatusOK, code, body)
@@ -166,7 +168,7 @@ func TestTaskboardIdleWithoutReport(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &brief))
 	require.Len(t, brief.Taskboards, 1)
 	assert.Equal(t, "crew", brief.Taskboards[0].Group)
-	assert.Equal(t, 2, brief.Taskboards[0].NeedsYou)
+	assert.Equal(t, 0, brief.Taskboards[0].NeedsYou)
 	assert.Equal(t, 1, brief.Taskboards[0].Blocked)
 	assert.Equal(t, 1, brief.Taskboards[0].Stalled)
 	var line string
@@ -175,7 +177,7 @@ func TestTaskboardIdleWithoutReport(t *testing.T) {
 			line = a.Title + " " + a.Detail
 		}
 	}
-	assert.Equal(t, "crew board: 2 tasks need you (1 stalled, 1 blocked)", line)
+	assert.Empty(t, line, "blocked and stalled tasks are not the operator's")
 
 	// A new turn clears it; the task stays open and assigned.
 	h.f.SetSessionStatus(h.worker, session.StatusWorking)

@@ -367,6 +367,9 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 			if strings.Contains(refused.reason, "limit") {
 				status, code = 429, "limit"
 			}
+			if strings.Contains(refused.reason, fedPaneStartingReason) {
+				status, code = 409, "starting"
+			}
 		}
 		writeError(w, status, code, err.Error())
 		return

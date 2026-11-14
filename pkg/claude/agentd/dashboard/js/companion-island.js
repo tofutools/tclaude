@@ -96,6 +96,7 @@ function CompanionTerminal({ agent, wsPath = '', generation, widgetFactory, load
         ...terminalAttachWidgetOptions(),
         host: hostRef.current,
         wsPath: wsPath || `/api/open-window-ws/${encodeURIComponent(agent.agentId)}`,
+        agentLabel: agent.name || '',
         initialRetry: true,
         applicationClipboardShortcuts: agent.harness === 'copilot',
         onStatus: (status) => { if (!cancelled) onStatus(status); },

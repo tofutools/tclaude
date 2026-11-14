@@ -25,6 +25,18 @@ import { isPageId, pagePaneKey } from './page-pane-model.js';
 // the explicit Reconnect control instead of creating a permanent retry loop.
 export const INITIAL_RETRY_DELAYS_MS = Object.freeze([200, 500, 1000]);
 export const INITIAL_RETRY_STABILITY_MS = 1000;
+// An agent whose launch is still in progress (agentd closes with
+// TERMINAL_STARTING, a peer with the 'starting' reason) is waited for, not
+// failed: the terminal says so and redials with this backoff, the last delay
+// repeating, for up to START_WAIT_MS from the first such answer. agentd only
+// answers 'starting' inside its own window after the launch began, so a launch
+// that never produces a pane still ends in the ordinary Disconnected state.
+export const TERMINAL_STARTING = 4005;
+export const START_RETRY_DELAYS_MS = Object.freeze([250, 500, 1000, 2000]);
+export const START_WAIT_MS = 30000;
+// A live terminal that drops without a settled answer (a socket hiccup, agentd
+// restarting) gets these few quiet redials before the manual Reconnect.
+export const TRANSIENT_RETRY_DELAYS_MS = Object.freeze([500, 1500, 3000]);
 // The opening resize is also the PTY startup handshake, so even the next-frame
 // refit can reach tmux before the attached harness has installed its resize
 // handling. Codex is particularly visible when that happens: tmux's status bar
@@ -36,15 +48,17 @@ export const INITIAL_RETRY_STABILITY_MS = 1000;
 export const POST_ATTACH_RESIZE_DELAY_MS = 250;
 export const POST_ATTACH_RESIZE_NUDGE_MS = 100;
 
-// Losing agentd is the one disconnect a terminal may repair on its own, because
-// it is the one it can PROVE. Every other reason a socket closes — the session
-// ended, the operator reopened this terminal somewhere else — leaves a daemon
-// that is alive and unchanged, and reattaching there drags back a terminal
-// somebody deliberately moved. So a settled disconnect asks /api/instance what
-// the daemon was doing when we lost it, and only a daemon that had already gone
-// away (or already come back as a different process) earns one reattach. See
-// instance-watch.js and watchForRestart below; everything else keeps nothing
-// but the explicit Reconnect control.
+// A settled answer from a live daemon — the session ended, or the operator
+// reopened this terminal somewhere else, which detaches this one — carries a
+// close code (TERMINAL_EXIT), and reattaching there would drag back a terminal
+// somebody deliberately moved, so it never redials. A close without one (a
+// socket hiccup, agentd going away) first gets a few quiet redials
+// (TRANSIENT_RETRY_DELAYS_MS). After those, losing agentd is the one disconnect
+// a terminal may still repair on its own, because it is the one it can PROVE:
+// a settled disconnect asks /api/instance what the daemon was doing when we
+// lost it, and only a daemon that had already gone away (or already come back
+// as a different process) earns one reattach. See instance-watch.js and
+// watchForRestart below; everything else keeps the explicit Reconnect control.
 
 // departedAgentSelectors returns every stable agent-id / conversation-id that
 // belonged to the previous active roster but not the next one. Keeping this as
@@ -153,10 +167,15 @@ export const REMOTE_CLOSE = Object.freeze({
   kicked: { text: "the peer's operator disconnected this view", final: false },
   taken_over: { text: 'another viewer took over this terminal', final: false },
   denied: { text: 'the peer does not share this terminal with you (needs sessions.watch to look, sessions.attach to type)', final: true },
+  starting: { text: 'the agent did not start on the peer in time', final: false },
   limit: { text: 'the peer has too many terminal views open; try again shortly', final: false },
   offline: { text: 'the peer is unreachable', final: false },
   error: { text: 'the connection failed', final: false },
 });
+
+// REMOTE_TRANSIENT are the remote closures a terminal redials quietly before
+// it settles: they say the path to the peer failed, not that the peer refused.
+const REMOTE_TRANSIENT = new Set(['offline', 'error']);
 
 // remoteCloseText words a closure from its reason; the peer's own message is
 // shown only as a short, control-free detail next to a known reason.
@@ -176,6 +195,8 @@ export const TERMINAL_EXIT = Object.freeze({
   4002: { text: 'session ended', closeTab: true },
   4003: { text: 'detached', closeTab: false },
   4004: { text: 'detached', closeTab: true },
+  // The agent has no live pane and is not starting (agentd's attach refusal).
+  4006: { text: 'the agent is not running', closeTab: false },
 });
 
 // A drawing board seed (seed.drawing board) has no socket: it must name a valid drawing board id, and
@@ -231,6 +252,12 @@ export function mountTerminalWidget({
   active = true,
   onStatus = () => {},
   onReconnectChange = () => {},
+  // {kind: 'starting' | 'reconnecting', text} while the widget waits on its
+  // own between redials, null otherwise, so a shell can show the quiet state
+  // in the terminal area.
+  onWaitingChange = () => {},
+  // Who the terminal is for, in "Waiting for <agentLabel> to start…".
+  agentLabel = '',
   onSelectionChange = () => {},
   onComposeMessage = null,
   applicationClipboardShortcuts = false,
@@ -244,6 +271,9 @@ export function mountTerminalWidget({
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
+  startRetryDelays = START_RETRY_DELAYS_MS,
+  startWaitMs = START_WAIT_MS,
+  transientRetryDelays = TRANSIENT_RETRY_DELAYS_MS,
   attachResizeMode = 'repair',
   initialResizeDelayMs = 0,
   postAttachResizeDelayMs = POST_ATTACH_RESIZE_DELAY_MS,
@@ -282,6 +312,17 @@ export function mountTerminalWidget({
   let reconnectAvailable = false;
   let retryIndex = 0;
   let retryTimer = null;
+  // The start wait: when the first 'starting' answer came (null: not waiting)
+  // and how far along its backoff the redials are.
+  let startingSince = null;
+  let startIndex = 0;
+  // Quiet redials spent since the terminal last proved it was attached, and
+  // whether the next dial is one. A quiet redial asks agentd to reattach only
+  // if nobody else holds the session (reattach=1), so it repairs a dropped
+  // socket without ever taking back a terminal the operator moved elsewhere.
+  let transientIndex = 0;
+  let reattachNext = false;
+  let waiting = null;
   let initialResizeTimer = null;
   let initialResizeReady = false;
   let firstOutputSeen = false;
@@ -401,6 +442,14 @@ export function mountTerminalWidget({
     if (disposed) return;
     status = next;
     onStatus(next);
+  }
+
+  function setWaiting(next) {
+    if (disposed) return;
+    const same = waiting === next || (waiting && next && waiting.kind === next.kind && waiting.text === next.text);
+    if (same) return;
+    waiting = next;
+    onWaitingChange(next);
   }
 
   function setReconnectAvailable(next) {
@@ -726,17 +775,77 @@ export function mountTerminalWidget({
       }, () => { /* nothing learned; this disconnect keeps its manual control */ });
   }
 
-  function scheduleInitialRetry() {
-    if (!initialRetry || retryIndex >= initialRetryDelays.length) return false;
-    const delay = Math.max(0, Number(initialRetryDelays[retryIndex]) || 0);
-    retryIndex += 1;
-    setStatus('retrying…');
+  function scheduleRedial(delay) {
     setReconnectAvailable(false);
     retryTimer = setTimeoutImpl(() => {
       retryTimer = null;
       void dial();
-    }, delay);
+    }, Math.max(0, Number(delay) || 0));
+  }
+
+  function scheduleInitialRetry() {
+    if (!initialRetry || retryIndex >= initialRetryDelays.length) return false;
+    const delay = initialRetryDelays[retryIndex];
+    retryIndex += 1;
+    setStatus('retrying…');
+    scheduleRedial(delay);
     return true;
+  }
+
+  function startWaitOpen() {
+    return startingSince !== null && now() - startingSince < startWaitMs;
+  }
+
+  // scheduleStartRetry waits for an agent that is still starting: it opens the
+  // start wait on the first 'starting' answer and redials with its backoff
+  // until the wait runs out. False once it has.
+  function scheduleStartRetry() {
+    if (startingSince === null) startingSince = now();
+    if (!startWaitOpen() || !startRetryDelays.length) return false;
+    const delay = startRetryDelays[Math.min(startIndex, startRetryDelays.length - 1)];
+    startIndex += 1;
+    const text = `Waiting for ${agentLabel || 'the agent'} to start…`;
+    setStatus(text.charAt(0).toLowerCase() + text.slice(1));
+    setWaiting({ kind: 'starting', text });
+    scheduleRedial(delay);
+    return true;
+  }
+
+  // scheduleTransientRetry redials a terminal that dropped without a settled
+  // answer. Inside an open start wait the drop is part of waiting for the
+  // launch (the daemon may be busy creating the pane), so it keeps that wait;
+  // otherwise it spends one of the few quiet redials. False when neither
+  // applies and the caller settles.
+  function scheduleTransientRetry() {
+    if (startWaitOpen()) return scheduleStartRetry();
+    if (!autoReattach || transientIndex >= transientRetryDelays.length) return false;
+    const delay = transientRetryDelays[transientIndex];
+    transientIndex += 1;
+    reattachNext = !remote;
+    setStatus('reconnecting…');
+    setWaiting({ kind: 'reconnecting', text: 'Reconnecting…' });
+    scheduleRedial(delay);
+    return true;
+  }
+
+  // attached marks the moment the terminal proved it is attached (its first
+  // output): the start wait is over, and the initial retries, which belong to
+  // the first attach only, are spent — a later drop is the quiet redials' to
+  // handle, which never take the session back (reattach=1). Their budget is
+  // restored only by a connection that then stays up (see onclose), so a
+  // command that draws and dies at once cannot redial forever.
+  function attached() {
+    startingSince = null;
+    startIndex = 0;
+    retryIndex = initialRetryDelays.length;
+    setWaiting(null);
+  }
+
+  // settle ends any waiting: the pane now shows a settled state.
+  function settle(text) {
+    setWaiting(null);
+    setStatus(text);
+    setReconnectAvailable(true);
   }
 
   async function dial() {
@@ -767,15 +876,15 @@ export function mountTerminalWidget({
         });
         if (disposed || mine !== generation) return false;
         if (!auth.ok) {
-          setStatus('authentication required');
-          setReconnectAvailable(true);
+          settle('authentication required');
           return false;
         }
       } catch (error) {
         if (disposed || mine !== generation || controller.signal.aborted) return false;
+        if (startWaitOpen() && scheduleStartRetry()) return false;
         if (scheduleInitialRetry()) return false;
-        setStatus('disconnected');
-        setReconnectAvailable(true);
+        if (transientIndex > 0 && scheduleTransientRetry()) return false;
+        settle('disconnected');
         watchForRestart();
         return false;
       } finally {
@@ -787,19 +896,25 @@ export function mountTerminalWidget({
     const proto = locationRef.protocol === 'https:' ? 'wss:' : 'ws:';
     const takeOver = remote && takeOverNext;
     takeOverNext = false;
-    const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath + (takeOver ? '&take_over=1' : ''));
+    const reattach = reattachNext;
+    reattachNext = false;
+    const query = takeOver ? '&take_over=1' : reattach ? `${wsPath.includes('?') ? '&' : '?'}reattach=1` : '';
+    const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath + query);
     if (remote) { setRemote(REMOTE_RESET); desired = null; lastDesired = ''; cancelLimitedHold(); }
     socket.binaryType = 'arraybuffer';
     ws = socket;
     let openedAt = null;
-    setStatus('connecting…');
+    // A redial inside a wait keeps saying what it is waiting for.
+    if (!waiting) setStatus('connecting…');
     socket.onopen = () => {
       if (disposed || mine !== generation || ws !== socket) return;
       openedAt = now();
       captureInstanceBaseline(mine);
       setReconnectAvailable(false);
-      if (remote) { setStatus('connecting to the peer…'); return; }
-      setStatus('connected');
+      if (remote) { if (!waiting) setStatus('connecting to the peer…'); return; }
+      // agentd answers a starting agent by closing an opened socket, so the
+      // wait ends only on output, never on the open alone.
+      if (!waiting) setStatus('connected');
       scheduleInitialResize(mine, socket);
     };
     socket.onmessage = (event) => {
@@ -816,6 +931,7 @@ export function mountTerminalWidget({
         });
         return;
       }
+      if (!firstOutputSeen) { attached(); setStatus('connected'); }
       term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data, markOutputParsed);
       // WebSocket open precedes PTY creation on the server. The first output is
       // the browser's earliest proof that the command/tmux attach is actually
@@ -828,6 +944,16 @@ export function mountTerminalWidget({
       if (disposed || mine !== generation || ws !== socket) return;
       cancelPostAttachResize();
       cancelInitialResize();
+      // A connection that drew and stayed up earns a fresh set of quiet redials.
+      if (firstOutputSeen && openedAt !== null && now() - openedAt >= initialRetryStabilityMs) transientIndex = 0;
+      const starting = remote ? remoteState.closed?.reason === 'starting' : event?.code === TERMINAL_STARTING;
+      if (starting) {
+        if (scheduleStartRetry()) return;
+        if (remote) setRemote({ files: false, viewer: '' });
+        settle(remote ? `closed: ${remoteCloseText(remoteState.closed)}` : `${agentLabel || 'the agent'} did not start in time`);
+        onDisconnect();
+        return;
+      }
       const exit = !remote && TERMINAL_EXIT[event?.code];
       // A pop-out or reattach can briefly lose to the client it replaces: the
       // old socket's teardown detaches every client, ours included, which
@@ -835,24 +961,29 @@ export function mountTerminalWidget({
       // earns its retry before an exit code is trusted.
       if (exit && (openedAt === null || now() - openedAt < initialRetryStabilityMs) && scheduleInitialRetry()) return;
       if (exit) {
-        setStatus(exit.text);
-        setReconnectAvailable(true);
-        onDisconnect({ closeTab: exit.closeTab });
+        settle(exit.text);
+        // A quiet redial's "detached" may only be this browser's own stale
+        // client (a half-open socket agentd has not noticed yet): it never
+        // closes the tab, and Reconnect stays to take the session by hand.
+        onDisconnect({ closeTab: exit.closeTab && !reattach });
         return;
       }
       if (remote) {
         // The pinned viewer is gone with the socket: no more file links.
         setRemote({ files: false, viewer: '' });
         const closed = remoteState.closed;
-        setStatus(closed ? `closed: ${remoteCloseText(closed)}` : 'disconnected');
+        // An unreachable peer or a failed stream is worth the quiet redials;
+        // every other reason is the peer's settled answer.
+        if ((!closed || REMOTE_TRANSIENT.has(closed.reason)) && scheduleTransientRetry()) return;
+        settle(closed ? `closed: ${remoteCloseText(closed)}` : 'disconnected');
         setReconnectAvailable(!(closed && REMOTE_CLOSE[closed.reason]?.final));
         onDisconnect();
         return;
       }
       const unstable = openedAt === null || now() - openedAt < initialRetryStabilityMs;
       if (unstable && scheduleInitialRetry()) return;
-      setStatus('disconnected');
-      setReconnectAvailable(true);
+      if (scheduleTransientRetry()) return;
+      settle('disconnected');
       watchForRestart();
       onDisconnect();
     };
@@ -882,6 +1013,8 @@ export function mountTerminalWidget({
       .filter(Boolean)
       .slice(0, 4));
     if (msg?.type === 'hello') {
+      // The peer attached this view: any wait is over.
+      attached();
       const mode = msg.mode === 'interactive' ? 'interactive' : 'watch';
       term.options.disableStdin = mode !== 'interactive';
       size();
@@ -945,6 +1078,11 @@ export function mountTerminalWidget({
   function connect() {
     cancelRetry();
     retryIndex = 0;
+    reattachNext = false;
+    startingSince = null;
+    startIndex = 0;
+    transientIndex = 0;
+    setWaiting(null);
     return dial();
   }
 
@@ -1020,6 +1158,7 @@ export function mountTerminalWidget({
     status: () => status,
     remoteState: () => (remote ? remoteState : null),
     reconnectAvailable: () => reconnectAvailable,
+    waiting: () => waiting,
     isDisposed: () => disposed,
     dispose() {
       if (disposed) return;

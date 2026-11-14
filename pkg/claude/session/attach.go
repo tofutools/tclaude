@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -64,7 +65,13 @@ func runAttach(params *AttachParams) error {
 		return err
 	}
 
-	// Check if session is alive
+	// Check if session is alive. A launch writes its row before it creates the
+	// pane, so an attach right after a spawn or resume can get here first: wait
+	// for that pane briefly instead of failing (and marking the launching row
+	// exited, which would mislabel a healthy agent).
+	if !IsTmuxSessionAlive(state.TmuxSession) {
+		state = waitForLaunchingSession(state)
+	}
 	if !IsTmuxSessionAlive(state.TmuxSession) {
 		MarkStateExited(state)
 		_ = SaveSessionState(state)
@@ -74,8 +81,11 @@ func runAttach(params *AttachParams) error {
 	// By default, don't attach if session already has clients (use --force to override)
 	if !params.Force && IsTmuxSessionAttached(state.TmuxSession) {
 		fmt.Fprintf(cliStdout, "Session %s is already attached in another terminal\n", sessionHandle(state))
-		// Try to focus the terminal window
-		TryFocusAttachedSession(state.TmuxSession)
+		// Try to focus the terminal window — not for a browser terminal, where
+		// raising a window on the daemon's desktop would help nobody.
+		if !isWebTerminalAttach() {
+			TryFocusAttachedSession(state.TmuxSession)
+		}
 		return nil
 	}
 
@@ -205,4 +215,49 @@ func findSession(id string) (*SessionState, error) {
 	}
 
 	return matches[0], nil
+}
+
+// AttachStartWindow is how long after a launch began `session attach` waits
+// for its pane. It matches the dashboard terminal's start window
+// (agentd terminalStartWindow).
+const AttachStartWindow = 30 * time.Second
+
+// attachStartPoll is the interval between pane checks while waiting, and
+// attachSleep how it waits; tests swap the latter.
+var (
+	attachStartPoll = 250 * time.Millisecond
+	attachSleep     = time.Sleep
+)
+
+// attachNow is the clock the start wait reads; tests swap it.
+var attachNow = time.Now
+
+// launchInProgress reports whether state is a launch that began inside the
+// start window and has not exited. Created is the launch's own time: a
+// relaunch's row write replaces it on a reused row.
+func launchInProgress(state *SessionState, now time.Time) bool {
+	return state != nil && state.Status != StatusExited && !state.Created.IsZero() &&
+		now.Sub(state.Created) < AttachStartWindow
+}
+
+// waitForLaunchingSession waits, while state is a launch still in progress,
+// for its tmux pane to come up, re-reading the row each time so an exit or a
+// relaunch is followed. It returns the latest row; the caller checks the pane.
+// A row that is not launching returns at once.
+func waitForLaunchingSession(state *SessionState) *SessionState {
+	if !launchInProgress(state, attachNow()) {
+		return state
+	}
+	// The web terminal's PTY bridge takes the first output as "attached", so
+	// it gets no notice; its own waiting state is the dashboard's.
+	if !isWebTerminalAttach() {
+		fmt.Fprintf(cliStderr, "Waiting for session %s to start...\n", sessionHandle(state))
+	}
+	for launchInProgress(state, attachNow()) && !IsTmuxSessionAlive(state.TmuxSession) {
+		attachSleep(attachStartPoll)
+		if fresh, err := LoadSessionState(state.ID); err == nil && fresh != nil {
+			state = fresh
+		}
+	}
+	return state
 }

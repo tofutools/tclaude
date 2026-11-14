@@ -15,3 +15,13 @@ export function processesAvailable(snapshot) {
 export function triggersAvailable(snapshot) {
   return !peerSnapshot(snapshot) || snapshot.triggers_enabled === true;
 }
+
+// triggersReadable reports whether a page can read a node's trigger rules
+// (/api/triggers) through its snapshot: this node, or a peer that offers
+// Triggers and trusts this node unrestricted. To any other peer the route is
+// local-only (peer_view_local_only), so the page does not ask. It waits for
+// the snapshot: before it arrives a peer page cannot tell (tk_56c664c0).
+export function triggersReadable(snapshot) {
+  if (!snapshot) return false;
+  return !peerSnapshot(snapshot) || (snapshot.triggers_enabled === true && snapshot.peer_view?.level === 'unrestricted');
+}
