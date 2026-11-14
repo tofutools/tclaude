@@ -55,7 +55,7 @@ function memberKey(member) {
 // queues exactly one follow-up instead of discarding the read, so a slow
 // daemon still converges. A long run's history catches up read after read
 // (`catchingUp`) without waiting for polls.
-function useRunDetail(api, runId) {
+export function useRunDetail(api, runId) {
   const empty = (id) => ({ runId: id, view: null, events: [], error: '', catchingUp: false });
   const [detail, setDetail] = useState(() => empty(runId));
   const [revision, setRevision] = useState(0);
@@ -148,7 +148,7 @@ function eventText(event) {
   return event.actor ? `${kind} · ${event.actor}` : kind;
 }
 
-function DecisionForm({ decision, node, onDecide, wizard }) {
+export function DecisionForm({ decision, node, onDecide, wizard }) {
   const [busy, setBusy] = useState('');
   const [decided, setDecided] = useState('');
   const [note, setNote] = useState('');

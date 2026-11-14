@@ -177,11 +177,18 @@ windows keep the full dashboard. A bar at the bottom has five views:
 
 | View | What it shows |
 |---|---|
-| **Now** | What needs you: access requests and decisions, each with its buttons; agents asking a question, with **Open** for the terminal and ✉ to message them. Below that: agents in an error state, agents that are working, your open PRs and usage. |
+| **Now** | What needs you: access requests and decisions, each with its buttons; process runs waiting on your verdict, with **approve** and **request changes**; agents asking a question, with **Open** for the terminal and ✉ to message them. Below that: agents in an error state, agents that are working, your open PRs and usage. |
 | **Agents** | Your agents by group, with a tab per group. Each row shows the agent's state, role, harness, context and its PR with checks, or its branch. Offline agents are folded away. Tap an agent for its actions: open the terminal, message, shut down or power on, restart, rename and retire. **＋ New** spawns an agent into a group. |
 | **Mail** | [Messages](dashboard-messages.md) as a phone mail app: folder chips at the top, then one row per message with its first line and attachments. A pending decision or access request has its buttons right on the row. Tap a message to read it full screen, with **Reply** at the bottom and **Terminal ›** at the top. **✎ Write** starts a new message. |
 | **Board** | Each group's [task board](taskboard.md), one group at a time, as lists: waiting on you, blocked, in progress, next and ideas. Tap a task to open it. |
 | **More** | Every other tab, **Power on all**, **Shut down all…** and **Desktop site** |
+
+**Automations** (in **More**) lists cron jobs, standing orders, triggers and
+exports by kind. Each has a switch to turn it on or off, and a cron job has ▶ to
+run it now. Tap one for its details and its recent runs or firings. **Runs**
+lists process runs from every group, waiting on you first: tap one for its steps,
+answer its gate, or pause it. Creating and editing automations and process
+templates are desktop only.
 
 Overlay windows, the side panel, drag and drop and the voice wake word aren't
 on the phone layout.

@@ -713,7 +713,26 @@ const jobsDescriptor = createIslandDescriptor({
     },
 });
 
+// A phone gets Automations as lists (phone-automations-island.js) over the
+// same state and actions, in place of the table and its dialogs.
+const phoneJobsDescriptor = createIslandDescriptor({
+  name: 'jobs', label: 'Automations', hosts: { host: '#jobs-root' }, failureClass: 'jobs-error ui-error-box',
+  load: async ({ hosts: { host }, dependencies: actionDependencies }) => {
+    const islandModule = import('./phone-automations-island.js');
+    const stateModule = import('./jobs-state.js');
+    const actionsModule = import('./jobs-actions.js');
+    const [{ mountPhoneJobsIsland }, { jobsState }, { createJobsActions }] =
+      await Promise.all([islandModule, stateModule, actionsModule]);
+    const jobsActions = createJobsActions({ state: jobsState, ...actionDependencies });
+    return {
+      state: jobsState,
+      mount: (registerCleanup) => mountPhoneJobsIsland({ host, state: jobsState, actions: jobsActions, registerCleanup }),
+    };
+  },
+});
+
 export async function mountJobsFeature(actionDependencies) {
+  if (isPhone) return mountIslandDescriptor(phoneJobsDescriptor, actionDependencies);
   return mountIslandDescriptor(jobsDescriptor, actionDependencies);
 }
 
@@ -1203,8 +1222,20 @@ const processesDescriptor = createIslandDescriptor({
   },
 });
 
+// A phone gets the process runs to read and decide (Runs), not the
+// templates and their editor.
+const phoneProcessesDescriptor = createIslandDescriptor({
+  name: 'processes', label: 'Processes', hosts: { host: '#processes-root' }, failureClass: 'processes-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./phone-automations-island.js');
+    const stateModule = import('./processes-state.js');
+    const [{ mountPhoneProcessesIsland }, { processesState }] = await Promise.all([islandModule, stateModule]);
+    return { state: processesState, mount: (registerCleanup) => mountPhoneProcessesIsland({ host, registerCleanup }) };
+  },
+});
+
 export function mountProcessesFeature(dependencies = {}) {
-  return mountIslandDescriptor(processesDescriptor, dependencies);
+  return mountIslandDescriptor(isPhone ? phoneProcessesDescriptor : processesDescriptor, dependencies);
 }
 
 const managementDescriptor = createIslandDescriptor({

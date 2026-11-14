@@ -97,9 +97,10 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 			// refresh. Remove it before looking for a periodic/recursive scheduler.
 			manualDebounces += strings.Count(source, "setTimeout(refresh, 250)")
 			source = strings.ReplaceAll(source, "setTimeout(refresh, 250)", "")
-		case "js/jobs-island.js":
-			// The Preact Jobs query has the same one-shot debounce, routed through
-			// the action boundary. It does not repeat or fetch snapshot directly.
+		case "js/jobs-island.js", "js/phone-automations-island.js":
+			// The Preact Jobs query (desktop and phone) has the same one-shot
+			// debounce, routed through the action boundary. It does not repeat or
+			// fetch snapshot directly.
 			const jobsDebounce = "setTimeout(() => void actions.refresh(), 250)"
 			manualDebounces += strings.Count(source, jobsDebounce)
 			source = strings.ReplaceAll(source, jobsDebounce, "")
@@ -128,8 +129,9 @@ func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
 	if schedulerCalls != 1 {
 		t.Errorf("snapshot scheduler installation count = %d, want exactly one", schedulerCalls)
 	}
-	if manualDebounces != 2 {
-		t.Errorf("known one-shot filter refresh debounce count = %d, want 2", manualDebounces)
+	// The one-shot filter debounces allowed above, one per file that has one.
+	if manualDebounces != 3 {
+		t.Errorf("known one-shot filter refresh debounce count = %d, want 3", manualDebounces)
 	}
 
 	dashboard, err := fs.ReadFile(dashboardAssetsFS, "js/dashboard.js")
