@@ -42,7 +42,9 @@ type taskboardContextTask = taskboardTaskView
 // started ones (WaitingOnYou the operator's, started or queued for it), Next
 // and Ideas are the rest in that stage, unassigned or held by an agent
 // (IdeasForYou the operator's ideas). Queued (open with an unmet dependency)
-// overlaps the others. NeedsYou is Blocked plus Stalled plus WaitingOnYou.
+// overlaps the others. NeedsYou is WaitingOnYou: what needs the operator is
+// what is assigned to it (tk_3cb51ce0). A blocked or stalled task is only
+// that, not the operator's to act on.
 type taskboardCounts struct {
 	Live       int `json:"live"`
 	NeedsYou   int `json:"needs_you"`
@@ -51,8 +53,9 @@ type taskboardCounts struct {
 	Ideas      int `json:"ideas"`
 	Blocked    int `json:"blocked"`
 	Stalled    int `json:"stalled"`
-	// WaitingOnYou counts the open tasks assigned to the operator, and the
-	// open questions on the other live tasks; they count in NeedsYou too.
+	// WaitingOnYou counts the live tasks assigned to the operator (a blocked
+	// one counts in Blocked too), and the open questions on the other live
+	// tasks; NeedsYou is the same count.
 	WaitingOnYou int `json:"waiting_on_you"`
 	// IdeasForYou counts the ideas the operator holds to triage
 	// (tk_3826822a); they are not waiting on it.
@@ -242,14 +245,20 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 	for _, v := range liveViews {
 		entry.Counts.Live++
 		i, inColumn := colAt[v.Column]
+		// A task the operator holds waits on it in any column, blocked
+		// too (tk_3cb51ce0); its ideas to triage do not.
+		operatorIdea := v.Held && v.Stage == db.GroupTaskStageIdea
+		operatorWaits := v.Assignee != nil && v.Assignee.Operator && !operatorIdea
 		switch {
 		case v.Status == db.GroupTaskBlocked:
 			entry.Counts.Blocked++
-			entry.Counts.NeedsYou++
+			if operatorWaits {
+				entry.Counts.WaitingOnYou++
+				entry.Counts.NeedsYou++
+			}
 		case v.Stalled:
 			entry.Counts.Stalled++
-			entry.Counts.NeedsYou++
-		case v.Assignee != nil && v.Assignee.Operator && v.Held && v.Stage == db.GroupTaskStageIdea:
+		case v.Assignee != nil && v.Assignee.Operator && operatorIdea:
 			entry.Counts.IdeasForYou++
 		case v.Assignee != nil && v.Assignee.Operator:
 			entry.Counts.WaitingOnYou++
@@ -266,8 +275,7 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		}
 		// An open question on a task the operator does not already wait
 		// on as a whole waits on it too (tk_8b2c86f7).
-		waitsWhole := v.Status == db.GroupTaskOpen && v.Assignee != nil && v.Assignee.Operator && (!v.Held || v.Stage != db.GroupTaskStageIdea)
-		if !waitsWhole {
+		if !operatorWaits {
 			entry.Counts.WaitingOnYou += v.OpenQuestions
 			entry.Counts.NeedsYou += v.OpenQuestions
 		}

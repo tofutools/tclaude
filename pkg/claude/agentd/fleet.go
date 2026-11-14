@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -51,7 +50,8 @@ type fleetBrief struct {
 	Taskboards []fleetTaskboard `json:"taskboards,omitempty"`
 }
 
-// fleetTaskboard is one group's task board "needs you" counts.
+// fleetTaskboard is one group's task board counts of what is held up.
+// NeedsYou is WaitingOnYou (tk_3cb51ce0).
 type fleetTaskboard struct {
 	Group    string `json:"group"`
 	NeedsYou int    `json:"needs_you"`
@@ -107,7 +107,7 @@ const (
 	fleetMessages   = "messages"   // unread notifications in Messages
 	fleetIdleLonger = "idle"       // online and idle for a while
 	fleetRecovering = "recovering" // a crashed agent: being recovered, or recovery stopped
-	fleetTaskboardK = "taskboard"  // a group's task board has blocked or stalled tasks
+	fleetTaskboardK = "taskboard"  // a group's task board has tasks waiting on the operator
 )
 
 var fleetRank = map[string]int{
@@ -312,8 +312,10 @@ func buildFleetBrief(shared *statusSnapshot, self, group string, now time.Time) 
 	return brief, nil
 }
 
-// addFleetTaskboards adds each listed group's task board "needs you" counts
-// and an attention item for every group with any.
+// addFleetTaskboards adds each listed group's task board counts, and an
+// attention item for every group with tasks waiting on the operator. Only
+// those need it (tk_3cb51ce0): blocked and stalled tasks are counted, not
+// raised.
 func addFleetTaskboards(brief *fleetBrief, groups []*db.AgentGroup, now time.Time) error {
 	if cfg, _ := config.Load(); !cfg.TaskboardEnabled() {
 		return nil
@@ -349,24 +351,17 @@ func addFleetTaskboards(brief *fleetBrief, groups []*db.AgentGroup, now time.Tim
 			continue
 		}
 		tb := fleetTaskboard{Group: g.Name, Blocked: blocked[g.ID], Stalled: stalled[g.ID], WaitingOnYou: waiting[g.ID]}
-		tb.NeedsYou = tb.Blocked + tb.Stalled + tb.WaitingOnYou
+		tb.NeedsYou = tb.WaitingOnYou
 		brief.Taskboards = append(brief.Taskboards, tb)
-		var parts []string
-		if tb.WaitingOnYou > 0 {
-			parts = append(parts, fmt.Sprintf("%d waiting on you", tb.WaitingOnYou))
+		if tb.WaitingOnYou == 0 {
+			continue
 		}
-		if tb.Stalled > 0 {
-			parts = append(parts, fmt.Sprintf("%d stalled", tb.Stalled))
-		}
-		if tb.Blocked > 0 {
-			parts = append(parts, fmt.Sprintf("%d blocked", tb.Blocked))
-		}
-		verb := " need you ("
-		if tb.NeedsYou == 1 {
-			verb = " needs you ("
+		verb := " wait on you"
+		if tb.WaitingOnYou == 1 {
+			verb = " waits on you"
 		}
 		brief.Attention = append(brief.Attention, fleetItem{Kind: fleetTaskboardK, Title: g.Name + " board:",
-			Detail: plural(tb.NeedsYou, "task") + verb + strings.Join(parts, ", ") + ")"})
+			Detail: plural(tb.WaitingOnYou, "task") + verb})
 	}
 	sort.Slice(brief.Taskboards, func(i, j int) bool { return brief.Taskboards[i].Group < brief.Taskboards[j].Group })
 	return nil

@@ -130,11 +130,11 @@ func CountBlockedGroupTasks() (map[int64]int, error) {
 	return countGroupTasksWhere(`status = 'blocked'`)
 }
 
-// CountOperatorGroupTasks counts the open tasks the operator holds, per
-// group id (tcl-p4t78f): waiting on the operator. Its ideas are left out
-// (CountOperatorGroupTaskIdeas).
+// CountOperatorGroupTasks counts the live (open or blocked) tasks the
+// operator holds, per group id (tcl-p4t78f): waiting on the operator, in any
+// column (tk_3cb51ce0). Its ideas are left out (CountOperatorGroupTaskIdeas).
 func CountOperatorGroupTasks() (map[int64]int, error) {
-	return countGroupTasksWhere(`status = 'open' AND assignee_kind = 'operator' AND NOT (stage = 'idea' AND started_at IS NULL)`)
+	return countGroupTasksWhere(`status IN ('open', 'blocked') AND assignee_kind = 'operator' AND NOT (stage = 'idea' AND started_at IS NULL)`)
 }
 
 func countGroupTasksWhere(where string) (map[int64]int, error) {
