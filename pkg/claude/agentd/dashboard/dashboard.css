@@ -19048,10 +19048,10 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 /* A column (or the List) grouped by readiness, this viewer's own
    (groups-taskboard-readiness.js): "◧ by readiness" on its head ungroups it,
    and a heading over each group's first card or row. */
-.tb-ready-chip { margin-left: 4px; padding: 0 6px; border: 1px solid #8957e5; border-radius: 999px; background: rgba(137, 87, 229, 0.12);
-  color: #d2a8ff; font: inherit; font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; line-height: 16px; cursor: pointer; white-space: nowrap; }
-.tb-ready-chip:hover { background: rgba(137, 87, 229, 0.24); }
-.tb-ready-chip:disabled { cursor: default; }
+.ui-tag.tb-ready-chip { margin-left: 4px; border-color: #8957e5; background: rgba(137, 87, 229, 0.12); color: #d2a8ff;
+  font-family: inherit; font-weight: 500; letter-spacing: 0; text-transform: none; cursor: pointer; white-space: nowrap; }
+.ui-tag.tb-ready-chip:hover { background: rgba(137, 87, 229, 0.24); }
+.ui-tag.tb-ready-chip:disabled { cursor: default; }
 .tb-ready-head { display: flex; align-items: center; gap: 6px; margin: 2px 2px 0; color: #8b949e; font-size: 11px; }
 .tb-ready-head::after { content: ''; flex: 1; border-top: 1px dashed #30363d; }
 .tb-ready-label { font-weight: 600; }
@@ -19059,8 +19059,8 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-ready-queued .tb-ready-label { color: #e3b341; }
 .tb-ready-blocked .tb-ready-label { color: #ff7b72; }
 .tb-ready-count { color: #6e7681; }
-.tb-ready-row td { padding: 3px 8px; background: #161b22; }
-.tb-ready-row .tb-ready-head { margin: 0; }
+tr.tb-ready-row { background: #161b22; }
+.tb-ready-row .tb-ready-head { margin: 0; padding: 1px 0; }
 .tb-lane-head { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; min-width: 0; }
 /* When the grid scrolls sideways, the lane column stays pinned on the left
    so each row still says whose it is; the cards slide under it. Its right

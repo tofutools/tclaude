@@ -128,7 +128,7 @@ export function ReadyChip({ column }) {
   const grouping = useReadyGrouping();
   if (!groupable(column) || !grouping.has(column.key)) return null;
   const off = typeof grouping.set === 'function' ? () => grouping.set(column.key, false) : null;
-  return html`<button type="button" data-ui-exempt class="tb-ready-chip" data-tb-ready=${column.key} disabled=${!off}
+  return html`<button type="button" data-ui-exempt class="ui-tag tb-ready-chip" data-tb-ready=${column.key} disabled=${!off}
     title="Grouped by readiness, only on this dashboard: ready, then queued, then blocked. Click to draw the board's order again."
     onClick=${off ? (event) => { event.stopPropagation(); off(); } : undefined}>◧ by readiness</button>`;
 }
