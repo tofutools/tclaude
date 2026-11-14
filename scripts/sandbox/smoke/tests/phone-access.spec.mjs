@@ -57,6 +57,15 @@ test('Access: a deep link lands on Sudo, revoke asks first, and slugs are search
 
   await views(page).getByRole('tab', { name: 'Agents' }).click();
   await expect(page.locator('.phone-desktop-only:visible')).toContainText('desktop only');
+
+  // Requests is the bare /access: Back onto it shows it again.
+  await views(page).getByRole('tab', { name: 'Requests' }).click();
+  await expect(page).toHaveURL(/\/access$/);
+  await views(page).getByRole('tab', { name: 'Sudo' }).click();
+  await expect(page).toHaveURL(/\/access\/sudo$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/access$/);
+  await expect(views(page).getByRole('tab', { name: 'Requests' })).toHaveAttribute('aria-selected', 'true');
   expect(errors).toEqual([]);
 });
 

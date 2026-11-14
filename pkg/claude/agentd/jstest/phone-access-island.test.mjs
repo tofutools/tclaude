@@ -136,3 +136,14 @@ test('before the first snapshot it says it is loading, then picks Requests if an
   await harness.act(() => { snapshot.value = snapshotWith({ requests: [{ id: 'r1', perm: 'x', agent_id: 'agt_lead', status: 'pending' }] }); });
   assert.equal(tab('Requests').getAttribute('aria-selected'), 'true');
 });
+
+test('a subtab picked before the first snapshot is not overridden by a waiting request', async (t) => {
+  const { harness, snapshot, tab } = await setup(t, { loaded: false });
+  // nav-history restores /access/sudo by clicking Sudo, which can land
+  // before the effect that would pick Requests has run.
+  await harness.act(() => {
+    tab('Sudo').click();
+    snapshot.value = snapshotWith({ requests: [{ id: 'r1', perm: 'x', agent_id: 'agt_lead', status: 'pending' }] });
+  });
+  assert.equal(tab('Sudo').getAttribute('aria-selected'), 'true');
+});

@@ -130,7 +130,9 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
   const [requests, setRequests] = useState(null);
   const routed = useRef(current.subtab);
   useEffect(() => {
-    if (requests === null && current.snapshotLoaded) setRequests(waiting > 0);
+    // Functional: a route restored between this render and the effect has
+    // already decided, and this render's `requests` would not know it.
+    if (current.snapshotLoaded) setRequests((decided) => (decided === null ? waiting > 0 : decided));
   }, [current.snapshotLoaded]);
   useEffect(() => {
     if (routed.current === current.subtab) return;
@@ -162,7 +164,7 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
     // The router restores /access/<subtab> by clicking .access-subtab
     // (nav-history.js), as on the desktop.
     href: view.key === 'requests' ? '/access' : `/access/${view.key}`,
-    class: view.key === 'requests' ? undefined : 'access-subtab',
+    class: view.key === 'requests' ? 'access-requests-tab' : 'access-subtab',
     attrs: view.key === 'requests' ? undefined : { 'data-subtab': view.key },
   }));
   return html`<div class="phone-access">

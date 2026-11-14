@@ -209,7 +209,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const hideNav = !!page?.hideNav;
   // A view a phone does not offer (js/phone-desktop-only.js) gets a page
   // that says so in place of its desktop content.
-  const desktopOnly = OWN_VIEWS.includes(view) ? '' : desktopOnlyView(activeTab, featureState('groups')?.subview?.value);
+  const routeMap = featureState('groups')?.subview?.value === 'routes';
+  const desktopOnly = OWN_VIEWS.includes(view) ? '' : desktopOnlyView(activeTab, routeMap ? 'routes' : '');
   const covering = OWN_VIEWS.includes(view) ? view : desktopOnly ? 'desktop-only' : '';
 
   // Any tab activation after the first render clears the own view, so a deep
@@ -265,6 +266,12 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     }
     shell.view.value = null;
     if (target.tab !== activeTab) phonePage.value = null;
+    // Agents shows the agent list, never the desktop-only route map a deep
+    // link left Groups on: the bare Groups location takes it back to Members.
+    if (target.tab === 'groups' && routeMap) {
+      actions.navigate('/');
+      return;
+    }
     actions.showTab(target.tab);
   }
 
@@ -288,7 +295,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     </header>
     ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} processSource=${processSource} /></div>`}
     ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} /></div>`}
-    ${desktopOnly && html`<div class="phone-view" role="region" aria-label=${desktopOnly}><${DesktopOnlyPage} what=${desktopOnly} open=${actions.desktopSite} /></div>`}
+    ${desktopOnly && html`<div class="phone-view" role="region" aria-label=${desktopOnly}><${DesktopOnlyPage} what=${desktopOnly} open=${actions.desktopSite}
+      other=${routeMap ? { label: 'Show agents', onClick: () => viewActions.navigate('/') } : null} /></div>`}
     ${!hideNav && html`<nav class="phone-nav" aria-label="Views">
       ${PHONE_SLOTS.map((target) => html`<button data-ui-exempt key=${target.id} type="button"
         class=${`phone-nav-item${slot === target.id ? ' on' : ''}`} aria-current=${slot === target.id ? 'page' : undefined}

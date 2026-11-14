@@ -285,6 +285,10 @@ function activate(loc, { traversal = false } = {}) {
     if (navBtn && !navBtn.classList.contains('active')) clickNavExactly(navBtn);
     if (loc.tab === 'access' && loc.subtab) {
       $(`#tab-access .access-subtab[data-subtab="${loc.subtab}"]`)?.click();
+    } else if (loc.tab === 'access' && traversal) {
+      // Back onto a bare /access: the phone's Requests view is that location
+      // (js/phone-access-island.js). The desktop has no such tab.
+      $('#tab-access .access-requests-tab')?.click();
     } else if (loc.tab === 'terminals' && loc.selection) {
       // Reattaching an agent's terminal is asynchronous (xterm runtime load,
       // then a socket), so like Processes this goes through the island rather

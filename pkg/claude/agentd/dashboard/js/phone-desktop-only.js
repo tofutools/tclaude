@@ -37,12 +37,14 @@ export function DesktopOnlyNote({ what, open = desktopSite }) {
   return html`<p class="phone-desktop-only">${what} <b>desktop only</b>.${' '}<button data-ui-exempt type="button" class="phone-link" onClick=${() => open()}>Desktop site ›</button></p>`;
 }
 
-// DesktopOnlyPage stands in for a whole view.
-export function DesktopOnlyPage({ what, open = desktopSite }) {
+// DesktopOnlyPage stands in for a whole view. `other` is a way on within the
+// phone layout ({label, onClick}), when the view sits on top of one.
+export function DesktopOnlyPage({ what, open = desktopSite, other = null }) {
   return html`<div class="phone-desktop-page">
     <div class="phone-desktop-page-icon" aria-hidden="true">🖥</div>
     <h2 class="phone-desktop-page-title">${what} is desktop only</h2>
     <p class="phone-desktop-page-body">It needs a wide screen to be useful. Switch this page to the desktop layout, or open it on a computer.</p>
     <${Button} variant="primary" class="phone-desktop-page-go" onClick=${() => open()}>Desktop site<//>
+    ${other && html`<${Button} class="phone-desktop-page-go" onClick=${other.onClick}>${other.label}<//>`}
   </div>`;
 }
