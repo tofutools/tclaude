@@ -1,0 +1,58 @@
+# Restore the Go build-cache snapshot of one heavy test shard (agentd or
+# sandbox). release.yml saves one per shard and platform on every push to main
+# (the save and its budget live in the test-suite action and
+# scripts/ci/build-cache.py); every other job only restores. Shared here so
+# the key scheme exists once: the test-suite action restores its own shard's
+# snapshot, and jobs that compile much of the same module (the sandbox v2
+# smoke's tclaude build and test binaries) restore the agentd one read-only.
+#
+# Callers must have set up Go first. Sets GOCACHE in the job environment.
+name: Restore test build cache
+description: Restore a heavy test shard's main-branch Go build cache snapshot.
+
+inputs:
+  shard:
+    description: agentd | sandbox
+    required: true
+  race:
+    description: The race setting the snapshot was built with ('true' or empty).
+    default: ''
+
+outputs:
+  prefix:
+    description: Key prefix shared by every snapshot of this shard and platform.
+    value: ${{ steps.resolve.outputs.prefix }}
+  key:
+    description: This commit's snapshot key (what a main push saves).
+    value: ${{ steps.resolve.outputs.key }}
+  cache-hit:
+    description: "'true' when the exact key was restored."
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve build cache key
+      id: resolve
+      shell: bash
+      env:
+        SHARD: ${{ inputs.shard }}
+        PLATFORM: ${{ runner.os }}-${{ runner.arch }}
+        RACE: ${{ inputs.race }}
+        MODULES: ${{ hashFiles('go.mod', 'go.sum') }}
+      run: |
+        case "$SHARD" in agentd|sandbox) ;; *) echo "unknown shard: $SHARD" >&2; exit 1 ;; esac
+        echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+        prefix="gobuild-tests-v1-$PLATFORM-$SHARD-"
+        compatible="$prefix$(go env GOVERSION)-$MODULES-race$RACE-"
+        echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+        echo "compatible=$compatible" >> "$GITHUB_OUTPUT"
+        echo "key=$compatible$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+    - name: Restore build cache
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.GOCACHE }}
+        key: ${{ steps.resolve.outputs.key }}
+        restore-keys: ${{ steps.resolve.outputs.compatible }}
