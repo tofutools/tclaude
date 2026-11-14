@@ -32,6 +32,14 @@ export function setFloatingTerminals(lookup) {
   floatingTerminals = lookup;
 }
 
+// The phone layout shows a terminal docked full screen, one at a time
+// (phone-terminal-island.js), never as a Collab pane: it registers here.
+let phoneTerminals = null;
+export function setPhoneTerminals(open) {
+  phoneTerminals = open;
+  return () => { if (phoneTerminals === open) phoneTerminals = null; };
+}
+
 // An agent is in one place at a time, and every way of showing it comes through
 // here. A window holds it first. A live pane in this tab beats a companion tab
 // that was left pinned: that pane is what has the session.
@@ -55,6 +63,9 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
     const key = seed.key || seed.ws;
+    // A socket terminal on a phone; a drawing board, process or page still
+    // opens in its tab.
+    if (phoneTerminals && !seed.drawingBoard && !seed.process && !seed.page) return phoneTerminals(seed);
     if (revealHeldSeed(seed)) return { key, floating: true };
     const current = controller;
     if (!current) return null;

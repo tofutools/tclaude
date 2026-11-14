@@ -175,8 +175,11 @@ export const TAB_PARAMS = {
 //   - task: a task's edit form, as <task-id>[@<node>]:<group> (task-route.js).
 //   - board-options: a board's Board options drawer, as [<node>:]<group>
 //     (groups-taskboard-options-route.js).
-export const OVERLAY_PARAMS = ['manage', 'notification', 'task', 'board-options'];
+//   - terminal: the phone's docked terminal, as its pane key (window:<agent>
+//     for an agent's own terminal; phone-terminal-island.js).
+export const OVERLAY_PARAMS = ['manage', 'notification', 'task', 'board-options', 'terminal'];
 const TASK_ROUTE = /^tk_[0-9a-z]+(@inst_[0-9a-z]+)?:.+$/;
+const TERMINAL_ROUTE = /^[^\u0000-\u001f\u007f]{1,300}$/;
 // A drawing board's focus: four numbers, and up to 200 element ids.
 const FOCUS_NUMBER = '-?\\d+(\\.\\d+)?';
 const FOCUS_CROP = new RegExp(`^${FOCUS_NUMBER}(,${FOCUS_NUMBER}){3}$`);
@@ -196,6 +199,7 @@ function normalizeParams(tab, params) {
     if (str === '' || (key === 'page' && !(Number(str) > 1))) continue;
     if (key === 'manage' && !MANAGE_KINDS.has(str)) continue;
     if (key === 'task' && !TASK_ROUTE.test(str)) continue;
+    if (key === 'terminal' && !TERMINAL_ROUTE.test(str)) continue;
     if (key === 'crop' && !FOCUS_CROP.test(str)) continue;
     if (key === 'elements' && !FOCUS_ELEMENTS.test(str)) continue;
     out[key] = key === 'page' ? String(Math.floor(Number(str))) : str;

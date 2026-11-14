@@ -109,11 +109,12 @@ test('More lists the tabs the dashboard shows, and the Desktop site switch', asy
 });
 
 test('an asking agent on Now opens its terminal or a message', async (t) => {
-  const { calls, mounted, tap } = await setup(t);
+  const { calls, mounted, tap, shell } = await setup(t);
   const row = mounted.container.querySelector('.phone-agent');
   await tap([...row.querySelectorAll('button')].find((b) => b.textContent === 'Open'));
   assert.equal(calls.at(-1)[0], 'openTerminal');
   assert.equal(calls.at(-1)[1].agentId, AGENT);
+  assert.equal(shell.view.value, 'now', 'the terminal docks over Now; Now stays');
   await tap(row.querySelector('[aria-label="Message checkout-ui"]'));
   assert.equal(calls.at(-1)[0], 'message');
 });

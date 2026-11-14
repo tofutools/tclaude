@@ -402,3 +402,60 @@
 :root[data-layout="phone"] .phone-agent-cwd { font-family: ui-monospace, monospace; font-size: 12px; }
 :root[data-layout="phone"] .phone-agent-sheet .phone-menu { margin-top: 10px; }
 :root[data-layout="phone"] .phone-agent-state.v-working { color: var(--ui-success-line); border-color: var(--ui-success); }
+
+/* ── Terminal (js/phone-terminal-island.js) ─────────────────────────────────
+   One terminal, docked full screen over everything but dialogs, which open
+   above it (the agent's message sheet). The island sets the height to the
+   visual viewport, so the key strip rides above an on-screen keyboard. */
+:root[data-layout="phone"][data-phone-terminal] body { overflow: hidden; }
+:root[data-layout="phone"] .phone-term {
+  position: fixed; left: 0; right: 0; top: 0; height: 100dvh; z-index: var(--z-panel);
+  display: flex; flex-direction: column;
+  background: var(--ui-card-bg);
+}
+:root[data-layout="phone"] .phone-term-bar {
+  flex: none; display: flex; align-items: center; gap: 4px;
+  min-height: var(--phone-bar-h); padding: var(--phone-safe-top) 8px 0 4px;
+  border-bottom: 1px solid var(--ui-line);
+}
+:root[data-layout="phone"] .phone-term-bar .phone-bar-live { margin: 0 6px; }
+:root[data-layout="phone"] .phone-term-bar .phone-bar-act { font-size: 18px; }
+:root[data-layout="phone"] .phone-term-bar .phone-bar-act.on { background: var(--ui-menu-hover); border-color: var(--ui-focus); }
+:root[data-layout="phone"] .phone-term-body { flex: 1; min-height: 0; position: relative; }
+/* touch-action: none, so a pinch reaches the terminal (its text size) and
+   never zooms the page. */
+:root[data-layout="phone"] .phone-term-host {
+  position: absolute; inset: 0; overflow: hidden; touch-action: none;
+}
+/* xterm's own box (its theme's background) fills the host, under the last
+   whole row too. */
+:root[data-layout="phone"] .phone-term-host .xterm { height: 100%; padding: 2px 2px 0; box-sizing: border-box; }
+:root[data-layout="phone"] .phone-term-note {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px var(--phone-gutter); background: var(--ui-card-bg); border-top: 1px solid var(--ui-line);
+  color: var(--ui-muted-text); font-size: 14px;
+}
+:root[data-layout="phone"] .phone-term-reconnect {
+  min-height: 40px; padding: 0 18px; border-radius: 20px;
+  background: var(--ui-primary); color: var(--ui-primary-text); border: 0; font: inherit; font-weight: 700; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-term-keys {
+  flex: none; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px;
+  padding: 8px 8px 0;
+}
+:root[data-layout="phone"] .phone-term-keys:last-child { padding-bottom: calc(8px + var(--phone-safe-bottom)); }
+:root[data-layout="phone"] .phone-term-key {
+  min-height: 42px; padding: 0; border-radius: 8px;
+  background: var(--ui-bg); border: 1px solid var(--ui-btn-line); color: var(--ui-text-strong);
+  font: inherit; font-size: 15px; font-family: ui-monospace, monospace; cursor: pointer;
+  touch-action: manipulation;
+}
+:root[data-layout="phone"] .phone-term-key:active { background: var(--ui-menu-hover); }
+:root[data-layout="phone"] .phone-term-compose {
+  flex: none; margin: 8px 8px calc(8px + var(--phone-safe-bottom)); min-height: 48px; padding: 0 18px;
+  border-radius: 24px; text-align: left;
+  background: var(--ui-field-bg); border: 1px solid var(--ui-line);
+  color: var(--ui-muted-text); font: inherit; font-size: 16px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
