@@ -33,6 +33,11 @@ export const MORE_TABS = Object.freeze([
   Object.freeze({ tab: 'access', label: 'Access', icon: '🔐', path: '/access' }),
   Object.freeze({ tab: 'usage', label: 'Usage', icon: '📊', path: '/usage' }),
   Object.freeze({ tab: 'diagnostics', label: 'Diagnostics', icon: '🩺', path: '/diagnostics' }),
+  // Fleet's nav anchor is always hidden (the desktop reaches it from the
+  // node chips), so the router will not route to its path: it is always
+  // offered and opened through its anchor (byAnchor), and its view says when
+  // there is no fleet.
+  Object.freeze({ tab: 'fleet-admin', label: 'Fleet', icon: '🌐', path: '/fleet-admin', byAnchor: true }),
   Object.freeze({ tab: 'config', label: 'Settings', icon: '⚙', path: '/config' }),
 ]);
 

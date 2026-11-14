@@ -173,12 +173,16 @@ export function BoardView({ source, state, actions }) {
 // MoreMenu is the More sheet: every other tab, the power actions and the
 // layout switch.
 function MoreMenu({ state, actions, close }) {
-  const go = (path) => { close(); actions.navigate(path); };
+  const go = (entry) => {
+    close();
+    if (entry.byAnchor) actions.showTab(entry.tab);
+    else actions.navigate(entry.path);
+  };
   const run = (act) => { close(); act(); };
   const meta = footerMetaView(state.snapshot.value);
   return html`<ul class="phone-menu">
-      ${MORE_TABS.filter((entry) => actions.tabAvailable(entry.tab)).map((entry) => html`<li key=${entry.tab}>
-        <button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => go(entry.path)}>
+      ${MORE_TABS.filter((entry) => entry.byAnchor || actions.tabAvailable(entry.tab)).map((entry) => html`<li key=${entry.tab}>
+        <button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => go(entry)}>
           <span class="phone-menu-icon" aria-hidden="true">${entry.icon}</span>${entry.label}
         </button>
       </li>`)}

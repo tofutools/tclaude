@@ -244,11 +244,35 @@ or the phone's Back returns to the list.
 **Usage › Costs** shows each agent on two lines: the name and cost, then the
 harness, model and last activity.
 
+### Diagnostics, Plugins and Fleet on a phone
+
+**Diagnostics** (under **More**) opens on the same four views, with **Doctor**
+first:
+
+- **Doctor**: the same checks and decisions as on the desktop, with its
+  categories as a row of tabs.
+- **Audit** and **Logs**: one row per event or log line. The first line says
+  who did what, or the message; the second gives the target and detail, or
+  the fields. The outcome or level is on the right. Tap a row to see all of it.
+  Each has one search, plus **Failed only** (Audit) or a level (Logs).
+- **Performance**: the dashboard's poll timings, one card per endpoint.
+  Daemon profiling and the per-phase breakdowns are desktop only.
+
+**Plugins** shows a card per installed plugin. The switch activates or
+deactivates it, **Check** re-runs its checks, and each step has ▶ to run it or
+■ to stop it, as its lamp offers on the desktop. **Check all** checks every
+plugin. Installing from the catalog and editing plugins are desktop only.
+
+**Fleet** (under **More**) is read-only: this node and its hub connection, the
+trusted peers (online, or when last seen, and their access level), and the
+instances asking to be trusted. Trust, grants, hub settings and the rest of
+Fleet admin are desktop only.
+
 ### Views that are desktop only
 
-Fleet admin, the Groups route map and Vegas need a wide screen. On a phone they
-show a page that says so, with **Desktop site** to open the same page in the
-full dashboard.
+Fleet admin's sections (beyond Fleet's own read-only view), the Groups route map
+and Vegas need a wide screen. On a phone they show a page that says so, with
+**Desktop site** to open the same page in the full dashboard.
 
 **Desktop site** in **More** shows the full dashboard on this phone, and **Phone
 view** at the bottom of that page switches back. The choice is kept in this

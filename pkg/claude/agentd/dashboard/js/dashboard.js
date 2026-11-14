@@ -77,7 +77,7 @@ import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import { bindActivityTab } from './activity-tab.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountVoiceWakeFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDoctorFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountAccessPanelFeature, mountCompanionFeature, mountDrawingBoardOverlayFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountKnowledgeSourceFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature, mountPhoneShellFeature, mountPhoneAgentsFeature, mountPhoneTerminalFeature, mountPhoneConfigFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountVoiceWakeFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountPhoneFleetFeature, mountCostsFeature, mountDebugFeature, mountDoctorFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountAccessPanelFeature, mountCompanionFeature, mountDrawingBoardOverlayFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountKnowledgeSourceFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature, mountPhoneShellFeature, mountPhoneAgentsFeature, mountPhoneTerminalFeature, mountPhoneConfigFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -223,9 +223,9 @@ async function settleInitialLayout() {
     () => mountFleetFeature(),
     () => mountFleetMergedGroupsFeature(),
     () => mountFusedMessagesFeature(),
-    // A phone shows no Fleet admin (js/phone-desktop-only.js): the hidden
-    // desktop island would poll the federation API for nothing.
-    async () => (isPhone ? null : mountFleetAdminFeature()),
+    // A phone shows Fleet read-only (js/phone-fleet.js) instead of Fleet
+    // admin, whose island would poll the federation API for views it lacks.
+    () => (isPhone ? mountPhoneFleetFeature() : mountFleetAdminFeature()),
     () => mountDebugFeature(),
     () => mountProfilesFeature({ confirm: confirmModal, pickAgent }),
     () => mountConfigFeature({ toast, isCyclingTabs }),

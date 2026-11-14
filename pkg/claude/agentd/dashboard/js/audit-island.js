@@ -107,9 +107,13 @@ function MergedNote({ response }) {
     ${(response.refused || []).map(({ node, why, offline }) => html` <span key=${node.id} class="scope-pill" style=${`--nc:${node.color}`}>${node.name}${offline ? html` <span class="muted">offline</span>` : html`<${LockReason} why=${why} />`}</span>`)}</div>`;
 }
 
-export function AuditApp({ state, actions }) {
+// useAuditFeed loads the audit log while its view shows, re-reads it on a
+// snapshot when due and on a re-selected tab, and returns `filter`, which sets
+// one filter and reloads (debounced for typing). The phone's rows
+// (phone-diagnostics.js) share it.
+export function useAuditFeed(state, actions) {
   const current = state.view.value;
-  const nodes = actions.nodes ? actions.nodes() : []; const searchTimer = useRef(null); const filterRef = useRef(null);
+  const searchTimer = useRef(null);
   useEffect(() => {
     if (!current.active) { clearTimeout(searchTimer.current); return undefined; }
     actions.load();
@@ -123,7 +127,13 @@ export function AuditApp({ state, actions }) {
     return () => document.removeEventListener('tclaude:tab-reselected', reselected);
   }, []);
   useEffect(() => () => clearTimeout(searchTimer.current), []);
-  const filter = (name, value, debounce = false) => { state.setFilter(name, value); clearTimeout(searchTimer.current); if (debounce) searchTimer.current = setTimeout(actions.load, 300); else actions.load(); };
+  return (name, value, debounce = false) => { state.setFilter(name, value); clearTimeout(searchTimer.current); if (debounce) searchTimer.current = setTimeout(actions.load, 300); else actions.load(); };
+}
+
+export function AuditApp({ state, actions }) {
+  const current = state.view.value;
+  const nodes = actions.nodes ? actions.nodes() : []; const filterRef = useRef(null);
+  const filter = useAuditFeed(state, actions);
   const retention = current.response ? current.response.pruning_on ? `keeping ${current.response.retention_days} day${current.response.retention_days === 1 ? '' : 's'}` : 'kept forever' : '';
   return html`<${Fragment}><div class="filter-bar"><${Input} domRef=${filterRef} id="filter-audit" aria-label="Search audit events" placeholder="Search (actor / verb / target / group / detail) — server-side" autocomplete="off" spellcheck=${false} value=${current.query} onInput=${(event) => filter('query', event.currentTarget.value, true)} /><span class="filter-count" id="filter-audit-count" aria-live="polite">${current.totalUnfiltered === 0 ? '' : current.total === current.totalUnfiltered ? `${current.total} event${current.total === 1 ? '' : 's'}` : `${current.total} / ${current.totalUnfiltered}`}</span><button data-ui-exempt class="clear-filter" id="filter-audit-clear" title="Clear search" aria-label="Clear audit search" onClick=${() => { filter('query', ''); filterRef.current?.focus(); }}>×</button><label class="filter-toggle" title="Which audit source or observer to show"><span>source</span><${Select} size="sm" id="audit-source" value=${current.source} onChange=${(event) => filter('source', event.currentTarget.value)}><option value="">all</option><option value="cli">CLI</option><option value="dashboard">dashboard</option><option value="popup">approval popup</option><option value="tmux">pane bootstrap observer</option><option value="hook">SessionEnd hook</option><option value="reaper">reaper</option><option value="reconcile">startup reconciliation</option><//></label><label class="filter-toggle" title="Which command outcomes to show"><span>outcome</span><${Select} size="sm" id="audit-outcome" value=${current.outcome} onChange=${(event) => filter('outcome', event.currentTarget.value)}><option value="">all</option><option value="success">success</option><option value="failure">denied / error</option><//></label><${NodeFilter} nodes=${nodes} value=${current.node} onChange=${(value) => { state.setNode(value); actions.load(); }} /><span class="spacer"></span><span id="audit-retention" class="muted">${current.response?.merged ? '' : retention}</span></div><${MergedNote} response=${current.response} /><div id="audit-list" aria-busy=${current.request.phase === 'loading' || current.request.phase === 'refreshing'}><${Rows} current=${current} state=${state} actions=${actions} /></div><${AuditPager} current=${current} state=${state} actions=${actions} /></${Fragment}>`;
 }

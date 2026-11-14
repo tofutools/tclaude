@@ -745,11 +745,13 @@ const pluginsDescriptor = createIslandDescriptor({
     },
     failureClass: 'plugins-error',
     load: async ({ hosts: { host, badgeHost, modalHost }, dependencies: actionDependencies }) => {
-      const islandModule = import('./plugins-island.js');
+      // A phone shows a card per plugin (phone-plugins.js), without the editor.
+      const islandModule = isPhone ? import('./phone-plugins.js') : import('./plugins-island.js');
       const stateModule = import('./plugins-state.js');
       const actionsModule = import('./plugins-actions.js');
-      const [{ mountPluginsIsland }, { pluginsState }, { createPluginsActions }] =
+      const [islandExports, { pluginsState }, { createPluginsActions }] =
         await Promise.all([islandModule, stateModule, actionsModule]);
+      const mountPluginsIsland = isPhone ? islandExports.mountPhonePluginsIsland : islandExports.mountPluginsIsland;
       const pluginsActions = createPluginsActions({ ...actionDependencies, state: pluginsState });
       return {
         state: pluginsState,
@@ -1027,11 +1029,13 @@ export async function mountLogsFeature(actionDependencies = {}) {
   return mountFeatureIsland({
     name: 'logs', label: 'Logs', hosts: [host], failureClass: 'logs-error',
     load: async () => {
-      const islandModule = import('./logs-island.js');
+      // A phone shows the log as two-line rows (phone-diagnostics.js).
+      const islandModule = isPhone ? import('./phone-diagnostics.js') : import('./logs-island.js');
       const stateModule = import('./logs-state.js');
       const actionsModule = import('./logs-actions.js');
-      const [{ mountLogsIsland }, { logsState }, { createLogsActions }] =
+      const [islandExports, { logsState }, { createLogsActions }] =
         await Promise.all([islandModule, stateModule, actionsModule]);
+      const mountLogsIsland = isPhone ? islandExports.mountPhoneLogsIsland : islandExports.mountLogsIsland;
       const logsActions = createLogsActions({ state: logsState, ...actionDependencies });
       return {
         state: logsState,
@@ -1120,16 +1124,36 @@ export function mountFleetAdminFeature(dependencies = {}) {
   return mountIslandDescriptor(fleetAdminDescriptor, dependencies);
 }
 
+// A phone shows Fleet read-only (phone-fleet.js) in the same host, from the
+// fleet state the Fleet island's status poller keeps fresh.
+const phoneFleetDescriptor = createIslandDescriptor({
+  name: 'fleet-admin', label: 'Fleet',
+  hosts: { host: '#fleet-admin-root' },
+  failureClass: 'fleet-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./phone-fleet.js');
+    const stateModule = import('./fleet-state.js');
+    const [{ mountPhoneFleetIsland }, { fleetState }] = await Promise.all([islandModule, stateModule]);
+    return { state: fleetState, mount: (registerCleanup) => mountPhoneFleetIsland({ host, state: fleetState, registerCleanup }) };
+  },
+});
+
+export function mountPhoneFleetFeature(dependencies = {}) {
+  return mountIslandDescriptor(phoneFleetDescriptor, dependencies);
+}
+
 export async function mountAuditFeature(actionDependencies = {}) {
   const host = document.querySelector('#audit-root');
   if (!host) return null;
   return mountFeatureIsland({
     name: 'audit', label: 'Audit', hosts: [host], failureClass: 'audit-error',
     load: async () => {
-      const islandModule = import('./audit-island.js');
+      // A phone shows the audit log as two-line rows (phone-diagnostics.js).
+      const islandModule = isPhone ? import('./phone-diagnostics.js') : import('./audit-island.js');
       const stateModule = import('./audit-state.js');
       const actionsModule = import('./audit-actions.js');
-      const [{ mountAuditIsland }, { auditState }, { createAuditActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
+      const [islandExports, { auditState }, { createAuditActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
+      const mountAuditIsland = isPhone ? islandExports.mountPhoneAuditIsland : islandExports.mountAuditIsland;
       const auditActions = createAuditActions({ state: auditState, ...actionDependencies });
       return { state: auditState, mount: (registerCleanup) => mountAuditIsland({ host, state: auditState, actions: auditActions, registerCleanup }) };
     },
