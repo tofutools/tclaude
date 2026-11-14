@@ -141,3 +141,42 @@ test('the More sheet is modal: the shell behind it is inert until it closes', as
   assert.equal(nav.inert, false);
   assert.equal(harness.document.activeElement, more, 'focus goes back to More');
 });
+
+test('a tab\'s pushed page takes the top bar and the bottom edge until it goes', async (t) => {
+  const { harness, mounted, root, navItem, tap, state } = await setup(t);
+  const { phonePage } = await harness.importDashboardModule('js/phone-page.js');
+  await tap(navItem('Mail'));
+  const calls = [];
+  await harness.act(() => {
+    phonePage.value = { title: 'Re: build', hideNav: true, onBack: () => calls.push('back'),
+      actions: [{ key: 'term', icon: 'Terminal ›', label: 'Open terminal', onClick: () => calls.push('act') }] };
+  });
+  const bar = mounted.container.querySelector('.phone-bar');
+  assert.ok(bar.classList.contains('phone-bar-page'));
+  assert.equal(bar.querySelector('.phone-bar-title').textContent, 'Re: build');
+  assert.equal(mounted.container.querySelector('.phone-nav'), null, 'the nav is hidden under the page');
+  assert.equal(root.dataset.phonePage, 'full');
+  await tap(bar.querySelector('.phone-bar-act'));
+  await tap(bar.querySelector('.phone-bar-back'));
+  assert.deepEqual(calls, ['act', 'back']);
+
+  await harness.act(() => { phonePage.value = null; });
+  assert.ok(mounted.container.querySelector('.phone-nav'), 'the nav comes back');
+  assert.equal(root.dataset.phonePage, undefined);
+
+  // An own view covers the page without dropping it, and picking the tab it
+  // belongs to again shows it as it was: nothing else would put it back.
+  await harness.act(() => state.setActiveTab('messages'));
+  const page = { title: 'Re: build', actions: [] };
+  await harness.act(() => { phonePage.value = page; });
+  await tap(navItem('Board'));
+  assert.equal(mounted.container.querySelector('.phone-bar-back'), null, 'Board has its own bar');
+  await tap(navItem('Mail'));
+  assert.equal(phonePage.value, page);
+  assert.ok(mounted.container.querySelector('.phone-bar-back'), 'the page is back with its back button');
+
+  // Another tab drops it, so it never outlives its tab.
+  await tap(navItem('Agents'));
+  assert.equal(phonePage.value, null);
+  assert.equal(mounted.container.querySelector('.phone-bar-back'), null);
+});

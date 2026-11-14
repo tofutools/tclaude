@@ -179,7 +179,7 @@ windows keep the full dashboard. A bar at the bottom has five views:
 |---|---|
 | **Now** | What needs you: access requests and decisions, each with its buttons; agents asking a question, with **Open** for the terminal and ✉ to message them. Below that: agents in an error state, agents that are working, your open PRs and usage. |
 | **Agents** | Your agents by group, with a tab per group. Each row shows the agent's state, role, harness, context and its PR with checks, or its branch. Offline agents are folded away. Tap an agent for its actions: open the terminal, message, shut down or power on, restart, rename and retire. **＋ New** spawns an agent into a group. |
-| **Mail** | The [Messages](dashboard-messages.md) tab |
+| **Mail** | [Messages](dashboard-messages.md) as a phone mail app: folder chips at the top, then one row per message with its first line and attachments. A pending decision or access request has its buttons right on the row. Tap a message to read it full screen, with **Reply** at the bottom and **Terminal ›** at the top. **✎ Write** starts a new message. |
 | **Board** | Each group's [task board](taskboard.md), one group at a time, as lists: waiting on you, blocked, in progress, next and ideas. Tap a task to open it. |
 | **More** | Every other tab, **Power on all**, **Shut down all…** and **Desktop site** |
 
