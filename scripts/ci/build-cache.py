@@ -1,4 +1,5 @@
 """Bound main-only test build snapshots without evicting unrelated caches."""
+from datetime import datetime
 import json
 import os
 import re
@@ -46,9 +47,18 @@ def superseded_codeql(entries):
             groups.setdefault(match.group(1), []).append(entry)
     stale = []
     for group in groups.values():
-        group.sort(key=lambda e: (e["created_at"], e["id"]), reverse=True)
+        # Parsed, not compared as text: the API's fractional seconds vary in length.
+        group.sort(key=lambda e: (created(e), e["id"]), reverse=True)
         stale += group[CODEQL_KEEP:]
     return stale
+
+
+def created(entry):
+    """created_at as a datetime. The API's fractional seconds vary in length,
+    which Python < 3.11 (macOS runners) cannot parse, so normalise them."""
+    stamp, _, fraction = entry["created_at"].rstrip("Z").partition(".")
+    micros = (fraction + "000000")[:6]
+    return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S").replace(microsecond=int(micros))
 
 
 def delete(repo, entry):
@@ -74,12 +84,17 @@ def main():
     entries = caches(repo)
     if operation == "prepare":
         size = sum(p.stat().st_size for p in Path(os.environ["GOCACHE"]).rglob("*") if p.is_file())
-        stale = superseded_codeql(entries)
-        for entry in stale:
-            if delete(repo, entry):
-                print(f"Deleted superseded CodeQL overlay base {entry['key']} ({entry['size_in_bytes']} bytes)")
-        stale_ids = {e["id"] for e in stale}
-        entries = [e for e in entries if e["id"] not in stale_ids]
+        # Housekeeping, never a reason to fail the release: an entry that
+        # could not be deleted simply still counts against the budget.
+        gone = set()
+        for entry in superseded_codeql(entries):
+            try:
+                if delete(repo, entry):
+                    print(f"Deleted superseded CodeQL overlay base {entry['key']} ({entry['size_in_bytes']} bytes)")
+                gone.add(entry["id"])
+            except (subprocess.CalledProcessError, OSError, ValueError) as error:
+                print(f"::warning title=CodeQL cache not pruned::{entry['key']}: {error}")
+        entries = [e for e in entries if e["id"] not in gone]
         allowed = can_save(entries, size)
         print(f"Build cache: {size} bytes on disk; repository caches: {sum(e['size_in_bytes'] for e in entries)} bytes; save={allowed}")
         if not allowed:
@@ -94,8 +109,8 @@ def main():
         if not any(e["ref"] == "refs/heads/main" and e["key"] == key for e in entries):
             raise SystemExit("new build snapshot not found; retaining old caches")
         for entry in obsolete(entries, prefix, key):
-            delete(repo, entry)
-            print(f"Deleted previous build snapshot {entry['key']} ({entry['size_in_bytes']} bytes)")
+            if delete(repo, entry):
+                print(f"Deleted previous build snapshot {entry['key']} ({entry['size_in_bytes']} bytes)")
     else:
         raise SystemExit("expected prepare or prune")
 

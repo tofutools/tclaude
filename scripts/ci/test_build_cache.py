@@ -42,6 +42,13 @@ class CachePolicyTests(unittest.TestCase):
         stale = cache.superseded_codeql(go + js + other)
         self.assertEqual(sorted(e["id"] for e in stale), [1, 2])
 
+    def test_creation_times_compare_across_fraction_lengths(self):
+        times = ["2026-11-14T19:09:14.764Z", "2026-11-14T19:09:14.7640001Z", "2026-11-14T19:09:14Z",
+                 "2026-11-14T19:09:14.76Z"]
+        order = sorted(times, key=lambda t: cache.created({"created_at": t}))
+        self.assertEqual(order, ["2026-11-14T19:09:14Z", "2026-11-14T19:09:14.76Z",
+                                 "2026-11-14T19:09:14.764Z", "2026-11-14T19:09:14.7640001Z"])
+
 
 if __name__ == "__main__":
     unittest.main()
