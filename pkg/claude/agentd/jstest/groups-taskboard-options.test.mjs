@@ -505,8 +505,8 @@ test("In progress's ⋯ Set limit… sets the lane's limit at once", async (t) =
   const head = [...s.c.querySelectorAll('.tb-col-more')].find((b) => /In progress/.test(b.getAttribute('aria-label') || ''));
   assert.ok(head, 'In progress has a ⋯ once the board serves options');
   await s.click(head);
-  assert.deepEqual([...s.harness.document.querySelectorAll('[data-column-menu]')].map((i) => i.dataset.columnMenu), ['limit', 'options'],
-    'In progress is always shown: no hide or cordon items');
+  assert.deepEqual([...s.harness.document.querySelectorAll('[data-column-menu]')].map((i) => i.dataset.columnMenu), ['limit', 'options', 'readiness'],
+    'In progress is always shown: no hide or cordon items (Group by readiness is the viewer\'s own)');
   await s.click(s.harness.document.querySelector('[data-column-menu="limit"]'));
   const input = s.harness.document.querySelector('#taskboard-limit-input');
   assert.equal(input.value, '2', 'the limit in force');

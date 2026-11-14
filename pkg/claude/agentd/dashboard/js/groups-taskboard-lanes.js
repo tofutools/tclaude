@@ -53,6 +53,7 @@ import { AnswerFor, QuestionCard, QuestionTag, answerTarget, askerOf, openQuesti
 import { dropSide, onOrderKey, orderItems, orderPeers } from './groups-taskboard-order.js';
 import { EpicBoard, EpicChip, EpicMark, epicColour, epicDimmed, epicMoved, intoEpic, isEpic } from './groups-taskboard-epics.js';
 import { BACKLOG, backlogItems, backlogSupported, backlogTasks } from './groups-taskboard-backlog.js';
+import { ReadyChip, ReadyHead, groupable, groupedCell, readinessPeers, readyMenuItem, sameGroup, useReadyGrouping } from './groups-taskboard-readiness.js';
 
 const html = htm.bind(h);
 
@@ -89,6 +90,13 @@ export const columnClass = (column) => `ui-eyebrow ${column.custom ? 'tb-col-cus
 export const cellClass = (column) => `${column.custom ? ' tb-cell-custom' : ''}${column.cordoned ? ' tb-cell-cordoned' : ''}`;
 
 const HIDEABLE_KEYS = HIDEABLE_BUILTINS.map((b) => b.key);
+
+// headMenu reports a column head that has a ⋯ (ColumnHeadMenu): a custom
+// column, a hideable one, In progress on a board with options, and any
+// column a viewer may group by readiness (groups-taskboard-readiness.js).
+export function headMenu(column, entry) {
+  return column.custom || HIDEABLE_KEYS.includes(column.key) || (column.key === 'progress' && !!entry?.options) || groupable(column);
+}
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 // CELL_SHOWN is how many cards a cell draws before "+ n more": a cell
 // holding many tasks would otherwise stretch its whole row (and push the
@@ -570,12 +578,16 @@ export function CellCards({ list, limit, open, onToggle, card, reveal = '' }) {
 
 // useCellReveal opens the cell holding a task a cross-link asked to see
 // (cross-links.js) past its cap, also when the cell is drawn only because
-// that click unfolded the section. setOpen takes an updater.
-export function useCellReveal(cells, limit, setOpen) {
+// that click unfolded the section. setOpen takes an updater. grouping (the
+// board's ReadyGrouping) draws a grouped column's cells in their grouped
+// order, which decides what is past the cap.
+export function useCellReveal(cells, limit, setOpen, grouping = null) {
   const want = taskRevealRequest.value;
   useEffect(() => {
     if (!want || Date.now() - want.at > REVEAL_FRESH_MS) return;
-    for (const [key, list] of cells) {
+    for (const [key, cellList] of cells) {
+      const column = key.slice(key.indexOf('|') + 1);
+      const list = groupedCell(cellList, !!grouping?.has(column) && groupable({ key: column })).list;
       if (list.slice(limit).some((task) => task.id === want.taskId)) setOpen((now) => (now[key] ? now : { ...now, [key]: true }));
     }
   }, [want?.seq]);
@@ -619,9 +631,14 @@ const short = (title) => (title.length > 32 ? `${title.slice(0, 31)}…` : title
 export function reorderDrop(task, slot, to, actions) {
   if (to.column === 'done') return { kind: 'derived', inert: true, label: 'Done is ordered by when tasks closed' };
   if (typeof actions?.reorder !== 'function' || slot?.self) return null;
+  // Grouped by readiness (groups-taskboard-readiness.js), a card moves
+  // within its group.
+  if (to.grouped && slot?.anchor && !sameGroup(task, slot.anchor)) {
+    return { kind: 'derived', inert: true, label: 'Grouped by readiness: a card moves within its group' };
+  }
   // By id: a refresh during the drag draws new task objects.
   const at = (id) => (peers || []).findIndex((t) => t.id === id);
-  const peers = orderPeers(to.list, task);
+  const peers = orderPeers(to.grouped ? readinessPeers(to.list, task) : to.list, task);
   const i = at(task.id);
   if (i < 0) return null;
   let anchor = slot?.anchor;
@@ -640,6 +657,9 @@ export function reorderDrop(task, slot, to, actions) {
 // keeps its own place.
 export function slotted(drop, task, to, slot, actions) {
   if (!drop || drop.reason || !slot || slot.self || typeof actions?.reorder !== 'function') return drop;
+  // Into a column grouped by readiness, at a slot in another group, it
+  // keeps its own place: the slot would not be where it is drawn.
+  if (to.grouped && !sameGroup(task, slot.anchor)) return drop;
   const stage = to.column === 'ideas' ? 'idea' : to.column === BACKLOG ? BACKLOG : (to.column === 'blocked' || to.column === 'done') ? '' : 'next';
   if (!stage || slot.anchor.stage !== stage) return drop;
   const { anchor, where } = slot;
@@ -732,9 +752,14 @@ export function useLaneDrag(actions, group, tasks = []) {
 // drag out onto any lane's Ideas, Next or In progress (backlogDrop) or
 // within it to reorder. Each card's ⋯ has Back to ideas. onHide hides it.
 export function BacklogColumn({ entry, group, snapshot, drag, actions = null, readApi = null, onEdit = null, onHide = null }) {
-  const list = backlogTasks(entry);
+  const grouping = useReadyGrouping();
+  const column = { key: BACKLOG, label: 'Backlog' };
+  const grouped = grouping.has(BACKLOG);
+  const shown = groupedCell(backlogTasks(entry), grouped);
+  const { list } = shown;
+  const ready = readyMenuItem(column, grouping);
   const byId = boardTasks(entry);
-  const target = { resolve: (fromLane) => fromLane, column: BACKLOG, key: BACKLOG, list };
+  const target = { resolve: (fromLane) => fromLane, column: BACKLOG, key: BACKLOG, list, grouped };
   const over = drag.over?.key === BACKLOG;
   const slot = over ? drag.over.slot : null;
   const where = 'the backlog';
@@ -743,13 +768,15 @@ export function BacklogColumn({ entry, group, snapshot, drag, actions = null, re
       onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
       onDragLeave=${actions ? drag.leaveGrid : undefined}
       onDrop=${actions ? (event) => { void drag.dropCell(event, target); } : undefined}>
-    <div class="ui-eyebrow tb-backlog-head">Backlog <span class="tb-col-count">${list.length}</span>${onHide && html`<${Button} size="sm" variant="ghost" icon=${true}
+    <div class="ui-eyebrow tb-backlog-head">Backlog <span class="tb-col-count">${list.length}</span><${ReadyChip} column=${column} />${
+      ready && html`<span class="tb-col-menu"><${RowMenu} label="the Backlog column" items=${[ready]} buttonClass="tb-col-more" title="More for the Backlog column" /></span>`}${onHide && html`<${Button} size="sm" variant="ghost" icon=${true}
       class="tb-backlog-hide" title="Hide the backlog" aria-label="Hide the backlog" onClick=${onHide}>✕<//>`}</div>
     <div class="tb-backlog-note">Parked: never started, queued or nudged.</div>
-    ${list.map((task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
+    ${list.map((task) => [shown.heads?.get(task.id) && html`<${ReadyHead} key=${`ready-${task.id}`} head=${shown.heads.get(task.id)} />`,
+      html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
       drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: t.assignee?.agent_id || UNASSIGNED, column: BACKLOG }) } : null}
-      menu=${[...orderItems(task, list, actions, where), ...backlogItems(task, actions), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null}
-      dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, list, actions) : null} />`)}
+      menu=${[...orderItems(task, shown.peers(task), actions, where), ...backlogItems(task, actions), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null}
+      dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, shown.peers(task), actions) : null} />`])}
     ${!list.length && html`<div class="ui-empty tb-backlog-empty">${actions ? 'Empty. Drag a card here, or use its ⋯ Move to backlog, to park it.' : 'Empty.'}</div>`}
   </section>`;
 }
@@ -970,7 +997,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   const limits = useLimitDialog(group, entry, actions);
   const [unfolded, setUnfolded] = useState({});
   const [open, setOpen] = useOpenCells(layoutKey(group), `lanes-${by}`);
-  useCellReveal(cells, CELL_SHOWN, setOpen);
+  const grouping = useReadyGrouping();
+  useCellReveal(cells, CELL_SHOWN, setOpen, grouping);
   // laneTasks are the ids of the tasks in a lane's cells.
   const laneTasks = (lane) => columns.flatMap((column) => (cells.get(`${lane.id}|${column.key}`) || []).map((task) => task.id));
   // A cross-link to a task in a folded offline lane unfolds that lane group,
@@ -993,10 +1021,12 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
   };
   const cell = (lane, column) => {
     const key = `${lane.id}|${column.key}`;
-    const list = cells.get(key) || [];
+    const grouped = groupable(column) && grouping.has(column.key);
+    const shown = groupedCell(cells.get(key) || [], grouped);
+    const { list } = shown;
     const stripe = striped(lane.id, column.key);
     const assignable = lane.id === UNASSIGNED || lane.id === OPERATOR || !!lane.member;
-    const target = { lane: lane.id, column: column.key, columnLabel: column.label, columns: custom, name: lane.name, member: assignable, list };
+    const target = { lane: lane.id, column: column.key, columnLabel: column.label, columns: custom, name: lane.name, member: assignable, list, grouped };
     const over = drag.over?.key === key;
     const slot = over ? drag.over.slot : null;
     const where = cellName(lane, column);
@@ -1009,10 +1039,11 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         onDragOver=${takes ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${takes ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
       <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
-        card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
+        card=${(task) => [shown.heads?.get(task.id) && html`<${ReadyHead} key=${`ready-${task.id}`} head=${shown.heads.get(task.id)} />`,
+          html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
-          menu=${[...orderItems(task, list, actions, where), ...backlogItems(task, backlogSupported(entry) ? actions : null), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null}
-          dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, list, actions) : null} />`} />
+          menu=${[...orderItems(task, shown.peers(task), actions, where), ...backlogItems(task, backlogSupported(entry) ? actions : null), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null}
+          dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, shown.peers(task), actions) : null} />`]} />
       ${lane.id === OPERATOR && column.key === 'progress' && model.questions.map(({ task, question }) => html`<${QuestionCard} key=${`${task.id}#${question.n}`}
         task=${task} question=${question} askedBy=${actorLabel(question.asked_by, group, snapshot)} onOpen=${actions ? onEdit : null}
         onAnswer=${answerable ? (id, n) => setAnswering(`${id}#${n}`) : null} />`)}
@@ -1047,8 +1078,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
         <div class="ui-eyebrow tb-col-lane">Lane<span class="tb-col-resize" ...${resize.handle(0, 'lane')}></span></div>
         ${columns.map((column, i) => html`<div key=${column.key} class=${columnClass(column)} data-col=${column.key}
             title=${column.cordoned ? 'Cordoned: it takes no new task; its tasks may leave' : undefined}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
-          column.key === 'done' && html`<span class="tb-col-note" title="Ordered by when each task closed, newest first: not by hand">by close time</span>`}<${LaneLimit} entry=${entry} column=${column} />${
-          (column.custom || HIDEABLE_KEYS.includes(column.key) || (column.key === 'progress' && entry.options)) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} limits=${limits} />`}${
+          column.key === 'done' && html`<span class="tb-col-note" title="Ordered by when each task closed, newest first: not by hand">by close time</span>`}<${LaneLimit} entry=${entry} column=${column} /><${ReadyChip} column=${column} />${
+          headMenu(column, entry) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} limits=${limits} />`}${
           i === columns.length - 1 && html`<${AddColumnButton} naming=${naming} columns=${custom} />`}${
           i < columns.length - 1 && html`<span class="tb-col-resize" ...${resize.handle(i + 1, column.label)}></span>`}</div>`)}
       </div>

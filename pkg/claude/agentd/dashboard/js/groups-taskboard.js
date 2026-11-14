@@ -60,6 +60,7 @@ import { QueuedChip } from './groups-taskboard-limits.js';
 import { applyPendingMove, onOrderKey, orderItems } from './groups-taskboard-order.js';
 import { boardNode, boardOptionsRoute, closeBoardOptions, isBoardOptionsFor } from './groups-taskboard-options-route.js';
 import { BacklogChip, backlogItems, backlogShown, backlogSupported, isParked, park, parkable, setBacklogShown, unpark } from './groups-taskboard-backlog.js';
+import { LIST as READY_LIST, ReadyGrouping, ReadyHead, groupedCell, readyGrouped, sameGroup, setReadyGrouped, useReadyGrouping } from './groups-taskboard-readiness.js';
 import { EpicBoard, EpicChip, EpicFilterMenu, EpicGroupRow, EpicMark, EpicStrip, NO_EPIC, boardEntry, epicDimmed, epicMoved, epicOf, intoEpic, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
 
 export { RefChip };
@@ -677,7 +678,7 @@ function clearAgentTarget(state) {
 
 // epicRows, when the List is grouped by epic, is a ref to { of(task), name(id) }:
 // the group a queue row is drawn in, and its epic's name.
-function useRowDrag(tasks, actions, group = null, epicRows = null) {
+function useRowDrag(tasks, actions, group = null, epicRows = null, readyRows = null) {
   const dragged = useRef(null);
   const [over, setOver] = useState(null);
   const [dragging, setDragging] = useState('');
@@ -776,6 +777,13 @@ function useRowDrag(tasks, actions, group = null, epicRows = null) {
       setOver(null);
     },
     overRow(event, task) {
+      // Grouped by readiness, a row moves within its group: no slot in
+      // another group of its section.
+      if (dragged.current && crossesReady(readyRows, dragged.current, task)) {
+        event.stopPropagation();
+        if (over) setOver(null);
+        return;
+      }
       if (!accept(event) || dragged.current.id === task.id) return;
       const rect = event.currentTarget.getBoundingClientRect();
       const where = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
@@ -803,6 +811,7 @@ function useRowDrag(tasks, actions, group = null, epicRows = null) {
       await actions.run(`${moving.id}:move`, 'Move to backlog', (api) => api.stage(moving.id, 'backlog'));
     },
     async dropOnRow(event, task) {
+      if (dragged.current && crossesReady(readyRows, dragged.current, task)) return;
       if (!accept(event)) return;
       const moving = dragged.current;
       const where = over?.id === task.id ? over.where : 'before';
@@ -856,6 +865,15 @@ function useRowDrag(tasks, actions, group = null, epicRows = null) {
       }
     },
   };
+}
+
+// crossesReady reports a drag of a live row onto a row of its own section
+// (the queue, the ideas, the backlog) in another readiness group, while the
+// viewer groups the List by readiness (readyRows.current).
+function crossesReady(readyRows, moving, task) {
+  if (!readyRows?.current || isClosed(moving) || isClosed(task)) return false;
+  const section = (t) => (isParked(t) ? 'backlog' : t.stage === 'idea' ? 'idea' : 'queue');
+  return section(moving) === section(task) && !sameGroup(moving, task);
 }
 
 const IDEAS_BAND = '__ideas';
@@ -947,7 +965,15 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const tasks = entry.tasks || [];
   const byId = boardTasks(entry);
   const epicRows = useRef(null);
-  const drag = useRowDrag(tasks, actions, group, epicRows);
+  // Grouped by readiness (the Filter's "group by readiness",
+  // groups-taskboard-readiness.js), each section's rows are drawn ready,
+  // waiting, then blocked, under a heading row each, and move within their
+  // group.
+  const grouping = useReadyGrouping();
+  const readyOn = view === 'list' && grouping.has(READY_LIST);
+  const readyRows = useRef(false);
+  readyRows.current = readyOn;
+  const drag = useRowDrag(tasks, actions, group, epicRows, readyRows);
   // An agent row dragged onto a task assigns it (useAgentOnTask).
   const boardRef = useRef(null);
   const boardNode = group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
@@ -1049,6 +1075,14 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const edited = editing && (listed(editing) || (fetched?.id === editing ? fetched : null));
   const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm, columns: entry.columns || [],
     backlogOn: backlogSupported(full) };
+  // liveRows are rows (a section's, or an epic's queue) as TaskRows, each
+  // moving among peers: the rows, or its readiness group's when grouped.
+  const liveRows = (rows, where, chip = true) => {
+    const shown = groupedCell(rows, readyOn);
+    return shown.list.map((task) => [shown.heads?.get(task.id) && html`<tr key=${`ready-${task.id}`} class="tb-ready-row"><td colspan=${TABLE_COLS}>
+        <${ReadyHead} head=${shown.heads.get(task.id)} /></td></tr>`,
+      html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} chip=${chip} peers=${shown.peers(task)} where=${where} />`]);
+  };
   // The band heads every idea-stage row the filter leaves (a blocked or
   // assigned idea is not in the "ideas" state), so no idea passes for a queue
   // row a drop next to would demote into.
@@ -1085,13 +1119,12 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
       <tbody>
         ${grouped ? grouped.map(({ id, rows }) => html`<${EpicGroupRow} key=${`epic-${id}`} epic=${id === NO_EPIC ? null : epicBoard.byId.get(id)} count=${rows.length}
             colspan=${TABLE_COLS} folded=${!!folded[id]} onFold=${(on) => setFolded({ ...folded, [id]: on })} onOpen=${actions ? openEdit : null} />
-          ${!folded[id] && rows.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} chip=${false}
-            peers=${rows} where=${id === NO_EPIC ? 'No epic' : `epic ${epicBoard.byId.get(id)?.title || id}`} />`)}`)
-          : queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} peers=${queue} where=${wizard ? 'the quest line' : 'the queue'} />`)}
+          ${!folded[id] && liveRows(rows, id === NO_EPIC ? 'No epic' : `epic ${epicBoard.byId.get(id)?.title || id}`, false)}`)
+          : liveRows(queue, wizard ? 'the quest line' : 'the queue')}
         ${ideasBand}
-        ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} peers=${ideas} where=${wizard ? 'the visions' : 'the ideas'} />`)}
+        ${liveRows(ideas, wizard ? 'the visions' : 'the ideas')}
         ${backlogBand}
-        ${backlog && parked.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} peers=${parked} where="the backlog" />`)}
+        ${backlog && liveRows(parked, 'the backlog')}
         ${historyLine}
         ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
       </tbody>
@@ -1198,6 +1231,13 @@ export function taskboardLanesBy(group) {
   return LANES_BY.includes(by) ? by : 'triage';
 }
 
+// readinessOf is a board's ReadyGrouping value: the keys this viewer
+// groups, and set(key, on), which stores the change and redraws.
+function readinessOf(group, redraw) {
+  const keys = readyGrouped(group);
+  return { has: (key) => keys.includes(key), set: (key, on) => { setReadyGrouped(group, key, on); redraw(); } };
+}
+
 // useViewPrefs reads the section's List | Lanes choice and the lanes' "by",
 // remembered per group and per viewer in dashPrefs like the section folds.
 function useViewPrefs(group, listDefaults = LIST_HIDDEN_DEFAULT) {
@@ -1222,6 +1262,9 @@ function useViewPrefs(group, listDefaults = LIST_HIDDEN_DEFAULT) {
     listByEpic: dashPrefs.getItem(LIST_BY_EPIC_PREF(group)) === '1',
     setListByEpic: (on) => { if (on) dashPrefs.setItem(LIST_BY_EPIC_PREF(group), '1'); else dashPrefs.removeItem(LIST_BY_EPIC_PREF(group)); bump((n) => n + 1); },
     setBy: (value) => set(LANES_BY_PREF(group), value),
+    // The columns (and the List) this viewer groups by readiness
+    // (groups-taskboard-readiness.js), for the views' ReadyGrouping.
+    readiness: readinessOf(group, () => bump((n) => n + 1)),
     // The Backlog, shown or hidden (groups-taskboard-backlog.js).
     backlog: backlogShown(group),
     setBacklog: (on) => { setBacklogShown(group, on); bump((n) => n + 1); },
@@ -1263,8 +1306,10 @@ function ListFilter({ group, prefs, columns = [], epics = false }) {
     <${ViewMenuHeading}>State<//>
     ${states.map(([key, text, title]) => html`<${ViewToggle} key=${key} id=${`${id}-${key.replace(':', '-')}`} title=${title} checked=${!hidden.includes(key)}
       onChange=${(on) => prefs.setListHidden(on ? hidden.filter((state) => state !== key) : [...hidden, key])}>${text}<//>`)}
-    ${epics && html`<${ViewMenuSep} /><${ViewMenuHeading}>Group<//>
-      <${ViewToggle} id=${`${id}-by-epic`} title="The queue under its epics, each with a head that folds it" checked=${prefs.listByEpic}
+    <${ViewMenuSep} /><${ViewMenuHeading}>Group<//>
+    <${ViewToggle} id=${`${id}-by-readiness`} title="Ready rows first, then waiting, then blocked; each in the board's order. Only on this dashboard; nothing is moved"
+      checked=${prefs.readiness.has(READY_LIST)} onChange=${(on) => prefs.readiness.set(READY_LIST, on)}>group by readiness<//>
+    ${epics && html`<${ViewToggle} id=${`${id}-by-epic`} title="The queue under its epics, each with a head that folds it" checked=${prefs.listByEpic}
         onChange=${prefs.setListByEpic}>group by epic<//>`}
     <${ViewMenuSep} />
     <button data-ui-exempt type="button" class="view-menu-reset" data-tb-filter-reset="" disabled=${changes === 0}
@@ -1346,9 +1391,9 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
       summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} /><${BoardOptionsSummary} options=${entry.options} columns=${entry.columns || []} />`} auto=${autoOpened.current}
       closedActions=${closedActions} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
-    <${TaskboardRows} entry=${lanes ? view : drawn} full=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
+    <${ReadyGrouping.Provider} value=${prefs.readiness}><${TaskboardRows} entry=${lanes ? view : drawn} full=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
       view=${prefs.view} lanesBy=${prefs.by} byEpic=${prefs.listByEpic} backlog=${backlogOn && prefs.backlog} onHideBacklog=${() => prefs.setBacklog(false)}
-      hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} />
+      hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} /><//>
   <//><//>`;
 }
 

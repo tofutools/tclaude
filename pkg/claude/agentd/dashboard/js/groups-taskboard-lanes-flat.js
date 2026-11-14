@@ -26,6 +26,7 @@ import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   BacklogColumn, BlockDialog, Card, CellAdd, CellCards, LaneHead, OPERATOR, UNASSIGNED, boardColumns, cellAdd, cellClass, columnClass, laneColumn, operatorQuestions, striped, useCellReveal, useLaneDrag,
+  headMenu,
 } from './groups-taskboard-lanes.js';
 import { actorLabel, agentLabel, archiveItems, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
 import { agentLink } from './cross-links.js';
@@ -34,7 +35,7 @@ import { AnswerFor, QuestionCard, answerTarget, askerOf } from './groups-taskboa
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
 import { LaneLimit, useLimitDialog } from './groups-taskboard-limits.js';
 import { backlogItems, backlogSupported } from './groups-taskboard-backlog.js';
-import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
+import { ReadyChip, ReadyHead, groupable, groupedCell, useReadyGrouping } from './groups-taskboard-readiness.js';
 import { EpicBoard, EpicNudge, EpicProgress, NO_EPIC, epicColour, epicOf, progressParts } from './groups-taskboard-epics.js';
 import { onOrderKey, orderItems } from './groups-taskboard-order.js';
 
@@ -137,7 +138,6 @@ function rowStriped(row, column) {
   return striped(row === AGENTS ? AGENTS : row, column);
 }
 
-const HIDEABLE_KEYS = HIDEABLE_BUILTINS.map((b) => b.key);
 
 export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions = null, readApi = null, wizard = false, now = Date.now(), onNewTask = null, onEdit = null, backlog = false, onHideBacklog = null }) {
   const tasks = entry.tasks || [];
@@ -149,7 +149,8 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   const columns = boardColumns(entry);
   const drag = useLaneDrag(actions, group, tasks);
   const [open, setOpen] = useOpenCells(group.shownName || group.name, mode);
-  useCellReveal(cells, FLAT_SHOWN, setOpen);
+  const grouping = useReadyGrouping();
+  useCellReveal(cells, FLAT_SHOWN, setOpen, grouping);
   const [answering, setAnswering] = useState('');
   // A column head's ⋯ and the last head's ＋ column, as in the lanes by
   // agent (groups-taskboard-columns.js).
@@ -167,9 +168,11 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
   };
   const cell = (row, column) => {
     const key = `${row}|${column.key}`;
-    const list = cells.get(key) || [];
+    const grouped = groupable(column) && grouping.has(column.key);
+    const shown = groupedCell(cells.get(key) || [], grouped);
+    const { list } = shown;
     const stripe = rowStriped(row, column.key);
-    const target = { ...rowTarget(row, column, group, entry.columns || [], byEpic ? epicName(row) : ''), list };
+    const target = { ...rowTarget(row, column, group, entry.columns || [], byEpic ? epicName(row) : ''), list, grouped };
     const over = drag.over?.key === key;
     const slot = over ? drag.over.slot : null;
     const rowName = byEpic ? epicName(row) : row === OPERATOR ? operatorName(group) : row === UNASSIGNED ? 'Unassigned' : row === AGENTS ? 'Agents' : '';
@@ -189,12 +192,13 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         onDragOver=${takes ? (event) => drag.overCell(event, target) : undefined}
         onDrop=${takes ? (event) => { if (over) landIn(key, list, drag.dragging); void drag.dropCell(event, target); } : undefined}>
       <${CellCards} list=${list} limit=${FLAT_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
-        card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${nameOf}
+        card=${(task) => [shown.heads?.get(task.id) && html`<${ReadyHead} key=${`ready-${task.id}`} head=${shown.heads.get(task.id)} />`,
+          html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${nameOf}
           marker=${lanesSay(mode, task) ? null : cardMarker(task, group, snapshot)}
           chip=${!byEpic}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: taskLane(t), column: column.key, ...(byEpic ? { epic: row === NO_EPIC ? '' : row } : {}) }) } : null}
-          menu=${[...orderItems(task, list, actions, where), ...backlogItems(task, backlogSupported(entry) ? actions : null), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null}
-          dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, list, actions) : null} />`} />
+          menu=${[...orderItems(task, shown.peers(task), actions, where), ...backlogItems(task, backlogSupported(entry) ? actions : null), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null}
+          dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, shown.peers(task), actions) : null} />`]} />
       ${row === OPERATOR && column.key === 'progress' && questions.map(({ task, question }) => html`<${QuestionCard} key=${`${task.id}#${question.n}`}
         task=${task} question=${question} askedBy=${nameOf(question.asked_by)} onOpen=${actions ? onEdit : null}
         onAnswer=${answerable ? (id, n) => setAnswering(`${id}#${n}`) : null} />`)}
@@ -263,8 +267,8 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
       <div class="tb-lane tb-lane-columns">
         ${triage && html`<div class="ui-eyebrow tb-col-lane">${byEpic ? 'Epic' : 'Who'}</div>`}
         ${columns.map((column, i) => html`<div key=${column.key} class=${columnClass(column)}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
-          column.key === 'done' && html`<span class="tb-col-note" title="Ordered by when each task closed, newest first: not by hand">by close time</span>`}<${LaneLimit} entry=${entry} column=${column} />${
-          (column.custom || HIDEABLE_KEYS.includes(column.key) || (column.key === 'progress' && entry.options)) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} limits=${limits} />`}${
+          column.key === 'done' && html`<span class="tb-col-note" title="Ordered by when each task closed, newest first: not by hand">by close time</span>`}<${LaneLimit} entry=${entry} column=${column} /><${ReadyChip} column=${column} />${
+          headMenu(column, entry) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} limits=${limits} />`}${
           i === columns.length - 1 && html`<${AddColumnButton} naming=${naming} columns=${custom} />`}</div>`)}
       </div>
       ${rows.map((row) => html`<div key=${row || 'unassigned'} class=${`tb-lane${row === OPERATOR ? ' tb-lane-operator' : ''}${byEpic && row === NO_EPIC && !rowCount(NO_EPIC) && !cells.has(`${NO_EPIC}|done`) ? ' tb-lane-folded' : ''}`} data-board-row-head=${row || 'unassigned'}>
