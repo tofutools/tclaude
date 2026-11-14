@@ -216,7 +216,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	c := runSnapshotCollectors(span, p.cfg, aliveSessions, groupNames)
 	attachSnapshotCollected(&out, c, p)
 	attachSnapshotPRLists(&out, prs, p.cfg)
-	attachSnapshotLiveState(&out, p.cfg)
+	attachSnapshotLiveState(&out, p.cfg, aliveSessions)
 	// The origins are the pages' keys: the local dashboard only, never a
 	// peer's snapshot, restricted or not.
 	if !isPeerSnapshot(r) {

@@ -149,9 +149,9 @@ type stewardAccess struct {
 	CaptureOff []string `json:"capture_off,omitempty"`
 }
 
-func stewardAccessView(cfg *config.Config, state permissionsState) *stewardAccess {
+func stewardAccessView(cfg *config.Config, state permissionsState, liveConvs []string) *stewardAccess {
 	view := &stewardAccess{
-		Convs: liveStewardConvs(), Config: stewardLevelSlugs(cfg),
+		Convs: liveConvs, Config: stewardLevelSlugs(cfg),
 		Carried: map[string]string{},
 	}
 	for slug, override := range storedStewardPermissions() {
@@ -502,9 +502,28 @@ func tellStewardsNewName(before, after *config.Config) {
 
 // liveStewardConvs lists the running Stewards' conversations, newest last.
 func liveStewardConvs() []string {
+	return liveStewardConvsWith(probeConvAlive)
+}
+
+// convAliveFn answers whether a conversation has a running pane.
+type convAliveFn func(conv string) bool
+
+// probeConvAlive asks tmux directly, one has-session per session row. Handlers
+// acting on a Steward use it; the dashboard poll uses the alive set it already
+// gathered instead (aliveInSet), so it forks nothing per Steward.
+func probeConvAlive(conv string) bool { return pickAliveSession(conv) != nil }
+
+// aliveInSet answers liveness from a snapshot-shaped alive set: session rows
+// are a DB read and the set is the poll's one tmux listing.
+func aliveInSet(alive map[string]struct{}) convAliveFn {
+	return func(conv string) bool { return isConvOnlineIn(conv, alive) }
+}
+
+// liveStewardConvsWith is liveStewardConvs with the liveness check supplied.
+func liveStewardConvsWith(isAlive convAliveFn) []string {
 	var convs []string
 	for _, conv := range stewardConvs() {
-		if pickAliveSession(conv) != nil {
+		if isAlive(conv) {
 			convs = append(convs, conv)
 		}
 	}
@@ -515,6 +534,11 @@ func liveStewardConvs() []string {
 // roster, running or not. With nobody seated, which is every install until the
 // operator first chooses, it is the newest running Steward.
 func activeStewardConv() string {
+	return activeStewardConvWith(probeConvAlive)
+}
+
+// activeStewardConvWith is activeStewardConv with the liveness check supplied.
+func activeStewardConvWith(isAlive convAliveFn) string {
 	convs := stewardConvs()
 	agentID, err := db.ActiveStewardAgent()
 	if err != nil {
@@ -526,7 +550,7 @@ func activeStewardConv() string {
 		}
 	}
 	for _, conv := range slices.Backward(convs) {
-		if pickAliveSession(conv) != nil {
+		if isAlive(conv) {
 			return conv
 		}
 	}
@@ -714,9 +738,9 @@ type stewardElevation struct {
 
 // stewardElevations reads each live Steward's effective access through the
 // same routine the permission gate uses, so nothing it can do goes unseen.
-func stewardElevations(cfg *config.Config, state permissionsState) map[string]stewardElevation {
+func stewardElevations(cfg *config.Config, state permissionsState, liveConvs []string) map[string]stewardElevation {
 	out := map[string]stewardElevation{}
-	for _, conv := range liveStewardConvs() {
+	for _, conv := range liveConvs {
 		agentID, err := db.AgentIDForConv(conv)
 		if err != nil || agentID == "" {
 			continue
