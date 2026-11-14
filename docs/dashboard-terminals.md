@@ -257,6 +257,12 @@ from a terminal you have since opened somewhere else; that one keeps it, and thi
 pane says **detached**. After that, it only reattaches on its own after a proven
 `agentd` restart. Otherwise you get a **Reconnect** button.
 
+A terminal on a linked node's agent behaves the same way. When the agent is
+restarted, resumed or reincarnated over there, the terminal shows **Waiting for
+<agent> to start…** and attaches to the new session once the peer lists it. An
+agent that is no longer running on the peer says **the agent is not running on
+the peer**, with **Reconnect**.
+
 `tclaude session attach` waits the same way: right after a launch it prints
 `Waiting for session … to start...` and attaches once the pane is up.
 

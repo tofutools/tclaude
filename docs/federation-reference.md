@@ -320,8 +320,14 @@ Credits cannot exceed outstanding output, keeping the 256 KiB window bounded
 through the browser renderer. Operational refusals use a hello-less JSON
 `closed` frame after upgrade; authentication/origin failures remain HTTP errors.
 Established sockets close with a reason: `exit`, `reincarnated`, `revoked`,
-`untrusted`, `kicked`, `taken_over`, `offline`, or `error`; initial opens also use `denied` and
-`limit`. A stalled connection can be aborted without delaying viewer cleanup.
+`untrusted`, `kicked`, `taken_over`, `offline`, or `error`; initial opens also use `denied`,
+`limit`, `starting` and `not_running`. `reincarnated` means a relaunch replaced the
+pane (or the catalog no longer lists it while the group still shares terminals),
+and `starting` that the peer is launching the agent, or runs a newer launch than
+this node's catalog lists yet; the browser redials the agent's address for up to
+about 30 seconds on both, which reaches the new launch. For a few minutes after a
+view of an agent ends, a reopen reaches the peer even while the catalog lists no
+pane for the agent, so the peer can answer `starting` or `not_running`. A stalled connection can be aborted without delaying viewer cleanup.
 Detach closes the viewer and never stops the agent.
 
 File paste and drop use local-only `POST /api/federation/terminal-attachments?terminal=`

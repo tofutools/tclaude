@@ -124,6 +124,7 @@ func fedViewerTargetStatus(cat *proto.CatalogPayload, p proto.SessionOpenPayload
 	if cat == nil {
 		return "revoked"
 	}
+	granted := false
 	for _, g := range cat.Groups {
 		if g.Name != p.Group {
 			continue
@@ -137,6 +138,7 @@ func fedViewerTargetStatus(cat *proto.CatalogPayload, p proto.SessionOpenPayload
 		if !g.HasCap(fedTerminalCap(p.ReadOnly)) {
 			continue
 		}
+		granted = true
 		for _, s := range g.Sessions {
 			if s.Agent == p.Agent && s.Session == p.Session {
 				if s.Incarnation != p.Incarnation {
@@ -145,6 +147,14 @@ func fedViewerTargetStatus(cat *proto.CatalogPayload, p proto.SessionOpenPayload
 				return ""
 			}
 		}
+	}
+	// The group still shares terminals, but no longer lists this pane: the
+	// agent's pane went away or a new launch replaced it (a relaunch takes the
+	// pane down before the new one is up). That is no revocation; the viewer
+	// follows the agent, and its reopen learns from the peer whether the agent
+	// is starting, running elsewhere or gone.
+	if granted {
+		return "reincarnated"
 	}
 	return "revoked"
 }

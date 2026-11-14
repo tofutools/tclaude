@@ -1381,6 +1381,43 @@ test('a remote terminal waits for a starting agent and redials an unreachable pe
   assert.equal(widget.waiting(), null);
 });
 
+test('a remote terminal follows its agent across a relaunch on the peer, as a local one does', async (t) => {
+  const { fakes, widget, state } = await mountWaitingWidget(t, {
+    wsPath: '/api/federation/terminal?peer=inst_peer1&agent=agt_one&mode=watch',
+  });
+  const closed = (socket, reason) => {
+    socket.onmessage({ data: JSON.stringify({ type: 'closed', reason }) });
+    closeWith(socket, 1000);
+  };
+  const hello = (socket) => socket.onmessage({ data: JSON.stringify({ type: 'hello', mode: 'watch', cols: 80, rows: 24 }) });
+  await widget.connect();
+  fakes.sockets[0].open();
+  hello(fakes.sockets[0]);
+  state.clock = 60000;
+  // A relaunch replaced the pane: wait for the agent, redialling its address.
+  closed(fakes.sockets[0], 'reincarnated');
+  assert.deepEqual(widget.waiting(), { kind: 'starting', text: 'Waiting for worker to start…' });
+  await state.fire();
+  assert.equal(fakes.sockets[1].url, fakes.sockets[0].url, 'the redial names the agent, not a session');
+  fakes.sockets[1].open();
+  closed(fakes.sockets[1], 'starting');
+  assert.equal(widget.waiting()?.kind, 'starting', 'the peer is still launching it');
+  await state.fire();
+  fakes.sockets[2].open();
+  hello(fakes.sockets[2]);
+  assert.equal(widget.waiting(), null, 'attached to the new launch');
+
+  // An agent that is not running any more settles, with Reconnect (local 4006).
+  state.clock = 120000;
+  closed(fakes.sockets[2], 'reincarnated');
+  await state.fire();
+  fakes.sockets[3].open();
+  closed(fakes.sockets[3], 'not_running');
+  assert.equal(state.statuses.at(-1), 'closed: the agent is not running on the peer');
+  assert.equal(widget.reconnectAvailable(), true);
+  assert.equal(widget.waiting(), null);
+});
+
 test('after the first attach a dropped terminal never falls back to a forcing initial retry', async (t) => {
   // Initial retries belong to the first attach only: a quiet redial that hears
   // "detached" from another client, or drops fast, must not be redialled by a

@@ -52,8 +52,15 @@ func handleDashboardFederationTerminal(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(refusal.body.Bytes(), &body)
 	reason := "error"
 	switch refusal.status {
-	case 403, 400, 404:
+	case 403, 400:
 		reason = "denied"
+	case 404:
+		reason = "denied"
+		// The agent has no live pane on the peer and is not starting: the
+		// remote counterpart of a local terminal's "not running" (4006).
+		if body.Code == "not_running" {
+			reason = "not_running"
+		}
 	case 429:
 		reason = "limit"
 	case 409:
@@ -64,8 +71,13 @@ func handleDashboardFederationTerminal(w http.ResponseWriter, r *http.Request) {
 	case 502, 503, 504:
 		reason = "offline"
 	}
+	// "starting" and "not_running" say all the peer's refusal says.
+	message := body.Error
+	if reason == "starting" || reason == "not_running" {
+		message = ""
+	}
 	_ = ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_ = ws.WriteJSON(map[string]any{"type": "closed", "reason": reason, "message": body.Error})
+	_ = ws.WriteJSON(map[string]any{"type": "closed", "reason": reason, "message": message})
 	_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, reason), time.Now().Add(time.Second))
 }
 
@@ -283,6 +295,9 @@ loop:
 			}
 		}
 	}
+	// Remember the agent before the browser hears the closure: its redial
+	// follows a relaunch through this memory (federation_terminal_follow.go).
+	rt.rememberTerminalFollow(peer.InstanceID, p)
 	if reason != "" {
 		_ = control(map[string]any{"type": "closed", "reason": reason, "message": ""})
 	}

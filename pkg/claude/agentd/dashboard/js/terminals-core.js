@@ -161,17 +161,24 @@ export function isRemoteTerminalPath(path) {
 // reconnect, since reopening would be refused the same way.
 export const REMOTE_CLOSE = Object.freeze({
   exit: { text: 'the agent exited', final: false },
-  reincarnated: { text: 'the session restarted on the peer; reopen to follow it', final: false },
+  reincarnated: { text: 'the session restarted on the peer', final: false },
   revoked: { text: 'the peer revoked your access to this terminal', final: true },
   untrusted: { text: 'the peer is no longer trusted', final: true },
   kicked: { text: "the peer's operator disconnected this view", final: false },
   taken_over: { text: 'another viewer took over this terminal', final: false },
   denied: { text: 'the peer does not share this terminal with you (needs sessions.watch to look, sessions.attach to type)', final: true },
   starting: { text: 'the agent did not start on the peer in time', final: false },
+  not_running: { text: 'the agent is not running on the peer', final: false },
   limit: { text: 'the peer has too many terminal views open; try again shortly', final: false },
   offline: { text: 'the peer is unreachable', final: false },
   error: { text: 'the connection failed', final: false },
 });
+
+// REMOTE_FOLLOW are the remote closures a terminal waits out with the start
+// wait, as a local terminal waits out TERMINAL_STARTING: the peer is launching
+// the agent, or a relaunch (restart, resume, reincarnation) replaced the pane
+// this view was on. Each redial names the agent, so it reaches the new launch.
+const REMOTE_FOLLOW = new Set(['starting', 'reincarnated']);
 
 // REMOTE_TRANSIENT are the remote closures a terminal redials quietly before
 // it settles: they say the path to the peer failed, not that the peer refused.
@@ -946,7 +953,7 @@ export function mountTerminalWidget({
       cancelInitialResize();
       // A connection that drew and stayed up earns a fresh set of quiet redials.
       if (firstOutputSeen && openedAt !== null && now() - openedAt >= initialRetryStabilityMs) transientIndex = 0;
-      const starting = remote ? remoteState.closed?.reason === 'starting' : event?.code === TERMINAL_STARTING;
+      const starting = remote ? REMOTE_FOLLOW.has(remoteState.closed?.reason) : event?.code === TERMINAL_STARTING;
       if (starting) {
         if (scheduleStartRetry()) return;
         if (remote) setRemote({ files: false, viewer: '' });

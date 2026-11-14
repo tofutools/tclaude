@@ -270,7 +270,9 @@ func TestDashboardFederationTerminalRevocationAndIncarnation(t *testing.T) {
 }
 
 func TestFederationTerminalPinnedBrowserSizeAndClosedReasons(t *testing.T) {
-	for _, change := range []string{"kicked", "revoked", "reincarnated"} {
+	// relaunched: the pane went away for a relaunch of the agent, which the
+	// viewer follows (reincarnated); ended: it went away with no launch.
+	for _, change := range []string{"kicked", "revoked", "reincarnated", "relaunched", "ended"} {
 		t.Run(change, func(t *testing.T) {
 			fh := newFedHarness(t)
 			f, p := fh.f, fh.peer
@@ -310,10 +312,23 @@ func TestFederationTerminalPinnedBrowserSizeAndClosedReasons(t *testing.T) {
 				mock.mu.Lock()
 				mock.pane = "%2"
 				mock.mu.Unlock()
+			case "relaunched":
+				// The launch rewrites the row before its new pane is up.
+				row, err := db.LoadSession("browser-pinned-runtime")
+				require.NoError(t, err)
+				row.CreatedAt = time.Now().Add(time.Second)
+				require.NoError(t, db.SaveSession(row))
+				f.MarkOffline("tclaude-browser-pinned")
+			case "ended":
+				f.MarkOffline("tclaude-browser-pinned")
+			}
+			want := map[string]string{"relaunched": "reincarnated", "ended": "exit"}[change]
+			if want == "" {
+				want = change
 			}
 			closed := terminalRead(t, conn)
 			require.Equal(t, terminal.Closed, closed.Kind)
-			require.Equal(t, change, string(closed.Data))
+			require.Equal(t, want, string(closed.Data))
 			fedEventually(t, "incoming viewer released", func() bool {
 				return !strings.Contains(fedHuman(t, f, "GET", "/v1/federation/viewers", nil).Body.String(), open.Stream)
 			})
@@ -447,4 +462,163 @@ func TestDashboardFederationTerminalShellNeedsShellCap(t *testing.T) {
 			})
 		})
 	}
+}
+
+// TestDashboardFederationTerminalFollowsARelaunch: a browser terminal on a
+// peer's agent follows the agent across a relaunch on the peer, as a local
+// terminal does. When the catalog stops listing the pane while the group
+// still shares terminals, the view closes "reincarnated" (followed), not
+// "revoked". Its redial still reaches the peer, naming the agent and the group
+// it was attached through: the peer's "starting" and "moved" answers read
+// "starting" (the browser keeps waiting; moved also asks for a fresh catalog),
+// and "no longer live" reads "not_running". Once the catalog lists the new
+// launch, the redial names it.
+func TestDashboardFederationTerminalFollowsARelaunch(t *testing.T) {
+	fh := newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	ws, _, first := dashboardTerminalOpen(t, fh, "watch")
+	caps := []string{proto.CapSessions, proto.CapSessionsWatch, proto.CapSessionsAttach}
+	catalog := func(sessions ...proto.CatalogSession) {
+		fh.peer.send(fh.peer.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{{Name: "builders", Caps: caps, Sessions: sessions, SessionsAt: time.Now()}}}))
+	}
+	// The relaunch takes the pane down: the peer's catalog lists none.
+	catalog()
+	var closed map[string]any
+	require.NoError(t, ws.ReadJSON(&closed))
+	require.Equal(t, "reincarnated", closed["reason"])
+	_ = ws.Close()
+
+	server := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
+	t.Cleanup(server.Close)
+	redial := func(refusal string) (proto.SessionOpenPayload, string) {
+		t.Helper()
+		previous := len(fh.peer.envelopes(proto.KindSessionOpen))
+		type result struct {
+			reason string
+			err    error
+		}
+		done := make(chan result, 1)
+		go func() {
+			ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/federation/terminal?peer="+fh.peer.id.ID()+"&agent="+first.Agent+"&mode=watch", nil)
+			if err != nil {
+				done <- result{err: err}
+				return
+			}
+			defer ws.Close()
+			_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
+			var closed map[string]any
+			err = ws.ReadJSON(&closed)
+			reason, _ := closed["reason"].(string)
+			done <- result{reason, err}
+		}()
+		var env *proto.Envelope
+		fedEventually(t, "redial reaches the peer", func() bool {
+			es := fh.peer.envelopes(proto.KindSessionOpen)
+			if len(es) > previous {
+				env = es[len(es)-1]
+				return true
+			}
+			return false
+		})
+		var open proto.SessionOpenPayload
+		require.NoError(t, env.DecodePayload(&open))
+		answer := fh.peer.envelope(proto.KindSessionAnswer, proto.Endpoint{}, proto.SessionAnswerPayload{Stream: open.Stream, Reason: refusal})
+		answer.InReplyTo = env.ID
+		fh.peer.send(answer)
+		got := <-done
+		require.NoError(t, got.err)
+		return open, got.reason
+	}
+
+	open, reason := redial("the agent is starting")
+	require.Equal(t, "starting", reason)
+	require.Equal(t, first.Agent, open.Agent)
+	require.Equal(t, first.Group, open.Group, "the redial keeps the group it was attached through")
+	require.Empty(t, open.Session, "no session is named while the catalog lists none")
+	require.Empty(t, open.Incarnation)
+
+	catalogRequests := len(fh.peer.envelopes(proto.KindCatalogReq))
+	_, reason = redial("session incarnation changed; list sessions again")
+	require.Equal(t, "starting", reason, "a newer launch than the catalog lists is waited for")
+	fedEventually(t, "a fresh catalog is asked for", func() bool {
+		return len(fh.peer.envelopes(proto.KindCatalogReq)) > catalogRequests
+	})
+
+	_, reason = redial("advertised session is no longer live; list sessions again")
+	require.Equal(t, "not_running", reason)
+
+	// The catalog lists the new launch: the redial names it.
+	catalog(proto.CatalogSession{Agent: first.Agent, Session: "runtime-2", Incarnation: "relaunched-runtime", Name: "remote"})
+	fedEventually(t, "new launch listed", func() bool {
+		return strings.Contains(fedHuman(t, fh.f, "GET", "/v1/federation/sessions", nil).Body.String(), "relaunched-runtime")
+	})
+	open, _ = redial("the agent is starting")
+	require.Equal(t, "runtime-2", open.Session)
+	require.Equal(t, "relaunched-runtime", open.Incarnation)
+}
+
+// TestDashboardFederationTerminalOpensARelaunchingMember: opened afresh on a
+// peer's agent whose pane is down (relaunching), a terminal still asks the
+// peer when a group sharing the terminal lists the agent as a member, as a
+// local terminal opened on a relaunching agent waits for it. An agent the
+// catalog does not list at all is refused here, without asking the peer.
+func TestDashboardFederationTerminalOpensARelaunchingMember(t *testing.T) {
+	fh := newFedHarness(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://localhost:12345"))
+	const member = "agt_remote00001"
+	fh.peer.send(fh.peer.envelope(proto.KindCatalog, proto.Endpoint{}, proto.CatalogPayload{Groups: []proto.CatalogGroup{{
+		Name: "builders", Caps: []string{proto.CapSessions, proto.CapSessionsWatch},
+		Members: []proto.CatalogMember{{Agent: member, Name: "remote"}}, SessionsAt: time.Now(),
+	}}}))
+	fedEventually(t, "catalog received", func() bool {
+		raw, _, _ := db.GetFederationCatalog(fh.peer.id.ID())
+		return strings.Contains(raw, member)
+	})
+	server := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
+	t.Cleanup(server.Close)
+	// The bridge upgrades only once the peer has answered, so a dial runs
+	// beside the test and hands back the closure it reads.
+	dial := func(agentID string) <-chan string {
+		done := make(chan string, 1)
+		go func() {
+			ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/federation/terminal?peer="+fh.peer.id.ID()+"&agent="+agentID+"&mode=watch", nil)
+			if err != nil {
+				done <- "dial: " + err.Error()
+				return
+			}
+			defer ws.Close()
+			_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
+			var closed map[string]any
+			if err := ws.ReadJSON(&closed); err != nil {
+				done <- "read: " + err.Error()
+				return
+			}
+			reason, _ := closed["reason"].(string)
+			done <- reason
+		}()
+		return done
+	}
+
+	require.Equal(t, "denied", <-dial("agt_stranger01"))
+	require.Empty(t, fh.peer.envelopes(proto.KindSessionOpen), "an agent the catalog does not list is not asked about")
+
+	closed := dial(member)
+	var env *proto.Envelope
+	fedEventually(t, "the open reaches the peer", func() bool {
+		es := fh.peer.envelopes(proto.KindSessionOpen)
+		if len(es) > 0 {
+			env = es[0]
+			return true
+		}
+		return false
+	})
+	var open proto.SessionOpenPayload
+	require.NoError(t, env.DecodePayload(&open))
+	require.Equal(t, member, open.Agent)
+	require.Equal(t, "builders", open.Group)
+	require.Empty(t, open.Session)
+	answer := fh.peer.envelope(proto.KindSessionAnswer, proto.Endpoint{}, proto.SessionAnswerPayload{Stream: open.Stream, Reason: "the agent is starting"})
+	answer.InReplyTo = env.ID
+	fh.peer.send(answer)
+	require.Equal(t, "starting", <-closed)
 }
