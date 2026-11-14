@@ -55,6 +55,8 @@ func checkNewGroupTaskKind(in NewGroupTask, status string) error {
 		return taskConflict("invalid_arg", "an epic has no assignee; its children do")
 	case in.Column != "":
 		return taskConflict("invalid_arg", "an epic sits in no column")
+	case in.Stage == GroupTaskStageBacklog:
+		return taskConflict("invalid_arg", "an epic is not parked; park its tasks")
 	case in.Question != nil:
 		return taskConflict("invalid_arg", "an epic is not a question")
 	case in.Blocks != "":

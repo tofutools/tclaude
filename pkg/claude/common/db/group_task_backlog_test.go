@@ -149,11 +149,27 @@ func TestGroupTaskBacklogStage(t *testing.T) {
 	_, err = SetGroupTaskStage(parked.ID, "later", "t")
 	require.ErrorAs(t, err, &conflict)
 
+	// Getting in line for a full lane takes a task out of the backlog: a
+	// queued task is in play.
+	inLine, err := CreateGroupTask(NewGroupTask{GroupID: gid, Title: "in line", Stage: GroupTaskStageBacklog, AssigneeID: worker, AssignedBy: "t", Hold: GroupTaskStageBacklog, Actor: "t"})
+	require.NoError(t, err)
+	inLine, err = QueueGroupTask(inLine.ID, QueueLaneInProgress, "full", "t", AnyAssignee)
+	require.NoError(t, err)
+	assert.Equal(t, GroupTaskStageNext, inLine.Stage)
+	assert.Equal(t, QueueLaneInProgress, inLine.QueuedFor)
+
 	// A parked child counts in its epic as not started.
 	epic, err := CreateGroupTask(NewGroupTask{GroupID: gid, Title: "epic", Kind: GroupTaskKindEpic, Actor: "t"})
 	require.NoError(t, err)
 	_, err = EditGroupTask(parked.ID, GroupTaskEdit{ParentID: &epic.ID, Actor: "t"})
 	require.NoError(t, err)
+	// An epic is not parked, by any path.
+	_, err = SetGroupTaskStage(epic.ID, GroupTaskStageBacklog, "t")
+	require.ErrorAs(t, err, &conflict)
+	_, err = MoveGroupTask(epic.ID, GroupTaskPosition{Before: parked.ID}, "t")
+	require.ErrorAs(t, err, &conflict)
+	_, err = CreateGroupTask(NewGroupTask{GroupID: gid, Title: "parked epic", Kind: GroupTaskKindEpic, Stage: GroupTaskStageBacklog, Actor: "t"})
+	require.ErrorAs(t, err, &conflict)
 	progress, err := GroupTaskEpicProgresses([]string{epic.ID})
 	require.NoError(t, err)
 	require.NotNil(t, progress[epic.ID])

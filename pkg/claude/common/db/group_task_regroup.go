@@ -126,6 +126,9 @@ func RegroupGroupTask(id string, in GroupTaskRegroup) (*GroupTaskRegroupResult, 
 		if assignee != "" && stage != GroupTaskStageBacklog {
 			stage = GroupTaskStageNext
 		}
+		if err := checkEpicParkTx(t, stage); err != nil {
+			return err
+		}
 		rank := t.Rank
 		if status == GroupTaskOpen {
 			if stage, rank, err = placeTask(tx, in.ToGroupID, stage, id, GroupTaskPosition{Bottom: true}); err != nil {

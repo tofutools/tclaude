@@ -74,7 +74,8 @@ func (t *GroupTask) GroupTaskLane() string {
 
 // QueueGroupTask puts task id in line for lane. A task waiting for In
 // progress is held (in next) if it was started; one waiting for a column
-// stays where it is. A task already in line for lane keeps its place.
+// stays where it is. A parked task leaves the backlog for next first: a
+// task in line is in play. A task already in line for lane keeps its place.
 // expectAssignee is the holder the caller was authorised against.
 func QueueGroupTask(id, lane, detail, actor, expectAssignee string) (*GroupTask, error) {
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
@@ -83,6 +84,11 @@ func QueueGroupTask(id, lane, detail, actor, expectAssignee string) (*GroupTask,
 		}
 		if !t.Live() {
 			return taskConflict("not_live", "task %s is %s; reopen it first", id, t.Status)
+		}
+		if t.Stage == GroupTaskStageBacklog {
+			if err := setGroupTaskStageTx(tx, t, GroupTaskStageNext, "to get in line", actor, now); err != nil {
+				return err
+			}
 		}
 		if lane == QueueLaneInProgress {
 			if t.AssigneeID == "" || t.AssigneeID == OperatorAssignee {

@@ -108,6 +108,8 @@ export function laneColumn(task, now = Date.now()) {
     const closed = Date.parse(task.closed_at || '');
     return Number.isFinite(closed) && now - closed <= WEEK_MS ? 'done' : null;
   }
+  // A parked task (the backlog, tk_5d2547b0) is in no lane.
+  if (task.stage === 'backlog') return null;
   const assigned = !!task.assignee?.agent_id;
   if (task.status === 'blocked' || (assigned && task.stalled)) return 'blocked';
   // A task in one of the board's custom columns stands there, whoever holds

@@ -50,6 +50,9 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		if in.Stage != "" && !IsGroupTaskStage(in.Stage) {
 			return taskConflict("invalid_arg", "stage is backlog, idea or next")
 		}
+		if err := checkEpicParkTx(t, in.Stage); err != nil {
+			return err
+		}
 		columnLabel := ""
 		if in.Column != "" {
 			if in.Stage == GroupTaskStageIdea || in.Stage == GroupTaskStageBacklog {

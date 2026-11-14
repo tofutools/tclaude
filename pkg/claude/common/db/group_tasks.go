@@ -1068,6 +1068,16 @@ func MoveGroupTask(id string, pos GroupTaskPosition, actor string) (*GroupTask, 
 		if err != nil {
 			return err
 		}
+		if stage != t.Stage {
+			if err := checkEpicParkTx(t, stage); err != nil {
+				return err
+			}
+			if !t.Started() || stage == GroupTaskStageBacklog {
+				if err := checkOperatorIdeaTx(tx, t, t.AssigneeID, stage); err != nil {
+					return err
+				}
+			}
+		}
 		if _, err := tx.Exec(`UPDATE group_tasks SET stage = ?, rank = ? WHERE id = ?`, stage, rank, id); err != nil {
 			return err
 		}
@@ -1139,6 +1149,15 @@ func stageChangeEvent(tx *sql.Tx, t *GroupTask, stage, actor, detail string, now
 	}
 }
 
+// checkEpicParkTx refuses to park an epic: it is no work of its own, its
+// tasks are parked.
+func checkEpicParkTx(t *GroupTask, stage string) error {
+	if t.IsEpic() && stage == GroupTaskStageBacklog {
+		return errGroupTaskEpic(t.ID, "parked")
+	}
+	return nil
+}
+
 // parkGroupTaskTx keeps the backlog's invariant for t, which just landed in
 // stage: a parked task is not started, so a started one is held, recorded
 // as such. (A trigger clears started_at too; this records why.)
@@ -1165,6 +1184,9 @@ func SetGroupTaskStage(id, stage, actor string) (*GroupTask, error) {
 		}
 		if !t.Live() {
 			return taskConflict("not_live", "task %s is %s; reopen it first", id, t.Status)
+		}
+		if err := checkEpicParkTx(t, stage); err != nil {
+			return err
 		}
 		if !t.Started() || stage == GroupTaskStageBacklog {
 			if err := checkOperatorIdeaTx(tx, t, t.AssigneeID, stage); err != nil {

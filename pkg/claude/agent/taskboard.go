@@ -581,7 +581,7 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		// own-group route's only invalid_arg is "no single group".
 		var de *DaemonError
 		if strings.TrimSpace(p.Group) == "" && strings.TrimSpace(p.Peer) == "" &&
-			p.Stage == "" && !p.All && !p.Archived && !p.JSON && p.Epic == "" && p.kind == "" &&
+			p.Stage == "" && !p.All && !p.Archived && !p.JSON && !p.Backlog && p.Epic == "" && p.kind == "" &&
 			errors.As(err, &de) && de.Code == "invalid_arg" {
 			return runTaskboardOverview(stdout, stderr)
 		}
