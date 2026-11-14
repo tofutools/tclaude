@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -181,12 +182,17 @@ func peerSpawnCatalogReadable(v *peerView) bool {
 // their models and modes, and the sandbox implementations -- on their own, so
 // a peer's dialog (which the peer-view snapshot does not give them) offers
 // what this node can launch.
+// spawnLaunchCatalogMaxAge bounds how stale the harness catalog this endpoint
+// serves may be. Nothing polls it, so with no dashboard open the background
+// refresh never runs; a dialog opening after that rebuilds inline instead.
+const spawnLaunchCatalogMaxAge = 30 * time.Second
+
 func handleDashboardSpawnLaunchCatalog(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"harnesses":    buildHarnessCatalog(),
+		"harnesses":    harnessCatalogAtMostAgo(spawnLaunchCatalogMaxAge),
 		"sandbox_impl": buildSandboxImplCatalog(),
 	})
 }
