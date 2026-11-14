@@ -193,6 +193,35 @@ test('back goes through history only for the reader the list just pushed', async
   assert.deepEqual(calls.at(-1), ['closeMessage']);
 });
 
+test('a refresh that pushes the open message off the page keeps it open', async (t) => {
+  const { $, view, harness } = await setup(t, { selectedMsgId: 1 });
+  assert.match($('.phone-mail-reader').textContent, /Subject 1/);
+  // New mail arrives above it; message 1 moves to the next page.
+  await harness.act(() => { view.value = { ...view.value, messages: [message(3), message(2)] }; });
+  assert.ok($('.phone-mail-reader'), 'still reading');
+  assert.match($('.phone-mail-reader').textContent, /Subject 1/, 'the same message, not "Select a message"');
+  await harness.act(() => { view.value = { ...view.value, selectedMsgId: null }; });
+  assert.equal($('.phone-mail-reader'), null, 'closing the selection closes it');
+});
+
+test('a message opens at its top, and back returns the list to where it was', async (t) => {
+  const { $, view, harness, tap } = await setup(t);
+  const scrolls = [];
+  const saved = { scrollTo: globalThis.scrollTo, scrollY: Object.getOwnPropertyDescriptor(globalThis, 'scrollY') };
+  globalThis.scrollTo = (x, y) => scrolls.push(y);
+  Object.defineProperty(globalThis, 'scrollY', { configurable: true, value: 640 });
+  t.after(() => {
+    globalThis.scrollTo = saved.scrollTo;
+    if (saved.scrollY) Object.defineProperty(globalThis, 'scrollY', saved.scrollY);
+    else delete globalThis.scrollY;
+  });
+  await tap($('.phone-mail-open'));
+  await harness.act(() => { view.value = { ...view.value, selectedMsgId: 1 }; });
+  assert.deepEqual(scrolls, [0], 'the reader starts at the top');
+  await harness.act(() => { view.value = { ...view.value, selectedMsgId: null }; });
+  assert.deepEqual(scrolls, [0, 640], 'the list is back where it was');
+});
+
 test('a peer operator\'s reply dialog has its host on a phone too', async (t) => {
   const { harness } = await setup(t, { selectedMsgId: 1 });
   const { PEER_MAIL_EVENT } = await harness.importDashboardModule('js/peer-mail.js');

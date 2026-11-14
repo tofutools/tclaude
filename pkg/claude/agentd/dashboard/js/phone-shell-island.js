@@ -223,7 +223,6 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const viewActions = useMemo(() => {
     const leave = (run) => (...args) => {
       shell.view.value = null;
-      phonePage.value = null;
       closePhoneSheet();
       return run(...args);
     };
@@ -235,9 +234,12 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     };
   }, [actions, shell]);
 
+  // A tab's pushed page goes when its tab does (the view takes it down when
+  // it goes inactive; clearing it here as well covers a view that does not).
+  // Picking the tab that is already showing keeps it: nothing would put it
+  // back, and the page would lose its back button.
   function pick(target) {
     closePhoneSheet();
-    phonePage.value = null;
     if (target.id === 'more') {
       openPhoneSheet({ label: 'More', Body: MoreMenu, props: { state, actions: viewActions } });
       return;
@@ -247,6 +249,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
       return;
     }
     shell.view.value = null;
+    if (target.tab !== activeTab) phonePage.value = null;
     actions.showTab(target.tab);
   }
 

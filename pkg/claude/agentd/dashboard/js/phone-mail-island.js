@@ -17,7 +17,7 @@
 // reader body is the desktop MessageReader itself.
 
 import { Fragment, h, render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { registerMailController } from './mail-bridge.js';
 import { MessageReader } from './mail-island.js';
@@ -185,8 +185,14 @@ function AgentFolders({ current, controller, onPicked }) {
   </div>`;
 }
 
-function MailList({ current, controller, model, open }) {
+function MailList({ current, controller, model, open, listScroll }) {
   const [agents, setAgents] = useState(false);
+  // Back from the reader returns to where the list was: Mail scrolls with
+  // the page, and the reader started it at the top.
+  useLayoutEffect(() => {
+    if (listScroll.current) globalThis.scrollTo?.(0, listScroll.current);
+    listScroll.current = 0;
+  }, [listScroll]);
   // The roster lists agent folders only while the picker is open.
   useEffect(() => {
     controller.listAgents(agents);
@@ -232,11 +238,26 @@ function MailList({ current, controller, model, open }) {
 }
 
 // openedMessage is the message or access request the reader shows, or null.
-export function openedMessage(current, model) {
+// `kept` is the one it showed last: a refresh that pushes the open message
+// onto the next page (new mail arriving above it) keeps it open, until the
+// selection itself changes.
+export function openedMessage(current, model, kept = null) {
   const id = current.selectedMsgId;
   if (id === null || id === undefined || id === '') return null;
-  if (model.access) return model.allAccess.find((request) => request.id === String(id)) || null;
-  return model.messages.find((message) => message.id === id) || null;
+  const found = model.access
+    ? model.allAccess.find((request) => request.id === String(id))
+    : model.messages.find((message) => message.id === id);
+  if (found) return found;
+  return kept && String(kept.id) === String(id) && !!kept.access === !!model.access ? kept.item : null;
+}
+
+// withItem is the page model with the open item in it: the desktop reader
+// looks it up there, and a kept item may have left the page.
+export function withItem(model, item) {
+  if (model.access) {
+    return model.allAccess.includes(item) ? model : { ...model, allAccess: [...model.allAccess, item] };
+  }
+  return model.messages.includes(item) ? model : { ...model, messages: [...model.messages, item] };
 }
 
 function Reader({ current, controller, model, item, active, back }) {
@@ -253,9 +274,11 @@ function Reader({ current, controller, model, item, active, back }) {
       onClick: () => import('./terminals-tab.js').then(({ openWebWindowPane }) => openWebWindowPane(item.from_agent, sender, {})),
     }] : [],
   }, active);
+  // A message opens at its top, wherever the list was scrolled to.
+  useLayoutEffect(() => { globalThis.scrollTo?.(0, 0); }, [item.id]);
   const canReply = human && (item.from_conv || item.from_agent) && !remoteNodeID();
   return html`<div class=${`phone-mail-reader${canReply ? ' with-reply' : ''}`}>
-    <${MessageReader} current=${current} controller=${controller} model=${model} />
+    <${MessageReader} current=${current} controller=${controller} model=${withItem(model, item)} />
     ${canReply && html`<div class="phone-mail-replybar">
       <button data-ui-exempt type="button" class="phone-mail-reply" onClick=${() => openHumanReplyModal({
         id: item.id, agent: item.from_agent || '', conv: item.from_conv || '', label: sender, subject: item.subject || '',
@@ -281,14 +304,18 @@ export function PhoneMailApp({ controller }) {
   // same). A reader reached any other way (a deep link, an attention jump)
   // has no list entry under it: back then closes it in place.
   const pushed = useRef(null);
+  const listScroll = useRef(0);
   const current = controller.state.view.value;
   const model = controller.messageView();
-  const item = openedMessage(current, model);
+  const kept = useRef(null);
+  const item = openedMessage(current, model, kept.current);
+  kept.current = item ? { id: current.selectedMsgId, access: !!model.access, item } : null;
   // Once the reader is gone, however it went (the OS back gesture, a
   // delete), its entry is no longer the one under a later reader.
   if (!item) pushed.current = null;
   const open = (id) => {
     pushed.current = String(id);
+    listScroll.current = globalThis.scrollY || 0;
     controller.selectMessage(id, { navigate: true });
   };
   const back = () => {
@@ -306,7 +333,7 @@ export function PhoneMailApp({ controller }) {
     ${item
       ? html`<${Reader} current=${current} controller=${controller} model=${model} item=${item}
           active=${activeTab === 'messages'} back=${back} />`
-      : html`<${MailList} current=${current} controller=${controller} model=${model} open=${open} />`}
+      : html`<${MailList} current=${current} controller=${controller} model=${model} open=${open} listScroll=${listScroll} />`}
     <${PeerMailHost} toast=${shellToast} />
   </${Fragment}>`;
 }

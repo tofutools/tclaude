@@ -15,9 +15,10 @@
 //     hideNav: boolean, hide the bottom nav while the page is up
 //   } | null
 //
-// The shell clears it whenever the operator switches views (a nav slot, a More
-// entry), so a page never outlives its tab; a view re-asserts its page when it
-// is shown again (usePhonePage does both).
+// A page never outlives its tab: usePhonePage takes it down when its view goes
+// inactive, and the shell clears it when the operator picks another tab. An
+// own view (Now, Board) covers it without clearing it, so going back to the
+// tab finds the page still up.
 
 import { signal } from '@preact/signals';
 import { useEffect, useRef } from 'preact/hooks';
