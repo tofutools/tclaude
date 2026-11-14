@@ -547,3 +547,61 @@ func TestFederation_TerminalOpenWhileTheAgentIsStarting(t *testing.T) {
 	require.False(t, ans.OK)
 	require.Contains(t, ans.Reason, "no longer live")
 }
+
+// A peer asked for an agent's pane after a relaunch replaced it under a new
+// session (a reincarnation or a fresh launch): while that launch is in
+// progress, an open naming the old session, or none (a requester whose catalog
+// lists no pane for the agent), answers "the agent is starting". Once the new
+// pane is up the open is refused as moved, never pinned to the new pane, so
+// the requester looks the agent up again; with no pane and no launch it is
+// not running.
+func TestFederation_TerminalOpenFollowsARelaunchUnderANewSession(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	const conv = "fed-terminal-relaunch"
+	f.HaveGroup("team")
+	f.HaveConvWithTitle(conv, "relaunch-target")
+	f.HaveMember("team", conv)
+	f.HaveAliveSession(conv, "relaunch-old", "tclaude-relaunch-old", f.TestCwd("work"))
+	aid, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	t.Cleanup(agentd.ResetFederationForTest)
+	incarnation := terminalCatalogIncarnation(t, fh, aid)
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermSessionsWatch, "scope": "group=team"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	open := func(sessionID, inc string) proto.SessionAnswerPayload {
+		kp, err := stream.NewKeyPair()
+		require.NoError(t, err)
+		o := proto.SessionOpenPayload{Agent: aid, Session: sessionID, Incarnation: inc, Group: "team", Stream: proto.NewEnvelopeID(), Key: kp.Pub, ReadOnly: true, Cols: 80, Rows: 24}
+		p.send(p.envelope(proto.KindSessionOpen, proto.Endpoint{}, o))
+		return terminalAnswer(t, p, o.Stream)
+	}
+
+	// The old pane is gone; the replacing launch has its row, not its pane.
+	f.MarkOffline("tclaude-relaunch-old")
+	old, err := db.LoadSession("relaunch-old")
+	require.NoError(t, err)
+	old.CreatedAt = time.Now().Add(-time.Hour)
+	require.NoError(t, db.SaveSession(old))
+	f.HaveAliveSession(conv, "relaunch-new", "tclaude-relaunch-new", f.TestCwd("work"))
+	f.MarkOffline("tclaude-relaunch-new")
+	for _, o := range []struct{ session, incarnation string }{{"relaunch-old", incarnation}, {"", ""}} {
+		ans := open(o.session, o.incarnation)
+		require.False(t, ans.OK)
+		require.Contains(t, ans.Reason, "the agent is starting", "open naming session %q", o.session)
+	}
+
+	// The new pane is up: the old session's open is told to look again.
+	f.World.Tmux.MarkAlive("tclaude-relaunch-new")
+	ans := open("relaunch-old", incarnation)
+	require.False(t, ans.OK, "a stale open never reaches the new pane")
+	require.Contains(t, ans.Reason, "session incarnation changed")
+
+	// No pane and no launch in progress: not running.
+	f.MarkOffline("tclaude-relaunch-new")
+	later := time.Now().Add(agentd.TerminalStartWindowForTest + time.Second)
+	t.Cleanup(agentd.SetTerminalNowForTest(func() time.Time { return later }))
+	ans = open("", "")
+	require.False(t, ans.OK)
+	require.Contains(t, ans.Reason, "no longer live")
+}

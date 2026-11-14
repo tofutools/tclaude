@@ -743,14 +743,14 @@ func (pin *fedPanePin) closureReason(peer string, p proto.SessionOpenPayload) st
 	}
 	row, err := db.LoadSession(pin.session)
 	if err != nil || row == nil || row.Status == session.StatusExited || !session.IsTmuxSessionAlive(pin.tmux) {
-		return fedPaneEnded(a, row)
+		return pin.ended(a)
 	}
 	if fedSessionIncarnation(row) != pin.incarnation {
 		return "reincarnated"
 	}
 	current, err := fedPaneIdentity(pin.tmux)
 	if err != nil {
-		return fedPaneEnded(a, row)
+		return pin.ended(a)
 	}
 	if current.pane != pin.pane || current.serverSession != pin.serverSession {
 		return "reincarnated"
@@ -758,11 +758,14 @@ func (pin *fedPanePin) closureReason(peer string, p proto.SessionOpenPayload) st
 	return "revoked"
 }
 
-// fedPaneEnded words the closure of a pinned pane that went away: a launch
+// ended words the closure of a pinned pane that went away: a launch
 // replacing it (a restart, resume or relaunch) is "reincarnated", which the
 // viewer follows, as a local terminal follows the replacing launch
 // (agentTerminalReplaced); anything else is the agent exiting.
-func fedPaneEnded(a *db.Agent, attached *db.SessionRow) string {
+func (pin *fedPanePin) ended(a *db.Agent) string {
+	// The pinned launch, not the row as it reads now: a relaunch rewrites the
+	// row's creation time.
+	attached := &db.SessionRow{ID: pin.session, CreatedAt: pin.created}
 	if agentTerminalReplaced(a.CurrentConvID, attached) {
 		return "reincarnated"
 	}
