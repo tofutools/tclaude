@@ -20,6 +20,11 @@
 <link rel="stylesheet" href="/static/drawing-board.css">
 <!-- Standard controls (ui-* classes). Last, so a ui-* class wins its ties. -->
 <link rel="stylesheet" href="/static/ui.css">
+<!-- Phone or desktop layout, decided once per load before the first paint
+     (js/layout-boot.js). Desktop mode adds nothing to the page; phone mode
+     marks <html data-layout="phone">, adds the viewport meta and links
+     phone.css after the sheets above. -->
+<script src="/static/js/layout-boot.js"></script>
 <!-- Browser-native package resolution for the no-build Preact/HTM islands.
      Every target is embedded and served from the authenticated agentd origin.
      Declared here, BEFORE the modulepreload block below, so the map is parsed
