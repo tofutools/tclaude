@@ -12,7 +12,7 @@
 // a deep link, Back) clears the own view.
 
 import { h, render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
 import { companionAgents } from './companion-model.js';
@@ -162,11 +162,21 @@ export function BoardView({ source, state, actions }) {
 function MoreSheet({ shell, state, actions }) {
   const sheet = useRef(null);
   const close = () => { shell.moreOpen.value = false; };
+  // A modal sheet: the rest of the shell and the tab under it are inert while
+  // it is open, and focus goes back to whatever opened it (the More button).
   useEffect(() => {
+    const doc = sheet.current.ownerDocument;
+    const opener = doc.activeElement;
+    const behind = [...doc.querySelectorAll('main, .phone-bar, .phone-view, .phone-nav')];
+    for (const element of behind) element.inert = true;
     const onKey = (event) => { if (event.key === 'Escape') close(); };
-    document.addEventListener('keydown', onKey);
-    sheet.current?.querySelector('button')?.focus();
-    return () => document.removeEventListener('keydown', onKey);
+    doc.addEventListener('keydown', onKey);
+    sheet.current.querySelector('button')?.focus();
+    return () => {
+      doc.removeEventListener('keydown', onKey);
+      for (const element of behind) element.inert = false;
+      if (opener?.isConnected) opener.focus();
+    };
   }, []);
   const go = (path) => { close(); actions.navigate(path); };
   const run = (act) => { close(); act(); };
@@ -217,6 +227,22 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     else delete root.dataset.phoneView;
   }, [view]);
 
+  // What the views and the More sheet do. Anything that goes to a tab leaves
+  // the own view first: the tab may already be the active one (Groups under a
+  // fresh Now), and then no tab change would clear it.
+  const viewActions = useMemo(() => {
+    const leave = (run) => (...args) => {
+      shell.view.value = null;
+      return run(...args);
+    };
+    return {
+      ...actions,
+      navigate: leave(actions.navigate),
+      openTerminal: leave(actions.openTerminal),
+      openAccessRequest: leave(actions.openAccessRequest),
+    };
+  }, [actions, shell]);
+
   function pick(target) {
     shell.moreOpen.value = false;
     if (target.id === 'more') {
@@ -244,8 +270,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
       <span class=${`phone-bar-live ${connection}`} role="status" title=${connection === 'connected' ? 'Connected' : connection}
         aria-label=${connection === 'connected' ? 'Connected' : `Connection: ${connection}`}></span>
     </header>
-    ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${actions} fetchImpl=${fetchImpl} /></div>`}
-    ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${actions} /></div>`}
+    ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} /></div>`}
+    ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} /></div>`}
     <nav class="phone-nav" aria-label="Views">
       ${PHONE_SLOTS.map((target) => html`<button data-ui-exempt key=${target.id} type="button"
         class=${`phone-nav-item${slot === target.id ? ' on' : ''}`} aria-current=${slot === target.id ? 'page' : undefined}
@@ -253,7 +279,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
         <span class="phone-nav-icon" aria-hidden="true">${target.icon}</span>${target.label}${badge(target.id)}
       </button>`)}
     </nav>
-    ${shell.moreOpen.value && html`<${MoreSheet} shell=${shell} state=${state} actions=${actions} />`}
+    ${shell.moreOpen.value && html`<${MoreSheet} shell=${shell} state=${state} actions=${viewActions} />`}
   </div>`;
 }
 

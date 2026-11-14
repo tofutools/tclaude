@@ -117,3 +117,27 @@ test('an asking agent on Now opens its terminal or a message', async (t) => {
   await tap(row.querySelector('[aria-label="Message checkout-ui"]'));
   assert.equal(calls.at(-1)[0], 'message');
 });
+
+test('leaving Now for the tab already under it still shows that tab', async (t) => {
+  // A fresh load lands on Now with Groups as the active tab: navigating to
+  // Groups changes no tab, so the shell must leave the own view itself.
+  const { shell, calls, mounted, root, tap } = await setup(t);
+  const allAgents = [...mounted.container.querySelectorAll('.phone-link')].find((b) => b.textContent.includes('All agents'));
+  await tap(allAgents);
+  assert.deepEqual(calls.at(-1), ['navigate', '/']);
+  assert.equal(shell.view.value, null);
+  assert.equal(root.dataset.phoneView, undefined);
+});
+
+test('the More sheet is modal: the shell behind it is inert until it closes', async (t) => {
+  const { harness, mounted, navItem, tap } = await setup(t);
+  const more = navItem('More');
+  more.focus();
+  await tap(more);
+  const nav = mounted.container.querySelector('.phone-nav');
+  assert.equal(nav.inert, true, 'the bottom nav is inert under the sheet');
+  assert.equal(mounted.container.querySelector('.phone-view').inert, true);
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.equal(nav.inert, false);
+  assert.equal(harness.document.activeElement, more, 'focus goes back to More');
+});

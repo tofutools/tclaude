@@ -93,13 +93,18 @@ test.describe('on a phone', () => {
     await page.goto('/');
     await booted(page);
     await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /More/ }).click();
-    await page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: /Desktop site/ }).click();
+    // Both switches reload the page: wait for the new one before reading it,
+    // or the old page (already booted) answers.
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: /Desktop site/ }).click(),
+    ]);
     await booted(page);
     await expect(page.locator('#phone-shell-root')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.dataset.layout ?? null)).toBeNull();
     const back = page.locator('.meta-phone-view');
     await expect(back).toHaveText('Phone view');
-    await back.click();
+    await Promise.all([page.waitForEvent('load'), back.click()]);
     await booted(page);
     await expect(page.locator('.phone-bar-title')).toBeVisible();
     expect(await page.evaluate(() => localStorage.getItem('tclaude.layout'))).toBe('phone');

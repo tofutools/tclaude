@@ -184,7 +184,7 @@ windows keep the full dashboard. A bar at the bottom has five views:
 | **More** | Every other tab, **Power on all**, **Shut down all…** and **Desktop site** |
 
 Overlay windows, the side panel, drag and drop and the voice wake word aren't
-on the phone layout. A terminal opens full screen.
+on the phone layout. **Open** on an agent shows its terminal in the Collab tab.
 
 **Desktop site** in **More** shows the full dashboard on this phone, and **Phone
 view** at the bottom of that page switches back. The choice is kept in this

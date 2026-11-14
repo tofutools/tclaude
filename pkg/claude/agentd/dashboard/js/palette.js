@@ -86,6 +86,7 @@ import { limitHint, limitPeerViewCommands, shellControl } from './peer-view-limi
 import { buildFusedNodeCommands } from './palette-fused.js';
 import { fusedGroupListing } from './group-order.js';
 import { jumpAgent } from './agent-jump.js';
+import { navTabShown } from './nav-tab-visibility.js';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
 // one. buildCommands wraps every command's PRESENTED label + hint (and its
@@ -635,10 +636,10 @@ export function buildCommands(snapshot) {
 
   // 4) Navigation — one command per VISIBLE nav button, reusing its own
   //    click handler (which also triggers each tab's data load). A
-  //    CSS-hidden tab (Costs auto-hidden, Vegas off-slop) has no
-  //    offsetParent, so it isn't a place the human can currently go.
+  //    CSS-hidden tab (Costs auto-hidden, Vegas off-slop) is not shown
+  //    (navTabShown), so it isn't a place the human can currently go.
   for (const btn of $$('nav [data-tab]')) {
-    if (btn.offsetParent === null || btn.getAttribute('aria-disabled') === 'true') continue;
+    if (!navTabShown(btn) || btn.getAttribute('aria-disabled') === 'true') continue;
     // Each tab carries a plain/wizard label-span pair (dashboard.html). Read
     // whichever the active theme SHOWS so the command reads "Go to Costs"
     // plainly and "Scry the Coffers" in wizard mode — btn.textContent would
@@ -681,7 +682,7 @@ export function buildCommands(snapshot) {
   // one command away (and findable as "costs") rather than behind Usage.
   const usageBtn = $('nav [data-tab="usage"]');
   const usageHub = featureState('usage-hub');
-  if (usageHub && usageBtn && usageBtn.offsetParent !== null && usageBtn.getAttribute('aria-disabled') !== 'true') {
+  if (usageHub && usageBtn && navTabShown(usageBtn) && usageBtn.getAttribute('aria-disabled') !== 'true') {
     for (const [view, plain, wizardly, words] of [
       ['quota', 'Quota', 'Reserves', 'quota limits forecast subscription window reserves mana'],
       ['costs', 'Costs', 'Coffers', 'costs spend money billing dollars coffers gold'],
@@ -701,7 +702,7 @@ export function buildCommands(snapshot) {
   // offered on a peer view (peerView 'tab' gates it on the Diagnostics tab);
   // the others fall to the default local-only gate there.
   const activityBtn = $$('nav [data-tab="diagnostics"]')[0];
-  if (activityBtn && activityBtn.offsetParent !== null) {
+  if (activityBtn && navTabShown(activityBtn)) {
     for (const [subtab, plain, arcane, keywords] of [
       ['audit', 'Audit', 'Deeds', 'audit trail log who commands denied chronicle deeds'],
       ['logs', 'Logs', 'Runes', 'logs daemon log output tail errors warnings runes'],

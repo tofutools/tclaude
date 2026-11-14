@@ -22,6 +22,7 @@ import { nodeSnapshot } from './node-api.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { matchesShortcut } from './keybindings.js';
 import { configTarget, pickConfigNode, setConfigNodes } from './config-access.js';
+import { navTabShown } from './nav-tab-visibility.js';
 
 const html = htm.bind(h);
 
@@ -45,7 +46,7 @@ function defaultNavigate(tab) {
   // body.hide-processes decides.
   const hidden = tab === 'processes'
     ? document.body.classList.contains('hide-processes')
-    : !anchor || anchor.offsetParent === null;
+    : !navTabShown(anchor);
   if (!TOP_LEVEL_TABS.has(tab) && hidden) anchor = document.querySelector('nav [data-tab="groups"]');
   anchor?.click();
 }
