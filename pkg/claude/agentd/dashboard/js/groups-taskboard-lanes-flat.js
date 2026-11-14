@@ -25,7 +25,7 @@ import { h } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  BlockDialog, Card, CellAdd, CellCards, LaneHead, OPERATOR, UNASSIGNED, boardColumns, cellAdd, cellClass, columnClass, laneColumn, operatorQuestions, striped, useCellReveal, useLaneDrag,
+  BacklogColumn, BlockDialog, Card, CellAdd, CellCards, LaneHead, OPERATOR, UNASSIGNED, boardColumns, cellAdd, cellClass, columnClass, laneColumn, operatorQuestions, striped, useCellReveal, useLaneDrag,
 } from './groups-taskboard-lanes.js';
 import { actorLabel, agentLabel, archiveItems, boardTasks, canAssign, operatorName } from './groups-taskboard.js';
 import { agentLink } from './cross-links.js';
@@ -33,6 +33,7 @@ import { useOpenCells } from './groups-taskboard-lanes-layout.js';
 import { AnswerFor, QuestionCard, answerTarget, askerOf } from './groups-taskboard-answer.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
 import { LaneLimit, useLimitDialog } from './groups-taskboard-limits.js';
+import { backlogItems, backlogSupported } from './groups-taskboard-backlog.js';
 import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
 import { EpicBoard, EpicNudge, EpicProgress, NO_EPIC, epicColour, epicOf, progressParts } from './groups-taskboard-epics.js';
 import { onOrderKey, orderItems } from './groups-taskboard-order.js';
@@ -138,7 +139,7 @@ function rowStriped(row, column) {
 
 const HIDEABLE_KEYS = HIDEABLE_BUILTINS.map((b) => b.key);
 
-export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions = null, readApi = null, wizard = false, now = Date.now(), onNewTask = null, onEdit = null }) {
+export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions = null, readApi = null, wizard = false, now = Date.now(), onNewTask = null, onEdit = null, backlog = false, onHideBacklog = null }) {
   const tasks = entry.tasks || [];
   const byId = boardTasks(entry);
   const epicBoard = useContext(EpicBoard);
@@ -192,7 +193,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
           marker=${lanesSay(mode, task) ? null : cardMarker(task, group, snapshot)}
           chip=${!byEpic}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: taskLane(t), column: column.key, ...(byEpic ? { epic: row === NO_EPIC ? '' : row } : {}) }) } : null}
-          menu=${[...orderItems(task, list, actions, where), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null}
+          menu=${[...orderItems(task, list, actions, where), ...backlogItems(task, backlogSupported(entry) ? actions : null), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null}
           dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, list, actions) : null} />`} />
       ${row === OPERATOR && column.key === 'progress' && questions.map(({ task, question }) => html`<${QuestionCard} key=${`${task.id}#${question.n}`}
         task=${task} question=${question} askedBy=${nameOf(question.asked_by)} onOpen=${actions ? onEdit : null}
@@ -254,6 +255,8 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
     ${answerTask && html`<${AnswerFor} task=${answerTask} n=${target.n} actions=${actions} askedBy=${actorLabel(askerOf(answerTask, target.n), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
+    <div class=${backlog ? 'tb-lanes-split' : undefined}>
+    ${backlog && html`<${BacklogColumn} entry=${entry} group=${group} snapshot=${snapshot} drag=${drag} actions=${actions} readApi=${readApi} onEdit=${onEdit} onHide=${onHideBacklog} />`}
     <div class=${`tb-lanes tb-lanes-flat${triage ? '' : ' tb-lanes-row'}`} data-taskboard-lanes=${group.name} data-lanes-by=${mode}
         style=${`--tb-lane-cols: ${cols}; --tb-lane-min: ${min}px`}
         onDragLeave=${actions ? drag.leaveGrid : undefined}>
@@ -267,6 +270,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
       ${rows.map((row) => html`<div key=${row || 'unassigned'} class=${`tb-lane${row === OPERATOR ? ' tb-lane-operator' : ''}${byEpic && row === NO_EPIC && !rowCount(NO_EPIC) && !cells.has(`${NO_EPIC}|done`) ? ' tb-lane-folded' : ''}`} data-board-row-head=${row || 'unassigned'}>
         ${triage && head(row)}${columns.map((column) => cell(row, column))}
       </div>`)}
+    </div>
     </div>
   </div>`;
 }

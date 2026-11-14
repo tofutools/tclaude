@@ -328,6 +328,9 @@ func seedSandboxTaskboard(s *sandboxSeeder) {
 		{"title": "Fix the cart badge count", "status": "done", "to": sbCopy},
 		{"title": "Add search telemetry", "status": "done", "to": sbSearch, "ref": pr(1440)},
 		{"title": "Old banner experiment", "status": "done"},
+		// The backlog: parked, hidden until shown (tk_5d2547b0).
+		{"title": "Loyalty points", "stage": "backlog", "ref": "https://linear.app/acme/issue/SHOP-118", "ref_label": "SHOP-118"},
+		{"title": "Migrate image storage to R2", "stage": "backlog", "body": "After the CDN move; not before Q3."},
 	}
 	ids := make([]string, len(tasks))
 	for i, body := range tasks {

@@ -149,10 +149,12 @@ export function columnLabel(state, columns = []) {
 // lanes are (docs/taskboard.md): blocked, stalled (assigned to an agent idle
 // past taskboard.idle_grace without reporting), waiting (the operator holds
 // it, queued or started), in progress (assigned and started), queued (open
-// with an unmet dependency), idea, or open. A task its assignee holds
+// with an unmet dependency), idea, backlog (parked), or open. A task its assignee holds
 // without starting it reads as its stage (tk_3826822a).
 export function taskRowState(task) {
   if (task.status === 'done' || task.status === 'dropped') return task.status;
+  // Parked (tk_5d2547b0): in no lane, waiting on nobody, blocked or not.
+  if (task.stage === 'backlog') return 'backlog';
   if (task.status === 'blocked') return 'blocked';
   if (task.stalled && task.assignee?.agent_id) return 'stalled';
   const ideaHeld = task.held && task.stage === 'idea';

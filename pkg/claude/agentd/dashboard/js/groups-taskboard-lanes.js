@@ -52,6 +52,7 @@ import { HIDEABLE_BUILTINS } from './groups-taskboard-colvis.js';
 import { AnswerFor, QuestionCard, QuestionTag, answerTarget, askerOf, openQuestions, questionOpen } from './groups-taskboard-answer.js';
 import { dropSide, onOrderKey, orderItems, orderPeers } from './groups-taskboard-order.js';
 import { EpicBoard, EpicChip, EpicMark, epicColour, epicDimmed, epicMoved, intoEpic, isEpic } from './groups-taskboard-epics.js';
+import { BACKLOG, backlogItems, backlogSupported, backlogTasks } from './groups-taskboard-backlog.js';
 
 const html = htm.bind(h);
 
@@ -108,8 +109,8 @@ export function laneColumn(task, now = Date.now()) {
     const closed = Date.parse(task.closed_at || '');
     return Number.isFinite(closed) && now - closed <= WEEK_MS ? 'done' : null;
   }
-  // A parked task (the backlog, tk_5d2547b0) is in no lane.
-  if (task.stage === 'backlog') return null;
+  // A parked task is in no lane: the Backlog column holds it.
+  if (task.stage === BACKLOG) return null;
   const assigned = !!task.assignee?.agent_id;
   if (task.status === 'blocked' || (assigned && task.stalled)) return 'blocked';
   // A task in one of the board's custom columns stands there, whoever holds
@@ -284,6 +285,7 @@ export function laneDrop(task, from, to, opts = {}) {
 
 function baseLaneDrop(task, from, to, { assign = true } = {}) {
   if (!task || (from.lane === to.lane && from.column === to.column) || striped(to.lane, to.column)) return null;
+  if (from.column === BACKLOG || to.column === BACKLOG) return backlogDrop(task, from, to, { assign });
   const open = task.status === 'open';
   const block = (api, reason) => api.status(task.id, 'blocked', reason);
   if (isCustomColumn(to.column)) return columnDrop(task, from, to, { assign });
@@ -363,6 +365,53 @@ function baseLaneDrop(task, from, to, { assign = true } = {}) {
     default:
       return null;
   }
+}
+
+// backlogDrop is a card dragged into or out of the Backlog column
+// (tk_5d2547b0). Into it, a live task is parked (`taskboard backlog`), in
+// whoever's hands it is. Out of it, `from.lane` is the lane of its holder:
+// onto Ideas or Next of that lane it comes back to that stage (its
+// assignee still holds it, not started); onto another lane it is given to
+// that lane's agent, held there, or taken off its assignee onto the
+// Unassigned lane; onto In progress its agent starts it. Blocked and Done
+// keep their own meaning; a custom column moves it there.
+export function backlogDrop(task, from, to, { assign = true } = {}) {
+  const live = task.status === 'open' || task.status === 'blocked';
+  if (!live || isEpic(task)) return null;
+  if (to.column === BACKLOG) {
+    if (task.stage === BACKLOG) return null;
+    return { kind: 'park', label: 'park in backlog', run: (api) => api.stage(task.id, BACKLOG) };
+  }
+  if (isCustomColumn(to.column)) return columnDrop(task, from, to, { assign });
+  const stage = { ideas: 'idea', next: 'next' }[to.column];
+  const words = stage === 'idea' ? 'back to ideas' : 'to next';
+  if (from.lane === to.lane) {
+    if (stage && task.assignee?.agent_id) {
+      // hold is an assign-level write unless the viewer is the assignee.
+      if (!assign) return null;
+      return { kind: 'unpark-hold', label: `${words}, not started`, run: (api) => api.hold(task.id, stage) };
+    }
+    if (stage) return { kind: 'unpark', label: words, run: (api) => api.stage(task.id, stage) };
+    if (to.column === 'progress' && task.assignee?.agent_id && assign) {
+      return { kind: 'unpark+start', label: 'start', run: (api) => api.start(task.id) };
+    }
+    if (to.column === 'done' && (!task.assignee?.agent_id || assign)) {
+      return { kind: 'done', label: 'done', run: (api) => api.status(task.id, 'done') };
+    }
+    return null;
+  }
+  if (!assign || task.status !== 'open') return null;
+  if (to.lane === UNASSIGNED) {
+    if (!stage) return null;
+    return { kind: 'unassign+unpark', label: `unassign · ${words}`,
+      run: twoStep((api) => api.unassign(task.id), (api) => api.stage(task.id, stage)) };
+  }
+  if (to.member === false) return null;
+  const name = to.name || to.lane;
+  if (to.column === 'progress') return { kind: 'assign', label: `assign to ${name}`, agent: to.lane, run: (api) => api.assign(task.id, to.lane) };
+  if (!stage) return null;
+  return { kind: 'assign-hold', label: `give to ${name}, ${stage === 'idea' ? 'an idea' : 'queued'}, not started`, agent: to.lane,
+    run: (api) => api.assign(task.id, to.lane, { hold: stage }) };
 }
 
 // columnDrop is a card dragged onto a custom column (`move --stage
@@ -465,7 +514,7 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
   // An editable card on a board has ⋯ Copy link (task-route.js), beside its own items.
   const board = useContext(TaskLink);
   const menu = board && onEdit ? [...(given || []), copyLinkItem(task.id, board)] : given;
-  return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}${isEpic(task) ? ` tb-card-epic tb-epic-c${epicColour(task.id)}` : ''}${dim ? ' tb-epic-dim' : ''}${dropAt ? ` tb-drop-${dropAt}` : ''}`}
+  return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${task.stage === BACKLOG ? ' tb-card-parked' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}${isEpic(task) ? ` tb-card-epic tb-epic-c${epicColour(task.id)}` : ''}${dim ? ' tb-epic-dim' : ''}${dropAt ? ` tb-drop-${dropAt}` : ''}`}
       data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
       onKeyDown=${onKey || undefined}
       onDblClick=${onEdit ? (event) => { if (event.target?.closest?.('.ui-popover')) return; event.preventDefault(); onEdit(task.id); } : undefined}
@@ -591,7 +640,7 @@ export function reorderDrop(task, slot, to, actions) {
 // keeps its own place.
 export function slotted(drop, task, to, slot, actions) {
   if (!drop || drop.reason || !slot || slot.self || typeof actions?.reorder !== 'function') return drop;
-  const stage = to.column === 'ideas' ? 'idea' : (to.column === 'blocked' || to.column === 'done') ? '' : 'next';
+  const stage = to.column === 'ideas' ? 'idea' : to.column === BACKLOG ? BACKLOG : (to.column === 'blocked' || to.column === 'done') ? '' : 'next';
   if (!stage || slot.anchor.stage !== stage) return drop;
   const { anchor, where } = slot;
   return { ...drop, kind: `${drop.kind}+order`, label: `${drop.label} · ${where} “${short(anchor.title)}”`,
@@ -675,6 +724,34 @@ export function useLaneDrag(actions, group, tasks = []) {
       if (ok && (drop.baseKind || drop.kind) === 'assign') markLanded({ group: group.name, node: group.fleet_node?.id || '', section: 'agents', ids: [drop.agent] });
     },
   };
+}
+
+// BacklogColumn is the Backlog, shown (tk_5d2547b0): one column before the
+// lanes, in no lane, with the board's parked tasks in their order. It takes
+// a card from any cell (parked, in whoever's hands it is), and its cards
+// drag out onto any lane's Ideas, Next or In progress (backlogDrop) or
+// within it to reorder. Each card's ⋯ has Back to ideas. onHide hides it.
+export function BacklogColumn({ entry, group, snapshot, drag, actions = null, readApi = null, onEdit = null, onHide = null }) {
+  const list = backlogTasks(entry);
+  const byId = boardTasks(entry);
+  const target = { resolve: (fromLane) => fromLane, column: BACKLOG, key: BACKLOG, list };
+  const over = drag.over?.key === BACKLOG;
+  const slot = over ? drag.over.slot : null;
+  const where = 'the backlog';
+  return html`<section class=${`tb-backlog${over ? (drag.over.inert ? ' tb-cell-inert' : ' tb-cell-over') : ''}`} data-tb-backlog-column=${group.name}
+      aria-label="Backlog" data-tb-drop=${over ? drag.over.label : undefined}
+      onDragOver=${actions ? (event) => drag.overCell(event, target) : undefined}
+      onDragLeave=${actions ? drag.leaveGrid : undefined}
+      onDrop=${actions ? (event) => { void drag.dropCell(event, target); } : undefined}>
+    <div class="ui-eyebrow tb-backlog-head">Backlog <span class="tb-col-count">${list.length}</span>${onHide && html`<${Button} size="sm" variant="ghost" icon=${true}
+      class="tb-backlog-hide" title="Hide the backlog" aria-label="Hide the backlog" onClick=${onHide}>✕<//>`}</div>
+    <div class="tb-backlog-note">Parked: never started, queued or nudged.</div>
+    ${list.map((task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
+      drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: t.assignee?.agent_id || UNASSIGNED, column: BACKLOG }) } : null}
+      menu=${[...orderItems(task, list, actions, where), ...backlogItems(task, actions), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null}
+      dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, list, actions) : null} />`)}
+    ${!list.length && html`<div class="ui-empty tb-backlog-empty">${actions ? 'Empty. Drag a card here, or use its ⋯ Move to backlog, to park it.' : 'Empty.'}</div>`}
+  </section>`;
 }
 
 // BlockDialog asks the reason a drop onto Blocked needs, in the board's
@@ -876,7 +953,7 @@ export function CellAdd({ lane, column, add, onNewTask, wizard, group, entry, pa
     onChoose=${(choice) => onNewTask(choice, initial)} />`;
 }
 
-export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, readApi = null, wizard = false, now = Date.now(), onNewTask = null, onLayout = null, onEdit = null }) {
+export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions = null, readApi = null, wizard = false, now = Date.now(), onNewTask = null, onLayout = null, onEdit = null, backlog = false, onHideBacklog = null }) {
   const tasks = entry.tasks || [];
   const byId = boardTasks(entry);
   const [, bumpLayout] = useState(0);
@@ -934,7 +1011,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
       <${CellCards} list=${list} limit=${CELL_SHOWN} open=${!!open[key]} reveal=${landed?.key === key ? landed.id : ''} onToggle=${(on) => setOpen({ ...open, [key]: on })}
         card=${(task) => html`<${Card} key=${task.id} task=${task} byId=${byId} api=${readApi || actions?.api || null} nameOf=${(actor) => actorLabel(actor, group, snapshot)}
           drag=${actions ? { ...drag, start: (event, t) => drag.start(event, t, { lane: lane.id, column: column.key }) } : null}
-          menu=${[...orderItems(task, list, actions, where), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null}
+          menu=${[...orderItems(task, list, actions, where), ...backlogItems(task, backlogSupported(entry) ? actions : null), ...archiveItems(task, actions)]} onEdit=${actions ? onEdit : null} onAnswer=${answerable ? setAnswering : null}
           dropAt=${slot?.id === task.id ? slot.where : ''} onKey=${actions ? (event) => onOrderKey(event, task, list, actions) : null} />`} />
       ${lane.id === OPERATOR && column.key === 'progress' && model.questions.map(({ task, question }) => html`<${QuestionCard} key=${`${task.id}#${question.n}`}
         task=${task} question=${question} askedBy=${actorLabel(question.asked_by, group, snapshot)} onOpen=${actions ? onEdit : null}
@@ -961,6 +1038,8 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
     ${answerTask && html`<${AnswerFor} task=${answerTask} n=${target.n} actions=${actions} askedBy=${actorLabel(askerOf(answerTask, target.n), group, snapshot)} onClose=${() => setAnswering('')} />`}
     ${drag.blocking && actions && html`<${BlockDialog} task=${drag.blocking.task} drop=${drag.blocking.drop} actions=${actions}
       group=${group} onClose=${() => drag.setBlocking(null)} />`}
+    <div class=${backlog ? 'tb-lanes-split' : undefined}>
+    ${backlog && html`<${BacklogColumn} entry=${entry} group=${group} snapshot=${snapshot} drag=${drag} actions=${actions} readApi=${readApi} onEdit=${onEdit} onHide=${onHideBacklog} />`}
     <div class="tb-lanes" data-taskboard-lanes=${group.name} data-lanes-by=${by} ref=${resize.gridRef}
         style=${laneGridStyle(resize)}
         onDragLeave=${actions ? drag.leaveGrid : undefined}>
@@ -991,6 +1070,7 @@ export function TaskboardLanes({ entry, group, snapshot, by = 'agent', actions =
           ...(folded ? [] : lg.lanes.map(row)),
         ];
       })}
+    </div>
     </div>
   </div>`;
 }

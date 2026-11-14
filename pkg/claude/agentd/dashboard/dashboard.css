@@ -19257,6 +19257,39 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 /* One row with every task: no lane column, so the first stage has no edge. */
 .tb-lanes-row .tb-lane > .tb-cell:first-child { border-left: none; }
 
+/* The Backlog (groups-taskboard-backlog.js, tk_5d2547b0): parked work. The
+   toolbar's chip shows or hides it and takes a dropped card; shown, a hatched
+   column before the lanes and a hatched band after the List's ideas. Dashed
+   edges say "not in play". */
+.tb-backlog-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border: 1px dashed #6e7681; border-radius: 6px;
+  background: #161b22; color: #c9d1d9; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.tb-backlog-chip:hover { border-color: #8b949e; background: #1c2128; }
+.tb-backlog-chip:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.tb-backlog-chip.tb-backlog-open { border-style: solid; border-color: #8b949e; background: #2d333b; color: #fff; }
+.tb-backlog-chip.tb-backlog-over { border: 1px solid #58a6ff; background: rgba(31, 111, 235, 0.18); color: #fff; box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.25); }
+.tb-backlog-chip.tb-backlog-flash { box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.45); border-color: #3fb950; }
+.tb-backlog-caret { color: #8b949e; font-size: 10px; }
+.tb-lanes-split { display: flex; align-items: stretch; gap: 8px; }
+.tb-lanes-split > .tb-lanes { flex: 1 1 auto; min-width: 0; }
+.tb-backlog {
+  position: relative; flex: 0 0 220px; display: flex; flex-direction: column; gap: 6px; padding: 0 6px 8px; min-height: 80px;
+  border: 1px dashed #3d444d; border-radius: 6px; font-size: 12.5px;
+  background: repeating-linear-gradient(135deg, #10151b 0 10px, #12181f 10px 20px);
+}
+.tb-backlog-head { display: flex; align-items: center; gap: 6px; margin: 0 -6px; padding: 6px 10px; background: #161b22; border-bottom: 1px solid #21262d; border-radius: 6px 6px 0 0; }
+.tb-backlog-hide { margin-left: auto; }
+.tb-backlog-note { font-size: 11px; color: #7d8590; }
+.tb-backlog-empty { padding: 4px 2px; }
+.tb-card.tb-card-parked { border-style: dashed; background: #13181e; }
+.tb-card.tb-card-parked .tb-card-title { color: #b1bac4; }
+.tb-table tr.tb-backlog-divider > td { background: repeating-linear-gradient(135deg, #10151b 0 10px, #12181f 10px 20px); border-top: 1px solid #3d444d; }
+.tb-table tr.tb-backlog-divider.tb-drop-into > td { background: rgba(88, 166, 255, 0.08); }
+.tb-backlog-band-hide { margin-left: 8px; font-size: 11px; }
+.ui-tag.tb-state-backlog { border-style: dashed; color: #8b949e; }
+
 /* A task's files (groups-taskboard-files.js): the edit form's tiles, and the
    picker the New task form and Ask an agent share with it. */
 .tb-files-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
