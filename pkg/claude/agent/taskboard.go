@@ -847,8 +847,10 @@ func runTaskboardSummary(peer string, asJSON bool, stdout, stderr io.Writer) int
 }
 
 // taskboardCountsLine reads as the dashboard's folded section, with what
-// needs you broken down: "9 · 2 needs you (1 stalled, 1 blocked) · 2 in
-// progress · 6 next · 3 ideas · 12 done this week".
+// waits on the operator first: "9 · 1 waiting on you · 1 blocked · 1 stalled
+// · 2 in progress · 6 next · 3 ideas · 12 done this week". Only what is
+// assigned to the operator needs it (tk_3cb51ce0); blocked and stalled are
+// plain counts.
 func taskboardCountsLine(c TaskboardCounts, columns ...TaskboardColumnCount) string {
 	parts := []string{fmt.Sprintf("%d", c.Live)}
 	add := func(n int, label string) {
@@ -856,23 +858,9 @@ func taskboardCountsLine(c TaskboardCounts, columns ...TaskboardColumnCount) str
 			parts = append(parts, fmt.Sprintf("%d %s", n, label))
 		}
 	}
-	if c.NeedsYou > 0 {
-		var why []string
-		if c.Stalled > 0 {
-			why = append(why, fmt.Sprintf("%d stalled", c.Stalled))
-		}
-		if c.Blocked > 0 {
-			why = append(why, fmt.Sprintf("%d blocked", c.Blocked))
-		}
-		if c.WaitingOnYou > 0 {
-			why = append(why, fmt.Sprintf("%d waiting on you", c.WaitingOnYou))
-		}
-		label := "needs you"
-		if len(why) > 0 {
-			label += " (" + strings.Join(why, ", ") + ")"
-		}
-		add(c.NeedsYou, label)
-	}
+	add(c.WaitingOnYou, "waiting on you")
+	add(c.Blocked, "blocked")
+	add(c.Stalled, "stalled")
 	add(c.InProgress, "in progress")
 	for _, col := range columns {
 		label := col.Label

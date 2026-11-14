@@ -1535,6 +1535,59 @@ test('Groups omits the trigger projection and its API load on a peer that does n
   await mounted.unmount();
 });
 
+test('a peer Groups page asks for triggers only once the peer snapshot says it may (tk_56c664c0)', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+  ]);
+  const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
+  state.initialize();
+  let loads = 0;
+  const actions = {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    loadTriggers: async () => { loads += 1; return []; },
+    reportError: (error) => { throw error; },
+  };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${actions} />`, host);
+  await harness.act(() => Promise.resolve());
+  assert.equal(loads, 0, 'before the snapshot arrives nothing is asked');
+  // Below unrestricted trust /api/triggers is local-only on the peer, even
+  // where its snapshot offers Triggers.
+  await harness.act(() => { state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), triggers_enabled: true, peer_view: { level: 'restricted' } }); });
+  await harness.act(() => Promise.resolve());
+  assert.equal(loads, 0, 'a restricted peer is not asked');
+  await harness.act(() => { state.publish({ ...snapshot([{ id: 3, name: 'alpha', members: [] }]), triggers_enabled: true, peer_view: { level: 'unrestricted' } }); });
+  await harness.act(() => Promise.resolve());
+  assert.equal(loads, 1, 'a peer that trusts this node unrestricted is read');
+  await mounted.unmount();
+});
+
+test('a local Groups page mounted before its snapshot loads triggers once it arrives', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+  ]);
+  const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
+  state.initialize();
+  let loads = 0;
+  const actions = {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    loadTriggers: async () => { loads += 1; return []; },
+    reportError: (error) => { throw error; },
+  };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${actions} />`, host);
+  await harness.act(() => Promise.resolve());
+  assert.equal(loads, 0);
+  await harness.act(() => { state.publish(snapshot([{ id: 3, name: 'alpha', members: [] }])); });
+  await harness.act(() => Promise.resolve());
+  assert.equal(loads, 1, 'this node is read as soon as its snapshot is in');
+  await mounted.unmount();
+});
+
 test('agent titles auto-correct to the rename charset like spawn names', async (t) => {
   const harness = await createPreactHarness(t);
   const { normalizeAgentTitle, resolveAgentTitle, agentTitleHint } =

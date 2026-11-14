@@ -987,7 +987,16 @@ func TestCodexHistoryFlushesKeepTheCostOpening(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 	now := time.Now()
-	old := now.AddDate(0, 0, -db.CostReadLimitDays-20)
+	// Cost rows are bucketed by local day. Anchor the fixture so no two entries
+	// that must share a day can straddle midnight, whatever time the test runs:
+	// the old entries at local noon, today's flushes inside today.
+	oldDay := now.AddDate(0, 0, -db.CostReadLimitDays-20)
+	old := time.Date(oldDay.Year(), oldDay.Month(), oldDay.Day(), 12, 0, 0, 0, time.Local)
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	todayAt := now.Add(-10 * time.Second)
+	if todayAt.Before(startOfToday) {
+		todayAt = startOfToday
+	}
 	appendCodexRefreshEnvelopeAt(t, path, old, "session_meta", map[string]any{"id": convID})
 	appendCodexRefreshEnvelopeAt(t, path, old, "turn_context", map[string]any{"model": "gpt-5.6-terra", "effort": "high"})
 	tokenCount := func(at time.Time, total int64) {
@@ -1023,7 +1032,7 @@ func TestCodexHistoryFlushesKeepTheCostOpening(t *testing.T) {
 	total := int64(3000)
 	for i := range 4 {
 		total += 2000
-		tokenCount(now.Add(time.Duration(i)*time.Second), total)
+		tokenCount(todayAt.Add(time.Duration(i)*time.Second), total)
 		refresh()
 		assert.False(t, stale(), "flush %d", i)
 		if i == 1 {

@@ -16,8 +16,9 @@ const LAYERS = ['content', 'window', 'chrome', 'panel', 'dialog', 'popover', 'co
 // are clipped to or carried by their host. A dialog's resize grip is part of it,
 // and so are an overlay window's own controls, snapped edges and the frame that
 // covers its content while it comes up (overlay-window-motion.js), a dock section
-// head and the process editor's issues panel (inside its full-screen dialog).
-const nested = /process-issues-panel|dock-section-head|dialog-resizer|overlay-window-(edge|controls)|overlay-live-frame|companion-(menu|decide-queue)|fleet-link-pop|mux-terminal-disconnect-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
+// head, the process editor's issues panel (inside its full-screen dialog), and a
+// terminal's own disconnect and waiting cards (inside its xterm host).
+const nested = /process-issues-panel|dock-section-head|dialog-resizer|overlay-window-(edge|controls)|overlay-live-frame|companion-(menu|decide-queue)|fleet-link-pop|mux-terminal-(disconnect|waiting)-overlay|pk-pane-overlay|open-prs-confirm-backdrop/;
 const opened = /menu|pop|modal|overlay|drawer|panel|dialog/i;
 
 // rank orders a z-index value on the scale: a layer plus its step, or a raw

@@ -504,3 +504,46 @@ func TestFederation_TerminalAdmissionBeforePaneProbes(t *testing.T) {
 	mock.mu.Unlock()
 	require.Equal(t, 30, probes, "rate-limited opens must not spawn a pane probe")
 }
+
+// A peer asked for an agent's pane while the agent's launch is in progress (a
+// resume or relaunch replacing it) answers "the agent is starting", which the
+// requesting node's browser waits on, instead of a final refusal. Past the
+// start window it is the ordinary "no longer live".
+func TestFederation_TerminalOpenWhileTheAgentIsStarting(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	const conv = "fed-terminal-starting"
+	f.HaveGroup("team")
+	f.HaveConvWithTitle(conv, "starting-target")
+	f.HaveMember("team", conv)
+	f.HaveAliveSession(conv, "terminal-starting", "tclaude-terminal-starting", f.TestCwd("work"))
+	aid, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	t.Cleanup(agentd.ResetFederationForTest)
+	incarnation := terminalCatalogIncarnation(t, fh, aid)
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermSessionsWatch, "scope": "group=team"})
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	open := func() proto.SessionAnswerPayload {
+		kp, err := stream.NewKeyPair()
+		require.NoError(t, err)
+		o := proto.SessionOpenPayload{Agent: aid, Session: "terminal-starting", Incarnation: incarnation, Group: "team", Stream: proto.NewEnvelopeID(), Key: kp.Pub, ReadOnly: true, Cols: 80, Rows: 24}
+		p.send(p.envelope(proto.KindSessionOpen, proto.Endpoint{}, o))
+		return terminalAnswer(t, p, o.Stream)
+	}
+
+	// The launch's row is fresh and its pane is not up (yet).
+	f.MarkOffline("tclaude-terminal-starting")
+	row, err := db.LoadSession("terminal-starting")
+	require.NoError(t, err)
+	row.CreatedAt = time.Now()
+	require.NoError(t, db.SaveSession(row))
+	ans := open()
+	require.False(t, ans.OK)
+	require.Contains(t, ans.Reason, "the agent is starting")
+
+	later := time.Now().Add(agentd.TerminalStartWindowForTest + time.Second)
+	t.Cleanup(agentd.SetTerminalNowForTest(func() time.Time { return later }))
+	ans = open()
+	require.False(t, ans.OK)
+	require.Contains(t, ans.Reason, "no longer live")
+}

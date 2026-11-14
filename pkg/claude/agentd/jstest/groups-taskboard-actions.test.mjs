@@ -8,7 +8,7 @@ const row = (id, title, extra = {}) => ({ id, group: 'crew', title, stage: 'next
 function board(group) {
   return {
     group, group_id: 1,
-    counts: { live: 4, needs_you: 1, next: 2, ideas: 1, blocked: 1, done_this_week: 1 },
+    counts: { live: 4, needs_you: 1, waiting_on_you: 1, next: 2, ideas: 1, blocked: 1, done_this_week: 1 },
     tasks: [
       row('tk_00000001', 'first'),
       row('tk_00000002', 'second', { assignee: { agent_id: 'agt_builder', name: 'builder' }, assigned_by: 'human:operator' }),
@@ -262,12 +262,12 @@ test('the client sends the CLI routes with an idempotency key', async (t) => {
   await assert.rejects(refusing.status('tk_00000001', 'done'), (err) => err.message === 'board is full' && err.status === 409);
 });
 
-test('a section that opened on its own stays open when the last blocked task clears', async (t) => {
+test('a section that opened on its own stays open when nothing waits on the operator any more', async (t) => {
   const name = 'tba-latch';
   const { harness, c, source } = await mountBoard(t, name);
-  assert.ok(c.querySelector('.tb-table'), 'opened: something is blocked');
+  assert.ok(c.querySelector('.tb-table'), 'opened: something waits on the operator');
   const cleared = board(name);
-  cleared.counts = { ...cleared.counts, needs_you: 0, blocked: 0 };
+  cleared.counts = { ...cleared.counts, needs_you: 0, waiting_on_you: 0 };
   cleared.tasks = cleared.tasks.filter((task) => task.status !== 'blocked');
   await harness.act(async () => { source.context.value = { groups: [cleared] }; });
   assert.ok(c.querySelector('.tb-table'), 'still open');

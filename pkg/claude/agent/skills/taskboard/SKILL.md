@@ -92,8 +92,11 @@ assigns the new task to you.
 
 ## When your work waits on the operator
 
-When you need the operator to answer something or do a step before your task
-can go on, give the operator a task and make yours wait on it, in one call:
+Blocking your task does not reach the operator: *Blocked* only means
+blocked. The operator sees what is assigned to them (their lane, *You*, and
+the questions asked of them). When you need the operator to answer something
+or do a step before your task can go on, give the operator a task and make
+yours wait on it, in one call:
 
 ```bash
 tclaude agent taskboard add <group> "Which colour for the lane?" --body "amber or purple; see the mock" \

@@ -105,7 +105,7 @@ func TestTaskboardContextCountsAndRows(t *testing.T) {
 	require.Equal(t, []string{"crew"}, contextGroupNames(c))
 	g := c.Groups[0]
 	assert.Equal(t, 5, g.Counts.Live)
-	assert.Equal(t, 1, g.Counts.NeedsYou)
+	assert.Equal(t, 0, g.Counts.NeedsYou, "a blocked task does not need the operator")
 	assert.Equal(t, 1, g.Counts.Blocked)
 	assert.Equal(t, 1, g.Counts.InProgress)
 	assert.Equal(t, 2, g.Counts.Next, "first and waits; taken is in progress")

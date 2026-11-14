@@ -11,7 +11,7 @@ function row(id, title, extra = {}) {
 function board(group, extra = {}) {
   return {
     group_id: 1, group,
-    counts: { live: 5, needs_you: 1, in_progress: 1, next: 2, ideas: 1, blocked: 1, queued: 1, done_this_week: 3, dropped: 1 },
+    counts: { live: 5, needs_you: 1, waiting_on_you: 1, in_progress: 1, next: 2, ideas: 1, blocked: 1, queued: 1, done_this_week: 3, dropped: 1 },
     tasks: [
       row('tk_00000001', 'Steward input row', { ref: { kind: 'github', url: 'https://github.com/tofutools/tclaude/pull/3432', label: '#3432' },
         assignee: { agent_id: 'agt_builder' }, assigned_by: 'human:operator', assigned_at: ago(41) }),
@@ -62,13 +62,14 @@ test('a board that needs the operator opens, lists the queue then the ideas, and
   const section = container.querySelector('[data-fused-taskboard="tb-open"]');
   assert.ok(section, 'the section is drawn');
   assert.match(section.querySelector('.gf-label').textContent, /Task board/);
-  assert.equal(section.querySelector('.tb-counts').textContent.replace(/\s+/g, ' ').trim(), '5', 'the head shows the total only');
-  assert.match(section.querySelector('.tb-counts').getAttribute('title'), /1 needs you/, 'the breakdown is in its tooltip');
+  assert.equal(section.querySelector('.tb-counts .gf-count').textContent, '5', 'the head shows the total');
+  assert.equal(section.querySelector('.tb-waiting-tag').textContent, '1 waiting on you', 'the head shows the total and what waits on the operator');
+  assert.match(section.querySelector('.tb-counts').getAttribute('title'), /1 waiting on you · 1 blocked/, 'the breakdown is in its tooltip');
   assert.equal(section.querySelector('.gf-section-actions'), null, 'open, the title line carries only the label and the total');
   const toolbar = [...section.querySelector('.gf-title-row').querySelectorAll('[data-taskboard-new], .tb-view')];
   assert.ok(toolbar.length >= 2 && toolbar[0].matches('[data-taskboard-new]'), 'the toolbar row: the add button, then the view switch');
 
-  // Auto-open: something needs the operator.
+  // Auto-open: something waits on the operator.
   const titles = [...section.querySelectorAll('tr.tb-row .tb-title')].map((n) => n.textContent);
   assert.deepEqual(titles, ['Steward input row', 'Engine: dynamic nodes', 'Wait-for-work node', 'Lighthouse regressions', 'Remote claim via peer grants']);
   const rows = [...section.querySelectorAll('tr.tb-row')];
@@ -197,8 +198,8 @@ test('while the feature is off the source looks again only now and then', async 
   assert.equal(calls.length, 2);
 
   assert.equal(taskboardCountsText({ live: 0 }), 'empty');
-  assert.equal(taskboardCountsText({ live: 9, needs_you: 1, in_progress: 2, next: 6, ideas: 3 }),
-    '9 · 1 needs you · 2 in progress · 6 next · 3 ideas');
+  assert.equal(taskboardCountsText({ live: 9, needs_you: 1, waiting_on_you: 1, blocked: 1, stalled: 1, in_progress: 2, next: 6, ideas: 3 }),
+    '9 · 1 waiting on you · 1 blocked · 1 stalled · 2 in progress · 6 next · 3 ideas', 'only what is assigned to the operator waits on it');
 });
 
 test('a stalled assignment shows amber and says its agent went idle', async (t) => {
@@ -206,13 +207,17 @@ test('a stalled assignment shows amber and says its agent went idle', async (t) 
   const harness = await createPreactHarness(t);
   const context = { groups: [{
     group_id: 2, group: 'tb-stalled',
-    counts: { live: 1, needs_you: 1, in_progress: 0, next: 0, ideas: 0, blocked: 0, stalled: 1, queued: 0, done_this_week: 0, dropped: 0 },
+    counts: { live: 1, needs_you: 0, in_progress: 0, next: 0, ideas: 0, blocked: 0, stalled: 1, queued: 0, done_this_week: 0, dropped: 0 },
     tasks: [row('tk_00000011', 'Port the sweep', { assignee: { agent_id: 'agt_builder' }, assigned_by: 'human:operator',
       assigned_at: ago(20), stalled: true, idle_since: ago(7) })],
     closed: [],
   }] };
   const { container } = await mountSection(harness, { group, context });
   const section = container.querySelector('[data-fused-taskboard="tb-stalled"]');
+  // A stalled task is not the operator's (tk_3cb51ce0): the section stays folded.
+  assert.equal(section.querySelector('.tb-table'), null, 'a stalled task does not open the section');
+  assert.match(section.querySelector('.tb-counts').getAttribute('title'), /1 stalled/);
+  await harness.act(() => harness.fireEvent(section.querySelector('.gf-section-toggle'), 'click'));
   const state = section.querySelector('tr.tb-row-stalled .tb-state');
   assert.ok(state, 'the row is drawn as stalled');
   assert.ok(state.classList.contains('tb-state-stalled'));

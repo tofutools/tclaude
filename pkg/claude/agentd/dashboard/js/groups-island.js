@@ -15,7 +15,7 @@ import { GroupsProcessesFocus } from './groups-processes.js';
 import { processContext } from './process-context.js';
 import { ViewMenu, ViewMenuHeading, ViewMenuSep, ViewToggle } from './view-menu.js';
 import { Button, Input } from './ui-components.js';
-import { processesAvailable, triggersAvailable } from './feature-availability.js';
+import { processesAvailable, triggersReadable } from './feature-availability.js';
 
 const html = htm.bind(h);
 
@@ -259,7 +259,9 @@ export function GroupsList({ host, state, actions, processSource = undefined }) 
   const wizard = useWizardTheme();
   const [triggers, setTriggers] = useState([]);
   const current = state.view.value;
-  const triggersEnabled = triggersAvailable(state.snapshot.value);
+  // A peer view reads triggers only where the peer lets it (not at all
+  // below unrestricted trust): no request, so no refusal to report.
+  const triggersEnabled = triggersReadable(state.snapshot.value);
 
   useEffect(() => {
     syncBotAnimations();
