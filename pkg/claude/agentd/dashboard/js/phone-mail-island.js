@@ -269,6 +269,8 @@ function Reader({ current, controller, model, item, active, back }) {
     title: '',
     onBack: back,
     hideNav: true,
+    // The reader is a location of its own (/messages/<folder>/<id>).
+    routed: true,
     actions: terminal ? [{
       key: 'terminal', icon: 'Terminal ›', label: live ? `Open ${sender}'s terminal` : `${sender} is offline`, disabled: !live,
       onClick: () => import('./terminals-tab.js').then(({ openWebWindowPane }) => openWebWindowPane(item.from_agent, sender, {})),

@@ -94,7 +94,8 @@ function SectionList({ panels, actions, onOpen, dirtyPanels }) {
 // below this island, phone.css), and for a read-only one, why and the way
 // to the desktop.
 function SectionPage({ panel, mode, actions, back, active }) {
-  usePhonePage({ title: panel?.title || 'Settings', onBack: back, hideNav: mode === 'edit' }, active);
+  // A section is a location of its own (/config/<section>).
+  usePhonePage({ title: panel?.title || 'Settings', onBack: back, hideNav: mode === 'edit', routed: true }, active);
   if (mode !== 'read') return null;
   return html`<div class="phone-config-readonly" role="note">
     <span>Read-only on a phone.</span>

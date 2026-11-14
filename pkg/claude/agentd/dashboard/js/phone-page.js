@@ -13,6 +13,8 @@
 //     onBack:  () => void, what the back button does
 //     actions: [{ key, icon, label, onClick, disabled?, danger? }], top bar buttons
 //     hideNav: boolean, hide the bottom nav while the page is up
+//     routed:  boolean, the page is a router location of its own; otherwise
+//              it is a history step of its own (phone-history.js)
 //   } | null
 //
 // A page never outlives its tab: usePhonePage takes it down when its view goes
@@ -49,6 +51,7 @@ export function usePhonePage(page, active = true) {
     const shown = {
       title: now.title || '',
       hideNav: !!now.hideNav,
+      routed: !!now.routed,
       onBack: () => latest.current?.onBack?.(),
       actions: (now.actions || []).map((act, index) => ({
         ...act,

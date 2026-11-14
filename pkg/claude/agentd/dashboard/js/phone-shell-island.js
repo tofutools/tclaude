@@ -31,6 +31,7 @@ import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
 import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
 import { DesktopOnlyPage, desktopOnlyView } from './phone-desktop-only.js';
 import { featureState } from './feature-state-registry.js';
+import { addressedView, installPhoneHistory } from './phone-history.js';
 
 const html = htm.bind(h);
 
@@ -218,11 +219,14 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const covering = OWN_VIEWS.includes(view) ? view : desktopOnly ? 'desktop-only' : '';
 
   // Any tab activation after the first render clears the own view, so a deep
-  // link, Back, or a link inside a view shows its tab.
+  // link, Back, or a link inside a view shows its tab; unless the address
+  // names the view (Back onto /?view=now, which phone-history.js restores).
   const seenTab = useRef(activeTab);
+  useEffect(() => installPhoneHistory({ view: shell.view }), [shell]);
   useEffect(() => {
     if (seenTab.current === activeTab) return;
     seenTab.current = activeTab;
+    if (addressedView() === shell.view.peek()) return;
     shell.view.value = null;
   }, [activeTab]);
   useEffect(() => {

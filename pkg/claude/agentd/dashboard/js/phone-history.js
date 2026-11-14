@@ -1,0 +1,123 @@
+// phone-history.js -- Back on a phone does what the screen suggests.
+//
+// The router (nav-history.js) records tabs and their routed views. On a phone
+// three more things sit over a tab and look like places a Back should leave:
+//   - a bottom sheet (phone-sheet.js), such as More or an agent's actions;
+//   - a page a tab view pushes over its list (phone-page.js) without a route
+//     of its own, such as an automation or a process run;
+//   - the shell's own views, Now and Board, which cover whatever tab is under
+//     them.
+// Each is an overlay of the router (overlay-routes.js), so it is a history
+// step: opening one records an entry, Back closes it, and closing it from the
+// screen (‹, the scrim, another tab) steps back off its entry.
+//
+//   ?phone=<n>   how many layers are up: a pushed page, a sheet over it. A
+//                layer cannot be reopened from a link, so Forward onto one
+//                leaves it closed.
+//   ?view=now|board   the shell's own view.
+//
+// A page with a route of its own (Mail's reader, a Settings section) says
+// `routed: true` and is left to the router.
+
+import { effect } from '@preact/signals';
+import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
+import { phonePage } from './phone-page.js';
+import { closePhoneSheet, phoneSheet } from './phone-sheet.js';
+
+export const OWN_VIEW_VALUES = Object.freeze(['now', 'board']);
+
+// layerDepth is how many layers are up: an unrouted page, then a sheet.
+export function layerDepth(page = phonePage.peek(), sheet = phoneSheet.peek()) {
+  return (page && !page.routed ? 1 : 0) + (sheet ? 1 : 0);
+}
+
+function booting(doc) {
+  return !!doc?.body?.classList?.contains('dashboard-booting');
+}
+
+// whenBooted runs `run` once the dashboard has finished booting (the router
+// is up then). Returns a cancel function.
+function whenBooted(doc, run) {
+  if (!booting(doc)) { const timer = setTimeout(run, 0); return () => clearTimeout(timer); }
+  const Observer = doc.defaultView?.MutationObserver;
+  if (!Observer) return () => {};
+  const watch = new Observer(() => { if (!booting(doc)) { watch.disconnect(); run(); } });
+  watch.observe(doc.body, { attributes: true, attributeFilter: ['class'] });
+  return () => watch.disconnect();
+}
+
+// addressedView is the own view the address names, or null.
+export function addressedView(loc = globalThis.location) {
+  const want = new URLSearchParams(loc?.search || '').get('view');
+  return OWN_VIEW_VALUES.includes(want) ? want : null;
+}
+
+// installPhoneHistory wires the layers and `view` (the shell's own-view
+// signal) to the router. Returns the uninstall function.
+export function installPhoneHistory({ view, doc = globalThis.document }) {
+  let restoring = false;
+  const unLayers = registerOverlayRoute('phone', {
+    value: () => { const depth = layerDepth(); return depth ? String(depth) : ''; },
+    restore: (want) => {
+      const depth = Number(want) || 0;
+      restoring = true;
+      try {
+        if (layerDepth() > depth && phoneSheet.peek()) closePhoneSheet();
+        if (layerDepth() > depth) phonePage.peek()?.onBack?.();
+      } finally {
+        restoring = false;
+      }
+    },
+  });
+  const unView = registerOverlayRoute('view', {
+    value: () => view.peek() || '',
+    restore: (want) => {
+      // The boot's restore of an address without a view: the shell already
+      // chose (a bare / lands on Now), and the address is corrected to match
+      // once booted. One with a view (a reload of /?view=board) shows it.
+      if (booting(doc) && !want) return;
+      const next = OWN_VIEW_VALUES.includes(want) ? want : null;
+      if (view.peek() === next) return;
+      restoring = true;
+      try {
+        view.value = next;
+      } finally {
+        restoring = false;
+      }
+    },
+  });
+
+  // Changes made on screen are history steps; ones Back made are not.
+  // A layer closed on screen steps back off its own entry.
+  let depth = layerDepth();
+  const stopLayers = effect(() => {
+    const next = layerDepth(phonePage.value, phoneSheet.value);
+    if (next === depth) return;
+    const closed = next < depth;
+    depth = next;
+    if (!restoring) announceOverlay({ closed, doc });
+  });
+  // An own view coming up or going is a step forward either way: leaving Now
+  // for Mail must leave Now behind it for Back. It is announced a moment
+  // later, so a tab the same tap shows records the step once, as that tab.
+  let shown = view.peek() || '';
+  let pending = null;
+  const stopView = effect(() => {
+    const next = view.value || '';
+    if (next === shown) return;
+    shown = next;
+    if (restoring) return;
+    clearTimeout(pending);
+    pending = setTimeout(() => announceOverlay({ doc }), 0);
+  });
+  // Put what is on screen at boot (Now on a bare /) into the address.
+  const cancelBoot = whenBooted(doc, () => announceOverlay({ replace: true, doc }));
+  return () => {
+    cancelBoot();
+    clearTimeout(pending);
+    stopLayers();
+    stopView();
+    unLayers();
+    unView();
+  };
+}

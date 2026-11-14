@@ -177,7 +177,11 @@ export const TAB_PARAMS = {
 //     (groups-taskboard-options-route.js).
 //   - terminal: the phone's docked terminal, as its pane key (window:<agent>
 //     for an agent's own terminal; phone-terminal-island.js).
-export const OVERLAY_PARAMS = ['manage', 'notification', 'task', 'board-options', 'terminal'];
+//   - phone: how many phone layers are up, a pushed page and a sheet over it
+//     (phone-history.js).
+//   - view: the phone shell's own view, now or board (phone-history.js).
+export const OVERLAY_PARAMS = ['manage', 'notification', 'task', 'board-options', 'terminal', 'phone', 'view'];
+const PHONE_VIEWS = new Set(['now', 'board']);
 const TASK_ROUTE = /^tk_[0-9a-z]+(@inst_[0-9a-z]+)?:.+$/;
 const TERMINAL_ROUTE = /^[^\u0000-\u001f\u007f]{1,300}$/;
 // A drawing board's focus: four numbers, and up to 200 element ids.
@@ -200,6 +204,8 @@ function normalizeParams(tab, params) {
     if (key === 'manage' && !MANAGE_KINDS.has(str)) continue;
     if (key === 'task' && !TASK_ROUTE.test(str)) continue;
     if (key === 'terminal' && !TERMINAL_ROUTE.test(str)) continue;
+    if (key === 'phone' && !/^[1-9]$/.test(str)) continue;
+    if (key === 'view' && !PHONE_VIEWS.has(str)) continue;
     if (key === 'crop' && !FOCUS_CROP.test(str)) continue;
     if (key === 'elements' && !FOCUS_ELEMENTS.test(str)) continue;
     out[key] = key === 'page' ? String(Math.floor(Number(str))) : str;
