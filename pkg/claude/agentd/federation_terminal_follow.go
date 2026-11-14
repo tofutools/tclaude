@@ -20,11 +20,11 @@ import (
 //     listed. The peer's own "starting" answer reads the same.
 //   - The catalog lists no pane for the agent at all (the relaunch took the
 //     old pane down before the new one came up). A viewer this node attached
-//     moments ago is remembered (fedTerminalFollowWindow), so its redial still
-//     reaches the peer, naming the agent and the group it was attached
-//     through but no session: the peer answers whether the agent is starting
-//     (wait), running a newer launch (moved, wait for the catalog) or not
-//     running.
+//     moments ago is remembered (fedTerminalFollowWindow), and a group that
+//     shares the terminal and lists the agent as a member is used otherwise,
+//     so the open still reaches the peer, naming the agent and that group
+//     but no session: the peer answers whether the agent is starting (wait),
+//     running a newer launch (moved, wait for the catalog) or not running.
 //
 // The peer stays the authority: an open naming a stale or empty session never
 // pins a newer pane (resolveFedPane), it only learns why it cannot.
@@ -92,8 +92,33 @@ func (rt *fedRuntime) terminalFollowGroup(peer, agentID string, readOnly bool) s
 	return ""
 }
 
+// fedTerminalMemberGroup returns a group of peer's catalog that shares the
+// terminal and lists agentID in its roster or agent statuses, so an agent
+// whose pane is down (relaunching) is still asked about, as a local terminal
+// opened on a relaunching agent waits for it.
+func fedTerminalMemberGroup(peer, agentID string, readOnly bool) string {
+	cat, _, _ := fedCatalogFor(peer)
+	for _, g := range fedTerminalGroups(cat) {
+		if !g.HasCap(fedTerminalCap(readOnly)) {
+			continue
+		}
+		for _, m := range g.Members {
+			if m.Agent == agentID {
+				return g.Name
+			}
+		}
+		for _, s := range g.AgentStatuses {
+			if s.Agent == agentID {
+				return g.Name
+			}
+		}
+	}
+	return ""
+}
+
 // followTerminalTarget is the open for an agent the catalog lists no pane for,
-// when a viewer of it was attached moments ago; ok is false otherwise.
+// when a viewer of it was attached moments ago or a group sharing the
+// terminal lists it as a member; ok is false otherwise.
 func (rt *fedRuntime) followTerminalTarget(address string, readOnly bool) (*db.FederationPeer, proto.SessionOpenPayload, bool) {
 	ref, sel, ok := strings.Cut(address, "@")
 	if !ok || !strings.HasPrefix(ref, "agt_") {
@@ -104,6 +129,9 @@ func (rt *fedRuntime) followTerminalTarget(address string, readOnly bool) (*db.F
 		return nil, proto.SessionOpenPayload{}, false
 	}
 	group := rt.terminalFollowGroup(peer.InstanceID, ref, readOnly)
+	if group == "" {
+		group = fedTerminalMemberGroup(peer.InstanceID, ref, readOnly)
+	}
 	if group == "" {
 		return nil, proto.SessionOpenPayload{}, false
 	}
