@@ -832,9 +832,35 @@ export async function mountUsageHistoryFeature(actionDependencies = {}) {
   });
 }
 
+// The phone's Access tab (phone-access-island.js) runs on the same state and
+// actions, plus the snapshot for the access requests it answers.
+function mountPhoneAccessFeature(host, actionDependencies) {
+  return mountFeatureIsland({
+    name: 'access', label: 'Access', hosts: [host], failureClass: 'access-error',
+    load: async () => {
+      const islandModule = import('./phone-access-island.js');
+      const stateModule = import('./access-state.js');
+      const actionsModule = import('./access-actions.js');
+      const snapshotModule = import('./snapshot-store.js');
+      const mailBridgeModule = import('./mail-bridge.js');
+      const [{ mountPhoneAccessIsland }, { accessState }, { createAccessActions }, { dashboardState }, { focusAccessRequest }] =
+        await Promise.all([islandModule, stateModule, actionsModule, snapshotModule, mailBridgeModule]);
+      const accessActions = createAccessActions({ ...actionDependencies, state: accessState });
+      return {
+        state: accessState,
+        mount: (registerCleanup) => mountPhoneAccessIsland({
+          host, state: accessState, actions: accessActions, snapshot: dashboardState.snapshot,
+          notify: actionDependencies.notify, openInMail: (id) => focusAccessRequest(id), registerCleanup,
+        }),
+      };
+    },
+  });
+}
+
 export async function mountAccessFeature(actionDependencies) {
   const host = document.querySelector('#access-root');
   if (!host) return null;
+  if (isPhone) return mountPhoneAccessFeature(host, actionDependencies);
   return mountFeatureIsland({
     name: 'access', label: 'Access', hosts: [host], failureClass: 'access-error',
     load: async () => {

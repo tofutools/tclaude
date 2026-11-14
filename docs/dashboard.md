@@ -223,6 +223,27 @@ or the phone's Back returns to the list.
 - Every other section can be read but not changed on a phone. Use **Desktop
   site** to change it.
 
+### Access and Usage on a phone
+
+**Access** (under **More**) has four views:
+
+- **Requests**: access requests waiting on you, with the same buttons as on
+  Now. It opens here while any request waits.
+- **Sudo**: active sudo grants with the time left and **Revoke**. **+ Grant
+  sudo** grants a new one.
+- **Agents**: each agent's grants and denials beyond the defaults. You can only
+  read them here; change them on the desktop.
+- **Slugs**: the permission slug registry, with a search.
+
+**Usage › Costs** shows each agent on two lines: the name and cost, then the
+harness, model and last activity.
+
+### Views that are desktop only
+
+Fleet admin, the Groups route map and Vegas need a wide screen. On a phone they
+show a page that says so, with **Desktop site** to open the same page in the
+full dashboard.
+
 **Desktop site** in **More** shows the full dashboard on this phone, and **Phone
 view** at the bottom of that page switches back. The choice is kept in this
 browser only. You can also add `?layout=phone`, `?layout=desktop` or

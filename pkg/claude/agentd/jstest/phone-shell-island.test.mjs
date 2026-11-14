@@ -204,3 +204,36 @@ test('a process run waiting on the operator is a gate card on Now and counts as 
   assert.equal(navItem('Now').querySelector('.ui-badge').textContent, '2', 'the asking agent and the gate');
   assert.ok(processSource.refreshes >= 1, 'Now reads the runs while it shows');
 });
+
+test('a tab a phone does not offer gets a desktop-only page in its place', async (t) => {
+  const { harness, state, calls, mounted, root, navItem, tap } = await setup(t, { startOnNow: false });
+  await harness.act(() => state.setActiveTab('fleet-admin'));
+  assert.equal(root.dataset.phoneView, 'desktop-only', 'the desktop content is hidden under it');
+  assert.equal(mounted.container.querySelector('.phone-bar-title').textContent, 'Fleet admin');
+  assert.match(mounted.container.querySelector('.phone-desktop-page').textContent, /Fleet admin is desktop only/);
+  assert.equal(navItem('More').getAttribute('aria-current'), 'page');
+  await tap(harness.getByRole(mounted.container, 'button', { name: 'Desktop site' }));
+  assert.deepEqual(calls.at(-1), ['desktopSite']);
+
+  await tap(navItem('Now'));
+  assert.equal(root.dataset.phoneView, 'now', 'an own view still comes up over it');
+  assert.equal(mounted.container.querySelector('.phone-desktop-page'), null);
+  await harness.act(() => state.setActiveTab('access'));
+  assert.equal(root.dataset.phoneView, undefined, 'a tab with a phone view shows');
+});
+
+test('a deep link left Groups on the route map: Agents and Show agents both go back to the list', async (t) => {
+  const { harness, state, calls, mounted, navItem, tap } = await setup(t, { startOnNow: false });
+  const { registerFeatureState } = await harness.importDashboardModule('js/feature-state-registry.js');
+  const subview = harness.signals.signal('routes');
+  t.after(registerFeatureState('groups', { subview }));
+  await harness.act(() => state.setActiveTab('config'));
+  await harness.act(() => state.setActiveTab('groups'));
+  assert.match(mounted.container.querySelector('.phone-desktop-page').textContent, /Route map is desktop only/);
+  await tap(harness.getByRole(mounted.container, 'button', { name: 'Show agents' }));
+  assert.deepEqual(calls.at(-1), ['navigate', '/']);
+  await tap(navItem('Agents'));
+  assert.deepEqual(calls.at(-1), ['navigate', '/'], 'not a no-op showTab of the active tab');
+  await harness.act(() => { subview.value = 'members'; });
+  assert.equal(mounted.container.querySelector('.phone-desktop-page'), null);
+});

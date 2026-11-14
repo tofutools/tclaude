@@ -18,7 +18,7 @@ import { ProcessStepStrip, runName, runPauseState, runSteps, stateLabel } from '
 import { DecisionForm, useRunDetail } from './groups-run-focus.js';
 import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
-import { setLayoutOverride } from './layout.js';
+import { DesktopOnlyNote } from './phone-desktop-only.js';
 
 const html = htm.bind(h);
 
@@ -148,15 +148,10 @@ export function RunsList({ source = processContext, onOpen, desktopSite, nameOf 
   }
   return html`<div class="phone-runs">
     ${body}
-    <${DesktopOnly} what="Process templates and the editor are" desktopSite=${desktopSite} />
+    <${DesktopOnlyNote} what="Process templates and the editor are" open=${desktopSite} />
   </div>`;
 }
 
-// DesktopOnly says what a phone leaves to the desktop, with the way there.
-export function DesktopOnly({ what, desktopSite }) {
-  return html`<p class="phone-desktop-only">${what} desktop only.${desktopSite && html` <button data-ui-exempt type="button"
-    class="phone-link" onClick=${desktopSite}>Desktop site ›</button>`}</p>`;
-}
 
 // Gates is a run's waiting decisions, each with its verdict form: what Now
 // shows per run and what tops the run page.
@@ -269,7 +264,7 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
     <${Gates} run=${run} detail=${detail} onDecide=${decider(api, runId, refresh, source)} />
     ${run.needsYou && !decidable(run) && html`<div class="phone-run-wait" role="status">
       <strong>${waitReason(run)}.</strong>${blocked.length ? ` ${blocked.join('; ')}.` : ''}
-      <${DesktopOnly} what="Resolving it is" desktopSite=${() => setLayoutOverride('desktop')} />
+      <${DesktopOnlyNote} what="Resolving it is" />
     </div>`}
     ${detail.error && html`<p class="ui-error-box" role="alert">Could not read the run: ${detail.error}</p>`}
     <p class="phone-run-facts">${[where, run.status, run.startedAt && `started ${relTime(run.startedAt)}`,
