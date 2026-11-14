@@ -212,9 +212,12 @@ away from the browser, disconnects it, and coming back reconnects.
 - Swipe up or down with one finger to scroll, exactly as the mouse wheel
   scrolls that terminal on a desktop. Each harness keeps its own scrolling:
   Claude Code's fullscreen TUI scrolls its own conversation history, and Codex
-  and shell sessions scroll tmux's history (copy-mode), which a swipe back down
-  to the bottom leaves. A quick swipe keeps scrolling after you lift your
-  finger.
+  and shell sessions scroll tmux's history (copy-mode). Where nothing takes the
+  mouse, a swipe sends the arrow keys a desktop wheel would. A quick swipe
+  keeps scrolling after you lift your finger. While you're scrolled back,
+  **↓ Live** scrolls back down to the live screen; swiping back down does too,
+  and pressing a key or typing first leaves tmux's copy-mode, so the key
+  reaches the session.
 
 ### Settings on a phone
 

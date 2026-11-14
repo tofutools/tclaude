@@ -15,6 +15,7 @@ function fakeWidgets() {
       connect() { this.calls.push(['connect']); return Promise.resolve(); },
       key(name) { this.calls.push(['key', name]); return true; },
       setSoftKeyboard(on) { this.calls.push(['keyboard', on]); },
+      toLive() { this.calls.push(['toLive']); options.onScrollBackChange?.(false); },
       dispose() { this.disposed = true; },
     };
     made.push(widget);
@@ -151,12 +152,15 @@ test('on the desktop a phone\'s terminal link opens the agent\'s pane and leaves
   assert.deepEqual(overlays.at(-1), { closed: false, replace: true });
 });
 
-test('the phone terminal scrolls by swipe and has no ↓ Live of its own', async (t) => {
-  const { harness, tab, made, host } = await setup(t);
+test('a swipe back through history shows ↓ Live, which comes back to live', async (t) => {
+  const { harness, tab, made, host, button, tap } = await setup(t);
   await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', {}));
   await harness.act(() => {});
   const [widget] = made;
-  assert.equal(widget.options.touchScroll, true, 'a swipe is the desktop wheel');
-  assert.equal(widget.options.onScrollBackChange, undefined);
+  assert.equal(widget.options.touchScroll, true);
+  assert.equal(host.querySelector('.phone-term-live'), null);
+  await harness.act(() => widget.options.onScrollBackChange(true));
+  await tap(button('Back to live'));
+  assert.deepEqual(widget.calls.at(-1), ['toLive']);
   assert.equal(host.querySelector('.phone-term-live'), null);
 });
