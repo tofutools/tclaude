@@ -110,6 +110,63 @@ export async function mountShellFeature(dependencies = {}, lifecycleOptions) {
   return cleanup;
 }
 
+// The phone shell (data-layout="phone"): top bar, bottom nav, More sheet and
+// the Now and Board views (phone-shell-island.js). Its host exists only on a
+// phone page: mountPhoneShellFeature adds it, so the desktop page is unchanged.
+const phoneShellDescriptor = createIslandDescriptor({
+  name: 'phone-shell',
+  label: 'Phone shell',
+  hosts: { host: '#phone-shell-root' },
+  failureClass: 'phone-shell-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const [
+      { mountPhoneShellIsland, createPhoneShellState, landsOnNow }, { dashboardState }, { taskboardContext },
+      { navigateToPath }, { openWebWindowPane }, { focusAccessRequest }, { setLayoutOverride }, { navTabShown },
+    ] = await Promise.all([
+      import('./phone-shell-island.js'), import('./snapshot-store.js'), import('./taskboard-context.js'),
+      import('./nav-history.js'), import('./terminals-tab.js'), import('./mail-bridge.js'), import('./layout.js'),
+      import('./nav-tab-visibility.js'),
+    ]);
+    const doc = host.ownerDocument;
+    const navButton = (tab) => doc.querySelector(`nav [data-tab="${tab}"]`);
+    // The desktop chrome is hidden on a phone but still in the page: the shell
+    // drives the same tab anchors and header buttons, so routing, the lazy tab
+    // loaders and the power confirmations stay the desktop's.
+    const actions = {
+      notify: dependencies.notify,
+      navigate: (path) => navigateToPath(path),
+      showTab: (tab) => {
+        if (dashboardState.activeTab.value !== tab) navButton(tab)?.click();
+      },
+      tabAvailable: (tab) => {
+        const button = navButton(tab);
+        return navTabShown(button) && button.getAttribute('aria-disabled') !== 'true';
+      },
+      openTerminal: (agent) => openWebWindowPane(agent.agentId, agent.name, { harness: agent.harness }),
+      message: (agent) => dependencies.onComposeMessage?.({ agent: agent.agentId, label: agent.name }),
+      openAccessRequest: (id) => focusAccessRequest(id),
+      powerOnAll: () => doc.getElementById('power-on-all-btn')?.click(),
+      shutdownAll: () => doc.getElementById('shutdown-all-btn')?.click(),
+      desktopSite: () => setLayoutOverride('desktop'),
+    };
+    const shell = createPhoneShellState({ startOnNow: landsOnNow() });
+    return {
+      mount: (registerCleanup) => mountPhoneShellIsland({
+        host, shell, state: dashboardState, actions, boardSource: taskboardContext, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountPhoneShellFeature(dependencies = {}, documentRef = document) {
+  if (!documentRef.getElementById('phone-shell-root')) {
+    const host = documentRef.createElement('div');
+    host.id = 'phone-shell-root';
+    documentRef.body.append(host);
+  }
+  return mountIslandDescriptor(phoneShellDescriptor, dependencies, { documentRef });
+}
+
 const groupsDescriptor = createIslandDescriptor({
   name: 'groups',
   label: 'Groups',

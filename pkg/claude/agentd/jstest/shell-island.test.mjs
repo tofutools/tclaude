@@ -1111,3 +1111,25 @@ test('a project-limited token reads everyone\'s project by project and says so, 
     'the project tab says it too');
   await mounted.unmount();
 });
+
+test('the footer offers Phone view only to a phone showing the desktop page', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { FooterMeta }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  state.beginRequest();
+  state.commitRequest(1, { version: 'v1', generated_at: '2026-07-13T10:00:00Z' });
+  const link = async (decision) => {
+    const mounted = await harness.mount(harness.html`<${FooterMeta} state=${state} decision=${decision} href="http://127.0.0.1:8123/messages" />`);
+    const found = mounted.container.querySelector('.meta-phone-view');
+    await mounted.unmount();
+    return found;
+  };
+  const phoneOnDesktop = await link({ layout: 'desktop', detected: 'phone', override: 'desktop' });
+  assert.ok(phoneOnDesktop, 'a phone on the desktop site gets the way back');
+  assert.equal(phoneOnDesktop.getAttribute('href'), '/messages?layout=phone');
+  assertAbsent(await link({ layout: 'desktop', detected: 'desktop', override: null }), 'a desktop never has it');
+  assertAbsent(await link({ layout: 'phone', detected: 'phone', override: null }), 'nor a phone already in the phone layout');
+});

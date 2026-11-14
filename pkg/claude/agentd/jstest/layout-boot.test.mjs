@@ -65,12 +65,15 @@ test('device detection: a phone is detected, tablets and fine-pointer screens ar
   assert.equal(boot({ device: IPHONE, userAgentData: { mobile: false } }).decision.detected, 'phone', 'mobile:false is not a veto');
 });
 
-test('until the phone shell exists a detected phone keeps the desktop page', () => {
-  const { decision, dataset, appended } = boot({ device: IPHONE });
-  assert.equal(decision.detected, 'phone');
-  assert.equal(decision.layout, 'desktop');
-  assert.deepEqual(dataset, {});
-  assert.deepEqual(appended, []);
+test('a detected phone gets the phone layout without an override', () => {
+  const { decision, dataset, appended, replaced } = boot({ device: IPHONE });
+  assert.deepEqual({ ...decision }, { layout: 'phone', detected: 'phone', override: null });
+  assert.equal(dataset.layout, 'phone');
+  assert.deepEqual(appended.map((node) => node.tagName), ['META', 'LINK']);
+  assert.deepEqual(replaced, [], 'no URL rewrite without ?layout=');
+  const tablet = boot({ device: IPAD_MINI });
+  assert.equal(tablet.decision.layout, 'desktop', 'a tablet keeps the desktop page');
+  assert.deepEqual(tablet.appended, []);
 });
 
 test('?layout=phone switches to the phone layout, remembers it and strips the parameter', () => {

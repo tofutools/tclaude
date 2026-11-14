@@ -38,6 +38,7 @@ import { fleetState } from './fleet-state.js';
 import { tickedNodes } from './fleet-scope.js';
 import { fusedDock } from './dock-nodes.js';
 import { useDismissablePopover, useExclusivePopover, useLeaveGrace } from './hover-popover.js';
+import { layoutDecision, layoutOverrideURL } from './layout.js';
 
 const html = htm.bind(h);
 const OPEN_PRS_INCLUDE_DRAFTS_PREF = 'tclaude.dash.open-prs.include-drafts-attention';
@@ -305,13 +306,20 @@ function MessagesBadge({ state }) {
   `;
 }
 
-function FooterMeta({ state }) {
+// PhoneViewLink is the way back to the phone layout from "Desktop site": shown
+// only on a phone that is showing the desktop page, so a desktop never has it.
+function PhoneViewLink({ decision = layoutDecision(), href = globalThis.location?.href }) {
+  if (decision.detected !== 'phone' || decision.layout !== 'desktop') return null;
+  return html`<span class="meta-sep"> · </span><a class="meta-phone-view" href=${layoutOverrideURL('phone', href)}>Phone view</a>`;
+}
+
+function FooterMeta({ state, decision = undefined, href = undefined }) {
   const view = footerMetaView(state.snapshot.value);
   if (!view) return html`<span class="meta" id="meta">loading…</span>`;
   return html`
     <span class="meta" id="meta">
       <span class="meta-version">tclaude version ${view.version}</span>
-      <span class="meta-sep"> · </span>refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span>
+      <span class="meta-sep"> · </span>refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span><${PhoneViewLink} decision=${decision} href=${href} />
     </span>
   `;
 }

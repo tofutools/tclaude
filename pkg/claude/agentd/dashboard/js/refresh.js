@@ -48,6 +48,7 @@ import { peerViewTabUsable } from './peer-view-limits.js';
 import { automationsNavTarget, noteAutomationsSection } from './automations-nav.js';
 import { matchesShortcut } from './keybindings.js';
 import { setEdgeRevealEnabled, setSidePanelTuning } from './side-panel-reveal.js';
+import { navTabShown } from './nav-tab-visibility.js';
 
 // groupsTabActive reports whether the Groups tab is the visible one — used to
 // skip the (default-hidden, expensive) conversations/replaced sub-fetches when
@@ -473,7 +474,7 @@ function bindTabs() {
 function visibleTabButtons() {
   // A peer view skips the tabs the peer does not offer (peer-view-limits.js).
   // A greyed-out (aria-disabled) tab is skipped too.
-  return $$('nav [data-tab]').filter(b => b.offsetParent !== null && b.getAttribute('aria-disabled') !== 'true' && peerViewTabUsable(b.dataset.tab));
+  return $$('nav [data-tab]').filter(b => navTabShown(b) && b.getAttribute('aria-disabled') !== 'true' && peerViewTabUsable(b.dataset.tab));
 }
 
 // cyclingTabs is true only while cycleTab() is dispatching its synthetic
