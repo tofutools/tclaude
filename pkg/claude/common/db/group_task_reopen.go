@@ -47,13 +47,13 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 		} else if answered {
 			return taskConflict("answered", "task %s is an answered question; ask again with ask-operator", id)
 		}
-		if in.Stage != "" && in.Stage != GroupTaskStageIdea && in.Stage != GroupTaskStageNext {
-			return taskConflict("invalid_arg", "stage is idea or next")
+		if in.Stage != "" && !IsGroupTaskStage(in.Stage) {
+			return taskConflict("invalid_arg", "stage is backlog, idea or next")
 		}
 		columnLabel := ""
 		if in.Column != "" {
-			if in.Stage == GroupTaskStageIdea {
-				return taskConflict("invalid_arg", "a column stands in next, not the ideas")
+			if in.Stage == GroupTaskStageIdea || in.Stage == GroupTaskStageBacklog {
+				return taskConflict("invalid_arg", "a column stands in next, not the %s", stageNoun(in.Stage))
 			}
 			cols, err := listGroupTaskColumnsTx(tx, t.GroupID)
 			if err != nil {
@@ -100,8 +100,8 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 			stage = in.Stage
 		}
 		if assignee != "" {
-			if in.Stage == GroupTaskStageIdea {
-				return taskConflict("invalid_arg", "an assigned task is in next, not an idea; take the assignee off to reopen it as an idea")
+			if in.Stage == GroupTaskStageIdea || in.Stage == GroupTaskStageBacklog {
+				return taskConflict("invalid_arg", "an assigned task is in next, not the %s; take the assignee off to reopen it there", stageNoun(in.Stage))
 			}
 			stage = GroupTaskStageNext
 		}
@@ -138,7 +138,7 @@ func ReopenGroupTask(id string, in GroupTaskReopen) (*GroupTask, error) {
 			return intoColumn()
 		}
 		pos := GroupTaskPosition{Bottom: true}
-		if stage == GroupTaskStageIdea {
+		if groupTaskStageTop(stage) {
 			pos = GroupTaskPosition{Top: true}
 		}
 		if anchored {

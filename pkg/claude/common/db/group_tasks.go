@@ -15,15 +15,19 @@ import (
 // group. The board is the view of right now and the next few tasks; the
 // durable backlog lives in an external tracker, which a task may link to.
 //
-// A task has a stage (idea | next, the operator's own line between a captured
-// idea and the queue) and a status (open | blocked | done | dropped). Tasks are
+// A task has a stage (backlog | idea | next: parked work, a captured idea,
+// and the queue; the operator's own lines) and a status (open | blocked | done | dropped). Tasks are
 // ordered within their stage by a lexicographic rank key. done and dropped
 // tasks leave the live list at once, are archived (hidden from --all) after a
 // while, and are purged after the retention period by the sweep.
 
 const (
-	GroupTaskStageIdea = "idea"
-	GroupTaskStageNext = "next"
+	// GroupTaskStageBacklog is parked work (tk_5d2547b0): before the ideas,
+	// never started, queued or nudged, and in no lane. A parked task may
+	// keep its assignee, held.
+	GroupTaskStageBacklog = "backlog"
+	GroupTaskStageIdea    = "idea"
+	GroupTaskStageNext    = "next"
 
 	GroupTaskOpen    = "open"
 	GroupTaskBlocked = "blocked"
@@ -548,8 +552,9 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 	if err := checkNewGroupTaskKind(in, status); err != nil {
 		return nil, err
 	}
-	// A task something waits on is queued, never an idea to triage.
-	if in.Blocks != "" && in.Hold == GroupTaskStageIdea {
+	// A task something waits on is queued, never an idea to triage or
+	// parked.
+	if in.Blocks != "" && (in.Hold == GroupTaskStageIdea || in.Hold == GroupTaskStageBacklog) {
 		in.Hold = GroupTaskStageNext
 	}
 	if in.Hold != "" && (in.AssigneeID == "" || status == GroupTaskDone) {
@@ -577,6 +582,8 @@ func CreateGroupTask(in NewGroupTask) (*GroupTask, error) {
 			return nil, taskConflict("invalid_arg", "a task logged as done sits in no column")
 		case in.Hold == GroupTaskStageIdea || in.Stage == GroupTaskStageIdea:
 			return nil, taskConflict("invalid_arg", "a column stands in next, not the ideas")
+		case in.Hold == GroupTaskStageBacklog || in.Stage == GroupTaskStageBacklog:
+			return nil, taskConflict("invalid_arg", "a column stands in next, not the backlog")
 		}
 		cols, err := listGroupTaskColumnsTx(tx, in.GroupID)
 		if err != nil {
@@ -792,7 +799,7 @@ func GetGroupTask(id string) (*GroupTask, error) {
 
 // GroupTaskListOpts filters ListGroupTasks.
 type GroupTaskListOpts struct {
-	// Stage limits the list to one stage ("" for both).
+	// Stage limits the list to one stage ("" for every one).
 	Stage string
 	// Closed also lists done and dropped tasks not yet archived.
 	Closed bool
@@ -806,7 +813,7 @@ type GroupTaskListOpts struct {
 }
 
 // ListGroupTasks lists a group's board in the operator's order: the live
-// next tasks, then the live ideas, each by rank; then, with Closed, the done
+// next tasks, then the live ideas, then the backlog, each by rank; then, with Closed, the done
 // and dropped tasks not yet archived, most recently closed first.
 func ListGroupTasks(groupID int64, opts GroupTaskListOpts) ([]*GroupTask, error) {
 	d, err := Open()
@@ -843,7 +850,7 @@ func ListGroupTasks(groupID int64, opts GroupTaskListOpts) ([]*GroupTask, error)
 		tasks, err = read(`group_id = ? AND archived_at IS NOT NULL`, `closed_at DESC, id`)
 	} else {
 		tasks, err = read(`group_id = ? AND status IN ('open','blocked')`,
-			`CASE stage WHEN 'next' THEN 0 ELSE 1 END, rank, closed_at DESC, id`)
+			`CASE stage WHEN 'next' THEN 0 WHEN 'idea' THEN 1 ELSE 2 END, rank, closed_at DESC, id`)
 		if err == nil && opts.Closed {
 			var closed []*GroupTask
 			closed, err = read(`group_id = ? AND archived_at IS NULL AND status IN ('done','dropped')`, `closed_at DESC, id`)
@@ -1067,7 +1074,10 @@ func MoveGroupTask(id string, pos GroupTaskPosition, actor string) (*GroupTask, 
 		if err := addGroupTaskMovedEventTx(tx, id, actor, describePosition(pos), now); err != nil {
 			return err
 		}
-		return stageChangeEvent(tx, t, stage, actor, "on move", now)
+		if err := stageChangeEvent(tx, t, stage, actor, "on move", now); err != nil {
+			return err
+		}
+		return parkGroupTaskTx(tx, t, stage, actor, now)
 	})
 }
 
@@ -1084,20 +1094,71 @@ func describePosition(pos GroupTaskPosition) string {
 	}
 }
 
+// groupTaskStageOrder is how far a stage is from the work: backlog, idea,
+// next. A move up it is a promotion, down it a demotion.
+func groupTaskStageOrder(stage string) int {
+	switch stage {
+	case GroupTaskStageBacklog:
+		return 0
+	case GroupTaskStageIdea:
+		return 1
+	default:
+		return 2
+	}
+}
+
+// IsGroupTaskStage reports whether stage is one of the board's stages.
+func IsGroupTaskStage(stage string) bool {
+	return stage == GroupTaskStageBacklog || stage == GroupTaskStageIdea || stage == GroupTaskStageNext
+}
+
+// stageNoun names a stage's tasks in a message: "the ideas", "the backlog".
+func stageNoun(stage string) string {
+	switch stage {
+	case GroupTaskStageIdea:
+		return "ideas"
+	case GroupTaskStageNext:
+		return "queue"
+	}
+	return stage
+}
+
+// groupTaskStageTop reports whether a task promoted or demoted into stage
+// goes to its top: the ideas and the backlog take the latest first, the
+// queue at its end.
+func groupTaskStageTop(stage string) bool { return stage != GroupTaskStageNext }
+
 func stageChangeEvent(tx *sql.Tx, t *GroupTask, stage, actor, detail string, now time.Time) error {
 	switch {
 	case t.Stage == stage:
 		return nil
-	case stage == GroupTaskStageNext:
+	case groupTaskStageOrder(stage) > groupTaskStageOrder(t.Stage):
 		return addGroupTaskChangeTx(tx, t.ID, actor, GroupTaskEventPromoted, detail, stageChange(t.Stage, stage), now)
 	default:
 		return addGroupTaskChangeTx(tx, t.ID, actor, GroupTaskEventDemoted, detail, stageChange(t.Stage, stage), now)
 	}
 }
 
-// SetGroupTaskStage promotes a task to the end of the queue or demotes it to
-// the top of the ideas. A task already in that stage is left as it is.
+// parkGroupTaskTx keeps the backlog's invariant for t, which just landed in
+// stage: a parked task is not started, so a started one is held, recorded
+// as such. (A trigger clears started_at too; this records why.)
+func parkGroupTaskTx(tx *sql.Tx, t *GroupTask, stage, actor string, now time.Time) error {
+	if stage != GroupTaskStageBacklog || !t.Started() {
+		return nil
+	}
+	if _, err := tx.Exec(`UPDATE group_tasks SET started_at = NULL WHERE id = ?`, t.ID); err != nil {
+		return err
+	}
+	return addGroupTaskEventTx(tx, t.ID, actor, GroupTaskEventHeld, t.AssigneeID+heldDetail(stage), now)
+}
+
+// SetGroupTaskStage promotes a task to the end of the queue, or demotes it
+// to the top of the ideas or the backlog; a task parked in the backlog is
+// held, not started. A task already in that stage is left as it is.
 func SetGroupTaskStage(id, stage, actor string) (*GroupTask, error) {
+	if !IsGroupTaskStage(stage) {
+		return nil, taskConflict("invalid_arg", "stage is backlog, idea or next, not %q", stage)
+	}
 	return withGroupTask(id, func(tx *sql.Tx, t *GroupTask, now time.Time) error {
 		if t.Stage == stage {
 			return nil
@@ -1105,23 +1166,15 @@ func SetGroupTaskStage(id, stage, actor string) (*GroupTask, error) {
 		if !t.Live() {
 			return taskConflict("not_live", "task %s is %s; reopen it first", id, t.Status)
 		}
-		if !t.Started() {
+		if !t.Started() || stage == GroupTaskStageBacklog {
 			if err := checkOperatorIdeaTx(tx, t, t.AssigneeID, stage); err != nil {
 				return err
 			}
 		}
-		pos := GroupTaskPosition{Bottom: true}
-		if stage == GroupTaskStageIdea {
-			pos = GroupTaskPosition{Top: true}
-		}
-		_, rank, err := placeTask(tx, t.GroupID, stage, id, pos)
-		if err != nil {
+		if err := setGroupTaskStageTx(tx, t, stage, "", actor, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`UPDATE group_tasks SET stage = ?, rank = ? WHERE id = ?`, stage, rank, id); err != nil {
-			return err
-		}
-		return stageChangeEvent(tx, t, stage, actor, "", now)
+		return parkGroupTaskTx(tx, t, stage, actor, now)
 	})
 }
 

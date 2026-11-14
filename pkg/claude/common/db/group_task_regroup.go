@@ -116,7 +116,9 @@ func RegroupGroupTask(id string, in GroupTaskRegroup) (*GroupTaskRegroupResult, 
 		if stage == "" {
 			stage = GroupTaskStageIdea
 		}
-		if assignee != "" {
+		// An assigned task lands in next, unless it is parked: a kept
+		// assignee holds it in the backlog.
+		if assignee != "" && stage != GroupTaskStageBacklog {
 			stage = GroupTaskStageNext
 		}
 		rank := t.Rank

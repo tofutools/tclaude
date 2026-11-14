@@ -111,10 +111,10 @@ const (
 // checkGroupTaskHold validates a stage a task is held in ("" for none).
 func checkGroupTaskHold(hold string) error {
 	switch hold {
-	case "", GroupTaskStageIdea, GroupTaskStageNext:
+	case "", GroupTaskStageBacklog, GroupTaskStageIdea, GroupTaskStageNext:
 		return nil
 	}
-	return taskConflict("invalid_arg", "a task is held in idea or next, not %q", hold)
+	return taskConflict("invalid_arg", "a task is held in backlog, idea or next, not %q", hold)
 }
 
 func heldDetail(hold string) string {
@@ -125,14 +125,14 @@ func heldDetail(hold string) string {
 }
 
 // setGroupTaskStageTx moves a live task to the end of stage (the top of
-// the ideas), recording the promotion or demotion; a task already there
-// stays where it is.
+// the ideas or the backlog), recording the promotion or demotion; a task
+// already there stays where it is.
 func setGroupTaskStageTx(tx *sql.Tx, t *GroupTask, stage, detail, actor string, now time.Time) error {
 	if t.Stage == stage {
 		return nil
 	}
 	pos := GroupTaskPosition{Bottom: true}
-	if stage == GroupTaskStageIdea {
+	if groupTaskStageTop(stage) {
 		pos = GroupTaskPosition{Top: true}
 	}
 	_, rank, err := placeTask(tx, t.GroupID, stage, t.ID, pos)
@@ -175,11 +175,11 @@ func StartGroupTask(id string, start bool, stage, actor, expectAssignee string) 
 	})
 }
 
-// checkOperatorIdeaTx refuses to make t an operator idea (assignee, held in
-// stage) while a task waits on it: nothing waits on an idea, which counts
-// as nobody's wait.
+// checkOperatorIdeaTx refuses to make t an operator idea or parked task
+// (assignee, held in stage) while a task waits on it: nothing waits on an
+// idea or the backlog, which count as nobody's wait.
 func checkOperatorIdeaTx(tx taskTx, t *GroupTask, assignee, stage string) error {
-	if assignee != OperatorAssignee || stage != GroupTaskStageIdea {
+	if assignee != OperatorAssignee || (stage != GroupTaskStageIdea && stage != GroupTaskStageBacklog) {
 		return nil
 	}
 	var waiting int
@@ -187,7 +187,7 @@ func checkOperatorIdeaTx(tx taskTx, t *GroupTask, assignee, stage string) error 
 		return err
 	}
 	if waiting != 0 {
-		return taskConflict("invalid_arg", "a task waits on %s; the operator holds it in next, not as an idea", t.ID)
+		return taskConflict("invalid_arg", "a task waits on %s; the operator holds it in next, not as an idea or in the backlog", t.ID)
 	}
 	return nil
 }

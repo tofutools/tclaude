@@ -789,7 +789,7 @@ func CountOpenGroupTaskQuestions() (map[int64]int, error) {
 	}
 	rows, err := d.Query(`SELECT t.group_id, COUNT(*) FROM group_task_questions q JOIN group_tasks t ON t.id = q.task_id
 		WHERE q.state = 'open' AND t.status IN ('open','blocked')
-			AND NOT (t.status = 'open' AND t.assignee_kind = 'operator' AND NOT (t.stage = 'idea' AND t.started_at IS NULL))
+			AND NOT (t.status = 'open' AND t.assignee_kind = 'operator' AND NOT (t.stage IN ('idea','backlog') AND t.started_at IS NULL))
 		GROUP BY t.group_id`)
 	if err != nil {
 		return nil, err

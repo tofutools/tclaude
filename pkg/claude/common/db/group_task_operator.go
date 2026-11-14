@@ -74,6 +74,9 @@ func blockGroupTaskOnTx(tx taskTx, t, on *GroupTask, actor, expectAssignee strin
 	if !on.Live() {
 		return taskConflict("not_live", "task %s is %s; a task waits only on a live task", on.ID, on.Status)
 	}
+	if on.Stage == GroupTaskStageBacklog {
+		return taskConflict("invalid_arg", "task %s is parked in the backlog; a task waits only on one queued or in progress", on.ID)
+	}
 	if on.Stage == GroupTaskStageIdea && !on.Started() {
 		return taskConflict("invalid_arg", "task %s is an idea for the operator to triage; a task waits only on one queued or in progress", on.ID)
 	}
