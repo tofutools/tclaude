@@ -21,7 +21,7 @@
    never zooms the page. */
 :root[data-layout="phone"] .phone-term-host {
   position: absolute; inset: 0; overflow: hidden; touch-action: none;
-  /* xterm's layers stay inside, under ↓ Live. */
+  /* xterm's layers stay inside, under the note. */
   isolation: isolate;
 }
 /* xterm's own box (its theme's background) fills the host, under the last
@@ -57,10 +57,3 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* ↓ Live: shown while a swipe has the terminal scrolled back. */
-:root[data-layout="phone"] .phone-term-live {
-  position: absolute; right: 12px; bottom: 12px;
-  min-height: 40px; padding: 0 16px; border-radius: 20px; border: 0;
-  background: var(--ui-primary); color: var(--ui-primary-text);
-  font: inherit; font-weight: 700; box-shadow: var(--ui-dialog-shadow); cursor: pointer;
-}

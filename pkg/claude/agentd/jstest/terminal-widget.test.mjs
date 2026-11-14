@@ -1526,169 +1526,101 @@ test('a touch pinch sets the font once it rests; named keys and the soft keyboar
   assert.equal(widget.key('1'), false, 'a disposed terminal sends nothing');
 });
 
-test('a one-finger swipe scrolls as the wheel does, coasts, and goes back to live (the phone terminal)', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
-  const fakes = widgetFakes(harness.document);
-  class PhoneTerminal extends fakes.FakeTerminal {
-    open(host) { super.open(host); this.modes = { mouseTrackingMode: 'vt200' }; }
-  }
-  const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const timers = manualTimers();
-  let clock = 0;
-  const frames = [];
-  const back = [];
-  const widget = mountTerminalWidget({
-    host, wsPath: '/api/open-window-ws/agt_one', authenticate: false,
-    initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
-    onScrollBackChange: (on) => back.push(on),
-    TerminalCtor: PhoneTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
-    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
-    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock,
-    requestAnimationFrameImpl: (run) => { frames.push(run); return frames.length; }, cancelAnimationFrameImpl: () => {}, ...timers,
+// The phone terminal's swipe is the desktop wheel: each notch is a wheel event
+// on xterm's element, which xterm encodes for the session as the desktop wheel
+// does (a mouse report where the session takes the mouse: tmux copy-mode for
+// Codex and shells, Claude Code's own fullscreen scrolling; arrow keys where
+// nothing does). The widget never asks agentd to scroll a pane.
+for (const [label, mouse] of [['a session that takes the mouse (tmux mouse, or Claude Code\'s fullscreen TUI)', 'vt200'], ['a session that does not take the mouse', 'none']]) {
+  test(`a one-finger swipe sends wheel notches, as the desktop wheel does, over ${label}`, async (t) => {
+    const harness = await createPreactHarness(t);
+    const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+    const fakes = widgetFakes(harness.document);
+    class PhoneTerminal extends fakes.FakeTerminal {
+      open(host) { super.open(host); this.modes = { mouseTrackingMode: mouse }; }
+    }
+    const host = harness.document.body.appendChild(harness.document.createElement('div'));
+    const timers = manualTimers();
+    let clock = 0;
+    const frames = [];
+    const widget = mountTerminalWidget({
+      host, wsPath: '/api/open-window-ws/agt_one', authenticate: false,
+      initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
+      TerminalCtor: PhoneTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+      ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
+      documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock,
+      requestAnimationFrameImpl: (run) => { frames.push(run); return frames.length; }, cancelAnimationFrameImpl: () => {}, ...timers,
+    });
+    await widget.connect();
+    const socket = fakes.sockets[0];
+    socket.open();
+    timers.flush();
+    frames.length = 0;
+    // What reaches the session, in order: wheel notches (xterm encodes them),
+    // typed bytes, and any control frame other than a resize.
+    const log = [];
+    host.addEventListener('wheel', (event) => {
+      assert.equal(event.deltaMode, 1, 'a line-mode notch, as a mouse wheel sends');
+      log.push(event.deltaY < 0 ? 'older' : 'newer');
+    });
+    const send = socket.send.bind(socket);
+    socket.send = (value) => {
+      if (typeof value !== 'string') log.push(new TextDecoder().decode(value));
+      else if (JSON.parse(value).type !== 'resize') log.push(value);
+      send(value);
+    };
+    const touch = (type, y, x = 50) => harness.fireEvent(host, type, { touches: type === 'touchend' ? [] : [{ clientX: x, clientY: y }] });
+
+    // A notch is five rows (16px each) of finger travel.
+    touch('touchstart', 100);
+    assert.equal(touch('touchmove', 105).defaultPrevented, false, 'a tap or a small wobble stays the terminal\'s');
+    clock = 50;
+    assert.ok(touch('touchmove', 190).defaultPrevented, 'a swipe is not the page\'s');
+    clock = 100;
+    touch('touchmove', 270);
+    assert.deepEqual(log, ['older', 'older'], 'finger down is further back');
+    clock = 300;
+    touch('touchend');
+    assert.equal(frames.length, 0, 'a finger that rested before lifting does not coast');
+
+    // Down is newer, from anywhere: the session decides what a notch at the
+    // bottom does, as it does for the desktop wheel.
+    touch('touchstart', 270); clock = 320; touch('touchmove', 100); clock = 900; touch('touchend');
+    assert.deepEqual(log.slice(2), ['newer', 'newer']);
+
+    // A sideways move is not a swipe.
+    log.length = 0;
+    touch('touchstart', 100, 50); clock = 920; touch('touchmove', 130, 200); clock = 1000; touch('touchend');
+    assert.deepEqual(log, []);
+
+    // A key goes straight to the session: nothing is sent ahead of it.
+    touch('touchstart', 100); clock = 1100; touch('touchmove', 190); clock = 1300; touch('touchend');
+    widget.key('1');
+    assert.deepEqual(log, ['older', '1']);
+
+    // A fling coasts on, slower each frame, and stops.
+    log.length = 0;
+    touch('touchstart', 100); clock = 1400; touch('touchmove', 120); clock = 1410; touch('touchmove', 220);
+    const during = log.length;
+    touch('touchend');
+    let run = 0;
+    while (frames.length && run < 500) { clock += 16; frames.shift()(); run += 1; }
+    assert.ok(log.length > during, 'it coasts after the finger lifts');
+    assert.ok(run < 500, 'and stops');
+    assert.ok(log.every((step) => step === 'older'));
+
+    // A pinch is not a swipe: the second finger stops it.
+    log.length = 0;
+    touch('touchstart', 100); clock = 9000; touch('touchmove', 140);
+    harness.fireEvent(host, 'touchstart', { touches: [{ clientX: 50, clientY: 140 }, { clientX: 150, clientY: 140 }] });
+    harness.fireEvent(host, 'touchmove', { touches: [{ clientX: 50, clientY: 300 }, { clientX: 150, clientY: 300 }] });
+    assert.deepEqual(log, []);
+    harness.fireEvent(host, 'touchend', { touches: [] });
+
+    // A closed socket has no session to scroll.
+    socket.disconnect();
+    touch('touchstart', 100); clock = 9500; touch('touchmove', 200); clock = 9900; touch('touchend');
+    assert.deepEqual(log, [], 'nothing to scroll while the socket is closed');
+    widget.dispose();
   });
-  await widget.connect();
-  const socket = fakes.sockets[0];
-  socket.open();
-  timers.flush();
-  frames.length = 0;
-  const term = fakes.terminal();
-  // What reaches the session, in order: wheel notches (xterm encodes them) and typed bytes.
-  const log = [];
-  host.addEventListener('wheel', (event) => log.push(event.deltaY < 0 ? 'older' : 'newer'));
-  const send = socket.send.bind(socket);
-  socket.send = (value) => { if (typeof value !== 'string') log.push(new TextDecoder().decode(value)); send(value); };
-  const touch = (type, y, x = 50) => harness.fireEvent(host, type, { touches: type === 'touchend' ? [] : [{ clientX: x, clientY: y }] });
-
-  // A notch is five rows (16px each) of finger travel while tmux takes the mouse.
-  touch('touchstart', 100);
-  assert.equal(touch('touchmove', 105).defaultPrevented, false, 'a tap or a small wobble stays the terminal\'s');
-  clock = 50;
-  assert.ok(touch('touchmove', 190).defaultPrevented, 'a swipe is not the page\'s');
-  clock = 100;
-  touch('touchmove', 270);
-  assert.deepEqual(log, ['older', 'older'], 'finger down is further back');
-  assert.deepEqual(back, [true]);
-  assert.equal(widget.scrolledBack(), true);
-  clock = 300;
-  touch('touchend');
-  assert.equal(frames.length, 0, 'a finger that rested before lifting does not coast');
-
-  // The first notch only entered copy-mode; the second scrolled. One notch
-  // down reaches the bottom (copy-mode leaves itself), one more for a drift.
-  widget.toLive();
-  assert.deepEqual(log.slice(2), ['newer', 'newer']);
-  assert.deepEqual(back, [true, false]);
-
-  // Swiping back down to the bottom leaves copy-mode: live again.
-  log.length = 0;
-  touch('touchstart', 100); clock = 320; touch('touchmove', 270); clock = 340; touch('touchmove', 350); clock = 900; touch('touchend');
-  assert.deepEqual(log, ['older', 'older', 'older'], 'enter, then two notches back');
-  touch('touchstart', 350); clock = 920; touch('touchmove', 180); clock = 1500; touch('touchend');
-  assert.deepEqual(log.slice(3), ['newer', 'newer']);
-  assert.equal(widget.scrolledBack(), false, 'two notches down reach the bottom');
-  assert.deepEqual(back, [true, false, true, false]);
-
-  // A key while scrolled back goes live first: copy-mode would take it.
-  log.length = 0;
-  touch('touchstart', 100); clock = 1600; touch('touchmove', 190); clock = 1800; touch('touchend');
-  widget.key('1');
-  assert.deepEqual(log, ['older', 'newer', 'newer', '1']);
-
-  // A fling coasts on, slower each frame, and stops.
-  log.length = 0;
-  touch('touchstart', 100); clock = 1900; touch('touchmove', 120); clock = 1910; touch('touchmove', 220);
-  const during = log.length;
-  touch('touchend');
-  let run = 0;
-  while (frames.length && run < 500) { clock += 16; frames.shift()(); run += 1; }
-  assert.ok(log.length > during, 'it coasts after the finger lifts');
-  assert.ok(run < 500, 'and stops');
-  assert.ok(log.every((step) => step === 'older'));
-
-  // A closed socket: agentd leaves copy-mode, so the view is live again.
-  assert.equal(widget.scrolledBack(), true);
-  back.length = 0;
-  socket.disconnect();
-  assert.equal(widget.scrolledBack(), false);
-  assert.deepEqual(back, [false]);
-  log.length = 0;
-  touch('touchstart', 100); clock = 9000; touch('touchmove', 200); clock = 9500; touch('touchend');
-  assert.deepEqual(log, [], 'nothing to scroll while the socket is closed');
-  widget.dispose();
-
-  widget.dispose();
-});
-
-test('a swipe over a session that does not take the mouse (Claude Code) asks agentd to scroll its pane', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
-  const fakes = widgetFakes(harness.document);
-  const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const timers = manualTimers();
-  let clock = 0;
-  const back = [];
-  const widget = mountTerminalWidget({
-    host, wsPath: '/api/open-window-ws/agt_two', authenticate: false,
-    initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
-    onScrollBackChange: (on) => back.push(on),
-    TerminalCtor: fakes.FakeTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
-    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
-    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock,
-    requestAnimationFrameImpl: () => 1, cancelAnimationFrameImpl: () => {}, ...timers,
-  });
-  await widget.connect();
-  const socket = fakes.sockets[0];
-  socket.open();
-  timers.flush();
-  const writes = fakes.counts.write;
-  const wheel = [];
-  host.addEventListener('wheel', () => wheel.push(1));
-  // What reaches agentd: scroll frames, and typed bytes.
-  const log = () => socket.sent.filter((value) => typeof value !== 'string' || value.includes('"scroll"'))
-    .map((value) => (typeof value === 'string' ? JSON.parse(value).op : new TextDecoder().decode(value)));
-  const answer = (copyMode, position) => socket.onmessage({ data: JSON.stringify({ type: 'scroll', copy_mode: copyMode, position }) });
-  const touch = (type, y) => harness.fireEvent(host, type, { touches: type === 'touchend' ? [] : [{ clientX: 50, clientY: y }] });
-
-  // A swipe down at live asks nothing: down from live is no scroll.
-  touch('touchstart', 300); clock = 10; touch('touchmove', 100); clock = 500; touch('touchend');
-  assert.deepEqual(log(), []);
-
-  touch('touchstart', 100); clock = 520;
-  assert.ok(touch('touchmove', 270).defaultPrevented);
-  clock = 1000; touch('touchend');
-  assert.deepEqual(wheel, [], 'no wheel notch: it would reach the prompt as an arrow key');
-  assert.deepEqual(log(), ['up', 'up']);
-  assert.equal(widget.scrolledBack(), true);
-  assert.deepEqual(back, [true]);
-  answer(true, 5);
-  answer(true, 10);
-  assert.equal(fakes.counts.write, writes, 'an answer is not terminal output');
-
-  // agentd says where the pane is: scrolled down to the bottom, it is live.
-  touch('touchstart', 270); clock = 1020; touch('touchmove', 100); clock = 1500; touch('touchend');
-  assert.deepEqual(log().slice(2), ['down', 'down']);
-  assert.equal(widget.scrolledBack(), false);
-  answer(true, 5);
-  assert.deepEqual(back, [true, false], 'an answer overtaken by a later frame is not where the pane is');
-  answer(false, 0);
-  assert.equal(widget.scrolledBack(), false);
-
-  // ↓ Live, or a key, leaves copy-mode before anything else reaches the pane.
-  touch('touchstart', 100); clock = 1520; touch('touchmove', 190); clock = 2000; touch('touchend');
-  widget.key('1');
-  assert.deepEqual(log().slice(4), ['up', 'live', '1']);
-  assert.equal(widget.scrolledBack(), false);
-  touch('touchstart', 100); clock = 2020; touch('touchmove', 190); clock = 2500; touch('touchend');
-  widget.toLive();
-  assert.deepEqual(log().slice(7), ['up', 'live']);
-  for (let i = 0; i < 4; i += 1) answer(false, 0);
-
-  // A pane agentd could not scroll (another tmux mode) answers live.
-  touch('touchstart', 100); clock = 2520; touch('touchmove', 190); clock = 3000; touch('touchend');
-  assert.equal(widget.scrolledBack(), true);
-  answer(false, 0);
-  assert.equal(widget.scrolledBack(), false);
-  assert.equal(back.at(-1), false);
-  widget.dispose();
-});
+}
