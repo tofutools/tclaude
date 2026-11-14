@@ -42,8 +42,12 @@ test('cron jobs switch, run behind a confirm, and open as a page', async ({ page
 
   const toggle = row.getByRole('switch');
   await expect(toggle).toBeChecked();
+  // The switch moves at once; wait for the server's answer before reloading,
+  // so the reload proves it was stored.
+  const stored = page.waitForResponse((response) => /\/api\/cron\/[^/]+\/disable/.test(response.url()) && response.ok());
   await toggle.click();
   await expect(toggle).not.toBeChecked();
+  await stored;
   await page.reload();
   await booted(page);
   await expect(page.locator('.phone-auto-row:visible', { hasText: 'standup-ping' }).getByRole('switch')).not.toBeChecked();

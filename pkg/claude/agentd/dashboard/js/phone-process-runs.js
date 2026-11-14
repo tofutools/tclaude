@@ -18,30 +18,63 @@ import { ProcessStepStrip, runName, runPauseState, runSteps, stateLabel } from '
 import { DecisionForm, useRunDetail } from './groups-run-focus.js';
 import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
+import { setLayoutOverride } from './layout.js';
 
 const html = htm.bind(h);
 
 // How many finished runs the list keeps under the live ones.
 export const DONE_SHOWN = 10;
 
-// phoneRuns sorts every group's runs into what waits on the operator, what is
-// running and what finished, each run once, with the group it ran in. A run
-// waiting on the operator is listed there only.
-export function phoneRuns(context) {
+// phoneRuns sorts every run in the context into what waits on the operator,
+// what is running and what finished, each run once, with where it runs: its
+// group, or for a run outside the group indexes (bound to an agent, or whose
+// group is gone) the agent or "no group". A run waiting on the operator is
+// listed there only.
+export function phoneRuns(context, nameOf = () => '') {
   const runs = context?.runs || {};
   const seen = new Set();
-  const pick = (ids, group) => (ids || []).filter((id) => {
+  const item = (id, where) => ({ run: { ...runs[id], runId: runs[id].runId ?? id }, where });
+  const pick = (ids, where) => (ids || []).filter((id) => {
     if (seen.has(id) || !runs[id]) return false;
     seen.add(id);
     return true;
-  }).map((id) => ({ run: { ...runs[id], runId: runs[id].runId ?? id }, group }));
+  }).map((id) => item(id, where));
   const groups = context?.groups || [];
   const waiting = groups.flatMap((entry) => pick(entry.needsYou, entry.group || ''));
   const running = groups.flatMap((entry) => pick(entry.active, entry.group || ''));
-  const done = groups.flatMap((entry) => pick(entry.done, entry.group || ''))
-    .sort((a, b) => String(b.run.updatedAt || '').localeCompare(String(a.run.updatedAt || '')))
-    .slice(0, DONE_SHOWN);
-  return { waiting, running, done };
+  const done = groups.flatMap((entry) => pick(entry.done, entry.group || ''));
+  for (const id of Object.keys(runs)) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const run = runs[id];
+    const agent = run.scope?.kind === 'agent' ? (nameOf(run.scope.agentId) || run.scope.agentId || 'an agent') : '';
+    const entry = item(id, agent ? `agent ${agent}` : (run.scope?.group || 'no group'));
+    if (run.needsYou) waiting.push(entry);
+    else if (String(run.status || '').toLowerCase() === 'running') running.push(entry);
+    else done.push(entry);
+  }
+  done.sort((a, b) => String(b.run.updatedAt || '').localeCompare(String(a.run.updatedAt || '')));
+  return { waiting, running, done: done.slice(0, DONE_SHOWN) };
+}
+
+// decidable reports whether a run waits on the operator's verdict at a gate,
+// the one wait a phone answers. A run can wait on the operator for other
+// reasons too (a blocked branch, no performer, a command to reconcile, a lost
+// group); those are resolved on the desktop.
+export function decidable(run) {
+  return run?.action === 'awaiting_decision';
+}
+
+// WAIT_REASONS words why a run waits on the operator when it is not a gate.
+const WAIT_REASONS = Object.freeze({
+  blocked: 'A branch is blocked',
+  needs_performer: 'A step has no one to perform it',
+  needs_reconcile: 'A command needs reconciling',
+  orphaned: 'Its group is gone',
+});
+
+export function waitReason(run) {
+  return WAIT_REASONS[run?.action] || 'It waits on you';
 }
 
 // runPosition is where a run stands, in words: the step it waits or works on
@@ -73,15 +106,16 @@ export function useProcessRuns(source = processContext) {
 }
 
 function RunRow({ item, waiting, onOpen }) {
-  const { run, group } = item;
+  const { run, where } = item;
   const paused = !!run.paused;
-  const tag = waiting ? html`<span class="ui-tag ui-tag-accent">Decide</span>`
+  const tag = waiting
+    ? html`<span class=${`ui-tag${decidable(run) ? ' ui-tag-accent' : ' ui-tag-warn'}`}>${decidable(run) ? 'Decide' : 'Needs you'}</span>`
     : paused ? html`<span class="ui-tag">Paused</span>` : null;
   return html`<li class=${`phone-run-row${waiting ? ' waiting' : ''}`} data-run=${run.runId}>
     <button data-ui-exempt type="button" class="phone-run-open" onClick=${() => onOpen(run.runId)}>
       <span class="phone-run-text">
         <span class="phone-run-name">${runName(run)}</span>
-        <span class="phone-run-sub">${[group, runPosition(run)].filter(Boolean).join(' · ')}</span>
+        <span class="phone-run-sub">${[where, runPosition(run)].filter(Boolean).join(' · ')}</span>
         <${ProcessStepStrip} run=${run} />
       </span>
       ${tag}
@@ -98,14 +132,14 @@ function RunSection({ title, items, waiting = false, onOpen }) {
 }
 
 // RunsList is the Runs view: every group's runs, waiting on you first.
-export function RunsList({ source = processContext, onOpen, desktopSite }) {
+export function RunsList({ source = processContext, onOpen, desktopSite, nameOf = () => '' }) {
   const { context, status, error } = useProcessRuns(source);
   let body;
   if (status === 'unavailable') body = html`<p class="ui-empty phone-empty">Processes are not available on this node.</p>`;
   else if (!context) {
     body = html`<p class="ui-empty phone-empty">${status === 'error' ? `Could not read the runs: ${error}` : 'Loading…'}</p>`;
   } else {
-    const { waiting, running, done } = phoneRuns(context);
+    const { waiting, running, done } = phoneRuns(context, nameOf);
     body = waiting.length + running.length + done.length === 0
       ? html`<p class="ui-empty phone-empty">No process runs.</p>`
       : html`<${RunSection} title="Waiting on you" items=${waiting} waiting onOpen=${onOpen} />
@@ -148,15 +182,35 @@ function decider(api, runId, refresh, source) {
   };
 }
 
-// GateCard is one run waiting on the operator, on Now: which run, where, and
-// the form to answer it.
+// useRunView reads only a run's durable view (its awaited decisions), again on
+// every snapshot poll: what a gate card needs, without the event history the
+// run page's useRunDetail pages through.
+export function useRunView(api, runId) {
+  const [detail, setDetail] = useState({ view: null, error: '' });
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const poll = () => setRevision((value) => value + 1);
+    document.addEventListener('tclaude:snapshot', poll);
+    return () => document.removeEventListener('tclaude:snapshot', poll);
+  }, []);
+  useEffect(() => {
+    let live = true;
+    api.getRun(runId).then((view) => { if (live) setDetail({ view, error: '' }); })
+      .catch((cause) => { if (live) setDetail((prior) => ({ ...prior, error: cause?.message || String(cause) })); });
+    return () => { live = false; };
+  }, [api, runId, revision]);
+  return [detail, () => setRevision((value) => value + 1)];
+}
+
+// GateCard is one run waiting on the operator's verdict, on Now: which run,
+// where, and the form to answer it.
 export function GateCard({ item, api = runDetailApi, source = processContext, onOpen = null }) {
-  const { run, group } = item;
-  const [detail, refresh] = useRunDetail(api, run.runId);
+  const { run, where } = item;
+  const [detail, refresh] = useRunView(api, run.runId);
   return html`<div class="phone-card phone-gate-card ui-card" data-run=${run.runId}>
     <div class="phone-gate-head">
       <span class="phone-run-name">${runName(run)}</span>
-      <span class="phone-run-sub">${group}</span>
+      <span class="phone-run-sub">${where}</span>
       ${onOpen && html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => onOpen(run.runId)}>Run ›</button>`}
     </div>
     ${detail.view
@@ -165,9 +219,9 @@ export function GateCard({ item, api = runDetailApi, source = processContext, on
   </div>`;
 }
 
-// gateItems are the runs Now lists: those waiting on the operator.
+// gateItems are the runs Now lists: those waiting on the operator's verdict.
 export function gateItems(context) {
-  return phoneRuns(context).waiting;
+  return phoneRuns(context).waiting.filter((entry) => decidable(entry.run));
 }
 
 // RunPage is one run, pushed over the Runs list: its gates on top, then its
@@ -175,18 +229,24 @@ export function gateItems(context) {
 export function RunPage({ runId, back, active = true, api = runDetailApi, source = processContext, nameOf = () => '' }) {
   const { context } = useProcessRuns(source);
   const raw = context?.runs?.[runId];
-  const group = (context?.groups || []).find((entry) => [entry.needsYou, entry.active, entry.done].some((ids) => (ids || []).includes(runId)))?.group || '';
+  const lists = phoneRuns(context, nameOf);
+  const where = [...lists.waiting, ...lists.running, ...lists.done].find((entry) => entry.run.runId === runId)?.where || '';
   const run = raw ? withPerformerNames({ ...raw, runId: raw.runId ?? runId }, nameOf) : null;
   const [detail, refresh] = useRunDetail(api, runId);
   const [busy, setBusy] = useState(false);
+  const [holdError, setHoldError] = useState('');
   const pause = run ? runPauseState(run) : { ok: false };
+  // A refused pause must say so: a run thought paused keeps dispatching.
   const hold = async () => {
     if (busy) return;
     setBusy(true);
+    setHoldError('');
     try {
       await (pause.paused ? api.resume(runId) : api.pause(runId));
       refresh();
       await source.refresh();
+    } catch (cause) {
+      setHoldError(`Could not ${pause.paused ? 'resume' : 'pause'} the run: ${cause?.message || String(cause)}`);
     } finally {
       setBusy(false);
     }
@@ -203,10 +263,16 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
   }
   const steps = runSteps(run);
   const waitingOn = new Set((detail.view?.awaitingDecisions || []).map((decision) => String(decision.nodeId)));
+  const blocked = (detail.view?.blocked || []).map((item) => item.reason).filter(Boolean);
   return html`<div class="phone-run-page">
+    ${holdError && html`<p class="ui-error-box" role="alert">${holdError}</p>`}
     <${Gates} run=${run} detail=${detail} onDecide=${decider(api, runId, refresh, source)} />
+    ${run.needsYou && !decidable(run) && html`<div class="phone-run-wait" role="status">
+      <strong>${waitReason(run)}.</strong>${blocked.length ? ` ${blocked.join('; ')}.` : ''}
+      <${DesktopOnly} what="Resolving it is" desktopSite=${() => setLayoutOverride('desktop')} />
+    </div>`}
     ${detail.error && html`<p class="ui-error-box" role="alert">Could not read the run: ${detail.error}</p>`}
-    <p class="phone-run-facts">${[group, run.status, run.startedAt && `started ${relTime(run.startedAt)}`,
+    <p class="phone-run-facts">${[where, run.status, run.startedAt && `started ${relTime(run.startedAt)}`,
       run.startedAt && `${formatRunDuration(run.startedAt, Date.parse(run.status === 'running' ? '' : run.updatedAt || '') || Date.now())}`]
       .filter(Boolean).join(' · ')}</p>
     <h2 class="ui-eyebrow phone-section-title">Steps</h2>

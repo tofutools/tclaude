@@ -17,13 +17,18 @@ function fakeSource(harness, context = FIXTURE) {
 
 function fakeApi() {
   const api = { decisions: [], holds: [] };
-  api.getRun = async (runId) => ({
-    id: runId, blocked: [],
+  api.runReads = [];
+  api.eventReads = 0;
+  api.getRun = async (runId) => (api.runReads.push(runId), {
+    id: runId, blocked: runId === 'run_migrate' ? [{ nodeId: 'apply', attempt: 1, reason: 'migration lock held' }] : [],
     awaitingDecisions: runId === 'run_release' ? [{ nodeId: 'review', verdicts: ['approved', 'changes'], attempt: 2 }] : [],
   });
-  api.listEvents = async () => ({ events: [], more: false });
+  api.listEvents = async () => { api.eventReads += 1; return { events: [], more: false }; };
   api.decide = async (runId, request) => { api.decisions.push([runId, request]); return { started: true }; };
-  api.pause = async (runId) => { api.holds.push(['pause', runId]); };
+  api.pause = async (runId) => {
+    api.holds.push(['pause', runId]);
+    if (api.refusePause) throw new Error('403 process.runs.manage required');
+  };
   api.resume = async (runId) => { api.holds.push(['resume', runId]); };
   return api;
 }
@@ -47,7 +52,7 @@ test('phoneRuns lists each run once: waiting on you, then running, then done', a
   assert.deepEqual(waiting.map((item) => item.run.runId), ['run_migrate', 'run_release']);
   assert.deepEqual(running.map((item) => item.run.runId), ['run_reindex'], 'a waiting run is not listed again as running');
   assert.deepEqual(done.map((item) => item.run.runId), ['run_hotfix']);
-  assert.equal(waiting[0].group, 'frontend-squad');
+  assert.equal(waiting[0].where, 'frontend-squad');
   assert.deepEqual(mod.phoneRuns(null), { waiting: [], running: [], done: [] });
 
   const many = { runs: {}, groups: [{ group: 'g', done: [] }] };
@@ -75,7 +80,7 @@ test('the Runs list opens a run, keeps the context fresh, and says what is deskt
   const root = mounted.container;
   const sections = [...root.querySelectorAll('.phone-run-section')].map((section) => section.getAttribute('aria-label'));
   assert.deepEqual(sections, ['Waiting on you', 'Running', 'Done']);
-  assert.ok(root.querySelector('.phone-run-row.waiting .ui-tag').textContent.includes('Decide'));
+  assert.equal(root.querySelector('.phone-run-row.waiting[data-run="run_release"] .ui-tag').textContent, 'Decide');
   assert.ok(root.querySelector('.phone-desktop-only').textContent.includes('desktop only'));
   assert.equal(source.refreshes, 1, 'read once on mount');
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot')));
@@ -133,4 +138,61 @@ test('a finished run offers no pause, and a run gone from the context says so', 
   assert.equal(done.container.querySelector('.phone-gate'), null);
   const gone = await harness.mount(harness.html`<${mod.RunPage} runId="run_nope" api=${api} source=${source} back=${() => {}} />`);
   assert.match(gone.container.textContent, /no longer listed/);
+});
+
+test('runs outside the group indexes are listed too, by their agent', async (t) => {
+  const { mod } = await load(t);
+  const context = {
+    runs: {
+      run_solo: { runId: 'run_solo', name: 'solo', status: 'running', needsYou: true, action: 'awaiting_decision',
+        scope: { kind: 'agent', agentId: 'agt_x' }, nodes: [] },
+      run_lost: { runId: 'run_lost', name: 'lost', status: 'running', needsYou: true, action: 'orphaned', scope: { kind: 'group' }, nodes: [] },
+    },
+    groups: [],
+  };
+  const { waiting } = mod.phoneRuns(context, (id) => (id === 'agt_x' ? 'xavier' : ''));
+  assert.deepEqual(waiting.map((item) => [item.run.runId, item.where]), [['run_solo', 'agent xavier'], ['run_lost', 'no group']]);
+  assert.deepEqual(mod.gateItems(context).map((item) => item.run.runId), ['run_solo'], 'only the gate goes to Now');
+});
+
+test('Now gets only runs waiting on a verdict; Runs tags the rest as needing you', async (t) => {
+  const { harness, mod } = await load(t);
+  assert.deepEqual(mod.gateItems(FIXTURE).map((item) => item.run.runId), ['run_release'], 'the blocked run has no gate to answer');
+  const mounted = await harness.mount(harness.html`<${mod.RunsList} source=${fakeSource(harness)} onOpen=${() => {}} />`);
+  const tag = (id) => mounted.container.querySelector(`.phone-run-row[data-run="${id}"] .ui-tag`).textContent;
+  assert.equal(tag('run_release'), 'Decide');
+  assert.equal(tag('run_migrate'), 'Needs you');
+});
+
+test('a run blocked on the operator says why and sends the fix to the desktop', async (t) => {
+  const { harness, mod } = await load(t);
+  const mounted = await harness.mount(harness.html`<${mod.RunPage} runId="run_migrate" api=${fakeApi()} source=${fakeSource(harness)} back=${() => {}} />`);
+  await settle(harness);
+  const wait = mounted.container.querySelector('.phone-run-wait');
+  assert.match(wait.textContent, /A branch is blocked\. migration lock held\./);
+  assert.match(wait.textContent, /desktop only/);
+  assert.equal(mounted.container.querySelector('.phone-gate'), null);
+});
+
+test('a refused pause is shown, not swallowed', async (t) => {
+  const { harness, mod, phonePage } = await load(t);
+  const api = fakeApi();
+  api.refusePause = true;
+  const mounted = await harness.mount(harness.html`<${mod.RunPage} runId="run_release" api=${api} source=${fakeSource(harness)} back=${() => {}} />`);
+  await settle(harness);
+  await harness.act(() => phonePage.value.actions[0].onClick());
+  await settle(harness);
+  assert.match(mounted.container.querySelector('.ui-error-box[role="alert"]').textContent, /Could not pause the run: 403/);
+});
+
+test('a gate card reads the run view only, never its event history', async (t) => {
+  const { harness, mod } = await load(t);
+  const api = fakeApi();
+  const item = mod.gateItems(FIXTURE)[0];
+  await harness.mount(harness.html`<${mod.GateCard} item=${item} api=${api} source=${fakeSource(harness)} />`);
+  await settle(harness);
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot')));
+  await settle(harness);
+  assert.deepEqual(api.runReads, ['run_release', 'run_release'], 'read on mount and on the poll');
+  assert.equal(api.eventReads, 0);
 });

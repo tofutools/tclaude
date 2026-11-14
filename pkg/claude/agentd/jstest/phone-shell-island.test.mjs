@@ -190,7 +190,7 @@ test('a tab\'s pushed page takes the top bar and the bottom edge until it goes',
 
 test('a process run waiting on the operator is a gate card on Now and counts as needing you', async (t) => {
   const processes = {
-    runs: { run_1: { runId: 'run_1', name: 'Release train', status: 'running', nodes: [
+    runs: { run_1: { runId: 'run_1', name: 'Release train', status: 'running', needsYou: true, action: 'awaiting_decision', nodes: [
       { id: 'gate', label: 'Checks pass?', kind: 'decision', state: 'awaiting', performer: { kind: 'human' } },
     ], edges: [] } },
     groups: [{ group: 'webshop', needsYou: ['run_1'], active: ['run_1'], done: [] }],

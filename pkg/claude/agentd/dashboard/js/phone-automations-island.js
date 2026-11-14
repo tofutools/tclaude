@@ -418,7 +418,7 @@ export function PhoneRunsApp({ activeTab = dashboardState.activeTab, snapshot = 
   return html`<div class="phone-auto">
     <${AutomationChips} snapshot=${snapshot.value} active=${PROCESSES_SUBTAB} onSelect=${select}
       waiting=${gateItems(context.context.value).length} />
-    <${RunsList} source=${context} desktopSite=${desktopSite} onOpen=${(id) => { globalThis.scrollTo?.(0, 0); setRunId(id); }} />
+    <${RunsList} source=${context} desktopSite=${desktopSite} nameOf=${(id) => companionAgents(snapshot.value).get(id)?.name || ''} onOpen=${(id) => { globalThis.scrollTo?.(0, 0); setRunId(id); }} />
   </div>`;
 }
 

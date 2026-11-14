@@ -579,3 +579,5 @@
 :root[data-layout="phone"] .phone-gate .grf-decide textarea { width: 100%; font-size: 16px; }
 :root[data-layout="phone"] .phone-gate .grf-verdicts { display: flex; gap: 8px; margin-top: 8px; }
 :root[data-layout="phone"] .phone-gate .grf-verdicts .ui-btn { flex: 1; min-height: 42px; }
+:root[data-layout="phone"] .phone-run-wait { margin: 8px 0 12px; color: var(--ui-warn-text); }
+:root[data-layout="phone"] .phone-run-wait .phone-desktop-only { margin-top: 8px; }
