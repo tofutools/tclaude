@@ -930,9 +930,10 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const boardRef = useRef(null);
   const boardNode = group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
   useAgentOnTask(boardRef, group, boardNode, [...tasks, ...(entry.closed || [])], actions);
-  const queue = tasks.filter((task) => task.stage !== 'idea' && shows(task));
+  // A parked task (the backlog, tk_5d2547b0) is not in the list.
+  const queue = tasks.filter((task) => task.stage !== 'idea' && task.stage !== 'backlog' && shows(task));
   const ideas = tasks.filter((task) => task.stage === 'idea' && shows(task));
-  const filtered = tasks.length - queue.length - ideas.length;
+  const filtered = tasks.length - tasks.filter((task) => task.stage === 'backlog').length - queue.length - ideas.length;
   // Against the whole entry: the drawn one leaves out the strip's epics and
   // what the Epic filter hides, which are on the board, not past its cap.
   const more = (full.counts?.live || 0) - (full.tasks || []).length;

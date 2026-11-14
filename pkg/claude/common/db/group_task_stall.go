@@ -125,16 +125,18 @@ func MarkGroupTaskStalled(id, assignee string, assignedAt time.Time, detail stri
 	return true, tx.Commit()
 }
 
-// CountBlockedGroupTasks is the number of blocked tasks per group id.
+// CountBlockedGroupTasks is the number of blocked tasks per group id, the
+// parked ones (backlog) left out: they wait on nobody now.
 func CountBlockedGroupTasks() (map[int64]int, error) {
-	return countGroupTasksWhere(`status = 'blocked'`)
+	return countGroupTasksWhere(`status = 'blocked' AND stage <> 'backlog'`)
 }
 
 // CountOperatorGroupTasks counts the live (open or blocked) tasks the
 // operator holds, per group id (tcl-p4t78f): waiting on the operator, in any
-// column (tk_3cb51ce0). Its ideas are left out (CountOperatorGroupTaskIdeas).
+// column (tk_3cb51ce0). Its ideas (CountOperatorGroupTaskIdeas) and its
+// parked tasks (backlog, never started) are left out.
 func CountOperatorGroupTasks() (map[int64]int, error) {
-	return countGroupTasksWhere(`status IN ('open', 'blocked') AND assignee_kind = 'operator' AND NOT (stage = 'idea' AND started_at IS NULL)`)
+	return countGroupTasksWhere(`status IN ('open', 'blocked') AND assignee_kind = 'operator' AND NOT (stage IN ('idea','backlog') AND started_at IS NULL)`)
 }
 
 func countGroupTasksWhere(where string) (map[int64]int, error) {

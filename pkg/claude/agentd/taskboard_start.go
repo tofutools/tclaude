@@ -14,7 +14,7 @@ import (
 // task without starting it: an idea to triage, or queued in next. It is in
 // progress only once started.
 
-// POST /v1/taskboard/tasks/{id}/start {"start": true|false, "stage": "idea"|"next"}
+// POST /v1/taskboard/tasks/{id}/start {"start": true|false, "stage": "backlog"|"idea"|"next"}
 // — start a task its assignee holds (the default), or put a started one back
 // to be held in stage (its own stage when omitted). The holder's action: the
 // assignee itself under taskboard.own, anyone else under taskboard.assign.
@@ -102,12 +102,15 @@ func handleTaskboardStart(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 // taskboardHeldNote is the light mail an agent gets for a task assigned to
 // it without being started: an idea to triage, or one queued for it.
 func taskboardHeldNote(g *db.AgentGroup, t *db.GroupTask, by string) (subject, text string) {
-	what, next := "queued for you", "Start it when you get to it"
-	if t.Stage == db.GroupTaskStageIdea {
+	what, next, where := "queued for you", "Start it when you get to it", "in your lane"
+	switch t.Stage {
+	case db.GroupTaskStageIdea:
 		what, next = "an idea for you to triage", "Start it, drop it, or give it back"
+	case db.GroupTaskStageBacklog:
+		what, next, where = "parked for you", "Nothing to do now; when it is time", "in the backlog"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s put task %s %q in %s in your lane, %s. It is not started.\n", by, t.ID, t.Title, g.Name, what)
+	fmt.Fprintf(&b, "%s put task %s %q in %s %s, %s. It is not started.\n", by, t.ID, t.Title, g.Name, where, what)
 	fmt.Fprintf(&b, "\n%s:\n", next)
 	fmt.Fprintf(&b, "Show it:     tclaude agent taskboard show %s\n", t.ID)
 	fmt.Fprintf(&b, "Start it:    tclaude agent taskboard start %s\n", t.ID)

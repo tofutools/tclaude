@@ -24,7 +24,7 @@ The group's Task board is the short-term view of what is happening now and next 
 ## The loop
 
 ```bash
-tclaude agent taskboard ls                 # your group's board: the queue (next), then ideas
+tclaude agent taskboard ls                 # your group's board: the queue (next), then ideas (--backlog: the parked tasks too)
 tclaude agent taskboard ls --mine          # the tasks assigned to you, in every group
 tclaude agent taskboard show tk_1a2b3c4d   # brief, ref, dependencies, who holds it, and its dashboard link
 tclaude agent taskboard take tk_1a2b3c4d   # take an open, unassigned task yourself (an idea is promoted)
@@ -155,7 +155,8 @@ tclaude agent taskboard edit tk_… --resolve-ref   # link a Linear (or awb) ref
 tclaude agent taskboard add <group> "title" --assignee <agent>      # starts in progress (assigned); --blocked "why" starts blocked; --done logs finished work
 tclaude agent taskboard attach tk_… <file>…   ;   detach tk_… <name>   # at most 10 files, 4 MiB each
 tclaude agent taskboard move tk_… --top | --before tk_… | --after tk_…
-tclaude agent taskboard promote tk_…   ;   tclaude agent taskboard demote tk_…
+tclaude agent taskboard promote tk_…   ;   tclaude agent taskboard demote tk_…   # one step: backlog ⇄ idea ⇄ next
+tclaude agent taskboard backlog tk_…   ;   move tk_… --stage idea   # park a task, and bring it back
 tclaude agent taskboard block tk_… --reason "waiting on review"   ;   unblock tk_…
 tclaude agent taskboard drop tk_… --reason "parked in awb"
 tclaude agent taskboard reopen tk_… [--next|--idea] [--assignee <agent>|--unassign]   # a done task needs more work
@@ -192,6 +193,26 @@ With `taskboard.write`, new tasks land unassigned in the ideas unless you pass
 `--next` (or `--mine` / `--assignee`). Keep the board short.
 When something will not happen soon, make sure the tracker has it, then
 `drop` it.
+
+### Deferring: the backlog
+
+The backlog is a stage before the ideas, for work that is deliberately
+deferred. Use it when a task waits on time, not on work: a later release,
+a migration window, or "after the refactor lands". A parked task is never
+started, queued or nudged. It is in no lane, and a plain `ls` hides it
+behind a `+N in backlog` line.
+
+```bash
+tclaude agent taskboard backlog tk_…              # park it (move --stage backlog does the same)
+tclaude agent taskboard add <group> "…" --backlog  # capture it parked
+tclaude agent taskboard ls <group> --backlog       # see it
+tclaude agent taskboard promote tk_…              # back to the ideas (or move --stage idea|next)
+```
+
+Parking a started task holds it: it keeps its assignee, not started. With
+`taskboard.write` you may defer any task. Under `taskboard.own` you may defer
+only your own. A task that waits on something outside the board (a review, an
+answer) is `block`ed, not parked. Work off the board for good is `drop`ped.
 
 ### When you are asked for tasks
 

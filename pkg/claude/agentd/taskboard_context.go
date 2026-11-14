@@ -36,23 +36,27 @@ const (
 // carries the assignment and the last report.
 type taskboardContextTask = taskboardTaskView
 
-// taskboardCounts are a board's counts. Live is every open or blocked task;
+// taskboardCounts are a board's counts. Live is every open or blocked task
+// not parked in the backlog;
 // the stage buckets split the open ones: Stalled is assigned to an agent idle
 // past taskboard.idle_grace without reporting, InProgress is the other
 // started ones (WaitingOnYou the operator's, started or queued for it), Next
 // and Ideas are the rest in that stage, unassigned or held by an agent
-// (IdeasForYou the operator's ideas). Queued (open with an unmet dependency)
-// overlaps the others. NeedsYou is WaitingOnYou: what needs the operator is
-// what is assigned to it (tk_3cb51ce0). A blocked or stalled task is only
-// that, not the operator's to act on.
+// (IdeasForYou the operator's ideas). Backlog counts the parked ones apart,
+// outside Live, blocked or not: they wait on nobody now. Queued (open with an
+// unmet dependency) overlaps the others. NeedsYou is WaitingOnYou: what needs
+// the operator is what is assigned to it (tk_3cb51ce0). A blocked or stalled
+// task is only that, not the operator's to act on.
 type taskboardCounts struct {
 	Live       int `json:"live"`
 	NeedsYou   int `json:"needs_you"`
 	InProgress int `json:"in_progress"`
 	Next       int `json:"next"`
 	Ideas      int `json:"ideas"`
-	Blocked    int `json:"blocked"`
-	Stalled    int `json:"stalled"`
+	// Backlog counts the tasks parked in the backlog (tk_5d2547b0).
+	Backlog int `json:"backlog"`
+	Blocked int `json:"blocked"`
+	Stalled int `json:"stalled"`
 	// WaitingOnYou counts the live tasks assigned to the operator (a blocked
 	// one counts in Blocked too), and the open questions on the other live
 	// tasks; NeedsYou is the same count.
@@ -243,13 +247,17 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 	}
 	entry.BuiltinColumns = taskboardBuiltinColumnStates(g)
 	for _, v := range liveViews {
-		entry.Counts.Live++
+		if v.Stage != db.GroupTaskStageBacklog {
+			entry.Counts.Live++
+		}
 		i, inColumn := colAt[v.Column]
 		// A task the operator holds waits on it in any column, blocked
-		// too (tk_3cb51ce0); its ideas to triage do not.
-		operatorIdea := v.Held && v.Stage == db.GroupTaskStageIdea
+		// too (tk_3cb51ce0); its ideas to triage and its parked tasks do not.
+		operatorIdea := v.Held && (v.Stage == db.GroupTaskStageIdea || v.Stage == db.GroupTaskStageBacklog)
 		operatorWaits := v.Assignee != nil && v.Assignee.Operator && !operatorIdea
 		switch {
+		case v.Stage == db.GroupTaskStageBacklog:
+			entry.Counts.Backlog++
 		case v.Status == db.GroupTaskBlocked:
 			entry.Counts.Blocked++
 			if operatorWaits {
@@ -279,7 +287,7 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 			entry.Counts.WaitingOnYou += v.OpenQuestions
 			entry.Counts.NeedsYou += v.OpenQuestions
 		}
-		if v.Queued {
+		if v.Queued && v.Stage != db.GroupTaskStageBacklog {
 			entry.Counts.Queued++
 		}
 	}

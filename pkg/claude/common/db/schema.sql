@@ -661,6 +661,11 @@ CREATE TRIGGER external_steward_retired
 
 CREATE INDEX idx_agents_active ON agents(agent_id) WHERE retired_at IS NULL;
 
+CREATE TRIGGER collab_drawing_board_sessions_agent_retired
+ AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
+ DELETE FROM collab_drawing_board_sessions WHERE agent_id = NEW.agent_id;
+END;
+
 CREATE TRIGGER group_tasks_unassign_on_retire
 		AFTER UPDATE OF retired_at ON agents
 		WHEN NEW.retired_at IS NOT NULL AND OLD.retired_at IS NULL
@@ -671,11 +676,6 @@ CREATE TRIGGER group_tasks_unassign_on_retire
 			UPDATE group_tasks SET assignee_id = NULL, assigned_by = '', assigned_at = NULL, updated_at = NEW.retired_at
 				WHERE assignee_id = NEW.agent_id AND status IN ('open','blocked');
 		END;
-
-CREATE TRIGGER collab_drawing_board_sessions_agent_retired
- AFTER UPDATE OF retired_at ON agents WHEN NEW.retired_at IS NOT NULL BEGIN
- DELETE FROM collab_drawing_board_sessions WHERE agent_id = NEW.agent_id;
-END;
 
 CREATE TABLE "agent_conversations" (
 			conv_id   TEXT PRIMARY KEY,
@@ -2387,80 +2387,6 @@ CREATE TABLE sandbox_profile_peer_owners (
 			peer       TEXT NOT NULL
 		);
 
-CREATE TABLE group_tasks (
-			id           TEXT PRIMARY KEY,
-			group_id     INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
-			title        TEXT NOT NULL,
-			body         TEXT NOT NULL DEFAULT '',
-			stage        TEXT NOT NULL CHECK(stage IN ('idea','next')),
-			status       TEXT NOT NULL CHECK(status IN ('open','blocked','done','dropped')),
-			rank         TEXT NOT NULL,
-			block_reason TEXT NOT NULL DEFAULT '',
-			ref_kind     TEXT NOT NULL DEFAULT '' CHECK(ref_kind IN ('','awb','linear','github','url')),
-			ref_url      TEXT NOT NULL DEFAULT '',
-			ref_label    TEXT NOT NULL DEFAULT '',
-			assignee_id  TEXT REFERENCES agents(agent_id) ON DELETE SET NULL,
-			assigned_by  TEXT NOT NULL DEFAULT '',
-			assigned_at  INTEGER,
-			outcome      TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','succeeded','failed')),
-			outcome_note TEXT NOT NULL DEFAULT '',
-			failures     INTEGER NOT NULL DEFAULT 0,
-			created_by   TEXT NOT NULL,
-			created_at   INTEGER NOT NULL,
-			updated_at   INTEGER NOT NULL,
-			closed_at    INTEGER,
-			archived_at  INTEGER
-		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '', more_refs TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '' CHECK(kind IN ('','epic')), parent_id TEXT REFERENCES group_tasks(id) ON DELETE SET NULL, close_suggested_at INTEGER, close_nudged INTEGER NOT NULL DEFAULT 0, queued_for TEXT NOT NULL DEFAULT '', queued_at INTEGER) STRICT;
-
-CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank);
-
-CREATE INDEX idx_group_tasks_closed ON group_tasks(closed_at) WHERE closed_at IS NOT NULL;
-
-CREATE INDEX idx_group_tasks_assignee ON group_tasks(assignee_id) WHERE assignee_id IS NOT NULL;
-
-CREATE INDEX idx_group_tasks_blocked_on ON group_tasks(blocked_on) WHERE blocked_on <> '';
-
-CREATE TRIGGER group_tasks_column_clear
-			AFTER UPDATE OF stage, status, group_id ON group_tasks
-			WHEN NEW.column_slug <> '' AND (NEW.stage <> 'next' OR NEW.status NOT IN ('open','blocked')
-				OR NOT EXISTS (SELECT 1 FROM group_task_columns c WHERE c.group_id = NEW.group_id AND c.slug = NEW.column_slug))
-			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
-
-CREATE TRIGGER group_task_questions_close
-			AFTER UPDATE OF status ON group_tasks
-			WHEN NEW.status IN ('done','dropped') AND OLD.status IN ('open','blocked')
-			BEGIN
-				UPDATE group_task_questions SET state = 'closed', closed_at = COALESCE(NEW.closed_at, NEW.updated_at)
-					WHERE task_id = NEW.id AND state = 'open';
-			END;
-
-CREATE TRIGGER group_tasks_column_cordoned_on_move
-			AFTER UPDATE OF group_id ON group_tasks
-			WHEN NEW.column_slug <> '' AND OLD.group_id <> NEW.group_id AND EXISTS (SELECT 1 FROM group_task_column_states s
-				WHERE s.group_id = NEW.group_id AND s.slug = NEW.column_slug AND s.state = 'cordoned')
-			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
-
-CREATE INDEX idx_group_tasks_status ON group_tasks(status, group_id);
-
-CREATE INDEX idx_group_tasks_history ON group_tasks(group_id, closed_at)
-			WHERE archived_at IS NULL AND status IN ('done','dropped');
-
-CREATE INDEX idx_group_tasks_parent ON group_tasks(parent_id) WHERE parent_id IS NOT NULL;
-
-CREATE INDEX idx_group_tasks_queued ON group_tasks(group_id, queued_at) WHERE queued_for <> '';
-
-CREATE TRIGGER group_tasks_queued_clear
-			AFTER UPDATE OF status, group_id, assignee_id, assignee_kind, started_at, column_slug, stage ON group_tasks
-			WHEN NEW.queued_for <> '' AND (
-				NEW.status NOT IN ('open','blocked')
-				OR NEW.group_id <> OLD.group_id
-				OR NEW.assignee_id IS NOT OLD.assignee_id
-				OR NEW.assignee_kind <> OLD.assignee_kind
-				OR NEW.column_slug <> OLD.column_slug
-				OR NEW.stage = 'idea'
-				OR (NEW.started_at IS NOT NULL) <> (OLD.started_at IS NOT NULL))
-			BEGIN UPDATE group_tasks SET queued_for = '', queued_at = NULL WHERE id = NEW.id; END;
-
 CREATE TABLE group_task_deps (
 			task_id    TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
 			depends_on TEXT NOT NULL REFERENCES group_tasks(id) ON DELETE CASCADE,
@@ -2521,13 +2447,13 @@ CREATE TABLE group_task_columns (
 			PRIMARY KEY (group_id, slug)
 		) STRICT;
 
-CREATE TRIGGER group_task_columns_removed
-			AFTER DELETE ON group_task_columns
-			BEGIN UPDATE group_tasks SET column_slug = '' WHERE group_id = OLD.group_id AND column_slug = OLD.slug; END;
-
 CREATE TRIGGER group_task_columns_removed_state
 			AFTER DELETE ON group_task_columns
 			BEGIN DELETE FROM group_task_column_states WHERE group_id = OLD.group_id AND slug = OLD.slug; END;
+
+CREATE TRIGGER group_task_columns_removed
+			AFTER DELETE ON group_task_columns
+			BEGIN UPDATE group_tasks SET column_slug = '' WHERE group_id = OLD.group_id AND column_slug = OLD.slug; END;
 
 CREATE TRIGGER group_task_columns_removed_queue
 			AFTER DELETE ON group_task_columns
@@ -2578,3 +2504,82 @@ CREATE TABLE group_taskboard_options (
 			updated_by TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER NOT NULL
 		) STRICT;
+
+CREATE TABLE "group_tasks" (
+			id           TEXT PRIMARY KEY,
+			group_id     INTEGER NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+			title        TEXT NOT NULL,
+			body         TEXT NOT NULL DEFAULT '',
+			stage        TEXT NOT NULL CHECK(stage IN ('backlog','idea','next')),
+			status       TEXT NOT NULL CHECK(status IN ('open','blocked','done','dropped')),
+			rank         TEXT NOT NULL,
+			block_reason TEXT NOT NULL DEFAULT '',
+			ref_kind     TEXT NOT NULL DEFAULT '' CHECK(ref_kind IN ('','awb','linear','github','url')),
+			ref_url      TEXT NOT NULL DEFAULT '',
+			ref_label    TEXT NOT NULL DEFAULT '',
+			assignee_id  TEXT REFERENCES agents(agent_id) ON DELETE SET NULL,
+			assigned_by  TEXT NOT NULL DEFAULT '',
+			assigned_at  INTEGER,
+			outcome      TEXT NOT NULL DEFAULT '' CHECK(outcome IN ('','succeeded','failed')),
+			outcome_note TEXT NOT NULL DEFAULT '',
+			failures     INTEGER NOT NULL DEFAULT 0,
+			created_by   TEXT NOT NULL,
+			created_at   INTEGER NOT NULL,
+			updated_at   INTEGER NOT NULL,
+			closed_at    INTEGER,
+			archived_at  INTEGER
+		, assignee_kind TEXT NOT NULL DEFAULT '' CHECK(assignee_kind IN ('','operator')), operator_request TEXT NOT NULL DEFAULT '', blocked_on TEXT NOT NULL DEFAULT '', started_at INTEGER, column_slug TEXT NOT NULL DEFAULT '', more_refs TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '' CHECK(kind IN ('','epic')), parent_id TEXT REFERENCES group_tasks(id) ON DELETE SET NULL, close_suggested_at INTEGER, close_nudged INTEGER NOT NULL DEFAULT 0, queued_for TEXT NOT NULL DEFAULT '', queued_at INTEGER) STRICT;
+
+CREATE INDEX idx_group_tasks_group ON group_tasks(group_id, status, stage, rank);
+
+CREATE INDEX idx_group_tasks_closed ON group_tasks(closed_at) WHERE closed_at IS NOT NULL;
+
+CREATE INDEX idx_group_tasks_assignee ON group_tasks(assignee_id) WHERE assignee_id IS NOT NULL;
+
+CREATE INDEX idx_group_tasks_blocked_on ON group_tasks(blocked_on) WHERE blocked_on <> '';
+
+CREATE INDEX idx_group_tasks_status ON group_tasks(status, group_id);
+
+CREATE INDEX idx_group_tasks_history ON group_tasks(group_id, closed_at)
+			WHERE archived_at IS NULL AND status IN ('done','dropped');
+
+CREATE INDEX idx_group_tasks_parent ON group_tasks(parent_id) WHERE parent_id IS NOT NULL;
+
+CREATE INDEX idx_group_tasks_queued ON group_tasks(group_id, queued_at) WHERE queued_for <> '';
+
+CREATE TRIGGER group_tasks_column_clear
+			AFTER UPDATE OF stage, status, group_id ON group_tasks
+			WHEN NEW.column_slug <> '' AND (NEW.stage <> 'next' OR NEW.status NOT IN ('open','blocked')
+				OR NOT EXISTS (SELECT 1 FROM group_task_columns c WHERE c.group_id = NEW.group_id AND c.slug = NEW.column_slug))
+			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
+
+CREATE TRIGGER group_task_questions_close
+			AFTER UPDATE OF status ON group_tasks
+			WHEN NEW.status IN ('done','dropped') AND OLD.status IN ('open','blocked')
+			BEGIN
+				UPDATE group_task_questions SET state = 'closed', closed_at = COALESCE(NEW.closed_at, NEW.updated_at)
+					WHERE task_id = NEW.id AND state = 'open';
+			END;
+
+CREATE TRIGGER group_tasks_column_cordoned_on_move
+			AFTER UPDATE OF group_id ON group_tasks
+			WHEN NEW.column_slug <> '' AND OLD.group_id <> NEW.group_id AND EXISTS (SELECT 1 FROM group_task_column_states s
+				WHERE s.group_id = NEW.group_id AND s.slug = NEW.column_slug AND s.state = 'cordoned')
+			BEGIN UPDATE group_tasks SET column_slug = '' WHERE id = NEW.id; END;
+
+CREATE TRIGGER group_tasks_queued_clear
+			AFTER UPDATE OF status, group_id, assignee_id, assignee_kind, started_at, column_slug, stage ON group_tasks
+			WHEN NEW.queued_for <> '' AND (
+				NEW.status NOT IN ('open','blocked')
+				OR NEW.group_id <> OLD.group_id
+				OR NEW.assignee_id IS NOT OLD.assignee_id
+				OR NEW.assignee_kind <> OLD.assignee_kind
+				OR NEW.column_slug <> OLD.column_slug
+				OR NEW.stage IN ('idea','backlog')
+				OR (NEW.started_at IS NOT NULL) <> (OLD.started_at IS NOT NULL))
+			BEGIN UPDATE group_tasks SET queued_for = '', queued_at = NULL WHERE id = NEW.id; END;
+
+CREATE TRIGGER group_tasks_backlog_unstarted
+			AFTER UPDATE OF stage, started_at ON group_tasks
+			WHEN NEW.stage = 'backlog' AND NEW.started_at IS NOT NULL
+			BEGIN UPDATE group_tasks SET started_at = NULL WHERE id = NEW.id; END;

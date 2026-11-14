@@ -55,6 +55,8 @@ func checkNewGroupTaskKind(in NewGroupTask, status string) error {
 		return taskConflict("invalid_arg", "an epic has no assignee; its children do")
 	case in.Column != "":
 		return taskConflict("invalid_arg", "an epic sits in no column")
+	case in.Stage == GroupTaskStageBacklog:
+		return taskConflict("invalid_arg", "an epic is not parked; park its tasks")
 	case in.Question != nil:
 		return taskConflict("invalid_arg", "an epic is not a question")
 	case in.Blocks != "":
@@ -227,6 +229,8 @@ type GroupTaskEpicProgress struct {
 	Columns  map[string]int `json:"columns,omitempty"`
 	Next     int            `json:"next"`
 	Ideas    int            `json:"ideas"`
+	// Backlog counts the open children parked in the backlog: not started.
+	Backlog int `json:"backlog,omitempty"`
 }
 
 // GroupTaskEpicProgresses returns the progress of each of the given epics
@@ -273,6 +277,9 @@ func GroupTaskEpicProgresses(ids []string) (map[string]*GroupTaskEpicProgress, e
 			switch {
 			case status == GroupTaskDone:
 				p.Done += n
+			case stage == GroupTaskStageBacklog:
+				// Parked, blocked or not: not started.
+				p.Backlog += n
 			case status == GroupTaskBlocked:
 				p.Blocked += n
 			case column != "":
@@ -310,7 +317,7 @@ func ListGroupTaskChildren(epicID string) ([]*GroupTask, error) {
 	}
 	tasks, err := queryRows(d, scanGroupTask, `SELECT `+groupTaskCols+` FROM group_tasks WHERE parent_id = ?
 		ORDER BY CASE WHEN status IN ('open','blocked') THEN 0 ELSE 1 END,
-			CASE WHEN status IN ('open','blocked') THEN CASE stage WHEN 'next' THEN 0 ELSE 1 END ELSE 0 END,
+			CASE WHEN status IN ('open','blocked') THEN CASE stage WHEN 'next' THEN 0 WHEN 'idea' THEN 1 ELSE 2 END ELSE 0 END,
 			CASE WHEN status IN ('open','blocked') THEN rank END, closed_at DESC, id`, epicID)
 	if err != nil {
 		return nil, err
