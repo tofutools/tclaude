@@ -25,7 +25,7 @@ import { messageFileSource } from './attachment-source.js';
 import { MarkdownDocument } from './markdown-document.js';
 import { DialogResizer, useDialogResize } from './dialog-resize.js';
 import {
-  ViewerDisplayButtons, ZOOM_STEP, clamp, useViewerDisplay, useZoomGestures,
+  ViewerDisplayButtons, ZOOM_STEP, clamp, useTouchZoom, useViewerDisplay, useZoomGestures,
 } from './viewer-controls.js';
 
 const html = htm.bind(h);
@@ -186,6 +186,14 @@ export function MarkdownViewer({ files, attachment, siblings, surface = 'attachm
       else if (action === 'out') zoomText((value) => value / ZOOM_STEP);
       else zoomText(() => 1);
     },
+  });
+
+  // A pinch sizes the text about the fingers; one finger scrolls natively.
+  useTouchZoom({
+    targetRef: stageRef,
+    enabled: viewerOpen,
+    shouldHandle: topmost,
+    onZoom: (factor, point) => zoomText((value) => value * factor, point),
   });
 
   // A document the caller did not hand over is read when the viewer opens.

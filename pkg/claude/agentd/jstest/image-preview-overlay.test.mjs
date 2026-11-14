@@ -210,3 +210,113 @@ test('the viewer can be maximized to the window', async (t) => {
   assert.equal(dialog.getAttribute('data-display'), 'normal');
   await mounted.unmount();
 });
+
+// touch dispatches a touch event at the stage: touches are the fingers still
+// down after it, changed the ones it is about, as [x, y] client points.
+// elsewhere adds fingers that are down outside the target; cancelable false
+// is a move the browser has already committed to a native scroll.
+function touch(harness, target, type, { touches = [], changed = touches, elsewhere = [], at = 0, cancelable = true } = {}) {
+  const event = new harness.window.Event(type, { bubbles: true, cancelable });
+  const list = (points) => points.map(([clientX, clientY], identifier) => ({ clientX, clientY, identifier }));
+  Object.defineProperty(event, 'touches', { value: list([...touches, ...elsewhere]) });
+  Object.defineProperty(event, 'targetTouches', { value: list(touches) });
+  Object.defineProperty(event, 'changedTouches', { value: list(changed) });
+  Object.defineProperty(event, 'timeStamp', { value: at });
+  target.dispatchEvent(event);
+  return event;
+}
+
+test('on a touch screen a pinch zooms the image and a double tap toggles fit', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mounted, dialog } = await openLoadedPreview(t, harness);
+  const stage = dialog.querySelector('.image-preview-stage');
+  assert.equal(zoomLabel(dialog), '100%');
+
+  let move;
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[100, 100], [140, 100]], at: 0 });
+    move = touch(harness, stage, 'touchmove', { touches: [[80, 100], [160, 100]], at: 16 });
+  });
+  assert.equal(move.defaultPrevented, true, 'the browser does not also zoom the page');
+  assert.equal(zoomLabel(dialog), '200%', 'fingers twice as far apart double the scale');
+  await harness.act(() => {
+    touch(harness, stage, 'touchmove', { touches: [[100, 100], [140, 100]], at: 32 });
+    touch(harness, stage, 'touchend', { touches: [], changed: [[100, 100], [140, 100]], at: 48 });
+  });
+  assert.equal(zoomLabel(dialog), '100%', 'each move applies its ratio to the last one');
+
+  let oneFinger;
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[50, 50]], at: 1000 });
+    oneFinger = touch(harness, stage, 'touchmove', { touches: [[10, 10]], at: 1016 });
+    touch(harness, stage, 'touchend', { changed: [[10, 10]], at: 1032 });
+  });
+  assert.equal(oneFinger.defaultPrevented, false, 'one finger is left to native scrolling');
+  assert.equal(zoomLabel(dialog), '100%');
+
+  const fit = [...dialog.querySelectorAll('.image-preview-footer button')].find((b) => b.textContent === 'Fit');
+  await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '+' }); });
+  assert.equal(fit.getAttribute('aria-pressed'), 'false');
+  let second;
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[60, 60]], at: 2000 });
+    touch(harness, stage, 'touchend', { changed: [[60, 60]], at: 2050 });
+    touch(harness, stage, 'touchstart', { touches: [[64, 62]], at: 2200 });
+    second = touch(harness, stage, 'touchend', { changed: [[64, 62]], at: 2250 });
+  });
+  assert.equal(fit.getAttribute('aria-pressed'), 'true', 'a double tap on a zoomed image returns to fit');
+  assert.equal(second.defaultPrevented, true, 'no synthesized dblclick toggles it back');
+
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[60, 60]], at: 3000 });
+    touch(harness, stage, 'touchend', { changed: [[60, 60]], at: 3050 });
+    touch(harness, stage, 'touchstart', { touches: [[60, 60]], at: 3500 });
+    touch(harness, stage, 'touchend', { changed: [[60, 60]], at: 3550 });
+  });
+  assert.equal(fit.getAttribute('aria-pressed'), 'true', 'two slow taps are not a double tap');
+  await mounted.unmount();
+});
+
+test('iOS Safari\'s gesture events do not zoom a touch pinch a second time', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mounted, dialog } = await openLoadedPreview(t, harness);
+  const stage = dialog.querySelector('.image-preview-stage');
+  let gesture;
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[100, 100], [140, 100]], at: 0 });
+    harness.fireEvent(stage, 'gesturestart', { scale: 1 });
+    touch(harness, stage, 'touchmove', { touches: [[80, 100], [160, 100]], at: 16 });
+    gesture = harness.fireEvent(stage, 'gesturechange', { scale: 2 });
+    touch(harness, stage, 'touchend', { touches: [], changed: [[80, 100], [160, 100]], at: 32 });
+    harness.fireEvent(stage, 'gestureend', { scale: 2 });
+  });
+  assert.equal(zoomLabel(dialog), '200%', 'one pinch, one zoom');
+  assert.equal(gesture.defaultPrevented, true, 'Safari still does not zoom the page');
+  await harness.act(() => {
+    harness.fireEvent(dialog, 'gesturestart', { scale: 1 });
+    harness.fireEvent(dialog, 'gesturechange', { scale: 0.5 });
+  });
+  assert.equal(zoomLabel(dialog), '100%', 'a trackpad pinch (no fingers down) still zooms');
+  await mounted.unmount();
+});
+
+test('a touch pinch leaves a committed scroll alone and ignores fingers off the stage', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mounted, dialog } = await openLoadedPreview(t, harness);
+  const stage = dialog.querySelector('.image-preview-stage');
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[100, 100], [140, 100]], at: 0 });
+    touch(harness, stage, 'touchmove', { touches: [[80, 100], [160, 100]], at: 16, cancelable: false });
+    touch(harness, stage, 'touchmove', { touches: [[60, 100], [180, 100]], at: 32 });
+    touch(harness, stage, 'touchend', { touches: [], changed: [[60, 100], [180, 100]], at: 48 });
+  });
+  assert.equal(zoomLabel(dialog), '100%', 'the second finger joined a native scroll: no zoom for that touch');
+
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[100, 100]], elsewhere: [[10, 10]], at: 1000 });
+    touch(harness, stage, 'touchmove', { touches: [[160, 100]], elsewhere: [[10, 10]], at: 1016 });
+    touch(harness, stage, 'touchend', { changed: [[160, 100]], elsewhere: [[10, 10]], at: 1032 });
+  });
+  assert.equal(zoomLabel(dialog), '100%', 'a thumb resting on the header does not make a drag a pinch');
+  await mounted.unmount();
+});

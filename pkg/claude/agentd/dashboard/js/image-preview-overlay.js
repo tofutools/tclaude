@@ -5,7 +5,7 @@ import { useDialogFocus } from './dialog-focus.js';
 import { isTopmostOverlay } from './overlay-stack.js';
 import { DialogResizer, useDialogResize } from './dialog-resize.js';
 import {
-  ViewerDisplayButtons, ZOOM_STEP, clamp, useViewerDisplay, useZoomGestures,
+  ViewerDisplayButtons, ZOOM_STEP, clamp, useTouchZoom, useViewerDisplay, useZoomGestures,
 } from './viewer-controls.js';
 
 import { VideoPoster, PlayerState, formatDuration } from './video-preview-content.js';
@@ -206,6 +206,18 @@ export function MediaViewer({ source, attachment: launcherAttachment, siblings =
     },
   });
 
+  // A pinch zooms about the fingers; a double tap toggles the zoom as a
+  // double click on the image does (see toggleZoomAt below), anywhere on the
+  // stage, since a fitted image can be a small target. One finger scrolls
+  // the stage natively.
+  useTouchZoom({
+    targetRef: stageRef,
+    enabled: open && !video && loadState === 'ready',
+    shouldHandle: topmost,
+    onZoom: (factor, point) => zoomTo((value) => value * factor, point),
+    onDoubleTap: (point) => toggleZoomAt(point),
+  });
+
   const navigate = (step) => {
     if (items.length < 2) return;
     setSelected((Math.max(0, index) + step + items.length) % items.length);
@@ -244,10 +256,12 @@ export function MediaViewer({ source, attachment: launcherAttachment, siblings =
 
   // Double-click toggles between fit and a closer look at the clicked point:
   // actual pixels for an image that fit had to shrink, double size otherwise.
-  const onImageDoubleClick = (event) => {
-    const point = { x: event.clientX, y: event.clientY };
+  const toggleZoomAt = (point) => {
     if (scale !== null) zoomTo('fit', point);
     else zoomTo(() => (fitScale < 1 ? 1 : fitScale * 2), point);
+  };
+  const onImageDoubleClick = (event) => {
+    toggleZoomAt({ x: event.clientX, y: event.clientY });
   };
 
   // Drag to pan with the mouse once the image overflows the stage. Touch and

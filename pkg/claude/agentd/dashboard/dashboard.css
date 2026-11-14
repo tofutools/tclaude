@@ -2120,6 +2120,10 @@ body.slop .attachment-preview-position { color: #c9a86b; }
   background-position: 0 0, 0 12px, 12px -12px, -12px 0;
   background-size: 24px 24px;
 }
+/* Touch: the viewer pinch-zooms and double-tap-zooms itself (viewer-controls.js
+   useTouchZoom), so the browser keeps only one-finger panning over the stage
+   and never zooms the page under the viewer. No effect on mouse input. */
+.image-preview-stage:not(.video-preview-stage), .markdown-preview-stage { touch-action: pan-x pan-y; }
 .image-preview-stage[data-pannable="true"] { cursor: grab; }
 .image-preview-stage[data-panning="true"] { cursor: grabbing; user-select: none; }
 /* Auto margins centre the image while it fits and fall back to 0 once it
