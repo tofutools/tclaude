@@ -1,0 +1,33 @@
+/* phone.css — the phone layout's styles.
+
+   Linked only in phone mode, by js/layout-boot.js, after every other sheet.
+   Every rule here is scoped under :root[data-layout="phone"] (a jstest,
+   phone-css.test.mjs, enforces it), so even if this sheet were ever loaded on
+   a desktop page it would match nothing there. Phone-only rules belong here,
+   not in dashboard.css or ui.css; the desktop sheets keep their own narrow-
+   window media queries, which serve narrow desktop windows.
+
+   Breakpoints: the layout attribute is the breakpoint. Inside phone mode use
+   at most the one secondary width query below (a phone held sideways) rather
+   than new ad-hoc values. */
+
+:root[data-layout="phone"] {
+  /* Side gutter and tap target size for phone views. */
+  --phone-gutter: 16px;
+  --phone-tap: 44px;
+  /* Heights of the phone shell's top bar and bottom view switcher. */
+  --phone-bar-h: 52px;
+  --phone-nav-h: 56px;
+  /* Notch and home-indicator insets (the viewport meta sets viewport-fit=cover). */
+  --phone-safe-top: env(safe-area-inset-top, 0px);
+  --phone-safe-right: env(safe-area-inset-right, 0px);
+  --phone-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --phone-safe-left: env(safe-area-inset-left, 0px);
+  /* Phones keep their own text size: no automatic font inflation. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* The one secondary width query in phone mode: a phone held sideways, where a
+   view may show two panes side by side (e.g. message list and message).
+   @media (min-width: 560px) { :root[data-layout="phone"] … { } } */
