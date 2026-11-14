@@ -14,8 +14,8 @@ inputs:
     description: >-
       Which slice to run: all | agentd | jstest | process | sandbox | rest |
       rest-all (rest + process + sandbox in one job).
-      The named shards isolate the measured heavyweights (agentd's ~2.5min
-      serial binary, jstest's 124 Node suites, the process tree's CPU-bound
+      The named shards isolate the measured heavyweights (agentd's large
+      flow-test binary, jstest's 124 Node suites, the process tree's CPU-bound
       packages) and the sandbox packages that modify their environment;
       `rest` is derived by subtracting the named shards' own `go list` output
       from the full package list, so the partition is exact by construction
@@ -112,10 +112,11 @@ runs:
           all) pkgs="./..." ;;
           agentd)
             pkgs="./pkg/claude/agentd"
-            # One test binary holding every daemon flow test. On the 3-core
-            # macOS runner it already runs close to go test's default 10m
-            # per-binary limit, so a slow runner panics the whole package.
-            timeout="-timeout=20m"
+            # One test binary holding every daemon flow test, run as
+            # 2-per-core concurrent processes (scripts/ci/agentd-tests.py),
+            # each a few minutes long. A per-test watchdog (120s) names a
+            # hang long before this per-process backstop is reached.
+            timeout="-timeout=10m"
             ;;
           jstest)
             pkgs="./pkg/claude/agentd/jstest"
@@ -186,12 +187,13 @@ runs:
           pkgs="$selected"
         fi
 
-        # Both platforms run agentd's independent domain processes concurrently
-        # inside this same job; the runner reports each side's failures separately.
+        # agentd runs as several concurrent processes of one test binary,
+        # each over a slice of the test list, with a per-test hang watchdog;
+        # the runner reports each process's failures separately.
         if [ "${{ inputs.shard }}" = agentd ]; then
           python3 scripts/ci/test_agentd_tests.py
           export TCLAUDE_AGENTD_TEST_LOG_DIR="$RUNNER_TEMP/agentd-test-logs"
-          scripts/ci/agentd-tests.sh $race $timeout
+          python3 scripts/ci/agentd-tests.py $race $timeout
           exit 0
         fi
 

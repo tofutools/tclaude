@@ -38,6 +38,9 @@ var agentdTestTmuxBase string
 // package.
 func TestMain(m *testing.M) {
 	hub.RunExecGuardian()
+	if err := applyAgentdTestPartition(); err != nil {
+		panic(fmt.Sprintf("select agentd test partition: %v", err))
+	}
 	cleanupTemplate, err := db.PrepareMigrationTemplateForTest()
 	if err != nil {
 		panic(fmt.Sprintf("prepare flow-test database template: %v", err))
