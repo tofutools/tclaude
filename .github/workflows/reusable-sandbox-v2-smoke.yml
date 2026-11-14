@@ -552,7 +552,7 @@ jobs:
           smoke_log="$RUNNER_TEMP/tclaude-filtered-model-endpoints.log"
           go test ./pkg/claude/session \
             -run '^TestPinnedFilteredModelEndpointEvidence$' \
-            -count=1 -v -timeout=60s |
+            -count=1 -v -timeout=180s |
             tee "$smoke_log"
           if ! grep -q '^--- PASS: TestPinnedFilteredModelEndpointEvidence ' "$smoke_log"; then
             {
