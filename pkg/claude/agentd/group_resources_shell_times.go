@@ -17,7 +17,7 @@ import (
 // stay blank.
 
 // shellTimesTTL bounds how stale a shell's Last may be: a few seconds of a
-// coarse "Nm ago" cell, against one fork per snapshot poll.
+// coarse "Nm ago" cell, against one tmux read per TTL.
 const shellTimesTTL = 5 * time.Second
 
 const shellTimesFormat = "#{session_name}\t#{session_created}\t#{session_activity}\t#{window_activity}"
@@ -27,24 +27,61 @@ type shellTimes struct{ created, activity time.Time }
 type shellTimesCache struct {
 	mu      sync.Mutex
 	now     func() time.Time
+	probe   func() map[string]shellTimes
 	expires time.Time
 	times   map[string]shellTimes
+	// probing is set while a background probe runs, so a burst of stale
+	// reads starts only one.
+	probing bool
+	// inline makes an expired read probe on the caller's goroutine. The
+	// agentd test binary sets it so no probe outlives the flow test that
+	// swapped the tmux runner.
+	inline bool
 }
 
-var shellTimesProbe = &shellTimesCache{now: time.Now}
+var shellTimesProbe = &shellTimesCache{now: time.Now, probe: probeShellTimes}
 
-// get returns the session times, probing tmux when the cached ones are past
-// their TTL. A failed probe is cached too (as no times), so a wedged tmux
-// costs one fork per TTL.
+// get returns the session times. Its caller is the dashboard snapshot poll,
+// so an expired read does not wait for tmux: it serves the last times and
+// starts one background probe. Only the first read, with nothing cached yet,
+// probes inline. A failed probe is cached too (as no times), so a wedged tmux
+// costs one probe per TTL.
 func (c *shellTimesCache) get() map[string]shellTimes {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.times != nil && c.now().Before(c.expires) {
 		return c.times
 	}
-	c.times = probeShellTimes()
-	c.expires = c.now().Add(shellTimesTTL)
+	if c.times == nil || c.inline {
+		c.times = c.probe()
+		c.expires = c.now().Add(shellTimesTTL)
+		return c.times
+	}
+	if !c.probing {
+		c.probing = true
+		go c.refresh()
+	}
 	return c.times
+}
+
+// refresh probes tmux off the poll path and publishes the result. It runs
+// outside any HTTP handler, so a panic is recovered rather than taking the
+// daemon down; the previous times stay and are retried after another TTL.
+func (c *shellTimesCache) refresh() {
+	var times map[string]shellTimes
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("group resources: shell times refresh panicked", "panic", r)
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.probing = false
+		c.expires = c.now().Add(shellTimesTTL)
+		if times != nil {
+			c.times = times
+		}
+	}()
+	times = c.probe()
 }
 
 func probeShellTimes() map[string]shellTimes {

@@ -1,9 +1,64 @@
 package agentd
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
+
+// An expired read serves the last times and probes tmux in the background:
+// the snapshot poll never waits for list-sessions after the first read.
+func TestShellTimesExpiredReadDoesNotWaitForProbe(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Unix(1000, 0)
+	probes := 0
+	release := make(chan struct{})
+	c := &shellTimesCache{
+		now: func() time.Time { mu.Lock(); defer mu.Unlock(); return now },
+		probe: func() map[string]shellTimes {
+			mu.Lock()
+			probes++
+			n := probes
+			mu.Unlock()
+			if n > 1 {
+				<-release
+			}
+			return map[string]shellTimes{"s": {created: time.Unix(int64(n), 0)}}
+		},
+	}
+	if got := c.get()["s"].created; !got.Equal(time.Unix(1, 0)) {
+		t.Fatalf("first read probes inline: got %v", got)
+	}
+	mu.Lock()
+	now = now.Add(2 * shellTimesTTL)
+	mu.Unlock()
+
+	done := make(chan map[string]shellTimes, 1)
+	go func() { done <- c.get() }()
+	select {
+	case got := <-done:
+		if !got["s"].created.Equal(time.Unix(1, 0)) {
+			t.Fatalf("expired read serves the last times: got %v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("expired read blocked on the tmux probe")
+	}
+	c.get() // a read while the probe runs does not start another
+	close(release)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !c.get()["s"].created.Equal(time.Unix(2, 0)) {
+		if time.Now().After(deadline) {
+			t.Fatal("background probe's times were never published")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if probes != 2 {
+		t.Fatalf("probes = %d, want the inline one plus one background one", probes)
+	}
+}
 
 func TestParseShellTimes(t *testing.T) {
 	got := parseShellTimes("tclaude-groupterm-a\t100\t200\t300\n" +
