@@ -22,6 +22,7 @@ import { Button, Input } from './ui-components.js';
 import { RowMenu } from './row-menu.js';
 import { HIDEABLE_BUILTINS, columnStateItems } from './groups-taskboard-colvis.js';
 import { boardNode, openBoardOptions } from './groups-taskboard-options-route.js';
+import { readyMenuItem, useReadyGrouping } from './groups-taskboard-readiness.js';
 
 const html = htm.bind(h);
 
@@ -113,13 +114,15 @@ function optionsItems(column, group, entry, limits) {
 // ColumnHeadMenu is a column head's ⋯: a custom column's rename, move and
 // remove, and any hideable column's hide and cordon items
 // (groups-taskboard-colvis.js), then its limit and the column in the Board
-// options. limits is the head's useLimitDialog.
+// options, and last this viewer's Group by readiness
+// (groups-taskboard-readiness.js). limits is the head's useLimitDialog.
 export function ColumnHeadMenu({ column, columns, group, actions, entry = null, onRename, limits = null }) {
+  const ready = readyMenuItem(column, useReadyGrouping());
   const manage = columnMenuItems({ column, columns, group, actions, onRename });
   // In progress is always shown: its ⋯ has only the limit items.
   const hideable = column.custom || HIDEABLE_BUILTINS.some((b) => b.key === column.key);
   const state = actions?.busy || !hideable ? [] : columnStateItems(column, entry);
-  const items = [...manage, ...state, ...optionsItems(column, group, entry, actions?.busy ? null : limits)];
+  const items = [...manage, ...state, ...optionsItems(column, group, entry, actions?.busy ? null : limits), ...(ready ? [ready] : [])];
   if (!items.length) return null;
   return html`<span class="tb-col-menu"><${RowMenu} label=${`the ${column.label} column`} items=${items} buttonClass="tb-col-more"
     title=${column.custom ? `Rename, move, hide, limit or remove the ${column.label} column` : `More for the ${column.label} column`} /></span>`;

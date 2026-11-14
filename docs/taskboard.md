@@ -1549,6 +1549,7 @@ a CLI verb:
 | *+* in a lanes cell (opens the add menu; the choice starts from the cell) | as the menu's items, with the cell's column and the lane's agent |
 | Drag a row by its ⋮⋮ handle | `move <task> --before … / --after …` |
 | ⋯ *Move to top* / *Move up* / *Move down* / *Move to bottom* on a row or a lanes card, or Alt+Home / Alt+↑ / Alt+↓ / Alt+End on it | `move <task> --before … / --after …`, among the rows or the cell it is in |
+| A column's ⋯ *Group by readiness*, or the List Filter's *group by readiness* ([Grouping by readiness](#grouping-by-readiness)) | none: a view of your own; nothing is written |
 | Drag a queued task onto the Ideas line | `demote <task>` |
 | ✓ *Next* on an idea | `promote <task>` |
 | ⋯ *Block…* (asks the reason in a dialog) / ⋯ *Unblock* | `block <task> --reason …` / `unblock <task>` |
@@ -1990,6 +1991,35 @@ the cell:
 - *From a tracker…* imports into the queue from a Next cell or an
   agent's lane. An import lands in Ideas or Next only, so you assign, block or
   close the tasks on the board afterwards.
+
+#### Grouping by readiness
+
+A column's **⋯ › Group by readiness** draws its cards in three groups, each
+under a small heading: **Ready** (open, nothing left to wait on), then
+**Queued** (an unfinished dependency, shown by its highlighted *after
+tk_…* chip, or in line for a full lane, shown by the ⏳ chip), then
+**Blocked** (blocked, or stalled with its agent).
+Each group keeps the board's order, so a ready card already above the
+queued ones stays where it was; only the queued cards drawn above it move
+down. A column whose cards are all ready shows no headings.
+
+It is a view, and it is yours: nothing is written, the board's order stays
+as it is for agents and other viewers, and a card moves into Ready by itself
+once what it waited on is done. The dashboard remembers it per board and
+column. A grouped column's head says **◧ by readiness**; click it, or
+**⋯ › Show in board order**, to see the board's order again. Every column
+but *Blocked* and *Done this week* can be grouped, the custom columns and the
+Backlog column included, in every lanes mode (by agent, role or subgroup,
+triage, one row and by epic).
+
+While a column is grouped, a card moves within its group: *Move to top* puts
+it above the first card of its group, and a drag onto a card of another
+group says *Grouped by readiness: a card moves within its group* and does
+nothing.
+
+In the List, the Filter's **group by readiness** does the same for each part
+of the list (the queue, or each epic's rows when grouped by epic, the ideas
+and the backlog), with a heading row over each group.
 
 #### Triage and one row
 
