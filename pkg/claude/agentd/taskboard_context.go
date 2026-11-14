@@ -42,7 +42,9 @@ type taskboardContextTask = taskboardTaskView
 // started ones (WaitingOnYou the operator's, started or queued for it), Next
 // and Ideas are the rest in that stage, unassigned or held by an agent
 // (IdeasForYou the operator's ideas). Queued (open with an unmet dependency)
-// overlaps the others. NeedsYou is Blocked plus Stalled plus WaitingOnYou.
+// overlaps the others. NeedsYou is WaitingOnYou: what needs the operator is
+// what is assigned to it (tk_3cb51ce0). A blocked or stalled task is only
+// that, not the operator's to act on.
 type taskboardCounts struct {
 	Live       int `json:"live"`
 	NeedsYou   int `json:"needs_you"`
@@ -52,7 +54,7 @@ type taskboardCounts struct {
 	Blocked    int `json:"blocked"`
 	Stalled    int `json:"stalled"`
 	// WaitingOnYou counts the open tasks assigned to the operator, and the
-	// open questions on the other live tasks; they count in NeedsYou too.
+	// open questions on the other live tasks; NeedsYou is the same count.
 	WaitingOnYou int `json:"waiting_on_you"`
 	// IdeasForYou counts the ideas the operator holds to triage
 	// (tk_3826822a); they are not waiting on it.
@@ -245,10 +247,8 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		switch {
 		case v.Status == db.GroupTaskBlocked:
 			entry.Counts.Blocked++
-			entry.Counts.NeedsYou++
 		case v.Stalled:
 			entry.Counts.Stalled++
-			entry.Counts.NeedsYou++
 		case v.Assignee != nil && v.Assignee.Operator && v.Held && v.Stage == db.GroupTaskStageIdea:
 			entry.Counts.IdeasForYou++
 		case v.Assignee != nil && v.Assignee.Operator:

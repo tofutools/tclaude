@@ -1,5 +1,5 @@
 // groups-taskboard-lanes.js -- the Task board's swim lanes (docs/taskboard.md):
-// the stage columns Ideas → Next → In progress → Blocked · needs you → Done
+// the stage columns Ideas → Next → In progress → Blocked → Done
 // this week, one lane per agent (grouped by role, by subgroup, or not at
 // all) under an Unassigned lane. Every drag is one route, the one its CLI
 // verb uses:
@@ -59,7 +59,7 @@ export const LANE_COLUMNS = [
   { key: 'ideas', label: 'Ideas', wizard: 'Visions' },
   { key: 'next', label: 'Next', wizard: 'Next' },
   { key: 'progress', label: 'In progress', wizard: 'Underway' },
-  { key: 'blocked', label: 'Blocked · needs you', wizard: 'Blocked · needs you' },
+  { key: 'blocked', label: 'Blocked', wizard: 'Blocked' },
   { key: 'done', label: 'Done this week', wizard: 'Fulfilled this week' },
 ];
 

@@ -100,10 +100,11 @@ export function taskboardGroupEntry(context, groupName) {
 }
 
 // taskboardCountParts are the non-zero buckets of a board, in reading order:
-// what needs the operator, what is moving, what is next, what is only an idea.
-// waiting_on_you (the tasks the operator holds) counts in needs_you too; it
-// is its own part, first, and needs you is the rest. who names the operator
-// ('you', or a linked node's operator).
+// what waits on the operator, what is held up, what is moving, what is next,
+// what is only an idea. Only waiting_on_you (the tasks assigned to the
+// operator and the open questions) needs the operator; needs_you is the same
+// count (tk_3cb51ce0). Blocked and stalled are plain counts. who names the
+// operator ('you', or a linked node's operator).
 // columns are the board's custom columns with their counts (the context's
 // per-group columns): each non-empty one is a part after in progress.
 export function taskboardCountParts(counts, who = 'you', columns = []) {
@@ -111,7 +112,8 @@ export function taskboardCountParts(counts, who = 'you', columns = []) {
   const parts = [];
   const waiting = c.waiting_on_you || 0;
   if (waiting) parts.push({ key: 'waiting-on-you', text: `${waiting} waiting on ${who}` });
-  if ((c.needs_you || 0) > waiting) parts.push({ key: 'needs-you', text: `${c.needs_you - waiting} needs you` });
+  if (c.blocked) parts.push({ key: 'blocked', text: `${c.blocked} blocked` });
+  if (c.stalled) parts.push({ key: 'stalled', text: `${c.stalled} stalled` });
   if (c.in_progress) parts.push({ key: 'in-progress', text: `${c.in_progress} in progress` });
   for (const column of columns || []) {
     if (column?.count) parts.push({ key: `column-${column.slug}`, text: `${column.count} ${column.label}` });
@@ -124,7 +126,7 @@ export function taskboardCountParts(counts, who = 'you', columns = []) {
 }
 
 // taskboardCountsText is the folded section's one line:
-// "9 · 1 needs you · 2 in progress · 6 next · 3 ideas".
+// "9 · 1 waiting on you · 1 blocked · 2 in progress · 6 next · 3 ideas".
 export function taskboardCountsText(counts, who = 'you', columns = []) {
   const live = counts?.live || 0;
   if (!live) return counts?.done_this_week ? `0 · ${counts.done_this_week} done this week` : 'empty';

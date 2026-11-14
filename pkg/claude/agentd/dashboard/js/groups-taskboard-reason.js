@@ -26,7 +26,7 @@ const REASON_COPY = Object.freeze({
   block: {
     title: 'Block task', ok: 'Block', busy: 'Blocking…', required: true, danger: false,
     label: 'Block reason', placeholder: 'why is it blocked? (required)',
-    line: 'The reason shows on the card, and the task waits in Blocked · needs you.',
+    line: 'The reason shows on the card, and the task waits in Blocked.',
   },
   drop: {
     title: 'Drop task', ok: 'Drop', busy: 'Dropping…', required: false, danger: true,

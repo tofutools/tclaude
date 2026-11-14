@@ -99,16 +99,17 @@ func TestTaskboardCLIReadsLikeTheDashboard(t *testing.T) {
 	assert.NotEqual(t, 0, rc)
 	assert.Contains(t, out, "  last report: failed — CI image lacks bwrap\n")
 
-	// The summary breaks needs-you down.
+	// The summary counts blocked tasks plainly (tk_3cb51ce0).
 	stdout := new(bytes.Buffer)
 	require.Equal(t, 0, agent.RunTaskboardSummary(false, stdout, new(bytes.Buffer)))
-	assert.Contains(t, stdout.String(), "1 needs you (1 blocked)")
+	assert.Contains(t, stdout.String(), "crew: 4 · 1 blocked · 1 next")
+	assert.NotContains(t, stdout.String(), "needs you")
 
 	// No group, as the operator: every board, its counts and its first rows.
 	h.f.HaveGroup("ops")
 	rc, out, errOut = run("ls")
 	require.Equal(t, 0, rc, errOut)
-	assert.Contains(t, out, "crew: 4 · 1 needs you (1 blocked)")
+	assert.Contains(t, out, "crew: 4 · 1 blocked")
 	assert.Contains(t, out, "ops: 0")
 	assert.Contains(t, out, "One board in full: tclaude agent taskboard ls <group>")
 

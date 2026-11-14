@@ -193,7 +193,7 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   numbered.
 - `ls --all` also lists done and dropped tasks that are not archived yet.
 - `ls --summary` prints one line of counts for every group board you can
-  read, for example `crew: 9 · 2 needs you (1 stalled, 1 blocked) · 2 in progress · 6 next · 3 ideas`.
+  read, for example `crew: 9 · 1 waiting on you · 1 blocked · 1 stalled · 2 in progress · 6 next · 3 ideas`.
   These are the counts the dashboard section shows.
 - If `move --before` or `move --after` names a task in the other stage, the
   moved task is promoted or demoted in the same write. Through the API a
@@ -619,10 +619,10 @@ there changes.
   dashboard. It never stalls.
 - A move to another group of this node keeps the operator as the assignee. A
   move to another node does not carry the assignee, as for any task.
-- **Counts.** An open task the operator holds counts as *waiting on you*, which
-  is part of *needs you*: `ls --summary` prints `2 needs you (1 blocked, 1
-  waiting on you)`, and `tclaude agent fleet` lists the board. The context
-  route's counts carry `waiting_on_you`.
+- **Counts.** An open task the operator holds counts as *waiting on you*:
+  `ls --summary` prints `1 waiting on you`, and `tclaude agent fleet` lists
+  the board. The context route's counts carry `waiting_on_you`, and
+  `needs_you` is the same count.
 
 ### Questions for the operator
 
@@ -807,11 +807,16 @@ stall either. Its agent is waiting on a review or CI, not idling on the work.
 Move the task there when you open its PR. A board that wants a column checked
 all the same lists it in `idle.check_columns`.
 
-Stalled and blocked tasks are what the board needs you for. `ls --summary`, the
-dashboard and the context route count them as *needs you*, and
-`tclaude agent fleet` (the Steward's brief) lists every group whose board has
-any, for example `crew board: 2 tasks need you (1 stalled, 1 blocked)`. The
-brief's JSON carries the same counts per group under `taskboards`.
+A stalled or a blocked task is only that: it does not need you. What needs
+you is what is assigned to you, the tasks given to the operator and the open
+[questions](#questions-for-the-operator), and that shows in your lane
+whatever its column. `ls --summary`, the dashboard and the context route
+count stalled and blocked tasks on their own, and count what is yours as
+*waiting on you* (`waiting_on_you`; the older `needs_you` field is the same
+count). `tclaude agent fleet` (the Steward's brief) raises every group whose
+board has tasks waiting on you, for example `crew board: 2 tasks wait on
+you`. The brief's JSON carries the counts per group, blocked and stalled
+too, under `taskboards`. A stalled task mails its assigner instead (above).
 
 ## Board options
 
@@ -1446,11 +1451,11 @@ the **Quest board**), below its Agents and Resources sections.
   when the board sets `idle.enabled` but `taskboard.idle_grace` is `0`),
   *⏱ idle check on* when the board tunes the check's options, and *✉ 2 messages changed* when the
   board changes the messages it sends. The count's tooltip carries the breakdown, for
-  example `5 · 1 waiting on you · 1 needs you · 1 in progress · 2 next · 1 idea`.
-  *Waiting on you* counts the open tasks assigned to the operator, and
-  the section line shows it as a tag beside the count. *Needs you* counts the
-  blocked and the stalled tasks, and *in progress* counts the other assigned
-  tasks. *Next* and *ideas* count the
+  example `5 · 1 waiting on you · 1 blocked · 1 in progress · 2 next · 1 idea`.
+  *Waiting on you* counts the open tasks assigned to the operator and the
+  open questions, and the section line shows it as a tag beside the count.
+  *Blocked* and *stalled* count those tasks, and *in progress* counts the
+  other assigned tasks. *Next* and *ideas* count the
   unassigned open tasks in each stage.
 - **Open**, the *List* view is a table like the Agents and Resources tables
   above it. It lists the queue in your order, then the Ideas band, then the
@@ -1478,7 +1483,7 @@ the **Quest board**), below its Agents and Resources sections.
   default, and a line under the list says how many tasks the filter hides,
   with *show all*. *Reset* puts the default back. The dashboard remembers the
   filter per group, for you only.
-- The section opens on its own when something needs you. If you fold or open
+- The section opens on its own when something waits on you. If you fold or open
   it yourself, the dashboard remembers that per group.
 
 You can change the board from the section. Each action uses the same route as
@@ -1792,8 +1797,10 @@ per epic ([Epics on the board](#epics-on-the-board)) (*triage* unless you
 pick another). The dashboard remembers both per group, for you only.
 
 The lanes view lays the same board out as a grid. It has five columns: *Ideas*,
-*Next*, *In progress*, *Blocked · needs you* and *Done this week*. *Blocked ·
-needs you* also holds stalled tasks. A board's [custom
+*Next*, *In progress*, *Blocked* and *Done this week*. *Blocked* also holds
+stalled tasks. A blocked task is only blocked; what needs you is what stands
+in your lane (*You*), in any column, with the open questions on other tasks
+as cards in its *In progress*. A board's [custom
 columns](#custom-columns) come after *In progress*, with blue heads; their
 cards say *⏸ no idle alarm* while an agent holds them.
 

@@ -67,7 +67,8 @@ func TestTaskboardOperatorAskBlocksAndUnblocks(t *testing.T) {
 		map[string]any{"title": "other work", "after": []string{op.ID}, "status": "blocked", "block_reason": "CI is red"})
 	other := tbDecodeOperatorTask(t, rec.Code, rec.Body.String(), http.StatusCreated)
 
-	// The context counts it as waiting on you, and needs you.
+	// The context counts it as waiting on you, and needs you; the two
+	// blocked tasks do not need the operator (tk_3cb51ce0).
 	rec = h.call("", http.MethodGet, "/v1/taskboard/context", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	var ctx struct {
@@ -83,7 +84,26 @@ func TestTaskboardOperatorAskBlocksAndUnblocks(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ctx))
 	require.Len(t, ctx.Groups, 1)
 	assert.Equal(t, 1, ctx.Groups[0].Counts.WaitingOnYou)
-	assert.Equal(t, 3, ctx.Groups[0].Counts.NeedsYou, "the operator task and the two blocked ones")
+	assert.Equal(t, 1, ctx.Groups[0].Counts.NeedsYou, "only the operator task")
+
+	// The fleet brief raises the board for the operator task alone.
+	rec = h.call("", http.MethodGet, "/v1/fleet", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var brief struct {
+		Attention []struct {
+			Kind   string `json:"kind"`
+			Title  string `json:"title"`
+			Detail string `json:"detail"`
+		} `json:"attention"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &brief))
+	var line string
+	for _, a := range brief.Attention {
+		if a.Kind == "taskboard" {
+			line = a.Title + " " + a.Detail
+		}
+	}
+	assert.Equal(t, "crew board: 1 task waits on you", line)
 
 	// An agent cannot close the operator's task; the worker who asked
 	// cannot report on it either.

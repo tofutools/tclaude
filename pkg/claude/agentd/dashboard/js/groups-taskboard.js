@@ -1249,15 +1249,15 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const [adding, setAdding] = useState(null);
   const prefs = useViewPrefs(shown.name, listHiddenDefault(entry));
   const epics = useEpicBoard(shown.name, entry);
-  // Once the section has opened on its own (something needed the
-  // operator), it stays open for this page, so clearing the last blocked
-  // task never folds it under a form or the capture box in use. The
+  // Once the section has opened on its own (something waits on the
+  // operator), it stays open for this page, so answering the last question
+  // never folds it under a form or the capture box in use. The
   // operator's own fold or open is remembered and wins as before.
   const autoOpened = useRef(false);
   if (!entry) return null;
   const wizard = isWizardActive();
   const counts = entry.counts || {};
-  if ((counts.needs_you || 0) > 0) autoOpened.current = true;
+  if ((counts.waiting_on_you || 0) > 0) autoOpened.current = true;
   // The views draw the board without its open epics (the strip has them),
   // under the Epic filter.
   const drawn = boardEntry(entry, epics.filter);
