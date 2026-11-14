@@ -387,6 +387,8 @@ export function backlogDrop(task, from, to, { assign = true } = {}) {
   const words = stage === 'idea' ? 'back to ideas' : 'to next';
   if (from.lane === to.lane) {
     if (stage && task.assignee?.agent_id) {
+      // hold is an assign-level write unless the viewer is the assignee.
+      if (!assign) return null;
       return { kind: 'unpark-hold', label: `${words}, not started`, run: (api) => api.hold(task.id, stage) };
     }
     if (stage) return { kind: 'unpark', label: words, run: (api) => api.stage(task.id, stage) };

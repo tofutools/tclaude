@@ -1064,7 +1064,10 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
     ${onHideBacklog && html`<${Button} size="sm" variant="link" class="tb-backlog-band-hide" onClick=${onHideBacklog}>▾ hide<//>`}</td></tr>`;
   // The Lanes view has no Filter: its history is all or nothing.
   const closed = view === 'list' ? (entry.closed || []).filter(shows) : (history ? entry.closed || [] : []);
-  const historyLine = html`<${HistoryLine} entry=${entry} group=${group} actions=${actions} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
+  // The live rows the List draws: the parked ones only while the backlog
+  // is shown.
+  const visibleRows = backlog ? tasks.length : tasks.length - parked.length;
+  const historyLine = html`<${HistoryLine} entry=${entry} group=${group} actions=${actions} open=${history} wizard=${wizard} row=${visibleRows > 0} onToggle=${() => setHistory(!history)} />`;
   // Grouped by epic (the Filter's "group by epic"), the queue is one group
   // per open epic, in the board's order, then No epic: each under a head row
   // that folds it. One level: the ideas and the history stay as they are.
@@ -1076,7 +1079,7 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   epicRows.current = grouped ? { of: (task) => epicOf(task, epicBoard.byId) || NO_EPIC, name: (id) => epicBoard.byId.get(id)?.title || id } : null;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
-  const table = (backlog ? tasks.length : tasks.length - parked.length) ? html`<table class="tb-table ui-table-auto" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
+  const table = visibleRows ? html`<table class="tb-table ui-table-auto" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-ic"></th><th title=${wizard ? 'Quests in the operator\'s order: top is next' : 'Tasks in the operator\'s order: top is next'}>Name</th>
         <th>State</th><th>Last</th><th>Age</th><th>Who</th><th>Ref</th><th>Deps</th><th>Files</th></tr></thead>
       <tbody>
@@ -1123,8 +1126,8 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
     ${view === 'list' && filtered > 0 && html`<div class="tb-more tb-filtered muted" data-tb-filtered=${filtered}>${filtered} ${filtered === 1 ? (wizard ? 'quest' : 'task') : (wizard ? 'quests' : 'tasks')} hidden by the filter ·
       <${Button} size="sm" variant="link" class="tb-filter-reset" onClick=${() => onHidden(hidden.filter((state) => state === 'done' || state === 'dropped'))}>show all<//></div>`}
     ${more > 0 && html`<div class="tb-more muted">+ ${more} more · <code>tclaude agent taskboard ls ${name}</code></div>`}
-    ${(view === 'lanes' || !tasks.length) && historyLine}
-    ${(view === 'lanes' || !tasks.length) && closed.length > 0 && html`<table class="tb-table ui-table-auto tb-closed-table">${COLUMNS}<tbody>
+    ${(view === 'lanes' || !visibleRows) && historyLine}
+    ${(view === 'lanes' || !visibleRows) && closed.length > 0 && html`<table class="tb-table ui-table-auto tb-closed-table">${COLUMNS}<tbody>
       ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
     </tbody></table>`}
   </div><//>`;

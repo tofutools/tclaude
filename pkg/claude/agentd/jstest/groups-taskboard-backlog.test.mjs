@@ -153,4 +153,40 @@ test('Lanes: the Backlog column draws when shown, and its drops map to the CLI v
   assert.deepEqual(await run(backlogDrop(held, { lane: 'agt_b', column: 'backlog' }, { lane: '', column: 'ideas' })), [['unassign', 'tk_h'], ['stage', 'tk_h', 'idea']]);
   assert.deepEqual(await run(backlogDrop(parked, { lane: '', column: 'backlog' }, { lane: 'agt_c', name: 'c', column: 'ideas' })), [['assign', 'tk_p', 'agt_c', { hold: 'idea' }]]);
   assert.equal(backlogDrop(parked, { lane: '', column: 'backlog' }, { lane: 'agt_c', column: 'ideas' }, { assign: false }), null, 'a lane change needs the assign right');
+  assert.equal(backlogDrop(held, { lane: 'agt_b', column: 'backlog' }, { lane: 'agt_b', column: 'next' }, { assign: false }), null, 'holding another\'s task needs the assign right');
+});
+
+test('✎ Edit keeps a parked task parked, and moves one in or out by its Where', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { editPlan, draftOf, setWhere } = await harness.importDashboardModule('js/groups-taskboard-edit.js');
+  const names = (task, draft) => editPlan(task, draft).map((s) => s.name);
+  const parked = row('tk_p', 'p', { stage: 'backlog' });
+  const held = row('tk_h', 'h', { stage: 'backlog', assignee: { agent_id: 'agt_b' }, held: true });
+  assert.equal(draftOf(parked).where, 'backlog');
+  assert.deepEqual(names(parked, { ...draftOf(parked), title: 'renamed' }), ['title']);
+  assert.deepEqual(names(held, { ...draftOf(held), title: 'renamed' }), ['title']);
+  assert.deepEqual(names(parked, setWhere(draftOf(parked), 'idea')), ['back to the ideas']);
+  const open = row('tk_o', 'o');
+  assert.deepEqual(names(open, setWhere(draftOf(open), 'backlog')), ['into the backlog']);
+});
+
+test('List: with the backlog hidden and only parked tasks live, the history still shows', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { TaskboardSection } = await harness.importDashboardModule('js/groups-taskboard.js');
+  const { dashPrefs } = await harness.importDashboardModule('js/prefs.js');
+  dashPrefs.setItem('tclaude.dash.groups.taskboard.view.tbb-hist', 'list');
+  const entry = {
+    group: 'tbb-hist', group_id: 1, counts: { live: 0, needs_you: 0, next: 0, ideas: 0, done_this_week: 1, backlog: 1 },
+    tasks: [row('tk_00000003', 'parked one', { stage: 'backlog' })],
+    closed: [row('tk_00000009', 'shipped it', { status: 'done', closed_at: ago(1) })],
+  };
+  const source = { context: harness.signals.signal({ groups: [entry] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
+  const group = { name: 'tbb-hist', members: [] };
+  const { container: c } = await harness.mount(harness.html`<${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${fakeApi()} />`);
+  const head = c.querySelector('[data-fused-taskboard] .gf-section-toggle, [data-fused-taskboard] summary, [data-fused-taskboard] [aria-expanded="false"]');
+  if (head && !c.querySelector('.tb-toolbar')) await harness.act(async () => { harness.fireEvent(head, 'click'); await new Promise((r) => setTimeout(r, 0)); });
+  assert.equal(c.querySelector('tr[data-task-id="tk_00000003"]'), null);
+  const history = c.querySelector('.tb-history');
+  assert.ok(history, 'the history line is reachable');
+  assert.equal(history.closest('tr'), null, 'drawn as a line, not a row of a table that is not there');
 });
