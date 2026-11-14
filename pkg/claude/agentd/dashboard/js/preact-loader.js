@@ -261,6 +261,77 @@ export function mountPhoneTerminalFeature(dependencies = {}) {
   return mountIslandDescriptor(phoneTerminalDescriptor, dependencies);
 }
 
+// The phone's Settings (phone-config-island.js): a section list over the
+// desktop Config form, which shows one section at a time below it.
+const phoneConfigDescriptor = createIslandDescriptor({
+  name: 'phone-config',
+  label: 'Settings',
+  hosts: { host: '#phone-config-root' },
+  failureClass: 'phone-config-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./phone-config-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const configPanelModule = import('./config-panel.js');
+    const configMarkupModule = import('./config-form-markup.js');
+    const layoutModule = import('./layout.js');
+    const slopModule = import('./slop.js');
+    const configStateModule = import('./config-state.js');
+    const shellStateModule = import('./shell-state.js');
+    const [
+      { mountPhoneConfigIsland }, { dashboardState }, { configLocation, configPanel, setConfigPanel },
+      { CONFIG_PANELS }, { setLayoutOverride }, { isWizardActive, toggleWizard }, { configState }, { shellConfirm },
+    ] = await Promise.all([
+      islandModule, snapshotStoreModule, configPanelModule, configMarkupModule, layoutModule, slopModule,
+      configStateModule, shellStateModule,
+    ]);
+    const actions = {
+      // Opening a section is a navigation, as on the desktop rail; it says
+      // whether it recorded a history entry (not when already there).
+      showSection: (id) => {
+        if (!setConfigPanel(id)) return false;
+        host.ownerDocument.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: configLocation(id) } }));
+        return true;
+      },
+      back: () => globalThis.history.back(),
+      // Desktop site reloads the page: unsaved edits in the form would go
+      // without a word, so it asks first, as the form's node switch does.
+      desktopSite: async () => {
+        if (configState.dirty.value && !(await shellConfirm({
+          title: 'Switch to the desktop site?',
+          body: 'Settings has unsaved changes. Switching reloads the page and drops them.',
+          okLabel: 'Drop changes and switch',
+        }))) return;
+        setLayoutOverride('desktop');
+      },
+      isWizard: () => isWizardActive(),
+      toggleWizard: () => toggleWizard(),
+      // What Settings shows (a section, or the list over a section), so a
+      // reload shows it again.
+      remember: (open, panel) => {
+        try { globalThis.sessionStorage?.setItem(OPEN_KEY, open || `list:${panel}`); } catch { /* best effort */ }
+      },
+    };
+    // A link to a section opens it, and a bare /config shows the list. The
+    // list's URL names a section too (the one the form last showed), so a
+    // reload of the list, remembered for this browser session, shows the
+    // list again; any other section the URL names opens.
+    const OPEN_KEY = 'tclaude.phone.config.open';
+    let remembered = null;
+    try { remembered = globalThis.sessionStorage?.getItem(OPEN_KEY); } catch { /* storage unavailable */ }
+    const linked = /^\/config\/[^/]+/.test(globalThis.location?.pathname || '') ? configPanel.peek() : '';
+    const initialOpen = remembered === `list:${linked}` ? '' : linked;
+    return {
+      mount: (registerCleanup) => mountPhoneConfigIsland({
+        host, state: dashboardState, config: configState, panels: CONFIG_PANELS, actions, initialOpen, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountPhoneConfigFeature(dependencies = {}) {
+  return mountIslandDescriptor(phoneConfigDescriptor, dependencies);
+}
+
 const groupsDescriptor = createIslandDescriptor({
   name: 'groups',
   label: 'Groups',

@@ -137,6 +137,35 @@ test.describe('on a phone', () => {
     expect(errors).toEqual([]);
   });
 
+  test('Settings lists the sections; one opens as a page to edit or to read', async ({ page }) => {
+    const errors = collectErrors(page);
+    await page.goto('/');
+    await booted(page);
+    await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /More/ }).click();
+    await page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: /Settings/ }).click();
+    const title = page.locator('.phone-bar-title');
+    await expect(title).toHaveText('Settings');
+    await expect(page.getByRole('group', { name: 'This phone' })).toBeVisible();
+    await expect(page.locator('#config-root')).toBeHidden();
+    await expectNoSideScroll(page, 'Settings');
+
+    await page.locator('.phone-config-row', { hasText: 'Notifications' }).click();
+    await expect(title).toHaveText('Notifications');
+    await expect(page.locator('#cfg-save')).toBeVisible();
+    await expect(page.locator('.cfg-rail')).toBeHidden();
+    await expectNoSideScroll(page, 'Notifications');
+    await page.goBack();
+    await expect(title).toHaveText('Settings');
+
+    await page.locator('.phone-config-row', { hasText: 'Daemon' }).click();
+    await expect(title).toHaveText('Daemon & network');
+    await expect(page.getByRole('note')).toContainText('Read-only on a phone');
+    await expect(page.locator('#cfg-save')).toBeHidden();
+    await page.getByRole('button', { name: 'Back' }).click();
+    await expect(page.getByRole('group', { name: 'This phone' })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
   test('a deep link lands on its tab inside the shell', async ({ page }) => {
     await page.goto('/messages');
     await booted(page);
