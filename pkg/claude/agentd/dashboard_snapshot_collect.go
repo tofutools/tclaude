@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -172,16 +173,21 @@ func attachSnapshotPRLists(out *snapshotPayload, prs snapshotPRIndex, cfg *confi
 // attachSnapshotLiveState writes the daemon's in-process state: broker
 // refusal counts, the steward's elevation, access and seat, the knowledge
 // source, companion cues, access requests and the plugin catalog.
-func attachSnapshotLiveState(out *snapshotPayload, cfg *config.Config) {
+func attachSnapshotLiveState(out *snapshotPayload, cfg *config.Config, aliveSessions map[string]struct{}) {
 	out.BrokerRefusalsTotal, out.BrokerRefusalsUnplaceable = brokerRefusals.counts()
 	stewardState := permissionsState{
 		Defaults:  out.Permissions.Defaults,
 		Grants:    out.Permissions.Grants,
 		Overrides: out.Permissions.Overrides,
 	}
-	out.StewardElevated = stewardElevations(cfg, stewardState)
-	out.StewardAccess = stewardAccessView(cfg, stewardState)
-	out.StewardRoster = stewardRosterView()
+	// Steward liveness comes from the poll's one tmux listing, not a
+	// has-session fork per Steward session row per view; names come from the
+	// conv_index cache the fsnotify monitor keeps fresh.
+	isAlive := aliveInSet(aliveSessions)
+	liveStewards := liveStewardConvsWith(isAlive)
+	out.StewardElevated = stewardElevations(cfg, stewardState, liveStewards)
+	out.StewardAccess = stewardAccessView(cfg, stewardState, liveStewards)
+	out.StewardRoster = stewardRosterViewWith(isAlive, agent.CachedTitle)
 	if len(out.StewardRoster) > 0 && out.StewardRoster[0].Seat == db.StewardSeatActive {
 		out.StewardActive = out.StewardRoster[0].AgentID
 	}

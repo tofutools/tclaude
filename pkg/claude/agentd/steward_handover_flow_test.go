@@ -384,6 +384,31 @@ type stewardRosterRow struct {
 	Keeps   []string `json:"keeps"`
 }
 
+// The dashboard poll reads Steward liveness from its one tmux listing: the
+// roster still tells a running Steward from a stopped one, without a
+// has-session probe per Steward on every 2-second poll.
+func TestSteward_SnapshotRosterForksNoHasSession(t *testing.T) {
+	s := newStewardHandoverFlow(t)
+	s.mustHandover(handoverWorker, "keep")
+	s.f.MarkOffline("tclaude-hand1")
+	fresh := s.summon()
+	s.f.HaveAliveSession(fresh, "stwd", "tclaude-stwd", s.f.TestCwd("stwd"))
+
+	before := s.f.World.Tmux.CommandCount("has-session")
+	roster := s.rosterRows()
+	assert.Equal(t, 0, s.f.World.Tmux.CommandCount("has-session")-before,
+		"the snapshot must not probe each Steward's tmux session")
+
+	online := map[string]bool{}
+	for _, row := range roster {
+		online[row.AgentID] = row.Online
+	}
+	require.Contains(t, online, s.agentID(fresh))
+	require.Contains(t, online, s.agentID(handoverWorker))
+	assert.True(t, online[s.agentID(fresh)], "the running Steward reads online")
+	assert.False(t, online[s.agentID(handoverWorker)], "the stopped Steward reads offline")
+}
+
 // A Steward on the roster stops scheduling from outside the role, and takes up
 // where it left off in the seat. A job the operator disabled stays disabled, and
 // one kept as a normal agent keeps running what it scheduled.
