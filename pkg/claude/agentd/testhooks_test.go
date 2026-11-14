@@ -2868,3 +2868,12 @@ func DisableHarnessCatalogCacheForTest() {
 	defer harnessCatalogCache.Unlock()
 	harnessCatalogCache.enabled = false
 }
+
+// ProbeShellTimesInlineForTest makes an expired shell-times read probe tmux on
+// the snapshot's own goroutine, so no background probe outlives the flow test
+// that swapped the tmux runner.
+func ProbeShellTimesInlineForTest() {
+	shellTimesProbe.mu.Lock()
+	defer shellTimesProbe.mu.Unlock()
+	shellTimesProbe.inline = true
+}

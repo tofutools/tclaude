@@ -81,6 +81,8 @@ func TestMain(m *testing.M) {
 	// as it was before that test's opt-ins; harness_catalog_cache_test.go
 	// covers the cache itself.
 	agentd.DisableHarnessCatalogCacheForTest()
+	// group_resources_shell_times_test.go covers the background refresh.
+	agentd.ProbeShellTimesInlineForTest()
 	// The test process is every socket peer here, and is not an agent the daemon runs.
 	agentd.SetExternalDaemonPIDForTest(-1)
 	// The board never runs the operator's awb CLI to learn its server;

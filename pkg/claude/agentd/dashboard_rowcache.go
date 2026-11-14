@@ -167,12 +167,17 @@ func newSnapshotRowCache(
 // startup dir comes from the conv's most-recent session row (sessions are
 // most-recent-first), mirroring ResolveLocation's FindSessionByConvID.
 func (rc *snapshotRowCache) computeLoc(convID string) agentLocationView {
+	return locationViewFrom(rc.location(convID))
+}
+
+// location is the full agent.Location (including the edit dir the wire view
+// drops) resolved purely from the batch: no query, .jsonl rescan or git.
+func (rc *snapshotRowCache) location(convID string) agent.Location {
 	startupDir := ""
 	if rows := rc.sessions[convID]; len(rows) > 0 {
 		startupDir = rows[0].Cwd
 	}
-	loc := agent.ResolveLocationFromParts(startupDir, rc.convIndex[convID], rc.workdirs[convID], rc.workspaces[convID])
-	return locationViewFrom(loc)
+	return agent.ResolveLocationFromParts(startupDir, rc.convIndex[convID], rc.workdirs[convID], rc.workspaces[convID])
 }
 
 // agentID returns the stable actor id for a conv from the batch, or "" for a
