@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { registerMailController } from './mail-bridge.js';
 import { MessageReader } from './mail-island.js';
+import { PeerMailHost } from './peer-mail.js';
 import { DecisionChoices, MailFooterToggles, LoadMore } from './mail-parts.js';
 import { allRecipientLabel, counterparty, senderLabel } from './mail-labels.js';
 import { messageAttachments } from './human-attachments.js';
@@ -147,7 +148,7 @@ export function chipsFor(view, label) {
 // MailboxChips are folder filters over one list, not tabs over panels, so
 // they are pressed toggle buttons in a group.
 function MailboxChips({ current, controller, onAgents, onPick }) {
-  const view = controller.mailboxView();
+  const view = controller.mailboxView({ unfiltered: true });
   const chips = chipsFor(view, controller.mailboxLabel);
   const agentFolder = !chips.some((chip) => chip.id === current.selected) && current.selected;
   return html`<div class="phone-mail-chips" role="group" aria-label="Mailboxes">
@@ -283,6 +284,9 @@ export function PhoneMailApp({ controller }) {
   const current = controller.state.view.value;
   const model = controller.messageView();
   const item = openedMessage(current, model);
+  // Once the reader is gone, however it went (the OS back gesture, a
+  // delete), its entry is no longer the one under a later reader.
+  if (!item) pushed.current = null;
   const open = (id) => {
     pushed.current = String(id);
     controller.selectMessage(id, { navigate: true });
@@ -296,11 +300,15 @@ export function PhoneMailApp({ controller }) {
     pushed.current = null;
     controller.closeMessage();
   };
-  if (item) {
-    return html`<${Reader} current=${current} controller=${controller} model=${model} item=${item}
-      active=${activeTab === 'messages'} back=${back} />`;
-  }
-  return html`<${MailList} current=${current} controller=${controller} model=${model} open=${open} />`;
+  // The reader's reply to a peer operator's message opens its dialog through
+  // PeerMailHost, as on the desktop.
+  return html`<${Fragment}>
+    ${item
+      ? html`<${Reader} current=${current} controller=${controller} model=${model} item=${item}
+          active=${activeTab === 'messages'} back=${back} />`
+      : html`<${MailList} current=${current} controller=${controller} model=${model} open=${open} />`}
+    <${PeerMailHost} toast=${shellToast} />
+  </${Fragment}>`;
 }
 
 export function mountPhoneMailIsland({ host, controller, registerCleanup }) {

@@ -831,8 +831,11 @@ function setShowPrevGens(on) {
 // mailboxView shapes the sidebar. Pinned and group rows (few, all in the
 // response) are filtered here; agent folders, flat and nested, arrive
 // already filtered and paged by the server, so they are shown as sent.
-function mailboxView() {
-  const q = (mail.boxQuery || '').trim().toLowerCase();
+// `unfiltered` keeps every pinned and group row whatever the filter says: the
+// phone's folder chips sit apart from its agent filter and must not vanish
+// under it.
+function mailboxView({ unfiltered = false } = {}) {
+  const q = unfiltered ? '' : (mail.boxQuery || '').trim().toLowerCase();
   const pinned = mail.mailboxes.filter(mb => (mb.kind === 'all' || mb.kind === 'human') && mailboxMatchesFilter(mb, q));
   // A peer's snapshot withholds its access requests; they are answered in
   // the fused Messages view or on its own dashboard.

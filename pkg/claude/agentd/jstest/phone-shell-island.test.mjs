@@ -141,3 +141,32 @@ test('the More sheet is modal: the shell behind it is inert until it closes', as
   assert.equal(nav.inert, false);
   assert.equal(harness.document.activeElement, more, 'focus goes back to More');
 });
+
+test('a tab\'s pushed page takes the top bar and the bottom edge until it goes', async (t) => {
+  const { harness, mounted, root, navItem, tap } = await setup(t);
+  const { phonePage } = await harness.importDashboardModule('js/phone-page.js');
+  await tap(navItem('Mail'));
+  const calls = [];
+  await harness.act(() => {
+    phonePage.value = { title: 'Re: build', hideNav: true, onBack: () => calls.push('back'),
+      actions: [{ key: 'term', icon: 'Terminal ›', label: 'Open terminal', onClick: () => calls.push('act') }] };
+  });
+  const bar = mounted.container.querySelector('.phone-bar');
+  assert.ok(bar.classList.contains('phone-bar-page'));
+  assert.equal(bar.querySelector('.phone-bar-title').textContent, 'Re: build');
+  assert.equal(mounted.container.querySelector('.phone-nav'), null, 'the nav is hidden under the page');
+  assert.equal(root.dataset.phonePage, 'full');
+  await tap(bar.querySelector('.phone-bar-act'));
+  await tap(bar.querySelector('.phone-bar-back'));
+  assert.deepEqual(calls, ['act', 'back']);
+
+  await harness.act(() => { phonePage.value = null; });
+  assert.ok(mounted.container.querySelector('.phone-nav'), 'the nav comes back');
+  assert.equal(root.dataset.phonePage, undefined);
+
+  // Switching views drops the page, so it never outlives its tab.
+  await harness.act(() => { phonePage.value = { title: 'Re: build', actions: [] }; });
+  await tap(navItem('Board'));
+  assert.equal(phonePage.value, null);
+  assert.equal(mounted.container.querySelector('.phone-bar-back'), null);
+});
