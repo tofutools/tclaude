@@ -261,6 +261,58 @@ export function mountPhoneTerminalFeature(dependencies = {}) {
   return mountIslandDescriptor(phoneTerminalDescriptor, dependencies);
 }
 
+// The phone's Settings (phone-config-island.js): a section list over the
+// desktop Config form, which shows one section at a time below it.
+const phoneConfigDescriptor = createIslandDescriptor({
+  name: 'phone-config',
+  label: 'Settings',
+  hosts: { host: '#phone-config-root' },
+  failureClass: 'phone-config-error',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./phone-config-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const configPanelModule = import('./config-panel.js');
+    const configMarkupModule = import('./config-form-markup.js');
+    const layoutModule = import('./layout.js');
+    const slopModule = import('./slop.js');
+    const [
+      { mountPhoneConfigIsland }, { dashboardState }, { configLocation, configPanel, setConfigPanel },
+      { CONFIG_PANELS }, { setLayoutOverride }, { isWizardActive, toggleWizard },
+    ] = await Promise.all([islandModule, snapshotStoreModule, configPanelModule, configMarkupModule, layoutModule, slopModule]);
+    const actions = {
+      // Opening a section is a navigation, as on the desktop rail; it says
+      // whether it recorded a history entry (not when already there).
+      showSection: (id) => {
+        if (!setConfigPanel(id)) return false;
+        host.ownerDocument.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: configLocation(id) } }));
+        return true;
+      },
+      back: () => globalThis.history.back(),
+      desktopSite: () => setLayoutOverride('desktop'),
+      isWizard: () => isWizardActive(),
+      toggleWizard: () => toggleWizard(),
+      remember: (open) => { try { globalThis.sessionStorage?.setItem(OPEN_KEY, open); } catch { /* best effort */ } },
+    };
+    // A link to a section opens it, and a bare /config shows the list. The
+    // URL of the list names the last section too, so a reload goes by what
+    // this browser session last showed.
+    const OPEN_KEY = 'tclaude.phone.config.open';
+    let remembered = null;
+    try { remembered = globalThis.sessionStorage?.getItem(OPEN_KEY); } catch { /* storage unavailable */ }
+    const linked = /^\/config\/[^/]+/.test(globalThis.location?.pathname || '') ? configPanel.peek() : '';
+    const initialOpen = remembered === null ? linked : (remembered === configPanel.peek() ? remembered : '');
+    return {
+      mount: (registerCleanup) => mountPhoneConfigIsland({
+        host, state: dashboardState, panels: CONFIG_PANELS, actions, initialOpen, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountPhoneConfigFeature(dependencies = {}) {
+  return mountIslandDescriptor(phoneConfigDescriptor, dependencies);
+}
+
 const groupsDescriptor = createIslandDescriptor({
   name: 'groups',
   label: 'Groups',

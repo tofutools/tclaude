@@ -203,6 +203,19 @@ away from the browser, disconnects it, and coming back reconnects.
 - Pinch to change the text size. The terminal refits its columns to the new
   size, and the size is remembered for each terminal.
 
+### Settings on a phone
+
+**Settings** (under **More**) is a list. Tap a section to open it as a page; ‹
+or the phone's Back returns to the list.
+
+- **This phone** has **Desktop site** and the wizard theme. Neither is saved to
+  `config.json`; they apply to this browser only.
+- **Notifications**, **Usage & costs** and **Steward** can be changed on the
+  phone. They use the same form as the desktop: **Save changes…** shows the diff
+  before anything is written.
+- Every other section can be read but not changed on a phone. Use **Desktop
+  site** to change it.
+
 **Desktop site** in **More** shows the full dashboard on this phone, and **Phone
 view** at the bottom of that page switches back. The choice is kept in this
 browser only. You can also add `?layout=phone`, `?layout=desktop` or
