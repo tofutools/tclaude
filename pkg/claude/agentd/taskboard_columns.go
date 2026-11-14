@@ -37,7 +37,7 @@ const (
 // a custom column may not take one, so --stage and the filters stay
 // unambiguous.
 var taskboardReservedColumnSlugs = map[string]bool{
-	"idea": true, "ideas": true, "next": true, "progress": true, "in-progress": true, "started": true,
+	"backlog": true, "idea": true, "ideas": true, "next": true, "progress": true, "in-progress": true, "started": true,
 	"blocked": true, "done": true, "dropped": true, "open": true, "queued": true, "stalled": true,
 	"waiting": true, "held": true, "closed": true, "history": true, "all": true,
 }
@@ -387,13 +387,14 @@ func handleTaskboardColumnRemove(w http.ResponseWriter, r *http.Request, g *db.A
 }
 
 // taskboardStageColumn splits a requested stage into a stage and a custom
-// column: idea and next are stages; anything else names one of the board's
+// column: backlog, idea and next are stages (backlog wins over an older
+// custom column of that name); anything else names one of the board's
 // columns (by slug or label, as move --stage takes it), which stands in
 // next. A column the board lacks is a bad request (bad); a lookup failure is
 // err.
 func taskboardStageColumn(g *db.AgentGroup, stage string) (outStage, column string, bad, err error) {
 	switch stage {
-	case "", db.GroupTaskStageIdea, db.GroupTaskStageNext:
+	case "", db.GroupTaskStageBacklog, db.GroupTaskStageIdea, db.GroupTaskStageNext:
 		return stage, "", nil, nil
 	}
 	col, ok, err := findTaskboardColumn(g, stage)
@@ -401,7 +402,7 @@ func taskboardStageColumn(g *db.AgentGroup, stage string) (outStage, column stri
 		return "", "", nil, err
 	}
 	if !ok {
-		return "", "", fmt.Errorf("stage is idea, next or a custom column of the board; %s has no column %q", g.Name, guideText(stage, 40)), nil
+		return "", "", fmt.Errorf("stage is backlog, idea, next or a custom column of the board; %s has no column %q", g.Name, guideText(stage, 40)), nil
 	}
 	return db.GroupTaskStageNext, col.Slug, nil, nil
 }

@@ -36,12 +36,14 @@ const (
 // carries the assignment and the last report.
 type taskboardContextTask = taskboardTaskView
 
-// taskboardCounts are a board's counts. Live is every open or blocked task;
+// taskboardCounts are a board's counts. Live is every open or blocked task
+// not parked in the backlog;
 // the stage buckets split the open ones: Stalled is assigned to an agent idle
 // past taskboard.idle_grace without reporting, InProgress is the other
 // started ones (WaitingOnYou the operator's, started or queued for it), Next
 // and Ideas are the rest in that stage, unassigned or held by an agent
-// (IdeasForYou the operator's ideas). Queued (open with an unmet dependency)
+// (IdeasForYou the operator's ideas). Backlog counts the parked ones apart,
+// outside Live, blocked or not: they wait on nobody now. Queued (open with an unmet dependency)
 // overlaps the others. NeedsYou is Blocked plus Stalled plus WaitingOnYou.
 type taskboardCounts struct {
 	Live       int `json:"live"`
@@ -49,8 +51,10 @@ type taskboardCounts struct {
 	InProgress int `json:"in_progress"`
 	Next       int `json:"next"`
 	Ideas      int `json:"ideas"`
-	Blocked    int `json:"blocked"`
-	Stalled    int `json:"stalled"`
+	// Backlog counts the tasks parked in the backlog (tk_5d2547b0).
+	Backlog int `json:"backlog"`
+	Blocked int `json:"blocked"`
+	Stalled int `json:"stalled"`
 	// WaitingOnYou counts the open tasks assigned to the operator, and the
 	// open questions on the other live tasks; they count in NeedsYou too.
 	WaitingOnYou int `json:"waiting_on_you"`
@@ -240,9 +244,13 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 	}
 	entry.BuiltinColumns = taskboardBuiltinColumnStates(g)
 	for _, v := range liveViews {
-		entry.Counts.Live++
+		if v.Stage != db.GroupTaskStageBacklog {
+			entry.Counts.Live++
+		}
 		i, inColumn := colAt[v.Column]
 		switch {
+		case v.Stage == db.GroupTaskStageBacklog:
+			entry.Counts.Backlog++
 		case v.Status == db.GroupTaskBlocked:
 			entry.Counts.Blocked++
 			entry.Counts.NeedsYou++
@@ -266,12 +274,12 @@ func buildTaskboardGroupContext(r *http.Request, g *db.AgentGroup, now time.Time
 		}
 		// An open question on a task the operator does not already wait
 		// on as a whole waits on it too (tk_8b2c86f7).
-		waitsWhole := v.Status == db.GroupTaskOpen && v.Assignee != nil && v.Assignee.Operator && (!v.Held || v.Stage != db.GroupTaskStageIdea)
+		waitsWhole := v.Status == db.GroupTaskOpen && v.Assignee != nil && v.Assignee.Operator && (!v.Held || (v.Stage != db.GroupTaskStageIdea && v.Stage != db.GroupTaskStageBacklog))
 		if !waitsWhole {
 			entry.Counts.WaitingOnYou += v.OpenQuestions
 			entry.Counts.NeedsYou += v.OpenQuestions
 		}
-		if v.Queued {
+		if v.Queued && v.Stage != db.GroupTaskStageBacklog {
 			entry.Counts.Queued++
 		}
 	}

@@ -38,7 +38,7 @@ type taskboardTransferResult struct {
 }
 
 // POST /v1/taskboard/tasks/{id}/move-to-group {"group": "<name>", "clone":
-// bool, "stage": "idea"|"next"}.
+// bool, "stage": "backlog"|"idea"|"next"}.
 func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
 		Group string `json:"group"`
@@ -57,8 +57,8 @@ func handleTaskboardMoveToGroup(w http.ResponseWriter, r *http.Request, t *db.Gr
 	switch {
 	case name == "":
 		err = fmt.Errorf("give the group to move the task to")
-	case stage != "" && stage != db.GroupTaskStageIdea && stage != db.GroupTaskStageNext:
-		err = fmt.Errorf("stage is idea or next")
+	case stage != "" && !db.IsGroupTaskStage(stage):
+		err = fmt.Errorf("stage is backlog, idea or next")
 	case strings.Contains(name, "@"):
 		err = fmt.Errorf("%s is on a linked node; moving a task to another node is not supported yet", guideText(name, 60))
 	}
@@ -283,8 +283,8 @@ func handleTaskboardTransferIn(w http.ResponseWriter, r *http.Request, g *db.Age
 		kind, refURL, refLabel, err = parseTaskRef(body.Ref, body.RefLabel)
 	}
 	stage := strings.TrimSpace(body.Stage)
-	if err == nil && stage != "" && stage != db.GroupTaskStageIdea && stage != db.GroupTaskStageNext {
-		err = fmt.Errorf("stage is idea or next")
+	if err == nil && stage != "" && !db.IsGroupTaskStage(stage) {
+		err = fmt.Errorf("stage is backlog, idea or next")
 	}
 	var moreRefs []db.GroupTaskRef
 	if err == nil {

@@ -21,6 +21,9 @@ tasks, rarely more than about ten per group. It is **not the backlog**:
 - When work is paused for longer, it goes back to the tracker and comes off the
   board. Make sure the tracker item exists, then `drop` the task. Its ref and
   its history stay, so you can still find it.
+- Work that is deliberately deferred but should stay in view, such as a task
+  that waits on time rather than on work, can be parked in the board's
+  [backlog](#the-backlog) instead. It is hidden by default.
 
 Agents should treat the board the same way. Don't use it to keep long-term
 items or as a record of everything planned. Park those in the tracker.
@@ -32,6 +35,7 @@ Neither one is inferred from age or position.
 
 | Stage | Meaning |
 |---|---|
+| `backlog` | Parked. Deliberately deferred: never started, queued or nudged. Hidden by default. See [The backlog](#the-backlog). |
 | `idea` | Captured but not queued yet. `add` puts a task here unless you pass `--next`. |
 | `next` | In the queue. The top task is the next one to do. |
 
@@ -43,13 +47,54 @@ Neither one is inferred from age or position.
 | `dropped` | Taken off the board, for example parked back in the tracker. |
 
 `ls` shows the queue (`next`) first, then the ideas, each in the operator's
-order. Blocking, closing and reopening a task never changes its stage, and
+order. The backlog comes last, and only with `ls --backlog` or `--all`. Blocking, closing and reopening a task never changes its stage, and
 reopening puts it back where it was. A task can depend on others (`--after`).
 An open task with a dependency that is not yet done shows as `queued`.
 A dropped dependency counts as not done, so the task stays queued until you
 remove the dependency (`edit --rm-dep`) or reopen the dropped task. A task is
 also queued while it waits in line for a full lane, on a board with
 [work-in-progress limits](#work-in-progress-limits).
+
+### The backlog
+
+The backlog is a stage before the ideas, for parked work: tasks that should
+stay on the board but are deliberately not up for consideration now. A
+typical one waits on time, not on work.
+
+```bash
+tclaude agent taskboard add crew "One-time prompt in doctor" --backlog
+tclaude agent taskboard backlog tk_…              # park a task (move --stage backlog)
+tclaude agent taskboard promote tk_…              # back to the top of the ideas
+tclaude agent taskboard move tk_… --stage next    # or straight into the queue
+tclaude agent taskboard ls crew --backlog         # list it, after the ideas
+```
+
+- **Never in play.** A parked task is never started, queued for a full lane
+  or nudged. The idle check, the work-in-progress limits, auto-start and the
+  lanes all ignore it. Parking a started task holds it: it keeps its
+  assignee, not started. Parking takes a task out of its custom column and
+  out of any lane's queue. `start`, `take` or an assign that starts it takes
+  it out of the backlog, to next.
+- **Out of the way.** A plain `ls` leaves the backlog out and ends with a
+  `+N in backlog` line (`backlog_hidden` in `--json`). The counts keep it
+  apart: it is not in the live count, nor in *needs you*, even when a
+  parked task is blocked or held by the operator. `ls --summary` adds
+  `N in backlog`. Nothing can wait on a parked operator task (`block --on`).
+- **Step by step.** `promote` and `demote` move one stage: backlog ⇄ idea ⇄
+  next. So `demote` on an idea parks it, and `promote` on a parked task brings
+  it back to the ideas. `backlog <task>` parks a task from any stage.
+- **Order.** The backlog keeps its own order. `move --top`, `--before` and
+  `--after` reorder it, and a move beside a parked task parks the moved one.
+- **Epics.** An epic's tasks may be parked. Its progress counts them as not
+  started (`N in backlog`). An epic itself is not parked.
+- **Who.** Parking and bringing back is a change of the task:
+  `taskboard.write` defers any task, `taskboard.own` only your own.
+- **Moves.** A parked task moved to another group stays parked unless the
+  move names a stage. An unassigned task reopens in the stage it was
+  closed in, so a parked one dropped and reopened is parked again (an
+  assigned one comes back started, in next, as any reopen does).
+- **Columns.** `backlog` is a built-in name, so a custom column cannot take
+  it, and `--stage backlog` always names the stage.
 
 ### Custom columns
 
@@ -141,7 +186,7 @@ tclaude agent taskboard columns uncordon crew in-review  # alias: enable
 ## Commands
 
 ```bash
-tclaude agent taskboard ls [group] [--stage idea|next] [--all] [--mine] [--json]
+tclaude agent taskboard ls [group] [--stage backlog|idea|next] [--backlog] [--all] [--mine] [--json]
 tclaude agent taskboard ls --summary [--json]   # counts for every board you can read
 tclaude agent taskboard show <task>        # tk_… id
 tclaude agent taskboard activity <task>    # comments and changes, oldest first; history is an alias
@@ -151,7 +196,7 @@ tclaude agent taskboard comment rm <task> <#id>
 tclaude agent taskboard comment ls <task> [--save <dir>]
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--add-ref URL|id]… [--resolve-ref]
-                                    [--next|--stage <custom column>] [--after tk_a,tk_b] [--top|--before tk_x]
+                                    [--next|--backlog|--stage <custom column>] [--after tk_a,tk_b] [--top|--before tk_x]
                                     [--assignee <agent>|operator|--mine] [--blocked "reason"|--done] [--attach f]…
 tclaude agent taskboard add <group> "title" --assignee operator --blocks tk_mine   # ask the operator; tk_mine waits
 tclaude agent taskboard ask-operator <task|group> "question?" [--option "A: why"]… [--block|--blocks tk_mine] [--wait 10m]
@@ -163,11 +208,12 @@ tclaude agent taskboard attachments <task> [--save <dir>]
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref] [--resolve-ref]
                                     [--add-ref …]… [--rm-ref #n|link|label]… [--first-ref #n|link|label] [--add-dep tk_…] [--rm-dep tk_…]
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
-tclaude agent taskboard move <task> --stage idea|next|<custom column>
+tclaude agent taskboard move <task> --stage backlog|idea|next|<custom column>
 tclaude agent taskboard columns ls|add|rename|move|rm <group> …   # custom columns
-tclaude agent taskboard move-to-group <task> <group>[@<peer>] [--clone] [--stage idea|next]
-tclaude agent taskboard promote <task>     # idea → end of the queue
-tclaude agent taskboard demote <task>      # next → top of the ideas
+tclaude agent taskboard move-to-group <task> <group>[@<peer>] [--clone] [--stage backlog|idea|next]
+tclaude agent taskboard promote <task>     # idea → end of the queue; backlog → top of the ideas
+tclaude agent taskboard demote <task>      # next → top of the ideas; idea → top of the backlog
+tclaude agent taskboard backlog <task>     # park it: top of the backlog
 tclaude agent taskboard block <task> --reason "waiting on CI"
 tclaude agent taskboard block <task> --on tk_…        # wait on an operator task
 tclaude agent taskboard unblock <task>
@@ -189,9 +235,12 @@ tclaude agent groups set-taskboard-writers <group> [agent…] | --members | --sh
   in several groups) it lists every board you can read: its counts and its
   first five live tasks.
 - `ls` numbers the live tasks in board order: one sequence through the
-  queue and then the ideas. Done and dropped tasks are not
-  numbered.
-- `ls --all` also lists done and dropped tasks that are not archived yet.
+  queue and then the ideas (and, with `--backlog`, the backlog). Done and
+  dropped tasks are not numbered.
+- `ls` hides the backlog and ends with `+N in backlog` when it has any;
+  `ls --backlog` lists it.
+- `ls --all` also lists the backlog, and the done and dropped tasks that are
+  not archived yet.
 - `ls --summary` prints one line of counts for every group board you can
   read, for example `crew: 9 · 2 needs you (1 stalled, 1 blocked) · 2 in progress · 6 next · 3 ideas`.
   These are the counts the dashboard section shows.
@@ -1971,7 +2020,7 @@ those drags aren't accepted in the lanes.
 
 | CLI | HTTP |
 |---|---|
-| `ls <group>` | `GET /v1/groups/{g}/taskboard[?stage=&all=1]` |
+| `ls <group>` | `GET /v1/groups/{g}/taskboard[?stage=&all=1]` (the API lists the backlog with the rest; `ls` leaves it out unless `--backlog`, `--all` or `--stage backlog`) |
 | `ls` (own group) | `GET /v1/taskboard` |
 | `show` | `GET /v1/taskboard/tasks/{id}` |
 | `activity` / `history` | `GET /v1/taskboard/tasks/{id}/activity` → `{id, group, title, entries}` (`…/events` answers the same) |
@@ -1982,7 +2031,7 @@ those drags aren't accepted in the lanes.
 | `ask` | `POST /v1/groups/{g}/taskboard/ask {"to":"<agent>","prompt":…}` |
 | `add --from-*` / `--lines-file` | `POST /v1/groups/{g}/taskboard/tasks {"refs":[…],"lines":[…],"stage"?}` |
 | `edit` | `PATCH /v1/taskboard/tasks/{id}` (`--resolve-ref` sends `"resolve_ref":true`; `--add-ref` sends `"add_refs":[…]`, `--rm-ref` sends `"rm_refs":[…]`, `--first-ref` sends `"first_ref"`, `--clear-ref` sends `"clear_ref":true,"clear_refs":true`) |
-| `move` | `POST /v1/taskboard/tasks/{id}/move {"top"\|"bottom"\|"before"\|"after", "stage"?: "idea"\|"next"}`: with `stage`, a place that would land the task in the other stage answers 409 `stale` |
+| `move` | `POST /v1/taskboard/tasks/{id}/move {"top"\|"bottom"\|"before"\|"after", "stage"?: "backlog"\|"idea"\|"next"}`: with `stage`, a place that would land the task in the other stage answers 409 `stale` |
 | `epics` | `GET /v1/groups/{g}/taskboard?kind=epic[&all=1]`. Each epic carries `kind:"epic"`, `progress:{total,done,dropped,blocked,in_progress,in_column,columns,next,ideas}` and, once all of its tasks are closed, `close_suggested_at` |
 | `ls --epic tk_…` | `GET /v1/groups/{g}/taskboard?parent=tk_…` (a task in an epic carries `parent_id`) |
 | `add --epic` / `--parent` | `POST /v1/groups/{g}/taskboard/tasks {…,"kind":"epic"}` / `{…,"parent":"tk_…"}` |
@@ -1990,8 +2039,8 @@ those drags aren't accepted in the lanes.
 | `done --force` | `POST /v1/taskboard/tasks/{id}/status {"status":"done","force":true}`. Without `force`, an epic with open tasks answers 409 `epic_open_children` |
 | `move-to-group` | `POST /v1/taskboard/tasks/{id}/move-to-group {"group":…,"clone"?,"stage"?}` → `{task, group, from, clone, dropped_deps, dropped_dependents, unassigned}` |
 | `move-to-group … <group>@<peer>` | on the peer `POST /v1/groups/{g}/taskboard/transfer-in {"title","body","ref","ref_label","add_refs","stage","clone","origin":{"group","task"}}` → the new task; then here `POST /v1/taskboard/tasks/{id}/moved-away {"to":{"node","group","task"}}` |
-| `promote` / `demote` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"}` |
-| `move --stage` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"idea"\|"next"\|"<column slug or label>"}` |
+| `promote` / `demote` / `backlog` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"next"\|"idea"\|"backlog"}` (`promote` and `demote` read the task first and send the stage one step up or down) |
+| `move --stage` | `POST /v1/taskboard/tasks/{id}/stage {"stage":"backlog"\|"idea"\|"next"\|"<column slug or label>"}` |
 | `columns ls` | `GET /v1/groups/{g}/taskboard/columns` → `{group, columns:[{slug,label}], cap}` |
 | `columns add` | `POST /v1/groups/{g}/taskboard/columns {"label","slug"?,"before"?}` |
 | `columns rename` / `move` | `PATCH /v1/groups/{g}/taskboard/columns/{slug} {"label"?,"before"?,"to_end"?}` |
@@ -2005,7 +2054,7 @@ those drags aren't accepted in the lanes.
 | `archive <group> --done` | `POST /v1/groups/{name}/taskboard/archive-done {"older_than"?: "7d"}` (answers `{"group","archived":[ids],"count"}`) |
 | `archive <group> --dropped [--done]` | `POST /v1/groups/{name}/taskboard/archive-closed {"statuses": ["done"?, "dropped"?], "older_than"?: "7d"}` (answers `{"group","statuses","archived":[ids],"count"}`; a node without it answers 404) |
 | `ls --archived` | `GET /v1/groups/{name}/taskboard?archived=1` |
-| `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea"\|"<column slug or label>", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
+| `reopen` | `POST /v1/taskboard/tasks/{id}/reopen {"stage"?: "next"\|"idea"\|"backlog"\|"<column slug or label>", "to"?: "<agent>"\|"operator"\|"", "before"?\|"after"?: "tk_…"}` (no `to` keeps the assignee; `""` takes it off; `before`/`after` places it beside a live task, in its stage, and needs `taskboard.write`) |
 | `assign` / `take` | `POST /v1/taskboard/tasks/{id}/assign {"to":"<agent>"\|""}` |
 | `--over-limit` (operator) | `"over_limit": true` on `add`, `assign`, `start`, `stage`, `reopen`, `status` (a reopen) and `move-to-group`; from an agent, 403. A write that met a full lane answers the task with `limit: {lane, label, max, count, per, action, position?}`, `action` being `queued`, `warned` or `over`; a refused one answers 409 `limit_reached` |
 | `unassign` / `release` | `POST /v1/taskboard/tasks/{id}/unassign` (`release` sends `{"self":true}`) |

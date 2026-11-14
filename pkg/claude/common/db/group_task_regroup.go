@@ -32,8 +32,9 @@ type GroupTaskRegroup struct {
 	// FromGroup and ToGroup are the groups' names, for the event.
 	FromGroup string
 	ToGroup   string
-	// Stage is where an open task lands: idea (the default) or next. An
-	// assignee that is kept puts it in next, as an assign does.
+	// Stage is where an open task lands: idea (the default; backlog for a
+	// parked task), next or backlog. An assignee that is kept puts it in
+	// next, as an assign does, unless it lands in the backlog.
 	Stage string
 	// KeepAssignee keeps the assignee: the caller found it a member of the
 	// target group. Otherwise the assignee is cleared.
@@ -114,7 +115,11 @@ func RegroupGroupTask(id string, in GroupTaskRegroup) (*GroupTaskRegroupResult, 
 		}
 		stage := in.Stage
 		if stage == "" {
+			// A parked task stays parked; anything else lands in the ideas.
 			stage = GroupTaskStageIdea
+			if t.Stage == GroupTaskStageBacklog {
+				stage = GroupTaskStageBacklog
+			}
 		}
 		// An assigned task lands in next, unless it is parked: a kept
 		// assignee holds it in the backlog.

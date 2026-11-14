@@ -27,8 +27,8 @@ func taskboardCmd() *cobra.Command {
 			"It is not the backlog: the durable backlog lives in an external tracker (awb, Linear, GitHub), and a task " +
 			"may link to its item there with --ref. Work paused for longer goes back to that tracker: drop the task here " +
 			"(its ref stays in the history).\n\n" +
-			"Tasks are in one of two stages: ideas (captured, not yet queued; where `add` lands) and next (the queue, top " +
-			"first). Members of the group read its board and track their own work on it (taskboard.own): a task a member adds " +
+			"Tasks are in one of three stages: ideas (captured, not yet queued; where `add` lands), next (the queue, top " +
+			"first) and the backlog (parked: never started, queued or nudged; hidden from a plain `ls`). Members of the group read its board and track their own work on it (taskboard.own): a task a member adds " +
 			"is assigned to it, and it edits, blocks, closes and reports on its own tasks, and takes any unassigned one. " +
 			"Owners change everything (taskboard.write); anyone else needs taskboard.read / taskboard.write, " +
 			"scoped with --scope group=<name> or unscoped, and a group grant of taskboard.write gives every member of a group the broad rights. A task in a group you cannot read is reported as not found. " +
@@ -53,8 +53,9 @@ func taskboardCmd() *cobra.Command {
 			taskboardColumnsCmd(),
 			taskboardOptionsCmd(),
 			taskboardMoveToGroupCmd(),
-			taskboardStageCmd("promote", "next", "Promote an idea to the end of the queue"),
-			taskboardStageCmd("demote", "idea", "Demote a queued task to the top of the ideas"),
+			taskboardStageCmd("promote", "next", "Promote an idea to the end of the queue, or a parked task back to the top of the ideas"),
+			taskboardStageCmd("demote", "idea", "Demote a queued task to the top of the ideas, or park an idea in the backlog"),
+			taskboardStageCmd("backlog", "backlog", "Park a task in the backlog: out of the way, never started or queued (move --stage idea brings it back)"),
 			taskboardBlockCmd(),
 			taskboardStatusCmd("unblock", "open", "Unblock a blocked task", false),
 			taskboardStatusCmd("drop", "dropped", "Drop a task off the board (park it in the external tracker)", true),
@@ -233,6 +234,7 @@ type taskboardEpicProgress struct {
 	Columns    map[string]int `json:"columns,omitempty"`
 	Next       int            `json:"next"`
 	Ideas      int            `json:"ideas"`
+	Backlog    int            `json:"backlog,omitempty"`
 }
 
 // text is the progress as a line reads it: "2/5 done, 1 in progress, …".
@@ -244,7 +246,7 @@ func (p *taskboardEpicProgress) text() string {
 	for _, c := range []struct {
 		n    int
 		what string
-	}{{p.InColumn, "in review/columns"}, {p.InProgress, "in progress"}, {p.Blocked, "blocked"}, {p.Next, "next"}, {p.Ideas, "ideas"}} {
+	}{{p.InColumn, "in review/columns"}, {p.InProgress, "in progress"}, {p.Blocked, "blocked"}, {p.Next, "next"}, {p.Ideas, "ideas"}, {p.Backlog, "in backlog"}} {
 		if c.n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", c.n, c.what))
 		}
@@ -443,8 +445,11 @@ func (t taskboardTask) where() string {
 
 type taskboardLsParams struct {
 	Group string `pos:"true" optional:"true" help:"Group whose board to list (default: your group when you are in exactly one; otherwise every board you can read, briefly)"`
-	Stage string `long:"stage" optional:"true" help:"Only this stage: idea or next"`
-	All   bool   `long:"all" help:"Also list done and dropped tasks not yet archived"`
+	Stage string `long:"stage" optional:"true" help:"Only this stage: next, idea or backlog"`
+	All   bool   `long:"all" help:"Also list the backlog, and the done and dropped tasks not yet archived"`
+	// Backlog lists the parked tasks too; a plain ls hides them behind a
+	// "+N in backlog" line.
+	Backlog bool `long:"backlog" help:"Also list the backlog: parked tasks, hidden by default"`
 	// Archived lists the archive instead (archive, archive --done, the sweep).
 	Archived bool `long:"archived" help:"List only the archived tasks, most recently closed first (unarchive or reopen brings one back)"`
 	Mine     bool `long:"mine" help:"Only the live tasks assigned to you, in every group"`
@@ -471,7 +476,7 @@ func (t taskboardTask) assigneeText() string {
 func taskboardLsCmd() *cobra.Command {
 	return boa.CmdT[taskboardLsParams]{
 		Use:         "ls",
-		Short:       "List a group's task board: the queue (next), then the ideas",
+		Short:       "List a group's task board: the queue (next), then the ideas (--backlog: then the parked tasks)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *taskboardLsParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
@@ -583,7 +588,32 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
+	// The backlog is out of the way unless asked for: a plain ls counts it.
+	parked := 0
+	if !p.Backlog && !p.All && !p.Archived && p.Stage != "backlog" {
+		shown := resp.Tasks[:0]
+		for _, t := range resp.Tasks {
+			if t.Stage == "backlog" && (t.Status == "open" || t.Status == "blocked") {
+				parked++
+				continue
+			}
+			shown = append(shown, t)
+		}
+		resp.Tasks = shown
+	}
 	if p.JSON {
+		if parked > 0 {
+			return writeJSONTo(stdout, struct {
+				Group          string            `json:"group"`
+				Tasks          []taskboardTask   `json:"tasks"`
+				Locked         bool              `json:"locked"`
+				Writers        []string          `json:"writers,omitempty"`
+				WriterNames    []string          `json:"writer_names,omitempty"`
+				Columns        []taskboardColumn `json:"columns,omitempty"`
+				BuiltinColumns map[string]string `json:"builtin_columns,omitempty"`
+				BacklogHidden  int               `json:"backlog_hidden"`
+			}{resp.Group, resp.Tasks, resp.Locked, resp.Writers, resp.WriterNames, resp.Columns, resp.BuiltinColumns, parked})
+		}
 		return writeJSONTo(stdout, resp)
 	}
 	printRemoteScheduleBanner(stdout, p.Peer, "task board")
@@ -593,6 +623,7 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 	}
 	if len(resp.Tasks) == 0 {
 		fmt.Fprintf(stdout, "%s: the task board is empty\n", resp.Group)
+		printBacklogHint(stdout, resp.Group, parked)
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "%s task board\n", resp.Group)
@@ -616,12 +647,21 @@ func runTaskboardLs(p *taskboardLsParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "(hidden on the board: %s; their tasks are listed here)\n", strings.Join(hiddenBuiltins, ", "))
 	}
 	printTaskboardRows(stdout, resp.Tasks)
+	printBacklogHint(stdout, resp.Group, parked)
 	return rcOK
+}
+
+// printBacklogHint is the line a plain ls ends with when it left parked
+// tasks out.
+func printBacklogHint(stdout io.Writer, group string, n int) {
+	if n > 0 {
+		fmt.Fprintf(stdout, "+%d in backlog: tclaude agent taskboard ls %s --backlog\n", n, group)
+	}
 }
 
 // printTaskboardRows prints tasks under their section headings, numbered as
 // the dashboard's list numbers them: the live tasks one sequence, the queue
-// then the ideas; closed tasks unnumbered.
+// then the ideas then the backlog; closed tasks unnumbered.
 func printTaskboardRows(stdout io.Writer, tasks []taskboardTask) {
 	section := ""
 	n := 0
@@ -638,6 +678,8 @@ func printTaskboardRows(stdout io.Writer, tasks []taskboardTask) {
 				fmt.Fprintln(stdout, "── next ──")
 			case "idea":
 				fmt.Fprintln(stdout, "── ideas ──")
+			case "backlog":
+				fmt.Fprintln(stdout, "── backlog (parked) ──")
 			default:
 				fmt.Fprintln(stdout, "── done / dropped ──")
 			}
@@ -718,7 +760,13 @@ func runTaskboardOverview(stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout)
 		}
 		fmt.Fprintf(stdout, "%s: %s\n", g.Group, taskboardCountsLine(g.Counts, g.Columns...))
-		rows := g.Tasks[:min(len(g.Tasks), taskboardOverviewRows)]
+		var live []taskboardTask
+		for _, t := range g.Tasks {
+			if t.Stage != "backlog" {
+				live = append(live, t)
+			}
+		}
+		rows := live[:min(len(live), taskboardOverviewRows)]
 		printTaskboardRows(stdout, rows)
 		if more := g.Counts.Live - len(rows); more > 0 {
 			fmt.Fprintf(stdout, "  … %d more: tclaude agent taskboard ls %s\n", more, g.Group)
@@ -736,6 +784,7 @@ type TaskboardCounts struct {
 	InProgress   int `json:"in_progress"`
 	Next         int `json:"next"`
 	Ideas        int `json:"ideas"`
+	Backlog      int `json:"backlog"`
 	Blocked      int `json:"blocked"`
 	Stalled      int `json:"stalled"`
 	WaitingOnYou int `json:"waiting_on_you"`
@@ -843,6 +892,7 @@ func taskboardCountsLine(c TaskboardCounts, columns ...TaskboardColumnCount) str
 	} else {
 		add(c.IdeasForYou, "ideas for you")
 	}
+	add(c.Backlog, "in backlog")
 	add(c.DoneThisWeek, "done this week")
 	add(c.Dropped, "dropped")
 	return strings.Join(parts, " · ")
@@ -991,7 +1041,8 @@ type taskboardAddParams struct {
 	ResolveRef bool   `long:"resolve-ref" help:"Look a bare awb or Linear --ref up through its tracker proxy to fill in its link, as an import does (the title stays yours)"`
 	Next       bool   `long:"next" help:"Add to the queue (next) instead of the ideas (unassigned: needs taskboard.write); with --assignee or --mine, queued for them, not started"`
 	Idea       bool   `long:"idea" help:"With --assignee or --mine: an idea in their lane for them to triage, not started"`
-	Stage      string `long:"stage" optional:"true" help:"Start it in one of the board's custom columns (slug or label, as move --stage takes it), in the same write; not with --next, --idea or --done"`
+	Backlog    bool   `long:"backlog" help:"Park it in the backlog: out of the way, never started or queued (with --assignee or --mine, held for them)"`
+	Stage      string `long:"stage" optional:"true" help:"Start it in one of the board's custom columns (slug or label, as move --stage takes it), in the same write; not with --next, --idea, --backlog or --done"`
 	Mine       bool   `long:"mine" help:"Assign it to yourself as it is created (in progress); what an add under taskboard.own alone always does"`
 	OverLimit  bool   `long:"over-limit" help:"Operator only (with --peer, the linked node must let this node change that board's options): go over the board's work-in-progress limit, where a full lane would queue or refuse the new task"`
 	After      string `long:"after" optional:"true" help:"Comma-separated task ids this task depends on"`
@@ -1101,15 +1152,18 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	if len(p.AddRef) > 0 {
 		req["add_refs"] = p.AddRef
 	}
-	if p.Next && p.Idea {
-		fmt.Fprintln(stderr, "Error: give --next or --idea, not both")
+	if n := btoi(p.Next) + btoi(p.Idea) + btoi(p.Backlog); n > 1 {
+		fmt.Fprintln(stderr, "Error: give one of --next, --idea and --backlog")
 		return rcInvalidArg
 	}
 	assigned := p.Mine || strings.TrimSpace(p.Assignee) != ""
 	stage := strings.TrimSpace(p.Stage)
 	switch {
-	case stage != "" && (p.Next || p.Idea):
-		fmt.Fprintln(stderr, "Error: give --stage or --next/--idea, not both")
+	case stage != "" && (p.Next || p.Idea || p.Backlog):
+		fmt.Fprintln(stderr, "Error: give --stage or --next/--idea/--backlog, not both")
+		return rcInvalidArg
+	case p.Backlog && p.Done:
+		fmt.Fprintln(stderr, "Error: a task logged as done is not parked; drop --backlog")
 		return rcInvalidArg
 	case stage != "" && p.Done:
 		fmt.Fprintln(stderr, "Error: a task logged as done sits in no column; drop --stage")
@@ -1120,8 +1174,10 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 		req["stage"] = "next"
 	case p.Idea:
 		req["stage"] = "idea"
+	case p.Backlog:
+		req["stage"] = "backlog"
 	}
-	if assigned && (p.Next || p.Idea) {
+	if assigned && (p.Next || p.Idea || p.Backlog) {
 		req["start"] = false
 	}
 	if p.ResolveRef {
@@ -1361,6 +1417,9 @@ func runTaskboardImport(p *taskboardAddParams, stdin io.Reader, stdout, stderr i
 	if p.Next {
 		req["stage"] = "next"
 	}
+	if p.Backlog {
+		req["stage"] = "backlog"
+	}
 	var resp struct {
 		Group   string                  `json:"group"`
 		Created int                     `json:"created"`
@@ -1530,7 +1589,7 @@ type taskboardMoveParams struct {
 	Bottom    bool   `long:"bottom" help:"To the end of its stage"`
 	Before    string `long:"before" optional:"true" help:"Just before this task (crossing into the other stage promotes or demotes)"`
 	After     string `long:"after" optional:"true" help:"Just after this task (crossing into the other stage promotes or demotes)"`
-	Stage     string `long:"stage" optional:"true" help:"Move it to this stage or column: idea, next, or a custom column of the board (its slug or label, e.g. in-review); next takes it out of a custom column"`
+	Stage     string `long:"stage" optional:"true" help:"Move it to this stage or column: backlog, idea, next, or a custom column of the board (its slug or label, e.g. in-review); next takes it out of a custom column, backlog parks it"`
 	OverLimit bool   `long:"over-limit" help:"Operator only (with --peer, the linked node must let this node change that board's options): go over the board's work-in-progress limit, where a full lane would queue or refuse this"`
 	Peer      string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
@@ -1588,7 +1647,7 @@ type taskboardMoveToGroupParams struct {
 	Task     string `pos:"true" help:"Task id (tk_…)"`
 	Group    string `pos:"true" help:"Group to move the task to: a group on this node, or group@peer for one on a linked node"`
 	Clone    bool   `long:"clone" help:"Clone it instead: a new task with the same title, brief and ref; the original stays"`
-	Stage    string `long:"stage" optional:"true" help:"Where it lands: idea (the default) or next"`
+	Stage    string `long:"stage" optional:"true" help:"Where it lands: idea (the default; backlog for a parked task), next or backlog"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" help:"Output JSON"`
 }
@@ -1630,8 +1689,8 @@ func taskboardMoveToGroupCmd() *cobra.Command {
 }
 
 func runTaskboardMoveToGroup(p *taskboardMoveToGroupParams, stdout, stderr io.Writer) int {
-	if p.Stage != "" && p.Stage != "idea" && p.Stage != "next" {
-		fmt.Fprintln(stderr, "Error: --stage is idea or next")
+	if p.Stage != "" && p.Stage != "idea" && p.Stage != "next" && p.Stage != "backlog" {
+		fmt.Fprintln(stderr, "Error: --stage is idea, next or backlog")
 		return rcInvalidArg
 	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
@@ -1806,10 +1865,40 @@ func taskboardStageCmd(use, stage, short string) *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *taskboardTaskParams, _ *cobra.Command, _ []string) {
-			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/stage"), map[string]any{"stage": stage},
-				p.AskHuman, p.JSON, use+"d", cliStdout, cliStderr))
+			to, verb := stage, use+"d"
+			if use == "backlog" {
+				verb = "parked"
+			}
+			// promote and demote step one stage: backlog ⇄ idea ⇄ next.
+			if use == "promote" || use == "demote" {
+				var t taskboardTask
+				if err := remoteRequest(p.Peer, http.MethodGet, taskboardPath(p.Task, ""), nil, &t); err != nil {
+					fmt.Fprintf(cliStderr, "Error: %v\n", err)
+					taskboardExit(MapDaemonErrorToRC(err))
+					return
+				}
+				to = taskboardStepStage(t.Stage, use == "promote")
+			}
+			taskboardExit(taskboardWrite(p.Peer, http.MethodPost, taskboardPath(p.Task, "/stage"), map[string]any{"stage": to},
+				p.AskHuman, p.JSON, verb, cliStdout, cliStderr))
 		},
 	}.ToCobra()
+}
+
+// taskboardStepStage is the stage one step up (promote) or down from stage:
+// backlog → idea → next. A task in a custom column stands in next: promote
+// takes it out of the column, as before.
+func taskboardStepStage(stage string, up bool) string {
+	switch {
+	case up && stage == "backlog":
+		return "idea"
+	case up:
+		return "next"
+	case stage == "idea" || stage == "backlog":
+		return "backlog"
+	default:
+		return "idea"
+	}
 }
 
 type taskboardStatusParams struct {
@@ -2449,4 +2538,12 @@ func runTaskboardArchiveClosed(p *taskboardArchiveParams, stdout, stderr io.Writ
 	}
 	fmt.Fprintf(stdout, "archived %d %s task(s) on %s\n", out.Count, strings.Join(statuses, " or "), out.Group)
 	return rcOK
+}
+
+// btoi counts a set flag as 1.
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

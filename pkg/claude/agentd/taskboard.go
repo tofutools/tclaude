@@ -880,8 +880,8 @@ func (p taskboardPositionBody) position() (db.GroupTaskPosition, error) {
 		return db.GroupTaskPosition{}, errors.New("give at most one of top, bottom, before, after")
 	}
 	stage := strings.TrimSpace(p.Stage)
-	if stage != "" && stage != db.GroupTaskStageIdea && stage != db.GroupTaskStageNext {
-		return db.GroupTaskPosition{}, errors.New("stage is idea or next")
+	if stage != "" && !db.IsGroupTaskStage(stage) {
+		return db.GroupTaskPosition{}, errors.New("stage is backlog, idea or next")
 	}
 	return db.GroupTaskPosition{Top: p.Top, Bottom: p.Bottom,
 		Before: strings.TrimSpace(p.Before), After: strings.TrimSpace(p.After), Stage: stage}, nil
@@ -909,16 +909,16 @@ func cleanTaskIDs(ids []string) ([]string, error) {
 
 // ---- handlers ----
 
-// GET /v1/groups/{name}/taskboard[?stage=idea|next][&all=1] — the board in
-// the operator's order: next, then ideas; with all, the done and dropped
-// tasks not yet archived.
+// GET /v1/groups/{name}/taskboard[?stage=backlog|idea|next][&all=1] — the
+// board in the operator's order: next, then ideas, then the backlog; with
+// all, the done and dropped tasks not yet archived.
 func handleTaskboardList(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	if !taskboardEnabled(w) || !requireTaskboard(w, r, g, false) {
 		return
 	}
 	stage := r.URL.Query().Get("stage")
-	if stage != "" && stage != db.GroupTaskStageIdea && stage != db.GroupTaskStageNext {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea or next")
+	if stage != "" && !db.IsGroupTaskStage(stage) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is backlog, idea or next")
 		return
 	}
 	all, archived := r.URL.Query().Get("all"), r.URL.Query().Get("archived")
@@ -1088,8 +1088,8 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 				"an import (refs or lines) takes only stage; title, body, ref, after, position and files are for one task")
 			return
 		}
-		if body.Stage != "" && body.Stage != db.GroupTaskStageIdea && body.Stage != db.GroupTaskStageNext {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea or next")
+		if body.Stage != "" && !db.IsGroupTaskStage(body.Stage) {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "stage is backlog, idea or next")
 			return
 		}
 		handleTaskboardImport(w, r, g, body.Refs, body.Lines, body.Stage)
@@ -1222,6 +1222,14 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 			return
 		}
 		hold = firstNonEmpty(body.Stage, db.GroupTaskStageIdea)
+	}
+	// A parked task is never started: an assignee holds it in the backlog.
+	if body.Stage == db.GroupTaskStageBacklog && assignee != "" && status != db.GroupTaskDone {
+		if body.Start != nil && *body.Start {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "a task in the backlog is not started; add it to next or the ideas to start it")
+			return
+		}
+		hold = db.GroupTaskStageBacklog
 	}
 	// A task that waits on the new operator task is changed in the same
 	// write, so its change is gated here too.
@@ -1556,8 +1564,9 @@ func handleTaskboardMove(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 	writeTaskboardTask(w, http.StatusOK, g, out)
 }
 
-// POST /v1/taskboard/tasks/{id}/stage {"stage":"next"|"idea"} — promote to
-// the end of the queue, or demote to the top of the ideas.
+// POST /v1/taskboard/tasks/{id}/stage {"stage":"next"|"idea"|"backlog"} —
+// promote to the end of the queue, or demote to the top of the ideas or of
+// the backlog (parked: held, out of its column and queue).
 func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
 	var body struct {
 		Stage string `json:"stage"`
@@ -1591,7 +1600,7 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 	t = ft
 	switch stage {
 	case "":
-		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is idea, next or a custom column of the board")
+		writeError(w, http.StatusBadRequest, "invalid_arg", "stage is backlog, idea, next or a custom column of the board")
 		return
 	case db.GroupTaskStageNext:
 		// Back to next from a custom column (In progress for a started task).
@@ -1607,7 +1616,11 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 			break
 		}
 		out, err = db.SetGroupTaskStage(t.ID, stage, taskboardActor(r))
-	case db.GroupTaskStageIdea:
+	case db.GroupTaskStageIdea, db.GroupTaskStageBacklog:
+		if t.IsEpic() && stage == db.GroupTaskStageBacklog {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "an epic is not parked; park its tasks")
+			return
+		}
 		out, err = db.SetGroupTaskStage(t.ID, stage, taskboardActor(r))
 	default:
 		// A custom column of the board (tcl-plby5h), by slug or label.
@@ -1618,7 +1631,7 @@ func handleTaskboardStage(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 		}
 		if !ok {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
-				fmt.Sprintf("stage is idea, next or a custom column of the board; %s has no column %q", g.Name, guideText(stage, 40)))
+				fmt.Sprintf("stage is backlog, idea, next or a custom column of the board; %s has no column %q", g.Name, guideText(stage, 40)))
 			return
 		}
 		stage = col.Slug
