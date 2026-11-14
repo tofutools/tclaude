@@ -141,6 +141,26 @@ const ZOOM_WHEEL_SETTLE_MS = 110;
 // reflows the grid once, not on every move.
 const ZOOM_PINCH_SETTLE_MS = 220;
 
+// A one-finger swipe scrolls as a mouse wheel does (touchScroll): one wheel
+// notch per SWIPE_ROWS_PER_NOTCH rows the finger travels while the session
+// takes the mouse (tmux scrolls copy-mode five lines a notch, so the text
+// keeps up with the finger), else per two rows (a notch is then one arrow
+// key). A swipe starts once the finger has moved SWIPE_START_PX, mostly up
+// or down. Let go of a scroll while moving and it coasts, slowing by
+// SWIPE_DECAY each frame until slower than SWIPE_STOP px/ms.
+const SWIPE_ROWS_PER_NOTCH = 5;
+const SWIPE_ROWS_PER_KEY = 2;
+const SWIPE_START_PX = 10;
+const SWIPE_FLING = 0.3;
+// A finger that rested this long before lifting does not fling.
+const SWIPE_REST_MS = 100;
+const SWIPE_STOP = 0.05;
+const SWIPE_DECAY = 0.95;
+const SWIPE_MAX_NOTCHES_PER_FRAME = 4;
+// A mouse report is how xterm hands the session a wheel notch; it is not
+// typing, and must not bring a scrolled-back view back to live.
+const MOUSE_REPORT = /^\x1b\[(<|M)/;
+
 // The keys a touch surface sends by name (key()): what a keyboard's key
 // would send. The arrows follow the application's cursor-key mode.
 const NAMED_KEYS = Object.freeze({
@@ -292,6 +312,11 @@ export function mountTerminalWidget({
   // softKeyboard: false keeps a touch device's on-screen keyboard down when
   // the terminal takes focus, until setSoftKeyboard(true).
   softKeyboard = true,
+  // touchScroll: a one-finger vertical swipe on the terminal scrolls as the
+  // wheel does (the phone terminal), and onScrollBackChange(back) says
+  // whether the view is scrolled back from live (tmux copy-mode).
+  touchScroll = false,
+  onScrollBackChange = () => {},
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
@@ -467,6 +492,8 @@ export function mountTerminalWidget({
   const spread = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
   function pinchStart(event) {
     if (event.touches?.length !== 2) return;
+    swipe = null;
+    stopCoasting();
     const distance = spread(event.touches);
     if (!(distance > 0)) return;
     pinch = { distance, size: zoomPending ?? term.options.fontSize };
@@ -481,9 +508,117 @@ export function mountTerminalWidget({
   function pinchEnd(event) {
     if ((event.touches?.length ?? 0) < 2) pinch = null;
   }
-  const pinchListeners = touchZoom
-    ? [['touchstart', pinchStart], ['touchmove', pinchMove], ['touchend', pinchEnd], ['touchcancel', pinchEnd]]
-    : [];
+  // The swipe: wheel notches dispatched on xterm's own element, so xterm
+  // encodes them exactly as a desktop wheel (a mouse report when the session
+  // takes the mouse, an arrow key otherwise).
+  let swipe = null;
+  let coast = null;
+  let scrolledBack = 0;
+  const mouseTaken = () => (term.modes?.mouseTrackingMode || 'none') !== 'none';
+  function rowHeight() {
+    const screen = host.getElementsByClassName?.('xterm-screen')[0];
+    const height = screen?.getBoundingClientRect?.().height;
+    return height > 0 && term.rows > 0 ? height / term.rows : 16;
+  }
+  const notchPx = () => rowHeight() * (mouseTaken() ? SWIPE_ROWS_PER_NOTCH : SWIPE_ROWS_PER_KEY);
+  function setScrolledBack(next) {
+    const was = scrolledBack > 0;
+    scrolledBack = next;
+    if (was !== scrolledBack > 0 && !disposed) onScrollBackChange(scrolledBack > 0);
+  }
+  function notch(older) {
+    const target = term.element || host;
+    const box = target.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
+    const init = {
+      deltaY: older ? -1 : 1, deltaMode: 1, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2,
+      bubbles: true, cancelable: true,
+    };
+    const View = documentRef.defaultView || globalThis;
+    const event = typeof View.WheelEvent === 'function'
+      ? new View.WheelEvent('wheel', init)
+      : Object.assign(new View.Event('wheel', { bubbles: true, cancelable: true }), init);
+    target.dispatchEvent(event);
+    if (mouseTaken()) setScrolledBack(Math.max(0, scrolledBack + (older ? 1 : -1)));
+  }
+  // travel turns finger travel (down is older) into notches, keeping the rest.
+  function travel(px) {
+    if (!swipe) return;
+    swipe.rest += px;
+    const step = notchPx();
+    let sent = 0;
+    while (Math.abs(swipe.rest) >= step && sent < SWIPE_MAX_NOTCHES_PER_FRAME) {
+      const older = swipe.rest > 0;
+      notch(older);
+      swipe.rest += older ? -step : step;
+      sent += 1;
+    }
+  }
+  function stopCoasting() {
+    if (coast !== null && typeof cancelAnimationFrameImpl === 'function') cancelAnimationFrameImpl(coast);
+    coast = null;
+  }
+  function coastFrom(velocity, at) {
+    if (typeof requestAnimationFrameImpl !== 'function') return;
+    let speed = velocity;
+    let last = at;
+    const frame = () => {
+      coast = null;
+      if (disposed || !swipe) return;
+      const time = now();
+      const dt = Math.max(1, time - last);
+      last = time;
+      travel(speed * dt);
+      speed *= SWIPE_DECAY ** (dt / 16);
+      if (Math.abs(speed) >= SWIPE_STOP) coast = requestAnimationFrameImpl(frame);
+    };
+    coast = requestAnimationFrameImpl(frame);
+  }
+  function swipeStart(event) {
+    stopCoasting();
+    if (event.touches?.length !== 1) { swipe = null; return; }
+    const { clientX: x, clientY: y } = event.touches[0];
+    swipe = { x0: x, y0: y, y, at: now(), speed: 0, rest: 0, moving: false };
+  }
+  function swipeMove(event) {
+    if (!swipe || event.touches?.length !== 1) return;
+    const { clientX: x, clientY: y } = event.touches[0];
+    if (!swipe.moving) {
+      const dy = y - swipe.y0;
+      if (Math.abs(dy) < SWIPE_START_PX || Math.abs(dy) < Math.abs(x - swipe.x0)) return;
+      swipe.moving = true;
+    }
+    event.preventDefault();
+    const time = now();
+    const dy = y - swipe.y;
+    swipe.speed = dy / Math.max(1, time - swipe.at);
+    swipe.y = y;
+    swipe.at = time;
+    travel(dy);
+  }
+  function swipeEnd(event) {
+    if (!swipe || (event.touches?.length ?? 0) > 0) return;
+    // Only scrolling coasts: arrow keys are commands to the application.
+    const fling = swipe.moving && mouseTaken() && Math.abs(swipe.speed) >= SWIPE_FLING && now() - swipe.at < SWIPE_REST_MS;
+    if (fling) coastFrom(swipe.speed, now());
+    else swipe = null;
+  }
+  // toLive scrolls back down to live: tmux's wheel copy-mode leaves itself
+  // at the bottom. Two notches more cover a count that drifted.
+  function toLive() {
+    if (disposed) return;
+    stopCoasting();
+    swipe = null;
+    const notches = scrolledBack;
+    setScrolledBack(0);
+    if (!notches) return;
+    for (let i = 0; i < notches + 2; i += 1) notch(false);
+    setScrolledBack(0);
+  }
+
+  const pinchListeners = [
+    ...(touchZoom ? [['touchstart', pinchStart], ['touchmove', pinchMove], ['touchend', pinchEnd], ['touchcancel', pinchEnd]] : []),
+    ...(touchScroll ? [['touchstart', swipeStart], ['touchmove', swipeMove], ['touchend', swipeEnd], ['touchcancel', swipeEnd]] : []),
+  ];
   for (const [type, listener] of pinchListeners) host.addEventListener?.(type, listener, { capture: true, passive: false });
 
   function setSoftKeyboard(on) {
@@ -499,10 +634,12 @@ export function mountTerminalWidget({
   }
   if (!softKeyboard) setSoftKeyboard(false);
 
-  // sendInput delivers bytes as if typed, by the path keystrokes take.
+  // sendInput delivers bytes as if typed, by the path keystrokes take. A
+  // view scrolled back goes live first: tmux copy-mode would take the keys.
   function sendInput(data) {
     if (disposed || !ws || ws.readyState !== WebSocketCtor.OPEN) return false;
     if (remote && remoteState.mode !== 'interactive') return false;
+    if (scrolledBack) toLive();
     ws.send(new TextEncoder().encode(data));
     return true;
   }
@@ -1177,6 +1314,7 @@ export function mountTerminalWidget({
 
   disposables.push(term.onData((data) => {
     if (remote && remoteState.mode !== 'interactive') return;
+    if (scrolledBack && !MOUSE_REPORT.test(data)) toLive();
     if (!disposed && ws && ws.readyState === WebSocketCtor.OPEN) {
       ws.send(new TextEncoder().encode(data));
     }
@@ -1214,6 +1352,10 @@ export function mountTerminalWidget({
       return typeof name === 'string' && name.length === 1 ? sendInput(name) : false;
     },
     setSoftKeyboard,
+    // toLive scrolls a swiped-back view down to live; scrolledBack says
+    // whether it is back from live.
+    toLive,
+    scrolledBack: () => scrolledBack > 0,
     resetZoom: () => setZoom(null),
     copy: () => disposed ? Promise.resolve() : interactions.copySelection(),
     // paste delivers text as terminal input, by the path keystrokes take, and
@@ -1251,6 +1393,7 @@ export function mountTerminalWidget({
       if (zoomFitTimer !== null) clearTimeoutImpl(zoomFitTimer);
       host.removeEventListener?.('wheel', zoomWheel, { capture: true });
       for (const [type, listener] of pinchListeners) host.removeEventListener?.(type, listener, { capture: true });
+      stopCoasting();
       abortAuth();
       closeSocket();
       documentRef.removeEventListener('tclaude:wizard', syncTheme);

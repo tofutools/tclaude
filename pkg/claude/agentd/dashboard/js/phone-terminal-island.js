@@ -9,7 +9,9 @@
 // A phone has no keyboard to spare, so the terminal does not raise one. Input
 // is the agent's message sheet (the desktop's Ctrl+M), a key strip for the
 // answers a harness asks for (1 2 3, the arrows, Enter, Esc, ^C), and ⌨ for
-// raw typing. A pinch sets the text size and the grid reflows to fit.
+// raw typing. A pinch sets the text size and the grid reflows to fit. A
+// one-finger swipe scrolls back through the session's history as the wheel
+// does on a desktop (tmux copy-mode), and ↓ Live (or any key) comes back.
 
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -119,7 +121,7 @@ function useVisualViewport(windowRef) {
 
 // TerminalSurface owns the widget. Preact renders the host div and never a
 // child into it: the widget alone owns what is inside.
-function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange }) {
+function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange }) {
   const host = useRef(null);
   useLayoutEffect(() => {
     const key = seed.key || seed.ws;
@@ -130,6 +132,8 @@ function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaiti
       active: true,
       agentLabel: seed.label || '',
       touchZoom: true,
+      touchScroll: true,
+      onScrollBackChange,
       softKeyboard: false,
       initialFontSize: readTerminalFont(FONT_SURFACE, key, deps.prefs) ?? PHONE_TERMINAL_FONT,
       onFontChange,
@@ -167,6 +171,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   const [waiting, setWaiting] = useState(null);
   const [reconnect, setReconnect] = useState(false);
   const [keyboard, setKeyboard] = useState(false);
+  const [scrolledBack, setScrolledBack] = useState(false);
   const widget = useRef(null);
 
   useEffect(() => {
@@ -191,6 +196,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   const onWidget = (next) => {
     widget.current = next;
     if (next && keyboard) next.setSoftKeyboard(true);
+    if (!next) setScrolledBack(false);
   };
   const message = seed.agent && deps.onComposeMessage
     ? () => deps.onComposeMessage({ agent: seed.agent, label: seed.label || '' })
@@ -212,7 +218,10 @@ export function PhoneTerminal({ seed, deps, onClose }) {
     </header>
     <div class="phone-term-body">
       ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} onWidget=${onWidget}
-        onFontChange=${onFontChange} onStatus=${setStatus} onWaitingChange=${setWaiting} onReconnectChange=${setReconnect} />`}
+        onFontChange=${onFontChange} onStatus=${setStatus} onWaitingChange=${setWaiting} onReconnectChange=${setReconnect}
+        onScrollBackChange=${setScrolledBack} />`}
+      ${scrolledBack && html`<button data-ui-exempt type="button" class="phone-term-live" onMouseDown=${keepFocus}
+        onClick=${() => widget.current?.toLive()} aria-label="Back to live">↓ Live</button>`}
       ${(note || reconnect) && html`<div class="phone-term-note" role="status">
         ${note && html`<span>${note}</span>`}
         ${reconnect && html`<button data-ui-exempt type="button" class="phone-term-reconnect" onClick=${() => void widget.current?.connect()}>Reconnect</button>`}

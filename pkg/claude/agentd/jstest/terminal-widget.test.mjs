@@ -1525,3 +1525,87 @@ test('a touch pinch sets the font once it rests; named keys and the soft keyboar
   widget.dispose();
   assert.equal(widget.key('1'), false, 'a disposed terminal sends nothing');
 });
+
+test('a one-finger swipe scrolls as the wheel does, coasts, and goes back to live (the phone terminal)', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  class PhoneTerminal extends fakes.FakeTerminal {
+    open(host) { super.open(host); this.modes = { mouseTrackingMode: 'vt200' }; }
+  }
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const timers = manualTimers();
+  let clock = 0;
+  const frames = [];
+  const back = [];
+  const widget = mountTerminalWidget({
+    host, wsPath: '/api/open-window-ws/agt_one', authenticate: false,
+    initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
+    onScrollBackChange: (on) => back.push(on),
+    TerminalCtor: PhoneTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock,
+    requestAnimationFrameImpl: (run) => { frames.push(run); return frames.length; }, cancelAnimationFrameImpl: () => {}, ...timers,
+  });
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  timers.flush();
+  frames.length = 0;
+  const term = fakes.terminal();
+  // What reaches the session, in order: wheel notches (xterm encodes them) and typed bytes.
+  const log = [];
+  host.addEventListener('wheel', (event) => log.push(event.deltaY < 0 ? 'older' : 'newer'));
+  const send = socket.send.bind(socket);
+  socket.send = (value) => { if (typeof value !== 'string') log.push(new TextDecoder().decode(value)); send(value); };
+  const touch = (type, y, x = 50) => harness.fireEvent(host, type, { touches: type === 'touchend' ? [] : [{ clientX: x, clientY: y }] });
+
+  // A notch is five rows (16px each) of finger travel while tmux takes the mouse.
+  touch('touchstart', 100);
+  assert.equal(touch('touchmove', 105).defaultPrevented, false, 'a tap or a small wobble stays the terminal\'s');
+  clock = 50;
+  assert.ok(touch('touchmove', 190).defaultPrevented, 'a swipe is not the page\'s');
+  clock = 100;
+  touch('touchmove', 270);
+  assert.deepEqual(log, ['older', 'older'], 'finger down is further back');
+  assert.deepEqual(back, [true]);
+  assert.equal(widget.scrolledBack(), true);
+  clock = 300;
+  touch('touchend');
+  assert.equal(frames.length, 0, 'a finger that rested before lifting does not coast');
+
+  widget.toLive();
+  assert.deepEqual(log.slice(2), ['newer', 'newer', 'newer', 'newer'], 'back down, and two notches more');
+  assert.deepEqual(back, [true, false]);
+
+  // A key while scrolled back goes live first: copy-mode would take it.
+  log.length = 0;
+  touch('touchstart', 100); clock = 400; touch('touchmove', 190); clock = 600; touch('touchend');
+  widget.key('1');
+  assert.deepEqual(log, ['older', 'newer', 'newer', 'newer', '1']);
+
+  // A fling coasts on, slower each frame, and stops.
+  log.length = 0;
+  touch('touchstart', 100); clock = 700; touch('touchmove', 120); clock = 710; touch('touchmove', 220);
+  const during = log.length;
+  touch('touchend');
+  let run = 0;
+  while (frames.length && run < 500) { clock += 16; frames.shift()(); run += 1; }
+  assert.ok(log.length > during, 'it coasts after the finger lifts');
+  assert.ok(run < 500, 'and stops');
+  assert.ok(log.every((step) => step === 'older'));
+
+  // A session that does not take the mouse gets an arrow key per two rows,
+  // and is never "scrolled back".
+  widget.toLive();
+  log.length = 0;
+  back.length = 0;
+  term.modes.mouseTrackingMode = 'none';
+  touch('touchstart', 100); clock = 9000; touch('touchmove', 165); clock = 9500; touch('touchend');
+  assert.deepEqual(log, ['older', 'older']);
+  assert.deepEqual(back, []);
+  frames.length = 0;
+  touch('touchstart', 100); clock = 9600; touch('touchmove', 120); clock = 9610; touch('touchmove', 220); touch('touchend');
+  assert.equal(frames.length, 0, 'arrow keys are commands: they do not coast');
+  widget.dispose();
+});
