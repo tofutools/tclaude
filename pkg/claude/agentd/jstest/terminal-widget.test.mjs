@@ -1697,3 +1697,83 @@ test('a swipe over a session that does not take the mouse sends the desktop whee
   assert.deepEqual(back, [], 'an arrow key scrolls nothing back: no ↓ Live');
   widget.dispose();
 });
+
+// xterm emits a wheel notch through onData while the wheel event is being
+// dispatched: a mouse report while the session takes the mouse, an arrow key
+// once it stops. The widget's own notch is never typing, so it neither goes
+// live nor sends notches of its own in answer (which would never end), and a
+// session that stopped taking the mouse ends ↓ Live without arrow keys.
+test('a notch xterm sends as an arrow key is not typing, and a touch during ↓ Live sends what is owed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  class XtermLike extends fakes.FakeTerminal {
+    open(host) {
+      super.open(host);
+      this.modes = { mouseTrackingMode: 'vt200' };
+      host.addEventListener('wheel', (event) => {
+        const up = event.deltaY < 0;
+        this.dataHandler(this.modes.mouseTrackingMode === 'none' ? (up ? '\x1b[A' : '\x1b[B') : (up ? '\x1b[<64;1;1M' : '\x1b[<65;1;1M'));
+      });
+    }
+  }
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const timers = manualTimers();
+  let clock = 0;
+  const frames = [];
+  const back = [];
+  const widget = mountTerminalWidget({
+    host, wsPath: '/api/open-window-ws/agt_three', authenticate: false,
+    initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
+    onScrollBackChange: (on) => back.push(on),
+    TerminalCtor: XtermLike, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock,
+    requestAnimationFrameImpl: (run) => { frames.push(run); return frames.length; }, cancelAnimationFrameImpl: () => {}, ...timers,
+  });
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  timers.flush();
+  frames.length = 0;
+  const sent = [];
+  const send = socket.send.bind(socket);
+  socket.send = (value) => { if (typeof value !== 'string') sent.push(new TextDecoder().decode(value)); send(value); };
+  const touch = (type, y) => harness.fireEvent(host, type, { touches: type === 'touchend' ? [] : [{ clientX: 50, clientY: y }] });
+  const swipeBack = (from) => {
+    touch('touchstart', 100); clock = from + 10; touch('touchmove', 180); clock = from + 20; touch('touchmove', 260);
+    clock = from + 30; touch('touchmove', 340); clock = from + 40; touch('touchmove', 420); clock = from + 300; touch('touchend');
+  };
+
+  // Scrolled back by wheel reports, which bring nothing back to live.
+  swipeBack(0);
+  assert.equal(sent.length, 4);
+  assert.ok(sent.every((value) => value.startsWith('\x1b[<64;')));
+  assert.equal(widget.scrolledBack(), true);
+
+  // A touch while ↓ Live is still pacing its notches sends them all first.
+  frames.length = 0;
+  sent.length = 0;
+  widget.toLive();
+  assert.equal(sent.length, 4, 'the first frame');
+  touch('touchstart', 100);
+  assert.equal(sent.length, 7, 'twice three back, and one: none dropped');
+  touch('touchend');
+  frames.length = 0;
+
+  // The session stops taking the mouse while scrolled back: a notch comes
+  // back as an arrow key, which is not typing, and ↓ Live goes away.
+  swipeBack(1000);
+  assert.equal(widget.scrolledBack(), true);
+  fakes.terminal().modes.mouseTrackingMode = 'none';
+  sent.length = 0;
+  touch('touchstart', 100); clock = 2000; touch('touchmove', 190); clock = 2300; touch('touchend');
+  assert.deepEqual(sent, ['\x1b[A'], 'one arrow key, as the desktop wheel sends, and nothing after it');
+  assert.equal(widget.scrolledBack(), false);
+  assert.equal(back.at(-1), false);
+  assert.equal(frames.length, 0);
+  widget.toLive();
+  widget.key('1');
+  assert.deepEqual(sent, ['\x1b[A', '1'], 'no arrow keys owed to a live view');
+  widget.dispose();
+});

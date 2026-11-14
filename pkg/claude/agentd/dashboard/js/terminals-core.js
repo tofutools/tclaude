@@ -526,6 +526,7 @@ export function mountTerminalWidget({
   // its own history (Claude Code) takes the same way.
   let scrolledBack = 0;
   let inCopyMode = false;
+  let dispatching = false;
   const mouseTaken = () => (term.modes?.mouseTrackingMode || 'none') !== 'none';
   const canSend = () => !!ws && ws.readyState === WebSocketCtor.OPEN && (!remote || remoteState.mode === 'interactive');
   function rowHeight() {
@@ -555,8 +556,15 @@ export function mountTerminalWidget({
       ? new View.WheelEvent('wheel', init)
       : Object.assign(new View.Event('wheel', { bubbles: true, cancelable: true }), init);
     const report = mouseTaken();
-    target.dispatchEvent(event);
-    if (!report) return true;
+    // What xterm emits during the dispatch is this notch, not typing.
+    dispatching = true;
+    try { target.dispatchEvent(event); } finally { dispatching = false; }
+    if (!report) {
+      // Arrow keys scroll nothing back (the application dropped mouse
+      // reporting): there is nothing to come back from.
+      if (inCopyMode) setCopyMode(false, 0);
+      return true;
+    }
     if (older) setCopyMode(true, inCopyMode ? scrolledBack + 1 : (remote ? 1 : 0));
     else if (inCopyMode) setCopyMode(scrolledBack > 1, scrolledBack - 1);
     return true;
@@ -596,8 +604,9 @@ export function mountTerminalWidget({
   }
   function swipeStart(event) {
     stopCoasting();
-    stopPacing();
-    owedDowns = 0;
+    // ↓ Live's notches still owed go first: dropping them would leave the
+    // pane scrolled back while the view says live.
+    if (owedDowns > 0) flushLive();
     if (event.touches?.length !== 1) { swipe = null; return; }
     const { clientX: x, clientY: y } = event.touches[0];
     swipe = { x0: x, y0: y, y, at: now(), speed: 0, rest: 0, moving: false };
@@ -639,9 +648,11 @@ export function mountTerminalWidget({
     if (paceFrame !== null && typeof cancelAnimationFrameImpl === 'function') cancelAnimationFrameImpl(paceFrame);
     paceFrame = null;
   }
+  // sendDowns sends owed notches while they are wheel reports: once the
+  // session stops taking the mouse, a notch would be an arrow key.
   function sendDowns(count) {
-    for (let i = 0; i < count; i += 1) {
-      if (!notch(false)) { owedDowns = 0; return; }
+    for (let i = 0; i < count && owedDowns > 0; i += 1) {
+      if (!mouseTaken() || !notch(false)) { owedDowns = 0; return; }
       owedDowns -= 1;
     }
   }
@@ -1373,7 +1384,7 @@ export function mountTerminalWidget({
 
   disposables.push(term.onData((data) => {
     if (remote && remoteState.mode !== 'interactive') return;
-    if (!MOUSE_REPORT.test(data)) {
+    if (!dispatching && !MOUSE_REPORT.test(data)) {
       if (inCopyMode) toLive();
       if (owedDowns > 0) flushLive();
     }
