@@ -29,6 +29,11 @@ type fedTerminalState struct {
 	waiters map[string]fedAnswerWaiter[proto.SessionAnswerPayload]
 	opens   map[string][]time.Time
 	stopped bool
+	// Requesting side: recent viewers an agent's relaunch is followed for, and
+	// when each peer was last asked for a fresh catalog
+	// (federation_terminal_follow.go).
+	follows      map[string]fedTerminalFollow
+	catalogAsked map[string]time.Time
 }
 type fedTerminalView struct {
 	ID           string    `json:"id"`
@@ -245,7 +250,7 @@ func resolveFedTerminalTarget(address string, readOnly bool) (*db.FederationPeer
 		}
 	}
 	if len(matches) == 0 {
-		return nil, proto.SessionOpenPayload{}, errors.New("session not shared with the requested watch/attach capability")
+		return nil, proto.SessionOpenPayload{}, errFedNoSharedSession
 	}
 	return peer, matches[0], nil
 }
@@ -286,6 +291,15 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 		peer, p, err = resolveFedShellTarget(q.Get("peer"), q.Get("group"), shell, q.Get("agent"), readOnly)
 	} else {
 		peer, p, err = resolveFedTerminalTarget(r.URL.Query().Get("target"), readOnly)
+		// The catalog lists no pane for an agent a viewer here was attached
+		// to moments ago: it is relaunching, so ask the peer about it.
+		if errors.Is(err, errFedNoSharedSession) {
+			if rt := currentFederation(); rt != nil {
+				if fp, fo, ok := rt.followTerminalTarget(r.URL.Query().Get("target"), readOnly); ok {
+					peer, p, err = fp, fo, nil
+				}
+			}
+		}
 	}
 	if err != nil {
 		writeError(w, 400, "invalid_arg", err.Error())
@@ -300,6 +314,16 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 		// sessions.takeover for one to be offered (below).
 		for _, g := range fedTerminalGroups(cat) {
 			if !g.HasCap(fedTerminalCap(readOnly)) {
+				continue
+			}
+			// A followed agent the catalog lists no pane for keeps the group
+			// it was attached through.
+			if p.Session == "" && g.Name == p.Group {
+				yes, _, err := permissionAllowsAction(r, caller, fedTerminalSlug(readOnly), ActionContext{RemotePeer: peer.InstanceID, RemoteGroup: g.Name})
+				if err == nil && yes {
+					allowed = true
+					break
+				}
 				continue
 			}
 			for _, s := range g.Sessions {
@@ -367,14 +391,26 @@ func handleFederationTerminal(w http.ResponseWriter, r *http.Request, browser bo
 			if strings.Contains(refused.reason, "limit") {
 				status, code = 429, "limit"
 			}
-			if strings.Contains(refused.reason, fedPaneStartingReason) {
+			switch {
+			case strings.Contains(refused.reason, fedPaneStartingReason):
 				status, code = 409, "starting"
+			case strings.Contains(refused.reason, fedPaneMovedReason):
+				// The agent runs a newer launch than this node's catalog
+				// lists: wait for the catalog to catch up, as for a start.
+				rt.requestCatalogRefresh(peer.InstanceID)
+				status, code = 409, "starting"
+			case strings.Contains(refused.reason, fedPaneNotRunningReason):
+				rt.requestCatalogRefresh(peer.InstanceID)
+				status, code = 404, "not_running"
 			}
 		}
 		writeError(w, status, code, err.Error())
 		return
 	}
 	v.addCleanup(func() { _ = conn.Close() })
+	// A relaunch of the agent is followed for a while after this viewer ends.
+	rt.rememberTerminalFollow(peer.InstanceID, p)
+	defer rt.rememberTerminalFollow(peer.InstanceID, p)
 	if browser {
 		serveDashboardFederationTerminal(w, r, rt, v, conn, peer, p)
 		return

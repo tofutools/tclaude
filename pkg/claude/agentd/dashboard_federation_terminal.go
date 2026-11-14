@@ -52,8 +52,15 @@ func handleDashboardFederationTerminal(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(refusal.body.Bytes(), &body)
 	reason := "error"
 	switch refusal.status {
-	case 403, 400, 404:
+	case 403, 400:
 		reason = "denied"
+	case 404:
+		reason = "denied"
+		// The agent has no live pane on the peer and is not starting: the
+		// remote counterpart of a local terminal's "not running" (4006).
+		if body.Code == "not_running" {
+			reason = "not_running"
+		}
 	case 429:
 		reason = "limit"
 	case 409:

@@ -81,7 +81,7 @@ func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error
 		}
 		incarnation := fedSessionIncarnation(r)
 		if p.Incarnation == "" || incarnation != p.Incarnation {
-			return nil, errors.New("session incarnation changed; list sessions again")
+			return nil, errFedPaneMoved
 		}
 		pin, err := fedPaneIdentity(r.TmuxSession)
 		if err != nil {
@@ -91,25 +91,49 @@ func resolveFedPane(peer string, p proto.SessionOpenPayload) (*fedPanePin, error
 		pin.agent, pin.conv, pin.session, pin.tmux, pin.group, pin.created, pin.incarnation = p.Agent, a.CurrentConvID, r.ID, r.TmuxSession, g.ID, r.CreatedAt, incarnation
 		return pin, nil
 	}
-	// A launch in progress (a resume or relaunch replacing the pane, or a pane
-	// not created yet) is a wait, not a refusal: say so, and the requesting
-	// node's browser retries instead of settling on a final denial.
-	now := terminalNow()
+	// A launch in progress (a resume or relaunch replacing the pane, a
+	// reincarnation under a new session, or a pane not created yet) is a wait,
+	// not a refusal: say so, and the requesting node's browser retries instead
+	// of settling. The same "launch in progress" the local terminal waits on
+	// (agentTerminalStarting). The open names the agent, possibly with an
+	// earlier session or none (a requester whose catalog no longer lists the
+	// agent's pane), so any launch of the agent counts. A live pane of another
+	// session does not: that is a newer runtime the requester must look up
+	// again (errFedPaneMoved), never a pane this open silently reaches.
+	if agentTerminalStarting(a.CurrentConvID, a.AgentID) {
+		for _, r := range rows {
+			if r.ID != p.Session && r.Status != session.StatusExited && r.TmuxSession != "" && session.IsTmuxSessionAlive(r.TmuxSession) {
+				return nil, errFedPaneMoved
+			}
+		}
+		return nil, errFedPaneStarting
+	}
 	for _, r := range rows {
-		if r.ID == p.Session && sessionRowLaunching(r, now) && !session.IsTmuxSessionAlive(r.TmuxSession) {
-			return nil, errFedPaneStarting
+		if r.Status != session.StatusExited && r.TmuxSession != "" && session.IsTmuxSessionAlive(r.TmuxSession) {
+			return nil, errFedPaneMoved
 		}
 	}
-	return nil, errors.New("advertised session is no longer live; list sessions again")
+	return nil, errFedPaneNotRunning
 }
 
-// fedPaneStartingReason is the refusal a peer gives while the target agent's
-// launch is in progress. The requesting node matches it by text
-// (handleFederationTerminal), as it does the "limit" refusals: an older peer
-// never sends it and its refusals keep their old meaning.
-const fedPaneStartingReason = "the agent is starting"
+// The refusals a peer gives for an agent pane it cannot pin. The requesting
+// node matches them by text (handleFederationTerminal), as it does the "limit"
+// refusals. The moved and not-running texts are what earlier peers already
+// sent; an older peer never sends the starting one.
+const (
+	// fedPaneStartingReason: the target agent's launch is in progress.
+	fedPaneStartingReason = "the agent is starting"
+	// fedPaneMovedReason: the agent runs a newer launch than the open named.
+	fedPaneMovedReason = "session incarnation changed"
+	// fedPaneNotRunningReason: the agent has no live pane and is not starting.
+	fedPaneNotRunningReason = "advertised session is no longer live"
+)
 
-var errFedPaneStarting = errors.New(fedPaneStartingReason)
+var (
+	errFedPaneStarting   = errors.New(fedPaneStartingReason)
+	errFedPaneMoved      = errors.New(fedPaneMovedReason + "; list sessions again")
+	errFedPaneNotRunning = errors.New(fedPaneNotRunningReason + "; list sessions again")
+)
 
 func fedPaneIdentity(tmuxName string) (*fedPanePin, error) {
 	out, err := clcommon.TmuxOutput("display-message", "-p", "-t", clcommon.ExactTarget(tmuxName)+":0.0", "#{pane_id}\t#{window_id}\t#{session_id}\t#{session_windows}\t#{window_panes}")
@@ -719,17 +743,28 @@ func (pin *fedPanePin) closureReason(peer string, p proto.SessionOpenPayload) st
 	}
 	row, err := db.LoadSession(pin.session)
 	if err != nil || row == nil || row.Status == session.StatusExited || !session.IsTmuxSessionAlive(pin.tmux) {
-		return "exit"
+		return fedPaneEnded(a, row)
 	}
 	if fedSessionIncarnation(row) != pin.incarnation {
 		return "reincarnated"
 	}
 	current, err := fedPaneIdentity(pin.tmux)
 	if err != nil {
-		return "exit"
+		return fedPaneEnded(a, row)
 	}
 	if current.pane != pin.pane || current.serverSession != pin.serverSession {
 		return "reincarnated"
 	}
 	return "revoked"
+}
+
+// fedPaneEnded words the closure of a pinned pane that went away: a launch
+// replacing it (a restart, resume or relaunch) is "reincarnated", which the
+// viewer follows, as a local terminal follows the replacing launch
+// (agentTerminalReplaced); anything else is the agent exiting.
+func fedPaneEnded(a *db.Agent, attached *db.SessionRow) string {
+	if agentTerminalReplaced(a.CurrentConvID, attached) {
+		return "reincarnated"
+	}
+	return "exit"
 }
