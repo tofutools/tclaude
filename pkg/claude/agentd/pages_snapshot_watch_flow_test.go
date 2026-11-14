@@ -194,11 +194,16 @@ func TestPageSnapshotWatchReportsTicksAndCapturesWhenTheAgentAsks(t *testing.T) 
 	require.Equal(t, "start", start.Type)
 	require.NotEmpty(t, start.Session)
 	assert.EqualValues(t, 1, start.MarksSeq, "the final capture draws the latest marks")
+	// The handler sends start before it opens the browser, so wait for the
+	// browser. Never fail while holding mu: the handler would block on it,
+	// and the test server's Close in cleanup would wait for it forever.
+	opened := func() int { mu.Lock(); defer mu.Unlock(); return len(jobs) }
+	require.Eventually(t, func() bool { return opened() > 0 }, 10*time.Second, 5*time.Millisecond, "the watch opened no browser")
 	mu.Lock()
-	require.Len(t, jobs, 1)
-	assert.Contains(t, jobs[0].Overlay, "<rect")
-	b := browsers[0]
+	jobCount, overlay, b := len(jobs), jobs[0].Overlay, browsers[0]
 	mu.Unlock()
+	require.Equal(t, 1, jobCount)
+	assert.Contains(t, overlay, "<rect")
 
 	// The page goes from the curtain to painted, then still.
 	first := s.next()
