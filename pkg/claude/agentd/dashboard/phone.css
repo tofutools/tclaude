@@ -23,6 +23,8 @@
   --phone-safe-right: env(safe-area-inset-right, 0px);
   --phone-safe-bottom: env(safe-area-inset-bottom, 0px);
   --phone-safe-left: env(safe-area-inset-left, 0px);
+  /* What the on-screen keyboard covers (js/phone-keyboard.js sets it). */
+  --phone-keyboard: 0px;
   /* Phones keep their own text size: no automatic font inflation. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
@@ -205,8 +207,8 @@
   position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(1, 4, 9, 0.6);
 }
 :root[data-layout="phone"] .phone-sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: calc(var(--z-dialog) + 1);
-  max-height: 85vh; overflow-y: auto;
+  position: fixed; left: 0; right: 0; bottom: var(--phone-keyboard); z-index: calc(var(--z-dialog) + 1);
+  max-height: calc(85vh - var(--phone-keyboard)); overflow-y: auto;
   padding: 8px var(--phone-gutter) calc(16px + var(--phone-safe-bottom));
   background: var(--ui-dialog-bg); border-top: 1px solid var(--ui-dialog-line); border-radius: 16px 16px 0 0;
   box-shadow: var(--ui-dialog-shadow);
@@ -245,7 +247,7 @@
    Every modal dialog is a full-width bottom sheet on a phone. !important: the
    desktop dialogs carry fixed min-widths and a remembered, resizable size
    (dialog-resize.js writes it inline); none of that fits a phone. */
-:root[data-layout="phone"] .modal-overlay.show { align-items: flex-end; }
+:root[data-layout="phone"] .modal-overlay.show { align-items: flex-end; padding-bottom: var(--phone-keyboard); }
 :root[data-layout="phone"] .modal-overlay .ui-dialog {
   box-sizing: border-box;
   width: 100% !important; min-width: 0 !important; max-width: 100% !important;
@@ -256,6 +258,11 @@
 }
 :root[data-layout="phone"] .modal-overlay .ui-dialog :is(input, textarea, select) { font-size: 16px; max-width: 100%; }
 :root[data-layout="phone"] .modal-overlay .ui-dialog .ui-btn { min-height: var(--phone-tap); }
+/* The shared form rows (.cron-create-row, 33 dialogs): the label goes above
+   its field instead of in a 72px column, so the field gets the full width. */
+:root[data-layout="phone"] .modal-overlay .ui-dialog { --cron-label-w: 0px; }
+:root[data-layout="phone"] .modal-overlay .cron-create-row { flex-wrap: wrap; row-gap: 4px; font-size: 14px; }
+:root[data-layout="phone"] .modal-overlay .cron-create-row .cron-create-label { flex: 1 0 100%; padding-top: 0; }
 
 /* ── Mail (js/phone-mail-island.js) ─────────────────────────────────────────
    The desktop pins the Messages tab into a viewport-high flex column for its

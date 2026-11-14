@@ -86,7 +86,9 @@
   const head = document.head || document.documentElement;
   const meta = document.createElement('meta');
   meta.name = 'viewport';
-  meta.content = 'width=device-width, initial-scale=1, viewport-fit=cover';
+  // interactive-widget: Android Chrome shrinks the page for the on-screen
+  // keyboard, so what sits at the bottom stays above it (phone-keyboard.js).
+  meta.content = 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content';
   head.appendChild(meta);
   const sheet = document.createElement('link');
   sheet.rel = 'stylesheet';

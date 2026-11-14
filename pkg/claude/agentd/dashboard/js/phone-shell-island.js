@@ -32,6 +32,7 @@ import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.j
 import { DesktopOnlyPage, desktopOnlyView } from './phone-desktop-only.js';
 import { featureState } from './feature-state-registry.js';
 import { addressedView, installPhoneHistory } from './phone-history.js';
+import { installKeyboardInset } from './phone-keyboard.js';
 
 const html = htm.bind(h);
 
@@ -223,6 +224,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // names the view (Back onto /?view=now, which phone-history.js restores).
   const seenTab = useRef(activeTab);
   useEffect(() => installPhoneHistory({ view: shell.view }), [shell]);
+  useEffect(() => installKeyboardInset(), []);
   useEffect(() => {
     if (seenTab.current === activeTab) return;
     seenTab.current = activeTab;

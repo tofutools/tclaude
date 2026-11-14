@@ -82,7 +82,7 @@ test('?layout=phone switches to the phone layout, remembers it and strips the pa
   assert.equal(dataset.layout, 'phone');
   assert.deepEqual(appended.map((node) => node.tagName), ['META', 'LINK']);
   assert.equal(appended[0].name, 'viewport');
-  assert.equal(appended[0].content, 'width=device-width, initial-scale=1, viewport-fit=cover');
+  assert.equal(appended[0].content, 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content');
   assert.equal(appended[1].rel, 'stylesheet');
   assert.equal(appended[1].href, '/static/phone.css');
   assert.equal(storage.getItem('tclaude.layout'), 'phone');
