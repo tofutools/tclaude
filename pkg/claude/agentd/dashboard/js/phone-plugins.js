@@ -39,10 +39,10 @@ function PluginCard({ plugin, actions, busy }) {
   const lamp = pluginLamp(plugin);
   const toggleKey = pluginBusyKey('plugin-toggle', plugin.name);
   const checkKey = pluginBusyKey('plugin-check', plugin.name);
-  // The switch shows what the plugin is set to (off is a choice); flipping
-  // it runs the lamp's action, which also retries a teardown that left a
-  // step running.
-  const on = !plugin.disabled;
+  // The switch is on exactly when the desktop lamp would deactivate (active,
+  // or still active after a teardown), so flipping it always does what it
+  // shows: on activates, off deactivates.
+  const on = lamp.verb === 'deactivate';
   const steps = plugin.steps || [];
   return html`<div class="phone-plugin ui-card" data-key=${`plugin-${plugin.name}`}>
     <div class="phone-plugin-head">

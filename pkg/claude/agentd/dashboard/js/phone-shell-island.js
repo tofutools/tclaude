@@ -250,6 +250,9 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     return {
       ...actions,
       navigate: leave(actions.navigate),
+      // More's anchor-opened entries (Fleet) may name the tab already under
+      // Now or Board: leaving the own view is what shows it.
+      showTab: leave(actions.showTab),
       openAccessRequest: leave(actions.openAccessRequest),
     };
   }, [actions, shell]);

@@ -40,11 +40,19 @@ test('a card per plugin: on/off, Check, steps with run and stop', async (t) => {
       { name: 'notes' },
     ] },
     { name: 'vpn-tunnel', status: 'unknown', disabled: true, steps: [] },
+    { name: 'ollama', status: 'ok', disabled: false, steps: [] },
+    { name: 'tunnel-left', status: 'warn', disabled: true, steps: [] },
   ]);
   const cards = [...c.querySelectorAll('.phone-plugin')];
-  assert.deepEqual(cards.map((card) => card.querySelector('.phone-plugin-name').textContent), ['postgres-dev', 'vpn-tunnel']);
-  const [pg, vpn] = cards;
-  assert.equal(pg.querySelector('input[role=switch], input[type=checkbox]').getAttribute('aria-label'), 'postgres-dev: activate');
+  assert.deepEqual(cards.map((card) => card.querySelector('.phone-plugin-name').textContent), ['postgres-dev', 'vpn-tunnel', 'ollama', 'tunnel-left']);
+  const [pg, vpn, ollama, left] = cards;
+  // The switch is on exactly when the desktop lamp would deactivate, so a
+  // flip always does what it shows: an enabled plugin that is not active
+  // (warn) shows off and activates; one still active after a teardown shows
+  // on and deactivates.
+  const label = (card) => card.querySelector('input[role=switch]').getAttribute('aria-label');
+  assert.deepEqual([pg, vpn, ollama, left].map(label),
+    ['postgres-dev: activate', 'vpn-tunnel: activate', 'ollama: deactivate', 'tunnel-left: deactivate']);
   assert.match(pg.querySelector('.phone-plugin-sub').textContent, /not active · Local DB/);
   const steps = [...pg.querySelectorAll('.phone-plugin-step')];
   assert.deepEqual(steps.map((step) => step.querySelector('.phone-plugin-act')?.getAttribute('aria-label') || ''),
@@ -55,11 +63,13 @@ test('a card per plugin: on/off, Check, steps with run and stop', async (t) => {
   await harness.act(() => harness.fireEvent(pg.querySelector('input'), 'change'));
   await harness.act(() => [...pg.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Check').click());
   await harness.act(() => harness.fireEvent(vpn.querySelector('input'), 'change'));
+  await harness.act(() => harness.fireEvent(ollama.querySelector('input'), 'change'));
+  await harness.act(() => harness.fireEvent(left.querySelector('input'), 'change'));
   await harness.act(() => [...c.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Check all').click());
   assert.deepEqual(calls, [
     ['step', 'postgres-dev', 0, 'stop'], ['step', 'postgres-dev', 1, 'run'],
     ['toggle', 'postgres-dev', 'activate'], ['check', 'postgres-dev'],
-    ['toggle', 'vpn-tunnel', 'activate'], ['checkAll'],
+    ['toggle', 'vpn-tunnel', 'activate'], ['toggle', 'ollama', 'deactivate'], ['toggle', 'tunnel-left', 'deactivate'], ['checkAll'],
   ]);
   assert.match(c.querySelector('.phone-desktop-only').textContent, /catalog and editing plugins are desktop only/);
   assert.equal(c.textContent.includes('github'), false, 'no catalog');

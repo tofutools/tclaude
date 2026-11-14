@@ -51,8 +51,18 @@ test('this node and its hub, trusted peers, and who asks to be trusted', async (
 
 test('another Fleet admin section is desktop only; no fleet says so', async (t) => {
   const { harness, state, page, c } = await setup(t);
+  const steps = [];
+  const record = (event) => steps.push(event.detail.location);
+  harness.document.addEventListener('tclaude:navigated', record);
+  t.after(() => harness.document.removeEventListener('tclaude:navigated', record));
   await harness.act(() => { page.value = 'grants'; });
   assert.match(c.querySelector('.phone-desktop-page').textContent, /Fleet admin is desktop only/);
+  // Not a dead end: the section is remembered, so the page offers the way back.
+  await harness.act(() => [...c.querySelectorAll('button')].find((b) => b.textContent === 'Show fleet').click());
+  assert.equal(page.value, '');
+  assert.deepEqual(steps, [{ tab: 'fleet-admin' }], 'a history step');
+  assert.equal(c.querySelector('.phone-desktop-page'), null);
+  await harness.act(() => { page.value = 'grants'; });
   await harness.act(() => { page.value = 'peers'; state.clearFleet(); state.markStatusLoaded(); });
   assert.match(c.textContent, /not set up for a fleet/);
 });

@@ -241,3 +241,14 @@ test('a deep link left Groups on the route map: Agents and Show agents both go b
   await harness.act(() => { subview.value = 'members'; });
   assert.equal(mounted.container.querySelector('.phone-desktop-page'), null);
 });
+
+test('More → Fleet over Now shows Fleet even when it is the tab underneath', async (t) => {
+  const { harness, shell, calls, mounted, navItem, tap, state } = await setup(t);
+  await harness.act(() => state.setActiveTab('fleet-admin'));
+  await harness.act(() => { shell.view.value = 'now'; });
+  await tap(navItem('More'));
+  const fleet = [...mounted.container.querySelectorAll('.phone-menu-item')].find((b) => b.textContent.trim().endsWith('Fleet'));
+  await tap(fleet);
+  assert.deepEqual(calls.at(-1), ['showTab', 'fleet-admin']);
+  assert.equal(shell.view.value, null, 'Now steps aside for the tab');
+});

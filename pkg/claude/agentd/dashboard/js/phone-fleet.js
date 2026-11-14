@@ -10,7 +10,7 @@
 
 import { h, render } from 'preact';
 import htm from 'htm';
-import { fleetAdminPage } from './fleet-admin-page.js';
+import { fleetAdminLocation, fleetAdminPage, setFleetAdminPage } from './fleet-admin-page.js';
 import { hubOffReason } from './fleet-model.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote, DesktopOnlyPage } from './phone-desktop-only.js';
@@ -70,8 +70,19 @@ function Asking({ stranger }) {
   </li>`;
 }
 
+// showFleet leaves a desktop-only section for this view, as a history step
+// (the section is remembered across tab switches, so More → Fleet would
+// otherwise come back to it).
+function showFleet(page) {
+  if (page === fleetAdminPage) setFleetAdminPage('');
+  else page.value = '';
+  document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: fleetAdminLocation('') } }));
+}
+
 export function PhoneFleet({ state, page = fleetAdminPage }) {
-  if (!PHONE_SECTIONS.has(page.value)) return html`<${DesktopOnlyPage} what="Fleet admin" />`;
+  if (!PHONE_SECTIONS.has(page.value)) {
+    return html`<${DesktopOnlyPage} what="Fleet admin" other=${{ label: 'Show fleet', onClick: () => showFleet(page) }} />`;
+  }
   const current = state.view.value;
   const node = current.node;
   if (!node) {

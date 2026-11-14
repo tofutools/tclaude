@@ -694,7 +694,7 @@
 
 :root[data-layout="phone"] #activity-performance #profiles-root,
 :root[data-layout="phone"] #activity-performance .filter-bar > .muted:first-child,
-:root[data-layout="phone"] .debug-card > :not(.debug-card-head, .debug-spark) {
+:root[data-layout="phone"] .debug-card > :not(.debug-card-head, .debug-spark, .empty) {
   display: none;
 }
 :root[data-layout="phone"] .debug-card-head .spacer { flex-basis: 100%; height: 0; }
