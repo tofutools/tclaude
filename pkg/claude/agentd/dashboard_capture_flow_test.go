@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -458,11 +459,15 @@ func (c *captureFlow) presence(body map[string]any) int {
 }
 
 // tickingClock is a fake clock that moves a millisecond each time it is read,
-// so every ping is heard at its own instant.
+// so every ping is heard at its own instant. The handler and the waiting
+// capture request read it from different goroutines.
 func tickingClock(t *testing.T) {
 	t.Helper()
+	var mu sync.Mutex
 	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
 	t.Cleanup(agentd.SetGuideClockForTest(func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
 		now = now.Add(time.Millisecond)
 		return now
 	}))
@@ -509,10 +514,10 @@ func TestDashboardPresence_AFullTableForgetsTheStalestTab(t *testing.T) {
 	newest := "reload-39"
 
 	waiting := c.request()
-	id := c.await(func() string {
-		assert.Empty(t, c.ping("reload-38", false, true), "the newest visible tab is the one asked")
-		return c.ping(newest, false, true)
-	})
+	// Only the newest tab pings while the request picks its target: pinging
+	// another would make that one the newest.
+	id := c.await(func() string { return c.ping(newest, false, true) })
+	assert.Empty(t, c.ping("reload-38", false, true), "the newest visible tab is the one asked")
 	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"png": capturePNG}))
 	rec := <-waiting
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

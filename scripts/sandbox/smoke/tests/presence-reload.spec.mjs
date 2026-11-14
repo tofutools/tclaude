@@ -21,12 +21,22 @@ function watchPresence(page) {
   return seen;
 }
 
-// load (re)loads the page and waits for its first presence ping to answer.
+// load (re)loads the page and waits for the new page load's first presence
+// ping to answer: a late ping from the page it replaces carries a load id seen
+// before, and does not count.
+const loadsSeen = new WeakMap();
 async function load(page, go) {
-  const answered = page.waitForResponse((r) => r.url().endsWith('/api/companion/presence') && r.request().method() === 'POST'
-    && !JSON.parse(r.request().postData() || '{}').gone);
+  if (!loadsSeen.has(page)) loadsSeen.set(page, new Set());
+  const known = loadsSeen.get(page);
+  const answered = page.waitForResponse((r) => {
+    if (!r.url().endsWith('/api/companion/presence') || r.request().method() !== 'POST') return false;
+    const body = JSON.parse(r.request().postData() || '{}');
+    return !body.gone && !!body.load && !known.has(body.load);
+  });
   await go();
-  return answered;
+  const response = await answered;
+  known.add(JSON.parse(response.request().postData()).load);
+  return response;
 }
 
 test('40 quick reloads keep one presence id and never get 429', async ({ page }) => {
