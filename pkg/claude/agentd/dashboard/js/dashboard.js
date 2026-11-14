@@ -77,7 +77,7 @@ import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import { bindActivityTab } from './activity-tab.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountVoiceWakeFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDoctorFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountAccessPanelFeature, mountCompanionFeature, mountDrawingBoardOverlayFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountKnowledgeSourceFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature, mountPhoneShellFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountVoiceWakeFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDoctorFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountAccessPanelFeature, mountCompanionFeature, mountDrawingBoardOverlayFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountKnowledgeSourceFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature, mountPhoneShellFeature, mountPhoneAgentsFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -188,6 +188,7 @@ async function settleInitialLayout() {
         openSudo: (agentID, label) => openSudoEditModal(agentID, label),
       })),
     async () => (isPhone ? null : mountVoiceWakeFeature()),
+    async () => (isPhone ? mountPhoneAgentsFeature({ onComposeMessage: (seed) => openOperatorMessageDialog(seed) }) : null),
     () => mountAccessPanelFeature({ notify: toast }),
     () => mountKnowledgeSourceFeature({ notify: toast }),
     async () => (isPhone ? null : mountDrawingBoardOverlayFeature()),

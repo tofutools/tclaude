@@ -82,6 +82,36 @@ test.describe('on a phone', () => {
     expect(errors).toEqual([]);
   });
 
+  test('Agents lists agents by group, and a row opens its sheet and its actions', async ({ page }) => {
+    const errors = collectErrors(page);
+    await page.goto('/');
+    await booted(page);
+    await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Agents/ }).click();
+    const rows = page.locator('.phone-agent-row');
+    await expect(rows.first()).toBeVisible();
+    await expect(page.locator('#groups-list')).not.toBeInViewport();
+    await expectNoSideScroll(page, 'Agents');
+    const name = await rows.first().locator('.phone-agent-title').textContent();
+    await rows.first().click();
+    const sheet = page.getByRole('dialog', { name, exact: true });
+    await expect(sheet).toBeVisible();
+    await sheet.getByRole('button', { name: 'Restart…' }).click();
+    await expect(sheet).toBeHidden();
+    const confirm = page.getByRole('dialog', { name: `Restart ${name}?` });
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toBeHidden();
+    expect(errors).toEqual([]);
+  });
+
+  test('a Board task opens its dialog over the phone shell', async ({ page }) => {
+    await page.goto('/');
+    await booted(page);
+    await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Board/ }).click();
+    await page.locator('.phone-task').first().click();
+    await expect(page.locator('.modal-overlay').getByRole('dialog')).toBeVisible();
+  });
+
   test('a deep link lands on its tab inside the shell', async ({ page }) => {
     await page.goto('/messages');
     await booted(page);
