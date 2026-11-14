@@ -358,6 +358,9 @@
    overlay, which a collapsed ancestor neither clips nor hides once it is
    visible again. */
 :root[data-layout="phone"] #tab-groups > :not(#phone-agents-root):not(#groups-list) { display: none; }
+/* The fleet's fused scope (html.scope-fused, dashboard.css) hides every child
+   of the tab but its fused tree; on a phone the Agents list stays instead. */
+:root[data-layout="phone"].scope-fused #tab-groups > #phone-agents-root { display: block !important; }
 :root[data-layout="phone"] #groups-list {
   height: 0; overflow: hidden; visibility: hidden;
 }

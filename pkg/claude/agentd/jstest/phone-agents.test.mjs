@@ -29,9 +29,9 @@ test('the model: groups in order, loudest first, offline apart, PR and checks', 
   const groups = model.agentGroups(SNAPSHOT);
   assert.deepEqual(groups.map((g) => g.name), ['webshop', 'steward', 'Ungrouped']);
   const [webshop] = groups;
-  assert.deepEqual(webshop.online.map((r) => r.name), ['payments-fix', 'lead'], 'asking before idle');
+  assert.deepEqual(webshop.shown.map((r) => r.name), ['payments-fix', 'lead'], 'asking before idle');
   assert.deepEqual(webshop.offline.map((r) => r.name), ['old-worker']);
-  const [asking, lead] = webshop.online;
+  const [asking, lead] = webshop.shown;
   assert.equal(asking.variant, 'asking');
   assert.equal(asking.detail, 'Allow npm test?');
   assert.deepEqual({ number: asking.pr.number, ci: asking.pr.ci }, { number: 1469, ci: 'failing' });
@@ -40,12 +40,29 @@ test('the model: groups in order, loudest first, offline apart, PR and checks', 
   assert.equal(lead.branch, 'main');
   assert.deepEqual(model.groupTabs(groups).map((tab) => `${tab.label} ${tab.online}/${tab.total}`),
     ['All 3/5', 'webshop 2/3', 'steward 1/1', 'Ungrouped 0/1']);
-  assert.equal(model.shownGroups(groups, 'steward').length, 1);
+  assert.equal(model.shownGroups(groups, model.groupKey('steward')).length, 1);
   assert.equal(model.shownGroups(groups, 'gone').length, 3, 'a group that went away shows All');
   assert.equal(model.findRow(groups, id(5)).group.key, model.UNGROUPED);
   assert.equal(model.ciState({ passed: 2, pending: 1 }), 'running');
   assert.equal(model.ciState({ passed: 2 }), 'passing');
   assert.equal(model.ciState(null), '');
+});
+
+test('the model: crashed agents stay in view, group names never collide, an agent in two groups', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/phone-agents-model.js');
+  const both = { agent_id: id(6), conv_id: 'c6', title: 'shared', online: true, state: {} };
+  const groups = model.agentGroups({ groups: [
+    { name: 'all', members: [both, { agent_id: id(7), conv_id: 'c7', title: 'dead', online: false, state: { exit_reason: 'unexpected' } }] },
+    { name: 'ungrouped', members: [both] },
+  ], ungrouped: [{ agent_id: id(8), conv_id: 'c8', title: 'x', online: true, state: {} }] });
+  const [all, named] = groups;
+  assert.deepEqual(all.shown.map((r) => r.name), ['shared', 'dead'], 'crashed is not folded away');
+  assert.deepEqual({ live: all.live, total: all.total }, { live: 1, total: 2 });
+  assert.equal(new Set(groups.map((g) => g.key)).size, 3);
+  assert.deepEqual(model.shownGroups(groups, all.key), [all], 'a group named all is its own tab');
+  assert.equal(model.findRow(groups, id(6), named.key).group, named);
+  assert.equal(model.findRow(groups, id(6)).group, all);
 });
 
 async function setup(t) {

@@ -45,8 +45,7 @@ function MetaLine({ row }) {
 
 function AgentRow({ row, onOpen }) {
   return html`<li>
-    <button data-ui-exempt type="button" class=${`phone-agent-row v-${row.variant}`} onClick=${() => onOpen(row)}
-      aria-label=${`${row.name}, ${row.waking ? 'waking' : VARIANT_LABELS[row.variant]}`}>
+    <button data-ui-exempt type="button" class=${`phone-agent-row v-${row.variant}`} onClick=${() => onOpen(row)}>
       <span class="phone-agent-line"><span class="phone-agent-title">${row.name}</span><${StateTag} row=${row} /></span>
       <${MetaLine} row=${row} />
       ${row.detail && html`<span class="phone-agent-why">${row.detail}</span>`}
@@ -56,8 +55,8 @@ function AgentRow({ row, onOpen }) {
 
 // AgentSheet is one agent's sheet. It reads the agent live from the snapshot,
 // so a state change while it is open shows (and a retired agent says so).
-export function AgentSheet({ state, order, actions, agentKey, close }) {
-  const found = findRow(agentGroups(state.snapshot.value, order), agentKey);
+export function AgentSheet({ state, order, actions, agentKey, groupKey, close }) {
+  const found = findRow(agentGroups(state.snapshot.value, order), agentKey, groupKey);
   if (!found) return html`<p class="ui-empty phone-empty">This agent is no longer listed.</p>`;
   const { row, group } = found;
   const run = (act) => () => { close(); act(row, group); };
@@ -90,19 +89,19 @@ export function PhoneAgents({ state, order, actions }) {
   if (!groups.length) return html`<p class="ui-empty phone-empty">No agents yet.</p>`;
   const tabs = groupTabs(groups);
   const current = tabs.some((t) => t.key === tab) ? tab : ALL;
-  const open = (row) => openPhoneSheet({ label: row.name, Body: AgentSheet, props: { state, order, actions, agentKey: row.key } });
+  const open = (g) => (row) => openPhoneSheet({ label: row.name, Body: AgentSheet, props: { state, order, actions, agentKey: row.key, groupKey: g.key } });
   return html`<div class="phone-agents">
     <${Tabs} class="phone-chips" label="Group" value=${current} onSelect=${setTab}
       items=${tabs.map((t) => ({ key: t.key, label: html`${t.label} <span class="phone-chip-count">${t.online}/${t.total}</span>` }))} />
     ${shownGroups(groups, current).map((g) => html`<div key=${g.key} class="phone-section" role="group" aria-label=${g.name}>
       <h2 class="phone-section-head ui-eyebrow">
-        <span>${g.name} · ${g.online.length}/${g.online.length + g.offline.length}</span>
+        <span>${g.name} · ${g.live}/${g.total}</span>
         ${g.group && html`<${Button} size="sm" class="phone-agents-spawn" onClick=${() => actions.spawn(g.name)} aria-label=${`New agent in ${g.name}`}>＋ New<//>`}
       </h2>
-      <ul class="phone-list">${g.online.map((row) => html`<${AgentRow} key=${row.key} row=${row} onOpen=${open} />`)}</ul>
+      <ul class="phone-list">${g.shown.map((row) => html`<${AgentRow} key=${row.key} row=${row} onOpen=${open(g)} />`)}</ul>
       ${g.offline.length > 0 && html`<details class="phone-agents-offline">
         <summary>Offline · ${g.offline.length}</summary>
-        <ul class="phone-list">${g.offline.map((row) => html`<${AgentRow} key=${row.key} row=${row} onOpen=${open} />`)}</ul>
+        <ul class="phone-list">${g.offline.map((row) => html`<${AgentRow} key=${row.key} row=${row} onOpen=${open(g)} />`)}</ul>
       </details>`}
     </div>`)}
   </div>`;

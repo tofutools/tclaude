@@ -42,7 +42,8 @@ function Sheet({ label, onClose, children }) {
     for (const element of behind) element.inert = true;
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
     doc.addEventListener('keydown', onKey);
-    sheet.current.querySelector('button, a[href], input')?.focus();
+    // The first action, not a link in the sheet's details.
+    (sheet.current.querySelector('button') || sheet.current.querySelector('a[href], input'))?.focus();
     return () => {
       doc.removeEventListener('keydown', onKey);
       for (const element of behind) element.inert = false;

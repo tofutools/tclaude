@@ -7,7 +7,11 @@ import { VARIANT_ORDER, memberVariant } from './group-activity.js';
 import { isAwayPlaceholder } from './agent-presence.js';
 
 export const ALL = 'all';
-export const UNGROUPED = 'ungrouped';
+export const UNGROUPED = '-ungrouped';
+
+// A group's tab key: prefixed, so no group name collides with All or
+// Ungrouped.
+export const groupKey = (name) => `g:${name}`;
 
 // The state tag a row shows, by memberVariant.
 export const VARIANT_LABELS = Object.freeze({
@@ -78,20 +82,24 @@ export function byLoudness(a, b) {
 // agentGroups lists the groups that have agents, in the operator's group
 // order (order is sortGroupsByPref over the dashboard prefs), then the agents
 // in no group. Placeholders for agents away on another node are left out.
-// Each group: { key, name, group, rows, online, offline } with rows split by
-// online, loudest first.
+// Each group: { key, name, group, shown, offline, live, total }: shown is the
+// open list (online agents, and crashed ones, which always need a look),
+// offline the folded rest, both loudest first; live counts the online ones.
 export function agentGroups(snapshot, order = (groups) => groups) {
   const out = [];
   const add = (key, name, group, members) => {
     const rows = (members || []).filter((m) => m && !isAwayPlaceholder(m)).map((m) => agentRow(m, group ? name : ''));
     if (!rows.length) return;
+    const open = (row) => row.online || row.variant === 'crashed';
     out.push({
       key, name, group,
-      online: rows.filter((row) => row.online).sort(byLoudness),
-      offline: rows.filter((row) => !row.online).sort(byLoudness),
+      shown: rows.filter(open).sort(byLoudness),
+      offline: rows.filter((row) => !open(row)).sort(byLoudness),
+      live: rows.filter((row) => row.online).length,
+      total: rows.length,
     });
   };
-  for (const group of order(snapshot?.groups || [])) add(group.name, group.name, group, group.members);
+  for (const group of order(snapshot?.groups || [])) add(groupKey(group.name), group.name, group, group.members);
   add(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped);
   return out;
 }
@@ -99,9 +107,8 @@ export function agentGroups(snapshot, order = (groups) => groups) {
 // groupTabs are the tabs above the list: All, then each group with its
 // online / total count.
 export function groupTabs(groups) {
-  const count = (g) => ({ online: g.online.length, total: g.online.length + g.offline.length });
-  const all = groups.reduce((sum, g) => ({ online: sum.online + count(g).online, total: sum.total + count(g).total }), { online: 0, total: 0 });
-  return [{ key: ALL, label: 'All', ...all }, ...groups.map((g) => ({ key: g.key, label: g.name, ...count(g) }))];
+  const all = groups.reduce((sum, g) => ({ online: sum.online + g.live, total: sum.total + g.total }), { online: 0, total: 0 });
+  return [{ key: ALL, label: 'All', ...all }, ...groups.map((g) => ({ key: g.key, label: g.name, online: g.live, total: g.total }))];
 }
 
 // shownGroups is what a tab shows; an unknown tab (a group that went away)
@@ -112,10 +119,12 @@ export function shownGroups(groups, tab) {
   return picked.length ? picked : groups;
 }
 
-// findRow finds an agent's row by its key in the groups, with its group.
-export function findRow(groups, key) {
+// findRow finds an agent's row by its key, with its group: in the group
+// groupKey names when given (an agent can sit in several), else the first.
+export function findRow(groups, key, inGroup = '') {
   for (const g of groups) {
-    const row = [...g.online, ...g.offline].find((r) => r.key === key);
+    if (inGroup && g.key !== inGroup) continue;
+    const row = [...g.shown, ...g.offline].find((r) => r.key === key);
     if (row) return { row, group: g };
   }
   return null;
