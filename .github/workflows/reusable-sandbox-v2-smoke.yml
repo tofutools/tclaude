@@ -28,6 +28,16 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Read-only: this job builds tclaude and several test binaries whose
+      # dependencies the agentd test snapshot already holds compiled (a cold
+      # `go build .` drops from ~50s to ~15s on 4 cores with it). Nothing here
+      # saves it; release.yml's agentd shard does, on main.
+      - name: Restore agentd test build cache
+        uses: ./.github/actions/test-build-cache
+        with:
+          shard: agentd
+          race: ${{ vars.RUN_RACE }}
+
       - name: Set up Node for OpenCode smoke
         uses: actions/setup-node@v7
         with:
@@ -542,7 +552,7 @@ jobs:
           smoke_log="$RUNNER_TEMP/tclaude-filtered-model-endpoints.log"
           go test ./pkg/claude/session \
             -run '^TestPinnedFilteredModelEndpointEvidence$' \
-            -count=1 -v -timeout=60s |
+            -count=1 -v -timeout=180s |
             tee "$smoke_log"
           if ! grep -q '^--- PASS: TestPinnedFilteredModelEndpointEvidence ' "$smoke_log"; then
             {

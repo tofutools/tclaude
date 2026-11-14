@@ -13,8 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -73,8 +75,9 @@ func TestPinnedFilteredModelEndpointEvidence(t *testing.T) {
 			args: append(filteredCodexEndpointEvidenceArgs(),
 				"exec", "--skip-git-repo-check", "--model", "gpt-5.4",
 				"Reply with exactly ok."),
-			env:      map[string]string{"CODEX_HOME": codexHome},
-			expected: []string{"api.openai.com:443"},
+			env:       map[string]string{"CODEX_HOME": codexHome},
+			expected:  []string{"api.openai.com:443"},
+			untilExit: true,
 		})
 	})
 	t.Run("codex-chatgpt", func(t *testing.T) {
@@ -96,7 +99,21 @@ type filteredEndpointEvidenceCase struct {
 	args     []string
 	env      map[string]string
 	expected []string
+	// untilExit audits the client's whole life: it runs until it gives up and
+	// exits by itself, every process of it, and a client that does not is a
+	// failure. Codex does exit (its reconnect ladder runs out after ~30-36s),
+	// and what it attempts while exhausting its retries and on giving up is
+	// exactly the traffic worth auditing. Without it the client is stopped
+	// at the end of a fixed 10s window.
+	untilExit bool
 }
+
+const (
+	filteredEvidenceWindow = 10 * time.Second
+	// filteredEvidenceExitCap only bounds a client that never exits; reaching
+	// it fails the test. Codex's own lifetime here is ~30-36s.
+	filteredEvidenceExitCap = 100 * time.Second
+)
 
 func runFilteredEndpointEvidence(
 	t *testing.T,
@@ -121,12 +138,35 @@ func runFilteredEndpointEvidence(
 		env["CODEX_HOME"] = codexHome
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	limit := filteredEvidenceWindow
+	if evidence.untilExit {
+		limit = filteredEvidenceExitCap
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	command := exec.CommandContext(ctx, evidence.binary, evidence.args...)
 	command.Dir = home
 	command.Env = filteredEndpointEvidenceEnv(env)
+	// The client runs in its own process group, and stopping it stops all of
+	// it: a client is often a wrapper plus the real binary (Codex's npm
+	// launcher), and killing only the first process used to leave the real
+	// client running unwatched by the deadline.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }
+	// Bounds how long output may stay open once the first process is gone.
+	command.WaitDelay = 5 * time.Second
 	output, _ := command.CombinedOutput()
+	if command.Process != nil {
+		pgid := command.Process.Pid
+		lingering := livingProcessGroupMembers(pgid, 2*time.Second)
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		if evidence.untilExit {
+			assert.NoErrorf(t, ctx.Err(),
+				"pinned harness did not exit by itself within %s; output:\n%s", limit, output)
+			assert.Emptyf(t, lingering,
+				"processes of the pinned harness outlived it; output:\n%s", output)
+		}
+	}
 	time.Sleep(100 * time.Millisecond)
 	hosts := proxy.hosts()
 	for _, expected := range evidence.expected {
@@ -138,6 +178,38 @@ func runFilteredEndpointEvidence(
 		assert.Containsf(t, evidence.expected, host,
 			"pinned harness attempted undeclared endpoint %s; output:\n%s",
 			host, output)
+	}
+}
+
+// livingProcessGroupMembers waits up to limit for process group pgid to have
+// no living member and returns the ones still alive then (as "pid comm").
+// Zombies do not count: a child reparented when its parent exited is reaped
+// a moment later, and until then it still answers kill(-pgid, 0).
+func livingProcessGroupMembers(pgid int, limit time.Duration) []string {
+	deadline := time.Now().Add(limit)
+	for {
+		var living []string
+		stats, _ := filepath.Glob("/proc/[0-9]*/stat")
+		for _, path := range stats {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				continue // exited meanwhile
+			}
+			stat := string(raw)
+			end := strings.LastIndexByte(stat, ')')
+			if end < 0 {
+				continue
+			}
+			// After "pid (comm)": state, ppid, pgrp, ...
+			fields := strings.Fields(stat[end+1:])
+			if len(fields) > 2 && fields[0] != "Z" && fields[2] == strconv.Itoa(pgid) {
+				living = append(living, stat[:end+1])
+			}
+		}
+		if len(living) == 0 || time.Now().After(deadline) {
+			return living
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -165,7 +237,8 @@ func runFilteredCodexChatGPTEndpointEvidence(
 			// preserve only this fixture's explicit Codex authority.
 			"CODEX_HOME": codexHome,
 		},
-		expected: expected,
+		expected:  expected,
+		untilExit: true,
 	})
 }
 

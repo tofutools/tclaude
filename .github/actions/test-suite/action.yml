@@ -49,32 +49,18 @@ runs:
         # fails there; the local caches do that job. Hosted runners cache.
         cache: ${{ runner.environment != 'self-hosted' }}
 
-    - name: Resolve shard build cache
+    - name: Check build cache policy
       if: inputs.shard == 'agentd' || inputs.shard == 'sandbox'
-      id: build-cache
       shell: bash
-      env:
-        SHARD: ${{ inputs.shard }}
-        PLATFORM: ${{ runner.os }}-${{ runner.arch }}
-        RACE: ${{ inputs.race }}
-        MODULES: ${{ hashFiles('go.mod', 'go.sum') }}
-      run: |
-        python3 scripts/ci/test_build_cache.py
-        echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
-        prefix="gobuild-tests-v1-$PLATFORM-$SHARD-"
-        compatible="$prefix$(go env GOVERSION)-$MODULES-race$RACE-"
-        echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
-        echo "compatible=$compatible" >> "$GITHUB_OUTPUT"
-        echo "key=$compatible$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      run: python3 scripts/ci/test_build_cache.py
 
     - name: Restore shard build cache
       if: inputs.shard == 'agentd' || inputs.shard == 'sandbox'
-      id: restore-build-cache
-      uses: actions/cache/restore@v6
+      id: build-cache
+      uses: ./.github/actions/test-build-cache
       with:
-        path: ${{ env.GOCACHE }}
-        key: ${{ steps.build-cache.outputs.key }}
-        restore-keys: ${{ steps.build-cache.outputs.compatible }}
+        shard: ${{ inputs.shard }}
+        race: ${{ inputs.race }}
 
     # The dashboard's JS is unit-tested with Node's built-in test runner.
     # Only `all`, `agentd` (process_graph_node_test.go), and `jstest` need it;
@@ -248,7 +234,7 @@ runs:
     # shard/platform and then prunes its predecessor; the module cache stays
     # under setup-go's existing policy. Reserve room before any parallel saves.
     - name: Check build cache budget
-      if: success() && inputs.save-build-cache == 'true' && github.ref == 'refs/heads/main' && steps.build-cache.outputs.key != '' && steps.restore-build-cache.outputs.cache-hit != 'true'
+      if: success() && inputs.save-build-cache == 'true' && github.ref == 'refs/heads/main' && steps.build-cache.outputs.key != '' && steps.build-cache.outputs.cache-hit != 'true'
       id: cache-budget
       shell: bash
       env:
