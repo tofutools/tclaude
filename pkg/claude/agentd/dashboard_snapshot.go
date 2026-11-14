@@ -221,7 +221,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// peer's snapshot, restricted or not.
 	if !isPeerSnapshot(r) {
 		out.LivePages = livePagesSnapshotFor(r)
-		out.GroupResources = groupResourcesSnapshot(p.groups, aliveSessions)
+		out.GroupResources = groupResourcesSnapshot(p.groups, aliveSessions, groupResourceInputs{
+			membersByGroup: rows.membersByGroup,
+			locate:         rc.location,
+		})
 	}
 
 	// Display-only cost compensation, applied as the final step over the

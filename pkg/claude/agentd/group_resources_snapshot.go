@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -69,7 +70,11 @@ func resourceTime(t time.Time) string {
 // drawing boards in none (group_id 0: the Groups tab's Ungrouped lists them, so one
 // made from the Collab panel can be moved into a group). alive is the
 // snapshot's set of live tmux sessions.
-func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) []groupResource {
+//
+// It runs on every 2-second snapshot poll, so what it needs about the groups'
+// members comes from the snapshot's own batch loads (in), not per-group or
+// per-conv reads of its own.
+func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}, in groupResourceInputs) []groupResource {
 	active := map[int64]*db.AgentGroup{}
 	for _, g := range groups {
 		if g != nil && !g.IsArchived() {
@@ -102,7 +107,7 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) 
 		}
 		out = append(out, groupResource{Kind: resourceKindShell, ID: g.Name, GroupID: g.ID, Title: "Group shell", State: resourceStateRunning, Session: session, Detail: g.DefaultCwd})
 	}
-	out = append(out, agentShellResources(active, alive)...)
+	out = append(out, agentShellResources(active, alive, in)...)
 	addShellTimes(out)
 	slices.SortFunc(out, func(a, b groupResource) int {
 		return cmp.Or(cmp.Compare(a.GroupID, b.GroupID), cmp.Compare(a.Kind, b.Kind), strings.Compare(a.Title, b.Title), strings.Compare(a.ID, b.ID))
@@ -118,7 +123,7 @@ func groupResourcesSnapshot(groups []*db.AgentGroup, alive map[string]struct{}) 
 // shell opens under (term:<agent>:<which>:<group>), so the browser matches it
 // to the tab, window or background row showing it. A shell of a superseded
 // generation, or of an agent in no active group, is not a group's.
-func agentShellResources(active map[int64]*db.AgentGroup, alive map[string]struct{}) []groupResource {
+func agentShellResources(active map[int64]*db.AgentGroup, alive map[string]struct{}, in groupResourceInputs) []groupResource {
 	var shells []backgroundTmuxSession
 	for name := range alive {
 		if strings.HasPrefix(name, "tclaude-term-") {
@@ -137,12 +142,7 @@ func agentShellResources(active map[int64]*db.AgentGroup, alive map[string]struc
 	for _, g := range active {
 		byName[g.Name] = g
 		names = append(names, g.Name)
-		members, err := db.ListAgentGroupMembers(g.ID)
-		if err != nil {
-			slog.Warn("group resources: group members unavailable", "group", g.Name, "error", err)
-			continue
-		}
-		for _, m := range members {
+		for _, m := range in.membersByGroup[g.ID] {
 			if m.ConvID != "" {
 				convs[m.ConvID] = struct{}{}
 			}
@@ -167,13 +167,25 @@ func agentShellResources(active map[int64]*db.AgentGroup, alive map[string]struc
 		if g == nil {
 			continue
 		}
-		start, current, worktree, _ := resolveDirs(t.ConvID)
+		// The same three directories resolveDirs reports, but from the
+		// snapshot's batch-loaded rows: agent.ResolveLocation would rescan the
+		// conv's .jsonl and, for a workdir row with no worktree root (an edit
+		// outside any git repo), fork `git rev-parse` on every poll.
+		loc := in.locate(t.ConvID)
 		out = append(out, groupResource{
 			Kind: resourceKindShell, ID: t.Key, GroupID: g.ID, Title: agentShellTitle(t.Label, t.Which), State: resourceStateRunning,
-			Session: t.TmuxSession, Detail: pickDir(t.Which, start, current, worktree), Agent: t.AgentID, Which: t.Which,
+			Session: t.TmuxSession, Detail: pickDir(t.Which, loc.StartupDir, loc.EditDir, loc.CurrentDir), Agent: t.AgentID, Which: t.Which,
 		})
 	}
 	return out
+}
+
+// groupResourceInputs is what groupResourcesSnapshot draws from the
+// snapshot's batch loads: each group's members, and a conv's location
+// resolved from the row cache's batch-loaded rows (snapshotRowCache.location).
+type groupResourceInputs struct {
+	membersByGroup map[int64][]*db.AgentGroupMember
+	locate         func(convID string) agent.Location
 }
 
 // agentHomeGroup is the active group an agent's shell lists under: the one it

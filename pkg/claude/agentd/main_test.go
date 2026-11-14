@@ -74,6 +74,8 @@ func TestMain(m *testing.M) {
 	agentd.InstallLauncherTestDefaults()
 	agentd.DisableBrokerPaneCacheForTest()
 	agentd.DisableFleetMetadataForTest()
+	// group_resources_shell_times_test.go covers the background refresh.
+	agentd.ProbeShellTimesInlineForTest()
 	// The test process is every socket peer here, and is not an agent the daemon runs.
 	agentd.SetExternalDaemonPIDForTest(-1)
 	// The board never runs the operator's awb CLI to learn its server;
