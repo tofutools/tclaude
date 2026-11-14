@@ -2859,3 +2859,12 @@ func SetAWBCLIStatusForTest(fn func(context.Context) ([]byte, error)) func() {
 	prev := setAWBCLIProbe(fn)
 	return func() { setAWBCLIProbe(prev) }
 }
+
+// DisableHarnessCatalogCacheForTest makes every harness catalog read build
+// the catalog inline, so a test that changes a harness opt-in or a readiness
+// probe sees the change on its next snapshot rather than a poll later.
+func DisableHarnessCatalogCacheForTest() {
+	harnessCatalogCache.Lock()
+	defer harnessCatalogCache.Unlock()
+	harnessCatalogCache.enabled = false
+}

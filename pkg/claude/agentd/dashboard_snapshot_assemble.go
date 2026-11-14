@@ -102,11 +102,12 @@ func assembleSnapshotPayload(r *http.Request, span *perfSpan, p snapshotPreload,
 	//     whenever its 60 s disclosure cache expires. At a 2 s poll that is one poll in thirty paying a
 	//     multi-fork bill: exactly the shape of an occasional
 	//     multi-hundred-ms spike in an otherwise ~13 ms request.
-	//   - buildHarnessCatalog used to cost ~500 ms whenever OpenCode's model
-	//     catalog went stale, because building it EXECUTED `opencode models`.
-	//     That read is now served from cache and refreshed in the background,
-	//     so this should stay in the microseconds; if it ever does not, a
-	//     harness descriptor has started doing work on the read path again.
+	//   - The harness catalog used to cost ~500 ms whenever OpenCode's model
+	//     catalog went stale (it EXECUTED `opencode models`), and ~300-400 ms
+	//     whenever pi's did (`pi --list-models`). The whole catalog is now
+	//     served from memory and rebuilt in the background
+	//     (harness_catalog_cache.go), so this should stay in the microseconds
+	//     on every poll but the daemon's very first.
 	//
 	// Both sat inside the "groups" window unmeasured, so their cost was charged
 	// to a group loop whose own sub-phases never exceed a fraction of a
@@ -131,7 +132,7 @@ func assembleSnapshotPayload(r *http.Request, span *perfSpan, p snapshotPreload,
 	)
 	payloadPhase("auth_session", func() { authSession = dashboardAuthSessionForRequest(r) })
 	payloadPhase("user_model", func() { userModel = readUserDefaultModel() })
-	payloadPhase("harness_catalog", func() { harnesses = buildHarnessCatalog() })
+	payloadPhase("harness_catalog", func() { harnesses = cachedHarnessCatalog() })
 	payloadPhase("sandbox_impl", func() { sandboxImpl = buildSandboxImplCatalog() })
 	payloadPhase("remote_access", func() {
 		raRunning, raBind = remoteListenerStatus()
