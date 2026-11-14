@@ -97,9 +97,11 @@ func TestDoctorRefreshAndInvalidationBuildInline(t *testing.T) {
 func TestDoctorInvalidationDropsInFlightRebuild(t *testing.T) {
 	var builds atomic.Int32
 	release := make(chan struct{})
+	started := make(chan struct{})
 	useDoctorBuildForTest(t, func() []doctor.Check {
 		n := builds.Add(1)
 		if n == 2 {
+			close(started)
 			<-release
 			return []doctor.Check{{ID: "stale-background"}}
 		}
@@ -109,6 +111,13 @@ func TestDoctorInvalidationDropsInFlightRebuild(t *testing.T) {
 	require.Equal(t, "1", firstDoctorID(doctorChecks(false)))
 	ageDoctorCacheForTest()
 	require.Equal(t, "1", firstDoctorID(doctorChecks(false)), "starts the background rebuild")
+	// The background rebuild must hold build #2 before the inline read below
+	// builds, or that read would take #2 and block.
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("background doctor rebuild never started")
+	}
 	invalidateDoctorChecks()
 	require.Equal(t, "3", firstDoctorID(doctorChecks(false)), "post-write read builds inline")
 	close(release)
