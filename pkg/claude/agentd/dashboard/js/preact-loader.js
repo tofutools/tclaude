@@ -2,6 +2,7 @@
 // loads its runtime graph only after claiming its stable hosts.
 import { createIslandDescriptor, mountFeatureIsland, mountIslandDescriptor } from './island-lifecycle.js';
 import { registerFeatureState } from './feature-state-registry.js';
+import { isPhone } from './layout.js';
 
 const shellDescriptor = createIslandDescriptor({
   name: 'shell',
@@ -795,8 +796,23 @@ const messagesDescriptor = createIslandDescriptor({
   },
 });
 
+// A phone gets Mail (phone-mail-island.js) over the same controller and
+// state, in place of the three desktop panes.
+const phoneMessagesDescriptor = createIslandDescriptor({
+  name: 'messages', label: 'Messages', hosts: { host: '#messages-root' }, failureClass: 'messages-error ui-error-box',
+  load: async ({ hosts: { host } }) => {
+    const islandModule = import('./phone-mail-island.js');
+    const legacyModule = import('./mail.js');
+    const [{ mountPhoneMailIsland }, { mailController }] = await Promise.all([islandModule, legacyModule]);
+    return {
+      state: mailController.state,
+      mount: (registerCleanup) => mountPhoneMailIsland({ host, controller: mailController, registerCleanup }),
+    };
+  },
+});
+
 export function mountMessagesFeature(dependencies = {}) {
-  return mountIslandDescriptor(messagesDescriptor, dependencies);
+  return mountIslandDescriptor(isPhone ? phoneMessagesDescriptor : messagesDescriptor, dependencies);
 }
 
 export async function mountLogsFeature(actionDependencies = {}) {
