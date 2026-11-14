@@ -129,3 +129,24 @@ test('the location: Back closes it, Forward or a link reopens an agent\'s termin
   await harness.act(() => routes.restoreOverlays({ terminal: 'term:agt_x:shell:' }));
   assert.equal(host.querySelector('.phone-term'), null);
 });
+
+test('on the desktop a phone\'s terminal link opens the agent\'s pane and leaves the location', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [routes, tab] = await Promise.all([
+    harness.importDashboardModule('js/overlay-routes.js'),
+    harness.importDashboardModule('js/terminals-tab.js'),
+  ]);
+  const opened = [];
+  const unregister = tab.registerTerminalShellController({ openPane: (seed) => { opened.push(seed); return { key: seed.key }; } });
+  t.after(unregister);
+  const overlays = [];
+  harness.document.addEventListener(routes.OVERLAY_EVENT, (event) => overlays.push(event.detail));
+  // The link arrives before the route registers (the router restores early).
+  routes.restoreOverlays({ terminal: `window:${AGENT}` });
+  const unroute = tab.registerDesktopTerminalRoute((agent) => (agent === AGENT ? 'checkout-ui' : agent));
+  t.after(unroute);
+  await harness.act(async () => {});
+  assert.deepEqual(opened.map((seed) => [seed.ws, seed.label]), [[`/api/open-window-ws/${AGENT}`, 'checkout-ui']]);
+  assert.equal(routes.overlayParams().terminal, '', 'no later location carries it');
+  assert.deepEqual(overlays.at(-1), { closed: false, replace: true });
+});

@@ -489,6 +489,10 @@ export function mountTerminalWidget({
   function setSoftKeyboard(on) {
     const textarea = term.textarea;
     if (disposed || !textarea) return;
+    // A browser raises its keyboard when an element takes focus, not when
+    // inputmode changes under focus: a terminal already focused (tapped)
+    // lets go first.
+    if (on && documentRef.activeElement === textarea) textarea.blur?.();
     textarea.inputMode = on ? 'text' : 'none';
     if (on) term.focus();
     else textarea.blur?.();

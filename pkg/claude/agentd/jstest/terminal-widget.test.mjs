@@ -1512,8 +1512,16 @@ test('a touch pinch sets the font once it rests; named keys and the soft keyboar
   assert.equal(widget.key('nonsense'), false);
   assert.deepEqual(typed(), ['1', '\x1b[A', '\r', '\x1b', '\x03', '\x1bOB']);
 
+  // A terminal already focused (tapped) lets go first, so the browser sees
+  // a fresh focus and raises its keyboard.
+  const order = [];
+  term.textarea.blur = () => order.push('blur');
+  term.focus = () => order.push('focus');
+  Object.defineProperty(harness.document, 'activeElement', { value: term.textarea, configurable: true });
   widget.setSoftKeyboard(true);
+  delete harness.document.activeElement;
   assert.equal(term.textarea.inputMode, 'text');
+  assert.deepEqual(order, ['blur', 'focus']);
   widget.dispose();
   assert.equal(widget.key('1'), false, 'a disposed terminal sends nothing');
 });

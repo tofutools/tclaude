@@ -69,7 +69,7 @@ import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
 import { initTerminalThemeSync } from './terminal-theme.js';
-import { closeTerminalsForWindowOp, openTerminalPane, openWebWindowPane } from './terminals-tab.js';
+import { closeTerminalsForWindowOp, openTerminalPane, openWebWindowPane, registerDesktopTerminalRoute } from './terminals-tab.js';
 import { recordGroupInteraction } from './last-group.js';
 import { loadSortState } from './sort.js';
 import { bindDock } from './dock.js';
@@ -82,7 +82,8 @@ import {
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
-import { bindShortcutOverrides, onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
+import { bindShortcutOverrides, dashboardState, onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
+import { agentLabel } from './terminal-nav-route.js';
 import { startBrowserNotifyPoll } from './browser-notify.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -374,6 +375,8 @@ async function settleInitialLayout() {
   // A drawing board or page row dragged onto another group's box moves it there
   // (resource-dnd.js, its own MIME type).
   if (!isPhone) pageCleanups.push(bindResourceDnd());
+  // A phone's terminal link opens the agent's pane in Collab.
+  if (!isPhone) pageCleanups.push(registerDesktopTerminalRoute((agent) => agentLabel(dashboardState.snapshot.value, agent)));
   // A task row in a task board's List drags as a whole, as agent and
   // resource rows do (row-drag.js); groups-taskboard.js owns the drag itself.
   if (!isPhone) pageCleanups.push(bindTaskRowDrag());

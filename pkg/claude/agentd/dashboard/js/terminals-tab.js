@@ -9,6 +9,7 @@ import { terminalAttachConfig } from './terminal-attach-config.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
 import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { isWizardActive } from './slop.js';
+import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
 
 let controller = null;
 let prepareRuntime = null;
@@ -38,6 +39,22 @@ let phoneTerminals = null;
 export function setPhoneTerminals(open) {
   phoneTerminals = open;
   return () => { if (phoneTerminals === open) phoneTerminals = null; };
+}
+
+// The terminal overlay param is the phone's (phone-terminal-island.js). On the
+// desktop a phone's link (terminal=window:<agent>) opens that agent's pane
+// here instead, and the param leaves the location, so it does not ride along
+// on every later one.
+const AGENT_TERMINAL = /^window:([A-Za-z0-9_-]{1,128})$/;
+export function registerDesktopTerminalRoute(labelFor = (agent) => agent) {
+  return registerOverlayRoute('terminal', {
+    value: () => '',
+    restore: (key) => {
+      const match = AGENT_TERMINAL.exec(key || '');
+      if (match) void openWebWindowPane(match[1], labelFor(match[1]));
+      if (key) announceOverlay({ replace: true });
+    },
+  });
 }
 
 // An agent is in one place at a time, and every way of showing it comes through
