@@ -628,6 +628,15 @@ func parseTermScroll(messageType int, data []byte) (op string, notches int, isSc
 	return "", 0, true
 }
 
+// termScrollAnswer is the answer to a scroll request: where the pane is.
+func termScrollAnswer(state session.PaneScroll) []byte {
+	reply, _ := json.Marshal(struct {
+		Type string `json:"type"`
+		session.PaneScroll
+	}{"scroll", state})
+	return reply
+}
+
 // initialResizeWait bounds how long runPTYOverWS holds the command back
 // waiting for the client's opening resize message. Every client of these
 // routes (the dashboard widget, the standalone terminal page, the remote TUI)
@@ -968,6 +977,12 @@ initialSize:
 				}
 				continue
 			}
+			// A scroll request before the command starts has no attached
+			// view to scroll: it answers live and never becomes input.
+			if _, _, isScroll := parseTermScroll(frame.messageType, frame.data); isScroll {
+				_ = conn.WriteMessage(websocket.TextMessage, termScrollAnswer(session.PaneScroll{}))
+				continue
+			}
 			pending = append(pending, frame)
 		case <-waitTimer.C:
 			break initialSize
@@ -992,6 +1007,10 @@ initialSize:
 					if size != nil {
 						initial = size
 					}
+					continue
+				}
+				if _, _, isScroll := parseTermScroll(frame.messageType, frame.data); isScroll {
+					_ = conn.WriteMessage(websocket.TextMessage, termScrollAnswer(session.PaneScroll{}))
 					continue
 				}
 				pending = append(pending, frame)
@@ -1038,8 +1057,8 @@ initialSize:
 	if hook != nil && hook.OnResize != nil && initial != nil {
 		hook.OnResize(int(startSize.Cols), int(startSize.Rows))
 	}
-	// scrolled: this terminal put its pane into copy-mode, which it must
-	// not leave behind.
+	// scrolled: this terminal's last scroll left its pane in copy-mode,
+	// which it must not leave behind.
 	var scrolled atomic.Bool
 	defer func() {
 		// Reliable detach first: tell the tmux server to drop this terminal's
@@ -1160,16 +1179,12 @@ initialSize:
 				var state session.PaneScroll
 				if op != "" && cleanupSession != "" {
 					state = session.ScrollTmuxPane(cleanupSession, op, notches)
-					if state.CopyMode {
-						scrolled.Store(true)
-					}
+					// Only a terminal whose last scroll left the pane in
+					// copy-mode cancels it at close: one that came back to
+					// live leaves another viewer's scrolling alone.
+					scrolled.Store(state.CopyMode)
 				}
-				if reply, err := json.Marshal(struct {
-					Type string `json:"type"`
-					session.PaneScroll
-				}{"scroll", state}); err == nil {
-					_ = writeFrame(websocket.TextMessage, reply)
-				}
+				_ = writeFrame(websocket.TextMessage, termScrollAnswer(state))
 				continue
 			}
 			_, _ = ptmx.Write(frame.data)

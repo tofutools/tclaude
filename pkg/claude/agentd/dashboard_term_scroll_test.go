@@ -92,7 +92,8 @@ func TestParseTermScroll(t *testing.T) {
 // A phone swipe over a Claude Code pane (tmux mouse off) scrolls the pane's
 // history in copy-mode through the terminal socket: the frame never reaches
 // the PTY, the answer says where the pane is, and a terminal that leaves
-// copy-mode behind cancels it on close.
+// copy-mode behind cancels it on close. A swipe before the command starts
+// answers live and never becomes input.
 func TestBrowserTerminalScrollFrame(t *testing.T) {
 	fake := &scrollPaneTmux{}
 	previousTmux := common.Default
@@ -120,6 +121,8 @@ func TestBrowserTerminalScrollFrame(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A swipe before the command starts: nothing to scroll yet.
+	send(`{"type":"scroll","op":"up","notches":1}`)
 	send(`{"type":"resize","cols":80,"rows":24}`)
 	proc := <-started
 	t.Cleanup(func() { _ = syscall.Kill(-proc.Pid, syscall.SIGKILL); <-done })
@@ -147,7 +150,14 @@ func TestBrowserTerminalScrollFrame(t *testing.T) {
 			output.Write(data)
 		}
 	}
-	read("READY", func() bool { return strings.Contains(output.String(), "READY") })
+	read("READY and the early answer", func() bool { return answer != nil && strings.Contains(output.String(), "READY") })
+	if answer["copy_mode"] != false {
+		t.Fatalf("early answer = %v, want live", answer)
+	}
+	if _, actions := fake.snapshot(); len(actions) != 0 {
+		t.Fatalf("a scroll before the command started ran %v", actions)
+	}
+	answer = nil
 
 	send(`{"type":"scroll","op":"up","notches":2}`)
 	read("the scroll answer", func() bool { return answer != nil })
