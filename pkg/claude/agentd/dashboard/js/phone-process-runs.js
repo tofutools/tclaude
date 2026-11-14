@@ -210,7 +210,7 @@ export function GateCard({ item, api = runDetailApi, source = processContext, on
     </div>
     ${detail.view
       ? html`<${Gates} run=${run} detail=${detail} onDecide=${decider(api, run.runId, refresh, source)} />`
-      : html`<p class="ui-empty">${detail.error ? `Could not read the run: ${detail.error}` : 'Loading…'}</p>`}
+      : html`<p class="ui-empty phone-empty">${detail.error ? `Could not read the run: ${detail.error}` : 'Loading…'}</p>`}
   </div>`;
 }
 
