@@ -265,7 +265,14 @@ type stewardRosterEntry struct {
 
 // stewardRosterView lists the active Steward, then the others, in seat order.
 func stewardRosterView() []stewardRosterEntry {
-	active := activeStewardConv()
+	return stewardRosterViewWith(probeConvAlive, agent.FreshTitle)
+}
+
+// stewardRosterViewWith is stewardRosterView with liveness and naming
+// supplied. The dashboard poll passes its alive set and the cached title, so
+// building the roster forks no tmux and re-reads no transcript.
+func stewardRosterViewWith(isAlive convAliveFn, title func(conv string) string) []stewardRosterEntry {
+	active := activeStewardConvWith(isAlive)
 	stored, err := db.ListStewardRoster()
 	if err != nil {
 		slog.Warn("steward: read roster failed", "error", err)
@@ -275,7 +282,7 @@ func stewardRosterView() []stewardRosterEntry {
 		if err != nil || agentID == "" {
 			return stewardRosterEntry{}, false
 		}
-		out := stewardRosterEntry{AgentID: agentID, Name: agent.FreshTitle(conv), Seat: seat, Online: pickAliveSession(conv) != nil}
+		out := stewardRosterEntry{AgentID: agentID, Name: title(conv), Seat: seat, Online: isAlive(conv)}
 		if h := harnessForConv(conv); h != nil {
 			out.Harness = h.Name
 		}
