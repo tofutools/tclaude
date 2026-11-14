@@ -1574,12 +1574,10 @@ test('a one-finger swipe scrolls as the wheel does, coasts, and goes back to liv
   touch('touchend');
   assert.equal(frames.length, 0, 'a finger that rested before lifting does not coast');
 
-  // The first notch only entered copy-mode; the second scrolled. ↓ Live
-  // sends twice the notches it went back, and one more: a notch down at the
-  // bottom does nothing. They go out a few a frame, as a swipe's do.
+  // The first notch only entered copy-mode; the second scrolled. One notch
+  // down reaches the bottom (copy-mode leaves itself), one more for a drift.
   widget.toLive();
-  assert.deepEqual(log.slice(2), ['newer', 'newer', 'newer']);
-  assert.equal(frames.length, 0, 'three notches fit one frame');
+  assert.deepEqual(log.slice(2), ['newer', 'newer']);
   assert.deepEqual(back, [true, false]);
 
   // Swiping back down to the bottom leaves copy-mode: live again.
@@ -1595,30 +1593,7 @@ test('a one-finger swipe scrolls as the wheel does, coasts, and goes back to liv
   log.length = 0;
   touch('touchstart', 100); clock = 1600; touch('touchmove', 190); clock = 1800; touch('touchend');
   widget.key('1');
-  assert.deepEqual(log, ['older', 'newer', 'newer', 'newer', '1']);
-
-  // A long way back: ↓ Live paces its notches over frames, and a key sends
-  // whatever is still owed before itself.
-  log.length = 0;
-  touch('touchstart', 100); clock = 1810; touch('touchmove', 180); clock = 1820; touch('touchmove', 260);
-  clock = 1830; touch('touchmove', 340); clock = 1840; touch('touchmove', 420); clock = 2000; touch('touchend');
-  assert.deepEqual(log, ['older', 'older', 'older', 'older']);
-  frames.length = 0;
-  log.length = 0;
-  widget.toLive();
-  assert.deepEqual(log, ['newer', 'newer', 'newer', 'newer'], 'four a frame');
-  assert.equal(frames.length, 1);
-  frames.shift()();
-  assert.equal(log.length, 7, 'twice three notches back, and one');
-  assert.equal(frames.length, 0);
-  touch('touchstart', 100); clock = 2010; touch('touchmove', 180); clock = 2020; touch('touchmove', 260);
-  clock = 2030; touch('touchmove', 340); clock = 2040; touch('touchmove', 420); clock = 2200; touch('touchend');
-  frames.length = 0;
-  log.length = 0;
-  widget.toLive();
-  widget.key('2');
-  assert.deepEqual(log, ['newer', 'newer', 'newer', 'newer', 'newer', 'newer', 'newer', '2'], 'owed notches go before the key');
-  frames.length = 0;
+  assert.deepEqual(log, ['older', 'newer', 'newer', '1']);
 
   // A fling coasts on, slower each frame, and stops.
   log.length = 0;
@@ -1700,10 +1675,12 @@ test('a swipe over a session that does not take the mouse sends the desktop whee
 
 // xterm emits a wheel notch through onData while the wheel event is being
 // dispatched: a mouse report while the session takes the mouse, an arrow key
-// once it stops. The widget's own notch is never typing, so it neither goes
-// live nor sends notches of its own in answer (which would never end), and a
-// session that stopped taking the mouse ends ↓ Live without arrow keys.
-test('a notch xterm sends as an arrow key is not typing, and a touch during ↓ Live sends what is owed', async (t) => {
+// once it stops. The widget's own notch is never typing, so it does not go
+// live in answer, and a session that stopped taking the mouse ends ↓ Live.
+// A harness that scrolls its own history (wheelCopyMode false: Claude Code)
+// gets the same wheel reports, and no ↓ Live: it takes keys while scrolled
+// back, as on the desktop.
+async function xtermLikeWidget(t, options = {}) {
   const harness = await createPreactHarness(t);
   const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
   const fakes = widgetFakes(harness.document);
@@ -1719,61 +1696,66 @@ test('a notch xterm sends as an arrow key is not typing, and a touch during ↓ 
   }
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const timers = manualTimers();
-  let clock = 0;
-  const frames = [];
+  const clock = { now: 0 };
   const back = [];
   const widget = mountTerminalWidget({
     host, wsPath: '/api/open-window-ws/agt_three', authenticate: false,
     initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
-    onScrollBackChange: (on) => back.push(on),
+    onScrollBackChange: (on) => back.push(on), ...options,
     TerminalCtor: XtermLike, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
     ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
-    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock,
-    requestAnimationFrameImpl: (run) => { frames.push(run); return frames.length; }, cancelAnimationFrameImpl: () => {}, ...timers,
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock.now,
+    requestAnimationFrameImpl: () => 1, cancelAnimationFrameImpl: () => {}, ...timers,
   });
   await widget.connect();
   const socket = fakes.sockets[0];
   socket.open();
   timers.flush();
-  frames.length = 0;
   const sent = [];
   const send = socket.send.bind(socket);
-  socket.send = (value) => { if (typeof value !== 'string') sent.push(new TextDecoder().decode(value)); send(value); };
-  const touch = (type, y) => harness.fireEvent(host, type, { touches: type === 'touchend' ? [] : [{ clientX: 50, clientY: y }] });
-  const swipeBack = (from) => {
-    touch('touchstart', 100); clock = from + 10; touch('touchmove', 180); clock = from + 20; touch('touchmove', 260);
-    clock = from + 30; touch('touchmove', 340); clock = from + 40; touch('touchmove', 420); clock = from + 300; touch('touchend');
+  socket.send = (value) => {
+    if (typeof value !== 'string') sent.push(new TextDecoder().decode(value));
+    else if (!value.includes('"resize"')) sent.push(value);
+    send(value);
   };
+  const touch = (type, y) => harness.fireEvent(host, type, { touches: type === 'touchend' ? [] : [{ clientX: 50, clientY: y }] });
+  const swipeBack = () => {
+    const from = clock.now;
+    touch('touchstart', 100); clock.now = from + 10; touch('touchmove', 180); clock.now = from + 20; touch('touchmove', 260);
+    clock.now = from + 30; touch('touchmove', 340); clock.now = from + 40; touch('touchmove', 420); clock.now = from + 300; touch('touchend');
+  };
+  return { widget, fakes, sent, back, touch, swipeBack, clock };
+}
 
-  // Scrolled back by wheel reports, which bring nothing back to live.
-  swipeBack(0);
+test('a notch xterm sends as an arrow key is not typing, and ends ↓ Live', async (t) => {
+  const { widget, fakes, sent, back, touch, swipeBack, clock } = await xtermLikeWidget(t);
+  swipeBack();
   assert.equal(sent.length, 4);
-  assert.ok(sent.every((value) => value.startsWith('\x1b[<64;')));
+  assert.ok(sent.every((value) => value.startsWith('\x1b[<64;')), 'wheel reports bring nothing back to live');
   assert.equal(widget.scrolledBack(), true);
-
-  // A touch while ↓ Live is still pacing its notches sends them all first.
-  frames.length = 0;
-  sent.length = 0;
-  widget.toLive();
-  assert.equal(sent.length, 4, 'the first frame');
-  touch('touchstart', 100);
-  assert.equal(sent.length, 7, 'twice three back, and one: none dropped');
-  touch('touchend');
-  frames.length = 0;
 
   // The session stops taking the mouse while scrolled back: a notch comes
   // back as an arrow key, which is not typing, and ↓ Live goes away.
-  swipeBack(1000);
-  assert.equal(widget.scrolledBack(), true);
   fakes.terminal().modes.mouseTrackingMode = 'none';
   sent.length = 0;
-  touch('touchstart', 100); clock = 2000; touch('touchmove', 190); clock = 2300; touch('touchend');
+  touch('touchstart', 100); clock.now += 10; touch('touchmove', 190); clock.now += 300; touch('touchend');
   assert.deepEqual(sent, ['\x1b[A'], 'one arrow key, as the desktop wheel sends, and nothing after it');
   assert.equal(widget.scrolledBack(), false);
   assert.equal(back.at(-1), false);
-  assert.equal(frames.length, 0);
-  widget.toLive();
   widget.key('1');
-  assert.deepEqual(sent, ['\x1b[A', '1'], 'no arrow keys owed to a live view');
+  assert.deepEqual(sent, ['\x1b[A', '1']);
+  widget.dispose();
+});
+
+test('a harness that scrolls its own history (Claude Code) gets the wheel reports, with no ↓ Live and keys straight', async (t) => {
+  const { widget, sent, back, swipeBack } = await xtermLikeWidget(t, { wheelCopyMode: false });
+  swipeBack();
+  assert.equal(sent.length, 4);
+  assert.ok(sent.every((value) => value.startsWith('\x1b[<64;')));
+  assert.equal(widget.scrolledBack(), false);
+  assert.deepEqual(back, [], 'no ↓ Live');
+  widget.key('1');
+  assert.equal(sent.at(-1), '1');
+  assert.equal(sent.length, 5, 'nothing is sent ahead of the key');
   widget.dispose();
 });

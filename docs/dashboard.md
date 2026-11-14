@@ -214,10 +214,12 @@ away from the browser, disconnects it, and coming back reconnects.
   Claude Code's fullscreen TUI scrolls its own conversation history, and Codex
   and shell sessions scroll tmux's history (copy-mode). Where nothing takes the
   mouse, a swipe sends the arrow keys a desktop wheel would. A quick swipe
-  keeps scrolling after you lift your finger. While you're scrolled back,
-  **↓ Live** scrolls back down to the live screen; swiping back down does too,
-  and pressing a key or typing first leaves tmux's copy-mode, so the key
-  reaches the session.
+  keeps scrolling after you lift your finger. In tmux's history (Codex,
+  shells), **↓ Live** scrolls back down to the live screen while you're
+  scrolled back, and so does swiping back down; pressing a key or typing
+  scrolls back down first, so tmux doesn't take the key. Claude Code has its
+  own way back to the bottom, and takes keys while scrolled back, as on a
+  desktop.
 
 ### Settings on a phone
 

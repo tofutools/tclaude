@@ -42,6 +42,9 @@ async function setup(t) {
   const deps = {
     widgetFactory: factory,
     widgetOptions: () => ({}),
+    // What the snapshot's harness list says (tmux_scrollback): Claude Code
+    // scrolls its own history.
+    wheelCopyMode: (harness) => harness !== 'claude',
     onComposeMessage: (seed) => composed.push(seed),
     agent: (id) => (id === AGENT ? { label: 'checkout-ui', harness: 'claude' } : null),
     prefs: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
@@ -163,4 +166,15 @@ test('a swipe back through history shows ↓ Live, which comes back to live', as
   await tap(button('Back to live'));
   assert.deepEqual(widget.calls.at(-1), ['toLive']);
   assert.equal(host.querySelector('.phone-term-live'), null);
+});
+
+test('↓ Live is for a session whose wheel scrolls tmux copy-mode, not one that scrolls its own history', async (t) => {
+  const { harness, tab, made } = await setup(t);
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  await harness.act(() => {});
+  assert.equal(made.at(-1).options.touchScroll, true);
+  assert.equal(made.at(-1).options.wheelCopyMode, false, 'Claude Code: as on the desktop');
+  await harness.act(() => tab.openWebWindowPane('agt_00000000000000000000000000000002', 'codex-one', { harness: 'codex' }));
+  await harness.act(() => {});
+  assert.equal(made.at(-1).options.wheelCopyMode, true, 'Codex: tmux copy-mode would take keys');
 });

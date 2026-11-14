@@ -12,7 +12,8 @@
 // raw typing. A pinch sets the text size and the grid reflows to fit. A
 // one-finger swipe scrolls exactly as the desktop's mouse wheel does, so each
 // harness scrolls its own way: Claude Code its own history, Codex and shells
-// tmux's. ↓ Live (or any key) scrolls back down.
+// tmux's. Where the wheel scrolls tmux copy-mode (Codex, shells), ↓ Live (or
+// any key) scrolls back down first, so copy-mode never takes a key.
 
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -134,6 +135,7 @@ function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaiti
       agentLabel: seed.label || '',
       touchZoom: true,
       touchScroll: true,
+      wheelCopyMode: deps.wheelCopyMode ? deps.wheelCopyMode(seed.harness || '') : true,
       onScrollBackChange,
       softKeyboard: false,
       initialFontSize: readTerminalFont(FONT_SURFACE, key, deps.prefs) ?? PHONE_TERMINAL_FONT,

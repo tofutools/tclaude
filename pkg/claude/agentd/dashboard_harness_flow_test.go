@@ -75,6 +75,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.Contains(t, claude.ApprovalModeHelp["inherit"], "⚠", "inherit is no longer the default and flags its can-block caveat")
 	assert.Contains(t, claude.ApprovalModeHelp["bypassPermissions"], "⚠", "bypassPermissions flags its no-guardrails caveat")
 	assert.True(t, claude.CanRemoteControl, "claude has built-in Remote Access (/remote-control)")
+	assert.False(t, claude.TmuxScrollback, "claude renders its own scrollback: the phone terminal shows no ↓ Live")
 	assert.Equal(t, harness.MustGet(harness.DefaultName).SupportsAwaitingInputObservation(),
 		claude.CanObserveAwaitingInput, "awaiting-input observation follows the harness registry")
 
@@ -92,6 +93,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, codex.CanSandbox, "codex takes a launch sandbox flag")
 	assert.True(t, codex.CanBuiltinOSSandbox, "Codex owns a real built-in OS sandbox")
 	assert.False(t, codex.CanRemoteControl, "codex has no built-in Remote Access — the toggle must be gated off")
+	assert.True(t, codex.TmuxScrollback, "codex scrolls tmux copy-mode: the phone terminal shows ↓ Live")
 	assert.Equal(t, harness.MustGet(harness.CodexName).SupportsAwaitingInputObservation(),
 		codex.CanObserveAwaitingInput, "awaiting-input observation follows the harness registry")
 	assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.HarnessBuiltinModes)
