@@ -28,3 +28,12 @@ export function triggersReadable(snapshot) {
   if (!nodeShares(snapshot, 'local_dashboard')) return false;
   return !peerSnapshot(snapshot) || snapshot.triggers_enabled === true;
 }
+
+// pageTriggersReadable is triggersReadable for the node the page shows. This
+// node's own page has nothing to wait for; a peer's page waits for the
+// peer's snapshot. The Automations island checks it before it mounts the
+// Triggers workspace, which reads /api/triggers at once: a Triggers view
+// remembered from this node's page must not ask a peer blind (tk_9575a939).
+export function pageTriggersReadable(snapshot, remote = globalThis.__tclaudeRemoteNode) {
+  return remote?.id ? triggersReadable(snapshot) : triggersAvailable(snapshot);
+}

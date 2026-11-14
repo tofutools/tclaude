@@ -726,3 +726,43 @@ test('Triggers stays out of the subnav only on a peer that does not offer it', a
   assert.equal(automationsSubnavEntries({ peer_view: { level: 'restricted' } }).includes('trigger'), false);
   assert.equal(automationsSubnavEntries({}).includes('trigger'), true);
 });
+
+test("A remembered Triggers view on a peer's page reads no rules until the peer's snapshot says it shares them", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+  ]);
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; });
+  // The view was last left on Triggers (on this node's own page); the
+  // island mounts on the peer's page before the peer's snapshot arrives.
+  const snapshot = harness.signals.signal(null);
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  state.setKind('trigger');
+  let triggerLoads = 0;
+  const actions = {
+    refresh: () => {}, loadTriggers: async () => { triggerLoads += 1; return []; },
+    openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, runCron: () => {},
+    toggleCron: () => {}, deleteCron: () => {}, downloadExport: () => {}, dismissExport: () => {},
+  };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
+  const flush = async () => harness.act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
+  await flush();
+  assert.equal(triggerLoads, 0, 'not before the snapshot');
+  assert.match(mounted.container.textContent, /Loading triggers/);
+
+  // A restricted peer (even one that still advertises Triggers) keeps them local.
+  await harness.act(() => { snapshot.value = { ...page(), triggers_enabled: true, peer_view: { level: 'restricted', included: ['groups'], omitted: [] } }; });
+  await flush();
+  assert.equal(triggerLoads, 0, 'a restricted peer is not asked');
+  assert.equal(mounted.container.querySelector('.triggers-workspace'), null);
+  assert.equal(state.kind.value, 'trigger', 'the remembered choice is kept for a page that can read it');
+
+  await harness.act(() => { snapshot.value = { ...page(), triggers_enabled: true, peer_view: { level: 'unrestricted', included: [], omitted: [] } }; });
+  await flush();
+  assert.equal(triggerLoads, 1, 'unrestricted trust reads them');
+  assert.ok(mounted.container.querySelector('.triggers-workspace'));
+  await mounted.unmount();
+});

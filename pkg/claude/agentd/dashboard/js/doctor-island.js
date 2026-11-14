@@ -34,7 +34,12 @@ const doctorShared = () => pageShares('local_dashboard');
 
 export function createDoctorActions({ state, notify, fetchImpl = globalThis.fetch, shares = doctorShared }) {
   async function load({ refresh = false } = {}) {
-    if (!shares()) return;
+    // A peer that stopped sharing them (trust lowered) shows none of its
+    // last checks, nor their badge counts.
+    if (!shares()) {
+      if (state.checks.peek().length) state.checks.value = [];
+      return;
+    }
     if (state.phase.value === 'idle') state.phase.value = 'loading';
     try {
       const body = await readJSON(await fetchImpl(`/api/doctor${refresh ? '?refresh=1' : ''}`, { credentials: 'same-origin' }));

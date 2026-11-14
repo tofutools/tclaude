@@ -6,10 +6,11 @@ import { createPreactHarness } from './preact-harness.mjs';
 // once its snapshot says the peer shares them (unrestricted trust).
 test("Doctor reads no checks from a peer's page until the peer is known to share them", async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ mountDoctorIsland }, { createDoctorState }] = await Promise.all([
+  const [{ mountDoctorIsland, createDoctorActions }, { createDoctorState }] = await Promise.all([
     harness.importDashboardModule('js/doctor-island.js'),
     harness.importDashboardModule('js/doctor-state.js'),
   ]);
+  const mountActions = (state, shares) => createDoctorActions({ state, shares });
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (url) => {
     calls.push(String(url));
@@ -34,5 +35,10 @@ test("Doctor reads no checks from a peer's page until the peer is known to share
   await harness.act(() => { shared.value = false; shared.value = true; });
   await flush();
   assert.equal(calls.length, 1, 'the gate opening again does not reload what is loaded');
+  // Trust lowered: the next poll's load clears what it showed.
+  shared.value = false;
+  await harness.act(() => mountActions(state, () => shared.value).load());
+  assert.equal(state.counts.value.blocking, 0, 'a peer no longer sharing its checks shows no stale badge');
+  assert.equal(calls.length, 1);
   await harness.act(() => { for (const fn of cleanups) fn(); });
 });
