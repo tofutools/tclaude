@@ -91,7 +91,7 @@ function SectionList({ panels, actions, onOpen, dirtyPanels }) {
 }
 
 // SectionPage is the top bar over the desktop form's section (which shows
-// below this island, phone.css), and for a read-only one, why and the way
+// below this island, phone-config.css), and for a read-only one, why and the way
 // to the desktop.
 function SectionPage({ panel, mode, actions, back, active }) {
   // A section is a location of its own (/config/<section>).

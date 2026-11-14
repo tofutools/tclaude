@@ -1,6 +1,6 @@
 // js/layout-boot.js: the once-per-load phone/desktop decision. Desktop mode
 // must leave the page exactly as it was; phone mode marks <html>, adds the
-// viewport meta and links phone.css; ?layout= overrides and is remembered per
+// viewport meta and links the phone sheets; ?layout= overrides and is remembered per
 // browser.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -69,7 +69,7 @@ test('a detected phone gets the phone layout without an override', () => {
   const { decision, dataset, appended, replaced } = boot({ device: IPHONE });
   assert.deepEqual({ ...decision }, { layout: 'phone', detected: 'phone', override: null });
   assert.equal(dataset.layout, 'phone');
-  assert.deepEqual(appended.map((node) => node.tagName), ['META', 'LINK']);
+  assert.deepEqual([...new Set(appended.map((node) => node.tagName))], ['META', 'LINK']);
   assert.deepEqual(replaced, [], 'no URL rewrite without ?layout=');
   const tablet = boot({ device: IPAD_MINI });
   assert.equal(tablet.decision.layout, 'desktop', 'a tablet keeps the desktop page');
@@ -80,11 +80,13 @@ test('?layout=phone switches to the phone layout, remembers it and strips the pa
   const { decision, dataset, appended, replaced, storage } = boot({ href: 'http://127.0.0.1:8123/messages?node=inst_abcd&layout=phone#m1' });
   assert.deepEqual({ ...decision }, { layout: 'phone', detected: 'desktop', override: 'phone' });
   assert.equal(dataset.layout, 'phone');
-  assert.deepEqual(appended.map((node) => node.tagName), ['META', 'LINK']);
+  assert.equal(appended[0].tagName, 'META');
   assert.equal(appended[0].name, 'viewport');
   assert.equal(appended[0].content, 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content');
-  assert.equal(appended[1].rel, 'stylesheet');
-  assert.equal(appended[1].href, '/static/phone.css');
+  const sheets = appended.slice(1);
+  assert.ok(sheets.length > 1, 'phone.css and the view sheets');
+  assert.ok(sheets.every((node) => node.tagName === 'LINK' && node.rel === 'stylesheet'));
+  assert.equal(sheets[0].href, '/static/phone.css', 'the base sheet first');
   assert.equal(storage.getItem('tclaude.layout'), 'phone');
   assert.deepEqual(replaced, ['/messages?node=inst_abcd#m1']);
 });

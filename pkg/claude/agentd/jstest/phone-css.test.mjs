@@ -1,14 +1,19 @@
 // The phone layout must not change the desktop page. Desktop mode stays
 // unchanged by construction: js/layout-boot.js adds the viewport meta, the
-// data-layout mark and phone.css only in phone mode, and every phone rule is
-// scoped under :root[data-layout="phone"]. This holds those pieces in place:
-//   - every selector in phone.css starts with that scope, and it imports no
-//     other sheet;
-//   - no other stylesheet targets data-layout (phone rules live in phone.css);
-//   - dashboard.html links neither a viewport meta nor phone.css statically;
+// data-layout mark and the phone sheets (phone.css, phone-<view>.css) only in
+// phone mode, and every phone rule is scoped under :root[data-layout="phone"].
+// This holds those pieces in place:
+//   - layout-boot.js links exactly the phone sheets on disk: phone.css first,
+//     then the view sheets in alphabetical order;
+//   - every selector in a phone sheet starts with that scope, and none
+//     imports another sheet;
+//   - no other stylesheet targets data-layout (phone rules live in the phone
+//     sheets);
+//   - dashboard.html links neither a viewport meta nor a phone sheet
+//     statically;
 //   - layout-boot.js loads as a plain blocking script in <head>, after the
-//     last stylesheet, so it decides before the first paint and phone.css
-//     lands after ui.css.
+//     last stylesheet, so it decides before the first paint and the phone
+//     sheets land after ui.css.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -83,27 +88,46 @@ test('cssSelectors sees nested and listed selectors, not at-rules or keyframe st
   assert.deepEqual(cssSelectors(css), [':root[data-layout="phone"] .a', '.b:is(.c, .d)', '.e > .f', ':root .g']);
 });
 
-test('every phone.css rule is scoped under :root[data-layout="phone"]', () => {
-  const selectors = cssSelectors(read('phone.css'));
-  assert.ok(selectors.length > 0, 'phone.css has rules');
-  const unscoped = selectors.filter((selector) => !(selector === SCOPE || selector.startsWith(`${SCOPE} `)
-    || selector.startsWith(`${SCOPE}:`) || selector.startsWith(`${SCOPE}.`) || selector.startsWith(`${SCOPE}[`)));
-  assert.deepEqual(unscoped, [], `phone.css selectors must start with ${SCOPE}`);
-  const source = read('phone.css').replace(/\/\*[\s\S]*?\*\//g, ' ');
-  assert.doesNotMatch(source, /@import\b/, 'an imported sheet would bring unscoped rules past this check');
+const isPhoneSheet = (name) => /^phone(-[a-z]+)?\.css$/.test(name);
+const phoneSheets = () => readdirSync(DASHBOARD).filter(isPhoneSheet);
+
+// bootSheets reads PHONE_SHEETS out of layout-boot.js.
+function bootSheets() {
+  const source = read('js/layout-boot.js');
+  const list = source.match(/const PHONE_SHEETS = \[([^\]]*)\]/);
+  assert.ok(list, 'layout-boot.js declares PHONE_SHEETS');
+  return [...list[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+}
+
+test('layout-boot.js links every phone sheet: phone.css, then the views alphabetically', () => {
+  const listed = bootSheets();
+  const views = phoneSheets().filter((name) => name !== 'phone.css').sort();
+  assert.deepEqual(listed, ['phone.css', ...views], 'PHONE_SHEETS in layout-boot.js lists the phone sheets on disk');
 });
 
-test('phone rules live only in phone.css', () => {
-  const sheets = readdirSync(DASHBOARD).filter((name) => name.endsWith('.css') && name !== 'phone.css');
+test('every phone sheet rule is scoped under :root[data-layout="phone"]', () => {
+  for (const name of phoneSheets()) {
+    const selectors = cssSelectors(read(name));
+    assert.ok(selectors.length > 0, `${name} has rules`);
+    const unscoped = selectors.filter((selector) => !(selector === SCOPE || selector.startsWith(`${SCOPE} `)
+      || selector.startsWith(`${SCOPE}:`) || selector.startsWith(`${SCOPE}.`) || selector.startsWith(`${SCOPE}[`)));
+    assert.deepEqual(unscoped, [], `${name}: selectors must start with ${SCOPE}`);
+    const source = read(name).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    assert.doesNotMatch(source, /@import\b/, `${name}: an imported sheet would bring unscoped rules past this check`);
+  }
+});
+
+test('phone rules live only in the phone sheets', () => {
+  const sheets = readdirSync(DASHBOARD).filter((name) => name.endsWith('.css') && !isPhoneSheet(name));
   const offenders = sheets.filter((name) => /data-layout/.test(read(name)));
-  assert.deepEqual(offenders, [], 'style the phone layout in phone.css, not in the desktop sheets');
+  assert.deepEqual(offenders, [], 'style the phone layout in phone.css or phone-<view>.css, not in the desktop sheets');
 });
 
 test('the desktop page carries no viewport meta and no phone sheet', () => {
   for (const page of ['dashboard.html']) {
     const html = withoutComments(read(page));
     assert.doesNotMatch(html, /<meta[^>]+name=["']?viewport/i, `${page}: the viewport meta is phone-only (layout-boot.js adds it)`);
-    assert.doesNotMatch(html, /phone\.css/, `${page}: phone.css is linked by layout-boot.js in phone mode only`);
+    assert.doesNotMatch(html, /phone(-[a-z]+)?\.css/, `${page}: the phone sheets are linked by layout-boot.js in phone mode only`);
     assert.doesNotMatch(html, /data-layout/, `${page}: data-layout is set by layout-boot.js in phone mode only`);
   }
 });
@@ -115,6 +139,6 @@ test('layout-boot.js is a blocking head script after the last stylesheet', () =>
   assert.doesNotMatch(tag[0], /\b(type=|defer|async)/, 'a classic, blocking script');
   const at = tag.index;
   const lastSheet = [...html.matchAll(/<link\b[^>]*rel="stylesheet"/g)].at(-1).index;
-  assert.ok(at > lastSheet, 'after every stylesheet link, so phone.css follows them in the cascade');
+  assert.ok(at > lastSheet, 'after every stylesheet link, so the phone sheets follow them in the cascade');
   assert.ok(at < html.indexOf('</head>'), 'inside <head>, before the first paint');
 });

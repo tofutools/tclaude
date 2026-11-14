@@ -16,7 +16,12 @@ async function layoutState(page) {
     mark: document.documentElement.dataset.layout ?? null,
     viewportMetas: document.querySelectorAll('meta[name="viewport"]').length,
     phoneSheet: [...document.styleSheets].some((sheet) => (sheet.href || '').endsWith('/static/phone.css')),
-    lastSheet: [...document.querySelectorAll('link[rel="stylesheet"]')].at(-1)?.getAttribute('href'),
+    // The stylesheet links from phone.css on: the phone sheets, last.
+    phoneTail: (() => {
+      const hrefs = [...document.querySelectorAll('link[rel="stylesheet"]')].map((link) => link.getAttribute('href'));
+      const at = hrefs.indexOf('/static/phone.css');
+      return at < 0 ? [] : hrefs.slice(at);
+    })(),
     search: location.search,
     layoutWidth: document.documentElement.clientWidth,
     gutter: getComputedStyle(document.documentElement).getPropertyValue('--phone-gutter').trim(),
@@ -52,7 +57,8 @@ test.describe('on a phone', () => {
     expect(state.mark).toBe('phone');
     expect(state.viewportMetas).toBe(1);
     expect(state.phoneSheet).toBe(true);
-    expect(state.lastSheet).toBe('/static/phone.css');
+    expect(state.phoneTail.length, 'phone.css and the view sheets').toBeGreaterThan(1);
+    for (const href of state.phoneTail) expect(href, 'nothing links after the phone sheets').toMatch(/^\/static\/phone(-[a-z]+)?\.css$/);
     expect(state.gutter).toBe('16px');
     expect(state.search, '?layout= is stripped from the address bar').toBe('');
     expect(state.layoutWidth).toBe(390);

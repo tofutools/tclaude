@@ -1,0 +1,15 @@
+/* Fleet (js/phone-fleet.js), read-only: this node, then its peers. */
+:root[data-layout="phone"] .phone-fleet-self { padding: 12px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 4px; }
+:root[data-layout="phone"] .phone-fleet-self .ui-tag { margin-left: 6px; font-weight: 400; vertical-align: 1px; }
+:root[data-layout="phone"] .phone-fleet-id { color: var(--ui-muted-text); font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-fleet-hub { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-fleet-hub.hub-connected { color: var(--ui-success-line); }
+:root[data-layout="phone"] .phone-fleet-hub:is(.hub-refused, .hub-disconnected) { color: var(--ui-danger); }
+:root[data-layout="phone"] .phone-fleet-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 0; }
+:root[data-layout="phone"] .phone-fleet-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--ui-line); }
+:root[data-layout="phone"] .phone-fleet-dot.online { background: var(--ui-success-line); }
+:root[data-layout="phone"] .phone-fleet-dot.asking { background: var(--ui-warn-text); }
+:root[data-layout="phone"] .phone-fleet-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] .phone-fleet-name { font-weight: 600; color: var(--ui-text-strong); overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-fleet-sub { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-fleet-when { flex: none; color: var(--ui-muted-text); font-size: 13px; }

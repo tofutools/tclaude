@@ -3,7 +3,7 @@
 //
 // A classic script loaded synchronously in <head>, right after the last
 // stylesheet link and before <body>, so the decision is in place before the
-// first paint and before the module graph runs; the phone.css it links lands
+// first paint and before the module graph runs; the phone sheets it links land
 // after ui.css and so wins its cascade ties. js/layout.js is the module-side
 // reader of the result.
 //
@@ -22,7 +22,8 @@
 // the address bar so a copied link does not carry it.
 //
 // Phone mode marks <html data-layout="phone">, adds the viewport meta and
-// links phone.css (whose every rule is scoped under that attribute). Desktop
+// links the phone sheets (PHONE_SHEETS; their every rule is scoped under that
+// attribute). Desktop
 // mode changes nothing at all: no attribute, no meta, no stylesheet, so the
 // desktop page is the page it was before this script existed. "Desktop site"
 // on a phone is therefore today's zoomed-out desktop page.
@@ -30,6 +31,24 @@
 // dashboard-imperative-boundary: platform-layout
 (() => {
   const STORAGE_KEY = 'tclaude.layout';
+  // The phone layout's sheets, in cascade order: phone.css (tokens, shared
+  // controls, the shell and its own views, pushed pages, dialogs), then one
+  // sheet per view, one per line, alphabetical, so parallel changes to
+  // different views touch different files. jstest/phone-css.test.mjs holds
+  // this list and the files in step.
+  const PHONE_SHEETS = [
+    'phone.css',
+    'phone-access.css',
+    'phone-agents.css',
+    'phone-automations.css',
+    'phone-config.css',
+    'phone-diagnostics.css',
+    'phone-fleet.css',
+    'phone-mail.css',
+    'phone-plugins.css',
+    'phone-terminal.css',
+    'phone-usage.css',
+  ];
   const LAYOUTS = ['phone', 'desktop'];
   const SHORT_SIDE_MAX = 600;
 
@@ -90,8 +109,10 @@
   // keyboard, so what sits at the bottom stays above it (phone-keyboard.js).
   meta.content = 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content';
   head.appendChild(meta);
-  const sheet = document.createElement('link');
-  sheet.rel = 'stylesheet';
-  sheet.href = '/static/phone.css';
-  head.appendChild(sheet);
+  for (const name of PHONE_SHEETS) {
+    const sheet = document.createElement('link');
+    sheet.rel = 'stylesheet';
+    sheet.href = `/static/${name}`;
+    head.appendChild(sheet);
+  }
 })();

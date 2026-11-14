@@ -173,7 +173,7 @@ export function mountPhoneShellFeature(dependencies = {}) {
 
 // The phone's Agents view (phone-agents-island.js): the Groups tab in the
 // phone layout. It mounts only on a phone. The desktop Groups island still
-// mounts there, out of sight (phone.css), because a task's ?task= link opens
+// mounts there, out of sight (phone-agents.css), because a task's ?task= link opens
 // its form from the group's board in that tree.
 const phoneAgentsDescriptor = createIslandDescriptor({
   name: 'phone-agents',
