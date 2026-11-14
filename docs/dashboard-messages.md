@@ -70,7 +70,9 @@ The image and Markdown attachment viewers zoom with the usual inputs: a
 trackpad pinch, Ctrl+scroll, or Ctrl/Cmd and `+` / `-` / `0` (bare `+`, `-`
 and `0` work too). Images zoom around the pointer and pan by dragging; the
 footer offers Fit and 1:1 (actual pixels), and a double-click toggles between
-them. Markdown zoom scales the text and reflows it. Both viewers resize from
+them. On a touch screen, pinch with two fingers to zoom, drag with one to pan
+or scroll, and double-tap an image to toggle between fit and a closer look.
+Markdown zoom scales the text and reflows it. Both viewers resize from
 their corner grip, maximize to the window (`T`), and go full screen (button or
 `F`). ← and → step through attachments.
 

@@ -210,3 +210,66 @@ test('the viewer can be maximized to the window', async (t) => {
   assert.equal(dialog.getAttribute('data-display'), 'normal');
   await mounted.unmount();
 });
+
+// touch dispatches a touch event at the stage: touches are the fingers still
+// down after it, changed the ones it is about, as [x, y] client points.
+function touch(harness, target, type, { touches = [], changed = touches, at = 0 } = {}) {
+  const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
+  const list = (points) => points.map(([clientX, clientY], identifier) => ({ clientX, clientY, identifier }));
+  Object.defineProperty(event, 'touches', { value: list(touches) });
+  Object.defineProperty(event, 'changedTouches', { value: list(changed) });
+  Object.defineProperty(event, 'timeStamp', { value: at });
+  target.dispatchEvent(event);
+  return event;
+}
+
+test('on a touch screen a pinch zooms the image and a double tap toggles fit', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mounted, dialog } = await openLoadedPreview(t, harness);
+  const stage = dialog.querySelector('.image-preview-stage');
+  assert.equal(zoomLabel(dialog), '100%');
+
+  let move;
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[100, 100], [140, 100]], at: 0 });
+    move = touch(harness, stage, 'touchmove', { touches: [[80, 100], [160, 100]], at: 16 });
+  });
+  assert.equal(move.defaultPrevented, true, 'the browser does not also zoom the page');
+  assert.equal(zoomLabel(dialog), '200%', 'fingers twice as far apart double the scale');
+  await harness.act(() => {
+    touch(harness, stage, 'touchmove', { touches: [[100, 100], [140, 100]], at: 32 });
+    touch(harness, stage, 'touchend', { touches: [], changed: [[100, 100], [140, 100]], at: 48 });
+  });
+  assert.equal(zoomLabel(dialog), '100%', 'each move applies its ratio to the last one');
+
+  let oneFinger;
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[50, 50]], at: 1000 });
+    oneFinger = touch(harness, stage, 'touchmove', { touches: [[10, 10]], at: 1016 });
+    touch(harness, stage, 'touchend', { changed: [[10, 10]], at: 1032 });
+  });
+  assert.equal(oneFinger.defaultPrevented, false, 'one finger is left to native scrolling');
+  assert.equal(zoomLabel(dialog), '100%');
+
+  const fit = [...dialog.querySelectorAll('.image-preview-footer button')].find((b) => b.textContent === 'Fit');
+  await harness.act(() => { harness.fireEvent(dialog, 'keydown', { key: '+' }); });
+  assert.equal(fit.getAttribute('aria-pressed'), 'false');
+  let second;
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[60, 60]], at: 2000 });
+    touch(harness, stage, 'touchend', { changed: [[60, 60]], at: 2050 });
+    touch(harness, stage, 'touchstart', { touches: [[64, 62]], at: 2200 });
+    second = touch(harness, stage, 'touchend', { changed: [[64, 62]], at: 2250 });
+  });
+  assert.equal(fit.getAttribute('aria-pressed'), 'true', 'a double tap on a zoomed image returns to fit');
+  assert.equal(second.defaultPrevented, true, 'no synthesized dblclick toggles it back');
+
+  await harness.act(() => {
+    touch(harness, stage, 'touchstart', { touches: [[60, 60]], at: 3000 });
+    touch(harness, stage, 'touchend', { changed: [[60, 60]], at: 3050 });
+    touch(harness, stage, 'touchstart', { touches: [[60, 60]], at: 3500 });
+    touch(harness, stage, 'touchend', { changed: [[60, 60]], at: 3550 });
+  });
+  assert.equal(fit.getAttribute('aria-pressed'), 'true', 'two slow taps are not a double tap');
+  await mounted.unmount();
+});

@@ -8,7 +8,8 @@
 //     pinch on macOS (a wheel event with ctrlKey set and small deltas);
 //   - Safari's pinch, which arrives as the non-standard gesture* events
 //     instead;
-//   - Ctrl/Cmd + = - 0, and the bare + - 0 keys, while the viewer has focus.
+//   - Ctrl/Cmd + = - 0, and the bare + - 0 keys, while the viewer has focus;
+//   - on a touch screen, a two-finger pinch and a double tap (useTouchZoom).
 //
 // Every one of those is ALSO a browser page-zoom gesture, so the handlers must
 // be able to cancel it. That is why the wheel listener is installed by hand
@@ -114,6 +115,131 @@ export function useZoomGestures({ targetRef, enabled, onZoom, onKey, shouldHandl
       node.removeEventListener('gesturechange', onGestureChange);
       node.removeEventListener('gestureend', onGestureEnd);
       document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [enabled, targetRef]);
+}
+
+// Touch. A phone or touch screen has no Ctrl+wheel, and the browser's own
+// pinch zooms the whole page instead of the image or text in the viewer (and
+// on the desktop page, panning that zoomed page over the viewer's stage is
+// then trapped by its contained scroll). So the viewer answers touch itself:
+//
+//   - two fingers pinch-zoom about their midpoint (each move applies the
+//     ratio of the fingers' new span to their last one);
+//   - a double tap toggles the zoom at the tapped point, as a double click
+//     does with a mouse;
+//   - one finger is left to the browser: it scrolls the stage natively, with
+//     momentum, which pans a zoomed image or scrolls a document.
+//
+// Touch events, not pointer events: a non-passive touchmove can cancel the
+// browser's two-finger gesture while one-finger scrolling stays native. The
+// stage also sets touch-action: pan-x pan-y, which keeps the browser from
+// pinch-zooming or double-tap-zooming the page over it.
+
+export const DOUBLE_TAP_MS = 300;
+// How far a tap may drift and still count as a tap, and how far apart two
+// taps may land and still make a double tap (CSS px).
+export const TAP_SLOP = 10;
+export const DOUBLE_TAP_SLOP = 30;
+
+// pinchStep turns two fingers' last and new positions ([{x, y}, {x, y}]) into
+// a zoom: the factor to apply and the point to keep still (the new midpoint).
+// Null when either span is degenerate.
+export function pinchStep(before, after) {
+  const span = (p) => Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y);
+  const from = span(before);
+  const to = span(after);
+  if (!(from > 0) || !(to > 0)) return null;
+  return { factor: to / from, point: { x: (after[0].x + after[1].x) / 2, y: (after[0].y + after[1].y) / 2 } };
+}
+
+// tapTracker classifies single-finger touches: end() returns 'double' when a
+// touch completes a double tap, 'tap' for a lone tap, null otherwise. Times
+// are milliseconds, positions client px.
+export function tapTracker() {
+  let start = null;
+  let lastTap = null;
+  return {
+    start(x, y, t) { start = { x, y, t }; },
+    cancel() { start = null; lastTap = null; },
+    end(x, y, t) {
+      const begun = start;
+      start = null;
+      if (!begun || Math.hypot(x - begun.x, y - begun.y) > TAP_SLOP || t - begun.t > DOUBLE_TAP_MS) {
+        lastTap = null;
+        return null;
+      }
+      if (lastTap && t - lastTap.t <= DOUBLE_TAP_MS && Math.hypot(x - lastTap.x, y - lastTap.y) <= DOUBLE_TAP_SLOP) {
+        lastTap = null;
+        return 'double';
+      }
+      lastTap = { x, y, t };
+      return 'tap';
+    },
+  };
+}
+
+// useTouchZoom wires the touch gestures above to one element (the viewer's
+// stage) while `enabled` holds: onZoom(factor, point) as useZoomGestures
+// calls it, and onDoubleTap(point) for a double tap. Without onDoubleTap a
+// double tap is left to the browser (in text, it selects a word).
+export function useTouchZoom({ targetRef, enabled, onZoom, onDoubleTap, shouldHandle = () => true }) {
+  const zoomRef = useRef(onZoom);
+  const tapRef = useRef(onDoubleTap);
+  const handleRef = useRef(shouldHandle);
+  zoomRef.current = onZoom;
+  tapRef.current = onDoubleTap;
+  handleRef.current = shouldHandle;
+
+  useEffect(() => {
+    const node = targetRef.current;
+    if (!enabled || !node) return undefined;
+    const taps = tapTracker();
+    let fingers = null; // the last two positions while pinching
+    const points = (list) => [0, 1].map((i) => ({ x: list[i].clientX, y: list[i].clientY }));
+
+    const onStart = (event) => {
+      if (!handleRef.current()) return;
+      if (event.touches.length === 1) {
+        const touch = event.touches[0];
+        taps.start(touch.clientX, touch.clientY, event.timeStamp);
+        fingers = null;
+      } else {
+        taps.cancel();
+        fingers = event.touches.length === 2 ? points(event.touches) : null;
+      }
+    };
+    const onMove = (event) => {
+      if (event.touches.length !== 2 || !fingers) return;
+      if (event.cancelable) event.preventDefault();
+      const next = points(event.touches);
+      const step = pinchStep(fingers, next);
+      fingers = next;
+      if (step && Math.abs(step.factor - 1) > 1e-3) zoomRef.current?.(step.factor, step.point);
+    };
+    const onEnd = (event) => {
+      if (event.touches.length === 2) { fingers = points(event.touches); return; }
+      fingers = null;
+      if (event.touches.length > 0) { taps.cancel(); return; }
+      const touch = event.changedTouches?.[0];
+      if (!touch || !tapRef.current || !handleRef.current()) return;
+      if (taps.end(touch.clientX, touch.clientY, event.timeStamp) !== 'double') return;
+      // No synthesized mouse events (and so no dblclick) after a handled
+      // double tap: the zoom must toggle once, not twice.
+      if (event.cancelable) event.preventDefault();
+      tapRef.current?.({ x: touch.clientX, y: touch.clientY });
+    };
+    const onCancel = () => { fingers = null; taps.cancel(); };
+
+    node.addEventListener('touchstart', onStart, { passive: true });
+    node.addEventListener('touchmove', onMove, { passive: false });
+    node.addEventListener('touchend', onEnd, { passive: false });
+    node.addEventListener('touchcancel', onCancel);
+    return () => {
+      node.removeEventListener('touchstart', onStart, { passive: true });
+      node.removeEventListener('touchmove', onMove, { passive: false });
+      node.removeEventListener('touchend', onEnd, { passive: false });
+      node.removeEventListener('touchcancel', onCancel);
     };
   }, [enabled, targetRef]);
 }
