@@ -159,7 +159,7 @@ test('the lanes draw the board by role, with the Unassigned lane first and offli
   assert.deepEqual(ids('unassigned', 'next'), ['tk_00000001']);
   assert.deepEqual(ids('unassigned', 'blocked'), ['tk_00000003']);
   assert.deepEqual(ids('agt_builder', 'progress'), ['tk_00000002']);
-  assert.deepEqual(ids('agt_lead', 'blocked'), ['tk_00000006'], 'stalled needs you');
+  assert.deepEqual(ids('agt_lead', 'blocked'), ['tk_00000006'], 'a stalled task stands in Blocked');
   assert.deepEqual(ids('agt_builder', 'done'), ['tk_00000005'], 'done this week only; dropped never');
   assert.ok(cell('unassigned', 'progress').classList.contains('tb-cell-striped'));
   assert.ok(!cell('agt_builder', 'ideas').classList.contains('tb-cell-striped'), 'an agent lane holds ideas');

@@ -166,7 +166,10 @@ export function laneModel(entry, group, by = 'agent', snapshot = null, now = Dat
     lane.holds = holds.get(lane.id) || 0;
   }
   const questions = operatorQuestions(entry);
-  const operatorHolds = ['progress', 'next'].reduce((sum, column) => sum + (cells.get(`${OPERATOR}|${column}`) || []).length, 0) + questions.length;
+  // The operator's lane holds what waits on it in any column (tk_3cb51ce0):
+  // all but its ideas and what is done.
+  const operatorHolds = [...cells.entries()].filter(([key]) => key.startsWith(`${OPERATOR}|`) && !['ideas', 'done'].includes(key.slice(OPERATOR.length + 1)))
+    .reduce((sum, [, tasks]) => sum + tasks.length, 0) + questions.length;
   return { cells, questions, groups: laneGroups(lanes, group, by, snapshot), operatorHolds };
 }
 

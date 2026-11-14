@@ -619,7 +619,8 @@ there changes.
   dashboard. It never stalls.
 - A move to another group of this node keeps the operator as the assignee. A
   move to another node does not carry the assignee, as for any task.
-- **Counts.** An open task the operator holds counts as *waiting on you*:
+- **Counts.** A live task the operator holds counts as *waiting on you*, a
+  blocked one too (it also counts as blocked):
   `ls --summary` prints `1 waiting on you`, and `tclaude agent fleet` lists
   the board. The context route's counts carry `waiting_on_you`, and
   `needs_you` is the same count.
@@ -1452,8 +1453,8 @@ the **Quest board**), below its Agents and Resources sections.
   *⏱ idle check on* when the board tunes the check's options, and *✉ 2 messages changed* when the
   board changes the messages it sends. The count's tooltip carries the breakdown, for
   example `5 · 1 waiting on you · 1 blocked · 1 in progress · 2 next · 1 idea`.
-  *Waiting on you* counts the open tasks assigned to the operator and the
-  open questions, and the section line shows it as a tag beside the count.
+  *Waiting on you* counts the live tasks assigned to the operator (blocked
+  ones too) and the open questions, and the section line shows it as a tag beside the count.
   *Blocked* and *stalled* count those tasks, and *in progress* counts the
   other assigned tasks. *Next* and *ideas* count the
   unassigned open tasks in each stage.

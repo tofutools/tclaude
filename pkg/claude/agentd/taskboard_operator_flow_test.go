@@ -105,6 +105,28 @@ func TestTaskboardOperatorAskBlocksAndUnblocks(t *testing.T) {
 	}
 	assert.Equal(t, "crew board: 1 task waits on you", line)
 
+	// An operator task that is itself blocked still waits on the operator:
+	// that is by assignment, whatever its column. It counts as blocked too.
+	rec = h.call("", http.MethodPost, "/v1/groups/crew/taskboard/tasks",
+		map[string]any{"title": "sign the release", "to": "operator", "status": "blocked", "block_reason": "after the notes"})
+	tbDecodeOperatorTask(t, rec.Code, rec.Body.String(), http.StatusCreated)
+	rec = h.call("", http.MethodGet, "/v1/taskboard/context", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ctx))
+	assert.Equal(t, 2, ctx.Groups[0].Counts.WaitingOnYou, "the blocked operator task waits on it too")
+	assert.Equal(t, 2, ctx.Groups[0].Counts.NeedsYou)
+	rec = h.call("", http.MethodGet, "/v1/fleet", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	brief.Attention = nil
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &brief))
+	line = ""
+	for _, a := range brief.Attention {
+		if a.Kind == "taskboard" {
+			line = a.Title + " " + a.Detail
+		}
+	}
+	assert.Equal(t, "crew board: 2 tasks wait on you", line)
+
 	// An agent cannot close the operator's task; the worker who asked
 	// cannot report on it either.
 	code, body := h.post(h.peer, op.ID, "status", map[string]any{"status": "done"})
