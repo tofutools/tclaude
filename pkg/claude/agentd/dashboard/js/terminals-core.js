@@ -159,6 +159,8 @@ const SWIPE_DECAY = 0.95;
 const SWIPE_MAX_NOTCHES_PER_FRAME = 4;
 // A mouse report is how xterm hands the session a wheel notch; it is not
 // typing, and must not bring a scrolled-back view back to live.
+// SCROLL_ANSWER starts the daemon's answer to a scroll frame.
+const SCROLL_ANSWER = '{"type":"scroll"';
 const MOUSE_REPORT = /^\x1b\[(<|M)/;
 
 // The keys a touch surface sends by name (key()): what a keyboard's key
@@ -509,8 +511,12 @@ export function mountTerminalWidget({
     if ((event.touches?.length ?? 0) < 2) pinch = null;
   }
   // The swipe: wheel notches dispatched on xterm's own element, so xterm
-  // encodes them exactly as a desktop wheel (a mouse report when the session
-  // takes the mouse, an arrow key otherwise).
+  // encodes them exactly as a desktop wheel, when the session takes the
+  // mouse (tmux mouse mode: Codex, shells). Where it does not (Claude Code),
+  // a wheel notch would reach the application as an arrow key, so a local
+  // terminal asks the daemon to scroll its pane in tmux copy-mode instead
+  // (a scroll frame, dashboard_term.go), and the daemon's answer says where
+  // the pane is.
   let swipe = null;
   let coast = null;
   // Where tmux's wheel copy-mode is, in notches: scrolledBack is how many
@@ -521,6 +527,14 @@ export function mountTerminalWidget({
   let scrolledBack = 0;
   let inCopyMode = false;
   const mouseTaken = () => (term.modes?.mouseTrackingMode || 'none') !== 'none';
+  const paneScroll = () => !remote && !mouseTaken();
+  // Scroll frames agentd has not answered yet: only the answer to the last
+  // one says where the pane is now.
+  let scrollsInFlight = 0;
+  function sendScroll(op) {
+    scrollsInFlight += 1;
+    ws.send(JSON.stringify(op === 'live' ? { type: 'scroll', op } : { type: 'scroll', op, notches: 1 }));
+  }
   const canSend = () => !!ws && ws.readyState === WebSocketCtor.OPEN && (!remote || remoteState.mode === 'interactive');
   function rowHeight() {
     const screen = host.getElementsByClassName?.('xterm-screen')[0];
@@ -538,6 +552,12 @@ export function mountTerminalWidget({
   // where copy-mode goes.
   function notch(older) {
     if (!canSend()) return false;
+    if (paneScroll()) {
+      if (!older && !inCopyMode) return true;
+      sendScroll(older ? 'up' : 'down');
+      setCopyMode(older || scrolledBack > 1, older ? scrolledBack + 1 : scrolledBack - 1);
+      return true;
+    }
     const target = term.element || host;
     const box = target.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
     const init = {
@@ -593,7 +613,7 @@ export function mountTerminalWidget({
     swipe = { x0: x, y0: y, y, at: now(), speed: 0, rest: 0, moving: false };
   }
   function swipeMove(event) {
-    if (!swipe || event.touches?.length !== 1 || !mouseTaken()) return;
+    if (!swipe || event.touches?.length !== 1 || (remote && !mouseTaken())) return;
     const { clientX: x, clientY: y } = event.touches[0];
     if (!swipe.moving) {
       const dy = y - swipe.y0;
@@ -624,6 +644,10 @@ export function mountTerminalWidget({
     if (!inCopyMode) return;
     const notches = Math.max(1, scrolledBack) + 1;
     setCopyMode(false, 0);
+    if (paneScroll()) {
+      if (canSend()) sendScroll('live');
+      return;
+    }
     for (let i = 0; i < notches; i += 1) notch(false);
   }
 
@@ -1130,6 +1154,7 @@ export function mountTerminalWidget({
       // agentd leaves copy-mode when a terminal socket closes: a new one
       // starts live.
       setCopyMode(false, 0);
+      scrollsInFlight = 0;
       captureInstanceBaseline(mine);
       setReconnectAvailable(false);
       if (remote) { if (!waiting) setStatus('connecting to the peer…'); return; }
@@ -1141,6 +1166,7 @@ export function mountTerminalWidget({
     socket.onmessage = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
       if (remote && typeof event.data === 'string') { remoteControl(event.data); return; }
+      if (typeof event.data === 'string' && event.data.startsWith(SCROLL_ANSWER)) { scrollAnswer(event.data); return; }
       if (remote) {
         // Credit flows back only once xterm has consumed the bytes, so the
         // federation stream's window stays bounded through the renderer.
@@ -1164,6 +1190,7 @@ export function mountTerminalWidget({
     socket.onclose = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
       setCopyMode(false, 0);
+      scrollsInFlight = 0;
       cancelPostAttachResize();
       cancelInitialResize();
       // A connection that drew and stayed up earns a fresh set of quiet redials.
@@ -1216,6 +1243,15 @@ export function mountTerminalWidget({
     return true;
   }
 
+  // scrollAnswer follows where the daemon says a scroll frame left the pane.
+  function scrollAnswer(text) {
+    scrollsInFlight = Math.max(0, scrollsInFlight - 1);
+    if (scrollsInFlight > 0) return;
+    let answer = null;
+    try { answer = JSON.parse(text); } catch { return; }
+    const lines = Number(answer?.position) || 0;
+    setCopyMode(answer?.copy_mode === true, Math.ceil(lines / SWIPE_ROWS_PER_NOTCH));
+  }
   // remoteControl applies a remote terminal's JSON control frame. Unparseable
   // text is dropped, never written to the terminal.
   function remoteControl(text) {

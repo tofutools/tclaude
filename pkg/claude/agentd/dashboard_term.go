@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -598,6 +599,35 @@ func parseTermResize(messageType int, data []byte) (size *pty.Winsize, isResize 
 	return &pty.Winsize{Cols: uint16(msg.Cols), Rows: uint16(msg.Rows)}, true
 }
 
+// termScrollMsg is a browser terminal's request to scroll its managed pane's
+// history ({"type":"scroll","op":"up"|"down"|"live","notches":n}): the phone
+// terminal's swipe over a session whose tmux mouse mode is off (Claude Code),
+// where a wheel notch would only reach the application as an arrow key. See
+// session.ScrollTmuxPane.
+type termScrollMsg struct {
+	Type    string `json:"type"`
+	Op      string `json:"op"`
+	Notches int    `json:"notches"`
+}
+
+// parseTermScroll classifies one frame as a scroll request. isScroll is true
+// for any {"type":"scroll",...} text frame, which never reaches the PTY; op is
+// empty when the request names no known operation.
+func parseTermScroll(messageType int, data []byte) (op string, notches int, isScroll bool) {
+	if messageType != websocket.TextMessage || !bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")) {
+		return "", 0, false
+	}
+	var msg termScrollMsg
+	if json.Unmarshal(data, &msg) != nil || msg.Type != "scroll" {
+		return "", 0, false
+	}
+	switch msg.Op {
+	case session.ScrollUp, session.ScrollDown, session.ScrollLive:
+		return msg.Op, msg.Notches, true
+	}
+	return "", 0, true
+}
+
 // initialResizeWait bounds how long runPTYOverWS holds the command back
 // waiting for the client's opening resize message. Every client of these
 // routes (the dashboard widget, the standalone terminal page, the remote TUI)
@@ -1008,6 +1038,9 @@ initialSize:
 	if hook != nil && hook.OnResize != nil && initial != nil {
 		hook.OnResize(int(startSize.Cols), int(startSize.Rows))
 	}
+	// scrolled: this terminal put its pane into copy-mode, which it must
+	// not leave behind.
+	var scrolled atomic.Bool
 	defer func() {
 		// Reliable detach first: tell the tmux server to drop this terminal's
 		// own client. Then tear down the PTY/process tree (the SIGHUP is a
@@ -1020,6 +1053,9 @@ initialSize:
 		// actually detached. This is separate from the optional whole-session
 		// detach above: the standalone TUI must preserve other viewers.
 		session.CancelTmuxScrollback(cleanupSession, cleanupHarness)
+		if scrolled.Load() {
+			session.LeaveTmuxCopyMode(cleanupSession)
+		}
 		slog.Info("browser terminal detached",
 			"tmux_session", logSession, "path", r.URL.Path,
 			"attached_for", time.Since(attachedAt).Round(time.Second).String())
@@ -1035,6 +1071,13 @@ initialSize:
 	// Closing conn also releases the frame reader and the input pump.
 	var closeOnce sync.Once
 	var closing atomic.Bool
+	// One writer at a time: the PTY pump, and a scroll request's answer.
+	var writeMu sync.Mutex
+	writeFrame := func(messageType int, data []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteMessage(messageType, data)
+	}
 	closeBoth := func() {
 		closeOnce.Do(func() {
 			closing.Store(true)
@@ -1078,7 +1121,7 @@ initialSize:
 				}
 				return
 			}
-			if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
+			if err := writeFrame(websocket.BinaryMessage, buf[:n]); err != nil {
 				return
 			}
 		}
@@ -1106,6 +1149,26 @@ initialSize:
 							hook.OnResize(int(size.Cols), int(size.Rows))
 						}
 					}
+				}
+				continue
+			}
+			// A scroll request runs before the next frame is read, so a
+			// "live" sent ahead of a key leaves copy-mode before the key
+			// reaches the pane. Only a managed pane scrolls; anything else
+			// answers live.
+			if op, notches, isScroll := parseTermScroll(frame.messageType, frame.data); isScroll {
+				var state session.PaneScroll
+				if op != "" && cleanupSession != "" {
+					state = session.ScrollTmuxPane(cleanupSession, op, notches)
+					if state.CopyMode {
+						scrolled.Store(true)
+					}
+				}
+				if reply, err := json.Marshal(struct {
+					Type string `json:"type"`
+					session.PaneScroll
+				}{"scroll", state}); err == nil {
+					_ = writeFrame(websocket.TextMessage, reply)
 				}
 				continue
 			}

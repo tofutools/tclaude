@@ -1617,26 +1617,78 @@ test('a one-finger swipe scrolls as the wheel does, coasts, and goes back to liv
   assert.deepEqual(log, [], 'nothing to scroll while the socket is closed');
   widget.dispose();
 
-  // A session that does not take the mouse is not scrolled: a wheel notch
-  // would be an arrow key, which a stray swipe must not send.
-  const plain = widgetFakes(harness.document);
-  const host2 = harness.document.body.appendChild(harness.document.createElement('div'));
-  const other = mountTerminalWidget({
-    host: host2, wsPath: '/api/open-window-ws/agt_two', authenticate: false,
+  widget.dispose();
+});
+
+test('a swipe over a session that does not take the mouse (Claude Code) asks agentd to scroll its pane', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const timers = manualTimers();
+  let clock = 0;
+  const back = [];
+  const widget = mountTerminalWidget({
+    host, wsPath: '/api/open-window-ws/agt_two', authenticate: false,
     initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
-    TerminalCtor: plain.FakeTerminal, FitAddonCtor: plain.FakeFitAddon, WebSocketCtor: plain.FakeWebSocket,
-    ResizeObserverCtor: plain.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
-    documentRef: harness.document, interactionsFactory: plain.interactionsFactory, now: () => clock,
+    onScrollBackChange: (on) => back.push(on),
+    TerminalCtor: fakes.FakeTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock,
     requestAnimationFrameImpl: () => 1, cancelAnimationFrameImpl: () => {}, ...timers,
   });
-  await other.connect();
-  plain.sockets[0].open();
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
   timers.flush();
-  const notches = [];
-  host2.addEventListener('wheel', () => notches.push(1));
-  harness.fireEvent(host2, 'touchstart', { touches: [{ clientX: 50, clientY: 100 }] });
-  const move = harness.fireEvent(host2, 'touchmove', { touches: [{ clientX: 50, clientY: 300 }] });
-  assert.equal(move.defaultPrevented, false);
-  assert.deepEqual(notches, []);
-  other.dispose();
+  const writes = fakes.counts.write;
+  const wheel = [];
+  host.addEventListener('wheel', () => wheel.push(1));
+  // What reaches agentd: scroll frames, and typed bytes.
+  const log = () => socket.sent.filter((value) => typeof value !== 'string' || value.includes('"scroll"'))
+    .map((value) => (typeof value === 'string' ? JSON.parse(value).op : new TextDecoder().decode(value)));
+  const answer = (copyMode, position) => socket.onmessage({ data: JSON.stringify({ type: 'scroll', copy_mode: copyMode, position }) });
+  const touch = (type, y) => harness.fireEvent(host, type, { touches: type === 'touchend' ? [] : [{ clientX: 50, clientY: y }] });
+
+  // A swipe down at live asks nothing: down from live is no scroll.
+  touch('touchstart', 300); clock = 10; touch('touchmove', 100); clock = 500; touch('touchend');
+  assert.deepEqual(log(), []);
+
+  touch('touchstart', 100); clock = 520;
+  assert.ok(touch('touchmove', 270).defaultPrevented);
+  clock = 1000; touch('touchend');
+  assert.deepEqual(wheel, [], 'no wheel notch: it would reach the prompt as an arrow key');
+  assert.deepEqual(log(), ['up', 'up']);
+  assert.equal(widget.scrolledBack(), true);
+  assert.deepEqual(back, [true]);
+  answer(true, 5);
+  answer(true, 10);
+  assert.equal(fakes.counts.write, writes, 'an answer is not terminal output');
+
+  // agentd says where the pane is: scrolled down to the bottom, it is live.
+  touch('touchstart', 270); clock = 1020; touch('touchmove', 100); clock = 1500; touch('touchend');
+  assert.deepEqual(log().slice(2), ['down', 'down']);
+  assert.equal(widget.scrolledBack(), false);
+  answer(true, 5);
+  assert.deepEqual(back, [true, false], 'an answer overtaken by a later frame is not where the pane is');
+  answer(false, 0);
+  assert.equal(widget.scrolledBack(), false);
+
+  // ↓ Live, or a key, leaves copy-mode before anything else reaches the pane.
+  touch('touchstart', 100); clock = 1520; touch('touchmove', 190); clock = 2000; touch('touchend');
+  widget.key('1');
+  assert.deepEqual(log().slice(4), ['up', 'live', '1']);
+  assert.equal(widget.scrolledBack(), false);
+  touch('touchstart', 100); clock = 2020; touch('touchmove', 190); clock = 2500; touch('touchend');
+  widget.toLive();
+  assert.deepEqual(log().slice(7), ['up', 'live']);
+  for (let i = 0; i < 4; i += 1) answer(false, 0);
+
+  // A pane agentd could not scroll (another tmux mode) answers live.
+  touch('touchstart', 100); clock = 2520; touch('touchmove', 190); clock = 3000; touch('touchend');
+  assert.equal(widget.scrolledBack(), true);
+  answer(false, 0);
+  assert.equal(widget.scrolledBack(), false);
+  assert.equal(back.at(-1), false);
+  widget.dispose();
 });

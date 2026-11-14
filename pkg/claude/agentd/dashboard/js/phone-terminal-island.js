@@ -10,8 +10,10 @@
 // is the agent's message sheet (the desktop's Ctrl+M), a key strip for the
 // answers a harness asks for (1 2 3, the arrows, Enter, Esc, ^C), and ⌨ for
 // raw typing. A pinch sets the text size and the grid reflows to fit. A
-// one-finger swipe scrolls back through the session's history as the wheel
-// does on a desktop (tmux copy-mode), and ↓ Live (or any key) comes back.
+// one-finger swipe scrolls back through the session's history in tmux
+// copy-mode (as the wheel does on a desktop where tmux takes the mouse, and
+// through agentd where it does not, as for Claude Code), and ↓ Live (or any
+// key) comes back.
 
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
