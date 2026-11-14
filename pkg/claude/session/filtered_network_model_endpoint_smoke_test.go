@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -126,6 +127,13 @@ func runFilteredEndpointEvidence(
 	command := exec.CommandContext(ctx, evidence.binary, evidence.args...)
 	command.Dir = home
 	command.Env = filteredEndpointEvidenceEnv(env)
+	// The 10s window is the evidence: whatever the client attempts in it is
+	// audited. At its end stop the whole client, not only its first process:
+	// Codex's children kept the output pipe open, so CombinedOutput waited
+	// ~25s more for them after the window had closed.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }
+	command.WaitDelay = 2 * time.Second
 	output, _ := command.CombinedOutput()
 	time.Sleep(100 * time.Millisecond)
 	hosts := proxy.hosts()
