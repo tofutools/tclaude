@@ -440,26 +440,52 @@ func TestDashboardFederationTerminalShellNeedsShellCap(t *testing.T) {
 			dashboardRemoteTerminalCatalog(t, fh, caps...)
 			server := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
 			t.Cleanup(server.Close)
-			ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/federation/terminal?peer="+fh.peer.id.ID()+"&group=builders&shell=group&mode=interactive", nil)
-			require.NoError(t, err)
-			defer ws.Close()
-			if !granted {
-				require.NoError(t, ws.SetReadDeadline(time.Now().Add(5*time.Second)))
+			// Dial in the background: a granted open completes the browser's
+			// upgrade only once the peer has answered it, and the peer here is
+			// the test itself.
+			type result struct {
+				closed map[string]any
+				err    error
+			}
+			done := make(chan result, 1)
+			go func() {
+				ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/federation/terminal?peer="+fh.peer.id.ID()+"&group=builders&shell=group&mode=interactive", nil)
+				if err != nil {
+					done <- result{err: err}
+					return
+				}
+				defer ws.Close()
+				_ = ws.SetReadDeadline(time.Now().Add(10 * time.Second))
 				var closed map[string]any
-				require.NoError(t, ws.ReadJSON(&closed))
-				require.Equal(t, "denied", closed["reason"])
+				done <- result{closed: closed, err: ws.ReadJSON(&closed)}
+			}()
+			if !granted {
+				got := <-done
+				require.NoError(t, got.err)
+				require.Equal(t, "denied", got.closed["reason"])
 				require.Empty(t, fh.peer.envelopes(proto.KindSessionOpen))
 				return
 			}
+			var env *proto.Envelope
+			var open proto.SessionOpenPayload
 			fedEventually(t, "shell open sent", func() bool {
 				for _, e := range fh.peer.envelopes(proto.KindSessionOpen) {
 					var p proto.SessionOpenPayload
 					if e.DecodePayload(&p) == nil && p.Shell == proto.ShellGroup && p.Group == "builders" && p.Agent == "" {
+						env, open = e, p
 						return true
 					}
 				}
 				return false
 			})
+			// Answer it (a refusal is enough), rather than leave the open to
+			// wait out its whole timeout for a peer that never replies.
+			answer := fh.peer.envelope(proto.KindSessionAnswer, proto.Endpoint{}, proto.SessionAnswerPayload{Stream: open.Stream, Reason: "the agent is starting"})
+			answer.InReplyTo = env.ID
+			fh.peer.send(answer)
+			got := <-done
+			require.NoError(t, got.err)
+			require.Equal(t, "starting", got.closed["reason"], "the browser hears the peer's answer, not a timeout")
 		})
 	}
 }
