@@ -41,7 +41,9 @@ export function layoutOverrideURL(mode, href = globalThis.location?.href) {
 }
 
 // setLayoutOverride switches the layout ('phone', 'desktop', or 'auto' to go
-// back to detection) by reloading the page through layout-boot.js.
+// back to detection) by reloading the page through layout-boot.js. It
+// replaces the history entry: Back must not return to a page cached in the
+// other layout, nor act as a layout toggle.
 export function setLayoutOverride(mode, loc = globalThis.location) {
-  loc.assign(layoutOverrideURL(mode, loc.href));
+  loc.replace(layoutOverrideURL(mode, loc.href));
 }

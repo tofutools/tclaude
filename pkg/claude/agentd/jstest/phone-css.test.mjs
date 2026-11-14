@@ -2,7 +2,8 @@
 // unchanged by construction: js/layout-boot.js adds the viewport meta, the
 // data-layout mark and phone.css only in phone mode, and every phone rule is
 // scoped under :root[data-layout="phone"]. This holds those pieces in place:
-//   - every selector in phone.css starts with that scope;
+//   - every selector in phone.css starts with that scope, and it imports no
+//     other sheet;
 //   - no other stylesheet targets data-layout (phone rules live in phone.css);
 //   - dashboard.html links neither a viewport meta nor phone.css statically;
 //   - layout-boot.js loads as a plain blocking script in <head>, after the
@@ -72,6 +73,8 @@ test('every phone.css rule is scoped under :root[data-layout="phone"]', () => {
   const unscoped = selectors.filter((selector) => !(selector === SCOPE || selector.startsWith(`${SCOPE} `)
     || selector.startsWith(`${SCOPE}:`) || selector.startsWith(`${SCOPE}.`) || selector.startsWith(`${SCOPE}[`)));
   assert.deepEqual(unscoped, [], `phone.css selectors must start with ${SCOPE}`);
+  const source = read('phone.css').replace(/\/\*[\s\S]*?\*\//g, ' ');
+  assert.doesNotMatch(source, /@import\b/, 'an imported sheet would bring unscoped rules past this check');
 });
 
 test('phone rules live only in phone.css', () => {

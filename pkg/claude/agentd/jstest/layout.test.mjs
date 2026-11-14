@@ -25,7 +25,7 @@ test('switching the layout navigates to the same page with ?layout=', () => {
   assert.equal(layoutOverrideURL('desktop', 'http://h/messages?node=inst_abcd#m1'), '/messages?node=inst_abcd&layout=desktop#m1');
   assert.equal(layoutOverrideURL('auto', 'http://h/?layout=phone'), '/?layout=auto');
   assert.throws(() => layoutOverrideURL('tablet', 'http://h/'), RangeError);
-  const assigned = [];
-  setLayoutOverride('phone', { href: 'http://h/config', assign: (url) => assigned.push(url) });
-  assert.deepEqual(assigned, ['/config?layout=phone']);
+  const replaced = [];
+  setLayoutOverride('phone', { href: 'http://h/config', replace: (url) => replaced.push(url) });
+  assert.deepEqual(replaced, ['/config?layout=phone'], 'replaces the history entry');
 });
