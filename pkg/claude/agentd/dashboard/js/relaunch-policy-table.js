@@ -13,6 +13,7 @@ import { h } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Seg, Select } from './ui-components.js';
+import { pageShares, pageWithheld } from './peer-view-limits.js';
 
 const html = htm.bind(h);
 
@@ -72,10 +73,18 @@ function ModeControl({ row, disabled, onSet }) {
   <//>`;
 }
 
-export function RelaunchPolicyTable({ fetchImpl = globalThis.fetch, notify }) {
+// RELAUNCH_FEATURE is the peer-view feature behind /api/relaunch-policy: it
+// has no peer grant, so a peer serves it only to unrestricted trust.
+const RELAUNCH_FEATURE = 'local_dashboard';
+
+export function RelaunchPolicyTable({ fetchImpl = globalThis.fetch, notify, gate = undefined }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // On a peer's page the table reads the peer's policy only once its
+  // snapshot says it is shared; else it says so instead of showing a 403.
+  const shared = pageShares(RELAUNCH_FEATURE, gate);
+  const withheld = pageWithheld(RELAUNCH_FEATURE, 'The relaunch policy', gate);
 
   const load = useCallback(async () => {
     try {
@@ -83,7 +92,7 @@ export function RelaunchPolicyTable({ fetchImpl = globalThis.fetch, notify }) {
       setError('');
     } catch (e) { setError(e.message || String(e)); }
   }, [fetchImpl]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (shared) load(); }, [load, shared]);
 
   const put = async (changes) => {
     setBusy(true); setError('');
@@ -112,6 +121,7 @@ export function RelaunchPolicyTable({ fetchImpl = globalThis.fetch, notify }) {
     }
   };
 
+  if (withheld) return html`<div class="rlp"><p class="ui-hint" data-rlp-withheld>${withheld}.</p></div>`;
   if (!data) {
     return html`<div class="rlp">${error ? html`<div class="ui-error-box">${error}</div>` : html`<div class="ui-hint">Loading…</div>`}</div>`;
   }

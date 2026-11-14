@@ -419,3 +419,55 @@ test('Dock draws Processes after the snapshot sections and an afterProcesses sec
   assert.deepEqual([...host.querySelectorAll('details.dock-section')].map((details) => details.dataset.key),
     ['profiles', 'processes', 'sandbox_profiles']);
 });
+
+test("On a peer's page the dock reads no catalog the peer keeps, and says so in place of an empty or failed section", async (t) => {
+  const harness = await createPreactHarness(t);
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ templates: [] }) }));
+  const [{ createDockState }, { Dock }] = await Promise.all([
+    harness.importDashboardModule('js/dock-state.js'),
+    harness.importDashboardModule('js/dock-island.js'),
+  ]);
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge' };
+  harness.document.documentElement.dataset.remoteNodeName = 'forge';
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; delete harness.document.documentElement.dataset.remoteNodeName; });
+  const state = createDockState();
+  const fetched = [];
+  const profiles = {
+    key: 'profiles', icon: () => '👤', title: () => 'Agent profiles', empty: () => 'no profiles yet',
+    items: (snap) => snap?.profiles || [], name: (item) => item.name, drag: false,
+    onManageItem: () => {}, onCloneItem: () => {}, onDeleteItem: () => {}, onManageAll: () => {},
+  };
+  const sandbox = {
+    key: 'sandbox_profiles', icon: () => '🛡', title: () => 'Sandbox profiles', empty: () => 'none',
+    load: { fetch: async () => { fetched.push('sandbox'); return [{ name: 'base' }]; }, version: (snap) => snap?.sandbox_profiles_rev },
+    name: (item) => item.name, drag: false,
+    onManageItem: () => {}, onCloneItem: () => {}, onDeleteItem: () => {}, onManageAll: () => {},
+  };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  host.getBoundingClientRect = () => ({ top: 0, bottom: 800 });
+  await harness.mount(harness.html`
+    <${Dock} host=${host} state=${state} sections=${[profiles, sandbox]} prefs=${memoryPrefs()}
+      isSectionOpen=${() => true} setSectionOpen=${() => {}} />
+  `, host);
+  const flush = async () => harness.act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
+  const body = (key) => host.querySelector(`details[data-key="${key}"] .dock-section-items`);
+  await flush();
+  assert.deepEqual(fetched, [], 'nothing is read before the peer snapshot arrives');
+
+  await harness.act(() => state.publish({ peer_view: { level: 'restricted', included: ['groups'], omitted: [{ feature: 'spawn.catalog', requires: 'node.spawn.read' }] } }));
+  await flush();
+  assert.deepEqual(fetched, [], 'a restricted peer keeping its catalogs is not asked');
+  for (const key of ['profiles', 'sandbox_profiles']) {
+    assert.match(body(key).textContent, /forge keeps its catalogs to itself: it needs node\.spawn\.read/, key);
+    assert.equal(body(key).querySelector('[role="alert"]'), null, `${key}: no error`);
+    assert.doesNotMatch(body(key).textContent, /no profiles yet|none/, `${key}: not an empty catalog`);
+    assert.ok(host.querySelector(`details[data-key="${key}"] .dock-section-withheld`), `${key}: the header carries the lock`);
+  }
+
+  await harness.act(() => state.publish({ peer_view: { level: 'restricted', included: ['groups', 'spawn.catalog'], omitted: [] }, profiles: [{ name: 'alpha' }], sandbox_profiles_rev: 'r1' }));
+  await flush();
+  assert.deepEqual(fetched, ['sandbox'], 'shared: read as on this node');
+  assert.equal(host.querySelector('[data-dock-withheld]'), null);
+  assert.ok(host.querySelector('.dock-card[data-dock-name="alpha"]'));
+  assert.ok(host.querySelector('.dock-card[data-dock-name="base"]'));
+});

@@ -249,3 +249,17 @@ test('A dashed pill and the card menu copy an item to another node', async (t) =
   await mounted.unmount();
   host.remove();
 });
+
+test('catalogWithheld names what a section rides: usage budgets take unrestricted trust, not node.spawn.read', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { catalogWithheld, pageCatalogWithheld } = await harness.importDashboardModule('js/dock-nodes.js');
+  const usage = { feature: 'local_dashboard', what: 'its usage budgets' };
+  const sharing = { peer_view: { level: 'restricted', included: ['groups', 'spawn.catalog'], omitted: [] } };
+  const mac = { id: 'inst_mac', name: 'mac' };
+  assert.equal(catalogWithheld(mac, sharing), '', 'the catalog grant opens the catalogs');
+  assert.equal(catalogWithheld(mac, sharing, null, usage), 'mac keeps its usage budgets to itself: it needs unrestricted trust.');
+  assert.equal(catalogWithheld(mac, { peer_view: { level: 'unrestricted' } }, null, usage), '');
+  assert.equal(catalogWithheld(mac, { groups: [] }, null, usage), '', 'this node');
+  assert.equal(pageCatalogWithheld(sharing, usage, null), '', "this node's page withholds nothing");
+  assert.equal(pageCatalogWithheld(null, null, { id: 'inst_mac' }), 'loading', "a peer's page waits for its snapshot");
+});

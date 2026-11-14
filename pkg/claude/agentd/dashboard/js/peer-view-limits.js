@@ -486,6 +486,40 @@ function currentPeerView() {
   return dashboardState.snapshot.value?.peer_view || null;
 }
 
+// nodeShares is the gate before a page reads a route that a peer may keep to
+// itself: whether the node a snapshot shows answers feature's routes here.
+// This node (its snapshot carries no peer_view) always does; a peer does
+// when it trusts this node unrestricted or names the feature shared. Until
+// the snapshot arrives nobody can tell, so it says no: a peer page that
+// asked first would only be refused (peer_view_local_only, a 403), and show
+// that as an error. Check it again when the snapshot changes.
+export function nodeShares(snapshot, feature) {
+  if (!snapshot) return false;
+  const pv = snapshot.peer_view;
+  if (!pv) return true;
+  return unrestricted(pv) || featureState(feature, pv) === 'shared';
+}
+
+// pageShares is nodeShares for the node this page shows, on the dashboard's
+// snapshot (a signal read: a component or effect re-checks when it moves).
+// This node's own page has nothing to wait for.
+export function pageShares(feature, { remote = globalThis.__tclaudeRemoteNode, snapshot = dashboardState.snapshot.value } = {}) {
+  if (!remote?.id) return true;
+  return nodeShares(snapshot, feature);
+}
+
+// pageWithheld is the quiet line a section shows in place of what the page's
+// peer does not share with this operator, or '' when it does (or the page
+// is this node's). A peer not yet heard from withholds nothing yet: the
+// section waits as it would for its data.
+export function pageWithheld(feature, what, { remote = globalThis.__tclaudeRemoteNode, snapshot = dashboardState.snapshot.value } = {}) {
+  if (!remote?.id || !snapshot || nodeShares(snapshot, feature)) return '';
+  const pv = snapshot.peer_view;
+  // (pv.peer names this node, the viewer, as the peer knows it.)
+  const node = globalThis.document?.documentElement?.dataset?.remoteNodeName || 'This peer';
+  return limitHint(featureState(feature, pv), what, node, [featureNeeds(feature, pv)]);
+}
+
 // peerViewTabUsable tells tab cycling and history routing whether a tab can
 // be shown on this page: always on this node, and on a peer view only when the
 // peer offers it.

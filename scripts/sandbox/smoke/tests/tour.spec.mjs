@@ -60,7 +60,12 @@ const ALLOW_CONSOLE = [
 const ALLOW_HTTP = [
   { text: /^409 \/api\/federation\/(away|boards)$/, why: NO_HUB, peer: false },
   { text: /^502 \/api\/peer\/inst_[a-z0-9]+\//, why: NO_HUB, peer: false },
-  { text: /^403 \/api\/peer\/inst_[a-z0-9]+\//, why: 'the live peer trusts the sandbox at the restricted level; the dashboard asks for views it did not grant and shows the refusal', peer: true },
+  // The live peer trusts the sandbox at the restricted level. A peer's page
+  // reads only what its snapshot says the peer shares (peer-view-limits.js
+  // nodeShares), so any other refusal is a page asking blind. Fleet admin
+  // asks each peer itself, and its answer is the shown hint:
+  { text: /^403 \/api\/peer\/inst_[a-z0-9]+\/node\/(update-scripts|run)$/, why: 'Fleet admin asks each peer for its update scripts and script runner; the refusal is the "not shared" hint in its row', peer: true },
+  { text: /^403 \/api\/peer\/inst_[a-z0-9]+\/mailbox$/, why: 'remote-inbox.js asks a peer not heard from yet for its human notifications once, then backs off for 30 minutes', peer: true },
   { text: /^429 \/api\/companion\/presence$/, why: 'every route is a fresh page load, faster than the 32-tab presence table ages tabs out' },
 ].filter((a) => (a.peer === undefined) || a.peer === !!peer);
 

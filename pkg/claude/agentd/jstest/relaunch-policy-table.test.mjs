@@ -81,3 +81,37 @@ test('relaunch policy: without relaunch-policy.manage the table is read-only wit
   assert.equal(row('harness_config').querySelector('select').disabled, true);
   assert.equal(button(view.container, 'Reset to defaults').disabled, true);
 });
+
+test("relaunch policy on a peer's page: read once its snapshot says it is shared, else a quiet line and no request", async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ RelaunchPolicyTable }, { dashboardState }] = await Promise.all([
+    harness.importDashboardModule('js/relaunch-policy-table.js'),
+    harness.importDashboardModule('js/snapshot-store.js'),
+  ]);
+  globalThis.__tclaudeRemoteNode = { id: 'inst_forge' };
+  harness.document.documentElement.dataset.remoteNodeName = 'forge';
+  t.after(() => {
+    delete globalThis.__tclaudeRemoteNode;
+    delete harness.document.documentElement.dataset.remoteNodeName;
+    dashboardState.publishLocalEdit(null);
+  });
+  dashboardState.publishLocalEdit(null);
+  const fake = daemon();
+  const view = await harness.mount(harness.html`<${RelaunchPolicyTable} fetchImpl=${fake.fetchImpl} />`);
+  const flush = async () => harness.act(async () => { for (let i = 0; i < 8; i += 1) await Promise.resolve(); });
+  await flush();
+  assert.deepEqual(fake.calls, [], 'no request before the peer snapshot arrives');
+  assert.match(view.container.textContent, /Loading/);
+
+  await harness.act(() => dashboardState.publishLocalEdit({ peer_view: { level: 'restricted', included: ['groups', 'node.config'], omitted: [] } }));
+  await flush();
+  assert.deepEqual(fake.calls, [], 'a restricted peer keeps it local: not asked');
+  assert.equal(view.container.querySelector('[role="alert"]'), null, 'no error');
+  assert.equal(view.container.querySelector('[data-rlp-withheld]')?.textContent,
+    'forge does not share the relaunch policy with you (needs unrestricted trust).');
+
+  await harness.act(() => dashboardState.publishLocalEdit({ peer_view: { level: 'unrestricted', included: [], omitted: [] } }));
+  await flush();
+  assert.equal(fake.calls.length, 1, 'unrestricted trust reads it');
+  assert.ok(view.container.querySelector('[data-rlp-field="group_env"]'));
+});

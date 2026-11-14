@@ -11,7 +11,7 @@ import {
   LIBRARY_EVENT, menuPlacement, filterSection, leafTexts, orderPinned, pinnedNames, searchTerms, togglePin,
 } from './dock-library.js';
 import {
-  catalogWithheld, copyRoute, fusedDock, hiddenNodes, mergeCatalog, nodeSnap, nodeTrustLock, shownNodes,
+  catalogWithheld, copyRoute, pageCatalogWithheld, fusedDock, hiddenNodes, mergeCatalog, nodeSnap, nodeTrustLock, shownNodes,
 } from './dock-nodes.js';
 import { LockReason } from './lock-reason.js';
 import { NodeSelect } from './node-select.js';
@@ -414,7 +414,7 @@ function useFusedItems(section, fused, wanted) {
   const withheld = {};
   const sharing = [];
   for (const node of nodes) {
-    const why = catalogWithheld(node, fused.snapOf(node.id), fused.failureOf(node.id));
+    const why = catalogWithheld(node, fused.snapOf(node.id), fused.failureOf(node.id), section.peer);
     if (why) withheld[node.id] = why; else sharing.push(node);
   }
   const versions = section.load ? sharing.map((node) => `${node.id}=${section.load.version(fused.snapOf(node.id))}`).join(',') : '';
@@ -472,7 +472,10 @@ function DockSection({
   const [dropOver, setDropOver] = useState(false);
   const fileRef = useRef(null);
   const searching = terms.length > 0;
-  const single = useSectionItems(section, snapshot, !fused && (open || searching));
+  // On a peer's page (not fused), the peer may keep its catalogs: then
+  // nothing is read from it and the section says why.
+  const pageKept = fused ? '' : pageCatalogWithheld(snapshot, section.peer);
+  const single = useSectionItems(section, snapshot, !fused && !pageKept && (open || searching));
   const many = useFusedItems(section, fused, !!fused && (open || searching));
   // Fused, a card is one name across the shown nodes (its ref copy stands
   // for it in search and pins); else one of the page node's items.
@@ -531,9 +534,10 @@ function DockSection({
           <span class="dock-section-chevron" aria-hidden="true">▸</span>
           <span class="dock-section-icon" aria-hidden="true">${section.icon()}</span>
           ${section.title()}
-          <span class="dock-section-count">${all === null ? '' : searching && items.length !== known.length ? `${items.length}/${known.length}` : known.length}</span>
+          <span class="dock-section-count">${all === null || pageKept ? '' : searching && items.length !== known.length ? `${items.length}/${known.length}` : known.length}</span>
         </span>
         ${fused ? html`<${DockWithheld} nodes=${fused.nodes} withheld=${many.withheld} />` : null}
+        ${pageKept && pageKept !== 'loading' ? html`<${DockWithheld} nodes=${[{ id: 'page', name: globalThis.document?.documentElement?.dataset?.remoteNodeName || 'this peer' }]} withheld=${{ page: pageKept }} />` : null}
         <span class="dock-section-tools">
           ${section.onNew ? html`<${Button} size="sm" variant="ghost"
             class="dock-section-manage"
@@ -576,9 +580,11 @@ function DockSection({
         </span>
       </summary>
       <div class="dock-section-items">
-        ${error ? html`<div class="dock-empty ui-empty island-error" role="alert">${error}</div>` : null}
-        ${all === null && !error ? html`<div class="dock-empty ui-empty">Loading…</div>` : null}
-        ${all !== null && (items.length ? items.map((value) => html`
+        ${pageKept && pageKept !== 'loading' ? html`<div class="dock-empty ui-empty" data-dock-withheld>${pageKept}</div>` : null}
+        ${!pageKept && error ? html`<div class="dock-empty ui-empty island-error" role="alert">${error}</div>` : null}
+        ${!pageKept && all === null && !error ? html`<div class="dock-empty ui-empty">Loading…</div>` : null}
+        ${pageKept === 'loading' ? html`<div class="dock-empty ui-empty">Loading…</div>` : null}
+        ${!pageKept && all !== null && (items.length ? items.map((value) => html`
           <${DockCard}
             key=${nameOf(value)}
             section=${section}

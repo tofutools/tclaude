@@ -1,10 +1,12 @@
 import { h, render } from 'preact';
 import { useEffect } from 'preact/hooks';
+import { effect } from '@preact/signals';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { DOCTOR_CATEGORIES } from './doctor-state.js';
 import { HarnessConfigRepairControl } from './harness-config-repair.js';
 import { clipboardFailure, writeClipboard } from './insecure-origin.js';
+import { pageShares } from './peer-view-limits.js';
 
 const html = htm.bind(h);
 
@@ -25,8 +27,19 @@ async function readJSON(response) {
   return body;
 }
 
-export function createDoctorActions({ state, notify, fetchImpl = globalThis.fetch }) {
+// The checks are the node's own (its tools, sandbox, hooks): a peer serves
+// them only to unrestricted trust, and the Doctor view is hidden on any
+// other peer's page. shares is that gate (peer-view-limits.js pageShares).
+const doctorShared = () => pageShares('local_dashboard');
+
+export function createDoctorActions({ state, notify, fetchImpl = globalThis.fetch, shares = doctorShared }) {
   async function load({ refresh = false } = {}) {
+    // A peer that stopped sharing them (trust lowered) shows none of its
+    // last checks, nor their badge counts.
+    if (!shares()) {
+      if (state.checks.peek().length) state.checks.value = [];
+      return;
+    }
     if (state.phase.value === 'idle') state.phase.value = 'loading';
     try {
       const body = await readJSON(await fetchImpl(`/api/doctor${refresh ? '?refresh=1' : ''}`, { credentials: 'same-origin' }));
@@ -158,13 +171,18 @@ function DoctorBadge({ state }) {
   </span>`;
 }
 
-export function mountDoctorIsland({ host, badgeHosts = [], state, notify, registerCleanup }) {
-  const actions = createDoctorActions({ state, notify });
+export function mountDoctorIsland({ host, badgeHosts = [], state, notify, registerCleanup, shares = doctorShared }) {
+  const actions = createDoctorActions({ state, notify, shares });
   render(html`<${DoctorApp} state=${state} actions=${actions} notify=${notify} />`, host);
   for (const badgeHost of badgeHosts) render(html`<${DoctorBadge} state=${state} />`, badgeHost);
-  actions.load();
+  // The first load waits until the page's node is known to share the checks
+  // (at once on this node; on a peer's page, once its snapshot says so).
+  const stopFirst = effect(() => {
+    if (shares() && state.phase.peek() === 'idle') void actions.load();
+  });
   const timer = setInterval(() => { if (!state.active.value) actions.load(); }, POLL_MS);
   registerCleanup(() => {
+    stopFirst();
     clearInterval(timer);
     render(null, host);
     for (const badgeHost of badgeHosts) render(null, badgeHost);
