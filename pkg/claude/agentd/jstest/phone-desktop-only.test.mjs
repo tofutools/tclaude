@@ -7,7 +7,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 test('desktopOnlyView names the views a phone leaves out', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/phone-desktop-only.js');
-  assert.equal(mod.desktopOnlyView('fleet-admin'), 'Fleet admin');
+  assert.equal(mod.desktopOnlyView('fleet-admin'), '', 'a phone shows Fleet read-only (phone-fleet.js)');
   assert.equal(mod.desktopOnlyView('vegas'), 'Vegas');
   assert.equal(mod.desktopOnlyView('groups', 'routes'), 'Route map');
   assert.equal(mod.desktopOnlyView('groups', 'members'), '');

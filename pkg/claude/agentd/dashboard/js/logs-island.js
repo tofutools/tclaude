@@ -55,14 +55,16 @@ function LogRows({ current }) {
   </tbody></table>`;
 }
 
-export function LogsApp({ state, actions }) {
+// useLogsFeed loads the log while its view shows (and every STREAM_MS while
+// streaming), re-reads it when the fused node switch moves, and returns
+// `filter`, which sets one filter and reloads (debounced for typing). The
+// phone's rows (phone-diagnostics.js) share it.
+export function useLogsFeed(state, actions) {
   // The fused node switch (activity-node.js) re-reads the chosen daemon's log;
   // a peer unticked since falls back to this node.
   const node = activityTarget()?.id || '';
-  const exportUrl = () => nodeDownloadPath(node, logsExportUrl(current));
   const current = state.view.value;
   const searchTimer = useRef(null);
-  const filterRef = useRef(null);
   useEffect(() => {
     if (!current.active) {
       clearTimeout(searchTimer.current);
@@ -74,10 +76,18 @@ export function LogsApp({ state, actions }) {
     return () => clearInterval(timer);
   }, [current.active, current.stream, node]);
   useEffect(() => () => clearTimeout(searchTimer.current), []);
-  const filter = (name, value, debounce = false) => {
+  return (name, value, debounce = false) => {
     state.setFilter(name, value); clearTimeout(searchTimer.current);
     if (debounce) searchTimer.current = setTimeout(actions.load, 300); else actions.load();
   };
+}
+
+export function LogsApp({ state, actions }) {
+  const node = activityTarget()?.id || '';
+  const exportUrl = () => nodeDownloadPath(node, logsExportUrl(current));
+  const current = state.view.value;
+  const filterRef = useRef(null);
+  const filter = useLogsFeed(state, actions);
   return html`<${Fragment}>
     <div class="filter-bar">
       <${Input} domRef=${filterRef} id="filter-logs" aria-label="Search logs" placeholder="Search (message / level / fields) — server-side" autocomplete="off" spellcheck=${false} value=${current.query} onInput=${(event) => filter('query', event.currentTarget.value, true)} />

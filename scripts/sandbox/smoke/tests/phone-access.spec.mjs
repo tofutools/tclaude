@@ -2,7 +2,7 @@
 // (js/phone-access-island.js, js/phone-desktop-only.js) in a real browser:
 // Sudo lists the seeded grant with Revoke behind a confirm, a deep link lands
 // on its subtab, the slug registry is searched rather than listed, Costs and
-// Access fit the phone, and Fleet admin says it is desktop only.
+// Access fit the phone, and Fleet admin's sections say they are desktop only.
 //
 //   scripts/sandbox/ui.sh smoke phone-access
 import { test, expect, devices } from '@playwright/test';
@@ -69,18 +69,19 @@ test('Access: a deep link lands on Sudo, revoke asks first, and slugs are search
   expect(errors).toEqual([]);
 });
 
-test('Costs fits the phone, and Fleet admin says it is desktop only', async ({ page }) => {
+test('Costs fits the phone, and a Fleet admin section says it is desktop only', async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto('/usage/costs');
   await booted(page);
   await expect(page.locator('#costs-table tbody tr').first()).toBeVisible();
   await expectNoSideScroll(page, 'Usage › Costs');
 
-  await page.goto('/fleet-admin');
+  // Fleet's own view is read-only (phone-diagnostics.spec.mjs); its admin
+  // sections are desktop only.
+  await page.goto('/fleet-admin/grants');
   await booted(page);
-  await expect(page.locator('.phone-bar-title')).toHaveText('Fleet admin');
-  await expect(page.locator('.phone-desktop-page')).toContainText('Fleet admin is desktop only');
-  await expect(page.locator('main')).toBeHidden();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Fleet');
+  await expect(page.locator('.phone-desktop-page:visible')).toContainText('Fleet admin is desktop only');
   expect(errors).toEqual([]);
   // The desktop Fleet admin it opens is not under test here (with no hub it
   // answers 409s, as the tour spec notes): only that the layout switched.

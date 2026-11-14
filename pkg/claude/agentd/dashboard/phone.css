@@ -637,3 +637,96 @@
   grid-row: 2; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 :root[data-layout="phone"] #costs-table tbody .cost-total-row td:nth-child(2) { white-space: normal; }
+
+/* Diagnostics (js/phone-diagnostics.js for Audit and Logs). The desktop's
+   sub-nav becomes a row of chips, Doctor first: the view that asks something
+   of the operator. Doctor stacks its category list over its checks;
+   Performance shows the endpoint cards (latency and a sparkline) and leaves
+   daemon profiling and the phase breakdowns to the desktop. */
+:root[data-layout="phone"] #tab-diagnostics .activity-subnav {
+  display: flex; flex-wrap: nowrap; overflow-x: auto; max-width: 100%; margin-bottom: 12px;
+}
+:root[data-layout="phone"] #tab-diagnostics .activity-subtab { flex: none; min-height: 36px; font-size: 14px; }
+:root[data-layout="phone"] #tab-diagnostics .activity-subtab[data-subtab="doctor"] { order: -1; }
+:root[data-layout="phone"] .phone-diag-filters { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+:root[data-layout="phone"] .phone-diag-search { flex: 1; min-width: 0; min-height: var(--phone-tap); font-size: 16px; }
+:root[data-layout="phone"] .phone-diag-filters :is(.ui-btn, select) { flex: none; min-height: var(--phone-tap); font-size: 14px; }
+:root[data-layout="phone"] .phone-diag-toggle.on { border-color: var(--ui-focus); color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-diag-count { margin: 4px 0; font-size: 12px; }
+:root[data-layout="phone"] .phone-diag-row > summary {
+  display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 0;
+  list-style: none; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-diag-row > summary::-webkit-details-marker { display: none; }
+:root[data-layout="phone"] .phone-diag-row > summary::before { content: none; }
+:root[data-layout="phone"] .phone-diag-time {
+  flex: none; width: 46px; color: var(--ui-muted-text); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+:root[data-layout="phone"] .phone-diag-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] :is(.phone-diag-head, .phone-diag-sub) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] .phone-diag-head { color: var(--ui-text-strong); font-weight: 600; }
+:root[data-layout="phone"] .phone-diag-sub { color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-diag-mono { font-family: ui-monospace, monospace; }
+:root[data-layout="phone"] .phone-diag-outcome { flex: none; }
+:root[data-layout="phone"] .phone-diag-row[open] .phone-diag-head { white-space: normal; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-diag-detail {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px;
+  margin: 0 0 10px 56px; font-size: 13px;
+}
+:root[data-layout="phone"] .phone-diag-detail dt { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-diag-detail dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+:root[data-layout="phone"] .phone-diag-pages { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
+:root[data-layout="phone"] .phone-diag-pages .ui-btn { min-height: var(--phone-tap); }
+
+:root[data-layout="phone"] .doctor-island { display: block; min-height: 0; }
+:root[data-layout="phone"] .doctor-side {
+  flex-direction: row; flex-wrap: nowrap; overflow-x: auto; padding: 0; border-right: 0; border-bottom: 1px solid var(--ui-line); border-radius: 6px 6px 0 0;
+}
+:root[data-layout="phone"] .doctor-side button {
+  flex: none; min-height: var(--phone-tap); border-left: 0; border-bottom: 2px solid transparent; white-space: nowrap;
+}
+:root[data-layout="phone"] .doctor-side button.on { border-bottom-color: var(--ui-focus); }
+:root[data-layout="phone"] .doctor-sep { display: none; }
+:root[data-layout="phone"] .doctor-main { padding: 12px; }
+:root[data-layout="phone"] .doctor-head { flex-wrap: wrap; }
+:root[data-layout="phone"] .doctor-choice { grid-template-columns: 1fr; }
+:root[data-layout="phone"] .doctor-acts .ui-btn { min-height: 38px; }
+
+:root[data-layout="phone"] #activity-performance #profiles-root,
+:root[data-layout="phone"] #activity-performance .filter-bar > .muted:first-child,
+:root[data-layout="phone"] .debug-card > :not(.debug-card-head, .debug-spark, .empty) {
+  display: none;
+}
+:root[data-layout="phone"] .debug-card-head .spacer { flex-basis: 100%; height: 0; }
+
+/* Plugins (js/phone-plugins.js): a card per plugin, its steps as rows. */
+:root[data-layout="phone"] .phone-plugin { padding: 12px; margin-bottom: 10px; }
+:root[data-layout="phone"] :is(.phone-plugin-head, .phone-plugin-step) { display: flex; align-items: center; gap: 10px; }
+:root[data-layout="phone"] .phone-plugin-head { min-height: var(--phone-tap); }
+:root[data-layout="phone"] .phone-plugin-dot { flex: none; width: 14px; text-align: center; }
+:root[data-layout="phone"] .phone-plugin-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] .phone-plugin-name { color: var(--ui-text-strong); font-weight: 600; overflow-wrap: anywhere; }
+:root[data-layout="phone"] :is(.phone-plugin-sub, .phone-plugin-out) {
+  color: var(--ui-muted-text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-layout="phone"] .phone-plugin-out { font-family: ui-monospace, monospace; }
+:root[data-layout="phone"] .phone-plugin-steps { list-style: none; margin: 8px 0 0; padding: 0; }
+:root[data-layout="phone"] .phone-plugin-step { min-height: var(--phone-tap); border-top: 1px solid var(--ui-line); padding: 4px 0; }
+:root[data-layout="phone"] .phone-plugin-act { flex: none; min-width: var(--phone-tap); min-height: 38px; }
+:root[data-layout="phone"] .phone-plugin-check { margin: 10px 0 0; }
+
+/* Fleet (js/phone-fleet.js), read-only: this node, then its peers. */
+:root[data-layout="phone"] .phone-fleet-self { padding: 12px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 4px; }
+:root[data-layout="phone"] .phone-fleet-self .ui-tag { margin-left: 6px; font-weight: 400; vertical-align: 1px; }
+:root[data-layout="phone"] .phone-fleet-id { color: var(--ui-muted-text); font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-fleet-hub { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-fleet-hub.hub-connected { color: var(--ui-success-line); }
+:root[data-layout="phone"] .phone-fleet-hub:is(.hub-refused, .hub-disconnected) { color: var(--ui-danger); }
+:root[data-layout="phone"] .phone-fleet-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 0; }
+:root[data-layout="phone"] .phone-fleet-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--ui-line); }
+:root[data-layout="phone"] .phone-fleet-dot.online { background: var(--ui-success-line); }
+:root[data-layout="phone"] .phone-fleet-dot.asking { background: var(--ui-warn-text); }
+:root[data-layout="phone"] .phone-fleet-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] .phone-fleet-name { font-weight: 600; color: var(--ui-text-strong); overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-fleet-sub { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-fleet-when { flex: none; color: var(--ui-muted-text); font-size: 13px; }

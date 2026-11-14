@@ -109,6 +109,10 @@ test('More lists the tabs the dashboard shows, and the Desktop site switch', asy
   await tap(item('Settings'));
   assert.deepEqual(calls.at(-1), ['navigate', '/config']);
   assert.equal(mounted.container.querySelector('[role="dialog"]'), null, 'picking an entry closes the sheet');
+  // Fleet's anchor is always hidden: it is offered anyway, and opened through it.
+  await tap(navItem('More'));
+  await tap(item('Fleet'));
+  assert.deepEqual(calls.at(-1), ['showTab', 'fleet-admin']);
   await tap(navItem('More'));
   await tap(item('Desktop site'));
   assert.deepEqual(calls.at(-1), ['desktopSite']);
@@ -207,10 +211,10 @@ test('a process run waiting on the operator is a gate card on Now and counts as 
 
 test('a tab a phone does not offer gets a desktop-only page in its place', async (t) => {
   const { harness, state, calls, mounted, root, navItem, tap } = await setup(t, { startOnNow: false });
-  await harness.act(() => state.setActiveTab('fleet-admin'));
+  await harness.act(() => state.setActiveTab('vegas'));
   assert.equal(root.dataset.phoneView, 'desktop-only', 'the desktop content is hidden under it');
-  assert.equal(mounted.container.querySelector('.phone-bar-title').textContent, 'Fleet admin');
-  assert.match(mounted.container.querySelector('.phone-desktop-page').textContent, /Fleet admin is desktop only/);
+  assert.equal(mounted.container.querySelector('.phone-bar-title').textContent, 'Vegas');
+  assert.match(mounted.container.querySelector('.phone-desktop-page').textContent, /Vegas is desktop only/);
   assert.equal(navItem('More').getAttribute('aria-current'), 'page');
   await tap(harness.getByRole(mounted.container, 'button', { name: 'Desktop site' }));
   assert.deepEqual(calls.at(-1), ['desktopSite']);
@@ -236,4 +240,15 @@ test('a deep link left Groups on the route map: Agents and Show agents both go b
   assert.deepEqual(calls.at(-1), ['navigate', '/'], 'not a no-op showTab of the active tab');
   await harness.act(() => { subview.value = 'members'; });
   assert.equal(mounted.container.querySelector('.phone-desktop-page'), null);
+});
+
+test('More → Fleet over Now shows Fleet even when it is the tab underneath', async (t) => {
+  const { harness, shell, calls, mounted, navItem, tap, state } = await setup(t);
+  await harness.act(() => state.setActiveTab('fleet-admin'));
+  await harness.act(() => { shell.view.value = 'now'; });
+  await tap(navItem('More'));
+  const fleet = [...mounted.container.querySelectorAll('.phone-menu-item')].find((b) => b.textContent.trim().endsWith('Fleet'));
+  await tap(fleet);
+  assert.deepEqual(calls.at(-1), ['showTab', 'fleet-admin']);
+  assert.equal(shell.view.value, null, 'Now steps aside for the tab');
 });

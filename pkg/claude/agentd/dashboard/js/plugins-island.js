@@ -14,7 +14,7 @@ import { shellConfirm, shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
-function statusPill(plugin) {
+export function statusPill(plugin) {
   if (plugin.disabled) return plugin.status === 'warn'
     ? { cls: 'state-awaiting', text: 'still active', title: 'deactivated, but a stoppable step still passes its check — click the lamp to retry the teardown' }
     : { cls: 'state-offline', text: 'off', title: 'deactivated on purpose — click the lamp to bring it back' };
@@ -23,7 +23,7 @@ function statusPill(plugin) {
   return { cls: 'state-offline', text: 'unknown', title: 'no check has run yet (or no steps define one)' };
 }
 
-function pluginLamp(plugin) {
+export function pluginLamp(plugin) {
   if (plugin.disabled) return plugin.status === 'warn'
     ? { glyph: '●', cls: 'status-dot-warn', verb: 'deactivate', tip: 'deactivated, but a stoppable step still passes its check — click to run the stop commands again' }
     : { glyph: '○', cls: 'status-dot-offline', verb: 'activate', tip: 'off — click to activate (runs each step in order, skipping satisfied ones)' };
@@ -32,7 +32,7 @@ function pluginLamp(plugin) {
   return { glyph: '○', cls: 'status-dot-offline', verb: 'activate', tip: 'status unknown — click to activate (runs each step in order, skipping satisfied ones)' };
 }
 
-function stepLamp(plugin, step) {
+export function stepLamp(plugin, step) {
   const when = step.check && step.checked && step.checked_at ? ` (checked ${relTime(step.checked_at)})` : '';
   const active = !!(step.check && step.checked && step.ok);
   if (active) return { glyph: '●', cls: 'status-dot-online', state: `check passes${when}`, verb: step.stop ? 'stop' : '' };
@@ -166,6 +166,18 @@ function FusedPeerPlugins({ peers, query, active, confirm, notify, fetchFor }) {
   });
 }
 
+// usePluginsTabShown hides the Plugins tab (body.hide-plugins) once a load
+// says there is nothing to show, and leaves the tab if it is open.
+export function usePluginsTabShown(current, visible) {
+  useEffect(() => {
+    if (!current.request.hasLoaded) return;
+    document.body.classList.toggle('hide-plugins', !visible);
+    if (!visible && current.activeTab === 'plugins') {
+      document.querySelector('nav [data-tab="groups"]')?.click();
+    }
+  }, [current.request.hasLoaded, visible, current.activeTab]);
+}
+
 export function PluginsApp({ state, actions, fleet = fleetState, confirm = shellConfirm, notify = shellToast, fetchFor = undefined }) {
   const current = state.view.value;
   // A fused view adds a section per ticked peer (fused-sections.js).
@@ -174,13 +186,7 @@ export function PluginsApp({ state, actions, fleet = fleetState, confirm = shell
   // A fused view keeps the tab (a ticked peer may have plugins this node
   // lacks), also before the fleet status has named its peers.
   const visible = current.visible || peers.length > 0 || (!!fleet.fused.value && !globalThis.__tclaudeRemoteNode);
-  useEffect(() => {
-    if (!current.request.hasLoaded) return;
-    document.body.classList.toggle('hide-plugins', !visible);
-    if (!visible && current.activeTab === 'plugins') {
-      document.querySelector('nav [data-tab="groups"]')?.click();
-    }
-  }, [current.request.hasLoaded, visible, current.activeTab]);
+  usePluginsTabShown(current, visible);
 
   const count = current.query
     ? `${current.installed.length} / ${current.all.length}`

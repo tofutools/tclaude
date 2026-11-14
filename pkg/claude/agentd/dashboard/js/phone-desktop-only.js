@@ -18,8 +18,9 @@ export const desktopSite = () => setLayoutOverride('desktop');
 
 // DESKTOP_ONLY_TABS are the dashboard tabs a phone does not show at all, by
 // the name the phone page gives them.
+// Fleet admin is not one of them: a phone shows Fleet read-only on its tab
+// (js/phone-fleet.js), and the desktop-only page for its other sections.
 export const DESKTOP_ONLY_TABS = Object.freeze({
-  'fleet-admin': 'Fleet admin',
   vegas: 'Vegas',
 });
 
