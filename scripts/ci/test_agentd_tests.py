@@ -64,6 +64,10 @@ def dump(*_):
     emit(Action="output", Output="goroutine 1 [chan receive]:\nfake dump\n")
     sys.exit(2)
 signal.signal(signal.SIGQUIT, dump)
+if os.getenv("FAKE_LEAK") and me == "p1":
+    # A child that inherits the output pipe and outlives the binary.
+    import subprocess
+    subprocess.Popen(["sleep", "20"], start_new_session=True)
 failed = False
 for name in selected:
     emit(Action="run", Test=name)
@@ -79,6 +83,9 @@ for name in selected:
     else:
         emit(Action="pass", Test=name, Elapsed=0.01)
 emit(Action="fail" if failed else "pass", Elapsed=.01)
+if os.getenv("FAKE_TEARDOWN_HANG") and me == "p1":
+    while True:  # a TestMain teardown that never returns
+        time.sleep(1)
 sys.exit(1 if failed else 0)
 '''
 
@@ -87,7 +94,7 @@ ALL = {"TestDashboardNewFeature", "TestFederationMail", "TestLifecycle", "TestFu
 
 
 class RunnerTests(unittest.TestCase):
-    def run_fixture(self, *args, procs=3, fail="", hang="", build_fail=""):
+    def run_fixture(self, *args, procs=3, fail="", hang="", build_fail="", leak="", teardown_hang=""):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
             (root / "go").write_text(FAKE_GO)
@@ -95,7 +102,10 @@ class RunnerTests(unittest.TestCase):
             (root / "fake_binary").write_text(FAKE_BINARY)
             env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
                        FAKE_GO_STATE=str(root), FAKE_FAIL=fail, FAKE_HANG=hang,
-                       FAKE_GO_BUILD_FAIL=build_fail,
+                       FAKE_GO_BUILD_FAIL=build_fail, FAKE_LEAK=leak,
+                       FAKE_TEARDOWN_HANG=teardown_hang,
+                       TCLAUDE_AGENTD_TEST_DRAIN_GRACE="1",
+                       TCLAUDE_AGENTD_TEST_PROCESS_GRACE="1",
                        TCLAUDE_AGENTD_TEST_PROCS=str(procs),
                        TCLAUDE_AGENTD_TEST_WATCHDOG="1",
                        TCLAUDE_AGENTD_TEST_LOG_DIR=str(root / "logs"))
@@ -135,6 +145,21 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("assertion before the hang", result.stdout)
         self.assertIn("fake dump", result.stdout)
         self.assertIn("Failing tests", result.stdout)
+
+    def test_a_leaked_child_holding_the_output_cannot_hang_the_runner(self):
+        began = time.monotonic()
+        result, _, _, _ = self.run_fixture(leak="1")
+        self.assertLess(time.monotonic() - began, 30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("output stayed open", result.stdout)
+
+    def test_a_hang_outside_any_test_is_stopped_by_the_process_deadline(self):
+        began = time.monotonic()
+        result, _, _, _ = self.run_fixture("-timeout=2s", teardown_hang="1")
+        self.assertLess(time.monotonic() - began, 30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outside any test", result.stdout)
+        self.assertIn("fake dump", result.stdout)
 
     def test_build_failure_stops_before_the_test_processes(self):
         result, ran, _, _ = self.run_fixture(build_fail="1")
