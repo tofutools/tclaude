@@ -87,12 +87,19 @@ export function useZoomGestures({ targetRef, enabled, onZoom, onKey, shouldHandl
     };
     // Safari: event.scale is cumulative from gesturestart, so each change
     // applies only its ratio to the previous one.
+    //
+    // iOS Safari fires these for a touch pinch as well as the touch events
+    // useTouchZoom zooms by; while fingers are down the touch path owns the
+    // zoom, so a pinch is not applied twice. (A macOS trackpad pinch fires
+    // no touch events.) The page zoom is still cancelled either way.
     let lastScale = 1;
+    let fingers = 0;
+    const onTouches = (event) => { fingers = event.touches?.length || 0; };
     const onGestureStart = (event) => { event.preventDefault(); lastScale = 1; };
     const onGestureChange = (event) => {
       event.preventDefault();
       const scale = Number(event.scale) || 1;
-      zoomRef.current?.(scale / lastScale, { x: event.clientX, y: event.clientY });
+      if (fingers === 0) zoomRef.current?.(scale / lastScale, { x: event.clientX, y: event.clientY });
       lastScale = scale;
     };
     const onGestureEnd = (event) => { event.preventDefault(); };
@@ -105,12 +112,14 @@ export function useZoomGestures({ targetRef, enabled, onZoom, onKey, shouldHandl
     };
 
     node.addEventListener('wheel', onWheel, { passive: false });
+    for (const type of ['touchstart', 'touchend', 'touchcancel']) node.addEventListener(type, onTouches, { passive: true });
     node.addEventListener('gesturestart', onGestureStart);
     node.addEventListener('gesturechange', onGestureChange);
     node.addEventListener('gestureend', onGestureEnd);
     document.addEventListener('keydown', onKeyDown);
     return () => {
       node.removeEventListener('wheel', onWheel, { passive: false });
+      for (const type of ['touchstart', 'touchend', 'touchcancel']) node.removeEventListener(type, onTouches, { passive: true });
       node.removeEventListener('gesturestart', onGestureStart);
       node.removeEventListener('gesturechange', onGestureChange);
       node.removeEventListener('gestureend', onGestureEnd);
@@ -198,29 +207,36 @@ export function useTouchZoom({ targetRef, enabled, onZoom, onDoubleTap, shouldHa
     let fingers = null; // the last two positions while pinching
     const points = (list) => [0, 1].map((i) => ({ x: list[i].clientX, y: list[i].clientY }));
 
+    // targetTouches: only the fingers on the stage. A thumb resting on the
+    // header must not turn a one-finger drag into a pinch.
     const onStart = (event) => {
       if (!handleRef.current()) return;
-      if (event.touches.length === 1) {
-        const touch = event.touches[0];
-        taps.start(touch.clientX, touch.clientY, event.timeStamp);
+      const touches = event.targetTouches;
+      if (touches.length === 1) {
+        taps.start(touches[0].clientX, touches[0].clientY, event.timeStamp);
         fingers = null;
       } else {
         taps.cancel();
-        fingers = event.touches.length === 2 ? points(event.touches) : null;
+        fingers = touches.length === 2 ? points(touches) : null;
       }
     };
     const onMove = (event) => {
-      if (event.touches.length !== 2 || !fingers) return;
-      if (event.cancelable) event.preventDefault();
-      const next = points(event.touches);
+      if (event.targetTouches.length !== 2 || !fingers) return;
+      // A second finger that lands after the first has started a native
+      // scroll cannot stop it (the move is no longer cancelable); zooming
+      // then would fight the scroller, so that touch sequence only scrolls.
+      if (!event.cancelable) { fingers = null; return; }
+      event.preventDefault();
+      const next = points(event.targetTouches);
       const step = pinchStep(fingers, next);
       fingers = next;
       if (step && Math.abs(step.factor - 1) > 1e-3) zoomRef.current?.(step.factor, step.point);
     };
     const onEnd = (event) => {
-      if (event.touches.length === 2) { fingers = points(event.touches); return; }
+      const touches = event.targetTouches;
+      if (touches.length === 2) { fingers = points(touches); return; }
       fingers = null;
-      if (event.touches.length > 0) { taps.cancel(); return; }
+      if (touches.length > 0) { taps.cancel(); return; }
       const touch = event.changedTouches?.[0];
       if (!touch || !tapRef.current || !handleRef.current()) return;
       if (taps.end(touch.clientX, touch.clientY, event.timeStamp) !== 'double') return;

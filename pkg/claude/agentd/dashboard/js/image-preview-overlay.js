@@ -206,8 +206,10 @@ export function MediaViewer({ source, attachment: launcherAttachment, siblings =
     },
   });
 
-  // A pinch zooms about the fingers; a double tap does what a double click
-  // does (see toggleZoomAt below). One finger scrolls the stage natively.
+  // A pinch zooms about the fingers; a double tap toggles the zoom as a
+  // double click on the image does (see toggleZoomAt below), anywhere on the
+  // stage, since a fitted image can be a small target. One finger scrolls
+  // the stage natively.
   useTouchZoom({
     targetRef: stageRef,
     enabled: open && !video && loadState === 'ready',
