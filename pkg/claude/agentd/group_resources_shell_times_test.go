@@ -82,3 +82,66 @@ func TestParseShellTimes(t *testing.T) {
 		}
 	}
 }
+
+// A background probe that panics keeps the last times and does not leave the
+// refresh stuck: the next expired read probes again.
+func TestShellTimesProbePanicIsRetried(t *testing.T) {
+	var mu sync.Mutex
+	now := time.Unix(1000, 0)
+	probes := 0
+	c := &shellTimesCache{
+		now: func() time.Time { mu.Lock(); defer mu.Unlock(); return now },
+		probe: func() map[string]shellTimes {
+			mu.Lock()
+			probes++
+			n := probes
+			mu.Unlock()
+			if n == 2 {
+				panic("tmux exploded")
+			}
+			return map[string]shellTimes{"s": {created: time.Unix(int64(n), 0)}}
+		},
+	}
+	advance := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		now = now.Add(2 * shellTimesTTL)
+	}
+	probeCount := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return probes
+	}
+	waitIdle := func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			c.mu.Lock()
+			idle := !c.probing
+			c.mu.Unlock()
+			if idle {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("background probe never finished")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	c.get()
+	advance()
+	c.get() // starts the panicking probe
+	waitIdle()
+	if got := c.get()["s"].created; !got.Equal(time.Unix(1, 0)) {
+		t.Fatalf("panicked probe kept the last times: got %v", got)
+	}
+	advance()
+	c.get() // must start a new probe
+	waitIdle()
+	if got := probeCount(); got != 3 {
+		t.Fatalf("probes = %d, want a retry after the panicked one", got)
+	}
+	if got := c.get()["s"].created; !got.Equal(time.Unix(3, 0)) {
+		t.Fatalf("retried probe's times were not published: got %v", got)
+	}
+}
