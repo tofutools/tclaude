@@ -111,21 +111,29 @@ export async function mountShellFeature(dependencies = {}, lifecycleOptions) {
 }
 
 // The phone shell (data-layout="phone"): top bar, bottom nav, More sheet and
-// the Now and Board views (phone-shell-island.js). Its host exists only on a
-// phone page: mountPhoneShellFeature adds it, so the desktop page is unchanged.
+// the Now and Board views (phone-shell-island.js). It mounts only on a phone;
+// on the desktop its static host stays an empty div.
 const phoneShellDescriptor = createIslandDescriptor({
   name: 'phone-shell',
   label: 'Phone shell',
   hosts: { host: '#phone-shell-root' },
   failureClass: 'phone-shell-error',
   load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./phone-shell-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const taskboardContextModule = import('./taskboard-context.js');
+    const navHistoryModule = import('./nav-history.js');
+    const terminalsTabModule = import('./terminals-tab.js');
+    const mailBridgeModule = import('./mail-bridge.js');
+    const layoutModule = import('./layout.js');
+    const navTabVisibilityModule = import('./nav-tab-visibility.js');
     const [
       { mountPhoneShellIsland, createPhoneShellState, landsOnNow }, { dashboardState }, { taskboardContext },
       { navigateToPath }, { openWebWindowPane }, { focusAccessRequest }, { setLayoutOverride }, { navTabShown },
     ] = await Promise.all([
-      import('./phone-shell-island.js'), import('./snapshot-store.js'), import('./taskboard-context.js'),
-      import('./nav-history.js'), import('./terminals-tab.js'), import('./mail-bridge.js'), import('./layout.js'),
-      import('./nav-tab-visibility.js'),
+      islandModule, snapshotStoreModule, taskboardContextModule,
+      navHistoryModule, terminalsTabModule, mailBridgeModule, layoutModule,
+      navTabVisibilityModule,
     ]);
     const doc = host.ownerDocument;
     const navButton = (tab) => doc.querySelector(`nav [data-tab="${tab}"]`);
@@ -158,13 +166,8 @@ const phoneShellDescriptor = createIslandDescriptor({
   },
 });
 
-export function mountPhoneShellFeature(dependencies = {}, documentRef = document) {
-  if (!documentRef.getElementById('phone-shell-root')) {
-    const host = documentRef.createElement('div');
-    host.id = 'phone-shell-root';
-    documentRef.body.append(host);
-  }
-  return mountIslandDescriptor(phoneShellDescriptor, dependencies, { documentRef });
+export function mountPhoneShellFeature(dependencies = {}) {
+  return mountIslandDescriptor(phoneShellDescriptor, dependencies);
 }
 
 const groupsDescriptor = createIslandDescriptor({

@@ -32,7 +32,7 @@ function collectErrors(page) {
 test('a desktop browser has no phone shell', async ({ page }) => {
   await page.goto('/');
   await booted(page);
-  await expect(page.locator('#phone-shell-root')).toHaveCount(0);
+  await expect(page.locator('#phone-shell-root > *')).toHaveCount(0);
   await expect(page.locator('body > header')).toBeVisible();
   await expect(page.locator('body > nav [data-tab="groups"]')).toBeVisible();
   await expect(page.locator('.meta-phone-view')).toHaveCount(0);
@@ -100,7 +100,7 @@ test.describe('on a phone', () => {
       page.getByRole('dialog', { name: 'More' }).getByRole('button', { name: /Desktop site/ }).click(),
     ]);
     await booted(page);
-    await expect(page.locator('#phone-shell-root')).toHaveCount(0);
+    await expect(page.locator('#phone-shell-root > *')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.dataset.layout ?? null)).toBeNull();
     const back = page.locator('.meta-phone-view');
     await expect(back).toHaveText('Phone view');

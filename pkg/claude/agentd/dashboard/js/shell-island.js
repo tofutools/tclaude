@@ -313,13 +313,13 @@ function PhoneViewLink({ decision = layoutDecision(), href = globalThis.location
   return html`<span class="meta-sep"> · </span><a class="meta-phone-view" href=${layoutOverrideURL('phone', href)}>Phone view</a>`;
 }
 
-function FooterMeta({ state, decision = undefined, href = undefined }) {
+function FooterMeta({ state }) {
   const view = footerMetaView(state.snapshot.value);
   if (!view) return html`<span class="meta" id="meta">loading…</span>`;
   return html`
     <span class="meta" id="meta">
       <span class="meta-version">tclaude version ${view.version}</span>
-      <span class="meta-sep"> · </span>refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span><${PhoneViewLink} decision=${decision} href=${href} />
+      <span class="meta-sep"> · </span>refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span><${PhoneViewLink} />
     </span>
   `;
 }
@@ -1044,4 +1044,4 @@ export function mountShellIsland({ hosts, state, groupsState, feedback, register
   }
 }
 
-export { Confirm, Disconnect, FooterMeta, GlobalActivity, MessagesBadge, OpenMRs, OpenPRs, Status, Toast, Usage };
+export { Confirm, Disconnect, FooterMeta, GlobalActivity, MessagesBadge, OpenMRs, OpenPRs, PhoneViewLink, Status, Toast, Usage };
