@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -59,6 +60,11 @@ func TestDoctorStaleReadDoesNotWaitForRebuild(t *testing.T) {
 		return numberedChecks(n)
 	})
 
+	// Registered after useDoctorBuildForTest's cleanup, so it runs first: a
+	// failed assertion below must not leave the rebuild blocked.
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
+
 	require.Equal(t, "1", firstDoctorID(doctorChecks(false)), "empty cache builds inline")
 	ageDoctorCacheForTest()
 
@@ -71,7 +77,7 @@ func TestDoctorStaleReadDoesNotWaitForRebuild(t *testing.T) {
 		t.Fatal("stale doctor read blocked on the background rebuild")
 	}
 	require.Equal(t, "1", firstDoctorID(doctorChecks(false)), "no second rebuild while one is in flight")
-	close(release)
+	unblock()
 
 	require.Eventually(t, func() bool {
 		return firstDoctorID(doctorChecks(false)) == "2"
@@ -140,4 +146,11 @@ func TestDoctorRefreshPanicKeepsPreviousChecks(t *testing.T) {
 	waitDoctorRefreshIdle(t)
 	require.Equal(t, "1", firstDoctorID(doctorChecks(false)), "panicked rebuild kept the previous checks")
 	require.Equal(t, int32(2), builds.Load(), "failed rebuild is not retried before the TTL")
+
+	// The panic did not leave the refresh stuck: once stale again, a read
+	// starts another rebuild.
+	ageDoctorCacheForTest()
+	require.Equal(t, "1", firstDoctorID(doctorChecks(false)))
+	require.Eventually(t, func() bool { return builds.Load() >= 3 }, 5*time.Second, 5*time.Millisecond,
+		"no rebuild retried after a panicked one")
 }
