@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const AGENT = 'agt_00000000000000000000000000000001';
+const CATALOG = [{ name: 'claude', tmux_scrollback: false }, { name: 'codex', tmux_scrollback: true }, { name: 'shell', tmux_scrollback: true }];
 
 function fakeWidgets() {
   const made = [];
@@ -42,6 +43,9 @@ async function setup(t) {
   const deps = {
     widgetFactory: factory,
     widgetOptions: () => ({}),
+    // The snapshot's harness catalog: Claude Code scrolls its own history,
+    // Codex scrolls tmux copy-mode.
+    harnesses: () => CATALOG,
     onComposeMessage: (seed) => composed.push(seed),
     agent: (id) => (id === AGENT ? { label: 'checkout-ui', harness: 'claude' } : null),
     prefs: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
@@ -163,4 +167,36 @@ test('a swipe back through history shows ↓ Live, which comes back to live', as
   await tap(button('Back to live'));
   assert.deepEqual(widget.calls.at(-1), ['toLive']);
   assert.equal(host.querySelector('.phone-term-live'), null);
+});
+
+test('↓ Live is for a session whose wheel scrolls tmux copy-mode, not one that scrolls its own history', async (t) => {
+  const { harness, tab, made } = await setup(t);
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  await harness.act(() => {});
+  assert.equal(made.at(-1).options.touchScroll, true);
+  assert.equal(made.at(-1).options.wheelCopyMode, false, 'Claude Code: as on the desktop');
+  await harness.act(() => tab.openWebWindowPane('agt_00000000000000000000000000000002', 'codex-one', { harness: 'codex' }));
+  await harness.act(() => {});
+  assert.equal(made.at(-1).options.wheelCopyMode, true, 'Codex: tmux copy-mode would take keys');
+});
+
+test('wheelCopyMode: an agent terminal without a harness takes the agent\'s, else Claude Code\'s; a shell may scroll copy-mode', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { wheelCopyMode } = await harness.importDashboardModule('js/phone-terminal-island.js');
+  const agent = (id) => (id === 'agt_codex' ? { label: 'c', harness: 'codex' } : id === 'agt_bare' ? { label: 'b', harness: '' } : null);
+  const deps = { harnesses: CATALOG, agent };
+  assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/x', agent: 'agt_x', harness: 'claude' }, deps), false);
+  assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/x', agent: 'agt_x', harness: 'codex' }, deps), true);
+  // Opened without a harness (phone mail, Get help): the agent's, from the snapshot.
+  assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/agt_codex', agent: 'agt_codex' }, deps), true);
+  assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/agt_bare', agent: 'agt_bare' }, deps), false, 'no harness known: Claude Code');
+  assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/agt_gone', agent: 'agt_gone' }, deps), false);
+  // A peer's agent: its row's harness, else Claude Code.
+  assert.equal(wheelCopyMode({ ws: '/api/federation/x', remote: { peer: 'p', agent: 'agt_r' } }, deps), false);
+  assert.equal(wheelCopyMode({ ws: '/api/federation/x', harness: 'codex', remote: { peer: 'p', agent: 'agt_r' } }, deps), true);
+  // No agent at all: a shell or a group terminal.
+  assert.equal(wheelCopyMode({ ws: '/api/group-term-ws/g' }, deps), true);
+  // A harness the catalog does not list may scroll copy-mode.
+  assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/x', agent: 'agt_x', harness: 'newharness' }, deps), true);
+  assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/x', agent: 'agt_x', harness: 'claude' }, { agent }), true, 'no catalog yet: keep ↓ Live');
 });

@@ -209,12 +209,17 @@ away from the browser, disconnects it, and coming back reconnects.
   Tapping the terminal doesn't raise it.
 - Pinch to change the text size. The terminal refits its columns to the new
   size, and the size is remembered for each terminal.
-- Swipe up or down with one finger to scroll back through the session's
-  history (tmux copy-mode). This works in every agent terminal, including
-  Claude Code, whose history the desktop's mouse wheel doesn't scroll. A quick
-  swipe keeps scrolling after you lift your finger. While you're scrolled back,
-  **↓ Live** returns to the live screen; pressing a key or typing does too, and
-  so does closing the terminal.
+- Swipe up or down with one finger to scroll, exactly as the mouse wheel
+  scrolls that terminal on a desktop. Each harness keeps its own scrolling:
+  Claude Code's fullscreen TUI scrolls its own conversation history, and Codex
+  and shell sessions scroll tmux's history (copy-mode). Where nothing takes the
+  mouse, a swipe sends the arrow keys a desktop wheel would. A quick swipe
+  keeps scrolling after you lift your finger. In tmux's history (Codex,
+  shells), **↓ Live** scrolls back down to the live screen while you're
+  scrolled back, and so does swiping back down; pressing a key or typing
+  scrolls back down first, so tmux doesn't take the key. Claude Code has its
+  own way back to the bottom, and takes keys while scrolled back, as on a
+  desktop.
 
 ### Settings on a phone
 

@@ -10,10 +10,10 @@
 // is the agent's message sheet (the desktop's Ctrl+M), a key strip for the
 // answers a harness asks for (1 2 3, the arrows, Enter, Esc, ^C), and ⌨ for
 // raw typing. A pinch sets the text size and the grid reflows to fit. A
-// one-finger swipe scrolls back through the session's history in tmux
-// copy-mode (as the wheel does on a desktop where tmux takes the mouse, and
-// through agentd where it does not, as for Claude Code), and ↓ Live (or any
-// key) comes back.
+// one-finger swipe scrolls exactly as the desktop's mouse wheel does, so each
+// harness scrolls its own way: Claude Code its own history, Codex and shells
+// tmux's. Where the wheel scrolls tmux copy-mode (Codex, shells), ↓ Live (or
+// any key) scrolls back down first, so copy-mode never takes a key.
 
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -28,6 +28,24 @@ const html = htm.bind(h);
 export const phoneTerminal = signal(null);
 
 const keyOf = (seed) => (seed ? seed.key || seed.ws : '');
+
+// wheelCopyMode says whether a terminal's wheel may scroll tmux copy-mode,
+// which takes keys (tmux mouse on: Codex, shells): then a swipe back shows
+// ↓ Live, and a key scrolls back down first. A harness that renders its own
+// scrollback (the catalog's tmux_scrollback false: Claude Code) scrolls its
+// own history and takes keys while scrolled back, as on a desktop. An agent's
+// terminal whose seed names no harness takes it from the agent, else Claude
+// Code (the default harness, as harnessCanRename assumes); a terminal of no
+// agent (a shell, a group terminal) may scroll copy-mode.
+export function wheelCopyMode(seed, { harnesses = [], agent = () => null } = {}) {
+  const agentId = seed?.agent || seed?.remote?.agent || '';
+  let harness = seed?.harness || '';
+  if (!harness && seed?.agent) harness = agent(seed.agent)?.harness || '';
+  if (!harness && agentId) harness = 'claude';
+  if (!harness) return true;
+  const known = (Array.isArray(harnesses) ? harnesses : []).find((h) => h?.name === harness);
+  return known?.tmux_scrollback !== false;
+}
 
 // The terminals this page opened, by key, so Back and Forward can bring one
 // back. A link from elsewhere can only name an agent's own terminal.
@@ -135,6 +153,7 @@ function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaiti
       agentLabel: seed.label || '',
       touchZoom: true,
       touchScroll: true,
+      wheelCopyMode: wheelCopyMode(seed, { harnesses: deps.harnesses?.() || [], agent: deps.agent || (() => null) }),
       onScrollBackChange,
       softKeyboard: false,
       initialFontSize: readTerminalFont(FONT_SURFACE, key, deps.prefs) ?? PHONE_TERMINAL_FONT,

@@ -246,6 +246,8 @@ const phoneTerminalDescriptor = createIslandDescriptor({
     };
     const deps = {
       agent,
+      // The snapshot's harness catalog (tmux_scrollback), for wheelCopyMode.
+      harnesses: () => dashboardState.snapshot.value?.harnesses || [],
       widgetFactory: mountTerminalWidget,
       loadRuntime: () => loadXtermRuntime(),
       widgetOptions: (seed) => terminalAttachWidgetOptions(seed.terminalAttach),

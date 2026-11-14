@@ -143,12 +143,11 @@ const ZOOM_PINCH_SETTLE_MS = 220;
 
 // A one-finger swipe scrolls as a mouse wheel does (touchScroll): one wheel
 // notch per SWIPE_ROWS_PER_NOTCH rows the finger travels (tmux scrolls
-// copy-mode five lines a notch, so the text keeps up with the finger). Only
-// a session that takes the mouse (tmux mouse on) scrolls: without it a
-// wheel notch is an arrow key, which recalls prompt history or moves a menu,
-// and a stray swipe on a phone must not. A swipe starts once the finger has
-// moved SWIPE_START_PX, mostly up or down. Let go while moving and it coasts,
-// slowing by SWIPE_DECAY each frame until slower than SWIPE_STOP px/ms.
+// copy-mode five lines a notch, so the text keeps up with the finger). Each
+// notch is the desktop wheel's own event, so every harness scrolls its own
+// way. A swipe starts once the finger has moved SWIPE_START_PX, mostly up or
+// down. Let go while moving and it coasts, slowing by SWIPE_DECAY each frame
+// until slower than SWIPE_STOP px/ms.
 const SWIPE_ROWS_PER_NOTCH = 5;
 const SWIPE_START_PX = 10;
 const SWIPE_FLING = 0.3;
@@ -159,8 +158,6 @@ const SWIPE_DECAY = 0.95;
 const SWIPE_MAX_NOTCHES_PER_FRAME = 4;
 // A mouse report is how xterm hands the session a wheel notch; it is not
 // typing, and must not bring a scrolled-back view back to live.
-// SCROLL_ANSWER starts the daemon's answer to a scroll frame.
-const SCROLL_ANSWER = '{"type":"scroll"';
 const MOUSE_REPORT = /^\x1b\[(<|M)/;
 
 // The keys a touch surface sends by name (key()): what a keyboard's key
@@ -316,8 +313,14 @@ export function mountTerminalWidget({
   softKeyboard = true,
   // touchScroll: a one-finger vertical swipe on the terminal scrolls as the
   // wheel does (the phone terminal), and onScrollBackChange(back) says
-  // whether the view is scrolled back from live (tmux copy-mode).
+  // whether the view is scrolled back from live.
   touchScroll = false,
+  // wheelCopyMode: the session's wheel may scroll tmux copy-mode, which takes
+  // keys (tmux mouse on: Codex, shells). Then the swipe follows how far back
+  // the view is, for ↓ Live, and a key scrolls back down first. False for a
+  // harness that scrolls its own history (Claude Code), which takes keys
+  // while scrolled back, as on the desktop.
+  wheelCopyMode = true,
   onScrollBackChange = () => {},
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
@@ -511,30 +514,24 @@ export function mountTerminalWidget({
     if ((event.touches?.length ?? 0) < 2) pinch = null;
   }
   // The swipe: wheel notches dispatched on xterm's own element, so xterm
-  // encodes them exactly as a desktop wheel, when the session takes the
-  // mouse (tmux mouse mode: Codex, shells). Where it does not (Claude Code),
-  // a wheel notch would reach the application as an arrow key, so a local
-  // terminal asks the daemon to scroll its pane in tmux copy-mode instead
-  // (a scroll frame, dashboard_term.go), and the daemon's answer says where
-  // the pane is.
+  // turns each into exactly what a desktop wheel notch sends. A session
+  // that takes the mouse gets a wheel report: tmux scrolls its copy-mode
+  // where tmux mouse is on (Codex, shells), and a harness that asks for
+  // mouse reporting itself scrolls its own history (Claude Code's
+  // fullscreen TUI, through tmux with mouse off). Otherwise xterm sends
+  // arrow keys, as the desktop wheel does.
   let swipe = null;
   let coast = null;
-  // Where tmux's wheel copy-mode is, in notches: scrolledBack is how many
-  // notches up from the bottom (0: live). A local session's first notch only
-  // enters copy-mode (tmux's WheelUpPane runs copy-mode -e); a remote pane
-  // enters and scrolls. Scrolling down to the bottom leaves copy-mode, and so
-  // does a notch down at the bottom.
+  // Where tmux's wheel copy-mode is, in notches, while notches are wheel
+  // reports and the session's wheel scrolls copy-mode (wheelCopyMode), where
+  // keys would go to copy-mode instead of the session: scrolledBack is how
+  // many notches up from the bottom (0: live). A local session's first notch
+  // only enters copy-mode (tmux's WheelUpPane runs copy-mode -e), a remote
+  // pane enters and scrolls, and scrolling down to the bottom leaves it.
   let scrolledBack = 0;
   let inCopyMode = false;
+  let dispatching = false;
   const mouseTaken = () => (term.modes?.mouseTrackingMode || 'none') !== 'none';
-  const paneScroll = () => !remote && !mouseTaken();
-  // Scroll frames agentd has not answered yet: only the answer to the last
-  // one says where the pane is now.
-  let scrollsInFlight = 0;
-  function sendScroll(op) {
-    scrollsInFlight += 1;
-    ws.send(JSON.stringify(op === 'live' ? { type: 'scroll', op } : { type: 'scroll', op, notches: 1 }));
-  }
   const canSend = () => !!ws && ws.readyState === WebSocketCtor.OPEN && (!remote || remoteState.mode === 'interactive');
   function rowHeight() {
     const screen = host.getElementsByClassName?.('xterm-screen')[0];
@@ -549,15 +546,9 @@ export function mountTerminalWidget({
     if (was !== on && !disposed) onScrollBackChange(on);
   }
   // notch sends one wheel notch, if it can reach the session, and follows
-  // where copy-mode goes.
+  // where a wheel report scrolls the view.
   function notch(older) {
     if (!canSend()) return false;
-    if (paneScroll()) {
-      if (!older && !inCopyMode) return true;
-      sendScroll(older ? 'up' : 'down');
-      setCopyMode(older || scrolledBack > 1, older ? scrolledBack + 1 : scrolledBack - 1);
-      return true;
-    }
     const target = term.element || host;
     const box = target.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
     const init = {
@@ -568,7 +559,17 @@ export function mountTerminalWidget({
     const event = typeof View.WheelEvent === 'function'
       ? new View.WheelEvent('wheel', init)
       : Object.assign(new View.Event('wheel', { bubbles: true, cancelable: true }), init);
-    target.dispatchEvent(event);
+    const report = mouseTaken();
+    // What xterm emits during the dispatch is this notch, not typing.
+    dispatching = true;
+    try { target.dispatchEvent(event); } finally { dispatching = false; }
+    if (!report || !wheelCopyMode) {
+      // Arrow keys scroll nothing back (the application dropped mouse
+      // reporting), and a harness's own history takes keys while scrolled
+      // back: there is nothing to come back from.
+      if (inCopyMode) setCopyMode(false, 0);
+      return true;
+    }
     if (older) setCopyMode(true, inCopyMode ? scrolledBack + 1 : (remote ? 1 : 0));
     else if (inCopyMode) setCopyMode(scrolledBack > 1, scrolledBack - 1);
     return true;
@@ -613,7 +614,7 @@ export function mountTerminalWidget({
     swipe = { x0: x, y0: y, y, at: now(), speed: 0, rest: 0, moving: false };
   }
   function swipeMove(event) {
-    if (!swipe || event.touches?.length !== 1 || (remote && !mouseTaken())) return;
+    if (!swipe || event.touches?.length !== 1) return;
     const { clientX: x, clientY: y } = event.touches[0];
     if (!swipe.moving) {
       const dy = y - swipe.y0;
@@ -644,10 +645,6 @@ export function mountTerminalWidget({
     if (!inCopyMode) return;
     const notches = Math.max(1, scrolledBack) + 1;
     setCopyMode(false, 0);
-    if (paneScroll()) {
-      if (canSend()) sendScroll('live');
-      return;
-    }
     for (let i = 0; i < notches; i += 1) notch(false);
   }
 
@@ -1151,10 +1148,9 @@ export function mountTerminalWidget({
     socket.onopen = () => {
       if (disposed || mine !== generation || ws !== socket) return;
       openedAt = now();
-      // agentd leaves copy-mode when a terminal socket closes: a new one
-      // starts live.
+      // A new socket starts live: agentd cancels a native-scrollback pane's
+      // copy-mode when its terminal detaches.
       setCopyMode(false, 0);
-      scrollsInFlight = 0;
       captureInstanceBaseline(mine);
       setReconnectAvailable(false);
       if (remote) { if (!waiting) setStatus('connecting to the peer…'); return; }
@@ -1166,7 +1162,6 @@ export function mountTerminalWidget({
     socket.onmessage = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
       if (remote && typeof event.data === 'string') { remoteControl(event.data); return; }
-      if (typeof event.data === 'string' && event.data.startsWith(SCROLL_ANSWER)) { scrollAnswer(event.data); return; }
       if (remote) {
         // Credit flows back only once xterm has consumed the bytes, so the
         // federation stream's window stays bounded through the renderer.
@@ -1190,7 +1185,6 @@ export function mountTerminalWidget({
     socket.onclose = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
       setCopyMode(false, 0);
-      scrollsInFlight = 0;
       cancelPostAttachResize();
       cancelInitialResize();
       // A connection that drew and stayed up earns a fresh set of quiet redials.
@@ -1243,15 +1237,6 @@ export function mountTerminalWidget({
     return true;
   }
 
-  // scrollAnswer follows where the daemon says a scroll frame left the pane.
-  function scrollAnswer(text) {
-    scrollsInFlight = Math.max(0, scrollsInFlight - 1);
-    if (scrollsInFlight > 0) return;
-    let answer = null;
-    try { answer = JSON.parse(text); } catch { return; }
-    const lines = Number(answer?.position) || 0;
-    setCopyMode(answer?.copy_mode === true, Math.ceil(lines / SWIPE_ROWS_PER_NOTCH));
-  }
   // remoteControl applies a remote terminal's JSON control frame. Unparseable
   // text is dropped, never written to the terminal.
   function remoteControl(text) {
@@ -1366,7 +1351,7 @@ export function mountTerminalWidget({
 
   disposables.push(term.onData((data) => {
     if (remote && remoteState.mode !== 'interactive') return;
-    if (inCopyMode && !MOUSE_REPORT.test(data)) toLive();
+    if (inCopyMode && !dispatching && !MOUSE_REPORT.test(data)) toLive();
     if (!disposed && ws && ws.readyState === WebSocketCtor.OPEN) {
       ws.send(new TextEncoder().encode(data));
     }

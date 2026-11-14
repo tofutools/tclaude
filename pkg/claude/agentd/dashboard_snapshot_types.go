@@ -533,6 +533,12 @@ type dashboardHarness struct {
 	// without an in-pane /rename), so the dashboard keeps Codex renameable.
 	CanRename  bool `json:"can_rename"`
 	CanCompact bool `json:"can_compact"`
+	// TmuxScrollback mirrors Harness.WantsTmuxScrollback: tmux mouse is on for
+	// the harness's panes and the wheel scrolls tmux copy-mode (Codex). False
+	// for a harness that renders its own scrollback (Claude Code). The phone
+	// terminal shows ↓ Live, and sends a key only once out of copy-mode, only
+	// where this is true.
+	TmuxScrollback bool `json:"tmux_scrollback"`
 	// CanMailMidTurn mirrors Harness.MailMidTurn, which continuous dictation
 	// gates on.
 	CanMailMidTurn bool `json:"can_mail_mid_turn"`
@@ -670,6 +676,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			EffortLevels:            h.Models.EffortLevels(),
 			CanRename:               h.CanRename(),
 			CanCompact:              h.CanCompact(),
+			TmuxScrollback:          h.WantsTmuxScrollback(),
 			CanMailMidTurn:          h.MailMidTurn,
 			CanSandbox:              h.SupportsSandbox(),
 			CanBuiltinOSSandbox:     h.SupportsBuiltinOSSandbox(),

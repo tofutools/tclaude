@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -599,42 +598,20 @@ func parseTermResize(messageType int, data []byte) (size *pty.Winsize, isResize 
 	return &pty.Winsize{Cols: uint16(msg.Cols), Rows: uint16(msg.Rows)}, true
 }
 
-// termScrollMsg is a browser terminal's request to scroll its managed pane's
-// history ({"type":"scroll","op":"up"|"down"|"live","notches":n}): the phone
-// terminal's swipe over a session whose tmux mouse mode is off (Claude Code),
-// where a wheel notch would only reach the application as an arrow key. See
-// session.ScrollTmuxPane.
-type termScrollMsg struct {
-	Type    string `json:"type"`
-	Op      string `json:"op"`
-	Notches int    `json:"notches"`
-}
-
-// parseTermScroll classifies one frame as a scroll request. isScroll is true
-// for any {"type":"scroll",...} text frame, which never reaches the PTY; op is
-// empty when the request names no known operation.
-func parseTermScroll(messageType int, data []byte) (op string, notches int, isScroll bool) {
-	if messageType != websocket.TextMessage || !bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")) {
-		return "", 0, false
+// isStaleScrollFrame reports a {"type":"scroll",...} text frame. A phone
+// terminal from v0.0.2829 sent one to have agentd scroll its pane in tmux
+// copy-mode. agentd no longer does that: a phone swipe is the desktop wheel,
+// so each harness scrolls its own way. A tab still running that build (it
+// reattaches across a daemon restart without reloading) may send one; it is
+// dropped, never typed into the session.
+func isStaleScrollFrame(messageType int, data []byte) bool {
+	if messageType != websocket.TextMessage || !strings.HasPrefix(strings.TrimSpace(string(data)), "{") {
+		return false
 	}
-	var msg termScrollMsg
-	if json.Unmarshal(data, &msg) != nil || msg.Type != "scroll" {
-		return "", 0, false
-	}
-	switch msg.Op {
-	case session.ScrollUp, session.ScrollDown, session.ScrollLive:
-		return msg.Op, msg.Notches, true
-	}
-	return "", 0, true
-}
-
-// termScrollAnswer is the answer to a scroll request: where the pane is.
-func termScrollAnswer(state session.PaneScroll) []byte {
-	reply, _ := json.Marshal(struct {
+	var msg struct {
 		Type string `json:"type"`
-		session.PaneScroll
-	}{"scroll", state})
-	return reply
+	}
+	return json.Unmarshal(data, &msg) == nil && msg.Type == "scroll"
 }
 
 // initialResizeWait bounds how long runPTYOverWS holds the command back
@@ -977,12 +954,6 @@ initialSize:
 				}
 				continue
 			}
-			// A scroll request before the command starts has no attached
-			// view to scroll: it answers live and never becomes input.
-			if _, _, isScroll := parseTermScroll(frame.messageType, frame.data); isScroll {
-				_ = conn.WriteMessage(websocket.TextMessage, termScrollAnswer(session.PaneScroll{}))
-				continue
-			}
 			pending = append(pending, frame)
 		case <-waitTimer.C:
 			break initialSize
@@ -1007,10 +978,6 @@ initialSize:
 					if size != nil {
 						initial = size
 					}
-					continue
-				}
-				if _, _, isScroll := parseTermScroll(frame.messageType, frame.data); isScroll {
-					_ = conn.WriteMessage(websocket.TextMessage, termScrollAnswer(session.PaneScroll{}))
 					continue
 				}
 				pending = append(pending, frame)
@@ -1057,9 +1024,6 @@ initialSize:
 	if hook != nil && hook.OnResize != nil && initial != nil {
 		hook.OnResize(int(startSize.Cols), int(startSize.Rows))
 	}
-	// scrolled: this terminal's last scroll left its pane in copy-mode,
-	// which it must not leave behind.
-	var scrolled atomic.Bool
 	defer func() {
 		// Reliable detach first: tell the tmux server to drop this terminal's
 		// own client. Then tear down the PTY/process tree (the SIGHUP is a
@@ -1072,9 +1036,6 @@ initialSize:
 		// actually detached. This is separate from the optional whole-session
 		// detach above: the standalone TUI must preserve other viewers.
 		session.CancelTmuxScrollback(cleanupSession, cleanupHarness)
-		if scrolled.Load() {
-			session.LeaveTmuxCopyMode(cleanupSession)
-		}
 		slog.Info("browser terminal detached",
 			"tmux_session", logSession, "path", r.URL.Path,
 			"attached_for", time.Since(attachedAt).Round(time.Second).String())
@@ -1090,13 +1051,6 @@ initialSize:
 	// Closing conn also releases the frame reader and the input pump.
 	var closeOnce sync.Once
 	var closing atomic.Bool
-	// One writer at a time: the PTY pump, and a scroll request's answer.
-	var writeMu sync.Mutex
-	writeFrame := func(messageType int, data []byte) error {
-		writeMu.Lock()
-		defer writeMu.Unlock()
-		return conn.WriteMessage(messageType, data)
-	}
 	closeBoth := func() {
 		closeOnce.Do(func() {
 			closing.Store(true)
@@ -1108,7 +1062,9 @@ initialSize:
 
 	// Input that arrived while the command was being sized and started.
 	for _, frame := range pending {
-		_, _ = ptmx.Write(frame.data)
+		if !isStaleScrollFrame(frame.messageType, frame.data) {
+			_, _ = ptmx.Write(frame.data)
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -1140,7 +1096,7 @@ initialSize:
 				}
 				return
 			}
-			if err := writeFrame(websocket.BinaryMessage, buf[:n]); err != nil {
+			if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
 				return
 			}
 		}
@@ -1171,20 +1127,7 @@ initialSize:
 				}
 				continue
 			}
-			// A scroll request runs before the next frame is read, so a
-			// "live" sent ahead of a key leaves copy-mode before the key
-			// reaches the pane. Only a managed pane scrolls; anything else
-			// answers live.
-			if op, notches, isScroll := parseTermScroll(frame.messageType, frame.data); isScroll {
-				var state session.PaneScroll
-				if op != "" && cleanupSession != "" {
-					state = session.ScrollTmuxPane(cleanupSession, op, notches)
-					// Only a terminal whose last scroll left the pane in
-					// copy-mode cancels it at close: one that came back to
-					// live leaves another viewer's scrolling alone.
-					scrolled.Store(state.CopyMode)
-				}
-				_ = writeFrame(websocket.TextMessage, termScrollAnswer(state))
+			if isStaleScrollFrame(frame.messageType, frame.data) {
 				continue
 			}
 			_, _ = ptmx.Write(frame.data)
