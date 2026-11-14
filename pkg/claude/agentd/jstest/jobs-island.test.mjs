@@ -753,12 +753,15 @@ test("A remembered Triggers view on a peer's page reads no rules until the peer'
   assert.equal(triggerLoads, 0, 'not before the snapshot');
   assert.match(mounted.container.textContent, /Loading triggers/);
 
-  // A restricted peer (even one that still advertises Triggers) keeps them local.
-  await harness.act(() => { snapshot.value = { ...page(), triggers_enabled: true, peer_view: { level: 'restricted', included: ['groups'], omitted: [] } }; });
-  await flush();
-  assert.equal(triggerLoads, 0, 'a restricted peer is not asked');
-  assert.equal(mounted.container.querySelector('.triggers-workspace'), null);
-  assert.equal(state.kind.value, 'trigger', 'the remembered choice is kept for a page that can read it');
+  // A restricted peer keeps them local; its snapshot always says
+  // triggers_enabled false (an older one may still say true).
+  for (const enabled of [false, true]) {
+    await harness.act(() => { snapshot.value = { ...page(), triggers_enabled: enabled, peer_view: { level: 'restricted', included: ['groups'], omitted: [] } }; });
+    await flush();
+    assert.equal(triggerLoads, 0, `a restricted peer is not asked (triggers_enabled ${enabled})`);
+    assert.equal(mounted.container.querySelector('.triggers-workspace'), null);
+    assert.equal(state.kind.value, 'trigger', "a restricted peer's page does not forget the choice made on this node's");
+  }
 
   await harness.act(() => { snapshot.value = { ...page(), triggers_enabled: true, peer_view: { level: 'unrestricted', included: [], omitted: [] } }; });
   await flush();

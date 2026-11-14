@@ -21,6 +21,7 @@ import { LockReason } from './lock-reason.js';
 import { Pager } from './pager.js';
 import { Button, Input } from './ui-components.js';
 import { pageTriggersReadable, triggersAvailable } from './feature-availability.js';
+import { pageShares } from './peer-view-limits.js';
 import { groupScopeLabel, localStamp } from './cell-format.js';
 import { TableHead } from './table-kit.js';
 import { NodePill } from './cell-parts.js';
@@ -401,9 +402,13 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
   const triggersEnabled = triggersAvailable(current.dashboard);
   // Readable: offered, and this page may read the rules (a peer's page waits
   // for its snapshot; a restricted peer keeps them local). A remembered
-  // Triggers view on a page that may not read them shows Automations, without
-  // forgetting the choice; the view only heals when the node has no Triggers.
+  // Triggers view on a page that may not read them shows Automations. The
+  // choice (this operator's own pref) heals away only where Automations is
+  // this page's own view, on a node without Triggers: a restricted peer's
+  // snapshot always says triggers_enabled false, and its page must not
+  // forget what was chosen on this node's.
   const triggersReady = pageTriggersReadable(current.dashboard);
+  const healsKind = pageShares('local_dashboard', { snapshot: current.dashboard });
   const subnavEntries = automationsSubnavEntries(current.dashboard);
   const displayKind = triggersKnown && !triggersReady && current.kind === 'trigger' ? 'all' : current.kind;
   // A fused view lists the other ticked nodes' automations after this node's.
@@ -413,12 +418,12 @@ export function JobsApp({ state, actions, fleet = fleetState, activeTab = dashbo
   const refreshTimer = useRef(null);
   useEffect(() => () => clearTimeout(refreshTimer.current), []);
   useEffect(() => {
-    if (!triggersKnown || triggersEnabled || current.kind !== 'trigger') return;
+    if (!triggersKnown || triggersEnabled || !healsKind || current.kind !== 'trigger') return;
     if (state.setKind('all')) void actions.refresh();
     document.dispatchEvent(new CustomEvent('tclaude:navigated', {
       detail: { location: state.location.value },
     }));
-  }, [triggersKnown, triggersEnabled, current.kind]);
+  }, [triggersKnown, triggersEnabled, healsKind, current.kind]);
 
   const queueRefresh = () => {
     clearTimeout(refreshTimer.current);
