@@ -469,11 +469,12 @@
 :root[data-layout="phone"][data-phone-config]:not([data-phone-config="list"]) :is(.cfg-rail, .cfg-wizard-title, .cfg-intro) { display: none; }
 :root[data-layout="phone"][data-phone-config]:not([data-phone-config="list"]) .cfg-layout { display: block; }
 :root[data-layout="phone"][data-phone-config]:not([data-phone-config="list"]) .cfg-panel-head h2 { display: none; }
-/* Read-only: the settings show, nothing takes a tap, and there is no Save. */
+/* Read-only: the settings show, nothing takes a tap (a label would pass it
+   on to its control), and there is no Save. Only More… still opens. */
 :root[data-layout="phone"][data-phone-config="read"] .cfg-footer { display: none; }
-:root[data-layout="phone"][data-phone-config="read"] .cfg-panel :is(input, select, textarea, button:not(.cfg-more)) {
-  pointer-events: none; opacity: 0.7;
-}
+:root[data-layout="phone"][data-phone-config="read"] .cfg-panel { pointer-events: none; }
+:root[data-layout="phone"][data-phone-config="read"] .cfg-panel .cfg-more > summary { pointer-events: auto; }
+:root[data-layout="phone"][data-phone-config="read"] .cfg-panel :is(input, select, textarea, button) { opacity: 0.7; }
 :root[data-layout="phone"] .cfg-footer { padding-bottom: calc(12px + var(--phone-safe-bottom)); }
 :root[data-layout="phone"] .cfg-footer button { min-height: 40px; }
 

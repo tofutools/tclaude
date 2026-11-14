@@ -32,11 +32,11 @@ export function sectionMode(id) {
   return PHONE_EDITABLE.includes(configSection(id)) ? 'edit' : 'read';
 }
 
-function SectionRow({ panel, onOpen, readOnly }) {
+function SectionRow({ panel, onOpen, readOnly, dirty }) {
   return html`<li><button data-ui-exempt type="button" class="phone-config-row" onClick=${() => onOpen(panel.id)}>
     <span class="phone-config-icon" aria-hidden="true">${panel.icon}</span>
     <span class="phone-config-text">
-      <span class="phone-config-title">${panel.title}${readOnly && html` <span class="ui-tag phone-config-tag">view</span>`}</span>
+      <span class="phone-config-title">${panel.title}${readOnly && html` <span class="ui-tag phone-config-tag">view</span>`}${dirty && html` <span class="ui-tag ui-tag-warn phone-config-tag">unsaved</span>`}</span>
       <span class="phone-config-lede">${panel.lede}</span>
     </span>
     <span class="phone-config-chevron" aria-hidden="true">›</span>
@@ -53,8 +53,9 @@ function useWizard(actions) {
   return wizard;
 }
 
-function SectionList({ panels, actions, onOpen }) {
+function SectionList({ panels, actions, onOpen, dirtyPanels }) {
   const wizard = useWizard(actions);
+  const dirty = (id) => dirtyPanels.includes(id);
   const editable = panels.filter((panel) => PHONE_EDITABLE.includes(panel.id));
   const others = panels.filter((panel) => !PHONE_EDITABLE.includes(panel.id));
   return html`<div class="phone-config">
@@ -79,12 +80,12 @@ function SectionList({ panels, actions, onOpen }) {
     </div>
     <div class="phone-section" role="group" aria-label="Settings">
       <h2 class="phone-section-head ui-eyebrow">Settings</h2>
-      <ul class="phone-list">${editable.map((panel) => html`<${SectionRow} key=${panel.id} panel=${panel} onOpen=${onOpen} />`)}</ul>
+      <ul class="phone-list">${editable.map((panel) => html`<${SectionRow} key=${panel.id} panel=${panel} onOpen=${onOpen} dirty=${dirty(panel.id)} />`)}</ul>
     </div>
     <div class="phone-section" role="group" aria-label="On the desktop">
       <h2 class="phone-section-head ui-eyebrow">On the desktop</h2>
       <p class="phone-config-note">These set up the machine tclaude runs on. Read them here; change them on the desktop site.</p>
-      <ul class="phone-list">${others.map((panel) => html`<${SectionRow} key=${panel.id} panel=${panel} onOpen=${onOpen} readOnly />`)}</ul>
+      <ul class="phone-list">${others.map((panel) => html`<${SectionRow} key=${panel.id} panel=${panel} onOpen=${onOpen} readOnly dirty=${dirty(panel.id)} />`)}</ul>
     </div>
   </div>`;
 }
@@ -101,7 +102,9 @@ function SectionPage({ panel, mode, actions, back, active }) {
   </div>`;
 }
 
-export function PhoneConfig({ state, panels, actions, initialOpen = '' }) {
+// config is the Config form's state (config-state.js): which sections hold
+// unsaved edits, which the list marks.
+export function PhoneConfig({ state, config = null, panels, actions, initialOpen = '' }) {
   const active = state.activeTab.value === 'config';
   const panel = configPanel.value;
   // open is the section the operator opened (or a link named); the list
@@ -110,7 +113,7 @@ export function PhoneConfig({ state, panels, actions, initialOpen = '' }) {
   const pushed = useRef('');
   const shown = open && open === panel ? open : '';
   const mode = sectionMode(shown);
-  useEffect(() => { actions.remember?.(shown); }, [shown]);
+  useEffect(() => { actions.remember?.(shown, panel); }, [shown, panel]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -129,12 +132,12 @@ export function PhoneConfig({ state, panels, actions, initialOpen = '' }) {
     setOpen('');
     if (wasPushed) actions.back();
   };
-  if (!shown) return html`<${SectionList} panels=${panels} actions=${actions} onOpen=${openSection} />`;
+  if (!shown) return html`<${SectionList} panels=${panels} actions=${actions} onOpen=${openSection} dirtyPanels=${config?.dirtyPanels.value || []} />`;
   const meta = panels.find((item) => item.id === configSection(shown));
   return html`<${SectionPage} panel=${meta} mode=${mode} actions=${actions} back=${back} active=${active} />`;
 }
 
-export function mountPhoneConfigIsland({ host, state, panels, actions, initialOpen, registerCleanup }) {
-  render(html`<${PhoneConfig} state=${state} panels=${panels} actions=${actions} initialOpen=${initialOpen} />`, host);
+export function mountPhoneConfigIsland({ host, state, config, panels, actions, initialOpen, registerCleanup }) {
+  render(html`<${PhoneConfig} state=${state} config=${config} panels=${panels} actions=${actions} initialOpen=${initialOpen} />`, host);
   registerCleanup(() => render(null, host));
 }

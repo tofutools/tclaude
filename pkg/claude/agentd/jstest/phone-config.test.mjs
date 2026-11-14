@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-async function setup(t, { initialOpen = '', panel = 'appearance' } = {}) {
+async function setup(t, { initialOpen = '', panel = 'appearance', dirtyPanels = [] } = {}) {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, island, configPanelModule, { CONFIG_PANELS }] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -27,7 +27,8 @@ async function setup(t, { initialOpen = '', panel = 'appearance' } = {}) {
     remember: (open) => calls.push(['remember', open]),
   };
   const [{ phonePage }] = await Promise.all([harness.importDashboardModule('js/phone-page.js')]);
-  const mounted = await harness.mount(harness.html`<${island.PhoneConfig} state=${state} panels=${CONFIG_PANELS}
+  const config = { dirtyPanels: harness.signals.signal(dirtyPanels) };
+  const mounted = await harness.mount(harness.html`<${island.PhoneConfig} state=${state} config=${config} panels=${CONFIG_PANELS}
     actions=${actions} initialOpen=${initialOpen} />`);
   const c = mounted.container;
   const root = harness.document.documentElement;
@@ -93,4 +94,12 @@ test('a section a link named opens directly, and ‹ shows the list in place', a
   await harness.act(() => phonePage.value.onBack());
   assert.equal(calls.some((call) => call[0] === 'back'), false, 'nothing to step back to');
   assert.ok(c.querySelector('.phone-config'));
+});
+
+test('the list marks a section that holds unsaved edits', async (t) => {
+  const { row } = await setup(t, { dirtyPanels: ['notifications', 'git'] });
+  const tags = (title) => [...row(title).querySelectorAll('.phone-config-tag')].map((tag) => tag.textContent);
+  assert.deepEqual(tags('Notifications'), ['unsaved']);
+  assert.deepEqual(tags('Git'), ['view', 'unsaved']);
+  assert.deepEqual(tags('Steward'), []);
 });
