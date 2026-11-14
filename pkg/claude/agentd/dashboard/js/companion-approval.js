@@ -1,10 +1,13 @@
-// The operator's approval of an agent's access request: the card shared by the
-// companion tab and the quick permissions panel, and the way to raise that
-// panel. Dependency-light so a terminal tab can raise it too.
+// The operator's answers: the approval card for an agent's access request,
+// shared by the companion tab, the quick permissions panel and the phone's Now
+// view, the way to raise that panel, and the card for a decision an agent put
+// to the operator. Dependency-light so a terminal tab or the phone shell can
+// use them without the companion's window machinery.
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { approvalSummary, stewardSummonBody, timeLeft } from './companion-model.js';
+import { postDismiss } from './decision-dismiss.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { Button } from './ui-components.js';
 
@@ -221,3 +224,53 @@ export function ApprovalCard({ request, fetchImpl, notify, from = '', onMore = n
   </div>`;
 }
 
+// DecisionCard is a decision the agent put to the operator with
+// `notify-human --option ...`: its question, any attached image, and one
+// button per option. The pick (plus an optional note) goes back to the agent
+// as mail, even if it is offline. All of it is agent text, rendered as text.
+export function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
+  const [busy, setBusy] = useState(0);
+  const [note, setNote] = useState('');
+  const image = (decision.attachments || []).find((a) => a.previewable);
+  async function choose(choice) {
+    setBusy(choice);
+    try {
+      const response = await fetchImpl('/api/human-messages/reply', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: decision.id, choice, body: note.trim() }),
+      });
+      if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+    } catch (error) {
+      notify(`That decision could not be sent: ${error?.message || error}`, true);
+      setBusy(0);
+    }
+  }
+  async function dismiss() {
+    setBusy('dismiss');
+    try {
+      await postDismiss(fetchImpl, [decision.id]);
+    } catch (error) {
+      notify(`That decision could not be dismissed: ${error?.message || error}`, true);
+      setBusy(0);
+    }
+  }
+  const question = decision.subject || 'Decision';
+  return html`<div class="companion-decision" role="group" aria-label=${`Decision: ${question}`}>
+    <div class="companion-approval-head"><b>${question}</b>${from && html`<span class="companion-decision-from">${from}</span>`}</div>
+    ${decision.body && decision.body !== decision.subject && html`<p class="companion-decision-body">${decision.body}</p>`}
+    <div class="companion-decision-options">
+      ${decision.options.map((option, i) => {
+        const recommended = i + 1 === decision.recommended;
+        return html`<${Button} key=${option} size="sm" variant=${recommended ? 'primary' : ''} class=${recommended ? 'companion-primary' : ''} disabled=${!!busy}
+          title=${recommended ? 'The agent recommends this one' : ''} onClick=${() => choose(i + 1)}>
+          ${busy === i + 1 ? 'Sending…' : option}${recommended && busy !== i + 1 ? html` <span class="companion-decision-rec">★</span>` : ''}
+        <//>`;
+      })}
+      <${Button} size="sm" class="companion-decision-dismiss" disabled=${!!busy} title="No longer relevant: take it off the list without answering; the agent is told"
+        onClick=${dismiss}>${busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}<//>
+    </div>
+    <input class="companion-decision-note" type="text" placeholder="Add a note (optional)" value=${note} disabled=${!!busy}
+      aria-label="Note to send with your choice" onInput=${(event) => setNote(event.currentTarget.value)} />
+    ${image && html`<a class="companion-decision-image" href=${image.url} target="_blank" rel="noopener"><img src=${image.url} alt=${image.filename || 'attached image'} /></a>`}
+  </div>`;
+}

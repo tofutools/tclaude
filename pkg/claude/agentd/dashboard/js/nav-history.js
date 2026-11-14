@@ -25,6 +25,7 @@ import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from
 import { fleetAdminLocation, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.js';
 import { withCostsPeriod } from './usage-hub-state.js';
+import { navTabShown } from './nav-tab-visibility.js';
 import {
   DEFAULT_TAB, OVERLAY_PARAMS, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, toQuery, fromPath, isKnownPath, resolvePopstate,
@@ -77,8 +78,7 @@ function tabAvailable(tab) {
   if (tab === 'drawing-boards') return !onPeerPage() || peerDrawingBoardsShared();
   // Nor has a process template's Collab tab, which needs Processes too.
   if (tab === 'collab-processes') return !onPeerPage() && !document.body.classList.contains('hide-processes');
-  const btn = $$('nav [data-tab]').find(b => b.dataset.tab === tab);
-  return !!(btn && btn.offsetParent !== null);
+  return navTabShown($$('nav [data-tab]').find(b => b.dataset.tab === tab));
 }
 
 // The Groups Route map is an opt-in subview of an otherwise available tab.

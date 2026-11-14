@@ -36,12 +36,13 @@ test('a desktop browser gets the desktop page, untouched', async ({ page }) => {
 test.describe('on a phone', () => {
   test.use(IPHONE);
 
-  test('the phone is detected but keeps the desktop page until the phone shell exists', async ({ page }) => {
+  test('the phone is detected and gets the phone layout', async ({ page }) => {
     await page.goto('/messages');
     const state = await layoutState(page);
-    expect(state.decision).toEqual({ layout: 'desktop', detected: 'phone', override: null });
-    expect(state.mark).toBeNull();
-    expect(state.viewportMetas).toBe(0);
+    expect(state.decision).toEqual({ layout: 'phone', detected: 'phone', override: null });
+    expect(state.mark).toBe('phone');
+    expect(state.viewportMetas).toBe(1);
+    expect(state.layoutWidth).toBe(390);
   });
 
   test('?layout=phone switches to the phone layout and is remembered; ?layout=auto forgets it', async ({ page }) => {

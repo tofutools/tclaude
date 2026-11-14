@@ -31,11 +31,6 @@
 (() => {
   const STORAGE_KEY = 'tclaude.layout';
   const LAYOUTS = ['phone', 'desktop'];
-  // Detection only takes effect once the phone shell exists: until then a
-  // detected phone keeps the desktop page, which a phone can at least zoom
-  // and pan, and only ?layout=phone opts in. The phone shell change turns this
-  // on.
-  const AUTO_PHONE = false;
   const SHORT_SIDE_MAX = 600;
 
   const isLayout = (value) => LAYOUTS.includes(value);
@@ -83,7 +78,7 @@
 
   const override = readOverride(asked);
   const detected = phoneDevice() ? 'phone' : 'desktop';
-  const layout = override || (AUTO_PHONE ? detected : 'desktop');
+  const layout = override || detected;
   window.__tclaudeLayout = Object.freeze({ layout, detected, override });
   if (layout !== 'phone') return;
 

@@ -170,6 +170,27 @@ When you upgrade tclaude and restart the daemon, open dashboards show "tclaude u
 reloading…" and reload. An open terminal can ask you to confirm first so you don't lose
 your session. If you cancel, the dashboard waits for the next change.
 
+## On a phone
+
+On a phone the dashboard has a simpler layout. Tablets and narrow desktop
+windows keep the full dashboard. A bar at the bottom has five views:
+
+| View | What it shows |
+|---|---|
+| **Now** | What needs you: access requests and decisions, each with its buttons; agents asking a question, with **Open** for the terminal and ✉ to message them. Below that: agents in an error state, agents that are working, your open PRs and usage. |
+| **Agents** | The [Groups](dashboard-groups.md) tab |
+| **Mail** | The [Messages](dashboard-messages.md) tab |
+| **Board** | Each group's [task board](taskboard.md), one group at a time, as lists: waiting on you, blocked, in progress, next and ideas. Tap a task to open it. |
+| **More** | Every other tab, **Power on all**, **Shut down all…** and **Desktop site** |
+
+Overlay windows, the side panel, drag and drop and the voice wake word aren't
+on the phone layout. **Open** on an agent shows its terminal in the Collab tab.
+
+**Desktop site** in **More** shows the full dashboard on this phone, and **Phone
+view** at the bottom of that page switches back. The choice is kept in this
+browser only. You can also add `?layout=phone`, `?layout=desktop` or
+`?layout=auto` (back to detection) to any dashboard address.
+
 ## Themes
 
 The **wizard** and **slop** themes re-skin the same dashboard. They're not different

@@ -20,6 +20,7 @@ import {
 } from './refresh.js';
 import { openWorktreeCleanup } from './dashboard-operations.js';
 import { installPeerViewLimits } from './peer-view-limits.js';
+import { isPhone } from './layout.js';
 
 // A peer's per-node view greys what the peer does not offer. Installed before
 // any feature binds its listeners so its capture-phase click guard runs first.
@@ -76,7 +77,7 @@ import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import { bindActivityTab } from './activity-tab.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountVoiceWakeFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDoctorFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountAccessPanelFeature, mountCompanionFeature, mountDrawingBoardOverlayFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountKnowledgeSourceFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountVoiceWakeFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountFleetFeature, mountFleetMergedGroupsFeature, mountFusedMessagesFeature, mountFleetAdminFeature, mountCostsFeature, mountDebugFeature, mountDoctorFeature, mountProfilesFeature, mountDirectoryPickerFeature, mountDockFeature, mountAccessPanelFeature, mountCompanionFeature, mountDrawingBoardOverlayFeature, mountGroupCreateFeature, mountGroupsFeature, mountHumanNotificationsFeature, mountJobsFeature, mountKnowledgeSourceFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountSpawnHarnessPolicyFeature, mountTerminalsFeature, mountQueuedSpawnsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountUsageHistoryFeature, mountUsageHubFeature, mountWorktreeCleanupFeature, mountGitRepositoriesFeature, mountPhoneShellFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -174,16 +175,22 @@ async function settleInitialLayout() {
     }),
     () => mountSpawnHarnessPolicyFeature({ confirmDiscard, notify: toast }),
     () => mountDockFeature(),
-    () => mountCompanionFeature({
-      notify: toast,
-      onComposeMessage: (seed) => openOperatorMessageDialog(seed),
-      openPermissions: (conv, label) => openPermEditModal(conv, label),
-      openSudo: (agentID, label) => openSudoEditModal(agentID, label),
-    }),
-    () => mountVoiceWakeFeature(),
+    // The phone shell (data-layout="phone", layout.js) has no overlay windows:
+    // a phone gets the shell instead of the floating companion, its drawing
+    // board windows and the voice wake word. Approvals and decisions are on
+    // the shell's Now view.
+    () => (isPhone
+      ? mountPhoneShellFeature({ notify: toast, onComposeMessage: (seed) => openOperatorMessageDialog(seed) })
+      : mountCompanionFeature({
+        notify: toast,
+        onComposeMessage: (seed) => openOperatorMessageDialog(seed),
+        openPermissions: (conv, label) => openPermEditModal(conv, label),
+        openSudo: (agentID, label) => openSudoEditModal(agentID, label),
+      })),
+    async () => (isPhone ? null : mountVoiceWakeFeature()),
     () => mountAccessPanelFeature({ notify: toast }),
     () => mountKnowledgeSourceFeature({ notify: toast }),
-    () => mountDrawingBoardOverlayFeature(),
+    async () => (isPhone ? null : mountDrawingBoardOverlayFeature()),
     () => mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
       refresh: dashboardActions.refresh,
@@ -345,24 +352,29 @@ async function settleInitialLayout() {
   pageCleanups.push(...featureCleanups);
 
   pageCleanups.push(bindTabs(), bindTabHotkeys(), bindActivityTab());
+  // The desktop chrome's binders below (the full-bleed bars, the dock, and
+  // every drag and drop) are skipped on a phone: the phone shell hides that
+  // chrome, and a touch screen has no native drag and drop. Their order on
+  // the desktop is unchanged.
+  //
   // Keep the full-bleed chrome bars sized to the scrollable content so a
   // horizontal page scrollbar doesn't leave them ragged (JOH-313).
-  bindHScroll();
+  if (!isPhone) bindHScroll();
   // The retractable right-side palette dock (JOH-374). After initDashPrefs
   // (awaited above) so its open/collapsed state seeds from the persisted
   // pref; the shell + edge toggle are static so this binds once and survives
   // the poll (renderDock only reconciles #dock-body).
-  bindDock();
+  if (!isPhone) bindDock();
   pageCleanups.push(
     bindDetailsPersistence(), bindGroupTitleToggle(), bindToolbarActionsMenu(), bindRowActions(),
   );
-  pageCleanups.push(bindDnd(), bindGroupReorder(), bindGroupsDragAutoScroll());
+  if (!isPhone) pageCleanups.push(bindDnd(), bindGroupReorder(), bindGroupsDragAutoScroll());
   // A drawing board or page row dragged onto another group's box moves it there
   // (resource-dnd.js, its own MIME type).
-  pageCleanups.push(bindResourceDnd());
+  if (!isPhone) pageCleanups.push(bindResourceDnd());
   // A task row in a task board's List drags as a whole, as agent and
   // resource rows do (row-drag.js); groups-taskboard.js owns the drag itself.
-  pageCleanups.push(bindTaskRowDrag());
+  if (!isPhone) pageCleanups.push(bindTaskRowDrag());
   // A peer's page reads the drawing boards it shares (peer-drawing-boards.js, tcl-ug8bb8).
   if (globalThis.__tclaudeRemoteNode?.id) pageCleanups.push(startPeerDrawingBoards());
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
@@ -371,7 +383,7 @@ async function settleInitialLayout() {
   //
   // Keep registration order stable so shared pill/highlight integrations see
   // events in the same sequence as before the ownership migration.
-  pageCleanups.push(bindDockDnd());
+  if (!isPhone) pageCleanups.push(bindDockDnd());
   // The REVERSE palette drag (JOH-393): drag a live agent row / group header
   // ONTO the dock to capture it as a spawn profile / group template. Must be
   // registered AFTER bindDnd() + bindGroupReorder() so its dragover runs LAST
@@ -379,7 +391,7 @@ async function settleInitialLayout() {
   // the cursor is off THEIR targets (the dock is off their targets). Self-gates
   // on their active flags + a distinct .dock-save-over highlight (see
   // dock-save-dnd.js), so it coexists with all three other DnD modules.
-  pageCleanups.push(bindDockSaveDnd());
+  if (!isPhone) pageCleanups.push(bindDockSaveDnd());
   window.addEventListener('pagehide', (event) => {
     // A persisted pagehide enters the back-forward cache; bootstrap does not
     // rerun on pageshow, so retain listeners for that suspended document.

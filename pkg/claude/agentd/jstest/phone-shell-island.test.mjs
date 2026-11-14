@@ -1,0 +1,143 @@
+// js/phone-shell-island.js: the phone shell's bottom nav, own views and More
+// sheet, driven through what the operator taps.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPreactHarness } from './preact-harness.mjs';
+
+const AGENT = 'agt_00000000000000000000000000000001';
+
+async function setup(t, { startOnNow = true, available = () => true } = {}) {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, island] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/phone-shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const shell = island.createPhoneShellState({ startOnNow });
+  const calls = [];
+  const record = (name) => (...args) => { calls.push([name, ...args]); };
+  const actions = {
+    notify: record('notify'), navigate: record('navigate'), showTab: record('showTab'),
+    tabAvailable: available, openTerminal: record('openTerminal'), message: record('message'),
+    openAccessRequest: record('openAccessRequest'), powerOnAll: record('powerOnAll'),
+    shutdownAll: record('shutdownAll'), desktopSite: record('desktopSite'),
+  };
+  const { signal } = harness.signals;
+  const boardSource = {
+    attach: () => () => {},
+    status: signal('ready'),
+    error: signal(''),
+    context: signal({ groups: [{ group: 'webshop', counts: { live: 1 }, tasks: [{ id: 'tk_1', title: 'Ship it', status: 'open', stage: 'next' }] }] }),
+  };
+  state.beginRequest();
+  state.commitRequest(1, {
+    groups: [{ name: 'webshop', members: [{ agent_id: AGENT, conv_id: 'c1', title: 'checkout-ui', online: true, state: { status: 'awaiting_input' } }] }],
+    messages_unread: 3, access_requests_pending: 0,
+  });
+  const mounted = await harness.mount(harness.html`<${island.PhoneShell} shell=${shell} state=${state} actions=${actions}
+    boardSource=${boardSource} fetchImpl=${async () => ({ ok: true })} />`);
+  const root = harness.document.documentElement;
+  const navItem = (label) => [...mounted.container.querySelectorAll('.phone-nav-item')].find((b) => b.textContent.includes(label));
+  const tap = (element) => harness.act(() => element.click());
+  return { harness, state, shell, calls, mounted, root, navItem, tap };
+}
+
+test('a fresh load lands on Now, with the counts on the nav', async (t) => {
+  const { mounted, root, navItem } = await setup(t);
+  const items = [...mounted.container.querySelectorAll('.phone-nav-item')];
+  assert.deepEqual(items.map((b) => b.querySelector('.phone-nav-icon').nextSibling.textContent), ['Now', 'Agents', 'Mail', 'Board', 'More']);
+  assert.equal(navItem('Now').getAttribute('aria-current'), 'page');
+  assert.equal(root.dataset.phoneView, 'now', 'main is hidden under the own view');
+  assert.equal(mounted.container.querySelector('.phone-bar-title').textContent, 'Now');
+  assert.equal(navItem('Now').querySelector('.ui-badge').textContent, '1', 'one agent is asking');
+  assert.equal(navItem('Mail').querySelector('.ui-badge').textContent, '3');
+  assert.ok(mounted.container.querySelector('[aria-label="Needs you"]').textContent.includes('checkout-ui'));
+});
+
+test('Agents and Mail show their tab; Now and Board come back over it', async (t) => {
+  const { harness, shell, calls, mounted, root, navItem, tap, state } = await setup(t);
+  await tap(navItem('Mail'));
+  assert.deepEqual(calls.at(-1), ['showTab', 'messages']);
+  assert.equal(shell.view.value, null);
+  assert.equal(root.dataset.phoneView, undefined, 'the tab shows');
+
+  await tap(navItem('Board'));
+  assert.equal(root.dataset.phoneView, 'board');
+  assert.equal(navItem('Board').getAttribute('aria-current'), 'page');
+  const task = mounted.container.querySelector('.phone-task');
+  assert.ok(task.textContent.includes('Ship it'));
+  await tap(task);
+  assert.deepEqual(calls.at(-1), ['navigate', '/?task=tk_1%3Awebshop']);
+
+  // A tab activation from anywhere (a deep link, Back, the task's dialog)
+  // clears the own view.
+  await tap(navItem('Now'));
+  assert.equal(root.dataset.phoneView, 'now');
+  await harness.act(() => state.setActiveTab('config'));
+  assert.equal(shell.view.value, null);
+  assert.equal(mounted.container.querySelector('.phone-bar-title').textContent, 'Settings');
+  assert.equal(navItem('More').getAttribute('aria-current'), 'page', 'a More tab lights More');
+});
+
+test('a deep link starts on its tab, not Now', async (t) => {
+  const { root, navItem } = await setup(t, { startOnNow: false });
+  assert.equal(root.dataset.phoneView, undefined);
+  assert.equal(navItem('Agents').getAttribute('aria-current'), 'page', 'the default tab is Groups');
+});
+
+test('More lists the tabs the dashboard shows, and the Desktop site switch', async (t) => {
+  const { harness, calls, mounted, navItem, tap } = await setup(t, { available: (tab) => tab !== 'plugins' });
+  await tap(navItem('More'));
+  const sheet = mounted.container.querySelector('[role="dialog"]');
+  assert.ok(sheet, 'the sheet opens');
+  const labels = [...sheet.querySelectorAll('.phone-menu-item')].map((b) => b.textContent.trim());
+  assert.ok(labels.some((l) => l.endsWith('Collab')));
+  assert.ok(!labels.some((l) => l.endsWith('Plugins')), 'a hidden tab is left out');
+  assert.ok(labels.some((l) => l.endsWith('Desktop site')));
+
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.equal(mounted.container.querySelector('[role="dialog"]'), null, 'Escape closes it');
+
+  await tap(navItem('More'));
+  const item = (label) => [...mounted.container.querySelectorAll('.phone-menu-item')].find((b) => b.textContent.trim().endsWith(label));
+  await tap(item('Settings'));
+  assert.deepEqual(calls.at(-1), ['navigate', '/config']);
+  assert.equal(mounted.container.querySelector('[role="dialog"]'), null, 'picking an entry closes the sheet');
+  await tap(navItem('More'));
+  await tap(item('Desktop site'));
+  assert.deepEqual(calls.at(-1), ['desktopSite']);
+});
+
+test('an asking agent on Now opens its terminal or a message', async (t) => {
+  const { calls, mounted, tap } = await setup(t);
+  const row = mounted.container.querySelector('.phone-agent');
+  await tap([...row.querySelectorAll('button')].find((b) => b.textContent === 'Open'));
+  assert.equal(calls.at(-1)[0], 'openTerminal');
+  assert.equal(calls.at(-1)[1].agentId, AGENT);
+  await tap(row.querySelector('[aria-label="Message checkout-ui"]'));
+  assert.equal(calls.at(-1)[0], 'message');
+});
+
+test('leaving Now for the tab already under it still shows that tab', async (t) => {
+  // A fresh load lands on Now with Groups as the active tab: navigating to
+  // Groups changes no tab, so the shell must leave the own view itself.
+  const { shell, calls, mounted, root, tap } = await setup(t);
+  const allAgents = [...mounted.container.querySelectorAll('.phone-link')].find((b) => b.textContent.includes('All agents'));
+  await tap(allAgents);
+  assert.deepEqual(calls.at(-1), ['navigate', '/']);
+  assert.equal(shell.view.value, null);
+  assert.equal(root.dataset.phoneView, undefined);
+});
+
+test('the More sheet is modal: the shell behind it is inert until it closes', async (t) => {
+  const { harness, mounted, navItem, tap } = await setup(t);
+  const more = navItem('More');
+  more.focus();
+  await tap(more);
+  const nav = mounted.container.querySelector('.phone-nav');
+  assert.equal(nav.inert, true, 'the bottom nav is inert under the sheet');
+  assert.equal(mounted.container.querySelector('.phone-view').inert, true);
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.equal(nav.inert, false);
+  assert.equal(harness.document.activeElement, more, 'focus goes back to More');
+});
