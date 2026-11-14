@@ -24,6 +24,7 @@ import {
 } from './phone-shell-model.js';
 import { Button } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
+import { phonePage } from './phone-page.js';
 
 const html = htm.bind(h);
 
@@ -212,6 +213,10 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const needs = snapshot ? nowView(snapshot).needs : 0;
   const mail = messagesBadgeView(snapshot);
   const connection = state.connection.value.status;
+  // A tab view's pushed page (js/phone-page.js): back, title and actions in
+  // the top bar, and maybe no bottom nav. An own view has no pages.
+  const page = OWN_VIEWS.includes(view) ? null : phonePage.value;
+  const hideNav = !!page?.hideNav;
 
   // Any tab activation after the first render clears the own view, so a deep
   // link, Back, or a link inside a view shows its tab.
@@ -226,6 +231,11 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     if (OWN_VIEWS.includes(view)) root.dataset.phoneView = view;
     else delete root.dataset.phoneView;
   }, [view]);
+  useEffect(() => {
+    const root = document.documentElement;
+    if (hideNav) root.dataset.phonePage = 'full';
+    else delete root.dataset.phonePage;
+  }, [hideNav]);
 
   // What the views and the More sheet do. Anything that goes to a tab leaves
   // the own view first: the tab may already be the active one (Groups under a
@@ -233,6 +243,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const viewActions = useMemo(() => {
     const leave = (run) => (...args) => {
       shell.view.value = null;
+      phonePage.value = null;
       return run(...args);
     };
     return {
@@ -245,6 +256,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
 
   function pick(target) {
     shell.moreOpen.value = false;
+    phonePage.value = null;
     if (target.id === 'more') {
       shell.moreOpen.value = true;
       return;
@@ -264,21 +276,26 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   };
 
   return html`<div class="phone-shell">
-    <header class="phone-bar">
-      <img class="phone-bar-logo" src="/static/tclaude-icon.svg" alt="" />
-      <h1 class="phone-bar-title">${titleFor(view, activeTab)}</h1>
-      <span class=${`phone-bar-live ${connection}`} role="status" title=${connection === 'connected' ? 'Connected' : connection}
-        aria-label=${connection === 'connected' ? 'Connected' : `Connection: ${connection}`}></span>
+    <header class=${`phone-bar${page ? ' phone-bar-page' : ''}`}>
+      ${page ? html`<button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${() => page.onBack?.()}>‹</button>
+        <h1 class="phone-bar-title">${page.title || ''}</h1>
+        ${(page.actions || []).map((act) => html`<button data-ui-exempt key=${act.key || act.label} type="button"
+          class=${`phone-bar-act${act.danger ? ' danger' : ''}`} aria-label=${act.label} title=${act.label}
+          disabled=${!!act.disabled} onClick=${act.onClick}>${act.icon || act.label}</button>`)}`
+      : html`<img class="phone-bar-logo" src="/static/tclaude-icon.svg" alt="" />
+        <h1 class="phone-bar-title">${titleFor(view, activeTab)}</h1>
+        <span class=${`phone-bar-live ${connection}`} role="status" title=${connection === 'connected' ? 'Connected' : connection}
+          aria-label=${connection === 'connected' ? 'Connected' : `Connection: ${connection}`}></span>`}
     </header>
     ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} /></div>`}
     ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} /></div>`}
-    <nav class="phone-nav" aria-label="Views">
+    ${!hideNav && html`<nav class="phone-nav" aria-label="Views">
       ${PHONE_SLOTS.map((target) => html`<button data-ui-exempt key=${target.id} type="button"
         class=${`phone-nav-item${slot === target.id ? ' on' : ''}`} aria-current=${slot === target.id ? 'page' : undefined}
         aria-haspopup=${target.id === 'more' ? 'dialog' : undefined} onClick=${() => pick(target)}>
         <span class="phone-nav-icon" aria-hidden="true">${target.icon}</span>${target.label}${badge(target.id)}
       </button>`)}
-    </nav>
+    </nav>`}
     ${shell.moreOpen.value && html`<${MoreSheet} shell=${shell} state=${state} actions=${viewActions} />`}
   </div>`;
 }
@@ -287,6 +304,8 @@ export function mountPhoneShellIsland({ host, shell, state, actions, boardSource
   render(html`<${PhoneShell} shell=${shell} state=${state} actions=${actions} boardSource=${boardSource} />`, host);
   registerCleanup(() => {
     render(null, host);
+    phonePage.value = null;
     delete document.documentElement.dataset.phoneView;
+    delete document.documentElement.dataset.phonePage;
   });
 }

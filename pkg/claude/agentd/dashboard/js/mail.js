@@ -95,6 +95,7 @@ import {
   messageDeleteEndpoint, nextMessagesAttention, pageHumanRoute, prepareMessagesAttention,
 } from './mail-state.js';
 import { effect } from '@preact/signals';
+import { isPhone } from './layout.js';
 import { refreshPageNotifications } from './peer-notifications.js';
 import { fromPath, locEquals, normalizeLocation, withoutOverlays } from './nav-history-core.js';
 
@@ -230,6 +231,8 @@ export const mailState = createMailState({
   // off the page) and selectedValid whether it is still visible under the
   // retired / empty / previous-generation toggles.
   agentsLimit: AGENTS_PAGE,
+  // The phone's agent picker is open (listAgents).
+  agentsListed: false,
   // groupLimits holds the member page size of each expanded group the
   // operator grew with its "Show more" row (name → n); absent = AGENTS_PAGE.
   groupLimits: new Map(),
@@ -430,7 +433,7 @@ async function loadMailboxes() {
     if (q) params.set('q', q);
     // A folded agent section with no filter shows only its count and unread
     // badge, so it needs the totals but no folders.
-    const showAgents = !!q || isAgentsExpanded() || mail.selectedBoxes.size > 0;
+    const showAgents = !!q || isAgentsExpanded() || mail.agentsListed || mail.selectedBoxes.size > 0;
     params.set('agents_limit', String(showAgents ? mail.agentsLimit : 0));
     for (const name of expandedGroupNames()) {
       params.append('expand', name);
@@ -755,6 +758,18 @@ function toggleAgentsExpand() {
   refreshRoster();
 }
 
+// listAgents asks the roster for the agent folders without touching the
+// sidebar's remembered fold (a dashboard pref every browser shares): the
+// phone's agent picker lists them only while it is open.
+function listAgents(on) {
+  on = !!on;
+  if (on === !!mail.agentsListed) return;
+  mail.agentsListed = on;
+  mail.agentsLimit = AGENTS_PAGE;
+  paintSidebar();
+  refreshRoster();
+}
+
 // isSelectedEmpty reports whether the open folder is an empty-mailbox
 // agent folder (total 0), per the current roster. Used to decide whether
 // hiding empty folders would strand the selection.
@@ -841,7 +856,7 @@ function mailboxView() {
     moreAgents: Math.max(0, mail.agentsTotal - agents.length),
     prevGens: prevGenConvSet(),
     filtering: !!q,
-    agentsExpanded: !!q || isAgentsExpanded() || mail.selectedBoxes.size > 0,
+    agentsExpanded: !!q || isAgentsExpanded() || mail.agentsListed || mail.selectedBoxes.size > 0,
   };
 }
 
@@ -1143,6 +1158,19 @@ function selectMessage(id, options = {}) {
   // a stuck agent's behalf), so merely opening one there must NOT flip it.
   if (mail.selected === HUMAN_ID) markOpenedHumanRead(mail.selectedMsgId);
   paintReader();      // re-highlight the row and repaint the reader
+}
+
+// closeMessage closes the reader, back to the open folder's list. It
+// corrects the current history entry rather than pushing one: the phone
+// reader's back button calls it when there is no list entry to go back to (a
+// deep link, an attention jump), and the list must not leave the reader
+// behind it on the history stack.
+function closeMessage() {
+  disarmAccessAutoSelect();
+  if (mail.selectedMsgId === null || mail.selectedMsgId === undefined) return;
+  mail.selectedMsgId = null;
+  announceMailLocation(true);
+  paintReader();
 }
 
 // markOpenedHumanRead implements "opening it reads it" for the human
@@ -1589,6 +1617,9 @@ function clearAttentionSearch() {
 // Messages badge. Access requests are already snapshot-ordered oldest-first;
 // human notifications are newest-first and paged, so the server serves the
 // page holding the target (focus).
+//
+// On a phone the jump stops at the folder: Mail is one column, and tapping
+// it should show the list, unread rows on top, not push the reader over it.
 async function focusNextAttention(snapshot) {
   if (mail.busy) return false;
   const target = nextMessagesAttention(snapshot);
@@ -1599,13 +1630,15 @@ async function focusNextAttention(snapshot) {
     accessHighlightId = target.id;
     const selected = await selectMailbox(ACCESS_ID);
     if (!selected || mail.selected !== ACCESS_ID) return false;
+    if (isPhone) { paintMail(); return true; }
     mail.selectedMsgId = target.id;
     paintMail();
     return true;
   }
 
-  const selected = await selectMailbox(HUMAN_ID, { focus: target.id });
+  const selected = await selectMailbox(HUMAN_ID, { focus: isPhone ? 0 : target.id });
   if (!selected || mail.selected !== HUMAN_ID) return false;
+  if (isPhone) return true;
   if (mail.pendingFocus) await loadMessages();
   if (!mail.messages.some((message) => message.id === target.id)) {
     paintMail();
@@ -1881,10 +1914,10 @@ export const mailController = Object.freeze({
   openHumanNotifications,
   setShowRetired, setShowEmpty, setShowPrevGens,
   mailboxView, mailboxLabel, mailboxTitleAttr, selectMailbox,
-  toggleGroupExpand, toggleAgentsExpand, loadMoreAgents, loadMoreMembers, toggleBoxSelection, clearBoxSelection,
+  toggleGroupExpand, toggleAgentsExpand, listAgents, loadMoreAgents, loadMoreMembers, toggleBoxSelection, clearBoxSelection,
   wipeSelectedMailboxes,
   messageView, messageCountText, counterparty, senderLabel, allRecipientLabel,
-  msgPreview, msgKind, selectMessage, toggleMessageSelection, togglePageSelection,
+  msgPreview, msgKind, selectMessage, closeMessage, toggleMessageSelection, togglePageSelection,
   deleteOneMessage, deleteSelectedMessages, setMessagesRead, markAllAgentRead,
   goToPage, setPageSize, decideAccess, decideProposal, accessWho, accessSubject,
   accessStatusText, accessIsPending, accessOutcome, accessCountdown,

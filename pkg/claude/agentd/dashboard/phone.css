@@ -195,3 +195,158 @@
 :root[data-layout="phone"] .phone-menu-icon { width: 28px; text-align: center; font-size: 18px; }
 :root[data-layout="phone"] .phone-menu-danger { color: var(--ui-danger-text); }
 :root[data-layout="phone"] .phone-sheet-meta { margin: 12px 4px 0; color: var(--ui-muted-text); font-size: 12px; }
+
+/* ── Pushed pages (js/phone-page.js) ─────────────────────────────────────────
+   A tab view's page puts back, title and actions in the top bar; a page that
+   owns the bottom edge (data-phone-page) has no bottom nav, and the body
+   gives that room back. */
+:root[data-layout="phone"] .phone-bar-page { gap: 4px; padding-left: 4px; }
+:root[data-layout="phone"] .phone-bar-back {
+  flex: none; width: var(--phone-tap); height: var(--phone-tap);
+  background: none; border: 0; color: var(--ui-text-strong); font-size: 28px; line-height: 1; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-bar-act {
+  flex: none; min-height: 36px; padding: 0 12px; border-radius: 18px;
+  background: var(--ui-bg); border: 1px solid var(--ui-btn-line); color: var(--ui-text-strong);
+  font: inherit; font-size: 14px; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-bar-act:disabled { opacity: 0.5; cursor: default; }
+:root[data-layout="phone"] .phone-bar-act.danger { color: var(--ui-danger-text); }
+:root[data-layout="phone"][data-phone-page] { --footer-h: 0px; }
+
+/* ── Dialogs ────────────────────────────────────────────────────────────────
+   Every modal dialog is a full-width bottom sheet on a phone. !important: the
+   desktop dialogs carry fixed min-widths and a remembered, resizable size
+   (dialog-resize.js writes it inline); none of that fits a phone. */
+:root[data-layout="phone"] .modal-overlay.show { align-items: flex-end; }
+:root[data-layout="phone"] .modal-overlay .ui-dialog {
+  box-sizing: border-box;
+  width: 100% !important; min-width: 0 !important; max-width: 100% !important;
+  height: auto !important; max-height: calc(100% - var(--phone-safe-top) - 24px) !important;
+  margin: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding-bottom: calc(16px + var(--phone-safe-bottom));
+  border-radius: 16px 16px 0 0; border-bottom: 0;
+}
+:root[data-layout="phone"] .modal-overlay .ui-dialog :is(input, textarea, select) { font-size: 16px; max-width: 100%; }
+:root[data-layout="phone"] .modal-overlay .ui-dialog .ui-btn { min-height: 40px; }
+
+/* ── Mail (js/phone-mail-island.js) ─────────────────────────────────────────
+   The desktop pins the Messages tab into a viewport-high flex column for its
+   three panes; Mail is one column that scrolls with the page instead. */
+:root[data-layout="phone"] body:has(#tab-messages.active),
+:root[data-layout="phone"] body:has(#tab-messages.active) main,
+:root[data-layout="phone"] body:has(#tab-messages.active) #tab-messages.active,
+:root[data-layout="phone"] #messages-root {
+  display: block; height: auto; min-height: 0;
+}
+:root[data-layout="phone"] body:has(#tab-messages.active) main { padding: 0; overflow: visible; }
+
+:root[data-layout="phone"] .phone-mail { padding-bottom: 88px; }
+:root[data-layout="phone"] .phone-mail-chips {
+  display: flex; gap: 8px; overflow-x: auto; padding: 10px var(--phone-gutter);
+  scrollbar-width: none;
+}
+:root[data-layout="phone"] .phone-mail-chip {
+  flex: none; min-height: 36px; padding: 0 14px; border-radius: 18px;
+  background: none; border: 1px solid var(--ui-line); color: var(--ui-text);
+  font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-mail-chip.on { background: var(--ui-menu-hover); border-color: var(--ui-focus); color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-mail-chip-count { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-mail-tools { display: flex; gap: 8px; align-items: center; padding: 0 var(--phone-gutter); }
+:root[data-layout="phone"] .phone-mail-search { flex: 1; min-width: 0; min-height: 40px; font-size: 16px; }
+:root[data-layout="phone"] .phone-mail-tools .ui-btn { min-height: 40px; flex: none; }
+:root[data-layout="phone"] .phone-mail-count { margin: 8px var(--phone-gutter) 0; color: var(--ui-muted-text); font-size: 12px; }
+
+:root[data-layout="phone"] .phone-mail-list > li { border-bottom: 1px solid var(--ui-line); }
+:root[data-layout="phone"] .phone-mail-row { padding: 0 var(--phone-gutter); }
+:root[data-layout="phone"] .phone-mail-open {
+  display: flex; gap: 12px; align-items: flex-start; width: 100%; padding: 12px 0;
+  background: none; border: 0; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-mail-avatar {
+  flex: none; width: 40px; height: 40px; border-radius: 50%;
+  display: grid; place-items: center; font-weight: 700; font-size: 17px; color: #fff;
+  background: #57606a;
+}
+:root[data-layout="phone"] .phone-mail-avatar[data-hue="0"] { background: #8250df; }
+:root[data-layout="phone"] .phone-mail-avatar[data-hue="1"] { background: #1f6feb; }
+:root[data-layout="phone"] .phone-mail-avatar[data-hue="2"] { background: #2da44e; }
+:root[data-layout="phone"] .phone-mail-avatar[data-hue="3"] { background: #bf8700; }
+:root[data-layout="phone"] .phone-mail-avatar[data-hue="4"] { background: #cf222e; }
+:root[data-layout="phone"] .phone-mail-avatar[data-hue="5"] { background: #0e7490; }
+:root[data-layout="phone"] .phone-mail-avatar[data-hue="6"] { background: #bc4c00; }
+:root[data-layout="phone"] .phone-mail-avatar[data-hue="7"] { background: #6e7781; }
+:root[data-layout="phone"] .phone-mail-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] .phone-mail-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+:root[data-layout="phone"] .phone-mail-party {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 15px; color: var(--ui-text-strong);
+}
+:root[data-layout="phone"] .phone-mail-group {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ui-muted-text); font-size: 13px;
+}
+:root[data-layout="phone"] .phone-mail-time { flex: none; margin-left: auto; color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-mail-subject,
+:root[data-layout="phone"] .phone-mail-preview {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+:root[data-layout="phone"] .phone-mail-subject { color: var(--ui-text); font-size: 15px; }
+:root[data-layout="phone"] .phone-mail-preview { color: var(--ui-muted-text); font-size: 14px; }
+:root[data-layout="phone"] .phone-mail-row.unread .phone-mail-party,
+:root[data-layout="phone"] .phone-mail-row.unread .phone-mail-subject { font-weight: 700; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-mail-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+:root[data-layout="phone"] .phone-mail-file {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 3px 10px; border: 1px solid var(--ui-line); border-radius: 14px; font-size: 13px; color: var(--ui-text);
+}
+:root[data-layout="phone"] .phone-mail-inline { padding: 0 0 12px 52px; }
+:root[data-layout="phone"] .phone-mail-inline .mail-decision {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin: 0; padding: 0; border: 0; background: none;
+}
+:root[data-layout="phone"] .phone-mail-inline .mail-decision-label { display: none; }
+:root[data-layout="phone"] .phone-mail-inline .ui-btn { min-height: 38px; }
+:root[data-layout="phone"] .phone-mail-access { display: flex; gap: 8px; justify-content: flex-end; }
+:root[data-layout="phone"] .phone-mail-pager {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 12px var(--phone-gutter); color: var(--ui-muted-text);
+}
+:root[data-layout="phone"] .phone-mail-pager .ui-btn { min-height: 40px; }
+:root[data-layout="phone"] .phone-mail-write {
+  position: fixed; z-index: var(--z-chrome);
+  right: calc(var(--phone-gutter) + var(--phone-safe-right)); bottom: calc(var(--footer-h) + 16px);
+  min-height: 52px; padding: 0 22px; border-radius: 16px; border: 0;
+  background: var(--ui-primary); color: var(--ui-primary-text); font: inherit; font-size: 16px; font-weight: 700;
+  box-shadow: var(--ui-dialog-shadow); cursor: pointer;
+}
+:root[data-layout="phone"] .phone-mail-agents { padding: 0 var(--phone-gutter); }
+:root[data-layout="phone"] .phone-mail-agents .phone-mail-search { width: 100%; margin-bottom: 6px; }
+:root[data-layout="phone"] .phone-mail-folder { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The reader: the desktop reader's content, full width, with finger-sized
+   buttons; its reply bar takes the bottom nav's place. */
+:root[data-layout="phone"] .phone-mail-reader { padding: 12px var(--phone-gutter) 24px; }
+:root[data-layout="phone"] .phone-mail-reader.with-reply { padding-bottom: calc(76px + var(--phone-safe-bottom)); }
+:root[data-layout="phone"] .phone-mail-reader .mail-reader {
+  display: block; height: auto; max-height: none; overflow: visible;
+  padding: 0; border-style: none; border-radius: 0; background: none;
+}
+:root[data-layout="phone"] .phone-mail-reader .mail-reader-body { font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-mail-reader .mail-reader-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+:root[data-layout="phone"] .phone-mail-reader .ui-btn { min-height: 40px; }
+/* Focus raises a terminal window on the dashboard's host; the top bar's
+   Terminal › opens it here instead. */
+:root[data-layout="phone"] .phone-mail-reader [data-act="msg-focus"] { display: none; }
+:root[data-layout="phone"] .phone-mail-replybar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-chrome);
+  padding: 10px var(--phone-gutter) calc(10px + var(--phone-safe-bottom));
+  background: var(--ui-card-bg); border-top: 1px solid var(--ui-line);
+}
+:root[data-layout="phone"] .phone-mail-reply {
+  width: 100%; min-height: 48px; padding: 0 18px; border-radius: 24px; text-align: left;
+  background: var(--ui-field-bg); border: 1px solid var(--ui-line);
+  color: var(--ui-muted-text); font: inherit; font-size: 16px; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-mail :is(.phone-empty, .ui-error-box) { margin: 12px var(--phone-gutter); }

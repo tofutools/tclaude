@@ -602,7 +602,9 @@ function ReviewSpawnRequest({ id, instance, load = () => createFleetAdminActions
     onClick=${() => openFleetPage('spawns')}>review request…<//>` : null;
 }
 
-function MessageReader({ current, controller, model }) {
+// MessageReader is also the phone Mail view's reader body
+// (phone-mail-island.js), which wraps it in a full-screen page.
+export function MessageReader({ current, controller, model }) {
   const wizard = document.body.classList.contains('wizard');
   if (model.access) {
     if (model.allAccess.length === 0) return html`<div class="mail-reader ui-card" id="mail-reader"
