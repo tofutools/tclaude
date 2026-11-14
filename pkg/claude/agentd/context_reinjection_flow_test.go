@@ -179,10 +179,10 @@ func TestContextReinjection_CopilotCompactionFromEventLog(t *testing.T) {
 		"name":      "copilot-worker",
 	})
 	inbox := func() []*db.AgentMessage { return reinjectedInbox(t, resp.ConvID, resp.AgentID) }
-	sweep := func() {
-		time.Sleep(2100 * time.Millisecond) // past the per-session refresh throttle
-		agentd.SweepCopilotUsageForTest()
-	}
+	// Every sweep re-reads the log: the per-session refresh throttle is about
+	// dashboard polling, not about what a sweep finds.
+	t.Cleanup(agentd.SetCopilotContextRefreshIntervalForTest(0))
+	sweep := agentd.SweepCopilotUsageForTest
 	agentd.SweepCopilotUsageForTest()
 
 	require.NoError(t, sim.AppendEvent(map[string]any{
@@ -233,6 +233,7 @@ func TestContextReinjection_CopilotIgnoresEarlierCompactions(t *testing.T) {
 		"trust_dir": true,
 		"name":      "copilot-worker",
 	})
+	t.Cleanup(agentd.SetCopilotContextRefreshIntervalForTest(0))
 	compaction := map[string]any{
 		"type": "session.compaction_complete",
 		"data": map[string]any{"success": true},
@@ -242,7 +243,6 @@ func TestContextReinjection_CopilotIgnoresEarlierCompactions(t *testing.T) {
 	assert.Empty(t, reinjectedInbox(t, resp.ConvID, resp.AgentID))
 
 	require.NoError(t, sim.AppendEvent(compaction))
-	time.Sleep(2100 * time.Millisecond) // past the per-session refresh throttle
 	agentd.SweepCopilotUsageForTest()
 	assert.Len(t, reinjectedInbox(t, resp.ConvID, resp.AgentID), 1)
 }

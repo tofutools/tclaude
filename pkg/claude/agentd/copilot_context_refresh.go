@@ -33,12 +33,13 @@ import (
 // never persisted. That is a transport integration, not a file tracker, and
 // is deliberately out of TCL-980's scope.
 
-const (
-	// copilotContextRefreshInterval throttles how often one session's log is
-	// re-statted. A Copilot turn is seconds long at best and the dashboard
-	// polls far faster than that.
-	copilotContextRefreshInterval = 2 * time.Second
+// copilotContextRefreshInterval throttles how often one session's log is
+// re-statted. A Copilot turn is seconds long at best and the dashboard polls
+// far faster than that. A variable only so tests can sweep repeatedly without
+// sleeping past it.
+var copilotContextRefreshInterval = 2 * time.Second
 
+const (
 	// copilotCheckpointPersistMinInterval bounds how often the durable
 	// follower checkpoint is rewritten. The checkpoint exists so a daemon
 	// restart resumes at a byte offset instead of rescanning; writing it on
