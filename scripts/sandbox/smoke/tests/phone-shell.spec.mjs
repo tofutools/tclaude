@@ -112,6 +112,31 @@ test.describe('on a phone', () => {
     await expect(page.locator('.modal-overlay').getByRole('dialog')).toBeVisible();
   });
 
+  test('Open docks the agent terminal full screen; Back closes it where it was opened', async ({ page }) => {
+    const errors = collectErrors(page);
+    await page.goto('/');
+    await booted(page);
+    await page.getByRole('group', { name: 'Needs you' }).getByRole('button', { name: 'Open', exact: true }).first().click();
+    const terminal = page.locator('.phone-term[role=dialog]');
+    await expect(terminal).toBeVisible();
+    await expect(terminal.locator('.xterm')).toBeVisible();
+    await expect(terminal.getByRole('group', { name: 'Keys' }).getByRole('button')).toHaveCount(8);
+    await expect(page).toHaveURL(/[?&]terminal=window%3A/);
+    await expectNoSideScroll(page, 'Terminal');
+    // The phone's Back closes the terminal, and Now is still there.
+    await page.goBack();
+    await expect(terminal).toBeHidden();
+    await expect(page.locator('.phone-bar-title')).toHaveText('Now');
+    await expect(page.locator('#terminals-root .xterm')).toHaveCount(0);
+    // Forward brings it back; the ‹ closes it.
+    await page.goForward();
+    await expect(terminal).toBeVisible();
+    await terminal.getByRole('button', { name: 'Back' }).click();
+    await expect(terminal).toBeHidden();
+    await expect(page).not.toHaveURL(/terminal=/);
+    expect(errors).toEqual([]);
+  });
+
   test('a deep link lands on its tab inside the shell', async ({ page }) => {
     await page.goto('/messages');
     await booted(page);

@@ -9,6 +9,7 @@ import { terminalAttachConfig } from './terminal-attach-config.js';
 import { detachWindowFeatures } from './terminal-drag-out.js';
 import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { isWizardActive } from './slop.js';
+import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
 
 let controller = null;
 let prepareRuntime = null;
@@ -30,6 +31,30 @@ export function registerTerminalShellController(next, runtimeLoader = null) {
 let floatingTerminals = () => false;
 export function setFloatingTerminals(lookup) {
   floatingTerminals = lookup;
+}
+
+// The phone layout shows a terminal docked full screen, one at a time
+// (phone-terminal-island.js), never as a Collab pane: it registers here.
+let phoneTerminals = null;
+export function setPhoneTerminals(open) {
+  phoneTerminals = open;
+  return () => { if (phoneTerminals === open) phoneTerminals = null; };
+}
+
+// The terminal overlay param is the phone's (phone-terminal-island.js). On the
+// desktop a phone's link (terminal=window:<agent>) opens that agent's pane
+// here instead, and the param leaves the location, so it does not ride along
+// on every later one.
+const AGENT_TERMINAL = /^window:([A-Za-z0-9_-]{1,128})$/;
+export function registerDesktopTerminalRoute(labelFor = (agent) => agent) {
+  return registerOverlayRoute('terminal', {
+    value: () => '',
+    restore: (key) => {
+      const match = AGENT_TERMINAL.exec(key || '');
+      if (match) void openWebWindowPane(match[1], labelFor(match[1]));
+      if (key) announceOverlay({ replace: true });
+    },
+  });
 }
 
 // An agent is in one place at a time, and every way of showing it comes through
@@ -55,6 +80,9 @@ export function openTerminalPane(seedOrPromise, { reveal = true, activate = true
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
     const key = seed.key || seed.ws;
+    // A socket terminal on a phone; a drawing board, process or page still
+    // opens in its tab.
+    if (phoneTerminals && !seed.drawingBoard && !seed.process && !seed.page) return phoneTerminals(seed);
     if (revealHeldSeed(seed)) return { key, floating: true };
     const current = controller;
     if (!current) return null;

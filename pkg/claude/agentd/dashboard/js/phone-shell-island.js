@@ -220,6 +220,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // What the views and the More sheet do. Anything that goes to a tab leaves
   // the own view first: the tab may already be the active one (Groups under a
   // fresh Now), and then no tab change would clear it.
+  // A terminal is not a tab: it docks over the view (phone-terminal-island.js),
+  // and closing it comes back to where it was opened.
   const viewActions = useMemo(() => {
     const leave = (run) => (...args) => {
       shell.view.value = null;
@@ -229,7 +231,6 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     return {
       ...actions,
       navigate: leave(actions.navigate),
-      openTerminal: leave(actions.openTerminal),
       openAccessRequest: leave(actions.openAccessRequest),
     };
   }, [actions, shell]);

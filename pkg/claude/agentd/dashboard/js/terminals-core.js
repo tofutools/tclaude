@@ -137,6 +137,16 @@ const ZOOM_WHEEL_MAX_PX = 30; // a mouse notch is one step, however large its de
 // waits long enough to span a gesture's events.
 const ZOOM_CLICK_SETTLE_MS = 32;
 const ZOOM_WHEEL_SETTLE_MS = 110;
+// A touch pinch settles once the fingers have rested this long, so a pinch
+// reflows the grid once, not on every move.
+const ZOOM_PINCH_SETTLE_MS = 220;
+
+// The keys a touch surface sends by name (key()): what a keyboard's key
+// would send. The arrows follow the application's cursor-key mode.
+const NAMED_KEYS = Object.freeze({
+  enter: '\r', esc: '\x1b', tab: '\t', 'ctrl-c': '\x03', backspace: '\x7f',
+});
+const CURSOR_KEYS = Object.freeze({ up: 'A', down: 'B', right: 'C', left: 'D' });
 // How long a shared view waits for the peer to answer its own size report
 // before saying another viewer limits the size.
 const REMOTE_LIMITED_GRACE_MS = 800;
@@ -275,6 +285,13 @@ export function mountTerminalWidget({
   // changes; zoomed is false while the size is the terminal's own.
   initialFontSize = null,
   onFontChange = () => {},
+  // touchZoom: a two-finger pinch on the terminal sets its font size, and the
+  // grid reflows once the pinch rests (the phone terminal). The host should
+  // then be touch-action: none, so the browser leaves the page alone.
+  touchZoom = false,
+  // softKeyboard: false keeps a touch device's on-screen keyboard down when
+  // the terminal takes focus, until setSoftKeyboard(true).
+  softKeyboard = true,
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
@@ -444,6 +461,51 @@ export function mountTerminalWidget({
   }
   // Capture: xterm would otherwise take the wheel for the application first.
   host.addEventListener?.('wheel', zoomWheel, { capture: true, passive: false });
+
+  // A pinch scales from the size it started at by how far the fingers spread.
+  let pinch = null;
+  const spread = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  function pinchStart(event) {
+    if (event.touches?.length !== 2) return;
+    const distance = spread(event.touches);
+    if (!(distance > 0)) return;
+    pinch = { distance, size: zoomPending ?? term.options.fontSize };
+    event.preventDefault();
+  }
+  function pinchMove(event) {
+    if (!pinch || event.touches?.length !== 2) return;
+    event.preventDefault();
+    const next = clampFont(pinch.size * spread(event.touches) / pinch.distance);
+    if (next !== (zoomPending ?? term.options.fontSize)) setZoom(next, ZOOM_PINCH_SETTLE_MS);
+  }
+  function pinchEnd(event) {
+    if ((event.touches?.length ?? 0) < 2) pinch = null;
+  }
+  const pinchListeners = touchZoom
+    ? [['touchstart', pinchStart], ['touchmove', pinchMove], ['touchend', pinchEnd], ['touchcancel', pinchEnd]]
+    : [];
+  for (const [type, listener] of pinchListeners) host.addEventListener?.(type, listener, { capture: true, passive: false });
+
+  function setSoftKeyboard(on) {
+    const textarea = term.textarea;
+    if (disposed || !textarea) return;
+    // A browser raises its keyboard when an element takes focus, not when
+    // inputmode changes under focus: a terminal already focused (tapped)
+    // lets go first.
+    if (on && documentRef.activeElement === textarea) textarea.blur?.();
+    textarea.inputMode = on ? 'text' : 'none';
+    if (on) term.focus();
+    else textarea.blur?.();
+  }
+  if (!softKeyboard) setSoftKeyboard(false);
+
+  // sendInput delivers bytes as if typed, by the path keystrokes take.
+  function sendInput(data) {
+    if (disposed || !ws || ws.readyState !== WebSocketCtor.OPEN) return false;
+    if (remote && remoteState.mode !== 'interactive') return false;
+    ws.send(new TextEncoder().encode(data));
+    return true;
+  }
 
   function setStatus(next) {
     if (disposed) return;
@@ -1143,6 +1205,15 @@ export function mountTerminalWidget({
     },
     zoomBy: (step) => zoomBy(step),
     zoomWheel,
+    // key sends a named key (NAMED_KEYS, the arrows) or a single printable
+    // character, and says whether it went.
+    key(name) {
+      const arrow = CURSOR_KEYS[name];
+      if (arrow) return sendInput(`${term.modes?.applicationCursorKeysMode ? '\x1bO' : '\x1b['}${arrow}`);
+      if (Object.hasOwn(NAMED_KEYS, name)) return sendInput(NAMED_KEYS[name]);
+      return typeof name === 'string' && name.length === 1 ? sendInput(name) : false;
+    },
+    setSoftKeyboard,
     resetZoom: () => setZoom(null),
     copy: () => disposed ? Promise.resolve() : interactions.copySelection(),
     // paste delivers text as terminal input, by the path keystrokes take, and
@@ -1179,6 +1250,7 @@ export function mountTerminalWidget({
       cancelRestartWatchIfAny();
       if (zoomFitTimer !== null) clearTimeoutImpl(zoomFitTimer);
       host.removeEventListener?.('wheel', zoomWheel, { capture: true });
+      for (const [type, listener] of pinchListeners) host.removeEventListener?.(type, listener, { capture: true });
       abortAuth();
       closeSocket();
       documentRef.removeEventListener('tclaude:wizard', syncTheme);

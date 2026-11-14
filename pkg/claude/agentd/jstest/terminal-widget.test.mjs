@@ -1468,3 +1468,60 @@ test('a terminal that draws and dies at once runs out of quiet redials', async (
   assert.equal(widget.reconnectAvailable(), true);
   assert.equal(fakes.sockets.length, 4, 'three quiet redials, then the manual Reconnect');
 });
+
+test('a touch pinch sets the font once it rests; named keys and the soft keyboard (the phone terminal)', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  class PhoneTerminal extends fakes.FakeTerminal {
+    open(host) { super.open(host); this.textarea = host.querySelector('textarea'); this.modes = { applicationCursorKeysMode: false }; }
+  }
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const timers = manualTimers();
+  const widget = mountTerminalWidget({
+    host, wsPath: '/api/open-window-ws/agt_one', authenticate: false,
+    initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchZoom: true, softKeyboard: false, initialFontSize: 11,
+    TerminalCtor: PhoneTerminal, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: fakes.interactionsFactory,
+    requestAnimationFrameImpl: () => 1, cancelAnimationFrameImpl: () => {}, ...timers,
+  });
+  const term = fakes.terminal();
+  assert.equal(term.textarea.inputMode, 'none', 'no on-screen keyboard until asked for');
+  await widget.connect();
+  const socket = fakes.sockets[0];
+  socket.open();
+  timers.flush();
+
+  const touch = (type, ...xs) => harness.fireEvent(host, type, { touches: xs.map((x) => ({ clientX: x, clientY: 100 })) });
+  assert.ok(touch('touchstart', 100, 200).defaultPrevented, 'the page does not zoom');
+  touch('touchmove', 75, 225);
+  touch('touchmove', 50, 250);
+  assert.equal(term.options.fontSize, 11, 'the font waits for the pinch to rest');
+  timers.flush();
+  assert.equal(term.options.fontSize, 22, 'twice the spread, twice the size');
+  touch('touchend');
+  touch('touchmove', 0, 400);
+  timers.flush();
+  assert.equal(term.options.fontSize, 22, 'one finger after a pinch is not a pinch');
+
+  const typed = () => socket.sent.filter((m) => typeof m !== 'string').map((bytes) => new TextDecoder().decode(bytes));
+  for (const name of ['1', 'up', 'enter', 'esc', 'ctrl-c']) assert.equal(widget.key(name), true);
+  term.modes.applicationCursorKeysMode = true;
+  widget.key('down');
+  assert.equal(widget.key('nonsense'), false);
+  assert.deepEqual(typed(), ['1', '\x1b[A', '\r', '\x1b', '\x03', '\x1bOB']);
+
+  // A terminal already focused (tapped) lets go first, so the browser sees
+  // a fresh focus and raises its keyboard.
+  const order = [];
+  term.textarea.blur = () => order.push('blur');
+  term.focus = () => order.push('focus');
+  Object.defineProperty(harness.document, 'activeElement', { value: term.textarea, configurable: true });
+  widget.setSoftKeyboard(true);
+  delete harness.document.activeElement;
+  assert.equal(term.textarea.inputMode, 'text');
+  assert.deepEqual(order, ['blur', 'focus']);
+  widget.dispose();
+  assert.equal(widget.key('1'), false, 'a disposed terminal sends nothing');
+});

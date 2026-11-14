@@ -184,7 +184,24 @@ windows keep the full dashboard. A bar at the bottom has five views:
 | **More** | Every other tab, **Power on all**, **Shut down all…** and **Desktop site** |
 
 Overlay windows, the side panel, drag and drop and the voice wake word aren't
-on the phone layout. **Open** on an agent shows its terminal in the Collab tab.
+on the phone layout.
+
+### Terminals on a phone
+
+**Open** on an agent, from Now, Agents or Mail, shows its terminal full
+screen, one at a time. ‹ or the phone's Back closes it and returns to where you
+opened it. Only the terminal on screen is connected: closing it, or switching
+away from the browser, disconnects it, and coming back reconnects.
+
+- **Message *agent*…** at the bottom opens the message sheet, the same one as
+  Ctrl+M on a desktop. This is the usual way to talk to an agent from a phone.
+- The keys above it send **1**, **2**, **3**, **↑**, **↓**, **⏎** (Enter),
+  **Esc** and **^C** (Ctrl+C), which is enough to answer a harness's choices
+  and interrupt it.
+- **⌨** raises the phone's keyboard for typing straight into the terminal.
+  Tapping the terminal doesn't raise it.
+- Pinch to change the text size. The terminal refits its columns to the new
+  size, and the size is remembered for each terminal.
 
 **Desktop site** in **More** shows the full dashboard on this phone, and **Phone
 view** at the bottom of that page switches back. The choice is kept in this

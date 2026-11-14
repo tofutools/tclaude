@@ -219,6 +219,48 @@ export function mountPhoneAgentsFeature(dependencies = {}) {
   return mountIslandDescriptor(phoneAgentsDescriptor, dependencies);
 }
 
+// The phone's docked terminal (phone-terminal-island.js): every terminal a
+// phone opens lands here instead of a Collab pane.
+const phoneTerminalDescriptor = createIslandDescriptor({
+  name: 'phone-terminal',
+  label: 'Terminal',
+  hosts: { host: '#phone-terminal-root' },
+  failureClass: 'phone-terminal-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./phone-terminal-island.js');
+    const terminalsTabModule = import('./terminals-tab.js');
+    const terminalsCoreModule = import('./terminals-core.js');
+    const xtermLoaderModule = import('./xterm-loader.js');
+    const attachConfigModule = import('./terminal-attach-config.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const [
+      { mountPhoneTerminalIsland }, { setPhoneTerminals }, { mountTerminalWidget }, { loadXtermRuntime },
+      { terminalAttachWidgetOptions }, { dashboardState },
+    ] = await Promise.all([islandModule, terminalsTabModule, terminalsCoreModule, xtermLoaderModule, attachConfigModule, snapshotStoreModule]);
+    // An agent a link names, from the snapshot: its name and harness.
+    const agent = (id) => {
+      const snapshot = dashboardState.snapshot.value;
+      const members = [...(snapshot?.groups || []).flatMap((g) => g.members || []), ...(snapshot?.ungrouped || [])];
+      const member = members.find((m) => m && (m.agent_id === id || m.conv_id === id));
+      return member ? { label: member.title || member.name || '', harness: member.state?.harness || member.harness || '' } : null;
+    };
+    const deps = {
+      agent,
+      widgetFactory: mountTerminalWidget,
+      loadRuntime: () => loadXtermRuntime(),
+      widgetOptions: (seed) => terminalAttachWidgetOptions(seed.terminalAttach),
+      onComposeMessage: dependencies.onComposeMessage,
+    };
+    return {
+      mount: (registerCleanup) => mountPhoneTerminalIsland({ host, deps, register: setPhoneTerminals, registerCleanup }),
+    };
+  },
+});
+
+export function mountPhoneTerminalFeature(dependencies = {}) {
+  return mountIslandDescriptor(phoneTerminalDescriptor, dependencies);
+}
+
 const groupsDescriptor = createIslandDescriptor({
   name: 'groups',
   label: 'Groups',
