@@ -533,10 +533,6 @@
 }
 :root[data-layout="phone"] .phone-auto-switch { transform: scale(1.25); margin: 0 4px; }
 :root[data-layout="phone"] .phone-auto-pager { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 0; }
-:root[data-layout="phone"] .phone-desktop-only {
-  margin: 16px 0 0; padding: 10px 12px; border: 1px dashed var(--ui-line); border-radius: 8px;
-  color: var(--ui-muted-text); font-size: 13px;
-}
 :root[data-layout="phone"] .phone-section-title { margin: 18px 0 6px; }
 :root[data-layout="phone"] .phone-auto-page { padding: 12px var(--phone-gutter) 24px; }
 :root[data-layout="phone"] .phone-auto-summary { margin: 0 0 10px; color: var(--ui-text-strong); }
@@ -581,3 +577,53 @@
 :root[data-layout="phone"] .phone-gate .grf-verdicts .ui-btn { flex: 1; min-height: 42px; }
 :root[data-layout="phone"] .phone-run-wait { margin: 8px 0 12px; color: var(--ui-warn-text); }
 :root[data-layout="phone"] .phone-run-wait .phone-desktop-only { margin-top: 8px; }
+
+/* What a phone leaves out (js/phone-desktop-only.js): a line inside a view,
+   or a page standing in for the whole view. */
+:root[data-layout="phone"] .phone-desktop-only {
+  margin: 14px 0; padding: 10px 12px; border: 1px dashed var(--ui-line); border-radius: 10px;
+  color: var(--ui-muted-text); font-size: 13px;
+}
+:root[data-layout="phone"] .phone-desktop-page { text-align: center; padding: 56px 12px 0; color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-desktop-page-icon { font-size: 40px; margin-bottom: 10px; }
+:root[data-layout="phone"] .phone-desktop-page-title { margin: 0 0 8px; font-size: 18px; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-desktop-page-go { margin-top: 18px; min-height: var(--phone-tap); padding: 0 24px; }
+
+/* Access (js/phone-access-island.js). */
+:root[data-layout="phone"] .phone-access-chips { margin-bottom: 12px; }
+:root[data-layout="phone"] .phone-access-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 0; }
+:root[data-layout="phone"] .phone-access-row .ui-btn { flex: none; min-height: 38px; }
+:root[data-layout="phone"] .phone-access-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] .phone-access-name { font-weight: 600; color: var(--ui-text-strong); overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-access-id { font-weight: 400; color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] :is(.phone-access-sub, .phone-access-desc) { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-access-desc {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+:root[data-layout="phone"] .phone-access-left { color: var(--ui-warn-text); font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-access-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+:root[data-layout="phone"] .phone-access-slug { font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-access-slug.deny { color: var(--ui-danger); }
+:root[data-layout="phone"] .phone-access-defaults { margin-bottom: 8px; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-access-defaults summary { min-height: var(--phone-tap); display: flex; align-items: center; cursor: pointer; }
+:root[data-layout="phone"] .phone-access-defaults > div { display: flex; flex-wrap: wrap; gap: 4px; }
+:root[data-layout="phone"] .phone-access-search { width: 100%; min-height: var(--phone-tap); font-size: 16px; margin-bottom: 6px; }
+
+/* Usage › Costs: each agent's row is two lines (name and cost, then harness,
+   model and last activity) instead of a six-column table wider than the
+   phone. The header stays as a row of sort buttons. */
+:root[data-layout="phone"] #costs-table :is(table, thead, tbody) { display: block; width: 100%; }
+:root[data-layout="phone"] #costs-table thead tr { display: flex; flex-wrap: wrap; gap: 4px 12px; padding-bottom: 6px; }
+:root[data-layout="phone"] #costs-table tbody tr {
+  display: grid; grid-template-columns: auto minmax(0, auto) minmax(0, 1fr) auto auto;
+  align-items: center; border-bottom: 1px solid var(--ui-line);
+}
+/* Cells keep the table density; the row draws the one line under them. */
+:root[data-layout="phone"] #costs-table tbody td { border: 0; min-width: 0; width: auto; max-width: none; }
+:root[data-layout="phone"] #costs-table tbody td:nth-child(1) { grid-area: 1 / 1 / 2 / 4; overflow-wrap: anywhere; }
+:root[data-layout="phone"] #costs-table tbody td:nth-child(2) { grid-area: 1 / 4 / 3 / 5; text-align: right; }
+:root[data-layout="phone"] #costs-table tbody td:nth-child(6) { grid-area: 1 / 5 / 3 / 6; }
+:root[data-layout="phone"] #costs-table tbody :is(td:nth-child(3), td:nth-child(4), td:nth-child(5)) {
+  grid-row: 2; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-layout="phone"] #costs-table tbody .cost-total-row td:nth-child(2) { white-space: normal; }

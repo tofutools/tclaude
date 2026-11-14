@@ -30,9 +30,9 @@ import { pageTriggersReadable } from './feature-availability.js';
 import { dashboardState } from './snapshot-store.js';
 import { processContext } from './process-context.js';
 import { companionAgents } from './companion-model.js';
-import { setLayoutOverride } from './layout.js';
 import { usePhonePage } from './phone-page.js';
-import { DesktopOnly, RunPage, RunsList, gateItems } from './phone-process-runs.js';
+import { RunPage, RunsList, gateItems } from './phone-process-runs.js';
+import { DesktopOnlyNote, desktopSite } from './phone-desktop-only.js';
 import { Button, Input, Switch } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 
@@ -43,7 +43,6 @@ const CHIP_LABELS = Object.freeze({
   [PROCESSES_SUBTAB]: 'Runs',
 });
 
-const desktopSite = () => setLayoutOverride('desktop');
 
 // cronSchedule says when a cron job fires, in words where the daemon could
 // render them.
@@ -252,7 +251,7 @@ function CronPage({ job, actions }) {
         return html`<li key=${run.id}><span class=${`phone-auto-meta ${outcome.tone}`}>${localStamp(run.fired_at, { empty: 'unknown time' })} · ${run.status || 'unknown'}</span>
           ${run.error_msg && html`<span class="phone-auto-log">${run.error_msg}</span>`}</li>`;
       }} />
-    <${DesktopOnly} what="Editing, duplicating and deleting are" desktopSite=${desktopSite} />
+    <${DesktopOnlyNote} what="Editing, duplicating and deleting are" />
   </div>`;
 }
 
@@ -269,7 +268,7 @@ function OrderPage({ order, actions }) {
       ['Off because', !order.enabled ? order.disabled_reason : ''],
       ['On', html`<${OnOff} on=${!!order.enabled} label=${order.name} onToggle=${() => actions.toggleStandingOrder(order)} />`],
     ]} />
-    <${DesktopOnly} what="Editing and deleting are" desktopSite=${desktopSite} />
+    <${DesktopOnlyNote} what="Editing and deleting are" />
   </div>`;
 }
 
@@ -290,7 +289,7 @@ function TriggerPage({ rule, actions, onChanged }) {
     <${History} load=${() => actions.loadTriggerFirings(rule.id)} empty="Never fired."
       render=${(firing) => html`<li key=${firing.id}><span class=${`phone-auto-meta ${firing.outcome === 'ok' ? 'ok' : 'warn'}`}>${localStamp(firing.started_at, { empty: 'unknown time' })} · ${firing.outcome || 'fired'}</span>
         ${firing.detail && html`<span class="phone-auto-log">${firing.detail}</span>`}</li>`} />
-    <${DesktopOnly} what="Editing and deleting are" desktopSite=${desktopSite} />
+    <${DesktopOnlyNote} what="Editing and deleting are" />
   </div>`;
 }
 
@@ -386,7 +385,7 @@ export function PhoneJobsApp({ state, actions, activeTab = dashboardState.active
       <span>${offset + 1}–${Math.min(total, offset + size)} of ${total}</span>
       <${Button} size="sm" disabled=${offset + size >= total} onClick=${() => turn('next')}>Next ›<//>
     </div>`}
-    <${DesktopOnly} what="Creating and editing automations is" desktopSite=${desktopSite} />
+    <${DesktopOnlyNote} what="Creating and editing automations is" />
   </div>`;
 }
 

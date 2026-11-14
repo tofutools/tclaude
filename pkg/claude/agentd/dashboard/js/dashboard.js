@@ -223,7 +223,9 @@ async function settleInitialLayout() {
     () => mountFleetFeature(),
     () => mountFleetMergedGroupsFeature(),
     () => mountFusedMessagesFeature(),
-    () => mountFleetAdminFeature(),
+    // A phone shows no Fleet admin (js/phone-desktop-only.js): the hidden
+    // desktop island would poll the federation API for nothing.
+    async () => (isPhone ? null : mountFleetAdminFeature()),
     () => mountDebugFeature(),
     () => mountProfilesFeature({ confirm: confirmModal, pickAgent }),
     () => mountConfigFeature({ toast, isCyclingTabs }),

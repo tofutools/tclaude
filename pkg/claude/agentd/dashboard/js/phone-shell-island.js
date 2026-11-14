@@ -7,7 +7,8 @@
 // the Groups tab, Mail is Messages, and the More sheet opens every other tab.
 // Tabs keep their desktop islands until each gets its phone view.
 //
-// The shell marks <html data-phone-view="now|board"> while an own view is up, so
+// The shell marks <html data-phone-view="now|board|desktop-only"> while an own
+// view or a desktop-only page (js/phone-desktop-only.js) is up, so
 // phone.css can hide <main> under it. Any tab activation (a slot, a More entry,
 // a deep link, Back) clears the own view.
 
@@ -28,6 +29,8 @@ import { phonePage } from './phone-page.js';
 import { processContext } from './process-context.js';
 import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
 import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
+import { DesktopOnlyPage, desktopOnlyView } from './phone-desktop-only.js';
+import { featureState } from './feature-state-registry.js';
 
 const html = htm.bind(h);
 
@@ -204,6 +207,10 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // the top bar, and maybe no bottom nav. An own view has no pages.
   const page = OWN_VIEWS.includes(view) ? null : phonePage.value;
   const hideNav = !!page?.hideNav;
+  // A view a phone does not offer (js/phone-desktop-only.js) gets a page
+  // that says so in place of its desktop content.
+  const desktopOnly = OWN_VIEWS.includes(view) ? '' : desktopOnlyView(activeTab, featureState('groups')?.subview?.value);
+  const covering = OWN_VIEWS.includes(view) ? view : desktopOnly ? 'desktop-only' : '';
 
   // Any tab activation after the first render clears the own view, so a deep
   // link, Back, or a link inside a view shows its tab.
@@ -215,9 +222,9 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   }, [activeTab]);
   useEffect(() => {
     const root = document.documentElement;
-    if (OWN_VIEWS.includes(view)) root.dataset.phoneView = view;
+    if (covering) root.dataset.phoneView = covering;
     else delete root.dataset.phoneView;
-  }, [view]);
+  }, [covering]);
   useEffect(() => {
     const root = document.documentElement;
     if (hideNav) root.dataset.phonePage = 'full';
@@ -275,12 +282,13 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
           class=${`phone-bar-act${act.danger ? ' danger' : ''}`} aria-label=${act.label} title=${act.label}
           disabled=${!!act.disabled} onClick=${act.onClick}>${act.icon || act.label}</button>`)}`
       : html`<img class="phone-bar-logo" src="/static/tclaude-icon.svg" alt="" />
-        <h1 class="phone-bar-title">${titleFor(view, activeTab)}</h1>
+        <h1 class="phone-bar-title">${desktopOnly || titleFor(view, activeTab)}</h1>
         <span class=${`phone-bar-live ${connection}`} role="status" title=${connection === 'connected' ? 'Connected' : connection}
           aria-label=${connection === 'connected' ? 'Connected' : `Connection: ${connection}`}></span>`}
     </header>
     ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} processSource=${processSource} /></div>`}
     ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} /></div>`}
+    ${desktopOnly && html`<div class="phone-view" role="region" aria-label=${desktopOnly}><${DesktopOnlyPage} what=${desktopOnly} open=${actions.desktopSite} /></div>`}
     ${!hideNav && html`<nav class="phone-nav" aria-label="Views">
       ${PHONE_SLOTS.map((target) => html`<button data-ui-exempt key=${target.id} type="button"
         class=${`phone-nav-item${slot === target.id ? ' on' : ''}`} aria-current=${slot === target.id ? 'page' : undefined}
