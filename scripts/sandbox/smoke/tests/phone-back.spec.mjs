@@ -63,3 +63,17 @@ test('a page inside a tab is a step of its own, and its ‹ leaves no extra step
   await page.goBack();
   await expect(title(page)).toHaveText('Mail');
 });
+
+test('a More entry picked over Now: Back returns to Now, and the address shows the view', async ({ page }) => {
+  await page.goto('/');
+  await booted(page);
+  await expect(title(page)).toHaveText('Now');
+  for (const entry of ['Automations', 'Fleet']) {
+    await nav(page, 'More');
+    await page.locator('.phone-sheet button', { hasText: entry }).click();
+    await expect(title(page)).toHaveText(entry);
+    await expect(page).not.toHaveURL(/[?&](own|phone)=/);
+    await page.goBack();
+    await expect(title(page)).toHaveText('Now');
+  }
+});

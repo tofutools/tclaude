@@ -59,18 +59,20 @@ test('an own view is a step forward when it comes and when it goes; Back restore
   view.value = 'now';
   await tick();
   assert.deepEqual(announced, [{ closed: false, replace: false }]);
-  assert.equal(routes.overlayParams().view, 'now');
+  assert.equal(routes.overlayParams().own, 'now');
   view.value = null;
   await tick();
   assert.equal(announced.length, 2);
   assert.equal(announced[1].closed, false, 'leaving Now keeps it behind for Back');
 
-  routes.restoreOverlays({ view: 'board' });
+  routes.restoreOverlays({ own: 'board' });
   assert.equal(view.value, 'board');
-  routes.restoreOverlays({ view: 'nonsense' });
+  assert.equal(history.keptView('mail'), null, 'kept only over the tab it was restored over');
+  routes.restoreOverlays({ own: 'now' });
+  assert.equal(history.keptView(null), 'now', 'Back kept Now over the tab it landed on');
+  assert.equal(history.keptView(null), null, 'once');
+  routes.restoreOverlays({ own: 'nonsense' });
   assert.equal(view.value, null);
   await tick();
   assert.equal(announced.length, 2, 'Back and Forward record nothing');
-  assert.equal(history.addressedView({ search: '?view=now' }), 'now');
-  assert.equal(history.addressedView({ search: '?view=x' }), null);
 });

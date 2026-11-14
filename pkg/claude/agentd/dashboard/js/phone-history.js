@@ -14,7 +14,7 @@
 //   ?phone=<n>   how many layers are up: a pushed page, a sheet over it. A
 //                layer cannot be reopened from a link, so Forward onto one
 //                leaves it closed.
-//   ?view=now|board   the shell's own view.
+//   ?own=now|board   the shell's own view.
 //
 // A page with a route of its own (Mail's reader, a Settings section) says
 // `routed: true` and is left to the router.
@@ -46,15 +46,23 @@ function whenBooted(doc, run) {
   return () => watch.disconnect();
 }
 
-// addressedView is the own view the address names, or null.
-export function addressedView(loc = globalThis.location) {
-  const want = new URLSearchParams(loc?.search || '').get('view');
-  return OWN_VIEW_VALUES.includes(want) ? want : null;
+// kept is the own view Back or Forward restored, and the tab it was
+// restored over: the shell clears its view on a tab change except on that
+// one (Back onto Now over Mail shows Now, not Mail).
+let kept = null;
+
+// keptView is the own view Back restored over `tab`, or null; asking spends
+// it, so a later tab change clears the view as usual.
+export function keptView(tab) {
+  const was = kept;
+  kept = null;
+  return was && was.tab === tab ? was.view : null;
 }
 
 // installPhoneHistory wires the layers and `view` (the shell's own-view
-// signal) to the router. Returns the uninstall function.
-export function installPhoneHistory({ view, doc = globalThis.document }) {
+// signal) to the router; `tab` reads the active tab. Returns the uninstall
+// function.
+export function installPhoneHistory({ view, tab = () => null, doc = globalThis.document }) {
   let restoring = false;
   const unLayers = registerOverlayRoute('phone', {
     value: () => { const depth = layerDepth(); return depth ? String(depth) : ''; },
@@ -69,14 +77,15 @@ export function installPhoneHistory({ view, doc = globalThis.document }) {
       }
     },
   });
-  const unView = registerOverlayRoute('view', {
+  const unView = registerOverlayRoute('own', {
     value: () => view.peek() || '',
     restore: (want) => {
       // The boot's restore of an address without a view: the shell already
       // chose (a bare / lands on Now), and the address is corrected to match
-      // once booted. One with a view (a reload of /?view=board) shows it.
+      // once booted. One with a view (a reload of /?own=board) shows it.
       if (booting(doc) && !want) return;
       const next = OWN_VIEW_VALUES.includes(want) ? want : null;
+      kept = next ? { view: next, tab: tab() } : null;
       if (view.peek() === next) return;
       restoring = true;
       try {
@@ -119,5 +128,6 @@ export function installPhoneHistory({ view, doc = globalThis.document }) {
     stopView();
     unLayers();
     unView();
+    kept = null;
   };
 }

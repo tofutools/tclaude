@@ -85,19 +85,31 @@
     }
   };
 
+  let url = null;
   let asked = null;
   try {
-    const url = new URL(window.location.href);
+    url = new URL(window.location.href);
     asked = url.searchParams.get('layout');
-    if (asked !== null) {
-      url.searchParams.delete('layout');
-      window.history?.replaceState?.(window.history.state, '', url.pathname + url.search + url.hash);
-    }
-  } catch { asked = null; }
+  } catch { url = null; }
 
   const override = readOverride(asked);
   const detected = phoneDevice() ? 'phone' : 'desktop';
   const layout = override || detected;
+
+  // The address keeps neither ?layout= nor what only the phone layout can
+  // show: its layers (?phone=, which no address can reopen) and, off the
+  // phone, its own view (?own=). Left in, the router would carry them onto
+  // every entry ("Desktop site" from the More sheet over Now).
+  if (url) {
+    const drop = ['layout', 'phone', ...(layout === 'phone' ? [] : ['own'])];
+    const had = drop.filter((key) => url.searchParams.has(key));
+    if (had.length) {
+      for (const key of had) url.searchParams.delete(key);
+      try {
+        window.history?.replaceState?.(window.history.state, '', url.pathname + url.search + url.hash);
+      } catch { /* the address keeps them; nothing else depends on it */ }
+    }
+  }
   window.__tclaudeLayout = Object.freeze({ layout, detected, override });
   if (layout !== 'phone') return;
 

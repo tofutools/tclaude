@@ -117,3 +117,13 @@ test('without usable storage ?layout=phone still holds for this load', () => {
   assert.equal(dataset.layout, 'phone');
   assert.equal(boot({ brokenStorage: true }).decision.layout, 'desktop');
 });
+
+test('the phone layout\'s own params leave the address: layers always, the own view off the phone', () => {
+  const desktop = boot({ href: 'http://h/?own=now&phone=1&layout=desktop', storage: memoryStorage({ 'tclaude.layout': 'phone' }) });
+  assert.equal(desktop.decision.layout, 'desktop');
+  assert.deepEqual(desktop.replaced, ['/']);
+  const phone = boot({ device: IPHONE, href: 'http://h/messages?own=board&phone=2' });
+  assert.deepEqual(phone.replaced, ['/messages?own=board']);
+  const clean = boot({ href: 'http://h/messages?q=x' });
+  assert.deepEqual(clean.replaced, [], 'an address without them is left alone');
+});
