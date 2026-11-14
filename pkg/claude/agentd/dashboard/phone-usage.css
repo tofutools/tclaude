@@ -1,0 +1,21 @@
+/* Usage › Costs: each agent's row is two lines (name and cost, then harness,
+   model and last activity) instead of a six-column table wider than the
+   phone. The header stays as a row of sort buttons. */
+:root[data-layout="phone"] #costs-table :is(table, thead, tbody) { display: block; width: 100%; }
+:root[data-layout="phone"] #costs-table thead tr { display: flex; flex-wrap: wrap; gap: 4px 12px; padding-bottom: 6px; }
+:root[data-layout="phone"] #costs-table tbody tr {
+  display: grid; grid-template-columns: auto minmax(0, auto) minmax(0, 1fr) auto auto;
+  align-items: center; border-bottom: 1px solid var(--ui-line);
+}
+/* Cells keep the table density; the row draws the one line under them. */
+:root[data-layout="phone"] #costs-table tbody td { border: 0; min-width: 0; width: auto; max-width: none; }
+:root[data-layout="phone"] #costs-table tbody td:nth-child(1) { grid-area: 1 / 1 / 2 / 4; overflow-wrap: anywhere; }
+:root[data-layout="phone"] #costs-table tbody td:nth-child(2) { grid-area: 1 / 4 / 3 / 5; text-align: right; }
+:root[data-layout="phone"] #costs-table tbody td:nth-child(6) { grid-area: 1 / 5 / 3 / 6; }
+:root[data-layout="phone"] #costs-table tbody :is(td:nth-child(3), td:nth-child(4), td:nth-child(5)) {
+  grid-row: 2; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-layout="phone"] #costs-table tbody .cost-total-row td:nth-child(2) { white-space: normal; }
+:root[data-layout="phone"] #costs-table .cost-ignore { min-width: var(--phone-tap); min-height: var(--phone-tap); }
+:root[data-layout="phone"] #tab-usage :is(.clear-filter, .costs-month-step) { min-width: var(--phone-tap); min-height: var(--phone-tap); }
+:root[data-layout="phone"] #tab-usage summary { min-height: var(--phone-tap); display: flex; align-items: center; }

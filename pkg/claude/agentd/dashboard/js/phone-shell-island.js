@@ -31,6 +31,8 @@ import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
 import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
 import { DesktopOnlyPage, desktopOnlyView } from './phone-desktop-only.js';
 import { featureState } from './feature-state-registry.js';
+import { installPhoneHistory, keptView } from './phone-history.js';
+import { installKeyboardInset } from './phone-keyboard.js';
 
 const html = htm.bind(h);
 
@@ -218,11 +220,15 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const covering = OWN_VIEWS.includes(view) ? view : desktopOnly ? 'desktop-only' : '';
 
   // Any tab activation after the first render clears the own view, so a deep
-  // link, Back, or a link inside a view shows its tab.
+  // link, Back, or a link inside a view shows its tab; unless Back restored
+  // the view over that tab (Back onto Now, phone-history.js).
   const seenTab = useRef(activeTab);
+  useEffect(() => installPhoneHistory({ view: shell.view, tab: () => state.activeTab.peek() }), [shell]);
+  useEffect(() => installKeyboardInset(), []);
   useEffect(() => {
     if (seenTab.current === activeTab) return;
     seenTab.current = activeTab;
+    if (shell.view.peek() && keptView(activeTab) === shell.view.peek()) return;
     shell.view.value = null;
   }, [activeTab]);
   useEffect(() => {

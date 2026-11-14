@@ -714,3 +714,60 @@ test('a navigation right after an overlay close waits for the step back to land'
   assert.equal(browsing.calls.at(-1).kind, 'push');
   assert.equal(browsing.at(), '/groups/runs/ops/run_1');
 });
+
+test('navigateToPath during an overlay close runs once the step back lands', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/automations');
+  const [{ initNavHistory, navigateToPath }, overlays] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/overlay-routes.js'),
+  ]);
+  initNavHistory();
+  let open = '';
+  t.after(overlays.registerOverlayRoute('phone', { value: () => open, restore: (want) => { open = want; } }));
+  open = '1';
+  overlays.announceOverlay({ doc: harness.document });
+  assert.equal(browsing.at(), '/automations?phone=1');
+  // A phone sheet's entry picked: the sheet closes, then the navigation.
+  browsing.calls.length = 0;
+  open = '';
+  overlays.announceOverlay({ closed: true, doc: harness.document });
+  assert.equal(navigateToPath('/'), true);
+  assert.deepEqual(browsing.calls.map((c) => c.kind), ['back'], 'nothing is activated or recorded yet');
+  browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/automations');
+  harness.window.dispatchEvent(new harness.window.Event('popstate'));
+  assert.equal(browsing.calls.at(-1).kind, 'push');
+  assert.equal(browsing.at(), '/');
+});
+
+test('an overlay that changes while a close steps back is read once the step lands', async (t) => {
+  const harness = await createPreactHarness(t);
+  installShell(harness);
+  const browsing = installBrowsingContext(t, harness, '/automations');
+  const [{ initNavHistory, navigateToPath }, overlays] = await Promise.all([
+    harness.importDashboardModule('js/nav-history.js'),
+    harness.importDashboardModule('js/overlay-routes.js'),
+  ]);
+  initNavHistory();
+  let own = '';
+  let sheet = '';
+  t.after(overlays.registerOverlayRoute('own', { value: () => own, restore: (want) => { own = want; } }));
+  t.after(overlays.registerOverlayRoute('phone', { value: () => sheet, restore: (want) => { sheet = want; } }));
+  own = 'now';
+  overlays.announceOverlay({ doc: harness.document });
+  sheet = '1';
+  overlays.announceOverlay({ doc: harness.document });
+  assert.equal(browsing.at(), '/automations?phone=1&own=now');
+  // More over Now, Agents picked: the sheet closes, Now goes, Agents shows.
+  browsing.calls.length = 0;
+  sheet = '';
+  overlays.announceOverlay({ closed: true, doc: harness.document });
+  own = '';
+  overlays.announceOverlay({ doc: harness.document });
+  assert.equal(navigateToPath('/'), true);
+  browsing.history.replaceState({ ...browsing.history.state, navIndex: 1 }, '', '/automations?own=now');
+  harness.window.dispatchEvent(new harness.window.Event('popstate'));
+  assert.deepEqual(browsing.calls.filter((c) => c.kind === 'push').length, 1, 'one step: Now, then Agents');
+  assert.equal(browsing.at(), '/');
+});

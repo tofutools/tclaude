@@ -226,8 +226,8 @@ function History({ load, render: renderItem, empty }) {
   };
   useEffect(() => { void fetchAgain(); }, []);
   if (error) return html`<p class="ui-error-box" role="alert">${error} <${Button} size="sm" onClick=${fetchAgain}>Retry<//></p>`;
-  if (!items) return html`<p class="ui-empty">Loading…</p>`;
-  if (!items.length) return html`<p class="ui-empty">${empty}</p>`;
+  if (!items) return html`<p class="ui-empty phone-empty">Loading…</p>`;
+  if (!items.length) return html`<p class="ui-empty phone-empty">${empty}</p>`;
   return html`<ul class="phone-auto-history">${items.map(renderItem)}</ul>`;
 }
 

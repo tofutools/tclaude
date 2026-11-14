@@ -1,0 +1,59 @@
+/* Diagnostics (js/phone-diagnostics.js for Audit and Logs). The desktop's
+   sub-nav becomes a row of chips, Doctor first: the view that asks something
+   of the operator. Doctor stacks its category list over its checks;
+   Performance shows the endpoint cards (latency and a sparkline) and leaves
+   daemon profiling and the phase breakdowns to the desktop. */
+:root[data-layout="phone"] #tab-diagnostics .activity-subnav {
+  display: flex; flex-wrap: nowrap; overflow-x: auto; max-width: 100%; margin-bottom: 12px;
+}
+:root[data-layout="phone"] #tab-diagnostics .activity-subtab { flex: none; font-size: 14px; }
+:root[data-layout="phone"] #tab-diagnostics .activity-subtab[data-subtab="doctor"] { order: -1; }
+:root[data-layout="phone"] .phone-diag-filters { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+:root[data-layout="phone"] .phone-diag-search { flex: 1; min-width: 0; }
+:root[data-layout="phone"] .phone-diag-filters :is(.ui-btn, select) { flex: none; }
+:root[data-layout="phone"] .phone-diag-filters .ui-btn { font-size: 14px; }
+:root[data-layout="phone"] .phone-diag-toggle.on { border-color: var(--ui-focus); color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-diag-count { margin: 4px 0; font-size: 12px; }
+:root[data-layout="phone"] .phone-diag-row > summary {
+  display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 0;
+  list-style: none; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-diag-row > summary::-webkit-details-marker { display: none; }
+:root[data-layout="phone"] .phone-diag-row > summary::before { content: none; }
+:root[data-layout="phone"] .phone-diag-time {
+  flex: none; width: 46px; color: var(--ui-muted-text); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+:root[data-layout="phone"] .phone-diag-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] :is(.phone-diag-head, .phone-diag-sub) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] .phone-diag-head { color: var(--ui-text-strong); font-weight: 600; }
+:root[data-layout="phone"] .phone-diag-sub { color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-diag-mono { font-family: ui-monospace, monospace; }
+:root[data-layout="phone"] .phone-diag-outcome { flex: none; }
+:root[data-layout="phone"] .phone-diag-row[open] .phone-diag-head { white-space: normal; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-diag-detail {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px;
+  margin: 0 0 10px 56px; font-size: 13px;
+}
+:root[data-layout="phone"] .phone-diag-detail dt { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-diag-detail dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+:root[data-layout="phone"] .phone-diag-pages { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
+
+:root[data-layout="phone"] .doctor-island { display: block; min-height: 0; }
+:root[data-layout="phone"] .doctor-side {
+  flex-direction: row; flex-wrap: nowrap; overflow-x: auto; padding: 0; border-right: 0; border-bottom: 1px solid var(--ui-line); border-radius: 6px 6px 0 0;
+}
+:root[data-layout="phone"] .doctor-side button {
+  flex: none; min-height: var(--phone-tap); border-left: 0; border-bottom: 2px solid transparent; white-space: nowrap;
+}
+:root[data-layout="phone"] .doctor-side button.on { border-bottom-color: var(--ui-focus); }
+:root[data-layout="phone"] .doctor-sep { display: none; }
+:root[data-layout="phone"] .doctor-main { padding: 12px; }
+:root[data-layout="phone"] .doctor-head { flex-wrap: wrap; }
+:root[data-layout="phone"] .doctor-choice { grid-template-columns: 1fr; }
+
+:root[data-layout="phone"] #activity-performance #profiles-root,
+:root[data-layout="phone"] #activity-performance .filter-bar > .muted:first-child,
+:root[data-layout="phone"] .debug-card > :not(.debug-card-head, .debug-spark, .empty) {
+  display: none;
+}
+:root[data-layout="phone"] .debug-card-head .spacer { flex-basis: 100%; height: 0; }

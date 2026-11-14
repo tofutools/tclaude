@@ -21,6 +21,7 @@ import {
   initialState, current, push, go, indexOf,
   toPath, toQuery, fromPath, isKnownPath, resolveStale, resolvePopstate,
   serializeStack, reviveState, NAV_STATE_VERSION, replaceCurrent,
+  OVERLAY_PARAMS, TAB_PARAMS,
 } from '../dashboard/js/nav-history-core.js';
 
 // A location is only ever compared through the module's own helpers, so tests
@@ -483,4 +484,16 @@ test('resolvePopstate relocates within the stack by URL when the index is absent
   const reseed = resolvePopstate(s, accessSudo, -1);
   assert.equal(reseed.entries.length, 1);
   assert.ok(locEquals(current(reseed), accessSudo));
+});
+
+test('no overlay key is also a tab param: withOverlays would strip it', () => {
+  const tabKeys = new Set(Object.values(TAB_PARAMS).flat());
+  assert.deepEqual(OVERLAY_PARAMS.filter((key) => tabKeys.has(key)), []);
+});
+
+test('the route map keeps its table view; the phone own view is validated', () => {
+  const routes = fromPath('/groups/routes', '?group=g&view=list');
+  assert.deepEqual(normalizeLocation(routes).params, { group: 'g', view: 'list' });
+  assert.equal(normalizeLocation(fromPath('/messages', '?own=now')).params.own, 'now');
+  assert.equal(normalizeLocation(fromPath('/messages', '?own=list')).params?.own, undefined);
 });

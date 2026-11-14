@@ -7,7 +7,7 @@
 // One search and one filter (outcome, or level) replace the filter bar. They
 // run on the desktop islands' state and actions, and on their feeds
 // (useAuditFeed, useLogsFeed), so loading, polling and paging are the
-// desktop's. Doctor and Performance keep their islands: phone.css lays them
+// desktop's. Doctor and Performance keep their islands: phone-diagnostics.css lays them
 // out for a phone.
 
 import { h, render } from 'preact';

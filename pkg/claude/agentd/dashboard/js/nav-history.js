@@ -389,11 +389,14 @@ let steppingBack = null;
 // the current entry.
 function onOverlay(event) {
   if (!ready || applying) return;
+  // Mid step back the current entry is the one being left: read the
+  // overlays again once the step lands (flushSteppingBack).
+  if (steppingBack) { overlayAgain = { ...event?.detail }; return; }
   const loc = withOverlays(current(stack));
   if (locEquals(loc, current(stack))) return;
   if (event?.detail?.replace) { correct(loc); return; }
   if (!event?.detail?.closed) { record(loc); return; }
-  if (!steppingBack && stack.index > 0 && locEquals(stack.entries[stack.index - 1], loc)) {
+  if (stack.index > 0 && locEquals(stack.entries[stack.index - 1], loc)) {
     steppingBack = [];
     history.back();
     // Should the traversal never arrive, stop holding navigations.
@@ -407,7 +410,23 @@ function flushSteppingBack() {
   const queued = steppingBack || [];
   steppingBack = null;
   for (const loc of queued) record(withOverlays(loc));
+  const paths = waitingPaths;
+  waitingPaths = [];
+  for (const path of paths) navigateToPath(path);
+  const again = overlayAgain;
+  overlayAgain = null;
+  if (again) onOverlay({ detail: again });
 }
+
+// overlayAgain is an overlay change announced while a step back was on its
+// way (the shell's own view going as a sheet's entry leaves for a tab).
+let overlayAgain = null;
+
+// waitingPaths are navigateToPath calls made while an overlay close steps
+// back (a phone sheet's entry picked to go elsewhere). They run once it has
+// landed: activating a location before then would let its corrections land
+// on the entry being left.
+let waitingPaths = [];
 
 // preservedQuery is the view-state query carried across a path push. Theme is
 // GLOBAL body state (body.slop / body.wizard, owned by slop.js), not per
@@ -571,6 +590,7 @@ export function navigateToPath(path) {
   if (!isKnownPath(url.pathname)) return false;
   const loc = normalizeLocation(fromPath(url.pathname, url.search));
   if (!ROUTABLE_TABS.has(loc.tab) || !locationAvailable(loc)) return false;
+  if (steppingBack) { waitingPaths.push(path); return true; }
   // Push first so the stack points at the new entry before activate() runs:
   // any in-place correction it makes (a bare /config, a peer-view fallback)
   // then rewrites the new entry, never the one the operator came from.

@@ -1,11 +1,18 @@
-/* phone.css — the phone layout's styles.
+/* phone.css — the phone layout's base styles.
 
-   Linked only in phone mode, by js/layout-boot.js, after every other sheet.
-   Every rule here is scoped under :root[data-layout="phone"] (a jstest,
-   phone-css.test.mjs, enforces it), so even if this sheet were ever loaded on
-   a desktop page it would match nothing there. Phone-only rules belong here,
-   not in dashboard.css or ui.css; the desktop sheets keep their own narrow-
-   window media queries, which serve narrow desktop windows.
+   Linked only in phone mode, by js/layout-boot.js, after every other sheet
+   and ahead of the per-view sheets (phone-<view>.css, its PHONE_SHEETS
+   list). This one holds what every view shares: the tokens, controls a
+   finger can hit, the shell and its own views (Now, Board), pushed pages,
+   dialogs and the desktop-only note. A view's own rules go in its sheet; a
+   new view gets a new sheet and a line in PHONE_SHEETS.
+
+   Every rule in every phone sheet is scoped under :root[data-layout="phone"]
+   (a jstest, phone-css.test.mjs, enforces it), so even if one were ever
+   loaded on a desktop page it would match nothing there. Phone-only rules
+   belong in these sheets, not in dashboard.css or ui.css; the desktop sheets
+   keep their own narrow-window media queries, which serve narrow desktop
+   windows.
 
    Breakpoints: the layout attribute is the breakpoint. Inside phone mode use
    at most the one secondary width query below (a phone held sideways) rather
@@ -23,10 +30,38 @@
   --phone-safe-right: env(safe-area-inset-right, 0px);
   --phone-safe-bottom: env(safe-area-inset-bottom, 0px);
   --phone-safe-left: env(safe-area-inset-left, 0px);
+  /* What the on-screen keyboard covers (js/phone-keyboard.js sets it). */
+  --phone-keyboard: 0px;
   /* Phones keep their own text size: no automatic font inflation. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
+
+/* ── Controls on every phone view ───────────────────────────────────────────
+   Set once here rather than per view, so a desktop island still showing on a
+   phone gets them too.
+   - Text fields at 16px: iOS Safari zooms the page into any focused field
+     smaller than that, and the viewport meta leaves zoom on.
+   - Buttons and tabs a finger can hit: at least --phone-tap tall. A link
+     button (text in a sentence) keeps its size and gets the height as an
+     invisible hit area instead. */
+:root[data-layout="phone"] :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), textarea, select) {
+  font-size: 16px;
+}
+:root[data-layout="phone"] :is(.ui-btn:not(.ui-btn-link), .ui-tab, .ui-input, .ui-select, .companion-decision-note) {
+  min-height: var(--phone-tap);
+}
+:root[data-layout="phone"] :is(.ui-btn-link, .phone-link) {
+  display: inline-block; padding-block: 12px; margin-block: -12px;
+}
+/* A switch: a 48x28 track drawn in the content box, with transparent
+   padding above and below that brings the hit area to --phone-tap. */
+:root[data-layout="phone"] .ui-switch {
+  box-sizing: content-box; width: 48px; height: 28px; padding: 8px 0; margin-block: -8px;
+  background-clip: content-box; border-radius: 14px / 22px;
+}
+:root[data-layout="phone"] .ui-switch::after { top: 10px; left: 2px; width: 24px; height: 24px; }
+:root[data-layout="phone"] .ui-switch:checked::after { left: 22px; }
 
 /* The one secondary width query in phone mode: a phone held sideways, where a
    view may show two panes side by side (e.g. message list and message).
@@ -127,12 +162,15 @@
   display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px;
 }
 :root[data-layout="phone"] .phone-link {
-  background: none; border: 0; padding: 0; color: var(--ui-focus); font: inherit; cursor: pointer;
+  background: none; border: 0; padding-inline: 0; color: var(--ui-focus); font: inherit; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-empty { margin: 6px 0; }
 :root[data-layout="phone"] .phone-card { margin-bottom: 10px; }
 :root[data-layout="phone"] .phone-wide { width: 100%; min-height: var(--phone-tap); margin-bottom: 10px; }
 :root[data-layout="phone"] .phone-usage { padding: 8px 10px; overflow-x: auto; }
+:root[data-layout="phone"] .phone-usage .usage-unit-switch button { min-width: 40px; min-height: var(--phone-tap); }
+/* The unit switch's column fits two finger-sized buttons, not two letters. */
+:root[data-layout="phone"] .phone-usage #usage .usage-source { grid-template-columns: 82px auto; }
 
 :root[data-layout="phone"] .phone-list { list-style: none; margin: 0; padding: 0; }
 :root[data-layout="phone"] .phone-list > li { border-bottom: 1px solid var(--ui-line); }
@@ -145,25 +183,23 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 :root[data-layout="phone"] .phone-agent-acts { display: flex; gap: 6px; flex: none; }
-:root[data-layout="phone"] .phone-agent-acts .ui-btn { min-height: 36px; min-width: 44px; }
+:root[data-layout="phone"] .phone-agent-acts .ui-btn { min-width: var(--phone-tap); }
 
 :root[data-layout="phone"] .phone-pr { display: flex; align-items: center; gap: 6px; min-height: var(--phone-tap); }
 :root[data-layout="phone"] .phone-pr-title {
-  flex: 1; min-width: 0; color: var(--ui-text);
+  flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; color: var(--ui-text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* The approval and decision cards come from the companion; on a phone they
    take the full width and finger-sized buttons. */
 :root[data-layout="phone"] .phone-card :is(.companion-approval, .companion-decision) {
-  max-width: none; background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 8px; padding: 10px;
+  max-width: none; margin: 0; background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 8px; padding: 10px;
 }
-:root[data-layout="phone"] .phone-card .ui-btn { min-height: 38px; }
-:root[data-layout="phone"] .phone-card .companion-decision-note { font-size: 16px; }
 
 /* Board: one group at a time, picked from a row of tabs that scrolls sideways. */
 :root[data-layout="phone"] .phone-chips { display: flex; flex-wrap: nowrap; overflow-x: auto; max-width: 100%; }
-:root[data-layout="phone"] .phone-chips .ui-tab { flex: none; min-height: 36px; font-size: 14px; }
+:root[data-layout="phone"] .phone-chips .ui-tab { flex: none; min-height: var(--phone-tap); font-size: 14px; }
 :root[data-layout="phone"] .phone-chip-count { color: var(--ui-muted-text); }
 :root[data-layout="phone"] .phone-task {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
@@ -178,8 +214,8 @@
   position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(1, 4, 9, 0.6);
 }
 :root[data-layout="phone"] .phone-sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: calc(var(--z-dialog) + 1);
-  max-height: 85vh; overflow-y: auto;
+  position: fixed; left: 0; right: 0; bottom: var(--phone-keyboard); z-index: calc(var(--z-dialog) + 1);
+  max-height: calc(85vh - var(--phone-keyboard)); overflow-y: auto;
   padding: 8px var(--phone-gutter) calc(16px + var(--phone-safe-bottom));
   background: var(--ui-dialog-bg); border-top: 1px solid var(--ui-dialog-line); border-radius: 16px 16px 0 0;
   box-shadow: var(--ui-dialog-shadow);
@@ -206,7 +242,7 @@
   background: none; border: 0; color: var(--ui-text-strong); font-size: 28px; line-height: 1; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-bar-act {
-  flex: none; min-height: 36px; padding: 0 12px; border-radius: 18px;
+  flex: none; min-height: var(--phone-tap); padding: 0 12px; border-radius: 18px;
   background: var(--ui-bg); border: 1px solid var(--ui-btn-line); color: var(--ui-text-strong);
   font: inherit; font-size: 14px; cursor: pointer;
 }
@@ -218,7 +254,7 @@
    Every modal dialog is a full-width bottom sheet on a phone. !important: the
    desktop dialogs carry fixed min-widths and a remembered, resizable size
    (dialog-resize.js writes it inline); none of that fits a phone. */
-:root[data-layout="phone"] .modal-overlay.show { align-items: flex-end; }
+:root[data-layout="phone"] .modal-overlay.show { align-items: flex-end; padding-bottom: var(--phone-keyboard); }
 :root[data-layout="phone"] .modal-overlay .ui-dialog {
   box-sizing: border-box;
   width: 100% !important; min-width: 0 !important; max-width: 100% !important;
@@ -227,366 +263,12 @@
   padding-bottom: calc(16px + var(--phone-safe-bottom));
   border-radius: 16px 16px 0 0; border-bottom: 0;
 }
-:root[data-layout="phone"] .modal-overlay .ui-dialog :is(input, textarea, select) { font-size: 16px; max-width: 100%; }
-:root[data-layout="phone"] .modal-overlay .ui-dialog .ui-btn { min-height: 40px; }
-
-/* ── Mail (js/phone-mail-island.js) ─────────────────────────────────────────
-   The desktop pins the Messages tab into a viewport-high flex column for its
-   three panes; Mail is one column that scrolls with the page instead. */
-:root[data-layout="phone"] body:has(#tab-messages.active),
-:root[data-layout="phone"] body:has(#tab-messages.active) main,
-:root[data-layout="phone"] body:has(#tab-messages.active) #tab-messages.active,
-:root[data-layout="phone"] #messages-root {
-  display: block; height: auto; min-height: 0;
-}
-:root[data-layout="phone"] body:has(#tab-messages.active) main { padding: 0; overflow: visible; }
-
-:root[data-layout="phone"] .phone-mail { padding-bottom: 88px; }
-:root[data-layout="phone"] .phone-mail-chips {
-  display: flex; gap: 8px; overflow-x: auto; padding: 10px var(--phone-gutter);
-  scrollbar-width: none;
-}
-:root[data-layout="phone"] .phone-mail-chip {
-  flex: none; min-height: 36px; padding: 0 14px; border-radius: 18px;
-  background: none; border: 1px solid var(--ui-line); color: var(--ui-text);
-  font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-mail-chip.on { background: var(--ui-menu-hover); border-color: var(--ui-focus); color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-mail-chip-count { color: var(--ui-muted-text); }
-:root[data-layout="phone"] .phone-mail-tools { display: flex; gap: 8px; align-items: center; padding: 0 var(--phone-gutter); }
-:root[data-layout="phone"] .phone-mail-search { flex: 1; min-width: 0; min-height: 40px; font-size: 16px; }
-:root[data-layout="phone"] .phone-mail-tools .ui-btn { min-height: 40px; flex: none; }
-:root[data-layout="phone"] .phone-mail-count { margin: 8px var(--phone-gutter) 0; color: var(--ui-muted-text); font-size: 12px; }
-
-:root[data-layout="phone"] .phone-mail-list > li { border-bottom: 1px solid var(--ui-line); }
-:root[data-layout="phone"] .phone-mail-row { padding: 0 var(--phone-gutter); }
-:root[data-layout="phone"] .phone-mail-open {
-  display: flex; gap: 12px; align-items: flex-start; width: 100%; padding: 12px 0;
-  background: none; border: 0; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-mail-avatar {
-  flex: none; width: 40px; height: 40px; border-radius: 50%;
-  display: grid; place-items: center; font-weight: 700; font-size: 17px; color: #fff;
-  background: #57606a;
-}
-:root[data-layout="phone"] .phone-mail-avatar[data-hue="0"] { background: #8250df; }
-:root[data-layout="phone"] .phone-mail-avatar[data-hue="1"] { background: #1f6feb; }
-:root[data-layout="phone"] .phone-mail-avatar[data-hue="2"] { background: #2da44e; }
-:root[data-layout="phone"] .phone-mail-avatar[data-hue="3"] { background: #bf8700; }
-:root[data-layout="phone"] .phone-mail-avatar[data-hue="4"] { background: #cf222e; }
-:root[data-layout="phone"] .phone-mail-avatar[data-hue="5"] { background: #0e7490; }
-:root[data-layout="phone"] .phone-mail-avatar[data-hue="6"] { background: #bc4c00; }
-:root[data-layout="phone"] .phone-mail-avatar[data-hue="7"] { background: #6e7781; }
-:root[data-layout="phone"] .phone-mail-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-:root[data-layout="phone"] .phone-mail-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-:root[data-layout="phone"] .phone-mail-party {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 15px; color: var(--ui-text-strong);
-}
-:root[data-layout="phone"] .phone-mail-group {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--ui-muted-text); font-size: 13px;
-}
-:root[data-layout="phone"] .phone-mail-time { flex: none; margin-left: auto; color: var(--ui-muted-text); font-size: 12px; }
-:root[data-layout="phone"] .phone-mail-subject,
-:root[data-layout="phone"] .phone-mail-preview {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-:root[data-layout="phone"] .phone-mail-subject { color: var(--ui-text); font-size: 15px; }
-:root[data-layout="phone"] .phone-mail-preview { color: var(--ui-muted-text); font-size: 14px; }
-:root[data-layout="phone"] .phone-mail-row.unread .phone-mail-party,
-:root[data-layout="phone"] .phone-mail-row.unread .phone-mail-subject { font-weight: 700; color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-mail-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-:root[data-layout="phone"] .phone-mail-file {
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  padding: 3px 10px; border: 1px solid var(--ui-line); border-radius: 14px; font-size: 13px; color: var(--ui-text);
-}
-:root[data-layout="phone"] .phone-mail-inline { padding: 0 0 12px 52px; }
-:root[data-layout="phone"] .phone-mail-inline .mail-decision {
-  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-  margin: 0; padding: 0; border: 0; background: none;
-}
-:root[data-layout="phone"] .phone-mail-inline .mail-decision-label { display: none; }
-:root[data-layout="phone"] .phone-mail-inline .ui-btn { min-height: 38px; }
-:root[data-layout="phone"] .phone-mail-access { display: flex; gap: 8px; justify-content: flex-end; }
-:root[data-layout="phone"] .phone-mail-pager {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 12px var(--phone-gutter); color: var(--ui-muted-text);
-}
-:root[data-layout="phone"] .phone-mail-pager .ui-btn { min-height: 40px; }
-:root[data-layout="phone"] .phone-mail-write {
-  position: fixed; z-index: var(--z-chrome);
-  right: calc(var(--phone-gutter) + var(--phone-safe-right)); bottom: calc(var(--footer-h) + 16px);
-  min-height: 52px; padding: 0 22px; border-radius: 16px; border: 0;
-  background: var(--ui-primary); color: var(--ui-primary-text); font: inherit; font-size: 16px; font-weight: 700;
-  box-shadow: var(--ui-dialog-shadow); cursor: pointer;
-}
-:root[data-layout="phone"] .phone-mail-agents { padding: 0 var(--phone-gutter); }
-:root[data-layout="phone"] .phone-mail-agents .phone-mail-search { width: 100%; margin-bottom: 6px; }
-:root[data-layout="phone"] .phone-mail-folder { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* The reader: the desktop reader's content, full width, with finger-sized
-   buttons; its reply bar takes the bottom nav's place. */
-:root[data-layout="phone"] .phone-mail-reader { padding: 12px var(--phone-gutter) 24px; }
-:root[data-layout="phone"] .phone-mail-reader.with-reply { padding-bottom: calc(76px + var(--phone-safe-bottom)); }
-:root[data-layout="phone"] .phone-mail-reader .mail-reader {
-  display: block; height: auto; max-height: none; overflow: visible;
-  padding: 0; border-style: none; border-radius: 0; background: none;
-}
-:root[data-layout="phone"] .phone-mail-reader .mail-reader-body { font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-mail-reader .mail-reader-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-:root[data-layout="phone"] .phone-mail-reader .ui-btn { min-height: 40px; }
-/* Focus raises a terminal window on the dashboard's host; the top bar's
-   Terminal › opens it here instead. */
-:root[data-layout="phone"] .phone-mail-reader [data-act="msg-focus"] { display: none; }
-:root[data-layout="phone"] .phone-mail-replybar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-chrome);
-  padding: 10px var(--phone-gutter) calc(10px + var(--phone-safe-bottom));
-  background: var(--ui-card-bg); border-top: 1px solid var(--ui-line);
-}
-:root[data-layout="phone"] .phone-mail-reply {
-  width: 100%; min-height: 48px; padding: 0 18px; border-radius: 24px; text-align: left;
-  background: var(--ui-field-bg); border: 1px solid var(--ui-line);
-  color: var(--ui-muted-text); font: inherit; font-size: 16px; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-mail :is(.phone-empty, .ui-error-box) { margin: 12px var(--phone-gutter); }
-
-/* ── Agents (js/phone-agents-island.js) ─────────────────────────────────────
-   The Groups tab shows the phone's Agents list. The desktop tree under it
-   stays mounted but out of sight and out of the way: a task's ?task= link
-   opens its form from a group's board in that tree, and that form is a fixed
-   overlay, which a collapsed ancestor neither clips nor hides once it is
-   visible again. */
-:root[data-layout="phone"] #tab-groups > :not(#phone-agents-root):not(#groups-list) { display: none; }
-/* The fleet's fused scope (html.scope-fused, dashboard.css) hides every child
-   of the tab but its fused tree; on a phone the Agents list stays instead. */
-:root[data-layout="phone"].scope-fused #tab-groups > #phone-agents-root { display: block !important; }
-:root[data-layout="phone"] #groups-list {
-  height: 0; overflow: hidden; visibility: hidden;
-}
-:root[data-layout="phone"] #groups-list :is(.modal-overlay, .manage-overlay) { visibility: visible; }
-
-:root[data-layout="phone"] .phone-agents-spawn { min-height: 32px; }
-:root[data-layout="phone"] .phone-agent-row {
-  display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%;
-  min-height: 56px; padding: 9px 0; background: none; border: 0;
-  color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-agent-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
-:root[data-layout="phone"] .phone-agent-title {
-  flex: 1; min-width: 0; font-weight: 600; color: var(--ui-text-strong);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-:root[data-layout="phone"] .phone-agent-state { flex: none; }
-:root[data-layout="phone"] .phone-agent-meta,
-:root[data-layout="phone"] .phone-agent-why {
-  color: var(--ui-muted-text); font-size: 13px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-:root[data-layout="phone"] .phone-agent-why { color: var(--ui-warn-text); }
-:root[data-layout="phone"] .phone-agent-row.v-offline .phone-agent-title { color: var(--ui-muted-text); font-weight: 500; }
-:root[data-layout="phone"] .phone-agent-pr.ci-passing { color: var(--ui-success-line); }
-:root[data-layout="phone"] .phone-agent-pr.ci-failing { color: var(--ui-danger-text); }
-:root[data-layout="phone"] .phone-agents-offline { margin-top: 6px; }
-:root[data-layout="phone"] .phone-agents-offline > summary {
-  min-height: var(--phone-tap); display: flex; align-items: center;
-  color: var(--ui-muted-text); cursor: pointer;
-}
-
-:root[data-layout="phone"] .phone-agent-sheet-name {
-  flex: 1; min-width: 0; margin: 0; font-size: 18px; color: var(--ui-text-strong);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-:root[data-layout="phone"] .phone-agent-sheet-meta { margin: 6px 0 0; color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-agent-sheet-meta a { color: var(--ui-focus); }
-:root[data-layout="phone"] .phone-agent-cwd { font-family: ui-monospace, monospace; font-size: 12px; }
-:root[data-layout="phone"] .phone-agent-sheet .phone-menu { margin-top: 10px; }
-:root[data-layout="phone"] .phone-agent-state.v-working { color: var(--ui-success-line); border-color: var(--ui-success); }
-
-/* ── Terminal (js/phone-terminal-island.js) ─────────────────────────────────
-   One terminal, docked full screen over everything but dialogs, which open
-   above it (the agent's message sheet). The island sets the height to the
-   visual viewport, so the key strip rides above an on-screen keyboard. */
-:root[data-layout="phone"][data-phone-terminal] body { overflow: hidden; }
-:root[data-layout="phone"] .phone-term {
-  position: fixed; left: 0; right: 0; top: 0; height: 100dvh; z-index: var(--z-panel);
-  display: flex; flex-direction: column;
-  background: var(--ui-card-bg);
-}
-:root[data-layout="phone"] .phone-term-bar {
-  flex: none; display: flex; align-items: center; gap: 4px;
-  min-height: var(--phone-bar-h); padding: var(--phone-safe-top) 8px 0 4px;
-  border-bottom: 1px solid var(--ui-line);
-}
-:root[data-layout="phone"] .phone-term-bar .phone-bar-live { margin: 0 6px; }
-:root[data-layout="phone"] .phone-term-bar .phone-bar-act { font-size: 18px; }
-:root[data-layout="phone"] .phone-term-bar .phone-bar-act.on { background: var(--ui-menu-hover); border-color: var(--ui-focus); }
-:root[data-layout="phone"] .phone-term-body { flex: 1; min-height: 0; position: relative; }
-/* touch-action: none, so a pinch reaches the terminal (its text size) and
-   never zooms the page. */
-:root[data-layout="phone"] .phone-term-host {
-  position: absolute; inset: 0; overflow: hidden; touch-action: none;
-  /* xterm's layers stay inside, under ↓ Live. */
-  isolation: isolate;
-}
-/* xterm's own box (its theme's background) fills the host, under the last
-   whole row too. */
-:root[data-layout="phone"] .phone-term-host .xterm { height: 100%; padding: 2px 2px 0; box-sizing: border-box; }
-:root[data-layout="phone"] .phone-term-note {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
-  padding: 10px var(--phone-gutter); background: var(--ui-card-bg); border-top: 1px solid var(--ui-line);
-  color: var(--ui-muted-text); font-size: 14px;
-}
-:root[data-layout="phone"] .phone-term-reconnect {
-  min-height: 40px; padding: 0 18px; border-radius: 20px;
-  background: var(--ui-primary); color: var(--ui-primary-text); border: 0; font: inherit; font-weight: 700; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-term-keys {
-  flex: none; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px;
-  padding: 8px 8px 0;
-}
-:root[data-layout="phone"] .phone-term-keys:last-child { padding-bottom: calc(8px + var(--phone-safe-bottom)); }
-:root[data-layout="phone"] .phone-term-key {
-  min-height: 42px; padding: 0; border-radius: 8px;
-  background: var(--ui-bg); border: 1px solid var(--ui-btn-line); color: var(--ui-text-strong);
-  font: inherit; font-size: 15px; font-family: ui-monospace, monospace; cursor: pointer;
-  touch-action: manipulation;
-}
-:root[data-layout="phone"] .phone-term-key:active { background: var(--ui-menu-hover); }
-:root[data-layout="phone"] .phone-term-compose {
-  flex: none; margin: 8px 8px calc(8px + var(--phone-safe-bottom)); min-height: 48px; padding: 0 18px;
-  border-radius: 24px; text-align: left;
-  background: var(--ui-field-bg); border: 1px solid var(--ui-line);
-  color: var(--ui-muted-text); font: inherit; font-size: 16px; cursor: pointer;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
-/* ↓ Live: shown while a swipe has the terminal scrolled back. */
-:root[data-layout="phone"] .phone-term-live {
-  position: absolute; right: 12px; bottom: 12px;
-  min-height: 40px; padding: 0 16px; border-radius: 20px; border: 0;
-  background: var(--ui-primary); color: var(--ui-primary-text);
-  font: inherit; font-weight: 700; box-shadow: var(--ui-dialog-shadow); cursor: pointer;
-}
-
-/* ── Settings (js/phone-config-island.js) ───────────────────────────────────
-   data-phone-config says what the Settings tab shows: the section list
-   (list), or one section of the desktop form below the island, editable
-   (edit) or read-only (read). A section page has no rail, search or intro:
-   the top bar names it and ‹ goes back to the list. */
-:root[data-layout="phone"][data-phone-config="list"] #config-root { display: none; }
-:root[data-layout="phone"][data-phone-config]:not([data-phone-config="list"]) :is(.cfg-rail, .cfg-wizard-title, .cfg-intro) { display: none; }
-:root[data-layout="phone"][data-phone-config]:not([data-phone-config="list"]) .cfg-layout { display: block; }
-:root[data-layout="phone"][data-phone-config]:not([data-phone-config="list"]) .cfg-panel-head h2 { display: none; }
-/* Read-only: the settings show, nothing takes a tap (a label would pass it
-   on to its control), and there is no Save. Only More… still opens. */
-:root[data-layout="phone"][data-phone-config="read"] .cfg-footer { display: none; }
-:root[data-layout="phone"][data-phone-config="read"] .cfg-panel { pointer-events: none; }
-:root[data-layout="phone"][data-phone-config="read"] .cfg-panel .cfg-more > summary { pointer-events: auto; }
-:root[data-layout="phone"][data-phone-config="read"] .cfg-panel :is(input, select, textarea, button) { opacity: 0.7; }
-:root[data-layout="phone"] .cfg-footer { padding-bottom: calc(12px + var(--phone-safe-bottom)); }
-:root[data-layout="phone"] .cfg-footer button { min-height: 40px; }
-
-:root[data-layout="phone"] .phone-config { padding-bottom: 24px; }
-:root[data-layout="phone"] .phone-config-row,
-:root[data-layout="phone"] .phone-config-device {
-  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 10px 0;
-}
-:root[data-layout="phone"] .phone-config-row {
-  background: none; border: 0; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-config-icon { flex: none; width: 28px; text-align: center; font-size: 20px; }
-:root[data-layout="phone"] .phone-config-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-:root[data-layout="phone"] .phone-config-title { color: var(--ui-text-strong); font-size: 15px; font-weight: 600; }
-:root[data-layout="phone"] .phone-config-lede {
-  color: var(--ui-muted-text); font-size: 13px;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-:root[data-layout="phone"] .phone-config-chevron { flex: none; color: var(--ui-muted-text); font-size: 22px; }
-:root[data-layout="phone"] .phone-config-tag { margin-left: 6px; font-weight: 400; vertical-align: 1px; }
-:root[data-layout="phone"] .phone-config-device .ui-btn { flex: none; min-height: 36px; }
-:root[data-layout="phone"] .phone-config-note { margin: 0 0 4px; color: var(--ui-muted-text); font-size: 13px; }
-:root[data-layout="phone"] .phone-config-readonly {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin: 12px var(--phone-gutter) 0; padding: 10px 12px; border-radius: 10px;
-  background: var(--ui-card-bg); border: 1px solid var(--ui-line); color: var(--ui-muted-text); font-size: 14px;
-}
-
-/* Automations (js/phone-automations-island.js) and process runs
-   (js/phone-process-runs.js): lists with a switch and Run now, pushed pages,
-   and the gate cards Now shows. */
-:root[data-layout="phone"] .phone-auto { padding: 0 var(--phone-gutter) 24px; }
-:root[data-layout="phone"] .phone-auto-chips { margin: 8px 0; }
-:root[data-layout="phone"] .phone-auto-tools { margin: 4px 0 6px; }
-:root[data-layout="phone"] .phone-auto-search { width: 100%; font-size: 16px; }
-:root[data-layout="phone"] .phone-auto-row { display: flex; align-items: center; gap: 10px; }
-:root[data-layout="phone"] .phone-auto-open {
-  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  min-height: var(--phone-tap); padding: 10px 0; background: none; border: 0;
-  color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-auto-open:disabled { cursor: default; opacity: 1; }
-:root[data-layout="phone"] .phone-auto-open > span { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-:root[data-layout="phone"] .phone-auto-title { font-weight: 600; color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-auto-sub { color: var(--ui-muted-text); font-size: 13px; }
-:root[data-layout="phone"] .phone-auto-row.off :is(.phone-auto-title, .phone-auto-sub) { opacity: 0.6; }
-:root[data-layout="phone"] .phone-auto-meta { font-size: 13px; color: var(--ui-muted-text); }
-:root[data-layout="phone"] .phone-auto-meta.ok { color: var(--ui-success-line); }
-:root[data-layout="phone"] .phone-auto-meta.bad { color: var(--ui-danger); }
-:root[data-layout="phone"] .phone-auto-meta.warn { color: var(--ui-warn-text); }
-:root[data-layout="phone"] .phone-auto-controls { display: flex; align-items: center; gap: 10px; flex: none; }
-:root[data-layout="phone"] .phone-auto-controls .ui-btn { min-height: 36px; }
-:root[data-layout="phone"] .phone-auto-run {
-  width: 40px; height: 40px; border-radius: 50%; flex: none;
-  background: var(--ui-bg); border: 1px solid var(--ui-line); color: var(--ui-text-strong); font-size: 14px; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-auto-switch { transform: scale(1.25); margin: 0 4px; }
-:root[data-layout="phone"] .phone-auto-pager { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 0; }
-:root[data-layout="phone"] .phone-section-title { margin: 18px 0 6px; }
-:root[data-layout="phone"] .phone-auto-page { padding: 12px var(--phone-gutter) 24px; }
-:root[data-layout="phone"] .phone-auto-summary { margin: 0 0 10px; color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-auto-facts { display: grid; grid-template-columns: 96px 1fr; gap: 8px 12px; margin: 0; font-size: 14px; }
-:root[data-layout="phone"] .phone-auto-facts dt { color: var(--ui-muted-text); }
-:root[data-layout="phone"] .phone-auto-facts dd { margin: 0; color: var(--ui-text-strong); overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-auto-history { list-style: none; margin: 0; padding: 0; }
-:root[data-layout="phone"] .phone-auto-history > li { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--ui-line); }
-:root[data-layout="phone"] .phone-auto-log {
-  font-family: var(--ui-mono, ui-monospace, monospace); font-size: 12px; color: var(--ui-muted-text); overflow-wrap: anywhere;
-}
-
-:root[data-layout="phone"] .phone-runs .phone-section-title:first-child { margin-top: 8px; }
-:root[data-layout="phone"] .phone-run-open {
-  display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--phone-tap); padding: 10px 0;
-  background: none; border: 0; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-run-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-:root[data-layout="phone"] .phone-run-name { font-weight: 600; color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-run-sub { color: var(--ui-muted-text); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-:root[data-layout="phone"] .phone-run-page { padding: 12px var(--phone-gutter) 24px; }
-:root[data-layout="phone"] .phone-run-facts { margin: 0 0 4px; color: var(--ui-muted-text); font-size: 13px; }
-:root[data-layout="phone"] .phone-run-steps { list-style: none; margin: 0; padding: 0; }
-:root[data-layout="phone"] .phone-run-step { display: flex; align-items: center; gap: 10px; min-height: 36px; font-size: 14px; }
-:root[data-layout="phone"] .phone-run-step-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-run-step-meta { color: var(--ui-muted-text); font-size: 13px; }
-:root[data-layout="phone"] .phone-run-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--ui-line); }
-:root[data-layout="phone"] .phone-run-step.s-done .phone-run-dot { background: var(--ui-success-line); }
-:root[data-layout="phone"] .phone-run-step.s-running .phone-run-dot { background: var(--ui-focus); }
-:root[data-layout="phone"] .phone-run-step.s-failed .phone-run-dot { background: var(--ui-danger); }
-:root[data-layout="phone"] .phone-run-step.s-waiting .phone-run-dot { background: var(--ui-warn-text); }
-:root[data-layout="phone"] .phone-run-step.mine { font-weight: 600; color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-run-step.mine .phone-run-step-meta { color: var(--ui-warn-text); }
-:root[data-layout="phone"] .phone-gate { margin: 8px 0 12px; }
-:root[data-layout="phone"] .phone-gate-card { padding: 10px; }
-:root[data-layout="phone"] .phone-gate-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
-:root[data-layout="phone"] .phone-gate-head .phone-link { margin-left: auto; }
-:root[data-layout="phone"] .phone-gate-title { font-weight: 600; color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-gate-prompt { margin: 4px 0 8px; color: var(--ui-text); font-size: 14px; }
-:root[data-layout="phone"] .phone-gate .grf-decide textarea { width: 100%; font-size: 16px; }
-:root[data-layout="phone"] .phone-gate .grf-verdicts { display: flex; gap: 8px; margin-top: 8px; }
-:root[data-layout="phone"] .phone-gate .grf-verdicts .ui-btn { flex: 1; min-height: 42px; }
-:root[data-layout="phone"] .phone-run-wait { margin: 8px 0 12px; color: var(--ui-warn-text); }
-:root[data-layout="phone"] .phone-run-wait .phone-desktop-only { margin-top: 8px; }
+:root[data-layout="phone"] .modal-overlay .ui-dialog :is(input, textarea, select) { max-width: 100%; }
+/* The shared form rows (.cron-create-row, 33 dialogs): the label goes above
+   its field instead of in a 72px column, so the field gets the full width. */
+:root[data-layout="phone"] .modal-overlay .ui-dialog { --cron-label-w: 0px; }
+:root[data-layout="phone"] .modal-overlay .cron-create-row { flex-wrap: wrap; row-gap: 4px; font-size: 14px; }
+:root[data-layout="phone"] .modal-overlay .cron-create-row .cron-create-label { flex: 1 0 100%; padding-top: 0; }
 
 /* What a phone leaves out (js/phone-desktop-only.js): a line inside a view,
    or a page standing in for the whole view. */
@@ -598,135 +280,3 @@
 :root[data-layout="phone"] .phone-desktop-page-icon { font-size: 40px; margin-bottom: 10px; }
 :root[data-layout="phone"] .phone-desktop-page-title { margin: 0 0 8px; font-size: 18px; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-desktop-page-go { margin-top: 18px; min-height: var(--phone-tap); padding: 0 24px; }
-
-/* Access (js/phone-access-island.js). */
-:root[data-layout="phone"] .phone-access-chips { margin-bottom: 12px; }
-:root[data-layout="phone"] .phone-access-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 0; }
-:root[data-layout="phone"] .phone-access-row .ui-btn { flex: none; min-height: 38px; }
-:root[data-layout="phone"] .phone-access-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-:root[data-layout="phone"] .phone-access-name { font-weight: 600; color: var(--ui-text-strong); overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-access-id { font-weight: 400; color: var(--ui-muted-text); font-size: 12px; }
-:root[data-layout="phone"] :is(.phone-access-sub, .phone-access-desc) { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-access-desc {
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-:root[data-layout="phone"] .phone-access-left { color: var(--ui-warn-text); font-size: 13px; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-access-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
-:root[data-layout="phone"] .phone-access-slug { font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-access-slug.deny { color: var(--ui-danger); }
-:root[data-layout="phone"] .phone-access-defaults { margin-bottom: 8px; color: var(--ui-muted-text); font-size: 13px; }
-:root[data-layout="phone"] .phone-access-defaults summary { min-height: var(--phone-tap); display: flex; align-items: center; cursor: pointer; }
-:root[data-layout="phone"] .phone-access-defaults > div { display: flex; flex-wrap: wrap; gap: 4px; }
-:root[data-layout="phone"] .phone-access-search { width: 100%; min-height: var(--phone-tap); font-size: 16px; margin-bottom: 6px; }
-
-/* Usage › Costs: each agent's row is two lines (name and cost, then harness,
-   model and last activity) instead of a six-column table wider than the
-   phone. The header stays as a row of sort buttons. */
-:root[data-layout="phone"] #costs-table :is(table, thead, tbody) { display: block; width: 100%; }
-:root[data-layout="phone"] #costs-table thead tr { display: flex; flex-wrap: wrap; gap: 4px 12px; padding-bottom: 6px; }
-:root[data-layout="phone"] #costs-table tbody tr {
-  display: grid; grid-template-columns: auto minmax(0, auto) minmax(0, 1fr) auto auto;
-  align-items: center; border-bottom: 1px solid var(--ui-line);
-}
-/* Cells keep the table density; the row draws the one line under them. */
-:root[data-layout="phone"] #costs-table tbody td { border: 0; min-width: 0; width: auto; max-width: none; }
-:root[data-layout="phone"] #costs-table tbody td:nth-child(1) { grid-area: 1 / 1 / 2 / 4; overflow-wrap: anywhere; }
-:root[data-layout="phone"] #costs-table tbody td:nth-child(2) { grid-area: 1 / 4 / 3 / 5; text-align: right; }
-:root[data-layout="phone"] #costs-table tbody td:nth-child(6) { grid-area: 1 / 5 / 3 / 6; }
-:root[data-layout="phone"] #costs-table tbody :is(td:nth-child(3), td:nth-child(4), td:nth-child(5)) {
-  grid-row: 2; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-:root[data-layout="phone"] #costs-table tbody .cost-total-row td:nth-child(2) { white-space: normal; }
-
-/* Diagnostics (js/phone-diagnostics.js for Audit and Logs). The desktop's
-   sub-nav becomes a row of chips, Doctor first: the view that asks something
-   of the operator. Doctor stacks its category list over its checks;
-   Performance shows the endpoint cards (latency and a sparkline) and leaves
-   daemon profiling and the phase breakdowns to the desktop. */
-:root[data-layout="phone"] #tab-diagnostics .activity-subnav {
-  display: flex; flex-wrap: nowrap; overflow-x: auto; max-width: 100%; margin-bottom: 12px;
-}
-:root[data-layout="phone"] #tab-diagnostics .activity-subtab { flex: none; min-height: 36px; font-size: 14px; }
-:root[data-layout="phone"] #tab-diagnostics .activity-subtab[data-subtab="doctor"] { order: -1; }
-:root[data-layout="phone"] .phone-diag-filters { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
-:root[data-layout="phone"] .phone-diag-search { flex: 1; min-width: 0; min-height: var(--phone-tap); font-size: 16px; }
-:root[data-layout="phone"] .phone-diag-filters :is(.ui-btn, select) { flex: none; min-height: var(--phone-tap); font-size: 14px; }
-:root[data-layout="phone"] .phone-diag-toggle.on { border-color: var(--ui-focus); color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-diag-count { margin: 4px 0; font-size: 12px; }
-:root[data-layout="phone"] .phone-diag-row > summary {
-  display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 0;
-  list-style: none; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-diag-row > summary::-webkit-details-marker { display: none; }
-:root[data-layout="phone"] .phone-diag-row > summary::before { content: none; }
-:root[data-layout="phone"] .phone-diag-time {
-  flex: none; width: 46px; color: var(--ui-muted-text); font-size: 12px; font-variant-numeric: tabular-nums;
-}
-:root[data-layout="phone"] .phone-diag-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-:root[data-layout="phone"] :is(.phone-diag-head, .phone-diag-sub) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-:root[data-layout="phone"] .phone-diag-head { color: var(--ui-text-strong); font-weight: 600; }
-:root[data-layout="phone"] .phone-diag-sub { color: var(--ui-muted-text); font-size: 12px; }
-:root[data-layout="phone"] .phone-diag-mono { font-family: ui-monospace, monospace; }
-:root[data-layout="phone"] .phone-diag-outcome { flex: none; }
-:root[data-layout="phone"] .phone-diag-row[open] .phone-diag-head { white-space: normal; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-diag-detail {
-  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px;
-  margin: 0 0 10px 56px; font-size: 13px;
-}
-:root[data-layout="phone"] .phone-diag-detail dt { color: var(--ui-muted-text); }
-:root[data-layout="phone"] .phone-diag-detail dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
-:root[data-layout="phone"] .phone-diag-pages { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
-:root[data-layout="phone"] .phone-diag-pages .ui-btn { min-height: var(--phone-tap); }
-
-:root[data-layout="phone"] .doctor-island { display: block; min-height: 0; }
-:root[data-layout="phone"] .doctor-side {
-  flex-direction: row; flex-wrap: nowrap; overflow-x: auto; padding: 0; border-right: 0; border-bottom: 1px solid var(--ui-line); border-radius: 6px 6px 0 0;
-}
-:root[data-layout="phone"] .doctor-side button {
-  flex: none; min-height: var(--phone-tap); border-left: 0; border-bottom: 2px solid transparent; white-space: nowrap;
-}
-:root[data-layout="phone"] .doctor-side button.on { border-bottom-color: var(--ui-focus); }
-:root[data-layout="phone"] .doctor-sep { display: none; }
-:root[data-layout="phone"] .doctor-main { padding: 12px; }
-:root[data-layout="phone"] .doctor-head { flex-wrap: wrap; }
-:root[data-layout="phone"] .doctor-choice { grid-template-columns: 1fr; }
-:root[data-layout="phone"] .doctor-acts .ui-btn { min-height: 38px; }
-
-:root[data-layout="phone"] #activity-performance #profiles-root,
-:root[data-layout="phone"] #activity-performance .filter-bar > .muted:first-child,
-:root[data-layout="phone"] .debug-card > :not(.debug-card-head, .debug-spark, .empty) {
-  display: none;
-}
-:root[data-layout="phone"] .debug-card-head .spacer { flex-basis: 100%; height: 0; }
-
-/* Plugins (js/phone-plugins.js): a card per plugin, its steps as rows. */
-:root[data-layout="phone"] .phone-plugin { padding: 12px; margin-bottom: 10px; }
-:root[data-layout="phone"] :is(.phone-plugin-head, .phone-plugin-step) { display: flex; align-items: center; gap: 10px; }
-:root[data-layout="phone"] .phone-plugin-head { min-height: var(--phone-tap); }
-:root[data-layout="phone"] .phone-plugin-dot { flex: none; width: 14px; text-align: center; }
-:root[data-layout="phone"] .phone-plugin-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-:root[data-layout="phone"] .phone-plugin-name { color: var(--ui-text-strong); font-weight: 600; overflow-wrap: anywhere; }
-:root[data-layout="phone"] :is(.phone-plugin-sub, .phone-plugin-out) {
-  color: var(--ui-muted-text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-:root[data-layout="phone"] .phone-plugin-out { font-family: ui-monospace, monospace; }
-:root[data-layout="phone"] .phone-plugin-steps { list-style: none; margin: 8px 0 0; padding: 0; }
-:root[data-layout="phone"] .phone-plugin-step { min-height: var(--phone-tap); border-top: 1px solid var(--ui-line); padding: 4px 0; }
-:root[data-layout="phone"] .phone-plugin-act { flex: none; min-width: var(--phone-tap); min-height: 38px; }
-:root[data-layout="phone"] .phone-plugin-check { margin: 10px 0 0; }
-
-/* Fleet (js/phone-fleet.js), read-only: this node, then its peers. */
-:root[data-layout="phone"] .phone-fleet-self { padding: 12px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 4px; }
-:root[data-layout="phone"] .phone-fleet-self .ui-tag { margin-left: 6px; font-weight: 400; vertical-align: 1px; }
-:root[data-layout="phone"] .phone-fleet-id { color: var(--ui-muted-text); font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-fleet-hub { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-fleet-hub.hub-connected { color: var(--ui-success-line); }
-:root[data-layout="phone"] .phone-fleet-hub:is(.hub-refused, .hub-disconnected) { color: var(--ui-danger); }
-:root[data-layout="phone"] .phone-fleet-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 0; }
-:root[data-layout="phone"] .phone-fleet-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--ui-line); }
-:root[data-layout="phone"] .phone-fleet-dot.online { background: var(--ui-success-line); }
-:root[data-layout="phone"] .phone-fleet-dot.asking { background: var(--ui-warn-text); }
-:root[data-layout="phone"] .phone-fleet-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-:root[data-layout="phone"] .phone-fleet-name { font-weight: 600; color: var(--ui-text-strong); overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-fleet-sub { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-fleet-when { flex: none; color: var(--ui-muted-text); font-size: 13px; }
