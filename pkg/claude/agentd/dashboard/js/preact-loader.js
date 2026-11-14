@@ -745,13 +745,11 @@ const pluginsDescriptor = createIslandDescriptor({
     },
     failureClass: 'plugins-error',
     load: async ({ hosts: { host, badgeHost, modalHost }, dependencies: actionDependencies }) => {
-      // A phone shows a card per plugin (phone-plugins.js), without the editor.
-      const islandModule = isPhone ? import('./phone-plugins.js') : import('./plugins-island.js');
+      const island = loadPluginsIsland();
       const stateModule = import('./plugins-state.js');
       const actionsModule = import('./plugins-actions.js');
-      const [islandExports, { pluginsState }, { createPluginsActions }] =
-        await Promise.all([islandModule, stateModule, actionsModule]);
-      const mountPluginsIsland = isPhone ? islandExports.mountPhonePluginsIsland : islandExports.mountPluginsIsland;
+      const [{ pluginsState }, { createPluginsActions }] = await Promise.all([stateModule, actionsModule]);
+      const mountPluginsIsland = await island;
       const pluginsActions = createPluginsActions({ ...actionDependencies, state: pluginsState });
       return {
         state: pluginsState,
@@ -1023,19 +1021,47 @@ export function mountMessagesFeature(dependencies = {}) {
   return mountIslandDescriptor(isPhone ? phoneMessagesDescriptor : messagesDescriptor, dependencies);
 }
 
+// A phone shows the log and the audit log as two-line rows
+// (phone-diagnostics.js), and a card per plugin (phone-plugins.js), on the
+// desktop views' state and actions.
+async function loadLogsIsland() {
+  if (isPhone) {
+    const { mountPhoneLogsIsland } = await import('./phone-diagnostics.js');
+    return mountPhoneLogsIsland;
+  }
+  const { mountLogsIsland } = await import('./logs-island.js');
+  return mountLogsIsland;
+}
+
+async function loadAuditIsland() {
+  if (isPhone) {
+    const { mountPhoneAuditIsland } = await import('./phone-diagnostics.js');
+    return mountPhoneAuditIsland;
+  }
+  const { mountAuditIsland } = await import('./audit-island.js');
+  return mountAuditIsland;
+}
+
+async function loadPluginsIsland() {
+  if (isPhone) {
+    const { mountPhonePluginsIsland } = await import('./phone-plugins.js');
+    return mountPhonePluginsIsland;
+  }
+  const { mountPluginsIsland } = await import('./plugins-island.js');
+  return mountPluginsIsland;
+}
+
 export async function mountLogsFeature(actionDependencies = {}) {
   const host = document.querySelector('#logs-root');
   if (!host) return null;
   return mountFeatureIsland({
     name: 'logs', label: 'Logs', hosts: [host], failureClass: 'logs-error',
     load: async () => {
-      // A phone shows the log as two-line rows (phone-diagnostics.js).
-      const islandModule = isPhone ? import('./phone-diagnostics.js') : import('./logs-island.js');
+      const island = loadLogsIsland();
       const stateModule = import('./logs-state.js');
       const actionsModule = import('./logs-actions.js');
-      const [islandExports, { logsState }, { createLogsActions }] =
-        await Promise.all([islandModule, stateModule, actionsModule]);
-      const mountLogsIsland = isPhone ? islandExports.mountPhoneLogsIsland : islandExports.mountLogsIsland;
+      const [{ logsState }, { createLogsActions }] = await Promise.all([stateModule, actionsModule]);
+      const mountLogsIsland = await island;
       const logsActions = createLogsActions({ state: logsState, ...actionDependencies });
       return {
         state: logsState,
@@ -1148,12 +1174,11 @@ export async function mountAuditFeature(actionDependencies = {}) {
   return mountFeatureIsland({
     name: 'audit', label: 'Audit', hosts: [host], failureClass: 'audit-error',
     load: async () => {
-      // A phone shows the audit log as two-line rows (phone-diagnostics.js).
-      const islandModule = isPhone ? import('./phone-diagnostics.js') : import('./audit-island.js');
+      const island = loadAuditIsland();
       const stateModule = import('./audit-state.js');
       const actionsModule = import('./audit-actions.js');
-      const [islandExports, { auditState }, { createAuditActions }] = await Promise.all([islandModule, stateModule, actionsModule]);
-      const mountAuditIsland = isPhone ? islandExports.mountPhoneAuditIsland : islandExports.mountAuditIsland;
+      const [{ auditState }, { createAuditActions }] = await Promise.all([stateModule, actionsModule]);
+      const mountAuditIsland = await island;
       const auditActions = createAuditActions({ state: auditState, ...actionDependencies });
       return { state: auditState, mount: (registerCleanup) => mountAuditIsland({ host, state: auditState, actions: auditActions, registerCleanup }) };
     },
