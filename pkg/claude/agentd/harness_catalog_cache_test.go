@@ -109,6 +109,13 @@ func TestHarnessCatalogRefreshPanicKeepsPreviousCatalog(t *testing.T) {
 	}, 5*time.Second, 5*time.Millisecond)
 	require.Equal(t, int32(2), builds.Load())
 	require.Equal(t, "good", cachedHarnessCatalog()[0].Name)
+
+	// The panic did not leave the refresh stuck: once stale again, a read
+	// starts another rebuild.
+	ageHarnessCatalogForTest()
+	require.Equal(t, "good", cachedHarnessCatalog()[0].Name)
+	require.Eventually(t, func() bool { return builds.Load() >= 3 }, 5*time.Second, 5*time.Millisecond,
+		"no rebuild retried after a panicked one")
 }
 
 // The one-shot read rebuilds inline only when the cache is older than asked.
