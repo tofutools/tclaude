@@ -6,7 +6,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const AGENT = 'agt_00000000000000000000000000000001';
 
-async function setup(t, { startOnNow = true, available = () => true } = {}) {
+async function setup(t, { startOnNow = true, available = () => true, processes = null } = {}) {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, island] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -29,17 +29,23 @@ async function setup(t, { startOnNow = true, available = () => true } = {}) {
     error: signal(''),
     context: signal({ groups: [{ group: 'webshop', counts: { live: 1 }, tasks: [{ id: 'tk_1', title: 'Ship it', status: 'open', stage: 'next' }] }] }),
   };
+  // The process read model Now reads its gates from; no runs unless a test
+  // gives some.
+  const processSource = {
+    context: signal(processes), status: signal('ready'), error: signal(''), refreshes: 0,
+    refresh() { this.refreshes += 1; return Promise.resolve(); },
+  };
   state.beginRequest();
   state.commitRequest(1, {
     groups: [{ name: 'webshop', members: [{ agent_id: AGENT, conv_id: 'c1', title: 'checkout-ui', online: true, state: { status: 'awaiting_input' } }] }],
     messages_unread: 3, access_requests_pending: 0,
   });
   const mounted = await harness.mount(harness.html`<${island.PhoneShell} shell=${shell} state=${state} actions=${actions}
-    boardSource=${boardSource} fetchImpl=${async () => ({ ok: true })} />`);
+    boardSource=${boardSource} processSource=${processSource} fetchImpl=${async () => ({ ok: true })} />`);
   const root = harness.document.documentElement;
   const navItem = (label) => [...mounted.container.querySelectorAll('.phone-nav-item')].find((b) => b.textContent.includes(label));
   const tap = (element) => harness.act(() => element.click());
-  return { harness, state, shell, calls, mounted, root, navItem, tap };
+  return { harness, state, shell, calls, mounted, root, navItem, tap, processSource };
 }
 
 test('a fresh load lands on Now, with the counts on the nav', async (t) => {
@@ -180,4 +186,21 @@ test('a tab\'s pushed page takes the top bar and the bottom edge until it goes',
   await tap(navItem('Agents'));
   assert.equal(phonePage.value, null);
   assert.equal(mounted.container.querySelector('.phone-bar-back'), null);
+});
+
+test('a process run waiting on the operator is a gate card on Now and counts as needing you', async (t) => {
+  const processes = {
+    runs: { run_1: { runId: 'run_1', name: 'Release train', status: 'running', nodes: [
+      { id: 'gate', label: 'Checks pass?', kind: 'decision', state: 'awaiting', performer: { kind: 'human' } },
+    ], edges: [] } },
+    groups: [{ group: 'webshop', needsYou: ['run_1'], active: ['run_1'], done: [] }],
+  };
+  const { mounted, navItem, processSource } = await setup(t, { processes });
+  const needs = mounted.container.querySelector('[aria-label="Needs you"]');
+  const card = needs.querySelector('.phone-gate-card');
+  assert.ok(card, 'the gate has a card');
+  assert.match(card.textContent, /Release train/);
+  assert.match(card.textContent, /webshop/);
+  assert.equal(navItem('Now').querySelector('.ui-badge').textContent, '2', 'the asking agent and the gate');
+  assert.ok(processSource.refreshes >= 1, 'Now reads the runs while it shows');
 });
