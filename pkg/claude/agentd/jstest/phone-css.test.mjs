@@ -18,6 +18,22 @@ const DASHBOARD = new URL('../dashboard/', import.meta.url);
 const read = (file) => readFileSync(new URL(file, DASHBOARD), 'utf8');
 const SCOPE = ':root[data-layout="phone"]';
 
+// withoutComments drops every <!-- … --> from a page shell, so the checks
+// below look at markup and not at the comments that describe it. A scan
+// rather than a regex replace: an unterminated comment drops the rest.
+function withoutComments(html) {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const open = html.indexOf('<!--', at);
+    if (open < 0) return out + html.slice(at);
+    out += html.slice(at, open);
+    const close = html.indexOf('-->', open + 4);
+    if (close < 0) return out;
+    at = close + 3;
+  }
+}
+
 // cssSelectors returns every style-rule selector in a stylesheet, one entry
 // per comma-separated selector, skipping at-rule preludes (@media …) and
 // keyframe steps.
@@ -85,7 +101,7 @@ test('phone rules live only in phone.css', () => {
 
 test('the desktop page carries no viewport meta and no phone sheet', () => {
   for (const page of ['dashboard.html']) {
-    const html = read(page).replace(/<!--[\s\S]*?-->/g, '');
+    const html = withoutComments(read(page));
     assert.doesNotMatch(html, /<meta[^>]+name=["']?viewport/i, `${page}: the viewport meta is phone-only (layout-boot.js adds it)`);
     assert.doesNotMatch(html, /phone\.css/, `${page}: phone.css is linked by layout-boot.js in phone mode only`);
     assert.doesNotMatch(html, /data-layout/, `${page}: data-layout is set by layout-boot.js in phone mode only`);
@@ -93,7 +109,7 @@ test('the desktop page carries no viewport meta and no phone sheet', () => {
 });
 
 test('layout-boot.js is a blocking head script after the last stylesheet', () => {
-  const html = read('dashboard.html').replace(/<!--[\s\S]*?-->/g, '');
+  const html = withoutComments(read('dashboard.html'));
   const tag = html.match(/<script\b[^>]*src="\/static\/js\/layout-boot\.js"[^>]*>/);
   assert.ok(tag, 'dashboard.html loads layout-boot.js');
   assert.doesNotMatch(tag[0], /\b(type=|defer|async)/, 'a classic, blocking script');
