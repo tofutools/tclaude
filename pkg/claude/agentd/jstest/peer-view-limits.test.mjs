@@ -407,3 +407,34 @@ test('a spawn without the peer\'s spawn grant is marked as a request, group by g
   assert.equal(mod.spawnRequestRule('x', { ...view, level: 'unrestricted' }), '');
   assert.match(mod.spawnRequestRule('S', view, (g) => `${g}@forge`, '#root [data-act]'), /:not\(\[data-group="build@forge"\], #root \[data-act\]\)/);
 });
+
+test('nodeShares and pageShares gate a peer route on the snapshot: a peer page asks nothing before it arrives', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/peer-view-limits.js');
+  const restricted = { peer_view: { level: 'restricted', included: ['groups'], omitted: [{ feature: 'spawn.catalog', requires: 'node.spawn.read' }] } };
+  const sharing = { peer_view: { level: 'restricted', included: ['groups', 'spawn.catalog'], omitted: [] } };
+  const trusted = { peer_view: { level: 'unrestricted', included: [], omitted: [] } };
+
+  assert.equal(mod.nodeShares(null, 'spawn.catalog'), false, 'nobody can tell before the snapshot');
+  assert.equal(mod.nodeShares({ groups: [] }, 'local_dashboard'), true, 'this node shares everything with its own page');
+  assert.equal(mod.nodeShares(restricted, 'spawn.catalog'), false);
+  assert.equal(mod.nodeShares(sharing, 'spawn.catalog'), true);
+  assert.equal(mod.nodeShares(restricted, 'local_dashboard'), false, 'the routes without a peer grant are local to a restricted peer');
+  assert.equal(mod.nodeShares(trusted, 'local_dashboard'), true);
+  assert.equal(mod.nodeShares(trusted, 'spawn.catalog'), true, 'unrestricted trust reaches what it does not list');
+
+  const remote = { id: 'inst_forge' };
+  assert.equal(mod.pageShares('local_dashboard', { remote: null, snapshot: null }), true, "this node's page does not wait");
+  assert.equal(mod.pageShares('local_dashboard', { remote, snapshot: null }), false, "a peer's page waits for its snapshot");
+  assert.equal(mod.pageShares('local_dashboard', { remote, snapshot: restricted }), false);
+  assert.equal(mod.pageShares('local_dashboard', { remote, snapshot: trusted }), true);
+
+  harness.document.documentElement.dataset.remoteNodeName = 'forge';
+  t.after(() => { delete harness.document.documentElement.dataset.remoteNodeName; });
+  assert.equal(mod.pageWithheld('local_dashboard', 'The relaunch policy', { remote: null, snapshot: restricted }), '');
+  assert.equal(mod.pageWithheld('local_dashboard', 'The relaunch policy', { remote, snapshot: null }), '', 'not yet known: nothing to say');
+  assert.equal(mod.pageWithheld('local_dashboard', 'The relaunch policy', { remote, snapshot: trusted }), '');
+  assert.equal(mod.pageWithheld('local_dashboard', 'The relaunch policy', { remote, snapshot: restricted }),
+    'forge does not share the relaunch policy with you (needs unrestricted trust)');
+  assert.equal(mod.pageWithheld('spawn.catalog', 'Its catalogs', { remote, snapshot: sharing }), '');
+});

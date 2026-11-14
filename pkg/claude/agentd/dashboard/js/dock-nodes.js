@@ -11,7 +11,7 @@
 // section's header with the reason.
 
 import { signal } from '@preact/signals';
-import { featureNeeds, featureState } from './peer-view-limits.js';
+import { featureNeeds, nodeShares } from './peer-view-limits.js';
 
 // fusedDock is null off the fused view; else { nodes, snapshots, failures,
 // page, fetchFor }: failures maps a node to its last failed read,
@@ -54,16 +54,28 @@ const CATALOG_FEATURE = 'spawn.catalog';
 // catalogWithheld is why a node lists no catalogs here: '' when it shares
 // them (this node, an unrestricted peer, or a peer granting the read), a
 // reason otherwise. A node not read yet is 'loading', unless its read failed.
-export function catalogWithheld(node, snapshot, failure = null) {
+// A section whose items ride another peer feature names it (peer: { feature,
+// what }): the usage budgets travel only in an unrestricted peer's snapshot,
+// so no grant opens them and the reason must not name node.spawn.read.
+export function catalogWithheld(node, snapshot, failure = null, peer = null) {
   if (!snapshot) {
     if (!failure) return 'loading';
     return failure.code === 'not_trusted' ? `${node.name} no longer trusts this node.` : `${node.name} is not answering, so its catalogs are not listed.`;
   }
-  const pv = snapshot.peer_view;
-  if (!pv || pv.level === 'unrestricted') return '';
-  if (featureState(CATALOG_FEATURE, pv) === 'shared') return '';
-  const needs = featureNeeds(CATALOG_FEATURE, pv) || 'node.spawn.read';
-  return `${node.name} keeps its catalogs to itself: it needs ${needs}.`;
+  const feature = peer?.feature || CATALOG_FEATURE;
+  if (nodeShares(snapshot, feature)) return '';
+  const needs = featureNeeds(feature, snapshot.peer_view) || (peer ? 'unrestricted trust' : 'node.spawn.read');
+  return `${node.name} keeps ${peer?.what || 'its catalogs'} to itself: it needs ${needs}.`;
+}
+
+// pageCatalogWithheld is catalogWithheld for the node the page shows: '' on
+// this node's page, else the page's peer's reason, 'loading' until its
+// snapshot says. A section that loads its own items (sandbox profiles) waits
+// for it, and one the peer withholds says so instead of '(none yet)'.
+export function pageCatalogWithheld(snapshot, peer = null, remote = globalThis.__tclaudeRemoteNode) {
+  if (!remote?.id) return '';
+  const name = globalThis.document?.documentElement?.dataset?.remoteNodeName || 'This peer';
+  return catalogWithheld({ id: remote.id, name }, snapshot, null, peer);
 }
 
 // nodeTrustLock is the 🔒 reason of a change to a node's catalog item from

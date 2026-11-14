@@ -4,6 +4,8 @@
 // an older peer may have had them switched off by its retired feature flag.
 // Before a snapshot arrives, this node's chrome shows.
 
+import { nodeShares } from './peer-view-limits.js';
+
 function peerSnapshot(snapshot) {
   return !!snapshot?.peer_view;
 }
@@ -18,10 +20,11 @@ export function triggersAvailable(snapshot) {
 
 // triggersReadable reports whether a page can read a node's trigger rules
 // (/api/triggers) through its snapshot: this node, or a peer that offers
-// Triggers and trusts this node unrestricted. To any other peer the route is
-// local-only (peer_view_local_only), so the page does not ask. It waits for
-// the snapshot: before it arrives a peer page cannot tell (tk_56c664c0).
+// Triggers and shares its local dashboard routes (unrestricted trust). To any
+// other peer the route is local-only (peer_view_local_only), so the page does
+// not ask. Like every nodeShares gate it waits for the snapshot: before it
+// arrives a peer page cannot tell (tk_56c664c0).
 export function triggersReadable(snapshot) {
-  if (!snapshot) return false;
-  return !peerSnapshot(snapshot) || (snapshot.triggers_enabled === true && snapshot.peer_view?.level === 'unrestricted');
+  if (!nodeShares(snapshot, 'local_dashboard')) return false;
+  return !peerSnapshot(snapshot) || snapshot.triggers_enabled === true;
 }

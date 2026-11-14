@@ -477,11 +477,18 @@ const createOn = (node, create) => async (body) => {
 //                       another node (dockNodeOps.copy)
 //   afterProcesses      render after the Processes section, which the dock
 //                       draws itself between the snapshot sections
+//   peer                { feature, what }: the peer-view feature its items
+//                       ride on a peer, when not the spawn catalog
+//                       (dock-nodes.js catalogWithheld)
 //
 // `drag` gates the draggable attribute (dock-dnd.js's dragstart still keys off
 // data-dock-kind): all three kinds drop onto a group — profiles + roles open
 // the spawn dialog prefilled (JOH-375 2/4), templates open the unified summon
 // dialog with a drop-mode chooser (JOH-377 4/4).
+
+// USAGE_PEER: a peer's usage budgets and limits travel only in the full
+// snapshot unrestricted trust reads; no peer grant opens them.
+const USAGE_PEER = Object.freeze({ feature: 'local_dashboard', what: 'its usage budgets' });
 
 export const dockSections = Object.freeze([
   {
@@ -644,6 +651,7 @@ export const dockSections = Object.freeze([
     key: 'usage_profiles',
     // Budgets for each agent; global and group limits live in the manager.
     afterProcesses: true,
+    peer: USAGE_PEER,
     icon: () => wizWord('💰', '💰'),
     title: () => wizWord('Usage profiles', 'Tithes'),
     empty: () => wizWord('no usage profiles yet', 'no tithes yet'),
@@ -670,6 +678,7 @@ export const dockSections = Object.freeze([
     // The active global, group and fleet limits with their readings; each
     // carries its alert ladder. Disabled ones live in the manager.
     afterProcesses: true,
+    peer: USAGE_PEER,
     icon: () => wizWord('🚦', '🚦'),
     title: () => wizWord('Usage limits & alerts', 'Coffer wards'),
     empty: () => wizWord('no active usage limits', 'no coffer wards'),
