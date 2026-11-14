@@ -350,3 +350,55 @@
   color: var(--ui-muted-text); font: inherit; font-size: 16px; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-mail :is(.phone-empty, .ui-error-box) { margin: 12px var(--phone-gutter); }
+
+/* ── Agents (js/phone-agents-island.js) ─────────────────────────────────────
+   The Groups tab shows the phone's Agents list. The desktop tree under it
+   stays mounted but out of sight and out of the way: a task's ?task= link
+   opens its form from a group's board in that tree, and that form is a fixed
+   overlay, which a collapsed ancestor neither clips nor hides once it is
+   visible again. */
+:root[data-layout="phone"] #tab-groups > :not(#phone-agents-root):not(#groups-list) { display: none; }
+/* The fleet's fused scope (html.scope-fused, dashboard.css) hides every child
+   of the tab but its fused tree; on a phone the Agents list stays instead. */
+:root[data-layout="phone"].scope-fused #tab-groups > #phone-agents-root { display: block !important; }
+:root[data-layout="phone"] #groups-list {
+  height: 0; overflow: hidden; visibility: hidden;
+}
+:root[data-layout="phone"] #groups-list :is(.modal-overlay, .manage-overlay) { visibility: visible; }
+
+:root[data-layout="phone"] .phone-agents-spawn { min-height: 32px; }
+:root[data-layout="phone"] .phone-agent-row {
+  display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%;
+  min-height: 56px; padding: 9px 0; background: none; border: 0;
+  color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-agent-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+:root[data-layout="phone"] .phone-agent-title {
+  flex: 1; min-width: 0; font-weight: 600; color: var(--ui-text-strong);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-layout="phone"] .phone-agent-state { flex: none; }
+:root[data-layout="phone"] .phone-agent-meta,
+:root[data-layout="phone"] .phone-agent-why {
+  color: var(--ui-muted-text); font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-layout="phone"] .phone-agent-why { color: var(--ui-warn-text); }
+:root[data-layout="phone"] .phone-agent-row.v-offline .phone-agent-title { color: var(--ui-muted-text); font-weight: 500; }
+:root[data-layout="phone"] .phone-agent-pr.ci-passing { color: var(--ui-success-line); }
+:root[data-layout="phone"] .phone-agent-pr.ci-failing { color: var(--ui-danger-text); }
+:root[data-layout="phone"] .phone-agents-offline { margin-top: 6px; }
+:root[data-layout="phone"] .phone-agents-offline > summary {
+  min-height: var(--phone-tap); display: flex; align-items: center;
+  color: var(--ui-muted-text); cursor: pointer;
+}
+
+:root[data-layout="phone"] .phone-agent-sheet-name {
+  flex: 1; min-width: 0; margin: 0; font-size: 18px; color: var(--ui-text-strong);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-layout="phone"] .phone-agent-sheet-meta { margin: 6px 0 0; color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-agent-sheet-meta a { color: var(--ui-focus); }
+:root[data-layout="phone"] .phone-agent-cwd { font-family: ui-monospace, monospace; font-size: 12px; }
+:root[data-layout="phone"] .phone-agent-sheet .phone-menu { margin-top: 10px; }
+:root[data-layout="phone"] .phone-agent-state.v-working { color: var(--ui-success-line); border-color: var(--ui-success); }

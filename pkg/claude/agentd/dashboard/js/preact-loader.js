@@ -171,6 +171,54 @@ export function mountPhoneShellFeature(dependencies = {}) {
   return mountIslandDescriptor(phoneShellDescriptor, dependencies);
 }
 
+// The phone's Agents view (phone-agents-island.js): the Groups tab in the
+// phone layout. It mounts only on a phone. The desktop Groups island still
+// mounts there, out of sight (phone.css), because a task's ?task= link opens
+// its form from the group's board in that tree.
+const phoneAgentsDescriptor = createIslandDescriptor({
+  name: 'phone-agents',
+  label: 'Agents',
+  hosts: { host: '#phone-agents-root' },
+  failureClass: 'phone-agents-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./phone-agents-island.js');
+    const snapshotStoreModule = import('./snapshot-store.js');
+    const groupOrderModule = import('./group-order.js');
+    const rowActionModule = import('./row-action-handler.js');
+    const terminalsTabModule = import('./terminals-tab.js');
+    const spawnModule = import('./agent-spawn-controller.js');
+    const featureStateModule = import('./feature-state-registry.js');
+    const [
+      { mountPhoneAgentsIsland }, { dashboardState }, { sortGroupsByPref }, { handleRowAction },
+      { openWebWindowPane }, { openAgentSpawnModal }, { featureState },
+    ] = await Promise.all([
+      islandModule, snapshotStoreModule, groupOrderModule, rowActionModule,
+      terminalsTabModule, spawnModule, featureStateModule,
+    ]);
+    // A row's actions, through the desktop's entry points. rowAction takes the
+    // same data a desktop row's data-* attributes carry.
+    const actions = {
+      openTerminal: (row) => openWebWindowPane(row.agent, row.name, { harness: row.harness }),
+      message: (row) => dependencies.onComposeMessage?.({ agent: row.agent, label: row.name }),
+      rowAction: (act, row) => handleRowAction({ data: {
+        act, conv: row.conv, agent: row.agent, label: row.name, harness: row.harness,
+        group: row.group, online: row.online ? '1' : '0',
+      } }),
+      rename: (row, group) => featureState('groups-actions')?.openMemberEditor(row.member, group.group, 'title'),
+      spawn: (groupName) => openAgentSpawnModal({ groupName }),
+    };
+    return {
+      mount: (registerCleanup) => mountPhoneAgentsIsland({
+        host, state: dashboardState, order: (groups) => sortGroupsByPref(groups), actions, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountPhoneAgentsFeature(dependencies = {}) {
+  return mountIslandDescriptor(phoneAgentsDescriptor, dependencies);
+}
+
 const groupsDescriptor = createIslandDescriptor({
   name: 'groups',
   label: 'Groups',

@@ -25,16 +25,16 @@ import {
 import { Button } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { phonePage } from './phone-page.js';
+import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
 
 const html = htm.bind(h);
 
 // createPhoneShellState holds the shell's own view ('now', 'board' or null
-// for a tab) and whether the More sheet is open. A fresh load of the bare
-// dashboard URL lands on Now; a deep link lands on its tab.
+// for a tab). A fresh load of the bare dashboard URL lands on Now; a deep
+// link lands on its tab.
 export function createPhoneShellState({ startOnNow = true } = {}) {
   return {
     view: signal(startOnNow ? 'now' : null),
-    moreOpen: signal(false),
   };
 }
 
@@ -160,49 +160,29 @@ export function BoardView({ source, state, actions }) {
   </div>`;
 }
 
-function MoreSheet({ shell, state, actions }) {
-  const sheet = useRef(null);
-  const close = () => { shell.moreOpen.value = false; };
-  // A modal sheet: the rest of the shell and the tab under it are inert while
-  // it is open, and focus goes back to whatever opened it (the More button).
-  useEffect(() => {
-    const doc = sheet.current.ownerDocument;
-    const opener = doc.activeElement;
-    const behind = [...doc.querySelectorAll('main, .phone-bar, .phone-view, .phone-nav')];
-    for (const element of behind) element.inert = true;
-    const onKey = (event) => { if (event.key === 'Escape') close(); };
-    doc.addEventListener('keydown', onKey);
-    sheet.current.querySelector('button')?.focus();
-    return () => {
-      doc.removeEventListener('keydown', onKey);
-      for (const element of behind) element.inert = false;
-      if (opener?.isConnected) opener.focus();
-    };
-  }, []);
+// MoreMenu is the More sheet: every other tab, the power actions and the
+// layout switch.
+function MoreMenu({ state, actions, close }) {
   const go = (path) => { close(); actions.navigate(path); };
   const run = (act) => { close(); act(); };
   const meta = footerMetaView(state.snapshot.value);
-  return html`<div class="phone-sheet-scrim" onClick=${close}></div>
-    <div class="phone-sheet" role="dialog" aria-modal="true" aria-label="More" ref=${sheet}>
-      <div class="phone-sheet-grab" aria-hidden="true"></div>
-      <ul class="phone-menu">
-        ${MORE_TABS.filter((entry) => actions.tabAvailable(entry.tab)).map((entry) => html`<li key=${entry.tab}>
-          <button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => go(entry.path)}>
-            <span class="phone-menu-icon" aria-hidden="true">${entry.icon}</span>${entry.label}
-          </button>
-        </li>`)}
-      </ul>
-      <h2 class="ui-eyebrow phone-menu-head">Actions</h2>
-      <ul class="phone-menu">
-        <li><button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => run(actions.powerOnAll)}>
-          <span class="phone-menu-icon" aria-hidden="true">🟢</span>Power on all</button></li>
-        <li><button data-ui-exempt type="button" class="phone-menu-item phone-menu-danger" onClick=${() => run(actions.shutdownAll)}>
-          <span class="phone-menu-icon" aria-hidden="true">🛑</span>Shut down all…</button></li>
-        <li><button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => run(actions.desktopSite)}>
-          <span class="phone-menu-icon" aria-hidden="true">🖥</span>Desktop site</button></li>
-      </ul>
-      ${meta && html`<p class="phone-sheet-meta">tclaude ${meta.version}</p>`}
-    </div>`;
+  return html`<ul class="phone-menu">
+      ${MORE_TABS.filter((entry) => actions.tabAvailable(entry.tab)).map((entry) => html`<li key=${entry.tab}>
+        <button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => go(entry.path)}>
+          <span class="phone-menu-icon" aria-hidden="true">${entry.icon}</span>${entry.label}
+        </button>
+      </li>`)}
+    </ul>
+    <h2 class="ui-eyebrow phone-menu-head">Actions</h2>
+    <ul class="phone-menu">
+      <li><button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => run(actions.powerOnAll)}>
+        <span class="phone-menu-icon" aria-hidden="true">🟢</span>Power on all</button></li>
+      <li><button data-ui-exempt type="button" class="phone-menu-item phone-menu-danger" onClick=${() => run(actions.shutdownAll)}>
+        <span class="phone-menu-icon" aria-hidden="true">🛑</span>Shut down all…</button></li>
+      <li><button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => run(actions.desktopSite)}>
+        <span class="phone-menu-icon" aria-hidden="true">🖥</span>Desktop site</button></li>
+    </ul>
+    ${meta && html`<p class="phone-sheet-meta">tclaude ${meta.version}</p>`}`;
 }
 
 export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = globalThis.fetch }) {
@@ -244,6 +224,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     const leave = (run) => (...args) => {
       shell.view.value = null;
       phonePage.value = null;
+      closePhoneSheet();
       return run(...args);
     };
     return {
@@ -255,10 +236,10 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   }, [actions, shell]);
 
   function pick(target) {
-    shell.moreOpen.value = false;
+    closePhoneSheet();
     phonePage.value = null;
     if (target.id === 'more') {
-      shell.moreOpen.value = true;
+      openPhoneSheet({ label: 'More', Body: MoreMenu, props: { state, actions: viewActions } });
       return;
     }
     if (OWN_VIEWS.includes(target.id)) {
@@ -296,7 +277,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
         <span class="phone-nav-icon" aria-hidden="true">${target.icon}</span>${target.label}${badge(target.id)}
       </button>`)}
     </nav>`}
-    ${shell.moreOpen.value && html`<${MoreSheet} shell=${shell} state=${state} actions=${viewActions} />`}
+    <${PhoneSheetHost} />
   </div>`;
 }
 
@@ -305,6 +286,7 @@ export function mountPhoneShellIsland({ host, shell, state, actions, boardSource
   registerCleanup(() => {
     render(null, host);
     phonePage.value = null;
+    closePhoneSheet();
     delete document.documentElement.dataset.phoneView;
     delete document.documentElement.dataset.phonePage;
   });
