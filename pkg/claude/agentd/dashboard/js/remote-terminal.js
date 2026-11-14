@@ -24,8 +24,11 @@ const SESSIONS_TTL_MS = 10000;
 // openRemotePane opens a peer's terminal as a tab in the Terminals tab, like
 // a local web terminal (pop-out and drag-out work the same way).
 // options (reveal, activate) overrides the reveal flag when a caller passes it.
-export function openRemotePane({ wsPath, label, remote, reveal = true }, options = { reveal }) {
-  return openTerminalPane({ ws: wsPath, label, initialRetry: true, remote: Object.freeze({ peer: String(remote.peer), peerLabel: String(remote.peerLabel || ''), agent: String(remote.agent || '') }) }, options);
+export function openRemotePane({ wsPath, label, remote, harness = '', reveal = true }, options = { reveal }) {
+  return openTerminalPane({
+    ws: wsPath, label, initialRetry: true, ...(harness ? { harness: String(harness) } : {}),
+    remote: Object.freeze({ peer: String(remote.peer), peerLabel: String(remote.peerLabel || ''), agent: String(remote.agent || '') }),
+  }, options);
 }
 const SAFE_ID = /^(agt|inst)_[A-Za-z0-9]{4,64}$/;
 const SESSIONS_WAIT_STEP_MS = 1500;

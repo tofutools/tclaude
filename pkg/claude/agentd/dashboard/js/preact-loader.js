@@ -244,17 +244,10 @@ const phoneTerminalDescriptor = createIslandDescriptor({
       const member = members.find((m) => m && (m.agent_id === id || m.conv_id === id));
       return member ? { label: member.title || member.name || '', harness: member.state?.harness || member.harness || '' } : null;
     };
-    // A harness that renders its own scrollback (tmux_scrollback false, as
-    // Claude Code) scrolls its own history under the wheel, never tmux
-    // copy-mode. Anything else (a shell, Codex, a harness not listed) may.
-    const wheelCopyMode = (harness) => {
-      if (!harness) return true;
-      const known = (dashboardState.snapshot.value?.harnesses || []).find((h) => h?.name === harness);
-      return known?.tmux_scrollback !== false;
-    };
     const deps = {
       agent,
-      wheelCopyMode,
+      // The snapshot's harness catalog (tmux_scrollback), for wheelCopyMode.
+      harnesses: () => dashboardState.snapshot.value?.harnesses || [],
       widgetFactory: mountTerminalWidget,
       loadRuntime: () => loadXtermRuntime(),
       widgetOptions: (seed) => terminalAttachWidgetOptions(seed.terminalAttach),
