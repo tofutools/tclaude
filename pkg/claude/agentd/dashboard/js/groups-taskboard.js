@@ -59,6 +59,7 @@ import { BoardOptionsButton, BoardOptionsDrawer, BoardOptionsSummary } from './g
 import { QueuedChip } from './groups-taskboard-limits.js';
 import { applyPendingMove, onOrderKey, orderItems } from './groups-taskboard-order.js';
 import { boardNode, boardOptionsRoute, closeBoardOptions, isBoardOptionsFor } from './groups-taskboard-options-route.js';
+import { BacklogChip, backlogItems, backlogShown, backlogSupported, isParked, park, parkable, setBacklogShown, unpark } from './groups-taskboard-backlog.js';
 import { EpicBoard, EpicChip, EpicFilterMenu, EpicGroupRow, EpicMark, EpicStrip, NO_EPIC, boardEntry, epicDimmed, epicMoved, epicOf, intoEpic, isEpic, useEpicBoard } from './groups-taskboard-epics.js';
 
 export { RefChip };
@@ -206,7 +207,7 @@ export function actorLabel(actor, group, snapshot) {
 }
 
 const STATE_LABELS = {
-  blocked: 'blocked', stalled: 'stalled', waiting: 'waiting', 'in-progress': 'in progress', queued: 'queued', idea: 'idea', open: 'open', done: 'done', dropped: 'dropped',
+  blocked: 'blocked', stalled: 'stalled', waiting: 'waiting', 'in-progress': 'in progress', queued: 'queued', idea: 'idea', open: 'open', done: 'done', dropped: 'dropped', backlog: 'backlog',
 };
 
 
@@ -269,7 +270,7 @@ function Who({ task, group, snapshot }) {
 const STATE_MEANING = {
   open: 'next in the queue', idea: 'captured, not yet in the queue', queued: 'waits on other tasks, or in line for a full lane',
   'in-progress': 'an agent holds it', waiting: 'the operator holds it: an answer or a step an agent waits on', stalled: 'its agent went idle without reporting', blocked: 'waits on something outside the board',
-  done: 'finished', dropped: 'dropped without being done',
+  done: 'finished', dropped: 'dropped without being done', backlog: 'parked: never started, queued or nudged',
 };
 
 // StatePill is a task's state as one word, as the Agents table's state pill
@@ -363,7 +364,7 @@ export function canClose(task, actions) {
 // focus/retire/⚙ cluster: the one action the row's state calls for (✓ Done,
 // ✓ Next on an idea, ↺ Reopen in history), ✎ Edit, and ⋯ for the rest
 // (rowMenu). Each names its CLI verb in its title.
-function RowActions({ task, group, tasks, actions, onForm, columns = [], peers = null, where = '' }) {
+function RowActions({ task, group, tasks, actions, onForm, columns = [], peers = null, where = '', backlogOn = false }) {
   const board = useContext(TaskLink);
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
@@ -375,11 +376,12 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [], peers =
   const slot = (key) => html`<span key=${key} class="tb-act-slot" aria-hidden="true"></span>`;
   let first;
   if (closed) first = icon('reopen', '↺', 'Reopen: put it back on the list where it was (or drag it where it should go)', go('reopen', 'Reopen', (api) => api.reopen(task.id)));
+  else if (isParked(task)) first = icon('unpark', '↩', 'Back to ideas: taskboard promote, out of the backlog', () => unpark(actions, task), 'tb-act-go');
   else if (task.stage === 'idea') first = icon('promote', '✓', 'Next: taskboard promote, to the end of the queue', go('promote', 'Promote', (api) => api.stage(task.id, 'next')), 'tb-act-go');
   else if (canClose(task, actions)) first = icon('done', '✓', 'Done: taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done')), 'tb-act-ok');
   else first = slot('done');
   const edit = icon('edit', '✎', 'Edit: title, brief, ref, where it is, assignee, dependencies and files', () => onForm('edit'));
-  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns, board, peers, where })}
+  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns, board, peers, where, backlogOn })}
     glyph="⋯" buttonClass="icon-btn tb-act tb-act-more" keepSlot=${true} title="More: move up or down, assign, block, move or clone to a group, drop, archive (or right-click the row)" /></span>`;
 }
 
@@ -387,7 +389,7 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [], peers =
 // unblock, unassign, move or clone to another group (the groups a drag
 // could reach, this node's or a linked one's, with a drop's confirmation)
 // and drop.
-function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = null, peers = null, where = '' }) {
+function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = null, peers = null, where = '', backlogOn = false }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   // An epic is no work of its own: no assign, block, column, start or hold
@@ -400,6 +402,8 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = nu
   // Move to top / up / down / to bottom among the rows it is listed with
   // (groups-taskboard-order.js), Alt+Home/↑/↓/End on the row.
   if (peers) items.push(...orderItems(task, peers, actions, where));
+  // Move to backlog / Back to ideas (groups-taskboard-backlog.js).
+  if (!closed && backlogOn) items.push(...backlogItems(task, actions));
   if (canAnswer(task, actions)) {
     items.push(item('answer', 'Answer…', 'taskboard answer: pick an option and/or answer in words; the agent that asked gets it', { run: () => onForm('answer') }));
   }
@@ -507,7 +511,7 @@ const DRAG_TITLE = 'Drag to reorder, onto an agent to assign, or onto another gr
 // URL drag, not the task's.
 const linkDrag = (event) => event.target !== event.currentTarget && !!event.target?.closest?.('a[href]');
 
-function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, onForm, columns = [], chip = true, peers = null, where = '' }) {
+function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, onForm, columns = [], chip = true, peers = null, where = '', backlogOn = false }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const over = drag?.over?.id !== task.id ? '' : drag.over.where === 'before' ? ' tb-drop-before' : ' tb-drop-after';
@@ -527,7 +531,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
       onKeyDown=${actions && peers ? (event) => onOrderKey(event, task, peers, actions) : undefined}
       onDragOver=${closed ? undefined : (event) => drag?.overRow(event, task)} onDrop=${closed ? undefined : (event) => drag?.dropOnRow(event, task)}>
     <td class="tb-ic">${actions && html`<span class="tb-handle" aria-hidden="true">⋮⋮</span><${RowActions} task=${task} group=${group} tasks=${tasks}
-        actions=${actions} columns=${columns} peers=${peers} where=${where} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
+        actions=${actions} columns=${columns} peers=${peers} where=${where} backlogOn=${backlogOn} onForm=${(mode) => onForm(task.id, mode)} />`}</td>
     <td class="tb-title-cell"><div class="ui-fit tb-title-box">
       <${TaskTitle} task=${task} api=${readApi} nameOf=${(actor) => actorLabel(actor, group, snapshot)} onOpen=${actions ? () => onForm(task.id, 'edit') : null}
         chips=${{ ref: task.ref && html`<${RefChip} task=${task} />`, deps: html`<${DepChips} task=${task} byId=${byId} />` }} />
@@ -781,6 +785,23 @@ function useRowDrag(tasks, actions, group = null, epicRows = null) {
       if (!accept(event)) return;
       if (over?.id !== IDEAS_BAND) setOver({ id: IDEAS_BAND, where: 'into' });
     },
+    // overBacklog / dropOnBacklog: a live row dropped on the Backlog band
+    // is parked, at the top of the backlog.
+    overBacklog(event) {
+      if (!dragged.current || isClosed(dragged.current) || isEpic(dragged.current) || !accept(event)) return;
+      if (over?.id !== BACKLOG_BAND) setOver({ id: BACKLOG_BAND, where: 'into' });
+    },
+    async dropOnBacklog(event) {
+      if (!dragged.current || isClosed(dragged.current) || isEpic(dragged.current) || !accept(event)) return;
+      const moving = dragged.current;
+      clear();
+      const first = tasks.find((t) => isParked(t) && t.id !== moving.id);
+      if (isParked(moving)) {
+        if (first) await actions.run(`${moving.id}:move`, 'Move', (api) => api.move(moving.id, { before: first.id }));
+        return;
+      }
+      await actions.run(`${moving.id}:move`, 'Move to backlog', (api) => api.stage(moving.id, 'backlog'));
+    },
     async dropOnRow(event, task) {
       if (!accept(event)) return;
       const moving = dragged.current;
@@ -829,7 +850,7 @@ function useRowDrag(tasks, actions, group = null, epicRows = null) {
         if (moving.assignee?.agent_id) opts.to = '';
         await actions.run(`${moving.id}:move`, 'Reopen', (api) => api.reopen(moving.id, opts));
       } else if (moving.stage !== 'idea') {
-        await actions.run(`${moving.id}:move`, 'Demote', (api) => api.stage(moving.id, 'idea'));
+        await actions.run(`${moving.id}:move`, isParked(moving) ? 'Back to ideas' : 'Demote', (api) => api.stage(moving.id, 'idea'));
       } else if (firstIdea) {
         await actions.run(`${moving.id}:move`, 'Move', (api) => api.move(moving.id, { before: firstIdea.id }));
       }
@@ -838,6 +859,7 @@ function useRowDrag(tasks, actions, group = null, epicRows = null) {
 }
 
 const IDEAS_BAND = '__ideas';
+const BACKLOG_BAND = '__backlog';
 const REOPEN_DRAG_TITLE = 'Drag among the tasks above, onto the Ideas line or onto an agent to reopen it there';
 
 // isClosed: a done or dropped task, which a drag reopens.
@@ -916,7 +938,7 @@ function HistoryLine({ entry, group = null, actions = null, open, onToggle, wiza
 // full is the board's whole entry, epics included, when entry is the one
 // its views draw (groups-taskboard-epics.js boardEntry): the epic strip
 // draws from it, and an epic's link opens its form.
-export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, view = 'list', lanesBy = 'agent', hidden = LIST_HIDDEN_DEFAULT, onHidden = () => {}, onNewTask = null, onLayout = null, byEpic = false }) {
+export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = isWizardActive(), actions = null, readApi = null, view = 'list', lanesBy = 'agent', hidden = LIST_HIDDEN_DEFAULT, onHidden = () => {}, onNewTask = null, onLayout = null, byEpic = false, backlog = false, onHideBacklog = null }) {
   // The List's Filter (ListFilter) hides task states; done and dropped are
   // the history, which the history line's toggle shows or hides together.
   const shows = (task) => !hidden.includes(taskRowState(task));
@@ -930,13 +952,14 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const boardRef = useRef(null);
   const boardNode = group.fleet_node && !group.fleet_node.local ? group.fleet_node.id : '';
   useAgentOnTask(boardRef, group, boardNode, [...tasks, ...(entry.closed || [])], actions);
-  // A parked task (the backlog, tk_5d2547b0) is not in the list.
-  const queue = tasks.filter((task) => task.stage !== 'idea' && task.stage !== 'backlog' && shows(task));
+  const queue = tasks.filter((task) => task.stage !== 'idea' && !isParked(task) && shows(task));
   const ideas = tasks.filter((task) => task.stage === 'idea' && shows(task));
-  const filtered = tasks.length - tasks.filter((task) => task.stage === 'backlog').length - queue.length - ideas.length;
+  // The backlog (tk_5d2547b0) is out of the way until the viewer shows it.
+  const parked = tasks.filter(isParked);
+  const filtered = tasks.length - parked.length - queue.length - ideas.length;
   // Against the whole entry: the drawn one leaves out the strip's epics and
   // what the Epic filter hides, which are on the board, not past its cap.
-  const more = (full.counts?.live || 0) - (full.tasks || []).length;
+  const more = (full.counts?.live || 0) + (full.counts?.backlog || 0) - (full.tasks || []).length;
   const name = group.name;
   // ✎ opens the edit form; the row's ⋯ Block… and Drop… ask their reason
   // in the reason dialog (groups-taskboard-reason.js).
@@ -1024,13 +1047,21 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
     return () => { live = false; };
   }, [want, wantedListed, askedTick]);
   const edited = editing && (listed(editing) || (fetched?.id === editing ? fetched : null));
-  const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm, columns: entry.columns || [] };
+  const rowProps = { byId, group, snapshot, tasks, actions, readApi: readApi || actions?.api || null, drag: actions ? drag : null, onForm, columns: entry.columns || [],
+    backlogOn: backlogSupported(full) };
   // The band heads every idea-stage row the filter leaves (a blocked or
   // assigned idea is not in the "ideas" state), so no idea passes for a queue
   // row a drop next to would demote into.
   const ideasBand = (ideas.length > 0 || (actions && queue.length > 0 && !hidden.includes('idea'))) && html`<tr class=${`tb-ideas-divider${drag.over?.id === IDEAS_BAND ? ' tb-drop-into' : ''}`}
       onDragOver=${actions ? drag.overIdeas : undefined} onDrop=${actions ? drag.dropOnIdeas : undefined}><td colspan=${TABLE_COLS}>
     <span class="ui-eyebrow">${wizard ? 'Visions' : 'Ideas'} · ${ideas.length} · captured, not yet in the queue${actions ? ' — ✓ Next promotes; drag across this line to promote or demote' : ''}</span></td></tr>`;
+  // The Backlog band heads the parked rows, shown (the toolbar's chip): a
+  // row dragged onto it is parked, a parked row dragged onto the Ideas line
+  // comes back.
+  const backlogBand = backlog && html`<tr class=${`tb-ideas-divider tb-backlog-divider${drag.over?.id === BACKLOG_BAND ? ' tb-drop-into' : ''}`} data-tb-backlog-band=${parked.length}
+      onDragOver=${actions ? drag.overBacklog : undefined} onDrop=${actions ? drag.dropOnBacklog : undefined}><td colspan=${TABLE_COLS}>
+    <span class="ui-eyebrow">Backlog · ${parked.length} · parked: never started, queued or nudged${actions ? ' — drag a row onto this line to park it, or onto the Ideas line to bring it back' : ''}</span>
+    ${onHideBacklog && html`<${Button} size="sm" variant="link" class="tb-backlog-band-hide" onClick=${onHideBacklog}>▾ hide<//>`}</td></tr>`;
   // The Lanes view has no Filter: its history is all or nothing.
   const closed = view === 'list' ? (entry.closed || []).filter(shows) : (history ? entry.closed || [] : []);
   const historyLine = html`<${HistoryLine} entry=${entry} group=${group} actions=${actions} open=${history} wizard=${wizard} row=${tasks.length > 0} onToggle=${() => setHistory(!history)} />`;
@@ -1045,7 +1076,7 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   epicRows.current = grouped ? { of: (task) => epicOf(task, epicBoard.byId) || NO_EPIC, name: (id) => epicBoard.byId.get(id)?.title || id } : null;
   // One table: the queue, the Ideas band, the ideas, the history line and the
   // closed tasks share its columns.
-  const table = tasks.length ? html`<table class="tb-table ui-table-auto" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
+  const table = (backlog ? tasks.length : tasks.length - parked.length) ? html`<table class="tb-table ui-table-auto" onDragLeave=${actions ? drag.leaveTable : undefined}>${COLUMNS}
       <thead><tr><th class="tb-ic"></th><th title=${wizard ? 'Quests in the operator\'s order: top is next' : 'Tasks in the operator\'s order: top is next'}>Name</th>
         <th>State</th><th>Last</th><th>Age</th><th>Who</th><th>Ref</th><th>Deps</th><th>Files</th></tr></thead>
       <tbody>
@@ -1056,6 +1087,8 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
           : queue.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} peers=${queue} where=${wizard ? 'the quest line' : 'the queue'} />`)}
         ${ideasBand}
         ${ideas.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} peers=${ideas} where=${wizard ? 'the visions' : 'the ideas'} />`)}
+        ${backlogBand}
+        ${backlog && parked.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} peers=${parked} where="the backlog" />`)}
         ${historyLine}
         ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
       </tbody>
@@ -1067,6 +1100,7 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const reasonTask = reasoning && actions && tasks.find((task) => task.id === reasoning.id);
   const reasonDialog = reasonTask && html`<${TaskReasonDialog} key=${`${reasonTask.id}-${reasoning.kind}`} kind=${reasoning.kind} task=${reasonTask}
     busy=${actions.busy === `${reasonTask.id}:form`} onClose=${() => setReasoning(null)}
+    onPark=${reasoning.kind === 'drop' && backlogSupported(full) && parkable(reasonTask, actions) ? () => park(actions, reasonTask) : null}
     onSubmit=${(reason) => actions.run(`${reasonTask.id}:form`, reasoning.kind === 'block' ? 'Block' : 'Drop',
       (api) => api.status(reasonTask.id, reasoning.kind === 'block' ? 'blocked' : 'dropped', reason))} />`;
   const answerTask = answering && tasks.find((task) => task.id === answering);
@@ -1083,8 +1117,8 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
     ${view === 'list' && canAssign(actions) && tasks.find((task) => task.id === drag.dragging)?.assignee && html`<div class="tb-unassign-drop"
       onDragOver=${drag.overUnassign} onDrop=${drag.dropUnassign}>⤺ drop here to unassign · or onto an agent above to reassign</div>`}
     ${view === 'lanes' && FLAT_MODES.includes(lanesBy) ? html`<${TaskboardFlat} entry=${entry} group=${group} snapshot=${snapshot} mode=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask}
-      onEdit=${openEdit} />` : view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
-      onEdit=${openEdit} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
+      onEdit=${openEdit} backlog=${backlog} onHideBacklog=${onHideBacklog} />` : view === 'lanes' ? html`<${TaskboardLanes} entry=${entry} group=${group} snapshot=${snapshot} by=${lanesBy} actions=${actions} readApi=${readApi || actions?.api || null} wizard=${wizard} onNewTask=${onNewTask} onLayout=${onLayout}
+      onEdit=${openEdit} backlog=${backlog} onHideBacklog=${onHideBacklog} />` : table || html`<div class="gf-empty ui-empty tb-empty">${wizard ? 'No quests on the board.' : 'No tasks on the board.'}${actions
       ? ' Add one with ＋ above.' : html` Add one with <code>tclaude agent taskboard add ${name} "…"</code>.`}</div>`}
     ${view === 'list' && filtered > 0 && html`<div class="tb-more tb-filtered muted" data-tb-filtered=${filtered}>${filtered} ${filtered === 1 ? (wizard ? 'quest' : 'task') : (wizard ? 'quests' : 'tasks')} hidden by the filter ·
       <${Button} size="sm" variant="link" class="tb-filter-reset" onClick=${() => onHidden(hidden.filter((state) => state === 'done' || state === 'dropped'))}>show all<//></div>`}
@@ -1185,6 +1219,9 @@ function useViewPrefs(group, listDefaults = LIST_HIDDEN_DEFAULT) {
     listByEpic: dashPrefs.getItem(LIST_BY_EPIC_PREF(group)) === '1',
     setListByEpic: (on) => { if (on) dashPrefs.setItem(LIST_BY_EPIC_PREF(group), '1'); else dashPrefs.removeItem(LIST_BY_EPIC_PREF(group)); bump((n) => n + 1); },
     setBy: (value) => set(LANES_BY_PREF(group), value),
+    // The Backlog, shown or hidden (groups-taskboard-backlog.js).
+    backlog: backlogShown(group),
+    setBacklog: (on) => { setBacklogShown(group, on); bump((n) => n + 1); },
     // The lanes' own order (groups-taskboard-lanes-layout.js): whether one
     // is stored, and putting it back to the default.
     customOrder: hasCustomOrder(group),
@@ -1277,7 +1314,12 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const node = boardNode(group);
   const hasOptions = !!entry.options;
   const addMenu = api && html`<${NewTaskMenu} group=${group} entry=${entry} wizard=${wizard} onChoose=${choose} />`;
-  const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} />${
+  // The Backlog chip: always in the toolbar, right after the view switch,
+  // on a board whose node knows the backlog.
+  const backlogOn = backlogSupported(entry);
+  const backlogChip = backlogOn && html`<${BacklogChip} count=${counts.backlog || 0} open=${prefs.backlog} onToggle=${prefs.setBacklog}
+    actions=${api ? actions : null} tasks=${entry.tasks || []} />`;
+  const toolbar = html`<div class="group-header-actions gf-title-row tb-toolbar">${addMenu}<${ViewSelector} prefs=${prefs} />${backlogChip}${
     prefs.view === 'list' && html`<${ListFilter} group=${shown.name} prefs=${prefs} columns=${entry.columns || []} epics=${epics.epics.length > 0} />`}<${EpicFilterMenu} group=${shown.name} />${
     lanes && html`<${ColumnsMenu} entry=${view} group=${shown.name} />`}${
     lanes && html`<${HiddenColumnsTag} entry=${view} tally=${hiddenTally(view, laneColumn)} />`}${
@@ -1302,7 +1344,7 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
       closedActions=${closedActions} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${TaskboardRows} entry=${lanes ? view : drawn} full=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}
-      view=${prefs.view} lanesBy=${prefs.by} byEpic=${prefs.listByEpic}
+      view=${prefs.view} lanesBy=${prefs.by} byEpic=${prefs.listByEpic} backlog=${backlogOn && prefs.backlog} onHideBacklog=${() => prefs.setBacklog(false)}
       hidden=${prefs.listHidden} onHidden=${prefs.setListHidden} onNewTask=${choose} onLayout=${prefs.refresh} />
   <//><//>`;
 }

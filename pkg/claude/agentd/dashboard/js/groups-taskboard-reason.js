@@ -38,8 +38,9 @@ const REASON_COPY = Object.freeze({
 // TaskReasonDialog asks the reason for `kind` ('block' or 'drop') on task.
 // `action` overrides the words of what runs (a Lanes drag that assigns
 // first: "assign to builder · block"). busy is the board's own busy flag
-// for this write.
-export function TaskReasonDialog({ kind, task, action = '', busy = false, onSubmit, onClose }) {
+// for this write. onPark, on a drop, offers the gentler way: park the task
+// in the backlog instead (tk_5d2547b0); it resolves true when it landed.
+export function TaskReasonDialog({ kind, task, action = '', busy = false, onSubmit, onClose, onPark = null }) {
   const copy = REASON_COPY[kind] || REASON_COPY.block;
   const [reason, setReason] = useState('');
   const inputRef = useRef(null);
@@ -61,7 +62,9 @@ export function TaskReasonDialog({ kind, task, action = '', busy = false, onSubm
   return html`<${Dialog} id="taskboard-reason-modal" dialogClass="cron-create-modal taskboard-reason-modal"
     title=${copy.title} onClose=${onClose} onSubmitHotkey=${() => void submit()}
     busy=${busy} initialFocusRef=${inputRef} cancel="Cancel"
-    footer=${html`<${Button} variant=${copy.danger ? 'danger' : 'primary'} id="taskboard-reason-submit" busy=${busy}
+    footer=${html`${onPark && html`<${Button} id="taskboard-reason-park" class="tb-reason-park" disabled=${busy}
+      title="taskboard backlog: keep it on the board, parked and out of the way"
+      onClick=${async () => { if (await onPark()) onClose(); }}>⤓ Park in backlog instead<//>`}<${Button} variant=${copy.danger ? 'danger' : 'primary'} id="taskboard-reason-submit" busy=${busy}
       disabled=${busy || invalid} onClick=${() => { void submit(); }}>${busy ? copy.busy : copy.ok}<//>`}>
     <div class="modal-meta tb-reason-task" data-task-form=${kind}>${action ? `${action} ` : ''}“${task.title || task.id}”</div>
     <p class="modal-hint ui-hint">${copy.line}</p>
