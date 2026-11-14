@@ -25,6 +25,8 @@ import {
 import { Button } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 import { phonePage } from './phone-page.js';
+import { processContext } from './process-context.js';
+import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
 import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
 
 const html = htm.bind(h);
@@ -85,10 +87,14 @@ function OpenPRs({ snapshot }) {
   <//>`;
 }
 
-export function NowView({ state, actions, fetchImpl = globalThis.fetch }) {
+export function NowView({ state, actions, fetchImpl = globalThis.fetch, processSource = processContext }) {
+  // Process gates waiting on the operator come from the process read model,
+  // not the snapshot: Now keeps it fresh while it shows.
+  const gates = gateItems(useProcessRuns(processSource).context);
   const snapshot = state.snapshot.value;
   if (!snapshot) return html`<div class="ui-empty phone-empty">Loading…</div>`;
-  const view = nowView(snapshot);
+  const now = nowView(snapshot);
+  const view = { ...now, needs: now.needs + gates.length };
   const agents = companionAgents(snapshot);
   const nameOf = (id) => agents.get(id)?.name || '';
   const quiet = view.needs === 0;
@@ -105,6 +111,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch }) {
       ${view.decisions.map((decision) => html`<div key=${decision.id} class="phone-card">
         <${DecisionCard} decision=${decision} fetchImpl=${fetchImpl} notify=${actions.notify} from=${askerName(snapshot, agents)(decision)} />
       </div>`)}
+      ${gates.map((item) => html`<${GateCard} key=${item.run.runId} item=${item} source=${processSource} />`)}
       ${view.asking.length > 0 && html`<ul class="phone-list">
         ${view.asking.map((agent) => html`<${AgentRow} key=${agent.agentId} agent=${agent} actions=${actions}
           detail=${agent.detail || 'is asking you'} tag=${html`<span class="ui-tag ui-tag-accent">asking</span>`} />`)}
@@ -185,12 +192,12 @@ function MoreMenu({ state, actions, close }) {
     ${meta && html`<p class="phone-sheet-meta">tclaude ${meta.version}</p>`}`;
 }
 
-export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = globalThis.fetch }) {
+export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = globalThis.fetch, processSource = processContext }) {
   const activeTab = state.activeTab.value;
   const view = shell.view.value;
   const slot = slotFor(view, activeTab);
   const snapshot = state.snapshot.value;
-  const needs = snapshot ? nowView(snapshot).needs : 0;
+  const needs = (snapshot ? nowView(snapshot).needs : 0) + gateItems(processSource.context.value).length;
   const mail = messagesBadgeView(snapshot);
   const connection = state.connection.value.status;
   // A tab view's pushed page (js/phone-page.js): back, title and actions in
@@ -272,7 +279,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
         <span class=${`phone-bar-live ${connection}`} role="status" title=${connection === 'connected' ? 'Connected' : connection}
           aria-label=${connection === 'connected' ? 'Connected' : `Connection: ${connection}`}></span>`}
     </header>
-    ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} /></div>`}
+    ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} processSource=${processSource} /></div>`}
     ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} /></div>`}
     ${!hideNav && html`<nav class="phone-nav" aria-label="Views">
       ${PHONE_SLOTS.map((target) => html`<button data-ui-exempt key=${target.id} type="button"

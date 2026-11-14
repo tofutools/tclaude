@@ -502,3 +502,82 @@
   margin: 12px var(--phone-gutter) 0; padding: 10px 12px; border-radius: 10px;
   background: var(--ui-card-bg); border: 1px solid var(--ui-line); color: var(--ui-muted-text); font-size: 14px;
 }
+
+/* Automations (js/phone-automations-island.js) and process runs
+   (js/phone-process-runs.js): lists with a switch and Run now, pushed pages,
+   and the gate cards Now shows. */
+:root[data-layout="phone"] .phone-auto { padding: 0 var(--phone-gutter) 24px; }
+:root[data-layout="phone"] .phone-auto-chips { margin: 8px 0; }
+:root[data-layout="phone"] .phone-auto-tools { margin: 4px 0 6px; }
+:root[data-layout="phone"] .phone-auto-search { width: 100%; font-size: 16px; }
+:root[data-layout="phone"] .phone-auto-row { display: flex; align-items: center; gap: 10px; }
+:root[data-layout="phone"] .phone-auto-open {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-height: var(--phone-tap); padding: 10px 0; background: none; border: 0;
+  color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-auto-open:disabled { cursor: default; opacity: 1; }
+:root[data-layout="phone"] .phone-auto-open > span { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] .phone-auto-title { font-weight: 600; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-auto-sub { color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-auto-row.off :is(.phone-auto-title, .phone-auto-sub) { opacity: 0.6; }
+:root[data-layout="phone"] .phone-auto-meta { font-size: 13px; color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-auto-meta.ok { color: var(--ui-success-line); }
+:root[data-layout="phone"] .phone-auto-meta.bad { color: var(--ui-danger); }
+:root[data-layout="phone"] .phone-auto-meta.warn { color: var(--ui-warn-text); }
+:root[data-layout="phone"] .phone-auto-controls { display: flex; align-items: center; gap: 10px; flex: none; }
+:root[data-layout="phone"] .phone-auto-controls .ui-btn { min-height: 36px; }
+:root[data-layout="phone"] .phone-auto-run {
+  width: 40px; height: 40px; border-radius: 50%; flex: none;
+  background: var(--ui-bg); border: 1px solid var(--ui-line); color: var(--ui-text-strong); font-size: 14px; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-auto-switch { transform: scale(1.25); margin: 0 4px; }
+:root[data-layout="phone"] .phone-auto-pager { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 0; }
+:root[data-layout="phone"] .phone-desktop-only {
+  margin: 16px 0 0; padding: 10px 12px; border: 1px dashed var(--ui-line); border-radius: 8px;
+  color: var(--ui-muted-text); font-size: 13px;
+}
+:root[data-layout="phone"] .phone-section-title { margin: 18px 0 6px; }
+:root[data-layout="phone"] .phone-auto-page { padding: 12px var(--phone-gutter) 24px; }
+:root[data-layout="phone"] .phone-auto-summary { margin: 0 0 10px; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-auto-facts { display: grid; grid-template-columns: 96px 1fr; gap: 8px 12px; margin: 0; font-size: 14px; }
+:root[data-layout="phone"] .phone-auto-facts dt { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-auto-facts dd { margin: 0; color: var(--ui-text-strong); overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-auto-history { list-style: none; margin: 0; padding: 0; }
+:root[data-layout="phone"] .phone-auto-history > li { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--ui-line); }
+:root[data-layout="phone"] .phone-auto-log {
+  font-family: var(--ui-mono, ui-monospace, monospace); font-size: 12px; color: var(--ui-muted-text); overflow-wrap: anywhere;
+}
+
+:root[data-layout="phone"] .phone-runs .phone-section-title:first-child { margin-top: 8px; }
+:root[data-layout="phone"] .phone-run-open {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--phone-tap); padding: 10px 0;
+  background: none; border: 0; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-run-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+:root[data-layout="phone"] .phone-run-name { font-weight: 600; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-run-sub { color: var(--ui-muted-text); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] .phone-run-page { padding: 12px var(--phone-gutter) 24px; }
+:root[data-layout="phone"] .phone-run-facts { margin: 0 0 4px; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-run-steps { list-style: none; margin: 0; padding: 0; }
+:root[data-layout="phone"] .phone-run-step { display: flex; align-items: center; gap: 10px; min-height: 36px; font-size: 14px; }
+:root[data-layout="phone"] .phone-run-step-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-run-step-meta { color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-run-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--ui-line); }
+:root[data-layout="phone"] .phone-run-step.s-done .phone-run-dot { background: var(--ui-success-line); }
+:root[data-layout="phone"] .phone-run-step.s-running .phone-run-dot { background: var(--ui-focus); }
+:root[data-layout="phone"] .phone-run-step.s-failed .phone-run-dot { background: var(--ui-danger); }
+:root[data-layout="phone"] .phone-run-step.s-waiting .phone-run-dot { background: var(--ui-warn-text); }
+:root[data-layout="phone"] .phone-run-step.mine { font-weight: 600; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-run-step.mine .phone-run-step-meta { color: var(--ui-warn-text); }
+:root[data-layout="phone"] .phone-gate { margin: 8px 0 12px; }
+:root[data-layout="phone"] .phone-gate-card { padding: 10px; }
+:root[data-layout="phone"] .phone-gate-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+:root[data-layout="phone"] .phone-gate-head .phone-link { margin-left: auto; }
+:root[data-layout="phone"] .phone-gate-title { font-weight: 600; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-gate-prompt { margin: 4px 0 8px; color: var(--ui-text); font-size: 14px; }
+:root[data-layout="phone"] .phone-gate .grf-decide textarea { width: 100%; font-size: 16px; }
+:root[data-layout="phone"] .phone-gate .grf-verdicts { display: flex; gap: 8px; margin-top: 8px; }
+:root[data-layout="phone"] .phone-gate .grf-verdicts .ui-btn { flex: 1; min-height: 42px; }
+:root[data-layout="phone"] .phone-run-wait { margin: 8px 0 12px; color: var(--ui-warn-text); }
+:root[data-layout="phone"] .phone-run-wait .phone-desktop-only { margin-top: 8px; }
