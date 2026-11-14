@@ -69,9 +69,9 @@ so a job the change cannot need never claims a runner:
 - **code**: everything else runs every test shard. Sandbox, proxy, session
   and harness-launch code also runs the filtered-proxy and proxy-posture
   smokes. The Copilot, Gemini and pi smokes run when `scripts/ci/affected`
-  says the change reaches their fixture package. Lint also type-checks every
-  package and its tests as `GOOS=darwin` (`scripts/ci/darwin-vet.sh`), so a
-  darwin compile break fails on Linux.
+  says the change reaches their fixture package. Lint also type-checks, in a
+  parallel job, every package and its tests as `GOOS=darwin`
+  (`scripts/ci/darwin-vet.sh`), so a darwin compile break fails on Linux.
 - **full**: `.github/`, `scripts/ci/`, `scripts/test.sh`, `go.mod`, `go.sum`,
   `mise.toml`, an unknown path or an empty diff — everything runs.
 
