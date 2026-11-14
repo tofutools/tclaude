@@ -658,8 +658,11 @@ export function reorderDrop(task, slot, to, actions) {
 export function slotted(drop, task, to, slot, actions) {
   if (!drop || drop.reason || !slot || slot.self || typeof actions?.reorder !== 'function') return drop;
   // Into a column grouped by readiness, at a slot in another group, it
-  // keeps its own place: the slot would not be where it is drawn.
-  if (to.grouped && !sameGroup(task, slot.anchor)) return drop;
+  // keeps its own place: the slot would not be where it is drawn. A
+  // blocked card dropped here is unblocked by the drop, so it is judged
+  // as it lands.
+  const landing = task.status === 'blocked' ? { ...task, status: 'open', stalled: false } : task;
+  if (to.grouped && !sameGroup(landing, slot.anchor)) return drop;
   const stage = to.column === 'ideas' ? 'idea' : to.column === BACKLOG ? BACKLOG : (to.column === 'blocked' || to.column === 'done') ? '' : 'next';
   if (!stage || slot.anchor.stage !== stage) return drop;
   const { anchor, where } = slot;

@@ -19056,8 +19056,8 @@ tr.tb-assign-over > td.name-cell[data-tb-assign]::after {
 .tb-ready-head::after { content: ''; flex: 1; border-top: 1px dashed #30363d; }
 .tb-ready-label { font-weight: 600; }
 .tb-ready-ready .tb-ready-label { color: #56d364; }
-.tb-ready-waiting .tb-ready-label { color: #d2a8ff; }
-.tb-ready-blocked .tb-ready-label { color: #e3b341; }
+.tb-ready-queued .tb-ready-label { color: #e3b341; }
+.tb-ready-blocked .tb-ready-label { color: #ff7b72; }
 .tb-ready-count { color: #6e7681; }
 .tb-ready-row td { padding: 3px 8px; background: #161b22; }
 .tb-ready-row .tb-ready-head { margin: 0; }

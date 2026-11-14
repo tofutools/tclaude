@@ -1996,10 +1996,11 @@ the cell:
 
 A column's **⋯ › Group by readiness** draws its cards in three groups, each
 under a small heading: **Ready** (open, nothing left to wait on), then
-**Waiting** (an unfinished dependency, or in line for a full lane, as
-`waiting on tk_…` or `In progress is full` on the card), then **Blocked**.
+**Queued** (an unfinished dependency, shown by its highlighted *after
+tk_…* chip, or in line for a full lane, shown by the ⏳ chip), then
+**Blocked** (blocked, or stalled with its agent).
 Each group keeps the board's order, so a ready card already above the
-waiting ones stays where it was; only the waiting cards drawn above it move
+queued ones stays where it was; only the queued cards drawn above it move
 down. A column whose cards are all ready shows no headings.
 
 It is a view, and it is yours: nothing is written, the board's order stays
@@ -2008,8 +2009,8 @@ once what it waited on is done. The dashboard remembers it per board and
 column. A grouped column's head says **◧ by readiness**; click it, or
 **⋯ › Show in board order**, to see the board's order again. Every column
 but *Blocked* and *Done this week* can be grouped, the custom columns and the
-Backlog column included, in the lanes by agent and in triage, one row and
-by epic.
+Backlog column included, in every lanes mode (by agent, role or subgroup,
+triage, one row and by epic).
 
 While a column is grouped, a card moves within its group: *Move to top* puts
 it above the first card of its group, and a drag onto a card of another

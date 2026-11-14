@@ -1,15 +1,16 @@
 // groups-taskboard-readiness.js -- a column grouped by readiness
 // (docs/taskboard.md "Grouping by readiness", tk_3876b835): the ready cards
-// first, then the waiting ones, then the blocked ones, each group in the
+// first, then the queued ones, then the blocked ones, each group in the
 // board's own order. It is a view, the viewer's own: nothing is written, the
 // order the board keeps (Position) stays as it is, and a card joins Ready by
 // itself once what it waited on is done.
 //
 //   ready    open, no dependency still to finish, not in line for a full
 //            lane
-//   waiting  open, but queued: on its dependencies (unmet) or for a full
+//   queued   open, but queued: on its dependencies (unmet) or for a full
 //            lane (queued_for)
-//   blocked  blocked
+//   blocked  blocked, or assigned and stalled (the Lanes draw it in
+//            Blocked too)
 //
 // In the Lanes a viewer groups a column from its head's ⋯ (Group by
 // readiness); a grouped head carries "◧ by readiness", which ungroups it. In
@@ -29,7 +30,7 @@ const html = htm.bind(h);
 
 export const READINESS = [
   { key: 'ready', label: 'Ready', title: 'Open, nothing to wait on: it can be taken now' },
-  { key: 'waiting', label: 'Waiting', title: 'Waits on a dependency, or in line for a full lane' },
+  { key: 'queued', label: 'Queued', title: 'Waits on a dependency, or in line for a full lane' },
   { key: 'blocked', label: 'Blocked', title: 'Blocked' },
 ];
 
@@ -37,12 +38,12 @@ export const READINESS = [
 // column keys.
 export const LIST = 'list';
 
-// readiness is a task's group: ready, waiting or blocked; '' for a closed
+// readiness is a task's group: ready, queued or blocked; '' for a closed
 // task, which no grouping holds.
 export function readiness(task) {
-  if (task?.status === 'blocked') return 'blocked';
+  if (task?.status === 'blocked' || (task?.status === 'open' && task.stalled && task.assignee?.agent_id)) return 'blocked';
   if (task?.status !== 'open') return '';
-  return task.queued || task.unmet?.length ? 'waiting' : 'ready';
+  return task.queued || task.unmet?.length ? 'queued' : 'ready';
 }
 
 // groupable reports a Lanes column a viewer may group: not Blocked (it holds
@@ -51,11 +52,11 @@ export function groupable(column) {
   return !!column && column.key !== 'blocked' && column.key !== 'done';
 }
 
-// byReadiness is list grouped: the ready tasks, the waiting ones, the
+// byReadiness is list grouped: the ready tasks, the queued ones, the
 // blocked ones, then any other (closed), each in list's order (a stable
 // partition). heads maps the first task of each group to that group and
 // its count, for a cell to draw a heading above it; there are none when
-// every task is ready, so a cell with nothing waiting reads as it did.
+// every task is ready, so a cell with nothing queued reads as it did.
 export function byReadiness(list) {
   const tasks = list || [];
   const parts = new Map([...READINESS.map((r) => [r.key, []]), ['', []]]);
@@ -117,7 +118,7 @@ export function readyMenuItem(column, grouping) {
     key: 'readiness', label: on ? 'Show in board order' : 'Group by readiness',
     attrs: { 'data-column-menu': 'readiness', title: on
       ? 'Draw the cards in the board\'s order again'
-      : 'Ready cards first, then waiting, then blocked; each in the board\'s order. Only on this dashboard; nothing is moved' },
+      : 'Ready cards first, then queued, then blocked; each in the board\'s order. Only on this dashboard; nothing is moved' },
     run: () => grouping.set(column.key, !on),
   };
 }
@@ -128,7 +129,7 @@ export function ReadyChip({ column }) {
   if (!groupable(column) || !grouping.has(column.key)) return null;
   const off = typeof grouping.set === 'function' ? () => grouping.set(column.key, false) : null;
   return html`<button type="button" data-ui-exempt class="tb-ready-chip" data-tb-ready=${column.key} disabled=${!off}
-    title="Grouped by readiness, only on this dashboard: ready, then waiting, then blocked. Click to draw the board's order again."
+    title="Grouped by readiness, only on this dashboard: ready, then queued, then blocked. Click to draw the board's order again."
     onClick=${off ? (event) => { event.stopPropagation(); off(); } : undefined}>◧ by readiness</button>`;
 }
 

@@ -266,7 +266,7 @@ export function TaskboardFlat({ entry, group, snapshot, mode = 'triage', actions
         onDragLeave=${actions ? drag.leaveGrid : undefined}>
       <div class="tb-lane tb-lane-columns">
         ${triage && html`<div class="ui-eyebrow tb-col-lane">${byEpic ? 'Epic' : 'Who'}</div>`}
-        ${columns.map((column, i) => html`<div key=${column.key} class=${columnClass(column)}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
+        ${columns.map((column, i) => html`<div key=${column.key} class=${columnClass(column)} data-col=${column.key}>${wizard ? column.wizard : column.label} <span class="tb-col-count">${column.key === 'done' ? (entry.counts?.done_this_week ?? count('done')) : count(column.key)}</span>${
           column.key === 'done' && html`<span class="tb-col-note" title="Ordered by when each task closed, newest first: not by hand">by close time</span>`}<${LaneLimit} entry=${entry} column=${column} /><${ReadyChip} column=${column} />${
           headMenu(column, entry) && html`<${ColumnHeadMenu} column=${column} columns=${custom} group=${group} actions=${actions} entry=${entry} onRename=${(c) => naming.open('rename', c)} limits=${limits} />`}${
           i === columns.length - 1 && html`<${AddColumnButton} naming=${naming} columns=${custom} />`}</div>`)}

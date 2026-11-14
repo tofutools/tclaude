@@ -3,16 +3,16 @@ import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
 // Grouping a column by readiness (groups-taskboard-readiness.js,
-// tk_3876b835): the viewer's own view, ready cards first, then waiting, then
+// tk_3876b835): the viewer's own view, ready cards first, then queued, then
 // blocked, each in the board's order, with no write; while grouped a card
 // moves within its group.
 
 const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
 const row = (id, title, extra = {}) => ({ id, group: 'crew', title, stage: 'next', status: 'open', depends_on: [], created_at: ago(5), ...extra });
 
-// The Next column in the board's order: a ready card on top, then a waiting
-// one (a dependency), a ready one, a waiting one (in line for a full lane),
-// a ready one. Two ideas, one waiting, and two parked ones, one waiting.
+// The Next column in the board's order: a ready card on top, then a queued
+// one (a dependency), a ready one, a queued one (in line for a full lane),
+// a ready one. Two ideas, one queued, and two parked ones, one queued.
 function board(group) {
   return {
     group, group_id: 1,
@@ -23,9 +23,9 @@ function board(group) {
       row('tk_c', 'charlie'),
       row('tk_d', 'delta', { queued: true, queued_for: 'in_progress', queued_reason: 'In progress is full' }),
       row('tk_e', 'echo'),
-      row('tk_i1', 'idea waiting', { stage: 'idea', depends_on: ['tk_x'], unmet: ['tk_x'], queued: true }),
+      row('tk_i1', 'idea queued', { stage: 'idea', depends_on: ['tk_x'], unmet: ['tk_x'], queued: true }),
       row('tk_i2', 'idea ready', { stage: 'idea' }),
-      row('tk_p1', 'parked waiting', { stage: 'backlog', depends_on: ['tk_x'], unmet: ['tk_x'], queued: true }),
+      row('tk_p1', 'parked queued', { stage: 'backlog', depends_on: ['tk_x'], unmet: ['tk_x'], queued: true }),
       row('tk_p2', 'parked ready', { stage: 'backlog' }),
     ],
     closed: [],
@@ -69,24 +69,25 @@ async function mount(t, name, { view = 'lanes', by = 'agent', prefs = {} } = {})
   return { harness, c, api, dashPrefs, settle, click, cell, ids, heads, card, menuItems, colMenu };
 }
 
-test('readiness helpers: ready, waiting and blocked; a stable grouping; heads only when something is not ready', async (t) => {
+test('readiness helpers: ready, queued and blocked; a stable grouping; heads only when something is not ready', async (t) => {
   const harness = await createPreactHarness(t);
   const { readiness, byReadiness, readinessPeers, groupable } = await harness.importDashboardModule('js/groups-taskboard-readiness.js');
   assert.equal(readiness(row('a', 'a')), 'ready');
-  assert.equal(readiness(row('a', 'a', { unmet: ['x'] })), 'waiting', 'an unmet dependency');
-  assert.equal(readiness(row('a', 'a', { queued: true, queued_for: 'in_progress' })), 'waiting', 'in line for a full lane');
+  assert.equal(readiness(row('a', 'a', { unmet: ['x'] })), 'queued', 'an unmet dependency');
+  assert.equal(readiness(row('a', 'a', { queued: true, queued_for: 'in_progress' })), 'queued', 'in line for a full lane');
   assert.equal(readiness(row('a', 'a', { status: 'blocked' })), 'blocked');
+  assert.equal(readiness(row('a', 'a', { stalled: true, assignee: { agent_id: 'agt_x' } })), 'blocked', 'stalled with its agent, as the Lanes draw it');
   assert.equal(readiness(row('a', 'a', { status: 'done' })), '');
 
   const list = [row('w1', 'w1', { unmet: ['x'] }), row('r1', 'r1'), row('b1', 'b1', { status: 'blocked' }), row('r2', 'r2'), row('w2', 'w2', { queued: true })];
   const grouped = byReadiness(list);
   assert.deepEqual(grouped.list.map((x) => x.id), ['r1', 'r2', 'w1', 'w2', 'b1'], 'each group keeps its order');
-  assert.deepEqual([...grouped.heads].map(([id, h]) => `${id}:${h.key}:${h.count}`), ['r1:ready:2', 'w1:waiting:2', 'b1:blocked:1']);
+  assert.deepEqual([...grouped.heads].map(([id, h]) => `${id}:${h.key}:${h.count}`), ['r1:ready:2', 'w1:queued:2', 'b1:blocked:1']);
   assert.deepEqual(readinessPeers(grouped.list, list[0]).map((x) => x.id), ['w1', 'w2']);
 
   const ready = byReadiness([row('r1', 'r1'), row('r2', 'r2')]);
   assert.deepEqual(ready.list.map((x) => x.id), ['r1', 'r2']);
-  assert.equal(ready.heads.size, 0, 'a column with nothing waiting draws no heads');
+  assert.equal(ready.heads.size, 0, 'a column with nothing queued draws no heads');
 
   assert.ok(groupable({ key: 'next' }) && groupable({ key: 'ideas' }) && groupable({ key: 'progress' }) && groupable({ key: 'col:review' }) && groupable({ key: 'backlog' }));
   assert.ok(!groupable({ key: 'blocked' }) && !groupable({ key: 'done' }));
@@ -103,7 +104,7 @@ test('Lanes: Next\'s ⋯ groups it by readiness, remembered; nothing is written;
   await click(item);
   await click(cell('next').querySelector('.tb-cell-more'));
   assert.deepEqual(ids(cell('next')), ['tk_a', 'tk_c', 'tk_e', 'tk_b', 'tk_d'], 'ready first: alpha stays on top, bravo and delta go under');
-  assert.deepEqual(heads(cell('next')), ['Ready 3', 'Waiting 2']);
+  assert.deepEqual(heads(cell('next')), ['Ready 3', 'Queued 2']);
   assert.deepEqual(api.calls, [], 'a view: no write');
   assert.deepEqual(JSON.parse(dashPrefs.getItem('tclaude.dash.groups.taskboard.readiness.rd-lanes')), ['next'], 'remembered per viewer and board');
   assert.deepEqual(ids(cell('ideas')), ['tk_i1', 'tk_i2'], 'Ideas is not grouped: only the column asked');
@@ -125,7 +126,7 @@ test('Lanes, grouped: a card\'s ⋯ and Alt keys move it within its group, and a
   await click(card('tk_e').querySelector('.tb-card-more'));
   await click(menuItems().find((b) => b.textContent.trim() === 'Move to top'));
   assert.deepEqual(api.calls, [['move', 'tk_e', { before: 'tk_a', stage: 'next' }]]);
-  // Bravo is the first waiting card: no Move up, though echo is drawn above.
+  // Bravo is the first queued card: no Move up, though echo is drawn above.
   await click(card('tk_b').querySelector('.tb-card-more'));
   const up = menuItems().find((b) => b.textContent.trim() === 'Move up');
   assert.ok(up.disabled || up.getAttribute('aria-disabled') === 'true', 'bravo is on top of its group');
@@ -136,7 +137,7 @@ test('Lanes, grouped: a card\'s ⋯ and Alt keys move it within its group, and a
   await settle();
   assert.deepEqual(api.calls, [['move', 'tk_d', { before: 'tk_b', stage: 'next' }]]);
 
-  // A drag of delta (waiting) onto alpha (ready) is refused and says why.
+  // A drag of delta (queued) onto alpha (ready) is refused and says why.
   api.calls.length = 0;
   const transfer = { setData() {}, effectAllowed: '', dropEffect: '', types: ['application/x-tclaude-task'] };
   const at = (id) => { const el = card(id); el.getBoundingClientRect = () => ({ top: 100, height: 20 }); return el; };
@@ -148,7 +149,7 @@ test('Lanes, grouped: a card\'s ⋯ and Alt keys move it within its group, and a
   await harness.act(async () => { harness.fireEvent(at('tk_a'), 'drop', { dataTransfer: transfer, clientY: 105 }); });
   await settle();
   assert.deepEqual(api.calls, []);
-  // Onto bravo (waiting), it moves.
+  // Onto bravo (queued), it moves.
   await harness.act(async () => { harness.fireEvent(card('tk_d'), 'dragstart', { dataTransfer: transfer }); });
   const ok = harness.fireEvent(at('tk_b'), 'dragover', { dataTransfer: transfer, clientY: 105 });
   await harness.act(async () => {});
@@ -158,11 +159,32 @@ test('Lanes, grouped: a card\'s ⋯ and Alt keys move it within its group, and a
   assert.deepEqual(api.calls, [['move', 'tk_d', { before: 'tk_b', stage: 'next' }]]);
 });
 
+test('Lanes, grouped: an idea dropped into Next at a slot of its own group is put there; at another group\'s slot it keeps its place', async (t) => {
+  const { harness, api, card, cell, settle } = await mount(t, 'rd-slotted', { prefs: { readiness: '["next"]' } });
+  const transfer = { setData() {}, effectAllowed: '', dropEffect: '', types: ['application/x-tclaude-task'] };
+  const at = (id) => { const el = card(id); el.getBoundingClientRect = () => ({ top: 100, height: 20 }); return el; };
+  const drop = async (id, on) => {
+    await harness.act(async () => { harness.fireEvent(card(id), 'dragstart', { dataTransfer: transfer }); });
+    harness.fireEvent(at(on), 'dragover', { dataTransfer: transfer, clientY: 105 });
+    await harness.act(async () => {});
+    await harness.act(async () => { harness.fireEvent(at(on), 'drop', { dataTransfer: transfer, clientY: 105 }); });
+    await settle();
+  };
+  // The ready idea onto charlie (ready): promoted, then put before charlie.
+  await drop('tk_i2', 'tk_c');
+  assert.deepEqual(api.calls, [['stage', 'tk_i2', 'next'], ['move', 'tk_i2', { before: 'tk_c', stage: 'next' }]]);
+  // The queued idea onto alpha (ready): promoted only.
+  api.calls.length = 0;
+  await drop('tk_i1', 'tk_a');
+  assert.deepEqual(api.calls, [['stage', 'tk_i1', 'next']]);
+  assert.ok(cell('next'));
+});
+
 test('Lanes triage and the Backlog column group too', async (t) => {
   const { c, ids, heads, colMenu, menuItems, click } = await mount(t, 'rd-triage', { by: 'triage', prefs: { readiness: '["ideas"]', backlog: '1' } });
   const ideas = c.querySelector('.tb-cell[data-board-row="unassigned"][data-column="ideas"]');
   assert.deepEqual(ids(ideas), ['tk_i2', 'tk_i1']);
-  assert.deepEqual(heads(ideas), ['Ready 1', 'Waiting 1']);
+  assert.deepEqual(heads(ideas), ['Ready 1', 'Queued 1']);
 
   const backlog = c.querySelector('[data-tb-backlog-column]');
   assert.deepEqual(ids(backlog), ['tk_p1', 'tk_p2']);
@@ -186,7 +208,7 @@ test('List: the Filter\'s group by readiness groups each section under heading r
   await harness.act(() => harness.fireEvent(box, 'change'));
   assert.deepEqual(rowIds(), ['tk_a', 'tk_c', 'tk_e', 'tk_b', 'tk_d', 'tk_i2', 'tk_i1'], 'the queue and the ideas, each grouped');
   assert.deepEqual([...c.querySelectorAll('tr.tb-ready-row')].map((x) => x.textContent.replace(/\s+/g, ' ').trim()),
-    ['Ready 3', 'Waiting 2', 'Ready 1', 'Waiting 1']);
+    ['Ready 3', 'Queued 2', 'Ready 1', 'Queued 1']);
   assert.deepEqual(api.calls, []);
 
   // Alt+↑ on delta goes before bravo, its group's first.
