@@ -1574,19 +1574,30 @@ test('a one-finger swipe scrolls as the wheel does, coasts, and goes back to liv
   touch('touchend');
   assert.equal(frames.length, 0, 'a finger that rested before lifting does not coast');
 
+  // The first notch only entered copy-mode; the second scrolled. One notch
+  // down reaches the bottom (copy-mode leaves itself), one more for a drift.
   widget.toLive();
-  assert.deepEqual(log.slice(2), ['newer', 'newer', 'newer', 'newer'], 'back down, and two notches more');
+  assert.deepEqual(log.slice(2), ['newer', 'newer']);
   assert.deepEqual(back, [true, false]);
+
+  // Swiping back down to the bottom leaves copy-mode: live again.
+  log.length = 0;
+  touch('touchstart', 100); clock = 320; touch('touchmove', 270); clock = 340; touch('touchmove', 350); clock = 900; touch('touchend');
+  assert.deepEqual(log, ['older', 'older', 'older'], 'enter, then two notches back');
+  touch('touchstart', 350); clock = 920; touch('touchmove', 180); clock = 1500; touch('touchend');
+  assert.deepEqual(log.slice(3), ['newer', 'newer']);
+  assert.equal(widget.scrolledBack(), false, 'two notches down reach the bottom');
+  assert.deepEqual(back, [true, false, true, false]);
 
   // A key while scrolled back goes live first: copy-mode would take it.
   log.length = 0;
-  touch('touchstart', 100); clock = 400; touch('touchmove', 190); clock = 600; touch('touchend');
+  touch('touchstart', 100); clock = 1600; touch('touchmove', 190); clock = 1800; touch('touchend');
   widget.key('1');
-  assert.deepEqual(log, ['older', 'newer', 'newer', 'newer', '1']);
+  assert.deepEqual(log, ['older', 'newer', 'newer', '1']);
 
   // A fling coasts on, slower each frame, and stops.
   log.length = 0;
-  touch('touchstart', 100); clock = 700; touch('touchmove', 120); clock = 710; touch('touchmove', 220);
+  touch('touchstart', 100); clock = 1900; touch('touchmove', 120); clock = 1910; touch('touchmove', 220);
   const during = log.length;
   touch('touchend');
   let run = 0;
@@ -1595,17 +1606,37 @@ test('a one-finger swipe scrolls as the wheel does, coasts, and goes back to liv
   assert.ok(run < 500, 'and stops');
   assert.ok(log.every((step) => step === 'older'));
 
-  // A session that does not take the mouse gets an arrow key per two rows,
-  // and is never "scrolled back".
-  widget.toLive();
-  log.length = 0;
+  // A closed socket: agentd leaves copy-mode, so the view is live again.
+  assert.equal(widget.scrolledBack(), true);
   back.length = 0;
-  term.modes.mouseTrackingMode = 'none';
-  touch('touchstart', 100); clock = 9000; touch('touchmove', 165); clock = 9500; touch('touchend');
-  assert.deepEqual(log, ['older', 'older']);
-  assert.deepEqual(back, []);
-  frames.length = 0;
-  touch('touchstart', 100); clock = 9600; touch('touchmove', 120); clock = 9610; touch('touchmove', 220); touch('touchend');
-  assert.equal(frames.length, 0, 'arrow keys are commands: they do not coast');
+  socket.disconnect();
+  assert.equal(widget.scrolledBack(), false);
+  assert.deepEqual(back, [false]);
+  log.length = 0;
+  touch('touchstart', 100); clock = 9000; touch('touchmove', 200); clock = 9500; touch('touchend');
+  assert.deepEqual(log, [], 'nothing to scroll while the socket is closed');
   widget.dispose();
+
+  // A session that does not take the mouse is not scrolled: a wheel notch
+  // would be an arrow key, which a stray swipe must not send.
+  const plain = widgetFakes(harness.document);
+  const host2 = harness.document.body.appendChild(harness.document.createElement('div'));
+  const other = mountTerminalWidget({
+    host: host2, wsPath: '/api/open-window-ws/agt_two', authenticate: false,
+    initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
+    TerminalCtor: plain.FakeTerminal, FitAddonCtor: plain.FakeFitAddon, WebSocketCtor: plain.FakeWebSocket,
+    ResizeObserverCtor: plain.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document, interactionsFactory: plain.interactionsFactory, now: () => clock,
+    requestAnimationFrameImpl: () => 1, cancelAnimationFrameImpl: () => {}, ...timers,
+  });
+  await other.connect();
+  plain.sockets[0].open();
+  timers.flush();
+  const notches = [];
+  host2.addEventListener('wheel', () => notches.push(1));
+  harness.fireEvent(host2, 'touchstart', { touches: [{ clientX: 50, clientY: 100 }] });
+  const move = harness.fireEvent(host2, 'touchmove', { touches: [{ clientX: 50, clientY: 300 }] });
+  assert.equal(move.defaultPrevented, false);
+  assert.deepEqual(notches, []);
+  other.dispose();
 });

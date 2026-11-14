@@ -209,10 +209,12 @@ away from the browser, disconnects it, and coming back reconnects.
   Tapping the terminal doesn't raise it.
 - Pinch to change the text size. The terminal refits its columns to the new
   size, and the size is remembered for each terminal.
-- Swipe up or down with one finger to scroll through the session's history,
-  as the mouse wheel does on a desktop. A quick swipe keeps scrolling after you
+- Swipe up or down with one finger to scroll back through history in
+  sessions whose history tmux holds (Codex agents and shells, which scroll with
+  the mouse wheel on a desktop too). A quick swipe keeps scrolling after you
   lift your finger. While you're scrolled back, **↓ Live** returns to the live
-  screen; pressing a key or typing does too.
+  screen; pressing a key or typing does too. In other sessions, such as Claude
+  Code, a swipe does nothing: there the wheel would only send ↑ and ↓.
 
 ### Settings on a phone
 

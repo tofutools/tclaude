@@ -142,14 +142,14 @@ const ZOOM_WHEEL_SETTLE_MS = 110;
 const ZOOM_PINCH_SETTLE_MS = 220;
 
 // A one-finger swipe scrolls as a mouse wheel does (touchScroll): one wheel
-// notch per SWIPE_ROWS_PER_NOTCH rows the finger travels while the session
-// takes the mouse (tmux scrolls copy-mode five lines a notch, so the text
-// keeps up with the finger), else per two rows (a notch is then one arrow
-// key). A swipe starts once the finger has moved SWIPE_START_PX, mostly up
-// or down. Let go of a scroll while moving and it coasts, slowing by
-// SWIPE_DECAY each frame until slower than SWIPE_STOP px/ms.
+// notch per SWIPE_ROWS_PER_NOTCH rows the finger travels (tmux scrolls
+// copy-mode five lines a notch, so the text keeps up with the finger). Only
+// a session that takes the mouse (tmux mouse on) scrolls: without it a
+// wheel notch is an arrow key, which recalls prompt history or moves a menu,
+// and a stray swipe on a phone must not. A swipe starts once the finger has
+// moved SWIPE_START_PX, mostly up or down. Let go while moving and it coasts,
+// slowing by SWIPE_DECAY each frame until slower than SWIPE_STOP px/ms.
 const SWIPE_ROWS_PER_NOTCH = 5;
-const SWIPE_ROWS_PER_KEY = 2;
 const SWIPE_START_PX = 10;
 const SWIPE_FLING = 0.3;
 // A finger that rested this long before lifting does not fling.
@@ -513,20 +513,31 @@ export function mountTerminalWidget({
   // takes the mouse, an arrow key otherwise).
   let swipe = null;
   let coast = null;
+  // Where tmux's wheel copy-mode is, in notches: scrolledBack is how many
+  // notches up from the bottom (0: live). A local session's first notch only
+  // enters copy-mode (tmux's WheelUpPane runs copy-mode -e); a remote pane
+  // enters and scrolls. Scrolling down to the bottom leaves copy-mode, and so
+  // does a notch down at the bottom.
   let scrolledBack = 0;
+  let inCopyMode = false;
   const mouseTaken = () => (term.modes?.mouseTrackingMode || 'none') !== 'none';
+  const canSend = () => !!ws && ws.readyState === WebSocketCtor.OPEN && (!remote || remoteState.mode === 'interactive');
   function rowHeight() {
     const screen = host.getElementsByClassName?.('xterm-screen')[0];
     const height = screen?.getBoundingClientRect?.().height;
     return height > 0 && term.rows > 0 ? height / term.rows : 16;
   }
-  const notchPx = () => rowHeight() * (mouseTaken() ? SWIPE_ROWS_PER_NOTCH : SWIPE_ROWS_PER_KEY);
-  function setScrolledBack(next) {
-    const was = scrolledBack > 0;
-    scrolledBack = next;
-    if (was !== scrolledBack > 0 && !disposed) onScrollBackChange(scrolledBack > 0);
+  const notchPx = () => rowHeight() * SWIPE_ROWS_PER_NOTCH;
+  function setCopyMode(on, notches) {
+    const was = inCopyMode;
+    inCopyMode = on;
+    scrolledBack = on ? notches : 0;
+    if (was !== on && !disposed) onScrollBackChange(on);
   }
+  // notch sends one wheel notch, if it can reach the session, and follows
+  // where copy-mode goes.
   function notch(older) {
+    if (!canSend()) return false;
     const target = term.element || host;
     const box = target.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
     const init = {
@@ -538,7 +549,9 @@ export function mountTerminalWidget({
       ? new View.WheelEvent('wheel', init)
       : Object.assign(new View.Event('wheel', { bubbles: true, cancelable: true }), init);
     target.dispatchEvent(event);
-    if (mouseTaken()) setScrolledBack(Math.max(0, scrolledBack + (older ? 1 : -1)));
+    if (older) setCopyMode(true, inCopyMode ? scrolledBack + 1 : (remote ? 1 : 0));
+    else if (inCopyMode) setCopyMode(scrolledBack > 1, scrolledBack - 1);
+    return true;
   }
   // travel turns finger travel (down is older) into notches, keeping the rest.
   function travel(px) {
@@ -548,7 +561,7 @@ export function mountTerminalWidget({
     let sent = 0;
     while (Math.abs(swipe.rest) >= step && sent < SWIPE_MAX_NOTCHES_PER_FRAME) {
       const older = swipe.rest > 0;
-      notch(older);
+      if (!notch(older)) { swipe.rest = 0; return; }
       swipe.rest += older ? -step : step;
       sent += 1;
     }
@@ -580,7 +593,7 @@ export function mountTerminalWidget({
     swipe = { x0: x, y0: y, y, at: now(), speed: 0, rest: 0, moving: false };
   }
   function swipeMove(event) {
-    if (!swipe || event.touches?.length !== 1) return;
+    if (!swipe || event.touches?.length !== 1 || !mouseTaken()) return;
     const { clientX: x, clientY: y } = event.touches[0];
     if (!swipe.moving) {
       const dy = y - swipe.y0;
@@ -597,22 +610,21 @@ export function mountTerminalWidget({
   }
   function swipeEnd(event) {
     if (!swipe || (event.touches?.length ?? 0) > 0) return;
-    // Only scrolling coasts: arrow keys are commands to the application.
-    const fling = swipe.moving && mouseTaken() && Math.abs(swipe.speed) >= SWIPE_FLING && now() - swipe.at < SWIPE_REST_MS;
+    const fling = swipe.moving && Math.abs(swipe.speed) >= SWIPE_FLING && now() - swipe.at < SWIPE_REST_MS;
     if (fling) coastFrom(swipe.speed, now());
     else swipe = null;
   }
   // toLive scrolls back down to live: tmux's wheel copy-mode leaves itself
-  // at the bottom. Two notches more cover a count that drifted.
+  // at the bottom. One notch more covers a count that drifted (scrolling up
+  // past the top of the history); a notch down when live does nothing.
   function toLive() {
     if (disposed) return;
     stopCoasting();
     swipe = null;
-    const notches = scrolledBack;
-    setScrolledBack(0);
-    if (!notches) return;
-    for (let i = 0; i < notches + 2; i += 1) notch(false);
-    setScrolledBack(0);
+    if (!inCopyMode) return;
+    const notches = Math.max(1, scrolledBack) + 1;
+    setCopyMode(false, 0);
+    for (let i = 0; i < notches; i += 1) notch(false);
   }
 
   const pinchListeners = [
@@ -639,7 +651,7 @@ export function mountTerminalWidget({
   function sendInput(data) {
     if (disposed || !ws || ws.readyState !== WebSocketCtor.OPEN) return false;
     if (remote && remoteState.mode !== 'interactive') return false;
-    if (scrolledBack) toLive();
+    if (inCopyMode) toLive();
     ws.send(new TextEncoder().encode(data));
     return true;
   }
@@ -1115,6 +1127,9 @@ export function mountTerminalWidget({
     socket.onopen = () => {
       if (disposed || mine !== generation || ws !== socket) return;
       openedAt = now();
+      // agentd leaves copy-mode when a terminal socket closes: a new one
+      // starts live.
+      setCopyMode(false, 0);
       captureInstanceBaseline(mine);
       setReconnectAvailable(false);
       if (remote) { if (!waiting) setStatus('connecting to the peer…'); return; }
@@ -1148,6 +1163,7 @@ export function mountTerminalWidget({
     };
     socket.onclose = (event) => {
       if (disposed || mine !== generation || ws !== socket) return;
+      setCopyMode(false, 0);
       cancelPostAttachResize();
       cancelInitialResize();
       // A connection that drew and stayed up earns a fresh set of quiet redials.
@@ -1314,7 +1330,7 @@ export function mountTerminalWidget({
 
   disposables.push(term.onData((data) => {
     if (remote && remoteState.mode !== 'interactive') return;
-    if (scrolledBack && !MOUSE_REPORT.test(data)) toLive();
+    if (inCopyMode && !MOUSE_REPORT.test(data)) toLive();
     if (!disposed && ws && ws.readyState === WebSocketCtor.OPEN) {
       ws.send(new TextEncoder().encode(data));
     }
@@ -1355,7 +1371,7 @@ export function mountTerminalWidget({
     // toLive scrolls a swiped-back view down to live; scrolledBack says
     // whether it is back from live.
     toLive,
-    scrolledBack: () => scrolledBack > 0,
+    scrolledBack: () => inCopyMode,
     resetZoom: () => setZoom(null),
     copy: () => disposed ? Promise.resolve() : interactions.copySelection(),
     // paste delivers text as terminal input, by the path keystrokes take, and
