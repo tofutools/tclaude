@@ -101,6 +101,13 @@ var guideState = struct {
 // guideNow is swapped by tests.
 var guideNow = time.Now
 
+// SetGuideClockForTest swaps the clock the guide, presence and capture read.
+func SetGuideClockForTest(now func() time.Time) (restore func()) {
+	old := guideNow
+	guideNow = now
+	return func() { guideNow = old }
+}
+
 // ResetDashboardGuideForTest clears the in-memory view and cues.
 func ResetDashboardGuideForTest() {
 	guideState.Lock()

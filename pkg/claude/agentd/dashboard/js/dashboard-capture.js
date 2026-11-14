@@ -157,6 +157,43 @@ export function trackPointer(win, now = Date.now) {
   return state;
 }
 
+// The tab's presence id, in session storage so that a reload keeps its slot
+// instead of taking another one from the daemon.
+export const CAPTURE_TAB_ID_KEY = 'tclaude.dash.presence-tab';
+const TAB_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+
+// claimTabId gives this page load its tab's presence id. A reload reuses the id
+// its tab had. "Duplicate tab" copies session storage too, so the stored id
+// carries the page load that holds it: a page that finds the id still held is
+// a copy of a tab that is still open, and takes an id of its own. The holder
+// lets go on pagehide, which a reload fires before the next page reads.
+// Without session storage every load gets a fresh id, as before.
+export function claimTabId(win, randomId) {
+  const load = randomId();
+  let store = null;
+  try { store = win.sessionStorage ?? null; } catch { store = null; }
+  const read = () => {
+    try {
+      const saved = JSON.parse(store?.getItem(CAPTURE_TAB_ID_KEY) || 'null');
+      return saved && typeof saved.id === 'string' && TAB_ID_PATTERN.test(saved.id) ? saved : null;
+    } catch { return null; }
+  };
+  const write = (value) => {
+    try { store?.setItem(CAPTURE_TAB_ID_KEY, JSON.stringify(value)); } catch { /* best effort */ }
+  };
+  const saved = read();
+  const id = saved && !saved.holder ? saved.id : randomId();
+  const hold = () => write({ id, holder: load });
+  hold();
+  // Only this load's hold is released: a copy that took its own id has
+  // written over it.
+  const release = () => {
+    const now = read();
+    if (now?.id === id && now.holder === load) write({ id });
+  };
+  return { id, load, hold, release };
+}
+
 // startCapturePresence tells the daemon this tab is open and whether it is on
 // screen, and answers a capture aimed at it. It returns a stop function.
 export function startCapturePresence({
@@ -164,7 +201,8 @@ export function startCapturePresence({
   setTimeoutImpl = (fn, ms) => win.setTimeout(fn, ms), clearTimeoutImpl = (id) => win.clearTimeout(id),
 }) {
   const doc = win.document;
-  const client = randomId();
+  const tabId = claimTabId(win, randomId);
+  const { id: client, load } = tabId;
   const tracker = trackPointer(win);
   let timer = null;
   let stopped = false;
@@ -223,7 +261,7 @@ export function startCapturePresence({
     inFlight = true;
     const abort = win.AbortController ? new win.AbortController() : null;
     try {
-      const body = { client, focused: !!doc.hasFocus?.(), visible: !hidden() };
+      const body = { client, load, focused: !!doc.hasFocus?.(), visible: !hidden() };
       const data = await within(send(body, abort?.signal), CAPTURE_PING_TIMEOUT_MS);
       if (Array.isArray(data?.marks)) onMarks?.(data.marks);
       if (data?.capture?.id) await within(answer(data.capture), CAPTURE_ANSWER_TIMEOUT_MS);
@@ -238,13 +276,15 @@ export function startCapturePresence({
   const goodbye = () => {
     stopped = true;
     clearTimeoutImpl(timer);
+    tabId.release();
     try {
-      win.navigator.sendBeacon('/api/companion/presence', new win.Blob([JSON.stringify({ client, gone: true })], { type: 'application/json' }));
+      win.navigator.sendBeacon('/api/companion/presence', new win.Blob([JSON.stringify({ client, load, gone: true })], { type: 'application/json' }));
     } catch { /* the daemon ages the tab out */ }
   };
   const revive = () => {
     if (!stopped) return;
     stopped = false;
+    tabId.hold();
     pingNow();
   };
   doc.addEventListener('visibilitychange', pingNow);
@@ -256,6 +296,7 @@ export function startCapturePresence({
   return () => {
     stopped = true;
     clearTimeoutImpl(timer);
+    tabId.release();
     tracker.stop();
     doc.removeEventListener('visibilitychange', pingNow);
     win.removeEventListener('focus', pingNow);

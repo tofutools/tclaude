@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -447,4 +449,83 @@ func TestDashboardCapture_NeedsPermission(t *testing.T) {
 	t.Cleanup(agentd.SetCaptureTimeoutForTest(10 * time.Millisecond))
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermDashboardCapture, "test"))
 	assert.Equal(t, http.StatusGatewayTimeout, ask(), "granted, it reaches the tab")
+}
+
+// presence reports a tab as a page load does, with its load id, and returns
+// the HTTP status.
+func (c *captureFlow) presence(body map[string]any) int {
+	c.t.Helper()
+	return testharness.Serve(c.dash, testharness.JSONRequest(c.t, http.MethodPost, "/api/companion/presence", body)).Code
+}
+
+// tickingClock is a fake clock that moves a millisecond each time it is read,
+// so every ping is heard at its own instant. The handler and the waiting
+// capture request read it from different goroutines.
+func tickingClock(t *testing.T) {
+	t.Helper()
+	var mu sync.Mutex
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	t.Cleanup(agentd.SetGuideClockForTest(func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		now = now.Add(time.Millisecond)
+		return now
+	}))
+}
+
+// A tab reloaded over and over keeps one slot: each page load pings with the
+// tab's id and its own load id, and the goodbye of the page it replaced lands
+// late without taking the slot from the new page.
+func TestDashboardPresence_QuickReloadsKeepOneSlot(t *testing.T) {
+	c := newCaptureFlow(t)
+	tickingClock(t)
+	prev := ""
+	for i := range 40 {
+		load := "load-" + strconv.Itoa(i)
+		require.Equal(t, http.StatusOK, c.presence(map[string]any{"client": "tab", "load": load, "focused": true, "visible": true}), "reload %d", i)
+		if prev != "" {
+			require.Equal(t, http.StatusNoContent, c.presence(map[string]any{"client": "tab", "load": prev, "gone": true}))
+		}
+		prev = load
+	}
+
+	waiting := c.request()
+	id := c.await(func() string { return c.ping("tab", true, true) })
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"png": capturePNG}))
+	rec := <-waiting
+	require.Equal(t, http.StatusOK, rec.Code, "the stale goodbyes left the reloaded tab capturable: %s", rec.Body.String())
+
+	// The current page's own goodbye still ends it.
+	require.Equal(t, http.StatusNoContent, c.presence(map[string]any{"client": "tab", "load": prev, "gone": true}))
+	rec = <-c.request()
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+// A page from before stable ids, or one without session storage, takes a new
+// id on every load and its goodbye may never arrive. When the table is full the
+// tab heard from least recently makes room: no tab is refused, and the newest
+// ones keep presence and capture.
+func TestDashboardPresence_AFullTableForgetsTheStalestTab(t *testing.T) {
+	c := newCaptureFlow(t)
+	tickingClock(t)
+	for i := range 40 {
+		require.Equal(t, http.StatusOK, c.presence(map[string]any{"client": "reload-" + strconv.Itoa(i), "focused": false, "visible": true}), "reload %d", i)
+	}
+	newest := "reload-39"
+
+	waiting := c.request()
+	// Only the newest tab pings while the request picks its target: pinging
+	// another would make that one the newest.
+	id := c.await(func() string { return c.ping(newest, false, true) })
+	assert.Empty(t, c.ping("reload-38", false, true), "the newest visible tab is the one asked")
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"png": capturePNG}))
+	rec := <-waiting
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// A forgotten tab that is still open comes back with its next ping.
+	require.Equal(t, http.StatusOK, c.presence(map[string]any{"client": "reload-0", "focused": true, "visible": true}))
+	waiting = c.request()
+	id = c.await(func() string { return c.ping("reload-0", true, true) })
+	require.Equal(t, http.StatusNoContent, c.answer(id, map[string]any{"error": "done"}))
+	<-waiting
 }

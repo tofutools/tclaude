@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { snapshotPage } from '../dashboard/js/capture-snapshot.js';
-import { buildNode, captureContext, cssUrls, describeElement, rewriteCss, startCapturePresence } from '../dashboard/js/dashboard-capture.js';
+import { buildNode, CAPTURE_TAB_ID_KEY, captureContext, claimTabId, cssUrls, describeElement, rewriteCss, startCapturePresence } from '../dashboard/js/dashboard-capture.js';
 import { parseHTML } from './third_party/linkedom.mjs';
 
 function element(tag, { attrs = {}, text = '', parent = null, classes = [] } = {}) {
@@ -194,7 +194,7 @@ test('a tab reports presence, then shows the cue and hands in its render', async
     setTimeoutImpl: (fn, ms) => { if (ms < 100) fn(); else h.timers.push(ms); return 1; }, clearTimeoutImpl: () => {},
   });
   await settle();
-  assert.deepEqual(h.calls[0], { url: '/api/companion/presence', body: { client: 'tab-1', focused: true, visible: true } });
+  assert.deepEqual(h.calls[0], { url: '/api/companion/presence', body: { client: 'tab-1', load: 'tab-1', focused: true, visible: true } });
   assert.deepEqual(notices, ['steward'], 'the operator is told every time');
   assert.equal(h.calls[1].url, '/api/companion/capture/c1');
   assert.equal(h.calls[1].body.png, globalThis.btoa('png'));
@@ -226,7 +226,7 @@ test('a hidden tab says so and pings slowly', async () => {
     setTimeoutImpl: (fn, ms) => { h.timers.push(ms); return 1; }, clearTimeoutImpl: () => {},
   });
   await settle();
-  assert.deepEqual(h.calls[0].body, { client: 'tab-3', focused: false, visible: false });
+  assert.deepEqual(h.calls[0].body, { client: 'tab-3', load: 'tab-3', focused: false, visible: false });
   assert.equal(h.timers.at(-1), 10000);
   stop();
 });
@@ -274,4 +274,76 @@ test('a render that never finishes cannot end presence', async () => {
   await settle();
   assert.ok(pending.some((t) => t.ms === 1500), 'it goes back to pinging');
   stop();
+});
+
+// memoryStorage is a tab's session storage. Duplicating a tab copies it.
+function memoryStorage(entries = {}) {
+  const map = new Map(Object.entries(entries));
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null), setItem: (key, value) => map.set(key, String(value)),
+    copy: () => memoryStorage(Object.fromEntries(map)),
+  };
+}
+
+const counter = () => { let n = 0; return () => `id-${++n}`; };
+
+test('a reloaded tab keeps its presence id, a duplicated one takes its own', () => {
+  const next = counter();
+  const storage = memoryStorage();
+  const first = claimTabId({ sessionStorage: storage }, next);
+  // "Duplicate tab" copies session storage while the first page still holds the id.
+  const copy = claimTabId({ sessionStorage: storage.copy() }, next);
+  assert.notEqual(copy.id, first.id, 'a copy of an open tab gets an id of its own');
+  assert.notEqual(copy.load, first.load);
+
+  // A reload: the page lets go on pagehide, the next page load reads the id.
+  first.release();
+  const reloaded = claimTabId({ sessionStorage: storage }, next);
+  assert.equal(reloaded.id, first.id, 'the reload reuses its slot');
+  assert.notEqual(reloaded.load, first.load, 'each page load is told apart');
+  // The page it replaced cannot take the hold back from it.
+  first.release();
+  assert.notEqual(claimTabId({ sessionStorage: storage.copy() }, next).id, first.id, 'still held by the reloaded page');
+});
+
+test('a tab without session storage, or with junk in it, still gets an id', () => {
+  const next = counter();
+  const blocked = { get sessionStorage() { throw new Error('denied'); } };
+  assert.equal(claimTabId(blocked, next).id, 'id-2');
+  const junk = memoryStorage({ [CAPTURE_TAB_ID_KEY]: '{"id":"<script>"}' });
+  assert.equal(claimTabId({ sessionStorage: junk }, next).id, 'id-4');
+  assert.equal(JSON.parse(junk.getItem(CAPTURE_TAB_ID_KEY)).id, 'id-4');
+});
+
+test('presence pings with the tab id across reloads and says goodbye with its load', async () => {
+  const storage = memoryStorage();
+  const beacons = [];
+  const next = counter();
+  const start = () => {
+    const h = presenceHarness([]);
+    h.win.sessionStorage = storage;
+    h.win.navigator = { sendBeacon: (url, blob) => { beacons.push(blob); return true; } };
+    h.win.Blob = class { constructor(parts) { this.text = parts.join(''); } };
+    const stop = startCapturePresence({ win: h.win, fetchImpl: h.fetchImpl, tab: () => '', randomId: next, setTimeoutImpl: () => 1, clearTimeoutImpl: () => {} });
+    return { h, stop };
+  };
+  const a = start();
+  await settle();
+  const first = a.h.calls[0].body;
+  a.h.listeners.get('pagehide')();
+  assert.deepEqual(JSON.parse(beacons[0].text), { client: first.client, load: first.load, gone: true });
+  a.stop();
+
+  const b = start();
+  await settle();
+  assert.equal(b.h.calls[0].body.client, first.client, 'the reload reports as the same tab');
+  assert.notEqual(b.h.calls[0].body.load, first.load);
+  // Back from the back/forward cache, the page holds its id again.
+  b.h.listeners.get('pagehide')();
+  b.h.listeners.get('pageshow')();
+  const dup = start();
+  await settle();
+  assert.notEqual(dup.h.calls[0].body.client, first.client, 'a duplicate of the restored page is a tab of its own');
+  b.stop();
+  dup.stop();
 });

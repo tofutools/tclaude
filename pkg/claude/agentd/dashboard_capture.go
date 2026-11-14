@@ -81,6 +81,10 @@ type captureClient struct {
 	Focused bool
 	Visible bool
 	Seen    time.Time
+	// Load names the page load that last pinged. A tab keeps its client id
+	// across reloads, so the goodbye of the page it replaced can land after the
+	// new page's first ping; Load tells that stale goodbye apart.
+	Load string
 }
 
 // captureRequest is what the chosen tab receives.
@@ -310,6 +314,7 @@ func handleDashboardCompanionPresence(w http.ResponseWriter, r *http.Request) {
 		Focused bool   `json:"focused"`
 		Visible bool   `json:"visible"`
 		Gone    bool   `json:"gone"`
+		Load    string `json:"load"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid presence: "+err.Error())
@@ -317,6 +322,10 @@ func handleDashboardCompanionPresence(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Client == "" || len(req.Client) > captureMaxClientID {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "presence needs a client id")
+		return
+	}
+	if len(req.Load) > captureMaxClientID {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "presence load id is too long")
 		return
 	}
 	// Only a tab on screen draws, so a hidden one costs no query.
@@ -331,7 +340,11 @@ func handleDashboardCompanionPresence(w http.ResponseWriter, r *http.Request) {
 	captureState.Lock()
 	defer captureState.Unlock()
 	if req.Gone {
-		delete(captureState.clients, req.Client)
+		// A reloaded tab's new page may already hold the slot; the old page's
+		// goodbye must not take it away.
+		if c, ok := captureState.clients[req.Client]; ok && (req.Load == "" || c.Load == "" || c.Load == req.Load) {
+			delete(captureState.clients, req.Client)
+		}
 		// The page's last poll says nothing now that the page has closed.
 		if len(captureState.clients) == 0 {
 			captureState.polled = time.Time{}
@@ -340,34 +353,46 @@ func handleDashboardCompanionPresence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	captureState.heard = guideNow()
-	resp := presenceResponse(w, req.Client, req.Focused, req.Visible)
-	if resp == nil {
-		return
-	}
+	resp := presenceResponse(req.Client, req.Load, req.Focused, req.Visible)
 	if req.Visible {
 		resp["marks"] = marks
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// presenceResponse records a tab and collects what is aimed at it. It answers
-// the request itself, and returns nil, when the tab cannot be recorded. The
-// caller holds the lock.
-func presenceResponse(w http.ResponseWriter, client string, focused, visible bool) map[string]any {
+// presenceResponse records a tab and collects what is aimed at it. The caller
+// holds the lock.
+func presenceResponse(client, load string, focused, visible bool) map[string]any {
 	if _, known := captureState.clients[client]; !known && len(captureState.clients) >= captureMaxClients {
 		captureTarget(guideNow())
 		if len(captureState.clients) >= captureMaxClients {
-			writeError(w, http.StatusTooManyRequests, "too_many", "too many dashboard tabs")
-			return nil
+			evictStalestCaptureClient()
 		}
 	}
-	captureState.clients[client] = captureClient{Focused: focused, Visible: visible, Seen: guideNow()}
+	captureState.clients[client] = captureClient{Focused: focused, Visible: visible, Seen: guideNow(), Load: load}
 	resp := map[string]any{}
 	if p := captureState.pending; p != nil && p.client == client && !p.delivered {
 		p.delivered = true
 		resp["capture"] = p.captureRequest
 	}
 	return resp
+}
+
+// evictStalestCaptureClient makes room for a new tab by forgetting the one heard
+// from least recently. A tab that is still open is not harmed: its next ping
+// takes a slot again, and a capture aimed at it still reaches it, since that is
+// matched by its id. The caller holds the lock.
+func evictStalestCaptureClient() {
+	var stalest string
+	var seen time.Time
+	for id, c := range captureState.clients {
+		if stalest == "" || c.Seen.Before(seen) || (c.Seen.Equal(seen) && id < stalest) {
+			stalest, seen = id, c.Seen
+		}
+	}
+	delete(captureState.clients, stalest)
+	slog.Debug("dashboard presence: table full, forgot the tab heard from least recently",
+		"client", stalest, "last_seen", seen, "max", captureMaxClients)
 }
 
 // POST /api/companion/capture/{id} — the tab hands in its render, or says why
