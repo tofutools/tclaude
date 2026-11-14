@@ -66,6 +66,25 @@ func cachedHarnessCatalog() []dashboardHarness {
 	return c.value
 }
 
+// harnessCatalogAtMostAgo returns a catalog no older than maxAge, building it
+// inline when the cached one is older. It is for one-shot reads that nothing
+// polls — the spawn-launch catalog a dialog (possibly a federation peer's)
+// fetches when it opens — where a stale read would not be followed by a
+// fresher one a poll later. Never use it on a polled path.
+func harnessCatalogAtMostAgo(maxAge time.Duration) []dashboardHarness {
+	c := &harnessCatalogCache
+	c.Lock()
+	defer c.Unlock()
+	if !c.enabled {
+		return c.build()
+	}
+	if c.at.IsZero() || time.Since(c.at) > maxAge {
+		c.value = c.build()
+		c.at = time.Now()
+	}
+	return c.value
+}
+
 // refreshHarnessCatalog rebuilds the catalog and publishes it. It runs outside
 // any HTTP handler, so a panic is recovered and logged rather than taking the
 // daemon down; the previous catalog stays in place.

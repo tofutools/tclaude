@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -70,7 +71,9 @@ func TestHarnessCatalogStaleReadDoesNotWaitForRebuild(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return cachedHarnessCatalog()[0].Name == "second"
 	}, 5*time.Second, 5*time.Millisecond, "rebuilt catalog was never published")
-	require.Equal(t, int32(2), builds.Load(), "one inline build plus one background rebuild")
+	// At least the inline build plus one rebuild; a slow runner may let the
+	// published catalog itself go stale inside Eventually and start another.
+	require.GreaterOrEqual(t, builds.Load(), int32(2))
 }
 
 // A fresh catalog is served without rebuilding.
@@ -106,4 +109,17 @@ func TestHarnessCatalogRefreshPanicKeepsPreviousCatalog(t *testing.T) {
 	}, 5*time.Second, 5*time.Millisecond)
 	require.Equal(t, int32(2), builds.Load())
 	require.Equal(t, "good", cachedHarnessCatalog()[0].Name)
+}
+
+// The one-shot read rebuilds inline only when the cache is older than asked.
+func TestHarnessCatalogAtMostAgo(t *testing.T) {
+	var builds atomic.Int32
+	useHarnessCatalogCacheForTest(t, func() []dashboardHarness {
+		return catalogNamed(fmt.Sprint(builds.Add(1)))
+	})
+	require.Equal(t, "1", harnessCatalogAtMostAgo(time.Hour)[0].Name, "empty cache builds")
+	require.Equal(t, "1", harnessCatalogAtMostAgo(time.Hour)[0].Name, "fresh enough is served")
+	ageHarnessCatalogForTest()
+	require.Equal(t, "2", harnessCatalogAtMostAgo(harnessCatalogRefreshAfter)[0].Name, "too old rebuilds inline")
+	require.Equal(t, "2", cachedHarnessCatalog()[0].Name, "inline rebuild is published to polled reads")
 }
