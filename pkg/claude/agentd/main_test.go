@@ -74,6 +74,10 @@ func TestMain(m *testing.M) {
 	agentd.InstallLauncherTestDefaults()
 	agentd.DisableBrokerPaneCacheForTest()
 	agentd.DisableFleetMetadataForTest()
+	// The harness catalog's background refresh would serve a test the catalog
+	// as it was before that test's opt-ins; harness_catalog_cache_test.go
+	// covers the cache itself.
+	agentd.DisableHarnessCatalogCacheForTest()
 	// The test process is every socket peer here, and is not an agent the daemon runs.
 	agentd.SetExternalDaemonPIDForTest(-1)
 	// The board never runs the operator's awb CLI to learn its server;

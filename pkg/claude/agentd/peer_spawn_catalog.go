@@ -186,7 +186,7 @@ func handleDashboardSpawnLaunchCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"harnesses":    buildHarnessCatalog(),
+		"harnesses":    cachedHarnessCatalog(),
 		"sandbox_impl": buildSandboxImplCatalog(),
 	})
 }
