@@ -27,8 +27,24 @@ jobs:
         with:
           version: v2.15.0
 
+  # Its own job rather than steps after golangci-lint: both are cold whole-module
+  # compiles (~3-4 min and ~2 min on the hosted runner), and run in sequence
+  # they made lint the longest job of PR CI. A caller's `lint` job still
+  # succeeds only when both jobs here do.
+  vet:
+    name: Vet (darwin, e2e drive)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
       # scripts/e2e/drive is its own module (keeps go-rod out of go.mod), so
-      # the root ./... build, lint and test above never compile it.
+      # the root ./... build, lint and test never compile it.
       - name: Vet e2e drive module
         run: go -C scripts/e2e/drive vet ./...
 
