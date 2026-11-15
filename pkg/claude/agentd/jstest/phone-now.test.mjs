@@ -53,7 +53,7 @@ async function setup(t, snapshot = SNAPSHOT, { stored = null, looked = null } = 
   const calls = [];
   const posts = [];
   const record = (name) => (...args) => { calls.push([name, ...args]); };
-  const actions = { notify: record('notify'), navigate: record('navigate'), openTerminal: record('openTerminal'), openAccessRequest: record('openAccessRequest') };
+  const actions = { notify: record('notify'), navigate: record('navigate'), openTerminal: record('openTerminal'), openAccessRequest: record('openAccessRequest'), agentMenu: record('agentMenu') };
   const fetchImpl = async (url, init) => { posts.push([url, JSON.parse(init.body)]); return { ok: true }; };
   const { signal } = harness.signals;
   const processSource = { context: signal(null), status: signal('ready'), error: signal(''), refresh: () => Promise.resolve() };
@@ -358,4 +358,28 @@ test('a row\'s label says when its context is nearly full', async (t) => {
   const { harness, root } = await setup(t, snapshot);
   const row = harness.getByRole(root, 'group', { name: 'Online' }).querySelector('.phone-row');
   assert.match(row.getAttribute('aria-label'), /^lead, working, context 92% full: open its terminal$/);
+});
+
+test('a row\'s ⋯ or a hold on it opens the agent\'s menu; so does a hold on an asking agent\'s card', async (t) => {
+  // No access request open, so the asker is an asking card, not a key card.
+  const { harness, root, calls, tap } = await setup(t, { ...SNAPSHOT, access_requests: [] });
+  const { HOLD_MS } = await harness.importDashboardModule('js/phone-hold.js');
+  const online = harness.getByRole(root, 'group', { name: 'Online' });
+  await tap(harness.getByRole(online, 'button', { name: 'lead: more' }));
+  assert.deepEqual([calls.at(-1)[0], calls.at(-1)[1].agentId], ['agentMenu', WORKER]);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const hold = async (el) => {
+    await harness.act(() => {
+      const event = new harness.window.Event('pointerdown', { bubbles: true, cancelable: true });
+      Object.assign(event, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+      el.dispatchEvent(event);
+    });
+    await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  };
+  const row = [...online.querySelectorAll('.phone-row')].find((r) => r.querySelector('.phone-who-name').textContent === 'steward');
+  await hold(row);
+  assert.deepEqual([calls.at(-1)[0], calls.at(-1)[1].agentId], ['agentMenu', STEWARD]);
+  const card = harness.getByRole(root, 'group', { name: 'payments-fix is asking' });
+  await hold(card);
+  assert.deepEqual([calls.at(-1)[0], calls.at(-1)[1].agentId], ['agentMenu', ASKER]);
 });

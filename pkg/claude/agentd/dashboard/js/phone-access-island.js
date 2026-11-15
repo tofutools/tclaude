@@ -18,7 +18,7 @@ import { fmtRemaining } from './access-model.js';
 import { companionAgents, pendingAccess, pendingApprovals } from './companion-model.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { PhoneApprovalCard } from './phone-approval.js';
-import { PhoneGrant } from './phone-grant.js';
+import { PhoneGrant, grantFor } from './phone-grant.js';
 import { createMessageAccessDialogActions } from './message-access-dialog-actions.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
 import { usePhoneBar } from './phone-page.js';
@@ -150,7 +150,15 @@ function Slugs({ state, current }) {
 export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThis.fetch, notify = () => {}, openInMail = () => {}, grantActions = null, refresh = async () => {} }) {
   // + Grant's page is up (phone-grant.js); it covers the views until it is
   // left or a grant goes through.
+  // granting: false, true (step 1) or the agent id an agent's menu asked
+  // for (its step 2, grantFor).
   const [granting, setGranting] = useState(false);
+  const asked = grantFor.value;
+  useEffect(() => {
+    if (!asked) return;
+    grantFor.value = '';
+    setGranting(asked);
+  }, [asked]);
   const [grantWith] = useState(() => grantActions || createMessageAccessDialogActions({ notify, refresh }));
   const current = state.view.value;
   const data = snapshot.value;
@@ -202,7 +210,8 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
     attrs: view.key === 'requests' ? undefined : { 'data-subtab': view.key },
   }));
   if (granting && current.snapshotLoaded) {
-    return html`<${PhoneGrant} snapshot=${data} grantActions=${grantWith} close=${() => setGranting(false)}
+    return html`<${PhoneGrant} key=${String(granting)} agentID=${typeof granting === 'string' ? granting : ''}
+      snapshot=${data} grantActions=${grantWith} close=${() => setGranting(false)}
       granted=${() => { setGranting(false); select('sudo'); }} />`;
   }
   return html`<div class="phone-access">

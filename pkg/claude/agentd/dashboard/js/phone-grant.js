@@ -16,6 +16,7 @@
 // on the desktop.
 
 import { h } from 'preact';
+import { signal } from '@preact/signals';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
@@ -28,6 +29,11 @@ import { ChipRow, Section } from './phone-ui.js';
 import { Button, Input, Seg } from './ui-components.js';
 
 const html = htm.bind(h);
+
+// grantFor asks Access to open + Grant on an agent's step 2: an agent's menu
+// (phone-agent-menu.js Grant sudo…) sets it to the agent id and goes to
+// Access, which takes it and clears it.
+export const grantFor = signal('');
 
 // USES_PRESETS are the use limits offered as segments; '' is no limit.
 export const USES_PRESETS = Object.freeze(['', '1', '3', '10']);
@@ -246,10 +252,11 @@ function PermsStep({ snapshot, agent, grantActions, onBack, onGranted }) {
 }
 
 // PhoneGrant is the whole flow over Access: step 1, then step 2 for the
-// agent picked. Back steps back; close() leaves it; granted() runs after a
+// agent picked (or for agentID, when an agent's menu opened it there; Back
+// is then step 1, as after a pick). Back steps back; close() leaves it; granted() runs after a
 // grant goes through.
-export function PhoneGrant({ snapshot, grantActions, close, granted }) {
-  const [agentID, setAgentID] = useState('');
+export function PhoneGrant({ snapshot, grantActions, close, granted, agentID: preset = '' }) {
+  const [agentID, setAgentID] = useState(preset);
   const agent = agentID ? (snapshot?.agents || []).find((item) => item.agent_id === agentID) : null;
   if (agent) {
     return html`<${PermsStep} key=${agent.agent_id} snapshot=${snapshot} agent=${agent} grantActions=${grantActions}

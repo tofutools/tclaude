@@ -721,6 +721,22 @@ export async function handleRowAction(action) {
         openSnapshots({ agent, node: rowNode() });
         return;
       }
+      case 'interrupt-agent': {
+        // Stop the agent's current turn (the phone's agent menu; the desktop
+        // has the terminal's Esc). No confirm: the agent carries on from
+        // where it stopped, and a new message starts it again.
+        const r = await api(`/api/agents/${encodeURIComponent(agent)}/interrupt`, { method: 'POST', credentials: 'same-origin' });
+        if (!r.ok) {
+          const text = await r.text();
+          let body = {};
+          try { body = JSON.parse(text); } catch (_) { /* plain error */ }
+          toast(`interrupt ${label} failed: ${body.error || text}`, true);
+          return;
+        }
+        toast(`Interrupted ${label}`);
+        refresh();
+        return;
+      }
       case 'compact-agent': {
         // The menu item only shows where the harness can compact and is
         // disabled offline; the daemon re-checks both. The summary replaces

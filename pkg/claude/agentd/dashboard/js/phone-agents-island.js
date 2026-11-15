@@ -3,7 +3,8 @@
 // every one), then each group's agents with an avatar, a
 // state pill and a line of role · harness · context · PR or branch. A tap
 // does a row's one thing (an online agent's terminal, an offline one's
-// resume); ⋯ opens its sheet with the rest. ＋ in the top bar spawns an agent
+// resume); a touch and hold, or ⋯, opens its menu with the rest
+// (phone-agent-menu.js). ＋ in the top bar spawns an agent
 // from a short sheet (group, profile, prompt), and a group's "Board ›" opens
 // its board. A tap on a group's header folds it (remembered, phone-agents-
 // model.js FOLD_PREF); under the header, folded too, a line counts its agents
@@ -19,8 +20,10 @@
 import { h, render } from 'preact';
 import { useReducer, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ALL, agentsFilter, agentGroups, findRow, foldPref, groupTabs, liveFilter, metaParts, shownGroups, spawnBody, spawnChoices, toggleFilter } from './phone-agents-model.js';
+import { ALL, agentsFilter, agentGroups, foldPref, groupTabs, liveFilter, metaParts, shownGroups, spawnBody, spawnChoices, toggleFilter } from './phone-agents-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
+import { AgentMenu } from './phone-agent-menu.js';
+import { useHold } from './phone-hold.js';
 import { usePhoneBar } from './phone-page.js';
 import { Avatar, IconButton, StatePill } from './phone-ui.js';
 import { dashPrefs } from './prefs.js';
@@ -52,13 +55,15 @@ function MetaLine({ row, kids = 0 }) {
   return html`<span class="phone-agent-meta">${parts.map((p, i) => html`${i ? ' · ' : ''}${part(p)}`)}</span>`;
 }
 
-// AgentRow is one agent: the row itself does its one thing, ⋯ the rest. A
+// AgentRow is one agent: the row itself does its one thing; a hold or ⋯ the
+// rest (its menu). A
 // worker (under) sits indented under the lead that spawned it, last marking
 // the end of that lead's workers; a lead says how many it has (kids).
 function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kids = 0 }) {
-  const cls = ['phone-agent', `v-${row.variant}`, !row.online && 'phone-agent-off', under && 'phone-agent-worker', last && 'phone-agent-last'].filter(Boolean).join(' ');
+  const { holding, handlers } = useHold(() => onMore(row));
+  const cls = ['phone-agent', `v-${row.variant}`, !row.online && 'phone-agent-off', under && 'phone-agent-worker', last && 'phone-agent-last', holding && 'phone-holding'].filter(Boolean).join(' ');
   return html`<li class=${cls}>
-    <button data-ui-exempt type="button" class="phone-agent-row" onClick=${() => onTap(row)}
+    <button data-ui-exempt type="button" class="phone-agent-row phone-holdable" ...${handlers} onClick=${() => onTap(row)}
       aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}${under ? `, spawned by ${under.name}` : ''}${kids > 0 ? `, ${kids} ${kids === 1 ? 'worker' : 'workers'}` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
       <${Avatar} bot glyph=${steward ? '✦' : '🤖'} badge=${row.pill.badge} dim=${!row.online} />
       <span class="phone-agent-text">
@@ -135,35 +140,6 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
   </form>`;
 }
 
-// AgentSheet is one agent's sheet. It reads the agent live from the snapshot,
-// so a state change while it is open shows (and a retired agent says so).
-// here: opened from the agent's own terminal, which it then does not offer.
-export function AgentSheet({ state, order, actions, agentKey, groupKey, here = false, close }) {
-  const found = findRow(agentGroups(state.snapshot.value, order), agentKey, groupKey);
-  if (!found) return html`<p class="ui-empty phone-empty">This agent is no longer listed.</p>`;
-  const { row, group } = found;
-  const run = (act) => () => { close(); act(row, group); };
-  const item = (label, onClick, extra = '') => html`<li><button data-ui-exempt type="button" class=${`phone-menu-item${extra}`} onClick=${onClick}>${label}</button></li>`;
-  return html`<div class="phone-agent-sheet">
-    <div class="phone-agent-line"><h2 class="phone-agent-sheet-name">${row.name}</h2><${Pill} row=${row} /></div>
-    <p class="phone-agent-sheet-meta">${[group.group ? group.name : 'No group', row.role, row.harness, row.ctx !== null ? `context ${row.ctx}%` : ''].filter(Boolean).join(' · ')}</p>
-    ${row.detail && html`<p class="phone-agent-why">${row.detail}</p>`}
-    ${row.pr && html`<p class="phone-agent-sheet-meta"><a href=${row.pr.url} target="_blank" rel="noopener">PR #${row.pr.number}${row.pr.title ? ` · ${row.pr.title}` : ''}</a>${row.pr.ci ? ` · checks ${row.pr.ci}` : ''}</p>`}
-    ${!row.pr && row.branch && html`<p class="phone-agent-sheet-meta">⎇ ${row.branch}</p>`}
-    ${row.cwd && html`<p class="phone-agent-sheet-meta phone-agent-cwd">${row.cwd}</p>`}
-    <ul class="phone-menu">
-      ${row.online && !here && item('Open terminal', run(actions.openTerminal))}
-      ${item('Message…', run(actions.message))}
-      ${row.online
-        ? item('Shut down…', run((r) => actions.rowAction('dot-toggle', r)))
-        : item(row.waking ? 'Waking…' : 'Power on', run((r) => actions.rowAction('dot-toggle', r)))}
-      ${row.online && item('Restart…', run((r) => actions.rowAction('restart', r)))}
-      ${group.group && item('Rename…', run(actions.rename))}
-      ${item('Retire…', run((r) => actions.rowAction('retire-agent', r)), ' phone-menu-danger')}
-    </ul>
-  </div>`;
-}
-
 // GroupChips is the filter row: All, then each group, any number of them
 // picked. It has the phone's chip look (phone.css .phone-chips), but its
 // chips are toggle buttons, not tabs: tabs pick one.
@@ -215,7 +191,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   if (!groups.length) return html`<p class="ui-empty phone-empty">No agents yet.</p>`;
   const steward = snapshot.steward_active || '';
   const isSteward = (row) => !!steward && (row.agent === steward || row.conv === steward);
-  const more = (g) => (row) => openPhoneSheet({ label: row.name, Body: AgentSheet, props: { state, order, actions, agentKey: row.key, groupKey: g.key } });
+  const more = (g) => (row) => openPhoneSheet({ label: row.name, Body: AgentMenu, props: { state, order, actions, agentKey: row.key, groupKey: g.key } });
   // A tap: an online agent's terminal; an offline one wakes (the desktop's
   // status light, no confirm: starting a session is harmless); one already
   // waking shows its sheet.

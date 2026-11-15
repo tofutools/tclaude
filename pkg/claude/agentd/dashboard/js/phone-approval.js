@@ -18,6 +18,7 @@ import { openPhoneSheet } from './phone-sheet.js';
 import { Button, Input } from './ui-components.js';
 import { Avatar, ButtonRow, Card, StatePill } from './phone-ui.js';
 import { contextHigh } from './phone-shell-model.js';
+import { useHold } from './phone-hold.js';
 
 const html = htm.bind(h);
 
@@ -180,9 +181,10 @@ export function PhoneDecisionCard({ decision, fetchImpl, notify, from = '', stew
 }
 
 // AskCard is an agent waiting on the operator in its terminal: what it asks,
-// and Open.
-export function AskCard({ agent, onOpen }) {
-  return html`<${Card} accent="q" class="phone-now-card" role="group" aria-label=${`${agent.name} is asking`}>
+// and Open. A hold on it opens the agent's menu (onMenu).
+export function AskCard({ agent, onOpen, onMenu = null }) {
+  const { holding, handlers } = useHold(onMenu ? () => onMenu(agent) : null);
+  return html`<${Card} accent="q" class=${`phone-now-card phone-holdable${holding ? ' phone-holding' : ''}`} role="group" aria-label=${`${agent.name} is asking`} ...${handlers}>
     <div class="phone-card-row">
       <${Avatar} bot glyph=${agent.steward ? '✦' : '🤖'} badge=${agent.steward ? '' : '❓'} />
       <div class="phone-card-text"><${Who} name=${agent.name} sub=${agent.group} ctx=${agent.ctx ?? null} />

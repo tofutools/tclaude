@@ -19,12 +19,12 @@ const SECTIONS = [
   ] },
 ];
 
-async function setup(t, sections) {
+async function setup(t, sections, { onMenu } = {}) {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/phone-sessions.js');
   const opened = [];
   const mounted = await harness.mount(harness.html`<${mod.PhoneSessions} snapshot=${{ value: {} }} actions=${{}}
-    listed=${() => sections} open=${(item, ctx) => opened.push([item.key, !!ctx.snapshot])} />`);
+    listed=${() => sections} open=${(item, ctx) => opened.push([item.key, !!ctx.snapshot])} onMenu=${onMenu} />`);
   return { harness, mod, opened, c: mounted.container };
 }
 
@@ -67,4 +67,26 @@ test('the empty strip: a phone lists the open sessions, the desktop keeps its ho
   const desk = await harness.mount(harness.html`<${HomeOrHint} phone=${false} rail=${false} snapshot=${snapshot} actions=${{}} panes=${[]}><p class="hint">hint</p><//>`);
   assert.equal(desk.container.querySelector('.phone-sessions'), null, 'the desktop never shows it');
   assert.ok(desk.container.querySelector('.hint'), 'the desktop keeps the hint');
+});
+
+test('a local agent\'s row has a ⋯, and a hold, for its menu; a shell or another node\'s agent has neither', async (t) => {
+  const agent = (key, title, extra = {}) => ({ key, kind: 'terminal', title, view: 'background',
+    status: { agent: { agent_id: `agt_${key}`, conv_id: `c_${key}` }, key: 'idle', label: 'idle' }, row: { kind: 'agent', ...extra } });
+  const menus = [];
+  const { harness, c } = await setup(t, [{ id: 'g', name: 'webshop', items: [
+    agent('a', 'checkout-ui'), agent('b', 'far-away', { node: { name: 'node-2' } }),
+    { key: 'bg:3', kind: 'terminal', title: 'scratch', view: 'background', status: null, row: { kind: 'shell' } },
+  ] }], { onMenu: (who) => menus.push(who) });
+  assert.deepEqual([...c.querySelectorAll('.phone-session-more')].map((b) => b.getAttribute('aria-label')), ['checkout-ui: more']);
+  await harness.act(() => c.querySelector('.phone-session-more').click());
+  assert.deepEqual(menus, [{ agentId: 'agt_a', name: 'checkout-ui' }]);
+  const { HOLD_MS } = await harness.importDashboardModule('js/phone-hold.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await harness.act(() => {
+    const event = new harness.window.Event('pointerdown', { bubbles: true, cancelable: true });
+    Object.assign(event, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    c.querySelector('.phone-session').dispatchEvent(event);
+  });
+  await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  assert.equal(menus.length, 2, 'a hold opens it too');
 });
