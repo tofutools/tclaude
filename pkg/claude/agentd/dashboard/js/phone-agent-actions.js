@@ -36,6 +36,8 @@ export function phoneAgentActions({ onComposeMessage = null, navigate = navigate
       grantFor.value = row.member?.agent_id || row.agent;
       navigate('/access');
     },
+    // explain says why an entry is greyed (a tap on Interrupt between turns).
+    explain: (text) => notify(text),
     // copy puts text on the clipboard; what names it in the toast.
     copy: async (text, what) => {
       if (await writeClipboard(text)) notify(`Copied ${what}`);

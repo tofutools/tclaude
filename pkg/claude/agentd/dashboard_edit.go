@@ -18,6 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/startupctx"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
@@ -1512,7 +1513,20 @@ func peerRequesterLabel(instanceID string) string {
 // dashboardInterruptAgent, dashboardAgentContextInfo and dashboardAgentPRs
 // are the cookie-auth twins of POST /v1/agent/{conv}/interrupt, GET
 // /v1/agent/{conv}/context and GET|POST /v1/agent/{conv}/prs.
+// dashboardInterruptAgent is the operator's Interrupt (the phone's agent
+// menu). A Codex agent on the app-server drive is interrupted through that
+// API, as POST /v1/agent/{conv}/interrupt does. A Claude Code agent is sent
+// its own interrupt key, Esc, as the operator's Esc in its terminal would
+// be (runClaudeInterrupt): for this node's operator only, so a peer's view
+// and the agent CLI keep the Codex-only route.
 func dashboardInterruptAgent(w http.ResponseWriter, r *http.Request, convID string) {
+	if peerGrantFromRequest(r) == nil && peerActionFromRequest(r) == nil && harnessForConv(convID).Name == harness.DefaultName {
+		if _, ok := requireCrossAgentPermission(w, asDashboardHumanPeer(r), PermAgentInterrupt, convID); !ok {
+			return
+		}
+		runClaudeInterrupt(w, convID)
+		return
+	}
 	handleAgentInterrupt(w, asDashboardHumanPeer(r), convID)
 }
 
