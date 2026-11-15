@@ -25,10 +25,13 @@ export const DESKTOP_ONLY_TABS = Object.freeze({
 });
 
 // desktopOnlyView names the view a phone should not show for the active tab,
-// or '' when the tab has a phone view. groupsSubview is the Groups island's
-// subview: its route map is desktop only, the agent list is not.
-export function desktopOnlyView(activeTab, groupsSubview = '') {
-  if (activeTab === 'groups' && groupsSubview === 'routes') return 'Route map';
+// or '' when the tab has a phone view. subview is the tab's own view: the
+// Groups island's route map is desktop only (the agent list is not), and so
+// is Diagnostics › Performance (profiling and timing breakdowns need a wide
+// screen; a phone's Diagnostics is Doctor, Audit and Logs).
+export function desktopOnlyView(activeTab, subview = '') {
+  if (activeTab === 'groups' && subview === 'routes') return 'Route map';
+  if (activeTab === 'diagnostics' && subview === 'performance') return 'Performance';
   return DESKTOP_ONLY_TABS[activeTab] || '';
 }
 

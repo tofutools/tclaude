@@ -1,13 +1,14 @@
-/* Diagnostics (js/phone-diagnostics.js for Audit and Logs). The desktop's
-   sub-nav becomes a row of chips, Doctor first: the view that asks something
-   of the operator. Doctor stacks its category list over its checks;
-   Performance shows the endpoint cards (latency and a sparkline) and leaves
-   daemon profiling and the phase breakdowns to the desktop. */
-:root[data-layout="phone"] #tab-diagnostics .activity-subnav {
-  display: flex; flex-wrap: nowrap; overflow-x: auto; max-width: 100%; margin-bottom: 12px;
-}
-:root[data-layout="phone"] #tab-diagnostics .activity-subtab { flex: none; font-size: 14px; }
+/* Diagnostics on a phone: Doctor (js/phone-doctor.js), Audit and Logs
+   (js/phone-diagnostics.js). The desktop's sub-nav becomes a row of chips,
+   Doctor first: the view that asks something of the operator. Performance is
+   desktop only (js/phone-desktop-only.js), so it has no chip. The chips'
+   look is phone.css's .phone-chips (dashboard.html gives the row that class;
+   it only applies on a phone). */
 :root[data-layout="phone"] #tab-diagnostics .activity-subtab[data-subtab="doctor"] { order: -1; }
+:root[data-layout="phone"] #tab-diagnostics .activity-subtab[data-subtab="performance"] { display: none; }
+/* The Doctor chip's count is red, as in the mock: it is what needs the
+   operator, decisions included. */
+:root[data-layout="phone"] #tab-diagnostics .doctor-badges .ui-badge-accent { background: var(--ui-danger); color: #fff; }
 :root[data-layout="phone"] .phone-diag-filters { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
 :root[data-layout="phone"] .phone-diag-search { flex: 1; min-width: 0; }
 :root[data-layout="phone"] .phone-diag-filters :is(.ui-btn, select) { flex: none; }
@@ -38,22 +39,41 @@
 :root[data-layout="phone"] .phone-diag-detail dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 :root[data-layout="phone"] .phone-diag-pages { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
 
-:root[data-layout="phone"] .doctor-island { display: block; min-height: 0; }
-:root[data-layout="phone"] .doctor-side {
-  flex-direction: row; flex-wrap: nowrap; overflow-x: auto; padding: 0; border-right: 0; border-bottom: 1px solid var(--ui-line); border-radius: 6px 6px 0 0;
-}
-:root[data-layout="phone"] .doctor-side button {
-  flex: none; min-height: var(--phone-tap); border-left: 0; border-bottom: 2px solid transparent; white-space: nowrap;
-}
-:root[data-layout="phone"] .doctor-side button.on { border-bottom-color: var(--ui-focus); }
-:root[data-layout="phone"] .doctor-sep { display: none; }
-:root[data-layout="phone"] .doctor-main { padding: 12px; }
-:root[data-layout="phone"] .doctor-head { flex-wrap: wrap; }
-:root[data-layout="phone"] .doctor-choice { grid-template-columns: 1fr; }
+:root[data-layout="phone"] .phone-diag-code { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-diag-code.ok { color: #3fb950; }
+:root[data-layout="phone"] .phone-diag-code.wait { color: var(--ui-warn-text); }
+:root[data-layout="phone"] .phone-diag-code.bad { color: #f85149; }
 
-:root[data-layout="phone"] #activity-performance #profiles-root,
-:root[data-layout="phone"] #activity-performance .filter-bar > .muted:first-child,
-:root[data-layout="phone"] .debug-card > :not(.debug-card-head, .debug-spark, .empty) {
-  display: none;
+/* Doctor: what needs the operator, grouped by severity, each a two-line row
+   that opens its own page; the passing checks fold into one line. */
+:root[data-layout="phone"] .phone-doctor-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+:root[data-layout="phone"] .phone-doctor-lede { flex: 1; min-width: 0; margin: 0; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-doctor-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 8px 0;
+  background: none; border: 0; border-bottom: 1px solid var(--phone-line); color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
-:root[data-layout="phone"] .debug-card-head .spacer { flex-basis: 100%; height: 0; }
+:root[data-layout="phone"] .phone-doctor-dot { flex: none; width: 20px; font-size: 13px; text-align: center; }
+:root[data-layout="phone"] .phone-doctor-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] .phone-doctor-title {
+  color: var(--ui-text-strong); font-weight: 600; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+:root[data-layout="phone"] .phone-doctor-sub { color: var(--ui-muted-text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] .phone-doctor-more { flex: none; color: var(--ui-muted-text); font-size: 20px; }
+:root[data-layout="phone"] .phone-doctor-fold {
+  display: flex; align-items: center; gap: 6px; min-height: var(--phone-tap); padding: 0;
+  background: none; border: 0; color: var(--ui-muted-text); font: inherit; font-size: 13px; cursor: pointer;
+}
+/* A finding's own page: everything it says, wrapped (a long path breaks
+   rather than running off the screen, B12). */
+:root[data-layout="phone"] .phone-doctor-page { overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-doctor-kicker { margin: 0 0 4px; }
+:root[data-layout="phone"] .phone-doctor-heading { margin: 0 0 10px; color: var(--ui-text-strong); font-size: 20px; line-height: 1.3; }
+:root[data-layout="phone"] .phone-doctor-detail { margin: 0 0 12px; color: var(--ui-text); font-size: 15px; line-height: 1.45; white-space: pre-wrap; }
+:root[data-layout="phone"] .phone-doctor-fix {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 12px; padding: 8px 10px;
+  background: var(--phone-panel2); border: 1px solid var(--phone-line); border-radius: 8px;
+}
+:root[data-layout="phone"] .phone-doctor-fix code { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-doctor-page .doctor-choice { grid-template-columns: 1fr; }
+:root[data-layout="phone"] .phone-doctor-page .doctor-acts .ui-btn { min-height: var(--phone-tap); font-size: 15px; }

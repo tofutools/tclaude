@@ -27,7 +27,10 @@ test('audit: two-line rows, the outcome on the right, a tap opens the rest', asy
   assert.deepEqual(rows.map((row) => row.querySelector('.phone-diag-head').textContent), ['lead → spawn', 'operator → notify-human']);
   assert.equal(rows[0].querySelector('.phone-diag-sub').textContent, 'tclaude reviewer-3 · cli');
   assert.equal(rows[1].querySelector('.phone-diag-sub'), null, 'nothing to say on the second line');
-  assert.deepEqual(rows.map((row) => row.querySelector('.phone-diag-outcome').textContent), ['ok', 'denied']);
+  const outcomes = rows.map((row) => row.querySelector('.phone-diag-outcome'));
+  assert.deepEqual(outcomes.map((o) => o.textContent), ['201', '403'], 'the status code, as in the mock');
+  assert.deepEqual(outcomes.map((o) => [...o.classList].filter((c) => ['ok', 'wait', 'bad'].includes(c))), [['ok'], ['bad']], 'coloured by outcome');
+  assert.equal(outcomes[1].getAttribute('aria-label'), 'denied (403)');
   assert.match(rows[0].querySelector('.phone-diag-detail').textContent, /Targettclaude reviewer-3/);
   assert.equal(c.querySelector('.phone-diag-count').textContent, '2 of 40 events');
 

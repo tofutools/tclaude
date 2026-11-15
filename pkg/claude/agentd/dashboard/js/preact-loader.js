@@ -1274,11 +1274,14 @@ export async function mountDoctorFeature(dependencies = {}) {
     load: async () => {
       const islandModule = import('./doctor-island.js');
       const stateModule = import('./doctor-state.js');
-      const [{ mountDoctorIsland }, { doctorState }] = await Promise.all([islandModule, stateModule]);
+      // A phone shows its own Doctor (phone-doctor.js) over the same state.
+      const phoneModule = isPhone ? import('./phone-doctor.js') : null;
+      const [{ mountDoctorIsland }, { doctorState }, phone] = await Promise.all([islandModule, stateModule, phoneModule]);
       return {
         state: doctorState,
         mount: (registerCleanup) => mountDoctorIsland({
           host, badgeHosts, state: doctorState, notify: dependencies.notify, registerCleanup,
+          ...(phone ? { App: phone.PhoneDoctor } : {}),
         }),
       };
     },

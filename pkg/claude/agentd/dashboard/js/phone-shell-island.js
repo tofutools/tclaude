@@ -25,6 +25,7 @@ import { gateItems } from './phone-process-runs.js';
 import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
 import { DesktopOnlyPage, desktopOnlyView } from './phone-desktop-only.js';
 import { featureState } from './feature-state-registry.js';
+import { activitySubtab } from './activity-state.js';
 import { installPhoneHistory, keptView } from './phone-history.js';
 import { installKeyboardInset } from './phone-keyboard.js';
 import { installInputModality } from './phone-input.js';
@@ -75,7 +76,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // A view a phone does not offer (js/phone-desktop-only.js) gets a page
   // that says so in place of its desktop content.
   const routeMap = featureState('groups')?.subview?.value === 'routes';
-  const desktopOnly = OWN_VIEWS.includes(view) ? '' : desktopOnlyView(activeTab, routeMap ? 'routes' : '');
+  const subview = activeTab === 'groups' ? (routeMap ? 'routes' : '') : activeTab === 'diagnostics' ? activitySubtab.value : '';
+  const desktopOnly = OWN_VIEWS.includes(view) ? '' : desktopOnlyView(activeTab, subview);
   const covering = OWN_VIEWS.includes(view) ? view : desktopOnly ? 'desktop-only' : '';
   // A root view's top bar: the shell's own furniture for its slot, and what
   // the view on screen added (phoneBar, js/phone-page.js). A desktop-only
@@ -212,7 +214,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} processSource=${processSource} /></div>`}
     ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} /></div>`}
     ${desktopOnly && html`<div class="phone-view" role="region" aria-label=${desktopOnly}><${DesktopOnlyPage} what=${desktopOnly} open=${actions.desktopSite}
-      other=${routeMap ? { label: 'Show agents', onClick: () => viewActions.navigate('/') } : null} /></div>`}
+      other=${routeMap ? { label: 'Show agents', onClick: () => viewActions.navigate('/') }
+        : desktopOnly === 'Performance' ? { label: 'Open the Doctor', onClick: () => viewActions.navigate('/diagnostics/doctor') } : null} /></div>`}
     ${!hideNav && html`<nav class="phone-nav" aria-label="Views">
       ${PHONE_SLOTS.map((target) => html`<button data-ui-exempt key=${target.id} type="button"
         class=${`phone-nav-item${slot === target.id ? ' on' : ''}`} aria-current=${slot === target.id ? 'page' : undefined}

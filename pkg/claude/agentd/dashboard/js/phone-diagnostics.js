@@ -7,8 +7,8 @@
 // One search and one filter (outcome, or level) replace the filter bar. They
 // run on the desktop islands' state and actions, and on their feeds
 // (useAuditFeed, useLogsFeed), so loading, polling and paging are the
-// desktop's. Doctor and Performance keep their islands: phone-diagnostics.css lays them
-// out for a phone.
+// desktop's. Doctor is phone-doctor.js; Performance is desktop only
+// (phone-desktop-only.js).
 
 import { h, render } from 'preact';
 import htm from 'htm';
@@ -62,6 +62,17 @@ function actorName(entry) {
   return entry.actor_label || (entry.actor_kind === 'agent' ? '(agent)' : 'unknown');
 }
 
+// statusTone is how an audit outcome's HTTP status reads on a phone, as in
+// the mock: green when done, amber when accepted and waiting (202, an access
+// request), red when refused or failed.
+export function statusTone(status) {
+  const value = Number(status) || 0;
+  if (value === 202) return 'wait';
+  if (value >= 200 && value < 300) return 'ok';
+  if (value >= 400) return 'bad';
+  return '';
+}
+
 function AuditRow({ entry }) {
   const status = statusView(entry.status);
   const target = targetTitle(entry);
@@ -73,7 +84,8 @@ function AuditRow({ entry }) {
         <span class="phone-diag-head">${actorName(entry)} → ${entry.verb}</span>
         ${sub && html`<span class="phone-diag-sub">${sub}</span>`}
       </span>
-      <span class=${`phone-diag-outcome ${status.className}`} title=${status.title}>${status.label}</span>
+      <span class=${`phone-diag-outcome phone-diag-code${statusTone(entry.status) ? ` ${statusTone(entry.status)}` : ''}`}
+        title=${status.title || status.label} aria-label=${`${status.label}${entry.status ? ` (${entry.status})` : ''}`}>${entry.status || status.label}</span>
     </summary>
     <dl class="phone-diag-detail">
       <dt>When</dt><dd>${fmtAuditTime(entry.at)}</dd>
