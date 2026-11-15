@@ -15795,6 +15795,10 @@ body.process-solo #companion-root, body.process-solo #drawing-board-overlay-root
 }
 .process-template-description { min-width: min(300px, 30vw); }
 .process-template-doc { min-width: min(260px, 26vw); resize: vertical; }
+.process-template-field { display: inline-flex; align-items: center; gap: 6px; }
+.process-template-field-label { color: #8b949e; font-size: 12px; }
+.process-template-patience { width: 72px; }
+.process-template-overseer-role { width: 110px; }
 .process-editor-body { display: flex; flex: 1; min-height: 0; align-items: stretch; }
 .process-editor-modal {
   /* Editor-owned modal controls share one narrow skin contract. The base
