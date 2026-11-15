@@ -51,7 +51,7 @@
 :root[data-layout="phone"] .phone-task-activity li {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid var(--phone-tile);
 }
-:root[data-layout="phone"] .phone-task-activity .phone-task-who { color: var(--ui-text-strong); font-size: 13px; font-weight: 600; }
+:root[data-layout="phone"] .phone-task-who { color: var(--ui-text-strong); font-size: 13px; font-weight: 600; }
 :root[data-layout="phone"] .phone-task-when { color: var(--ui-muted-text); font-size: 12px; }
 :root[data-layout="phone"] .phone-task-what { flex-basis: 100%; color: var(--ui-text); font-size: 13px; overflow-wrap: anywhere; }
 :root[data-layout="phone"] .phone-task-comment .phone-task-md { flex-basis: 100%; }
