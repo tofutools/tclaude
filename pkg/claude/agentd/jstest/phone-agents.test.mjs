@@ -538,3 +538,45 @@ test('menuModel: Interrupt only while at work, Compact where the harness can, Op
   const noAgentId = model.agentRow({ conv_id: 'c8', title: 'plain', online: true, state: {} }, '');
   assert.equal(menuModel(noAgentId, { group: null }, {}).agent.some((e) => e.key === 'grant'), false, 'sudo goes to an agent id');
 });
+
+test('findAgent: where an agent sits, by agent or conversation id, offline and nested counted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/phone-agents-model.js');
+  const spot = model.findAgent(SNAPSHOT, id(3));
+  assert.equal(spot.row.name, 'old-worker');
+  assert.deepEqual([spot.groupKey, spot.path, spot.archived], ['g:webshop', ['g:webshop'], false]);
+  assert.equal(model.findAgent(SNAPSHOT, 'c5').groupKey, model.UNGROUPED, 'a conversation id, an agent in no group');
+  assert.equal(model.findAgent(SNAPSHOT, 'agt_gone'), null);
+  const nested = { groups: [{ name: 'top', members: [] }, { name: 'sub', parent: 'top', archived: true, members: [{ agent_id: id(9), conv_id: 'c9', title: 'deep', online: false, state: {} }] }] };
+  assert.deepEqual(model.findAgent(nested, id(9), model.ALL_GROUPS).path, ['g:top', 'g:sub']);
+  assert.equal(model.findAgent(nested, id(9), model.ALL_GROUPS).archived, true);
+});
+
+test('a link to an agent opens what hides it, glows its row a while, then lets go of the link', async (t) => {
+  const prefs = memPrefs({ 'tclaude.dash.phone.agents.offline': '0', 'tclaude.dash.phone.fold.webshop': '1' });
+  const { harness, c, item, titles, chip, tap, model } = await setup(t, { prefs });
+  const [routes, route, { FOUND_MS }] = await Promise.all([
+    harness.importDashboardModule('js/overlay-routes.js'),
+    harness.importDashboardModule('js/agent-route.js'),
+    harness.importDashboardModule('js/phone-agents-island.js'),
+  ]);
+  await tap(chip('steward'));
+  assert.ok(!titles().includes('old-worker'), 'filtered, folded, offline hidden');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const events = [];
+  const onOverlay = (event) => events.push(event.detail);
+  harness.window.document.addEventListener(routes.OVERLAY_EVENT, onOverlay);
+  t.after(() => harness.window.document.removeEventListener(routes.OVERLAY_EVENT, onOverlay));
+  await harness.act(() => routes.restoreOverlays({ agent: id(3) }));
+  await harness.act(() => {});
+  assert.ok(item('old-worker').classList.contains('phone-agent-found'), 'its row glows');
+  assert.equal(prefs.getItem('tclaude.dash.phone.agents.offline'), null, 'Show offline on');
+  assert.equal(prefs.getItem('tclaude.dash.phone.fold.webshop'), null, 'its group unfolded');
+  assert.deepEqual(model.agentsFilter.value, [], 'the chips that hid it cleared');
+  assert.equal(route.agentFocus.value, null, 'the link is let go of');
+  assert.deepEqual(events.at(-1), { closed: false, replace: true }, 'in place: Back goes to where it was tapped');
+  await harness.act(() => t.mock.timers.tick(FOUND_MS - 1));
+  assert.ok(item('old-worker').classList.contains('phone-agent-found'));
+  await harness.act(() => t.mock.timers.tick(1));
+  assert.equal(c.querySelector('.phone-agent-found'), null, 'and stops after FOUND_MS');
+});

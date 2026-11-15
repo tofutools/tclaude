@@ -448,3 +448,38 @@ test('the viewer is a step of its own: Back closes it and leaves the reader (B4)
   assert.ok($('.phone-mail-reader'), 'Back leaves the reader');
   assert.ok(phonePage.value);
 });
+
+test('Find › sits beside Terminal ›, on in either case; a sender that is not live explains a terminal tap', async (t) => {
+  const { $, phonePage, harness, tap, island } = await setup(t, { selectedMsgId: 1 }, (controller) => { controller.senderOnline = () => false; });
+  const route = await harness.importDashboardModule('js/agent-route.js');
+  const terminal = $('.phone-mail-terminal');
+  assert.equal(terminal.disabled, false, 'tappable, so it can say why');
+  assert.equal(terminal.getAttribute('aria-disabled'), 'true');
+  assert.equal(phonePage.value.actions[0].muted, true, '⌖ too');
+  const find = $('.phone-mail-find');
+  assert.equal(find.textContent, 'Find ›');
+  assert.equal(find.getAttribute('aria-label'), 'Find Alpha in Agents');
+  assert.equal(find.disabled, false, 'an offline sender is what Find is for');
+  assert.equal(terminal.nextElementSibling, find);
+  assert.equal(route.agentPath('agt_alpha'), '/groups?agent=agt_alpha');
+
+  // Why a terminal cannot open: from the snapshot, then the retired list.
+  const snapshot = { agents: [{ agent_id: 'agt_alpha', conv_id: 'conv-a', online: false }], ungrouped: [] };
+  const msg = { from_agent: 'agt_alpha', from_conv: 'conv-a' };
+  const never = async () => { throw new Error('not asked'); };
+  assert.match(await island.whyNotLive(msg, 'Alpha', { snapshot, fetchImpl: never }), /^Alpha is offline\. Find › shows it in Agents/);
+  const asked = [];
+  const retired = (rows) => async (url) => { asked.push(url); return { ok: true, json: async () => ({ rows }) }; };
+  assert.equal(await island.whyNotLive(msg, 'Alpha', { snapshot: {}, fetchImpl: retired([{ agent_id: 'agt_alpha' }]) }), 'Alpha was retired.');
+  assert.equal(asked.at(-1), '/api/retired?limit=20&q=agt_alpha');
+  assert.equal(await island.whyNotLive(msg, 'Alpha', { snapshot: {}, fetchImpl: retired([{ agent_id: 'agt_alphabet' }]) }),
+    'Alpha no longer exists (deleted).', 'q is a contains filter: only an exact id counts');
+  assert.match(await island.whyNotLive({}, 'x', { snapshot: {}, fetchImpl: never }), /^Unknown sender/);
+  assert.equal(await island.whyNotLive(msg, 'Alpha', { snapshot: {}, fetchImpl: async () => ({ ok: false }) }), 'Alpha is not running.');
+  await tap(terminal);
+});
+
+test('Find › is for this node\'s agents: none without from_agent, nor for mail a peer relayed', async (t) => {
+  const { $ } = await setup(t, { selectedMsgId: 1, messages: [message(1, { from_agent: '' })] });
+  assert.equal($('.phone-mail-find'), null);
+});
