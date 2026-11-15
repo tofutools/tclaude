@@ -11,21 +11,25 @@ const { defaultBrowserType: _ignored, ...IPHONE } = devices['iPhone 13'];
 // layoutState reads what the page ended up with once it booted.
 async function layoutState(page) {
   await page.waitForFunction(() => !document.body.classList.contains('dashboard-booting'), null, { timeout: 60_000 });
-  return page.evaluate(() => ({
+  return page.evaluate(() => {
+    // An asset's path without the build's versioned prefix (/static/v-<hash>/).
+    const asset = (href) => (href ? new URL(href, location.href).pathname.replace(/^\/static\/v-[^/]+\//, '/static/') : '');
+    return {
     decision: { ...window.__tclaudeLayout },
     mark: document.documentElement.dataset.layout ?? null,
     viewportMetas: document.querySelectorAll('meta[name="viewport"]').length,
-    phoneSheet: [...document.styleSheets].some((sheet) => (sheet.href || '').endsWith('/static/phone.css')),
+    phoneSheet: [...document.styleSheets].some((sheet) => asset(sheet.href) === '/static/phone.css'),
     // The stylesheet links from phone.css on: the phone sheets, last.
     phoneTail: (() => {
-      const hrefs = [...document.querySelectorAll('link[rel="stylesheet"]')].map((link) => link.getAttribute('href'));
+      const hrefs = [...document.querySelectorAll('link[rel="stylesheet"]')].map((link) => asset(link.getAttribute('href')));
       const at = hrefs.indexOf('/static/phone.css');
       return at < 0 ? [] : hrefs.slice(at);
     })(),
     search: location.search,
     layoutWidth: document.documentElement.clientWidth,
     gutter: getComputedStyle(document.documentElement).getPropertyValue('--phone-gutter').trim(),
-  }));
+    };
+  });
 }
 
 test('a desktop browser gets the desktop page, untouched', async ({ page }) => {

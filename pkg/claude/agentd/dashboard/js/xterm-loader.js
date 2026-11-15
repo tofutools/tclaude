@@ -5,7 +5,8 @@
 // xterm in its HTML because opening that page is itself terminal intent.
 // dashboard-imperative-boundary: browser-io
 
-const XTERM_RUNTIME_SRC = '/static/third_party/xterm/xterm.min.js';
+// Relative to this module, so it shares the page's versioned asset prefix.
+const XTERM_RUNTIME_SRC = new URL('../third_party/xterm/xterm.min.js', import.meta.url).href;
 
 let runtimePromise = null;
 

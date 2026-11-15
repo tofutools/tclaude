@@ -30,6 +30,10 @@
 //
 // dashboard-imperative-boundary: platform-layout
 (() => {
+  // The phone sheets sit beside this script's own directory: the served page
+  // loads it from the versioned /static/v-<hash>/ prefix, and they must come
+  // from the same one (see dashboard_static.go).
+  const SELF = document.currentScript?.src || '';
   const STORAGE_KEY = 'tclaude.layout';
   // The phone layout's sheets, in cascade order: phone.css (tokens, shared
   // controls, the shell and its own views, pushed pages, dialogs), then one
@@ -131,7 +135,7 @@
   for (const name of PHONE_SHEETS) {
     const sheet = document.createElement('link');
     sheet.rel = 'stylesheet';
-    sheet.href = `/static/${name}`;
+    sheet.href = SELF ? new URL(`../${name}`, SELF).href : `/static/${name}`;
     head.appendChild(sheet);
   }
 })();

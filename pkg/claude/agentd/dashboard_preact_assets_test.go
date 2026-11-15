@@ -64,7 +64,7 @@ func TestDashboardPreactRuntimeAssets(t *testing.T) {
 }
 
 func TestDashboardPreactImportMap(t *testing.T) {
-	html := string(dashboardIndexHTML)
+	html := unversionedStatic(string(dashboardIndexHTML))
 	for _, mapping := range []string{
 		`"preact": "/static/third_party/preact/preact.module.js"`,
 		`"preact/hooks": "/static/third_party/preact/hooks.module.js"`,

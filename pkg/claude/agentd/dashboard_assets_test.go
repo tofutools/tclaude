@@ -1097,7 +1097,7 @@ func TestDashboardAssets_ClaudeCleanupPeriodWired(t *testing.T) {
 // path the document was served from), and that the retired Stage-1
 // inline splice points (<style></style> / <script></script>) are gone.
 func TestDashboardHTML_ReferencesStaticAssets(t *testing.T) {
-	html := string(dashboardIndexHTML)
+	html := unversionedStatic(string(dashboardIndexHTML))
 	for _, needle := range []string{
 		`<link rel="stylesheet" href="/static/dashboard.css">`,
 		`<script type="module" src="/static/js/dashboard.js"></script>`,
