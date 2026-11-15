@@ -334,6 +334,31 @@ function Palette({ controller, hidden, snippets, view }) {
   </aside>`;
 }
 
+// TemplateOverseerField picks who oversees a run of this template unless the
+// run names one: the group's lead (the default), whoever started it, the
+// operator, or the holder of a role, typed beside the select.
+const OVERSEER_CHOICES = [['', "default (group lead)"], ['lead', 'group lead'], ['starter', 'whoever started it'], ['operator', 'the operator'], ['role', 'a role…']];
+function TemplateOverseerField({ pending, value, onCommit }) {
+  const current = value || '';
+  const isRole = current.startsWith('role:');
+  const [choosingRole, setChoosingRole] = useState(false);
+  const kind = isRole || choosingRole ? 'role' : current;
+  return html`<label class="process-template-field" title="Who oversees a run of this template unless the run names one">
+    <span class="process-template-field-label">overseer</span>
+    <${Select} size="sm" class="process-inspector-select process-template-overseer" aria-label="Template overseer" disabled=${pending} value=${kind}
+      onChange=${(event) => {
+        const next = event.currentTarget.value;
+        if (next === 'role') { setChoosingRole(true); return; }
+        setChoosingRole(false);
+        onCommit(next);
+      }}>
+      ${OVERSEER_CHOICES.map(([key, label]) => html`<option key=${key} value=${key}>${label}</option>`)}
+    <//>
+    ${kind === 'role' && html`<${StableField} blocked=${pending} class="process-inspector-input process-template-overseer-role" type="text" spellcheck="false" placeholder="role, e.g. qa" aria-label="Overseer role"
+      value=${isRole ? current.slice('role:'.length) : ''} onCommit=${(role) => { const name = String(role || '').trim(); if (name) { setChoosingRole(false); onCommit(`role:${name}`); } }} />`}
+  </label>`;
+}
+
 function Inspector({ controller, view }) {
   const root = useRef(null);
   const pending = view.pending.externalDecision || view.pending.externalReload;
@@ -349,6 +374,11 @@ function Inspector({ controller, view }) {
     <span class="process-inspector-id process-template-id-locked" title="Template id: the permanent store key that pinned versions and running instances resolve through">${view.model.id}</span>
     <${StableField} blocked=${pending} class="process-inspector-input process-template-description" type="text" spellcheck="true" placeholder="description" aria-label="Template description" value=${view.model.description} onCommit=${(description) => controller.setTemplateMeta({ description })} />
     <${StableField} blocked=${pending} multiline class="process-inspector-input process-template-doc" rows="2" spellcheck="true" placeholder="documentation" aria-label="Template documentation" value=${view.model.doc} onCommit=${(doc) => controller.setTemplateMeta({ doc })} />
+    <${TemplateOverseerField} pending=${pending} value=${view.model.overseer} onCommit=${(overseer) => controller.setTemplateMeta({ overseer })} />
+    <label class="process-template-field" title="How long a step may stay stuck before the engine raises a concern to the overseer; a step's own patience overrides it">
+      <span class="process-template-field-label">patience</span>
+      <${StableField} blocked=${pending} class="process-inspector-input process-template-patience" type="text" spellcheck="false" placeholder="30m" aria-label="Template patience" value=${view.model.patience} onCommit=${(patience) => controller.setTemplateMeta({ patience })} />
+    </label>
   </div>`;
   if (selected.length > 1) {
     const nodes = selected.filter((item) => item.type === 'node').length;

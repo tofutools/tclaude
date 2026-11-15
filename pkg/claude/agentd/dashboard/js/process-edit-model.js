@@ -1121,26 +1121,16 @@ export class ProcessEditModel {
     this.template.start = to;
   }
 
-  setTemplateMeta({ name, description, doc } = {}) {
+  setTemplateMeta(fields = {}) {
     if (this.inScope) throw new Error('template settings belong to the root process; exit the subprocess first');
     // Same no-op discipline as renameNode/setJoin/setEdgeOutcome: a change
     // event that commits the current value must not dirty the model.
-    const changed = (name !== undefined && (name || undefined) !== this.template.name)
-      || (description !== undefined && (description || undefined) !== this.template.description)
-      || (doc !== undefined && (doc || undefined) !== this.template.doc);
-    if (!changed) return;
+    const keys = ['name', 'description', 'doc', 'overseer', 'patience'].filter((key) => fields[key] !== undefined);
+    if (!keys.some((key) => (fields[key] || undefined) !== this.template[key])) return;
     this.begin();
-    if (name !== undefined) {
-      if (name) this.template.name = name;
-      else delete this.template.name;
-    }
-    if (description !== undefined) {
-      if (description) this.template.description = description;
-      else delete this.template.description;
-    }
-    if (doc !== undefined) {
-      if (doc) this.template.doc = doc;
-      else delete this.template.doc;
+    for (const key of keys) {
+      if (fields[key]) this.template[key] = fields[key];
+      else delete this.template[key];
     }
   }
 

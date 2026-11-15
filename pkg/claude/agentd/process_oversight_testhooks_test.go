@@ -16,3 +16,7 @@ func ProcessConcernPatienceForTest() time.Duration { return processConcernPatien
 // SweepProcessConcernsForTest runs the oversight sweep once, as the runtime
 // ticker does.
 func SweepProcessConcernsForTest() { sweepProcessConcerns() }
+
+// SweepProcessStuckSignalsForTest runs the stuck-signal sweep once, as the
+// runtime ticker does.
+func SweepProcessStuckSignalsForTest() { sweepProcessStuckSignals() }

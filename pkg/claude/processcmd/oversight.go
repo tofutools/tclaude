@@ -58,7 +58,7 @@ func (o processRunOverseerJSON) String() string {
 	if label == "" {
 		label = o.Ref
 	}
-	via := map[string]string{"set": "set on the run", "lead": "the group's lead", "starter": "started the run"}[o.Via]
+	via := map[string]string{"set": "set on the run", "template": "the template's choice", "lead": "the group's lead", "starter": "started the run"}[o.Via]
 	if via != "" {
 		label += " (" + via + ")"
 	}

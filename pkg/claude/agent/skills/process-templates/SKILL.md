@@ -149,6 +149,8 @@ Top-level fields:
 | `start` | Entry node id. A separate start-typed node is optional. |
 | `nodes` | Map keyed by stable node id. |
 | `fallback` | Default for agent steps nobody can take; see Performers. |
+| `overseer` | Who oversees its runs unless a run names one: `lead` (default), `starter`, `operator` or `role:<role>`. |
+| `patience` | How long a step may stay stuck (blocked, no performer, unreported) before the engine raises a concern to the overseer, e.g. `45m`. A step's own `patience:` overrides it; default 30m, and unreported steps are only watched with an explicit patience. |
 | `layout` | Optional editor-owned node positions; follow the preservation rule below. |
 
 Parameter references use `{{ params.issue }}` and must name a declared param.

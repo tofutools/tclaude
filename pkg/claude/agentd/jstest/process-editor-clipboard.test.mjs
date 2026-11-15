@@ -210,3 +210,9 @@ test('multi-megabyte sentinel is rejected before UTF-8 encoding or JSON parsing'
     JSON.parse = nativeParse;
   }
 });
+
+test('a step with its own patience copies like any other field', async () => {
+  const { validateProcessEditNode } = await import('../dashboard/js/process-editor-clipboard.js');
+  assert.doesNotThrow(() => validateProcessEditNode({ type: 'task', patience: '45m' }));
+  assert.throws(() => validateProcessEditNode({ type: 'task', patience: 45 }));
+});

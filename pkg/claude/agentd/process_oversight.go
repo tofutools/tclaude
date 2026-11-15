@@ -58,6 +58,9 @@ const (
 	processOverseerViaSet     = "set"
 	processOverseerViaLead    = "lead"
 	processOverseerViaStarter = "starter"
+	// processOverseerViaTemplate is the overseer its template names
+	// (overseer: starter | operator | role:<role>).
+	processOverseerViaTemplate = "template"
 )
 
 func (o processOverseer) operator() bool { return o.AgentID == "" }
@@ -104,6 +107,9 @@ func resolveProcessRunOverseer(runID string) (processOverseer, error) {
 	scope, err := db.GetProcessRunScope(runID)
 	if err != nil {
 		return processOverseer{}, err
+	}
+	if o, ok := processTemplateOverseer(processRunTemplateOversight(runID).Overseer, scope); ok {
+		return o, nil
 	}
 	if scope.Kind == db.ProcessRunScopeGroup {
 		if leads := processGroupLeads(processOversightMembers(scope.GroupID)); len(leads) > 0 {

@@ -383,6 +383,7 @@ export class ProcessTemplateEditor {
       model: {
         id: model.template.id || '', name: model.template.name || '',
         description: model.template.description || '', doc: model.template.doc || '',
+        overseer: model.template.overseer || '', patience: model.template.patience || '',
         start: model.template.start || '', sourceHash: model.sourceHash || '',
         semanticHash: model.semanticHash || '', currentRef: model.currentRef || '',
         dirty: model.dirty, canUndo: model.canUndo, canRedo: model.canRedo,
