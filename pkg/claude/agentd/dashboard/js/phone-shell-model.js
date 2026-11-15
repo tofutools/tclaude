@@ -62,10 +62,10 @@ export function slotFor(view, activeTab) {
 // ROOT_BARS is what the shell itself puts in a root view's top bar (no page
 // pushed), by bottom-nav slot: the node chip, ⏻ for the power actions, and
 // 🔍 search. A view adds its own actions through phoneBar (phone-page.js).
+// Mail's 🔍 is its own (phone-mail-island.js): it searches the open mailbox.
 const ROOT_BARS = Object.freeze({
   now: Object.freeze({ node: true, search: true }),
   agents: Object.freeze({ power: true, search: true }),
-  mail: Object.freeze({ search: true }),
 });
 const NO_BAR = Object.freeze({});
 
