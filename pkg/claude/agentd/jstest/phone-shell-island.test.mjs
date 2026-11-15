@@ -92,6 +92,12 @@ test('Agents and Mail show their tab; Now and Board come back over it', async (t
   await tap(mounted.container.querySelector('.phone-bar-back'));
   assert.ok(mounted.container.querySelector('.phone-board-card'), 'Back comes back to the board');
   assert.equal(mounted.container.querySelector('.phone-bar-title').textContent.startsWith('Board'), true);
+  // Opened again, it is its page again, with its bar.
+  await tap(mounted.container.querySelector('.phone-board-card .phone-board-open'));
+  assert.equal(mounted.container.querySelector('.phone-task-page-title')?.textContent, 'Ship it');
+  assert.equal(mounted.container.querySelector('.phone-bar-title').textContent, 'webshop', 'the reopened page has its bar');
+  await tap(mounted.container.querySelector('.phone-bar-back'));
+  assert.ok(mounted.container.querySelector('.phone-board-card'));
 
   // A tab activation from anywhere (a deep link, Back, the task's dialog)
   // clears the own view.

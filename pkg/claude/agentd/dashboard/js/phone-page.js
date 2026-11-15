@@ -28,7 +28,7 @@
 // tab finds the page still up.
 
 import { signal } from '@preact/signals';
-import { useEffect, useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 
 export const phonePage = signal(null);
 
@@ -46,11 +46,15 @@ export function pageKey(page) {
 // replaced only when the page's look changes (pageKey), never on a mere
 // re-render, and its handlers always call the latest ones passed here.
 // Clearing only removes the page this component set, never another view's.
+// It is a layout effect, so the bar, and the history step the page is
+// (phone-history.js), land in the same commit as the page itself: a passive
+// effect can run a frame late, and a Back in between left the page up with
+// the root's bar and no entry to step off.
 export function usePhonePage(page, active = true) {
   const latest = useRef(page);
   latest.current = page;
   const key = active && page ? pageKey(page) : '';
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!key) return undefined;
     const now = latest.current;
     const shown = {
@@ -100,7 +104,7 @@ export function usePhoneBar(bar, active = true) {
   const latest = useRef(bar);
   latest.current = bar;
   const key = active && bar ? barKey(bar) : '';
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!key) return undefined;
     const now = latest.current;
     const shown = {
