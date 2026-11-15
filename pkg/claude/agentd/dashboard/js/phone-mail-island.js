@@ -11,7 +11,7 @@
 //          long press starts selecting. ✎ Write opens the message sheet.
 //   reader a full-screen page pushed over the list (js/phone-page.js puts its
 //          back button and actions in the shell's top bar and hides the
-//          bottom nav): ⌖ (the sender's terminal), ✉̸ (mark unread) and 🗑 in
+//          bottom nav): ⌨ (the sender's terminal), ✉̸ (mark unread) and 🗑 in
 //          the bar; the subject, a sender row, the body, images inline (tap
 //          to zoom, a history step of its own), and a reply bar that opens
 //          the message sheet. Another node's mail, a peer's and a spawn
@@ -530,7 +530,7 @@ function PhoneReader({ current, controller, item, active, back }) {
     // The reader is a location of its own (/messages/<folder>/<id>).
     routed: true,
     actions: [
-      ...(terminal ? [{ key: 'focus', icon: '⌖', label: live ? `Open ${sender}'s terminal` : `${sender} is offline`, disabled: !live,
+      ...(terminal ? [{ key: 'focus', icon: '⌨', label: live ? `Open ${sender}'s terminal` : `${sender} is offline`, disabled: !live,
         onClick: () => openTerminal(item.from_agent, sender) }] : []),
       { key: 'read', icon: item.read ? '✉̸' : '✉', label: item.read ? 'Mark unread' : 'Mark read', onClick: () => acts.setRead(item, !item.read) },
       { key: 'delete', icon: '🗑', label: acts.deleteLock || 'Delete this message', danger: true, disabled: !!acts.deleteLock,

@@ -183,7 +183,7 @@ test('an open message is a full-screen page with a back button and a reply bar',
   assert.ok($('.phone-mail-reader'), 'the reader replaces the list');
   assert.equal($('.phone-mail-list'), null);
   assert.equal(phonePage.value?.hideNav, true, 'the page owns the bottom edge');
-  assert.deepEqual(phonePage.value.actions.map((a) => a.icon), ['⌖', '✉', '🗑']);
+  assert.deepEqual(phonePage.value.actions.map((a) => a.icon), ['⌨', '✉', '🗑']);
   assert.equal($('.mail-headers'), null, 'no desktop header table');
   assert.equal($('.phone-mail-title').textContent, 'Subject 1');
   assert.equal($('.phone-mail-sender-name').textContent, 'Alpha');
