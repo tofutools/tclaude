@@ -277,10 +277,19 @@ first:
 - **Performance**: the dashboard's poll timings, one card per endpoint.
   Daemon profiling and the per-phase breakdowns are desktop only.
 
-**Plugins** shows a card per installed plugin. The switch activates or
-deactivates it, **Check** re-runs its checks, and each step has ▶ to run it or
-■ to stop it, as its lamp offers on the desktop. **Check all** checks every
-plugin. Installing from the catalog and editing plugins are desktop only.
+**Plugins** shows a card per installed plugin, with its description. The
+switch activates or deactivates it.
+
+- A plugin whose checks all pass is folded to one line ("2 steps · checked 3m
+  ago"). A plugin that is off is folded and dimmed. Tap the name to show the
+  steps.
+- A plugin that needs a look shows its steps right away, each with its last
+  output.
+- Each step has ▶ to run it or ■ to stop it, as its lamp offers on the desktop.
+- **Check** re-runs the plugin's checks.
+- **Check all**, in the top bar, checks every plugin.
+
+Installing from the catalog and editing plugins are desktop only.
 
 **Fleet** (under **More**) is read-only: this node and its hub connection, the
 trusted peers (online, or when last seen, and their access level), and the

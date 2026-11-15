@@ -146,3 +146,35 @@ test('usePhoneBar shows a view\'s bar while it is active, with its latest handle
   await mounted.unmount();
   assert.equal(mod.phoneBar.value, other, 'another view\'s bar is left alone');
 });
+
+test('usePhoneBar: a tab under another still finds its own bar, its latest look, and loses it when taken down', async (t) => {
+  const { harness, mod } = await load(t, 'js/phone-page.js');
+  const { html } = harness;
+  function View({ tab, label, on = true }) {
+    mod.usePhoneBar({ tab, actions: [{ key: 'a', icon: '＋', label }] }, on);
+    return null;
+  }
+  // Plugins sets its bar, then Agents (mounted out of sight) sets its own.
+  const plugins = await harness.mount(html`<${View} tab="plugins" label="Check all" />`);
+  const agents = await harness.mount(html`<${View} tab="groups" label="New agent" />`);
+  assert.equal(mod.barFor(mod.phoneBar.value, 'plugins').actions[0].label, 'Check all', 'the plugins bar, under Agents\'');
+  assert.equal(mod.barFor(mod.phoneBar.value, 'groups').actions[0].label, 'New agent');
+  assert.equal(mod.barFor(mod.phoneBar.value, 'messages'), null);
+
+  // A new look of the covered one replaces its old entry, not adds one.
+  await plugins.rerender(html`<${View} tab="plugins" label="Checking…" />`);
+  await agents.rerender(html`<${View} tab="groups" label="New agent!" />`);
+  const tabs = [];
+  for (let at = mod.phoneBar.value; at; at = at.covered) tabs.push(at.tab);
+  assert.deepEqual(tabs, ['groups', 'plugins'], 'one entry per tab');
+  assert.equal(mod.barFor(mod.phoneBar.value, 'plugins').actions[0].label, 'Checking…');
+  // Its handlers still reach the view through the copy the chain holds.
+  assert.equal(typeof mod.barFor(mod.phoneBar.value, 'plugins').actions[0].onClick, 'function');
+
+  // Taken down while covered, it leaves the chain.
+  await plugins.rerender(html`<${View} tab="plugins" label="Checking…" on=${false} />`);
+  assert.equal(mod.barFor(mod.phoneBar.value, 'plugins'), null);
+  assert.equal(mod.barFor(mod.phoneBar.value, 'groups').actions[0].label, 'New agent!');
+  await agents.unmount();
+  assert.equal(mod.phoneBar.value, null);
+});

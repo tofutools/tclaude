@@ -531,16 +531,19 @@ func seedSandboxPlugin(s *sandboxSeeder) {
 	s.t.Helper()
 	s.dashAPI(http.MethodPost, "/api/plugins", map[string]any{
 		"name":  "webshop-dev-env",
+		"descr": "Node and browsers for webshop",
 		"steps": []map[string]any{{"name": "node-toolchain", "check": "true"}, {"name": "playwright-browsers", "check": "true"}},
 	}, nil)
 	// One whose second step's check fails, and one the operator switched off.
 	s.dashAPI(http.MethodPost, "/api/plugins", map[string]any{
 		"name":  "payments-sandbox",
-		"steps": []map[string]any{{"name": "stripe-cli", "check": "true"}, {"name": "test-webhooks", "check": "false", "run": "false"}},
+		"descr": "Stripe test mode for checkout",
+		"steps": []map[string]any{{"name": "stripe-cli", "check": "true"}, {"name": "test-webhooks", "check": "echo 'webhook endpoint not listening on :4242'; false", "run": "false"}},
 	}, nil)
 	s.dashAPI(http.MethodPost, "/api/plugins", map[string]any{
 		"name":  "search-cluster",
-		"steps": []map[string]any{{"name": "opensearch", "check": "true", "stop": "true"}},
+		"descr": "Local OpenSearch",
+		"steps": []map[string]any{{"name": "opensearch", "check": "false", "run": "false", "stop": "true"}},
 	}, nil)
 	s.dashAPI(http.MethodPost, "/api/plugins/check", nil, nil)
 	s.dashAPI(http.MethodPost, "/api/plugins/search-cluster/deactivate", nil, nil)
