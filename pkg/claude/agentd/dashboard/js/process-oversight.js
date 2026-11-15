@@ -18,7 +18,7 @@ import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
 
-const VIA = { set: 'set on the run', lead: "the group's lead", starter: 'started the run' };
+const VIA = { set: 'set on the run', template: "the template's choice", lead: "the group's lead", starter: 'started the run' };
 
 // overseerText is the "overseen by" line of a run view.
 export function overseerText(overseer, { wizard = false } = {}) {

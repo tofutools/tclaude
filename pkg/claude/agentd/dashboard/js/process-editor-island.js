@@ -349,6 +349,8 @@ function Inspector({ controller, view }) {
     <span class="process-inspector-id process-template-id-locked" title="Template id: the permanent store key that pinned versions and running instances resolve through">${view.model.id}</span>
     <${StableField} blocked=${pending} class="process-inspector-input process-template-description" type="text" spellcheck="true" placeholder="description" aria-label="Template description" value=${view.model.description} onCommit=${(description) => controller.setTemplateMeta({ description })} />
     <${StableField} blocked=${pending} multiline class="process-inspector-input process-template-doc" rows="2" spellcheck="true" placeholder="documentation" aria-label="Template documentation" value=${view.model.doc} onCommit=${(doc) => controller.setTemplateMeta({ doc })} />
+    <${StableField} blocked=${pending} class="process-inspector-input process-template-overseer" type="text" spellcheck="false" placeholder="overseer: lead · starter · operator · role:<role>" aria-label="Template overseer" title="Who oversees a run of this template unless the run names one; blank is the group's lead" value=${view.model.overseer} onCommit=${(overseer) => controller.setTemplateMeta({ overseer })} />
+    <${StableField} blocked=${pending} class="process-inspector-input process-template-patience" type="text" spellcheck="false" placeholder="patience: 30m" aria-label="Template patience" title="How long a step may stay stuck before the engine raises a concern to the overseer; a step's own patience overrides it" value=${view.model.patience} onCommit=${(patience) => controller.setTemplateMeta({ patience })} />
   </div>`;
   if (selected.length > 1) {
     const nodes = selected.filter((item) => item.type === 'node').length;

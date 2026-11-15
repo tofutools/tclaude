@@ -962,6 +962,7 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 				sweepProcessRuns()
 				sweepProcessAgentDispatches()
 				sweepProcessConcerns()
+				sweepProcessStuckSignals()
 			}
 		}
 	}()

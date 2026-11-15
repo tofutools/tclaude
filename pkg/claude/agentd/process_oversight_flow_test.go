@@ -39,7 +39,8 @@ type oversightRunView struct {
 	} `json:"overseer"`
 	Concerns []oversightConcernWire `json:"concerns"`
 	Blocked  []struct {
-		NodeID string `json:"nodeId"`
+		NodeID  string `json:"nodeId"`
+		Attempt int    `json:"attempt"`
 	} `json:"blocked"`
 }
 

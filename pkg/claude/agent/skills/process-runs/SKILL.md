@@ -91,8 +91,9 @@ tclaude process record-outcome <run-id> [--node <node>] --outcome succeeded|fail
 ## Oversight: concerns and escalation
 
 Every run has an **overseer**: the agent set with `run --overseer` or
-`oversee`, else the group's lead (role `lead`, else an owner), else whoever
-started it. `show` prints it. Overseeing a run lets you, for that run only,
+`oversee`, else the template's `overseer:` (`starter`, `operator`,
+`role:<role>`), else the group's lead (role `lead`, else an owner), else
+whoever started it. `show` prints it. Overseeing a run lets you, for that run only,
 `pause`, `resume` and `assign`, and answer its concerns, without
 `process.runs.manage`. It never lets you edit the template or hand the run
 to another overseer.
@@ -105,7 +106,11 @@ handle. It climbs a chain until someone settles it:
 
 The escalation agent is a group member with the role `escalation` that holds
 `process.runs.manage`. A holder that does not answer within 30 minutes is
-passed over, and the run pauses until the next level decides. The operator
+passed over, and the run pauses until the next level decides. The engine
+raises concerns too (source `engine`) when a step stays stuck past its
+template's `patience:`: `blocked`, `no_performer`, or `no_report` (only with
+an explicit patience). One per stuck spell; it settles itself (`cleared`)
+when the step moves on. The operator
 gets a decision card (Resume, Skip this step, Reassign, Keep paused, Cancel
 the run, depending on what the run allows). The daemon applies the pick and
 mails it to the overseer. If the pick is Reassign, the overseer does the

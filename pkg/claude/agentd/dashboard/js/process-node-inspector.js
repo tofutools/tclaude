@@ -167,7 +167,18 @@ function RetryBlock({ node, commit, readOnly }) {
     <${NodeSelect} fieldKey="retry.onFail" label="on fail" options=${RETRY_ON_FAIL_MODES} value=${node.retry?.onFail}
       blankLabel="default (fresh-attempt)" readOnly=${readOnly}
       apply=${(key, raw) => commit(key, (draft) => setRetryField(draft, 'onFail', raw))} />
+    <${NodeField} fieldKey="patience" label="patience" placeholder="template's" readOnly=${readOnly}
+      value=${node.patience || ''}
+      apply=${(key, raw) => commit(key, (draft) => setNodePatience(draft, raw))} />
   </div>`;
+}
+
+// setNodePatience sets how long the step may stay stuck before the engine
+// raises a concern (a duration such as 45m); blank takes the template's.
+export function setNodePatience(node, raw) {
+  const text = String(raw ?? '').trim();
+  if (text) node.patience = text;
+  else delete node.patience;
 }
 
 function OutputsBlock({ node, commit, readOnly }) {

@@ -73,9 +73,17 @@ type Template struct {
 	// Fallback is the process-wide default for agent steps no member can
 	// take; a step's own Performer.Fallback overrides it.
 	Fallback *PerformerFallback `json:"fallback,omitempty" yaml:"fallback,omitempty"`
-	Start    string             `json:"start" yaml:"start"`
-	Nodes    map[string]Node    `json:"nodes" yaml:"nodes"`
-	Layout   *Layout            `json:"layout,omitempty" yaml:"layout,omitempty"`
+	// Overseer is who oversees a run of this template unless the run names
+	// one: "lead" (the group's lead, the default), "starter" (whoever started
+	// it), "operator", or "role:<role>" (the group's member with that role).
+	Overseer string `json:"overseer,omitempty" yaml:"overseer,omitempty"`
+	// Patience is how long a step may stay stuck (blocked, without a
+	// performer, or handed out and unreported) before the engine raises a
+	// concern to the run's overseer; a step's own patience overrides it.
+	Patience string          `json:"patience,omitempty" yaml:"patience,omitempty"`
+	Start    string          `json:"start" yaml:"start"`
+	Nodes    map[string]Node `json:"nodes" yaml:"nodes"`
+	Layout   *Layout         `json:"layout,omitempty" yaml:"layout,omitempty"`
 }
 
 type Param struct {
@@ -98,8 +106,10 @@ type Node struct {
 	Checks      []Step       `json:"checks,omitempty" yaml:"checks,omitempty"`
 	Review      *Step        `json:"review,omitempty" yaml:"review,omitempty"`
 	Retry       *RetryPolicy `json:"retry,omitempty" yaml:"retry,omitempty"`
-	Wait        *WaitConfig  `json:"wait,omitempty" yaml:"wait,omitempty"`
-	Next        Next         `json:"next,omitempty" yaml:"next,omitempty"`
+	// Patience overrides the template's patience for this step.
+	Patience string      `json:"patience,omitempty" yaml:"patience,omitempty"`
+	Wait     *WaitConfig `json:"wait,omitempty" yaml:"wait,omitempty"`
+	Next     Next        `json:"next,omitempty" yaml:"next,omitempty"`
 	// Loops bounds the outcomes of a decision that go back to earlier work,
 	// keyed by outcome (tcl-eu70x9). See LoopBound.
 	Loops  map[string]LoopBound `json:"loops,omitempty" yaml:"loops,omitempty"`

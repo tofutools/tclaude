@@ -654,6 +654,19 @@ test('regression: no-op setTemplateMeta neither dirties nor burns an undo slot',
   assert.equal(model.dirty, true);
 });
 
+test('a template names its overseer and patience; clearing them removes the keys and undo restores them', () => {
+  const model = new ProcessEditModel(view());
+  model.setTemplateMeta({ overseer: 'role:qa', patience: '45m' });
+  assert.equal(model.template.overseer, 'role:qa');
+  assert.equal(model.template.patience, '45m');
+  model.setTemplateMeta({ overseer: '' });
+  assert.equal('overseer' in model.template, false, 'blank takes the default (the group lead)');
+  model.undo();
+  assert.equal(model.template.overseer, 'role:qa');
+  model.setTemplateMeta({ patience: '45m' });
+  assert.equal(model.canRedo, true, 'an unchanged patience is a no-op and keeps the redo');
+});
+
 test('template params are one undoable mutation and no-op apply stays clean', () => {
   const model = new ProcessEditModel(view());
   assert.deepEqual(model.template.params, {}, 'older templates normalize to an empty param map');

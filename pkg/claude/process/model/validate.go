@@ -101,6 +101,12 @@ func validateTemplateIdentity(tmpl *Template, diagnostics *templateDiagnosticCol
 	if !diagnostics.AddAll(validateFallback(tmpl.Fallback, "fallback")) {
 		return false
 	}
+	if !diagnostics.AddAll(validateOverseer(tmpl.Overseer, "overseer")) {
+		return false
+	}
+	if !diagnostics.AddAll(validateDuration("patience", tmpl.Patience)) {
+		return false
+	}
 	if strings.TrimSpace(tmpl.ID) == "" {
 		if !diagnostics.Add(diagError("missing_id", "id", "template id is required")) {
 			return false
@@ -160,6 +166,9 @@ func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector, dep
 			}
 		}
 		if !validateCaptures(node, path, diagnostics) {
+			return false
+		}
+		if !diagnostics.AddAll(validateDuration(path+".patience", node.Patience)) {
 			return false
 		}
 		if node.Subprocess != nil && node.Type != NodeTypeSubprocess {
@@ -729,6 +738,29 @@ func validateRetry(retry *RetryPolicy, path string) Diagnostics {
 	diagnostics = append(diagnostics, checkInertParamRef(path+".backoff", retry.Backoff)...)
 	diagnostics = append(diagnostics, validateDuration(path+".backoff", retry.Backoff)...)
 	return diagnostics
+}
+
+// Template overseer selectors.
+const (
+	OverseerLead     = "lead"
+	OverseerStarter  = "starter"
+	OverseerOperator = "operator"
+	OverseerRole     = "role:"
+)
+
+// validateOverseer accepts the template overseer selectors: lead, starter,
+// operator or role:<role>. Blank takes the default (lead).
+func validateOverseer(value, path string) Diagnostics {
+	value = strings.TrimSpace(value)
+	switch value {
+	case "", OverseerLead, OverseerStarter, OverseerOperator:
+		return nil
+	}
+	if role, ok := strings.CutPrefix(value, OverseerRole); ok && idPattern.MatchString(role) {
+		return nil
+	}
+	return Diagnostics{diagError("invalid_overseer", path,
+		fmt.Sprintf("overseer must be lead, starter, operator or role:<role>; got %q", value))}
 }
 
 // validateDuration rejects duration-ish fields that Go's time.ParseDuration

@@ -280,8 +280,10 @@ in it raises a concern.
 - The overseer is the one set with `tclaude process run --overseer <agent>`
   or later with `tclaude process oversee <run-id> <agent|operator|default>`
   (`process.runs.manage`; an agent starting a run may name only itself
-  without it). With none set, it is the group's lead (a member with the
-  role `lead`, else an owner), else whoever started the run.
+  without it). With none set, the template's `overseer:` decides
+  (`lead`, `starter`, `operator` or `role:<role>`), and without that it is
+  the group's lead (a member with the role `lead`, else an owner), else
+  whoever started the run.
 - Overseeing a run grants, for that run only, what steering it needs:
   pause, resume, reassigning a step, and answering its concerns. It does not
   grant editing the template, or handing the run to another overseer.
@@ -319,6 +321,21 @@ escalating it. An agent whose concern would go straight to the operator needs
 `human.notify` (or `process.runs.manage`), as reaching the operator always
 does. When a run ends, its open concerns are settled as `run_ended` and their
 cards taken down.
+
+The engine raises concerns of its own when a step stays **stuck** longer
+than its **patience**: a template's `patience:` (a duration such as `45m`),
+overridden by a step's own `patience:`, and 30 minutes when neither says.
+
+| Signal | When |
+| --- | --- |
+| `blocked` | The step's branch is blocked: its retries are spent. |
+| `no_performer` | Nobody can take the step. |
+| `no_report` | The step was handed out and not reported. Only raised for a step (or template) with a patience of its own: agent work has no natural length. |
+
+An engine concern goes to the overseer like any other and climbs the same
+chain. It is raised once per stuck spell: answering it ("carry on") does not
+bring it back while the step stays as it was. When the step moves on, the
+concern settles itself as `cleared`. A paused run raises nothing new.
 
 Every step is in the run's events and its log in the dashboard:
 `concern_raised`, `concern_escalated` (with why it moved), `concern_resolved`
