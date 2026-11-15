@@ -483,6 +483,18 @@ type processProjectionSkeleton struct {
 	// tightest one.
 	loops     []model.Loop
 	innermost map[string]int
+	// gates are the agreement gates: the engine keeps their edges and loop
+	// rounds on their tallies.
+	gates map[string]bool
+}
+
+// engineSource is the node whose checkpoint entries hold an authored node's
+// outgoing edges and loop rounds: a gate's tally, or the node itself.
+func (s *processProjectionSkeleton) engineSource(id string) string {
+	if s.gates[id] {
+		return model.GateTallyID(id)
+	}
+	return id
 }
 
 var processProjectionSkeletons = struct {
@@ -603,6 +615,12 @@ func newProcessProjectionSkeleton(tmpl *model.Template) *processProjectionSkelet
 			skeleton.edges = append(skeleton.edges, edge)
 		}
 	}
+	skeleton.gates = map[string]bool{}
+	for id, node := range tmpl.Nodes {
+		if node.Type == model.NodeTypeDecision && node.IsGate() {
+			skeleton.gates[id] = true
+		}
+	}
 	skeleton.loops = model.Loops(tmpl, model.NormalizeEdges(tmpl))
 	skeleton.innermost = map[string]int{}
 	for index, loop := range skeleton.loops {
@@ -628,6 +646,15 @@ func sortedNextLabels(next model.Next) []string {
 
 func processProjectionPerformerOf(node model.Node) processProjectionPerformer {
 	switch {
+	case node.Type == model.NodeTypeDecision && node.IsGate():
+		// A gate decided by agents alone is an agent step; any person makes it
+		// a person's.
+		for _, decider := range node.Deciders {
+			if decider.Kind != model.PerformerAgent {
+				return processProjectionPerformer{Kind: string(model.PerformerHuman)}
+			}
+		}
+		return processProjectionPerformer{Kind: string(model.PerformerAgent)}
 	case node.Type == model.NodeTypeDecision:
 		return processProjectionPerformer{Kind: string(model.PerformerHuman)}
 	case node.Performer == nil:
@@ -748,7 +775,7 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 		}
 		if index, ok := s.innermost[node.ID]; ok {
 			loop := s.loops[index]
-			node.Round, node.Rounds = run.Checkpoint.Iterations[loop.From][loop.Outcome]+1, loop.MaxIterations
+			node.Round, node.Rounds = run.Checkpoint.Iterations[s.engineSource(loop.From)][loop.Outcome]+1, loop.MaxIterations
 		}
 		if processNodeStateRank[node.State] >= processNodeStateRank[string(engine.NodeReady)] &&
 			node.State != string(engine.NodeFailed) && node.State != string(engine.NodeCanceled) {
@@ -758,7 +785,7 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 	}
 	for i, edge := range projection.Edges {
 		projection.Edges[i].State = string(engine.EdgeUnresolved)
-		if disposition, ok := run.Checkpoint.Edges[edge.From][edge.Label]; ok {
+		if disposition, ok := run.Checkpoint.Edges[s.engineSource(edge.From)][edge.Label]; ok {
 			projection.Edges[i].State = string(disposition)
 		}
 	}

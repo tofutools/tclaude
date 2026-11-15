@@ -148,6 +148,12 @@ func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector, dep
 				return false
 			}
 		}
+		if node.Type != NodeTypeDecision && (len(node.Deciders) > 0 || !isBlank(node.Agree)) {
+			if !diagnostics.Add(diagError("gate_on_non_decision", path+".deciders",
+				"deciders and agree make a decision an agreement gate; they are only valid on decision nodes")) {
+				return false
+			}
+		}
 		if node.Type != NodeTypeEnd && !isBlank(node.Result) {
 			if !diagnostics.Add(diagError("result_on_non_end_node", path+".result", "result is only valid on end nodes")) {
 				return false

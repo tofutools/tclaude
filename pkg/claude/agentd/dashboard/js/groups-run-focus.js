@@ -217,7 +217,11 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
   const decisionNode = decision && String(decision.nodeId) !== node.id ? { ...node, id: String(decision.nodeId) } : node;
   const gate = (view?.gates || []).find((item) => String(item.nodeId) === node.id);
   const blocked = (view?.blocked || []).find((item) => String(item.nodeId) === node.id);
-  const history = detail.events.filter((event) => String(event.nodeId || '') === node.id).slice(-HISTORY_ROWS);
+  // A gate's history includes its votes' and its tally's rows.
+  const history = detail.events.filter((event) => {
+    const id = String(event.nodeId || '');
+    return id === node.id || gateNodeOf(id) === node.id || id === `${node.id}.tally`;
+  }).slice(-HISTORY_ROWS);
   const neighbours = (list) => (list.length
     ? list.map((item, i) => html`${i > 0 && ', '}<span class=${`grf-neighbour pk-state-${item.state}`}>${item.label}${item.state === 'done' ? ' ✓' : ''}</span>`)
     : '—');

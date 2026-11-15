@@ -157,6 +157,8 @@ type GateVote struct {
 	NodeID string
 	// Verdict is the outcome it chose, empty while it has not voted.
 	Verdict string
+	// Human says a person casts it.
+	Human bool
 }
 
 // Gate describes an agreement gate of the run: its tally node, the outcome
@@ -188,7 +190,8 @@ func (d *Definition) Gates(checkpoint Checkpoint) []Gate {
 		}
 		for _, voter := range tally.voters {
 			verdict, _ := voteOf(checkpoint, d, voter)
-			gate.Votes = append(gate.Votes, GateVote{NodeID: d.nodes[voter].id, Verdict: verdict})
+			gate.Votes = append(gate.Votes, GateVote{NodeID: d.nodes[voter].id, Verdict: verdict,
+				Human: d.nodes[voter].agent == nil})
 		}
 		gates = append(gates, gate)
 	}

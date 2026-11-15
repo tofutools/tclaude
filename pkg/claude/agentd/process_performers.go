@@ -1673,7 +1673,7 @@ func processLoopFeedback(runID string, command engine.Command) string {
 	if command.Round < 2 {
 		return ""
 	}
-	if feedback := processAgreementFeedback(runID, command.LoopFrom, command.Round, command.Rounds); feedback != "" {
+	if feedback := processAgreementFeedback(runID, command.NodeID, command.LoopFrom, command.Round, command.Rounds); feedback != "" {
 		return feedback
 	}
 	events, err := db.ListLatestProcessRunNodeEvents(runID, "loop_iterated")

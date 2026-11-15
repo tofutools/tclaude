@@ -69,7 +69,7 @@ func voteAs(t *testing.T, f *testharness.Flow, conv, runID, node string, attempt
 // told what both said. Next round both approve and the run completes.
 func TestProcessAgreementGate_AgentAndHumanDecideTogether(t *testing.T) {
 	f, root := processRuntimeFlow(t)
-	g := f.HaveGroup("crew")
+	f.HaveGroup("crew")
 	const devConv, revConv = "gdev-1111-2222-3333-4444", "grev-1111-2222-3333-4444"
 	dev := havePerformerAgent(t, f, "crew", devConv, "dana", "dev", "idle")
 	rev := havePerformerAgent(t, f, "crew", revConv, "rita", "reviewer", "idle")
@@ -90,7 +90,9 @@ func TestProcessAgreementGate_AgentAndHumanDecideTogether(t *testing.T) {
 		}}
 
 	const runID = "run_agree_mixed"
-	view := startPerformerRun(t, f, root, runID, tmpl, groupScope(g))
+	// Started in the group for real, so the run is in the group's context.
+	startLoopRun(t, f, root, runID, tmpl)
+	view := showPerformerRun(t, f, runID)
 	agentID, attempt, _ := commandFor(t, view, "build")
 	require.Equal(t, dev, agentID)
 	reportStep(t, f, devConv, runID, "build", attempt, nil)
@@ -121,13 +123,19 @@ func TestProcessAgreementGate_AgentAndHumanDecideTogether(t *testing.T) {
 	inbox := processInbox(t, devConv)
 	require.Len(t, inbox, 2)
 	body := inbox[1].Body
-	assert.Contains(t, body, `The deciders of "review" did not all choose approve`)
+	assert.Contains(t, body, `The deciders of "review" did not all choose approve, so this work runs again`)
 	assert.Contains(t, body, "1. rita: approve\n   code is fine")
 	assert.Contains(t, body, "2. human: changes\n   the error message is unclear")
+	// The run's graph counts the gate's rounds (a new round starts its body's
+	// edges over, so the way the gate went shows once it settles for good).
+	round, _ := gateContext(t, f, runID)
+	assert.Equal(t, 2, round["build"], "build is in round 2 of the gate's loop")
+	assert.Equal(t, 2, round["review"])
 	reportStep(t, f, devConv, runID, "build", attempt, nil)
 
 	view = showPerformerRun(t, f, runID)
 	_, voteAttempt, _ = commandFor(t, view, "review.vote.1")
+	assert.Contains(t, processInbox(t, revConv)[1].Body, "so it is up for a vote again", "a decider is told the vote is open again")
 	voteAs(t, f, revConv, runID, "review.vote.1", voteAttempt, "approve", "still fine")
 	gate = showGateRun(t, f, runID)
 	assert.Equal(t, "1/2 agreed, waiting on human", gateSummary(t, gate))
@@ -135,6 +143,41 @@ func TestProcessAgreementGate_AgentAndHumanDecideTogether(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, decideLoop(t, f, runID, map[string]any{"nodeId": "review.vote.2",
 		"verdict": "approve", "attempt": gate.AwaitingDecisions[0].Attempt}))
 	assert.Equal(t, engine.RunCompleted, showGateRun(t, f, runID).Status)
+	_, edge := gateContext(t, f, runID)
+	assert.Equal(t, string(engine.EdgeArrived), edge["review/approve"])
+	assert.Equal(t, string(engine.EdgeNotTaken), edge["review/escalate"])
+}
+
+// gateContext reads the run's projection off /v1/process/context: each node's
+// round, and each edge's state keyed "from/label".
+func gateContext(t *testing.T, f *testharness.Flow, runID string) (map[string]int, map[string]string) {
+	t.Helper()
+	rec := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/context", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var context struct {
+		Runs map[string]struct {
+			Nodes []struct {
+				ID    string `json:"id"`
+				Round int    `json:"round"`
+			} `json:"nodes"`
+			Edges []struct {
+				From  string `json:"from"`
+				Label string `json:"label"`
+				State string `json:"state"`
+			} `json:"edges"`
+		} `json:"runs"`
+	}
+	testharness.DecodeJSON(t, rec, &context)
+	run, ok := context.Runs[runID]
+	require.True(t, ok, "run %s in the context", runID)
+	rounds, edges := map[string]int{}, map[string]string{}
+	for _, node := range run.Nodes {
+		rounds[node.ID] = node.Round
+	}
+	for _, edge := range run.Edges {
+		edges[edge.From+"/"+edge.Label] = edge.State
+	}
+	return rounds, edges
 }
 
 // waysOfWorking is docs/examples/ways-of-working.yaml, the 8-step template.

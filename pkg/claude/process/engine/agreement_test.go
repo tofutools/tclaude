@@ -169,6 +169,31 @@ func TestAgreementGate_Validation(t *testing.T) {
 	}, "gate_loop_exhausted")
 	expect("agree on a plain decision", func(n *model.Node) { n.Deciders = nil }, "agree_without_deciders")
 
+	whole := func(name, code string, edit func(*model.Template)) {
+		t.Helper()
+		tmpl := agreementTemplate()
+		edit(tmpl)
+		for _, d := range model.Validate(tmpl, model.NormalizeEdges(tmpl)) {
+			if d.Code == code {
+				return
+			}
+		}
+		t.Errorf("%s: want %s", name, code)
+	}
+	whole("deciders on a task", "gate_on_non_decision", func(tmpl *model.Template) {
+		task := tmpl.Nodes["merge"]
+		task.Agree = "approved"
+		tmpl.Nodes["merge"] = task
+	})
+	whole("sameAs a gate", "invalid_performer_constraint", func(tmpl *model.Template) {
+		gate := tmpl.Nodes["decide"]
+		gate.Deciders[0] = model.Performer{Kind: model.PerformerAgent, Prompt: "Review."}
+		tmpl.Nodes["decide"] = gate
+		merge := tmpl.Nodes["merge"]
+		merge.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Merge.", SameAs: "decide"}
+		tmpl.Nodes["merge"] = merge
+	})
+
 	tmpl := agreementTemplate()
 	tmpl.Nodes["decide.vote.1"] = model.Node{Type: model.NodeTypeEnd}
 	found := false

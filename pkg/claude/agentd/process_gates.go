@@ -59,12 +59,16 @@ func processRunGateViews(definition *engine.Definition, checkpoint engine.Checkp
 		open := false
 		view := processRunGateView{NodeID: gate.NodeID, Agree: gate.Agree, Total: len(gate.Votes)}
 		var waiting, dissents []string
+		people := processGatePeople(gate)
 		for _, vote := range gate.Votes {
 			status := checkpoint.Nodes[vote.NodeID]
 			if status != engine.NodePending {
 				open = true
 			}
-			decider := processGateDecider(vote.NodeID, performers)
+			decider := people[vote.NodeID]
+			if !vote.Human {
+				decider = processGateDecider(vote.NodeID, performers)
+			}
 			view.Votes = append(view.Votes, processRunGateVoteView{NodeID: vote.NodeID, Decider: decider, Verdict: vote.Verdict})
 			switch vote.Verdict {
 			case "":
@@ -89,8 +93,27 @@ func processRunGateViews(definition *engine.Definition, checkpoint engine.Checkp
 	return views
 }
 
-// processGateDecider names a vote's decider: the agent its latest attempt went
-// to, or "human" for a person's vote.
+// processGatePeople names a gate's people's votes: "human" for the one person,
+// "person 1", "person 2"… in decider order when there are several.
+func processGatePeople(gate engine.Gate) map[string]string {
+	names := map[string]string{}
+	var ids []string
+	for _, vote := range gate.Votes {
+		if vote.Human {
+			ids = append(ids, vote.NodeID)
+		}
+	}
+	for i, id := range ids {
+		names[id] = "human"
+		if len(ids) > 1 {
+			names[id] = fmt.Sprintf("person %d", i+1)
+		}
+	}
+	return names
+}
+
+// processGateDecider names an agent vote's decider: the agent its latest
+// attempt went to.
 func processGateDecider(voteID string, performers []processRunPerformerView) string {
 	name := ""
 	found := false
@@ -111,14 +134,17 @@ func processGateDecider(voteID string, performers []processRunPerformerView) str
 	case found:
 		return "an agent not yet chosen"
 	default:
-		return "human"
+		return "an agent"
 	}
 }
 
 // processAgreementFeedback is what the performer of a round an agreement gate sent back is
 // told: what each decider voted, with its notes. Empty when tallyID is not a
 // gate's tally.
-func processAgreementFeedback(runID, tallyID string, round, rounds int) string {
+func processAgreementFeedback(runID, nodeID, tallyID string, round, rounds int) string {
+	if !strings.HasSuffix(tallyID, ".tally") {
+		return "" // not a gate's loop: no run to load
+	}
 	run, err := executor.LoadRun(runID)
 	if err != nil {
 		slog.Warn("process gates: run not loaded", "run", runID, "error", err)
@@ -129,13 +155,18 @@ func processAgreementFeedback(runID, tallyID string, round, rounds int) string {
 		return ""
 	}
 	gateID := gate.NodeID
+	people := processGatePeople(gate)
 	rows, _ := db.ListProcessAgentDispatchesForRun(runID)
 	decisions, _ := db.ListLatestProcessRunNodeEvents(runID, "decision_recorded")
 	var b strings.Builder
-	fmt.Fprintf(&b, "## Sent back for round %d of %d\n\nThe deciders of %q did not all choose %s, so this work runs again. What each decided:\n",
-		round, rounds, gateID, gate.Agree)
+	again := "this work runs again"
+	if strings.HasPrefix(nodeID, gateID+".vote.") {
+		again = "it is up for a vote again"
+	}
+	fmt.Fprintf(&b, "## Sent back for round %d of %d\n\nThe deciders of %q did not all choose %s, so %s. What each decided last round:\n",
+		round, rounds, gateID, gate.Agree, again)
 	for k, vote := range gate.Votes {
-		decider, verdict, note := "human", "", ""
+		decider, verdict, note := people[vote.NodeID], "", ""
 		// An agent's vote is its report; a person's is the decision row.
 		for _, row := range rows {
 			if row.NodeID == vote.NodeID && row.ReportVerdict != "" {

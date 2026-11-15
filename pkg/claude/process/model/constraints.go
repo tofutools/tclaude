@@ -113,8 +113,17 @@ func validatePerformerConstraints(tmpl *Template, diagnostics *templateDiagnosti
 				}
 				return true
 			}
-			if same := strings.TrimSpace(performer.SameAs); same != "" && !check("sameAs", same) {
-				return false
+			if same := strings.TrimSpace(performer.SameAs); same != "" {
+				if !check("sameAs", same) {
+					return false
+				}
+				// Several agents vote at a gate, so "the same agent" names none.
+				if target := tmpl.Nodes[same]; target.Type == NodeTypeDecision && target.IsGate() {
+					if !diagnostics.Add(diagError("invalid_performer_constraint", slot.path+".sameAs",
+						fmt.Sprintf("sameAs names %q, an agreement gate several agents decide; name a step one agent performs", same))) {
+						return false
+					}
+				}
 			}
 			seen := map[string]bool{}
 			for i, ref := range performer.DifferentFrom {
