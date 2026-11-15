@@ -128,7 +128,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   const rows = list.rows;
   const stuck = stuckRows(view);
   const chips = [
-    { key: 'all', label: 'All', count: view.online.length },
+    { key: 'all', label: 'All', count: list.total },
     { key: 'needs', label: 'Needs you', badge: view.needs, badgeTone: 'danger' },
     { key: 'idle', label: 'Idle', count: view.resting.length },
     { key: 'recent', label: 'Recent' },
@@ -171,10 +171,10 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
     body = html`
     <${UsageStrip} snapshot=${snapshot} onOpen=${() => actions.navigate('/usage')} />
     ${needsYou}
-    <${Section} title=${list.all ? 'Online' : 'Working'} count=${rows.length}
+    <${Section} title=${list.all ? 'Online' : 'Active'} count=${rows.length}
       more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button>`}>
       ${rows.length === 0
-        ? html`<p class="ui-empty phone-empty">${list.all ? 'No agent is online.' : 'No agent is working.'}</p>`
+        ? html`<p class="ui-empty phone-empty">${list.all ? 'No agent is online.' : 'No agent is active right now.'}</p>`
         : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} />`}
       ${list.total > FEW_ONLINE && html`<button data-ui-exempt type="button" class="phone-now-all" aria-expanded=${showAll ? 'true' : 'false'}
         onClick=${() => setShowAll(!showAll)}>${showAll ? 'Only the recent ones' : `Show all ${list.total} online`}

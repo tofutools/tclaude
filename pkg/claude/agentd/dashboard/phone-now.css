@@ -74,7 +74,7 @@
   text-transform: inherit; text-align: left; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-section-chev { color: var(--ui-focus); font-size: 16px; }
-/* Show all / Only the busy ones, under Now's rows of agents. */
+/* Show all / Only the recent ones, under Now's rows of agents. */
 :root[data-layout="phone"] .phone-now-all {
   display: flex; justify-content: center; align-items: center; gap: 6px; width: 100%; min-height: var(--phone-tap); margin-top: 6px;
   background: none; border: 0; color: var(--ui-focus); font: inherit; cursor: pointer;
@@ -85,7 +85,7 @@
 :root[data-layout="phone"] .phone-now-chips .ui-tab { padding-inline: 8px; }
 /* A row's time line (idle 12m, updated 4m ago, last update 47m ago); amber
    once a busy agent has been quiet past STUCK_AFTER_MS. */
-:root[data-layout="phone"] .phone-now-when { display: block; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-now-when { flex-basis: 100%; color: var(--ui-muted-text); font-size: 13px; }
 :root[data-layout="phone"] .phone-now-when.quiet { color: var(--ui-warn-text); }
 /* A group's name over its first row in Idle. */
 :root[data-layout="phone"] .phone-now-group { margin: 0; padding: 9px 12px 2px; }

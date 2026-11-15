@@ -121,7 +121,7 @@ test('many online: only the ones at work or in error, and Show all lists every g
   const offline = { agent_id: 'agt_20000000000000000000000000000000', conv_id: 'o', title: 'gone', online: false, state: { status: 'idle' } };
   const snapshot = { ...SNAPSHOT, groups: [...SNAPSHOT.groups, { name: 'tclaude', members: [...idle, offline] }] };
   const { harness, root, tap } = await setup(t, snapshot);
-  const working = harness.getByRole(root, 'group', { name: 'Working' });
+  const working = harness.getByRole(root, 'group', { name: 'Active' });
   assert.deepEqual([...working.querySelectorAll('.phone-who-name')].map((n) => n.textContent), ['release-bot', 'lead']);
   const all = root.querySelector('.phone-now-all');
   assert.match(all.textContent, /Show all 13 online/, 'the offline one is not counted');
@@ -134,7 +134,7 @@ test('many online: only the ones at work or in error, and Show all lists every g
   assert.ok(names.includes('idle-0') && names.includes('steward'), 'every group\'s online agents');
   assert.ok(!names.includes('gone'));
   await tap(root.querySelector('.phone-now-all'));
-  assert.ok(harness.getByRole(root, 'group', { name: 'Working' }), 'Only the busy ones folds it back');
+  assert.ok(harness.getByRole(root, 'group', { name: 'Active' }), 'Only the recent ones folds it back');
 });
 
 test('open PRs are collapsed under their header until a tap anywhere on it', async (t) => {
@@ -182,7 +182,7 @@ test('the chips: All by default, counts on them, each shows its view, and the pi
   const chips = harness.getByRole(root, 'tablist', { name: 'Show on Now' });
   const chip = (name) => harness.getByRole(chips, 'tab', { name });
   assert.equal(chip(/^All/).getAttribute('aria-selected'), 'true');
-  assert.match(chip(/^All/).textContent, /All 4/);
+  assert.match(chip(/^All/).textContent, /All 3/, 'online agents but the asker, as the rows count them');
   assert.match(chip(/^Needs you/).querySelector('.ui-badge-danger').textContent, /^\d+$/);
   assert.equal(chip(/^Stuck\?/).querySelector('.ui-badge-warn').textContent, '1', 'lead has been quiet 40m');
 

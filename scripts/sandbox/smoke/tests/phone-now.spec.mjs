@@ -37,7 +37,7 @@ test('Now shows what needs you as cards, and its strip and rows go where they sa
   const { scroll, width } = await page.evaluate(() => ({ scroll: document.querySelector('.phone-view').scrollWidth, width: document.querySelector('.phone-view').clientWidth }));
   expect(scroll).toBeLessThanOrEqual(width);
 
-  await page.getByRole('group', { name: /^(Online|Working)$/ }).locator('.phone-row').first().click();
+  await page.getByRole('group', { name: /^(Online|Active)$/ }).locator('.phone-row').first().click();
   await expect(page.locator('.phone-term[role=dialog]')).toBeVisible();
   await page.goBack();
   await expect(page.locator('.phone-term[role=dialog]')).toBeHidden();
