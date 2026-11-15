@@ -15,6 +15,9 @@
 //     hideNav: boolean, hide the bottom nav while the page is up
 //     routed:  boolean, the page is a router location of its own; otherwise
 //              it is a history step of its own (phone-history.js)
+//     view:    the shell's own view the page is pushed over ('board': a
+//              task's page), or absent for a tab's page; the shell shows a
+//              page only over the view it belongs to
 //   } | null
 //
 // A page never outlives its tab: usePhonePage takes it down when its view goes
@@ -33,7 +36,7 @@ export const phonePage = signal(null);
 export function pageKey(page) {
   if (!page) return '';
   const acts = (page.actions || []).map((act) => [act.key || act.label, act.icon || '', act.label, !!act.disabled, !!act.danger]);
-  return JSON.stringify([page.title || '', !!page.hideNav, acts]);
+  return JSON.stringify([page.title || '', !!page.hideNav, acts, page.view || '']);
 }
 
 // usePhonePage shows `page` in the shell while `active` holds and the
@@ -52,6 +55,7 @@ export function usePhonePage(page, active = true) {
       title: now.title || '',
       hideNav: !!now.hideNav,
       routed: !!now.routed,
+      ...(now.view ? { view: now.view } : {}),
       onBack: () => latest.current?.onBack?.(),
       actions: (now.actions || []).map((act, index) => ({
         ...act,
@@ -87,7 +91,8 @@ function barKey(bar) {
 // usePhoneBar shows `bar` in the shell's top bar while `active` holds and the
 // component is mounted, the way usePhonePage does for a page: replaced only
 // when its look changes, its handlers always the latest, and cleared only if
-// it is still this component's.
+// it is still this component's. Clearing it puts back the bar of another tab
+// it covered.
 export function usePhoneBar(bar, active = true) {
   const latest = useRef(bar);
   latest.current = bar;
@@ -103,9 +108,15 @@ export function usePhoneBar(bar, active = true) {
         onClick: () => latest.current?.actions?.[index]?.onClick?.(),
       })),
     };
+    // An own view's bar (Board's) covers the bar of the tab under it
+    // (Mail's): that tab's view stays mounted and sets its bar only when its
+    // look changes, so taking this one down puts the covered one back.
+    const prev = phoneBar.peek();
+    const covered = prev && prev.tab !== shown.tab ? prev : (prev?.covered || null);
+    if (covered) shown.covered = covered;
     phoneBar.value = shown;
     return () => {
-      if (phoneBar.peek() === shown) phoneBar.value = null;
+      if (phoneBar.peek() === shown) phoneBar.value = shown.covered || null;
     };
   }, [key]);
 }

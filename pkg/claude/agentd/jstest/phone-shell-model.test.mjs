@@ -1,5 +1,5 @@
 // js/phone-shell-model.js: the phone shell's slots, titles, Now view and
-// Board lanes, as plain data.
+// Board groups, as plain data.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
@@ -77,30 +77,3 @@ test('Board lists groups with live tasks, those waiting on you first', async (t)
   assert.deepEqual(boardGroups(null), []);
 });
 
-test('Board lanes split a group by row state, in board order, empty lanes left out', async (t) => {
-  const { BOARD_LANES, boardLanes } = await load(t);
-  const entry = { tasks: [
-    { id: 'tk_1', title: 'mine', status: 'open', stage: 'next', assignee: { operator: true, agent_id: 'operator' } },
-    { id: 'tk_2', title: 'stuck', status: 'blocked', stage: 'next' },
-    { id: 'tk_3', title: 'doing', status: 'open', stage: 'next', assignee: { agent_id: 'agt_x' } },
-    { id: 'tk_4', title: 'in review', status: 'open', stage: 'next', column: 'review' },
-    { id: 'tk_5', title: 'queued', status: 'open', stage: 'next' },
-    { id: 'tk_6', title: 'later', status: 'open', stage: 'idea' },
-    { id: 'tk_7', title: 'parked', status: 'open', stage: 'backlog' },
-  ] };
-  const lanes = boardLanes(entry);
-  assert.deepEqual(lanes.map((lane) => [lane.id, lane.tasks.map((t) => t.id)]), [
-    ['waiting', ['tk_1']],
-    ['blocked', ['tk_2']],
-    ['progress', ['tk_3', 'tk_4']],
-    ['next', ['tk_5']],
-    ['ideas', ['tk_6']],
-  ], 'a backlog task is in no lane');
-  assert.equal(BOARD_LANES.length, 5);
-  assert.deepEqual(boardLanes({ tasks: [] }), []);
-});
-
-test('a task opens through the same ?task= deep link as on the desktop', async (t) => {
-  const { taskPath } = await load(t);
-  assert.equal(taskPath({ id: 'tk_ab12' }, 'webshop'), '/?task=tk_ab12%3Awebshop');
-});

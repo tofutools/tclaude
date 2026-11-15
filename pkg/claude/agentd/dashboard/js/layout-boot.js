@@ -41,6 +41,7 @@
     'phone-access.css',
     'phone-agents.css',
     'phone-automations.css',
+    'phone-board.css',
     'phone-config.css',
     'phone-diagnostics.css',
     'phone-fleet.css',

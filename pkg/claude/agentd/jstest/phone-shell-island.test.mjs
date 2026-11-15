@@ -76,10 +76,22 @@ test('Agents and Mail show their tab; Now and Board come back over it', async (t
   await tap(navItem('Board'));
   assert.equal(root.dataset.phoneView, 'board');
   assert.equal(navItem('Board').getAttribute('aria-current'), 'page');
-  const task = mounted.container.querySelector('.phone-task');
+  const task = mounted.container.querySelector('.phone-board-card .phone-board-open');
   assert.ok(task.textContent.includes('Ship it'));
+  const before = calls.length;
   await tap(task);
-  assert.deepEqual(calls.at(-1), ['navigate', '/?task=tk_1%3Awebshop']);
+  // The task opens on its phone page over the Board: never the desktop's
+  // task form, never another tab (B1, B2).
+  assert.equal(calls.length, before, 'no navigation, no tab change');
+  assert.equal(root.dataset.phoneView, 'board');
+  assert.equal(mounted.container.querySelector('.phone-bar-title').textContent, 'webshop');
+  assert.equal(mounted.container.querySelector('.phone-task-page-title').textContent, 'Ship it');
+  assert.equal(navItem('Board').getAttribute('aria-current'), 'page');
+  assert.equal(harness.document.activeElement?.tagName === 'TEXTAREA' || harness.document.activeElement?.tagName === 'INPUT', false,
+    'nothing takes the focus, so a phone keeps its keyboard down');
+  await tap(mounted.container.querySelector('.phone-bar-back'));
+  assert.ok(mounted.container.querySelector('.phone-board-card'), 'Back comes back to the board');
+  assert.equal(mounted.container.querySelector('.phone-bar-title').textContent.startsWith('Board'), true);
 
   // A tab activation from anywhere (a deep link, Back, the task's dialog)
   // clears the own view.
@@ -270,7 +282,9 @@ test('each root view has its own top-bar actions: node chip and 🔍 on Now, ⏻
   assert.ok(named('Search'));
   assert.equal(bar().querySelector('.phone-node-chip'), null, 'the node chip is on Now and More only');
   await tap(navItem('Board'));
-  assert.equal(bar().querySelector('.phone-ib'), null, 'Board adds its own');
+  assert.ok(named('Add a task'), 'Board adds its ＋');
+  assert.ok(named('Board webshop, pick a group'), 'and the group in its title');
+  assert.equal(bar().querySelector('[aria-label="Power"]'), null);
 });
 
 test('⏻ opens the power actions', async (t) => {
@@ -320,8 +334,9 @@ test('🔍 finds agents, groups, mail and tasks, and opens what is tapped', asyn
   await tap(harness.getByRole(bar(), 'button', { name: 'Search' }));
   await harness.input(harness.getByRole(sheet(), 'textbox', { name: 'Search' }), 'ship');
   await tap(sheet().querySelector('[aria-label="Tasks"] .phone-search-hit'));
-  assert.deepEqual(calls.at(-1), ['navigate', '/?task=tk_1%3Awebshop']);
-  assert.equal(shell.view.value, null, 'it leaves Now for the task');
+  assert.equal(shell.view.value, 'board', 'it opens the task over the Board');
+  assert.equal(bar().querySelector('.phone-bar-title').textContent, 'webshop');
+  assert.ok(bar().querySelector('.phone-bar-back'), "the task's page, with its back button");
 });
 
 test('a search for a group opens Agents on that group', async (t) => {

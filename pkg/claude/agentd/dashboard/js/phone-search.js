@@ -13,7 +13,6 @@ import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { scoreMatch } from './palette-score.js';
 import { agentsTab, groupKey } from './phone-agents-model.js';
-import { taskPath } from './phone-shell-model.js';
 import { openHumanNotifications } from './mail-bridge.js';
 import { Input } from './ui-components.js';
 import { Avatar, Section, StatePill } from './phone-ui.js';
@@ -133,7 +132,7 @@ export function SearchSheet({ state, actions, boardSource = null, close }) {
         sub=${[sender(message), message.group].filter(Boolean).join(' · ')} />`)}
     <//>
     <${Kind} title="Tasks" found=${hits.tasks}>
-      ${hits.tasks.items.map((task) => html`<${Hit} key=${`${task.group}:${task.id}`} onClick=${go(() => actions.navigate(taskPath(task, task.group)))}
+      ${hits.tasks.items.map((task) => html`<${Hit} key=${`${task.group}:${task.id}`} onClick=${go(() => actions.openTask(task.id, task.group))}
         lead=${html`<${Avatar} bot glyph="▤" />`} title=${task.title} sub=${task.group} />`)}
     <//>
   </div>`;

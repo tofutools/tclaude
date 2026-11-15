@@ -1,0 +1,240 @@
+// js/phone-board-model.js, phone-board.js and phone-task-page.js: the phone
+// Board as the approved mock draws it (one column at a time, readiness
+// sections, cards with tags, Move ▸ and Comment, questions answered in
+// place) and a task's own phone page.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPreactHarness } from './preact-harness.mjs';
+
+const AGENT = 'agt_00000000000000000000000000000001';
+const LEAD = 'agt_00000000000000000000000000000002';
+
+// A webshop board: one of each place a task can stand.
+function board() {
+  return {
+    group: 'webshop',
+    counts: { live: 8, waiting_on_you: 2 },
+    columns: [{ slug: 'in-review', label: 'In review', count: 1 }],
+    tasks: [
+      { id: 'tk_ready', title: 'Checkout page redesign', status: 'open', stage: 'next', held: true,
+        assignee: { agent_id: AGENT, name: 'checkout-ui' },
+        refs: [{ kind: 'github', label: '#1482', url: 'https://github.com/acme/webshop/pull/1482', pr: { number: 1482, checks: { state: 'passing', total: 4, passed: 4 } } }] },
+      { id: 'tk_coupon', title: 'Coupon lookup p95 regression', status: 'open', stage: 'next', kind: 'bug' },
+      { id: 'tk_carrier', title: 'Which carrier?', status: 'open', stage: 'next',
+        questions: [{ n: 1, title: 'Which carrier?', state: 'open', asked_by: `agent:${LEAD}`, recommend: 'dhl',
+          options: [{ key: 'dhl', label: 'DHL' }, { key: 'ups', label: 'UPS' }, { key: 'fedex', label: 'FedEx' }] }] },
+      { id: 'tk_queued', title: 'After the redesign', status: 'open', stage: 'next', unmet: ['tk_ready'] },
+      { id: 'tk_stuck', title: 'Upgrade the SDK', status: 'blocked', stage: 'next', block_reason: 'waiting on the vendor' },
+      { id: 'tk_doing', title: 'Search relevance v2', status: 'open', stage: 'next', assignee: { agent_id: LEAD, name: 'lead' } },
+      { id: 'tk_mine', title: 'Approve the contract', status: 'open', stage: 'next', assignee: { agent_id: 'operator', operator: true } },
+      { id: 'tk_review', title: 'Onboarding copy', status: 'open', stage: 'next', column: 'in-review' },
+      { id: 'tk_idea', title: 'Gift cards', status: 'open', stage: 'idea' },
+      { id: 'tk_parked', title: 'Loyalty points', status: 'open', stage: 'backlog' },
+    ],
+    closed: [
+      { id: 'tk_old', title: 'Older fix', status: 'done', closed_at: '2026-11-10T00:00:00Z' },
+      { id: 'tk_new', title: 'Newer fix', status: 'done', closed_at: '2026-11-14T00:00:00Z' },
+      { id: 'tk_dropped', title: 'Dropped', status: 'dropped', closed_at: '2026-11-14T00:00:00Z' },
+    ],
+  };
+}
+
+test('the board is one column at a time, split into readiness sections', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/phone-board-model.js');
+  const entry = board();
+  assert.deepEqual(m.boardColumns(entry).map((c) => [c.label, c.count]),
+    [['Idea', 1], ['Next', 6], ['Started', 1], ['In review', 1], ['Done', 2]], 'a backlog task and a dropped one are in none; one the operator holds stays in Next');
+  assert.deepEqual(m.columnSections(entry, 'next').map((s) => [s.label, s.tasks.map((task) => task.id)]), [
+    ['Ready', ['tk_ready', 'tk_coupon']],
+    ['Waiting on you', ['tk_carrier', 'tk_mine']],
+    ['Queued', ['tk_queued']],
+    ['Blocked', ['tk_stuck']],
+  ]);
+  assert.deepEqual(m.columnSections(entry, 'idea').map((s) => s.label), ['Ready', 'Waiting on you', 'Blocked'], 'Queued only when it holds something');
+  assert.deepEqual(m.columnSections(entry, 'done')[0].tasks.map((task) => task.id), ['tk_new', 'tk_old'], 'Done is the latest first');
+  assert.equal(m.defaultColumn(entry), 'next', 'the board opens on the column with something waiting on you');
+  assert.equal(m.defaultColumn({ tasks: [{ id: 'a', status: 'open', stage: 'idea' }] }), 'idea');
+});
+
+test('a card shows who holds it, its PR and kind, and a question with its options', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/phone-board-model.js');
+  const [ready, coupon, carrier] = board().tasks;
+  const names = new Map([[LEAD, { name: 'lead' }]]);
+  assert.deepEqual(m.cardView(ready, names).tags.map((tag) => tag.text), ['@checkout-ui', 'PR #1482']);
+  assert.deepEqual(m.cardView(coupon, names).tags.map((tag) => tag.text), ['bug']);
+  const view = m.cardView(carrier, names);
+  assert.equal(view.accent, 'q', 'waiting on you: the blue edge');
+  assert.equal(view.question.asker, 'lead');
+  assert.deepEqual(view.question.options.map((o) => [o.label, o.recommended]), [['DHL', true], ['UPS', false], ['FedEx', false]]);
+  assert.equal(view.question.inline, true);
+});
+
+test('Move offers the columns a task can go to, and its place among its section', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/phone-board-model.js');
+  const entry = board();
+  const [ready, coupon] = entry.tasks;
+  const moves = m.columnMoves(coupon, entry);
+  assert.deepEqual(moves.map((c) => [c.key, c.current, c.disabled]), [
+    ['idea', false, false], ['next', true, false], ['started', false, true], ['col:in-review', false, false], ['done', false, false],
+  ], 'an unassigned task cannot start');
+  assert.equal(m.columnMoves(ready, entry).find((c) => c.key === 'started').disabled, false, "its agent holds it: it can start");
+  assert.deepEqual(m.positionMoves([ready, coupon], coupon), { top: { before: 'tk_ready', stage: 'next' }, up: { before: 'tk_ready', stage: 'next' }, down: null });
+});
+
+async function setupView(t) {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, boardMod, sheetMod, pageMod] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/phone-board.js'),
+    harness.importDashboardModule('js/phone-sheet.js'),
+    harness.importDashboardModule('js/phone-page.js'),
+  ]);
+  const { signal } = harness.signals;
+  const state = createDashboardState();
+  state.beginRequest();
+  state.commitRequest(1, { groups: [{ name: 'webshop', members: [
+    { agent_id: AGENT, conv_id: 'c1', title: 'checkout-ui', online: true, state: { status: 'working' } },
+    { agent_id: LEAD, conv_id: 'c2', title: 'lead', online: true, state: { status: 'idle' } },
+  ] }] });
+  const writes = [];
+  let refreshes = 0;
+  const source = {
+    attach: () => () => {}, status: signal('ready'), error: signal(''),
+    context: signal({ groups: [board()] }),
+    refresh() { refreshes += 1; return Promise.resolve(); },
+  };
+  const record = (name) => async (...args) => { writes.push([name, ...args]); return {}; };
+  const api = {
+    answer: record('answer'), comment: record('comment'), stage: record('stage'), start: record('start'),
+    hold: record('hold'), status: record('status'), move: record('move'), create: record('create'),
+    task: async (id) => ({ ...board().tasks.find((task) => task.id === id), body: 'The **address** step is done.' }),
+    activity: async () => ({ events: [
+      { id: 1, at: '2026-11-14T00:00:00Z', actor: 'human:operator', actor_name: 'operator', kind: 'created', detail: 'in next' },
+      { id: 2, at: '2026-11-14T00:01:00Z', actor: `agent:${AGENT}`, actor_name: 'checkout-ui', kind: 'comment', comment: { body: 'PR is up.' } },
+    ] }),
+  };
+  t.after(() => { boardMod.boardTask.value = null; sheetMod.closePhoneSheet(); pageMod.phonePage.value = null; pageMod.phoneBar.value = null; });
+  const { html } = harness;
+  const mounted = await harness.mount(html`<div>
+    <${boardMod.BoardView} source=${source} state=${state} actions=${{}} api=${api} />
+    <${sheetMod.PhoneSheetHost} />
+  </div>`);
+  const c = mounted.container;
+  const tap = (element) => harness.act(() => element.click());
+  const settle = () => harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const card = (id) => c.querySelector(`[data-task-id="${id}"]`);
+  const sheet = () => c.querySelector('[role="dialog"]');
+  const button = (root, name) => harness.getByRole(root, 'button', { name });
+  // A submit button's form, submitted (LinkeDOM does not submit on a click).
+  const submit = (btn) => harness.act(() => harness.fireEvent(btn.closest('form'), 'submit'));
+  return { harness, c, tap, submit, settle, card, sheet, button, writes, refreshes: () => refreshes, pageMod, boardMod };
+}
+
+test('the Board draws the chosen column: chips, sections, cards, and a question answered in place', async (t) => {
+  const { harness, c, tap, settle, card, button, writes, pageMod } = await setupView(t);
+  assert.deepEqual([...c.querySelectorAll('.phone-chips [role="tab"]')].map((chip) => chip.textContent.replace(/\s+/g, ' ').trim()),
+    ['Idea 1', 'Next 6', 'Started 1', 'In review 1', 'Done 2']);
+  assert.deepEqual([...c.querySelectorAll('.phone-section')].map((s) => s.getAttribute('aria-label')), ['Ready', 'Waiting on you', 'Queued', 'Blocked']);
+  assert.equal(pageMod.phoneBar.value.menu.sub, 'webshop', 'the group is in the title');
+  assert.deepEqual(pageMod.phoneBar.value.actions.map((a) => a.label), ['Add a task']);
+  assert.match(card('tk_ready').textContent, /@checkout-ui.*PR #1482/);
+  assert.ok(button(card('tk_ready'), 'Move ▸') && button(card('tk_ready'), 'Comment'));
+  assert.ok(card('tk_carrier').classList.contains('phone-box-q'));
+  assert.match(card('tk_carrier').textContent, /asked by lead · 3 options/);
+  await tap(button(card('tk_carrier'), /UPS/));
+  await settle();
+  assert.deepEqual(writes.at(-1), ['answer', 'tk_carrier', ['ups'], '', 1]);
+  assert.match(card('tk_stuck').textContent, /waiting on the vendor/);
+
+  await tap(harness.getByRole(c, 'tab', { name: /Done/ }));
+  assert.deepEqual([...c.querySelectorAll('.phone-board-card .phone-board-title')].map((e) => e.textContent), ['Newer fix', 'Older fix']);
+  assert.equal(c.querySelector('[data-task-id="tk_new"] .phone-btn'), null, 'a done task has no Move or Comment');
+});
+
+test('Move ▸ is a sheet: another column, or up and down among its section', async (t) => {
+  const { tap, settle, card, sheet, button, writes } = await setupView(t);
+  await tap(button(card('tk_coupon'), 'Move ▸'));
+  assert.equal(sheet().getAttribute('aria-label'), 'Move');
+  assert.equal(button(sheet(), /^Started/).disabled, true, 'nobody holds it to start it');
+  await tap(button(sheet(), /^In review/));
+  await settle();
+  assert.deepEqual(writes.at(-1), ['stage', 'tk_coupon', 'in-review']);
+  assert.equal(sheet(), null, 'a pick closes the sheet');
+
+  await tap(button(card('tk_coupon'), 'Move ▸'));
+  assert.equal(button(sheet(), '↓ Down').disabled, true, 'last in Ready');
+  await tap(button(sheet(), '↑ Up'));
+  await settle();
+  assert.deepEqual(writes.at(-1), ['move', 'tk_coupon', { before: 'tk_ready', stage: 'next' }]);
+
+  await tap(button(card('tk_ready'), 'Move ▸'));
+  await tap(button(sheet(), /^Started/));
+  await settle();
+  assert.deepEqual(writes.at(-1), ['start', 'tk_ready'], 'its agent starts it');
+
+  await tap(button(card('tk_coupon'), 'Move ▸'));
+  await tap(button(sheet(), /^Done/));
+  await settle();
+  assert.deepEqual(writes.at(-1), ['status', 'tk_coupon', 'done']);
+});
+
+test('Comment and ＋ write through a sheet with the field focused', async (t) => {
+  const { harness, tap, submit, settle, card, sheet, button, writes, pageMod } = await setupView(t);
+  await tap(button(card('tk_coupon'), 'Comment'));
+  await settle();
+  const field = harness.getByRole(sheet(), 'textbox', { name: 'Comment' });
+  assert.equal(harness.document.activeElement, field, 'the operator asked to write');
+  await harness.input(field, 'On it');
+  await submit(button(sheet(), 'Comment'));
+  await settle();
+  assert.equal(writes.at(-1)[0], 'comment');
+  assert.deepEqual(writes.at(-1).slice(1, 3), ['tk_coupon', 'On it']);
+  assert.equal(sheet(), null);
+
+  await harness.act(() => pageMod.phoneBar.value.actions[0].onClick());
+  await harness.input(harness.getByRole(sheet(), 'textbox', { name: 'Title' }), 'Free shipping banner');
+  await submit(button(sheet(), 'Add'));
+  await settle();
+  assert.deepEqual(writes.at(-1), ['create', 'webshop', { title: 'Free shipping banner', stage: 'next' }]);
+});
+
+test("a task's page: its brief, refs and activity, a comment box, and Back to the board", async (t) => {
+  const { harness, c, tap, submit, settle, card, button, writes, pageMod, boardMod } = await setupView(t);
+  await tap(card('tk_ready').querySelector('.phone-board-open'));
+  await settle();
+  await settle();
+  assert.deepEqual(boardMod.boardTask.value, { id: 'tk_ready', group: 'webshop' });
+  const page = pageMod.phonePage.value;
+  assert.equal(page.title, 'webshop', 'the bar names the board');
+  assert.equal(c.querySelector('.phone-task-page-title').textContent, 'Checkout page redesign');
+  assert.equal(page.view, 'board', 'a page over the Board');
+  const text = c.querySelector('.phone-task-page').textContent;
+  assert.match(text, /address/, 'the brief');
+  assert.match(text, /PR #1482/, 'its refs');
+  assert.match(text, /PR is up\./, 'a comment in the activity');
+  assert.notEqual(harness.document.activeElement?.tagName, 'TEXTAREA', 'no field takes the focus by itself');
+  await harness.input(harness.getByRole(c, 'textbox', { name: 'Comment' }), 'Looks good');
+  await submit(button(c.querySelector('.phone-task-comment-box'), 'Comment'));
+  await settle();
+  assert.deepEqual(writes.at(-1).slice(0, 3), ['comment', 'tk_ready', 'Looks good']);
+
+  await harness.act(() => page.onBack());
+  assert.equal(boardMod.boardTask.value, null);
+  assert.ok(card('tk_ready'), 'back on the board');
+  assert.equal(pageMod.phonePage.value, null);
+});
+
+test("a question is also answered in words on the task's page", async (t) => {
+  const { harness, c, submit, settle, button, writes, boardMod } = await setupView(t);
+  await harness.act(() => boardMod.openBoardTask('tk_carrier', 'webshop'));
+  await settle();
+  const q = c.querySelector('.phone-task-q');
+  assert.ok(q, 'the open question');
+  await harness.input(harness.getByRole(q, 'textbox', { name: 'Answer in words' }), 'DHL for the EU only');
+  await submit(button(q, 'Answer'));
+  await settle();
+  assert.deepEqual(writes.at(-1), ['answer', 'tk_carrier', [], 'DHL for the EU only', 1]);
+});
