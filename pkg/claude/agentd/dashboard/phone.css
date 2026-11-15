@@ -219,32 +219,12 @@
 :root[data-layout="phone"] .phone-empty { margin: 6px 0; }
 :root[data-layout="phone"] .phone-card { margin-bottom: 10px; }
 :root[data-layout="phone"] .phone-wide { width: 100%; min-height: var(--phone-tap); margin-bottom: 10px; }
-:root[data-layout="phone"] .phone-usage { padding: 8px 10px; overflow-x: auto; }
-:root[data-layout="phone"] .phone-usage .usage-unit-switch button { min-width: 40px; min-height: var(--phone-tap); }
-/* The unit switch's column fits two finger-sized buttons, not two letters. */
-:root[data-layout="phone"] .phone-usage #usage .usage-source { grid-template-columns: 82px auto; }
-
 :root[data-layout="phone"] .phone-list { list-style: none; margin: 0; padding: 0; }
 :root[data-layout="phone"] .phone-list > li { border-bottom: 1px solid var(--ui-line); }
-:root[data-layout="phone"] .phone-agent { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 6px 0; }
-:root[data-layout="phone"] .phone-agent-text { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; column-gap: 6px; }
-:root[data-layout="phone"] .phone-agent-name { font-weight: 600; color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-agent-group { color: var(--ui-muted-text); }
-:root[data-layout="phone"] .phone-agent-detail {
-  flex-basis: 100%; color: var(--ui-muted-text); font-size: 13px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-:root[data-layout="phone"] .phone-agent-acts { display: flex; gap: 6px; flex: none; }
-:root[data-layout="phone"] .phone-agent-acts .ui-btn { min-width: var(--phone-tap); }
 
-:root[data-layout="phone"] .phone-pr { display: flex; align-items: center; gap: 6px; min-height: var(--phone-tap); }
-:root[data-layout="phone"] .phone-pr-title {
-  flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; color: var(--ui-text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
-/* The approval and decision cards come from the companion; on a phone they
-   take the full width and finger-sized buttons. */
+/* The desktop approval and decision cards where a phone view still shows
+   them (Access): the full width and finger-sized buttons. Now has its own
+   (phone-approval.js, phone-now.css). */
 :root[data-layout="phone"] .phone-card :is(.companion-approval, .companion-decision) {
   max-width: none; margin: 0; background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 8px; padding: 10px;
 }

@@ -1,0 +1,59 @@
+/* Now (js/phone-now.js, js/phone-approval.js and Now's gate card in
+   js/phone-process-runs.js): the usage strip, the cards for what needs the
+   operator, the rows of agents at work, and the open PRs. Built on the
+   primitives in phone.css (Card, Avatar, StatePill, ButtonRow). */
+
+/* The usage strip: one line, each subscription's fullest window. */
+:root[data-layout="phone"] .phone-usage-strip {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: var(--phone-tap); margin-bottom: 4px; padding: 6px 12px;
+  background: var(--phone-panel); border: 1px solid var(--phone-line); border-radius: var(--phone-r);
+  color: var(--ui-muted-text); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-usage-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; }
+:root[data-layout="phone"] .phone-usage-name { color: var(--ui-text); }
+:root[data-layout="phone"] .phone-usage-bar { display: inline-block; width: 44px; height: 6px; border-radius: 3px; background: var(--phone-tile); overflow: hidden; }
+:root[data-layout="phone"] .phone-usage-bar b { display: block; height: 100%; }
+:root[data-layout="phone"] .phone-usage-pct { color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-usage-go { margin-left: auto; font-size: 16px; }
+
+/* A card's head: the avatar, who and one line of context, maybe a pill or a
+   button at the end. */
+:root[data-layout="phone"] .phone-card-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+:root[data-layout="phone"] .phone-card-text {
+  flex: 1; min-width: 0; padding: 0; background: none; border: 0;
+  color: inherit; font: inherit; text-align: left;
+}
+:root[data-layout="phone"] button.phone-card-text { min-height: var(--phone-tap); cursor: pointer; }
+:root[data-layout="phone"] .phone-who { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+:root[data-layout="phone"] .phone-who-name { font-weight: 600; color: var(--ui-text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] .phone-who-sub { flex: none; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-card-line {
+  margin-top: 2px; color: var(--ui-muted-text); font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-layout="phone"] .phone-star { color: #e3b341; }
+
+/* A decision in full (its ⋯ sheet). */
+:root[data-layout="phone"] .phone-sheet-title { margin: 0 4px 4px; font-size: 17px; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-sheet-sub { margin: 0 4px 10px; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-decision-body { margin: 0 4px 12px; color: var(--ui-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-decision-image img { display: block; max-width: 100%; max-height: 40vh; margin: 0 auto 12px; border-radius: 10px; }
+:root[data-layout="phone"] .phone-decision-note { width: 100%; margin-bottom: 10px; }
+:root[data-layout="phone"] .phone-decision-options { display: flex; flex-direction: column; gap: 8px; }
+
+/* Now's gate card: each gate's step and its verdicts. */
+:root[data-layout="phone"] .phone-gate-card .phone-gate { margin: 10px 0 0; }
+:root[data-layout="phone"] .phone-gate-card .phone-gate .phone-btns { margin-top: 8px; }
+:root[data-layout="phone"] .phone-gate-done { margin: 6px 0 0; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-gate-note { width: 100%; margin: 6px 0 10px; }
+
+/* Working: one card of plain rows, each with its state pill. */
+:root[data-layout="phone"] .phone-rows-card { padding: 2px 12px; }
+:root[data-layout="phone"] .phone-rows { list-style: none; margin: 0; padding: 0; }
+:root[data-layout="phone"] .phone-rows > li + li { border-top: 1px solid var(--phone-tile); }
+:root[data-layout="phone"] .phone-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--phone-tap); padding: 6px 0;
+  background: none; border: 0; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-row-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; }
+:root[data-layout="phone"] .phone-pr-title { color: var(--ui-text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

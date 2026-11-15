@@ -4,9 +4,11 @@
 // waits on the operator.
 //
 // A phone reads and decides runs; it does not draw them or edit templates.
-// The steps are a list rather than the desktop graph, and a gate's form is
-// the desktop run inspector's DecisionForm, posted through the same run API,
-// so verdicts, notes and the stale-attempt guard are the desktop's.
+// The steps are a list rather than the desktop graph. On the run page a
+// gate's form is the desktop run inspector's DecisionForm; Now's gate card is
+// a compact one (a button per verdict, a note behind "…"). Both post through
+// the same run API, so verdicts, notes and the stale-attempt guard are the
+// desktop's.
 
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
@@ -15,7 +17,10 @@ import {
   formatRunDuration, processContext, runDetailApi, withPerformerNames,
 } from './process-context.js';
 import { ProcessStepStrip, runName, runPauseState, runSteps, stateLabel } from './process-kit.js';
-import { DecisionForm, useRunDetail } from './groups-run-focus.js';
+import { DecisionForm, useRunDetail, verdictPresentation } from './groups-run-focus.js';
+import { openPhoneSheet } from './phone-sheet.js';
+import { Button, Textarea } from './ui-components.js';
+import { Avatar, Card } from './phone-ui.js';
 import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
@@ -197,21 +202,102 @@ export function useRunView(api, runId) {
   return [detail, () => setRevision((value) => value + 1)];
 }
 
-// GateCard is one run waiting on the operator's verdict, on Now: which run,
-// where, and the form to answer it.
+// APPROVING matches a verdict that lets the run go on; it is answered from the
+// card in one tap. Any other verdict (request changes, reject) usually wants
+// a reason, so it opens a sheet with a note first.
+const APPROVING = /^(approved?|accept(ed)?|yes|ok|pass(ed)?|lgtm)$/i;
+
+// GateNoteSheet sends one verdict with a note for the record.
+function GateNoteSheet({ label, title, onSend, close }) {
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const send = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await onSend(note.trim());
+      close();
+    } catch (cause) {
+      setError(cause?.message || String(cause));
+      setBusy(false);
+    }
+  };
+  return html`<div class="phone-gate-sheet">
+    <h2 class="phone-sheet-title">${title}</h2>
+    <${Textarea} class="phone-gate-note" rows="3" maxlength="4096" placeholder="Note for the record (optional)"
+      aria-label="Note for the record (optional)" value=${note} disabled=${busy} onInput=${(event) => setNote(event.currentTarget.value)} />
+    ${error && html`<div class="ui-error" role="alert">${error}</div>`}
+    <${Button} class="phone-btn phone-btn-pri phone-wide" disabled=${busy} onClick=${send}>${busy ? 'Sending…' : label}<//>
+  </div>`;
+}
+
+// GateVerdicts is one awaited gate on a card: its step and a button per
+// verdict. A decided gate says what was recorded until the refreshed run
+// drops it.
+function GateVerdicts({ run, decision, node, onDecide }) {
+  const [busy, setBusy] = useState('');
+  const [decided, setDecided] = useState('');
+  const [error, setError] = useState('');
+  const send = (verdict) => (evidence = '') => onDecide({ nodeId: node.id, verdict, evidence, attempt: decision.attempt || 0 })
+    .then(() => setDecided(verdict));
+  const now = async (verdict) => {
+    if (busy || decided) return;
+    setBusy(verdict);
+    setError('');
+    try {
+      await send(verdict)();
+    } catch (cause) {
+      setError(cause?.message || String(cause));
+    } finally {
+      setBusy('');
+    }
+  };
+  const verdicts = decision.verdicts || [];
+  const label = (verdict) => verdictPresentation(verdict).label;
+  return html`<div class="phone-gate" data-run-decision=${node.id}>
+    <div class="phone-gate-title">${node.label}</div>
+    ${node.description && html`<p class="phone-gate-prompt">${node.description}</p>`}
+    ${decided
+      ? html`<p class="phone-gate-done" role="status">Recorded: ${label(decided)}</p>`
+      : html`<div class="phone-btns">
+        ${verdicts.map((verdict) => APPROVING.test(verdict)
+          ? html`<${Button} key=${verdict} class="phone-btn phone-btn-ok phone-btn-grow" data-run-verdict=${verdict} disabled=${!!busy}
+              onClick=${() => now(verdict)}>${busy === verdict ? '…' : label(verdict)}<//>`
+          : html`<${Button} key=${verdict} class="phone-btn phone-btn-grow" data-run-verdict=${verdict} disabled=${!!busy} aria-haspopup="dialog"
+              onClick=${() => openPhoneSheet({ label: `${runName(run)}: ${node.label}`, Body: GateNoteSheet,
+                props: { label: label(verdict), title: `${node.label}: ${label(verdict)}`, onSend: send(verdict) } })}>${label(verdict)}…<//>`)}
+      </div>`}
+    ${!verdicts.length && html`<p class="phone-gate-done">This gate offers no verdicts.</p>`}
+    ${error && html`<div class="ui-error" role="alert">${error}</div>`}
+  </div>`;
+}
+
+// GateCard is one run waiting on the operator's verdict, on Now, in the
+// mock's card shape: the run and where it runs, then each awaited gate with
+// its verdicts. onOpen opens the run page.
 export function GateCard({ item, api = runDetailApi, source = processContext, onOpen = null }) {
   const { run, where } = item;
   const [detail, refresh] = useRunView(api, run.runId);
-  return html`<div class="phone-card phone-gate-card ui-card" data-run=${run.runId}>
-    <div class="phone-gate-head">
-      <span class="phone-run-name">${runName(run)}</span>
-      <span class="phone-run-sub">${where}</span>
+  const decisions = detail.view?.awaitingDecisions || [];
+  const nodes = new Map(runSteps(run).map((node) => [String(node.id), node]));
+  const onDecide = decider(api, run.runId, refresh, source);
+  return html`<${Card} accent="ask" class="phone-now-card phone-gate-card" data-run=${run.runId} role="group" aria-label=${`Process: ${runName(run)}`}>
+    <div class="phone-card-row">
+      <${Avatar} bot glyph="⛭" />
+      <div class="phone-card-text">
+        <div class="phone-who"><span class="phone-who-name phone-run-name">${runName(run)}</span><span class="phone-who-sub phone-run-sub">${where}</span></div>
+        <div class="phone-card-line">waits on your verdict</div>
+      </div>
       ${onOpen && html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => onOpen(run.runId)}>Run ›</button>`}
     </div>
     ${detail.view
-      ? html`<${Gates} run=${run} detail=${detail} onDecide=${decider(api, run.runId, refresh, source)} />`
+      ? decisions.map((decision) => {
+        const node = nodes.get(String(decision.nodeId)) || { id: String(decision.nodeId), label: String(decision.nodeId) };
+        return html`<${GateVerdicts} key=${`${node.id}:${decision.attempt || 0}`} run=${run} decision=${decision} node=${node} onDecide=${onDecide} />`;
+      })
       : html`<p class="ui-empty phone-empty">${detail.error ? `Could not read the run: ${detail.error}` : 'Loading…'}</p>`}
-  </div>`;
+  <//>`;
 }
 
 // gateItems are the runs Now lists: those waiting on the operator's verdict.
