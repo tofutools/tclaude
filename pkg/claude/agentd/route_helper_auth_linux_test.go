@@ -99,6 +99,37 @@ func TestRouteHelperCredentialReadRejectsPredecessorGeneration(t *testing.T) {
 // TestRouteHelperSiblingAttachesWithCapability. It is intentionally a child
 // process with no harness ancestor: the only proof accepted by the production
 // channel handler is the daemon-minted capability.
+// routeHelperAttachedMarker is the line the sibling process prints once the
+// daemon answered its channel request with 101, so the parent waits on the
+// handshake rather than on how long a fresh test binary takes to start.
+const routeHelperAttachedMarker = "ROUTE-HELPER-SIBLING-ATTACHED"
+
+// waitForLine reads r until a line equal to want arrives. It fails the test
+// if r ends first, or if limit passes: a hang guard for a child that never
+// gets that far, not a timing assumption.
+func waitForLine(t *testing.T, r io.Reader, want string, limit time.Duration) {
+	t.Helper()
+	found := make(chan bool, 1)
+	go func() {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			if scanner.Text() == want {
+				found <- true
+				// Drain the rest so the child never blocks on a full pipe.
+				_, _ = io.Copy(io.Discard, r)
+				return
+			}
+		}
+		found <- false
+	}()
+	select {
+	case ok := <-found:
+		require.True(t, ok, "the sibling process ended before printing %q", want)
+	case <-time.After(limit):
+		t.Fatalf("the sibling process did not print %q within %s", want, limit)
+	}
+}
+
 func TestRouteHelperSiblingProcess(t *testing.T) {
 	if os.Getenv("TCLAUDE_ROUTE_HELPER_CHILD") != "1" {
 		return
@@ -137,8 +168,10 @@ func TestRouteHelperSiblingProcess(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expected, response.StatusCode)
 	if expected == http.StatusSwitchingProtocols {
-		// Keep the hijacked channel alive until the parent has observed that the
-		// broker accepted it.
+		// Tell the parent the handshake is through, then keep the hijacked
+		// channel alive until the parent has observed that the broker
+		// accepted it.
+		_, _ = fmt.Fprintln(os.Stdout, routeHelperAttachedMarker)
 		_, _ = bufio.NewReader(os.Stdin).ReadByte()
 	}
 }
@@ -207,10 +240,15 @@ func TestRouteHelperSiblingAttachesWithCapability(t *testing.T) {
 	sibling := startSibling(credential, launchGeneration, http.MethodPost, http.StatusSwitchingProtocols)
 	release, err := sibling.StdinPipe()
 	require.NoError(t, err)
+	out, err := sibling.StdoutPipe()
+	require.NoError(t, err)
 	require.NoError(t, sibling.Start())
+	// Starting a fresh test binary can take seconds on a loaded runner; wait
+	// for the handshake itself, then for the broker to count the channel.
+	waitForLine(t, out, routeHelperAttachedMarker, 60*time.Second)
 	require.Eventually(t, func() bool {
 		return GroupRouteBroker().Metrics().PublisherChannels > 0
-	}, time.Second, 10*time.Millisecond, "production route handler did not attach the sibling channel")
+	}, 5*time.Second, 10*time.Millisecond, "production route handler did not attach the sibling channel")
 	_, err = release.Write([]byte{'x'})
 	require.NoError(t, err)
 	require.NoError(t, release.Close())
