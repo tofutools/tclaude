@@ -115,3 +115,35 @@ test('on a 360px phone the chips scroll inside their row: Problems scrolls into 
   // Problems lists the fixture's failing PR (payments-fix's #1469) and its error.
   await expect(page.getByRole('group', { name: 'Problems' }).locator('.phone-now-group')).not.toHaveCount(0);
 });
+
+// A full context is no problem (the harness compacts, or the agent
+// reincarnates): rows wear the desktop's context meter by their state pill,
+// the agent menu's header has the exact figure, and Problems lists the
+// fixture's db-migrations (93%) for its error only, never for its context.
+// SHOTS=<dir> saves each view.
+test('the context meter by the pill, its figure in the agent menu, and no context in Problems', async ({ page }) => {
+  const shot = async (name) => { if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/${name}.png` }); };
+  await page.goto('/');
+  await booted(page);
+  await page.getByRole('tablist', { name: 'Show on Now' }).getByRole('tab', { name: /^Recent/ }).click();
+  const meter = page.locator('.phone-row > .ctx-meter.ctx-regular').first();
+  await expect(meter).toBeVisible();
+  expect(await meter.evaluate((el) => el.nextElementSibling.nextElementSibling.classList.contains('phone-pill')), 'by the pill').toBe(true);
+  expect(await page.locator('.phone-ctx-tag').count(), 'no text tag').toBe(0);
+  await shot('now-recent');
+  await page.getByRole('tablist', { name: 'Show on Now' }).getByRole('tab', { name: /^Problems/ }).click();
+  const problems = page.getByRole('group', { name: 'Problems' });
+  await expect(problems.locator('.phone-now-group').first()).toBeVisible();
+  await expect(problems.locator('.phone-now-group')).not.toContainText([/context/i]);
+  await expect(problems.locator('.phone-now-when')).not.toContainText([/context \d+% full/]);
+  await shot('now-problems');
+
+  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /^Agents/ }).click();
+  const row = page.locator('.phone-agent').filter({ has: page.locator('.phone-agent-title', { hasText: /^db-migrations$/ }) });
+  await expect(row.locator('.phone-agent-line > .ctx-meter.ctx-regular .ctx-seg.lit-red')).toHaveCount(1);
+  await expect(row.locator('.phone-agent-meta')).not.toContainText('ctx');
+  await shot('agents-rows');
+  await row.getByRole('button', { name: 'db-migrations: more' }).click();
+  await expect(page.locator('.phone-sheet[role=dialog] .phone-agent-sheet-meta').first()).toContainText(/ctx \d+%/);
+  await shot('agent-menu');
+});

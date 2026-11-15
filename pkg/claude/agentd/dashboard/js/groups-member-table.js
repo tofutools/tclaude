@@ -22,6 +22,7 @@ import {
 } from './human-notification-attention.js';
 import { bodilessNotice } from './human-attachments.js';
 import { HarnessMark } from './harness-mark.js';
+import { ContextMeter } from './context-meter.js';
 import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
 import { isPendingWake, clearPendingWake } from './waking-state.js';
 import { PRChain, prDescription } from './pr-chain.js';
@@ -695,43 +696,6 @@ function WizardPill({ state, online, conv }) {
   const [glyph, label] = WIZARD_STATE[status] || ['✨', status];
   return html`<span class="wizard-pill" data-status=${status} data-conv=${conv || ''}
     aria-hidden="true"><span class="wizard-pill-glyph">${glyph}</span> ${label}</span>`;
-}
-
-function fmtTokens(value) {
-  const n = Number(value) || 0;
-  if (n >= 1000000) return `${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
-  if (n >= 1000) return `${Math.round(n / 1000)}k`;
-  return String(n);
-}
-
-function ContextMeter({ state }) {
-  const pct = Math.max(0, Math.min(100, Number(state?.context_pct || 0)));
-  const configuredMax = Number(state?.context_window_max || 0);
-  const known = pct > 0 || configuredMax > 0 || Number(state?.context_window_size || 0) > 0;
-  const filled = pct > 0 ? Math.min(5, Math.max(1, Math.round(pct / 20))) : 0;
-  const total = Number(state?.tokens_input || 0) + Number(state?.tokens_output || 0);
-  // The window here is already the effective one and context_pct is measured
-  // against it, so the regular usage figures are sufficient on their own.
-  const win = configuredMax > 0 ? configuredMax : Number(state?.context_window_size || 0);
-  // 'reported' is a limit the local harness disclosed; 'catalog' came from
-  // Copilot's authenticated remote model catalog; 'assumed' is tclaude's
-  // static per-model fallback.
-  const source = state?.context_window_source === 'configured' ? ' (configured cap)'
-    : state?.context_window_source === 'reported' ? ' (reported cap)'
-      : state?.context_window_source === 'catalog' ? ' (catalog cap)'
-        : state?.context_window_source === 'assumed' ? ' (assumed cap)' : '';
-  const regularTitle = !known ? 'context window: usage not reported yet'
-    : win > 0 && total > 0 ? `context: ${fmtTokens(total)} / ${fmtTokens(win)} tokens${source} — ${Math.round(pct)}%`
-      : `context: ${Math.round(pct)}% full`;
-  const wizardTitle = !known ? '🔮 Mana reserves: not yet divined'
-    : win > 0 && total > 0 ? `🔮 Mana: ${fmtTokens(total)} / ${fmtTokens(win)} channeled${source} — ${Math.round(pct)}%`
-      : `🔮 Mana: ${Math.round(pct)}% channeled`;
-  const segments = [...Array(5)].map((_, i) => {
-    const band = i >= 4 ? 'red' : i >= 2 ? 'yellow' : 'green';
-    return html`<span key=${i} class=${`ctx-seg${i < filled ? ` lit-${band}` : ''}`}></span>`;
-  });
-  const unknown = known ? '' : ' ctx-unknown';
-  return html`<span class=${`ctx-meter ctx-regular${unknown}`} title=${regularTitle}>${segments}</span><span class=${`ctx-meter ctx-mana${unknown}`} title=${wizardTitle}>${segments}</span>`;
 }
 
 function ActivityBadges({ state }) {

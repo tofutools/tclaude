@@ -66,7 +66,7 @@ test('the model: groups in order, loudest first, offline apart, PR and checks', 
   assert.deepEqual(model.agentPill({ online: true, state: { status: 'error' } }), { text: 'error', tone: 'err', badge: '💥' });
   assert.deepEqual(lead.pill, { text: 'idle', tone: 'idle', badge: '' });
   assert.deepEqual(webshop.offline[0].pill, { text: 'offline', tone: 'off', badge: '' });
-  assert.deepEqual(model.metaParts(lead), ['lead', 'claude', 'ctx 42%', 'main']);
+  assert.deepEqual(model.metaParts(lead), ['lead', 'claude', 'main'], 'the context is the meter by the pill');
   assert.deepEqual(model.metaParts(webshop.offline[0]), ['dev', 'resume ›']);
 });
 
@@ -158,7 +158,13 @@ test('rows: an avatar, a pill, the meta line; offline agents inline; the chips f
   assert.ok(row('payments-fix').querySelector('.phone-pill-key'));
   assert.equal(row('payments-fix').querySelector('.phone-av-badge').textContent, '🔑');
   assert.ok(row('payments-fix').textContent.includes('PR #1469 ✗'));
-  assert.equal(row('lead').querySelector('.phone-agent-meta').textContent, 'lead · claude · ctx 42% · main');
+  assert.equal(row('lead').querySelector('.phone-agent-meta').textContent, 'lead · claude · main');
+  // The desktop's context meter by the pill: 42% lights two of five, green.
+  const meter = row('lead').querySelector('.phone-agent-line > .ctx-meter.ctx-regular');
+  assert.equal(meter.querySelectorAll('.ctx-seg.lit-green').length, 2);
+  assert.equal(meter.getAttribute('title'), 'context: 42% full');
+  assert.ok(meter.nextElementSibling.nextElementSibling.classList.contains('phone-pill'), 'the meter (and its wizard twin) sit before the pill');
+  assert.ok(row('old-worker').querySelector('.ctx-meter.ctx-unknown'), 'no usage reported: dimmed');
   assert.equal(row('steward').querySelector('.phone-av').textContent, '✦', 'the steward wears its own glyph');
   // Offline agents sit in their group's list, dimmed, after the online ones.
   const webshop = [...c.querySelector('[aria-label="webshop"]').querySelectorAll('.phone-agent-title')].map((n) => n.textContent);
@@ -228,6 +234,7 @@ test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ open
   await tap(more('lead'));
   const dialog = c.querySelector('.phone-sheet[role=dialog]');
   assert.equal(dialog.getAttribute('aria-label'), 'lead');
+  assert.equal(dialog.querySelector('.phone-agent-sheet-meta').textContent, 'webshop · lead · claude · ctx 42%', 'the exact figure in the header');
   assert.equal(c.querySelector('main').inert, true, 'the page behind is inert');
   assert.deepEqual(tiles(), ['Terminal', 'Message', 'Interrupt (off)', 'Copy id'], 'Interrupt only while it is at work');
   assert.deepEqual(entries(), ['Compact…', 'Restart…', 'Shut down…', 'Rename…', 'Reincarnate…', 'Grant sudo…', 'Copy name', 'Retire…'],

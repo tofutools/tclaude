@@ -21,6 +21,7 @@
 // open shows, and an agent that goes away says so.
 
 import { h } from 'preact';
+import { contextFigure } from './context-meter.js';
 import htm from 'htm';
 import { agentGroups, findRow } from './phone-agents-model.js';
 import { StatePill } from './phone-ui.js';
@@ -109,7 +110,7 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
   return html`<div class="phone-agent-sheet">
     <div class="phone-agent-line"><h2 class="phone-agent-sheet-name">${row.name}</h2>
       <${StatePill} tone=${row.pill.tone} class="phone-agent-state">${row.pill.text}<//></div>
-    <p class="phone-agent-sheet-meta">${[group.group ? group.name : 'No group', row.role, row.harness, row.ctx !== null ? `context ${row.ctx}%` : ''].filter(Boolean).join(' · ')}</p>
+    <p class="phone-agent-sheet-meta">${[group.group ? group.name : 'No group', row.role, row.harness, contextFigure(row.member?.state)].filter(Boolean).join(' · ')}</p>
     ${row.detail && html`<p class="phone-agent-why">${row.detail}</p>`}
     ${row.branch && html`<p class="phone-agent-sheet-meta">⎇ ${row.branch}${row.pr?.ci ? ` · PR #${row.pr.number} checks ${row.pr.ci}` : ''}</p>`}
     ${row.cwd && html`<p class="phone-agent-sheet-meta phone-agent-cwd">${row.cwd}</p>`}

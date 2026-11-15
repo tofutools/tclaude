@@ -136,8 +136,8 @@ test('Problems: each online agent once under its worst problem; Since you looked
   ] }] };
   const view = nowView(snapshot);
   assert.deepEqual(problemRows(view, now).map((r) => [r.kind, r.agent.name]),
-    [['error', 'broken'], ['ci', 'red'], ['context', 'full'], ['quiet', 'quiet']],
-    'broken once (its error, not its context); a merged PR\'s red checks are not a problem; under the threshold is not; offline is not');
+    [['error', 'broken'], ['ci', 'red'], ['quiet', 'quiet']],
+    'broken once; a merged PR\'s red checks are not a problem; a full context is not one either (the harness compacts); offline is not');
 
   const look = lookedState(view);
   assert.deepEqual(sinceLooked(view, null), [], 'no look yet: nothing to show');

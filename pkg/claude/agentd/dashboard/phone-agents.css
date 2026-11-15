@@ -37,6 +37,8 @@
 :root[data-layout="phone"] .phone-agent-pr.ci-passing { color: var(--ui-success-line); }
 :root[data-layout="phone"] .phone-agent-pr.ci-failing { color: var(--ui-danger-text); }
 :root[data-layout="phone"] .phone-agent-more { color: var(--ui-muted-text); }
+/* The context meter (context-meter.js) by the state pill, as on the desktop. */
+:root[data-layout="phone"] .phone-agent-line > .ctx-meter { flex: none; margin-right: 0; }
 :root[data-layout="phone"] .phone-agents-board { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 
 /* A group's header folds its section: the caret, name and count are one
