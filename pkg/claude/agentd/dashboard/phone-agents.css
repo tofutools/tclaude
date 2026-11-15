@@ -134,3 +134,55 @@
 :root[data-layout="phone"] .phone-agent-menu-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 :root[data-layout="phone"] .phone-agent-menu-text small { color: var(--ui-muted-text); font-size: 12.5px; }
 :root[data-layout="phone"] .phone-agent-menu-last { margin-top: 12px; }
+/* Active | All groups: a segmented pair the width of the view. */
+:root[data-layout="phone"] .phone-agents-seg {
+  display: flex; gap: 2px; padding: 2px; margin: 0 0 10px;
+  border-radius: 10px; background: var(--phone-panel); border: 1px solid var(--phone-line);
+}
+:root[data-layout="phone"] .phone-agents-seg-btn {
+  flex: 1; min-height: 36px; border: 0; border-radius: 8px; background: none;
+  color: var(--ui-muted-text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-agents-seg-btn.on { background: var(--ui-pressed-bg); color: var(--ui-text-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+
+/* All groups: the caret is its own tap target, the name another (its page).
+   A subgroup indents on a guide line; a group with nothing online is dimmed. */
+:root[data-layout="phone"] .phone-agents-caret-btn {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; min-height: var(--phone-tap); margin-left: -8px; padding: 0;
+  background: none; border: 0; color: var(--ui-muted-text); font: inherit; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-agents-node .phone-agents-summary { margin-left: 24px; }
+:root[data-layout="phone"] .phone-agents-sub { margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--ui-line); }
+:root[data-layout="phone"] .phone-agents-sub > .phone-agents-node { margin-top: 4px; }
+/* A folded or empty group is one line (and its summary): the tree stays
+   dense, as on the desktop. */
+:root[data-layout="phone"] .phone-agents-node:is(.phone-agents-folded, .phone-agents-empty) { margin-top: 4px; }
+:root[data-layout="phone"] .phone-agents-node.phone-agents-empty > h2 { padding-bottom: 0; border-bottom: 1px solid var(--ui-line); }
+:root[data-layout="phone"] .phone-agents-dim > h2 .phone-agents-name,
+:root[data-layout="phone"] .phone-agents-dim > h2 .phone-agents-count,
+:root[data-layout="phone"] .phone-agents-dim > .phone-agents-summary { opacity: .6; }
+:root[data-layout="phone"] .phone-agents-tag {
+  flex: none; padding: 1px 6px; border: 1px solid var(--ui-line); border-radius: 6px;
+  color: var(--ui-muted-text); font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0;
+}
+:root[data-layout="phone"] .phone-agents-archived { display: block; min-height: var(--phone-tap); margin: 8px 4px; font-size: 14px; }
+
+/* A group's page: the crumbs, a card with its actions, its subgroups as
+   cards and its members. */
+:root[data-layout="phone"] .phone-agents-crumbs { margin: 0 4px 10px; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-agents-crumbs b { color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-agents-crumbs .phone-link { padding: 0; font-size: 13px; }
+:root[data-layout="phone"] .phone-group-card { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+:root[data-layout="phone"] .phone-group-card .phone-agent-sheet-meta { margin: 0; }
+:root[data-layout="phone"] .phone-group-card .phone-agents-summary { margin: -4px 0 0; }
+:root[data-layout="phone"] .phone-agents-subcards { display: flex; flex-direction: column; gap: 8px; }
+:root[data-layout="phone"] .phone-agents-subcard {
+  width: 100%; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+  border: 1px solid var(--phone-line); border-radius: var(--phone-r); background: var(--phone-panel);
+  color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-agents-subcard-head { display: flex; gap: 8px; font-weight: 600; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-agents-subcard .phone-agents-summary { margin: 0; }
+:root[data-layout="phone"] .phone-agents-chev { margin-left: auto; color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-agents-note { margin: 4px 4px 8px; color: var(--ui-muted-text); font-size: 13px; }

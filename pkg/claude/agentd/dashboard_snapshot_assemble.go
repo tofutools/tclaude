@@ -316,6 +316,7 @@ func (gb snapshotGroupsBuild) buildGroup(g *db.AgentGroup) dashboardGroup {
 	if g.ParentGroupID != nil {
 		dg.Parent = gb.groupNameByID[*g.ParentGroupID]
 	}
+	dg.Archived = g.IsArchived()
 	dg.FederationLinks = gb.groupFedLinks[g.ID]
 	// Advisory process state (JOH-242): attach the current phase + phase map
 	// + transition log so the group view can render a phase chip + advance

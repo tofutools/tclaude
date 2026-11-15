@@ -945,6 +945,9 @@ type dashboardGroup struct {
 	// top-level rather than dangling.
 	Parent          string `json:"parent,omitempty"`
 	RouteGeneration int64  `json:"route_generation"`
+	// Archived marks an archived group: it refuses changes until unarchived,
+	// and the phone's All groups tree lists it last, behind Show archived.
+	Archived bool `json:"archived,omitempty"`
 	// Process is the group's advisory process state (JOH-242): the current
 	// phase, the ordered phase map, and the transition log. nil for a group
 	// with no process (the phase chip + advance control render only when set).
