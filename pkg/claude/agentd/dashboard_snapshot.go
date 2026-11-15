@@ -140,6 +140,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	})
 	prs := loadSnapshotPRIndex(span, rc, convIDs, p.cfg)
 	externalStewardParents := externalStewardChildNames()
+	// A peer's view of this node nests nothing: its agents are top level there.
+	var spawnParents map[string]string
+	if !isPeerSnapshot(r) {
+		spawnParents = snapshotSpawnParents(rc, convIDs)
+	}
 
 	// The preload warm loop above resolves EVERY conv the snapshot will render,
 	// so it — not the group loop — is where the un-batched per-row side reads
@@ -162,6 +167,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		notifyPrefs:            p.notifyPrefs,
 		notifyEffective:        notifyEffective,
 		externalStewardParents: externalStewardParents,
+		spawnParents:           spawnParents,
 	}
 	agents := newSnapshotAgentRows(rowInputs)
 	out := assembleSnapshotPayload(r, span, p, payloadStart)

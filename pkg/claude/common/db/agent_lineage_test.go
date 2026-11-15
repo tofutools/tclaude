@@ -118,3 +118,30 @@ func TestAgentLineageWalkIsCycleSafeAndDepthBounded(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, self)
 }
+
+func TestListAgentParentsBatchesAndSkipsUnknown(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	lead, _, err := EnsureAgentForConv("parents-lead", "spawn")
+	require.NoError(t, err)
+	human, _, err := EnsureAgentForConv("parents-human", "spawn")
+	require.NoError(t, err)
+	var children []string
+	// More children than one query takes, so the chunks are exercised.
+	for i := 0; i < lineageParentsChunk+3; i++ {
+		child, _, err := EnsureAgentForConv(fmt.Sprintf("parents-child-%d", i), "spawn")
+		require.NoError(t, err)
+		require.NoError(t, RecordAgentLineage(child, lead, now))
+		children = append(children, child)
+	}
+	ids := append([]string{lead, human, "", children[0]}, children...)
+	parents, err := ListAgentParents(ids)
+	require.NoError(t, err)
+	assert.Len(t, parents, len(children), "the lead and the human-spawned agent have no parent")
+	for _, child := range children {
+		assert.Equal(t, lead, parents[child])
+	}
+	empty, err := ListAgentParents(nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}

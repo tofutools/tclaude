@@ -1059,6 +1059,10 @@ type dashboardMember struct {
 	ExternalSteward bool `json:"external_steward,omitempty"`
 	// SpawnedByExternalSteward — see dashboardAgent.SpawnedByExternalSteward.
 	SpawnedByExternalSteward string `json:"spawned_by_external_steward,omitempty"`
+	// SpawnedBy is the agent id of the agent that spawned this one
+	// (agent_lineage), empty when a human spawned it, lineage predates it,
+	// or the snapshot is a peer's. The phone nests a worker under it.
+	SpawnedBy string `json:"spawned_by,omitempty"`
 	// Waking marks a resume in flight for this conversation: offline on the
 	// wire, but seconds from either online or a failure toast. The UI renders
 	// it as a pulsing dot + "waking…" pill instead of a dead offline row.

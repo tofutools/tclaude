@@ -6,8 +6,9 @@
 // resume); ⋯ opens its sheet with the rest. ＋ in the top bar spawns an agent
 // from a short sheet (group, profile, prompt), and a group's "Board ›" opens
 // its board. A tap on a group's header folds it (remembered, phone-agents-
-// model.js FOLD_PREF), a folded one still counting who waits on the
-// operator. No drag and drop, no columns, no side panel: those stay on the
+// model.js FOLD_PREF); under the header, folded too, a line counts its agents
+// by state. A worker sits indented under the agent that spawned it. No drag
+// and drop, no columns, no side panel: those stay on the
 // desktop.
 //
 // Every action goes through the desktop's own entry points (the row action
@@ -18,7 +19,7 @@
 import { h, render } from 'preact';
 import { useReducer, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ALL, agentsFilter, agentGroups, findRow, foldPref, groupTabs, liveFilter, metaParts, shownGroups, spawnBody, spawnChoices, toggleFilter, waiting } from './phone-agents-model.js';
+import { ALL, agentsFilter, agentGroups, findRow, foldPref, groupTabs, liveFilter, metaParts, shownGroups, spawnBody, spawnChoices, toggleFilter } from './phone-agents-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { usePhoneBar } from './phone-page.js';
 import { Avatar, IconButton, StatePill } from './phone-ui.js';
@@ -39,21 +40,26 @@ function PRLabel({ pr }) {
   return html`<span class=${`phone-agent-pr${pr.ci ? ` ci-${pr.ci}` : ''}`}>PR #${pr.number}${pr.ci ? ` ${CI_MARK[pr.ci]}` : ''}</span>`;
 }
 
-// MetaLine is a row's second line (phone-agents-model.js metaParts).
-function MetaLine({ row }) {
+// MetaLine is a row's second line (phone-agents-model.js metaParts), and
+// how many workers a lead has.
+function MetaLine({ row, kids = 0 }) {
   const parts = metaParts(row);
-  return html`<span class="phone-agent-meta">${parts.map((part, i) => html`${i ? ' · ' : ''}${typeof part === 'string' ? part : html`<${PRLabel} pr=${part.pr} />`}`)}</span>`;
+  return html`<span class="phone-agent-meta">${parts.map((part, i) => html`${i ? ' · ' : ''}${typeof part === 'string' ? part : html`<${PRLabel} pr=${part.pr} />`}`)}${
+    kids > 0 && html` · <span class="phone-agent-kids">${kids} ${kids === 1 ? 'worker' : 'workers'}</span>`}</span>`;
 }
 
-// AgentRow is one agent: the row itself does its one thing, ⋯ the rest.
-function AgentRow({ row, steward, onTap, onMore }) {
-  return html`<li class=${`phone-agent v-${row.variant}${row.online ? '' : ' phone-agent-off'}`}>
+// AgentRow is one agent: the row itself does its one thing, ⋯ the rest. A
+// worker (under) sits indented under the lead that spawned it, last marking
+// the end of that lead's workers; a lead says how many it has (kids).
+function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kids = 0 }) {
+  const cls = ['phone-agent', `v-${row.variant}`, !row.online && 'phone-agent-off', under && 'phone-agent-worker', last && 'phone-agent-last'].filter(Boolean).join(' ');
+  return html`<li class=${cls}>
     <button data-ui-exempt type="button" class="phone-agent-row" onClick=${() => onTap(row)}
-      aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
+      aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}${under ? `, spawned by ${under.name}` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
       <${Avatar} bot glyph=${steward ? '✦' : '🤖'} badge=${row.pill.badge} dim=${!row.online} />
       <span class="phone-agent-text">
         <span class="phone-agent-line"><span class="phone-agent-title">${row.name}</span><${Pill} row=${row} /></span>
-        <${MetaLine} row=${row} />
+        <${MetaLine} row=${row} kids=${kids} />
         ${row.detail && html`<span class="phone-agent-why">${row.detail}</span>`}
       </span>
     </button>
@@ -166,21 +172,24 @@ function GroupChips({ tabs, picked, onToggle }) {
   </div>`;
 }
 
-// GroupHead is a group section's header: a tap folds or unfolds it; folded,
-// it says how many agents it has and how many wait on the operator.
+// summaryText is a group's state summary in words: "1 error, 3 working".
+const summaryText = (g) => g.summary.map((s) => `${s.count} ${s.text}`).join(', ');
+
+// GroupHead is a group section's header: a tap folds or unfolds it. Under it,
+// folded or not, a line counts its agents by state, loudest first.
 function GroupHead({ g, folded, onFold }) {
-  const asks = waiting(g);
   return html`<h2 class="phone-section-head ui-eyebrow phone-agents-head">
     <button data-ui-exempt type="button" class="phone-agents-fold" aria-expanded=${folded ? 'false' : 'true'}
-      aria-label=${`${g.name}, ${g.live} of ${g.total} online${asks ? `, ${asks} waiting on you` : ''}: ${folded ? 'unfold' : 'fold'}`} onClick=${onFold}>
+      aria-label=${`${g.name}, ${g.live} of ${g.total} online: ${summaryText(g)}. ${folded ? 'Unfold' : 'Fold'}`} onClick=${onFold}>
       <span class="phone-agents-caret" aria-hidden="true">${folded ? '▸' : '▾'}</span>
       <span class="phone-agents-name">${g.name}</span>
       <span class="phone-agents-count">${g.live}/${g.total}</span>
-      ${folded && asks > 0 && html`<${StatePill} tone="ask" class="phone-agents-waiting">${asks} waiting<//>`}
     </button>
     ${g.group && html`<button data-ui-exempt type="button" class="phone-link phone-agents-board"
       aria-label=${`${g.name}'s board`} onClick=${() => openBoardGroup(g.name)}>Board ›</button>`}
-  </h2>`;
+  </h2>
+  <p class="phone-agents-summary" aria-hidden="true">${g.summary.map((s) => html`<span key=${s.text} class=${`phone-agents-sum tone-${s.tone}`}>
+    <i class="phone-agents-dot"></i>${s.count} ${s.text}</span>`)}</p>`;
 }
 
 export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetch, prefs = dashPrefs }) {
@@ -201,6 +210,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   if (!snapshot) return html`<p class="ui-empty phone-empty">Loading…</p>`;
   if (!groups.length) return html`<p class="ui-empty phone-empty">No agents yet.</p>`;
   const steward = snapshot.steward_active || '';
+  const isSteward = (row) => !!steward && (row.agent === steward || row.conv === steward);
   const more = (g) => (row) => openPhoneSheet({ label: row.name, Body: AgentSheet, props: { state, order, actions, agentKey: row.key, groupKey: g.key } });
   // A tap: an online agent's terminal; an offline one wakes (the desktop's
   // status light, no confirm: starting a session is harmless); one already
@@ -222,8 +232,10 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
       const folded = isFolded(g);
       return html`<div key=${g.key} class=${`phone-section${folded ? ' phone-agents-folded' : ''}`} role="group" aria-label=${g.name}>
         <${GroupHead} g=${g} folded=${folded} onFold=${fold(g)} />
-        ${!folded && html`<ul class="phone-list phone-agents-list">${[...g.shown, ...g.offline].map((row) => html`<${AgentRow} key=${row.key} row=${row}
-          steward=${!!steward && (row.agent === steward || row.conv === steward)} onTap=${tap(g)} onMore=${more(g)} />`)}</ul>`}
+        ${!folded && html`<ul class="phone-list phone-agents-list">${g.tree.map(({ row, kids }) => html`
+          <${AgentRow} key=${row.key} row=${row} kids=${kids.length} steward=${isSteward(row)} onTap=${tap(g)} onMore=${more(g)} />
+          ${kids.map((kid, i) => html`<${AgentRow} key=${kid.key} row=${kid} under=${row} last=${i === kids.length - 1}
+            steward=${isSteward(kid)} onTap=${tap(g)} onMore=${more(g)} />`)}`)}</ul>`}
       </div>`;
     })}
   </div>`;
