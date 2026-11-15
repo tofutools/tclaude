@@ -121,7 +121,7 @@
 :root[data-layout="phone"] .phone-compose-foot { display: flex; align-items: center; gap: 10px; }
 :root[data-layout="phone"] .phone-compose-foot .phone-btn { min-height: 44px; font-size: 16px; }
 :root[data-layout="phone"] .phone-compose-send { padding: 0 20px; }
-:root[data-layout="phone"] .phone-compose-hint { flex: 1; min-width: 0; margin: 0; text-align: center; color: var(--ui-muted-text); font-size: 14px; }
+:root[data-layout="phone"] .phone-compose-note { flex: 1; min-width: 0; margin: 0; text-align: center; }
 :root[data-layout="phone"] .phone-compose-ask { flex: 1; min-width: 0; color: var(--ui-text-strong); font-weight: 600; }
 :root[data-layout="phone"] .phone-compose-foot .phone-btns { margin-top: 0; flex-wrap: nowrap; }
 /* A sheet's grab handle takes a swipe down (phone-sheet.js): a taller strip

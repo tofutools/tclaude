@@ -117,8 +117,7 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
     }
   };
 
-  return html`<form class="phone-compose" onSubmit=${(event) => { event.preventDefault(); void submit(); }}
-    onPaste=${(event) => {
+  return html`<div class="phone-compose" onPaste=${(event) => {
       const pasted = Array.from(event.clipboardData?.files || []);
       if (!pasted.length || textOnly) return;
       event.preventDefault();
@@ -135,8 +134,8 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
     </div>
     ${listing && html`<div class="phone-compose-prompts">
       ${prompts.error ? html`<p class="ui-error-box" role="alert">${prompts.error}</p>`
-        : !prompts.prompts ? html`<p class="phone-compose-hint">Loading…</p>`
-          : !prompts.prompts.length ? html`<p class="phone-compose-hint">No saved prompts yet.</p>`
+        : !prompts.prompts ? html`<p class="ui-hint phone-compose-note">Loading…</p>`
+          : !prompts.prompts.length ? html`<p class="ui-hint phone-compose-note">No saved prompts yet.</p>`
             : html`<ul class="phone-menu" aria-label="Saved prompts">${prompts.prompts.map((prompt) => html`<li key=${prompt.name}>
               <button data-ui-exempt type="button" class="phone-menu-item phone-compose-prompt" title=${prompt.body}
                 onClick=${() => insert(prompt)}>${prompt.label || prompt.name}</button></li>`)}</ul>`}
@@ -162,10 +161,10 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
         </div>`
       : html`<div class="phone-compose-foot">
           <${Button} class="phone-btn phone-compose-cancel" disabled=${busy} onClick=${requestClosePhoneSheet}>Cancel<//>
-          <span class="phone-compose-hint">${node ? 'text only on another node' : "queued if it's busy"}</span>
-          <${Button} type="submit" class="phone-btn phone-btn-pri phone-compose-send" disabled=${busy}>${busy ? 'Sending…' : 'Send ➤'}<//>
+          <span class="ui-hint phone-compose-note">${node ? 'text only on another node' : "queued if it's busy"}</span>
+          <${Button} class="phone-btn phone-btn-pri phone-compose-send" disabled=${busy} onClick=${() => void submit()}>${busy ? 'Sending…' : 'Send ➤'}<//>
         </div>`}
-  </form>`;
+  </div>`;
 }
 
 // openPhoneCompose opens the sheet for seed ({ agent, label, node }), the

@@ -17,6 +17,7 @@ function fakeWidgets() {
       key(name) { this.calls.push(['key', name]); return true; },
       setSoftKeyboard(on) { this.calls.push(['keyboard', on]); },
       toLive() { this.calls.push(['toLive']); options.onScrollBackChange?.(false); },
+      zoomBy(step) { this.calls.push(['zoomBy', step]); },
       dispose() { this.disposed = true; },
     };
     made.push(widget);
@@ -26,7 +27,7 @@ function fakeWidgets() {
   return { made, factory };
 }
 
-async function setup(t) {
+async function setup(t, extra = {}) {
   // Unmount before the harness takes its DOM globals away.
   const cleanups = [];
   t.after(() => cleanups.forEach((fn) => fn()));
@@ -51,6 +52,7 @@ async function setup(t) {
     prefs: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     documentRef: harness.document,
     windowRef: {},
+    ...extra,
   };
   const host = harness.document.createElement('div');
   harness.document.body.append(host);
@@ -199,4 +201,46 @@ test('wheelCopyMode: an agent terminal without a harness takes the agent\'s, els
   // A harness the catalog does not list may scroll copy-mode.
   assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/x', agent: 'agt_x', harness: 'newharness' }, deps), true);
   assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/x', agent: 'agt_x', harness: 'claude' }, { agent }), true, 'no catalog yet: keep ↓ Live');
+});
+
+test('the bar names the agent and its group, wears its state, and ⋯ opens its sheet', async (t) => {
+  const row = { key: AGENT, agent: AGENT, name: 'checkout-ui', group: 'webshop', variant: 'asking', online: true };
+  const menus = [];
+  const { harness, tab, host, button, tap } = await setup(t, {
+    agentRow: (id) => (id === AGENT ? { row, group: { key: 'g:webshop', name: 'webshop' } } : null),
+    agentMenu: (r) => menus.push(r.key),
+  });
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  const title = host.querySelector('.phone-term-bar .phone-bar-title');
+  assert.equal(title.textContent, 'checkout-uiwebshop');
+  assert.equal(title.querySelector('small').textContent, 'webshop');
+  const pill = host.querySelector('.phone-term-bar .phone-pill');
+  assert.equal(pill.textContent.trim(), 'asking');
+  assert.match(pill.className, /phone-pill-ask/);
+  assert.equal(host.querySelector('.phone-bar-live'), null, 'the state pill stands in for the live dot');
+  await tap(button('checkout-ui: more'));
+  assert.deepEqual(menus, [AGENT]);
+  assert.match(host.querySelector('.phone-term-compose').textContent, /✉ Message checkout-ui…/);
+});
+
+test('a terminal of no agent keeps the live dot and has only ⌨', async (t) => {
+  const { harness, tab, host } = await setup(t, { agentRow: () => null, agentMenu: () => {} });
+  await harness.act(() => tab.openWebWindowPane('agt_unknown', 'shell', { harness: 'shell' }));
+  assert.ok(host.querySelector('.phone-bar-live'));
+  assert.equal(host.querySelector('.phone-term-bar .phone-ib'), null, 'no ⋯ without an agent row');
+});
+
+test('the pinch chip shows the size against the phone\'s own, and a tap resets it', async (t) => {
+  const { harness, tab, made, host, tap } = await setup(t);
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  assert.equal(host.querySelector('.phone-term-zoom'), null, 'no chip until the terminal reports its size');
+  const [widget] = made;
+  await harness.act(() => widget.options.onFontChange({ size: 11, zoomed: true }));
+  const chip = () => host.querySelector('.phone-term-zoom');
+  assert.equal(chip().textContent, 'pinch · 100%');
+  assert.equal(chip().disabled, true, 'nothing to reset at 100%');
+  await harness.act(() => widget.options.onFontChange({ size: 15, zoomed: true }));
+  assert.equal(chip().textContent, 'pinch · 136%');
+  await tap(chip());
+  assert.deepEqual(widget.calls.at(-1), ['zoomBy', -4]);
 });

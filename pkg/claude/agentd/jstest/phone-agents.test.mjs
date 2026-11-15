@@ -143,3 +143,18 @@ test('the sheet follows the snapshot, and New spawns into the group', async (t) 
   await tap(c.querySelector('[aria-label="New agent in webshop"]'));
   assert.deepEqual(calls.at(-1), ['spawn', 'webshop']);
 });
+
+test('the sheet opened from an agent\'s own terminal does not offer that terminal', async (t) => {
+  const { harness, state, c } = await setup(t);
+  const [island, sheet] = await Promise.all([
+    harness.importDashboardModule('js/phone-agents-island.js'),
+    harness.importDashboardModule('js/phone-sheet.js'),
+  ]);
+  t.after(() => sheet.closePhoneSheet());
+  const lead = [...c.querySelectorAll('.phone-agent-row')].find((b) => b.textContent.includes('lead'));
+  await harness.act(() => lead.click());
+  const props = { ...sheet.phoneSheet.value.props, here: true };
+  await harness.act(() => sheet.openPhoneSheet({ label: 'lead (terminal)', Body: island.AgentSheet, props: { ...props, state } }));
+  assert.deepEqual([...c.querySelectorAll('.phone-sheet .phone-menu-item')].map((b) => b.textContent),
+    ['Message…', 'Shut down…', 'Restart…', 'Rename…', 'Retire…']);
+});
