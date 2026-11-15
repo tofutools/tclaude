@@ -210,7 +210,9 @@ test('the bar names the agent and its group, wears its state, and ⋯ opens its 
     agentRow: (id) => (id === AGENT ? { row, group: { key: 'g:webshop', name: 'webshop' } } : null),
     agentMenu: (r) => menus.push(r.key),
   });
-  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  // A link opened before the snapshot came knows only the agent's id: the
+  // bar takes the name from the agent's row.
+  await harness.act(() => tab.openWebWindowPane(AGENT, AGENT, { harness: 'claude' }));
   const title = host.querySelector('.phone-term-bar .phone-bar-title');
   assert.equal(title.textContent, 'checkout-uiwebshop');
   assert.equal(title.querySelector('small').textContent, 'webshop');

@@ -19,7 +19,7 @@
 // text field); otherwise its first button does.
 
 import { h } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
 
@@ -46,17 +46,19 @@ export function requestClosePhoneSheet() {
   else closePhoneSheet();
 }
 
-// useSheetGuard installs a guard for the sheet this Body renders in, while
-// active: a function that runs instead of a requested close.
-export function useSheetGuard(active, onRequestClose) {
+// useSheetGuard guards the sheet this Body renders in: onRequestClose runs
+// instead of a requested close and returns true when it held the close (a
+// draft to ask about), false to let it go. It is installed as the Body
+// mounts and always calls the latest onRequestClose, so a close the instant
+// after a keystroke is guarded too.
+export function useSheetGuard(onRequestClose) {
   const latest = useRef(onRequestClose);
   latest.current = onRequestClose;
-  useEffect(() => {
-    if (!active) return undefined;
-    const mine = () => latest.current();
+  useLayoutEffect(() => {
+    const mine = () => { if (!latest.current()) closePhoneSheet(); };
     guard = mine;
     return () => { if (guard === mine) guard = null; };
-  }, [active]);
+  }, []);
 }
 
 // What the sheet makes inert while it is open: everything a tap could reach

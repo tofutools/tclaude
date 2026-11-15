@@ -239,25 +239,27 @@ export function PhoneTerminal({ seed, deps, onClose }) {
     if (next && keyboard) next.setSoftKeyboard(true);
     if (!next) setScrolledBack(false);
   };
-  const message = seed.agent && deps.onComposeMessage
-    ? () => deps.onComposeMessage({ agent: seed.agent, label: seed.label || '' })
-    : null;
-  // The agent behind the terminal, live from the snapshot: its state for the
+  // The agent behind the terminal, live from the snapshot: its name (a link
+  // opened before the snapshot came knows only its id), its state for the
   // pill, its group for the title, and ⋯ for what else a phone can do to it.
   const found = seed.agent ? deps.agentRow?.(seed.agent) || null : null;
   const row = found?.row || null;
+  const label = row?.name || seed.label || '';
+  const message = seed.agent && deps.onComposeMessage
+    ? () => deps.onComposeMessage({ agent: seed.agent, label })
+    : null;
   const live = status === 'connected';
   const note = runtime === 'failed' ? 'The terminal could not load.'
     : runtime === 'loading' ? 'Loading…'
       : waiting?.text || (status === 'connected' || status === 'connecting' ? '' : status);
   const pct = zoomPercent(font.size);
-  const name = seed.label || row?.name || 'the agent';
+  const name = label || 'the agent';
 
   const style = viewport ? `height:${viewport.height}px;top:${viewport.top}px` : undefined;
-  return html`<div class="phone-term" role="dialog" aria-modal="true" aria-label=${seed.label ? `Terminal: ${seed.label}` : 'Terminal'} style=${style}>
+  return html`<div class="phone-term" role="dialog" aria-modal="true" aria-label=${label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
     <header class="phone-term-bar">
       <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}>‹</button>
-      <${Title} label=${seed.label} group=${row?.group || ''} />
+      <${Title} label=${label} group=${row?.group || ''} />
       ${row
         ? html`<${StatePill} state=${row.variant} title=${live ? undefined : `Terminal: ${status}`}>${row.waking ? 'waking' : VARIANT_LABELS[row.variant]}<//>`
         : html`<span class=${`phone-bar-live ${live ? 'connected' : status === 'disconnected' ? 'disconnected' : ''}`} role="status"

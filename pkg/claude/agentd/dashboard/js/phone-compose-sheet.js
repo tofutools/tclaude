@@ -71,7 +71,11 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
   const name = label || 'the agent';
 
   // A close the operator asked for waits for a yes while there is a draft.
-  useSheetGuard(dirty || busy, () => { if (!busy) setConfirming(true); });
+  useSheetGuard(() => {
+    if (!dirty && !busy) return false;
+    if (!busy) setConfirming(true);
+    return true;
+  });
 
   useLayoutEffect(() => {
     if (caret === null) return;
