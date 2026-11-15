@@ -32,10 +32,10 @@ test('the terminal bar, pinch chip and message sheet', async ({ page }) => {
   await expect(term.locator('.phone-term-bar .phone-pill')).toBeVisible();
   await expect(term.locator('.phone-term-zoom')).toHaveText('pinch · 100%');
 
-  // ⋯: the agent's sheet, without Open terminal.
+  // ⋯: the agent's menu, its Terminal tile off (this is it).
   await term.getByRole('button', { name: `${name}: more` }).click();
   const sheet = page.locator('.phone-sheet[role=dialog]');
-  await expect(sheet.locator('.phone-menu-item').first()).toHaveText('Message…');
+  await expect(sheet.locator('.phone-agent-tile[data-act="terminal"]')).toBeDisabled();
   await page.keyboard.press('Escape');
   await expect(sheet).toBeHidden();
 

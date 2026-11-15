@@ -20,7 +20,8 @@ import { FEW_ONLINE, PROBLEMS, agentRows, askerName, hookAt, idleGroups, context
 import { usageStrip } from './phone-now-model.js';
 import { AskCard, ContextTag, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
 import { Button } from './ui-components.js';
-import { Card, ChipRow, Section, StatePill } from './phone-ui.js';
+import { Card, ChipRow, IconButton, Section, StatePill } from './phone-ui.js';
+import { useHold } from './phone-hold.js';
 import { relTime } from './helpers.js';
 import { processContext } from './process-context.js';
 import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
@@ -55,19 +56,29 @@ function UsageStrip({ snapshot, onOpen }) {
 // terminal. heads put a heading over a row (Idle's groups, Problems' kinds);
 // changed (agent ids) puts a blue dot on what changed since the viewer
 // looked, and a nearly full context is tagged by the name.
-function AgentRows({ rows, onOpen, changed = null }) {
+// NowRow is one agent's row: a tap opens its terminal; a hold, or its ⋯,
+// opens its menu (phone-agent-menu.js) when onMenu is wired.
+function NowRow({ agent, state, when, tone, changed, onOpen, onMenu }) {
+  const { holding, handlers } = useHold(onMenu ? () => onMenu(agent) : null);
+  return html`<div class=${`phone-now-agent${holding ? ' phone-holding' : ''}`}>
+    <button data-ui-exempt type="button" class="phone-row phone-holdable" ...${handlers} onClick=${() => onOpen(agent)}
+      aria-label=${`${agent.name}${changed ? ' (changed since you looked)' : ''}, ${state}${contextHigh(agent) && !String(when || '').startsWith('context') ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
+      ${changed && html`<span class="phone-now-new" aria-hidden="true"></span>`}
+      <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}<${ContextTag} ctx=${agent.ctx ?? null} />
+        ${state === 'error' && agent.detail && tone === undefined && html`<span class="phone-card-line">${agent.detail}</span>`}
+        ${when && html`<span class=${`phone-now-when${tone ? ` ${tone}` : ''}`}>${when}</span>`}</span>
+      <${StatePill} state=${state} />
+    </button>
+    ${onMenu && html`<${IconButton} icon="⋯" label=${`${agent.name}: more`} aria-haspopup="dialog" class="phone-now-more" onClick=${() => onMenu(agent)} />`}
+  </div>`;
+}
+
+function AgentRows({ rows, onOpen, onMenu = null, changed = null }) {
   return html`<${Card} class="phone-rows-card">
     <ul class="phone-rows">
       ${rows.map(({ agent, state, when, tone, head }) => html`<li key=${agent.agentId}>
         ${head && html`<p class="ui-eyebrow phone-now-group">${head}</p>`}
-        <button data-ui-exempt type="button" class="phone-row" onClick=${() => onOpen(agent)}
-          aria-label=${`${agent.name}${changed?.has(agent.agentId) ? ' (changed since you looked)' : ''}, ${state}${contextHigh(agent) && !String(when || '').startsWith('context') ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
-          ${changed?.has(agent.agentId) && html`<span class="phone-now-new" aria-hidden="true"></span>`}
-          <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}<${ContextTag} ctx=${agent.ctx ?? null} />
-            ${state === 'error' && agent.detail && tone === undefined && html`<span class="phone-card-line">${agent.detail}</span>`}
-            ${when && html`<span class=${`phone-now-when${tone ? ` ${tone}` : ''}`}>${when}</span>`}</span>
-          <${StatePill} state=${state} />
-        </button>
+        <${NowRow} agent=${agent} state=${state} when=${when} tone=${tone} changed=${!!changed?.has(agent.agentId)} onOpen=${onOpen} onMenu=${onMenu} />
       </li>`)}
     </ul>
   <//>`;
@@ -238,10 +249,10 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
       ${view.decisions.map((decision) => html`<${PhoneDecisionCard} key=${decision.id} decision=${decision} fetchImpl=${fetchImpl}
         notify=${actions.notify} from=${asker(decision)} steward=${!!agents.get(decision.from_agent)?.steward} />`)}
       ${gates.map((item) => html`<${GateCard} key=${item.run.runId} item=${item} source=${processSource} />`)}
-      ${view.asking.map((agent) => html`<${AskCard} key=${agent.agentId} agent=${agent} onOpen=${actions.openTerminal} />`)}
+      ${view.asking.map((agent) => html`<${AskCard} key=${agent.agentId} agent=${agent} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />`)}
     <//>`;
   const rowsOr = (list, empty) => (list.length
-    ? html`<${AgentRows} rows=${list} onOpen=${actions.openTerminal} changed=${changed} />`
+    ? html`<${AgentRows} rows=${list} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} changed=${changed} />`
     : html`<p class="ui-empty phone-empty">${empty}</p>`);
   let body;
   if (chip === 'needs') body = needsYou;
@@ -266,13 +277,13 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
     ${needsYou}
     ${changes.length > 0 && html`<${Section} title="Since you looked" count=${changes.length}
       more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${markSeen}>Mark seen</button>`}>
-      <${AgentRows} rows=${changes} onOpen=${actions.openTerminal} />
+      <${AgentRows} rows=${changes} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />
     <//>`}
     <${Section} title=${list.all ? 'Online' : 'Active'} count=${rows.length}
       more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button>`}>
       ${rows.length === 0
         ? html`<p class="ui-empty phone-empty">${list.all ? 'No agent is online.' : 'No agent is active right now.'}</p>`
-        : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} changed=${changed} />`}
+        : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} changed=${changed} />`}
       ${list.total > FEW_ONLINE && html`<button data-ui-exempt type="button" class="phone-now-all" aria-expanded=${showAll ? 'true' : 'false'}
         onClick=${() => setShowAll(!showAll)}>${showAll ? 'Only the recent ones' : `Show all ${list.total} online`}
         <span aria-hidden="true">${showAll ? '⌄' : '›'}</span></button>`}

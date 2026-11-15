@@ -130,6 +130,7 @@ async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () =>
   const actions = {
     openTerminal: record('openTerminal'), message: record('message'), rename: record('rename'), spawn: record('spawn'),
     rowAction: (act, row) => calls.push(['rowAction', act, row.name]),
+    grant: record('grant'), copy: (text, what) => calls.push(['copy', text, what]),
   };
   const mounted = await harness.mount(harness.html`<main><${island.PhoneAgents} state=${state} order=${(g) => g} actions=${actions} fetchImpl=${fetchImpl} prefs=${prefs} /></main>
     <${sheet.PhoneSheetHost} />`);
@@ -138,11 +139,17 @@ async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () =>
   const item = (name) => [...c.querySelectorAll('.phone-agent')].find((li) => li.querySelector('.phone-agent-title').textContent === name);
   const row = (name) => item(name).querySelector('.phone-agent-row');
   const more = (name) => item(name).querySelector('.phone-agent-more');
-  const menu = (label) => [...c.querySelectorAll('.phone-sheet .phone-menu-item')].find((b) => b.textContent === label);
+  // An entry's label is its first line (a second, smaller one may explain it).
+  const label = (b) => (b.querySelector('.phone-agent-menu-text > span, .phone-menu-label') || b).textContent;
+  const entries = () => [...c.querySelectorAll('.phone-sheet .phone-menu-item')].map(label);
+  const tileLabel = (b) => b.querySelector('span:last-child').textContent;
+  const tiles = () => [...c.querySelectorAll('.phone-sheet .phone-agent-tile')].map((b) => `${tileLabel(b)}${b.disabled ? ' (off)' : ''}`);
+  const menu = (text) => [...c.querySelectorAll('.phone-sheet .phone-menu-item')].find((b) => label(b) === text)
+    || [...c.querySelectorAll('.phone-sheet .phone-agent-tile')].find((b) => tileLabel(b) === text);
   const chip = (label) => [...c.querySelectorAll('.phone-agents-chips button')].find((b) => b.firstChild.textContent.trim() === label);
   const titles = () => [...c.querySelectorAll('.phone-agent-title')].map((n) => n.textContent);
   const sections = () => [...c.querySelectorAll('.phone-agents > .phone-section')].map((n) => n.getAttribute('aria-label'));
-  return { harness, state, calls, c, tap, item, row, more, menu, page, board, chip, titles, sections, prefs, model };
+  return { harness, state, calls, c, tap, item, row, more, menu, entries, tiles, page, board, chip, titles, sections, prefs, model };
 }
 
 test('rows: an avatar, a pill, the meta line; offline agents inline; the chips filter', async (t) => {
@@ -210,8 +217,8 @@ test('a group\'s header folds it, remembered in the prefs; its state summary sho
   assert.equal(calls.length, 0, 'folding opens nothing');
 });
 
-test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ opens the sheet', async (t) => {
-  const { harness, calls, c, tap, row, more, menu } = await setup(t);
+test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ opens its menu', async (t) => {
+  const { harness, calls, c, tap, row, more, menu, entries, tiles } = await setup(t);
   await tap(row('lead'));
   assert.deepEqual(calls.at(-1), ['openTerminal', 'lead']);
   assert.equal(c.querySelector('.phone-sheet'), null);
@@ -222,8 +229,10 @@ test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ open
   const dialog = c.querySelector('.phone-sheet[role=dialog]');
   assert.equal(dialog.getAttribute('aria-label'), 'lead');
   assert.equal(c.querySelector('main').inert, true, 'the page behind is inert');
-  assert.deepEqual([...dialog.querySelectorAll('.phone-menu-item')].map((b) => b.textContent),
-    ['Open terminal', 'Message…', 'Shut down…', 'Restart…', 'Rename…', 'Retire…']);
+  assert.deepEqual(tiles(), ['Terminal', 'Message', 'Interrupt (off)', 'Copy id'], 'Interrupt only while it is at work');
+  assert.deepEqual(entries(), ['Compact…', 'Restart…', 'Shut down…', 'Rename…', 'Reincarnate…', 'Grant sudo…', 'Copy name', 'Retire…'],
+    'Session, then Agent, then Retire');
+  assert.ok(dialog.querySelector('.phone-menu-danger').textContent.startsWith('Retire…'));
   await tap(menu('Restart…'));
   assert.deepEqual(calls.at(-1), ['rowAction', 'restart', 'lead']);
   assert.equal(c.querySelector('.phone-sheet'), null, 'the sheet closed');
@@ -233,10 +242,25 @@ test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ open
   await tap(menu('Rename…'));
   assert.deepEqual(calls.at(-1), ['rename', 'lead', 'webshop']);
 
-  // An offline agent offers Power on and no terminal; Escape closes.
+  await tap(more('lead'));
+  await tap(menu('Copy name'));
+  assert.deepEqual(calls.at(-1), ['copy', 'lead', 'lead\'s name']);
+  await tap(more('lead'));
+  await tap(menu('Copy id'));
+  assert.deepEqual(calls.at(-1), ['copy', id(1), 'lead\'s id']);
+  await tap(more('lead'));
+  await tap(menu('Grant sudo…'));
+  assert.deepEqual(calls.at(-1), ['grant', 'lead']);
+
+  // An offline agent: Power on where Terminal was, no Session group (a line
+  // says why); Escape closes.
   await tap(more('loner'));
-  assert.deepEqual([...c.querySelectorAll('.phone-sheet .phone-menu-item')].map((b) => b.textContent),
-    ['Message…', 'Power on', 'Retire…'], 'no rename outside a group');
+  assert.deepEqual(tiles(), ['Power on', 'Message', 'Interrupt (off)', 'Copy id']);
+  assert.deepEqual(entries(), ['Grant sudo…', 'Copy name', 'Retire…'], 'no rename outside a group');
+  assert.match(c.querySelector('.phone-sheet .phone-sheet-meta').textContent, /need it running/);
+  await tap(menu('Power on'));
+  assert.deepEqual(calls.at(-1), ['rowAction', 'dot-toggle', 'loner']);
+  await tap(more('loner'));
   await harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
   assert.equal(c.querySelector('.phone-sheet'), null);
 });
@@ -304,16 +328,16 @@ test('a refused spawn keeps the sheet open', async (t) => {
 
 test('the sheet opened from an agent\'s own terminal does not offer that terminal', async (t) => {
   const { harness, state, c, tap, more } = await setup(t);
-  const [island, sheet] = await Promise.all([
-    harness.importDashboardModule('js/phone-agents-island.js'),
+  const [menuModule, sheet] = await Promise.all([
+    harness.importDashboardModule('js/phone-agent-menu.js'),
     harness.importDashboardModule('js/phone-sheet.js'),
   ]);
   t.after(() => sheet.closePhoneSheet());
   await tap(more('lead'));
   const props = { ...sheet.phoneSheet.value.props, here: true };
-  await harness.act(() => sheet.openPhoneSheet({ label: 'lead (terminal)', Body: island.AgentSheet, props: { ...props, state } }));
-  assert.deepEqual([...c.querySelectorAll('.phone-sheet .phone-menu-item')].map((b) => b.textContent),
-    ['Message…', 'Shut down…', 'Restart…', 'Rename…', 'Retire…']);
+  await harness.act(() => sheet.openPhoneSheet({ label: 'lead (terminal)', Body: menuModule.AgentMenu, props: { ...props, state } }));
+  const terminal = c.querySelector('.phone-sheet .phone-agent-tile[data-act="terminal"]');
+  assert.equal(terminal.disabled, true, 'its own terminal is the one open');
 });
 
 test('a double tap on Spawn spawns once', async (t) => {
@@ -412,4 +436,63 @@ test('rows: a worker sits under its lead, which says how many it has', async (t)
   assert.equal(rows[1].classList.contains('phone-agent-last'), false);
   assert.ok(rows[1].querySelector('.phone-agent-row').getAttribute('aria-label').includes('spawned by lead'));
   assert.equal(rows[6].querySelector('.phone-agent-kids'), null);
+});
+
+test('a touch and hold on a row opens its menu; moving first, or a short tap, does not', async (t) => {
+  const { harness, c, row, calls } = await setup(t);
+  const { HOLD_MS } = await harness.importDashboardModule('js/phone-hold.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pointer = (el, type, x = 10, y = 10) => harness.act(() => {
+    const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
+    Object.assign(event, { button: 0, pointerId: 1, clientX: x, clientY: y });
+    el.dispatchEvent(event);
+  });
+  // A short tap: down and up before HOLD_MS is a tap (the terminal), no menu.
+  await pointer(row('lead'), 'pointerdown');
+  assert.ok(row('lead').closest('.phone-agent').classList.contains('phone-holding'), 'the cue while it builds');
+  await harness.act(() => t.mock.timers.tick(HOLD_MS / 2));
+  await pointer(row('lead'), 'pointerup');
+  await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  assert.equal(c.querySelector('.phone-sheet'), null);
+  assert.equal(row('lead').closest('.phone-agent').classList.contains('phone-holding'), false);
+
+  // Moving (a scroll) cancels it.
+  await pointer(row('lead'), 'pointerdown');
+  await pointer(row('lead'), 'pointermove', 10, 40);
+  await harness.act(() => t.mock.timers.tick(HOLD_MS * 2));
+  assert.equal(c.querySelector('.phone-sheet'), null, 'a move is a scroll, not a hold');
+
+  // Held still: the menu, and the click the lift makes is swallowed.
+  await pointer(row('lead'), 'pointerdown');
+  await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  assert.equal(c.querySelector('.phone-sheet[role=dialog]').getAttribute('aria-label'), 'lead');
+  const before = calls.length;
+  await pointer(row('lead'), 'pointerup');
+  await harness.act(() => row('lead').click());
+  assert.equal(calls.length, before, `the lift does not open the terminal too: ${JSON.stringify(calls.slice(before))}`);
+  // A lift landing elsewhere (the sheet's scrim) is swallowed at the
+  // document, in the capture phase linkedom does not run: the
+  // phone-agent-menu smoke covers it in a browser.
+});
+
+test('menuModel: Interrupt only while at work, Compact where the harness can, Open PR when it has one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ menuModel }, model] = await Promise.all([
+    harness.importDashboardModule('js/phone-agent-menu.js'),
+    harness.importDashboardModule('js/phone-agents-model.js'),
+  ]);
+  const group = { group: { name: 'webshop' }, name: 'webshop' };
+  const snapshot = { harnesses: [{ name: 'codex', can_compact: true }] };
+  const working = model.agentRow({ agent_id: id(7), conv_id: 'c7', title: 'w', online: true, state: { status: 'working', harness: 'codex', codex_app_server: true },
+    branch_pr_number: 12, branch_pr_url: 'https://example.test/pr/12' }, 'webshop');
+  const m = menuModel(working, group, snapshot);
+  assert.equal(m.quick.find((q) => q.key === 'interrupt').disabled, false, 'a Codex turn on the app-server drive');
+  const claude = model.agentRow({ ...working.member, state: { status: 'working', harness: 'claude' } }, 'webshop');
+  assert.equal(menuModel(claude, group, snapshot).quick.find((q) => q.key === 'interrupt').disabled, true,
+    'the daemon interrupts no other turn, so its tile is greyed as an idle one is');
+  assert.deepEqual(m.agent.find((e) => e.key === 'pr'), { key: 'pr', label: 'Open PR #12 ›', href: 'https://example.test/pr/12' });
+  const external = model.agentRow({ ...working.member, external_steward: true }, 'webshop');
+  assert.equal(menuModel(external, group, snapshot).agent.some((e) => e.key === 'reincarnate'), false, 'an external Steward does not reincarnate here');
+  const noAgentId = model.agentRow({ conv_id: 'c8', title: 'plain', online: true, state: {} }, '');
+  assert.equal(menuModel(noAgentId, { group: null }, {}).agent.some((e) => e.key === 'grant'), false, 'sudo goes to an agent id');
 });

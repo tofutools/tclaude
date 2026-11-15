@@ -97,3 +97,40 @@
 :root[data-layout="phone"] .phone-agent-sheet-meta a { color: var(--ui-focus); }
 :root[data-layout="phone"] .phone-agent-cwd { font-family: ui-monospace, monospace; font-size: 12px; }
 :root[data-layout="phone"] .phone-agent-sheet .phone-menu { margin-top: 10px; }
+
+/* Touch and hold (js/phone-hold.js) on an agent's row or card: no text
+   selection or callout under the finger; while the hold builds, the row is
+   tinted and a bar fills along its bottom edge. The cue waits a moment, so a
+   plain tap does not flash. */
+:root[data-layout="phone"] .phone-holdable { position: relative; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+:root[data-layout="phone"] :is(.phone-holding .phone-holdable, .phone-holdable.phone-holding) {
+  background: color-mix(in srgb, var(--phone-accent) 12%, transparent); border-radius: 10px;
+}
+:root[data-layout="phone"] :is(.phone-holding .phone-holdable, .phone-holdable.phone-holding)::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: 2px; height: 3px; border-radius: 2px;
+  background: var(--phone-accent); transform-origin: left; transform: scaleX(0); pointer-events: none;
+  animation: phone-hold-fill 380ms linear 120ms forwards;
+}
+@keyframes phone-hold-fill { to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-layout="phone"] :is(.phone-holding .phone-holdable, .phone-holdable.phone-holding)::after { animation: none; transform: scaleX(1); }
+}
+/* Now's rows carry a ⋯ for the same menu. */
+:root[data-layout="phone"] .phone-now-agent { display: flex; align-items: center; gap: 2px; }
+:root[data-layout="phone"] .phone-now-more { flex: none; color: var(--ui-muted-text); }
+
+/* An agent's menu (js/phone-agent-menu.js): four quick tiles, then the
+   grouped entries, Retire apart at the end. The sheet scrolls when it is
+   taller than the screen. */
+:root[data-layout="phone"] .phone-agent-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 4px; }
+:root[data-layout="phone"] .phone-agent-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 64px; padding: 6px 2px;
+  border-radius: var(--phone-r); color: var(--ui-text); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-agent-tile:disabled { opacity: .4; cursor: default; }
+:root[data-layout="phone"] .phone-agent-tile-icon { font-size: 20px; line-height: 1; }
+:root[data-layout="phone"] .phone-agent-menu-head { margin: 14px 4px 4px; }
+:root[data-layout="phone"] .phone-agent-menu-item { min-height: 52px; text-decoration: none; }
+:root[data-layout="phone"] .phone-agent-menu-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+:root[data-layout="phone"] .phone-agent-menu-text small { color: var(--ui-muted-text); font-size: 12.5px; }
+:root[data-layout="phone"] .phone-agent-menu-last { margin-top: 12px; }

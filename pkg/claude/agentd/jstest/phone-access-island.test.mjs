@@ -46,6 +46,8 @@ async function setup(t, options = {}) {
   const snapshot = signal(options.loaded === false ? null : snapshotWith(options));
   const state = createAccessState({ snapshot, prefs: prefs(), now: () => NOW });
   state.initialize();
+  // grantFor: an agent's menu asked for its Grant sudo… before Access mounted.
+  if (options.grantFor) (await harness.importDashboardModule('js/phone-grant.js')).grantFor.value = options.grantFor;
   const calls = [];
   const actions = {
     revoke: async (grant) => { calls.push(['revoke', grant.id]); return true; },
@@ -138,6 +140,21 @@ test('Grant, step 1: the agents by group, online first; offline ones on request'
   assert.equal(phonePage.value.title, 'Grant to lead');
   await tap({ click: () => phonePage.value.onBack() });
   assert.equal(phonePage.value.title, 'Grant sudo', 'Back from step 2 is step 1');
+});
+
+test('an agent\'s Grant sudo… opens Access on that agent\'s step 2; Back is step 1', async (t) => {
+  const { harness, root, settle } = await setup(t, { grantFor: 'agt_lead' });
+  await settle();
+  const [{ phonePage }, { grantFor }] = await Promise.all([
+    harness.importDashboardModule('js/phone-page.js'),
+    harness.importDashboardModule('js/phone-grant.js'),
+  ]);
+  assert.equal(phonePage.value.title, 'Grant to lead');
+  assert.ok(root.querySelector('.phone-grant-submit'), 'step 2, the permissions');
+  assert.equal(grantFor.value, '', 'taken, so coming back to Access later is Access');
+  await harness.act(() => phonePage.value.onBack());
+  await settle();
+  assert.equal(phonePage.value.title, 'Grant sudo');
 });
 
 test('Grant, step 2: the warning, nothing sent until a permission is picked, the limits in the label', async (t) => {

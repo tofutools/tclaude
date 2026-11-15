@@ -168,6 +168,8 @@ export const AGENT_GRANT_ACTS = Object.freeze({
   // Compaction, and a request that the agent reincarnate itself (a peer
   // sends no follow-up, focus hint or forced mode).
   'compact-agent': ['groups.members.compact'],
+  // Stopping its current turn (the phone's agent menu).
+  'interrupt-agent': ['groups.members.interrupt'],
   'reincarnate': ['groups.members.reincarnate'],
   // Remote access, permanent delete (its worktree is unrestricted trust's:
   // the dialog's worktree probe is refused, so it offers none) and the debug

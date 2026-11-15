@@ -128,13 +128,15 @@ const phoneShellDescriptor = createIslandDescriptor({
     const mailBridgeModule = import('./mail-bridge.js');
     const layoutModule = import('./layout.js');
     const navTabVisibilityModule = import('./nav-tab-visibility.js');
+    const holdModule = import('./phone-hold.js');
     const [
       { mountPhoneShellIsland, createPhoneShellState, landsOnNow }, { dashboardState }, { taskboardContext },
       { navigateToPath }, { openWebWindowPane }, { focusAccessRequest }, { setLayoutOverride }, { navTabShown },
+      { setAgentMenuOpener },
     ] = await Promise.all([
       islandModule, snapshotStoreModule, taskboardContextModule,
       navHistoryModule, terminalsTabModule, mailBridgeModule, layoutModule,
-      navTabVisibilityModule,
+      navTabVisibilityModule, holdModule,
     ]);
     const doc = host.ownerDocument;
     const navButton = (tab) => doc.querySelector(`nav [data-tab="${tab}"]`);
@@ -154,11 +156,32 @@ const phoneShellDescriptor = createIslandDescriptor({
       openTerminal: (agent) => openWebWindowPane(agent.agentId, agent.name, { harness: agent.harness }),
       message: (agent) => dependencies.onComposeMessage?.({ agent: agent.agentId, label: agent.name }),
       openAccessRequest: (id) => focusAccessRequest(id),
+      // An agent's menu (phone-agent-menu.js), as the Agents view opens it;
+      // navigate is how Grant sudo… goes to Access from where it was opened.
+      agentMenu: async (agent, { navigate } = {}) => {
+        const menuModule = import('./phone-agent-menu.js');
+        const agentActionsModule = import('./phone-agent-actions.js');
+        const groupOrderModule = import('./group-order.js');
+        const sheetModule = import('./phone-sheet.js');
+        const [{ AgentMenu }, { phoneAgentActions }, { sortGroupsByPref }, { openPhoneSheet }] = await Promise.all([
+          menuModule, agentActionsModule, groupOrderModule, sheetModule,
+        ]);
+        const agentActions = phoneAgentActions({ onComposeMessage: dependencies.onComposeMessage, ...(navigate ? { navigate } : {}) });
+        openPhoneSheet({
+          label: agent.name, Body: AgentMenu,
+          props: { state: dashboardState, order: (groups) => sortGroupsByPref(groups), actions: agentActions, agentKey: agent.agentId },
+        });
+      },
       powerOnAll: () => doc.getElementById('power-on-all-btn')?.click(),
       shutdownAll: () => doc.getElementById('shutdown-all-btn')?.click(),
       desktopSite: () => setLayoutOverride('desktop'),
     };
     const shell = createPhoneShellState({ startOnNow: landsOnNow() });
+    // Open sessions' rows: Grant sudo… leaves whatever page the shell shows,
+    // as the shell's own views do (phone-shell-island.js leave).
+    setAgentMenuOpener((agent) => actions.agentMenu(agent, {
+      navigate: (path) => { shell.view.value = null; return navigateToPath(path); },
+    }));
     return {
       mount: (registerCleanup) => mountPhoneShellIsland({
         host, shell, state: dashboardState, actions, boardSource: taskboardContext, registerCleanup,
@@ -216,20 +239,26 @@ const phoneTerminalDescriptor = createIslandDescriptor({
     const attachConfigModule = import('./terminal-attach-config.js');
     const snapshotStoreModule = import('./snapshot-store.js');
     const agentsModelModule = import('./phone-agents-model.js');
-    const agentsIslandModule = import('./phone-agents-island.js');
+    const agentsIslandModule = import('./phone-agent-menu.js');
     const actionsModule = import('./phone-agent-actions.js');
     const sheetModule = import('./phone-sheet.js');
     const groupOrderModule = import('./group-order.js');
+    const navHistoryModule = import('./nav-history.js');
     const [
-      { mountPhoneTerminalIsland }, { setPhoneTerminals }, { mountTerminalWidget }, { loadXtermRuntime },
-      { terminalAttachWidgetOptions }, { dashboardState }, { agentGroups, findRow }, { AgentSheet },
-      { phoneAgentActions }, { openPhoneSheet }, { sortGroupsByPref },
+      { mountPhoneTerminalIsland, closePhoneTerminal }, { setPhoneTerminals }, { mountTerminalWidget }, { loadXtermRuntime },
+      { terminalAttachWidgetOptions }, { dashboardState }, { agentGroups, findRow }, { AgentMenu },
+      { phoneAgentActions }, { openPhoneSheet }, { sortGroupsByPref }, { navigateToPath },
     ] = await Promise.all([
       islandModule, terminalsTabModule, terminalsCoreModule, xtermLoaderModule, attachConfigModule, snapshotStoreModule,
-      agentsModelModule, agentsIslandModule, actionsModule, sheetModule, groupOrderModule,
+      agentsModelModule, agentsIslandModule, actionsModule, sheetModule, groupOrderModule, navHistoryModule,
     ]);
     const order = (groups) => sortGroupsByPref(groups);
-    const actions = phoneAgentActions({ onComposeMessage: dependencies.onComposeMessage });
+    // The menu's Grant sudo… goes to Access: the terminal closes first, or the
+    // page would open under it (a navigation keeps an open overlay).
+    const actions = phoneAgentActions({
+      onComposeMessage: dependencies.onComposeMessage,
+      navigate: (path) => { closePhoneTerminal(); return navigateToPath(path); },
+    });
     // An agent a link names, from the snapshot: its name and harness.
     const agent = (id) => {
       const snapshot = dashboardState.snapshot.value;
@@ -248,9 +277,9 @@ const phoneTerminalDescriptor = createIslandDescriptor({
       // The agent's row as the Agents view shows it (its state and group),
       // read from the live snapshot, or null.
       agentRow: (id) => findRow(agentGroups(dashboardState.snapshot.value, order), id),
-      // ⋯: the agent's sheet, as the Agents view opens it.
+      // ⋯: the agent's menu, as the Agents view opens it.
       agentMenu: (row) => openPhoneSheet({
-        label: row.name, Body: AgentSheet,
+        label: row.name, Body: AgentMenu,
         props: { state: dashboardState, order, actions, agentKey: row.key, groupKey: '', here: true },
       }),
     };

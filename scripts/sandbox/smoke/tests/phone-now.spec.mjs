@@ -33,9 +33,12 @@ test('Now shows what needs you as cards, and its strip and rows go where they sa
   await page.keyboard.press('Escape');
   await expect(sheet).toBeHidden();
 
-  // No side scroll: the usage strip fits (B6).
-  const { scroll, width } = await page.evaluate(() => ({ scroll: document.querySelector('.phone-view').scrollWidth, width: document.querySelector('.phone-view').clientWidth }));
-  expect(scroll).toBeLessThanOrEqual(width);
+  // No side scroll: the usage strip fits (B6). Polled: read once, just after
+  // the sheet closed, it once caught the layout mid-settle (407 of 390).
+  await expect.poll(() => page.evaluate(() => {
+    const view = document.querySelector('.phone-view');
+    return view.scrollWidth - view.clientWidth;
+  }), { message: 'Now scrolls sideways', timeout: 3000 }).toBeLessThanOrEqual(0);
 
   await page.getByRole('group', { name: /^(Online|Active)$/ }).locator('.phone-row').first().click();
   await expect(page.locator('.phone-term[role=dialog]')).toBeVisible();

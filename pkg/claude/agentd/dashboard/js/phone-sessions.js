@@ -11,8 +11,9 @@
 import { h } from 'preact';
 import htm from 'htm';
 import { bucketOf, needsYou } from './collab-rail-model.js';
-import { collabItems, openRailItem } from './collab-rail-actions.js';
-import { Avatar, Card, Section, StatePill } from './phone-ui.js';
+import { collabItems, openRailItem, railAgent } from './collab-rail-actions.js';
+import { agentMenuOpener, useHold } from './phone-hold.js';
+import { Avatar, Card, IconButton, Section, StatePill } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -33,12 +34,18 @@ export function sessionKind(item) {
   return { glyph: '', word: 'agent' };
 }
 
-function SessionRow({ item, onOpen }) {
+// SessionRow is one open session; a local agent's row opens its menu
+// (phone-agent-menu.js) on a hold, or its ⋯.
+function SessionRow({ item, onOpen, onMenu }) {
   const kind = sessionKind(item);
+  const agent = onMenu ? railAgent(item) : null;
+  const menu = agent?.agent_id ? () => onMenu({ agentId: agent.agent_id, name: item.title }) : null;
+  const { holding, handlers } = useHold(menu);
   const waiting = needsYou(item);
   const state = item.status?.label || '';
   const sub = [kind.word, item.row?.node?.name].filter(Boolean).join(' · ');
-  return html`<li><button data-ui-exempt type="button" class="phone-session" onClick=${() => onOpen(item)}
+  return html`<li class=${`phone-session-item${holding ? ' phone-holding' : ''}`}><button data-ui-exempt type="button"
+    class=${`phone-session${menu ? ' phone-holdable' : ''}`} ...${handlers} onClick=${() => onOpen(item)}
     aria-label=${[item.title, waiting ? 'needs you' : state, kind.word].filter(Boolean).join(', ')}>
     <${Avatar} name=${item.title} glyph=${kind.glyph} bot=${!!kind.glyph} />
     <span class="phone-session-text">
@@ -46,14 +53,14 @@ function SessionRow({ item, onOpen }) {
       <span class="phone-session-sub">${sub}</span>
     </span>
     ${waiting ? html`<${StatePill} state="ask">needs you<//>` : state && html`<${StatePill} state=${state} />`}
-    <span class="phone-session-chevron" aria-hidden="true">›</span>
-  </button></li>`;
+    ${!menu && html`<span class="phone-session-chevron" aria-hidden="true">›</span>`}
+  </button>${menu && html`<${IconButton} icon="⋯" label=${`${item.title}: more`} aria-haspopup="dialog" class="phone-session-more" onClick=${menu} />`}</li>`;
 }
 
 // PhoneSessions is the list. ctx (actions, snapshot, notify) is what
 // openRailItem takes; listed and open are injectable for tests.
 const panelSections = (panes, snapshot) => collabItems(panes, snapshot).sections;
-export function PhoneSessions({ panes = [], actions, snapshot, notify = () => {}, listed = panelSections, open = openRailItem }) {
+export function PhoneSessions({ panes = [], actions, snapshot, notify = () => {}, listed = panelSections, open = openRailItem, onMenu = agentMenuOpener() }) {
   const sections = openSessions(listed(panes, snapshot));
   const onOpen = (item) => open(item, { actions, snapshot, notify });
   if (!sections.length) {
@@ -63,7 +70,7 @@ export function PhoneSessions({ panes = [], actions, snapshot, notify = () => {}
   }
   return html`<div class="phone-sessions">
     ${sections.map((section) => html`<${Section} key=${section.id} title=${section.name || 'Other'} count=${section.items.length}>
-      <ul class="phone-list">${section.items.map((item) => html`<${SessionRow} key=${item.key} item=${item} onOpen=${onOpen} />`)}</ul>
+      <ul class="phone-list">${section.items.map((item) => html`<${SessionRow} key=${item.key} item=${item} onOpen=${onOpen} onMenu=${onMenu} />`)}</ul>
     <//>`)}
   </div>`;
 }

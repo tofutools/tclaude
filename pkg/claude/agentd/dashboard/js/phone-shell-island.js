@@ -173,6 +173,9 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
       // Now or Board: leaving the own view is what shows it.
       showTab: leave(actions.showTab),
       openAccessRequest: leave(actions.openAccessRequest),
+      // An agent's menu (a hold or ⋯ on Now). What in it goes to a tab
+      // (Grant sudo…) leaves the own view first, like everything else here.
+      agentMenu: actions.agentMenu ? (agent) => actions.agentMenu(agent, { navigate: leave(actions.navigate) }) : null,
       // A task opens on its phone page over the Board, never in the
       // desktop's task form.
       openTask: (id, group) => {

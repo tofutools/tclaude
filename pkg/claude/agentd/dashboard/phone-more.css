@@ -20,4 +20,7 @@
 :root[data-layout="phone"] .phone-session-sub { color: var(--ui-muted-text); font-size: 12px; }
 :root[data-layout="phone"] .phone-session-chevron { flex: none; color: var(--ui-muted-text); font-size: 20px; }
 :root[data-layout="phone"] .phone-sessions-empty p { margin: 0; }
+/* A local agent's row: the row, then its ⋯ (the menu a hold opens too). */
+:root[data-layout="phone"] .phone-session-item { display: flex; align-items: center; gap: 2px; }
+:root[data-layout="phone"] .phone-session-more { flex: none; color: var(--ui-muted-text); }
 :root[data-layout="phone"] .phone-sessions-empty p + p { margin-top: 4px; color: var(--ui-muted-text); font-size: 13px; }
