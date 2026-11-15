@@ -1332,6 +1332,8 @@ func cloneCommand(command Command) Command {
 	clone.Program = cloneProgramCommand(command.Program)
 	if command.Agent != nil {
 		agent := *command.Agent
+		agent.DifferentFrom = slices.Clone(command.Agent.DifferentFrom)
+		agent.Captures = slices.Clone(command.Agent.Captures)
 		clone.Agent = &agent
 	}
 	clone.Verdicts = slices.Clone(command.Verdicts)

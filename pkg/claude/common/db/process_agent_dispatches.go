@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,7 +31,11 @@ const (
 const (
 	MaxProcessDispatchWaitReasonBytes = 1024
 	MaxProcessDispatchReportNoteBytes = 4096
-	MaxProcessDispatchReadPage        = 256
+	// MaxProcessDispatchOutputBytes bounds one reported step output, and
+	// MaxProcessDispatchOutputsBytes all of a report's, encoded.
+	MaxProcessDispatchOutputBytes  = 16384
+	MaxProcessDispatchOutputsBytes = 65536
+	MaxProcessDispatchReadPage     = 256
 )
 
 // ErrProcessDispatchConflict reports a compare-and-swap that found the dispatch
@@ -54,6 +59,9 @@ type ProcessAgentDispatch struct {
 	ReportNote    string
 	// ReportVerdict is an agent decider's reported verdict; empty otherwise.
 	ReportVerdict string
+	// ReportOutputs are the step outputs the performer reported, by name;
+	// nil when its node declares none.
+	ReportOutputs map[string]string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	DeliveredAt   time.Time
@@ -67,15 +75,21 @@ func (d *ProcessAgentDispatch) Open() bool {
 
 const processAgentDispatchColumns = `run_id, command_id, node_id, attempt, state, agent_id, resolution,
 	wait_reason, message_id, deliveries, report_outcome, report_note, created_at, updated_at,
-	delivered_at, reported_at, report_verdict`
+	delivered_at, reported_at, report_verdict, report_outputs`
 
 func scanProcessAgentDispatch(scanner processRunScanner) (*ProcessAgentDispatch, error) {
 	var row ProcessAgentDispatch
 	var created, updated, delivered, reported dbTimestamp
+	var outputs string
 	if err := scanner.Scan(&row.RunID, &row.CommandID, &row.NodeID, &row.Attempt, &row.State,
 		&row.AgentID, &row.Resolution, &row.WaitReason, &row.MessageID, &row.Deliveries,
-		&row.ReportOutcome, &row.ReportNote, &created, &updated, &delivered, &reported, &row.ReportVerdict); err != nil {
+		&row.ReportOutcome, &row.ReportNote, &created, &updated, &delivered, &reported, &row.ReportVerdict, &outputs); err != nil {
 		return nil, err
+	}
+	if outputs != "" {
+		if err := json.Unmarshal([]byte(outputs), &row.ReportOutputs); err != nil {
+			return nil, fmt.Errorf("process dispatch %s/%s outputs: %w", row.RunID, row.CommandID, err)
+		}
 	}
 	row.CreatedAt, row.UpdatedAt = created.Time(), updated.Time()
 	row.DeliveredAt, row.ReportedAt = delivered.Time(), reported.Time()
@@ -237,12 +251,23 @@ func ReleaseProcessAgentDispatch(runID, commandID, agentID, reason string) error
 // RecordProcessAgentDispatchReport durably accepts one performer's report. It
 // is a compare-and-swap on the exact performer: only the agent the attempt was
 // delivered to can move it, and only once.
-func RecordProcessAgentDispatchReport(runID, commandID, agentID, outcome, note, verdict string) error {
+func RecordProcessAgentDispatchReport(runID, commandID, agentID, outcome, note, verdict string, outputs map[string]string) error {
+	encoded := ""
+	if len(outputs) > 0 {
+		raw, err := json.Marshal(outputs)
+		if err != nil {
+			return err
+		}
+		if len(raw) > MaxProcessDispatchOutputsBytes {
+			return fmt.Errorf("%w: the reported outputs exceed %d bytes", ErrProcessRunInvalid, MaxProcessDispatchOutputsBytes)
+		}
+		encoded = string(raw)
+	}
 	now := time.Now().UTC()
 	return execProcessDispatchCAS(`UPDATE process_agent_dispatches
-		SET state = ?, report_outcome = ?, report_note = ?, report_verdict = ?, reported_at = ?, updated_at = ?
+		SET state = ?, report_outcome = ?, report_note = ?, report_verdict = ?, report_outputs = ?, reported_at = ?, updated_at = ?
 		WHERE run_id = ? AND command_id = ? AND state = ? AND agent_id = ?`,
-		ProcessDispatchReported, outcome, boundedDispatchText(note, MaxProcessDispatchReportNoteBytes), verdict,
+		ProcessDispatchReported, outcome, boundedDispatchText(note, MaxProcessDispatchReportNoteBytes), verdict, encoded,
 		dbTime(now), dbTime(now), runID, commandID, ProcessDispatchDelivered, agentID)
 }
 
@@ -273,6 +298,18 @@ func CloseProcessAgentDispatch(runID, commandID, reason string) error {
 		WHERE run_id = ? AND command_id = ? AND state != ?`,
 		ProcessDispatchClosed, reason, boundedDispatchText(reason, MaxProcessDispatchWaitReasonBytes),
 		dbTime(time.Now().UTC()), runID, commandID, ProcessDispatchClosed)
+	return err
+}
+
+// ClearProcessAgentDispatchOutputs drops the outputs a dispatch's report
+// carried, for a report the run never applied.
+func ClearProcessAgentDispatchOutputs(runID, commandID string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE process_agent_dispatches SET report_outputs = '', updated_at = ?
+		WHERE run_id = ? AND command_id = ?`, dbTime(time.Now().UTC()), runID, commandID)
 	return err
 }
 

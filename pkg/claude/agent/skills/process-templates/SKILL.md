@@ -158,7 +158,9 @@ warns when placed in inert fields such as profile, timeout, or backoff.
 ### Node types
 
 - `task`: require `performer`; usually route `pass` and `fail`. Optionally add
-  `plan`, ordered `checks`, `review`, `retry`, and `captures`.
+  `plan`, ordered `checks`, `review`, `retry`, and `captures` (outputs: a
+  plain agent task's performer reports each with `--output name=value`, and a
+  later prompt reads it as `{{ outputs.name }}`; params stay `{{ params.x }}`).
 - `decision`: require a decider `performer`; each possible verdict needs an
   exact outcome key in `next`.
 - `wait`: require `wait.duration`, `wait.until`, or `wait.signal`, plus `next`.
@@ -210,8 +212,13 @@ Every performer starts with `kind` and may use shared `profile`, `timeout`, and
 
 - `kind: agent`: require `prompt`; optional `model`, `effort`. Who performs
   it is at most one of `assignee` (a specific agent by name or id), `role`
-  (any group member with that role), or `anyone: true` (anyone in the run's
-  group, idle first); with none of them, `profile` is the role (legacy).
+  (any group member with that role), `anyone: true` (anyone in the run's
+  group, idle first), or `lead: true` (the group's lead: role `lead`, else
+  an owning member); with none of them, `profile` is the role (legacy).
+  Constraints on top (not with `assignee`): `sameAs: <step>` (the agent that
+  performed that step, e.g. back to the implementor) and `differentFrom:
+  [<step>, ...]` (an agent that performed none of them, both ways: an
+  independent reviewer).
   `fallback` says what happens when nobody can take it: `{action: spawn,
   profile: P}` (no profile = the group's default spawn profile), `{action:
   wait}`, or `{action: fail}`. A top-level template `fallback` sets the

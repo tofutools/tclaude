@@ -88,7 +88,12 @@ attempt and exact report command. Do the work, then report exactly once:
 tclaude process report succeeded --run <run-id> --node <node> --attempt <n> --note "PR #12 is open"
 tclaude process report failed --run <run-id> --node <node> --attempt <n> --note "why"
 tclaude process report succeeded ... --verdict changes --note "reasoning"   # when asked to decide
+tclaude process report succeeded ... --output pr="PR #12" --note "done"   # when the step declares outputs
 ```
+
+A step with outputs must report each one the message names (with a single
+output, the note stands in for it); a success without them is refused, so
+report again with them.
 
 `--run/--node/--attempt` may be omitted when you have exactly one open node.
 

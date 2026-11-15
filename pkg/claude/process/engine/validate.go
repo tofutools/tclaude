@@ -214,6 +214,7 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	if err := prepareLoops(definition, loops); err != nil {
 		return nil, err
 	}
+	mutualDifferentFrom(definition)
 	for edgeIndex, edge := range definition.edges {
 		// A bounded back edge is no candidate of its target: taking it starts a
 		// new round there instead of arriving (loops.go).
@@ -279,6 +280,8 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				if err != nil {
 					return err
 				}
+				constrainAgent(agent, *node.Performer, prefix)
+				agent.Captures = slices.Clone(node.Captures)
 				prepared.agent = agent
 				break
 			}
@@ -297,6 +300,7 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				if err != nil {
 					return err
 				}
+				constrainAgent(agent, *node.Performer, prefix)
 				prepared.agent = agent
 				prepared.maxAttempts = 1
 			}
@@ -372,6 +376,7 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 					if err != nil {
 						return err
 					}
+					constrainAgent(agent, *spec.Performer, prefix)
 					child.agent = agent
 					break
 				}
@@ -698,13 +703,68 @@ func bindAgent(nodeID string, performer model.Performer, retry *model.RetryPolic
 	return command, nil
 }
 
+// constrainAgent binds a performer's lead selector and constraints onto its
+// command, namespacing the node ids into the scope (prefix) they were
+// authored in.
+func constrainAgent(command *AgentCommand, performer model.Performer, prefix string) {
+	if same := strings.TrimSpace(performer.SameAs); same != "" {
+		command.SameAs = prefix + same
+	}
+	for _, ref := range performer.DifferentFrom {
+		if ref = strings.TrimSpace(ref); ref != "" {
+			command.DifferentFrom = append(command.DifferentFrom, prefix+ref)
+		}
+	}
+}
+
+// mutualDifferentFrom makes differentFrom symmetric: a node that must differ
+// from another lists it, and the other lists the node back, so the pair never
+// shares a performer whichever of them is dispatched first. A compound
+// task's stages count as the task.
+func mutualDifferentFrom(definition *Definition) {
+	agentNodes := map[string][]int{}
+	for index, node := range definition.nodes {
+		if node.agent == nil {
+			continue
+		}
+		owner := node.id
+		if node.parent >= 0 {
+			owner = definition.nodes[node.parent].id
+		}
+		agentNodes[owner] = append(agentNodes[owner], index)
+	}
+	for index := range definition.nodes {
+		node := &definition.nodes[index]
+		if node.agent == nil {
+			continue
+		}
+		owner := node.id
+		if node.parent >= 0 {
+			owner = definition.nodes[node.parent].id
+		}
+		for _, ref := range slices.Clone(node.agent.DifferentFrom) {
+			for _, other := range agentNodes[ref] {
+				agent := definition.nodes[other].agent
+				if !slices.Contains(agent.DifferentFrom, owner) {
+					agent.DifferentFrom = append(agent.DifferentFrom, owner)
+				}
+			}
+		}
+	}
+	for index := range definition.nodes {
+		if agent := definition.nodes[index].agent; agent != nil && len(agent.DifferentFrom) > 0 {
+			slices.Sort(agent.DifferentFrom)
+		}
+	}
+}
+
 // AgentCommandFor is the performer-selection part of an agent command: who
 // may take the node and what happens when nobody can. bindAgent completes it
 // for a run; a resolve preview uses it as is.
 func AgentCommandFor(bound model.Performer, processFallback *model.PerformerFallback) *AgentCommand {
 	command := &AgentCommand{
 		Profile: bound.Profile, Prompt: bound.Prompt, Assignee: bound.Assignee,
-		Role: strings.TrimSpace(bound.Role), Anyone: bound.Anyone,
+		Role: strings.TrimSpace(bound.Role), Anyone: bound.Anyone, Lead: bound.Lead,
 		Model: bound.Model, Effort: bound.Effort,
 		Spawn: bound.Spawn == model.SpawnAllowed,
 	}
@@ -1362,8 +1422,18 @@ func terminalStatus(result string) RunStatus {
 	}
 }
 
+// agentCommandsEqual compares two agent commands field by field.
+func agentCommandsEqual(left, right AgentCommand) bool {
+	return left.Profile == right.Profile && left.Prompt == right.Prompt && left.Assignee == right.Assignee &&
+		left.Model == right.Model && left.Effort == right.Effort && left.Role == right.Role &&
+		left.Anyone == right.Anyone && left.Lead == right.Lead && left.SameAs == right.SameAs &&
+		slices.Equal(left.DifferentFrom, right.DifferentFrom) && slices.Equal(left.Captures, right.Captures) &&
+		left.Spawn == right.Spawn && left.FallbackAction == right.FallbackAction &&
+		left.FallbackProfile == right.FallbackProfile && left.RetryMode == right.RetryMode
+}
+
 func commandsEqual(left, right Command) bool {
-	if (left.Agent == nil) != (right.Agent == nil) || (left.Agent != nil && *left.Agent != *right.Agent) {
+	if (left.Agent == nil) != (right.Agent == nil) || (left.Agent != nil && !agentCommandsEqual(*left.Agent, *right.Agent)) {
 		return false
 	}
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&

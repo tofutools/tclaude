@@ -514,7 +514,7 @@ func TestAgentTaskPerformerIsEligibleAndPlansAgentCommand(t *testing.T) {
 	}
 	want := AgentCommand{Profile: "dev", Prompt: "Fix main", Assignee: "alice", Spawn: true,
 		RetryMode: model.RetryModeFeedbackSameSession}
-	if *command.Agent != want {
+	if !agentCommandsEqual(*command.Agent, want) {
 		t.Fatalf("agent binding = %+v, want %+v", *command.Agent, want)
 	}
 	if !strings.HasSuffix(command.ID, "_1_agent") {

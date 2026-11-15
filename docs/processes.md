@@ -650,7 +650,8 @@ creation with a path-specific diagnostic, rather than failing later: human
 task performers; agent performer `timeout`; retry backoff waits; same-session retry feedback
 for program tasks (`retry.onFail: feedback-same-session` is executable only
 for agent tasks); retries on compound stages; `plan.approvalRetry`; human
-stage performers; poison handling; wait nodes; captures.
+stage performers; poison handling; wait nodes; outputs (`captures`) on
+anything but a plain agent task.
 
 ## Agent performers
 
@@ -679,7 +680,9 @@ and fail-fast behave identically.
 
 - `assignee`: a specific agent, by name or agent id;
 - `role`: any member of the run's group with that role;
-- `anyone: true`: anyone in the run's group.
+- `anyone: true`: anyone in the run's group;
+- `lead: true`: the group's lead — a member with the role `lead`, else a
+  member that owns the group.
 
 With none of them, the step's `profile` is the role (the original shape): a
 member whose role matches the profile, or the role that spawn profile
@@ -702,7 +705,7 @@ spawned there again re-arms the notice.
 
 | Scope | Resolution |
 | --- | --- |
-| group | the explicit `assignee`, if it names a current member; else a member the selector admits (its `role`, anyone, or the `profile` role), idle first, then busy, then offline, and among equals the one holding the fewest open process steps; else the fallback — a spawn only when the run owner could spawn into the group |
+| group | the explicit `assignee`, if it names a current member; else, with `sameAs`, that step's performer; else a member the selector admits (its `role`, anyone, the lead, or the `profile` role) and `differentFrom` does not rule out, idle first, then busy, then offline, and among equals the one holding the fewest open process steps; else the fallback — a spawn only when the run owner could spawn into the group |
 | agent | the bound agent performs every agent node; an `assignee` naming anyone else waits as needs performer |
 | none | only an explicit `assignee` (any active agent); otherwise the node waits as needs performer, or fails when its fallback is `fail` |
 
@@ -710,6 +713,72 @@ spawned there again re-arms the notice.
 each agent step, who would take it if the run started now — a member, a spawn
 of which profile, a wait, or a failure — without starting anything. The
 process context lists each group's `defaultSpawnProfile` and member `roles`.
+
+**Same agent, different agent.** Two constraints sit on top of the
+selector, naming other agent steps of the same graph:
+
+- `sameAs: <step>` hands the step to the agent that performed that step (its
+  latest attempt), for example a fix-up that goes back to the implementor.
+  Before that step has run, or once its performer has left the group, the
+  selector chooses.
+- `differentFrom: [<step>, ...]` keeps the step from every agent that
+  performed one of those steps, for an independent vet or a second reviewer.
+  It holds both ways: two steps that must differ never share a performer,
+  whichever is dispatched first, which is what keeps two reviewers running
+  alongside each other apart. A compound step's stages count as the step.
+
+A constraint wins over the selector's preference: `sameAs` takes that agent
+even when it is busy, and `differentFrom` leaves the excluded agents out even
+when no one else matches, in which case the fallback applies (a spawned
+performer is always a different agent). An `assignee` names one agent, so it
+takes no constraint. An agent-scoped run is performed by its bound agent
+throughout, constraints or not.
+
+```yaml
+nodes:
+  implement:
+    type: task
+    performer: {kind: agent, role: dev, prompt: "Build it.", fallback: {action: spawn}}
+  vet:
+    type: task
+    performer: {kind: agent, role: ux, differentFrom: [plan, implement], prompt: "Vet it."}
+  merge:
+    type: task
+    performer: {kind: agent, lead: true, prompt: "Final check, then merge."}
+```
+
+**Step outputs.** A plain agent task can declare outputs with
+`captures: [<name>, ...]`. Its performer reports a value for each with
+`--output <name>=<value>`; a step with a single output can leave that out,
+and its note is the output. A later step's prompt (or a person's ask) reads
+the value as `{{ outputs.<name> }}`, filled in when the step is handed to its
+performer, so a loop's next round reads the latest value. Parameters keep
+their own form, `{{ params.<name> }}` (the editors' bare `{{name}}` is short
+for a parameter, never an output). The value is marked in the prompt as
+reported by an earlier step, so the agent reads it as data, not as the
+template's instructions.
+
+```yaml
+nodes:
+  plan:
+    type: task
+    captures: [plan]
+    performer: {kind: agent, role: planner, prompt: "Plan {{ params.task }}."}
+  build:
+    type: task
+    captures: [pr]
+    performer: {kind: agent, role: dev, prompt: "Build this plan:\n{{ outputs.plan }}\nReport the PR link as pr."}
+  review:
+    type: task
+    performer: {kind: agent, role: reviewer, prompt: "Review {{ outputs.pr }} against the plan:\n{{ outputs.plan }}"}
+```
+
+A success that leaves out a declared output is refused at that step, with
+the command that would fix it, and the agent reports again; nothing later
+ever reads a blank. A name the step does not declare is refused too. An
+output is declared by one step only; a `{{ outputs.name }}` that names no declared
+output is a validation warning and stays as written. Each value is at most
+16 KiB. `show --json` lists what each attempt reported under `performers[].outputs`.
 
 A **needs performer** node is retried on every runtime sweep (once a minute),
 so it is picked up as soon as a matching member joins. `show` prints the

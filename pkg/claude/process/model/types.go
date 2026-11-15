@@ -104,10 +104,11 @@ type Node struct {
 	// keyed by outcome (tcl-eu70x9). See LoopBound.
 	Loops  map[string]LoopBound `json:"loops,omitempty" yaml:"loops,omitempty"`
 	Result string               `json:"result,omitempty" yaml:"result,omitempty"`
-	// Captures names the outputs a task node publishes for downstream nodes
-	// (design §2: performer input = instructions + upstream captures). Names
-	// only in v1 — the runtime capture plumbing is a later ticket; validation
-	// keeps names id-shaped and unique so they can become references later.
+	// Captures names the outputs an agent task publishes for later steps
+	// (shown as "outputs" in the editors): its performer reports a value for
+	// each (`--output name=value`, or the note when the step has one), and a
+	// later step's prompt or ask reads it as {{ name }}. A report that leaves
+	// one out is refused, so a missing output fails at its own step.
 	Captures []string `json:"captures,omitempty" yaml:"captures,omitempty"`
 	// Subprocess is the nested graph of a subprocess node, and is only valid on
 	// that node type.
@@ -156,6 +157,19 @@ type Performer struct {
 	// none of them, Profile names the role (the legacy shape).
 	Role   string `json:"role,omitempty" yaml:"role,omitempty"`
 	Anyone bool   `json:"anyone,omitempty" yaml:"anyone,omitempty"`
+	// Lead is the fourth agent selector: the group's lead, a member with the
+	// role "lead", else an agent that owns the group.
+	Lead bool `json:"lead,omitempty" yaml:"lead,omitempty"`
+	// SameAs and DifferentFrom constrain who performs an agent step, on top
+	// of its selector: the agent that performed node SameAs (a loop back to
+	// the implementor), or an agent that performed none of DifferentFrom (an
+	// independent reviewer). Node ids in the same graph scope. DifferentFrom
+	// is mutual: two steps that must differ never share a performer, whichever
+	// is dispatched first. A constraint wins over the selector's preference;
+	// when no member satisfies it, the fallback applies (a spawn is always a
+	// different agent).
+	SameAs        string   `json:"sameAs,omitempty" yaml:"sameAs,omitempty"`
+	DifferentFrom []string `json:"differentFrom,omitempty" yaml:"differentFrom,omitempty"`
 	// Fallback is agent-scoped: what happens when no member can take the
 	// step. It overrides Template.Fallback and replaces the legacy Spawn.
 	Fallback *PerformerFallback `json:"fallback,omitempty" yaml:"fallback,omitempty"`
