@@ -600,6 +600,25 @@ func TestOpenCodeOverflowAutoCompactionShowsCompacting(t *testing.T) {
 	assert.Equal(t, "Bash", state.StatusDetail)
 }
 
+// An overflow's turn is not over: OpenCode compacts and carries it on, so the
+// busy after the error is that turn, not a new prompt for user-prompt orders.
+func TestOpenCodeBusyAfterOverflowIsNotANewPrompt(t *testing.T) {
+	const convID = "ses_target"
+	projector := newOpenCodeEventProjector(convID, "/tmp/project")
+	project := func(event string) []session.HookCallbackInput {
+		t.Helper()
+		got, err := projector.project(json.RawMessage(event))
+		require.NoError(t, err)
+		return got
+	}
+	project(openCodeTestEvent("evt_busy", "session.status", convID, `"status":{"type":"busy"}`))
+	got := project(openCodeTestEvent("evt_overflow", "session.error", convID,
+		`"error":{"name":"ContextOverflowError","data":{"message":"too long"}}`))
+	require.Len(t, got, 1)
+	require.Equal(t, "StopFailure", got[0].HookEventName)
+	assert.Empty(t, project(openCodeTestEvent("evt_busy_2", "session.status", convID, `"status":{"type":"busy"}`)))
+}
+
 // A failed turn is over: the busy that starts the next one repaints working,
 // although the last status OpenCode reported before the error was busy too.
 func TestOpenCodeBusyAfterErrorRepaintsWorking(t *testing.T) {

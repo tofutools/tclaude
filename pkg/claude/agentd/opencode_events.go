@@ -190,8 +190,14 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 		p.deferredIdle = false
 		p.pendingAttention = false
 		// The failed turn is over: OpenCode's next busy is a new turn, not a
-		// repeat of the one before the error, so it must repaint working.
-		p.lastSessionStatus = ""
+		// repeat of the one before the error, so it must repaint working. A
+		// context overflow is the exception: OpenCode compacts and carries the
+		// same turn on, its compaction part repaints the status, and a busy
+		// projected as a new prompt would fire user-prompt standing orders in
+		// the middle of the recovery.
+		if envelope.Properties.Error.Name != "ContextOverflowError" {
+			p.lastSessionStatus = ""
+		}
 		input := p.hook("StopFailure")
 		input.ErrorType = openCodeHookErrorType(envelope.Properties.Error)
 		input.ErrorMessage = boundedOpenCodeDetail(envelope.Properties.Error.Data.Message)
