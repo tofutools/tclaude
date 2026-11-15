@@ -168,7 +168,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
       </div></div>
       <div class="gm-field" data-mini-agree=${id}><span>All must choose</span><${Select} size="sm" aria-label="The outcome every decider must choose"
         value=${node.agree || ''} onChange=${(event) => onApply(setAgree(view, id, event.currentTarget.value))}>
-        ${outcomes.map(({ outcome }) => html`<option key=${outcome} value=${outcome}>${outcome}</option>`)}
+        ${outcomes.filter(({ outcome }) => !loopBound(node, outcome)).map(({ outcome }) => html`<option key=${outcome} value=${outcome}>${outcome}</option>`)}
       <//></div>
       <p class="gq-dim">Otherwise the first decider, in this order, who chose something else decides; the work goes back with everyone's notes.</p>`
     : html`<div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} />
@@ -179,7 +179,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
       value=${constraint} onChange=${(event) => onApply(updateStep(view, id, (s) => setStepConstraint(s, constraintFromValue(event.currentTarget.value))))}>
       <option value="">whoever fits</option>
       ${!constraintKnown && html`<option value=${constraint}>${constraint.startsWith('same:') ? `same as ${stepName(constraint.slice(5))}` : `not the agent of ${constraint.slice(10).split(',').map(stepName).join(', ')}`}</option>`}
-      <optgroup label="The same agent as">${others.map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>${stepName(other)}</option>`)}</optgroup>
+      <optgroup label="The same agent as">${others.filter((other) => !view.template.nodes[other]?.deciders?.length).map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>${stepName(other)}</option>`)}</optgroup>
       <optgroup label="Not the agent of">${others.map((other) => html`<option key=${`different:${other}`} value=${`different:${other}`}>${stepName(other)}</option>`)}</optgroup>
     <//></div>`}
     ${kind === 'agent' && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}

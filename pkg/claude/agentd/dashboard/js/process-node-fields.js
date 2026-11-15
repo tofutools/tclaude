@@ -75,7 +75,7 @@ export function NodeSelect({ fieldKey, label, options, value, apply, readOnly, b
 // contact schedule.
 export function PerformerEditor({
   performer, locate, path, commit, readOnly, choiceRouting = true,
-  only = null, omit = [], showKind = true, contact = false,
+  only = null, omit = [], showKind = true, contact = false, kinds = PERFORMER_KINDS,
 }) {
   const kind = typeof performer?.kind === 'string' && performer.kind ? performer.kind : 'agent';
   const known = PERFORMER_KINDS.includes(kind);
@@ -86,7 +86,7 @@ export function PerformerEditor({
   const schedule = performer?.contact || {};
   return html`<div class="process-performer-editor">
     ${showKind && html`<${NodeSelect} fieldKey=${`${path}.kind`} label="kind"
-      options=${known ? PERFORMER_KINDS : [...PERFORMER_KINDS, kind]} value=${kind} readOnly=${readOnly}
+      options=${kinds.includes(kind) ? kinds : [...kinds, kind]} value=${kind} readOnly=${readOnly}
       apply=${(key, value) => mutate('kind', value, setPerformerKind)} />`}
     ${showKind && !known && html`<p class="process-node-empty ui-empty">Unknown performer kind ${kind}: validation rejects it — pick a supported kind.</p>`}
     ${fields.map((field) => {

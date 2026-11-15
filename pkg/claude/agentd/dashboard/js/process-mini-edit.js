@@ -178,8 +178,23 @@ export function syncLoops(view) {
         setLoopBound(node, outcome, { maxIterations: bound.maxIterations });
       }
     }
+    if (node.deciders?.length) syncGate(view, id, node, outcomes);
   }
   return view;
+}
+
+// syncGate keeps a gate valid after its edges change: what all must choose
+// never goes back, and every loop has its way out up front, since nobody is
+// there to pick one when the rounds run out.
+function syncGate(view, id, node, outcomes) {
+  if (!outcomes.includes(node.agree) || loopBound(node, node.agree)) node.agree = agreeChoice(view, id, node);
+  for (const outcome of Object.keys(node.loops || {})) {
+    const bound = loopBound(node, outcome);
+    if (bound.onExhausted) continue;
+    const ways = exhaustionChoices(node, outcomes, outcome);
+    const way = ways.find((o) => o !== node.agree) || ways[0];
+    if (way) setLoopBound(node, outcome, { ...bound, onExhausted: way });
+  }
 }
 
 // insertAfter puts a new step on `id`'s main path, before what came next.
@@ -265,6 +280,8 @@ export function duplicate(view, id) {
   const copy = clone(node);
   copy.name = `${node.name || id} copy`;
   delete copy.join;
+  // Output names are unique to one step.
+  delete copy.captures;
   const added = addNode(next, copy, `${id}-copy`);
   const main = mainEdge(next, id);
   for (const edge of outgoing(next, id)) next.edges.push({ from: added, outcome: edge.outcome, to: edge.to });
@@ -298,6 +315,8 @@ export function changeKind(view, id, kind) {
     changed.performer.choices = answers.length ? [CONTINUE.you, ...answers.filter((a) => a !== CONTINUE.you)] : [CONTINUE.you];
   }
   next.template.nodes[id] = changed;
+  // Only a task reports outputs.
+  if (changed.type !== 'task') delete changed.captures;
   let orphans = [];
   if (from === 'you') {
     // A task continues one way: only the main answer's path stays, and the
@@ -424,6 +443,7 @@ export function addOutcome(view, id, to) {
 export function canRemoveOutcome(view, id, outcome) {
   const out = outgoing(view, id);
   if (out.length < 2) return 'a decision keeps at least one outcome';
+  if (view.template.nodes[id]?.deciders?.length && out.length < 3) return 'a gate needs an outcome besides the one all must choose';
   const node = view.template.nodes[id];
   if (!loopBound(node, outcome) && !out.some((edge) => edge.outcome !== outcome && !loopBound(node, edge.outcome))) {
     return 'its only outcome that does not loop back';
@@ -632,7 +652,8 @@ export function canAddDecider(view, id) {
 // approving one if there is one, else its first that does not go back.
 function agreeChoice(view, id, node) {
   const outcomes = outcomesOf(view, id).map((o) => o.outcome);
-  return outcomes.find((o) => APPROVING.test(o)) || outcomes.find((o) => !node.loops?.[o]) || outcomes[0] || '';
+  const forward = outcomes.filter((o) => !node.loops?.[o]);
+  return forward.find((o) => APPROVING.test(o)) || forward[0] || outcomes[0] || '';
 }
 
 // addDecider gives decision id another decider; a plain decision becomes a

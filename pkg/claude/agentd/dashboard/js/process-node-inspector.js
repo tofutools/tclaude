@@ -72,6 +72,8 @@ function locateMain(type) {
 // and the outcome all of them must choose.
 // A gate's votes are its outcomes, so a decider names no choices of its own.
 const GATE_VOTE_OMIT = ['choices', 'choiceOutcomes'];
+// A command cannot vote: deciders are agents or people.
+const GATE_DECIDER_KINDS = ['agent', 'human'];
 
 function DecidersBlock({ node, commit, readOnly, edges }) {
   const outcomes = edges.map((edge) => edge.outcome);
@@ -84,7 +86,7 @@ function DecidersBlock({ node, commit, readOnly, edges }) {
         ${!readOnly && html`<${Button} size="sm" variant="ghost danger" class="process-action" aria-label=${`Remove decider ${index + 1}`}
           onClick=${() => commit(`deciders.${index}.remove`, (draft) => removeGateDecider(draft, index, outcomes))}>remove<//>`}</div>
       <${PerformerEditor} path=${`deciders.${index}`} locate=${(draft) => draft.deciders[index]} performer=${decider}
-        commit=${commit} readOnly=${readOnly} choiceRouting=${false} contact=${true} omit=${GATE_VOTE_OMIT} />
+        commit=${commit} readOnly=${readOnly} choiceRouting=${false} contact=${true} omit=${GATE_VOTE_OMIT} kinds=${GATE_DECIDER_KINDS} />
     </div>`)}
     ${!readOnly && node.deciders.length < MAX_GATE_DECIDERS && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
       onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, outcomes))}>+ add decider<//>`}

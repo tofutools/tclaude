@@ -316,7 +316,8 @@ const APPROVING_OUTCOME = /^(approve|approved|ok|ship|yes|accept|pass|lgtm)$/i;
 // gateAgreeChoice is the outcome a new gate asks everyone to choose: an
 // approving one, else one that does not loop back, else the first.
 export function gateAgreeChoice(node, outcomes) {
-  return outcomes.find((o) => APPROVING_OUTCOME.test(o)) || outcomes.find((o) => !node.loops?.[o]) || outcomes[0] || '';
+  const forward = outcomes.filter((o) => !node.loops?.[o]);
+  return forward.find((o) => APPROVING_OUTCOME.test(o)) || forward[0] || outcomes[0] || '';
 }
 
 // addGateDecider gives a decision another decider (a copy of the first's
