@@ -1,3 +1,5 @@
+//ci:reads docs/examples/ways-of-working.yaml
+
 package agentd_test
 
 import (

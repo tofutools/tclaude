@@ -395,7 +395,7 @@ func validateExpansionCollisions(tmpl *Template, diagnostics *templateDiagnostic
 	derivedBy := map[string]string{}
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
 		node := tmpl.Nodes[nodeID]
-		if !node.IsCompound() && !(node.Type == NodeTypeDecision && node.IsGate()) {
+		if !node.IsCompound() && (node.Type != NodeTypeDecision || !node.IsGate()) {
 			continue
 		}
 		visitChildID := func(childID string) bool {
