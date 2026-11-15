@@ -927,6 +927,8 @@ func (m *processRunManager) shutdown(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		m.wg.Wait()
+		// A run that just ended settles its board task first.
+		executor.WaitTerminalHooks()
 		close(done)
 	}()
 	select {
