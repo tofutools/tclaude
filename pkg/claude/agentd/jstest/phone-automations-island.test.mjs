@@ -171,3 +171,33 @@ test('leaving the tab closes an open page', async (t) => {
   await harness.act(() => { activeTab.value = 'jobs'; });
   assert.ok($('.phone-auto-list'), 'coming back shows the list');
 });
+
+test('a Groups run link opens the run in Runs, as a correction of the link entry', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [island, runs] = await Promise.all([
+    harness.importDashboardModule('js/phone-automations-island.js'),
+    harness.importDashboardModule('js/phone-process-runs.js'),
+  ]);
+  const { signal } = harness.signals;
+  const activeTab = signal('groups');
+  const context = { context: signal(null), status: signal('ready'), error: signal(''), refresh: async () => {} };
+  const mounted = await harness.mount(harness.html`<${island.PhoneRunsApp} activeTab=${activeTab} snapshot=${signal(null)} context=${context} />`);
+  const announced = [];
+  const onNav = (event) => announced.push(event.detail);
+  harness.window.document.addEventListener('tclaude:navigated', onNav);
+  t.after(() => harness.window.document.removeEventListener('tclaude:navigated', onNav));
+  let opened = 0;
+  await harness.act(() => runs.openRunLink({ tab: 'groups', subtab: 'runs', selection: 'webshop', item: 'run_7' },
+    { doc: harness.window.document, open: () => { opened += 1; activeTab.value = 'processes'; } }));
+  assert.deepEqual(announced, [{ location: { tab: 'processes' }, correction: true }], 'the link entry becomes Runs');
+  assert.equal(opened, 1);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(runs.runRequest.value, null, 'the request is taken');
+  assert.equal(mounted.container.querySelector('.phone-auto'), null, 'the run page, not the list');
+
+  // A link to a group's runs, with no run, opens the list.
+  await harness.act(() => runs.openRunLink({ tab: 'groups', subtab: 'runs', selection: 'webshop' },
+    { doc: harness.window.document, open: () => {} }));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.ok(mounted.container.querySelector('.phone-auto'), 'the Runs list');
+});
