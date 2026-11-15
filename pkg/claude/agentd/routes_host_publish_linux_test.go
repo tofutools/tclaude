@@ -124,8 +124,19 @@ func TestHostOnlyPublicationWithoutGroup(t *testing.T) {
 	require.Empty(t, groupRoutes)
 	require.NoError(t, db.SetAgentPermissionOverride(args.ConvID, PermRoutesPublishHost, db.PermEffectDeny, "test"))
 	require.Eventually(t, func() bool { return len(hostRoutesForRoute(route.ID)) == 0 }, time.Second, 10*time.Millisecond)
-	_, err = client.Get("http://" + lease.Endpoint + "/")
-	require.Error(t, err)
+	// A new connection must be refused. The earlier GET's keep-alive
+	// connection was accepted before the revoke and closing the listener
+	// does not close it, so reusing it could still be served: dial fresh,
+	// and allow the teardown to finish.
+	fresh := &http.Client{Timeout: time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	require.Eventually(t, func() bool {
+		resp, err := fresh.Get("http://" + lease.Endpoint + "/")
+		if err != nil {
+			return true
+		}
+		_ = resp.Body.Close()
+		return false
+	}, 3*time.Second, 20*time.Millisecond, "the revoked host route still serves new connections")
 }
 
 func TestHostPermissionDoesNotBreakUnsupportedResume(t *testing.T) {
