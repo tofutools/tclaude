@@ -177,11 +177,24 @@ test('↓ Live is for a session whose wheel scrolls tmux copy-mode, not one that
   await harness.act(() => {});
   assert.equal(made.at(-1).options.touchScroll, true);
   assert.equal(made.at(-1).options.wheelCopyMode, false, 'Claude Code: as on the desktop');
-  assert.equal(made.at(-1).options.swipeWheel, 'claude', 'Claude Code\'s own wheel model');
+  assert.equal(made.at(-1).options.swipeWheel(), 'claude', 'Claude Code\'s own wheel model');
   await harness.act(() => tab.openWebWindowPane('agt_00000000000000000000000000000002', 'codex-one', { harness: 'codex' }));
   await harness.act(() => {});
   assert.equal(made.at(-1).options.wheelCopyMode, true, 'Codex: tmux copy-mode would take keys');
-  assert.equal(made.at(-1).options.swipeWheel, 'tmux', 'Codex: five lines a notch');
+  assert.equal(made.at(-1).options.swipeWheel(), 'tmux', 'Codex: five lines a notch');
+});
+
+test('a terminal opened before the page knows its agent takes Claude Code\'s wheel once the snapshot names it', async (t) => {
+  // A cold link (/?terminal=window:<agent>): the widget is made before the
+  // first snapshot, so the agent is unknown until it arrives.
+  let known = null;
+  const { harness, tab, made } = await setup(t, { agent: (id) => (id === AGENT ? known : null) });
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', {}));
+  await harness.act(() => {});
+  const { swipeWheel } = made.at(-1).options;
+  assert.equal(swipeWheel(), 'tmux', 'unknown yet: the safe mapping');
+  known = { label: 'checkout-ui', harness: 'claude' };
+  assert.equal(swipeWheel(), 'claude', 'read again at the next swipe');
 });
 
 test('wheelCopyMode: an agent terminal without a harness takes the agent\'s, else Claude Code\'s; a shell may scroll copy-mode', async (t) => {

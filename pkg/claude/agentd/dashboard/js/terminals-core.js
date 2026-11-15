@@ -17,7 +17,7 @@ import { terminalThemeFor } from './terminal-theme.js';
 import { drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js';
 import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
 import { isPageId, pagePaneKey } from './page-pane-model.js';
-import { claudeWheelState, claudeWheelStep } from './claude-wheel.js';
+import { claudeWheelState, claudeWheelStep, claudeWheelWait } from './claude-wheel.js';
 
 // A newly-created browser terminal can briefly lose an attach race with the
 // client it is replacing (pop-out / reattach), or arrive while a freshly
@@ -170,6 +170,10 @@ const SWIPE_FRICTION = 0.998;
 const SWIPE_MAX_NOTCHES_PER_FRAME = { tmux: 4, claude: 12 };
 // Past Claude Code's acceleration window (40ms), its next notch is one line.
 const SWIPE_CLAUDE_FLUSH_MS = 50;
+// SWIPE_CLAUDE_GAP_MARGIN_MS is how close to Claude's acceleration gap a
+// notch may not go (claudeWheelWait): the clocks of this page and Claude,
+// and the way between them, differ by about that much.
+const SWIPE_CLAUDE_GAP_MARGIN_MS = 10;
 // A mouse report is how xterm hands the session a wheel notch; it is not
 // typing, and must not bring a scrolled-back view back to live.
 const MOUSE_REPORT = /^\x1b\[(<|M)/;
@@ -556,7 +560,9 @@ export function mountTerminalWidget({
   const mouseTaken = () => (term.modes?.mouseTrackingMode || 'none') !== 'none';
   // Claude Code scrolls its own view only while it takes the mouse (its
   // fullscreen renderer); otherwise a notch is an arrow key.
-  const wheelModel = () => (swipeWheel === 'claude' && mouseTaken() ? 'claude' : 'tmux');
+  // swipeWheel may be a function, read at each notch: a terminal opened
+  // before the page knows its agent's harness learns it when it arrives.
+  const wheelModel = () => ((typeof swipeWheel === 'function' ? swipeWheel() : swipeWheel) === 'claude' && mouseTaken() ? 'claude' : 'tmux');
   const canSend = () => !!ws && ws.readyState === WebSocketCtor.OPEN && (!remote || remoteState.mode === 'interactive');
   function rowHeight() {
     const screen = host.getElementsByClassName?.('xterm-screen')[0];
@@ -627,7 +633,17 @@ export function mountTerminalWidget({
     const row = rowHeight();
     for (let sent = 0; sent < cap && Math.abs(s.rest) >= row; sent += 1) {
       const older = s.rest > 0;
-      const step = claudeWheelStep(claudeWheel, older ? -1 : 1, now());
+      const t = now();
+      // Too close to Claude's acceleration gap to know how far this notch
+      // scrolls: it goes once it is clearly past it.
+      const wait = claudeWheelWait(claudeWheel, older ? -1 : 1, t, SWIPE_CLAUDE_GAP_MARGIN_MS);
+      if (wait > 0) {
+        if (typeof setTimeoutImpl === 'function') {
+          flush = setTimeoutImpl(() => { flush = null; if (!disposed) travelClaude(cap, s); }, wait);
+        }
+        return;
+      }
+      const step = claudeWheelStep(claudeWheel, older ? -1 : 1, t);
       if (Math.abs(s.rest) < step.lines * row) {
         if (typeof setTimeoutImpl === 'function') {
           flush = setTimeoutImpl(() => { flush = null; if (!disposed) travelClaude(cap, s); }, SWIPE_CLAUDE_FLUSH_MS);

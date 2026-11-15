@@ -87,3 +87,18 @@ export function claudeWheelStep(state, dir, t) {
   s.mult = gap > ACCEL_GAP_MS ? BASE : Math.min(ACCEL_MAX, s.mult + ACCEL_STEP);
   return { lines: lines(s.mult), state: s };
 }
+
+// claudeWheelWait is how long a notch the dir way at t should wait so that
+// Claude reads its acceleration the way this model does, in ms (0: send it
+// now). A notch close to ACCEL_GAP_MS after the last (within margin) could
+// fall either side of it: Claude times notches as they arrive, and a phone's
+// touch moves come a frame apart, so a missed frame puts two notches 40ms
+// apart, right on the line. Such a notch waits until it is clearly past it,
+// where it scrolls the base. A reversal, the first notch, and wheel mode
+// (which decays smoothly) do not wait.
+export function claudeWheelWait(state, dir, t, margin) {
+  if (!state || state.wheelMode || state.dir === 0 || dir !== state.dir || state.pendingFlip) return 0;
+  const gap = t - state.time;
+  if (!(gap > ACCEL_GAP_MS - margin && gap < ACCEL_GAP_MS + margin)) return 0;
+  return Math.ceil(ACCEL_GAP_MS + margin - gap);
+}
