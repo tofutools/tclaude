@@ -27,7 +27,7 @@ const MARK_TIP_LINE_CHARS = 44;
 const MARK_TIP_FLOAT_BOTTOM = 96;
 const MARK_TIP_STEP = 24;
 const MARK_REPLY_MAX = 2000;
-const CONSENT_SELECTOR = '.companion-approval, .companion-decision, .mail-decision, .phone-decision-options, .access-btn, button';
+const CONSENT_SELECTOR = '.companion-approval, .companion-decision, .mail-decision, .phone-decision-options, .phone-decision-choices, .access-btn, button';
 
 // markVisibleHere reports whether a mark belongs to this page.
 export function markVisibleHere(mark, location) {

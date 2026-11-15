@@ -26,6 +26,7 @@ test('a cue cannot point at the operator\'s own consent', async (t) => {
   page.innerHTML = `<button id="keep">Approve the plan later</button>
     <div class="mail-decision"><button>Sidebar</button></div>
     <div class="phone-decision-options"><button>Admin server</button></div>
+    <div class="phone-decision-choices"><button>Sidecar</button></div>
     <button class="access-btn approve">Grant it</button>
     <button id="save">Save draft</button>`;
   doc.body.append(page);
@@ -36,7 +37,7 @@ test('a cue cannot point at the operator\'s own consent', async (t) => {
   assert.equal(g.consentControl(page.querySelector('.phone-decision-options button')), true, 'a phone decision too');
   assert.equal(g.consentControl(page.querySelector('.access-btn')), true);
   assert.equal(g.consentControl(doc.getElementById('save')), false);
-  for (const target of ['Approve the plan later', 'Sidebar', 'Admin server', 'Grant it']) {
+  for (const target of ['Approve the plan later', 'Sidebar', 'Admin server', 'Sidecar', 'Grant it']) {
     assert.equal(g.findGuideTarget(doc, target), null, target);
   }
 });

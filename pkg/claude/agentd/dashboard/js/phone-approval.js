@@ -167,7 +167,7 @@ export function PhoneDecisionCard({ decision, fetchImpl, notify, from = '', stew
       ${steward ? html`<${Avatar} bot glyph="✦" />` : html`<${Avatar} bot glyph="🤖" badge="❓" />`}
       <div class="phone-card-text"><${Who} name=${from || 'An agent'} sub="decide" /><div class="phone-card-line">${question}</div></div>
     </div>
-    <${ButtonRow} class="phone-decision-options" buttons=${[
+    <${ButtonRow} class="phone-decision-choices" buttons=${[
       ...cardOptions(decision).map((option) => ({
         key: `o${option.choice}`, disabled: !!busy, title: option.recommended ? 'The agent recommends this one' : undefined,
         label: busy === option.choice ? 'Sending…' : html`${option.recommended && html`<span class="phone-star" aria-label="recommended">★</span> `}${option.label}`,
