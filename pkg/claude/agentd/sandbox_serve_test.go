@@ -262,7 +262,29 @@ func seedSandboxFull(t *testing.T, f *testharness.Flow) {
 	seedSandboxPlugin(s)
 	seedSandboxLog(t)
 	seedSandboxAccessRequest(s)
+	seedSandboxRemoteAccess(s)
 	s.writeFixture()
+}
+
+// seedSandboxRemoteAccess arms Claude Code's Remote Access in checkout-ui's
+// pane and reads it once through the dashboard route, as the operator's
+// status read does: its menus then offer "Open in Claude app ↗" with the
+// session link, and the other Claude Code agents "Turn on Remote Access &
+// open".
+func seedSandboxRemoteAccess(s *sandboxSeeder) {
+	cc := s.f.World.CCs.GetByConvID(sbUI)
+	if cc == nil {
+		s.t.Fatalf("sandbox: checkout-ui has no Claude Code pane")
+	}
+	cc.Receive("/remote-control")
+	cc.Receive("Enter")
+	var st struct {
+		SessionURL string `json:"session_url"`
+	}
+	s.dashAPI(http.MethodPost, "/api/agents/"+sbUI+"/remote-control", map[string]any{"intent": "status"}, &st)
+	if st.SessionURL == "" {
+		s.t.Fatalf("sandbox: checkout-ui's Remote Access link was not read")
+	}
 }
 
 // The docs fleet's agents, by conversation.
