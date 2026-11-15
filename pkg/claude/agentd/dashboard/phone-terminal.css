@@ -20,6 +20,8 @@
    never zooms the page. */
 :root[data-layout="phone"] .phone-term-host {
   position: absolute; inset: 0; overflow: hidden; touch-action: none;
+  /* A hold is Select (phone-terminal-text.js): not iOS's own callout. */
+  -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
   /* xterm's layers stay inside, under ↓ Live. */
   isolation: isolate;
 }
@@ -37,7 +39,7 @@
   background: var(--ui-primary); color: var(--ui-primary-text); border: 0; font: inherit; font-weight: 700; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-term-keys {
-  flex: none; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px;
+  flex: none; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 5px;
   padding: 8px 8px 0;
 }
 :root[data-layout="phone"] .phone-term-key {
@@ -47,6 +49,9 @@
   touch-action: manipulation;
 }
 :root[data-layout="phone"] .phone-term-key:active { background: var(--ui-menu-hover); }
+/* Copy, last on the strip: opens Select. A word, in the UI font, sized to
+   fit the strip's narrowest key (an SE's). */
+:root[data-layout="phone"] .phone-term-copy-key { font-family: inherit; font-size: 12.5px; color: var(--ui-focus); }
 /* The input row: ✉ Message as a rounded field, ⌨ a round button beside it. */
 :root[data-layout="phone"] .phone-term-input {
   flex: none; display: flex; align-items: center; gap: 10px;
@@ -134,3 +139,33 @@
 :root[data-layout="phone"] .phone-compose-note { flex: 1; min-width: 0; margin: 0; text-align: center; }
 :root[data-layout="phone"] .phone-compose-ask { flex: 1; min-width: 0; color: var(--ui-text-strong); font-weight: 600; }
 :root[data-layout="phone"] .phone-compose-foot .phone-btns { margin-top: 0; flex-wrap: nowrap; }
+
+/* Select (js/phone-terminal-text.js): the screen as text over the terminal,
+   selected with the phone's own handles; links tappable; Copy below. */
+:root[data-layout="phone"] .phone-term-text {
+  position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
+  background: var(--ui-card-bg);
+}
+:root[data-layout="phone"] .phone-term-text-done {
+  margin-left: auto; min-height: var(--phone-tap); padding: 0 12px; border: 0; background: none;
+  color: var(--ui-focus); font: inherit; font-weight: 700; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-term-text-body {
+  flex: 1; min-height: 0; overflow: auto; padding: 10px 12px;
+  font: 13px/1.5 ui-monospace, monospace; color: var(--ui-text);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  -webkit-user-select: text; user-select: text; -webkit-touch-callout: default;
+}
+:root[data-layout="phone"] .phone-term-link {
+  color: var(--ui-focus); text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-term-link[data-link="file"] { text-decoration-style: dotted; }
+:root[data-layout="phone"] .phone-term-text-foot {
+  flex: none; display: flex; gap: 10px;
+  padding: 10px var(--phone-gutter) calc(10px + var(--phone-safe-bottom)); border-top: 1px solid var(--ui-line);
+}
+:root[data-layout="phone"] .phone-term-text-foot .phone-btn { flex: 1; min-height: 48px; }
+/* A link's sheet: its whole target, then what to do with it. */
+:root[data-layout="phone"] .phone-term-link-target {
+  margin: 0 4px 8px; font: 13px/1.45 ui-monospace, monospace; color: var(--ui-text-strong); overflow-wrap: anywhere;
+}

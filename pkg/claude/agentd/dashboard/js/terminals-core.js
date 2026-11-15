@@ -12,6 +12,7 @@
 // dashboard.css / helpers.js.
 
 import { attachTerminalInteractions } from './terminal-interactions.js';
+import { cellAt, screenRows } from './terminal-interactions.js';
 import { restartWatcher as sharedRestartWatcher } from './instance-watch.js';
 import { terminalThemeFor } from './terminal-theme.js';
 import { drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js';
@@ -1471,6 +1472,13 @@ export function mountTerminalWidget({
     scrolledBack: () => inCopyMode,
     resetZoom: () => setZoom(null),
     copy: () => disposed ? Promise.resolve() : interactions.copySelection(),
+    // For a phone's text view and link taps (phone-terminal-text.js): the
+    // rows on screen, the cell under a point, whether a link shown on screen
+    // may be followed (as a click's rules say), and following it.
+    screen: () => (disposed ? [] : screenRows(term)),
+    cellAt: (clientX, clientY) => (disposed ? null : cellAt(term, host, clientX, clientY)),
+    link: (raw) => (disposed ? null : interactions.linkFor?.(raw, true) ?? null),
+    followLink: (raw) => (disposed ? false : !!interactions.followLink?.(raw, true)),
     // paste delivers text as terminal input, by the path keystrokes take, and
     // says whether it could: a closed socket or a watch-only view takes none.
     paste(text) {

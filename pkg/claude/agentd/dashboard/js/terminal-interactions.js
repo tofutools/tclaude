@@ -251,6 +251,22 @@ export function selectedText(term, from, to, clicks = 1) {
   return out || null;
 }
 
+// screenRows is what term shows now, for a phone's text view
+// (phone-terminal-text.js): each row on screen as drawn (rowCells: a hidden
+// cell reads as a space, a wide character's spacer column as ''), its buffer
+// row, and whether it continues the row before it (a soft wrap).
+export function screenRows(term) {
+  const buffer = term?.buffer?.active;
+  if (!buffer || typeof buffer.getLine !== 'function' || !term.rows) return [];
+  const top = buffer.viewportY || 0;
+  const rows = [];
+  for (let y = top; y < top + term.rows; y++) {
+    const line = buffer.getLine(y);
+    rows.push({ row: y, cells: line ? rowCells(line, 0, term.cols) : [], wrapped: !!line?.isWrapped });
+  }
+  return rows;
+}
+
 export function shouldArmTmuxClipboard(drag, event, mouseTrackingMode) {
   if (!drag || !event || mouseTrackingMode === 'none') return false;
   const multiClickCopy = Number(event.detail) >= 2;
@@ -310,7 +326,7 @@ export function safeTerminalLink(raw) {
 // plain because the browser cannot know which terminal directory they name.
 const VISIBLE_LOCAL_FILE_RE = /file:\/\/(?:localhost)?\/[^\s"'<>]+|\/[^\s"'<>]+/g;
 
-function trimPathPunctuation(raw) {
+export function trimPathPunctuation(raw) {
   let end = raw.length;
   while (end > 1 && /[.,;:!?]/.test(raw[end - 1])) end--;
   for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
@@ -785,6 +801,9 @@ export function attachTerminalInteractions({
       flash(`${modClickText()} to ${action} ${target}`);
       return;
     }
+    go(link);
+  };
+  const go = (link) => {
     if (link.kind === 'file') {
       void downloadHostFile(link.target).then(
         () => flash(`downloading ${link.target.split('/').pop() || 'file'}…`),
@@ -793,6 +812,15 @@ export function attachTerminalInteractions({
       return;
     }
     window.open(link.target, '_blank', 'noopener,noreferrer');
+  };
+  // followLink opens or downloads a link picked on purpose, where no
+  // modifier click exists (a phone's link sheet, which showed the target
+  // first): linkFor's rules as a click's, and false when they refuse it.
+  const followLink = (raw, visible = false) => {
+    const link = linkFor(raw, visible);
+    if (!link) { flash('blocked unsafe link'); return false; }
+    go(link);
+    return true;
   };
   // An OSC 8 hyperlink chooses its label text independently of its target, so
   // "see the docs" — or a string that reads like some other URL — can point
@@ -1055,6 +1083,8 @@ export function attachTerminalInteractions({
   return {
     invalidate,
     copySelection,
+    linkFor,
+    followLink,
     dispose() {
       if (disposed) return;
       disposed = true;

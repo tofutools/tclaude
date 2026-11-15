@@ -6,6 +6,14 @@ import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const AGENT = 'agt_00000000000000000000000000000001';
+// A screen 39 columns wide: a URL soft-wrapped across two rows (the first
+// full, as a soft wrap is), a path alone on its line.
+const SCREEN = [
+  ['● Done. See https://github.com/acme/web', false],
+  ['shop/pull/1482 for the PR', true],
+  ['/home/dev/git/webshop/notes.md', false],
+  ['ok  2.1s', false],
+];
 const CATALOG = [{ name: 'claude', tmux_scrollback: false }, { name: 'codex', tmux_scrollback: true }, { name: 'shell', tmux_scrollback: true }];
 
 function fakeWidgets() {
@@ -18,6 +26,12 @@ function fakeWidgets() {
       setSoftKeyboard(on) { this.calls.push(['keyboard', on]); },
       toLive() { this.calls.push(['toLive']); options.onScrollBackChange?.(false); },
       zoomBy(step) { this.calls.push(['zoomBy', step]); },
+      // The screen: SCREEN's rows, a cell per character, and a cell per
+      // pixel (x a column, y a row) for cellAt.
+      screen: () => SCREEN.map(([text, wrapped], row) => ({ row, cells: [...text.padEnd(39)], wrapped })),
+      cellAt: (x, y) => ({ row: Math.floor(y), col: Math.floor(x) }),
+      link: (raw) => (raw.startsWith('/remote/') ? null : { kind: raw.startsWith('http') ? 'http' : 'file', target: raw }),
+      followLink(raw) { this.calls.push(['followLink', raw]); return true; },
       dispose() { this.disposed = true; },
     };
     made.push(widget);
@@ -79,7 +93,7 @@ test('an agent terminal opens docked, live, with the key strip and its message s
   assert.deepEqual(overlays.at(-1), { closed: false, replace: false }, 'opening is a history step');
   assert.equal(harness.document.documentElement.dataset.phoneTerminal, 'open');
 
-  assert.deepEqual([...host.querySelectorAll('.phone-term-key')].map((b) => b.textContent), ['1', '2', '3', '↑', '↓', '⏎', 'Esc', '^C']);
+  assert.deepEqual([...host.querySelectorAll('.phone-term-key')].map((b) => b.textContent), ['1', '2', '3', '↑', '↓', '⏎', 'Esc', '^C', 'Copy']);
   await tap(button('2'));
   await tap(button('Up'));
   await tap(button('Control C'));
@@ -264,4 +278,122 @@ test('the pinch chip shows the size against the phone\'s own, and a tap resets i
   assert.equal(chip().textContent, 'pinch · 136%');
   await tap(chip());
   assert.deepEqual(widget.calls.at(-1), ['zoomBy', -4]);
+});
+
+// touch dispatches a touch event at (x, y) on the terminal's host: a cell
+// per pixel, as the fake widget's cellAt reads it.
+function touch(harness, el, type, x = 0, y = 0, fingers = 1) {
+  return harness.act(() => {
+    const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
+    const list = type === 'touchend' || type === 'touchcancel' ? [] : Array.from({ length: fingers }, () => ({ clientX: x, clientY: y }));
+    Object.assign(event, { touches: list });
+    el.dispatchEvent(event);
+  });
+}
+
+async function openTerminal(t) {
+  const env = await setup(t, { copy: async (text, what) => { env.copied.push([text, what]); } });
+  env.copied = [];
+  const sheet = await env.harness.importDashboardModule('js/phone-sheet.js');
+  const sheetHost = env.harness.document.createElement('div');
+  env.harness.document.body.append(sheetHost);
+  await env.harness.act(() => env.harness.preact.render(env.harness.html`<${sheet.PhoneSheetHost} />`, sheetHost));
+  t.after(() => sheet.closePhoneSheet());
+  await env.harness.act(() => env.tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  await env.harness.act(() => {});
+  return { ...env, sheet, sheetHost, surface: env.host.querySelector('.phone-term-host') };
+}
+
+test('a tap on a link opens its sheet: where it goes, Open or Download, Copy; a tap elsewhere is a tap', async (t) => {
+  const { harness, made, surface, sheetHost, copied } = await openTerminal(t);
+  const [widget] = made;
+  const tapAt = async (x, y) => { await touch(harness, surface, 'touchstart', x, y); await touch(harness, surface, 'touchend'); };
+  const items = () => [...sheetHost.querySelectorAll('.phone-sheet .phone-menu-item')].map((b) => b.textContent.trim());
+  // The URL's second row, wrapped: the whole URL.
+  await tapAt(3, 1);
+  assert.equal(sheetHost.querySelector('.phone-term-link-target').textContent, 'https://github.com/acme/webshop/pull/1482');
+  assert.deepEqual(items(), ['Open link ›', 'Copy link']);
+  await harness.act(() => sheetHost.querySelector('.phone-sheet .phone-menu-item').click());
+  assert.deepEqual(widget.calls.at(-1), ['followLink', 'https://github.com/acme/webshop/pull/1482']);
+  assert.equal(sheetHost.querySelector('.phone-sheet'), null, 'it closes');
+
+  await tapAt(10, 2);
+  assert.deepEqual(items(), ['Download notes.md', 'Copy path']);
+  await harness.act(() => [...sheetHost.querySelectorAll('.phone-sheet .phone-menu-item')][1].click());
+  assert.deepEqual(copied.at(-1), ['/home/dev/git/webshop/notes.md', 'the path']);
+
+  const calls = widget.calls.length;
+  await tapAt(2, 3);
+  assert.equal(sheetHost.querySelector('.phone-sheet'), null, 'no link there');
+  // A swipe is not a tap.
+  await touch(harness, surface, 'touchstart', 15, 0);
+  await touch(harness, surface, 'touchmove', 15, 40);
+  await touch(harness, surface, 'touchend');
+  assert.equal(sheetHost.querySelector('.phone-sheet'), null, 'a swipe on a link is a scroll');
+  assert.equal(widget.calls.length, calls);
+});
+
+test('a still hold opens Select with the word under the finger picked; Copy on the strip opens it too', async (t) => {
+  const { harness, host, surface, button, tap, copied } = await openTerminal(t);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { HOLD_MS } = await harness.importDashboardModule('js/phone-terminal-text.js');
+  // Moved first: no Select.
+  await touch(harness, surface, 'touchstart', 2, 3);
+  await touch(harness, surface, 'touchmove', 2, 30);
+  await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  assert.equal(host.querySelector('.phone-term-text'), null);
+  await touch(harness, surface, 'touchend');
+  // Two fingers are a pinch.
+  await touch(harness, surface, 'touchstart', 2, 3, 2);
+  await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  assert.equal(host.querySelector('.phone-term-text'), null);
+  await touch(harness, surface, 'touchend');
+
+  await touch(harness, surface, 'touchstart', 1, 3);
+  await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  await touch(harness, surface, 'touchend');
+  const page = host.querySelector('.phone-term-text[role=dialog]');
+  assert.equal(page.getAttribute('aria-label'), 'Select text');
+  assert.deepEqual([...page.querySelectorAll('.phone-term-text-line')].map((l) => l.textContent),
+    ['● Done. See https://github.com/acme/webshop/pull/1482 for the PR', '/home/dev/git/webshop/notes.md', 'ok  2.1s'],
+    'soft-wrapped rows are one line');
+  assert.deepEqual([...page.querySelectorAll('.phone-term-link')].map((l) => l.dataset.link), ['http', 'file']);
+  // The word held is selected, and Copy selection copies it: linkedom has no
+  // Selection, so the phone-terminal-select smoke checks those in a browser.
+  await tap(button('Copy screen'));
+  assert.deepEqual(copied.at(-1), ['● Done. See https://github.com/acme/webshop/pull/1482 for the PR\n/home/dev/git/webshop/notes.md\nok  2.1s', 'the screen']);
+  await tap(button('Done'));
+  assert.equal(host.querySelector('.phone-term-text'), null);
+
+  await tap(button('Select and copy text'));
+  assert.ok(host.querySelector('.phone-term-text'), 'the strip\'s Copy');
+  assert.equal(host.querySelector('.phone-term'), host.querySelector('.phone-term-text').parentElement, 'over the terminal, which stays');
+});
+
+test('a link this view may not follow offers Copy only, and says why', async (t) => {
+  const harness = await createPreactHarness(t);
+  const text = await harness.importDashboardModule('js/phone-terminal-text.js');
+  const copied = [];
+  const widget = { link: () => null, followLink: () => assert.fail('not followed') };
+  const mounted = await harness.mount(harness.html`<${text.LinkSheet} link=${{ text: '/remote/x.log', kind: 'file' }} widget=${widget}
+    copy=${(v, w) => copied.push([v, w])} close=${() => {}} />`);
+  assert.deepEqual([...mounted.container.querySelectorAll('.phone-menu-item')].map((b) => b.textContent.trim()), ['Copy path']);
+  assert.match(mounted.container.textContent, /cannot download/);
+});
+
+test('the text model: wrapped rows join, links by the desktop\'s rules, a cell maps into its line', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/phone-terminal-text.js');
+  const rows = SCREEN.map(([s, wrapped], row) => ({ row: row + 100, cells: [...s.padEnd(39)], wrapped }));
+  const lines = m.screenLines(rows);
+  assert.equal(lines.length, 3);
+  assert.deepEqual(m.indexAt(lines, { row: 101, col: 3 }), { line: 0, index: 42 });
+  assert.equal(m.indexAt(lines, { row: 103, col: 30 }), null, 'past the line\'s end');
+  assert.deepEqual(m.linksIn('see https://a.example/x). and https://u:p@evil.example/ too').map((l) => l.text), ['https://a.example/x'],
+    'trailing punctuation off; credentials refused');
+  assert.deepEqual(m.linksIn('edit ./go.mod and /etc/hosts now').map((l) => l.text), [], 'relative paths, and a path mid-prose, stay plain (as on the desktop)');
+  assert.deepEqual(m.linksIn('wrote /tmp/out.txt').map((l) => [l.kind, l.text]), [['file', '/tmp/out.txt']]);
+  assert.deepEqual(m.linksIn('https://x.example/a/b').map((l) => l.kind), ['http'], 'a URL\'s path is not a file too');
+  assert.deepEqual(m.wordAt('go test ./db/...', 4), [3, 7]);
+  assert.equal(m.wordAt('a b', 1), null);
 });
