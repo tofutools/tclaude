@@ -414,7 +414,7 @@ test('a sudo plan\'s reader reads its body as facts: what, for how long, why', a
   const facts = reader.$$('.phone-mail-facts > div').map((d) => [d.querySelector('dt').textContent, d.querySelector('dd').textContent]);
   assert.deepEqual(facts, [['Permissions', 'agent.spawn'], ['For', '30 min'], ['Reason', 'spawn a test runner']], 'no raw body');
   const card = reader.$('.phone-box-key');
-  assert.match(card.textContent, /Plan: agent\.spawn · for 30 min/);
+  assert.match(card.textContent, /Plan for 30 min: agent\.spawn/);
   assert.match(card.querySelector('.phone-plan-reason').textContent, /“spawn a test runner”/);
   assert.match(card.getAttribute('aria-label'), /because: spawn a test runner$/);
 });

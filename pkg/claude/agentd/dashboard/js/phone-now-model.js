@@ -34,13 +34,14 @@ function firstLine(text) {
 
 // approvalContext is an access request in one line: what it grants and, for
 // one command, the agent's words about it ("git.push: push PR #4351"). A plan
-// lists its permissions and how long they would last ("Plan: agent.spawn · for
-// 30 min"). Agent text, rendered as text.
+// says how long it would last, then its permissions ("Plan for 30 min:
+// agent.spawn"), so a cut line still shows the time. Agent text, rendered as
+// text.
 export function approvalContext(request) {
   const summary = approvalSummary(request);
   if (summary.kind === 'plan') {
     const plan = planDetails(request);
-    return `Plan: ${summary.slugs.join(', ') || 'temporary permissions'}${plan.ok ? ` · for ${plan.duration}` : ''}`;
+    return `Plan${plan.ok ? ` for ${plan.duration}` : ''}: ${summary.slugs.join(', ') || 'temporary permissions'}`;
   }
   const what = summary.slugs[0] || 'Permission';
   const why = firstLine(request?.body) || (request?.path ? `${request.method ? `${request.method} ` : ''}${request.path}` : '');
