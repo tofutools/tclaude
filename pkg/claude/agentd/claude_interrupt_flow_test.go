@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -58,10 +59,48 @@ func TestInterrupt_DashboardSendsEscToBusyClaudeAgent(t *testing.T) {
 			if tc.want == http.StatusOK {
 				assert.Equal(t, "escape", body["via"])
 				assert.Equal(t, []string{"Escape"}, sent, "exactly one Esc, to the agent's own pane")
+				// Claude Code reports nothing when Esc cancels its turn, so the
+				// row is idle now and a second tap sends no second Esc (it would
+				// land on the prompt: a cleared line, or the rewind menu).
+				again := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/interrupt", nil))
+				assert.Equal(t, http.StatusConflict, again.Code, again.Body.String())
+				assert.Contains(t, again.Body.String(), "not_busy")
+				assert.Equal(t, []string{"Escape"}, sentTo(f, "tmux-cc-int:0.0"), "still one Esc")
 				return
 			}
 			assert.Contains(t, rec.Body.String(), "not_busy")
 			assert.Empty(t, sent, "an agent between turns gets no keys")
 		})
 	}
+}
+
+// Scenario: the Esc is this node's operator's alone. The agent CLI's interrupt
+// stays Codex-only, and a peer node's view, even under unrestricted trust,
+// gets the Codex-only answer too: no key reaches a busy Claude Code pane.
+func TestInterrupt_EscIsNotForAgentsOrPeers(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("crew")
+	const conv = "019ec004-8888-2222-3333-444444444444"
+	f.HaveAliveSession(conv, "cc-busy", "tmux-cc-busy", f.World.HomeDir)
+	f.HaveMember("crew", conv)
+	f.SetSessionStatus(conv, "working")
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+
+	// Granted, so the answer is the route's own, not the permission gate's.
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermAgentInterrupt, "test"))
+	code, body := f.AsAgent(conv).Interrupt(conv)
+	assert.Equal(t, http.StatusBadRequest, code, body)
+	assert.Contains(t, body, "unsupported")
+
+	peer, err := db.GetFederationPeer(p.id.ID())
+	require.NoError(t, err)
+	peer.TrustLevel = db.FederationTrustUnrestricted
+	require.NoError(t, db.TrustFederationPeer(*peer))
+	rec := testharness.Serve(agentd.PeerViewHandler(p.id.ID()), testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+agentID+"/interrupt", nil))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "unsupported")
+
+	assert.Empty(t, sentTo(f, "tmux-cc-busy:0.0"), "no Esc from an agent or a peer")
 }

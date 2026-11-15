@@ -1358,6 +1358,13 @@ func (f *Flow) Compact(convID string) CompactResp {
 	return CompactResp{Code: rec.Code, Raw: rec.Body.Bytes()}
 }
 
+// Interrupt drives POST /v1/agent/{conv}/interrupt, the agent CLI's route.
+func (f *Flow) Interrupt(convID string) (int, string) {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+convID+"/interrupt", nil)
+	return rec.Code, rec.Body.String()
+}
+
 // CompactWithFollowUp drives compact with its optional next-turn prompt.
 func (f *Flow) CompactWithFollowUp(convID, followUp string) CompactResp {
 	f.T.Helper()

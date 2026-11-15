@@ -1510,6 +1510,15 @@ func peerRequesterLabel(instanceID string) string {
 	return "linked node " + proto.SafeName(peerDisplay(p), false)
 }
 
+// peerForwarded reports a request a peer node relayed in, under any trust:
+// the relays mark it remote-authed with a bare true (peer_member_routes.go,
+// peer_grant_routes.go, peer_actions.go), where this node's own signed-in
+// operator carries a remoteAuthSession and loopback carries nothing.
+func peerForwarded(r *http.Request) bool {
+	forwarded, _ := r.Context().Value(remoteAuthedCtxKey{}).(bool)
+	return forwarded || peerGrantFromRequest(r) != nil || peerActionFromRequest(r) != nil
+}
+
 // dashboardInterruptAgent, dashboardAgentContextInfo and dashboardAgentPRs
 // are the cookie-auth twins of POST /v1/agent/{conv}/interrupt, GET
 // /v1/agent/{conv}/context and GET|POST /v1/agent/{conv}/prs.
@@ -1520,7 +1529,7 @@ func peerRequesterLabel(instanceID string) string {
 // be (runClaudeInterrupt): for this node's operator only, so a peer's view
 // and the agent CLI keep the Codex-only route.
 func dashboardInterruptAgent(w http.ResponseWriter, r *http.Request, convID string) {
-	if peerGrantFromRequest(r) == nil && peerActionFromRequest(r) == nil && harnessForConv(convID).Name == harness.DefaultName {
+	if !peerForwarded(r) && harnessForConv(convID).Name == harness.DefaultName {
 		if _, ok := requireCrossAgentPermission(w, asDashboardHumanPeer(r), PermAgentInterrupt, convID); !ok {
 			return
 		}

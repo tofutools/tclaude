@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
@@ -230,10 +232,21 @@ var claudeInterruptible = map[string]bool{
 	session.StatusAwaitingInput:      true,
 }
 
+// claudeInterruptMu serializes runClaudeInterrupt's check, send and mark, so
+// two quick taps cannot both see the agent at work and press Esc twice: the
+// second would land on an idle prompt (clearing a typed line, or opening the
+// rewind menu as a double Esc).
+var claudeInterruptMu sync.Mutex
+
 // runClaudeInterrupt sends a busy Claude Code agent's pane its interrupt key
 // (dashboardInterruptAgent: the operator's dashboard only), once, under the
-// pane's injection lock.
+// pane's injection lock. Claude Code fires no hook when Esc cancels a turn
+// (session/hook_events.go idle_prompt: only its own ~60s idle timer reports
+// back), so the row is marked idle here; a hook that lands meanwhile wins the
+// compare-and-swap.
 func runClaudeInterrupt(w http.ResponseWriter, target string) {
+	claudeInterruptMu.Lock()
+	defer claudeInterruptMu.Unlock()
 	sess := pickAliveSession(target)
 	if sess == nil {
 		writeError(w, http.StatusConflict, "not_running", "the agent is not running")
@@ -248,6 +261,9 @@ func runClaudeInterrupt(w http.ResponseWriter, target string) {
 	if err := injectSignalExitSerializedBy(pane, pane, []string{claudeInterruptKey}); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "failed", "send Esc: "+err.Error())
 		return
+	}
+	if _, err := db.SetSessionStatusIfUnchanged(sess.ID, sess.Status, sess.UpdatedAt, session.StatusIdle, "", time.Now()); err != nil {
+		slog.Warn("interrupt: could not mark the session idle after Esc", "conv", target, "error", err, "module", "agentd")
 	}
 	slog.Info("interrupt: Esc sent to a Claude Code pane", "conv", target, "tmux", sess.TmuxSession, "module", "agentd")
 	writeJSON(w, http.StatusOK, map[string]any{
