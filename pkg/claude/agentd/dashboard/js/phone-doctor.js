@@ -55,7 +55,7 @@ function CheckRow({ check, onOpen }) {
   const sub = [categoryLabel(check), check.detail].filter(Boolean).join(' · ');
   return html`<li><button data-ui-exempt type="button" class=${`phone-doctor-row sev-${check.severity}`} data-check=${check.id}
     onClick=${() => onOpen(check.id)}>
-    <span class="phone-doctor-dot" aria-label=${check.severity}>${DOT[check.severity] || '•'}</span>
+    <span class="phone-doctor-dot" role="img" aria-label=${SEVERITY[check.severity] || check.severity}>${DOT[check.severity] || '•'}</span>
     <span class="phone-doctor-text">
       <span class="phone-doctor-title">${check.title}</span>
       ${sub && html`<span class="phone-doctor-sub">${sub}</span>`}

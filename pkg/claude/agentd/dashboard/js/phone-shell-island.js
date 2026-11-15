@@ -25,7 +25,7 @@ import { gateItems } from './phone-process-runs.js';
 import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
 import { DesktopOnlyPage, desktopOnlyView } from './phone-desktop-only.js';
 import { featureState } from './feature-state-registry.js';
-import { activitySubtab } from './activity-state.js';
+import { activitySubtab, setActivitySubtab } from './activity-state.js';
 import { installPhoneHistory, keptView } from './phone-history.js';
 import { installKeyboardInset } from './phone-keyboard.js';
 import { installInputModality } from './phone-input.js';
@@ -77,6 +77,12 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // that says so in place of its desktop content.
   const routeMap = featureState('groups')?.subview?.value === 'routes';
   const subview = activeTab === 'groups' ? (routeMap ? 'routes' : '') : activeTab === 'diagnostics' ? activitySubtab.value : '';
+  // Performance is desktop only on a phone: once the operator leaves it,
+  // Diagnostics opens on the Doctor again, not on that page (nor with its
+  // islands polling behind it).
+  useEffect(() => {
+    if (activeTab !== 'diagnostics' && activitySubtab.peek() === 'performance') setActivitySubtab('doctor');
+  }, [activeTab]);
   const desktopOnly = OWN_VIEWS.includes(view) ? '' : desktopOnlyView(activeTab, subview);
   const covering = OWN_VIEWS.includes(view) ? view : desktopOnly ? 'desktop-only' : '';
   // A root view's top bar: the shell's own furniture for its slot, and what

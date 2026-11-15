@@ -42,9 +42,9 @@
 :root[data-layout="phone"] .phone-diag-pages { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
 
 :root[data-layout="phone"] .phone-diag-code { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ui-muted-text); }
-:root[data-layout="phone"] .phone-diag-code.ok { color: #3fb950; }
+:root[data-layout="phone"] .phone-diag-code.ok { color: var(--phone-ok); }
 :root[data-layout="phone"] .phone-diag-code.wait { color: var(--ui-warn-text); }
-:root[data-layout="phone"] .phone-diag-code.bad { color: #f85149; }
+:root[data-layout="phone"] .phone-diag-code.bad { color: var(--phone-bad); }
 
 /* Doctor: what needs the operator, grouped by severity, each a two-line row
    that opens its own page; the passing checks fold into one line. */
