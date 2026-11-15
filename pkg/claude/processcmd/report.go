@@ -15,12 +15,13 @@ import (
 )
 
 type processReportParams struct {
-	Outcome string `pos:"true" help:"Outcome of the node's work: succeeded or failed"`
-	Run     string `long:"run" optional:"true" help:"Process run id from the dispatch message; optional when you have exactly one open node"`
-	Node    string `long:"node" optional:"true" help:"Node id from the dispatch message"`
-	Attempt int    `long:"attempt" optional:"true" help:"Attempt number from the dispatch message"`
-	Note    string `long:"note" optional:"true" help:"Short summary of the result, or why it failed"`
-	Verdict string `long:"verdict" optional:"true" help:"Your decision, when you were asked to decide a step: one of the verdicts the dispatch message lists"`
+	Outcome string   `pos:"true" help:"Outcome of the node's work: succeeded or failed"`
+	Run     string   `long:"run" optional:"true" help:"Process run id from the dispatch message; optional when you have exactly one open node"`
+	Node    string   `long:"node" optional:"true" help:"Node id from the dispatch message"`
+	Attempt int      `long:"attempt" optional:"true" help:"Attempt number from the dispatch message"`
+	Note    string   `long:"note" optional:"true" help:"Short summary of the result, or why it failed"`
+	Verdict string   `long:"verdict" optional:"true" help:"Your decision, when you were asked to decide a step: one of the verdicts the dispatch message lists"`
+	Output  []string `long:"output" optional:"true" help:"A step output the dispatch message asks for, as name=value; repeat for each. With one output, --note stands in for it"`
 }
 
 // processReportCmd is the fixed report-back verb an agent performer runs when
@@ -34,7 +35,8 @@ func processReportCmd() *cobra.Command {
 		Long: "Run this from the agent that received a process node in its inbox, exactly once, " +
 			"when the work is done. Copy --run, --node, and --attempt from the dispatch message; " +
 			"they may be omitted when you have exactly one open process node. " +
-			"A decider reports succeeded with --verdict naming its decision, and its --note is the reasoning.",
+			"A decider reports succeeded with --verdict naming its decision, and its --note is the reasoning. " +
+			"A step that declares outputs reports each with --output name=value; later steps read them.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		ValidArgs:   []string{string(engine.ProgramSucceeded), string(engine.ProgramFailed)},
 		RunFunc: func(p *processReportParams, _ *cobra.Command, _ []string) {
@@ -48,6 +50,10 @@ func runProcessReport(p *processReportParams, stdout, stderr io.Writer) error {
 	if outcome != engine.ProgramSucceeded && outcome != engine.ProgramFailed {
 		return fmt.Errorf("outcome must be %s or %s", engine.ProgramSucceeded, engine.ProgramFailed)
 	}
+	outputs, err := parseProcessReportOutputs(p.Output)
+	if err != nil {
+		return err
+	}
 	if err := requireProcessRuntime(stderr); err != nil {
 		return err
 	}
@@ -58,8 +64,9 @@ func runProcessReport(p *processReportParams, stdout, stderr io.Writer) error {
 		Outcome engine.ProgramOutcome `json:"outcome"`
 		Note    string                `json:"note,omitempty"`
 		Verdict string                `json:"verdict,omitempty"`
+		Outputs map[string]string     `json:"outputs,omitempty"`
 	}{RunID: strings.TrimSpace(p.Run), NodeID: strings.TrimSpace(p.Node), Attempt: p.Attempt,
-		Outcome: outcome, Note: strings.TrimSpace(p.Note), Verdict: strings.TrimSpace(p.Verdict)}
+		Outcome: outcome, Note: strings.TrimSpace(p.Note), Verdict: strings.TrimSpace(p.Verdict), Outputs: outputs}
 	var response struct {
 		Status  string `json:"status"`
 		RunID   string `json:"runId"`
@@ -87,4 +94,24 @@ func runProcessReport(p *processReportParams, stdout, stderr io.Writer) error {
 			outcome, response.RunID, response.NodeID, response.Attempt)
 	}
 	return nil
+}
+
+// parseProcessReportOutputs reads repeated --output name=value flags.
+func parseProcessReportOutputs(flags []string) (map[string]string, error) {
+	if len(flags) == 0 {
+		return nil, nil
+	}
+	outputs := make(map[string]string, len(flags))
+	for _, flag := range flags {
+		name, value, ok := strings.Cut(flag, "=")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" {
+			return nil, fmt.Errorf("--output takes name=value; got %q", flag)
+		}
+		if _, dup := outputs[name]; dup {
+			return nil, fmt.Errorf("--output %s is given twice", name)
+		}
+		outputs[name] = value
+	}
+	return outputs, nil
 }

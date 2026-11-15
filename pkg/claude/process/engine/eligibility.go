@@ -155,8 +155,11 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 			if node.Wait != nil && node.Type != model.NodeTypeWait {
 				add("unsupported_wait", path+".wait", "wait configuration is not executable in this engine yet")
 			}
-			if len(node.Captures) > 0 {
-				add("unsupported_captures", path+".captures", "runtime captures are not executable in this engine yet")
+			// An output is what an agent reports, so only a plain agent task
+			// publishes one.
+			if len(node.Captures) > 0 && (node.Type != model.NodeTypeTask || node.IsCompound() ||
+				node.Performer == nil || node.Performer.Kind != model.PerformerAgent) {
+				add("unsupported_captures", path+".captures", "only a plain agent task can declare outputs in this engine")
 			}
 			if node.Performer != nil && node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision {
 				add("unsupported_performer", path+".performer", "only task and decision nodes may declare performers in this engine")

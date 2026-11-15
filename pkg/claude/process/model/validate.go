@@ -69,6 +69,9 @@ func validateScope(tmpl *Template, edges []Edge, diagnostics *templateDiagnostic
 		}
 	}
 	validateParamRefs(tmpl, diagnostics)
+	if diagnostics.Exhausted() || !validatePerformerConstraints(tmpl, diagnostics) || !validateCaptureRefs(tmpl, diagnostics) {
+		return
+	}
 	if diagnostics.Exhausted() || isBody {
 		return
 	}
@@ -524,6 +527,9 @@ func validateKindScopedFields(performer Performer, path string, diagnostics *tem
 		!scoped("spawn", !isBlank(performer.Spawn), PerformerAgent) ||
 		!scoped("role", !isBlank(performer.Role), PerformerAgent) ||
 		!scoped("anyone", performer.Anyone, PerformerAgent) ||
+		!scoped("lead", performer.Lead, PerformerAgent) ||
+		!scoped("sameAs", !isBlank(performer.SameAs), PerformerAgent) ||
+		!scoped("differentFrom", len(performer.DifferentFrom) > 0, PerformerAgent) ||
 		!scoped("fallback", performer.Fallback != nil, PerformerAgent) ||
 		!scoped("prompt", !isBlank(performer.Prompt), PerformerAgent, PerformerHuman) ||
 		!scoped("model", !isBlank(performer.Model), PerformerAgent) ||
@@ -539,14 +545,20 @@ func validateKindScopedFields(performer Performer, path string, diagnostics *tem
 		}
 	}
 	selectors := 0
-	for _, set := range []bool{!isBlank(performer.Assignee) && performer.Kind == PerformerAgent, !isBlank(performer.Role), performer.Anyone} {
+	for _, set := range []bool{!isBlank(performer.Assignee) && performer.Kind == PerformerAgent, !isBlank(performer.Role), performer.Anyone, performer.Lead} {
 		if set {
 			selectors++
 		}
 	}
 	if selectors > 1 {
 		if !diagnostics.Add(diagError("conflicting_performer_selector", path,
-			"an agent performer names at most one of assignee, role and anyone")) {
+			"an agent performer names at most one of assignee, role, anyone and lead")) {
+			return false
+		}
+	}
+	if performer.Kind == PerformerAgent && !isBlank(performer.Assignee) && (!isBlank(performer.SameAs) || len(performer.DifferentFrom) > 0) {
+		if !diagnostics.Add(diagError("conflicting_performer_constraint", path,
+			"an assignee names one agent, so sameAs and differentFrom cannot apply; pick a role, anyone or lead instead")) {
 			return false
 		}
 	}

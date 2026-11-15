@@ -49,16 +49,17 @@ type performerRunView struct {
 }
 
 type performerView struct {
-	NodeID     string `json:"nodeId"`
-	Attempt    int    `json:"attempt"`
-	State      string `json:"state"`
-	AgentID    string `json:"agentId"`
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Resolution string `json:"resolution"`
-	WaitReason string `json:"waitReason"`
-	Outcome    string `json:"outcome"`
-	Note       string `json:"note"`
+	NodeID     string            `json:"nodeId"`
+	Attempt    int               `json:"attempt"`
+	State      string            `json:"state"`
+	AgentID    string            `json:"agentId"`
+	Name       string            `json:"name"`
+	Status     string            `json:"status"`
+	Resolution string            `json:"resolution"`
+	WaitReason string            `json:"waitReason"`
+	Outcome    string            `json:"outcome"`
+	Note       string            `json:"note"`
+	Outputs    map[string]string `json:"outputs"`
 }
 
 // performerTemplate is start → work (agent) → end.

@@ -257,6 +257,15 @@ type AgentCommand struct {
 	// neither, Profile is the role.
 	Role   string `json:"role,omitempty"`
 	Anyone bool   `json:"anyone,omitempty"`
+	// Lead selects the group's lead (model.Performer.Lead).
+	Lead bool `json:"lead,omitempty"`
+	// SameAs and DifferentFrom are the performer constraints, as prepared
+	// node ids: SameAs as authored, DifferentFrom made mutual (a node lists
+	// every node that lists it). Sorted.
+	SameAs        string   `json:"sameAs,omitempty"`
+	DifferentFrom []string `json:"differentFrom,omitempty"`
+	// Captures are the outputs the performer must report (model.Node.Captures).
+	Captures []string `json:"captures,omitempty"`
 	// Spawn records that the template allows spawning a fresh performer with
 	// Profile when nobody in scope can take the node (the legacy form).
 	Spawn bool `json:"spawn,omitempty"`

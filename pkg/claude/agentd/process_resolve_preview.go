@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -76,7 +77,18 @@ func handleProcessResolvePreview(w http.ResponseWriter, r *http.Request) {
 		for id := range parsed.Template.Nodes {
 			ids = append(ids, id)
 		}
-		sort.Strings(ids)
+		// A step constrained by another (sameAs, differentFrom) is previewed
+		// after the steps it names.
+		constrained := func(id string) bool {
+			p := parsed.Template.Nodes[id].Performer
+			return p != nil && (p.SameAs != "" || len(p.DifferentFrom) > 0)
+		}
+		sort.SliceStable(ids, func(i, j int) bool {
+			if ci, cj := constrained(ids[i]), constrained(ids[j]); ci != cj {
+				return cj
+			}
+			return ids[i] < ids[j]
+		})
 		for _, id := range ids {
 			node := parsed.Template.Nodes[id]
 			if node.Type != model.NodeTypeTask {
@@ -86,7 +98,24 @@ func handleProcessResolvePreview(w http.ResponseWriter, r *http.Request) {
 				if performer == nil || performer.Kind != model.PerformerAgent {
 					return
 				}
-				nodes[key] = previewProcessPerformer(group, members, engine.AgentCommandFor(*performer, parsed.Template.Fallback))
+				if same := strings.TrimSpace(performer.SameAs); same != "" {
+					if other, ok := nodes[same]; ok && other.AgentID != "" {
+						other.Reason = fmt.Sprintf("the agent that performs %q", same)
+						nodes[key] = other
+						return
+					}
+				}
+				eligible := members
+				if len(performer.DifferentFrom) > 0 {
+					eligible = slices.DeleteFunc(slices.Clone(members), func(c processPerformerCandidate) bool {
+						return slices.ContainsFunc(performer.DifferentFrom, func(ref string) bool {
+							return nodes[strings.TrimSpace(ref)].AgentID == c.AgentID
+						})
+					})
+				}
+				spec := engine.AgentCommandFor(*performer, parsed.Template.Fallback)
+				spec.DifferentFrom = performer.DifferentFrom
+				nodes[key] = previewProcessPerformer(group, eligible, spec)
 			}
 			preview(id, node.Performer)
 			// A compound task's plan, check and review stages are agent steps
@@ -118,6 +147,8 @@ func previewProcessPerformer(group *db.AgentGroup, members []processPerformerCan
 		switch {
 		case spec.Anyone:
 			reason = "anyone in the group"
+		case spec.Lead:
+			reason = "the group's lead"
 		case spec.Role != "":
 			reason = fmt.Sprintf("a member with role %q", spec.Role)
 		}
