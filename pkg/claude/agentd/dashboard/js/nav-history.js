@@ -24,6 +24,8 @@ import { configLocation, setConfigPanel } from './config-panel.js';
 import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from './mail-bridge.js';
 import { fleetAdminLocation, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.js';
+// Registers the agent link (?agent=), so a layout without its view drops it.
+import './agent-route.js';
 import { withCostsPeriod } from './usage-hub-state.js';
 import { navTabShown } from './nav-tab-visibility.js';
 import {

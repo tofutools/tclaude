@@ -45,9 +45,16 @@ export function doneAgentFocus() {
   announceOverlay({ replace: true });
 }
 
+// Only the phone's Agents view finds an agent; the desktop drops the ask in
+// place, after the restore that brought it, so it does not ride along on
+// every later location. The router imports this module, so the route is
+// there on either layout.
+const onPhone = () => globalThis.document?.documentElement?.dataset?.layout === 'phone';
+
 registerOverlayRoute('agent', {
   value: () => agentFocus.value?.id || '',
   restore: (value) => {
     agentFocus.value = AGENT_ROUTE.test(value || '') ? { id: value, n: ++asks } : null;
+    if (agentFocus.value && !onPhone()) setTimeout(doneAgentFocus, 0);
   },
 });
