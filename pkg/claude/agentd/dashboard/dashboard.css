@@ -77,6 +77,26 @@ body.dashboard-booting > #boot-progress {
   pointer-events: none;
   animation: dashboard-boot-label-failsafe 0s 8s forwards;
 }
+/* A boot that has not started after a while, or whose graph failed, keeps the
+   curtain and the label (with its Reload) past the 8s failsafe: revealing an
+   app whose code never ran shows a dead page. */
+body.dashboard-booting.boot-stuck > * { animation: none; }
+body.dashboard-booting.boot-stuck > #boot-progress {
+  animation: none;
+  visibility: visible;
+  pointer-events: auto;
+}
+.boot-progress-reload {
+  margin-top: 12px;
+  padding: 4px 14px;
+  font: inherit;
+  color: #e6edf3;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.boot-progress-reload[hidden] { display: none; }
 .boot-progress-title { margin-bottom: 10px; }
 .boot-progress-bar {
   height: 4px;
