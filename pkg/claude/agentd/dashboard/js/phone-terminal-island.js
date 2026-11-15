@@ -181,8 +181,10 @@ function TerminalSurface({ seed, deps, labelRef, onWidget, onFontChange, onStatu
       agentLabel: seed.label || '',
       touchZoom: true,
       touchScroll: true,
-      wheelCopyMode: wheelCopyMode(seed, { harnesses: deps.harnesses?.() || [], agent: deps.agent || (() => null) }),
-      swipeWheel: swipeWheel(seed, { agent: deps.agent || (() => null) }),
+      // Both read at each notch: on a cold link the agent's harness, and the
+      // harness catalog, are known only once the snapshot arrives.
+      wheelCopyMode: () => wheelCopyMode(seed, { harnesses: deps.harnesses?.() || [], agent: deps.agent || (() => null) }),
+      swipeWheel: () => swipeWheel(seed, { agent: deps.agent || (() => null) }),
       onScrollBackChange,
       softKeyboard: false,
       initialFontSize: readTerminalFont(FONT_SURFACE, key, deps.prefs) ?? PHONE_TERMINAL_FONT,

@@ -1789,6 +1789,31 @@ test('a harness that scrolls its own history (Claude Code) gets the wheel report
 // Claude Code scrolls a line a notch, faster on close notches (claude-wheel.js),
 // so the swipe sends a notch once the finger has gone as many rows (16px
 // each here) as it will scroll: the content moves with the finger.
+// A phone's touch moves come a frame apart, so a missed frame puts two notches
+// right on Claude's 40ms acceleration gap, where this page's clock and
+// Claude's could read it apart (it failed on a cold page: 12 notches the
+// page counted as 23 lines moved Claude 17). No notch goes near that gap.
+test('a swipe over Claude Code sends no notch near its acceleration gap, so a clock a few ms off reads the same', async (t) => {
+  const { widget, notches, touch, clock, harness, timers } = await xtermLikeWidget(t, { wheelCopyMode: false, swipeWheel: () => 'claude' });
+  clock.now = 1000;
+  touch('touchstart', 100);
+  // Twenty rows, a row a move, the moves 40ms apart; timers fire on time.
+  for (let y = 116; y <= 420; y += 16) {
+    for (let i = 0; i < 4; i += 1) { clock.now += 10; timers.flush(); }
+    touch('touchmove', y);
+  }
+  clock.now += 60; timers.flush();
+  clock.now += 300; touch('touchend');
+  const gaps = notches.slice(1).map((n, i) => n.at - notches[i].at);
+  assert.ok(gaps.every((gap) => gap <= 30 || gap >= 50), `gaps ${gaps.join(',')}`);
+  assert.equal(await claudeLines(harness, notches), 20, 'twenty rows of finger, twenty lines');
+  for (const skew of [-4, 4]) {
+    const off = notches.map((n, i) => ({ ...n, at: n.at + (i % 2 ? skew : -skew) }));
+    assert.equal(await claudeLines(harness, off), 20, `the same twenty with Claude's clock ${skew}ms off`);
+  }
+  widget.dispose();
+});
+
 test('a swipe over Claude Code moves its view as far as the finger went, slow or fast', async (t) => {
   const { widget, notches, touch, clock, harness, timers } = await xtermLikeWidget(t, { wheelCopyMode: false, swipeWheel: 'claude' });
 

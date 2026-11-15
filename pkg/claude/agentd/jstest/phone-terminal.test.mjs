@@ -190,12 +190,29 @@ test('↓ Live is for a session whose wheel scrolls tmux copy-mode, not one that
   await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
   await harness.act(() => {});
   assert.equal(made.at(-1).options.touchScroll, true);
-  assert.equal(made.at(-1).options.wheelCopyMode, false, 'Claude Code: as on the desktop');
-  assert.equal(made.at(-1).options.swipeWheel, 'claude', 'Claude Code\'s own wheel model');
+  assert.equal(made.at(-1).options.wheelCopyMode(), false, 'Claude Code: as on the desktop');
+  assert.equal(made.at(-1).options.swipeWheel(), 'claude', 'Claude Code\'s own wheel model');
   await harness.act(() => tab.openWebWindowPane('agt_00000000000000000000000000000002', 'codex-one', { harness: 'codex' }));
   await harness.act(() => {});
-  assert.equal(made.at(-1).options.wheelCopyMode, true, 'Codex: tmux copy-mode would take keys');
-  assert.equal(made.at(-1).options.swipeWheel, 'tmux', 'Codex: five lines a notch');
+  assert.equal(made.at(-1).options.wheelCopyMode(), true, 'Codex: tmux copy-mode would take keys');
+  assert.equal(made.at(-1).options.swipeWheel(), 'tmux', 'Codex: five lines a notch');
+});
+
+test('a terminal opened before the page knows its agent takes Claude Code\'s wheel and history once the snapshot names it', async (t) => {
+  // A cold link (/?terminal=window:<agent>): the widget is made before the
+  // first snapshot, so neither the agent nor the harness catalog is known.
+  let known = null;
+  let catalog = [];
+  const { harness, tab, made } = await setup(t, { agent: (id) => (id === AGENT ? known : null), harnesses: () => catalog });
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', {}));
+  await harness.act(() => {});
+  const { swipeWheel, wheelCopyMode } = made.at(-1).options;
+  assert.equal(swipeWheel(), 'tmux', 'unknown yet: the safe mapping');
+  assert.equal(wheelCopyMode(), true, 'no catalog yet: keep ↓ Live');
+  known = { label: 'checkout-ui', harness: 'claude' };
+  catalog = CATALOG;
+  assert.equal(swipeWheel(), 'claude', 'read again at the next notch');
+  assert.equal(wheelCopyMode(), false, 'Claude Code scrolls its own history: no ↓ Live');
 });
 
 test('wheelCopyMode: an agent terminal without a harness takes the agent\'s, else Claude Code\'s; a shell may scroll copy-mode', async (t) => {

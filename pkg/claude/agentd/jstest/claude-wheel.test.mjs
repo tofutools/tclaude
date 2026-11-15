@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { claudeWheelState, claudeWheelStep } from '../dashboard/js/claude-wheel.js';
+import { claudeWheelState, claudeWheelStep, claudeWheelWait } from '../dashboard/js/claude-wheel.js';
 
 // lines runs notches (dir, at ms) through the model and returns what each
 // scrolls, carrying the state.
@@ -49,4 +49,18 @@ test('a step leaves the state it was given as it was', () => {
   const before = { ...state };
   claudeWheelStep(state, -1, 1000);
   assert.deepEqual(state, before);
+});
+
+test('a notch too close to the 40ms acceleration gap waits until it is clearly past it', () => {
+  const { state } = lines([[-1, 0]]);
+  assert.equal(claudeWheelWait(state, -1, 20, 10), 0, 'clearly close: accelerates either way');
+  assert.equal(claudeWheelWait(state, -1, 30, 10), 0);
+  assert.equal(claudeWheelWait(state, -1, 31, 10), 19);
+  assert.equal(claudeWheelWait(state, -1, 40, 10), 10, 'right on the line');
+  assert.equal(claudeWheelWait(state, -1, 49.5, 10), 1);
+  assert.equal(claudeWheelWait(state, -1, 50, 10), 0, 'clearly past: the base either way');
+  assert.equal(claudeWheelWait(state, 1, 40, 10), 0, 'a reversal scrolls nothing whenever it comes');
+  assert.equal(claudeWheelWait(claudeWheelState(), -1, 40, 10), 0, 'the first notch');
+  // Waited out, the notch reads the same to a clock a few ms off.
+  for (const skew of [-4, 0, 4]) assert.equal(claudeWheelStep(lines([[-1, 0]]).state, -1, 50 + skew).lines, 1);
 });
