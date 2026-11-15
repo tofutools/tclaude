@@ -54,6 +54,8 @@ export function createPhoneShellState({ startOnNow = true } = {}) {
 
 // LOOK_PARAMS only change how the dashboard looks (the wizard or slop skin,
 // a layout override), so a link carrying them is still the bare dashboard.
+// layout-boot.js already drops ?layout before the shell starts; it is listed
+// so the answer holds whenever this is asked.
 const LOOK_PARAMS = new Set(['wizard', 'slop', 'layout']);
 
 // landsOnNow reports whether a page load at this URL starts on Now: the bare
