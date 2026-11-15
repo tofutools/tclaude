@@ -1698,6 +1698,7 @@ async function xtermLikeWidget(t, options = {}) {
   const timers = manualTimers();
   const clock = { now: 0 };
   const back = [];
+  const frames = [];
   const widget = mountTerminalWidget({
     host, wsPath: '/api/open-window-ws/agt_three', authenticate: false,
     initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
@@ -1705,17 +1706,22 @@ async function xtermLikeWidget(t, options = {}) {
     TerminalCtor: XtermLike, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
     ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
     documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock.now,
-    requestAnimationFrameImpl: () => 1, cancelAnimationFrameImpl: () => {}, ...timers,
+    requestAnimationFrameImpl: (run) => { frames.push(run); return frames.length; }, cancelAnimationFrameImpl: () => {}, ...timers,
   });
   await widget.connect();
   const socket = fakes.sockets[0];
   socket.open();
   timers.flush();
   const sent = [];
+  // When each wheel report left, for a model of the session on the far side.
+  const notches = [];
   const send = socket.send.bind(socket);
   socket.send = (value) => {
-    if (typeof value !== 'string') sent.push(new TextDecoder().decode(value));
-    else if (!value.includes('"resize"')) sent.push(value);
+    if (typeof value !== 'string') {
+      const text = new TextDecoder().decode(value);
+      sent.push(text);
+      if (text.startsWith('\x1b[<6')) notches.push({ older: text.startsWith('\x1b[<64;'), at: clock.now });
+    } else if (!value.includes('"resize"')) sent.push(value);
     send(value);
   };
   const touch = (type, y) => harness.fireEvent(host, type, { touches: type === 'touchend' ? [] : [{ clientX: 50, clientY: y }] });
@@ -1724,7 +1730,27 @@ async function xtermLikeWidget(t, options = {}) {
     touch('touchstart', 100); clock.now = from + 10; touch('touchmove', 180); clock.now = from + 20; touch('touchmove', 260);
     clock.now = from + 30; touch('touchmove', 340); clock.now = from + 40; touch('touchmove', 420); clock.now = from + 300; touch('touchend');
   };
-  return { widget, fakes, sent, back, touch, swipeBack, clock };
+  // runFrames runs the coast, 16ms a frame, and returns how many ran.
+  const runFrames = (limit = 1000) => {
+    let run = 0;
+    while (frames.length && run < limit) { clock.now += 16; frames.shift()(); run += 1; }
+    return run;
+  };
+  return { widget, fakes, sent, notches, back, touch, swipeBack, clock, runFrames, harness };
+}
+
+// claudeLines is how far Claude Code's view moved for the notches sent, by
+// its measured wheel model: positive is older.
+async function claudeLines(harness, notches) {
+  const { claudeWheelState, claudeWheelStep } = await harness.importDashboardModule('js/claude-wheel.js');
+  let state = claudeWheelState();
+  let lines = 0;
+  for (const { older, at } of notches) {
+    const step = claudeWheelStep(state, older ? -1 : 1, at);
+    state = step.state;
+    lines += older ? step.lines : -step.lines;
+  }
+  return lines;
 }
 
 test('a notch xterm sends as an arrow key is not typing, and ends ↓ Live', async (t) => {
@@ -1757,5 +1783,69 @@ test('a harness that scrolls its own history (Claude Code) gets the wheel report
   widget.key('1');
   assert.equal(sent.at(-1), '1');
   assert.equal(sent.length, 5, 'nothing is sent ahead of the key');
+  widget.dispose();
+});
+
+// Claude Code scrolls a line a notch, faster on close notches (claude-wheel.js),
+// so the swipe sends a notch once the finger has gone as many rows (16px
+// each here) as it will scroll: the content moves with the finger.
+test('a swipe over Claude Code moves its view as far as the finger went, slow or fast', async (t) => {
+  const { widget, notches, touch, clock, harness } = await xtermLikeWidget(t, { wheelCopyMode: false, swipeWheel: 'claude' });
+
+  // Slow: ten rows in 8px moves 50ms apart, each notch on its own.
+  clock.now = 1000;
+  touch('touchstart', 100);
+  for (let y = 108; y <= 260; y += 8) { clock.now += 50; touch('touchmove', y); }
+  clock.now += 300; touch('touchend');
+  assert.equal(notches.length, 10, 'a notch a row');
+  assert.equal(await claudeLines(harness, notches), 10, 'ten rows of finger, ten lines of view');
+
+  // Fast: thirty rows in 48px moves 10ms apart. Claude accelerates the close
+  // notches, so fewer go, and the view still keeps up with the finger. (Its
+  // wheel state carries over from swipe to swipe, so the lines are counted
+  // over every notch sent.)
+  let before = notches.length;
+  let moved = await claudeLines(harness, notches);
+  clock.now = 5000;
+  touch('touchstart', 100);
+  for (let y = 148; y <= 580; y += 48) { clock.now += 10; touch('touchmove', y); }
+  clock.now += 300; touch('touchend');
+  const fast = (await claudeLines(harness, notches)) - moved;
+  assert.ok(notches.length - before < 30, `fewer notches than rows: ${notches.length - before}`);
+  assert.ok(fast >= 26 && fast <= 30, `the view went ${fast} of the finger's 30 rows, never past it`);
+
+  // Back up ten rows: the reversal's first notch scrolls nothing, and the
+  // swipe sends one more, so the view still goes the finger's ten.
+  before = notches.length;
+  moved = await claudeLines(harness, notches);
+  clock.now = 9000;
+  touch('touchstart', 500);
+  for (let y = 492; y >= 340; y -= 8) { clock.now += 50; touch('touchmove', y); }
+  clock.now += 300; touch('touchend');
+  assert.equal((await claudeLines(harness, notches)) - moved, -10);
+  assert.equal(notches.length - before, 11, 'ten notches and the reversal');
+  widget.dispose();
+});
+
+// A flick coasts as a native list does: on the speed of the last 100ms of the
+// finger, slowing by 0.998 a ms, about speed / 0.002 px further.
+test('a flick over Claude Code coasts about as far as a native list, and a tiny one does not', async (t) => {
+  const { widget, notches, touch, clock, runFrames, harness } = await xtermLikeWidget(t, { wheelCopyMode: false, swipeWheel: 'claude' });
+  clock.now = 1000;
+  touch('touchstart', 100);
+  for (let y = 132; y <= 420; y += 32) { clock.now += 16; touch('touchmove', y); }
+  const dragged = await claudeLines(harness, notches);
+  touch('touchend');
+  const run = runFrames();
+  assert.ok(run < 1000, 'the coast stops');
+  const coasted = (await claudeLines(harness, notches)) - dragged;
+  // 2px/ms: about 970px, 60 rows, before it is slower than 0.05px/ms.
+  assert.ok(coasted >= 52 && coasted <= 64, `a 2px/ms flick coasted ${coasted} rows`);
+
+  // A flick of a row is a tap gone astray, not a scroll.
+  notches.length = 0;
+  clock.now = 9000;
+  touch('touchstart', 100); clock.now += 8; touch('touchmove', 118); touch('touchend');
+  assert.equal(runFrames(), 0, 'no coast');
   widget.dispose();
 });

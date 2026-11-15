@@ -84,6 +84,40 @@ test('over Claude Code a swipe is the desktop wheel: its own scrolling, no ↓ L
   expect(pane.sent.join('')).not.toContain('"scroll"');
 });
 
+// Claude Code scrolls a line a notch, faster on close notches (claude-wheel.js,
+// measured on Claude Code 2.1.323): the swipe sends what moves its view as far
+// as the finger went, where it used to send a notch per five rows.
+test('over Claude Code a swipe moves its view as far as the finger went', async ({ page }) => {
+  const { claudeWheelState, claudeWheelStep } = await import('../../../../pkg/claude/agentd/dashboard/js/claude-wheel.js');
+  const { pane } = await openPane(page, 'claude');
+  const row = await page.evaluate(() => {
+    const screen = document.querySelector('.phone-term-host .xterm-screen');
+    const rows = document.querySelectorAll('.phone-term-host .xterm-rows > div').length;
+    return screen.getBoundingClientRect().height / rows;
+  });
+  const stamped = [];
+  pane.socket.onMessage((message) => {
+    const text = typeof message === 'string' ? message : Buffer.from(message).toString('latin1');
+    for (const _ of text.matchAll(/\x1b\[<64;\d+;\d+M/g)) stamped.push(Date.now());
+  });
+  await swipe(page, 60, 360);
+  await settled(pane);
+  let state = claudeWheelState();
+  let lines = 0;
+  for (const at of stamped) {
+    const step = claudeWheelStep(state, -1, at);
+    state = step.state;
+    lines += step.lines;
+  }
+  const rows = 300 / row;
+  const measured = `${rows.toFixed(1)} rows (${row.toFixed(1)}px) of finger: ${stamped.length} notches, ${lines} lines of view`;
+  test.info().annotations.push({ type: 'measured', description: measured });
+  console.log(measured);
+  expect(stamped.length, `notches for ${rows.toFixed(1)} rows`).toBeGreaterThan(rows / 3);
+  expect(lines, `${lines} lines of view for ${rows.toFixed(1)} rows of finger`).toBeGreaterThanOrEqual(Math.floor(rows) - 6);
+  expect(lines).toBeLessThanOrEqual(Math.ceil(rows) + 1);
+});
+
 test('over Codex a swipe scrolls tmux copy-mode: ↓ Live shows, and a key scrolls back down first', async ({ page }) => {
   const { pane, terminal, live } = await openPane(page, 'codex');
   await swipe(page, 60, 360);

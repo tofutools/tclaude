@@ -177,9 +177,11 @@ test('↓ Live is for a session whose wheel scrolls tmux copy-mode, not one that
   await harness.act(() => {});
   assert.equal(made.at(-1).options.touchScroll, true);
   assert.equal(made.at(-1).options.wheelCopyMode, false, 'Claude Code: as on the desktop');
+  assert.equal(made.at(-1).options.swipeWheel, 'claude', 'Claude Code\'s own wheel model');
   await harness.act(() => tab.openWebWindowPane('agt_00000000000000000000000000000002', 'codex-one', { harness: 'codex' }));
   await harness.act(() => {});
   assert.equal(made.at(-1).options.wheelCopyMode, true, 'Codex: tmux copy-mode would take keys');
+  assert.equal(made.at(-1).options.swipeWheel, 'tmux', 'Codex: five lines a notch');
 });
 
 test('wheelCopyMode: an agent terminal without a harness takes the agent\'s, else Claude Code\'s; a shell may scroll copy-mode', async (t) => {

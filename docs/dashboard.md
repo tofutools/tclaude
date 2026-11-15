@@ -220,8 +220,12 @@ away from the browser, disconnects it, and coming back reconnects.
   scrolls that terminal on a desktop. Each harness keeps its own scrolling:
   Claude Code's fullscreen TUI scrolls its own conversation history, and Codex
   and shell sessions scroll tmux's history (copy-mode). Where nothing takes the
-  mouse, a swipe sends the arrow keys a desktop wheel would. A quick swipe
-  keeps scrolling after you lift your finger. In tmux's history (Codex,
+  mouse, a swipe sends the arrow keys a desktop wheel would. The text moves
+  about as far as your finger does: in Claude Code's fullscreen TUI, which
+  scrolls a line a wheel notch and speeds up on quick notches, the swipe
+  sends the notches that keep up with the finger. A quick flick keeps
+  scrolling after you lift your finger and slows down as a native list does.
+  In tmux's history (Codex,
   shells), **↓ Live** scrolls back down to the live screen while you're
   scrolled back, and so does swiping back down; pressing a key or typing
   scrolls back down first, so tmux doesn't take the key. Claude Code has its
