@@ -61,11 +61,20 @@ test('Access: a deep link lands on Sudo, revoke asks first, and slugs are search
   // Requests is the bare /access: Back onto it shows it again.
   await views(page).getByRole('tab', { name: 'Requests' }).click();
   await expect(page).toHaveURL(/\/access$/);
+  // The fixture's pending request is the phone's approval card, as on Now.
+  const waiting = page.getByRole('group', { name: 'Waiting on you' });
+  await expect(waiting.getByRole('button', { name: /^Approve/ })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Sudo grants' })).toContainText('agent.spawn');
   await views(page).getByRole('tab', { name: 'Sudo' }).click();
   await expect(page).toHaveURL(/\/access\/sudo$/);
   await page.goBack();
   await expect(page).toHaveURL(/\/access$/);
   await expect(views(page).getByRole('tab', { name: 'Requests' })).toHaveAttribute('aria-selected', 'true');
+
+  // + Grant in the top bar opens the sudo grant's agent picker.
+  await page.locator('.phone-bar').getByRole('button', { name: 'Grant sudo' }).click();
+  await expect(page.getByText('Grant sudo to')).toBeVisible();
+  await expectNoSideScroll(page, 'the grant picker');
   expect(errors).toEqual([]);
 });
 
