@@ -289,9 +289,18 @@ Fleet admin are desktop only.
 
 ### Views that are desktop only
 
-Fleet admin's sections (beyond Fleet's own read-only view), the Groups route map
-and Vegas need a wide screen. On a phone they show a page that says so, with
-**Desktop site** to open the same page in the full dashboard.
+Fleet admin's sections (beyond Fleet's own read-only view), the Fleet map, the
+Groups route map and Vegas need a wide screen. On a phone they show a page that
+says so, with **Desktop site** to open the same page in the full dashboard. The
+Fleet map's page also has **Show fleet**, and the route map's page has **Show
+agents**.
+
+Links into the desktop's views still work on a phone:
+
+- A Groups run link (`/groups/runs/<group>/<run>`) opens the run in
+  **Automations**. **Back** then shows the Runs list.
+- A drawing board opens read-only, fitted to its contents. You can pan and zoom
+  but not draw. Drawing and editing are desktop only.
 
 **Desktop site** in **More** shows the full dashboard on this phone, and **Phone
 view** at the bottom of that page switches back. The choice is kept in this

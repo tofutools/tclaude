@@ -426,3 +426,38 @@ test('a pan does not re-render the shapes', async (t) => {
   assert.equal(root.querySelector('[data-drawing-board-viewport]').getAttribute('transform'), 'scale(1) translate(0 40)');
   assert.equal(root.querySelector('rect.drawing-board-el'), shape);
 });
+
+test('on a phone the drawing board only looks: no tools or menus, a drag pans, and it opens fitted', async (t) => {
+  const { harness, island } = await setup(t);
+  const m = await harness.importDashboardModule('js/drawing-board-model.js');
+  const fetchImpl = drawingBoardFetch({ version: 1, elements: [m.newElement('rectangle', { id: 'wide', x: 0, y: 0, width: 4000, height: 100 })] });
+  const snapshot = harness.signals.signal({ groups: [] });
+  const sent = [];
+  const counting = async (url, init = {}) => { if (init.method) sent.push(url); return fetchImpl(url, init); };
+  const view = await harness.mount(harness.html`<${island.DrawingBoardEditor} drawingBoardId="plan" snapshot=${snapshot}
+    fetchImpl=${counting} win=${harness.window} rasterize=${null} phone=${true} />`);
+  await harness.act(() => wait());
+  const root = view.container;
+  const zoom = () => root.querySelector('.drawing-board-zoom').textContent;
+  assert.equal(root.querySelector('[aria-label="Select"], .drawing-board-swatch, [aria-label="Undo"]'), null, 'no tools, colours or undo');
+  assert.deepEqual([...root.querySelectorAll('button')].map((b) => b.textContent.trim()).filter((text) => ['File', 'View', 'Share'].includes(text)), [],
+    'no File, View or Share menus');
+  assert.equal(root.querySelector('.reh-stack'), null, 'no people');
+  assert.equal(root.querySelector('.drawing-board-minimap'), null, 'no minimap');
+  assert.match(root.querySelector('.phone-desktop-only').textContent, /Drawing and editing are desktop only/);
+
+  // Laid out, it fits what is on it, once.
+  const svg = root.querySelector('svg.drawing-board-canvas');
+  sized(svg, 0, 0, 1000, 600);
+  await fire(harness, svg, 'wheel', { deltaX: 0, deltaY: 0, clientX: 0, clientY: 0 });
+  assert.equal(zoom(), '25%');
+  await harness.act(() => root.querySelector('[aria-label="Zoom in"]').click());
+  assert.equal(zoom(), '31%', 'the zoom buttons work, and the fit is not redone');
+
+  // A drag on a shape pans; nothing is selected, moved or sent.
+  await pointer(harness, svg, 'pointerdown', 100, 100);
+  await pointer(harness, svg, 'pointermove', 200, 150);
+  await pointer(harness, svg, 'pointerup', 200, 150);
+  assert.equal(root.querySelector('.drawing-board-selection'), null);
+  assert.deepEqual(sent, []);
+});

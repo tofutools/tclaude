@@ -31,7 +31,7 @@ import { dashboardState } from './snapshot-store.js';
 import { processContext } from './process-context.js';
 import { companionAgents } from './companion-model.js';
 import { usePhonePage } from './phone-page.js';
-import { RunPage, RunsList, gateItems } from './phone-process-runs.js';
+import { RunPage, RunsList, gateItems, runRequest } from './phone-process-runs.js';
 import { DesktopOnlyNote, desktopSite } from './phone-desktop-only.js';
 import { Button, Input, Switch } from './ui-components.js';
 import { ChipRow } from './phone-ui.js';
@@ -416,6 +416,13 @@ export function PhoneRunsApp({ activeTab = dashboardState.activeTab, snapshot = 
   const active = activeTab.value === 'processes';
   const [runId, setRunId] = useState('');
   useEffect(() => { if (!active) setRunId(''); }, [active]);
+  // A run link (openRunLink) opens its run, or the list.
+  const asked = runRequest.value;
+  useEffect(() => {
+    if (asked === null || !active) return;
+    runRequest.value = null;
+    setRunId(asked);
+  }, [asked, active]);
   const select = (key) => {
     setRunId('');
     if (key !== PROCESSES_SUBTAB) openAutomationsEntry(key);

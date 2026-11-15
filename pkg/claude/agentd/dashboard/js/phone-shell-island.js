@@ -21,7 +21,8 @@ import { messagesBadgeView } from './shell-model.js';
 import { OWN_VIEWS, PHONE_SLOTS, nowView, rootBarFor, slotFor, titleFor } from './phone-shell-model.js';
 import { phoneBar, phonePage } from './phone-page.js';
 import { processContext } from './process-context.js';
-import { gateItems } from './phone-process-runs.js';
+import { gateItems, openRunLink } from './phone-process-runs.js';
+import { PROCESSES_SUBTAB, openAutomationsEntry } from './automations-subnav.js';
 import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
 import { DesktopOnlyPage, desktopOnlyView } from './phone-desktop-only.js';
 import { featureState } from './feature-state-registry.js';
@@ -89,6 +90,17 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // the view over that tab (Back onto Now, phone-history.js).
   const seenTab = useRef(activeTab);
   useEffect(() => installPhoneHistory({ view: shell.view, tab: () => state.activeTab.peek() }), [shell]);
+  // A Groups run link opens the run in Automations (phone-process-runs.js),
+  // once the router has finished landing on it.
+  useEffect(() => {
+    const onRestore = (event) => {
+      const loc = event.detail?.location;
+      if (loc?.tab !== 'groups' || loc.subtab !== 'runs') return;
+      setTimeout(() => openRunLink(loc, { open: () => openAutomationsEntry(PROCESSES_SUBTAB) }), 0);
+    };
+    document.addEventListener('tclaude:restore-location', onRestore);
+    return () => document.removeEventListener('tclaude:restore-location', onRestore);
+  }, []);
   useEffect(() => installKeyboardInset(), []);
   useEffect(() => installInputModality(), []);
   useEffect(() => {
@@ -177,6 +189,11 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     openPhoneSheet({ label, Body, props: { state, actions: viewActions, ...props } });
   };
   const title = desktopOnly || titleFor(view, activeTab);
+  // A desktop-only page over a tab with a phone view of its own offers it.
+  const desktopOther = !desktopOnly ? null
+    : activeTab === 'groups' ? { label: 'Show agents', onClick: () => viewActions.navigate('/') }
+      : activeTab === 'map' ? { label: 'Show fleet', onClick: () => actions.showTab('fleet-admin') }
+        : null;
 
   const badge = (id) => {
     if (id === 'now' && needs > 0) return html`<span class="ui-badge ui-badge-danger phone-nav-badge">${needs}</span>`;
@@ -209,7 +226,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} processSource=${processSource} /></div>`}
     ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} /></div>`}
     ${desktopOnly && html`<div class="phone-view" role="region" aria-label=${desktopOnly}><${DesktopOnlyPage} what=${desktopOnly} open=${actions.desktopSite}
-      other=${routeMap ? { label: 'Show agents', onClick: () => viewActions.navigate('/') } : null} /></div>`}
+      other=${desktopOther} /></div>`}
     ${!hideNav && html`<nav class="phone-nav" aria-label="Views">
       ${PHONE_SLOTS.map((target) => html`<button data-ui-exempt key=${target.id} type="button"
         class=${`phone-nav-item${slot === target.id ? ' on' : ''}`} aria-current=${slot === target.id ? 'page' : undefined}
