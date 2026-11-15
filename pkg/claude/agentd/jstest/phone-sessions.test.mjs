@@ -28,13 +28,13 @@ async function setup(t, sections) {
   return { harness, mod, opened, c: mounted.container };
 }
 
-test('openSessions keeps what is open, in order, and drops empty groups', async (t) => {
+test('openSessions keeps the sessions running, in order, and drops empty groups', async (t) => {
   const { mod } = await setup(t, []);
   const kept = mod.openSessions(SECTIONS);
-  assert.deepEqual(kept.map((s) => [s.id, s.items.map((i) => i.key)]), [['g1', ['bg:1', 'bg:2', 'pr:1']], ['other', ['bg:3']]]);
+  assert.deepEqual(kept.map((s) => [s.id, s.items.map((i) => i.key)]), [['g1', ['bg:1', 'bg:2']], ['other', ['bg:3']]],
+    'the sessions running; a drawing board or process is not a session, open or not');
   assert.deepEqual(mod.sessionKind(SECTIONS[0].items[0]), { glyph: '', word: 'agent' });
   assert.equal(mod.sessionKind(SECTIONS[2].items[0]).word, 'shell');
-  assert.equal(mod.sessionKind(SECTIONS[0].items[3]).word, 'process');
 });
 
 test('a group per section with its open sessions; a tap opens one', async (t) => {
@@ -42,11 +42,11 @@ test('a group per section with its open sessions; a tap opens one', async (t) =>
   const groups = [...c.querySelectorAll('[role="group"]')].map((g) => g.getAttribute('aria-label'));
   assert.deepEqual(groups, ['webshop', 'Other'], 'a group with nothing open is left out; a nameless one is Other');
   const rows = [...c.querySelectorAll('.phone-session')];
-  assert.deepEqual(rows.map((r) => r.querySelector('.phone-session-title').textContent), ['checkout-ui', 'payments-fix', 'release-train', 'scratch']);
+  assert.deepEqual(rows.map((r) => r.querySelector('.phone-session-title').textContent), ['checkout-ui', 'payments-fix', 'scratch']);
   assert.equal(rows[0].querySelector('.phone-pill').textContent, 'working');
   assert.equal(rows[1].querySelector('.phone-pill').textContent, 'needs you', 'an agent waiting says so');
-  assert.equal(rows[2].querySelector('.phone-pill'), null, 'a process has no state');
-  assert.equal(rows[2].querySelector('.phone-session-sub').textContent, 'process');
+  assert.equal(rows[2].querySelector('.phone-pill'), null, 'a shell has no state');
+  assert.equal(rows[2].querySelector('.phone-session-sub').textContent, 'shell');
   await harness.act(() => rows[1].click());
   assert.deepEqual(opened, [['bg:2', true]], 'the item opens with the panel\'s context');
 });
@@ -55,4 +55,16 @@ test('nothing open says so', async (t) => {
   const { c } = await setup(t, [SECTIONS[1]]);
   assert.equal(c.querySelectorAll('.phone-session').length, 0);
   assert.match(c.querySelector('.phone-sessions-empty').textContent, /Nothing is open/);
+});
+
+test('the empty strip: a phone lists the open sessions, the desktop keeps its home or hint', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { HomeOrHint } = await harness.importDashboardModule('js/terminal-shell-island.js');
+  const snapshot = harness.signals.signal({ groups: [], group_resources: [] });
+  const phone = await harness.mount(harness.html`<${HomeOrHint} phone=${true} rail=${true} snapshot=${snapshot} actions=${{}} panes=${[]}><p class="hint">hint</p><//>`);
+  assert.ok(phone.container.querySelector('.phone-sessions'), 'a phone shows the list');
+  assert.equal(phone.container.querySelector('.hint'), null);
+  const desk = await harness.mount(harness.html`<${HomeOrHint} phone=${false} rail=${false} snapshot=${snapshot} actions=${{}} panes=${[]}><p class="hint">hint</p><//>`);
+  assert.equal(desk.container.querySelector('.phone-sessions'), null, 'the desktop never shows it');
+  assert.ok(desk.container.querySelector('.hint'), 'the desktop keeps the hint');
 });

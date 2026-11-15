@@ -325,7 +325,8 @@ const phoneConfigDescriptor = createIslandDescriptor({
     // configPanel only after this island loads, and until then configPanel
     // holds the section this browser showed last.
     const linkedPath = /^\/config\/([^/]+)/.exec(globalThis.location?.pathname || '');
-    const linked = linkedPath ? decodeURIComponent(linkedPath[1]) : '';
+    let linked = '';
+    try { linked = linkedPath ? decodeURIComponent(linkedPath[1]) : ''; } catch { /* a malformed link opens the list */ }
     const initialOpen = remembered === `list:${linked}` ? '' : linked;
     return {
       mount: (registerCleanup) => mountPhoneConfigIsland({

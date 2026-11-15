@@ -60,6 +60,16 @@ test('More: a scope per entry, the Diagnostics count, notifications and this dev
   // ‹ goes back to where More was opened.
   await page.locator('.phone-bar-back').click();
   await expect(page.locator('.phone-bar-title')).toHaveText('Now');
+  // So does the phone's Back, and Settings from More then starts on its list.
+  await more(page).click();
+  await entry(page, 'Notifications').click();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Notifications');
+  await page.goBack();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Now');
+  await more(page).click();
+  await entry(page, 'Settings').click();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Settings');
+  await expect(page.locator('.phone-config-row').first()).toBeVisible();
   expect(errors).toEqual([]);
 });
 

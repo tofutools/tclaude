@@ -23,6 +23,16 @@ export function DiagnosticsCounts({ doctor = featureState('doctor') }) {
     blocking > 0 && html`<span class="ui-badge ui-badge-danger phone-more-count" title="Blocking problems">${blocking}</span>`}`;
 }
 
+// openNotifications opens Settings › Notifications. Already on its
+// location (the Settings list names the section it last showed), the
+// navigation records no entry, so ‹ shows the list in place.
+const NOTIFICATIONS_PATH = '/config/notifications';
+function openNotifications(go, location = globalThis.location) {
+  const pushed = location?.pathname !== NOTIFICATIONS_PATH;
+  go({ path: NOTIFICATIONS_PATH });
+  openSettingsSection('notifications', pushed);
+}
+
 function Entry({ icon, label, after = null, end = null, danger = false, onClick }) {
   return html`<li><button data-ui-exempt type="button" class=${`phone-menu-item${danger ? ' phone-menu-danger' : ''}`} onClick=${onClick}>
     <span class="phone-menu-icon" aria-hidden="true">${icon}</span><span class="phone-menu-label">${label}</span>${after}${end}
@@ -52,7 +62,7 @@ export function MoreMenu({ state, actions, close, fleet = null, doctor = feature
     <ul class="phone-menu">
       <${Entry} icon="🟢" label="Power on all" onClick=${() => run(actions.powerOnAll)} />
       <${Entry} icon="🛑" label="Shut down all…" danger onClick=${() => run(actions.shutdownAll)} />
-      <${Entry} icon="🔔" label="Notifications" onClick=${() => { go({ path: '/config/notifications' }); openSettingsSection('notifications'); }}
+      <${Entry} icon="🔔" label="Notifications" onClick=${() => openNotifications(go)}
         end=${snap && html`<span class="phone-menu-end phone-menu-note">${notifying ? 'on' : 'off'}</span>`} />
       <${Entry} icon="🖥" label="Desktop site" onClick=${() => run(actions.desktopSite)}
         end=${html`<span class="phone-menu-end phone-menu-note">this device</span>`} />

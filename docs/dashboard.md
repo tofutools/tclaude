@@ -193,10 +193,9 @@ top bar pauses the run. Creating and editing automations and process templates
 are desktop only.
 
 **Open sessions** (in **More**) is the phone's Collab: a plain list, by group,
-of the agents and sessions running and the drawing boards, processes and pages
-that are open. Each row shows its state, and an agent waiting on you says
-**needs you**. Tap a row to open it: an agent's terminal opens full screen, and
-a drawing board opens read-only.
+of the agents, sessions and shells running. Each row shows its state, and an
+agent waiting on you says **needs you**. Tap a row to open its terminal full
+screen. Drawing boards, processes and pages are on the desktop's Collab.
 
 Overlay windows, the side panel, drag and drop and the voice wake word aren't
 on the phone layout.

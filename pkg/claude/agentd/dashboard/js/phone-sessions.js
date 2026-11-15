@@ -1,11 +1,12 @@
 // phone-sessions.js -- the Collab tab on a phone: a plain list of what is open,
 // in place of the desktop's strip, rail and empty-strip home (collab-home.js).
 //
-// It lists what the Collab panel lists (collab-rail-actions.js collabItems),
-// by group, leaving out what is closed: running agents and sessions, and the
-// drawing boards, processes and pages that are open. A tap opens the item the
-// way the panel does (openRailItem), so an agent's terminal docks full screen
-// (phone-terminal-island.js) and a drawing board opens read-only.
+// It lists the sessions the Collab panel lists (collab-rail-actions.js
+// collabItems), by group: the agents, sessions and shells running. A tap opens
+// one the way the panel does (openRailItem), and a phone docks its terminal
+// full screen (phone-terminal-island.js). Drawing boards, processes and pages
+// are left out: the panel opens them on the desktop's tab strip, which a phone
+// does not have.
 
 import { h } from 'preact';
 import htm from 'htm';
@@ -15,32 +16,21 @@ import { Avatar, Card, Section, StatePill } from './phone-ui.js';
 
 const html = htm.bind(h);
 
-// The glyph and word for an item that is not an agent's terminal.
-const KINDS = Object.freeze({
-  drawing_board: Object.freeze({ glyph: '✎', word: 'drawing board' }),
-  process: Object.freeze({ glyph: '⧉', word: 'process' }),
-  page: Object.freeze({ glyph: '◫', word: 'page' }),
-  shell: Object.freeze({ glyph: '›', word: 'shell' }),
-});
-
-// openSessions is collabItems' sections with only what is open: each kept
-// section with its items in the panel's order, and no empty section.
+// openSessions is collabItems' sections with only the open sessions: each
+// kept section with its terminals in the panel's order, and no empty section.
 export function openSessions(sections) {
   return (sections || [])
-    .map((section) => ({ ...section, items: section.items.filter((item) => (item.bucket || bucketOf(item.view)) !== 'closed') }))
+    .map((section) => ({ ...section, items: section.items.filter((item) => item.kind === 'terminal' && (item.bucket || bucketOf(item.view)) !== 'closed') }))
     .filter((section) => section.items.length > 0);
 }
 
 // sessionKind is what a row says it is, and its avatar glyph ('' draws the
 // name's initial).
 export function sessionKind(item) {
-  if (item.kind === 'terminal') {
-    const kind = item.row?.kind;
-    if (kind === 'shell' || kind === 'group_shell') return { glyph: '›', word: 'shell' };
-    if (kind === 'session') return { glyph: '', word: 'session' };
-    return { glyph: '', word: 'agent' };
-  }
-  return KINDS[item.kind] || { glyph: '•', word: String(item.kind || '').replace(/_/g, ' ') };
+  const kind = item.row?.kind;
+  if (kind === 'shell' || kind === 'group_shell') return { glyph: '›', word: 'shell' };
+  if (kind === 'session') return { glyph: '', word: 'session' };
+  return { glyph: '', word: 'agent' };
 }
 
 function SessionRow({ item, onOpen }) {

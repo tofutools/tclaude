@@ -38,10 +38,11 @@ export function sectionMode(id) {
 // alone cannot say so, since the list's URL names a section too.
 export const sectionRequest = signal(null);
 
-// openSettingsSection asks for section id; the navigation to it is the
-// caller's, so Settings' ‹ goes back through it.
-export function openSettingsSection(id) {
-  sectionRequest.value = { id };
+// openSettingsSection asks for section id after the caller navigated to it.
+// pushed says whether that navigation recorded a history entry: then
+// Settings' ‹ steps back through it, else ‹ shows the list in place.
+export function openSettingsSection(id, pushed = true) {
+  sectionRequest.value = { id, pushed: !!pushed };
 }
 
 function SectionRow({ panel, onOpen, readOnly, dirty }) {
@@ -132,9 +133,20 @@ export function PhoneConfig({ state, config = null, panels, actions, initialOpen
   useEffect(() => {
     if (!request) return;
     sectionRequest.value = null;
-    pushed.current = request.id;
+    pushed.current = request.pushed ? request.id : '';
     setOpen(request.id);
   }, [request]);
+
+  // Leaving Settings (the phone's Back, another tab) leaves its section: the
+  // next visit, a bare /config included, starts on the list.
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (wasActive.current && !active) {
+      pushed.current = '';
+      setOpen('');
+    }
+    wasActive.current = active;
+  }, [active]);
 
   useEffect(() => {
     const root = document.documentElement;

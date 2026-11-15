@@ -34,7 +34,7 @@ async function setup(t, { initialOpen = '', panel = 'appearance', dirtyPanels = 
   const root = harness.document.documentElement;
   const row = (title) => [...c.querySelectorAll('.phone-config-row')].find((b) => b.querySelector('.phone-config-title').textContent.startsWith(title));
   const tap = (element) => harness.act(() => element.click());
-  return { harness, island, configPanel, calls, c, root, row, tap, phonePage, actionsWizard: () => wizard };
+  return { harness, island, configPanel, calls, c, root, row, tap, phonePage, state, actionsWizard: () => wizard };
 }
 
 test('the list: this phone, the sections a phone edits, and the rest to view', async (t) => {
@@ -110,6 +110,26 @@ test('a section another view asks for opens over the list, and ‹ steps back th
   assert.equal(island.sectionRequest.value, null, 'the request is taken once');
   await harness.act(() => phonePage.value.onBack());
   assert.ok(calls.some((call) => call[0] === 'back'), 'the navigation it came with is the step back');
+  assert.ok(c.querySelector('.phone-config'));
+});
+
+test('a section asked for from its own location shows the list on ‹; leaving Settings drops the section', async (t) => {
+  const { c, root, calls, phonePage, harness, island, configPanel, state } = await setup(t, { panel: 'notifications' });
+  // The list's URL already named Notifications: the navigation recorded
+  // nothing, so ‹ shows the list in place.
+  await harness.act(() => island.openSettingsSection('notifications', false));
+  assert.equal(phonePage.value.title, 'Notifications');
+  await harness.act(() => phonePage.value.onBack());
+  assert.equal(calls.some((call) => call[0] === 'back'), false, 'no step back past Settings');
+  assert.ok(c.querySelector('.phone-config'));
+  // Asked for again, then the phone's Back leaves the tab: the next visit,
+  // on the same remembered section, starts on the list.
+  await harness.act(() => island.openSettingsSection('notifications'));
+  assert.equal(root.dataset.phoneConfig, 'edit');
+  await harness.act(() => state.setActiveTab('groups'));
+  await harness.act(() => state.setActiveTab('config'));
+  assert.equal(configPanel.value, 'notifications');
+  assert.equal(root.dataset.phoneConfig, 'list');
   assert.ok(c.querySelector('.phone-config'));
 });
 
