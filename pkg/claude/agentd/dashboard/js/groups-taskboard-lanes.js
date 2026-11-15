@@ -45,6 +45,7 @@ import { NewTaskMenu } from './groups-taskboard-new.js';
 import { CommentCount } from './groups-taskboard-comments.js';
 import { TaskTitle } from './groups-taskboard-card.js';
 import { copyLinkItem, TaskLink } from './task-route.js';
+import { TaskProcess, TaskProcessLine, runWithProcessItem } from './groups-taskboard-process.js';
 import { COLUMN_STATE, columnLabel } from './taskboard-context.js';
 import { AddColumnButton, ColumnHeadMenu, useColumnNaming } from './groups-taskboard-columns.js';
 import { LaneLimit, QueuedChip, useLimitDialog } from './groups-taskboard-limits.js';
@@ -521,7 +522,10 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
   const dim = epicDimmed(useContext(EpicBoard), task);
   // An editable card on a board has ⋯ Copy link (task-route.js), beside its own items.
   const board = useContext(TaskLink);
-  const menu = board && onEdit ? [...(given || []), copyLinkItem(task.id, board)] : given;
+  // ⋯ Run with a process… on a board that offers processes (groups-taskboard-process.js).
+  const processBoard = useContext(TaskProcess);
+  const runItem = onEdit ? runWithProcessItem(processBoard, task) : null;
+  const menu = board && onEdit ? [...(given || []), ...(runItem ? [runItem] : []), copyLinkItem(task.id, board)] : given;
   return html`<div class=${`ui-card tb-card${marker ? ` tb-card-marked ${marker.class}` : ''}${done ? ' tb-card-done' : ''}${task.stage === 'idea' && task.status === 'open' ? ' tb-card-idea' : ''}${task.stage === BACKLOG ? ' tb-card-parked' : ''}${drag?.dragging === task.id ? ' tb-dragging' : ''}${isEpic(task) ? ` tb-card-epic tb-epic-c${epicColour(task.id)}` : ''}${dim ? ' tb-epic-dim' : ''}${dropAt ? ` tb-drop-${dropAt}` : ''}`}
       data-task-id=${task.id} draggable=${drag ? 'true' : undefined} data-dnd-card=${drag ? task.id : undefined}
       onKeyDown=${onKey || undefined}
@@ -535,6 +539,7 @@ export function Card({ task, byId, drag, api = null, nameOf = null, onEdit = nul
     ${((chip && task.parent_id) || isEpic(task)) && html`<div class="tb-card-epic-line"><${EpicMark} task=${task} />${chip && html`<${EpicChip} task=${task} />`}</div>`}
     ${!done && html`<div class="tb-card-meta">${task.ref && html`<${RefChip} task=${task} />`}<${DepChips} task=${task} byId=${byId} /><${QueuedChip} task=${task} />${cardHint(task)}<${CommentCount} task=${task} onOpen=${onEdit ? () => onEdit(task.id) : null} />
       <${QuestionTag} task=${task} askedBy=${nameOf && askerOf(task) ? nameOf(askerOf(task)) : ''} /></div>`}
+    <${TaskProcessLine} task=${task} compact=${true} />
     ${onAnswer && questionOpen(task) && html`<div class="tb-card-answer"><${Button} size="sm" variant="primary" class="tb-answer-open"
       onClick=${(event) => { event.stopPropagation(); onAnswer(task.id); }}>Answer…<//></div>`}
   </div>`;

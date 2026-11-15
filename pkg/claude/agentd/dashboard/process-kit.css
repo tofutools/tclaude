@@ -235,3 +235,30 @@ button.pk-gnode { cursor: pointer; }
 .pk-sheet-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 8px 0; font-size: 12px; }
 .pk-sheet-cell { width: 110px; flex: none; }
 .pk-sheet-muted { color: var(--pk-muted); font-size: 11px; }
+
+/* A board task's process run (tk_8aa88514, process-task-run.js): the card's
+   and row's line (◈ name · step N/T label · waiting on X) over a segment per
+   step, and a task's "will follow X when started" line. */
+.tk-run { display: flex; flex-direction: column; gap: 3px; width: 100%; max-width: 100%; box-sizing: border-box; margin-top: 4px; padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--pk-running) 40%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--pk-running) 7%, transparent);
+  color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.tk-run:hover, .tk-run:focus-visible { background: color-mix(in srgb, var(--pk-running) 15%, transparent); }
+.tk-run-waiting { border-color: color-mix(in srgb, var(--pk-waiting) 60%, transparent); background: color-mix(in srgb, var(--pk-waiting) 10%, transparent); }
+.tk-run-done { border-color: color-mix(in srgb, var(--pk-done) 45%, transparent); background: transparent; }
+.tk-run-failed { border-color: color-mix(in srgb, var(--pk-failed) 55%, transparent); background: color-mix(in srgb, var(--pk-failed) 8%, transparent); }
+.tk-run-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-run-compact .tk-run-line { white-space: normal; overflow-wrap: anywhere; }
+.tk-run-glyph { color: var(--pk-running-text); }
+.tk-run-bar { display: flex; gap: 2px; height: 4px; }
+.tk-seg { flex: 1 1 0; min-width: 3px; border-radius: 2px; background: color-mix(in srgb, var(--pk-planned) 45%, transparent); }
+.tk-seg-done { background: var(--pk-done); }
+.tk-seg-running { background: var(--pk-running); }
+.tk-seg-waiting { background: var(--pk-waiting); }
+.tk-seg-failed { background: var(--pk-failed); }
+.tk-seg-current { box-shadow: 0 0 0 1px var(--pk-running-text); }
+.tk-follow-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-top: 4px; font-size: 12px; color: var(--pk-planned-text); }
+.tk-follow-row .gr-add { display: inline-flex; }
+.tk-follow-row .gr-add::before { content: '·'; margin: 0 4px 0 2px; }
+.tk-link, .tk-follow-change { background: none; border: 0; padding: 0; color: var(--pk-running-text); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.gp-card-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-start-task { flex-basis: 100%; }

@@ -235,6 +235,38 @@ block or recording an outcome steers other agents' work, so they stay on
 `process.runs.manage`. An unfiltered `runs ls` still needs
 `process.runs.read`.
 
+### A run for a board task
+
+A run can be for a task on a group's board: `tclaude process run <template>
+--task tk_…`, the task's ⋯ *Run with a process…* in the dashboard, or
+`tclaude agent taskboard add <group> "title" --process <template>`, which
+adds the task and starts the run in one step. The run is the task's group's
+(scoping it to one member with `--agent` also works), and it gets the task as
+inputs: its title and brief as `{{params.task}}` and its id as
+`{{params.task_ref}}`. A start that passes either param keeps its own value.
+
+A task has one live run at a time; a second start for it is refused with the
+live run's id. `runs ls --task tk_…` lists a task's runs. The task card shows
+the run's progress (the step it is on, the round of a loop, who it waits on,
+a bar of its steps), and the run's card in Resources says which task it is
+for and links back to it.
+
+The run's end settles the task. A completed run closes it as done, a failed
+one blocks it with the reason ("its process review failed (run …)"), and a
+canceled one leaves it as it is: someone stopped the process, not the work.
+A task closed by hand meanwhile is left alone.
+
+A board can have a **default way of working**: `tclaude agent taskboard
+options set <group> process=<template>`, or the ⚙ Board options drawer's
+*Way of working* tab, offered once the group has a saved process. It is
+unset by default. With one set, a new task shows *◈ will follow X when
+started* and the run starts when the task is taken or started, unless the
+task chose another (`taskboard edit tk_… --process <template>`) or none
+(`--process none`). A task's process runs once, from its start: a task that
+already had a run starts no other on its own. The board's way of working
+runs as the operator's, so a member that takes the task needs no
+`process.runs.start`; choosing a process for one task does need it.
+
 ## Run scope
 
 Every run is bound to a context when it starts, and keeps that binding:

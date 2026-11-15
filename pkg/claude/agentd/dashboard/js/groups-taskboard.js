@@ -49,6 +49,7 @@ import { RefChip, TaskTitle } from './groups-taskboard-card.js';
 import { FilesCount } from './groups-taskboard-files.js';
 import { listenForTransfer, runCrossTransfer, runTransfer, transferTargets } from './groups-taskboard-transfer.js';
 import { agentLink, jumpToTask } from './cross-links.js';
+import { TaskProcess, TaskProcessLine, runWithProcessItem, taskProcessBoard } from './groups-taskboard-process.js';
 import { closeTaskRoute, copyLinkItem, dropTaskRoute, openTaskRoute, sameTask, TaskLink, taskRoute } from './task-route.js';
 import {
   COLUMN_STATE, actorAgentId, columnLabel, createTaskboardContextSource, taskRowState, taskboardContext, taskboardCountsText,
@@ -367,6 +368,7 @@ export function canClose(task, actions) {
 // (rowMenu). Each names its CLI verb in its title.
 function RowActions({ task, group, tasks, actions, onForm, columns = [], peers = null, where = '', backlogOn = false }) {
   const board = useContext(TaskLink);
+  const processBoard = useContext(TaskProcess);
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   const go = (key, label, fn) => () => actions.run(`${task.id}:${key}`, label, fn);
@@ -382,7 +384,7 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [], peers =
   else if (canClose(task, actions)) first = icon('done', '✓', 'Done: taskboard done', go('done', 'Done', (api) => api.status(task.id, 'done')), 'tb-act-ok');
   else first = slot('done');
   const edit = icon('edit', '✎', 'Edit: title, brief, ref, where it is, assignee, dependencies and files', () => onForm('edit'));
-  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns, board, peers, where, backlogOn })}
+  return html`<span class="row-actions tb-row-actions">${first}${edit}<${RowMenu} label=${task.title} items=${rowMenu({ task, group, tasks, actions, onForm, columns, board, peers, where, backlogOn, processBoard })}
     glyph="⋯" buttonClass="icon-btn tb-act tb-act-more" keepSlot=${true} title="More: move up or down, assign, block, move or clone to a group, drop, archive (or right-click the row)" /></span>`;
 }
 
@@ -390,7 +392,7 @@ function RowActions({ task, group, tasks, actions, onForm, columns = [], peers =
 // unblock, unassign, move or clone to another group (the groups a drag
 // could reach, this node's or a linked one's, with a drop's confirmation)
 // and drop.
-function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = null, peers = null, where = '', backlogOn = false }) {
+function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = null, peers = null, where = '', backlogOn = false, processBoard = null }) {
   const state = taskRowState(task);
   const closed = state === 'done' || state === 'dropped';
   // An epic is no work of its own: no assign, block, column, start or hold
@@ -441,6 +443,10 @@ function rowMenu({ task, group, tasks, actions, onForm, columns = [], board = nu
   if (work && !closed && task.status === 'open' && offeredColumns(columns).length) {
     items.push(item('move-to', 'Move to…', 'taskboard move --stage <column>: Idea, Next or a column of the board\'s own (In review, …)', { run: () => onForm('move') }));
   }
+  // Run with a process… (groups-taskboard-process.js), on a board that
+  // offers processes.
+  const runItem = runWithProcessItem(processBoard, task);
+  if (runItem) items.push(runItem);
   if (!closed && task.status === 'blocked') items.push(item('unblock', 'Unblock', 'taskboard unblock', { run: run('unblock', 'Unblock', (api) => api.status(task.id, 'open')) }));
   else if (work && !closed) items.push(item('block', 'Block…', 'taskboard block: with a reason', { run: () => onForm('block') }));
   // A task its assignee holds starts (in progress); a started one is put
@@ -540,6 +546,7 @@ function TaskRow({ task, byId, group, snapshot, tasks, actions, readApi, drag, o
       <${QuestionTag} task=${task} askedBy=${actorLabel(askerOf(task), group, snapshot)} />
       <${CommentCount} task=${task} onOpen=${actions ? () => onForm(task.id, 'edit') : null} />
       ${task.status === 'blocked' && task.block_reason && html`<div class="tb-reason" title=${task.block_reason}>blocked: “${task.block_reason}”</div>`}
+      <${TaskProcessLine} task=${task} />
     </div></td>
     <td><${StatePill} task=${task} byId=${byId} columns=${columns} assignee=${task.assignee?.operator ? actorLabel(task.assigned_by, group, snapshot)
       : task.assignee?.agent_id ? agentLabel(task.assignee.agent_id, group, snapshot) : ''} /><${QueuedChip} task=${task} /></td>
@@ -1144,7 +1151,8 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
   const moveDialog = moveTask && html`<${TaskMoveDialog} key=${`${moveTask.id}-${moving.reopen}`} task=${moveTask} reopen=${moving.reopen}
     columns=${entry.columns || []} canAssign=${canAssign(actions)} wizard=${wizard} busy=${actions.busy === `${moveTask.id}:move`}
     onClose=${() => setMoving(null)} onSubmit=${(write) => actions.run(`${moveTask.id}:move`, write.name, write.run)} />`;
-  return html`<${TaskLink.Provider} value=${board}><div class="tb-board" data-taskboard=${name} ref=${boardRef}>
+  const processBoard = taskProcessBoard({ group, entry: full, snapshot, actions });
+  return html`<${TaskLink.Provider} value=${board}><${TaskProcess.Provider} value=${processBoard}><div class="tb-board" data-taskboard=${name} ref=${boardRef}>
     ${!(view === 'lanes' && lanesBy === 'epic') && html`<${EpicStrip} entry=${full} actions=${actions} onEdit=${actions ? openEdit : null} />`}
     ${editDialog}
     ${reasonDialog}
@@ -1163,7 +1171,7 @@ export function TaskboardRows({ entry, full = entry, group, snapshot, wizard = i
     ${(view === 'lanes' || !visibleRows) && closed.length > 0 && html`<table class="tb-table ui-table-auto tb-closed-table">${COLUMNS}<tbody>
       ${closed.map((task) => html`<${TaskRow} key=${task.id} task=${task} ...${rowProps} />`)}
     </tbody></table>`}
-  </div><//>`;
+  </div><//><//>`;
 }
 
 const VIEW_PREF = (group) => `tclaude.dash.groups.taskboard.view.${group}`;
@@ -1385,10 +1393,11 @@ export function TaskboardSection({ group: shown, snapshot, source: ownSource = t
   const optionsDrawer = hasOptions && isBoardOptionsFor(optionsAt, group.name, node)
     ? html`<${BoardOptionsDrawer} group=${group} shownName=${shown.shownName || shown.name} nodeName=${boardNodeName(group)} entry=${entry}
         api=${optionsApi} readApi=${readApi} actions=${api ? actions : null} section=${optionsAt.section} column=${optionsAt.column} wizard=${wizard}
+        processes=${taskProcessBoard({ group, entry, snapshot, actions: null })?.saved || null}
         onSaved=${() => { void Promise.resolve(source.refresh?.()).catch(() => {}); }} onClose=${closeBoardOptions} />`
     : null;
   return html`<${EpicBoard.Provider} value=${epics}>${dialog}${optionsDrawer}<${FusedSection} group=${shown.name} section="taskboard" label=${wizard ? 'Quest board' : 'Task board'}
-      summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} /><${BoardOptionsSummary} options=${entry.options} columns=${entry.columns || []} />`} auto=${autoOpened.current}
+      summary=${html`<${TaskboardCounts} counts=${counts} who=${operatorName(group)} columns=${entry.columns || []} /><${BoardOptionsSummary} options=${entry.options} columns=${entry.columns || []} process=${entry.process || ''} />`} auto=${autoOpened.current}
       closedActions=${closedActions} attrs=${{ 'data-fused-taskboard': shown.name }}>
     ${toolbar}
     <${ReadyGrouping.Provider} value=${prefs.readiness}><${TaskboardRows} entry=${lanes ? view : drawn} full=${entry} group=${group} snapshot=${snapshot} wizard=${wizard} actions=${api ? actions : null} readApi=${readApi}

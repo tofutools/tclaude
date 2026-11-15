@@ -12,6 +12,9 @@
 :root[data-layout="phone"] .phone-board-title { margin: 0; color: var(--ui-text-strong); font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 :root[data-layout="phone"] :is(.phone-board-asked, .phone-board-note) { margin: 0; color: var(--ui-muted-text); font-size: 13px; }
 :root[data-layout="phone"] .phone-board-note { color: var(--ui-danger-text); }
+/* A task's process run (tk_8aa88514): its line on the card, as wide as the card, big enough to tap. */
+:root[data-layout="phone"] .phone-board-card .tk-run { min-height: 40px; font-size: 13px; }
+:root[data-layout="phone"] .phone-board-card .tk-follow { font-size: 13px; color: var(--ui-muted-text); }
 
 /* Tags: rounded outline chips (@agent, PR #n, a ref, the kind). */
 :root[data-layout="phone"] .phone-board-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }

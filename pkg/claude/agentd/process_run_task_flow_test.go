@@ -171,6 +171,22 @@ func TestTaskboardAddWithAProcessStartsItForTheNewTask(t *testing.T) {
 func TestBoardDefaultWayOfWorkingStartsWhenATaskIsTaken(t *testing.T) {
 	h := processTaskFlow(t)
 	h.call("", http.MethodPatch, "/v1/groups/crew/taskboard/options", map[string]any{"set": map[string]string{"process": "gate"}})
+	ctx := h.call("", http.MethodGet, "/v1/taskboard/context", nil)
+	require.Equal(t, http.StatusOK, ctx.Code, ctx.Body.String())
+	var boards struct {
+		Groups []struct {
+			Group   string `json:"group"`
+			Process string `json:"process"`
+		} `json:"groups"`
+	}
+	require.NoError(t, json.Unmarshal(ctx.Body.Bytes(), &boards))
+	shown := ""
+	for _, b := range boards.Groups {
+		if b.Group == "crew" {
+			shown = b.Process
+		}
+	}
+	assert.Equal(t, "gate", shown, "the board shows its default way of working on every card")
 	follows := h.add("Follows the board", "next")
 	opted := h.add("No process for this one", "next")
 	assert.Empty(t, h.runsForTask(follows.ID), "nothing runs before the task is started")

@@ -292,8 +292,10 @@ export function createTaskboardApi({ fetchImpl = (...args) => fetch(...args), up
     // URL or label); a node from before tasks had several refs ignores them.
     // firstRef moves a ref (one of the task's, or of addRefs) to the front.
     // parent moves the task into an epic, clearParent takes it out.
-    edit(id, { title, body, ref, refLabel, clearRef = false, resolveRef = false, addDeps, rmDeps, addRefs, rmRefs, firstRef, parent, clearParent = false }) {
+    edit(id, { title, body, ref, refLabel, clearRef = false, resolveRef = false, addDeps, rmDeps, addRefs, rmRefs, firstRef, parent, clearParent = false, process }) {
       const payload = {};
+      // process is the task's way of working: a template, 'none', or '' for the board's.
+      if (process !== undefined) payload.process = process;
       if (clearParent) payload.clear_parent = true;
       else if (parent) payload.parent = parent;
       if (rmRefs?.length) payload.rm_refs = rmRefs;

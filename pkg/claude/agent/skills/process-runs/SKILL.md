@@ -47,10 +47,17 @@ tclaude process templates ls
 tclaude process run release --param version=1.4.0 --group webshop
 tclaude process run lint-fix --agent <self>             # bound to you
 tclaude process run deploy --authorize-program-profile ci   # each program profile, explicitly
+tclaude process run review --task tk_…                  # for a board task: its group's run; the run's end closes the task
 tclaude process runs ls [--group <g>] [--agent <a>] [--performer <a>] [--limit 32] [--after <run-id>]
 tclaude process show <run-id> [--json]                  # state, scope, owner, what needs a human
 tclaude process events <run-id> [--after <seq>] [--json-lines]   # ordered evidence trail
 ```
+
+A run for a board task (`--task`) gets the task's text as `{{params.task}}`
+and its id as `{{params.task_ref}}`; one task has one live run at a time;
+`runs ls --task tk_…` lists its runs. Completed closes the task (done),
+failed blocks it, canceled leaves it as it is. See the taskboard skill's
+"A task that follows a process" for `taskboard add --process`.
 
 Scope binds a run for life: `--group` (by id, survives renames), `--agent`
 (stable agent id, survives reincarnate), or neither (unscoped: only in

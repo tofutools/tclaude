@@ -197,7 +197,8 @@ tclaude agent taskboard comment ls <task> [--save <dir>]
 
 tclaude agent taskboard add <group> "title" [--body …|--body-file f] [--ref URL|id] [--add-ref URL|id]… [--resolve-ref]
                                     [--next|--backlog|--stage <custom column>] [--after tk_a,tk_b] [--top|--before tk_x]
-                                    [--assignee <agent>|operator|--mine] [--blocked "reason"|--done] [--attach f]…
+                                    [--assignee <agent>|operator|--mine] [--blocked "reason"|--done] [--attach f]… [--process <template>|none]
+tclaude agent taskboard add <group> "title" --process review   # add it and run the process for it now (processes.md "A run for a board task")
 tclaude agent taskboard add <group> "title" --assignee operator --blocks tk_mine   # ask the operator; tk_mine waits
 tclaude agent taskboard ask-operator <task|group> "question?" [--option "A: why"]… [--block|--blocks tk_mine] [--wait 10m]
 tclaude agent taskboard answer <task> [--question n] --pick <key|label|n>[,…] [--text "…"]
@@ -207,6 +208,7 @@ tclaude agent taskboard detach <task> <name|#id>…
 tclaude agent taskboard attachments <task> [--save <dir>]
 tclaude agent taskboard edit <task> [--title …] [--body …|--clear-body] [--ref …|--clear-ref] [--resolve-ref]
                                     [--add-ref …]… [--rm-ref #n|link|label]… [--first-ref #n|link|label] [--add-dep tk_…] [--rm-dep tk_…]
+                                    [--process <template>|none|default]   # what it follows once started
 tclaude agent taskboard move <task> --top|--bottom|--before tk_x|--after tk_x
 tclaude agent taskboard move <task> --stage backlog|idea|next|<custom column>
 tclaude agent taskboard columns ls|add|rename|move|rm <group> …   # custom columns
@@ -905,6 +907,7 @@ $ tclaude agent taskboard options reset crew all
 | `idle.nudge` | `on` / `off`: nudge the idle assignee | on |
 | `idle.tell` | any of `assigner`, `owners`, `operator`; `none` for no one | `assigner` |
 | `idle.check_columns` | custom column slugs whose tasks are checked too | none |
+| `process` | the board's default way of working: a saved process a new task follows, started when the task is taken or started ([processes](processes.md#a-run-for-a-board-task)); `none` clears it | none |
 
 `set` takes several `key=value` pairs and applies them as one change; a value
 of `default` is the same as `reset`. `reset` takes keys, an event

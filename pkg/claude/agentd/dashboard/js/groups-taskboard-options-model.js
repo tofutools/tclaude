@@ -77,7 +77,10 @@ export const eventKey = (name, field) => `events.${name}.${field}`;
 // The drawer's tabs and the sections a deep link (#idle) may name. Limits
 // arrives with the per-board limits (tk_68919cad PR 3).
 export const TABS = [['triggers', 'Triggers'], ['limits', 'Limits'], ['columns', 'Columns']];
-export const SECTION_TAB = { idle: 'triggers', events: 'triggers', triggers: 'triggers', limits: 'limits', columns: 'columns' };
+// PROCESS_TAB is the Way of working tab (tk_8aa88514): only on a board whose
+// group uses processes.
+export const PROCESS_TAB = ['process', 'Way of working'];
+export const SECTION_TAB = { idle: 'triggers', events: 'triggers', triggers: 'triggers', limits: 'limits', columns: 'columns', process: 'process' };
 
 // Work-in-progress limits (docs/taskboard.md "Work-in-progress limits"): a
 // cap per lane, In progress (IN_PROGRESS) and each custom column, what a
@@ -140,6 +143,7 @@ export function flatOptions(options) {
   };
   lane(IN_PROGRESS, limits.in_progress);
   for (const [slug, limit] of Object.entries(limits.columns || {})) lane(slug, limit);
+  if (options?.process) out.process = options.process;
   return out;
 }
 
@@ -197,6 +201,8 @@ export function inheritedOf(view, key, draft = null) {
     case 'idle.nudge': return { value: true, source: 'default' };
     case 'idle.tell': return { value: ['assigner'], source: 'default' };
     case 'idle.check_columns': return { value: [], source: 'default' };
+    // No default way of working: a task runs no process unless one is chosen.
+    case 'process': return { value: '', source: 'default' };
     default: {
       const [, name, field] = key.split('.');
       return field === 'enabled' ? { value: true, source: 'default' } : { value: [...(EVENT_DEFAULT_TO[name] || [])], source: 'default' };
@@ -366,7 +372,7 @@ export function valueText(value) {
 // change from the inherited behaviour, from its context entry's options
 // ({ version, idle_active, idle_globally_off, idle_source, set }): one chip
 // per part, each with the section of the drawer it opens.
-export function optionsSummary(options, columns = []) {
+export function optionsSummary(options, columns = [], process = '') {
   if (!options) return [];
   const set = Array.isArray(options.set) ? options.set : [];
   const out = [];
@@ -396,6 +402,7 @@ export function optionsSummary(options, columns = []) {
       text: options.limits.per === 'assignee' ? `${label} ≤ ${lane.max} each` : `${label} ${lane.count} / ${lane.max}`,
       title: laneTitle(lane, label, options.limits.per) });
   }
+  if (process) out.push({ section: 'process', text: `◈ follows ${process}`, title: `New tasks follow the process ${process} when they are taken or started` });
   if (queued) out.push({ section: 'limits', key: 'limits-queued', text: `${queued} queued`, title: `${queued} ${queued === 1 ? 'task waits' : 'tasks wait'} in line for a full lane` });
   return out.map((part) => ({ key: part.section, ...part }));
 }

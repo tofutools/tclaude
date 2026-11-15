@@ -165,6 +165,7 @@ function RunRow({ item, waiting, onOpen }) {
       <span class="phone-run-text">
         <span class="phone-run-name">${runName(run)}</span>
         <span class="phone-run-sub">${[where, runPosition(run)].filter(Boolean).join(' · ')}</span>
+        ${run.scope?.task && html`<span class="phone-run-task" data-run-task=${run.scope.task}>◈ for task: ${run.scope.taskTitle || run.scope.task}</span>`}
         <${ProcessStepStrip} run=${run} />
       </span>
       ${tag}

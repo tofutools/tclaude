@@ -194,6 +194,26 @@ With `taskboard.write`, new tasks land unassigned in the ideas unless you pass
 When something will not happen soon, make sure the tracker has it, then
 `drop` it.
 
+### A task that follows a process
+
+A task can run a saved process (a way of working: review loop, release
+train). The run carries the task: its text is the `task` param and its id
+`task_ref`. The task card shows the run's step, and the run's end settles
+the task: completed → done, failed → blocked with the reason. "Use process
+X for this idea" means:
+
+```bash
+tclaude agent taskboard add <group> "title" --process X   # adds the task and starts X for it now
+tclaude process run X --task tk_…                          # start X for a task already on the board
+tclaude agent taskboard edit tk_… --process X|none|default # what it follows once started
+tclaude agent taskboard options set <group> process=X      # the board's default way of working (unset by default)
+```
+
+With a board default, a new task follows it and the run starts when the task
+is taken or started; `--process none` opts one task out. A task runs one
+process at a time. Choosing a process needs `process.runs.start` in the
+group.
+
 ### Deferring: the backlog
 
 The backlog is a stage before the ideas, for work that is deliberately

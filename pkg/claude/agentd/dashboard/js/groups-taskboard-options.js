@@ -34,7 +34,7 @@ import { shellConfirmDiscard, shellToast } from './shell-state.js';
 import { openBoardOptions } from './groups-taskboard-options-route.js';
 import { AddColumnButton, COLUMNS_CAP, columnMenuItems, useColumnNaming } from './groups-taskboard-columns.js';
 import {
-  EVENT_TO, eventRows, IDLE_TELL, RECIPIENT_LABEL, RECIPIENT_TITLE, SECTION_TAB, TABS,
+  EVENT_TO, eventRows, IDLE_TELL, PROCESS_TAB, RECIPIENT_LABEL, RECIPIENT_TITLE, SECTION_TAB, TABS,
   AT_LIMITS, IN_PROGRESS, PER,
   changedKeys, draftErrors, effectiveOf, eventKey, flatOptions, inheritedOf, laneKey, laneLimit,
   optionsSummary, patchOf, rebaseDraft, resetOption, setOption, sourceText, valueText,
@@ -60,8 +60,8 @@ export function BoardOptionsButton({ group, node = '', iconOnly = false, wizard 
 // too). It sits inside the section's toggle, so it is text, not controls.
 const SUMMARY_ICON = { idle: '⏱ ', events: '✉ ', limits: '' };
 
-export function BoardOptionsSummary({ options, columns = [] }) {
-  const parts = optionsSummary(options, columns);
+export function BoardOptionsSummary({ options, columns = [], process = '' }) {
+  const parts = optionsSummary(options, columns, process);
   if (!parts.length) return null;
   return html`<span class="tb-options-summary">${parts.map((part) => html`<span key=${part.key}
     class=${`ui-tag tb-options-chip${part.fill ? ` tb-lane-${part.fill}` : ''}`} data-tb-options-summary=${part.section}
@@ -235,6 +235,29 @@ function AtLimitSelect({ view, draft, lane, label, canWrite, set, reset }) {
     onChange=${(value) => (value ? set(key, value) : reset([key]))} />`;
 }
 
+// ProcessTab is the board's default way of working (tk_8aa88514): the
+// process a new task follows, started for it when it is taken or started.
+// Unset by default; a task may pick another or none.
+function ProcessTab({ view, draft, saved, canWrite, set, reset, processes = [], wizard = false }) {
+  const value = effectiveOf(view, draft, 'process').value || '';
+  const known = processes.some((row) => row.id === value);
+  const options = [...processes.map((row) => [row.id, row.name || row.id]), ...(value && !known ? [[value, value]] : [])];
+  return html`<section class="tb-opt-section" data-tb-opt-section="process" aria-label="Way of working">
+    <p class="tb-opt-desc ui-hint">${wizard ? 'The rite a new quest follows' : 'The process a new task follows'}: it starts for the task when the task is taken or started,
+      and its end closes the task (done) or blocks it (failed). A task can follow another, or none.</p>
+    <div class="tb-opt-grid">
+      <span class="tb-opt-label" id="tb-opt-process-label">Default way of working</span>
+      <span class="tb-opt-ctl">
+        <${OptionalSelect} size="sm" class="tb-opt-process" value=${value} unset="None" options=${options} disabled=${!canWrite}
+          aria-labelledby="tb-opt-process-label" data-tb-opt-process=""
+          onChange=${(next) => (next ? set('process', next) : reset(['process']))} />
+      </span>
+      <${Source} view=${view} draft=${draft} saved=${saved} keys=${['process']} canWrite=${canWrite} onReset=${reset} label="the default way of working" />
+    </div>
+    <p class="ui-hint"><code>${'tclaude agent taskboard options set <group> process=<template>'}</code> · <code>taskboard add … --process none</code> opts a task out.</p>
+  </section>`;
+}
+
 // LimitsTab is the board's work-in-progress limits: a cap on In progress
 // and on each custom column, what a full lane does, and whether a cap
 // counts the lane or each assignee in it.
@@ -338,7 +361,7 @@ function DrawerClose() {
 // options.version moving rereads the options; actions are the board's
 // column actions (null without taskboard.columns).
 export function BoardOptionsDrawer({ group, shownName = group.name, nodeName = '', entry, api = null, readApi = null, actions = null,
-  section = '', column = '', wizard = false, onSaved = null, onClose }) {
+  section = '', column = '', wizard = false, onSaved = null, onClose, processes = null }) {
   const canWrite = !!api && typeof api.saveOptions === 'function';
   const reader = readApi || api;
   const [view, setView] = useState(null);
@@ -443,6 +466,10 @@ export function BoardOptionsDrawer({ group, shownName = group.name, nodeName = '
     ? html`<span class="ui-hint tb-opt-unsaved" data-tb-opt-unsaved=${count}>${count} unsaved ${count === 1 ? 'change' : 'changes'}</span>`
     : html`<span class="ui-hint tb-opt-cli">Stored with the board · <code>tclaude agent taskboard options show ${group.name}</code></span>`;
   const props = { view, draft, saved, columns, canWrite, set, setMany, reset, errors };
+  // Way of working shows only for a group that uses processes (`processes`:
+  // its saved ones), or a board that already sets one.
+  const processOn = !!processes && (processes.length > 0 || !!saved.process);
+  const tabs = processOn ? [...TABS, PROCESS_TAB] : TABS;
   return html`<${Dialog} id="taskboard-options-modal" overlayClass="tb-opt-overlay" dialogClass="cron-create-modal tb-opt-drawer"
     titleId="taskboard-options-title" title=${html`<span aria-hidden="true">⚙</span> ${title} <span class="ui-tag tb-opt-node">${where}</span>`}
     onClose=${onClose} busy=${busy} dirty=${() => dirtyRef.current} confirmDiscard=${shellConfirmDiscard}
@@ -455,13 +482,14 @@ export function BoardOptionsDrawer({ group, shownName = group.name, nodeName = '
     ${stale && html`<p class="tb-opt-note ui-hint" role="status" data-tb-opt-stale="">
       These options changed elsewhere since you opened them. Save applies your changes over the newer version.</p>`}
     <${Tabs} label="Board options" variant="seg" class="tb-opt-tabs" value=${tab} onSelect=${setTab}
-      items=${TABS.map(([key, label]) => ({ key, label, attrs: { 'data-tb-opt-tab': key } }))} />
+      items=${tabs.map(([key, label]) => ({ key, label, attrs: { 'data-tb-opt-tab': key } }))} />
     <div class="tb-opt-body" ref=${bodyRef}>
       ${loadError && html`<p class="ui-error-box" role="alert">${loadError}</p>`}
       ${!view && !loadError && html`<p class="ui-hint" aria-busy="true">Reading the board's options…</p>`}
       ${view && tab === 'triggers' && html`<${IdleSection} ...${props} /><${EventsSection} ...${props} />`}
       ${view && tab === 'limits' && html`<${LimitsTab} ...${props} entry=${entry} />`}
       ${view && tab === 'columns' && html`<${ColumnsTab} group=${group} ...${props} actions=${actions} focusColumn=${column} />`}
+      ${view && tab === 'process' && processOn && html`<${ProcessTab} ...${props} processes=${processes} wizard=${wizard} />`}
     </div>
   <//>`;
 }
