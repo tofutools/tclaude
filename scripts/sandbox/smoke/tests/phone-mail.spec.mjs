@@ -36,6 +36,10 @@ test('Mail lists, opens, goes back, picks an agent folder and writes', async ({ 
   await booted(page);
   await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Mail/ }).click();
   const chips = page.getByRole('group', { name: 'Mailboxes' });
+  // Mail opens on what needs the operator first; the fixture's pending access
+  // request takes it to Access, so pick Human.
+  await expect(chips.getByRole('button', { name: /^Access/ })).toHaveAttribute('aria-pressed', 'true');
+  await chips.getByRole('button', { name: /^Human/ }).click();
   await expect(chips.getByRole('button', { name: /^Human/ })).toHaveAttribute('aria-pressed', 'true');
   const rows = page.locator('.phone-mail-open');
   await expect(rows.first()).toBeVisible();
