@@ -19,7 +19,7 @@
 // desktop's (jobs-actions.js), over the same state (jobs-state.js).
 
 import { h, render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { PROCESSES_SUBTAB, automationsSubnavEntries, openAutomationsEntry } from './automations-subnav.js';
 import { cronRunSucceeded, formatJobInterval } from './jobs-format.js';
@@ -34,7 +34,7 @@ import { usePhonePage } from './phone-page.js';
 import { RunPage, RunsList, gateItems } from './phone-process-runs.js';
 import { DesktopOnlyNote, desktopSite } from './phone-desktop-only.js';
 import { Button, Input, Switch } from './ui-components.js';
-import { Tabs } from './ui-tabs.js';
+import { ChipRow } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -61,14 +61,17 @@ export function cronTarget(job) {
   return 'no target';
 }
 
-// cronOutcome is a cron job's last run: how it went and when, and whether
-// that was a failure (the desktop's status pill, in a line).
+// cronOutcome is a cron job's last run, in the mock's words: "✓ ran 6h ago",
+// "✗ failed 1d ago", coloured by how it went (the desktop's status pill, in
+// a line).
 export function cronOutcome(job) {
   if (!job.last_run_status) return { text: job.enabled ? 'never run' : 'off · never run', tone: '' };
-  const ok = cronRunSucceeded(job.last_run_status);
-  const failed = /denied|failed|error|deadline|feature_disabled|profile_disabled|profile_operator_only/.test(job.last_run_status);
+  const status = job.last_run_status;
+  const ok = cronRunSucceeded(status);
+  const failed = /denied|failed|error|deadline|feature_disabled|profile_disabled|profile_operator_only/.test(status);
   const when = relTime(job.last_run_at);
-  const text = `${ok ? '✓' : failed ? '✗' : '•'} ${job.last_run_status}${when ? ` · ${when}` : ''}`;
+  const word = status === 'ok' ? 'ran' : status.replace(/_/g, ' ');
+  const text = `${ok ? '✓' : failed ? '✗' : '•'} ${word}${when ? ` ${when}` : ''}`;
   return { text: job.enabled ? text : `off · ${text}`, tone: ok ? 'ok' : failed ? 'bad' : 'warn' };
 }
 
@@ -103,21 +106,29 @@ export function exportOutcome(job) {
 }
 
 // AutomationChips is the kind row, Runs included, shared by both islands.
-// The row scrolls sideways; the chip in use is scrolled into sight, so Runs
-// (last in the row) shows that it is the one picked.
-export function AutomationChips({ snapshot, active, onSelect, waiting = 0 }) {
+// The row scrolls sideways; the chip in use is brought into sight whenever
+// it changes and whenever its island comes on screen (a hidden island cannot
+// scroll), so Runs, last in the row, shows that it is the one picked.
+export function AutomationChips({ snapshot, active, onSelect, waiting = 0, shown = true }) {
   const entries = automationsSubnavEntries(snapshot);
   const row = useRef(null);
-  useEffect(() => {
-    row.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-  }, [active, entries.length]);
-  return html`<div class="phone-auto-chips" ref=${row}><${Tabs} class="phone-chips" label="Automation views" value=${active} onSelect=${onSelect}
-    items=${entries.map((key) => ({
-      key,
-      label: key === PROCESSES_SUBTAB && waiting > 0
-        ? html`${CHIP_LABELS[key]} <span class="ui-badge ui-badge-accent">${waiting}</span>`
-        : CHIP_LABELS[key],
-    }))} /></div>`;
+  useLayoutEffect(() => {
+    if (shown) revealChip(row.current?.querySelector('.phone-chips'));
+  }, [active, entries.length, shown]);
+  return html`<div class="phone-auto-chips" ref=${row}><${ChipRow} label="Automation views" value=${active} onSelect=${onSelect}
+    items=${entries.map((key) => ({ key, label: CHIP_LABELS[key], badge: key === PROCESSES_SUBTAB ? waiting : 0 }))} /></div>`;
+}
+
+// revealChip scrolls a chip row sideways, and only sideways, so its picked
+// chip is in sight.
+export function revealChip(strip) {
+  const chip = strip?.querySelector?.('[aria-selected="true"]');
+  if (!chip) return;
+  const box = chip.getBoundingClientRect();
+  const left = box.left - strip.getBoundingClientRect().left + strip.scrollLeft;
+  const right = left + box.width;
+  if (left < strip.scrollLeft) strip.scrollLeft = Math.max(0, left - 12);
+  else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth + 12;
 }
 
 function Line({ outcome }) {
@@ -374,7 +385,7 @@ export function PhoneJobsApp({ state, actions, activeTab = dashboardState.active
   const size = state.limit.value;
   const turn = (action) => { if (state.page(action, total)) void actions.refresh(); };
   return html`<div class="phone-auto">
-    <${AutomationChips} snapshot=${snapshot} active=${kind} onSelect=${select} waiting=${waiting} />
+    <${AutomationChips} snapshot=${snapshot} active=${kind} onSelect=${select} waiting=${waiting} shown=${active} />
     ${kind !== 'trigger' && html`<div class="phone-auto-tools">
       <${Input} type="search" class="phone-auto-search" aria-label="Filter automations" placeholder="Filter"
         value=${current.query} onInput=${(event) => onQuery(event.currentTarget.value)} />
@@ -416,7 +427,7 @@ export function PhoneRunsApp({ activeTab = dashboardState.activeTab, snapshot = 
   }
   return html`<div class="phone-auto">
     <${AutomationChips} snapshot=${snapshot.value} active=${PROCESSES_SUBTAB} onSelect=${select}
-      waiting=${gateItems(context.context.value).length} />
+      waiting=${gateItems(context.context.value).length} shown=${active} />
     <${RunsList} source=${context} desktopSite=${desktopSite} nameOf=${(id) => companionAgents(snapshot.value).get(id)?.name || ''} onOpen=${(id) => { globalThis.scrollTo?.(0, 0); setRunId(id); }} />
   </div>`;
 }

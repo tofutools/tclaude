@@ -4,11 +4,11 @@
 // waits on the operator.
 //
 // A phone reads and decides runs; it does not draw them or edit templates.
-// The steps are a list rather than the desktop graph. On the run page a
-// gate's form is the desktop run inspector's DecisionForm; Now's gate card is
-// a compact one (a button per verdict, a note behind "…"). Both post through
-// the same run API, so verdicts, notes and the stale-attempt guard are the
-// desktop's.
+// The steps are a list rather than the desktop graph. A gate is the same
+// compact card on Now and atop the run page: a button per verdict (one tap
+// for one that lets the run go on, a note sheet for the rest), posted
+// through the run API, so verdicts, notes and the stale-attempt guard are
+// the desktop's.
 
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
@@ -17,10 +17,10 @@ import {
   formatRunDuration, processContext, runDetailApi, withPerformerNames,
 } from './process-context.js';
 import { ProcessStepStrip, runName, runPauseState, runSteps, stateLabel } from './process-kit.js';
-import { DecisionForm, useRunDetail, verdictPresentation } from './groups-run-focus.js';
+import { useRunDetail, verdictPresentation } from './groups-run-focus.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { Button, Textarea } from './ui-components.js';
-import { Avatar, Card } from './phone-ui.js';
+import { Avatar, Card, StatePill } from './phone-ui.js';
 import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
@@ -110,12 +110,22 @@ export function useProcessRuns(source = processContext) {
   return { context: source.context.value, status: source.status.value, error: source.error.value };
 }
 
+// runPill is the pill a run row wears: what it waits on, else how it runs
+// or how it ended.
+export function runPill(run, waiting = false) {
+  if (waiting) return decidable(run) ? { text: 'Decide', tone: 'key' } : { text: 'Needs you', tone: 'err' };
+  if (run?.paused) return { text: 'Paused', tone: 'idle' };
+  const status = String(run?.status || '').toLowerCase();
+  if (status === 'running') return { text: 'Running', tone: 'work' };
+  if (/fail|error/.test(status)) return { text: 'Failed', tone: 'err' };
+  if (/cancel|abort/.test(status)) return { text: 'Cancelled', tone: 'off' };
+  return { text: status === 'completed' || status === 'done' || !status ? 'Done' : status, tone: 'idle' };
+}
+
 function RunRow({ item, waiting, onOpen }) {
   const { run, where } = item;
-  const paused = !!run.paused;
-  const tag = waiting
-    ? html`<span class=${`ui-tag${decidable(run) ? ' ui-tag-accent' : ' ui-tag-warn'}`}>${decidable(run) ? 'Decide' : 'Needs you'}</span>`
-    : paused ? html`<span class="ui-tag">Paused</span>` : null;
+  const pill = runPill(run, waiting);
+  const tag = html`<${StatePill} tone=${pill.tone} class="phone-run-pill">${pill.text}<//>`;
   return html`<li class=${`phone-run-row${waiting ? ' waiting' : ''}`} data-run=${run.runId}>
     <button data-ui-exempt type="button" class="phone-run-open" onClick=${() => onOpen(run.runId)}>
       <span class="phone-run-text">
@@ -158,20 +168,14 @@ export function RunsList({ source = processContext, onOpen, desktopSite, nameOf 
 }
 
 
-// Gates is a run's waiting decisions, each with its verdict form: what Now
-// shows per run and what tops the run page.
-function Gates({ run, detail, onDecide }) {
-  const decisions = detail.view?.awaitingDecisions || [];
-  if (!decisions.length) return null;
-  const nodes = new Map(runSteps(run).map((node) => [String(node.id), node]));
-  return decisions.map((decision) => {
-    const node = nodes.get(String(decision.nodeId)) || { id: String(decision.nodeId), label: String(decision.nodeId) };
-    return html`<div class="phone-gate" key=${`${node.id}:${decision.attempt || 0}`}>
-      <div class="phone-gate-title">${node.label}</div>
-      ${node.description && html`<p class="phone-gate-prompt">${node.description}</p>`}
-      <${DecisionForm} key=${`${node.id}:${decision.attempt || 0}`} decision=${decision} node=${node} onDecide=${onDecide} />
-    </div>`;
-  });
+// nodeEvents are what a run's event history says about each step: the last
+// event (when it was, who acted), keyed by node id.
+export function nodeEvents(events) {
+  const last = new Map();
+  for (const event of events || []) {
+    if (event?.nodeId) last.set(String(event.nodeId), event);
+  }
+  return last;
 }
 
 function decider(api, runId, refresh, source) {
@@ -232,10 +236,27 @@ function GateNoteSheet({ label, title, onSend, close }) {
   </div>`;
 }
 
+// verdictLabel is a verdict as a phone button says it, the mock's way: the
+// desktop's words for the verdicts it knows (verdictPresentation), without
+// their glyph and capitalised ("✓ approve" → "Approve"). Any other verdict
+// is said as the template wrote it.
+export function verdictLabel(verdict) {
+  const raw = String(verdict);
+  const { label } = verdictPresentation(raw);
+  if (label === raw) return raw;
+  const words = label.replace(/^[✓↺]\s*/u, '');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// REQUESTING matches a verdict that sends the work back (the desktop's
+// "request changes" family): it is the red button. Any other verdict that
+// does not approve is a plain one.
+const REQUESTING = /^(changes?|changes?[_-]requested|request[_-]changes|reject(ed)?|rework|no|fail(ed)?)$/i;
+
 // GateVerdicts is one awaited gate on a card: its step and a button per
 // verdict. A decided gate says what was recorded until the refreshed run
 // drops it.
-function GateVerdicts({ run, decision, node, onDecide }) {
+function GateVerdicts({ run, decision, node, onDecide, since = '' }) {
   const [busy, setBusy] = useState('');
   const [decided, setDecided] = useState('');
   const [error, setError] = useState('');
@@ -254,17 +275,18 @@ function GateVerdicts({ run, decision, node, onDecide }) {
     }
   };
   const verdicts = decision.verdicts || [];
-  const label = (verdict) => verdictPresentation(verdict).label;
+  const label = verdictLabel;
   return html`<div class="phone-gate" data-run-decision=${node.id}>
     <div class="phone-gate-title">${node.label}</div>
     ${node.description && html`<p class="phone-gate-prompt">${node.description}</p>`}
+    ${since && html`<p class="phone-gate-since">Waiting on you · ${since}</p>`}
     ${decided
       ? html`<p class="phone-gate-done" role="status">Recorded: ${label(decided)}</p>`
       : html`<div class="phone-btns">
         ${verdicts.map((verdict) => APPROVING.test(verdict)
           ? html`<${Button} key=${verdict} class="phone-btn phone-btn-ok phone-btn-grow" data-run-verdict=${verdict} disabled=${!!busy}
               onClick=${() => now(verdict)}>${busy === verdict ? '…' : label(verdict)}<//>`
-          : html`<${Button} key=${verdict} class="phone-btn phone-btn-grow" data-run-verdict=${verdict} disabled=${!!busy} aria-haspopup="dialog"
+          : html`<${Button} key=${verdict} class=${`phone-btn${REQUESTING.test(verdict) ? ' phone-btn-no' : ''} phone-btn-grow`} data-run-verdict=${verdict} disabled=${!!busy} aria-haspopup="dialog"
               onClick=${() => openPhoneSheet({ label: `${runName(run)}: ${node.label}`, Body: GateNoteSheet,
                 props: { label: label(verdict), title: `${node.label}: ${label(verdict)}`, onSend: send(verdict) } })}>${label(verdict)}…<//>`)}
       </div>`}
@@ -343,11 +365,20 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
     return html`<div class="phone-run-page"><p class="ui-empty phone-empty">${context ? 'This run is no longer listed.' : 'Loading…'}</p></div>`;
   }
   const steps = runSteps(run);
-  const waitingOn = new Set((detail.view?.awaitingDecisions || []).map((decision) => String(decision.nodeId)));
+  const decisions = detail.view?.awaitingDecisions || [];
+  const waitingOn = new Set(decisions.map((decision) => String(decision.nodeId)));
+  const lastEvent = nodeEvents(detail.events);
+  const onDecide = decider(api, runId, refresh, source);
   const blocked = (detail.view?.blocked || []).map((item) => item.reason).filter(Boolean);
   return html`<div class="phone-run-page">
     ${holdError && html`<p class="ui-error-box" role="alert">${holdError}</p>`}
-    <${Gates} run=${run} detail=${detail} onDecide=${decider(api, runId, refresh, source)} />
+    ${decisions.map((decision) => {
+      const node = steps.find((step) => String(step.id) === String(decision.nodeId)) || { id: String(decision.nodeId), label: String(decision.nodeId) };
+      return html`<${Card} key=${`${node.id}:${decision.attempt || 0}`} accent="key" class="phone-gate-card phone-run-gate"
+        role="group" aria-label=${`Gate: ${node.label}`}>
+        <${GateVerdicts} run=${run} decision=${decision} node=${node} onDecide=${onDecide} since=${relTime(lastEvent.get(String(node.id))?.occurredAt)} />
+      <//>`;
+    })}
     ${run.needsYou && !decidable(run) && html`<div class="phone-run-wait" role="status">
       <strong>${waitReason(run)}.</strong>${blocked.length ? ` ${blocked.join('; ')}.` : ''}
       <${DesktopOnlyNote} what="Resolving it is" />
@@ -360,10 +391,13 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
     <ol class="phone-run-steps">${steps.map((step) => {
       const mine = waitingOn.has(String(step.id));
       const who = mine ? 'you' : (step.performer?.label || step.performer?.name || '');
+      // A finished step says who did it and when.
+      const when = step.state === 'done' || step.state === 'failed' ? relTime(lastEvent.get(String(step.id))?.occurredAt) : '';
+      const meta = mine ? 'you' : [who, when].filter(Boolean).join(' · ');
       return html`<li key=${step.id} class=${`phone-run-step s-${step.state}${mine ? ' mine' : ''}`}>
         <span class="phone-run-dot" aria-hidden="true"></span>
         <span class="phone-run-step-label">${step.label}</span>
-        <span class="phone-run-step-meta">${who || stateLabel(step.state)}</span>
+        <span class="phone-run-step-meta">${meta || stateLabel(step.state)}</span>
       </li>`;
     })}</ol>
   </div>`;

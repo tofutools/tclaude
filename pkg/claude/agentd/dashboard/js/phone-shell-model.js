@@ -46,7 +46,9 @@ const TAB_TITLES = Object.freeze({
   ...Object.fromEntries(MORE_TABS.map((entry) => [entry.tab, entry.label])),
   'drawing-boards': 'Drawing boards',
   'collab-processes': 'Processes',
-  processes: 'Processes',
+  // A phone's Runs live in Automations (phone-automations-island.js): the
+  // Processes tab is their island, under the Automations title.
+  processes: 'Automations',
   map: 'Fleet map',
   'fleet-admin': 'Fleet',
   vegas: 'Vegas',

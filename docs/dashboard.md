@@ -177,7 +177,7 @@ windows keep the full dashboard. A bar at the bottom has five views:
 
 | View | What it shows |
 |---|---|
-| **Now** | What needs you: access requests and decisions, each with its buttons; process runs waiting on your verdict, with **approve** and **request changes**; agents asking a question, with **Open** for the terminal and ✉ to message them. Below that: agents in an error state, agents that are working, your open PRs and usage. |
+| **Now** | What needs you: access requests and decisions, each with its buttons; process runs waiting on your verdict, with **Approve** and **Request changes**; agents asking a question, with **Open** for the terminal and ✉ to message them. Below that: agents in an error state, agents that are working, your open PRs and usage. |
 | **Agents** | Your agents by group, with a chip per group and its agent count. Each row shows the agent with a state pill (approval, asking, working, idle, error, offline), its role, harness, context and its PR with checks, or its branch. Offline agents are listed dimmed. Tap an online agent to open its terminal, or an offline one to resume it. **⋯** has the rest: message, shut down or power on, restart, rename and retire. **Board ›** opens a group's board. **＋** spawns an agent from a short sheet: a group, a profile and a prompt, with **All options…** for the full form. |
 | **Mail** | [Messages](dashboard-messages.md) as a phone mail app: folder chips at the top, then one row per message with its first line and attachments. A pending decision or access request has its buttons right on the row. Tap a message to read it full screen, with **Reply** at the bottom and **Terminal ›** at the top. **✎ Write** starts a new message. |
 | **Board** | A group's [task board](taskboard.md), one column at a time: **Idea**, **Next**, **Started**, the board's own columns and **Done**. Each column is split into ready, waiting on you, queued and blocked. A card shows who holds the task, its PR and refs. A question waiting on you has its options right on the card. **Move ▸** moves a task to another column, or up or down. **Comment** adds a comment. Tap the group name in the title to pick another group, and **＋** to add a task. Tap a task for its page: brief, refs, activity, its open questions and a comment box. Editing a task is on the desktop. |
@@ -186,9 +186,11 @@ windows keep the full dashboard. A bar at the bottom has five views:
 **Automations** (in **More**) lists cron jobs, standing orders, triggers and
 exports by kind. Each has a switch to turn it on or off, and a cron job has ▶ to
 run it now. Tap one for its details and its recent runs or firings. **Runs**
-lists process runs from every group, waiting on you first: tap one for its steps,
-answer its gate, or pause it. Creating and editing automations and process
-templates are desktop only.
+lists process runs from every group: waiting on you, running and done. Tap one
+for its steps, with who did each finished step and when. Its gate is a card on
+top: **Approve** in one tap, or **Request changes** with a note. **Pause** in the
+top bar pauses the run. Creating and editing automations and process templates
+are desktop only.
 
 Overlay windows, the side panel, drag and drop and the voice wake word aren't
 on the phone layout.

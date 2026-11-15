@@ -64,8 +64,14 @@
 :root[data-layout="phone"] .phone-gate-card { padding: 10px; }
 :root[data-layout="phone"] .phone-gate-title { font-weight: 600; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-gate-prompt { margin: 4px 0 8px; color: var(--ui-text); font-size: 14px; }
-:root[data-layout="phone"] .phone-gate .grf-decide textarea { width: 100%; }
-:root[data-layout="phone"] .phone-gate .grf-verdicts { display: flex; gap: 8px; margin-top: 8px; }
-:root[data-layout="phone"] .phone-gate .grf-verdicts .ui-btn { flex: 1; }
+:root[data-layout="phone"] .phone-gate-since { margin: 0 0 8px; color: var(--ui-muted-text); font-size: 13px; }
+/* The gate atop a run page: Now's card, on its own. */
+:root[data-layout="phone"] .phone-run-gate { margin: 4px 0 14px; }
+:root[data-layout="phone"] .phone-run-gate .phone-gate { margin: 0; }
+
+/* A run's step strip (process-kit.js ProcessStepStrip) as the mock's
+   segments: one bar per step, in its state's colour, across the row. */
+:root[data-layout="phone"] .phone-run-text .pk-steps { display: flex; gap: 4px; width: 100%; margin-top: 4px; }
+:root[data-layout="phone"] .phone-run-text .pk-step { flex: 1; width: auto; height: 4px; margin: 0; border-radius: 2px; }
 :root[data-layout="phone"] .phone-run-wait { margin: 8px 0 12px; color: var(--ui-warn-text); }
 :root[data-layout="phone"] .phone-run-wait .phone-desktop-only { margin-top: 8px; }
