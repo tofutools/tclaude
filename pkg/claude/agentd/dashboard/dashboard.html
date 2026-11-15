@@ -236,6 +236,7 @@
       stalledNote = '';
       failure = '';
       isStuck = false;
+      stop();
     }
     var d = (ev && ev.detail) || {};
     if (d.total) appTotal = d.total;
@@ -249,10 +250,9 @@
   // spend the reserved top band and drive the bar to 100%.
   document.addEventListener('tclaude:snapshot', function () { ready = true; render(); }, { once: true });
   document.addEventListener('DOMContentLoaded', render);
-  // Ceiling so the observer can never outlive boot even if a preload never
-  // reports a matching entry (network fault) — matches the 8s CSS reveal
-  // failsafe, after which the curtain is gone and #boot-progress is display:none.
-  setTimeout(stop, 8000);
+  // The observer lives until dashboard.js starts (or the first snapshot): the
+  // stall label and the Reload offer judge progress by the last arrival, so a
+  // slow but steady boot past 8s must keep being counted, not look stuck.
 })();
 </script>
 </head>

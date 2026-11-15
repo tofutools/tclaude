@@ -105,8 +105,9 @@ var dashboardStaticNow = time.Now
 
 // dashboardStaticSlow is how long a static request may take inside agentd
 // before it is logged. The boot graph is ~300 parallel module requests, so
-// one slow response holds the whole boot; the warning tells a slow request
-// that agentd served late from one delayed in front of it (a tunnel, a CDN).
+// one slow response holds the whole boot. No warning for a request that was
+// slow end to end means it was held before it reached agentd (a tunnel, a
+// CDN). "serve" includes writing the response, so a slow reader shows there.
 const dashboardStaticSlow = time.Second
 
 func warnSlowDashboardStatic(path string, start, authDone, end time.Time) {
