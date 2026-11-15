@@ -117,6 +117,9 @@
 }
 /* Now's rows carry a ⋯ for the same menu. */
 :root[data-layout="phone"] .phone-now-agent { display: flex; align-items: center; gap: 2px; }
+/* The row gives way to its ⋯: a long unbroken name ("session <uuid>") ellipsizes
+   instead of pushing ⋯ off the screen. */
+:root[data-layout="phone"] .phone-now-agent > .phone-row { flex: 1; min-width: 0; }
 :root[data-layout="phone"] .phone-now-more { flex: none; color: var(--ui-muted-text); }
 
 /* An agent's menu (js/phone-agent-menu.js): four quick tiles, then the
