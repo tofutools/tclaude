@@ -26,6 +26,11 @@ type openCodeEventProjector struct {
 	// compactionPart is the last compaction part projected, so its repeated
 	// updates paint the compacting phase once.
 	compactionPart string
+	// errorCarriesTurnOn marks the event just projected as a session.error
+	// OpenCode recovers from inside the same turn (a context overflow, which
+	// it compacts and carries on): its StopFailure paints the error but does
+	// not end the turn (see turnEnds). Reset for every event.
+	errorCarriesTurnOn bool
 }
 
 type openCodeSessionStatus struct {
@@ -114,6 +119,7 @@ func newOpenCodeEventProjector(convID, cwd string) *openCodeEventProjector {
 
 func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookCallbackInput, error) {
 	p.pendingNativeHook = nil
+	p.errorCarriesTurnOn = false
 	var envelope openCodeEventEnvelope
 	if err := json.Unmarshal(event, &envelope); err != nil {
 		return nil, fmt.Errorf("decode OpenCode event: %w", err)
@@ -195,7 +201,9 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 		// same turn on, its compaction part repaints the status, and a busy
 		// projected as a new prompt would fire user-prompt standing orders in
 		// the middle of the recovery.
-		if envelope.Properties.Error.Name != "ContextOverflowError" {
+		if envelope.Properties.Error.Name == "ContextOverflowError" {
+			p.errorCarriesTurnOn = true
+		} else {
 			p.lastSessionStatus = ""
 		}
 		input := p.hook("StopFailure")

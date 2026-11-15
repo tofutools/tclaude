@@ -316,7 +316,7 @@ func applyOpenCodeHooks(
 			}
 		}
 		if applied && projector != nil && projector.standingOrderTurn &&
-			openCodeTurnEnd(input.HookEventName) {
+			projector.turnEnds(input.HookEventName) {
 			if err := db.CompleteStandingOrderTurnOrigin(
 				agentID, runtime.ConvID); err != nil {
 				slog.Warn("OpenCode standing-order origin: clear turn failed",
@@ -328,6 +328,18 @@ func applyOpenCodeHooks(
 	}
 }
 
-func openCodeTurnEnd(event string) bool {
-	return event == "Stop" || event == "StopFailure"
+// turnEnds reports whether a hook the projector just produced ends the turn,
+// which releases a standing-order turn origin. A Stop does, and so does a
+// StopFailure, except the one for an error OpenCode carries the same turn on
+// from (a context overflow, followed by its own compaction): the tool calls
+// after the compaction are still the turn the order's delivery started. If no
+// compaction follows, the idle after it projects the Stop that ends the turn.
+func (p *openCodeEventProjector) turnEnds(event string) bool {
+	switch event {
+	case "Stop":
+		return true
+	case "StopFailure":
+		return !p.errorCarriesTurnOn
+	}
+	return false
 }
