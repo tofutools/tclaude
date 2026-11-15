@@ -470,6 +470,9 @@ test('a touch and hold on a row opens its menu; moving first, or a short tap, do
   await pointer(row('lead'), 'pointerup');
   await harness.act(() => row('lead').click());
   assert.equal(calls.length, before, `the lift does not open the terminal too: ${JSON.stringify(calls.slice(before))}`);
+  // A lift landing elsewhere (the sheet's scrim) is swallowed at the
+  // document, in the capture phase linkedom does not run: the
+  // phone-agent-menu smoke covers it in a browser.
 });
 
 test('menuModel: Interrupt only while at work, Compact where the harness can, Open PR when it has one', async (t) => {
@@ -479,11 +482,14 @@ test('menuModel: Interrupt only while at work, Compact where the harness can, Op
     harness.importDashboardModule('js/phone-agents-model.js'),
   ]);
   const group = { group: { name: 'webshop' }, name: 'webshop' };
-  const snapshot = { harnesses: [{ name: 'claude', can_compact: true }] };
-  const working = model.agentRow({ agent_id: id(7), conv_id: 'c7', title: 'w', online: true, state: { status: 'working', harness: 'claude' },
+  const snapshot = { harnesses: [{ name: 'codex', can_compact: true }] };
+  const working = model.agentRow({ agent_id: id(7), conv_id: 'c7', title: 'w', online: true, state: { status: 'working', harness: 'codex', codex_app_server: true },
     branch_pr_number: 12, branch_pr_url: 'https://example.test/pr/12' }, 'webshop');
   const m = menuModel(working, group, snapshot);
-  assert.equal(m.quick.find((q) => q.key === 'interrupt').disabled, false);
+  assert.equal(m.quick.find((q) => q.key === 'interrupt').disabled, false, 'a Codex turn on the app-server drive');
+  const claude = model.agentRow({ ...working.member, state: { status: 'working', harness: 'claude' } }, 'webshop');
+  assert.equal(menuModel(claude, group, snapshot).quick.find((q) => q.key === 'interrupt').disabled, true,
+    'the daemon interrupts no other turn, so its tile is greyed as an idle one is');
   assert.deepEqual(m.agent.find((e) => e.key === 'pr'), { key: 'pr', label: 'Open PR #12 ›', href: 'https://example.test/pr/12' });
   const external = model.agentRow({ ...working.member, external_steward: true }, 'webshop');
   assert.equal(menuModel(external, group, snapshot).agent.some((e) => e.key === 'reincarnate'), false, 'an external Steward does not reincarnate here');

@@ -3,7 +3,9 @@
 // agent is listed (Agents, Now's rows and cards, a terminal's ⋯).
 //
 //   quick    four tiles: Terminal (Power on when it is offline), Message,
-//            Interrupt (only while it is at work) and Copy id
+//            Interrupt (only while it is at work, and only a Codex agent on
+//            the app-server drive, the one turn the daemon can interrupt) and
+//            Copy id
 //   Session  Compact…, Restart…, Shut down… (left out while it is offline,
 //            with a line saying why)
 //   Agent    Rename…, Reincarnate…, Grant sudo…, Copy name, Open PR #N ›
@@ -28,6 +30,11 @@ const html = htm.bind(h);
 // BUSY are the states Interrupt can stop: the agent is in a turn.
 const BUSY = new Set(['working']);
 
+// interruptible: the daemon interrupts a turn only for a Codex agent on the
+// app-server drive (agent_slash.go runCodexInterrupt); any other agent's
+// tile stays greyed, as it does while the agent is not at work.
+const interruptible = (row) => row.online && BUSY.has(row.variant) && !!row.member?.state?.codex_app_server;
+
 // menuModel is what the menu offers for a row in its group, as plain data:
 // { quick: [...], session: [...] | null, agent: [...], retire, note }. Each
 // entry is { key, label, sub?, disabled?, href? }. here: the menu is opened
@@ -39,7 +46,7 @@ export function menuModel(row, group, snapshot, { here = false } = {}) {
       ? { key: 'terminal', icon: '⌨', label: 'Terminal', disabled: here, sub: here ? 'open' : '' }
       : { key: 'power', icon: '⏻', label: row.waking ? 'Waking…' : 'Power on', disabled: row.waking },
     { key: 'message', icon: '✉', label: 'Message' },
-    { key: 'interrupt', icon: '⏹', label: 'Interrupt', disabled: !online || !BUSY.has(row.variant) },
+    { key: 'interrupt', icon: '⏹', label: 'Interrupt', disabled: !interruptible(row) },
     { key: 'copy-id', icon: '⧉', label: 'Copy id' },
   ];
   const session = online ? [

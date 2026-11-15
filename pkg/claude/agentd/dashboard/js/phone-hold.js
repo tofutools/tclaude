@@ -13,6 +13,26 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 
 export const HOLD_MS = 500;
 export const HOLD_SLOP_PX = 10;
+// LIFT_MS is how long after a hold the click its lift makes is swallowed
+// anywhere on the page.
+const LIFT_MS = 700;
+
+// swallowLift eats the one click the finger's lift may make after a hold
+// fired: the menu has opened under the finger by then, and a browser that
+// hit-tests the lift where it lands would close it on the scrim, or run the
+// entry under it. The next pointerdown, or LIFT_MS, ends it.
+function swallowLift(doc = globalThis.document) {
+  if (!doc?.addEventListener) return;
+  const eat = (event) => { event.preventDefault(); event.stopImmediatePropagation(); done(); };
+  const done = () => {
+    clearTimeout(timer);
+    doc.removeEventListener('click', eat, true);
+    doc.removeEventListener('pointerdown', done, true);
+  };
+  const timer = setTimeout(done, LIFT_MS);
+  doc.addEventListener('click', eat, true);
+  doc.addEventListener('pointerdown', done, true);
+}
 
 // useHold returns { holding, handlers }: spread handlers on the element and
 // give it .phone-holding while holding. onHold(event-free) runs on a hold; a
@@ -36,13 +56,15 @@ export function useHold(onHold, { ms = HOLD_MS } = {}) {
       // The primary button or a finger; a second finger is a pinch, not a hold.
       if (event.button > 0 || (start.current && start.current.id !== event.pointerId)) { stop(); return; }
       swallow.current = false;
-      start.current = { x: event.clientX, y: event.clientY, id: event.pointerId };
+      start.current = { x: event.clientX, y: event.clientY, id: event.pointerId, doc: event.currentTarget?.ownerDocument };
       setHolding(true);
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
         timer.current = null;
+        const doc = start.current?.doc;
         start.current = null;
         swallow.current = true;
+        swallowLift(doc);
         setHolding(false);
         latest.current?.();
       }, ms);

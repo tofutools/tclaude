@@ -176,8 +176,12 @@ const phoneShellDescriptor = createIslandDescriptor({
       shutdownAll: () => doc.getElementById('shutdown-all-btn')?.click(),
       desktopSite: () => setLayoutOverride('desktop'),
     };
-    setAgentMenuOpener((agent) => actions.agentMenu(agent));
     const shell = createPhoneShellState({ startOnNow: landsOnNow() });
+    // Open sessions' rows: Grant sudo… leaves whatever page the shell shows,
+    // as the shell's own views do (phone-shell-island.js leave).
+    setAgentMenuOpener((agent) => actions.agentMenu(agent, {
+      navigate: (path) => { shell.view.value = null; return navigateToPath(path); },
+    }));
     return {
       mount: (registerCleanup) => mountPhoneShellIsland({
         host, shell, state: dashboardState, actions, boardSource: taskboardContext, registerCleanup,
@@ -239,16 +243,22 @@ const phoneTerminalDescriptor = createIslandDescriptor({
     const actionsModule = import('./phone-agent-actions.js');
     const sheetModule = import('./phone-sheet.js');
     const groupOrderModule = import('./group-order.js');
+    const navHistoryModule = import('./nav-history.js');
     const [
-      { mountPhoneTerminalIsland }, { setPhoneTerminals }, { mountTerminalWidget }, { loadXtermRuntime },
+      { mountPhoneTerminalIsland, closePhoneTerminal }, { setPhoneTerminals }, { mountTerminalWidget }, { loadXtermRuntime },
       { terminalAttachWidgetOptions }, { dashboardState }, { agentGroups, findRow }, { AgentMenu },
-      { phoneAgentActions }, { openPhoneSheet }, { sortGroupsByPref },
+      { phoneAgentActions }, { openPhoneSheet }, { sortGroupsByPref }, { navigateToPath },
     ] = await Promise.all([
       islandModule, terminalsTabModule, terminalsCoreModule, xtermLoaderModule, attachConfigModule, snapshotStoreModule,
-      agentsModelModule, agentsIslandModule, actionsModule, sheetModule, groupOrderModule,
+      agentsModelModule, agentsIslandModule, actionsModule, sheetModule, groupOrderModule, navHistoryModule,
     ]);
     const order = (groups) => sortGroupsByPref(groups);
-    const actions = phoneAgentActions({ onComposeMessage: dependencies.onComposeMessage });
+    // The menu's Grant sudo… goes to Access: the terminal closes first, or the
+    // page would open under it (a navigation keeps an open overlay).
+    const actions = phoneAgentActions({
+      onComposeMessage: dependencies.onComposeMessage,
+      navigate: (path) => { closePhoneTerminal(); return navigateToPath(path); },
+    });
     // An agent a link names, from the snapshot: its name and harness.
     const agent = (id) => {
       const snapshot = dashboardState.snapshot.value;
