@@ -987,8 +987,18 @@ conversation has no session left:
 pi cannot install its managed `fd` and `rg` from inside the wall; install them
 on the host (or run pi once outside it) and `find`/`grep` use them. Other
 harnesses' homes are not visible. In a constructed root (such as a filtered
-network on Linux) tclaude mounts the `pi` package and its Node runtime
-read-only, wherever they are installed.
+network on Linux) tclaude starts pi's CLI by absolute path and mounts the `pi`
+package and its Node runtime read-only. That works for an npm install (global,
+local, nvm, mise) and for pi's own installer:
+
+- With pi's installer, `pi` on PATH is a `#!/bin/sh` launcher
+  (`~/.pi/agent/bin/pi`). tclaude starts the release
+  `~/.pi/agent/install/current-version` names instead, with the installer's
+  Node (`${XDG_DATA_HOME:-~/.local/share}/pi-node/current`), else `node` from
+  PATH. It sets `PI_MANAGED_INSTALL_ROOT` as the launcher does. The release
+  is resolved at launch, so a `pi update` applies to the next launch.
+- Any other shell shim on PATH (asdf, pnpm) is refused there. Put the Node
+  install's own `bin` directory on PATH instead.
 
 **Filtered network.** A filtered launch checks the model's route against
 your network rules and refuses, with the missing destination, when they do not

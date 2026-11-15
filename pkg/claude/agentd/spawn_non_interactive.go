@@ -369,6 +369,13 @@ func wrapOneShotLayer(
 				return "", err
 			}
 			input.HarnessReadPaths = append(input.HarnessReadPaths, late.ReadPaths...)
+			if h.Name == harness.PiName {
+				// What pi's managed launcher would have exported to the CLI
+				// pinned in its place, as the pane launch does.
+				if install := harness.PiManagedInstallRoot(late.Path); install != "" {
+					piEnv = append(piEnv, harness.PiManagedInstallEnvVar+"="+install)
+				}
+			}
 			if spec, err = session.BuildTclaudeLayerLaunchSpec(input); err != nil {
 				return "", err
 			}
