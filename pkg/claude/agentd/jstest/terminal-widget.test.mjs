@@ -1842,13 +1842,16 @@ test('a swipe over Claude Code never shifts the screen itself', async (t) => {
   clock.now = 1000;
   touch('touchstart', 100);
   clock.now += 60; touch('touchmove', 106); look();
-  assert.equal(notches.length, 0, 'less than half a row: no notch');
+  assert.equal(notches.length, 0, 'not a swipe yet (under its start distance): no notch');
   clock.now += 60; touch('touchmove', 112); look();
   assert.equal(notches.length, 1, 'half a row: the first notch goes at once');
   clock.now += 60; touch('touchmove', 124); look();
   assert.equal(notches.length, 1, 'the finger is half a row behind it now');
+  // A wobble back right after the early notch does not scroll back.
+  clock.now += 60; touch('touchmove', 100); look();
+  assert.equal(notches.length, 1, 'a row back from the finger, half a row past the first notch: nothing');
   clock.now += 60; touch('touchmove', 132); look();
-  assert.equal(notches.length, 2, 'a row on: the next');
+  assert.equal(notches.length, 2, 'on the way again, a row on: the next');
   clock.now += 60; touch('touchmove', 300); look();
   clock.now += 300; touch('touchend'); look();
   timers.flush(); look();

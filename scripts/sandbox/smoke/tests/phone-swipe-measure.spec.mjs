@@ -159,7 +159,8 @@ test('a phone swipe over a Claude Code like view on Fast 4G', async ({ page, con
     window.WebSocket = class extends Native {
       constructor(...args) {
         super(...args);
-        this.addEventListener('message', () => window.__termMessages.push(performance.now()));
+        // Terminal output is binary; control messages (JSON) do not count.
+        this.addEventListener('message', (event) => { if (typeof event.data !== 'string') window.__termMessages.push(performance.now()); });
       }
     };
   });

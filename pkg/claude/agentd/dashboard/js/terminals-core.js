@@ -635,12 +635,15 @@ export function mountTerminalWidget({
   // renderer, so the page never shifts or previews its rows (tk_77cabfac).
   // A swipe's first notch goes at half a row, so the first redraw is on its
   // way as the finger starts (the finger is then half a row behind, which
-  // the next notches keep).
+  // the next notches keep). Until the next notch the same way, a reversal
+  // still takes a full row back from where the finger was, so a wobble
+  // just after the first notch does not scroll back (s.lead).
   function travelClaude(cap, s = swipe) {
     stopFlush();
     const row = rowHeight();
     const early = () => (s.notched ? 0 : row / 2);
-    for (let sent = 0; sent < cap && Math.abs(s.rest) >= row - early(); sent += 1) {
+    const back = () => (s.lead && Math.sign(s.rest) !== s.lead.way ? s.lead.px : 0);
+    for (let sent = 0; sent < cap && Math.abs(s.rest) >= row - early() + back(); sent += 1) {
       const older = s.rest > 0;
       const t = now();
       // Too close to Claude's acceleration gap to know how far this notch
@@ -653,7 +656,7 @@ export function mountTerminalWidget({
         return;
       }
       const step = claudeWheelStep(claudeWheel, older ? -1 : 1, t);
-      if (Math.abs(s.rest) < step.lines * row - early()) {
+      if (Math.abs(s.rest) < step.lines * row - early() + back()) {
         if (typeof setTimeoutImpl === 'function') {
           flush = setTimeoutImpl(() => { flush = null; if (!disposed) travelClaude(cap, s); }, SWIPE_CLAUDE_FLUSH_MS);
         }
@@ -661,6 +664,8 @@ export function mountTerminalWidget({
       }
       if (!notch(older)) { s.rest = 0; return; }
       claudeWheel = step.state;
+      if (step.lines && !s.notched) s.lead = { way: older ? 1 : -1, px: row / 2 };
+      else if (s.lead && (older ? 1 : -1) === s.lead.way) s.lead = null;
       s.rest += (older ? -1 : 1) * step.lines * row;
       if (step.lines) s.notched = true;
     }
