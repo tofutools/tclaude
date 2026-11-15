@@ -103,7 +103,10 @@ func TestBrowserTerminalSwipeReachesClaudeCodeAsTheWheel(t *testing.T) {
 	}
 	send(websocket.TextMessage, `{"type":"scroll","op":"live"}`)
 	send(websocket.TextMessage, "1")
-	read("the wheel reports and the key", "1")
+	// Read until the whole sequence is in: the wheel reports themselves
+	// contain a "1" (";12M"), so waiting for the key alone can stop before
+	// the key has arrived.
+	read("the wheel reports and the key", wheel+"1")
 	if got := strings.TrimPrefix(output.String(), "READY"); got != wheel+"1" {
 		t.Fatalf("the pane read %q, want the wheel reports and the key %q", got, wheel+"1")
 	}
