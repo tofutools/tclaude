@@ -300,9 +300,8 @@ function RunCard({ run, entry, nameOf, wizard, onOpen, group = null }) {
       <span class="gp-card-name">${runName(named)}</span>
       <${ProcessStateChip} state=${state} label=${`${stateLabel(state)}${duration ? ` · ${duration}` : ''}`} />
       <${ProcessScopeChip} scope=${named.scope?.kind === 'agent' && nameOf(named.scope.agentId) ? { kind: 'agent', name: nameOf(named.scope.agentId) } : named.scope} wizard=${wizard} />
+      ${named.scope?.task && html`<span class="pk-chip ui-tag gp-card-task" data-process-run-task=${named.scope.task}>◈ for task:${' '}<a class="tk-link" href="#" ...${taskLink({ shown: group?.name || named.scope?.group || '', group: named.scope?.group || group?.name || '', node: group?.fleet_node?.id || '', taskId: named.scope.task, title: named.scope.taskTitle })}>${named.scope.taskTitle || named.scope.task}</a></span>`}
       ${(template || owner) && html`<span class="gp-card-meta">${template && html`${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}${template && owner && ' · '}${owner && html`owner <b>${owner}</b>`}</span>`}
-      ${named.scope?.task && html`<span class="gp-card-meta gp-card-task" data-process-run-task=${named.scope.task}>for task
-        <a class="tk-link" href="#" ...${taskLink({ shown: group?.name || named.scope?.group || '', group: named.scope?.group || group?.name || '', node: group?.fleet_node?.id || '', taskId: named.scope.task, title: named.scope.taskTitle })}>${named.scope.taskTitle || named.scope.task}</a></span>`}
       <span class="gp-spacer"></span>
       ${runNeedsYou(named, entry) && html`<span class="pk-chip ui-tag pk-state-waiting gp-needs-you">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
       <button data-ui-exempt type="button" class="gp-open" data-process-open=${named.runId} onClick=${() => onOpen(named.runId)}

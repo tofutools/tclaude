@@ -361,6 +361,7 @@ export function sourceText(source) {
 
 // valueText is a value as the drawer shows it beside its source.
 export function valueText(value) {
+  if (value === '') return 'none';
   if (Array.isArray(value)) return value.length ? value.join(', ') : 'no one';
   if (value === 0) return 'no limit';
   if (value === true) return 'on';

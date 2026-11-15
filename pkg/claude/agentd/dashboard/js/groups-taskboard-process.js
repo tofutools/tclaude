@@ -103,9 +103,9 @@ export function TaskProcessLine({ task, compact = false }) {
     : null;
   const others = board.saved.filter((row) => row.id !== followed);
   return html`<span class="tk-follow-row">
-    <${WillFollowLine} task=${task} boardDefault=${board.boardDefault} nameOf=${board.nameOf}
+    <${WillFollowLine} task=${task} boardDefault=${board.boardDefault} nameOf=${board.nameOf} compact=${compact}
       onNone=${choose ? () => choose('none') : null} />
-    ${choose && others.length > 0 && html`<${RowMenu} label=${task.title} glyph="change" title="Follow another process when it starts"
+    ${choose && !compact && others.length > 0 && html`<${RowMenu} label=${task.title} glyph="change" title="Follow another process when it starts"
       buttonClass="tk-follow-change" items=${others.map((row) => ({
         key: row.id, label: row.name, attrs: { 'data-task-follow-pick': row.id },
         run: () => choose(row.id === board.boardDefault ? '' : row.id),

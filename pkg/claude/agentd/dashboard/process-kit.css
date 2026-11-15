@@ -262,3 +262,9 @@ button.pk-gnode { cursor: pointer; }
 .tk-link, .tk-follow-change { background: none; border: 0; padding: 0; color: var(--pk-running-text); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .gp-card-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gp-start-task { flex-basis: 100%; }
+.tk-follow-compact { display: flex; align-items: center; gap: 4px; min-width: 0; width: 100%; }
+.tk-follow-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-follow-x { text-decoration: none; padding: 0 4px; opacity: 0.7; }
+.tk-follow-x:hover, .tk-follow-x:focus-visible { opacity: 1; }
+/* A lanes card's ⋯ sits bottom-right on hover: the line leaves it room. */
+.tb-card .tk-follow-compact, .tb-card .tk-run { margin-right: 22px; width: auto; }

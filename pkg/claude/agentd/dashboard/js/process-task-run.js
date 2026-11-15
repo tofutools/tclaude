@@ -93,10 +93,19 @@ export function taskProcessFollowed(task, boardDefault = '') {
 // WillFollowLine is the line of a task not started yet that will run a
 // process when it is: ◈ will follow X when started · change · no process.
 // change picks another; no process opts the task out. Nothing shows for a
-// task that follows none.
-export function WillFollowLine({ task, boardDefault = '', nameOf = (id) => id, onChange, onNone }) {
+// task that follows none. compact (a narrow lanes card) is one line, the
+// sentence in its title, and × for no process.
+export function WillFollowLine({ task, boardDefault = '', nameOf = (id) => id, onChange, onNone, compact = false }) {
   const process = taskProcessFollowed(task, boardDefault);
   if (!process) return null;
+  if (compact) {
+    const name = nameOf(process) || process;
+    return html`<span class="tk-follow tk-follow-compact" data-task-follow=${process} title=${`Will follow ${name} when started: the process starts when the task is taken or started`}>
+      <span class="tk-follow-text"><span class="tk-run-glyph" aria-hidden="true">◈</span> <span class="tk-follow-name">${name}</span></span>
+      ${onNone && html`<button type="button" data-ui-exempt class="tk-link tk-follow-x" data-task-follow-none aria-label="No process for this task" title="No process for this task"
+        onClick=${(event) => { event.stopPropagation(); onNone(task); }}>×</button>`}
+    </span>`;
+  }
   return html`<span class="tk-follow" data-task-follow=${process}>
     <span class="tk-run-glyph" aria-hidden="true">◈</span> will follow <b>${nameOf(process) || process}</b> when started
     ${onChange && html` · <button type="button" data-ui-exempt class="tk-link" data-task-follow-change
