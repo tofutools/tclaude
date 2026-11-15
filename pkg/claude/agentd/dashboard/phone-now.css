@@ -65,3 +65,28 @@
 :root[data-layout="phone"] .phone-row-text { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
 :root[data-layout="phone"] .phone-row-text .phone-card-line { flex-basis: 100%; margin-top: 0; }
 :root[data-layout="phone"] .phone-pr-title { color: var(--ui-text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* A section head that folds (phone-ui.js Section fold): the whole row is the
+   tap target, not just its chevron. */
+:root[data-layout="phone"] .phone-section-fold {
+  display: flex; justify-content: space-between; align-items: center; width: 100%; min-height: var(--phone-tap);
+  margin: -6px 0; padding: 0; background: none; border: 0; color: inherit; font: inherit; letter-spacing: inherit;
+  text-transform: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-section-chev { color: var(--ui-focus); font-size: 16px; }
+/* Show all / Only the recent ones, under Now's rows of agents. */
+:root[data-layout="phone"] .phone-now-all {
+  display: flex; justify-content: center; align-items: center; gap: 6px; width: 100%; min-height: var(--phone-tap); margin-top: 6px;
+  background: none; border: 0; color: var(--ui-focus); font: inherit; cursor: pointer;
+}
+/* The chips over Now (All, Needs you, Idle, Recent, Stuck?): the shared
+   .phone-chips look, kept to one line on a 390px phone. */
+:root[data-layout="phone"] .phone-chips.phone-now-chips { gap: 5px; margin-bottom: 10px; }
+:root[data-layout="phone"] .phone-now-chips .ui-tab { padding-inline: 8px; }
+/* A row's time line (idle 12m, updated 4m ago, last update 47m ago); amber
+   once a busy agent has been quiet past STUCK_AFTER_MS. */
+:root[data-layout="phone"] .phone-now-when { flex-basis: 100%; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-now-when.quiet { color: var(--ui-warn-text); }
+/* A group's name over its first row in Idle. */
+:root[data-layout="phone"] .phone-now-group { margin: 0; padding: 9px 12px 2px; }
+:root[data-layout="phone"] .phone-now-hint { margin: 0 4px 10px; }

@@ -77,10 +77,16 @@ export function Card({ accent = '', class: extra, children, ...rest }) {
 // Section is a titled block of a view: an eyebrow heading with an optional
 // count and a link at its end (more). A div with role="group", not a
 // <section>, for the same reason as Card.
-export function Section({ title, count = null, children, more = null, class: extra }) {
+// fold ({ open, onToggle }) makes the whole head one tap target that opens
+// and closes the section, its chevron at the end. A folding head has no `more`.
+export function Section({ title, count = null, children, more = null, fold = null, class: extra }) {
+  const label = html`<span>${title}${count !== null && html` · ${count}`}</span>`;
   return html`<div class=${join('phone-section', extra)} role="group" aria-label=${title}>
     <h2 class="phone-section-head ui-eyebrow">
-      <span>${title}${count !== null && html` · ${count}`}</span>${more}
+      ${fold
+        ? html`<button data-ui-exempt type="button" class="phone-section-fold" aria-expanded=${fold.open ? 'true' : 'false'}
+            onClick=${fold.onToggle}>${label}<span class="phone-section-chev" aria-hidden="true">${fold.open ? '⌄' : '›'}</span></button>`
+        : html`${label}${more}`}
     </h2>
     ${children}
   </div>`;
@@ -88,8 +94,8 @@ export function Section({ title, count = null, children, more = null, class: ext
 
 // ChipRow is a row of rounded chips that scrolls sideways: one view's
 // filters or groups, one of them picked. items: [{ key, label, count?,
-// badge? }]; count is muted after the label, badge a blue bubble (something
-// waiting there). It is a tab row (ui-tabs.js), so the keyboard and screen
+// badge?, badgeTone? }]; count is muted after the label, badge a bubble
+// (something waiting there), blue unless badgeTone says danger or warn. It is a tab row (ui-tabs.js), so the keyboard and screen
 // reader see the same tabs as everywhere else; only the look is the
 // phone's.
 export function ChipRow({ items, value, onSelect, label, class: extra }) {
@@ -98,7 +104,7 @@ export function ChipRow({ items, value, onSelect, label, class: extra }) {
       key: item.key,
       title: item.title,
       disabled: item.disabled,
-      label: html`${item.label}${item.count !== undefined && item.count !== null && html` <span class="phone-chip-count">${item.count}</span>`}${item.badge > 0 && html` <span class="ui-badge ui-badge-accent">${item.badge}</span>`}`,
+      label: html`${item.label}${item.count !== undefined && item.count !== null && html` <span class="phone-chip-count">${item.count}</span>`}${item.badge > 0 && html` <span class=${`ui-badge ui-badge-${item.badgeTone || 'accent'}`}>${item.badge}</span>`}`,
     }))} />`;
 }
 

@@ -111,6 +111,10 @@ export function nowView(snapshot) {
   const asking = agents.filter((agent) => agent.online && NEEDS.has(agent.status) && !carded.has(agent.agentId)).sort(byName);
   const errors = agents.filter((agent) => agent.online && ERRORS.has(agent.status)).sort(byName);
   const working = agents.filter((agent) => agent.online && WORKING.has(agent.status)).sort(byName);
+  // The rest online: neither asking (a card above) nor at work, most often
+  // idle between turns. Grouped, so a group's agents sit together.
+  const resting = agents.filter((agent) => agent.online && !NEEDS.has(agent.status) && !ERRORS.has(agent.status) && !WORKING.has(agent.status))
+    .sort((a, b) => a.group.localeCompare(b.group) || byName(a, b));
   return {
     approvals,
     elsewhere,
@@ -118,8 +122,83 @@ export function nowView(snapshot) {
     asking,
     errors,
     working,
+    resting,
+    online: agents.filter((agent) => agent.online),
     needs: approvals.length + elsewhere + decisions.length + asking.length,
   };
+}
+
+// FEW_ONLINE is how many online agents Now lists whole. Above it, All lists
+// the ones at work or in error and those heard from recently, and "Show all"
+// opens the rest.
+export const FEW_ONLINE = 10;
+
+// RECENT_MS is how lately an agent must have called a hook to count as
+// recently active in All when there are many agents online.
+export const RECENT_MS = 15 * 60 * 1000;
+
+// STUCK_AFTER_MS is how long a busy agent may stay quiet (no hook) before
+// Stuck? marks it and counts it.
+export const STUCK_AFTER_MS = 15 * 60 * 1000;
+
+// hookAt is when an agent last called a hook, in ms, or null if never.
+export function hookAt(agent) {
+  const at = Date.parse(agent?.lastHook || '');
+  return Number.isFinite(at) ? at : null;
+}
+
+// rowState is an agent's state word for its row's pill.
+export function rowState(agent) {
+  if (ERRORS.has(agent.status)) return 'error';
+  if (WORKING.has(agent.status)) return 'working';
+  if (NEEDS.has(agent.status)) return 'asking';
+  return 'idle';
+}
+
+// agentRows is All's rows of agents: { rows: [{ agent, state }], all (every
+// online agent is listed), total (how many are online, askers aside) }.
+// With few online, all of them; above that, the ones at work or in error
+// and the rest heard from (a hook) within RECENT_MS. Agents asking the
+// operator are cards in Needs you, always, and not rows here.
+export function agentRows(view, { showAll = false, few = FEW_ONLINE, now = Date.now() } = {}) {
+  const busy = [...view.errors.map((agent) => ({ agent, state: 'error' })), ...view.working.map((agent) => ({ agent, state: 'working' }))];
+  const rest = view.resting.map((agent) => ({ agent, state: 'idle' }));
+  const total = busy.length + rest.length;
+  const all = showAll || total <= few;
+  const recent = ({ agent }) => { const at = hookAt(agent); return at !== null && now - at <= RECENT_MS; };
+  return { rows: all ? [...busy, ...rest] : [...busy, ...rest.filter(recent)], all, total };
+}
+
+// idleGroups is the Idle chip: the online idle agents by group, each group's
+// longest-idle last.
+export function idleGroups(view) {
+  const groups = new Map();
+  for (const agent of view.resting) {
+    if (!groups.has(agent.group)) groups.set(agent.group, []);
+    groups.get(agent.group).push(agent);
+  }
+  const latest = (agent) => hookAt(agent) ?? -Infinity;
+  return [...groups].map(([group, agents]) => ({ group, agents: agents.sort((a, b) => latest(b) - latest(a)) }));
+}
+
+// recentRows is the Recent chip: every online agent, the latest hook first;
+// an agent that never called one goes last.
+export function recentRows(view) {
+  const latest = (agent) => hookAt(agent) ?? -Infinity;
+  return [...view.online].sort((a, b) => latest(b) - latest(a) || a.name.localeCompare(b.name))
+    .map((agent) => ({ agent, state: rowState(agent) }));
+}
+
+// stuckRows is the Stuck? chip: the agents at work, quiet the longest first,
+// each marked quiet once STUCK_AFTER_MS has passed without a hook; quiet is
+// how many are. One that never called a hook cannot be timed and goes last.
+export function stuckRows(view, now = Date.now()) {
+  const oldest = (agent) => hookAt(agent) ?? Infinity;
+  const rows = [...view.working].sort((a, b) => oldest(a) - oldest(b) || a.name.localeCompare(b.name)).map((agent) => {
+    const at = hookAt(agent);
+    return { agent, state: 'working', quiet: at !== null && now - at > STUCK_AFTER_MS };
+  });
+  return { rows, quiet: rows.filter((row) => row.quiet).length };
 }
 
 // askerName names whoever put a decision to the operator, as the companion's

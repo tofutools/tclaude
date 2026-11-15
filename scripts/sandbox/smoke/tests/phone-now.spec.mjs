@@ -1,7 +1,8 @@
 // The phone's Now view (js/phone-now.js, js/phone-approval.js) in a real
 // browser on the sandbox's data: the usage strip opens Usage, an access
 // request is a card with Deny / +5 min / Approve, a decision's ⋯ opens the
-// whole decision, and the agents at work are rows that open their terminal.
+// whole decision, and the agents online are rows that open their terminal.
+// The chips over it switch what Now shows.
 //
 //   scripts/sandbox/ui.sh smoke phone-now
 import { test, expect, devices } from '@playwright/test';
@@ -36,7 +37,7 @@ test('Now shows what needs you as cards, and its strip and rows go where they sa
   const { scroll, width } = await page.evaluate(() => ({ scroll: document.querySelector('.phone-view').scrollWidth, width: document.querySelector('.phone-view').clientWidth }));
   expect(scroll).toBeLessThanOrEqual(width);
 
-  await page.getByRole('group', { name: 'Working' }).locator('.phone-row').first().click();
+  await page.getByRole('group', { name: /^(Online|Active)$/ }).locator('.phone-row').first().click();
   await expect(page.locator('.phone-term[role=dialog]')).toBeVisible();
   await page.goBack();
   await expect(page.locator('.phone-term[role=dialog]')).toBeHidden();
@@ -61,4 +62,37 @@ test('with three subscriptions the usage strip wraps inside the phone instead of
   const fits = await strip.evaluate((el) => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= document.documentElement.clientWidth);
   expect(fits, 'the strip stays inside the phone').toBe(true);
   await strip.screenshot({ path: test.info().outputPath('strip-three.png') });
+});
+
+test('the chips over Now switch its view, are kept fitted, and the pick survives a reload; a section head folds on a tap anywhere', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(`page error: ${error.message}`));
+  await page.goto('/');
+  await booted(page);
+  const chips = page.getByRole('tablist', { name: 'Show on Now' });
+  await expect(chips.getByRole('tab')).toHaveText([/^All/, /^Needs you/, /^Idle/, /^Recent/, /^Stuck\?/]);
+  // Every chip is on screen on a 390px phone, the last one too.
+  const last = await chips.getByRole('tab', { name: /^Stuck\?/ }).boundingBox();
+  expect(last.x + last.width).toBeLessThanOrEqual(390);
+
+  // A few online agents: every group's are listed, the idle ones too.
+  await expect(page.getByRole('group', { name: 'Online' }).locator('.phone-pill', { hasText: 'idle' }).first()).toBeVisible();
+
+  // The whole Open PRs head row folds, at least a finger tall.
+  const head = page.getByRole('group', { name: 'Open PRs' }).locator('.phone-section-fold');
+  if (await head.count()) {
+    expect((await head.boundingBox()).height).toBeGreaterThanOrEqual(44);
+    await head.click({ position: { x: 20, y: 10 } });
+    await expect(head).toHaveAttribute('aria-expanded', 'true');
+  }
+
+  await chips.getByRole('tab', { name: /^Idle/ }).click();
+  await expect(page.getByRole('group', { name: 'Idle' })).toBeVisible();
+  await expect(page.locator('.phone-usage-strip')).toHaveCount(0);
+  await page.reload();
+  await booted(page);
+  await expect(page.getByRole('tablist', { name: 'Show on Now' }).getByRole('tab', { name: /^Idle/ })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('tablist', { name: 'Show on Now' }).getByRole('tab', { name: /^Stuck\?/ }).click();
+  await expect(page.getByRole('group', { name: 'Stuck?' })).toBeVisible();
+  expect(errors).toEqual([]);
 });

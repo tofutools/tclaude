@@ -65,6 +65,59 @@ test('Now lists what needs the operator, then errors and work', async (t) => {
   assert.equal(nowView(null).needs, 0);
 });
 
+test('Now\'s rows: every online agent when there are few, else the busy ones until Show all', async (t) => {
+  const { nowView, agentRows, FEW_ONLINE } = await load(t);
+  const id = (n) => `agt_${String(n).padStart(32, '0')}`;
+  const snapshot = (idle) => ({ groups: [
+    { name: 'webshop', members: [member(id(1), 'lead', 'working'), member(id(2), 'bot', 'error'), member(id(3), 'asker', 'awaiting_input')] },
+    { name: 'tclaude', members: Array.from({ length: idle }, (_, i) => member(id(10 + i), `idle-${i}`, 'idle')) },
+    { name: 'alpha', members: [member(id(99), 'zed', 'idle'), member(id(98), 'off', 'idle', { online: false })] },
+  ] });
+  const few = agentRows(nowView(snapshot(2)));
+  assert.equal(few.all, true);
+  assert.deepEqual(few.rows.map((r) => [r.agent.name, r.state]),
+    [['bot', 'error'], ['lead', 'working'], ['zed', 'idle'], ['idle-0', 'idle'], ['idle-1', 'idle']],
+    'busy first, then the rest by group; never the asker (a card) or an offline agent');
+  const many = nowView(snapshot(FEW_ONLINE));
+  const busy = agentRows(many);
+  assert.equal(busy.all, false);
+  assert.equal(busy.total, FEW_ONLINE + 3);
+  assert.deepEqual(busy.rows.map((r) => r.agent.name), ['bot', 'lead']);
+  assert.equal(agentRows(many, { showAll: true }).rows.length, FEW_ONLINE + 3);
+});
+
+test('Now\'s chips: Idle by group, Recent latest first, Stuck? quiet the longest first, and All above few keeps the recent', async (t) => {
+  const { nowView, agentRows, idleGroups, recentRows, stuckRows, FEW_ONLINE, STUCK_AFTER_MS, RECENT_MS } = await load(t);
+  const now = Date.parse('2026-11-15T12:00:00Z');
+  const ago = (min) => new Date(now - min * 60_000).toISOString();
+  const id = (n) => `agt_${String(n).padStart(32, '0')}`;
+  const m = (n, title, status, hook, extra = {}) => member(id(n), title, status, { state: { status, last_hook: hook }, ...extra });
+  const view = nowView({ groups: [
+    { name: 'webshop', members: [m(1, 'lead', 'working', ago(1)), m(2, 'migrations', 'working', ago(47)), m(3, 'probe', 'working', ago(22)), m(4, 'nohook', 'working', '')] },
+    { name: 'tclaude', members: [m(5, 'steward', 'idle', ago(4)), m(6, 'old', 'idle', ago(60)), m(7, 'asker', 'awaiting_input', ago(0))] },
+    { name: 'alpha', members: [m(8, 'zed', 'idle', ago(9)), m(9, 'gone', 'idle', ago(0), { online: false })] },
+  ] });
+  assert.deepEqual(idleGroups(view).map(({ group, agents }) => [group, agents.map((a) => a.name)]),
+    [['alpha', ['zed']], ['tclaude', ['steward', 'old']]], 'by group, the latest heard from first');
+  assert.deepEqual(recentRows(view).map((r) => r.agent.name),
+    ['asker', 'lead', 'steward', 'zed', 'probe', 'migrations', 'old', 'nohook'], 'every online agent, latest first, never-heard last');
+  assert.equal(recentRows(view)[0].state, 'asking');
+  const stuck = stuckRows(view, now);
+  assert.deepEqual(stuck.rows.map((r) => [r.agent.name, r.quiet]),
+    [['migrations', true], ['probe', true], ['lead', false], ['nohook', false]], 'quiet the longest first; every one past the threshold is marked');
+  assert.equal(stuck.quiet, 2, 'the badge counts the marked rows');
+  assert.equal(STUCK_AFTER_MS, 15 * 60_000);
+
+  // Many online: All keeps the busy ones and the idle ones heard from lately.
+  const crowd = nowView({ groups: [
+    { name: 'webshop', members: [m(1, 'lead', 'working', ago(1))] },
+    { name: 'tclaude', members: Array.from({ length: FEW_ONLINE }, (_, i) => m(20 + i, `idle-${i}`, 'idle', ago(i === 0 ? 3 : RECENT_MS / 60_000 + 5))) },
+  ] });
+  const shown = agentRows(crowd, { now });
+  assert.equal(shown.all, false);
+  assert.deepEqual(shown.rows.map((r) => r.agent.name), ['lead', 'idle-0'], 'idle-0 called a hook 3m ago; the rest are older than RECENT_MS');
+});
+
 test('Board lists groups with live tasks, those waiting on you first', async (t) => {
   const { boardGroups } = await load(t);
   const context = { groups: [

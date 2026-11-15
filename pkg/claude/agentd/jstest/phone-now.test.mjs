@@ -25,8 +25,13 @@ const SNAPSHOT = {
   authored_open_prs: { available: true, total: 1, items: [{ url: 'https://github.com/o/r/pull/1482', title: 'Checkout redesign', checks: { state: 'passing' } }] },
 };
 
-async function setup(t) {
+async function setup(t, snapshot = SNAPSHOT, { stored = null } = {}) {
   const harness = await createPreactHarness(t);
+  const store = new Map(stored ? [['tclaude.phone.now.chip', stored]] : []);
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } };
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true });
+  t.after(() => { if (saved) Object.defineProperty(globalThis, 'localStorage', saved); else delete globalThis.localStorage; });
   const [{ createDashboardState }, now, sheet] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
     harness.importDashboardModule('js/phone-now.js'),
@@ -35,7 +40,7 @@ async function setup(t) {
   t.after(() => sheet.closePhoneSheet());
   const state = createDashboardState();
   state.beginRequest();
-  state.commitRequest(1, SNAPSHOT);
+  state.commitRequest(1, snapshot);
   const calls = [];
   const posts = [];
   const record = (name) => (...args) => { calls.push([name, ...args]); };
@@ -45,7 +50,7 @@ async function setup(t) {
   const processSource = { context: signal(null), status: signal('ready'), error: signal(''), refresh: () => Promise.resolve() };
   const mounted = await harness.mount(harness.html`<div><${now.NowView} state=${state} actions=${actions} fetchImpl=${fetchImpl} processSource=${processSource} /><${sheet.PhoneSheetHost} /></div>`);
   const tap = (element) => harness.act(() => element.click());
-  return { harness, mounted, calls, posts, tap, root: mounted.container };
+  return { harness, mounted, calls, posts, tap, store, root: mounted.container };
 }
 
 test('the usage strip shows each subscription\'s fullest window and opens Usage', async (t) => {
@@ -94,25 +99,53 @@ test('a decision is a purple card with the recommended option and one more; ⋯ 
   assert.equal(root.querySelector('[role="dialog"]'), null, 'a pick closes the sheet');
 });
 
-test('agents at work and in error are rows in one card, with pills, that open their terminal', async (t) => {
+test('few online: every online agent is a row, at work and in error first, the idle ones too; a row opens its terminal', async (t) => {
   const { harness, root, calls, tap } = await setup(t);
-  const working = harness.getByRole(root, 'group', { name: 'Working' });
-  const rows = [...working.querySelectorAll('.phone-row')];
+  const online = harness.getByRole(root, 'group', { name: 'Online' });
+  const rows = [...online.querySelectorAll('.phone-row')];
   assert.deepEqual(rows.map((r) => [r.querySelector('.phone-who-name').textContent, r.querySelector('.phone-pill').textContent]),
-    [['release-bot', 'error'], ['lead', 'working']]);
-  assert.match(working.querySelector('.phone-section-head').textContent, /Working · 2/);
+    [['release-bot', 'error'], ['lead', 'working'], ['steward', 'idle']], 'the asker is a card in Needs you, not a row');
+  assert.match(online.querySelector('.phone-section-head').textContent, /Online · 3/);
   assert.equal(rows[0].querySelector('.phone-card-line').textContent, 'rate limited until 14:00', 'an error row says why');
   assert.equal(rows[1].querySelector('.phone-card-line'), null);
+  assert.equal(root.querySelector('.phone-now-all'), null, 'nothing hidden, so no Show all');
   await tap(rows[1]);
   assert.equal(calls.at(-1)[0], 'openTerminal');
   assert.equal(calls.at(-1)[1].agentId, WORKER);
 });
 
-test('open PRs are collapsed under their header until it is tapped', async (t) => {
+test('many online: only the ones at work or in error, and Show all lists every group\'s', async (t) => {
+  const idle = Array.from({ length: 10 }, (_, i) => ({
+    agent_id: `agt_1000000000000000000000000000000${i.toString(16)}`, conv_id: `i${i}`, title: `idle-${i}`, online: true, state: { status: 'idle' },
+  }));
+  const offline = { agent_id: 'agt_20000000000000000000000000000000', conv_id: 'o', title: 'gone', online: false, state: { status: 'idle' } };
+  const snapshot = { ...SNAPSHOT, groups: [...SNAPSHOT.groups, { name: 'tclaude', members: [...idle, offline] }] };
+  const { harness, root, tap } = await setup(t, snapshot);
+  const working = harness.getByRole(root, 'group', { name: 'Active' });
+  assert.deepEqual([...working.querySelectorAll('.phone-who-name')].map((n) => n.textContent), ['release-bot', 'lead']);
+  const all = root.querySelector('.phone-now-all');
+  assert.match(all.textContent, /Show all 13 online/, 'the offline one is not counted');
+  assert.equal(all.getAttribute('aria-expanded'), 'false');
+  await tap(all);
+  const online = harness.getByRole(root, 'group', { name: 'Online' });
+  const names = [...online.querySelectorAll('.phone-who-name')].map((n) => n.textContent);
+  assert.equal(names.length, 13);
+  assert.deepEqual(names.slice(0, 2), ['release-bot', 'lead'], 'the busy ones stay first');
+  assert.ok(names.includes('idle-0') && names.includes('steward'), 'every group\'s online agents');
+  assert.ok(!names.includes('gone'));
+  await tap(root.querySelector('.phone-now-all'));
+  assert.ok(harness.getByRole(root, 'group', { name: 'Active' }), 'Only the recent ones folds it back');
+});
+
+test('open PRs are collapsed under their header until a tap anywhere on it', async (t) => {
   const { harness, root, tap } = await setup(t);
   const prs = harness.getByRole(root, 'group', { name: 'Open PRs' });
   assert.equal(prs.querySelector('.phone-row'), null);
-  await tap(harness.getByRole(prs, 'button', { name: 'Show open PRs' }));
+  const head = prs.querySelector('.phone-section-head button');
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.match(head.textContent, /Open PRs · 1/, 'the whole head row is the button, not just its chevron');
+  await tap(head);
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
   const row = prs.querySelector('a.phone-row');
   assert.equal(row.getAttribute('href'), 'https://github.com/o/r/pull/1482');
   assert.equal(row.querySelector('.phone-pill-work').textContent, 'passing');
@@ -133,4 +166,52 @@ test('the Now model: the strip, a request in one line, the options a card shows'
   assert.equal(model.countdown(42), '0:42');
   assert.equal(model.countdown(125), '2:05');
   assert.equal(model.countdown(86_396), '23h 59m', 'a long deadline in hours');
+});
+
+test('the chips: All by default, counts on them, each shows its view, and the pick is remembered', async (t) => {
+  const hook = (min) => new Date(Date.now() - min * 60_000).toISOString();
+  const snapshot = { ...SNAPSHOT, groups: [
+    { name: 'webshop', members: [
+      SNAPSHOT.groups[0].members[0],
+      { ...SNAPSHOT.groups[0].members[1], state: { status: 'working', last_hook: hook(40) } },
+      SNAPSHOT.groups[0].members[2],
+    ] },
+    { name: 'steward', scribe: true, members: [{ ...SNAPSHOT.groups[1].members[0], state: { status: 'idle', last_hook: hook(5) } }] },
+  ] };
+  const { harness, root, tap, store } = await setup(t, snapshot);
+  const chips = harness.getByRole(root, 'tablist', { name: 'Show on Now' });
+  const chip = (name) => harness.getByRole(chips, 'tab', { name });
+  assert.equal(chip(/^All/).getAttribute('aria-selected'), 'true');
+  assert.match(chip(/^All/).textContent, /All 3/, 'online agents but the asker, as the rows count them');
+  assert.match(chip(/^Needs you/).querySelector('.ui-badge-danger').textContent, /^\d+$/);
+  assert.equal(chip(/^Stuck\?/).querySelector('.ui-badge-warn').textContent, '1', 'lead has been quiet 40m');
+
+  await tap(chip(/^Needs you/));
+  assert.ok(harness.getByRole(root, 'group', { name: 'Needs you' }));
+  assert.equal(root.querySelector('.phone-usage-strip'), null, 'only the cards');
+  assert.equal(root.querySelector('.phone-rows'), null);
+  assert.equal(store.get('tclaude.phone.now.chip'), 'needs', 'remembered for this viewer');
+
+  await tap(chip(/^Idle/));
+  const idle = harness.getByRole(root, 'group', { name: 'Idle' });
+  assert.match(idle.querySelector('.phone-now-group').textContent, /steward · 1/);
+  assert.match(idle.querySelector('.phone-now-when').textContent, /^idle 5m$/);
+
+  await tap(chip(/^Recent/));
+  const recent = harness.getByRole(root, 'group', { name: 'Recent' });
+  assert.deepEqual([...recent.querySelectorAll('.phone-who-name')].map((n) => n.textContent).slice(0, 2), ['steward', 'lead']);
+
+  await tap(chip(/^Stuck\?/));
+  const stuck = harness.getByRole(root, 'group', { name: 'Stuck?' });
+  const when = stuck.querySelector('.phone-now-when');
+  assert.match(when.textContent, /^last update 40m ago$/);
+  assert.ok(when.classList.contains('quiet'), 'amber past the threshold');
+});
+
+test('a remembered chip comes back; a bad one falls back to All', async (t) => {
+  const { harness, root } = await setup(t, SNAPSHOT, { stored: 'idle' });
+  assert.ok(harness.getByRole(root, 'group', { name: 'Idle' }));
+  const { storedChip } = await harness.importDashboardModule('js/phone-now.js');
+  assert.equal(storedChip({ getItem: () => 'nonsense' }), 'all');
+  assert.equal(storedChip({ getItem: () => { throw new Error('blocked'); } }), 'all');
 });
