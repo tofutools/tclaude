@@ -149,6 +149,11 @@ async function settleInitialLayout() {
   // Jobs are NOT here: they must mount first / before the legacy modal
   // binders, so they stay as the two sequential awaits below. The rest are
   // independent and are started concurrently at the Promise.all.
+  // A phone's ✉ Message opens the phone's message sheet, not the desktop
+  // dialog; the module loads on first use.
+  const phoneCompose = (seed) => import('./phone-compose-sheet.js')
+    .then(({ openPhoneCompose }) => openPhoneCompose(seed, { notify: toast }))
+    .catch((error) => toast(`The message sheet could not open: ${error?.message || error}`, true));
   const featureMounts = [
     () => mountTerminalsFeature({
       onComposeMessage: (seed) => openOperatorMessageDialog(seed),
@@ -181,7 +186,7 @@ async function settleInitialLayout() {
     // board windows and the voice wake word. Approvals and decisions are on
     // the shell's Now view.
     () => (isPhone
-      ? mountPhoneShellFeature({ notify: toast, onComposeMessage: (seed) => openOperatorMessageDialog(seed) })
+      ? mountPhoneShellFeature({ notify: toast, onComposeMessage: phoneCompose })
       : mountCompanionFeature({
         notify: toast,
         onComposeMessage: (seed) => openOperatorMessageDialog(seed),
@@ -189,8 +194,8 @@ async function settleInitialLayout() {
         openSudo: (agentID, label) => openSudoEditModal(agentID, label),
       })),
     async () => (isPhone ? null : mountVoiceWakeFeature()),
-    async () => (isPhone ? mountPhoneAgentsFeature({ onComposeMessage: (seed) => openOperatorMessageDialog(seed) }) : null),
-    async () => (isPhone ? mountPhoneTerminalFeature({ onComposeMessage: (seed) => openOperatorMessageDialog(seed) }) : null),
+    async () => (isPhone ? mountPhoneAgentsFeature({ onComposeMessage: phoneCompose }) : null),
+    async () => (isPhone ? mountPhoneTerminalFeature({ onComposeMessage: phoneCompose }) : null),
     async () => (isPhone ? mountPhoneConfigFeature() : null),
     () => mountAccessPanelFeature({ notify: toast }),
     () => mountKnowledgeSourceFeature({ notify: toast }),

@@ -184,29 +184,11 @@ const phoneAgentsDescriptor = createIslandDescriptor({
     const islandModule = import('./phone-agents-island.js');
     const snapshotStoreModule = import('./snapshot-store.js');
     const groupOrderModule = import('./group-order.js');
-    const rowActionModule = import('./row-action-handler.js');
-    const terminalsTabModule = import('./terminals-tab.js');
-    const spawnModule = import('./agent-spawn-controller.js');
-    const featureStateModule = import('./feature-state-registry.js');
-    const [
-      { mountPhoneAgentsIsland }, { dashboardState }, { sortGroupsByPref }, { handleRowAction },
-      { openWebWindowPane }, { openAgentSpawnModal }, { featureState },
-    ] = await Promise.all([
-      islandModule, snapshotStoreModule, groupOrderModule, rowActionModule,
-      terminalsTabModule, spawnModule, featureStateModule,
+    const actionsModule = import('./phone-agent-actions.js');
+    const [{ mountPhoneAgentsIsland }, { dashboardState }, { sortGroupsByPref }, { phoneAgentActions }] = await Promise.all([
+      islandModule, snapshotStoreModule, groupOrderModule, actionsModule,
     ]);
-    // A row's actions, through the desktop's entry points. rowAction takes the
-    // same data a desktop row's data-* attributes carry.
-    const actions = {
-      openTerminal: (row) => openWebWindowPane(row.agent, row.name, { harness: row.harness }),
-      message: (row) => dependencies.onComposeMessage?.({ agent: row.agent, label: row.name }),
-      rowAction: (act, row) => handleRowAction({ data: {
-        act, conv: row.conv, agent: row.agent, label: row.name, harness: row.harness,
-        group: row.group, online: row.online ? '1' : '0',
-      } }),
-      rename: (row, group) => featureState('groups-actions')?.openMemberEditor(row.member, group.group, 'title'),
-      spawn: (groupName) => openAgentSpawnModal({ groupName }),
-    };
+    const actions = phoneAgentActions({ onComposeMessage: dependencies.onComposeMessage });
     return {
       mount: (registerCleanup) => mountPhoneAgentsIsland({
         host, state: dashboardState, order: (groups) => sortGroupsByPref(groups), actions, registerCleanup,
@@ -233,10 +215,21 @@ const phoneTerminalDescriptor = createIslandDescriptor({
     const xtermLoaderModule = import('./xterm-loader.js');
     const attachConfigModule = import('./terminal-attach-config.js');
     const snapshotStoreModule = import('./snapshot-store.js');
+    const agentsModelModule = import('./phone-agents-model.js');
+    const agentsIslandModule = import('./phone-agents-island.js');
+    const actionsModule = import('./phone-agent-actions.js');
+    const sheetModule = import('./phone-sheet.js');
+    const groupOrderModule = import('./group-order.js');
     const [
       { mountPhoneTerminalIsland }, { setPhoneTerminals }, { mountTerminalWidget }, { loadXtermRuntime },
-      { terminalAttachWidgetOptions }, { dashboardState },
-    ] = await Promise.all([islandModule, terminalsTabModule, terminalsCoreModule, xtermLoaderModule, attachConfigModule, snapshotStoreModule]);
+      { terminalAttachWidgetOptions }, { dashboardState }, { agentGroups, findRow }, { AgentSheet },
+      { phoneAgentActions }, { openPhoneSheet }, { sortGroupsByPref },
+    ] = await Promise.all([
+      islandModule, terminalsTabModule, terminalsCoreModule, xtermLoaderModule, attachConfigModule, snapshotStoreModule,
+      agentsModelModule, agentsIslandModule, actionsModule, sheetModule, groupOrderModule,
+    ]);
+    const order = (groups) => sortGroupsByPref(groups);
+    const actions = phoneAgentActions({ onComposeMessage: dependencies.onComposeMessage });
     // An agent a link names, from the snapshot: its name and harness.
     const agent = (id) => {
       const snapshot = dashboardState.snapshot.value;
@@ -252,6 +245,14 @@ const phoneTerminalDescriptor = createIslandDescriptor({
       loadRuntime: () => loadXtermRuntime(),
       widgetOptions: (seed) => terminalAttachWidgetOptions(seed.terminalAttach),
       onComposeMessage: dependencies.onComposeMessage,
+      // The agent's row as the Agents view shows it (its state and group),
+      // read from the live snapshot, or null.
+      agentRow: (id) => findRow(agentGroups(dashboardState.snapshot.value, order), id),
+      // ⋯: the agent's sheet, as the Agents view opens it.
+      agentMenu: (row) => openPhoneSheet({
+        label: row.name, Body: AgentSheet,
+        props: { state: dashboardState, order, actions, agentKey: row.key, groupKey: '', here: true },
+      }),
     };
     return {
       mount: (registerCleanup) => mountPhoneTerminalIsland({ host, deps, register: setPhoneTerminals, registerCleanup }),

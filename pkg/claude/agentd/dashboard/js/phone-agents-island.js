@@ -54,7 +54,8 @@ function AgentRow({ row, onOpen }) {
 
 // AgentSheet is one agent's sheet. It reads the agent live from the snapshot,
 // so a state change while it is open shows (and a retired agent says so).
-export function AgentSheet({ state, order, actions, agentKey, groupKey, close }) {
+// here: opened from the agent's own terminal, which it then does not offer.
+export function AgentSheet({ state, order, actions, agentKey, groupKey, here = false, close }) {
   const found = findRow(agentGroups(state.snapshot.value, order), agentKey, groupKey);
   if (!found) return html`<p class="ui-empty phone-empty">This agent is no longer listed.</p>`;
   const { row, group } = found;
@@ -68,7 +69,7 @@ export function AgentSheet({ state, order, actions, agentKey, groupKey, close })
     ${!row.pr && row.branch && html`<p class="phone-agent-sheet-meta">⎇ ${row.branch}</p>`}
     ${row.cwd && html`<p class="phone-agent-sheet-meta phone-agent-cwd">${row.cwd}</p>`}
     <ul class="phone-menu">
-      ${row.online && item('Open terminal', run(actions.openTerminal))}
+      ${row.online && !here && item('Open terminal', run(actions.openTerminal))}
       ${item('Message…', run(actions.message))}
       ${row.online
         ? item('Shut down…', run((r) => actions.rowAction('dot-toggle', r)))
