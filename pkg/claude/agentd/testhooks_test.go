@@ -899,6 +899,14 @@ func SetAutoGrantableForTest(slug string) func() {
 // returns a `dashTestHandler` that injects a valid cookie + Origin on
 // every request — the dashboard's auth checks would otherwise refuse
 // the synthetic httptest peer.
+// ServePeerDashboardSnapshotForTest serves /api/snapshot as an unrestricted
+// trusted peer receives it (servePeerSnapshot), without a federation setup.
+func ServePeerDashboardSnapshotForTest(w http.ResponseWriter, r *http.Request) {
+	initDashboardToken()
+	ctx := context.WithValue(context.WithValue(r.Context(), remoteAuthedCtxKey{}, true), peerSnapshotCtxKey{}, true)
+	handleDashboardSnapshot(w, r.Clone(ctx))
+}
+
 func BuildDashboardHandlerForTest() http.Handler {
 	initDashboardToken()
 	mux := http.NewServeMux()

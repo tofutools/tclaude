@@ -241,6 +241,7 @@ func seedSandboxFull(t *testing.T, f *testharness.Flow) {
 	seedSandboxDrawingBoards(s)
 	seedSandboxTaskboard(s)
 	seedSandboxFleetState(s)
+	seedSandboxLineage(s)
 	seedSandboxAutomations(s)
 	seedSandboxCronHistory(s)
 	seedSandboxProcessRuns(s)
@@ -569,6 +570,26 @@ func seedSandboxFleetState(s *sandboxSeeder) {
 	} {
 		if err := db.UpdateContextPct("lbl-"+title, pct); err != nil {
 			s.t.Fatalf("context %s: %v", title, err)
+		}
+	}
+}
+
+// seedSandboxLineage has lead spawn four of webshop's workers (agent_lineage),
+// so the phone's Agents view nests them under it; search-indexer and
+// onboarding-copy were added by the operator and stay at the top level.
+func seedSandboxLineage(s *sandboxSeeder) {
+	s.t.Helper()
+	lead, err := db.AgentIDForConv(sbLead)
+	if err != nil || lead == "" {
+		s.t.Fatalf("lead agent: %q %v", lead, err)
+	}
+	for i, conv := range []string{sbUI, sbPayments, sbReviewer, sbMigrations} {
+		child, err := db.AgentIDForConv(conv)
+		if err != nil || child == "" {
+			s.t.Fatalf("worker agent %s: %q %v", conv, child, err)
+		}
+		if err := db.RecordAgentLineage(child, lead, time.Now().Add(time.Duration(i-4)*time.Hour)); err != nil {
+			s.t.Fatalf("lineage %s: %v", conv, err)
 		}
 	}
 }

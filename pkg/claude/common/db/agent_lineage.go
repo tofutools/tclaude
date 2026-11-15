@@ -80,6 +80,59 @@ func ListAgentChildren(parentAgentID string) ([]string, error) {
 	return children, rows.Err()
 }
 
+// lineageParentsChunk bounds the IN list of one ListAgentParents query, well
+// under SQLite's bound-parameter limit.
+const lineageParentsChunk = 500
+
+// ListAgentParents returns the agent that spawned each of childAgentIDs, by
+// child, in as few queries as the list allows. A child with no recorded
+// birth edge (spawned by a human, or before lineage was recorded) is absent.
+func ListAgentParents(childAgentIDs []string) (map[string]string, error) {
+	seen := map[string]bool{}
+	ids := make([]string, 0, len(childAgentIDs))
+	for _, id := range childAgentIDs {
+		id = strings.TrimSpace(id)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	parents := map[string]string{}
+	if len(ids) == 0 {
+		return parents, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for start := 0; start < len(ids); start += lineageParentsChunk {
+		chunk := ids[start:min(start+lineageParentsChunk, len(ids))]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		rows, err := d.Query(`SELECT child_agent_id, parent_agent_id FROM agent_lineage
+			WHERE child_agent_id IN (?`+strings.Repeat(",?", len(chunk)-1)+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var child, parent string
+			if err := rows.Scan(&child, &parent); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			parents[child] = parent
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return parents, nil
+}
+
 func DeleteAgentLineageForChild(childAgentID string) (int64, error) {
 	childAgentID = strings.TrimSpace(childAgentID)
 	if childAgentID == "" {

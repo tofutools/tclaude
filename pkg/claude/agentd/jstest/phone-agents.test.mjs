@@ -51,7 +51,9 @@ test('the model: groups in order, loudest first, offline apart, PR and checks', 
   assert.deepEqual(model.toggleFilter([], 'g:a'), ['g:a']);
   assert.deepEqual(model.toggleFilter(['g:a', 'g:b'], 'g:a'), ['g:b']);
   assert.deepEqual(model.toggleFilter(['g:a'], model.ALL), []);
-  assert.equal(model.waiting(webshop), 1, 'the approval waits on the operator');
+  assert.deepEqual(webshop.summary.map((x) => `${x.count} ${x.text}`), ['1 approval', '1 idle', '1 offline'], 'loudest first');
+  assert.deepEqual(webshop.tree.map((n) => [n.row.name, n.kids.length]), [['payments-fix', 0], ['lead', 0], ['old-worker', 0]],
+    'no spawn parents: every agent at the top level');
   assert.equal(model.foldPref(webshop), 'tclaude.dash.phone.fold.webshop');
   assert.equal(model.foldPref(groups[2]), 'tclaude.dash.phone.fold.-ungrouped');
   assert.equal(model.findRow(groups, id(5)).group.key, model.UNGROUPED);
@@ -184,7 +186,7 @@ test('the chips filter by any number of groups; All shows every one', async (t) 
   assert.deepEqual(pressed(), ['All']);
 });
 
-test('a group\'s header folds it, remembered in the prefs; folded, it counts who waits', async (t) => {
+test('a group\'s header folds it, remembered in the prefs; its state summary shows folded too', async (t) => {
   const prefs = memPrefs({ 'tclaude.dash.phone.fold.steward': '1' });
   const { c, tap, titles, prefs: kept, calls } = await setup(t, { prefs });
   const head = (name) => c.querySelector(`[aria-label="${name}"] .phone-agents-fold`);
@@ -194,15 +196,17 @@ test('a group\'s header folds it, remembered in the prefs; folded, it counts who
   await tap(head('webshop'));
   assert.deepEqual(titles(), ['loner']);
   assert.equal(kept.getItem('tclaude.dash.phone.fold.webshop'), '1');
-  assert.equal(head('webshop').querySelector('.phone-agents-waiting').textContent, '1 waiting', 'the approval still shows');
-  assert.ok(head('webshop').getAttribute('aria-label').includes('1 waiting on you'));
+  const summary = (name) => [...c.querySelectorAll(`[aria-label="${name}"] .phone-agents-sum`)].map((n) => n.textContent.trim());
+  assert.deepEqual(summary('webshop'), ['1 approval', '1 idle', '1 offline'], 'the approval still shows');
+  assert.ok(c.querySelector('[aria-label="webshop"] .phone-agents-sum.tone-key'), 'in the approval pill\'s colour');
+  assert.ok(head('webshop').getAttribute('aria-label').includes('2 of 3 online: 1 approval, 1 idle, 1 offline'));
   assert.equal(head('webshop').querySelector('.phone-agents-count').textContent, '2/3');
   // Board › stays its own button beside the header.
   assert.ok(c.querySelector('[aria-label="webshop\'s board"]'));
   await tap(head('steward'));
   assert.deepEqual(titles(), ['steward', 'loner']);
   assert.equal(kept.getItem('tclaude.dash.phone.fold.steward'), null, 'unfolding forgets it');
-  assert.equal(head('steward').querySelector('.phone-agents-waiting'), null);
+  assert.deepEqual(summary('steward'), ['1 working']);
   assert.equal(calls.length, 0, 'folding opens nothing');
 });
 
@@ -340,4 +344,72 @@ test("on a peer's page ＋ is the desktop form, which spawns there", async (t) =
 test('a row tells a screen reader what the agent waits on', async (t) => {
   const { row } = await setup(t);
   assert.equal(row('payments-fix').getAttribute('aria-label'), 'payments-fix, approval (Allow npm test?): open its terminal');
+});
+
+// TREE has a lead that spawned three workers, one of which spawned its own;
+// a worker whose spawner is in another group, and one added by a human.
+const TREE = {
+  groups: [
+    {
+      name: 'webshop',
+      members: [
+        { agent_id: id(10), conv_id: 'c10', title: 'lead', role: 'lead', online: true, state: { status: 'idle' } },
+        { agent_id: id(11), conv_id: 'c11', title: 'ui', role: 'dev', online: true, state: { status: 'working' }, spawned_by: id(10) },
+        { agent_id: id(12), conv_id: 'c12', title: 'payments', role: 'dev', online: true, state: { status: 'error', status_detail: 'boom' }, spawned_by: id(10) },
+        { agent_id: id(13), conv_id: 'c13', title: 'reviewer', role: 'reviewer', online: false, state: {}, spawned_by: id(10) },
+        { agent_id: id(14), conv_id: 'c14', title: 'helper', role: 'dev', online: true, state: { status: 'working' }, spawned_by: id(11) },
+        { agent_id: id(15), conv_id: 'c15', title: 'visitor', role: 'dev', online: true, state: { status: 'working' }, spawned_by: id(99) },
+        { agent_id: id(16), conv_id: 'c16', title: 'solo', role: 'dev', online: true, state: { status: 'idle' } },
+      ],
+    },
+  ],
+  ungrouped: [],
+};
+
+test('the model: workers nest one level under the agent that spawned them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/phone-agents-model.js');
+  const [webshop] = model.agentGroups(TREE);
+  assert.deepEqual(webshop.tree.map((n) => [n.row.name, n.kids.map((k) => k.name)]), [
+    ['lead', ['payments', 'helper', 'ui', 'reviewer']],
+    ['visitor', []],
+    ['solo', []],
+  ], 'a worker\'s worker sits flat under the same lead; a spawner from elsewhere leaves it at the top; kids loudest first, offline last;'
+    + ' the idle lead ranks by its errored worker');
+  // An offline lead does not take an asking worker down the list.
+  const [quiet] = model.agentGroups({ groups: [{ name: 'g', members: [
+    { agent_id: id(20), conv_id: 'c20', title: 'busy', online: true, state: { status: 'working' } },
+    { agent_id: id(21), conv_id: 'c21', title: 'gone-lead', online: false, state: {} },
+    { agent_id: id(22), conv_id: 'c22', title: 'asker', online: true, state: { status: 'awaiting_input' }, spawned_by: id(21) },
+  ] }], ungrouped: [] });
+  assert.deepEqual(quiet.tree.map((n) => n.row.name), ['gone-lead', 'busy']);
+  // Ungrouped agents nest too.
+  const ungrouped = model.agentGroups({ groups: [], ungrouped: [
+    { agent_id: id(30), conv_id: 'c30', title: 'boss', online: true, state: { status: 'idle' } },
+    { agent_id: id(31), conv_id: 'c31', title: 'minion', online: true, state: { status: 'idle' }, spawned_by: id(30) },
+  ] });
+  assert.deepEqual(ungrouped[0].tree.map((n) => [n.row.name, n.kids.map((k) => k.name)]), [['boss', ['minion']]]);
+  assert.deepEqual(webshop.summary.map((x) => `${x.count} ${x.text}`), ['1 error', '3 working', '2 idle', '1 offline']);
+  // A cycle (corrupt lineage) cannot spin: both stay listed.
+  const loop = model.agentTree([{ agent: 'a', parent: 'b', name: 'a' }, { agent: 'b', parent: 'a', name: 'b' }]);
+  assert.equal(loop.reduce((n, node) => n + 1 + node.kids.length, 0), 2);
+});
+
+test('rows: a worker sits under its lead, which says how many it has', async (t) => {
+  const { harness, state, c } = await setup(t);
+  await harness.act(() => {
+    state.beginRequest();
+    state.commitRequest(2, TREE);
+  });
+  const rows = [...c.querySelectorAll('[aria-label="webshop"] .phone-agent')];
+  assert.deepEqual(rows.map((li) => `${li.classList.contains('phone-agent-worker') ? '  ' : ''}${li.querySelector('.phone-agent-title').textContent}`),
+    ['lead', '  payments', '  helper', '  ui', '  reviewer', 'visitor', 'solo']);
+  const lead = rows[0];
+  assert.equal(lead.querySelector('.phone-agent-kids').textContent, '4 workers');
+  assert.match(lead.querySelector('.phone-agent-meta').textContent, /^lead · 4 workers( · |$)/, 'right after the role, before an ellipsis can cut it');
+  assert.ok(lead.querySelector('.phone-agent-row').getAttribute('aria-label').includes('idle, 4 workers'), 'a screen reader hears it too');
+  assert.ok(rows[4].classList.contains('phone-agent-last'), 'the last worker ends the guide line');
+  assert.equal(rows[1].classList.contains('phone-agent-last'), false);
+  assert.ok(rows[1].querySelector('.phone-agent-row').getAttribute('aria-label').includes('spawned by lead'));
+  assert.equal(rows[6].querySelector('.phone-agent-kids'), null);
 });

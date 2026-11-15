@@ -26,6 +26,25 @@ type snapshotRowInputs struct {
 	notifyPrefs            map[string]string
 	notifyEffective        func(convID string) bool
 	externalStewardParents map[string]string
+	// spawnParents is the agent that spawned each agent, by agent id
+	// (agent_lineage): a member row's spawned_by.
+	spawnParents map[string]string
+}
+
+// snapshotSpawnParents loads the spawning agent of every agent the snapshot
+// renders, in one batched read of agent_lineage. A failed read only costs the
+// phone its nesting, so it is logged, not fatal.
+func snapshotSpawnParents(rc *snapshotRowCache, convIDs []string) map[string]string {
+	ids := make([]string, 0, len(convIDs))
+	for _, convID := range convIDs {
+		ids = append(ids, rc.agentID(convID))
+	}
+	parents, err := db.ListAgentParents(ids)
+	if err != nil {
+		slog.Warn("dashboard snapshot: spawn parents", "error", err)
+		return nil
+	}
+	return parents
 }
 
 // linksFor is a row's repo links decorated with its presented PRs and the
@@ -77,6 +96,7 @@ func (ar *snapshotAgentRows) add(convID string) *dashboardAgent {
 		ExternalSteward:   db.IsExternalStewardConv(convID),
 
 		SpawnedByExternalSteward: ar.externalStewardParents[b.AgentID],
+		SpawnedBy:                ar.spawnParents[b.AgentID],
 		// init non-nil so JSON serializes [] not null;
 		// the dashboard's JS does .length / .map without a guard.
 		Groups:          []string{},
@@ -354,6 +374,7 @@ func (gb snapshotGroupsBuild) buildGroup(g *db.AgentGroup) dashboardGroup {
 			ExternalSteward:    db.IsExternalStewardConv(m.ConvID),
 
 			SpawnedByExternalSteward: gb.externalStewardParents[b.AgentID],
+			SpawnedBy:                gb.spawnParents[b.AgentID],
 
 			Owner:           ownerSet[m.ConvID],
 			State:           b.State,
@@ -403,6 +424,7 @@ func (gb snapshotGroupsBuild) buildGroup(g *db.AgentGroup) dashboardGroup {
 			ExternalSteward: db.IsExternalStewardConv(ownerConv),
 
 			SpawnedByExternalSteward: gb.externalStewardParents[b.AgentID],
+			SpawnedBy:                gb.spawnParents[b.AgentID],
 
 			agentLocationView:  b.Loc,
 			repoLinksView:      ownerLinks,

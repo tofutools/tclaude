@@ -23,6 +23,13 @@ function collectErrors(page) {
   return errors;
 }
 
+async function expectNoSideScroll(page) {
+  const { scroll, width } = await page.evaluate(() => ({
+    scroll: document.documentElement.scrollWidth, width: document.documentElement.clientWidth,
+  }));
+  expect(scroll, `the page is ${scroll}px wide on a ${width}px phone`).toBeLessThanOrEqual(width);
+}
+
 const nav = (page, name) => page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: new RegExp(`^${name}`) });
 const chips = (page) => page.getByRole('group', { name: 'Show groups' });
 const chip = (page, name) => chips(page).getByRole('button', { name: new RegExp(`^${name} \\d+$`) });
@@ -104,5 +111,32 @@ test('More lists every entry after Fleet, on a node with a fleet', async ({ page
   // desktop rule to apply.
   expect(await page.evaluate(() => !!document.querySelector('#node-chips-root .has-fleet[data-smoke]'))).toBe(true);
   expect(await labels()).toEqual(all);
+  expect(errors).toEqual([]);
+});
+
+test('Agents: each header counts its agents by state, folded too; workers sit under their lead', async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto('/');
+  await booted(page);
+  await nav(page, 'Agents').click();
+  const webshop = page.getByRole('group', { name: 'webshop', exact: true });
+  const summary = webshop.locator('.phone-agents-sum');
+  await expect(summary.first()).toBeVisible();
+  // Loudest first: the errored db-migrations before the working agents.
+  await expect(summary.first()).toHaveText(/^\d+ error$/);
+  // The sandbox's lead spawned four of webshop's agents (seedSandboxLineage).
+  const lead = webshop.locator('.phone-agent').filter({ has: page.locator('.phone-agent-title', { hasText: /^lead$/ }) });
+  await expect(lead.locator('.phone-agent-kids')).toHaveText('4 workers');
+  await expect(webshop.locator('.phone-agent-worker')).toHaveCount(4);
+  const worker = webshop.locator('.phone-agent-worker').filter({ hasText: 'checkout-ui' });
+  await expect(worker).toBeVisible();
+  const box = await worker.locator('.phone-agent-row').boundingBox();
+  expect(box.width, 'the indent leaves the row most of the phone').toBeGreaterThan(260);
+  await expectNoSideScroll(page);
+  // Folded, the summary stays.
+  await webshop.locator('.phone-agents-fold').click();
+  await expect(webshop.locator('.phone-agent')).toHaveCount(0);
+  await expect(summary.first()).toBeVisible();
+  await webshop.locator('.phone-agents-fold').click();
   expect(errors).toEqual([]);
 });

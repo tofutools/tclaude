@@ -32,12 +32,6 @@ export function toggleFilter(filter, key) {
 export const FOLD_PREF = 'tclaude.dash.phone.fold.';
 export const foldPref = (group) => FOLD_PREF + (group.group ? group.name : UNGROUPED);
 
-// waiting counts a group's agents that wait on the operator (an approval,
-// a question, an error), which a folded section still shows.
-export function waiting(group) {
-  return [...group.shown, ...group.offline].filter((row) => ['key', 'ask', 'err'].includes(row.pill.tone)).length;
-}
-
 // A group's tab key: prefixed, so no group name collides with All or
 // Ungrouped.
 export const groupKey = (name) => `g:${name}`;
@@ -113,6 +107,9 @@ export function agentRow(member, group = '') {
     branch: member.branch || member.startup_branch || '',
     cwd: member.current_dir || member.startup_dir || state.cwd || '',
     pr: agentPR(member),
+    // The agent that spawned this one (snapshot spawned_by, agent_lineage),
+    // or '' (a human added it, or it is a peer's).
+    parent: member.spawned_by || '',
     member,
   };
 }
@@ -136,10 +133,12 @@ export function agentGroups(snapshot, order = (groups) => groups) {
     const rows = (members || []).filter((m) => m && !isAwayPlaceholder(m)).map((m) => agentRow(m, group ? name : ''));
     if (!rows.length) return;
     const open = (row) => row.online || row.variant === 'crashed';
+    const shown = rows.filter(open).sort(byLoudness);
+    const offline = rows.filter((row) => !open(row)).sort(byLoudness);
     out.push({
-      key, name, group,
-      shown: rows.filter(open).sort(byLoudness),
-      offline: rows.filter((row) => !open(row)).sort(byLoudness),
+      key, name, group, shown, offline,
+      tree: agentTree([...shown, ...offline]),
+      summary: stateSummary(rows),
       live: rows.filter((row) => row.online).length,
       total: rows.length,
     });
@@ -147,6 +146,62 @@ export function agentGroups(snapshot, order = (groups) => groups) {
   for (const group of order(snapshot?.groups || [])) add(groupKey(group.name), group.name, group, group.members);
   add(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped);
   return out;
+}
+
+// agentTree nests a group's workers under the agent that spawned them, one
+// level: [{ row, kids }] in the list's order (loudest first, offline last),
+// each lead's kids in that order too. A worker whose spawner is in the group
+// goes under that spawner's own top-level ancestor there, so a worker's
+// workers sit flat under the same lead. One whose spawner is elsewhere (another
+// group, retired, a peer's, or none) stays at the top level.
+export function agentTree(rows) {
+  const byAgent = new Map(rows.map((row) => [row.agent, row]));
+  // A chain that loops (corrupt lineage) has no top: the row stays at the
+  // top level itself, so nothing drops out of the list.
+  const rootOf = (row) => {
+    let at = row;
+    const seen = new Set([at.agent]);
+    while (at.parent && byAgent.has(at.parent)) {
+      if (seen.has(at.parent)) return row;
+      at = byAgent.get(at.parent);
+      seen.add(at.agent);
+    }
+    return at;
+  };
+  const kids = new Map();
+  const top = [];
+  for (const row of rows) {
+    const root = rootOf(row);
+    if (root === row) top.push(row);
+    else kids.set(root.agent, [...(kids.get(root.agent) || []), row]);
+  }
+  // A lead sits where its loudest agent would, itself or a worker: an offline
+  // or idle lead must not take an errored or asking worker down the list.
+  // Ties keep the list's order.
+  const at = new Map(rows.map((row, i) => [row, i]));
+  const nodes = top.map((row) => {
+    const own = kids.get(row.agent) || [];
+    return { row, kids: own, loudest: Math.min(...[row, ...own].map((r) => at.get(r))) };
+  });
+  nodes.sort((a, b) => a.loudest - b.loudest);
+  return nodes.map(({ row, kids: own }) => ({ row, kids: own }));
+}
+
+// SUMMARY_ORDER is how a group's state summary lists its pills: what needs a
+// look first, then what is busy, then what rests.
+const SUMMARY_ORDER = Object.freeze(['error', 'crashed', 'approval', 'asking', 'working', 'waking', 'idle', 'offline']);
+
+// stateSummary counts a group's agents by the pill they wear, loudest first:
+// [{ text, tone, count }], e.g. 1 error · 3 working · 2 idle.
+export function stateSummary(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    const at = counts.get(row.pill.text) || { text: row.pill.text, tone: row.pill.tone, count: 0 };
+    at.count += 1;
+    counts.set(row.pill.text, at);
+  }
+  const rank = (text) => (SUMMARY_ORDER.includes(text) ? SUMMARY_ORDER.indexOf(text) : SUMMARY_ORDER.length);
+  return [...counts.values()].sort((a, b) => rank(a.text) - rank(b.text));
 }
 
 // groupTabs are the chips above the list: All, then each group, with how
