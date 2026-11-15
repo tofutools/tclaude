@@ -15,7 +15,7 @@ function prefs() {
 
 const NOW = Date.parse('2026-11-14T12:00:00Z');
 
-function snapshotWith({ requests = [], slugs = 3 } = {}) {
+function snapshotWith({ requests = [], slugs = 3, uses = null } = {}) {
   return {
     generated_at: new Date(NOW).toISOString(),
     agents: [{ agent_id: 'agt_lead', conv_id: 'c-lead', title: 'lead' }],
@@ -24,6 +24,7 @@ function snapshotWith({ requests = [], slugs = 3 } = {}) {
     sudo: [{
       id: 7, agent_id: 'agt_lead', conv_id: 'c-lead', conv_title: 'lead', slug: 'human.notify', granted_by: 'operator',
       granted_at: new Date(NOW - 600000).toISOString(), expires_at: new Date(NOW + 3000000).toISOString(), reason: 'UI review',
+      ...(uses ? { uses_limit: uses[1], uses_left: uses[0] } : {}),
     }],
     access_requests: requests,
   };
@@ -92,6 +93,13 @@ test('+ Grant sits in the top bar, whichever view is open', async (t) => {
   await tap(tab('Slugs'));
   await harness.act(() => grant().onClick());
   assert.deepEqual(calls.at(-1), ['openGrant']);
+});
+
+test('a sudo grant with a use limit shows the uses left beside the time left', async (t) => {
+  const { root, tab, tap } = await setup(t, { uses: [2, 3] });
+  await tap(tab('Sudo'));
+  const row = root.querySelector('.phone-access-row[data-key="sudo-7"]');
+  assert.match(row.querySelector('.phone-access-left').textContent, /^50m left · 2 of 3 uses left · "UI review"$/);
 });
 
 test('with nothing waiting it opens on the routed subtab; Sudo revokes and grants', async (t) => {

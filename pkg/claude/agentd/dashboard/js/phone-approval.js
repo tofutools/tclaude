@@ -13,7 +13,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { answerDecision, decideAccessRequest, secondsLeft } from './companion-approval.js';
 import { postDismiss } from './decision-dismiss.js';
-import { approvalContext, cardOptions, countdown } from './phone-now-model.js';
+import { approvalContext, cardOptions, countdown, planDetails } from './phone-now-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { Button, Input } from './ui-components.js';
 import { Avatar, ButtonRow, Card, StatePill } from './phone-ui.js';
@@ -69,8 +69,13 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
     }
   }
   const context = approvalContext(request);
-  const text = html`<${Who} name=${name} sub=${group || request.target_group || ''} ctx=${ctx} /><div class="phone-card-line">${context}</div>`;
-  return html`<${Card} accent="key" class="phone-now-card" role="group" aria-label=${`${name} asks: ${context}`}>
+  // A plan's reason is its own line: the plan line already carries the
+  // permissions and how long they last.
+  const details = plan ? planDetails(request) : null;
+  const reason = details?.ok ? details.reason : '';
+  const text = html`<${Who} name=${name} sub=${group || request.target_group || ''} ctx=${ctx} /><div class="phone-card-line">${context}</div>
+    ${reason && html`<div class="phone-card-line phone-plan-reason">“${reason}”</div>`}`;
+  return html`<${Card} accent="key" class="phone-now-card" role="group" aria-label=${`${name} asks: ${context}${reason ? `, because: ${reason}` : ''}`}>
     <div class="phone-card-row">
       <${Avatar} bot glyph="🤖" badge="🔑" />
       ${onMore
@@ -86,23 +91,46 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
   <//>`;
 }
 
-// DecisionSheet is a decision in full, behind its card's ⋯: the question, the
-// agent's text and image, every option, a note to send with the pick, and
-// Dismiss.
-export function DecisionSheet({ decision, from = '', fetchImpl, notify, close }) {
+// DecisionAnswer answers a decision: a note to send with the pick, every
+// option as a full-width button (the recommended one ★ and primary), and
+// Dismiss. onDone(label) runs once it is sent, with the option's label, or ''
+// for a dismissal. Now's ⋯ sheet and Mail's reader show it.
+export function DecisionAnswer({ decision, fetchImpl, notify, onDone }) {
   const [busy, setBusy] = useState(0);
   const [note, setNote] = useState('');
-  const image = (decision.attachments || []).find((a) => a.previewable);
-  const run = async (key, act, failure) => {
+  useEffect(() => { setBusy(0); setNote(''); }, [decision.id]);
+  const fetchWith = fetchImpl || ((...args) => globalThis.fetch(...args));
+  const run = async (key, act, sent, failure) => {
     setBusy(key);
     try {
       await act();
-      close();
+      onDone(sent);
     } catch (error) {
       notify(`${failure}: ${error?.message || error}`, true);
       setBusy(0);
     }
   };
+  return html`<${Input} class="phone-decision-note" placeholder="Add a note (optional)" aria-label="Note to send with your choice"
+      value=${note} disabled=${!!busy} onInput=${(event) => setNote(event.currentTarget.value)} />
+    <div class="phone-decision-options">
+      ${decision.options.map((option, i) => {
+        const recommended = i + 1 === decision.recommended;
+        return html`<${Button} key=${option} class=${`phone-btn${recommended ? ' phone-btn-pri' : ''}`} disabled=${!!busy}
+          title=${recommended ? 'The agent recommends this one' : undefined}
+          onClick=${() => run(i + 1, () => answerDecision(fetchWith, decision.id, i + 1, note), option, 'That decision could not be sent')}>
+          ${busy === i + 1 ? 'Sending…' : html`${recommended && html`<span class="phone-star" aria-label="recommended">★</span> `}${option}`}
+        <//>`;
+      })}
+      <${Button} class="phone-btn" disabled=${!!busy} title="No longer relevant: take it off the list without answering; the agent is told"
+        onClick=${() => run('dismiss', () => postDismiss(fetchWith, [decision.id]), '', 'That decision could not be dismissed')}>
+        ${busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}<//>
+    </div>`;
+}
+
+// DecisionSheet is a decision in full, behind its card's ⋯: the question, the
+// agent's text and image, and its DecisionAnswer.
+export function DecisionSheet({ decision, from = '', fetchImpl, notify, close }) {
+  const image = (decision.attachments || []).find((a) => a.previewable);
   const question = decision.subject || 'Decision';
   // Close comes first: the sheet focuses its first button, and that must not
   // be an answer a stray Enter would send.
@@ -114,21 +142,7 @@ export function DecisionSheet({ decision, from = '', fetchImpl, notify, close })
     ${from && html`<p class="phone-sheet-sub">from ${from}</p>`}
     ${decision.body && decision.body !== decision.subject && html`<p class="phone-decision-body">${decision.body}</p>`}
     ${image && html`<a class="phone-decision-image" href=${image.url} target="_blank" rel="noopener"><img src=${image.url} alt=${image.filename || 'attached image'} /></a>`}
-    <${Input} class="phone-decision-note" placeholder="Add a note (optional)" aria-label="Note to send with your choice"
-      value=${note} disabled=${!!busy} onInput=${(event) => setNote(event.currentTarget.value)} />
-    <div class="phone-decision-options">
-      ${decision.options.map((option, i) => {
-        const recommended = i + 1 === decision.recommended;
-        return html`<${Button} key=${option} class=${`phone-btn${recommended ? ' phone-btn-pri' : ''}`} disabled=${!!busy}
-          title=${recommended ? 'The agent recommends this one' : undefined}
-          onClick=${() => run(i + 1, () => answerDecision(fetchImpl, decision.id, i + 1, note), 'That decision could not be sent')}>
-          ${busy === i + 1 ? 'Sending…' : html`${recommended && html`<span class="phone-star" aria-label="recommended">★</span> `}${option}`}
-        <//>`;
-      })}
-      <${Button} class="phone-btn" disabled=${!!busy} title="No longer relevant: take it off the list without answering; the agent is told"
-        onClick=${() => run('dismiss', () => postDismiss(fetchImpl, [decision.id]), 'That decision could not be dismissed')}>
-        ${busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}<//>
-    </div>
+    <${DecisionAnswer} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} onDone=${() => close()} />
   </div>`;
 }
 
@@ -153,7 +167,7 @@ export function PhoneDecisionCard({ decision, fetchImpl, notify, from = '', stew
       ${steward ? html`<${Avatar} bot glyph="✦" />` : html`<${Avatar} bot glyph="🤖" badge="❓" />`}
       <div class="phone-card-text"><${Who} name=${from || 'An agent'} sub="decide" /><div class="phone-card-line">${question}</div></div>
     </div>
-    <${ButtonRow} buttons=${[
+    <${ButtonRow} class="phone-decision-choices" buttons=${[
       ...cardOptions(decision).map((option) => ({
         key: `o${option.choice}`, disabled: !!busy, title: option.recommended ? 'The agent recommends this one' : undefined,
         label: busy === option.choice ? 'Sending…' : html`${option.recommended && html`<span class="phone-star" aria-label="recommended">★</span> `}${option.label}`,
