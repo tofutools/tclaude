@@ -1814,11 +1814,10 @@ test('a swipe over Claude Code sends no notch near its acceleration gap, so a cl
   widget.dispose();
 });
 
-// On a phone the redraw for a notch is a round trip away, so the screen
-// follows the finger by what has not been drawn yet, and goes back into place
-// as Claude Code's redraws land.
-test('a swipe over Claude Code moves the screen with the finger until the redraw lands', async (t) => {
-  let render = null;
+// Claude Code is a fullscreen renderer: only its redraws move the screen.
+// The page never shifts or previews rows while the notches are on their way
+// (tk_77cabfac: a preview shook the screen and froze it at the bottom).
+test('a swipe over Claude Code never shifts the screen itself', async (t) => {
   class Rendering {
     constructor(options) { this.options = options; this.cols = 80; this.rows = 24; }
     loadAddon() {}
@@ -1831,37 +1830,35 @@ test('a swipe over Claude Code moves the screen with the finger until the redraw
     }
     onData(handler) { this.dataHandler = handler; return { dispose() {} }; }
     onResize() { return { dispose() {} }; }
-    onRender(handler) { render = handler; return { dispose() {} }; }
+    onRender() { return { dispose() {} }; }
     focus() {}
     write() {}
     dispose() {}
   }
   const { widget, notches, touch, clock, timers, harness } = await xtermLikeWidget(t, { wheelCopyMode: false, swipeWheel: 'claude', TerminalCtor: Rendering });
   const screen = harness.document.querySelector('.xterm-screen');
-  const offset = () => screen.style.translate;
+  const offsets = new Set();
+  const look = () => offsets.add(`${screen.style.translate || ''}|${screen.style.transform || ''}`);
   clock.now = 1000;
   touch('touchstart', 100);
-  clock.now += 60; touch('touchmove', 112);
-  assert.equal(notches.length, 0, 'not a row yet: no notch');
-  assert.equal(offset(), '0 12px', 'but the screen moves with the finger at once');
-  clock.now += 60; touch('touchmove', 124);
-  assert.equal(notches.length, 1, 'a row: one notch');
-  assert.equal(offset(), '0 24px', 'its line is not drawn yet, so the screen still carries it');
-  render({ start: 0, end: 1 });
-  assert.equal(offset(), '0 24px', 'a line or two redrawn (a spinner) is not the scroll');
-  render({ start: 0, end: 23 });
-  assert.equal(offset(), '0 8px', 'the redraw landed: only the part of a row still owed');
-  clock.now += 300; touch('touchend');
-  timers.flush();
-  assert.equal(offset(), '', 'let go with nothing on its way: back into place');
-  // A redraw that never comes is given up on.
+  clock.now += 60; touch('touchmove', 106); look();
+  assert.equal(notches.length, 0, 'less than half a row: no notch');
+  clock.now += 60; touch('touchmove', 112); look();
+  assert.equal(notches.length, 1, 'half a row: the first notch goes at once');
+  clock.now += 60; touch('touchmove', 124); look();
+  assert.equal(notches.length, 1, 'the finger is half a row behind it now');
+  clock.now += 60; touch('touchmove', 132); look();
+  assert.equal(notches.length, 2, 'a row on: the next');
+  clock.now += 60; touch('touchmove', 300); look();
+  clock.now += 300; touch('touchend'); look();
+  timers.flush(); look();
+  // A flick past the end of Claude's view: nothing is drawn back, and
+  // nothing waits for it.
   touch('touchstart', 100);
-  clock.now += 60; touch('touchmove', 120);
-  assert.equal(notches.length, 2);
-  clock.now += 300; touch('touchend');
-  assert.equal(offset(), '0 20px', 'let go while its line is on the way: held');
-  clock.now += 1100; timers.flush();
-  assert.equal(offset(), '', 'past the give-up time it goes back, with no touch and no redraw');
+  for (let y = 132; y <= 420; y += 32) { clock.now += 16; touch('touchmove', y); look(); }
+  touch('touchend'); look();
+  clock.now += 2000; timers.flush(); look();
+  assert.deepEqual([...offsets], ['|'], 'the screen is never shifted: Claude Code redraws it, the page does not');
   widget.dispose();
 });
 
