@@ -1,10 +1,10 @@
 // phone-access-island.js -- the Access tab on a phone (data-layout="phone").
 //
 // Four views behind a row of tabs: Requests (access requests waiting on the
-// operator, answered with the same card as the Now view), Sudo (time-bounded
-// grants, revoked here and granted with + Grant), Agents (the per-agent
+// operator, answered with the same card as the Now view, and the sudo grants
+// running), Sudo (time-bounded grants, revoked here), Agents (the per-agent
 // overrides, read-only) and Slugs (the registry, searched rather than listed
-// in full). It runs on the desktop island's state and actions (access-state.js,
+// in full). "+ Grant" in the top bar grants sudo from any of them. It runs on the desktop island's state and actions (access-state.js,
 // access-actions.js); Agents, Sudo and Slugs are that state's subtabs and keep
 // their /access/<subtab> routes. Requests is the phone's own and the default
 // while any request waits.
@@ -13,10 +13,12 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtRemaining } from './access-model.js';
-import { ApprovalCard } from './companion-approval.js';
 import { companionAgents, pendingAccess, pendingApprovals } from './companion-model.js';
 import { relTime, shortAgentId } from './helpers.js';
+import { PhoneApprovalCard } from './phone-approval.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
+import { usePhoneBar } from './phone-page.js';
+import { Section } from './phone-ui.js';
 import { Button, Input } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
 
@@ -40,62 +42,81 @@ function navigated(subtab) {
   document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location } }));
 }
 
-function Requests({ snapshot, fetchImpl, notify, openInMail }) {
+// Requests is what waits on the operator, each answered with the phone's
+// approval card (as on Now), then the sudo grants running.
+function Requests({ snapshot, current, actions, fetchImpl, notify, openInMail }) {
   const requests = pendingApprovals(snapshot);
   const elsewhere = pendingAccess(snapshot).length - requests.length;
   const agents = companionAgents(snapshot);
-  if (!requests.length && !elsewhere) return html`<p class="ui-empty phone-empty">No access request is waiting for you.</p>`;
   return html`<div class="phone-access-requests">
-    ${requests.map((request) => html`<div key=${request.id} class="phone-card">
-      <${ApprovalCard} request=${request} fetchImpl=${fetchImpl} notify=${notify}
-        from=${agents.get(request.agent_id)?.name || request.conv_title || ''} onMore=${() => openInMail(request.id)} />
-    </div>`)}
-    ${elsewhere > 0 && html`<${Button} class="phone-wide" onClick=${() => openInMail()}>
-      ${elsewhere} more access request${elsewhere === 1 ? '' : 's'} in Mail ›<//>`}
+    <${Section} title="Waiting on you">
+      ${!requests.length && !elsewhere && html`<p class="ui-empty phone-empty">No access request is waiting for you.</p>`}
+      ${requests.map((request) => {
+        const agent = agents.get(request.agent_id);
+        return html`<${PhoneApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify}
+          from=${agent?.name || request.conv_title || ''} group=${agent?.group || ''} onMore=${() => openInMail(request.id)} />`;
+      })}
+      ${elsewhere > 0 && html`<${Button} class="phone-btn phone-wide" onClick=${() => openInMail()}>
+        ${elsewhere} more access request${elsewhere === 1 ? '' : 's'} in Mail ›<//>`}
+    <//>
+    ${current.sudo.length > 0 && html`<${Section} title="Sudo grants" count=${current.sudo.length}>
+      <${SudoRows} current=${current} actions=${actions} />
+    <//>`}
   </div>`;
+}
+
+// SudoRows are the sudo grants running: who has what, by whom, the time left
+// and why, each with its Revoke.
+function SudoRows({ current, actions }) {
+  return html`${current.mutation.error && html`<div role="alert" class="ui-error-box">${current.mutation.error}</div>`}
+    <ul class="phone-list">${current.sudo.map((grant) => {
+      const busy = current.mutation.busy.has(`revoke:${grant.id}`);
+      return html`<li key=${grant.id} class="phone-access-row" data-key=${`sudo-${grant.id}`}>
+        <div class="phone-access-text">
+          <span class="phone-access-name">${grant.conv_title || shortAgentId(grant.agent_id, grant.conv_id) || '(unknown)'}</span>
+          <span class="phone-access-sub"><span class="slug">${grant.slug}</span>${grant.granted_by ? ` · by ${grant.granted_by}` : ''} · ${relTime(grant.granted_at)}</span>
+          <span class="phone-access-left">${fmtRemaining(grant.remaining_seconds)} left${grant.reason ? ` · "${grant.reason}"` : ''}</span>
+        </div>
+        <${Button} class="phone-btn phone-btn-no phone-access-revoke" disabled=${busy}
+          aria-label=${`Revoke ${grant.slug} from ${grant.conv_title || grant.agent_id || 'this agent'}`}
+          onClick=${() => actions.revoke(grant)}>${busy ? 'Revoking…' : 'Revoke'}<//>
+      </li>`;
+    })}</ul>`;
 }
 
 function Sudo({ current, actions }) {
   return html`<div class="phone-access-sudo">
-    <${Button} variant="primary" class="phone-wide" onClick=${() => actions.openGrant()}>+ Grant sudo<//>
-    ${current.mutation.error && html`<div role="alert" class="ui-error-box">${current.mutation.error}</div>`}
     ${!current.sudo.length
-      ? html`<p class="ui-empty phone-empty">${current.sudoAvailable ? 'No active sudo grants.' : 'Sudo grants are not in the latest snapshot.'}</p>`
-      : html`<ul class="phone-list">${current.sudo.map((grant) => {
-        const busy = current.mutation.busy.has(`revoke:${grant.id}`);
-        return html`<li key=${grant.id} class="phone-access-row" data-key=${`sudo-${grant.id}`}>
-          <div class="phone-access-text">
-            <span class="phone-access-name">${grant.conv_title || shortAgentId(grant.agent_id, grant.conv_id) || '(unknown)'}</span>
-            <span class="phone-access-sub"><span class="slug">${grant.slug}</span>${grant.granted_by ? ` · by ${grant.granted_by}` : ''} · ${relTime(grant.granted_at)}</span>
-            <span class="phone-access-left">${fmtRemaining(grant.remaining_seconds)} left${grant.reason ? ` · ${grant.reason}` : ''}</span>
-          </div>
-          <${Button} variant="ghost danger" disabled=${busy} aria-label=${`Revoke ${grant.slug} from ${grant.conv_title || grant.agent_id || 'this agent'}`}
-            onClick=${() => actions.revoke(grant)}>${busy ? 'Revoking…' : 'Revoke'}<//>
-        </li>`;
-      })}</ul>`}
+      ? html`${current.mutation.error && html`<div role="alert" class="ui-error-box">${current.mutation.error}</div>`}
+        <p class="ui-empty phone-empty">${current.sudoAvailable ? 'No active sudo grants. + Grant gives one.' : 'Sudo grants are not in the latest snapshot.'}</p>`
+      : html`<${SudoRows} current=${current} actions=${actions} />`}
   </div>`;
 }
 
+// SlugTags are an agent's overrides as small chips: green + for a grant,
+// red − for a denial.
 function SlugTags({ slugs, denied = false }) {
-  return slugs.map((slug) => html`<span key=${slug} class=${`ui-tag phone-access-slug${denied ? ' deny' : ''}`}>${denied ? '−' : '+'} ${slug}</span>`);
+  return slugs.map((slug) => html`<span key=${slug} class=${`phone-access-slug${denied ? ' deny' : ''}`}>${denied ? '−' : '+'} ${slug}</span>`);
 }
 
 function Agents({ current }) {
+  const [defaults, setDefaults] = useState(false);
   if (!current.permissions) return html`<p class="ui-empty phone-empty">Permissions are not in the latest snapshot.</p>`;
+  const count = current.defaults.length;
   return html`<div class="phone-access-agents">
-    <details class="phone-access-defaults">
-      <summary>Every agent: ${current.defaults.length} default slug${current.defaults.length === 1 ? '' : 's'}</summary>
-      <div>${current.defaults.map((slug) => html`<span key=${slug} class="ui-tag phone-access-slug">${slug}</span>`)}</div>
-    </details>
+    <button data-ui-exempt type="button" class="phone-access-defaults" aria-expanded=${defaults ? 'true' : 'false'}
+      onClick=${() => setDefaults(!defaults)}>Everyone: ${count} default slug${count === 1 ? '' : 's'}
+      <span aria-hidden="true">${defaults ? '⌄' : '›'}</span></button>
+    ${defaults && html`<div class="phone-access-tags phone-access-default-tags">${current.defaults.map((slug) => html`<span key=${slug} class="phone-access-slug base">${slug}</span>`)}</div>`}
     ${!current.permissionRows.length
       ? html`<p class="ui-empty phone-empty">No agent has grants or denials beyond the defaults.</p>`
       : html`<ul class="phone-list">${current.permissionRows.map((row) => html`<li key=${row.convId} class="phone-access-row" data-key=${row.convId}>
         <div class="phone-access-text">
-          <span class="phone-access-name">${row.title} <span class="phone-access-id">${shortAgentId(row.agentId, row.convId)}</span></span>
+          <span class="phone-access-name">${row.title} <span class="phone-access-id">· ${shortAgentId(row.agentId, row.convId)}</span></span>
           <span class="phone-access-tags"><${SlugTags} slugs=${row.granted} /><${SlugTags} slugs=${row.denied} denied=${true} /></span>
         </div>
       </li>`)}</ul>`}
-    <${DesktopOnlyNote} what="Editing an agent's permissions is" />
+    <${DesktopOnlyNote} what="Editing per-agent overrides is" />
   </div>`;
 }
 
@@ -156,6 +177,8 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
     if (changed || requests) navigated(key);
     setRequests(false);
   };
+  // "+ Grant" sits in the top bar, as in the mock, whichever view is open.
+  usePhoneBar({ tab: 'access', actions: [{ key: 'grant', text: '+ Grant', label: 'Grant sudo', onClick: () => actions.openGrant() }] });
   const items = VIEWS.map((view) => ({
     key: view.key,
     label: view.key === 'requests' && waiting > 0
@@ -172,7 +195,7 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
     ${!current.snapshotLoaded
       ? html`<p class="ui-empty phone-empty">Loading…</p>`
       : html`<div role="tabpanel" aria-label=${VIEWS.find((view) => view.key === shown)?.label}>
-        ${shown === 'requests' && html`<${Requests} snapshot=${data} fetchImpl=${fetchImpl} notify=${notify} openInMail=${openInMail} />`}
+        ${shown === 'requests' && html`<${Requests} snapshot=${data} current=${current} actions=${actions} fetchImpl=${fetchImpl} notify=${notify} openInMail=${openInMail} />`}
         ${shown === 'sudo' && html`<${Sudo} current=${current} actions=${actions} />`}
         ${shown === 'permissions' && html`<${Agents} current=${current} />`}
         ${shown === 'slugs' && html`<${Slugs} state=${state} current=${current} />`}

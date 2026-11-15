@@ -67,13 +67,31 @@ test('a waiting request leads, answered with the same card as Now', async (t) =>
   const { harness, root, tab, posts, calls, tap, settle } = await setup(t, { requests });
   assert.equal(tab('Requests').getAttribute('aria-selected'), 'true');
   assert.equal(tab('Requests').querySelector('.ui-badge').textContent, '2');
-  const cards = root.querySelectorAll('.companion-approval');
+  const waiting = root.querySelector('[role="group"][aria-label="Waiting on you"]');
+  const cards = waiting.querySelectorAll('.phone-box-key');
   assert.equal(cards.length, 1, 'a peer\'s request is not approved blind');
+  assert.deepEqual([...cards[0].querySelectorAll('.phone-btns button')].map((b) => b.textContent.trim()), ['Deny', '+5 min', 'Approve'],
+    'the phone card, as on Now');
   await harness.act(() => harness.getByRole(cards[0], 'button', { name: /Approve/ }).click());
   await settle();
   assert.deepEqual(posts.at(-1)[1], { decision: 'approve' });
   await tap([...root.querySelectorAll('.ui-btn')].find((button) => /1 more access request in Mail/.test(button.textContent)));
   assert.deepEqual(calls.at(-1), ['openInMail', undefined]);
+  const sudo = root.querySelector('[role="group"][aria-label="Sudo grants"]');
+  assert.match(sudo.querySelector('.phone-section-head').textContent, /Sudo grants · 1/, 'the grants running, under the requests');
+  await tap(sudo.querySelector('[aria-label="Revoke human.notify from lead"]'));
+  assert.deepEqual(calls.at(-1), ['revoke', 7]);
+});
+
+test('+ Grant sits in the top bar, whichever view is open', async (t) => {
+  const { harness, calls, tab, tap } = await setup(t);
+  const { phoneBar } = await harness.importDashboardModule('js/phone-page.js');
+  const grant = () => phoneBar.value?.actions?.find((act) => act.key === 'grant');
+  assert.equal(phoneBar.value.tab, 'access');
+  assert.equal(grant().text, '+ Grant');
+  await tap(tab('Slugs'));
+  await harness.act(() => grant().onClick());
+  assert.deepEqual(calls.at(-1), ['openGrant']);
 });
 
 test('with nothing waiting it opens on the routed subtab; Sudo revokes and grants', async (t) => {
@@ -83,11 +101,11 @@ test('with nothing waiting it opens on the routed subtab; Sudo revokes and grant
   assert.deepEqual(navigations.at(-1), { tab: 'access', subtab: 'sudo' });
   const row = root.querySelector('.phone-access-row[data-key="sudo-7"]');
   assert.match(row.textContent, /human\.notify/);
-  assert.match(row.querySelector('.phone-access-left').textContent, /^50m left · UI review$/);
-  await tap(row.querySelector('[aria-label="Revoke human.notify from lead"]'));
+  assert.match(row.querySelector('.phone-access-left').textContent, /^50m left · "UI review"$/);
+  const revoke = row.querySelector('[aria-label="Revoke human.notify from lead"]');
+  assert.ok(revoke.matches('.phone-btn.phone-btn-no'), 'a bordered red button, not a text link');
+  await tap(revoke);
   assert.deepEqual(calls.at(-1), ['revoke', 7]);
-  await tap([...root.querySelectorAll('.ui-btn')].find((button) => button.textContent.includes('+ Grant sudo')));
-  assert.deepEqual(calls.at(-1), ['openGrant']);
   await tap(tab('Requests'));
   assert.match(root.textContent, /No access request is waiting/);
   assert.deepEqual(navigations.at(-1), { tab: 'access' }, 'Requests is the bare /access');
@@ -109,10 +127,16 @@ test('a route that names a subtab wins over the Requests default', async (t) => 
 test('Agents lists the overrides read-only and points editing at the desktop', async (t) => {
   const { root, tab, tap } = await setup(t);
   await tap(tab('Agents'));
-  assert.match(root.querySelector('.phone-access-defaults summary').textContent, /2 default slugs/);
+  const defaults = root.querySelector('.phone-access-defaults');
+  assert.match(defaults.textContent, /Everyone: 2 default slugs/);
+  assert.equal(root.querySelector('.phone-access-default-tags'), null, 'the defaults are one line until opened');
+  await tap(defaults);
+  assert.equal(defaults.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual([...root.querySelectorAll('.phone-access-default-tags .phone-access-slug')].map((tag) => tag.textContent), ['self.rename', 'self.task']);
   const row = root.querySelector('.phone-access-row[data-key="c-lead"]');
   assert.deepEqual([...row.querySelectorAll('.phone-access-slug')].map((tag) => tag.textContent), ['+ agent.spawn', '− git.push']);
   assert.equal(row.querySelector('button'), null);
+  assert.ok(row.querySelector('.phone-access-slug.deny'), 'a denial is the red chip');
   assert.match(root.querySelector('.phone-desktop-only').textContent, /desktop only/);
 });
 

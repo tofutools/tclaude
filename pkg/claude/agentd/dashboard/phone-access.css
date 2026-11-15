@@ -1,19 +1,33 @@
 /* Access (js/phone-access-island.js). */
 :root[data-layout="phone"] .phone-access-chips { margin-bottom: 12px; }
-:root[data-layout="phone"] .phone-access-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 0; }
+:root[data-layout="phone"] .phone-access-row {
+  display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 10px 0;
+  border-bottom: 1px solid var(--phone-line);
+}
 :root[data-layout="phone"] .phone-access-row .ui-btn { flex: none; }
 :root[data-layout="phone"] .phone-access-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 :root[data-layout="phone"] .phone-access-name { font-weight: 600; color: var(--ui-text-strong); overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-access-id { font-weight: 400; color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-access-id { font-weight: 600; color: var(--ui-text-strong); }
 :root[data-layout="phone"] :is(.phone-access-sub, .phone-access-desc) { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
 :root[data-layout="phone"] .phone-access-desc {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 :root[data-layout="phone"] .phone-access-left { color: var(--ui-warn-text); font-size: 13px; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-access-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
-:root[data-layout="phone"] .phone-access-slug { font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
-:root[data-layout="phone"] .phone-access-slug.deny { color: var(--ui-danger); }
-:root[data-layout="phone"] .phone-access-defaults { margin-bottom: 8px; color: var(--ui-muted-text); font-size: 13px; }
-:root[data-layout="phone"] .phone-access-defaults summary { min-height: var(--phone-tap); display: flex; align-items: center; cursor: pointer; }
-:root[data-layout="phone"] .phone-access-defaults > div { display: flex; flex-wrap: wrap; gap: 4px; }
+/* Revoke: a bordered red button, not a text link. */
+:root[data-layout="phone"] .phone-access-revoke { min-height: 36px; padding: 0 14px; font-size: 14px; }
+
+/* An agent's overrides: small green + / red − chips. */
+:root[data-layout="phone"] .phone-access-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+:root[data-layout="phone"] .phone-access-slug {
+  display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 9px; border: 1px solid #2e7d3f;
+  background: rgba(46, 125, 63, 0.14); color: #7ee787; font: 11px/16px ui-monospace, monospace; overflow-wrap: anywhere;
+}
+:root[data-layout="phone"] .phone-access-slug.deny { border-color: #6e2a27; background: rgba(248, 81, 73, 0.12); color: #ffa198; }
+:root[data-layout="phone"] .phone-access-slug.base { border-color: var(--phone-line); background: none; color: var(--ui-muted-text); }
+/* "Everyone: N default slugs ›": one line until opened. */
+:root[data-layout="phone"] .phone-access-defaults {
+  display: flex; align-items: center; gap: 6px; min-height: var(--phone-tap); padding: 0;
+  background: none; border: 0; color: var(--ui-muted-text); font: inherit; font-size: 13px; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-access-default-tags { margin: 0 0 8px; }
 :root[data-layout="phone"] .phone-access-search { width: 100%; min-height: var(--phone-tap); margin-bottom: 6px; }

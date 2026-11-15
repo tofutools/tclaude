@@ -217,17 +217,9 @@
   background: none; border: 0; padding-inline: 0; color: var(--ui-focus); font: inherit; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-empty { margin: 6px 0; }
-:root[data-layout="phone"] .phone-card { margin-bottom: 10px; }
 :root[data-layout="phone"] .phone-wide { width: 100%; min-height: var(--phone-tap); margin-bottom: 10px; }
 :root[data-layout="phone"] .phone-list { list-style: none; margin: 0; padding: 0; }
 :root[data-layout="phone"] .phone-list > li { border-bottom: 1px solid var(--ui-line); }
-
-/* The desktop approval and decision cards where a phone view still shows
-   them (Access): the full width and finger-sized buttons. Now has its own
-   (phone-approval.js, phone-now.css). */
-:root[data-layout="phone"] .phone-card :is(.companion-approval, .companion-decision) {
-  max-width: none; margin: 0; background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 8px; padding: 10px;
-}
 
 /* A chip row (phone-ui.js ChipRow, or any tab row with .phone-chips): rounded
    chips in a row that scrolls sideways, edge to edge. A chip is drawn 32px

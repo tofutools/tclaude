@@ -198,8 +198,11 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
               ${title}<small>${added.menu.sub ? ` ${added.menu.sub}` : ''} ▾</small></button>`
           : title}</h1>
         ${own.power && html`<${IconButton} icon="⏻" label="Power" aria-haspopup="dialog" onClick=${() => openSheet('Power', PowerMenu)} />`}
-        ${(added?.actions || []).map((act) => html`<${IconButton} key=${act.key || act.label} icon=${act.icon || act.label} label=${act.label}
-          danger=${!!act.danger} disabled=${!!act.disabled} badge=${act.badge} onClick=${act.onClick} />`)}
+        ${(added?.actions || []).map((act) => (act.text
+          ? html`<button data-ui-exempt key=${act.key || act.label} type="button" class=${`phone-bar-act${act.danger ? ' danger' : ''}`}
+              aria-label=${act.label} title=${act.label} disabled=${!!act.disabled} onClick=${act.onClick}>${act.text}</button>`
+          : html`<${IconButton} key=${act.key || act.label} icon=${act.icon || act.label} label=${act.label}
+              danger=${!!act.danger} disabled=${!!act.disabled} badge=${act.badge} onClick=${act.onClick} />`))}
         ${own.node && html`<${NodeChip} fleet=${fleet} />`}
         <span class=${`phone-bar-live ${connection}`} role="status" title=${connection === 'connected' ? 'Connected' : connection}
           aria-label=${connection === 'connected' ? 'Connected' : `Connection: ${connection}`}></span>
