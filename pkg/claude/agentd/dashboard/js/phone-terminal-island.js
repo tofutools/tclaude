@@ -175,9 +175,9 @@ function TerminalSurface({ seed, deps, labelRef, onWidget, onFontChange, onStatu
       agentLabel: seed.label || '',
       touchZoom: true,
       touchScroll: true,
-      wheelCopyMode: wheelCopyMode(seed, { harnesses: deps.harnesses?.() || [], agent: deps.agent || (() => null) }),
-      // Read at each swipe: on a cold link the agent's harness may only be
-      // known once the snapshot arrives.
+      // Both read at each notch: on a cold link the agent's harness, and the
+      // harness catalog, are known only once the snapshot arrives.
+      wheelCopyMode: () => wheelCopyMode(seed, { harnesses: deps.harnesses?.() || [], agent: deps.agent || (() => null) }),
       swipeWheel: () => swipeWheel(seed, { agent: deps.agent || (() => null) }),
       onScrollBackChange,
       softKeyboard: false,

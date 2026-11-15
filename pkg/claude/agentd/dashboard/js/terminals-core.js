@@ -338,6 +338,8 @@ export function mountTerminalWidget({
   // the view is, for ↓ Live, and a key scrolls back down first. False for a
   // harness that scrolls its own history (Claude Code), which takes keys
   // while scrolled back, as on the desktop.
+  // Either may be a function, read at each notch (a cold link learns its
+  // agent's harness when the snapshot arrives).
   wheelCopyMode = true,
   // swipeWheel: how far the session scrolls a notch, so the swipe moves the
   // content with the finger: 'claude' (Claude Code's fullscreen view) or
@@ -594,7 +596,7 @@ export function mountTerminalWidget({
     // What xterm emits during the dispatch is this notch, not typing.
     dispatching = true;
     try { target.dispatchEvent(event); } finally { dispatching = false; }
-    if (!report || !wheelCopyMode) {
+    if (!report || !(typeof wheelCopyMode === 'function' ? wheelCopyMode() : wheelCopyMode)) {
       // Arrow keys scroll nothing back (the application dropped mouse
       // reporting), and a harness's own history takes keys while scrolled
       // back: there is nothing to come back from.
