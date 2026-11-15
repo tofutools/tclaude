@@ -18,6 +18,8 @@ import { dashboardState } from './snapshot-store.js';
 import { openUsageRulesManager } from './modal-usage-rules.js';
 import { barTone, fmtAmount, periodLabel } from './usage-rules-model.js';
 import { Tabs } from './ui-tabs.js';
+import { isPhone } from './layout.js';
+import { PhoneCosts, PhoneQuota, PhoneUsageChips } from './phone-usage.js';
 
 export { topCostAgents };
 
@@ -279,7 +281,14 @@ function FusedUsage({ fleet, snapshot, active, fetchImpl }) {
   return html`<${FusedUsageSummary} nodes=${nodes} selfUsage=${snapshot.value?.usage} entries=${entries} fmt=${fmtUSD} />`;
 }
 
-export function UsageHubApp({ state, quotaState, costsState, fleet = fleetState, snapshot = dashboardState.snapshot, fetchImpl = undefined }) {
+// pickCostsSpan changes the Costs span the way its own span buttons do (a
+// history step and a reload): the phone hides the desktop Costs view but
+// keeps it mounted, so its buttons stay the one place that does that.
+function pickCostsSpan(key) {
+  document.querySelector(`#costs-spans [data-span="${CSS.escape(key)}"]`)?.click();
+}
+
+export function UsageHubApp({ state, quotaState, costsState, fleet = fleetState, snapshot = dashboardState.snapshot, fetchImpl = undefined, phone = isPhone, pickSpan = pickCostsSpan }) {
   const current = state.view.value;
   const wizard = useWizardTheme();
   const open = (name) => (event) => {
@@ -290,7 +299,8 @@ export function UsageHubApp({ state, quotaState, costsState, fleet = fleetState,
     // A quota card names its series; bring that graph into view.
     const series = event?.currentTarget?.dataset?.series;
     if (series) {
-      requestAnimationFrame(() => document.querySelector(`#usage-root [data-series-key="${CSS.escape(series)}"]`)
+      const target = phone ? `.phone-quota-card[data-series="${CSS.escape(series)}"]` : `#usage-root [data-series-key="${CSS.escape(series)}"]`;
+      requestAnimationFrame(() => document.querySelector(target)
         ?.scrollIntoView({ block: 'nearest' }));
     }
   };
@@ -307,8 +317,15 @@ export function UsageHubApp({ state, quotaState, costsState, fleet = fleetState,
   }, [current.subview]);
   return html`<div class="usage-hub">
     <${FusedUsage} fleet=${fleet} snapshot=${snapshot} active=${current.activeTab === 'usage'} fetchImpl=${fetchImpl} />
-    ${current.showSubnav && html`<${Subnav} current=${current} wizard=${wizard} open=${open}
-      quota=${quotaState.view.value} costs=${costsState.view.value} />`}
+    ${current.showSubnav && (phone
+      ? html`<${PhoneUsageChips} current=${current} wizard=${wizard} open=${open}
+        meta=${(name) => subtabMeta(name, quotaState.view.value, costsState.view.value)} />`
+      : html`<${Subnav} current=${current} wizard=${wizard} open=${open}
+        quota=${quotaState.view.value} costs=${costsState.view.value} />`)}
+    ${phone && current.subview === 'quota' && html`<${PhoneQuota} quota=${quotaState.view.value} wizard=${wizard}
+      summaries=${quotaSummaries(quotaState.view.value, wizard).map((item) => ({ ...item, statusLine: quotaStatusLine(item, wizard) }))} />`}
+    ${phone && current.subview === 'costs' && html`<${PhoneCosts} costs=${costsState.view.value} wizard=${wizard}
+      pickSpan=${pickSpan} spanLabel=${spanLabel(costsState.view.value)} />`}
     ${current.subview === 'overview' && html`<${Overview} quota=${quotaState.view.value}
       costs=${costsState.view.value} wizard=${wizard} open=${open} />`}
     ${(current.subview === 'overview' || !current.showSubnav) && html`<${UsageLimits} snapshot=${snapshot} wizard=${wizard} />`}

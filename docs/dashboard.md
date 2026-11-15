@@ -248,8 +248,20 @@ or the phone's Back returns to the list.
   read them here; change them on the desktop.
 - **Slugs**: the permission slug registry, with a search.
 
-**Usage › Costs** shows each agent on two lines: the name and cost, then the
-harness, model and last activity.
+**Usage** (under **More**) has the same three views as on the desktop, as
+chips: **Overview**, **Quota** and **Costs**.
+
+- **Overview**: the same summary cards as on the desktop.
+- **Quota**: one card per quota window, with the windows predicted to run out
+  first. Each card shows the % used with a bar, when the window resets, a
+  sparkline and the prediction.
+- **Costs**: chips for the span (**This month**, **Last 7d**, **Last 30d**,
+  **Last 90d**), then the total, the totals per provider and per model, and
+  the top five agents.
+
+Use the desktop for the rest: history ranges and prediction choices, past
+months, charts, filters, multipliers and the per-agent table. Provider and
+model choices made on the desktop still apply on the phone.
 
 ### Diagnostics, Plugins and Fleet on a phone
 
