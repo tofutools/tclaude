@@ -16,7 +16,7 @@ import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { authoredOpenPRsView } from './shell-model.js';
 import { featureState } from './peer-view-limits.js';
-import { FEW_ONLINE, PROBLEMS, agentRows, askerName, hookAt, idleGroups, lookedState, nowView, problemRows, recentRows, rowState, sinceLooked } from './phone-shell-model.js';
+import { FEW_ONLINE, PROBLEMS, agentRows, askerName, hookAt, idleGroups, contextHigh, lookedState, nowView, problemRows, recentRows, rowState, sinceLooked } from './phone-shell-model.js';
 import { usageStrip } from './phone-now-model.js';
 import { AskCard, ContextTag, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
 import { Button } from './ui-components.js';
@@ -61,7 +61,7 @@ function AgentRows({ rows, onOpen, changed = null }) {
       ${rows.map(({ agent, state, when, tone, head }) => html`<li key=${agent.agentId}>
         ${head && html`<p class="ui-eyebrow phone-now-group">${head}</p>`}
         <button data-ui-exempt type="button" class="phone-row" onClick=${() => onOpen(agent)}
-          aria-label=${`${agent.name}${changed?.has(agent.agentId) ? ' (changed since you looked)' : ''}, ${state}${when ? `, ${when}` : ''}: open its terminal`}>
+          aria-label=${`${agent.name}${changed?.has(agent.agentId) ? ' (changed since you looked)' : ''}, ${state}${contextHigh(agent) && !String(when || '').startsWith('context') ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
           ${changed?.has(agent.agentId) && html`<span class="phone-now-new" aria-hidden="true"></span>`}
           <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}<${ContextTag} ctx=${agent.ctx ?? null} />
             ${state === 'error' && agent.detail && tone === undefined && html`<span class="phone-card-line">${agent.detail}</span>`}
@@ -93,8 +93,8 @@ function storeChip(chip, storage = globalThis.localStorage) {
 
 // LOOKED_KEY holds, per viewer, what Now showed when the viewer last looked
 // (phone-shell-model lookedState). It moves on Mark seen, or on leaving Now
-// (or hiding the page) after it has been up LOOK_MS, so a glance does not
-// clear what changed.
+// (or hiding the page) once what changed has been on screen LOOK_MS, so a
+// glance, or a chip that does not show the changes, does not clear them.
 const LOOKED_KEY = 'tclaude.phone.now.looked';
 export const LOOK_MS = 5000;
 export function storedLooked(storage = globalThis.localStorage) {
@@ -163,14 +163,37 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   const [chip, setChip] = useState(storedChip);
   const pick = (key) => { setChip(key); storeChip(key); };
   const [looked, setLooked] = useState(storedLooked);
-  // latest is what Now shows now, for the look to keep when it moves.
+  // latest is what Now shows now, for the look to keep when it moves;
+  // marks says which changes are on screen (All, under Needs you), '' when
+  // none; seenSince is when they came into view on a visible page.
   const latest = useRef(null);
+  const marks = useRef('');
+  const pending = useRef(0);
+  const seenSince = useRef(null);
+  const visible = () => globalThis.document?.visibilityState !== 'hidden';
+  // After each render: the marks' time on screen starts when they show, and
+  // again when a new change joins them or the page comes back.
+  const shown = useRef('');
   useEffect(() => {
-    const since = Date.now();
-    const leave = () => { if (latest.current && Date.now() - since >= LOOK_MS) storeLooked(latest.current); };
-    const onHide = () => { if (globalThis.document?.visibilityState === 'hidden') leave(); };
-    globalThis.document?.addEventListener('visibilitychange', onHide);
-    return () => { globalThis.document?.removeEventListener('visibilitychange', onHide); leave(); };
+    if (!marks.current || !visible()) { seenSince.current = null; shown.current = ''; return; }
+    if (marks.current !== shown.current) { seenSince.current = Date.now(); shown.current = marks.current; }
+  });
+  useEffect(() => {
+    // The look moves past changes only once they have been on screen
+    // LOOK_MS; with none waiting, keeping what shows loses nothing.
+    const leave = () => {
+      if (!latest.current) return false;
+      const seen = seenSince.current !== null && Date.now() - seenSince.current >= LOOK_MS;
+      if (pending.current > 0 && !seen) return false;
+      storeLooked(latest.current);
+      return true;
+    };
+    const onVisibility = () => {
+      if (!visible()) { if (leave()) setLooked(latest.current); seenSince.current = null; shown.current = ''; return; }
+      if (marks.current) { seenSince.current = Date.now(); shown.current = marks.current; }
+    };
+    globalThis.document?.addEventListener('visibilitychange', onVisibility);
+    return () => { globalThis.document?.removeEventListener('visibilitychange', onVisibility); leave(); };
   }, []);
   const ready = !!state.snapshot.value;
   // A first visit has nothing to compare: what it sees is the first look.
@@ -191,6 +214,8 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   const problems = problemRows(view);
   const changes = changeRows(sinceLooked(view, looked));
   const changed = new Set(changes.map((row) => row.agent.agentId));
+  pending.current = changes.length;
+  marks.current = chip === 'all' ? changes.map((row) => `${row.agent.agentId}:${row.when}`).join('|') : '';
   const markSeen = () => { storeLooked(latest.current); setLooked(latest.current); };
   const online = new Map(view.online.map((agent) => [agent.agentId, agent]));
   const chips = [

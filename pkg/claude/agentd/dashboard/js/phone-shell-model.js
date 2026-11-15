@@ -96,14 +96,16 @@ export const CONTEXT_HIGH_PCT = 85;
 
 // agentFacts is, per agent id, what Now reads beyond companionAgents: how
 // full its context is (null if not reported) and its PR (phone-agents-model
-// agentPR: number, state, ci). The live membership wins, as there.
+// agentPR: number, state, ci). It keeps the same membership as
+// companionAgents: the first, unless a later one is online and it is not.
 function agentFacts(snapshot) {
   const out = new Map();
   const add = (member) => {
     const id = member?.agent_id;
-    if (!id || (out.has(id) && member.online !== true)) return;
+    const prev = id && out.get(id);
+    if (!id || (prev && (prev.online || member.online !== true))) return;
     const pct = Number(member.state?.context_pct);
-    out.set(id, { ctx: member.state?.context_pct != null && Number.isFinite(pct) ? Math.round(pct) : null, pr: agentPR(member) });
+    out.set(id, { online: member.online === true, ctx: member.state?.context_pct != null && Number.isFinite(pct) ? Math.round(pct) : null, pr: agentPR(member) });
   };
   for (const group of snapshot?.groups || []) for (const member of group?.members || []) add(member);
   for (const member of [...(snapshot?.agents || []), ...(snapshot?.ungrouped || [])]) add(member);
@@ -128,7 +130,10 @@ export const contextHigh = (agent) => agent?.ctx !== null && agent?.ctx !== unde
 //   needs      the count the Now slot's badge shows
 export function nowView(snapshot) {
   const facts = agentFacts(snapshot);
-  const agents = [...companionAgents(snapshot).values()].map((agent) => ({ ...agent, ...(facts.get(agent.agentId) || { ctx: null, pr: null }) }));
+  const agents = [...companionAgents(snapshot).values()].map((agent) => {
+    const { ctx = null, pr = null } = facts.get(agent.agentId) || {};
+    return { ...agent, ctx, pr };
+  });
   const approvals = pendingApprovals(snapshot);
   const elsewhere = pendingAccess(snapshot).length - approvals.length;
   const decisions = pendingDecisions(snapshot);
@@ -164,7 +169,7 @@ export const FEW_ONLINE = 10;
 export const RECENT_MS = 15 * 60 * 1000;
 
 // STUCK_AFTER_MS is how long a busy agent may stay quiet (no hook) before
-// Stuck? marks it and counts it.
+// Problems lists it as quiet while busy.
 export const STUCK_AFTER_MS = 15 * 60 * 1000;
 
 // hookAt is when an agent last called a hook, in ms, or null if never.
@@ -215,7 +220,8 @@ export function recentRows(view) {
     .map((agent) => ({ agent, state: rowState(agent) }));
 }
 
-// stuckRows is the Stuck? chip: the agents at work, quiet the longest first,
+// stuckRows is the agents at work, quiet the longest first (Problems' quiet
+// while busy),
 // each marked quiet once STUCK_AFTER_MS has passed without a hook; quiet is
 // how many are. One that never called a hook cannot be timed and goes last.
 export function stuckRows(view, now = Date.now()) {
@@ -281,7 +287,7 @@ export function sinceLooked(view, last) {
     if (state === 'error' && was.s !== 'error') out.push({ agent, kind: 'errored', text: `errored${agent.detail ? ` · ${agent.detail}` : ''}` });
     else if (state === 'idle' && was.s === 'working') out.push({ agent, kind: 'finished', text: 'finished · was working' });
     if (samePR && pr.state === 'merged' && was.prs !== 'merged') out.push({ agent, kind: 'merged', text: `PR #${pr.number} merged` });
-    else if (pr && pr.ci === 'failing' && pr.state !== 'merged' && !(samePR && was.ci === 'failing')) out.push({ agent, kind: 'ci', text: `PR #${pr.number} CI failed` });
+    else if (pr && pr.ci === 'failing' && pr.state !== 'merged' && pr.state !== 'closed' && !(samePR && was.ci === 'failing')) out.push({ agent, kind: 'ci', text: `PR #${pr.number} CI failed` });
   }
   return out;
 }

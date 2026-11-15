@@ -63,7 +63,10 @@ test('the usage strip shows each subscription\'s fullest window and opens Usage'
 });
 
 test('an access request is an amber card: countdown, Deny / +5 min / Approve, and its text opens Mail', async (t) => {
-  const { harness, root, calls, posts, tap } = await setup(t);
+  // Its own deadline, set as the test starts: the module-level one ages while
+  // earlier tests run, and a slow run read 0:40.
+  const deadline = new Date(Date.now() + 42_500).toISOString();
+  const { harness, root, calls, posts, tap } = await setup(t, { ...SNAPSHOT, access_requests: [{ ...SNAPSHOT.access_requests[0], deadline }] });
   const card = harness.getByRole(root, 'group', { name: 'payments-fix asks: git.push: push PR #4351' });
   assert.ok(card.classList.contains('phone-box-key'));
   assert.equal(card.querySelector('.phone-av-badge').textContent, '🔑');
@@ -256,14 +259,15 @@ test('a first visit takes what it sees as the look; leaving keeps a new look onl
   const first = JSON.parse(store.get('tclaude.phone.now.looked'));
   assert.equal(first[WORKER].s, 'working');
 
-  // A second visit shown under LOOK_MS keeps the old look when it leaves.
+  // A second visit with a change waiting, left before it was seen LOOK_MS,
+  // keeps the old look.
   const { LOOK_MS } = await harness.importDashboardModule('js/phone-now.js');
-  store.set('tclaude.phone.now.looked', JSON.stringify({ ...first, [WORKER]: { s: 'idle', pr: 0, prs: '', ci: '' } }));
-  const kept = store.get('tclaude.phone.now.looked');
-  const realNow = Date.now;
-  t.after(() => { Date.now = realNow; });
   await harness.act(() => mounted.unmount());
-  assert.equal(store.get('tclaude.phone.now.looked'), kept, 'left within LOOK_MS: unchanged');
+  const second = await setup(t, SNAPSHOT, { looked: { ...first, [WORKER]: { s: 'working', pr: 0, prs: '', ci: '' }, [BROKEN]: { s: 'working', pr: 0, prs: '', ci: '' } } });
+  const kept = second.store.get('tclaude.phone.now.looked');
+  assert.ok(second.root.querySelector('[aria-label="Since you looked"]'), 'release-bot errored since');
+  await harness.act(() => second.mounted.unmount());
+  assert.equal(second.store.get('tclaude.phone.now.looked'), kept, 'left within LOOK_MS: unchanged');
   assert.equal(LOOK_MS, 5000);
 });
 
@@ -290,12 +294,45 @@ test('a nearly full context is tagged by the name on rows and cards, and listed 
     ['rate limited until 14:00', 'PR #9 checks failing', 'context 91% full']);
 });
 
-test('leaving Now after LOOK_MS keeps what it showed as the new look', async (t) => {
-  const old = { [WORKER]: { s: 'idle', pr: 0, prs: '', ci: '' } };
+// A look in which release-bot was still working: it has errored since.
+const BEFORE_ERROR = { [WORKER]: { s: 'working', pr: 0, prs: '', ci: '' }, [BROKEN]: { s: 'working', pr: 0, prs: '', ci: '' } };
+
+test('leaving Now after the changes were on screen LOOK_MS keeps what it showed as the new look', async (t) => {
+  const old = BEFORE_ERROR;
   const { harness, mounted, store } = await setup(t, SNAPSHOT, { looked: old });
   const realNow = Date.now;
   t.after(() => { Date.now = realNow; });
   Date.now = () => realNow() + 6000;
   await harness.act(() => mounted.unmount());
-  assert.equal(JSON.parse(store.get('tclaude.phone.now.looked'))[WORKER].s, 'working', 'shown 6s: the look moved');
+  assert.equal(JSON.parse(store.get('tclaude.phone.now.looked'))[BROKEN].s, 'error', 'shown 6s: the look moved');
+});
+
+test('changes a chip never showed are not cleared by leaving, however long Now was up', async (t) => {
+  const { harness, mounted, store } = await setup(t, SNAPSHOT, { looked: BEFORE_ERROR, stored: 'needs' });
+  const kept = store.get('tclaude.phone.now.looked');
+  const realNow = Date.now;
+  t.after(() => { Date.now = realNow; });
+  Date.now = () => realNow() + 60_000;
+  await harness.act(() => mounted.unmount());
+  assert.equal(store.get('tclaude.phone.now.looked'), kept, 'Needs you shows no marks, so nothing was seen');
+});
+
+test('hiding the page after the changes were seen moves the look, on screen too; coming back starts the clock again', async (t) => {
+  const { harness, root, store } = await setup(t, SNAPSHOT, { looked: BEFORE_ERROR });
+  const realNow = Date.now;
+  const doc = globalThis.document;
+  const setVisibility = (value) => Object.defineProperty(doc, 'visibilityState', { value, configurable: true });
+  t.after(() => { Date.now = realNow; delete doc.visibilityState; });
+  assert.ok(root.querySelector('[aria-label="Since you looked"]'));
+  Date.now = () => realNow() + 6000;
+  await harness.act(() => { setVisibility('hidden'); doc.dispatchEvent(new Event('visibilitychange')); });
+  assert.equal(JSON.parse(store.get('tclaude.phone.now.looked'))[BROKEN].s, 'error', 'stored');
+  assert.equal(root.querySelector('[aria-label="Since you looked"]'), null, 'and the screen follows');
+});
+
+test('a row\'s label says when its context is nearly full', async (t) => {
+  const snapshot = { ...SNAPSHOT, groups: [{ name: 'webshop', members: [{ ...SNAPSHOT.groups[0].members[1], state: { status: 'working', context_pct: 92 } }] }] };
+  const { harness, root } = await setup(t, snapshot);
+  const row = harness.getByRole(root, 'group', { name: 'Online' }).querySelector('.phone-row');
+  assert.match(row.getAttribute('aria-label'), /^lead, working, context 92% full: open its terminal$/);
 });
