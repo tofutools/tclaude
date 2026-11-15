@@ -2,7 +2,8 @@
 // hold on an agent opens (phone-hold.js), and the row's ⋯ too, wherever an
 // agent is listed (Agents, Now's rows and cards, a terminal's ⋯).
 //
-//   quick    four tiles: Terminal (Power on when it is offline), Message,
+//   quick    four tiles: Terminal (Power on when it is offline; Select text
+//            from its own terminal's ⋯, phone-terminal-text.js), Message,
 //            Interrupt (only while it is at work, and only a Codex agent on
 //            the app-server drive, the one turn the daemon can interrupt) and
 //            Copy id
@@ -39,11 +40,14 @@ const interruptible = (row) => row.online && BUSY.has(row.variant) && !!row.memb
 // { quick: [...], session: [...] | null, agent: [...], retire, note }. Each
 // entry is { key, label, sub?, disabled?, href? }. here: the menu is opened
 // from the agent's own terminal, which it then does not offer.
-export function menuModel(row, group, snapshot, { here = false } = {}) {
+export function menuModel(row, group, snapshot, { here = false, selectText = false } = {}) {
   const online = row.online;
   const quick = [
-    online
-      ? { key: 'terminal', icon: '⌨', label: 'Terminal', disabled: here, sub: here ? 'open' : '' }
+    online && here && selectText
+      // In its own terminal, where Terminal would be the one open: Select.
+      ? { key: 'select', icon: '⌶', label: 'Select text' }
+      : online
+        ? { key: 'terminal', icon: '⌨', label: 'Terminal', disabled: here, sub: here ? 'open' : '' }
       : { key: 'power', icon: '⏻', label: row.waking ? 'Waking…' : 'Power on', disabled: row.waking },
     { key: 'message', icon: '✉', label: 'Message' },
     { key: 'interrupt', icon: '⏹', label: 'Interrupt', disabled: !interruptible(row) },
@@ -70,16 +74,17 @@ export function menuModel(row, group, snapshot, { here = false } = {}) {
 }
 
 // AgentMenu is the sheet's body. actions are phone-agent-actions.js's.
-export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here = false, close }) {
+export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here = false, selectText = null, close }) {
   const snapshot = state.snapshot.value;
   const found = findRow(agentGroups(snapshot, order), agentKey, groupKey);
   if (!found) return html`<p class="ui-empty phone-empty">This agent is no longer listed.</p>`;
   const { row, group } = found;
-  const model = menuModel(row, group, snapshot, { here });
+  const model = menuModel(row, group, snapshot, { here, selectText: !!selectText });
   const run = (key) => () => {
     close();
     const go = {
       terminal: () => actions.openTerminal(row),
+      select: () => selectText?.(),
       power: () => actions.rowAction('dot-toggle', row),
       message: () => actions.message(row),
       interrupt: () => actions.rowAction('interrupt-agent', row),

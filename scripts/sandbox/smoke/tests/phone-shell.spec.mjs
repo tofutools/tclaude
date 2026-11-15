@@ -169,7 +169,7 @@ test.describe('on a phone', () => {
     const terminal = page.locator('.phone-term[role=dialog]');
     await expect(terminal).toBeVisible();
     await expect(terminal.locator('.xterm')).toBeVisible();
-    await expect(terminal.getByRole('group', { name: 'Keys' }).getByRole('button')).toHaveCount(8);
+    await expect(terminal.getByRole('group', { name: 'Keys' }).getByRole('button')).toHaveCount(9);
     await expect(page).toHaveURL(/[?&]terminal=window%3A/);
     await expectNoSideScroll(page, 'Terminal');
     // The phone's Back closes the terminal, and Now is still there.

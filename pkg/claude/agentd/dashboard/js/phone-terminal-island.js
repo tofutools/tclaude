@@ -26,6 +26,9 @@ import { readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
 import { VARIANT_LABELS } from './phone-agents-model.js';
 import { IconButton, StatePill } from './phone-ui.js';
+import { TerminalText, indexAt, linkAt, openLinkSheet, screenLines, useTerminalTouch, wordAt } from './phone-terminal-text.js';
+import { writeClipboard } from './insecure-origin.js';
+import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -163,8 +166,11 @@ function useVisualViewport(windowRef) {
 
 // TerminalSurface owns the widget. Preact renders the host div and never a
 // child into it: the widget alone owns what is inside.
-function TerminalSurface({ seed, deps, labelRef, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange }) {
+function TerminalSurface({ seed, deps, labelRef, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange, onTap, onHold }) {
   const host = useRef(null);
+  // A tap on a link, or a still hold, on the terminal itself
+  // (phone-terminal-text.js); the zoom chip and Live are not the terminal.
+  useTerminalTouch(host, { onTap, onHold });
   useLayoutEffect(() => {
     const key = seed.key || seed.ws;
     const widget = deps.widgetFactory({
@@ -232,7 +238,29 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   const [reconnect, setReconnect] = useState(false);
   const [keyboard, setKeyboard] = useState(false);
   const [scrolledBack, setScrolledBack] = useState(false);
+  // select: Select's lines and the word picked, while it is open.
+  const [select, setSelect] = useState(null);
   const widget = useRef(null);
+  const copy = deps.copy || (async (text, what) => {
+    if (await writeClipboard(text)) shellToast(`Copied ${what}`);
+    else shellToast(`Could not copy ${what}`, true);
+  });
+  const lines = () => screenLines(widget.current?.screen?.() || []);
+  const showLink = (link) => openLinkSheet(link, { widget: widget.current, copy });
+  const onTap = (x, y) => {
+    const now = lines();
+    const link = linkAt(now, indexAt(now, widget.current?.cellAt?.(x, y)));
+    if (link) showLink(link);
+    return !!link;
+  };
+  // openSelect opens Select on the screen as it is, the word at a point
+  // (a hold's) picked.
+  const openSelect = (x = null, y = null) => {
+    const now = lines();
+    const at = x === null ? null : indexAt(now, widget.current?.cellAt?.(x, y));
+    const word = at && wordAt(now[at.line].text, at.index);
+    setSelect({ lines: now, picked: word ? [at.line, ...word] : null });
+  };
 
   useEffect(() => {
     if (!deps.loadRuntime) return undefined;
@@ -285,12 +313,12 @@ export function PhoneTerminal({ seed, deps, onClose }) {
         ? html`<${StatePill} state=${row.variant} title=${live ? undefined : `Terminal: ${status}`}>${row.waking ? 'waking' : VARIANT_LABELS[row.variant]}<//>`
         : html`<span class=${`phone-bar-live ${live ? 'connected' : status === 'disconnected' ? 'disconnected' : ''}`} role="status"
           aria-label=${live ? 'Connected' : `Terminal: ${status}`} title=${status}></span>`}
-      ${row && deps.agentMenu && html`<${IconButton} icon="⋯" label=${`${row.name}: more`} onClick=${() => deps.agentMenu(row)} />`}
+      ${row && deps.agentMenu && html`<${IconButton} icon="⋯" label=${`${row.name}: more`} onClick=${() => deps.agentMenu(row, { selectText: () => openSelect() })} />`}
     </header>
     <div class="phone-term-body">
       ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} labelRef=${labelRef} onWidget=${onWidget}
         onFontChange=${onFontChange} onStatus=${setStatus} onWaitingChange=${setWaiting} onReconnectChange=${setReconnect}
-        onScrollBackChange=${setScrolledBack} />`}
+        onScrollBackChange=${setScrolledBack} onTap=${onTap} onHold=${openSelect} />`}
       ${sized && html`<button data-ui-exempt type="button" class="phone-term-zoom" onMouseDown=${keepFocus}
         aria-label=${pct === 100 ? 'Text size 100%: pinch to zoom' : `Text size ${pct}%: reset to 100%`}
         title="Pinch the terminal to zoom it" disabled=${pct === 100}
@@ -305,12 +333,15 @@ export function PhoneTerminal({ seed, deps, onClose }) {
     <div class="phone-term-keys" role="group" aria-label="Keys">
       ${KEY_STRIP.map(({ name: k, label, spoken }) => html`<button data-ui-exempt key=${k} type="button" class="phone-term-key"
         aria-label=${spoken} onMouseDown=${keepFocus} onClick=${() => widget.current?.key(k)}>${label}</button>`)}
+      <button data-ui-exempt type="button" class="phone-term-key phone-term-copy-key" aria-label="Select and copy text"
+        onMouseDown=${keepFocus} onClick=${() => openSelect()}>Copy</button>
     </div>
     <div class="phone-term-input">
       ${message && !keyboard && html`<button data-ui-exempt type="button" class="phone-term-compose" onClick=${message}>✉ Message ${name}…</button>`}
       <button data-ui-exempt type="button" class=${`phone-term-kbd${keyboard ? ' on' : ''}`} aria-pressed=${keyboard ? 'true' : 'false'}
         aria-label="Keyboard" title="Type into the terminal" onMouseDown=${keepFocus} onClick=${toggleKeyboard}>⌨</button>
     </div>
+    ${select && html`<${TerminalText} lines=${select.lines} picked=${select.picked} onLink=${showLink} copy=${copy} onClose=${() => setSelect(null)} />`}
   </div>`;
 }
 

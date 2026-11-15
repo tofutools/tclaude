@@ -278,9 +278,10 @@ const phoneTerminalDescriptor = createIslandDescriptor({
       // read from the live snapshot, or null.
       agentRow: (id) => findRow(agentGroups(dashboardState.snapshot.value, order), id),
       // ⋯: the agent's menu, as the Agents view opens it.
-      agentMenu: (row) => openPhoneSheet({
+      // selectText: the terminal's Select, offered where Terminal would be.
+      agentMenu: (row, { selectText = null } = {}) => openPhoneSheet({
         label: row.name, Body: AgentMenu,
-        props: { state: dashboardState, order, actions, agentKey: row.key, groupKey: '', here: true },
+        props: { state: dashboardState, order, actions, agentKey: row.key, groupKey: '', here: true, selectText },
       }),
     };
     return {
