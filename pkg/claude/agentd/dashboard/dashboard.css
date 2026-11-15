@@ -86,16 +86,7 @@ body.dashboard-booting.boot-stuck > #boot-progress {
   visibility: visible;
   pointer-events: auto;
 }
-.boot-progress-reload {
-  margin-top: 12px;
-  padding: 4px 14px;
-  font: inherit;
-  color: #e6edf3;
-  background: #21262d;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  cursor: pointer;
-}
+.boot-progress-reload { margin-top: 12px; }
 .boot-progress-reload[hidden] { display: none; }
 .boot-progress-title { margin-bottom: 10px; }
 .boot-progress-bar {
