@@ -1,11 +1,13 @@
 package worktree
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -466,4 +468,70 @@ func TestUnmergedCommitsIn(t *testing.T) {
 	git("branch", "-m", trunk, "trunkless")
 	_, err = UnmergedCommitsIn(repoPath, "feat")
 	assert.Error(t, err, "no main or master to compare against")
+}
+
+// gitStartArgv records the argv of every git process the calls in fn start,
+// from Git's trace2 event stream (which, unlike GIT_TRACE, keeps the -c
+// overrides), one space-joined line per process.
+func gitStartArgv(t *testing.T, fn func()) []string {
+	t.Helper()
+	tracePath := filepath.Join(t.TempDir(), "trace2.json")
+	t.Setenv("GIT_TRACE2_EVENT", tracePath)
+	fn()
+	data, err := os.ReadFile(tracePath)
+	require.NoError(t, err)
+	var argvs []string
+	for _, line := range strings.Split(string(data), "\n") {
+		var ev struct {
+			Event string   `json:"event"`
+			Argv  []string `json:"argv"`
+		}
+		if json.Unmarshal([]byte(line), &ev) == nil && ev.Event == "start" {
+			argvs = append(argvs, strings.Join(ev.Argv, " "))
+		}
+	}
+	return argvs
+}
+
+// The dashboard's config-lock retry ladder owns the wait between attempts,
+// so its calls turn Git's own config-lock wait (Git 2.55+, 1s) off; the
+// ordinary first attempt keeps it, since it absorbs a brief writer.
+func TestConfigLockWaitIsOffOnlyForRetryLadderCalls(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	require.NoError(t, exec.Command("git", "-C", repoPath, "remote", "add", "origin", repoPath).Run())
+	require.NoError(t, exec.Command("git", "-C", repoPath, "update-ref",
+		"refs/remotes/origin/main", "HEAD").Run())
+	const off = "-c core.configLockTimeout=0"
+	commandWith := func(argvs []string, sub string) string {
+		for _, a := range argvs {
+			if strings.Contains(a, sub) {
+				return a
+			}
+		}
+		t.Fatalf("no git process ran %q; saw %q", sub, argvs)
+		return ""
+	}
+
+	argvs := gitStartArgv(t, func() {
+		_, err := AddWorktreeIn(repoPath, "first", "refs/remotes/origin/main", "")
+		require.NoError(t, err)
+	})
+	assert.NotContains(t, commandWith(argvs, "worktree add"), off)
+
+	argvs = gitStartArgv(t, func() {
+		_, err := AddWorktreeInNoConfigLockWait(repoPath, "retry", "refs/remotes/origin/main", "")
+		require.NoError(t, err)
+	})
+	assert.Contains(t, commandWith(argvs, "worktree add"), off)
+
+	argvs = gitStartArgv(t, func() {
+		_, err := AddWorktreeInWithoutTracking(repoPath, "fallback", "refs/remotes/origin/main", "")
+		require.NoError(t, err)
+	})
+	assert.Contains(t, commandWith(argvs, "worktree add"), off)
+
+	argvs = gitStartArgv(t, func() {
+		require.NoError(t, SetBranchUpstreamIn(repoPath, "first", "refs/remotes/origin/main"))
+	})
+	assert.Contains(t, commandWith(argvs, "--set-upstream-to"), off)
 }
