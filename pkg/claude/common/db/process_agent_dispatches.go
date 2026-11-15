@@ -155,6 +155,14 @@ func ListProcessAgentDispatchesForRun(runID string) ([]ProcessAgentDispatch, err
 	return queryProcessAgentDispatches(`WHERE run_id = ? ORDER BY node_id, attempt`, runID)
 }
 
+// ListOpenProcessAgentDispatchesForRun returns a run's dispatches still
+// waiting on a performer or a report, the rows a stuck check reads every
+// minute: closed and reported attempts are left out.
+func ListOpenProcessAgentDispatchesForRun(runID string) ([]ProcessAgentDispatch, error) {
+	return queryProcessAgentDispatches(`WHERE run_id = ? AND state IN (?, ?) ORDER BY node_id, attempt`,
+		runID, ProcessDispatchNeedsPerformer, ProcessDispatchDelivered)
+}
+
 // ListProcessAgentDispatchesForNode returns every attempt's dispatch for one
 // node of one run, oldest first.
 func ListProcessAgentDispatchesForNode(runID, nodeID string) ([]ProcessAgentDispatch, error) {

@@ -39,16 +39,23 @@ type processStuckSpell struct {
 
 func (s processStuckSpell) key() string { return s.NodeID + "\x00" + s.Signal }
 
-// processRunStuckSpells lists how a run's steps are stuck now.
-func processRunStuckSpells(run *db.ProcessRun, oversight processTemplateOversight) []processStuckSpell {
+// processRunStuckSpells lists how a run's steps are stuck now. Any read that
+// fails fails the whole list: a missing spell would read as "the step moved
+// on" and settle its concern.
+func processRunStuckSpells(run *db.ProcessRun, oversight processTemplateOversight) ([]processStuckSpell, error) {
 	var spells []processStuckSpell
 	var checkpoint engine.Checkpoint
-	if err := run.DecodeCheckpoint(&checkpoint); err == nil && len(checkpoint.Blocked) > 0 {
+	if err := run.DecodeCheckpoint(&checkpoint); err != nil {
+		return nil, err
+	}
+	if len(checkpoint.Blocked) > 0 {
 		since := map[string]time.Time{}
-		if events, err := db.ListLatestProcessRunNodeEvents(run.ID, "node_blocked"); err == nil {
-			for _, e := range events {
-				since[e.NodeID] = e.OccurredAt
-			}
+		events, err := db.ListLatestProcessRunNodeEvents(run.ID, "node_blocked")
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range events {
+			since[e.NodeID] = e.OccurredAt
 		}
 		for _, b := range checkpoint.Blocked {
 			at := since[b.NodeID]
@@ -58,9 +65,9 @@ func processRunStuckSpells(run *db.ProcessRun, oversight processTemplateOversigh
 			spells = append(spells, processStuckSpell{NodeID: b.NodeID, Signal: processSignalBlocked, Since: at, Detail: b.Reason})
 		}
 	}
-	rows, err := db.ListProcessAgentDispatchesForRun(run.ID)
+	rows, err := db.ListOpenProcessAgentDispatchesForRun(run.ID)
 	if err != nil {
-		return spells
+		return nil, err
 	}
 	seen := map[string]bool{}
 	for _, row := range rows {
@@ -83,7 +90,7 @@ func processRunStuckSpells(run *db.ProcessRun, oversight processTemplateOversigh
 		seen[spell.key()] = true
 		spells = append(spells, spell)
 	}
-	return spells
+	return spells, nil
 }
 
 // processStuckReason is the concern's text.
@@ -128,20 +135,34 @@ func sweepProcessStuckSignals() {
 
 func checkProcessRunStuck(run *db.ProcessRun, now time.Time) {
 	oversight := processRunTemplateOversight(run.ID)
-	spells := processRunStuckSpells(run, oversight)
-	live := map[string]bool{}
+	spells, err := processRunStuckSpells(run, oversight)
+	if err != nil {
+		slog.Warn("process oversight: stuck check skipped", "run", run.ID, "error", err)
+		return
+	}
+	since := map[string]time.Time{}
 	for _, s := range spells {
-		live[s.key()] = true
+		since[s.key()] = s.Since
 	}
 	concerns, err := db.ListProcessRunConcerns(run.ID)
 	if err != nil {
 		return
 	}
+	openEngine := 0
 	for _, c := range concerns {
-		if c.Open() && c.Source == db.ProcessConcernSourceEngine && !live[c.NodeID+"\x00"+c.Signal] {
-			if resolved, err := db.ResolveProcessRunConcern(run.ID, c.ID, processConcernCleared, "", processOversightActor); err == nil {
-				closeProcessConcernCard(resolved, processOversightActor)
-			}
+		if !c.Open() || c.Source != db.ProcessConcernSourceEngine {
+			continue
+		}
+		// Settled when the step moved on, or when a new spell began since it
+		// was raised (a retry handed out again, a loop came back): the new
+		// spell gets its own concern once its patience runs out.
+		at, live := since[c.NodeID+"\x00"+c.Signal]
+		if live && !c.CreatedAt.Before(at) {
+			openEngine++
+			continue
+		}
+		if resolved, err := db.ResolveProcessRunConcern(run.ID, c.ID, processConcernCleared, "", processOversightActor); err == nil {
+			closeProcessConcernCard(resolved, processOversightActor)
 		}
 	}
 	// A paused run is someone's decision to hold it: its steps waiting is not
@@ -154,6 +175,12 @@ func checkProcessRunStuck(run *db.ProcessRun, now time.Time) {
 		if stuckFor < oversight.patienceFor(s.NodeID) || processSpellRaised(concerns, s) {
 			continue
 		}
+		// The engine keeps half the run's open concerns free for the people
+		// in it.
+		if openEngine >= db.MaxOpenProcessConcernsPerRun/2 {
+			return
+		}
+		openEngine++
 		if _, err := raiseProcessConcern(run.ID, s.NodeID, db.ProcessConcernSourceEngine, s.Signal,
 			processOversightActor, processStuckReason(s, stuckFor)); err != nil && !errors.Is(err, db.ErrProcessConcernLimit) {
 			slog.Warn("process oversight: raise a stuck signal", "run", run.ID, "node", s.NodeID, "signal", s.Signal, "error", err)

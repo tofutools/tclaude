@@ -191,9 +191,12 @@ test('removing an optional block clears its slice as one undoable edit', async (
   await open('build');
   await click('[data-add-block="retry"]');
   await set('retry.maxAttempts', '4');
+  await set('patience', '45m');
+  assert.equal(editor.model.node('build').patience, '45m', 'the step\'s patience sits beside its retry');
   assert.ok(blocks().includes('retry'));
-  await click('[aria-label="Remove Retry"]');
+  await click('[aria-label="Remove Retry · patience"]');
   assert.equal(editor.model.node('build').retry, undefined);
+  assert.equal(editor.model.node('build').patience, undefined);
   assert.ok(!blocks().includes('retry'));
   await harness.act(() => editor.applyHistory('undo'));
   assert.deepEqual(editor.model.node('build').retry, { maxAttempts: 4 });

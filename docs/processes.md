@@ -283,7 +283,9 @@ in it raises a concern.
   without it). With none set, the template's `overseer:` decides
   (`lead`, `starter`, `operator` or `role:<role>`), and without that it is
   the group's lead (a member with the role `lead`, else an owner), else
-  whoever started the run.
+  whoever started the run. A template that names `role:<role>` or `starter`
+  hands that member the overseer's steering below, so who holds a role is
+  part of the template's trust.
 - Overseeing a run grants, for that run only, what steering it needs:
   pause, resume, reassigning a step, and answering its concerns. It does not
   grant editing the template, or handing the run to another overseer.
@@ -335,7 +337,9 @@ overridden by a step's own `patience:`, and 30 minutes when neither says.
 An engine concern goes to the overseer like any other and climbs the same
 chain. It is raised once per stuck spell: answering it ("carry on") does not
 bring it back while the step stays as it was. When the step moves on, the
-concern settles itself as `cleared`. A paused run raises nothing new.
+concern settles itself as `cleared`, as does one whose step became stuck
+again in a new way (a retry handed out anew). A paused run raises nothing
+new, and engine concerns never take more than half of a run's open concerns.
 
 Every step is in the run's events and its log in the dashboard:
 `concern_raised`, `concern_escalated` (with why it moved), `concern_resolved`
