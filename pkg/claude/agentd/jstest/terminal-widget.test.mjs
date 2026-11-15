@@ -1736,7 +1736,7 @@ async function xtermLikeWidget(t, options = {}) {
     while (frames.length && run < limit) { clock.now += 16; frames.shift()(); run += 1; }
     return run;
   };
-  return { widget, fakes, sent, notches, back, touch, swipeBack, clock, runFrames, harness };
+  return { widget, fakes, sent, notches, back, touch, swipeBack, clock, runFrames, harness, timers };
 }
 
 // claudeLines is how far Claude Code's view moved for the notches sent, by
@@ -1790,7 +1790,7 @@ test('a harness that scrolls its own history (Claude Code) gets the wheel report
 // so the swipe sends a notch once the finger has gone as many rows (16px
 // each here) as it will scroll: the content moves with the finger.
 test('a swipe over Claude Code moves its view as far as the finger went, slow or fast', async (t) => {
-  const { widget, notches, touch, clock, harness } = await xtermLikeWidget(t, { wheelCopyMode: false, swipeWheel: 'claude' });
+  const { widget, notches, touch, clock, harness, timers } = await xtermLikeWidget(t, { wheelCopyMode: false, swipeWheel: 'claude' });
 
   // Slow: ten rows in 8px moves 50ms apart, each notch on its own.
   clock.now = 1000;
@@ -1809,10 +1809,15 @@ test('a swipe over Claude Code moves its view as far as the finger went, slow or
   clock.now = 5000;
   touch('touchstart', 100);
   for (let y = 148; y <= 580; y += 48) { clock.now += 10; touch('touchmove', y); }
-  clock.now += 300; touch('touchend');
   const fast = (await claudeLines(harness, notches)) - moved;
   assert.ok(notches.length - before < 30, `fewer notches than rows: ${notches.length - before}`);
-  assert.ok(fast >= 26 && fast <= 30, `the view went ${fast} of the finger's 30 rows, never past it`);
+  assert.ok(fast >= 24 && fast <= 30, `the view went ${fast} of the finger's 30 rows, never past it`);
+  // The rows held back while Claude's acceleration would overshoot go once it
+  // has worn off: the view ends where the finger stopped.
+  clock.now += 60;
+  timers.flush();
+  assert.equal((await claudeLines(harness, notches)) - moved, 30, 'all thirty rows, once the finger rests');
+  clock.now += 300; touch('touchend');
 
   // Back up ten rows: the reversal's first notch scrolls nothing, and the
   // swipe sends one more, so the view still goes the finger's ten.

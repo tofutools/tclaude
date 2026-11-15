@@ -168,6 +168,8 @@ const SWIPE_STOP = 0.05;
 // UIScrollView's normal deceleration rate, per ms.
 const SWIPE_FRICTION = 0.998;
 const SWIPE_MAX_NOTCHES_PER_FRAME = { tmux: 4, claude: 12 };
+// Past Claude Code's acceleration window (40ms), its next notch is one line.
+const SWIPE_CLAUDE_FLUSH_MS = 50;
 // A mouse report is how xterm hands the session a wheel notch; it is not
 // typing, and must not bring a scrolled-back view back to live.
 const MOUSE_REPORT = /^\x1b\[(<|M)/;
@@ -538,6 +540,7 @@ export function mountTerminalWidget({
   // arrow keys, as the desktop wheel does.
   let swipe = null;
   let coast = null;
+  let flush = null;
   // Where tmux's wheel copy-mode is, in notches, while notches are wheel
   // reports and the session's wheel scrolls copy-mode (wheelCopyMode), where
   // keys would go to copy-mode instead of the session: scrolledBack is how
@@ -615,21 +618,35 @@ export function mountTerminalWidget({
   // travelClaude sends a notch once the finger has gone as many rows as
   // Claude Code will scroll for it. A reversal's first notch scrolls nothing
   // and takes a full row the new way, so a wobble does not flip Claude's
-  // direction back and forth.
-  function travelClaude(cap) {
+  // direction back and forth. Rows held back because Claude's acceleration
+  // would scroll the next notch further than the finger went are sent once
+  // it has worn off (SWIPE_CLAUDE_FLUSH_MS), so the view ends where the
+  // finger did even if it stops there, or lifts.
+  function travelClaude(cap, s = swipe) {
+    stopFlush();
     const row = rowHeight();
-    for (let sent = 0; sent < cap && Math.abs(swipe.rest) >= row; sent += 1) {
-      const older = swipe.rest > 0;
+    for (let sent = 0; sent < cap && Math.abs(s.rest) >= row; sent += 1) {
+      const older = s.rest > 0;
       const step = claudeWheelStep(claudeWheel, older ? -1 : 1, now());
-      if (Math.abs(swipe.rest) < step.lines * row) return;
-      if (!notch(older)) { swipe.rest = 0; return; }
+      if (Math.abs(s.rest) < step.lines * row) {
+        if (typeof setTimeoutImpl === 'function') {
+          flush = setTimeoutImpl(() => { flush = null; if (!disposed) travelClaude(cap, s); }, SWIPE_CLAUDE_FLUSH_MS);
+        }
+        return;
+      }
+      if (!notch(older)) { s.rest = 0; return; }
       claudeWheel = step.state;
-      swipe.rest += (older ? -1 : 1) * step.lines * row;
+      s.rest += (older ? -1 : 1) * step.lines * row;
     }
+  }
+  function stopFlush() {
+    if (flush !== null) clearTimeoutImpl(flush);
+    flush = null;
   }
   function stopCoasting() {
     if (coast !== null && typeof cancelAnimationFrameImpl === 'function') cancelAnimationFrameImpl(coast);
     coast = null;
+    stopFlush();
   }
   function coastFrom(velocity, at) {
     if (typeof requestAnimationFrameImpl !== 'function') return;
