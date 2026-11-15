@@ -6,6 +6,8 @@
    it only applies on a phone). */
 :root[data-layout="phone"] #tab-diagnostics .activity-subtab[data-subtab="doctor"] { order: -1; }
 :root[data-layout="phone"] #tab-diagnostics .activity-subtab[data-subtab="performance"] { display: none; }
+/* A finding open as a page owns the screen: the chips step aside. */
+:root[data-layout="phone"][data-phone-page] #tab-diagnostics .activity-subnav { display: none; }
 /* The Doctor chip's count is red, as in the mock: it is what needs the
    operator, decisions included. */
 :root[data-layout="phone"] #tab-diagnostics .doctor-badges .ui-badge-accent { background: var(--ui-danger); color: #fff; }

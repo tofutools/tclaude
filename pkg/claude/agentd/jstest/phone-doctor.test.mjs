@@ -71,6 +71,7 @@ test('a finding opens as its own page: all of it, its fix, and Back returns to t
   assert.equal(phonePage.value.hideNav, true);
   const page = root.querySelector('.phone-doctor-page');
   assert.equal(page.querySelector('.phone-doctor-heading').textContent, 'Codex CLI hooks are not installed');
+  assert.match(page.querySelector('.phone-doctor-kicker').textContent, /Warning · Hooks & setup$/);
   assert.ok(page.querySelector('.phone-doctor-detail').textContent.includes(LONG_PATH), 'the whole detail, long path and all');
   assert.equal(page.querySelector('.phone-doctor-fix code').textContent, 'tclaude setup');
   assert.ok([...page.querySelectorAll('button')].some((b) => b.textContent === 'Copy'));
@@ -84,6 +85,7 @@ test('a finding opens as its own page: all of it, its fix, and Back returns to t
 test('the sandbox decision\'s page offers its choice; a check that clears says so', async (t) => {
   const { root, tap, calls, state, harness } = await setup(t);
   await tap(root.querySelector('[data-check="sandbox-default"]'));
+  assert.match(root.querySelector('.phone-doctor-kicker').textContent, /Decision$/, 'not "Decision · Decisions"');
   const use = [...root.querySelectorAll('.phone-doctor-page button')].find((b) => /Use tclaude sandbox/.test(b.textContent));
   await tap(use);
   assert.deepEqual(calls.at(-1), ['setSandboxDefault', 'tclaude-layer']);

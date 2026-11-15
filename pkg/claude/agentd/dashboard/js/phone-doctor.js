@@ -31,6 +31,15 @@ export const GROUPS = Object.freeze([
 ]);
 
 const DOT = { decision: '🔵', blocking: '🔴', warning: '🟡', info: '⚪', ok: '✅' };
+const SEVERITY = { decision: 'Decision', blocking: 'Blocking', warning: 'Warning', info: 'Info', ok: 'OK' };
+
+// kicker is the line over a finding's title: its severity, and its category
+// unless that says the same ("Decision · Decisions").
+export function kicker(check) {
+  const severity = SEVERITY[check.severity] || check.severity || '';
+  const label = check.category === 'decisions' ? '' : categoryLabel(check);
+  return [severity, label].filter(Boolean).join(' · ');
+}
 
 export const categoryLabel = (check) => DOCTOR_CATEGORIES.find((c) => c.id === check.category)?.label || '';
 
@@ -66,9 +75,8 @@ function CheckPage({ check, state, actions, notify, back }) {
       <${Button} class="phone-btn phone-wide" onClick=${back}>Back to the Doctor<//>
     </div>`;
   }
-  const label = categoryLabel(check);
   return html`<div class=${`phone-doctor-page sev-${check.severity}`} data-check=${check.id}>
-    <p class="ui-eyebrow phone-doctor-kicker"><span aria-hidden="true">${DOT[check.severity] || '•'}</span> ${check.severity}${label ? ` · ${label}` : ''}</p>
+    <p class="ui-eyebrow phone-doctor-kicker"><span aria-hidden="true">${DOT[check.severity] || '•'}</span> ${kicker(check)}</p>
     <h1 class="phone-doctor-heading">${check.title}</h1>
     ${check.detail && html`<p class="phone-doctor-detail">${check.detail}</p>`}
     ${check.fix && html`<div class="phone-doctor-fix">
