@@ -266,6 +266,8 @@ export function MiniGraphEditor({
   const [autosave, setAutosave] = useState('');
   // touched: the operator has changed this draft since it was made.
   const touched = useRef(!untouched);
+  const inflight = useRef(null);
+  const failedAt = useRef(null);
   const nameRef = useRef(null);
   const canvas = useRef(null);
   // dragged swallows the click that ends a handle drag.
@@ -324,7 +326,14 @@ export function MiniGraphEditor({
   const undo = () => { if (model.current.undo()) { setRev(model.current.rev); setSelected(''); } };
   const stepsList = viewToStepList(draft);
   const save = async ({ quiet = false } = {}) => {
-    if (busy) return false;
+    // A click during an autosave waits for it, rather than being dropped.
+    if (inflight.current) {
+      const ok = await inflight.current;
+      if (!ok || !model.current.dirty) return ok;
+    }
+    if (inflight.current) return false;
+    let done;
+    inflight.current = new Promise((resolve) => { done = resolve; });
     setBusy(quiet ? 'auto' : 'save');
     setError('');
     const savedAt = model.current.rev;
@@ -334,21 +343,29 @@ export function MiniGraphEditor({
       if (!quiet) notify(isDraft ? `Saved ${name}` : `Saved ${name} as a new version`);
       void source?.refresh?.();
       return true;
+      done(true);
+      return true;
     } catch (cause) {
       setError(/head changed/.test(cause.message)
-        ? `${name} was saved elsewhere since you opened it. Cancel and reopen it to edit the newest version.` : cause.message);
+        ? `${name} was saved elsewhere since you opened it. ${isDraft ? 'Close it without saving' : 'Cancel'} and reopen it to edit the newest version.` : cause.message);
+      done(false);
       return false;
     } finally {
+      inflight.current = null;
       setBusy('');
     }
   };
   // A draft saves itself a moment after each change; a change made while a
   // save is under way is saved after it.
+  // One that fails is not retried until the next change.
   useEffect(() => {
-    if (!isDraft || !dirty || busy) return undefined;
+    if (!isDraft || !dirty || busy || failedAt.current === draftKey) return undefined;
     const timer = setTimeout(() => {
       setAutosave('saving');
-      void save({ quiet: true }).then((ok) => setAutosave(ok ? 'saved' : 'failed'));
+      void save({ quiet: true }).then((ok) => {
+        failedAt.current = ok ? null : draftKey;
+        setAutosave(ok ? 'saved' : 'failed');
+      });
     }, AUTOSAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [isDraft, draftKey, dirty, busy]);
@@ -476,7 +493,9 @@ export function MiniGraphEditor({
       ${onRun && html`<${Button} size="sm" data-mini-run disabled=${(!!busy && busy !== 'auto') || empty} title=${empty ? 'Add a step first' : `Save it, then pick how to run it in ${group.name}`}
         onClick=${() => void runDraft()}>▶ Run…<//>`}
       <${Button} size="sm" icon=${true} variant="ghost" data-mini-close aria-label="Close" title=${!touched.current && empty ? 'Close: an untouched new process is not kept' : 'Close: it stays saved in the group'}
-        onClick=${() => void closeDraft()}>✕<//>`
+        onClick=${() => void closeDraft()}>✕<//>
+      ${autosave === 'failed' && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-drop title="Close it; the changes since the last save are lost"
+        onClick=${onClose}>close without saving<//>`}`
     : html`${discarding
     ? html`<span class="gq-confirm">Discard ${summary.length || 'the'} change${summary.length === 1 ? '' : 's'}?
         <${Button} size="sm" variant="danger" data-mini-discard onClick=${onClose}>discard<//>

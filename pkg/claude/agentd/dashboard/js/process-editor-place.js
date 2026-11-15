@@ -222,7 +222,7 @@ export function floatHandoff(id, label, handoff) {
   if (floating.has(id) || opening.has(id) || handoffs.has(id) || floatingProcessTab(id)) return Promise.resolve(false);
   return new Promise((settle) => {
     handoffs.set(id, { handoff, settle });
-    openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id, ...(group ? { group } : {}) });
+    openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id });
   });
 }
 

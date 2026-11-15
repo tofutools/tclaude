@@ -400,6 +400,30 @@ test('New process stores an untitled draft of the group and opens it in place as
   assert.deepEqual(calls.at(-1), ['delete', 'tpl_1']);
   assert.equal(infra().querySelector('[data-mini-editor]'), null);
 });
+test('a new process whose autosave is refused says so, and can be closed without saving', async (t) => {
+  const empty = { ...FIXTURE, runs: {}, groups: (FIXTURE.groups || []).map((entry) => ({ ...entry, active: [], needsYou: [], done: [], planned: [] })) };
+  const calls = [];
+  const api = {
+    listTemplates: async () => [],
+    createTemplate: async () => ({ id: 'tpl_1', ref: 'tpl_1@sha256:a', sourceHash: 'h1', semanticHash: 's1' }),
+    saveTemplate: async (id) => { calls.push(['save', id]); throw new Error('process template head changed'); },
+    deleteTemplate: async (id) => { calls.push(['delete', id]); },
+  };
+  const { harness, group } = await mountFocus(t, { sourceOptions: { context: empty }, api });
+  await settle(harness);
+  const infra = () => group('infra-crew');
+  await harness.act(async () => { infra().querySelector('[data-process-new]').click(); });
+  await waitForCondition(harness, () => infra().querySelector('[data-mini-editor="tpl_1"]'), 'the draft opens in place');
+  const title = infra().querySelector('[data-mini-title]');
+  await harness.act(async () => { title.value = 'Night shift'; harness.fireEvent(title, 'change'); });
+  await waitForCondition(harness, () => infra().querySelector('[data-mini-autosave="failed"]'), 'the refused autosave shows');
+  assert.equal(infra().querySelector('[data-mini-autosave]').textContent, 'draft · not saved');
+  const saves = calls.length;
+  await harness.act(async () => { infra().querySelector('[data-mini-drop]').click(); });
+  await waitForCondition(harness, () => !infra().querySelector('[data-mini-editor]'), 'it closes without saving');
+  assert.equal(calls.length, saves, 'closing it sends nothing more, and nothing is deleted');
+});
+
 test('the avatar strip reads each member\'s real status, not just process work', async (t) => {
   const { group, mod } = await mountFocus(t);
   const { memberAvailability } = mod;

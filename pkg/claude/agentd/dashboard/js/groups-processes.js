@@ -520,13 +520,15 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       creating.current = false;
     }
   }
-  // editInline opens a stored template here as a draft (← Back inline).
+  // editInline opens a stored template here (← Back inline): one the library
+  // does not list is the group's draft and saves itself; a listed one keeps
+  // the explicit save, so no half-made version goes live.
   async function editInline(templateId) {
     try {
       const view = await api.getTemplate(templateId);
       setStarting(false);
       const name = view?.template?.name || templateId;
-      setQuick({ mode: 'graph', key: Date.now(), process: { templateId, name, listed: !!view?.listed }, view, stored: view, draft: true });
+      setQuick({ mode: 'graph', key: Date.now(), process: { templateId, name, listed: !!view?.listed }, view, stored: view, draft: !view?.listed });
     } catch (cause) {
       say(`Could not open the process here: ${cause.message}`, true);
     }
