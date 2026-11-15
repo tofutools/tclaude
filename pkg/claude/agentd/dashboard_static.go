@@ -97,7 +97,7 @@ func handleDashboardStatic() http.Handler {
 // dashboardCompressible lists the asset types worth gzipping: text. Images,
 // fonts and the like are already compressed.
 var dashboardCompressible = map[string]bool{
-	".js": true, ".mjs": true, ".css": true, ".svg": true, ".html": true, ".json": true, ".map": true, ".txt": true,
+	".js": true, ".mjs": true, ".css": true, ".svg": true, ".html": true, ".json": true, ".map": true,
 }
 
 // dashboardGzipMinSize skips files too small for gzip to pay for its header.
@@ -114,6 +114,11 @@ var dashboardGzipCache sync.Map // asset path → *dashboardGzipEntry
 // nil when the asset is missing, not text, small, or does not shrink.
 func dashboardGzipped(asset string) []byte {
 	if !dashboardCompressible[path.Ext(asset)] || !fs.ValidPath(asset) {
+		return nil
+	}
+	// Only real files get a cache entry, so requests for made-up paths cannot
+	// grow the cache.
+	if info, err := fs.Stat(dashboardAssetsFS, asset); err != nil || info.IsDir() {
 		return nil
 	}
 	v, _ := dashboardGzipCache.LoadOrStore(asset, &dashboardGzipEntry{})
