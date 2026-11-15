@@ -35,6 +35,8 @@ import { unrestrictedOn } from './node-trust.js';
 import { isPageNode } from './node-api.js';
 import { discardQueuedSpawn, editQueuedSpawn, launchQueuedSpawn, queuedSpawnLabel } from './queued-spawns.js';
 import { modClickText } from './keybindings.js';
+import { claudeAppOffer, openInClaudeApp, pageCanToggleRemote } from './claude-app.js';
+import { shellToast } from './shell-state.js';
 
 import { AgentTaskIndicator } from './taskboard-agent-indicator.js';
 import { onActivateKey } from './table-kit.js';
@@ -769,6 +771,30 @@ function RemoteMenuItem({ member, canRemote }) {
   return html`<${MenuButton} member=${member} act="toggle-remote-control" attrs=${{ 'data-intent': on ? 'off' : 'on' }} regular=${`${glyph} remote: ${on ? 'on' : 'off'}`} wizard=${`${glyph} remote scrying: ${on ? 'on' : 'off'}`} title=${title} />`;
 }
 
+// ClaudeAppMenuItem opens the agent's Remote Access session in the Claude
+// app (claude-app.js): a plain link when its session link is known, else, on
+// this node's own page, "Turn on Remote Access & open". A link is a real
+// <a target=_blank>, so a phone's universal link opens the app.
+function ClaudeAppMenuItem({ member, group, snapshot, canRemote }) {
+  const interactions = useGroupsInteractions();
+  const elsewhere = (group?.fleet_node && !group.fleet_node.local) || (member.fleet_node?.id && !isPageNode(member.fleet_node.id));
+  const offer = claudeAppOffer(member.state, { online: member.online, canRemote, canToggle: pageCanToggleRemote(snapshot) && !elsewhere });
+  if (!offer) return null;
+  const label = member.title || member.conv_id;
+  const title = `Open ${label}'s session in Anthropic's Claude app (Claude Code Remote Access); claude.ai in the browser where the app is not installed`;
+  if (offer.kind === 'open') {
+    return html`<a role="menuitem" class="ui-menu-item" data-act="open-claude-app" href=${offer.url} target="_blank" rel="noopener"
+      title=${title} onClick=${() => interactions.closeMenu(true)}>📱 ${offer.label}</a>`;
+  }
+  return html`<${MenuButton} member=${member} act="open-claude-app" regular=${`📱 ${offer.label}`} title=${title} attrs=${{ onClick: (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    interactions.closeMenu(true);
+    // The tab opens inside this click, before anything is awaited.
+    void openInClaudeApp({ conv: member.agent_id || member.conv_id, label, turnOn: offer.turnOn, notify: shellToast });
+  } }} />`;
+}
+
 function CompactMenuItem({ member, snapshot }) {
   if (!harnessCanCompact(snapshot, member.state?.harness)) return null;
   const label = member.title || member.conv_id;
@@ -942,6 +968,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     ${runsHere && html`<${MakeStewardMenuItem} member=${member} group=${group} snapshot=${snapshot} />`}
     <${NotifyMenuItem} member=${member} />
     <${RemoteMenuItem} member=${member} canRemote=${canRemote} />
+    <${ClaudeAppMenuItem} member=${member} group=${group} snapshot=${snapshot} canRemote=${canRemote} />
     <${FastModeMenuItem} member=${member} />
     <${MenuButton} member=${member} group=${group} selector="label" act="cron-new" attrs=${{ 'data-prefill': prefill }} regular="⏰ schedule…" wizard="⏳ bind ritual…" title=${wizardCopy(`Schedule a recurring nudge for ${label}`, `Bind a recurring ritual for hero ${label}`)} />
     ${member.agent_id && !snapshot?.peer_view && !(group?.fleet_node && !group.fleet_node.local) && !(member.fleet_node?.id && !isPageNode(member.fleet_node.id)) ? html`<${MenuButton} member=${member} group=${group} act="usage-budget" attrs=${{ onClick: (event) => {

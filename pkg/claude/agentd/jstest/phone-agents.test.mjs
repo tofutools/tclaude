@@ -250,7 +250,7 @@ test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ open
   assert.equal(dialog.querySelector('.phone-agent-sheet-meta').textContent, 'webshop · lead · claude · ctx 42%', 'the exact figure in the header');
   assert.equal(c.querySelector('main').inert, true, 'the page behind is inert');
   assert.deepEqual(tiles(), ['Terminal', 'Message', 'Interrupt (off)', 'Copy id'], 'Interrupt only while it is at work');
-  assert.deepEqual(entries(), ['Compact…', 'Restart…', 'Shut down…', 'Rename…', 'Reincarnate…', 'Grant sudo…', 'Copy name', 'Retire…'],
+  assert.deepEqual(entries(), ['Turn on Remote Access & open', 'Compact…', 'Restart…', 'Shut down…', 'Rename…', 'Reincarnate…', 'Grant sudo…', 'Copy name', 'Retire…'],
     'Session, then Agent, then Retire');
   // A greyed Interrupt says why on a tap, and leaves the menu open.
   await tap(menu('Interrupt'));
@@ -579,4 +579,32 @@ test('a link to an agent opens what hides it, glows its row a while, then lets g
   assert.ok(item('old-worker').classList.contains('phone-agent-found'));
   await harness.act(() => t.mock.timers.tick(1));
   assert.equal(c.querySelector('.phone-agent-found'), null, 'and stops after FOUND_MS');
+});
+
+test('menuModel: Open in Claude app with a known link; Turn on Remote Access & open on this node; neither elsewhere', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ menuModel }, model] = await Promise.all([
+    harness.importDashboardModule('js/phone-agent-menu.js'),
+    harness.importDashboardModule('js/phone-agents-model.js'),
+  ]);
+  const group = { group: { name: 'webshop' }, name: 'webshop' };
+  const snapshot = { harnesses: [{ name: 'claude', can_remote_control: true }, { name: 'codex', can_remote_control: false }] };
+  const link = 'https://claude.ai/code/session_abc';
+  const entry = (state, { online = true, snap = snapshot } = {}) => menuModel(
+    model.agentRow({ agent_id: id(8), conv_id: 'c8', title: 'cc', online, state: { status: 'idle', harness: 'claude', ...state } }, 'webshop'), group, snap,
+  ).session?.find((e) => e.key === 'claude-app');
+  assert.deepEqual(
+    { label: entry({ remote_control: true, remote_control_url: link }).label, href: entry({ remote_control: true, remote_control_url: link }).href },
+    { label: 'Open in Claude app ↗', href: link }, 'a known link is a plain link',
+  );
+  assert.equal(entry({ remote_control_url: 'https://evil.example/code/x' })?.href, undefined, 'only the claude.ai/code origin is a link');
+  assert.equal(entry({}).label, 'Turn on Remote Access & open');
+  assert.equal(entry({}).turnOn, true);
+  assert.equal(entry({ remote_control: true }).label, 'Open in Claude app ↗', 'on, link not read yet: fetched on tap');
+  assert.equal(entry({ remote_control: true }).turnOn, false);
+  assert.equal(entry({ harness: 'codex' }), undefined, 'a harness without Remote Access');
+  assert.equal(entry({}, { online: false }), undefined, 'not running');
+  assert.equal(entry({}, { snap: { ...snapshot, peer_view: true } }), undefined, 'a peer page does not switch it on');
+  assert.equal(entry({ remote_control: true, remote_control_url: link }, { snap: { ...snapshot, peer_view: true } }).href, link,
+    'a peer page opens a link the node shared');
 });

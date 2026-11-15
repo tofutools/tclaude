@@ -8,8 +8,9 @@
 //            knows how to stop one: Esc for Claude Code, the app-server's
 //            interrupt for Codex on it; greyed otherwise, and a tap says why)
 //            and Copy id
-//   Session  Compact…, Restart…, Shut down… (left out while it is offline,
-//            with a line saying why)
+//   Session  Open in Claude app ↗ (or Turn on Remote Access & open,
+//            claude-app.js), Compact…, Restart…, Shut down… (left out while
+//            it is offline, with a line saying why)
 //   Agent    Rename…, Reincarnate…, Grant sudo…, Copy name, Open PR #N ›
 //   last     Retire…, in red
 //
@@ -17,7 +18,8 @@
 // where it was. "…" entries go through the desktop's row action handler and
 // its own confirm; Interrupt goes without one (it stops the agent's turn, and
 // the agent carries on from there). Clone, export, snapshot, sandbox,
-// permissions, schedule, fast mode and remote control stay on the desktop.
+// permissions, schedule, fast mode and the remote control switch stay on the
+// desktop.
 // It reads the agent live from the snapshot, so a state change while it is
 // open shows, and an agent that goes away says so.
 
@@ -26,7 +28,8 @@ import { contextFigure } from './context-meter.js';
 import htm from 'htm';
 import { agentGroups, findRow } from './phone-agents-model.js';
 import { StatePill } from './phone-ui.js';
-import { harnessCanCompact } from './helpers.js';
+import { harnessCanCompact, harnessCanRemoteControl } from './helpers.js';
+import { claudeAppOffer, pageCanToggleRemote } from './claude-app.js';
 
 const html = htm.bind(h);
 
@@ -69,7 +72,12 @@ export function menuModel(row, group, snapshot, { here = false, selectText = fal
     { key: 'interrupt', icon: '⏹', label: 'Interrupt', why: interruptWhy(row) },
     { key: 'copy-id', icon: '⧉', label: 'Copy id' },
   ];
+  const app = claudeAppOffer(row.member?.state, {
+    online, canRemote: harnessCanRemoteControl(snapshot, row.harness), canToggle: pageCanToggleRemote(snapshot),
+  });
   const session = online ? [
+    ...(app?.kind === 'open' ? [{ key: 'claude-app', label: app.label, href: app.url }] : []),
+    ...(app?.kind === 'get' ? [{ key: 'claude-app', label: app.label, turnOn: app.turnOn, sub: 'The same session, in the Claude app' }] : []),
     ...(harnessCanCompact(snapshot, row.harness) ? [{ key: 'compact', label: 'Compact…', sub: 'Summarise its context and carry on' }] : []),
     { key: 'restart', label: 'Restart…' },
     { key: 'shutdown', label: 'Shut down…' },
@@ -110,6 +118,7 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
       message: () => actions.message(row),
       interrupt: () => actions.rowAction('interrupt-agent', row),
       'copy-id': () => actions.copy(row.member?.agent_id || row.conv, `${row.name}'s id`),
+      'claude-app': () => actions.openClaudeApp(row, !!model.session?.find((entry) => entry.key === 'claude-app')?.turnOn),
       compact: () => actions.rowAction('compact-agent', row),
       restart: () => actions.rowAction('restart', row),
       shutdown: () => actions.rowAction('dot-toggle', row),

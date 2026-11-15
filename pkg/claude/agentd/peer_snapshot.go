@@ -237,6 +237,23 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 				return nil, nil, err
 			}
 		}
+		// The Remote Access link controls the session as an interactive terminal
+		// does, so a peer that may attach to the group's agents gets it.
+		if status && v != nil && fedPeerAllows(v.peer.InstanceID, g.ID, PermSessionsAttach) {
+			for i := range row.Members {
+				m := &row.Members[i]
+				if !m.Online {
+					continue
+				}
+				if url := rcSessionURLForConv(m.ConvID); url != "" {
+					m.State.RemoteControlURL = url
+					if a, ok := agents[m.AgentID]; ok {
+						a.State.RemoteControlURL = url
+						agents[m.AgentID] = a
+					}
+				}
+			}
+		}
 		for i := range row.Members {
 			if m := &row.Members[i]; slices.Contains(settings[g.Name], PermGroupsMembersManage) || len(agentHeld[m.AgentID]) > 0 {
 				if err := projectPeerMemberSettings(m, descrs[m.AgentID], settings[g.Name], agentHeld[m.AgentID]); err != nil {

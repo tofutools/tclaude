@@ -182,3 +182,37 @@ badge reflects tclaude's tracked, best-known state — the harness offers no
 readback beyond the on-demand `status` probe. The armed state survives
 relaunch: resume, reincarnate, and clone re-arm from the source agent's
 last-known value.
+
+### Opening the session in the Claude app
+
+The agent's menu — the row's ⚙ menu on the desktop, and on a phone the menu
+a touch and hold (or ⋯, or a terminal's ⋯) opens — offers **Open in Claude
+app ↗**: a plain link to the session's `https://claude.ai/code/…` address.
+On a phone with the Claude app installed the link opens the session in the
+app; elsewhere it opens claude.ai in the browser. It is an alternative to
+tclaude's own terminal, not a replacement.
+
+The daemon learns the link by reading the footer pill, on demand only: when
+`status` or a toggle reads the pane. The dashboard snapshot then carries the
+last link read from the agent's live session (it is dropped when Remote
+Access is switched, or a read finds it off), and never logs it. Where the
+dashboard has no link yet, the entry reads:
+
+- **Open in Claude app ↗** while Remote Access is on: the tap reads the pane
+  once for the link, then opens it.
+- **Turn on Remote Access & open** while it is off, on a running Claude Code
+  agent of this node: the tap switches it on, waits up to 10 s for the link,
+  then opens it. A toast says when it did not come up.
+
+The tab is opened inside the tap and pointed at the link when it arrives,
+because a browser opens tabs only from a tap; where the browser blocks it, the
+toast offers a second **Open in Claude app ↗** tap.
+
+The link controls the session for whoever is signed in to its Claude account,
+so it is treated like an interactive terminal. A [federated](federation.md)
+peer gets it, and with it the same Open entry, only for agents in groups where
+it holds `sessions.attach` (or unrestricted trust); watching
+(`sessions.watch`) or reading status is not enough. Operators often use one
+Claude account across their own nodes, so the link opens from any of them;
+claude.ai itself opens it only for that account. A peer's page never switches
+Remote Access on.
