@@ -1,8 +1,9 @@
 // Mail on a phone (js/phone-mail-island.js) in a real browser: the mailbox
 // chips and rows fit the phone, a message opens as a full-screen page whose
-// back button (and the browser's Back) returns to the list, the Agents
-// picker lists agent folders, and Write opens the message dialog as a bottom
-// sheet. Nothing on the way scrolls the page sideways.
+// back button (and the browser's Back) returns to the list, the title's
+// mailbox sheet lists agent folders, and Write opens the phone message sheet
+// with a To field that finds an agent. Nothing on the way scrolls the page
+// sideways.
 //
 //   scripts/sandbox/ui.sh smoke phone-mail
 import { test, expect, devices } from '@playwright/test';
@@ -62,20 +63,26 @@ test('Mail lists, opens, goes back, picks an agent folder and writes', async ({ 
   await expect(page.locator('.phone-mail-reader')).toHaveCount(0);
   await expect(rows.first()).toBeVisible();
 
-  await chips.getByRole('button', { name: /Agents/ }).click();
-  await expect(page.locator('.phone-mail-agents .phone-menu-item').first()).toBeVisible();
-  await expectNoSideScroll(page, 'the agents picker');
-  await chips.getByRole('button', { name: /^Human/ }).click();
+  await page.getByRole('button', { name: /Pick a mailbox/ }).click();
+  const boxes = page.getByRole('dialog', { name: 'Mailboxes' });
+  await expect(boxes.locator('.phone-menu-item .phone-av').first()).toBeVisible();
+  await expectNoSideScroll(page, 'the mailbox sheet');
+  await boxes.locator('.phone-menu-item', { hasText: 'Human' }).click();
+  await expect(boxes).toHaveCount(0);
+  await expect(chips.getByRole('button', { name: /^Human/ })).toHaveAttribute('aria-pressed', 'true');
 
   await page.locator('.phone-mail-write').click();
-  const dialog = page.locator('.modal-overlay.show .ui-dialog');
+  const dialog = page.getByRole('dialog', { name: 'New message' });
   await expect(dialog).toBeVisible();
+  await dialog.getByRole('searchbox', { name: 'To' }).fill('checkout');
+  await dialog.locator('.phone-compose-recipient').first().click();
+  await expect(dialog.locator('.phone-compose-to-picked')).toContainText('checkout');
   const { left, right, width } = await dialog.evaluate((el) => {
     const box = el.getBoundingClientRect();
     return { left: box.left, right: box.right, width: document.documentElement.clientWidth };
   });
-  expect(left, 'the dialog is a full-width sheet').toBeLessThanOrEqual(1);
+  expect(left, 'the sheet is full width').toBeLessThanOrEqual(1);
   expect(right).toBeGreaterThanOrEqual(width - 1);
-  await expectNoSideScroll(page, 'the write dialog');
+  await expectNoSideScroll(page, 'the write sheet');
   expect(errors).toEqual([]);
 });

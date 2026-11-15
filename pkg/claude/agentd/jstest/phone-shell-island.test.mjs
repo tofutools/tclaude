@@ -314,7 +314,7 @@ test('a tab view adds bar actions and a title menu while it is the one on screen
   await tap(harness.getByRole(bar(), 'button', { name: 'Mail Human, Pick a mailbox' }));
   assert.deepEqual(calls, ['read', 'menu']);
   assert.match(bar().querySelector('.phone-bar-title').textContent, /Mail\s*Human ▾/);
-  assert.ok(harness.getByRole(bar(), 'button', { name: 'Search' }), 'the shell keeps its own');
+  assert.equal(bar().querySelector('[aria-label="Search"]'), null, "Mail's 🔍 is its own, searching the open mailbox");
   await harness.act(() => state.setActiveTab('groups'));
   assert.equal(bar().querySelector('[aria-label="Mark all read"]'), null, 'another tab does not show it');
   await tap(navItem('Board'));

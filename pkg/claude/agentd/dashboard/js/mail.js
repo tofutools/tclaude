@@ -209,7 +209,9 @@ const WIPE_BATCH = 5;
 // shared request lifecycle rejects stale responses.
 export const mailState = createMailState({
   mailboxes: [],
-  selected: dashPrefs.getItem(SELECTED_KEY) || HUMAN_ID,
+  // A phone opens Mail on what needs the operator, Human, not on the
+  // mailbox last used (B14); a link naming a folder still opens it.
+  selected: (isPhone ? '' : dashPrefs.getItem(SELECTED_KEY)) || HUMAN_ID,
   boxQuery: dashPrefs.getItem(BOX_FILTER_KEY) || '',
   messageQuery: dashPrefs.getItem('tclaude.dash.filter.messages') || '',
   // Exact human.notify sender constraint used only by Groups-row deep links.
@@ -977,6 +979,13 @@ function togglePageSelection(checked) {
   mailState.touch();
 }
 
+// clearMessageSelection drops every pick, on every page.
+function clearMessageSelection() {
+  if (mail.busy) return;
+  mail.selectedMsgs.clear();
+  mailState.touch();
+}
+
 function paintList() { mailState.touch(); }
 
 // paintListBulkBar drives the select-all checkbox + "delete selected"
@@ -1470,9 +1479,10 @@ async function decideProposal(id, body) {
 
 // Access-request rows are rendered by the Preact island. Details and decision
 // buttons live in the reader pane, matching the Human / All mail split:
-// middle pane for scanning, right pane for the selected item.
+// middle pane for scanning, right pane for the selected item. It resolves
+// true once the decision is recorded, false when it was not (and toasted).
 async function decideAccess(id, decision, extra = {}) {
-  if (!id) return;
+  if (!id) return false;
   try {
     const r = await fetch(`/api/access-requests/${encodeURIComponent(id)}/decision`, {
       method: 'POST',
@@ -1483,7 +1493,7 @@ async function decideAccess(id, decision, extra = {}) {
     if (!r.ok) throw new Error(await r.text());
     if (decision === 'extend') {
       toast(wz('Auto-decline pushed back 5 minutes.', 'The sands turned back five minutes.'));
-      return;
+      return true;
     }
     if (lastSnapshot && Array.isArray(lastSnapshot.access_requests)) {
       const e = lastSnapshot.access_requests.find(x => x.id === id);
@@ -1501,9 +1511,11 @@ async function decideAccess(id, decision, extra = {}) {
       paintList();
       paintReader();
     }
+    return true;
   } catch {
     toast(wz('That request could not be recorded — it may have just been decided or timed out.',
       'The petition slipped away — already judged, or the sands ran out.'), true);
+    return false;
   }
 }
 
@@ -1920,7 +1932,7 @@ export const mailController = Object.freeze({
   toggleGroupExpand, toggleAgentsExpand, listAgents, loadMoreAgents, loadMoreMembers, toggleBoxSelection, clearBoxSelection,
   wipeSelectedMailboxes,
   messageView, messageCountText, counterparty, senderLabel, allRecipientLabel,
-  msgPreview, msgKind, selectMessage, closeMessage, toggleMessageSelection, togglePageSelection,
+  msgPreview, msgKind, selectMessage, closeMessage, toggleMessageSelection, togglePageSelection, clearMessageSelection,
   deleteOneMessage, deleteSelectedMessages, setMessagesRead, markAllAgentRead,
   goToPage, setPageSize, decideAccess, decideProposal, accessWho, accessSubject,
   accessStatusText, accessIsPending, accessOutcome, accessCountdown,

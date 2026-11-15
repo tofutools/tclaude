@@ -53,9 +53,48 @@ function usePrompts(open) {
   return state;
 }
 
+// To is Write's recipient: a field that finds an agent as the operator
+// types, or the one picked, with ✕ to pick again.
+function To({ to, query, busy, recipients, onQuery, onPick, onClear }) {
+  if (to) {
+    return html`<div class="phone-compose-to"><span class="phone-compose-to-label">To</span>
+      <span class="phone-compose-att phone-compose-to-picked"><span class="phone-compose-file">${to.label || to.agent}</span>
+        <button data-ui-exempt type="button" class="phone-compose-unattach" disabled=${busy}
+          aria-label=${`Choose someone other than ${to.label || to.agent}`} onClick=${onClear}>✕</button></span></div>`;
+  }
+  const hits = matchRecipients(recipients(), query);
+  return html`<div class="phone-compose-to">
+    <label class="phone-compose-to-field"><span class="phone-compose-to-label">To</span>
+      <input class="ui-input phone-compose-to-input" data-sheet-focus type="search" autocomplete="off" enterkeyhint="search"
+        placeholder="An agent's name or group" aria-label="To" value=${query} onInput=${(event) => onQuery(event.currentTarget.value)} /></label>
+    ${hits.length ? html`<ul class="phone-menu phone-compose-recipients" aria-label="Agents">${hits.map((r) => html`<li key=${r.agent}>
+      <button data-ui-exempt type="button" class="phone-menu-item phone-compose-recipient" onClick=${() => onPick({ agent: r.agent, label: r.label })}>
+        <span class="phone-compose-file">${r.label}</span>${r.group && html`<small>${r.group}</small>`}${!r.online && html`<small>offline</small>`}
+      </button></li>`)}</ul>`
+      : html`<p class="ui-hint phone-compose-note">No agent matches “${query.trim()}”.</p>`}
+  </div>`;
+}
+
+// RECIPIENTS_SHOWN is how many agents the To field lists for a query.
+export const RECIPIENTS_SHOWN = 6;
+
+// matchRecipients is the agents a To query finds, by name or group, live
+// ones first, at most RECIPIENTS_SHOWN.
+export function matchRecipients(all, query) {
+  const q = String(query || '').trim().toLowerCase();
+  const hits = (all || []).filter((r) => !q || `${r.label} ${r.group || ''}`.toLowerCase().includes(q));
+  return hits.sort((a, b) => Number(!!b.online) - Number(!!a.online)).slice(0, RECIPIENTS_SHOWN);
+}
+
 // ComposeSheet is the sheet's body. send(draft) sends it (sendOperatorMessage's
-// draft); close() closes the sheet without asking.
-export function ComposeSheet({ agent, label = '', node = '', send, close }) {
+// draft); close() closes the sheet without asking. title replaces "Message
+// <name>" (a reply's "Reply to <name>"), hint the line beside Send, and
+// offline, when set, says why nothing can be sent (Send stays off).
+// recipients() lists the agents a To field picks from ({ agent, label,
+// group, online }): Write, which starts with no one.
+export function ComposeSheet({ agent = '', label = '', node = '', title = '', hint = '', offline = '', recipients = null, send, close }) {
+  const [to, setTo] = useState(agent ? { agent, label } : null);
+  const [query, setQuery] = useState('');
   const [body, setBody] = useState('');
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -69,7 +108,8 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
   const textOnly = !!node;
   const dirty = !!body || files.length > 0;
   const prompts = usePrompts(listing);
-  const name = label || 'the agent';
+  const name = to?.label || to?.agent || 'the agent';
+  const picking = !!recipients && !to;
 
   // A close the operator asked for waits for a yes while there is a draft.
   // Asked again while the question is up (Escape, Back), it means Keep.
@@ -107,7 +147,12 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
     setCaret(done.caret);
   };
   const submit = async () => {
-    if (busy) return;
+    if (busy || offline) return;
+    if (!to) {
+      setError('Choose who to send it to.');
+      root.current?.querySelector('.phone-compose-to input')?.focus();
+      return;
+    }
     if (!body.trim() && (textOnly || !files.length)) {
       setError(textOnly ? 'Write a message.' : 'Write a message or attach a file.');
       field.current?.focus();
@@ -116,7 +161,7 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
     setError('');
     setBusy(true);
     try {
-      await send({ to: agent, subject: '', body, files: Object.freeze([...files]), ...(node ? { node } : {}) });
+      await send({ to: to.agent, subject: '', body, files: Object.freeze([...files]), ...(node ? { node } : {}) });
       close();
     } catch (cause) {
       setError(cause?.message || String(cause));
@@ -137,7 +182,7 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
       addFiles(pasted);
     }}>
     <div class="phone-compose-head">
-      <h2 class="phone-compose-title">Message ${name}</h2>
+      <h2 class="phone-compose-title">${title || (recipients ? 'New message' : `Message ${name}`)}</h2>
       ${!textOnly && html`<button data-ui-exempt type="button" class="phone-compose-chip" disabled=${busy || files.length >= MAX_ATTACHMENTS}
         aria-label="Attach files" title="Attach files" onClick=${() => picker.current?.click()}>📎</button>
         <input ref=${picker} type="file" multiple hidden class="phone-compose-files" disabled=${busy}
@@ -153,7 +198,10 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
               <button data-ui-exempt type="button" class="phone-menu-item phone-compose-prompt" title=${prompt.body}
                 onClick=${() => insert(prompt)}>${prompt.label || prompt.name}</button></li>`)}</ul>`}
     </div>`}
-    <textarea ref=${field} data-sheet-focus class="phone-compose-body" rows="5" maxlength=${MESSAGE_MAX_BYTES}
+    ${recipients && html`<${To} to=${to} query=${query} busy=${busy} recipients=${recipients}
+      onQuery=${setQuery} onPick=${(next) => { setTo(next); setQuery(''); setError(''); setCaret(body.length); }}
+      onClear=${() => setTo(null)} />`}
+    <textarea ref=${field} data-sheet-focus=${picking ? undefined : ''} class="phone-compose-body" rows="5" maxlength=${MESSAGE_MAX_BYTES}
       aria-label=${`Message to ${name}`} placeholder="Write a message…" enterkeyhint="enter" spellcheck=${true}
       value=${body} readOnly=${busy} onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${onKeyDown}></textarea>
     ${files.length > 0 && html`<ul class="phone-compose-attachments" aria-label="Attachments">
@@ -174,24 +222,27 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
         </div>`
       : html`<div class="phone-compose-foot">
           <${Button} class="phone-btn phone-compose-cancel" disabled=${busy} onClick=${requestClosePhoneSheet}>Cancel<//>
-          <span class="ui-hint phone-compose-note">${node ? 'text only on another node' : "queued if it's busy"}</span>
-          <${Button} class="phone-btn phone-btn-pri phone-compose-send" disabled=${busy} onClick=${() => void submit()}>${busy ? 'Sending…' : 'Send ➤'}<//>
+          <span class="ui-hint phone-compose-note">${offline || hint || (node ? 'text only on another node' : "queued if it's busy")}</span>
+          <${Button} class="phone-btn phone-btn-pri phone-compose-send" disabled=${busy || !!offline} onClick=${() => void submit()}>${busy ? 'Sending…' : 'Send ➤'}<//>
         </div>`}
   </div>`;
 }
 
 // openPhoneCompose opens the sheet for seed ({ agent, label, node }), the
 // seed every ✉ Message hands onComposeMessage. notify reports a failure to
-// set up; send failures show in the sheet.
+// set up; send failures show in the sheet. The rest are ComposeSheet's:
+// send replaces the mailbox send (a reply), and recipients makes it Write's
+// sheet, which may start with no agent.
 let actions = null;
-export function openPhoneCompose(seed = {}, { notify = () => {}, send = null } = {}) {
-  if (!seed.agent) return;
+export function openPhoneCompose(seed = {}, { notify = () => {}, send = null, title = '', hint = '', offline = '', recipients = null } = {}) {
+  if (!seed.agent && !recipients) return;
   actions ||= createMessageAccessDialogActions({ notify });
+  const name = seed.label || seed.agent;
   openPhoneSheet({
-    label: `Message ${seed.label || seed.agent}`,
+    label: title || (name ? `Message ${name}` : 'New message'),
     Body: ComposeSheet,
     props: {
-      agent: seed.agent, label: seed.label || '', node: seed.node || '',
+      agent: seed.agent || '', label: seed.label || '', node: seed.node || '', title, hint, offline, recipients,
       send: send || ((draft) => actions.sendOperatorMessage(draft)),
     },
   });

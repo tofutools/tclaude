@@ -26,10 +26,19 @@ function controllerFor(view, calls) {
     setBoxQuery: record('setBoxQuery'), setMessageQuery: record('setMessageQuery'),
     setShowRetired: record('setShowRetired'), setShowEmpty: record('setShowEmpty'), setShowPrevGens: record('setShowPrevGens'),
     selectMailbox: record('selectMailbox'), selectMessage: record('selectMessage'), closeMessage: record('closeMessage'),
-    listAgents: record('listAgents'), goToPage: record('goToPage'), decideAccess: record('decideAccess'),
+    listAgents: record('listAgents'), goToPage: record('goToPage'),
+    decideAccess: async (...args) => { calls.push(['decideAccess', ...args]); return view.value.decideFails !== true; },
+    clearMessageSelection: () => { calls.push(['clearMessageSelection']); view.value = { ...view.value, selectedMsgs: new Set() }; },
     renderMailTab: record('renderMailTab'), reloadMail: () => {}, reloadMessagesPage: () => {}, loadMoreAgents: () => {},
-    toggleMessageSelection: () => {}, togglePageSelection: () => {}, deleteOneMessage: () => {},
-    deleteSelectedMessages: () => {}, setMessagesRead: () => {}, markAllAgentRead: () => {}, setPageSize: () => {},
+    toggleMessageSelection: (id, on) => {
+      calls.push(['toggleMessageSelection', id, on]);
+      const next = new Set(view.value.selectedMsgs);
+      if (on) next.add(id); else next.delete(id);
+      view.value = { ...view.value, selectedMsgs: next };
+    },
+    togglePageSelection: (on) => { calls.push(['togglePageSelection', on]); if (!on) view.value = { ...view.value, selectedMsgs: new Set() }; },
+    deleteOneMessage: record('deleteOneMessage'), deleteSelectedMessages: record('deleteSelectedMessages'),
+    setMessagesRead: record('setMessagesRead'), markAllAgentRead: () => {}, setPageSize: () => {},
     consumeAccessHighlight: () => {}, highlightedAccessRequest: () => null,
     mailboxLabel: (mailbox) => mailbox.title || mailbox.id,
     mailboxTitleAttr: (mailbox) => mailbox.title || mailbox.id,
@@ -72,22 +81,26 @@ function viewState(overrides = {}) {
   };
 }
 
-async function setup(t, overrides) {
+async function setup(t, overrides, patch = null) {
   const harness = await createPreactHarness(t);
-  const [island, { phonePage }, { dashboardState }] = await Promise.all([
+  const [island, { phonePage, phoneBar }, { dashboardState }, sheet] = await Promise.all([
     harness.importDashboardModule('js/phone-mail-island.js'),
     harness.importDashboardModule('js/phone-page.js'),
     harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/phone-sheet.js'),
   ]);
+  t.after(() => sheet.closePhoneSheet());
   dashboardState.setActiveTab('messages');
   const view = harness.signals.signal(viewState(overrides));
   const calls = [];
   const controller = controllerFor(view, calls);
-  const mounted = await harness.mount(harness.html`<${island.PhoneMailApp} controller=${controller} />`);
+  patch?.(controller);
+  const mounted = await harness.mount(harness.html`<div><${island.PhoneMailApp} controller=${controller} /><${sheet.PhoneSheetHost} /></div>`);
   const $ = (selector) => mounted.container.querySelector(selector);
   const $$ = (selector) => [...mounted.container.querySelectorAll(selector)];
   const tap = (element) => harness.act(() => element.click());
-  return { harness, island, phonePage, view, calls, controller, $, $$, tap };
+  const dialog = () => mounted.container.querySelector('.phone-sheet[role=dialog]');
+  return { harness, island, phonePage, phoneBar, sheet, dialog, view, calls, controller, $, $$, tap };
 }
 
 test('the row helpers: subject and preview line, inline decisions, plain access requests', async (t) => {
@@ -109,13 +122,15 @@ test('the row helpers: subject and preview line, inline decisions, plain access 
 test('the list shows mailbox chips, rows with previews and files, and answers decisions inline', async (t) => {
   const { $, $$, calls, tap } = await setup(t);
   const chips = $$('.phone-mail-chip').map((chip) => chip.textContent.trim());
-  assert.deepEqual(chips, ['Human 1', 'All agent mail', 'Access 2', 'webshop 3', 'Agents ▾'], 'pinned folders first, then groups');
+  assert.deepEqual(chips, ['Human 1', 'All agent mail', 'Access 2', 'webshop 3'], 'pinned folders first, then groups');
   assert.equal($('.phone-mail-chip.on').getAttribute('aria-pressed'), 'true');
   const rows = $$('.phone-mail-row');
   assert.equal(rows.length, 2);
   assert.ok(rows[0].classList.contains('unread'));
   assert.equal(rows[0].querySelector('.phone-mail-preview').textContent, 'First line 1');
-  assert.match(rows[0].querySelector('.phone-mail-file').textContent, /shot\.png/);
+  assert.match(rows[0].querySelector('.phone-mail-file').textContent, /🖼 shot\.png · 10 B/, 'a file shows its size');
+  assert.equal(rows[0].querySelector('.phone-av').textContent, 'A', 'the sender\'s avatar');
+  assert.equal(rows[0].querySelector('.phone-mail-group'), null);
   assert.ok(rows[1].querySelector('.phone-mail-inline'), 'a pending decision answers on its row');
   assert.equal(rows[0].querySelector('.phone-mail-inline'), null);
 
@@ -127,18 +142,36 @@ test('the list shows mailbox chips, rows with previews and files, and answers de
   assert.deepEqual(calls.at(-1), ['selectMessage', 1, { navigate: true }]);
 });
 
-test('Agents ▾ lists agent folders only while it is open', async (t) => {
-  const { $, $$, calls, tap } = await setup(t);
-  assert.deepEqual(calls.filter(([name]) => name === 'listAgents'), [['listAgents', false]]);
-  await tap($$('.phone-mail-chip').at(-1));
+test('the title names the mailbox; its ▾ lists every mailbox, agent folders only while open', async (t) => {
+  const { $, $$, calls, tap, phoneBar, dialog, harness } = await setup(t);
+  assert.equal(phoneBar.value.tab, 'messages');
+  assert.equal(phoneBar.value.menu.sub, 'Human');
+  assert.deepEqual(phoneBar.value.actions.map((a) => a.icon), ['✓✓', '🔍']);
+  assert.equal(calls.filter(([name]) => name === 'listAgents').length, 0, 'no agent roster for the list');
+  await harness.act(() => phoneBar.value.menu.onClick());
+  assert.equal(dialog().getAttribute('aria-label'), 'Mailboxes');
   assert.deepEqual(calls.filter(([name]) => name === 'listAgents').at(-1), ['listAgents', true]);
-  assert.equal($('.phone-mail-list'), null, 'the picker replaces the list');
-  const beta = $$('.phone-mail-agents .phone-menu-item')[0];
-  assert.match(beta.textContent, /Beta\s*4/);
-  await tap(beta);
+  const items = [...dialog().querySelectorAll('.phone-menu-item')].map((b) => b.textContent.replace(/\s+/g, ''));
+  assert.deepEqual(items, ['🔔Human1', '✉Allagentmail', '🔑Access2', '#webshop3', 'BBeta4']);
+  await tap([...dialog().querySelectorAll('.phone-menu-item')].at(-1));
   assert.ok(calls.some(([name, id]) => name === 'selectMailbox' && id === 'agt_beta'));
+  assert.equal(dialog(), null, 'picking one closes the sheet');
   assert.deepEqual(calls.filter(([name]) => name === 'listAgents').at(-1), ['listAgents', false]);
-  assert.ok($('.phone-mail-list'), 'picking a folder returns to the list');
+  assert.ok($('.phone-mail-list'));
+  assert.equal($$('.phone-mail-chip').length, 4);
+});
+
+test('🔍 opens a search over the mailbox; a kept search shows it open', async (t) => {
+  const { $, calls, harness, phoneBar } = await setup(t);
+  assert.equal($('.phone-mail-search'), null, 'no search field until asked');
+  await harness.act(() => phoneBar.value.actions[1].onClick());
+  await harness.input($('.phone-mail-search'), 'deploy');
+  assert.deepEqual(calls.at(-1), ['setMessageQuery', 'deploy']);
+});
+
+test('a search the controller kept shows its field open', async (t) => {
+  const { $ } = await setup(t, { messageQuery: 'deploy' });
+  assert.equal($('.phone-mail-search').value, 'deploy', 'a kept search is not hidden');
 });
 
 test('an open message is a full-screen page with a back button and a reply bar', async (t) => {
@@ -146,8 +179,16 @@ test('an open message is a full-screen page with a back button and a reply bar',
   assert.ok($('.phone-mail-reader'), 'the reader replaces the list');
   assert.equal($('.phone-mail-list'), null);
   assert.equal(phonePage.value?.hideNav, true, 'the page owns the bottom edge');
-  assert.equal(phonePage.value.actions[0].icon, 'Terminal ›');
+  assert.deepEqual(phonePage.value.actions.map((a) => a.icon), ['⌖', '✉', '🗑']);
+  assert.equal($('.mail-headers'), null, 'no desktop header table');
+  assert.equal($('.phone-mail-title').textContent, 'Subject 1');
+  assert.equal($('.phone-mail-sender-name').textContent, 'Alpha');
+  assert.match($('.phone-mail-sender-line').textContent, /^to you/);
+  assert.match($('.phone-mail-terminal').textContent, /Terminal ›/);
+  assert.match($('.phone-mail-caption').textContent, /shot\.png · 10 B · ↓ save/);
   assert.match($('.phone-mail-reply').textContent, /Reply to Alpha/);
+  await harness.act(() => phonePage.value.actions[2].onClick());
+  assert.deepEqual(calls.at(-1), ['deleteOneMessage', 1]);
 
   // Reached without a tap on the list (a deep link), back closes in place.
   await harness.act(() => phonePage.value.onBack());
@@ -162,7 +203,7 @@ test('an open message is a full-screen page with a back button and a reply bar',
 test('an agent filter narrows the agent picker, never the folder chips', async (t) => {
   const { $$ } = await setup(t, { boxQuery: 'bet' });
   assert.deepEqual($$('.phone-mail-chip').map((chip) => chip.textContent.trim()),
-    ['Human 1', 'All agent mail', 'Access 2', 'webshop 3', 'Agents ▾']);
+    ['Human 1', 'All agent mail', 'Access 2', 'webshop 3']);
 });
 
 test('back goes through history only for the reader the list just pushed', async (t) => {
@@ -229,4 +270,139 @@ test('a peer operator\'s reply dialog has its host on a phone too', async (t) =>
     detail: { kind: 'operator', peer: 'inst_abcd', subject: 'Re: hi' },
   })));
   assert.ok(harness.document.querySelector('#peer-mail-subject'), 'the peer mail dialog opens');
+});
+
+// pointer drives a row's gestures: a press at x, moves, and a lift.
+function pointer(harness, element) {
+  const fire = (type, x, y = 10) => {
+    const event = new harness.window.Event(type, { bubbles: true });
+    Object.defineProperty(event, 'clientX', { value: x });
+    Object.defineProperty(event, 'clientY', { value: y });
+    Object.defineProperty(event, 'button', { value: 0 });
+    element.dispatchEvent(event);
+  };
+  return {
+    swipe: (to) => harness.act(() => { fire('pointerdown', 200); fire('pointermove', 200 + to / 2); fire('pointermove', 200 + to); fire('pointerup', 200 + to); }),
+    down: () => harness.act(() => fire('pointerdown', 200)),
+    up: () => harness.act(() => fire('pointerup', 200)),
+  };
+}
+
+test('a swipe right marks agent mail read, a swipe left deletes it; a short drag does nothing', async (t) => {
+  const { harness, $$, calls } = await setup(t, { selected: 'agt_beta' });
+  const row = $$('.phone-mail-row')[0];
+  await pointer(harness, row).swipe(40);
+  assert.equal(calls.filter(([n]) => n === 'setMessagesRead').length, 0);
+  await pointer(harness, row).swipe(120);
+  assert.deepEqual(calls.at(-1), ['setMessagesRead', [1], true]);
+  await pointer(harness, row).swipe(-120);
+  assert.deepEqual(calls.at(-1), ['deleteOneMessage', 1]);
+  assert.ok(!calls.some(([n]) => n === 'selectMessage'), 'a swipe does not open the message');
+});
+
+test('a long press starts selecting; taps then pick rows, and the bar acts on them', async (t) => {
+  const { harness, $, $$, calls, tap } = await setup(t, { selected: 'agt_beta' });
+  const row = $$('.phone-mail-row')[0];
+  const press = pointer(harness, row);
+  await press.down();
+  // The hold fires on its own timer: wait for it, a bounded number of turns.
+  const deadline = Date.now() + 3000;
+  while (!calls.some(([n]) => n === 'toggleMessageSelection') && Date.now() < deadline) {
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 25)));
+  }
+  await press.up();
+  assert.deepEqual(calls.find(([n]) => n === 'toggleMessageSelection'), ['toggleMessageSelection', 1, true]);
+  assert.match($('.phone-mail-selected').textContent, /1 selected/);
+  assert.equal($('.phone-mail-chips'), null, 'the selection bar takes the chips\' place');
+  await tap($$('.phone-mail-open')[1]);
+  assert.deepEqual(calls.at(-1), ['toggleMessageSelection', 2, true], 'a tap picks, it does not open');
+  await tap([...$('.phone-mail-selectbar').querySelectorAll('button')].find((b) => /Delete/.test(b.textContent)));
+  assert.deepEqual(calls.at(-1), ['deleteSelectedMessages']);
+  await tap($('.phone-mail-selectbar [aria-label="Stop selecting"]'));
+  assert.deepEqual(calls.at(-1), ['clearMessageSelection'], 'every page\'s picks, not just this one\'s');
+  assert.equal($('.phone-mail-selectbar'), null);
+});
+
+test('✎ Write opens the message sheet with a To field over this node\'s agents', async (t) => {
+  const { $, tap, dialog, harness } = await setup(t);
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  dashboardState.beginRequest();
+  dashboardState.commitRequest(1, { groups: [{ name: 'webshop', members: [
+    { agent_id: 'agt_00000000000000000000000000000001', conv_id: 'c1', title: 'lead', online: true },
+    { agent_id: 'agt_00000000000000000000000000000002', conv_id: 'c2', title: 'checkout-ui', online: false },
+  ] }] });
+  await tap($('.phone-mail-write'));
+  assert.equal(dialog().getAttribute('aria-label'), 'New message');
+  const to = dialog().querySelector('.phone-compose-to-input');
+  assert.equal(harness.document.activeElement, to, 'To takes focus');
+  await harness.input(to, 'check');
+  const hits = [...dialog().querySelectorAll('.phone-compose-recipient')].map((b) => b.textContent);
+  assert.deepEqual(hits, ['checkout-uiwebshopoffline']);
+  await tap(dialog().querySelector('.phone-compose-recipient'));
+  assert.match(dialog().querySelector('.phone-compose-to-picked').textContent, /checkout-ui/);
+});
+
+test('Reply opens the message sheet as a reply to the sender', async (t) => {
+  const { $, tap, dialog } = await setup(t, { selectedMsgId: 1 });
+  await tap($('.phone-mail-send'));
+  assert.equal(dialog().getAttribute('aria-label'), 'Reply to Alpha');
+  assert.equal(dialog().querySelector('.phone-compose-title').textContent, 'Reply to Alpha');
+});
+
+test('a plain access request is its approval card, answered through the controller', async (t) => {
+  const request = { id: 'ar_1', perm: 'git.push', conv_title: 'checkout-ui', body: 'push PR #1', path: '/api/git/push',
+    created_at: '2026-07-12T00:00:00Z', auto_grantable: true };
+  const access = (controller) => {
+    controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [] });
+  };
+  const { $, calls, tap } = await setup(t, { selected: 'access-requests' }, access);
+  const card = $('.phone-mail-card .phone-box-key');
+  assert.ok(card, 'the approval card');
+  const labels = [...card.querySelectorAll('.phone-btns button')].map((b) => b.textContent.trim());
+  assert.deepEqual(labels, ['Deny', '+5 min', 'Approve'], 'Deny, as on Now (B15)');
+  await tap(card.querySelectorAll('.phone-btns button')[0]);
+  assert.deepEqual(calls.find(([n]) => n === 'decideAccess'), ['decideAccess', 'ar_1', 'deny']);
+});
+
+test('a decision Mail could not record frees the card\'s buttons again', async (t) => {
+  const request = { id: 'ar_1', perm: 'git.push', conv_title: 'checkout-ui', created_at: '2026-07-12T00:00:00Z' };
+  const access = (controller) => {
+    controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [] });
+  };
+  const { $, tap, harness } = await setup(t, { selected: 'access-requests', decideFails: true }, access);
+  const approve = () => [...$('.phone-mail-card .phone-btns').querySelectorAll('button')].at(-1);
+  await tap(approve());
+  await harness.act(async () => {});
+  assert.equal(approve().textContent.trim(), 'Approve', 'not stuck on Approving…');
+  assert.equal(approve().disabled, false);
+});
+
+test('a plain access request\'s reader stacks what it asks for, with Always allow', async (t) => {
+  const request = { id: 'ar_1', perm: 'git.push', conv_title: 'checkout-ui', body: 'push PR #1', path: '/api/git/push',
+    created_at: '2026-07-12T00:00:00Z', auto_grantable: true };
+  const access = (controller) => {
+    controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [] });
+  };
+  const reader = await setup(t, { selected: 'access-requests', selectedMsgId: 'ar_1' }, access);
+  assert.equal(reader.$('.mail-headers'), null, 'not the desktop table');
+  assert.deepEqual(reader.$$('.phone-mail-facts dt').map((dt) => dt.textContent), ['Permission', 'Endpoint', 'Body']);
+  assert.match(reader.$('.phone-mail-always').textContent, /Always allow/);
+});
+
+test('the viewer is a step of its own: Back closes it and leaves the reader (B4)', async (t) => {
+  const { harness, $, phonePage } = await setup(t, { selectedMsgId: 1, messages: [
+    message(1, { attachment: { filename: 'shot.png', content_type: 'image/png', size_bytes: 2048, previewable: true } }),
+  ] });
+  const routes = await harness.importDashboardModule('js/overlay-routes.js');
+  const announced = [];
+  harness.document.addEventListener(routes.OVERLAY_EVENT, (event) => announced.push(event.detail));
+  assert.match($('.phone-mail-zoom').textContent, /tap to zoom/);
+  await harness.act(() => $('.phone-mail-preview-img').click());
+  assert.equal(routes.overlayParams().file, '0');
+  assert.deepEqual(announced, [{ closed: false, replace: false }], 'opening is a history step');
+  assert.ok(harness.document.querySelector('[role="dialog"]'), 'the viewer is open');
+  await harness.act(() => routes.restoreOverlays({}));
+  assert.equal(routes.overlayParams().file, '');
+  assert.ok($('.phone-mail-reader'), 'Back leaves the reader');
+  assert.ok(phonePage.value);
 });
