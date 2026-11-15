@@ -486,6 +486,15 @@ func seedDocAgent(t *testing.T, f *testharness.Flow, groupID int64, group string
 		launch = docHome + "/git/webshop-" + a.startBranch
 	}
 	f.HaveAliveSessionOnBranch(a.conv, label, tmux, launch, a.startBranch)
+	// The title goes into the transcript too, as a /rename would put it: a
+	// freshness read that rescans the .jsonl (the Retire dialog's worktree
+	// probe does) would otherwise put back the sim's "session <conv>" summary,
+	// and the sandbox's agents would lose their names partway through a run.
+	if cc := f.World.CCs.GetByLabel(label); cc != nil {
+		if err := cc.WriteCustomTitle(a.title); err != nil {
+			t.Fatalf("transcript title %s: %v", a.title, err)
+		}
+	}
 	// Title the conversation without clobbering the branch the .jsonl scan
 	// just indexed (HaveConvWithTitle upserts a bare row).
 	conv := agent.FreshConvRowResolved(a.conv)

@@ -733,7 +733,10 @@ export async function handleRowAction(action) {
           toast(`interrupt ${label} failed: ${body.error || text}`, true);
           return;
         }
-        toast(`Interrupted ${label}`);
+        // A Claude Code agent is stopped by Esc in its pane (via: escape).
+        let done = {};
+        try { done = await r.json(); } catch (_) { /* no body */ }
+        toast(done.via === 'escape' ? `Sent Esc to ${label}` : `Interrupted ${label}`);
         refresh();
         return;
       }

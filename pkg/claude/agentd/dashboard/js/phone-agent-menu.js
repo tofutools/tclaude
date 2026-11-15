@@ -4,9 +4,10 @@
 //
 //   quick    four tiles: Terminal (Power on when it is offline; Select text
 //            from its own terminal's ⋯, phone-terminal-text.js), Message,
-//            Interrupt (only while it is at work, and only a Codex agent on
-//            the app-server drive, the one turn the daemon can interrupt) and
-//            Copy id
+//            Interrupt (only while it is in a turn, and only where the daemon
+//            knows how to stop one: Esc for Claude Code, the app-server's
+//            interrupt for Codex on it; greyed otherwise, and a tap says why)
+//            and Copy id
 //   Session  Compact…, Restart…, Shut down… (left out while it is offline,
 //            with a line saying why)
 //   Agent    Rename…, Reincarnate…, Grant sudo…, Copy name, Open PR #N ›
@@ -29,13 +30,26 @@ import { harnessCanCompact } from './helpers.js';
 
 const html = htm.bind(h);
 
-// BUSY are the states Interrupt can stop: the agent is in a turn.
-const BUSY = new Set(['working']);
+// CLAUDE_BUSY are the statuses in which Esc stops a Claude Code agent's turn,
+// the ones the daemon accepts (agent_slash.go claudeInterruptible): at work,
+// or asking for approval or input mid-turn.
+const CLAUDE_BUSY = new Set(['working', 'awaiting_permission', 'awaiting_input']);
 
-// interruptible: the daemon interrupts a turn only for a Codex agent on the
-// app-server drive (agent_slash.go runCodexInterrupt); any other agent's
-// tile stays greyed, as it does while the agent is not at work.
-const interruptible = (row) => row.online && BUSY.has(row.variant) && !!row.member?.state?.codex_app_server;
+// interruptWhy is '' when Interrupt can stop the row's turn, else why not. A
+// Codex agent on the app-server drive is interrupted through its API while it
+// works (runCodexInterrupt); a Claude Code agent gets Esc in its pane, from
+// this node's own dashboard only (runClaudeInterrupt). Other harnesses wait
+// until their interrupt key is verified.
+export function interruptWhy(row) {
+  if (!row.online) return 'Interrupt: it is not running.';
+  const status = row.member?.state?.status || '';
+  if (row.member?.state?.codex_app_server) {
+    return row.variant === 'working' ? '' : 'Interrupt works only while it is at work.';
+  }
+  if (row.harness && row.harness !== 'claude') return `Interrupt is not available for ${row.harness} yet.`;
+  if (globalThis.__tclaudeRemoteNode?.id) return 'Interrupt is not available from a peer\'s page yet.';
+  return CLAUDE_BUSY.has(status) ? '' : 'Interrupt works only while it is working or asking.';
+}
 
 // menuModel is what the menu offers for a row in its group, as plain data:
 // { quick: [...], session: [...] | null, agent: [...], retire, note }. Each
@@ -51,7 +65,8 @@ export function menuModel(row, group, snapshot, { here = false, selectText = fal
         ? { key: 'terminal', icon: '⌨', label: 'Terminal', disabled: here, sub: here ? 'open' : '' }
       : { key: 'power', icon: '⏻', label: row.waking ? 'Waking…' : 'Power on', disabled: row.waking },
     { key: 'message', icon: '✉', label: 'Message' },
-    { key: 'interrupt', icon: '⏹', label: 'Interrupt', disabled: !interruptible(row) },
+    // Greyed but tappable (aria-disabled), so a tap can say why.
+    { key: 'interrupt', icon: '⏹', label: 'Interrupt', why: interruptWhy(row) },
     { key: 'copy-id', icon: '⧉', label: 'Copy id' },
   ];
   const session = online ? [
@@ -82,6 +97,11 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
   const { row, group } = found;
   const model = menuModel(row, group, snapshot, { here, selectText: !!selectText });
   const run = (key) => () => {
+    const tile = model.quick.find((q) => q.key === key);
+    if (tile?.why) {
+      actions.explain?.(tile.why);
+      return;
+    }
     close();
     const go = {
       terminal: () => actions.openTerminal(row),
@@ -116,7 +136,7 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
     ${row.cwd && html`<p class="phone-agent-sheet-meta phone-agent-cwd">${row.cwd}</p>`}
     <div class="phone-agent-quick" role="group" aria-label="Quick actions">
       ${model.quick.map((tile) => html`<button data-ui-exempt type="button" key=${tile.key} class="ui-card ui-inset phone-agent-tile" data-act=${tile.key}
-        disabled=${!!tile.disabled} onClick=${run(tile.key)}>
+        disabled=${!!tile.disabled} aria-disabled=${tile.why ? 'true' : null} title=${tile.why || null} onClick=${run(tile.key)}>
         <span class="phone-agent-tile-icon" aria-hidden="true">${tile.icon}</span><span>${tile.label}</span></button>`)}
     </div>
     ${model.session && html`<h3 class="ui-eyebrow phone-agent-menu-head">Session</h3>

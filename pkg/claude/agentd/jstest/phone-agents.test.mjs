@@ -131,6 +131,7 @@ async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () =>
     openTerminal: record('openTerminal'), message: record('message'), rename: record('rename'), spawn: record('spawn'),
     rowAction: (act, row) => calls.push(['rowAction', act, row.name]),
     grant: record('grant'), copy: (text, what) => calls.push(['copy', text, what]),
+    explain: (text) => calls.push(['explain', text]),
   };
   const mounted = await harness.mount(harness.html`<main><${island.PhoneAgents} state=${state} order=${(g) => g} actions=${actions} fetchImpl=${fetchImpl} prefs=${prefs} /></main>
     <${sheet.PhoneSheetHost} />`);
@@ -143,7 +144,7 @@ async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () =>
   const label = (b) => (b.querySelector('.phone-agent-menu-text > span, .phone-menu-label') || b).textContent;
   const entries = () => [...c.querySelectorAll('.phone-sheet .phone-menu-item')].map(label);
   const tileLabel = (b) => b.querySelector('span:last-child').textContent;
-  const tiles = () => [...c.querySelectorAll('.phone-sheet .phone-agent-tile')].map((b) => `${tileLabel(b)}${b.disabled ? ' (off)' : ''}`);
+  const tiles = () => [...c.querySelectorAll('.phone-sheet .phone-agent-tile')].map((b) => `${tileLabel(b)}${b.disabled || b.getAttribute('aria-disabled') === 'true' ? ' (off)' : ''}`);
   const menu = (text) => [...c.querySelectorAll('.phone-sheet .phone-menu-item')].find((b) => label(b) === text)
     || [...c.querySelectorAll('.phone-sheet .phone-agent-tile')].find((b) => tileLabel(b) === text);
   const chip = (label) => [...c.querySelectorAll('.phone-agents-chips button')].find((b) => b.firstChild.textContent.trim() === label);
@@ -251,6 +252,10 @@ test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ open
   assert.deepEqual(tiles(), ['Terminal', 'Message', 'Interrupt (off)', 'Copy id'], 'Interrupt only while it is at work');
   assert.deepEqual(entries(), ['Compact…', 'Restart…', 'Shut down…', 'Rename…', 'Reincarnate…', 'Grant sudo…', 'Copy name', 'Retire…'],
     'Session, then Agent, then Retire');
+  // A greyed Interrupt says why on a tap, and leaves the menu open.
+  await tap(menu('Interrupt'));
+  assert.deepEqual(calls.at(-1), ['explain', 'Interrupt works only while it is working or asking.']);
+  assert.ok(c.querySelector('.phone-sheet[role=dialog]'), 'the menu stays open');
   assert.ok(dialog.querySelector('.phone-menu-danger').textContent.startsWith('Retire…'));
   await tap(menu('Restart…'));
   assert.deepEqual(calls.at(-1), ['rowAction', 'restart', 'lead']);
@@ -505,10 +510,28 @@ test('menuModel: Interrupt only while at work, Compact where the harness can, Op
   const working = model.agentRow({ agent_id: id(7), conv_id: 'c7', title: 'w', online: true, state: { status: 'working', harness: 'codex', codex_app_server: true },
     branch_pr_number: 12, branch_pr_url: 'https://example.test/pr/12' }, 'webshop');
   const m = menuModel(working, group, snapshot);
-  assert.equal(m.quick.find((q) => q.key === 'interrupt').disabled, false, 'a Codex turn on the app-server drive');
-  const claude = model.agentRow({ ...working.member, state: { status: 'working', harness: 'claude' } }, 'webshop');
-  assert.equal(menuModel(claude, group, snapshot).quick.find((q) => q.key === 'interrupt').disabled, true,
-    'the daemon interrupts no other turn, so its tile is greyed as an idle one is');
+  const why = (state, online = true) => menuModel(model.agentRow({ ...working.member, online, state }, 'webshop'), group, snapshot)
+    .quick.find((q) => q.key === 'interrupt').why;
+  assert.equal(m.quick.find((q) => q.key === 'interrupt').why, '', 'a Codex turn on the app-server drive');
+  assert.match(why({ status: 'awaiting_input', harness: 'codex', codex_app_server: true }), /only while it is at work/);
+  // Claude Code: Esc, while it is in a turn (working or asking).
+  for (const status of ['working', 'awaiting_permission', 'awaiting_input']) {
+    assert.equal(why({ status, harness: 'claude' }), '', `claude ${status}`);
+    assert.equal(why({ status }), '', `no harness recorded is Claude Code: ${status}`);
+  }
+  for (const status of ['idle', 'main_agent_idle', 'error', '']) {
+    assert.match(why({ status, harness: 'claude' }), /only while it is working or asking/, `claude ${status || 'blank'}`);
+  }
+  assert.match(why({ status: 'working', harness: 'claude' }, false), /not running/);
+  // Harnesses whose interrupt key is not verified stay greyed.
+  for (const name of ['codex', 'opencode', 'gemini', 'copilot', 'pi']) {
+    assert.equal(why({ status: 'working', harness: name }), `Interrupt is not available for ${name} yet.`);
+  }
+  // A peer's page: the daemon presses Esc for its own operator only.
+  globalThis.__tclaudeRemoteNode = { id: 'peer-1' };
+  try {
+    assert.match(why({ status: 'working', harness: 'claude' }), /peer/);
+  } finally { delete globalThis.__tclaudeRemoteNode; }
   assert.deepEqual(m.agent.find((e) => e.key === 'pr'), { key: 'pr', label: 'Open PR #12 ›', href: 'https://example.test/pr/12' });
   const external = model.agentRow({ ...working.member, external_steward: true }, 'webshop');
   assert.equal(menuModel(external, group, snapshot).agent.some((e) => e.key === 'reincarnate'), false, 'an external Steward does not reincarnate here');

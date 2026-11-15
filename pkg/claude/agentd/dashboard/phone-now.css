@@ -27,6 +27,7 @@
 :root[data-layout="phone"] button.phone-card-text { min-height: var(--phone-tap); cursor: pointer; }
 :root[data-layout="phone"] .phone-who { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 :root[data-layout="phone"] .phone-who-name { font-weight: 600; color: var(--ui-text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] .phone-row-text .phone-who-name { min-width: 0; max-width: 100%; }
 :root[data-layout="phone"] .phone-who-sub { flex: none; color: var(--ui-muted-text); font-size: 13px; }
 :root[data-layout="phone"] .phone-card-line {
   margin-top: 2px; color: var(--ui-muted-text); font-size: 13px;

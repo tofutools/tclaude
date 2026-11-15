@@ -2,10 +2,13 @@
 // js/phone-agent-menu.js), in a real browser on the sandbox's data: a hold on
 // a Now row opens it without opening the terminal too, it scrolls to Retire on
 // an iPhone SE with the desktop's confirm behind it, and Grant sudo… lands on
-// that agent's Grant page.
+// that agent's Grant page. Interrupt on a working Claude Code agent sends Esc
+// to its pane; on an idle one the greyed tile says why and sends nothing.
 //
 //   scripts/sandbox/ui.sh smoke phone-agent-menu
 import { test, expect, devices } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 const { defaultBrowserType: _ignored, ...IPHONE } = devices['iPhone 13'];
 test.use(IPHONE);
@@ -81,4 +84,44 @@ test('Grant sudo… from a terminal\'s ⋯ closes the terminal and shows the Gra
   await page.locator('.phone-sheet[role=dialog]').getByRole('button', { name: 'Grant sudo…' }).click();
   await expect(term).toBeHidden();
   await expect(page.locator('.phone-bar-title')).toHaveText(`Grant to ${name}`);
+});
+
+// escSent counts the server's log lines for an Esc sent to conv's pane
+// (agent_slash.go runClaudeInterrupt): the simulated tmux has no screen to
+// show a key on, so the daemon's own record of the send-keys is the proof.
+const serverLog = process.env.SANDBOX_FIXTURE_JSON ? join(dirname(process.env.SANDBOX_FIXTURE_JSON), 'server.log') : '';
+const escSent = (conv = '') => readFileSync(serverLog, 'utf8').split('\n')
+  .filter((line) => line.includes('interrupt: Esc sent to a Claude Code pane') && line.includes(conv)).length;
+
+test('Interrupt sends Esc to a working Claude Code agent, and says why it cannot for an idle one', async ({ page }) => {
+  test.skip(!serverLog, 'needs ui.sh smoke (SANDBOX_FIXTURE_JSON)');
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(`page error: ${error.message}`));
+  await page.goto('/groups');
+  await booted(page);
+  const sheet = page.locator('.phone-sheet[role=dialog]');
+  const interrupt = sheet.locator('.phone-agent-tile[data-act="interrupt"]');
+
+  // checkout-ui is a Claude Code agent at work (the docs fleet).
+  const busy = 'd0c00000-0000-4000-8000-000000000002';
+  const before = escSent(busy);
+  await page.getByRole('button', { name: 'checkout-ui: more' }).first().click();
+  await expect(sheet).toHaveAttribute('aria-label', 'checkout-ui');
+  await expect(interrupt).not.toHaveAttribute('aria-disabled', 'true');
+  await interrupt.click();
+  await expect(sheet).toBeHidden();
+  await expect(page.getByText('Sent Esc to checkout-ui')).toBeVisible();
+  await expect.poll(() => escSent(busy), { message: 'one Esc reached its pane' }).toBe(before + 1);
+
+  // steward is a Claude Code agent between turns: greyed, a tap explains, no key.
+  const total = escSent();
+  await page.getByRole('button', { name: 'steward: more' }).first().click();
+  await expect(sheet).toHaveAttribute('aria-label', 'steward');
+  await expect(interrupt).toHaveAttribute('aria-disabled', 'true');
+  // A finger still taps it (Playwright would wait for aria-disabled to go).
+  await interrupt.click({ force: true });
+  await expect(page.getByText('Interrupt works only while it is working or asking.')).toBeVisible();
+  await expect(sheet, 'the menu stays open').toBeVisible();
+  expect(escSent(), 'no Esc for an agent between turns').toBe(total);
+  expect(errors).toEqual([]);
 });

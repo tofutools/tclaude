@@ -119,6 +119,9 @@
 }
 /* Now's rows carry a ⋯ for the same menu. */
 :root[data-layout="phone"] .phone-now-agent { display: flex; align-items: center; gap: 2px; }
+/* The row gives way to its ⋯: a long unbroken name ("session <uuid>") ellipsizes
+   instead of pushing ⋯ off the screen. */
+:root[data-layout="phone"] .phone-now-agent > .phone-row { flex: 1; min-width: 0; }
 :root[data-layout="phone"] .phone-now-more { flex: none; color: var(--ui-muted-text); }
 
 /* An agent's menu (js/phone-agent-menu.js): four quick tiles, then the
@@ -129,7 +132,8 @@
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 64px; padding: 6px 2px;
   border-radius: var(--phone-r); color: var(--ui-text); font: inherit; font-size: 12.5px; cursor: pointer;
 }
-:root[data-layout="phone"] .phone-agent-tile:disabled { opacity: .4; cursor: default; }
+:root[data-layout="phone"] .phone-agent-tile:disabled,
+:root[data-layout="phone"] .phone-agent-tile[aria-disabled="true"] { opacity: .4; cursor: default; }
 :root[data-layout="phone"] .phone-agent-tile-icon { font-size: 20px; line-height: 1; }
 :root[data-layout="phone"] .phone-agent-menu-head { margin: 14px 4px 4px; }
 :root[data-layout="phone"] .phone-agent-menu-item { min-height: 52px; text-decoration: none; }

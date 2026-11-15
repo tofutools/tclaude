@@ -2,12 +2,16 @@ package agentd
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // handleWhoamiRename injects `/rename <title>` into the caller's own CC
@@ -211,6 +215,61 @@ func handleAgentInterrupt(w http.ResponseWriter, r *http.Request, targetConv str
 		return
 	}
 	runCodexInterrupt(w, targetConv, caller)
+}
+
+// claudeInterruptKey is Claude Code's interrupt: Esc stops its turn, or
+// dismisses the prompt it waits on, as the operator's Esc in its terminal
+// does. A tmux key name fixed at compile time, never anything a request
+// carries; paneinput lets it through even while the pane awaits a human.
+const claudeInterruptKey = "Escape"
+
+// claudeInterruptible are the states a Claude Code turn is interrupted in:
+// at work, or asking (a permission prompt or a question). Esc on an idle
+// prompt would only clear a half-typed line, so it is refused there.
+var claudeInterruptible = map[string]bool{
+	session.StatusWorking:            true,
+	session.StatusAwaitingPermission: true,
+	session.StatusAwaitingInput:      true,
+}
+
+// claudeInterruptMu serializes runClaudeInterrupt's check, send and mark, so
+// two quick taps cannot both see the agent at work and press Esc twice: the
+// second would land on an idle prompt (clearing a typed line, or opening the
+// rewind menu as a double Esc).
+var claudeInterruptMu sync.Mutex
+
+// runClaudeInterrupt sends a busy Claude Code agent's pane its interrupt key
+// (dashboardInterruptAgent: the operator's dashboard only), once, under the
+// pane's injection lock. Claude Code fires no hook when Esc cancels a turn
+// (session/hook_events.go idle_prompt: only its own ~60s idle timer reports
+// back), so the row is marked idle here; a hook that lands meanwhile wins the
+// compare-and-swap.
+func runClaudeInterrupt(w http.ResponseWriter, target string) {
+	claudeInterruptMu.Lock()
+	defer claudeInterruptMu.Unlock()
+	sess := pickAliveSession(target)
+	if sess == nil {
+		writeError(w, http.StatusConflict, "not_running", "the agent is not running")
+		return
+	}
+	if !claudeInterruptible[sess.Status] {
+		writeError(w, http.StatusConflict, "not_busy",
+			"the agent is not in a turn: Interrupt stops one that is working or asking")
+		return
+	}
+	pane := sess.TmuxSession + ":0.0"
+	if err := injectSignalExitSerializedBy(pane, pane, []string{claudeInterruptKey}); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "failed", "send Esc: "+err.Error())
+		return
+	}
+	if _, err := db.SetSessionStatusIfUnchanged(sess.ID, sess.Status, sess.UpdatedAt, session.StatusIdle, "", time.Now()); err != nil {
+		slog.Warn("interrupt: could not mark the session idle after Esc", "conv", target, "error", err, "module", "agentd")
+	}
+	slog.Info("interrupt: Esc sent to a Claude Code pane", "conv", target, "tmux", sess.TmuxSession, "module", "agentd")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"conv_id": target, "action": "interrupt", "via": "escape",
+		"note": "Esc was sent to the agent's pane",
+	})
 }
 
 func runCodexInterrupt(w http.ResponseWriter, target, caller string) {
