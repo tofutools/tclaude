@@ -82,6 +82,11 @@ export function cidrNetwork(cidr) {
     return b & ((0xff << (8 - keep)) & 0xff);
   });
   const hostBits = masked.some((b, i) => b !== bytes[i]);
+  // The daemon unmaps an IPv4-mapped prefix (::ffff:a.b.c.d/96+) after
+  // masking it and stores the IPv4 network, so name that one.
+  const mapped = !v4 && bits >= 96 && masked.slice(0, 10).every((b) => b === 0) &&
+    masked[10] === 0xff && masked[11] === 0xff;
+  if (mapped) return { network: `${masked.slice(12).join('.')}/${bits - 96}`, bits, single: 128, hostBits };
   const network = `${v4 ? masked.join('.') : formatIPv6(masked)}/${bits}`;
   return { network, bits, single: width, hostBits };
 }

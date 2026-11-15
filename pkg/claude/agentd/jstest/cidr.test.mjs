@@ -19,6 +19,8 @@ test('cidrNetwork reads IPv6, compressed as netip prints it', () => {
   assert.equal(cidrNetwork('1:0:0:2:0:0:0:3/128').network, '1:0:0:2::3/128', 'the longest zero run is compressed');
   assert.equal(cidrNetwork('::ffff:10.0.0.0/120').hostBits, false, 'an embedded IPv4 tail is read');
   assert.equal(cidrNetwork('::ffff:10.0.0.9/120').hostBits, true);
+  assert.equal(cidrNetwork('::ffff:10.0.0.9/120').network, '10.0.0.0/24', 'a mapped prefix names the IPv4 network the daemon stores');
+  assert.equal(cidrNetwork('::ffff:0:0/96').network, '0.0.0.0/0');
 });
 
 test('cidrNetwork refuses what netip.ParsePrefix refuses', () => {
