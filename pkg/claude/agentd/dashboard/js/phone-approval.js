@@ -54,7 +54,8 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
       // An extension leaves the request pending: free the buttons again.
       if (decision === 'extend') setBusy('');
     } catch (error) {
-      notify(`That decision could not be recorded: ${error?.message || error}`, true);
+      // A decide override that already told the operator marks its error told.
+      if (!error?.told) notify(`That decision could not be recorded: ${error?.message || error}`, true);
       setBusy('');
     }
   }

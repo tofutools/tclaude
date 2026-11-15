@@ -237,17 +237,27 @@ function MessageRow({ message, folder, aggregate, open, controller, selecting, s
   <//>`;
 }
 
+// decideThrough is a PhoneApprovalCard's decide over Mail's controller, which
+// toasts its own failure and resolves false: the card is told, so it frees
+// its buttons without a second toast.
+export function decideThrough(controller) {
+  return async (id, decision) => {
+    if (await controller.decideAccess(id, decision)) return;
+    throw Object.assign(new Error('not recorded'), { told: true });
+  };
+}
+
 function AccessRow({ request, open, controller }) {
   const who = controller.accessWho(request);
   if (accessInline(request, controller)) {
     return html`<li class="phone-mail-row phone-mail-card" data-id=${request.id}>
       <${PhoneApprovalCard} request=${request} from=${who} notify=${shellToast}
-        decide=${(id, decision) => controller.decideAccess(id, decision)}
+        decide=${decideThrough(controller)}
         onMore=${() => open(request.id)} moreLabel=${`Open ${who}'s request`} />
     </li>`;
   }
   const pending = controller.accessIsPending(request);
-  return html`<li class=${`phone-mail-row${pending ? ' unread' : ''}`} data-id=${request.id}>
+  return html`<li class=${`phone-mail-row${pending ? ' unread' : ''}`} data-id=${request.id}><div class="phone-mail-slide">
     <button data-ui-exempt type="button" class="phone-mail-open" onClick=${() => open(request.id)}>
       <${Avatar} bot glyph="🤖" badge="🔑" />
       <span class="phone-mail-text">
@@ -259,7 +269,7 @@ function AccessRow({ request, open, controller }) {
         <span class="phone-mail-subject">${controller.accessSubject(request)}</span>
       </span>
     </button>
-  </li>`;
+  </div></li>`;
 }
 
 // chipsFor are the mailbox chips: Human, All agent mail and Access requests
@@ -346,7 +356,7 @@ function SelectBar({ current, controller, folder }) {
   const ids = [...current.selectedMsgs];
   const lock = folder === HUMAN ? '' : trustLock('', 'deleting its messages');
   return html`<div class="phone-mail-selectbar" role="toolbar" aria-label="Selected messages">
-    <button data-ui-exempt type="button" class="phone-ib" aria-label="Stop selecting" onClick=${() => controller.togglePageSelection(false)}>✕</button>
+    <button data-ui-exempt type="button" class="phone-ib" aria-label="Stop selecting" onClick=${() => controller.clearMessageSelection()}>✕</button>
     <span class="phone-mail-selected">${ids.length} selected</span>
     ${folder !== HUMAN && html`<${Button} size="sm" class="phone-btn" disabled=${!ids.length} onClick=${() => controller.setMessagesRead(ids, true)}>✓ Read<//>`}
     <${Button} size="sm" class="phone-btn phone-btn-no" disabled=${!ids.length || !!lock} title=${lock || undefined}
@@ -587,6 +597,13 @@ function DesktopReader({ current, controller, model, item, active, back }) {
 // where the request offers it. Anything else keeps the desktop reader.
 function AccessReader({ controller, item, active, back }) {
   const who = controller.accessWho(item);
+  // One Always allow at a time, and none once the request has timed out.
+  const [always, setAlways] = useState(false);
+  const allow = async (decision) => {
+    setAlways(true);
+    try { await controller.decideAccess(item.id, decision); } finally { setAlways(false); }
+  };
+  const lapsed = !controller.accessIsPending(item);
   usePhonePage({ title: '', onBack: back, hideNav: true, routed: true, actions: [] }, active);
   useLayoutEffect(() => { globalThis.scrollTo?.(0, 0); }, [item.id]);
   const rows = [
@@ -595,14 +612,14 @@ function AccessReader({ controller, item, active, back }) {
   ].filter(([, value]) => value);
   return html`<div class="phone-mail-reader phone-mail-read">
     <h1 class="phone-mail-title">${controller.accessSubject(item)}</h1>
-    <${PhoneApprovalCard} request=${item} from=${who} notify=${shellToast} decide=${(id, decision) => controller.decideAccess(id, decision)} />
+    <${PhoneApprovalCard} request=${item} from=${who} notify=${shellToast} decide=${decideThrough(controller)} />
     <dl class="phone-mail-facts">${rows.map(([k, v, mono]) => html`<div key=${k}><dt>${k}</dt><dd class=${mono ? 'mono' : undefined}>${v}</dd></div>`)}
       ${item.body && html`<div><dt>${item.body_label || 'Body'}</dt><dd><pre class="phone-mail-pre">${item.body}</pre></dd></div>`}</dl>
     ${item.auto_grantable && html`<div class="phone-btns phone-mail-always">
       ${item.scope_display && html`<${Button} class="phone-btn phone-btn-grow" title=${`Approve now, and from now on for ${item.scope_display} only`}
-        onClick=${() => controller.decideAccess(item.id, 'always_scoped')}>Always allow — ${item.scope_display}<//>`}
+        disabled=${always || lapsed} onClick=${() => allow('always_scoped')}>Always allow — ${item.scope_display}<//>`}
       <${Button} class="phone-btn phone-btn-grow" title="Approve now, and do not ask again for this permission"
-        onClick=${() => controller.decideAccess(item.id, 'always')}>${item.scope_display ? 'Always allow — any scope' : 'Always allow'}<//>
+        disabled=${always || lapsed} onClick=${() => allow('always')}>${item.scope_display ? 'Always allow — any scope' : 'Always allow'}<//>
     </div>`}
   </div>`;
 }

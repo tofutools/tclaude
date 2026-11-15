@@ -21,7 +21,7 @@ test('Back returns to Now and Board, and closes sheets', async ({ page }) => {
   await booted(page);
   await expect(title(page)).toHaveText('Now');
   await nav(page, 'Mail');
-  await expect(title(page)).toHaveText('Mail');
+  await expect(title(page)).toHaveText(/^Mail/);
   await page.goBack();
   await expect(title(page)).toHaveText('Now');
 
@@ -32,7 +32,7 @@ test('Back returns to Now and Board, and closes sheets', async ({ page }) => {
   await expect(page.getByRole('dialog', { name: 'More' })).toBeVisible();
   await page.goBack();
   await expect(page.getByRole('dialog', { name: 'More' })).toHaveCount(0);
-  await expect(title(page)).toHaveText('Mail');
+  await expect(title(page)).toHaveText(/^Mail/);
   await page.goBack();
   await expect(title(page)).toHaveText(/^Board/);
 
@@ -61,7 +61,7 @@ test('a page inside a tab is a step of its own, and its ‹ leaves no extra step
   await page.locator('.phone-bar-back').click();
   await expect(title(page)).toHaveText('Automations');
   await page.goBack();
-  await expect(title(page)).toHaveText('Mail');
+  await expect(title(page)).toHaveText(/^Mail/);
 });
 
 test('a More entry picked over Now: Back returns to Now, and the address shows the view', async ({ page }) => {

@@ -26,7 +26,9 @@ function controllerFor(view, calls) {
     setBoxQuery: record('setBoxQuery'), setMessageQuery: record('setMessageQuery'),
     setShowRetired: record('setShowRetired'), setShowEmpty: record('setShowEmpty'), setShowPrevGens: record('setShowPrevGens'),
     selectMailbox: record('selectMailbox'), selectMessage: record('selectMessage'), closeMessage: record('closeMessage'),
-    listAgents: record('listAgents'), goToPage: record('goToPage'), decideAccess: record('decideAccess'),
+    listAgents: record('listAgents'), goToPage: record('goToPage'),
+    decideAccess: async (...args) => { calls.push(['decideAccess', ...args]); return view.value.decideFails !== true; },
+    clearMessageSelection: () => { calls.push(['clearMessageSelection']); view.value = { ...view.value, selectedMsgs: new Set() }; },
     renderMailTab: record('renderMailTab'), reloadMail: () => {}, reloadMessagesPage: () => {}, loadMoreAgents: () => {},
     toggleMessageSelection: (id, on) => {
       calls.push(['toggleMessageSelection', id, on]);
@@ -317,6 +319,7 @@ test('a long press starts selecting; taps then pick rows, and the bar acts on th
   await tap([...$('.phone-mail-selectbar').querySelectorAll('button')].find((b) => /Delete/.test(b.textContent)));
   assert.deepEqual(calls.at(-1), ['deleteSelectedMessages']);
   await tap($('.phone-mail-selectbar [aria-label="Stop selecting"]'));
+  assert.deepEqual(calls.at(-1), ['clearMessageSelection'], 'every page\'s picks, not just this one\'s');
   assert.equal($('.phone-mail-selectbar'), null);
 });
 
@@ -359,6 +362,19 @@ test('a plain access request is its approval card, answered through the controll
   assert.deepEqual(labels, ['Deny', '+5 min', 'Approve'], 'Deny, as on Now (B15)');
   await tap(card.querySelectorAll('.phone-btns button')[0]);
   assert.deepEqual(calls.find(([n]) => n === 'decideAccess'), ['decideAccess', 'ar_1', 'deny']);
+});
+
+test('a decision Mail could not record frees the card\'s buttons again', async (t) => {
+  const request = { id: 'ar_1', perm: 'git.push', conv_title: 'checkout-ui', created_at: '2026-07-12T00:00:00Z' };
+  const access = (controller) => {
+    controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [] });
+  };
+  const { $, tap, harness } = await setup(t, { selected: 'access-requests', decideFails: true }, access);
+  const approve = () => [...$('.phone-mail-card .phone-btns').querySelectorAll('button')].at(-1);
+  await tap(approve());
+  await harness.act(async () => {});
+  assert.equal(approve().textContent.trim(), 'Approve', 'not stuck on Approving…');
+  assert.equal(approve().disabled, false);
 });
 
 test('a plain access request\'s reader stacks what it asks for, with Always allow', async (t) => {

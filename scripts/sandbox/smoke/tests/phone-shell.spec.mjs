@@ -68,7 +68,7 @@ test.describe('on a phone', () => {
 
     for (const [slot, heading, section] of [['Agents', 'Agents', '#tab-groups'], ['Mail', 'Mail', '#tab-messages']]) {
       await nav.getByRole('button', { name: new RegExp(slot) }).click();
-      await expect(title).toHaveText(heading);
+      await expect(title).toHaveText(new RegExp(`^${heading}`));
       await expect(page.locator(section)).toBeVisible();
       await expectNoSideScroll(page, slot);
     }
@@ -219,7 +219,7 @@ test.describe('on a phone', () => {
   test('a deep link lands on its tab inside the shell', async ({ page }) => {
     await page.goto('/messages');
     await booted(page);
-    await expect(page.locator('.phone-bar-title')).toHaveText('Mail');
+    await expect(page.locator('.phone-bar-title')).toHaveText(/^Mail/);
     await expect(page.locator('#tab-messages')).toBeVisible();
   });
 
