@@ -18060,9 +18060,7 @@ body.wizard .gp-start-form select:where(:not(.ui-select)) { background: #241b3d;
 .gq-ask-in:disabled { opacity: .7; }
 .gq-sec { margin: 14px 0 8px; }
 .gq-sec .gq-dim { text-transform: none; letter-spacing: 0; font-weight: 400; }
-.gq-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11px; }
-.gq-flow i { font-style: normal; color: #6e7681; }
-.gq-note, .gq-dim { font-size: 11.5px; color: #8b949e; }
+.gq-dim { font-size: 11.5px; color: #8b949e; }
 .gq-tag { font-size: 10.5px; border: 1px solid #30363d; border-radius: 4px; padding: 0 5px; color: #8b949e; }
 .gq-add, .gq-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .gq-spacer { flex: 1; }
@@ -18197,7 +18195,7 @@ body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176,
 /* The empty process's "＋ Add first step" placeholder, drawn as a step. */
 .gm-canvas .pk-gnode[data-process-node="mini-first-step"] { border: 1px dashed #58a6ff; background: #0d1117; color: #58a6ff; }
 .gm-canvas .pk-gnode[data-process-node="mini-first-step"] .pk-gnode-label { color: #58a6ff; }
-.gm-canvas .pk-gnode[data-process-node="mini-first-step"] .pk-gnode-glyph, .gm-canvas .pk-gnode[data-process-node="mini-first-step"] svg { display: none; }
+.gm-canvas .pk-gnode[data-process-node="mini-first-step"] svg { display: none; }
 .gm-canvas .pk-gnode[data-process-node="mini-first-step"]:hover, .gm-canvas .pk-gnode[data-process-node="mini-first-step"]:focus-visible { border-style: solid; background: rgba(31, 111, 235, .18); outline: none; }
 .gm-start-from { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-top: 1px solid #21262d; }
 .gm-start-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }

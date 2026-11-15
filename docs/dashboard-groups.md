@@ -477,10 +477,11 @@ Where processes are not available (a peer that does not share them), each
 group shows its roster only. The older `/groups/agents` and
 `/groups/processes` addresses open `/groups`.
 
-To start a run, open the **＋** menu on the group's Resources section and pick
-**Process for the group** or **Process for one agent**. Either opens the start
-form, which runs a saved process or, with *or build a new one ▸*, opens
-*Get started*.
+To make a process, open the **＋** menu on the group's Resources section and
+pick **◈ New process**: an untitled draft of the group's opens in place, as a
+graph, with its name ready to type. To start a run, pick **▶ Run a process…**:
+the start form runs a saved process for the group or for one agent. See
+[Processes › In the dashboard](processes.md#in-the-dashboard).
 
 ### Resources
 
@@ -506,7 +507,7 @@ the table. The kinds are:
 The section's count is its saved
 processes, drawing boards, pages and shells (runs are not counted), and a section with
 nothing at all says *No resources yet*.
-The **＋** menu starts a process for the group or for one agent, adds a new drawing board
+The **＋** menu makes a new process or runs a saved one, adds a new drawing board
 linked to the group or a blank live page, or opens the group's shell (once the
 group has a directory). A new drawing board or page first asks for its name, in
 a small dialog that says what is made and in which group, with the usual name

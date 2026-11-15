@@ -129,46 +129,26 @@ export function restorableScribeDraft(scribes, processes) {
 }
 
 // draftWithScribe asks the operator to approve the scribe's grant and only
-// then stores a near-empty template, saved to the group (pinned, not listed
-// in the library), and summons a background scribe on it. The scribe is
-// summoned for a stored template, which is why the draft is stored first. The
-// request goes as operator mail, so it reads as the operator's first message
-// in the scribe's chat window, which opens once it is sent. A declined
-// approval stores and starts nothing and answers null. A failed start deletes
-// the empty draft again, so nothing is left behind unlisted. With `template`
-// ({id, sourceHash, ref, view}: a new process already stored, from its Start
-// from strip) the scribe works on that one, and a failed start leaves it be.
-export async function draftWithScribe(api, { group, text, roster = [], confirm, openChat = openHelperWindow, template = null }) {
-  const name = template ? (template.view?.template?.name || scribeDraftName(text)) : scribeDraftName(text);
+// then summons a background scribe on `template` ({id, sourceHash, ref,
+// view}): a new process already stored in the group (New process, from its
+// Start from strip), which the scribe fills in. The request goes as operator
+// mail, so it reads as the operator's first message in the scribe's chat
+// window, which opens once it is sent. A declined approval starts nothing
+// and answers null; a failed start stops the scribe and leaves the draft.
+export async function draftWithScribe(api, { group, text, roster = [], confirm, openChat = openHelperWindow, template }) {
+  const name = template.view?.template?.name || scribeDraftName(text);
   const approved = await confirm({
     title: 'Grant process-scribe access?',
-    body: processScribeGrantBody(template ? `the draft process "${name}"` : `a new draft process, "${name}"`),
+    body: processScribeGrantBody(`the draft process "${name}"`),
     meta: PROCESS_SCRIBE_GRANT_META,
     okLabel: 'Grant & draft',
   });
   if (!approved) return null;
-  let view;
-  let templateId;
-  let sourceHash;
-  let currentRef;
-  let semanticHash = '';
-  if (template) {
-    ({ view } = template);
-    templateId = String(template.id || '');
-    sourceHash = String(template.sourceHash || '');
-    currentRef = String(template.ref || '');
-  } else {
-    // Loaded on demand, as the Processes tab does: the graph model is not
-    // part of the Groups tab's startup.
-    const { blankEditView } = await import('./process-edit-model.js');
-    view = blankEditView(name);
-    const body = await api.createTemplate(view, { listed: false, pinGroup: group.name });
-    templateId = String(body?.id || '');
-    if (!templateId) throw new Error('the template was not created');
-    sourceHash = String(body?.sourceHash || '');
-    currentRef = String(body?.ref || '');
-    semanticHash = String(body?.semanticHash || '');
-  }
+  const { view } = template;
+  const templateId = String(template.id || '');
+  const sourceHash = String(template.sourceHash || '');
+  const currentRef = String(template.ref || '');
+  const semanticHash = String(view?.semanticHash || '');
   let agentId = '';
   try {
     const handoff = processScribeHandoff({ kind: 'template', id: templateId, currentRef, sourceHash });
@@ -195,7 +175,6 @@ export async function draftWithScribe(api, { group, text, roster = [], confirm, 
     };
   } catch (cause) {
     if (agentId) await api.stopAgent(agentId).catch(() => {});
-    if (!template) await api.deleteTemplate(templateId).catch(() => api.unpinProcess(group.name, templateId).catch(() => {}));
     throw cause;
   }
 }

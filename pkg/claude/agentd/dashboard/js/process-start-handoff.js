@@ -49,9 +49,9 @@ export function takeProcessStart(group, { now = Date.now } = {}) {
 // the palette's New process). Loaded on demand, so the caller's module does
 // not pull the Groups tab in.
 export async function openGroupProcess(request) {
-  const [{ dashPrefs }, { groupsState }, { showGroupRuns }] = await Promise.all([
-    import('./prefs.js'), import('./groups-state.js'), import('./groups-focus.js'),
-  ]);
+  const { dashPrefs } = await import('./prefs.js');
+  const { groupsState } = await import('./groups-state.js');
+  const { showGroupRuns } = await import('./groups-focus.js');
   requestProcessStart(request, {
     prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [],
     showRuns: () => showGroupRuns(groupsState), rerender: groupsState.rerender,

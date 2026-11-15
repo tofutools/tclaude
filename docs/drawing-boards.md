@@ -13,7 +13,7 @@ exported as an `.excalidraw` file.
 ## In the dashboard
 
 **＋ New ▾** › **Drawing board…** in the Collab side panel lists the drawing boards, one line each
-(**Process…** beside it lists the processes: see [Processes](processes.md)):
+(**Open a process…** beside it lists the processes: see [Processes](processes.md)):
 in their groups, newest first, with a green dot on a drawing board an agent has a
 session on. Pick one to open it in a tab. The box at the top searches titles and groups;
 a new title makes a drawing board with **Create** or Enter, and the title of one that

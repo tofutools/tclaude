@@ -26,11 +26,12 @@ function fakeSource(harness, { status = 'ready', context = FIXTURE, error = '' }
   return source;
 }
 
-// startFrom opens a group's start form the way the operator does: ＋,
-// then the process item for that scope.
+// startFrom opens a group's start form the way the operator does: ＋, Run
+// a process…, then the form's own switch for one agent.
 async function startFrom(harness, el, scope = 'group') {
   await harness.act(() => harness.fireEvent(el.querySelector('[data-resource-add]'), 'click'));
-  await harness.act(() => harness.fireEvent(el.querySelector(scope === 'agent' ? '[data-resource-add-process-agent]' : '[data-resource-add-process]'), 'click'));
+  await harness.act(() => harness.fireEvent(el.querySelector('[data-resource-run-process]'), 'click'));
+  if (scope === 'agent') await harness.act(() => harness.fireEvent(el.querySelector('[data-start-scope-pick="agent"]'), 'click'));
 }
 
 // waitForCondition polls, instead of a fixed number of ticks, for state that
@@ -96,9 +97,8 @@ test('Running shows each group\'s live runs as graph cards, needs-you first, and
   assert.equal(fe.querySelector('.gp-member.busy').getAttribute('title'), '2 performing a process step — fe-dev-forms, fe-dev-charts');
   assert.equal(fe.querySelector('.gp-member.busy .gp-member-count').textContent, '2');
   assert.equal(fe.querySelector('.gp-member.is-working .gp-member-count'), null, 'a lone member gets no count');
-  // Processes run elsewhere, so the empty group folds Get started to a line.
-  assert.ok(group('infra-crew').querySelector('[data-quickstart-folded="infra-crew"]'), 'an empty group folds Get started once processes exist');
-  assert.equal(group('infra-crew').querySelector('[data-quickstart]'), null);
+  // A group with no processes at all offers New process.
+  assert.ok(group('infra-crew').querySelector('[data-process-empty="infra-crew"] [data-process-new="infra-crew"]'), 'an empty group offers New process');
   assert.equal(group('Ungrouped').querySelector('.gp-empty').textContent, 'No ungrouped agent runs a process.');
   assert.equal(root.querySelector('.gp-toolbar'), null, 'no filter row of its own: the checklist lives on the toolbar icon');
 });
@@ -120,11 +120,11 @@ test('the ticked run kinds pick the matching runs', async (t) => {
     });
   }
   // A group with runs, none of the ticked kinds, says so; a group with no
-  // runs at all offers Get started instead.
+  // runs at all offers New process instead.
   const onlyRunning = { ...FIXTURE, groups: FIXTURE.groups.map((entry) => (entry.group === 'frontend-squad' ? { ...entry, done: [], planned: [] } : entry)) };
   const { group } = await mountFocus(t, { filter: 'planned,done', sourceOptions: { context: onlyRunning } });
-  assert.equal(group('frontend-squad').querySelector('.gp-empty:not(.gq-folded)').textContent, 'No planned or done processes.');
-  assert.ok(group('infra-crew').querySelector('[data-quickstart-folded]'));
+  assert.equal(group('frontend-squad').querySelector('.gp-empty:not([data-process-empty])').textContent, 'No planned or done processes.');
+  assert.ok(group('infra-crew').querySelector('[data-process-new="infra-crew"]'));
 });
 
 test('an agentd without the read model shows the placeholder', async (t) => {
@@ -151,7 +151,8 @@ test('+ start process starts a run scoped to the group and refreshes', async (t)
   await settle(harness);
   const form = fe.querySelector('form.gp-start-form');
   assert.equal(form.getAttribute('aria-label'), 'Start a process in frontend-squad');
-  assert.match(form.textContent, /group scope · frontend-squad/);
+  assert.equal(form.querySelector('[data-start-scope-pick="group"]').getAttribute('aria-pressed'), 'true', 'for the group, first');
+  assert.match(form.textContent, /⌂ frontend-squad/);
   const select = form.querySelector('.gp-start-template');
   assert.deepEqual(await comboLabels(harness, select), ['Alpha', 'Beta']);
   await comboPick(harness, select, 'tpl_b');
@@ -370,22 +371,35 @@ test('an Ungrouped agent run opens in the single-run focus', async (t) => {
 });
 
 // Kept last: dismissing writes the shared dashPrefs key that folds the panel.
-test('Get started shows in full only before the first process, folds when dismissed, and expands on demand', async (t) => {
+test('New process stores an untitled draft of the group and opens it in place as a graph; one closed untouched is deleted', async (t) => {
   const empty = { ...FIXTURE, runs: {}, groups: (FIXTURE.groups || []).map((entry) => ({ ...entry, active: [], needsYou: [], done: [], planned: [] })) };
-  const api = { listTemplates: async () => [] };
+  const calls = [];
+  let n = 0;
+  const api = {
+    listTemplates: async () => [],
+    createTemplate: async (view, meta) => { n += 1; calls.push(['create', view.template.name, meta]); return { id: `tpl_${n}`, ref: `tpl_${n}@sha256:a`, sourceHash: 'h1', semanticHash: 's1' }; },
+    saveTemplate: async (id, view, meta) => { calls.push(['save', id, view.template.name, meta.sourceHash]); return { ref: `${id}@sha256:b`, sourceHash: 'h2' }; },
+    deleteTemplate: async (id) => { calls.push(['delete', id]); },
+  };
   const { harness, group } = await mountFocus(t, { sourceOptions: { context: empty }, api });
   await settle(harness);
   const infra = () => group('infra-crew');
-  assert.ok(infra().querySelector('[data-quickstart="infra-crew"]'), 'no process anywhere yet: the full panel');
-  assert.equal(infra().querySelector('[data-quickstart-folded]'), null);
-  await harness.act(async () => { infra().querySelector('[data-quickstart-dismiss]').click(); });
-  assert.equal(infra().querySelector('[data-quickstart]'), null, 'dismissed: folded');
-  assert.ok(infra().querySelector('[data-quickstart-folded="infra-crew"]'));
-  await harness.act(async () => { infra().querySelector('[data-quickstart-expand]').click(); });
-  await settle(harness);
-  assert.ok(infra().querySelector('[data-quickstart="infra-crew"]'), 'Get started ▸ opens the panel again');
+  assert.equal(infra().querySelector('[data-process-empty]').textContent.trim(), 'No processes yet ◈ New process', 'a fresh group: one button');
+  await harness.act(async () => { infra().querySelector('[data-process-new]').click(); });
+  await waitForCondition(harness, () => infra().querySelector('[data-mini-editor="tpl_1"]'), 'the draft opens in place');
+  assert.deepEqual(calls, [['create', 'Untitled process', { listed: false, pinGroup: 'infra-crew' }]], 'stored at once, the group\'s, not the library\'s');
+  const editor = infra().querySelector('[data-mini-editor="tpl_1"]');
+  assert.equal(editor.querySelector('[data-mini-title]').value, 'Untitled process');
+  assert.equal(editor.querySelector('.gm-toggle .on').textContent, '◈ Graph', 'graph first');
+  assert.ok(editor.querySelector('[data-mini-steps]'), 'with Steps beside it');
+  assert.ok(editor.querySelector('[data-process-node="mini-first-step"]'), 'the empty canvas offers the first step');
+  assert.ok(editor.querySelector('[data-mini-start-from] [data-mini-starter]'), 'and what to start from');
+  assert.ok(editor.querySelector('[data-mini-run]').disabled, 'nothing to run yet');
+  await harness.act(async () => { editor.querySelector('[data-mini-close]').click(); });
+  await waitForCondition(harness, () => calls.some(([kind]) => kind === 'delete'), 'closed untouched, it is deleted');
+  assert.deepEqual(calls.at(-1), ['delete', 'tpl_1']);
+  assert.equal(infra().querySelector('[data-mini-editor]'), null);
 });
-
 test('the avatar strip reads each member\'s real status, not just process work', async (t) => {
   const { group, mod } = await mountFocus(t);
   const { memberAvailability } = mod;
@@ -533,11 +547,11 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   await settle(harness);
   assert.ok(section(infra, 'processes').classList.contains('open'), '＋ on the folded line unfolds Resources');
   // The menu survives the move to the title row.
-  assert.ok(section(infra, 'processes').querySelector('.gf-title-row [data-resource-add-process]'), 'the ＋ menu stays open on the title row');
+  assert.ok(section(infra, 'processes').querySelector('.gf-title-row [data-resource-new-process]'), 'the ＋ menu stays open on the title row');
   assert.equal(document.activeElement, section(infra, 'processes').querySelector('.gf-title-row [data-resource-add]'), 'focus follows the button to the title row');
-  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('[data-resource-add-process-agent]'), 'click'));
+  await harness.act(() => harness.fireEvent(section(infra, 'processes').querySelector('[data-resource-run-process]'), 'click'));
   await settle(harness);
-  assert.ok(section(infra, 'processes').querySelector('form.gp-start-form[data-start-scope="agent"]'), 'Process for one agent opens the agent-scoped start form');
+  assert.ok(section(infra, 'processes').querySelector('form.gp-start-form[data-start-scope="group"]'), 'Run a process… opens the start form');
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.processes.infra-crew'), '1');
 });
 

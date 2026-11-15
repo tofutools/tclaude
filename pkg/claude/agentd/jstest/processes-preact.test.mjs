@@ -1124,7 +1124,7 @@ test('a list refresh under an open name editor cannot substitute a newer CAS bas
   await mounted.unmount();
 });
 
-test('creating a template persists the named scaffold and prepopulates the editor with its generated id', async (t) => {
+test('+ new template stores an untitled scaffold at once and opens the editor on its generated id', async (t) => {
   const harness = await createPreactHarness(t);
   const previous = { raf: globalThis.requestAnimationFrame, css: globalThis.CSS };
   globalThis.requestAnimationFrame = () => 1;
@@ -1163,34 +1163,27 @@ test('creating a template persists the named scaffold and prepopulates the edito
   await harness.act(() => Promise.resolve());
 
   await harness.act(() => harness.fireEvent(mounted.container.querySelector('#process-template-new'), 'click'));
-  const input = mounted.container.querySelector('[data-process-create-input]');
-  assert.ok(input, 'creation prompts for a display name');
-  assertAbsent(mounted.container.querySelector('.process-editor-id-input'), 'creation never offers an id field');
-
-  input.value = 'Release train';
-  await harness.act(() => harness.fireEvent(input, 'input'));
-  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog form'), 'submit'));
+  assertAbsent(mounted.container.querySelector('.process-rename-dialog'), 'no dialog asks for a name first');
   for (let i = 0; i < 10 && !state.canvas.value; i++) await harness.act(() => Promise.resolve());
 
   assert.equal(state.canvas.value?.kind, 'editor');
   assert.equal(state.canvas.value?.blank, false, 'the editor opens the persisted backend generation');
-  assert.equal(state.canvas.value?.name, 'Release train', 'the editor opens on the chosen name');
+  assert.equal(state.canvas.value?.name, 'Untitled process', 'the editor opens untitled');
   assert.equal(state.canvas.value?.id, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8',
     'the editor uses the id assigned by the backend');
-  assert.equal(state.canvas.value?.view?.template.name, 'Release train');
+  assert.equal(state.canvas.value?.view?.template.name, 'Untitled process');
   assert.equal(state.canvas.value?.view?.template.id, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8');
   assert.equal(state.canvas.value?.view?.currentRef, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8@sha256:new');
   assert.equal(state.canvas.value?.view?.sourceHash, 'source-new');
-  assert.equal(state.create.value, null, 'the prompt closes once the editor opens');
   for (let i = 0; i < 20 && !state.currentEditor(); i++) {
     await harness.act(() => new Promise((resolve) => setTimeout(resolve, 5)));
   }
   assert.equal(state.currentEditor()?.model?.template?.id, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8');
-  assert.equal(state.currentEditor()?.model?.template?.name, 'Release train');
+  assert.equal(state.currentEditor()?.model?.template?.name, 'Untitled process');
   assert.equal(state.currentEditor()?.model?.sourceHash, 'source-new',
     'the created editor starts on the backend-confirmed CAS generation');
-  assert.equal(mounted.container.querySelector('[data-process-title-edit]')?.textContent, 'Release train',
-    'the rendered editor title is prepopulated from the creation dialog');
+  assert.equal(mounted.container.querySelector('[data-process-title-edit]')?.textContent, 'Untitled process',
+    'the editor title, where it is named');
   const create = requests.find((request) => request.options.method === 'POST');
   assert.equal(create.path, '/v1/process/templates');
   assert.equal(create.options.credentials, 'same-origin');
@@ -1198,24 +1191,12 @@ test('creating a template persists the named scaffold and prepopulates the edito
   assert.equal(create.options.headers['X-Tclaude-Request-Digest'], createHash('sha256')
     .update(`POST\x00/v1/process/templates\x00${create.options.body}`).digest('hex'));
   const payload = JSON.parse(create.options.body);
-  assert.equal(payload.template.name, 'Release train');
+  assert.equal(payload.template.name, 'Untitled process');
   assert.equal(Object.hasOwn(payload.template, 'id'), false, 'the browser never proposes a permanent id');
   assert.equal(Object.hasOwn(payload, 'sourceHash'), false, 'creation has no prior CAS generation');
   await mounted.unmount();
 });
 
-test('an empty creation name cannot be submitted', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const actions = createProcessesActions({ state, notify() {}, fetchImpl: async () => ({ ok: true, json: async () => ({}) }) });
-  await actions.openCreate();
-  assert.equal(await actions.submitCreate('   '), false, 'a whitespace-only name is not a name');
-  assert.ok(state.create.value, 'the prompt stays open');
-  assert.equal(state.canvas.value, null, 'no editor opens without a name');
-});
 // The browser URL must name the template being edited, so the editor is
 // deep-linkable and browser Back walks in and out of it.
 test('Processes URL location follows the open template editor and restores from it', async (t) => {
@@ -1344,7 +1325,7 @@ test('a router restore-location event opens the editor on the mounted Processes 
   host.remove();
 });
 
-test('a failed template creation stays in the dialog and surfaces the backend error', async (t) => {
+test('a failed template creation opens no editor and surfaces the backend error', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
     harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
@@ -1358,112 +1339,11 @@ test('a failed template creation stays in the dialog and surfaces the backend er
       json: async () => ({ message: 'store unavailable' }),
     }),
   });
-  actions.openCreate();
-
-  assert.equal(await actions.submitCreate('Release train'), false);
-  assert.equal(state.create.value?.name, 'Release train');
-  assert.equal(state.create.value?.error, 'store unavailable');
-  assert.equal(state.create.value?.attempt, null, 'a definitive response gets a fresh key on retry');
+  assert.equal(await actions.newTemplate(), false);
   assert.equal(state.canvas.value, null, 'a failed create never opens a fictional template id');
   assert.match(state.notice.value, /Template creation failed: store unavailable/);
   assert.match(notices.at(-1)[0], /process template creation failed: store unavailable/);
   assert.equal(state.mutation.value.busy, false);
-});
-
-test('an unknown template-create outcome blocks automatic retry until the operator reconciles it', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const attemptIDs = [
-    '11111111-2222-4333-8444-555555555555',
-    '22222222-3333-4444-8555-666666666666',
-  ];
-  let calls = 0;
-  let minted = 0;
-  const actions = createProcessesActions({
-    state, notify() {}, mintAttemptID: () => attemptIDs[minted++],
-    fetchImpl: async () => {
-      calls += 1;
-      return calls === 1
-        ? {
-          ok: false, status: 409, statusText: 'Conflict',
-          json: async () => ({
-            code: 'idempotency_unknown',
-            error: 'the previous agentd stopped while this operation was pending; its outcome is unknown',
-          }),
-        }
-        : {
-          ok: false, status: 503, statusText: 'Unavailable',
-          json: async () => ({ error: 'store unavailable' }),
-        };
-    },
-  });
-  actions.openCreate();
-
-  assert.equal(await actions.submitCreate('Release train'), false);
-  assert.equal(state.create.value?.attempt?.key, attemptIDs[0]);
-  assert.equal(state.create.value?.attempt?.blocked, true);
-  assert.match(state.create.value?.error, /Refresh Templates to reconcile/);
-
-  assert.equal(await actions.submitCreate('Release train'), false);
-  assert.equal(calls, 1, 'the same ambiguous mutation is not sent again or silently reminted');
-  assert.equal(minted, 1);
-
-  assert.equal(await actions.submitCreate('Different template'), false,
-    'changing the name is an explicit new logical creation');
-  assert.equal(calls, 2);
-  assert.equal(minted, 2);
-  assert.equal(state.create.value?.attempt, null, 'the definitive new-attempt failure can be retried normally');
-});
-
-test('an ambiguous template-create failure retries with the same durable attempt key', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const attemptID = '11111111-2222-4333-8444-555555555555';
-  const generatedID = '9f3c2b1a4d5e6f708192a3b4c5d6e7f8';
-  let minted = 0;
-  const requests = [];
-  const actions = createProcessesActions({
-    state, notify() {}, mintAttemptID: () => { minted += 1; return attemptID; },
-    fetchImpl: async (path, options = {}) => {
-      requests.push({ path, options });
-      if (options.method === 'POST' && requests.filter((request) => request.options.method === 'POST').length === 1) {
-        throw new Error('connection reset after commit');
-      }
-      if (options.method === 'POST') {
-        return {
-          ok: true, status: 201, statusText: 'Created',
-          json: async () => ({
-            id: generatedID, ref: `${generatedID}@sha256:new`,
-            sourceHash: 'source-new', semanticHash: 'semantic-new', diagnostics: [],
-          }),
-        };
-      }
-      return { ok: true, json: async () => ({ templates: [] }) };
-    },
-  });
-  actions.openCreate();
-
-  assert.equal(await actions.submitCreate('Release train'), false);
-  assert.equal(state.create.value?.attempt?.key, attemptID);
-  assert.match(state.notice.value, /connection reset after commit/);
-  assert.equal(await actions.submitCreate('Release train'), true);
-
-  const posts = requests.filter((request) => request.options.method === 'POST');
-  assert.equal(posts.length, 2);
-  assert.equal(minted, 1, 'one logical create keeps one idempotency key across an ambiguous retry');
-  assert.equal(posts[0].options.body, posts[1].options.body);
-  assert.equal(posts[0].options.headers['Idempotency-Key'], attemptID);
-  assert.equal(posts[1].options.headers['Idempotency-Key'], attemptID);
-  assert.equal(posts[0].options.headers['X-Tclaude-Request-Digest'],
-    posts[1].options.headers['X-Tclaude-Request-Digest']);
-  assert.equal(state.canvas.value?.id, generatedID,
-    'the retry adopts the original backend result instead of minting a second template');
 });
 
 test('process scribe browser fallback opens a revealed terminal pane with live identity', async (t) => {

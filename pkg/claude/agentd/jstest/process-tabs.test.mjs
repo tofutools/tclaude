@@ -121,8 +121,8 @@ test('the panel\'s ＋ New lists processes by pinned group, filters them, and op
   const { harness, host, widgets, processes } = env;
   await harness.act(async () => { harness.fireEvent(host.querySelector('.cr-new'), 'click'); await wait(); });
   const kinds = [...host.querySelectorAll('[data-new-kind]')].map((node) => node.dataset.newKind);
-  assert.ok(kinds.includes('drawing_board') && kinds.includes('process'), 'with Processes on, the menu offers Boards and Processes');
-  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-new-kind="process"]'), 'click'); await wait(); });
+  assert.ok(kinds.includes('drawing_board') && kinds.includes('process') && kinds.includes('process-open'), 'with Processes on, the menu offers Boards, a new process and the saved ones');
+  await harness.act(async () => { harness.fireEvent(host.querySelector('[data-new-kind="process-open"]'), 'click'); await wait(); });
   await harness.act(() => wait());
   assert.ok(requests.includes('GET /v1/process/templates'));
   const sections = () => [...host.querySelectorAll('.process-menu-list .drawing-board-section')].map((section) => ({
