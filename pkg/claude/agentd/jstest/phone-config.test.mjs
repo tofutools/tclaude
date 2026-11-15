@@ -96,6 +96,23 @@ test('a section a link named opens directly, and ‹ shows the list in place', a
   assert.ok(c.querySelector('.phone-config'));
 });
 
+test('a section another view asks for opens over the list, and ‹ steps back through its navigation', async (t) => {
+  const { c, root, calls, phonePage, harness, island, configPanel } = await setup(t);
+  assert.equal(root.dataset.phoneConfig, 'list');
+  // More navigated to /config/notifications (the router set the panel), then
+  // asked for the section.
+  await harness.act(() => {
+    configPanel.value = 'notifications';
+    island.openSettingsSection('notifications');
+  });
+  assert.equal(root.dataset.phoneConfig, 'edit');
+  assert.equal(phonePage.value.title, 'Notifications');
+  assert.equal(island.sectionRequest.value, null, 'the request is taken once');
+  await harness.act(() => phonePage.value.onBack());
+  assert.ok(calls.some((call) => call[0] === 'back'), 'the navigation it came with is the step back');
+  assert.ok(c.querySelector('.phone-config'));
+});
+
 test('the list marks a section that holds unsaved edits', async (t) => {
   const { row } = await setup(t, { dirtyPanels: ['notifications', 'git'] });
   const tags = (title) => [...row(title).querySelectorAll('.phone-config-tag')].map((tag) => tag.textContent);

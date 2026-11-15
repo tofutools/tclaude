@@ -115,21 +115,31 @@ test('a deep link starts on its tab, not Now', async (t) => {
   assert.equal(navItem('Agents').getAttribute('aria-current'), 'page', 'the default tab is Groups');
 });
 
-test('More lists the tabs the dashboard shows, and the Desktop site switch', async (t) => {
+test('More lists the tabs the dashboard shows with their scope, notifications and the Desktop site switch', async (t) => {
   const { harness, calls, mounted, navItem, tap } = await setup(t, { available: (tab) => tab !== 'plugins' });
   await tap(navItem('More'));
   const sheet = mounted.container.querySelector('[role="dialog"]');
   assert.ok(sheet, 'the sheet opens');
-  const labels = [...sheet.querySelectorAll('.phone-menu-item')].map((b) => b.textContent.trim());
-  assert.ok(labels.some((l) => l.endsWith('Collab')));
-  assert.ok(!labels.some((l) => l.endsWith('Plugins')), 'a hidden tab is left out');
-  assert.ok(labels.some((l) => l.endsWith('Desktop site')));
+  const label = (b) => b.querySelector('.phone-menu-label').textContent.trim();
+  const items = [...sheet.querySelectorAll('.phone-menu-item')];
+  const labels = items.map(label);
+  assert.deepEqual(labels.slice(0, 7), ['Open sessions', 'Usage', 'Automations', 'Access', 'Diagnostics', 'Settings', 'Fleet'],
+    'Collab is the open sessions list, and a hidden tab (Plugins) is left out');
+  const scope = (name) => items.find((b) => label(b) === name).querySelector('.phone-scope');
+  assert.equal(scope('Usage').textContent, 'read-only');
+  assert.ok(scope('Usage').classList.contains('phone-scope-ro'));
+  assert.equal(scope('Access').textContent, 'approve, revoke');
+  assert.ok(scope('Access').classList.contains('phone-scope-simp'));
+  assert.equal(scope('Fleet').textContent, 'nodes, read-only');
+  const end = (name) => items.find((b) => label(b) === name).querySelector('.phone-menu-note')?.textContent;
+  assert.equal(end('Notifications'), 'off', 'the snapshot says notifications are off');
+  assert.equal(end('Desktop site'), 'this device');
 
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
   assert.equal(mounted.container.querySelector('[role="dialog"]'), null, 'Escape closes it');
 
   await tap(navItem('More'));
-  const item = (label) => [...mounted.container.querySelectorAll('.phone-menu-item')].find((b) => b.textContent.trim().endsWith(label));
+  const item = (name) => [...mounted.container.querySelectorAll('.phone-menu-item')].find((b) => label(b) === name);
   await tap(item('Settings'));
   assert.deepEqual(calls.at(-1), ['navigate', '/config']);
   assert.equal(mounted.container.querySelector('[role="dialog"]'), null, 'picking an entry closes the sheet');
@@ -138,8 +148,30 @@ test('More lists the tabs the dashboard shows, and the Desktop site switch', asy
   await tap(item('Fleet'));
   assert.deepEqual(calls.at(-1), ['showTab', 'fleet-admin']);
   await tap(navItem('More'));
+  await tap(item('Notifications'));
+  assert.deepEqual(calls.at(-1), ['navigate', '/config/notifications']);
+  await tap(navItem('More'));
   await tap(item('Desktop site'));
   assert.deepEqual(calls.at(-1), ['desktopSite']);
+});
+
+test('More: Diagnostics shows the Doctor\'s counts, and Notifications says on', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { MoreMenu } = await harness.importDashboardModule('js/phone-more.js');
+  const { signal } = harness.signals;
+  const counts = signal({ decision: 1, blocking: 0 });
+  const state = { snapshot: signal({ notifications_enabled: true }) };
+  const actions = { tabAvailable: () => true, navigate: () => {}, showTab: () => {} };
+  const mounted = await harness.mount(harness.html`<${MoreMenu} state=${state} actions=${actions} close=${() => {}} doctor=${{ counts }} />`);
+  const entry = (name) => [...mounted.container.querySelectorAll('.phone-menu-item')]
+    .find((b) => b.querySelector('.phone-menu-label').textContent === name);
+  const badges = () => [...entry('Diagnostics').querySelectorAll('.phone-more-count')].map((b) => [b.textContent, b.classList.contains('ui-badge-danger')]);
+  assert.deepEqual(badges(), [['1', false]], 'a decision waiting is a blue count');
+  await harness.act(() => { counts.value = { decision: 0, blocking: 2 }; });
+  assert.deepEqual(badges(), [['2', true]], 'blocking problems are a red count');
+  await harness.act(() => { counts.value = { decision: 0, blocking: 0 }; });
+  assert.deepEqual(badges(), []);
+  assert.equal(entry('Notifications').querySelector('.phone-menu-note').textContent, 'on');
 });
 
 test('an asking agent on Now is a card that opens its terminal', async (t) => {
@@ -269,7 +301,7 @@ test('More → Fleet over Now shows Fleet even when it is the tab underneath', a
   await harness.act(() => state.setActiveTab('fleet-admin'));
   await harness.act(() => { shell.view.value = 'now'; });
   await tap(navItem('More'));
-  const fleet = [...mounted.container.querySelectorAll('.phone-menu-item')].find((b) => b.textContent.trim().endsWith('Fleet'));
+  const fleet = [...mounted.container.querySelectorAll('.phone-menu-item')].find((b) => b.querySelector('.phone-menu-label').textContent === 'Fleet');
   await tap(fleet);
   assert.deepEqual(calls.at(-1), ['showTab', 'fleet-admin']);
   assert.equal(shell.view.value, null, 'Now steps aside for the tab');

@@ -22,24 +22,26 @@ export const PHONE_SLOTS = Object.freeze([
 // The shell's own views: what the content area shows instead of a tab.
 export const OWN_VIEWS = Object.freeze(['now', 'board']);
 
-// The More sheet's entries: every other tab a phone may open, in this order.
+// The More sheet's entries: every other tab a phone may open, in this order,
+// each with its scope: what a phone can do there (read-only, or a few things).
 // A tab the dashboard hides (no plugins, no usage yet, a peer page that does
 // not offer it) is left out by the availability check the island passes in.
 export const MORE_TABS = Object.freeze([
-  Object.freeze({ tab: 'terminals', label: 'Collab', icon: '🖥', path: '/terminals' }),
-  Object.freeze({ tab: 'jobs', label: 'Automations', icon: '⏱', path: '/automations' }),
-  Object.freeze({ tab: 'plugins', label: 'Plugins', icon: '🔧', path: '/plugins' }),
-  Object.freeze({ tab: 'access', label: 'Access', icon: '🔐', path: '/access' }),
-  Object.freeze({ tab: 'usage', label: 'Usage', icon: '📊', path: '/usage' }),
-  Object.freeze({ tab: 'diagnostics', label: 'Diagnostics', icon: '🩺', path: '/diagnostics' }),
+  // Collab's strip, rail and drawing tools are desktop things: a phone lists
+  // the sessions open there instead (phone-sessions.js).
+  Object.freeze({ tab: 'terminals', label: 'Open sessions', icon: '🖥', path: '/terminals', scope: Object.freeze({ kind: 'simp', text: 'list, open' }) }),
+  Object.freeze({ tab: 'usage', label: 'Usage', icon: '📊', path: '/usage', scope: Object.freeze({ kind: 'ro', text: 'read-only' }) }),
+  Object.freeze({ tab: 'jobs', label: 'Automations', icon: '⏱', path: '/automations', scope: Object.freeze({ kind: 'simp', text: 'on/off, run now' }) }),
+  Object.freeze({ tab: 'plugins', label: 'Plugins', icon: '🔧', path: '/plugins', scope: Object.freeze({ kind: 'simp', text: 'on/off, check' }) }),
+  Object.freeze({ tab: 'access', label: 'Access', icon: '🔐', path: '/access', scope: Object.freeze({ kind: 'simp', text: 'approve, revoke' }) }),
+  Object.freeze({ tab: 'diagnostics', label: 'Diagnostics', icon: '🩺', path: '/diagnostics', scope: Object.freeze({ kind: 'ro', text: 'read-only' }) }),
+  Object.freeze({ tab: 'config', label: 'Settings', icon: '⚙', path: '/config', scope: Object.freeze({ kind: 'simp', text: 'a few' }) }),
   // Fleet's nav anchor is always hidden (the desktop reaches it from the
   // node chips), so the router will not route to its path: it is always
   // offered and opened through its anchor (byAnchor), and its view says when
   // there is no fleet.
-  Object.freeze({ tab: 'fleet-admin', label: 'Fleet', icon: '🌐', path: '/fleet-admin', byAnchor: true }),
-  Object.freeze({ tab: 'config', label: 'Settings', icon: '⚙', path: '/config' }),
+  Object.freeze({ tab: 'fleet-admin', label: 'Fleet', icon: '🌐', path: '/fleet-admin', byAnchor: true, scope: Object.freeze({ kind: 'ro', text: 'nodes, read-only' }) }),
 ]);
-
 const TAB_TITLES = Object.freeze({
   groups: 'Agents',
   messages: 'Mail',

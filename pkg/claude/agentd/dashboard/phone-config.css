@@ -13,6 +13,11 @@
 :root[data-layout="phone"][data-phone-config="read"] .cfg-panel { pointer-events: none; }
 :root[data-layout="phone"][data-phone-config="read"] .cfg-panel .cfg-more > summary { pointer-events: auto; }
 :root[data-layout="phone"][data-phone-config="read"] .cfg-panel :is(input, select, textarea, button) { opacity: 0.7; }
+/* A phone's form is the simple one: no config.json key under each setting,
+   and Notifications without its Advanced block (raw transition rules, the
+   notifier command), which are for the desktop. */
+:root[data-layout="phone"][data-phone-config] .cfg-row-meta > .cfg-key { display: none; }
+:root[data-layout="phone"][data-phone-config] [data-cfg-panel="notifications"] .cfg-section:has([data-cfg-key="notifications.notification_command"]) { display: none; }
 :root[data-layout="phone"] .cfg-footer { padding-bottom: calc(12px + var(--phone-safe-bottom)); }
 :root[data-layout="phone"] .cfg-footer button { min-height: var(--phone-tap); }
 

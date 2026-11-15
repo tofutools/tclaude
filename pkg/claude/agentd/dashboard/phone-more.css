@@ -1,0 +1,23 @@
+/* More (js/phone-more.js): an entry's scope badge or note sits at its end,
+   and Diagnostics' counts follow its label. */
+:root[data-layout="phone"] .phone-menu-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-layout="phone"] .phone-menu-end { margin-left: auto; padding-left: 8px; flex: none; }
+:root[data-layout="phone"] .phone-menu-note { color: var(--ui-muted-text); font-size: 14px; }
+:root[data-layout="phone"] .phone-more-count { margin-left: -6px; border-radius: 10px; min-width: 20px; text-align: center; }
+
+/* Open sessions (js/phone-sessions.js): Collab on a phone is a list, so the
+   desktop's empty tab strip goes. */
+:root[data-layout="phone"] #terminals-root .terminal-shell-root:has(.phone-sessions) .mux-tabbar { display: none; }
+:root[data-layout="phone"] .phone-sessions { padding: 4px var(--phone-gutter) 24px; }
+:root[data-layout="phone"] .phone-session {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 8px 0;
+  background: none; border: 0; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-session-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] .phone-session-title {
+  color: var(--ui-text-strong); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-layout="phone"] .phone-session-sub { color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-session-chevron { flex: none; color: var(--ui-muted-text); font-size: 20px; }
+:root[data-layout="phone"] .phone-sessions-empty p { margin: 0; }
+:root[data-layout="phone"] .phone-sessions-empty p + p { margin-top: 4px; color: var(--ui-muted-text); font-size: 13px; }

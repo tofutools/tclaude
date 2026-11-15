@@ -181,7 +181,7 @@ windows keep the full dashboard. A bar at the bottom has five views:
 | **Agents** | Your agents by group, with a chip per group and its agent count. Each row shows the agent with a state pill (approval, asking, working, idle, error, offline), its role, harness, context and its PR with checks, or its branch. Offline agents are listed dimmed. Tap an online agent to open its terminal, or an offline one to resume it. **⋯** has the rest: message, shut down or power on, restart, rename and retire. **Board ›** opens a group's board. **＋** spawns an agent from a short sheet: a group, a profile and a prompt, with **All options…** for the full form. |
 | **Mail** | [Messages](dashboard-messages.md) as a phone mail app: folder chips at the top, then one row per message with its first line and attachments. A pending decision or access request has its buttons right on the row. Tap a message to read it full screen, with **Reply** at the bottom and **Terminal ›** at the top. **✎ Write** starts a new message. |
 | **Board** | A group's [task board](taskboard.md), one column at a time: **Idea**, **Next**, **Started**, the board's own columns and **Done**. Each column is split into ready, waiting on you, queued and blocked. A card shows who holds the task, its PR and refs. A question waiting on you has its options right on the card. **Move ▸** moves a task to another column, or up or down. **Comment** adds a comment. Tap the group name in the title to pick another group, and **＋** to add a task. Tap a task for its page: brief, refs, activity, its open questions and a comment box. Editing a task is on the desktop. |
-| **More** | Every other tab, **Power on all**, **Shut down all…** and **Desktop site** |
+| **More** | Every other tab, each with a badge for what you can do there on a phone: read-only (blue), or a few things such as **on/off, run now** (green). **Diagnostics** shows the Doctor's count. Then **Power on all**, **Shut down all…**, **Notifications** (on or off; tap it to change it) and **Desktop site** |
 
 **Automations** (in **More**) lists cron jobs, standing orders, triggers and
 exports by kind. Each has a switch to turn it on or off, and a cron job has ▶ to
@@ -191,6 +191,12 @@ for its steps, with who did each finished step and when. Its gate is a card on
 top: **Approve** in one tap, or **Request changes** with a note. **Pause** in the
 top bar pauses the run. Creating and editing automations and process templates
 are desktop only.
+
+**Open sessions** (in **More**) is the phone's Collab: a plain list, by group,
+of the agents and sessions running and the drawing boards, processes and pages
+that are open. Each row shows its state, and an agent waiting on you says
+**needs you**. Tap a row to open it: an agent's terminal opens full screen, and
+a drawing board opens read-only.
 
 Overlay windows, the side panel, drag and drop and the voice wake word aren't
 on the phone layout.
@@ -226,13 +232,16 @@ away from the browser, disconnects it, and coming back reconnects.
 ### Settings on a phone
 
 **Settings** (under **More**) is a list. Tap a section to open it as a page; ‹
-or the phone's Back returns to the list.
+or the phone's Back returns to the list. A link to a section, such as
+`/config/notifications`, opens that section.
 
 - **This phone** has **Desktop site** and the wizard theme. Neither is saved to
   `config.json`; they apply to this browser only.
 - **Notifications**, **Usage & costs** and **Steward** can be changed on the
   phone. They use the same form as the desktop: **Save changes…** shows the diff
-  before anything is written.
+  before anything is written. The phone leaves out the `config.json` key under
+  each setting, and Notifications leaves out its **Advanced** block (raw
+  transition rules and the notification command).
 - Every other section can be read but not changed on a phone. Use **Desktop
   site** to change it.
 

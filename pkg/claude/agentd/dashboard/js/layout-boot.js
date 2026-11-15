@@ -46,6 +46,7 @@
     'phone-diagnostics.css',
     'phone-fleet.css',
     'phone-mail.css',
+    'phone-more.css',
     'phone-now.css',
     'phone-plugins.css',
     'phone-terminal.css',
