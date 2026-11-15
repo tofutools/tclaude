@@ -38,6 +38,18 @@ test('a desktop browser has no phone shell', async ({ page }) => {
   await expect(page.locator('.meta-phone-view')).toHaveCount(0);
 });
 
+test('a desktop browser previewing the phone layout keeps it in a phone-wide column', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?layout=phone');
+  await booted(page);
+  for (const layer of ['.phone-bar', '.phone-nav', '.phone-view']) {
+    const box = await page.locator(layer).boundingBox();
+    expect(box.width, `${layer} width`).toBeLessThanOrEqual(480);
+    expect(Math.abs(box.x + box.width / 2 - 720), `${layer} is centred`).toBeLessThanOrEqual(2);
+  }
+  await page.goto('/?layout=auto');
+});
+
 test.describe('on a phone', () => {
   test.use(IPHONE);
 
@@ -134,6 +146,25 @@ test.describe('on a phone', () => {
     await terminal.getByRole('button', { name: 'Back' }).click();
     await expect(terminal).toBeHidden();
     await expect(page).not.toHaveURL(/terminal=/);
+    expect(errors).toEqual([]);
+  });
+
+  test('🔍 finds an agent and opens its terminal; the node chip names the node', async ({ page }) => {
+    const errors = collectErrors(page);
+    await page.goto('/');
+    await booted(page);
+    const bar = page.locator('.phone-bar');
+    await expect(bar.locator('.phone-node-chip')).toBeVisible();
+    await bar.getByRole('button', { name: 'Search' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Search' });
+    const field = sheet.getByRole('searchbox', { name: 'Search' });
+    await expect(field).toBeFocused();
+    await field.fill('checkout');
+    const hit = sheet.getByRole('group', { name: 'Agents' }).locator('.phone-search-hit').first();
+    await expect(hit).toContainText('checkout-ui');
+    await hit.click();
+    await expect(sheet).toBeHidden();
+    await expect(page.locator('.phone-term[role=dialog]')).toBeVisible();
     expect(errors).toEqual([]);
   });
 

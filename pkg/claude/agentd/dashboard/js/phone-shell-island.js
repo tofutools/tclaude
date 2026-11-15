@@ -12,27 +12,33 @@
 // phone.css can hide <main> under it. Any tab activation (a slot, a More entry,
 // a deep link, Back) clears the own view.
 
+
 import { h, render } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
-import { companionAgents } from './companion-model.js';
-import { ApprovalCard, DecisionCard } from './companion-approval.js';
-import { messagesBadgeView, footerMetaView, authoredOpenPRsView } from './shell-model.js';
-import { Usage } from './shell-island.js';
-import {
-  MORE_TABS, OWN_VIEWS, PHONE_SLOTS, askerName, boardGroups, boardLanes, nowView, slotFor, taskPath, titleFor,
-} from './phone-shell-model.js';
-import { Button } from './ui-components.js';
-import { Tabs } from './ui-tabs.js';
-import { phonePage } from './phone-page.js';
+import { messagesBadgeView } from './shell-model.js';
+import { OWN_VIEWS, PHONE_SLOTS, nowView, rootBarFor, slotFor, titleFor } from './phone-shell-model.js';
+import { phoneBar, phonePage } from './phone-page.js';
 import { processContext } from './process-context.js';
-import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
+import { gateItems } from './phone-process-runs.js';
 import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
 import { DesktopOnlyPage, desktopOnlyView } from './phone-desktop-only.js';
 import { featureState } from './feature-state-registry.js';
 import { installPhoneHistory, keptView } from './phone-history.js';
 import { installKeyboardInset } from './phone-keyboard.js';
+import { installInputModality } from './phone-input.js';
+import { fleetState } from './fleet-state.js';
+import { IconButton } from './phone-ui.js';
+import { NodeChip } from './phone-node-picker.js';
+import { SearchSheet } from './phone-search.js';
+import { NowView } from './phone-now.js';
+import { BoardView } from './phone-board.js';
+import { MoreMenu, PowerMenu } from './phone-more.js';
+
+// The own views live in their own files; re-exported for this module's
+// callers.
+export { NowView, BoardView };
 
 const html = htm.bind(h);
 
@@ -52,156 +58,7 @@ export function landsOnNow(loc = globalThis.location) {
   return (path === '/' || path === '/dashboard') && !loc?.search;
 }
 
-function AgentRow({ agent, actions, tag = null, detail = '' }) {
-  return html`<li class="phone-agent">
-    <div class="phone-agent-text">
-      <span class="phone-agent-name">${agent.name}</span>
-      ${agent.group && html`<span class="phone-agent-group">${agent.group}</span>`}
-      ${detail && html`<span class="phone-agent-detail">${detail}</span>`}
-    </div>
-    ${tag}
-    <div class="phone-agent-acts">
-      <${Button} size="sm" onClick=${() => actions.message(agent)} aria-label=${`Message ${agent.name}`}>✉<//>
-      <${Button} size="sm" onClick=${() => actions.openTerminal(agent)}>Open<//>
-    </div>
-  </li>`;
-}
-
-function Section({ title, count = null, children, more = null }) {
-  // A div, not a <section>: dashboard.css hides every section but the active tab.
-  return html`<div class="phone-section" role="group" aria-label=${title}>
-    <h2 class="phone-section-head ui-eyebrow">
-      <span>${title}${count !== null && html` · ${count}`}</span>${more}
-    </h2>
-    ${children}
-  </div>`;
-}
-
-function OpenPRs({ snapshot }) {
-  const view = authoredOpenPRsView(snapshot);
-  if (!view.available || !view.total) return null;
-  const shown = view.items.slice(0, 5);
-  return html`<${Section} title="Open PRs" count=${view.total}>
-    <ul class="phone-list">
-      ${shown.map((pr) => html`<li key=${pr.url} class="phone-pr">
-        <a href=${pr.url} target="_blank" rel="noopener" class="phone-pr-title">${pr.title || pr.url}</a>
-        ${pr.draft && html`<span class="ui-tag">draft</span>`}
-        ${pr.checks?.state && html`<span class=${`ui-tag phone-pr-checks phone-pr-${pr.checks.state}`}>${pr.checks.state}</span>`}
-      </li>`)}
-    </ul>
-  <//>`;
-}
-
-export function NowView({ state, actions, fetchImpl = globalThis.fetch, processSource = processContext }) {
-  // Process gates waiting on the operator come from the process read model,
-  // not the snapshot: Now keeps it fresh while it shows.
-  const gates = gateItems(useProcessRuns(processSource).context);
-  const snapshot = state.snapshot.value;
-  if (!snapshot) return html`<div class="ui-empty phone-empty">Loading…</div>`;
-  const now = nowView(snapshot);
-  const view = { ...now, needs: now.needs + gates.length };
-  const agents = companionAgents(snapshot);
-  const nameOf = (id) => agents.get(id)?.name || '';
-  const quiet = view.needs === 0;
-  return html`<div class="phone-now">
-    <div class="phone-usage ui-card"><${Usage} state=${state} /></div>
-    <${Section} title="Needs you" count=${view.needs}>
-      ${quiet && html`<p class="ui-empty phone-empty">Nothing needs you right now.</p>`}
-      ${view.approvals.map((request) => html`<div key=${request.id} class="phone-card">
-        <${ApprovalCard} request=${request} fetchImpl=${fetchImpl} notify=${actions.notify} from=${nameOf(request.agent_id) || request.conv_title || ''}
-          onMore=${() => actions.openAccessRequest(request.id)} />
-      </div>`)}
-      ${view.elsewhere > 0 && html`<${Button} class="phone-wide" onClick=${() => actions.openAccessRequest()}>
-        ${view.elsewhere} more access request${view.elsewhere === 1 ? '' : 's'} in Mail ›<//>`}
-      ${view.decisions.map((decision) => html`<div key=${decision.id} class="phone-card">
-        <${DecisionCard} decision=${decision} fetchImpl=${fetchImpl} notify=${actions.notify} from=${askerName(snapshot, agents)(decision)} />
-      </div>`)}
-      ${gates.map((item) => html`<${GateCard} key=${item.run.runId} item=${item} source=${processSource} />`)}
-      ${view.asking.length > 0 && html`<ul class="phone-list">
-        ${view.asking.map((agent) => html`<${AgentRow} key=${agent.agentId} agent=${agent} actions=${actions}
-          detail=${agent.detail || 'is asking you'} tag=${html`<span class="ui-tag ui-tag-accent">asking</span>`} />`)}
-      </ul>`}
-    <//>
-    ${view.errors.length > 0 && html`<${Section} title="Errors" count=${view.errors.length}>
-      <ul class="phone-list">
-        ${view.errors.map((agent) => html`<${AgentRow} key=${agent.agentId} agent=${agent} actions=${actions}
-          detail=${agent.detail} tag=${html`<span class="ui-tag ui-tag-warn">error</span>`} />`)}
-      </ul>
-    <//>`}
-    <${Section} title="Working" count=${view.working.length}
-      more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button>`}>
-      ${view.working.length === 0
-        ? html`<p class="ui-empty phone-empty">No agent is working.</p>`
-        : html`<ul class="phone-list">
-          ${view.working.map((agent) => html`<${AgentRow} key=${agent.agentId} agent=${agent} actions=${actions} />`)}
-        </ul>`}
-    <//>
-    <${OpenPRs} snapshot=${snapshot} />
-  </div>`;
-}
-
-export function BoardView({ source, state, actions }) {
-  const [picked, setPicked] = useState('');
-  useEffect(() => source.attach(), [source]);
-  const status = source.status.value;
-  if (status === 'unavailable') return html`<p class="ui-empty phone-empty">Task boards are turned off.</p>`;
-  const context = source.context.value;
-  if (!context) return html`<p class="ui-empty phone-empty">${status === 'error' ? `Could not read the boards: ${source.error.value}` : 'Loading…'}</p>`;
-  const groups = boardGroups(context);
-  if (groups.length === 0) return html`<p class="ui-empty phone-empty">No open tasks on any board.</p>`;
-  const group = groups.find((g) => g.group === picked)?.group || groups[0].group;
-  const entry = context.groups.find((g) => g.group === group);
-  const agents = companionAgents(state.snapshot.value);
-  return html`<div class="phone-board">
-    <${Tabs} class="phone-chips" label="Group" value=${group} onSelect=${setPicked}
-      items=${groups.map((g) => ({
-        key: g.group,
-        label: html`${g.group} <span class="phone-chip-count">${g.live}</span>${g.waiting > 0 && html` <span class="ui-badge ui-badge-accent">${g.waiting}</span>`}`,
-      }))} />
-    ${boardLanes(entry).map((lane) => html`<${Section} key=${lane.id} title=${lane.label} count=${lane.tasks.length}>
-      <ul class="phone-list">
-        ${lane.tasks.map((task) => html`<li key=${task.id}>
-          <button data-ui-exempt type="button" class="phone-task" onClick=${() => actions.navigate(taskPath(task, group))}>
-            <span class="phone-task-title">${task.title}</span>
-            ${task.assignee?.agent_id && !task.assignee.operator && html`<span class="phone-task-who">@${agents.get(task.assignee.agent_id)?.name || task.assignee.agent_id.slice(0, 12)}</span>`}
-            ${task.assignee?.operator && html`<span class="phone-task-who">you</span>`}
-          </button>
-        </li>`)}
-      </ul>
-    <//>`)}
-  </div>`;
-}
-
-// MoreMenu is the More sheet: every other tab, the power actions and the
-// layout switch.
-function MoreMenu({ state, actions, close }) {
-  const go = (entry) => {
-    close();
-    if (entry.byAnchor) actions.showTab(entry.tab);
-    else actions.navigate(entry.path);
-  };
-  const run = (act) => { close(); act(); };
-  const meta = footerMetaView(state.snapshot.value);
-  return html`<ul class="phone-menu">
-      ${MORE_TABS.filter((entry) => entry.byAnchor || actions.tabAvailable(entry.tab)).map((entry) => html`<li key=${entry.tab}>
-        <button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => go(entry)}>
-          <span class="phone-menu-icon" aria-hidden="true">${entry.icon}</span>${entry.label}
-        </button>
-      </li>`)}
-    </ul>
-    <h2 class="ui-eyebrow phone-menu-head">Actions</h2>
-    <ul class="phone-menu">
-      <li><button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => run(actions.powerOnAll)}>
-        <span class="phone-menu-icon" aria-hidden="true">🟢</span>Power on all</button></li>
-      <li><button data-ui-exempt type="button" class="phone-menu-item phone-menu-danger" onClick=${() => run(actions.shutdownAll)}>
-        <span class="phone-menu-icon" aria-hidden="true">🛑</span>Shut down all…</button></li>
-      <li><button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => run(actions.desktopSite)}>
-        <span class="phone-menu-icon" aria-hidden="true">🖥</span>Desktop site</button></li>
-    </ul>
-    ${meta && html`<p class="phone-sheet-meta">tclaude ${meta.version}</p>`}`;
-}
-
-export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = globalThis.fetch, processSource = processContext }) {
+export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = globalThis.fetch, processSource = processContext, fleet = fleetState }) {
   const activeTab = state.activeTab.value;
   const view = shell.view.value;
   const slot = slotFor(view, activeTab);
@@ -218,6 +75,12 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const routeMap = featureState('groups')?.subview?.value === 'routes';
   const desktopOnly = OWN_VIEWS.includes(view) ? '' : desktopOnlyView(activeTab, routeMap ? 'routes' : '');
   const covering = OWN_VIEWS.includes(view) ? view : desktopOnly ? 'desktop-only' : '';
+  // A root view's top bar: the shell's own furniture for its slot, and what
+  // the view on screen added (phoneBar, js/phone-page.js). A desktop-only
+  // page has neither.
+  const onScreen = OWN_VIEWS.includes(view) ? view : activeTab;
+  const own = desktopOnly ? {} : rootBarFor(slot);
+  const added = !desktopOnly && phoneBar.value?.tab === onScreen ? phoneBar.value : null;
 
   // Any tab activation after the first render clears the own view, so a deep
   // link, Back, or a link inside a view shows its tab; unless Back restored
@@ -225,6 +88,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const seenTab = useRef(activeTab);
   useEffect(() => installPhoneHistory({ view: shell.view, tab: () => state.activeTab.peek() }), [shell]);
   useEffect(() => installKeyboardInset(), []);
+  useEffect(() => installInputModality(), []);
   useEffect(() => {
     if (seenTab.current === activeTab) return;
     seenTab.current = activeTab;
@@ -270,7 +134,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   function pick(target) {
     closePhoneSheet();
     if (target.id === 'more') {
-      openPhoneSheet({ label: 'More', Body: MoreMenu, props: { state, actions: viewActions } });
+      openPhoneSheet({ label: 'More', Body: MoreMenu, props: { state, actions: viewActions, fleet } });
       return;
     }
     if (OWN_VIEWS.includes(target.id)) {
@@ -288,6 +152,12 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     actions.showTab(target.tab);
   }
 
+  const openSheet = (label, Body, props = {}) => {
+    closePhoneSheet();
+    openPhoneSheet({ label, Body, props: { state, actions: viewActions, ...props } });
+  };
+  const title = desktopOnly || titleFor(view, activeTab);
+
   const badge = (id) => {
     if (id === 'now' && needs > 0) return html`<span class="ui-badge ui-badge-danger phone-nav-badge">${needs}</span>`;
     if (id === 'mail' && !mail.hidden) return html`<span class="ui-badge ui-badge-accent phone-nav-badge">${mail.text}</span>`;
@@ -302,9 +172,19 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
           class=${`phone-bar-act${act.danger ? ' danger' : ''}`} aria-label=${act.label} title=${act.label}
           disabled=${!!act.disabled} onClick=${act.onClick}>${act.icon || act.label}</button>`)}`
       : html`<img class="phone-bar-logo" src="/static/tclaude-icon.svg" alt="" />
-        <h1 class="phone-bar-title">${desktopOnly || titleFor(view, activeTab)}</h1>
+        <h1 class="phone-bar-title">${added?.menu
+          ? html`<button data-ui-exempt type="button" class="phone-bar-title-btn" aria-haspopup="dialog"
+              aria-label=${`${title}${added.menu.sub ? ` ${added.menu.sub}` : ''}, ${added.menu.label || 'pick'}`} onClick=${added.menu.onClick}>
+              ${title}<small>${added.menu.sub ? ` ${added.menu.sub}` : ''} ▾</small></button>`
+          : title}</h1>
+        ${own.power && html`<${IconButton} icon="⏻" label="Power" aria-haspopup="dialog" onClick=${() => openSheet('Power', PowerMenu)} />`}
+        ${(added?.actions || []).map((act) => html`<${IconButton} key=${act.key || act.label} icon=${act.icon || act.label} label=${act.label}
+          danger=${!!act.danger} disabled=${!!act.disabled} badge=${act.badge} onClick=${act.onClick} />`)}
+        ${own.node && html`<${NodeChip} fleet=${fleet} />`}
         <span class=${`phone-bar-live ${connection}`} role="status" title=${connection === 'connected' ? 'Connected' : connection}
-          aria-label=${connection === 'connected' ? 'Connected' : `Connection: ${connection}`}></span>`}
+          aria-label=${connection === 'connected' ? 'Connected' : `Connection: ${connection}`}></span>
+        ${own.search && html`<${IconButton} icon="🔍" label="Search" aria-haspopup="dialog"
+          onClick=${() => openSheet('Search', SearchSheet, { boardSource })} />`}`}
     </header>
     ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} processSource=${processSource} /></div>`}
     ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} /></div>`}
@@ -326,6 +206,7 @@ export function mountPhoneShellIsland({ host, shell, state, actions, boardSource
   registerCleanup(() => {
     render(null, host);
     phonePage.value = null;
+    phoneBar.value = null;
     closePhoneSheet();
     delete document.documentElement.dataset.phoneView;
     delete document.documentElement.dataset.phonePage;

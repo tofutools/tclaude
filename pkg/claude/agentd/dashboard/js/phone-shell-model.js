@@ -60,6 +60,21 @@ export function slotFor(view, activeTab) {
   return PHONE_SLOTS.find((slot) => slot.tab === activeTab)?.id || 'more';
 }
 
+// ROOT_BARS is what the shell itself puts in a root view's top bar (no page
+// pushed), by bottom-nav slot: the node chip, ⏻ for the power actions, and
+// 🔍 search. A view adds its own actions through phoneBar (phone-page.js).
+const ROOT_BARS = Object.freeze({
+  now: Object.freeze({ node: true, search: true }),
+  agents: Object.freeze({ power: true, search: true }),
+  mail: Object.freeze({ search: true }),
+});
+const NO_BAR = Object.freeze({});
+
+// rootBarFor is the shell's own top bar furniture for a slot.
+export function rootBarFor(slot) {
+  return ROOT_BARS[slot] || NO_BAR;
+}
+
 // titleFor is the top bar's title.
 export function titleFor(view, activeTab) {
   if (OWN_VIEWS.includes(view)) return PHONE_SLOTS.find((slot) => slot.id === view).label;

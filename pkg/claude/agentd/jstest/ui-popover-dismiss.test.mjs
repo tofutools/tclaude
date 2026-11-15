@@ -19,6 +19,7 @@ const ALLOWED = {
   'popover-watch.js': 'the shared rule itself',
   'drawing-board-island.js': 'a press elsewhere ends the drawing board\'s claim on page keys',
   'process-editor-place.js': 'tracks which process editor the operator touched last',
+  'phone-input.js': 'tells touch from keyboard for the phone layout\'s focus rings; it closes nothing',
   'overlay-snap-assist.js': 'window snapping (overlay-window area): the press picks or ends a snap',
   'row-actions.js': 'a new gesture makes a context-menu activation stale',
   'row-drag.js': 'a press on a control in a draggable table row (agent, resource, task) turns that row\'s drag off for the press, so the control clicks; it closes nothing',

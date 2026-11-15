@@ -32,18 +32,15 @@ import { openHumanReplyModal, openMessageCreateModal } from './message-access-di
 import { shellToast } from './shell-state.js';
 import { usePhonePage } from './phone-page.js';
 import { Button } from './ui-components.js';
+import { avatarHue } from './phone-ui.js';
 
 const html = htm.bind(h);
 
 const HUMAN = 'human';
 const ACCESS = 'access-requests';
 
-// avatarHue picks one of the eight avatar colours for a name, stably.
-export function avatarHue(name) {
-  let hash = 0;
-  for (const ch of String(name || '')) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
-  return hash % 8;
-}
+// avatarHue (phone-ui.js) picks a name's avatar colour; re-exported for its callers here.
+export { avatarHue };
 
 function Avatar({ name }) {
   const initial = String(name || '?').trim().charAt(0).toUpperCase() || '?';

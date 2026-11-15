@@ -37,6 +37,30 @@
   text-size-adjust: 100%;
 }
 
+/* The approved phone mocks' palette and shapes, as tokens. Set on body, not
+   :root: the dashboard's skins (body.wizard, body.slop) set the ui tokens on
+   body, and these follow them. The state colours (pills, accents) are the
+   mock's own in every skin. */
+:root[data-layout="phone"] body {
+  --phone-panel: var(--ui-card-bg);
+  --phone-panel2: color-mix(in srgb, var(--ui-card-bg) 55%, var(--ui-bg));
+  --phone-tile: var(--ui-bg);
+  --phone-line: var(--ui-line);
+  --phone-accent: var(--ui-focus);
+  --phone-accent-bg: var(--ui-primary);
+  /* A picked chip or nav slot, and the edge of an accent-coloured chip. */
+  --phone-on-bg: color-mix(in srgb, var(--ui-primary) 28%, var(--ui-card-bg));
+  --phone-on-line: color-mix(in srgb, var(--ui-primary) 45%, var(--ui-card-bg));
+  --phone-ok: #3fb950;
+  --phone-warn: #d29922;
+  --phone-bad: #f85149;
+  --phone-purple: #a371f7;
+  --phone-r: 12px;
+  --phone-btn-r: 10px;
+  /* The column a desktop preview (?layout=phone) keeps the phone shell in. */
+  --phone-col: 480px;
+}
+
 /* ── Controls on every phone view ───────────────────────────────────────────
    Set once here rather than per view, so a desktop island still showing on a
    phone gets them too.
@@ -62,6 +86,23 @@
 }
 :root[data-layout="phone"] .ui-switch::after { top: 10px; left: 2px; width: 24px; height: 24px; }
 :root[data-layout="phone"] .ui-switch:checked::after { left: 22px; }
+
+/* Touch draws no focus ring (js/phone-input.js): a closing sheet hands focus
+   back to the button that opened it, and :focus-visible would ring it after
+   every tap. The first key press brings the rings back. */
+:root[data-layout="phone"][data-phone-input="touch"] :focus-visible { outline: none; }
+
+/* Disclosures (<details>): a drawn chevron that turns as it opens, apart from
+   the text, instead of dashboard.css's "▶ " glyph. Views that draw their own
+   marker (.phone-diag-row) or none (a group tree) are left out. */
+:root[data-layout="phone"] details:not([data-group-key], .phone-diag-row) > summary { list-style: none; cursor: pointer; }
+:root[data-layout="phone"] details:not([data-group-key], .phone-diag-row) > summary::-webkit-details-marker { display: none; }
+:root[data-layout="phone"] details:not([data-group-key], .phone-diag-row) > summary::before {
+  content: ""; display: inline-block; flex: none; width: 7px; height: 7px; margin: 0 12px 2px 3px;
+  border-right: 2px solid var(--ui-muted-text); border-bottom: 2px solid var(--ui-muted-text);
+  transform: rotate(-45deg); transition: transform .15s ease;
+}
+:root[data-layout="phone"] details:not([data-group-key], .phone-diag-row)[open] > summary::before { transform: rotate(45deg); margin-bottom: 4px; }
 
 /* The one secondary width query in phone mode: a phone held sideways, where a
    view may show two panes side by side (e.g. message list and message).
@@ -112,9 +153,9 @@
 :root[data-layout="phone"] .phone-bar {
   position: fixed; top: 0; left: 0; right: 0; z-index: var(--z-chrome);
   height: calc(var(--phone-bar-h) + var(--phone-safe-top));
-  padding: var(--phone-safe-top) var(--phone-gutter) 0;
-  display: flex; align-items: center; gap: 10px;
-  background: var(--ui-card-bg); border-bottom: 1px solid var(--ui-line);
+  padding: var(--phone-safe-top) 8px 0 var(--phone-gutter);
+  display: flex; align-items: center; gap: 6px;
+  background: var(--phone-panel); border-bottom: 1px solid var(--phone-line);
 }
 :root[data-layout="phone"] .phone-bar-logo { width: 24px; height: 24px; }
 :root[data-layout="phone"] .phone-bar-title {
@@ -122,11 +163,18 @@
   font-size: 18px; font-weight: 700; color: var(--ui-text-strong);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+:root[data-layout="phone"] .phone-bar-title small { margin-left: 4px; font-size: 13px; font-weight: 400; color: var(--ui-muted-text); }
+/* A view's title menu (phoneBar.menu): the title itself is the button. */
+:root[data-layout="phone"] .phone-bar-title-btn {
+  max-width: 100%; min-height: var(--phone-tap); padding: 0; background: none; border: 0;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 :root[data-layout="phone"] .phone-bar-live {
-  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  width: 8px; height: 8px; margin: 0 6px; border-radius: 50%; flex: none;
   background: var(--ui-warn-text);
 }
-:root[data-layout="phone"] .phone-bar-live.connected { background: var(--ui-success-line); }
+:root[data-layout="phone"] .phone-bar-live.connected { background: var(--phone-ok); }
 :root[data-layout="phone"] .phone-bar-live.disconnected { background: var(--ui-danger); }
 
 :root[data-layout="phone"] .phone-nav {
@@ -143,10 +191,13 @@
   background: none; border: 0; color: var(--ui-muted-text);
   font: inherit; font-size: 11px; cursor: pointer;
 }
-:root[data-layout="phone"] .phone-nav-icon { font-size: 19px; line-height: 1; padding: 2px 14px; border-radius: 12px; }
-:root[data-layout="phone"] .phone-nav-item.on { color: var(--ui-focus); }
-:root[data-layout="phone"] .phone-nav-item.on .phone-nav-icon { background: var(--ui-menu-hover); }
-:root[data-layout="phone"] .phone-nav-badge { position: absolute; top: 4px; left: calc(50% + 6px); }
+:root[data-layout="phone"] .phone-nav-icon { font-size: 20px; line-height: 1; padding: 3px 16px; border-radius: 14px; }
+:root[data-layout="phone"] .phone-nav-item.on { color: var(--phone-accent); }
+:root[data-layout="phone"] .phone-nav-item.on .phone-nav-icon { background: var(--phone-on-bg); }
+:root[data-layout="phone"] .phone-nav-badge {
+  position: absolute; top: 4px; left: calc(50% + 6px);
+  min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; font-size: 10px; line-height: 17px;
+}
 
 /* An own view (Now, Board) fills the space between the bars and scrolls. */
 :root[data-layout="phone"] .phone-view {
@@ -159,7 +210,8 @@
 :root[data-layout="phone"] .phone-section { margin-top: 18px; }
 :root[data-layout="phone"] .phone-section:first-child { margin-top: 0; }
 :root[data-layout="phone"] .phone-section-head {
-  display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 8px;
+  display: flex; justify-content: space-between; align-items: baseline; margin: 0 4px 8px;
+  font-size: 12px; font-weight: 700;
 }
 :root[data-layout="phone"] .phone-link {
   background: none; border: 0; padding-inline: 0; color: var(--ui-focus); font: inherit; cursor: pointer;
@@ -197,9 +249,26 @@
   max-width: none; margin: 0; background: var(--ui-card-bg); border: 1px solid var(--ui-card-line); border-radius: 8px; padding: 10px;
 }
 
-/* Board: one group at a time, picked from a row of tabs that scrolls sideways. */
-:root[data-layout="phone"] .phone-chips { display: flex; flex-wrap: nowrap; overflow-x: auto; max-width: 100%; }
-:root[data-layout="phone"] .phone-chips .ui-tab { flex: none; min-height: var(--phone-tap); font-size: 14px; }
+/* A chip row (phone-ui.js ChipRow, or any tab row with .phone-chips): rounded
+   chips in a row that scrolls sideways, edge to edge. A chip is drawn 32px
+   tall; the row's padding and each chip's ::after keep a finger-sized hit
+   area. */
+:root[data-layout="phone"] .phone-chips {
+  display: flex; flex-wrap: nowrap; gap: 8px; overflow-x: auto; scrollbar-width: none;
+  max-width: none; margin: -6px calc(-1 * var(--phone-gutter)) 4px; padding: 6px var(--phone-gutter);
+  background: none; border: 0; border-radius: 0;
+}
+:root[data-layout="phone"] .phone-chips::-webkit-scrollbar { display: none; }
+:root[data-layout="phone"] .phone-chips .ui-tab {
+  position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px;
+  min-height: 0; height: 32px; padding: 0 12px; border-radius: 16px;
+  background: var(--phone-panel2); border: 1px solid var(--phone-line); color: var(--ui-text);
+  font-size: 13px; font-weight: 400;
+}
+:root[data-layout="phone"] .phone-chips .ui-tab::after { content: ""; position: absolute; inset: -6px 0; }
+:root[data-layout="phone"] .phone-chips .ui-tab:is(.active, [aria-selected="true"]) {
+  background: var(--phone-on-bg); border-color: var(--phone-accent-bg); color: var(--ui-text-strong); font-weight: 500;
+}
 :root[data-layout="phone"] .phone-chip-count { color: var(--ui-muted-text); }
 :root[data-layout="phone"] .phone-task {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
@@ -217,20 +286,136 @@
   position: fixed; left: 0; right: 0; bottom: var(--phone-keyboard); z-index: calc(var(--z-dialog) + 1);
   max-height: calc(85vh - var(--phone-keyboard)); overflow-y: auto;
   padding: 8px var(--phone-gutter) calc(16px + var(--phone-safe-bottom));
-  background: var(--ui-dialog-bg); border-top: 1px solid var(--ui-dialog-line); border-radius: 16px 16px 0 0;
+  background: var(--ui-dialog-bg); border-top: 1px solid var(--ui-dialog-line); border-radius: 20px 20px 0 0;
   box-shadow: var(--ui-dialog-shadow);
 }
 :root[data-layout="phone"] .phone-sheet-grab { width: 40px; height: 5px; border-radius: 3px; background: var(--ui-pressed-bg); margin: 2px auto 10px; }
 :root[data-layout="phone"] .phone-menu { list-style: none; margin: 0; padding: 0; }
 :root[data-layout="phone"] .phone-menu-head { margin: 14px 0 4px; }
 :root[data-layout="phone"] .phone-menu-item {
-  display: flex; align-items: center; gap: 14px; width: 100%; min-height: 50px; padding: 0 4px;
-  background: none; border: 0; border-bottom: 1px solid var(--ui-line);
+  display: flex; align-items: center; gap: 14px; width: 100%; min-height: 58px; padding: 0 6px;
+  background: none; border: 0; border-bottom: 1px solid var(--phone-tile);
   color: var(--ui-text-strong); font: inherit; font-size: 16px; text-align: left; cursor: pointer;
 }
-:root[data-layout="phone"] .phone-menu-icon { width: 28px; text-align: center; font-size: 18px; }
+:root[data-layout="phone"] .phone-menu-item:disabled { opacity: .5; cursor: default; }
+/* A menu entry's icon sits on a rounded tile. */
+:root[data-layout="phone"] .phone-menu-icon {
+  flex: none; display: grid; place-items: center; width: 34px; height: 34px;
+  border-radius: 9px; background: var(--phone-tile); font-size: 17px;
+}
 :root[data-layout="phone"] .phone-menu-danger { color: var(--ui-danger-text); }
 :root[data-layout="phone"] .phone-sheet-meta { margin: 12px 4px 0; color: var(--ui-muted-text); font-size: 12px; }
+
+/* ── Phone UI primitives (js/phone-ui.js) ────────────────────────────────────
+   The approved mocks' building blocks; every phone view composes these. */
+
+/* Avatar: a coloured circle with an initial, or an agent's glyph on a tile
+   with a corner badge for what it waits on. */
+:root[data-layout="phone"] .phone-av {
+  position: relative; flex: none; display: grid; place-items: center;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: #6e7781; color: #fff; font-weight: 700; font-size: 16px; line-height: 1;
+}
+:root[data-layout="phone"] .phone-av[data-hue="0"] { background: #8250df; }
+:root[data-layout="phone"] .phone-av[data-hue="1"] { background: #1f6feb; }
+:root[data-layout="phone"] .phone-av[data-hue="2"] { background: #2da44e; }
+:root[data-layout="phone"] .phone-av[data-hue="3"] { background: #bf8700; }
+:root[data-layout="phone"] .phone-av[data-hue="4"] { background: #cf222e; }
+:root[data-layout="phone"] .phone-av[data-hue="5"] { background: #0e7490; }
+:root[data-layout="phone"] .phone-av[data-hue="6"] { background: #bc4c00; }
+:root[data-layout="phone"] .phone-av[data-hue="7"] { background: #6e7781; }
+:root[data-layout="phone"] .phone-av-bot { width: 36px; height: 36px; border-radius: 10px; background: var(--phone-tile); font-size: 20px; font-weight: 400; }
+:root[data-layout="phone"] .phone-av-badge { position: absolute; top: -5px; right: -4px; font-size: 12px; font-style: normal; }
+:root[data-layout="phone"] .phone-av-dim { opacity: .5; }
+
+/* StatePill: a state in a filled pill. */
+:root[data-layout="phone"] .phone-pill {
+  flex: none; display: inline-block; padding: 4px 7px; border: 1px solid; border-radius: 9px;
+  font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap;
+}
+:root[data-layout="phone"] .phone-pill-ask { color: #d2a8ff; border-color: #6e40c9; background: #271a40; }
+:root[data-layout="phone"] .phone-pill-work { color: #7ee787; border-color: #2e7d3f; background: #12301b; }
+:root[data-layout="phone"] .phone-pill-idle { color: var(--ui-muted-text); border-color: var(--phone-line); background: none; }
+:root[data-layout="phone"] .phone-pill-off { color: #6e7681; border-color: #30363d; background: #0d1117; }
+:root[data-layout="phone"] .phone-pill-err { color: #ffa198; border-color: #8e1519; background: #3a1012; }
+:root[data-layout="phone"] .phone-pill-key { color: #f2cc60; border-color: #9e6a03; background: #3b2e05; }
+
+/* Card: a rounded panel; an accent colours its left edge. */
+:root[data-layout="phone"] .phone-box {
+  margin-bottom: 10px; padding: 12px;
+  background: var(--phone-panel); border: 1px solid var(--phone-line); border-radius: var(--phone-r);
+}
+:root[data-layout="phone"] .phone-box-key { border-left: 3px solid var(--phone-warn); }
+:root[data-layout="phone"] .phone-box-ask { border-left: 3px solid var(--phone-purple); }
+:root[data-layout="phone"] .phone-box-q { border-left: 3px solid var(--phone-accent); }
+
+/* ScopeBadge: what a phone can do on a page. */
+:root[data-layout="phone"] .phone-scope {
+  flex: none; padding: 3px 8px; border: 1px solid var(--phone-line); border-radius: 9px;
+  color: var(--ui-muted-text); font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+:root[data-layout="phone"] .phone-scope-ro { color: #79c0ff; border-color: #1f3b60; }
+:root[data-layout="phone"] .phone-scope-simp { color: #7ee787; border-color: #2e7d3f; }
+:root[data-layout="phone"] .phone-scope-desk { border-style: dashed; }
+
+/* IconButton: an app-bar action. */
+:root[data-layout="phone"] .phone-ib {
+  position: relative; flex: none; display: grid; place-items: center;
+  width: var(--phone-tap); height: var(--phone-tap); padding: 0;
+  background: none; border: 0; border-radius: var(--phone-btn-r);
+  color: var(--ui-muted-text); font: inherit; font-size: 19px; line-height: 1; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-ib:active { background: var(--phone-tile); }
+:root[data-layout="phone"] .phone-ib:disabled { opacity: .5; cursor: default; }
+:root[data-layout="phone"] .phone-ib.danger { color: var(--ui-danger-text); }
+:root[data-layout="phone"] .phone-ib-badge { position: absolute; top: 2px; right: 0; min-width: 16px; font-size: 10px; }
+
+/* ButtonRow: a card's actions, equal widths in one row. */
+:root[data-layout="phone"] .phone-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+:root[data-layout="phone"] .phone-btn {
+  padding: 0 14px; border-radius: var(--phone-btn-r);
+  background: var(--phone-panel2); border-color: var(--phone-line); color: var(--ui-text-strong);
+  font-size: 14px; font-weight: 500;
+}
+:root[data-layout="phone"] .phone-btn-grow { flex: 1 1 0; min-width: 0; justify-content: center; }
+:root[data-layout="phone"] .phone-btn-pri { background: var(--phone-accent-bg); border-color: var(--phone-accent-bg); color: #fff; }
+:root[data-layout="phone"] .phone-btn-ok { background: #1a4d2a; border-color: #2e7d3f; color: #c6f6d0; }
+:root[data-layout="phone"] .phone-btn-no { color: #ffb3ad; border-color: #6e2a27; }
+
+/* The node chip (js/phone-node-picker.js): the node on screen, in the app
+   bar of Now and atop the More sheet; a button when there are others. */
+:root[data-layout="phone"] .phone-node-chip {
+  position: relative; flex: 0 1 auto; min-width: 0; max-width: 42vw;
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
+  background: var(--phone-panel2); border: 1px solid var(--phone-on-line); border-radius: 14px;
+  color: var(--phone-accent); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-node-chip::after { content: ""; position: absolute; inset: -8px 0; }
+:root[data-layout="phone"] .phone-node-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] span.phone-node-chip { cursor: default; }
+:root[data-layout="phone"] .phone-more-node { display: flex; justify-content: flex-end; margin: 0 0 6px; }
+:root[data-layout="phone"] .phone-node-dot { color: var(--nc, var(--phone-accent)); }
+:root[data-layout="phone"] .phone-node-dot[data-online="false"] { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-layout="phone"] .phone-node-row[aria-current="page"] .phone-node-name { font-weight: 700; }
+:root[data-layout="phone"] .phone-node-meta { flex: none; color: var(--ui-muted-text); font-size: 13px; }
+
+/* The 🔍 search sheet (js/phone-search.js). */
+:root[data-layout="phone"] .phone-sheet:has(.phone-search) { min-height: 60vh; }
+:root[data-layout="phone"] .phone-search-input {
+  width: 100%; height: var(--phone-tap); margin-bottom: 12px; padding: 0 16px;
+  background: var(--phone-panel2); border: 1px solid var(--phone-line); border-radius: 22px;
+}
+:root[data-layout="phone"] .phone-search .phone-section { margin-top: 14px; }
+:root[data-layout="phone"] .phone-search-list > li { border-bottom-color: var(--phone-tile); }
+:root[data-layout="phone"] .phone-search-hit {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 2px;
+  background: none; border: 0; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-search-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] :is(.phone-search-title, .phone-search-sub) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] .phone-search-title { font-weight: 600; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-search-sub { color: var(--ui-muted-text); font-size: 13px; }
 
 /* ── Pushed pages (js/phone-page.js) ─────────────────────────────────────────
    A tab view's page puts back, title and actions in the top bar; a page that
@@ -280,3 +465,20 @@
 :root[data-layout="phone"] .phone-desktop-page-icon { font-size: 40px; margin-bottom: 10px; }
 :root[data-layout="phone"] .phone-desktop-page-title { margin: 0 0 8px; font-size: 18px; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-desktop-page-go { margin-top: 18px; min-height: var(--phone-tap); padding: 0 24px; }
+
+/* ── A desktop preview (?layout=phone on a desktop browser, B3) ─────────────
+   layout-boot.js marks it data-phone-preview. The phone shell keeps to a
+   phone-wide column in the middle of the window, on a darker backdrop, so
+   the preview looks like a phone and not a stretched page. Each fixed layer
+   is placed in the column: --phone-x is the room on either side. */
+:root[data-layout="phone"][data-phone-preview] { background: #05070a; }
+:root[data-layout="phone"][data-phone-preview] body {
+  --phone-x: max(0px, calc((100% - var(--phone-col)) / 2));
+  max-width: var(--phone-col); min-height: 100vh; margin-inline: auto;
+  background: var(--ui-field-bg); box-shadow: 0 0 0 1px var(--phone-line);
+}
+:root[data-layout="phone"][data-phone-preview] :is(.phone-bar, .phone-nav, .phone-view, .phone-sheet, .phone-term, .phone-mail-replybar) {
+  left: var(--phone-x); right: var(--phone-x);
+}
+:root[data-layout="phone"][data-phone-preview] .phone-mail-write { right: calc(var(--phone-x) + var(--phone-gutter) + var(--phone-safe-right)); }
+:root[data-layout="phone"][data-phone-preview] .modal-overlay .ui-dialog { max-width: var(--phone-col) !important; }
