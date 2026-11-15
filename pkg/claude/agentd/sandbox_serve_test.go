@@ -33,6 +33,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -245,6 +247,7 @@ func seedSandboxFull(t *testing.T, f *testharness.Flow) {
 	seedSandboxAutomations(s)
 	seedSandboxCronHistory(s)
 	seedSandboxProcessRuns(s)
+	seedSandboxAgreementGate(s)
 	seedSandboxAccess(t)
 	seedSandboxAttachment(s)
 	seedSandboxOfflineSender(t)
@@ -457,6 +460,48 @@ func seedSandboxProcessRuns(s *sandboxSeeder) {
 	s.api(http.MethodPost, "/v1/process/runs/run_release_23/decide", map[string]any{
 		"nodeId": "checks-pass", "verdict": "yes", "evidence": "All release checks are green.",
 	}, nil)
+}
+
+// seedSandboxAgreementGate stores a three-person agreement gate and runs it
+// twice: run_ui_review_2 has two approvals and waits on the third person
+// (the tally "2/3 agreed"), and run_ui_review_1 is agreed and done.
+func seedSandboxAgreementGate(s *sandboxSeeder) {
+	s.t.Helper()
+	fs, err := store.NewFS(filepath.Join(s.f.World.HomeDir, ".tclaude", "processes"))
+	if err != nil {
+		s.t.Fatalf("process store: %v", err)
+	}
+	ask := func(text string) model.Performer { return model.Performer{Kind: model.PerformerHuman, Ask: text} }
+	if _, err := fs.PutTemplate(s.t.Context(), &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "ui-review", Name: "UI review",
+		Description: "Design, product and support must all approve a UI change.",
+		Start:       "start",
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{"next": "sign-off"}},
+			"sign-off": {Type: model.NodeTypeDecision, Name: "Sign-off", Agree: "approve",
+				Deciders: []model.Performer{
+					ask("Design: does the new filter bar read well?"),
+					ask("Product: is this the behaviour we want?"),
+					ask("Support: will users understand it?"),
+				},
+				Next: model.Next{"approve": "shipped", "changes": "reworked"}},
+			"shipped":  {Type: model.NodeTypeEnd, Name: "Shipped", Result: "success"},
+			"reworked": {Type: model.NodeTypeEnd, Name: "Sent back", Result: "canceled"},
+		},
+	}); err != nil {
+		s.t.Fatalf("process template: %v", err)
+	}
+	votes := map[string]int{"run_ui_review_1": 3, "run_ui_review_2": 2}
+	for _, runID := range []string{"run_ui_review_1", "run_ui_review_2"} {
+		s.api(http.MethodPost, "/v1/process/runs", map[string]any{
+			"id": runID, "templateId": "ui-review", "group": "webshop", "authorizeProgramProfiles": []string{},
+		}, nil)
+		for k := 1; k <= votes[runID]; k++ {
+			s.api(http.MethodPost, "/v1/process/runs/"+runID+"/decide", map[string]any{
+				"nodeId": model.GateVoteID("sign-off", k), "verdict": "approve", "evidence": "Looks right to me.",
+			}, nil)
+		}
+	}
 }
 
 func seedSandboxAccess(t *testing.T) {
