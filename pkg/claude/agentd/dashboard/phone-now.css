@@ -98,8 +98,6 @@
 :root[data-layout="phone"] .phone-now-when.info { color: var(--ui-focus); }
 /* The dot on a row that changed since the viewer last looked. */
 :root[data-layout="phone"] .phone-now-new { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ui-focus); }
-/* "ctx 91%" by the name of an agent whose context is nearly full. */
-:root[data-layout="phone"] .phone-ctx-tag {
-  flex: none; align-self: center; padding: 1px 7px; border-radius: 9px; font-size: 12px; font-weight: 600;
-  background: color-mix(in srgb, var(--phone-warn) 25%, transparent); color: var(--ui-warn-text);
-}
+/* An agent's context meter (context-meter.js, the desktop's gauge) by its
+   state pill on a row, and by its name on a card: the row's gap spaces it. */
+:root[data-layout="phone"] :is(.phone-row, .phone-who) > .ctx-meter { flex: none; align-self: center; margin-right: 0; }

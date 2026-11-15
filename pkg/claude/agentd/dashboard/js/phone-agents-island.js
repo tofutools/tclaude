@@ -36,6 +36,7 @@ import { AgentMenu } from './phone-agent-menu.js';
 import { useHold } from './phone-hold.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
 import { Avatar, ButtonRow, Card, IconButton, Section, StatePill } from './phone-ui.js';
+import { ContextMeter } from './context-meter.js';
 import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
 import { Button } from './ui-components.js';
@@ -77,7 +78,7 @@ function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kid
       aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}${under ? `, spawned by ${under.name}` : ''}${kids > 0 ? `, ${kids} ${kids === 1 ? 'worker' : 'workers'}` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
       <${Avatar} bot glyph=${steward ? '✦' : '🤖'} badge=${row.pill.badge} dim=${!row.online} />
       <span class="phone-agent-text">
-        <span class="phone-agent-line"><span class="phone-agent-title">${row.name}</span><${Pill} row=${row} /></span>
+        <span class="phone-agent-line"><span class="phone-agent-title">${row.name}</span><${ContextMeter} state=${row.member?.state || {}} /><${Pill} row=${row} /></span>
         <${MetaLine} row=${row} kids=${kids} />
         ${row.detail && html`<span class="phone-agent-why">${row.detail}</span>`}
       </span>

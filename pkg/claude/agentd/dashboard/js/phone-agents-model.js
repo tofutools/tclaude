@@ -216,11 +216,10 @@ export function groupTabs(groups) {
   return [{ key: ALL, label: 'All', ...all }, ...groups.map((g) => ({ key: g.key, label: g.name, online: g.live, total: g.total }))];
 }
 
-// metaParts are a row's second line: role, harness, context, then the PR or
-// the branch. An offline agent's ends in "resume ›", what its tap does.
+// metaParts are a row's second line: role, harness, then the PR or the
+// branch. Its context is the meter by its pill (context-meter.js). An offline agent's ends in "resume ›", what its tap does.
 export function metaParts(row) {
   const parts = [row.role, row.harness];
-  if (row.ctx !== null && row.online) parts.push(`ctx ${row.ctx}%`);
   if (!row.online) parts.push(row.waking ? 'waking…' : 'resume ›');
   else if (row.pr) parts.push({ pr: row.pr });
   else if (row.branch) parts.push(row.branch);

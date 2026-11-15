@@ -294,7 +294,7 @@ test('a first visit takes what it sees as the look; leaving keeps a new look onl
   assert.equal(LOOK_MS, 5000);
 });
 
-test('a nearly full context is tagged by the name on rows and cards, and listed in Problems; CI failing too', async (t) => {
+test('a nearly full context is the desktop\'s meter on rows and cards, and no problem: not in Problems or its count', async (t) => {
   const snapshot = { ...SNAPSHOT, groups: [
     { name: 'webshop', members: [
       { ...SNAPSHOT.groups[0].members[0], state: { status: 'awaiting_permission', context_pct: 91 } },
@@ -306,15 +306,21 @@ test('a nearly full context is tagged by the name on rows and cards, and listed 
   ] };
   const { harness, root, tap } = await setup(t, snapshot);
   const card = root.querySelector('.phone-box-key');
-  assert.equal(card.querySelector('.phone-ctx-tag').textContent, 'ctx 91%', 'the approval card tags its agent');
+  const lit = (meter) => [...meter.querySelectorAll('.ctx-seg')].map((seg) => seg.className.replace('ctx-seg', '').trim() || '-').join(' ');
+  assert.equal(lit(card.querySelector('.phone-who > .ctx-meter.ctx-regular')), 'lit-green lit-green lit-yellow lit-yellow lit-red', 'the approval card: 91% lights all five');
   const online = harness.getByRole(root, 'group', { name: 'Online' });
-  assert.equal(online.querySelector('.phone-ctx-tag').textContent, 'ctx 88%');
+  const row = [...online.querySelectorAll('.phone-row')].find((b) => b.querySelector('.ctx-meter')?.getAttribute('title') === 'context: 88% full');
+  assert.ok(row, 'the 88% row wears the meter');
+  assert.ok(row.querySelector('.ctx-meter.ctx-regular').nextElementSibling.nextElementSibling.classList.contains('phone-pill'), 'by its state pill');
+  assert.equal(root.querySelector('.phone-ctx-tag'), null, 'no text tag any more');
   await tap(harness.getByRole(harness.getByRole(root, 'tablist', { name: 'Show on Now' }), 'tab', { name: /^Problems/ }));
   const problems = harness.getByRole(root, 'group', { name: 'Problems' });
-  assert.deepEqual([...problems.querySelectorAll('.phone-now-group')].map((n) => n.textContent), ['Errors · 1', 'CI failed · 1', 'Context high · 1'],
-    'lead is under CI failed, its worst; its 88% is not listed twice. The offline sleeper is not listed');
+  assert.deepEqual([...problems.querySelectorAll('.phone-now-group')].map((n) => n.textContent), ['Errors · 1', 'CI failed · 1'],
+    'the 91% and 88% agents are listed only for what is wrong with them: lead\'s failing checks');
   assert.deepEqual([...problems.querySelectorAll('.phone-now-when')].map((n) => n.textContent),
-    ['rate limited until 14:00', 'PR #9 checks failing', 'context 91% full']);
+    ['rate limited until 14:00', 'PR #9 checks failing']);
+  const chip = harness.getByRole(harness.getByRole(root, 'tablist', { name: 'Show on Now' }), 'tab', { name: /^Problems/ });
+  assert.match(chip.textContent.replace(/\s+/g, ' ').trim(), /^Problems 2$/, 'the chip counts two, not the full contexts');
 });
 
 // A look in which release-bot was still working: it has errored since.

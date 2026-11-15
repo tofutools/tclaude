@@ -2,8 +2,9 @@
 // A row of chips picks what it shows: All (below), Needs you (the cards
 // only), Idle (online idle agents by group), Recent (every online agent, the
 // latest heard from first) and Problems (one go-look list: errors, CI failed,
-// context nearly full, at work but quiet). All also says what changed since
-// this viewer last looked, and a nearly full context is tagged by the name. All is a one-line usage strip that opens Usage, then what needs the operator as
+// at work but quiet). All also says what changed since this viewer last
+// looked. A row's context meter sits by its state pill (context-meter.js):
+// a full context is no problem. All is a one-line usage strip that opens Usage, then what needs the operator as
 // cards (access requests, decisions, process gates, agents asking), the
 // online agents in one card of rows (every one when there are few, else the
 // ones at work or in error, with Show all), and the operator's open PRs
@@ -18,7 +19,8 @@ import { authoredOpenPRsView } from './shell-model.js';
 import { featureState } from './peer-view-limits.js';
 import { FEW_ONLINE, PROBLEMS, agentRows, askerName, hookAt, idleGroups, contextHigh, lookedState, nowView, problemRows, recentRows, rowState, sinceLooked } from './phone-shell-model.js';
 import { usageStrip } from './phone-now-model.js';
-import { AskCard, ContextTag, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
+import { AskCard, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
+import { ContextMeter } from './context-meter.js';
 import { Button } from './ui-components.js';
 import { Card, ChipRow, IconButton, Section, StatePill } from './phone-ui.js';
 import { useHold } from './phone-hold.js';
@@ -55,19 +57,19 @@ function UsageStrip({ snapshot, onOpen }) {
 // line (when) in a tone (ok, bad, info, warn). A row opens the agent's
 // terminal. heads put a heading over a row (Idle's groups, Problems' kinds);
 // changed (agent ids) puts a blue dot on what changed since the viewer
-// looked, and a nearly full context is tagged by the name.
+// looked, and the agent's context meter sits by its state pill.
 // NowRow is one agent's row: a tap opens its terminal; a hold, or its ⋯,
 // opens its menu (phone-agent-menu.js) when onMenu is wired.
 function NowRow({ agent, state, when, tone, changed, onOpen, onMenu }) {
   const { holding, handlers } = useHold(onMenu ? () => onMenu(agent) : null);
   return html`<div class=${`phone-now-agent${holding ? ' phone-holding' : ''}`}>
     <button data-ui-exempt type="button" class="phone-row phone-holdable" ...${handlers} onClick=${() => onOpen(agent)}
-      aria-label=${`${agent.name}${changed ? ' (changed since you looked)' : ''}, ${state}${contextHigh(agent) && !String(when || '').startsWith('context') ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
+      aria-label=${`${agent.name}${changed ? ' (changed since you looked)' : ''}, ${state}${contextHigh(agent) ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
       ${changed && html`<span class="phone-now-new" aria-hidden="true"></span>`}
-      <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}<${ContextTag} ctx=${agent.ctx ?? null} />
+      <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}
         ${state === 'error' && agent.detail && tone === undefined && html`<span class="phone-card-line">${agent.detail}</span>`}
         ${when && html`<span class=${`phone-now-when${tone ? ` ${tone}` : ''}`}>${when}</span>`}</span>
-      <${StatePill} state=${state} />
+      ${agent.ctxState && html`<${ContextMeter} state=${agent.ctxState} />`}<${StatePill} state=${state} />
     </button>
     ${onMenu && html`<${IconButton} icon="⋯" label=${`${agent.name}: more`} aria-haspopup="dialog" class="phone-now-more" onClick=${() => onMenu(agent)} />`}
   </div>`;
@@ -121,7 +123,7 @@ function storeLooked(value, storage = globalThis.localStorage) {
 // The tones and marks of a change's or a problem's line.
 const CHANGE_TONE = Object.freeze({ errored: 'bad', ci: 'bad', merged: 'info', finished: 'ok' });
 const CHANGE_MARK = Object.freeze({ errored: '✗', ci: '✗', merged: '⇡', finished: '✓' });
-const PROBLEM_TONE = Object.freeze({ error: 'bad', ci: 'bad', context: 'quiet', quiet: 'quiet' });
+const PROBLEM_TONE = Object.freeze({ error: 'bad', ci: 'bad', quiet: 'quiet' });
 
 // changeRows folds Since you looked's changes into one row per agent, the
 // worst change's tone leading.
@@ -140,7 +142,6 @@ function changeRows(changes) {
 function problemLine({ kind, agent }) {
   if (kind === 'error') return agent.detail || 'in error';
   if (kind === 'ci') return `PR #${agent.pr.number} checks failing`;
-  if (kind === 'context') return `context ${agent.ctx}% full`;
   return since(agent) ? `last update ${since(agent)} ago` : 'no update time';
 }
 
@@ -241,7 +242,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
       ${view.approvals.map((request) => {
         const agent = agents.get(request.agent_id);
         return html`<${PhoneApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${actions.notify}
-          from=${agent?.name || request.conv_title || ''} group=${agent?.group || ''} ctx=${online.get(request.agent_id)?.ctx ?? null}
+          from=${agent?.name || request.conv_title || ''} group=${agent?.group || ''} ctxState=${online.get(request.agent_id)?.ctxState ?? null}
           onMore=${() => actions.openAccessRequest(request.id)} />`;
       })}
       ${view.elsewhere > 0 && html`<${Button} class="phone-btn phone-wide" onClick=${() => actions.openAccessRequest()}>
@@ -270,7 +271,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
       head: i === 0 || problems[i - 1].kind !== row.kind
         ? `${PROBLEMS.find((p) => p.kind === row.kind).title} · ${problems.filter((p) => p.kind === row.kind).length}` : '',
     }));
-    body = html`<${Section} title="Problems" count=${rows.length}>${rowsOr(rows, 'Nothing to look at: no errors, failing checks, full contexts or quiet agents.')}<//>`;
+    body = html`<${Section} title="Problems" count=${rows.length}>${rowsOr(rows, 'Nothing to look at: no errors, failing checks or quiet agents.')}<//>`;
   } else {
     body = html`
     <${UsageStrip} snapshot=${snapshot} onOpen=${() => actions.navigate('/usage')} />

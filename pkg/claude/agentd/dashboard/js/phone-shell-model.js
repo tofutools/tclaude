@@ -91,12 +91,15 @@ const WORKING = new Set(['working', 'main_agent_idle', 'restarting']);
 const ERRORS = new Set(['error', 'crashed', 'crash loop / backoff']);
 
 // CONTEXT_HIGH_PCT is how full an agent's context window must be for Now to
-// flag it (a tag by its name, and a row in Problems).
+// say so to a screen reader by its name. Only that: a full context is no
+// problem, as the harness compacts or the agent reincarnates on its own, so
+// it is not in Problems; the meter by the pill shows it to the eye.
 export const CONTEXT_HIGH_PCT = 85;
 
 // agentFacts is, per agent id, what Now reads beyond companionAgents: how
-// full its context is (null if not reported) and its PR (phone-agents-model
-// agentPR: number, state, ci). It keeps the same membership as
+// full its context is (null if not reported), the state its context meter
+// reads (context-meter.js), and its PR (phone-agents-model agentPR: number,
+// state, ci). It keeps the same membership as
 // companionAgents: the first, unless a later one is online and it is not.
 function agentFacts(snapshot) {
   const out = new Map();
@@ -105,7 +108,7 @@ function agentFacts(snapshot) {
     const prev = id && out.get(id);
     if (!id || (prev && (prev.online || member.online !== true))) return;
     const pct = Number(member.state?.context_pct);
-    out.set(id, { online: member.online === true, ctx: member.state?.context_pct != null && Number.isFinite(pct) ? Math.round(pct) : null, pr: agentPR(member) });
+    out.set(id, { online: member.online === true, ctx: member.state?.context_pct != null && Number.isFinite(pct) ? Math.round(pct) : null, ctxState: member.state || {}, pr: agentPR(member) });
   };
   for (const group of snapshot?.groups || []) for (const member of group?.members || []) add(member);
   for (const member of [...(snapshot?.agents || []), ...(snapshot?.ungrouped || [])]) add(member);
@@ -131,8 +134,8 @@ export const contextHigh = (agent) => agent?.ctx !== null && agent?.ctx !== unde
 export function nowView(snapshot) {
   const facts = agentFacts(snapshot);
   const agents = [...companionAgents(snapshot).values()].map((agent) => {
-    const { ctx = null, pr = null } = facts.get(agent.agentId) || {};
-    return { ...agent, ctx, pr };
+    const { ctx = null, ctxState = null, pr = null } = facts.get(agent.agentId) || {};
+    return { ...agent, ctx, ctxState, pr };
   });
   const approvals = pendingApprovals(snapshot);
   const elsewhere = pendingAccess(snapshot).length - approvals.length;
@@ -237,13 +240,12 @@ export function stuckRows(view, now = Date.now()) {
 export const PROBLEMS = Object.freeze([
   { kind: 'error', title: 'Errors' },
   { kind: 'ci', title: 'CI failed' },
-  { kind: 'context', title: 'Context high' },
   { kind: 'quiet', title: 'Quiet while busy' },
 ]);
 
 // problemRows is the Problems chip: one go-look list of online agents, each
 // once, under the worst of its problems: in error, its open PR's checks
-// failing, its context at CONTEXT_HIGH_PCT or over, or at work but quiet past
+// failing, or at work but quiet past
 // STUCK_AFTER_MS (quiet the longest first). [{ kind, agent, state }]
 export function problemRows(view, now = Date.now()) {
   const taken = new Set();
@@ -258,7 +260,6 @@ export function problemRows(view, now = Date.now()) {
   const online = view.online;
   take('error', view.errors);
   take('ci', online.filter((agent) => agent.pr?.ci === 'failing' && agent.pr.state !== 'merged' && agent.pr.state !== 'closed'));
-  take('context', online.filter(contextHigh).sort((a, b) => b.ctx - a.ctx));
   take('quiet', stuckRows(view, now).rows.filter((row) => row.quiet).map((row) => row.agent));
   return rows;
 }
