@@ -7,7 +7,7 @@
 import { VARIANT_ORDER, memberVariant } from './group-activity.js';
 import { isAwayPlaceholder } from './agent-presence.js';
 import { signal } from '@preact/signals';
-import { deriveSpawnNameFromMessage, normalizeSpawnName } from './agent-spawn-model.js';
+import { normalizeSpawnName } from './agent-spawn-model.js';
 
 export const ALL = 'all';
 export const UNGROUPED = '-ungrouped';
@@ -157,13 +157,13 @@ export function spawnChoices(snapshot) {
 }
 
 // spawnBody is the request the spawn sheet sends (POST
-// /api/groups/<group>/spawn): the prompt, the name (as the desktop form
-// normalizes it, or from the prompt's first words when none is given) and a
-// profile when one is picked. What it leaves out the daemon fills from the
-// group's default profile and directory, as for `tclaude agent spawn`.
+// /api/groups/<group>/spawn): the prompt, the name when one is given (as the
+// desktop form normalizes it) and a profile when one is picked. What it
+// leaves out the daemon fills from the group's default profile and
+// directory, as for `tclaude agent spawn`, the profile's agent name among it.
 export function spawnBody({ prompt = '', name = '', profile = '' } = {}) {
   const body = { initial_message: String(prompt) };
-  const named = normalizeSpawnName(name) || deriveSpawnNameFromMessage(prompt);
+  const named = normalizeSpawnName(name);
   if (named) body.name = named;
   if (profile) body.profile = profile;
   return body;

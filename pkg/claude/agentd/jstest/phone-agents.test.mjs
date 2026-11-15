@@ -67,7 +67,7 @@ test('the model: what the spawn sheet offers and sends', async (t) => {
     profiles: ['companion', 'reviewer'],
   });
   assert.deepEqual(model.spawnBody({ prompt: 'Fix the flaky checkout test, please' }),
-    { initial_message: 'Fix the flaky checkout test, please', name: 'Fix-the-flaky-checkout' }, 'named from the prompt');
+    { initial_message: 'Fix the flaky checkout test, please' }, 'no name: the daemon and the profile name it');
   assert.deepEqual(model.spawnBody({ prompt: 'x', name: 'my agent', profile: 'reviewer' }),
     { initial_message: 'x', name: 'my-agent', profile: 'reviewer' });
 });
@@ -215,7 +215,7 @@ test('＋ in the top bar spawns from a short sheet: group, profile, prompt', asy
   });
   await harness.fireEvent(form, 'submit');
   await settle(harness);
-  assert.deepEqual(sent, [['/api/groups/steward/spawn', { initial_message: 'Review the open PRs', name: 'Review-the-open-PRs', profile: 'reviewer' }]]);
+  assert.deepEqual(sent, [['/api/groups/steward/spawn', { initial_message: 'Review the open PRs', profile: 'reviewer' }]]);
   assert.equal(c.querySelector('.phone-sheet'), null, 'the sheet closed');
 
   // All options… is the desktop form, on the group picked.
@@ -237,16 +237,45 @@ test('a refused spawn keeps the sheet open', async (t) => {
 });
 
 test('the sheet opened from an agent\'s own terminal does not offer that terminal', async (t) => {
-  const { harness, state, c } = await setup(t);
+  const { harness, state, c, tap, more } = await setup(t);
   const [island, sheet] = await Promise.all([
     harness.importDashboardModule('js/phone-agents-island.js'),
     harness.importDashboardModule('js/phone-sheet.js'),
   ]);
   t.after(() => sheet.closePhoneSheet());
-  const lead = [...c.querySelectorAll('.phone-agent-row')].find((b) => b.textContent.includes('lead'));
-  await harness.act(() => lead.click());
+  await tap(more('lead'));
   const props = { ...sheet.phoneSheet.value.props, here: true };
   await harness.act(() => sheet.openPhoneSheet({ label: 'lead (terminal)', Body: island.AgentSheet, props: { ...props, state } }));
   assert.deepEqual([...c.querySelectorAll('.phone-sheet .phone-menu-item')].map((b) => b.textContent),
     ['Message…', 'Shut down…', 'Restart…', 'Rename…', 'Retire…']);
+});
+
+test('a double tap on Spawn spawns once', async (t) => {
+  const sent = [];
+  let release;
+  const fetchImpl = (url) => { sent.push(url); return new Promise((resolve) => { release = () => resolve({ ok: true, json: async () => ({}) }); }); };
+  const { harness, c, page } = await setup(t, { fetchImpl });
+  await harness.act(() => page.phoneBar.value.actions[0].onClick());
+  const form = c.querySelector('.phone-sheet form');
+  await harness.input(form.querySelector('textarea'), 'go');
+  form.dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
+  form.dispatchEvent(new harness.window.Event('submit', { bubbles: true, cancelable: true }));
+  await settle(harness);
+  assert.equal(sent.length, 1);
+  release();
+  await settle(harness);
+});
+
+test("on a peer's page ＋ is the desktop form, which spawns there", async (t) => {
+  globalThis.__tclaudeRemoteNode = { id: 'inst_peer1' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; });
+  const { harness, calls, c, page } = await setup(t);
+  await harness.act(() => page.phoneBar.value.actions[0].onClick());
+  assert.equal(c.querySelector('.phone-sheet'), null);
+  assert.deepEqual(calls.at(-1), ['spawn', '']);
+});
+
+test('a row tells a screen reader what the agent waits on', async (t) => {
+  const { row } = await setup(t);
+  assert.equal(row('payments-fix').getAttribute('aria-label'), 'payments-fix, approval (Allow npm test?): open its terminal');
 });

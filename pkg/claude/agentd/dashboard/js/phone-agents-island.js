@@ -13,7 +13,7 @@
 // posts the same spawn route `tclaude agent spawn` does.
 
 import { h, render } from 'preact';
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ALL, agentsTab, agentGroups, findRow, groupTabs, metaParts, shownGroups, spawnBody, spawnChoices } from './phone-agents-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
@@ -45,7 +45,7 @@ function MetaLine({ row }) {
 function AgentRow({ row, steward, onTap, onMore }) {
   return html`<li class=${`phone-agent v-${row.variant}${row.online ? '' : ' phone-agent-off'}`}>
     <button data-ui-exempt type="button" class="phone-agent-row" onClick=${() => onTap(row)}
-      aria-label=${`${row.name}, ${row.pill.text}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
+      aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
       <${Avatar} bot glyph=${steward ? '✦' : '🤖'} badge=${row.pill.badge} dim=${!row.online} />
       <span class="phone-agent-text">
         <span class="phone-agent-line"><span class="phone-agent-title">${row.name}</span><${Pill} row=${row} /></span>
@@ -67,11 +67,14 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
+  // A second tap before the re-render must not spawn twice.
+  const lock = useRef(false);
   if (!groups.length) return html`<p class="ui-empty phone-empty">Make a group on the desktop first.</p>`;
   const fallback = groups.find((g) => g.name === group)?.profile || '';
   const submit = async (event) => {
     event?.preventDefault?.();
-    if (!prompt.trim() || !group || busy) return;
+    if (!prompt.trim() || !group || lock.current) return;
+    lock.current = true;
     setBusy(true);
     const body = spawnBody({ prompt: prompt.trim(), name, profile });
     try {
@@ -86,6 +89,7 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
       close();
     } catch (cause) {
       shellToast(`Could not spawn: ${cause?.message || cause}`, true);
+      lock.current = false;
       setBusy(false);
     }
   };
@@ -107,7 +111,7 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
         value=${prompt} onInput=${(event) => setPrompt(event.currentTarget.value)}></textarea>
     </label>
     <label class="phone-agents-label">Name
-      <input class="ui-input phone-agents-field" placeholder="From the prompt" autocapitalize="off" autocomplete="off"
+      <input class="ui-input phone-agents-field" placeholder="Optional" autocapitalize="off" autocomplete="off"
         value=${name} onInput=${(event) => setName(event.currentTarget.value)} />
     </label>
     <div class="phone-btns">
@@ -154,10 +158,12 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   const tabs = groupTabs(groups);
   const current = tabs.some((t) => t.key === tab) ? tab : ALL;
   const picked = groups.find((g) => g.key === current && g.group);
-  const spawn = (group) => openPhoneSheet({
+  // A peer's page (remote-node.js) spawns through its own route and shape,
+  // which the desktop form knows; the short sheet is this node's.
+  const spawn = (group) => (globalThis.__tclaudeRemoteNode?.id ? actions.spawn(group) : openPhoneSheet({
     label: 'New agent', Body: SpawnSheet,
     props: { state, group, fetchImpl, openFull: (g) => actions.spawn(g) },
-  });
+  }));
   usePhoneBar({ tab: 'groups', actions: snapshot ? [{ key: 'spawn', icon: '＋', label: 'New agent', onClick: () => spawn(picked?.name || '') }] : [] });
   if (!snapshot) return html`<p class="ui-empty phone-empty">Loading…</p>`;
   if (!groups.length) return html`<p class="ui-empty phone-empty">No agents yet.</p>`;
