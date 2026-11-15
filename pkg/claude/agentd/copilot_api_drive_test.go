@@ -48,6 +48,10 @@ func newCopilotAPIDriveFixture(t *testing.T) *copilotAPIDriveFixture {
 	previous := clcommon.Default
 	clcommon.Default = tmux
 	t.Cleanup(func() { clcommon.Default = previous })
+	// Registered after the swap so it runs first: a delivery the test caused
+	// can still be nudging the pane through clcommon.Default in a background
+	// goroutine, and restoring the global under it is a data race.
+	t.Cleanup(waitBackground)
 
 	const (
 		convID    = "ses_copilot_api_drive"
@@ -295,6 +299,10 @@ func TestCopilotWithoutTheAPIDriveStillTakesSendKeys(t *testing.T) {
 	previous := clcommon.Default
 	clcommon.Default = tmux
 	t.Cleanup(func() { clcommon.Default = previous })
+	// Registered after the swap so it runs first: a delivery the test caused
+	// can still be nudging the pane through clcommon.Default in a background
+	// goroutine, and restoring the global under it is a data race.
+	t.Cleanup(waitBackground)
 
 	const convID = "ses_copilot_send_keys"
 	require.NoError(t, session.SaveSessionState(&session.SessionState{
