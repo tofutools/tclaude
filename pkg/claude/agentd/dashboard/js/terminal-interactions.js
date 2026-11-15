@@ -254,13 +254,25 @@ export function selectedText(term, from, to, clicks = 1) {
 // screenRows is what term shows now, for a phone's text view
 // (phone-terminal-text.js): each row on screen as drawn (rowCells: a hidden
 // cell reads as a space, a wide character's spacer column as ''), its buffer
-// row, and whether it continues the row before it (a soft wrap).
+// row, and whether it continues the row before it (a soft wrap). A line cut
+// by the screen's top or bottom edge comes whole, rows off screen included:
+// its tail alone could read as another link (".../build" + "/out.tar").
+// Only a row that fills the width is continued past an edge: a soft wrap
+// does, and a flag on a row that does not (seen on a phone under tmux, on
+// the row below the screen) would join a line to something else.
 export function screenRows(term) {
   const buffer = term?.buffer?.active;
   if (!buffer || typeof buffer.getLine !== 'function' || !term.rows) return [];
-  const top = buffer.viewportY || 0;
+  const full = (line) => {
+    const last = line?.getCell(term.cols - 1)?.getChars?.();
+    return !!last && last !== ' ';
+  };
+  let top = buffer.viewportY || 0;
+  let end = top + term.rows;
+  while (top > 0 && buffer.getLine(top)?.isWrapped && full(buffer.getLine(top - 1))) top--;
+  while (buffer.getLine(end)?.isWrapped && full(buffer.getLine(end - 1))) end++;
   const rows = [];
-  for (let y = top; y < top + term.rows; y++) {
+  for (let y = top; y < end; y++) {
     const line = buffer.getLine(y);
     rows.push({ row: y, cells: line ? rowCells(line, 0, term.cols) : [], wrapped: !!line?.isWrapped });
   }

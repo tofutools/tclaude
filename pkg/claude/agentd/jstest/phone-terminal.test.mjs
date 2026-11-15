@@ -283,12 +283,13 @@ test('the pinch chip shows the size against the phone\'s own, and a tap resets i
 // touch dispatches a touch event at (x, y) on the terminal's host: a cell
 // per pixel, as the fake widget's cellAt reads it.
 function touch(harness, el, type, x = 0, y = 0, fingers = 1) {
+  let event;
   return harness.act(() => {
-    const event = new harness.window.Event(type, { bubbles: true, cancelable: true });
+    event = new harness.window.Event(type, { bubbles: true, cancelable: true });
     const list = type === 'touchend' || type === 'touchcancel' ? [] : Array.from({ length: fingers }, () => ({ clientX: x, clientY: y }));
     Object.assign(event, { touches: list });
     el.dispatchEvent(event);
-  });
+  }).then(() => event);
 }
 
 async function openTerminal(t) {
@@ -307,10 +308,11 @@ async function openTerminal(t) {
 test('a tap on a link opens its sheet: where it goes, Open or Download, Copy; a tap elsewhere is a tap', async (t) => {
   const { harness, made, surface, sheetHost, copied } = await openTerminal(t);
   const [widget] = made;
-  const tapAt = async (x, y) => { await touch(harness, surface, 'touchstart', x, y); await touch(harness, surface, 'touchend'); };
+  const tapAt = async (x, y) => { await touch(harness, surface, 'touchstart', x, y); return touch(harness, surface, 'touchend'); };
   const items = () => [...sheetHost.querySelectorAll('.phone-sheet .phone-menu-item')].map((b) => b.textContent.trim());
-  // The URL's second row, wrapped: the whole URL.
-  await tapAt(3, 1);
+  // The URL's second row, wrapped: the whole URL. The tap's click is
+  // cancelled: it would land on the sheet just opened under the finger.
+  assert.equal((await tapAt(3, 1)).defaultPrevented, true);
   assert.equal(sheetHost.querySelector('.phone-term-link-target').textContent, 'https://github.com/acme/webshop/pull/1482');
   assert.deepEqual(items(), ['Open link ›', 'Copy link']);
   await harness.act(() => sheetHost.querySelector('.phone-sheet .phone-menu-item').click());
@@ -323,7 +325,7 @@ test('a tap on a link opens its sheet: where it goes, Open or Download, Copy; a 
   assert.deepEqual(copied.at(-1), ['/home/dev/git/webshop/notes.md', 'the path']);
 
   const calls = widget.calls.length;
-  await tapAt(2, 3);
+  assert.equal((await tapAt(2, 3)).defaultPrevented, false, 'a plain tap keeps its click');
   assert.equal(sheetHost.querySelector('.phone-sheet'), null, 'no link there');
   // A swipe is not a tap.
   await touch(harness, surface, 'touchstart', 15, 0);
@@ -396,4 +398,24 @@ test('the text model: wrapped rows join, links by the desktop\'s rules, a cell m
   assert.deepEqual(m.linksIn('https://x.example/a/b').map((l) => l.kind), ['http'], 'a URL\'s path is not a file too');
   assert.deepEqual(m.wordAt('go test ./db/...', 4), [3, 7]);
   assert.equal(m.wordAt('a b', 1), null);
+});
+
+test('screenRows: a line cut by the screen\'s edges comes whole, so its tail is not a link of its own', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [interactions, m] = await Promise.all([
+    harness.importDashboardModule('js/terminal-interactions.js'),
+    harness.importDashboardModule('js/phone-terminal-text.js'),
+  ]);
+  const cell = (ch) => ({ getWidth: () => 1, getChars: () => ch, isInvisible: () => false });
+  const line = (text, isWrapped) => ({ isWrapped, getCell: (x) => cell(text[x] ?? ' ') });
+  // Rows 0-1: a path wrapped over the top edge; 2: on screen; 3-4: a URL
+  // wrapped past the bottom edge. The screen is rows 1-3.
+  const buffer = ['saved /home/u/proj/b', 'uild/out.tar', 'ok', 'see https://x.exampl', 'e/a/b'].map((t2, i) => line(t2.padEnd(20), [false, true, false, false, true][i]));
+  const term = { rows: 3, cols: 20, buffer: { active: { viewportY: 1, getLine: (y) => buffer[y] } } };
+  const lines = m.screenLines(interactions.screenRows(term));
+  assert.deepEqual(lines.map((l) => l.text), ['saved /home/u/proj/build/out.tar', 'ok', 'see https://x.example/a/b']);
+  assert.deepEqual(lines.flatMap((l) => m.linksIn(l.text).map((k) => k.text)), ['/home/u/proj/build/out.tar', 'https://x.example/a/b']);
+  // A wrap flag below a row that does not fill the width joins nothing.
+  buffer[3] = line('wrote /tmp/notes.md'.padEnd(20), false);
+  assert.deepEqual(m.screenLines(interactions.screenRows(term)).at(-1).text, 'wrote /tmp/notes.md');
 });

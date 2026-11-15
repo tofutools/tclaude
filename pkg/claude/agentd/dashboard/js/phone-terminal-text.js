@@ -104,11 +104,13 @@ export function wordAt(text, index) {
   return [start, end];
 }
 
-// useTerminalTouch reports a tap (onTap) and a still hold (onHold) on the
+// useTerminalTouch reports a tap (onTap, which says whether it opened
+// something) and a still hold (onHold) on the
 // element ref points at, each with the touch's client point. A second finger
 // (a pinch) or a move past SLOP_PX (a swipe, terminals-core.js) is neither.
 // It never cancels a touch the terminal's own gestures use: only the lift
-// after a hold, which nothing else takes.
+// after a hold, or after a tap that opened something, which nothing else
+// takes.
 export function useTerminalTouch(ref, { onTap, onHold }) {
   const latest = useRef({ onTap, onHold });
   latest.current = { onTap, onHold };
@@ -145,7 +147,10 @@ export function useTerminalTouch(ref, { onTap, onHold }) {
       // land on Select, just opened under the finger, and drop the word it
       // picked.
       if (held) { event.preventDefault(); return; }
-      if ((event.touches?.length ?? 0) === 0 && Date.now() - at < TAP_MS) latest.current.onTap?.(x, y);
+      // A tap that opened something (a link's sheet) makes no click either:
+      // it would land on the sheet, just opened under the finger, and press
+      // whatever is there (Download).
+      if ((event.touches?.length ?? 0) === 0 && Date.now() - at < TAP_MS && latest.current.onTap?.(x, y)) event.preventDefault();
     };
     // A hold is Select here: not the browser's own long-press menu.
     const menu = (event) => event.preventDefault();

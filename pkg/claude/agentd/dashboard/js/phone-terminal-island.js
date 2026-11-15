@@ -251,6 +251,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
     const now = lines();
     const link = linkAt(now, indexAt(now, widget.current?.cellAt?.(x, y)));
     if (link) showLink(link);
+    return !!link;
   };
   // openSelect opens Select on the screen as it is, the word at a point
   // (a hold's) picked.
