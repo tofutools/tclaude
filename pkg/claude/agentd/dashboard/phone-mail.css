@@ -154,7 +154,7 @@
 :root[data-layout="phone"] .phone-mail-facts { margin: 14px 0 0; }
 :root[data-layout="phone"] .phone-mail-facts > div { padding: 8px 0; border-bottom: 1px solid var(--phone-tile); }
 :root[data-layout="phone"] .phone-mail-facts dt { color: var(--ui-muted-text); font-size: 12px; }
-:root[data-layout="phone"] .phone-mail-facts dd { margin: 2px 0 0; color: var(--ui-text-strong); overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-mail-facts dd { margin: 2px 0 0; color: var(--ui-text-strong); overflow-wrap: anywhere; white-space: pre-wrap; }
 :root[data-layout="phone"] .phone-mail-facts dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
 :root[data-layout="phone"] .phone-mail-pre { margin: 0; white-space: pre-wrap; font-size: 13px; }
 :root[data-layout="phone"] .phone-mail-always { margin-top: 16px; }

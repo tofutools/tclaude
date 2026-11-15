@@ -615,9 +615,10 @@ function AccessReader({ controller, item, active, back }) {
   usePhonePage({ title: '', onBack: back, hideNav: true, routed: true, actions: [] }, active);
   useLayoutEffect(() => { globalThis.scrollTo?.(0, 0); }, [item.id]);
   // A sudo plan's body is agentd's "Sudo request:" preview; read as facts
-  // (what, how long, why) it replaces the raw body.
+  // (what, how long, why) it replaces the raw body. A body not in that shape
+  // stays raw.
   const plan = String(item.perm || '').startsWith('sudo.') ? planDetails(item) : null;
-  const planned = !!plan?.slugs.length;
+  const planned = !!plan?.ok;
   const rows = [
     ...(planned
       ? [['Permissions', plan.slugs.join(', '), true], ['For', plan.duration], ['Reason', plan.reason]]

@@ -40,37 +40,35 @@ export function approvalContext(request) {
   const summary = approvalSummary(request);
   if (summary.kind === 'plan') {
     const plan = planDetails(request);
-    const slugs = plan.slugs.length ? plan.slugs : summary.slugs;
-    return `Plan: ${slugs.join(', ') || 'temporary permissions'}${plan.duration ? ` · for ${plan.duration}` : ''}`;
+    return `Plan: ${summary.slugs.join(', ') || 'temporary permissions'}${plan.ok ? ` · for ${plan.duration}` : ''}`;
   }
   const what = summary.slugs[0] || 'Permission';
   const why = firstLine(request?.body) || (request?.path ? `${request.method ? `${request.method} ` : ''}${request.path}` : '');
   return why ? `${what}: ${why}` : what;
 }
 
-// planDetails reads a sudo plan's request body (agentd's "Sudo request:"
-// preview: slugs, duration, expires_at, reason) as { slugs, duration, reason,
-// expiresAt }: the permissions the plan asks for, how long they would last
-// ("30 min", "1 h 30 min"), and the agent's reason. Empty fields when the body
-// is not in that shape; the card then falls back to the request's perm.
+// planDetails reads a sudo plan as { ok, slugs, duration, expiresAt, reason }:
+// the permissions it asks for, how long they would last ("30 min",
+// "1 h 30 min"), and the agent's reason. The slugs are the request's perm,
+// which agentd checked; the rest is read from its body, agentd's "Sudo
+// request:" preview (buildSudoApprovalPreview in sudo.go): slugs, duration,
+// expires_at, then reason, always last. The reason is the agent's own text and
+// may run over lines that look like fields, so the body is read strictly in
+// that order, and everything after "reason: " is the reason: nothing in it can
+// stand in for the duration. ok is false when the body is not in that shape;
+// the card then shows only the perm.
 export function planDetails(request) {
-  const out = { slugs: [], duration: '', reason: '', expiresAt: '' };
+  const out = { ok: false, slugs: approvalSummary(request).slugs, duration: '', expiresAt: '', reason: '' };
   const lines = String(request?.body || '').split('\n');
-  if (!/^Sudo request:\s*$/.test(lines[0] || '')) return out;
-  let inSlugs = false;
-  for (const raw of lines.slice(1)) {
-    const item = raw.match(/^\s{4}- (.+)$/);
-    if (inSlugs && item) { out.slugs.push(item[1].trim()); continue; }
-    inSlugs = false;
-    const field = raw.match(/^\s{2}(\w+):\s?(.*)$/);
-    if (!field) continue;
-    const [, key, value] = field;
-    if (key === 'slugs') inSlugs = true;
-    else if (key === 'duration') out.duration = goDuration(value.trim());
-    else if (key === 'expires_at') out.expiresAt = value.trim();
-    else if (key === 'reason') out.reason = value.trim();
-  }
-  return out;
+  if (lines[0] !== 'Sudo request:' || lines[1] !== '  slugs:') return out;
+  let i = 2;
+  while (i < lines.length && lines[i].startsWith('    - ')) i++;
+  const duration = (lines[i] || '').match(/^ {2}duration: (\S+)$/);
+  const expires = (lines[i + 1] || '').match(/^ {2}expires_at: (\S+)$/);
+  if (!duration || !expires) return out;
+  const rest = lines.slice(i + 2).join('\n');
+  if (rest && !rest.startsWith('  reason: ')) return out;
+  return { ...out, ok: true, duration: goDuration(duration[1]), expiresAt: expires[1], reason: rest.slice('  reason: '.length).trim() };
 }
 
 // goDuration turns a Go duration ("30m0s", "1h30m0s", "45s") into words

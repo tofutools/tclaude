@@ -71,7 +71,8 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
   const context = approvalContext(request);
   // A plan's reason is its own line: the plan line already carries the
   // permissions and how long they last.
-  const reason = plan ? planDetails(request).reason : '';
+  const details = plan ? planDetails(request) : null;
+  const reason = details?.ok ? details.reason : '';
   const text = html`<${Who} name=${name} sub=${group || request.target_group || ''} ctx=${ctx} /><div class="phone-card-line">${context}</div>
     ${reason && html`<div class="phone-card-line phone-plan-reason">“${reason}”</div>`}`;
   return html`<${Card} accent="key" class="phone-now-card" role="group" aria-label=${`${name} asks: ${context}${reason ? `, because: ${reason}` : ''}`}>
@@ -166,7 +167,7 @@ export function PhoneDecisionCard({ decision, fetchImpl, notify, from = '', stew
       ${steward ? html`<${Avatar} bot glyph="✦" />` : html`<${Avatar} bot glyph="🤖" badge="❓" />`}
       <div class="phone-card-text"><${Who} name=${from || 'An agent'} sub="decide" /><div class="phone-card-line">${question}</div></div>
     </div>
-    <${ButtonRow} buttons=${[
+    <${ButtonRow} class="phone-decision-options" buttons=${[
       ...cardOptions(decision).map((option) => ({
         key: `o${option.choice}`, disabled: !!busy, title: option.recommended ? 'The agent recommends this one' : undefined,
         label: busy === option.choice ? 'Sending…' : html`${option.recommended && html`<span class="phone-star" aria-label="recommended">★</span> `}${option.label}`,
