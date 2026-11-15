@@ -55,7 +55,9 @@ test('Agents: the chips filter by several groups, a header folds its group acros
   await expect(fold).toHaveAttribute('aria-expanded', 'false');
   await expect(group.locator('.phone-agent')).toHaveCount(0);
   // The fold is kept in the daemon's prefs: a reload keeps it folded.
-  await page.waitForTimeout(600); // the prefs write is debounced (prefs.js)
+  // The prefs write is debounced (prefs.js): wait until the daemon has it.
+  await expect.poll(() => page.evaluate((key) => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
+    .then((r) => r.json()).then((prefs) => prefs[key] ?? null), `tclaude.dash.phone.fold.${first}`)).toBe('1');
   await page.reload();
   await booted(page);
   await nav(page, 'Agents').click();
@@ -97,6 +99,10 @@ test('More lists every entry after Fleet, on a node with a fleet', async ({ page
   // nav's other tabs while Fleet admin is open; a phone must not read that.
   await page.evaluate(() => document.querySelector('#node-chips-root')?.insertAdjacentHTML('beforeend', '<span class="has-fleet" data-smoke></span>'));
   await nav(page, 'More').click();
+  await expect(page.getByRole('dialog', { name: 'More' })).toBeVisible();
+  // The chip row is Preact's: the fleet mark must still be there for the
+  // desktop rule to apply.
+  expect(await page.evaluate(() => !!document.querySelector('#node-chips-root .has-fleet[data-smoke]'))).toBe(true);
   expect(await labels()).toEqual(all);
   expect(errors).toEqual([]);
 });

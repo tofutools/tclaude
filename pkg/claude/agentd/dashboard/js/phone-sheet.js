@@ -135,10 +135,13 @@ function Sheet({ label, overNav = false, onClose, children }) {
   // late on a busy page, and an Escape in between was lost, leaving the sheet
   // up.
   useLayoutEffect(() => {
-    const doc = sheet.current.ownerDocument;
+    const box = sheet.current;
+    const doc = box.ownerDocument;
     const opener = doc.activeElement;
     const behind = [...doc.querySelectorAll(overNav ? BEHIND_ABOVE_NAV : BEHIND)];
     for (const element of behind) element.inert = true;
+    // Over the nav, the nav stays on top: a sheet dragged down slides under it.
+    if (overNav) doc.documentElement.dataset.phoneSheet = 'over-nav';
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
     doc.addEventListener('keydown', onKey);
     // The first action, not a link in the sheet's details.
@@ -148,12 +151,18 @@ function Sheet({ label, overNav = false, onClose, children }) {
     return () => {
       doc.removeEventListener('keydown', onKey);
       for (const element of behind) element.inert = false;
-      if (opener?.isConnected) opener.focus();
+      if (overNav) delete doc.documentElement.dataset.phoneSheet;
+      // Focus goes back to the opener, unless the operator already moved it
+      // out of the sheet (a nav slot under a sheet over the nav).
+      const moved = doc.activeElement && doc.activeElement !== doc.body && !box.contains(doc.activeElement);
+      if (opener?.isConnected && !moved) opener.focus();
     };
   }, []);
+  // Over the nav the sheet is not aria-modal: the nav stays in reach, for a
+  // screen reader too.
   const above = overNav ? ' phone-sheet-over-nav' : '';
   return html`<div class=${`phone-sheet-scrim${above}`} onClick=${onClose}></div>
-    <div class=${`phone-sheet${above}`} role="dialog" aria-modal="true" aria-label=${label} ref=${sheet}>
+    <div class=${`phone-sheet${above}`} role="dialog" aria-modal=${overNav ? undefined : 'true'} aria-label=${label} ref=${sheet}>
       <${Grab} sheet=${sheet} onClose=${onClose} />
       ${children}
     </div>`;

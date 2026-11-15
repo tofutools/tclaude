@@ -226,19 +226,25 @@ test('the More sheet sits above the nav: More lit, the rest of the shell inert, 
   assert.equal(navItem('More').getAttribute('aria-current'), 'page', 'More is lit while its sheet is up');
   assert.equal(navItem('Now').getAttribute('aria-current'), null);
   assert.equal(navItem('More').getAttribute('aria-expanded'), 'true');
+  assert.equal(harness.document.documentElement.dataset.phoneSheet, 'over-nav', 'the nav stays on top of it');
   await tap(navItem('More'));
   assert.equal(sheet(), null, 'More again closes it');
+  assert.equal(harness.document.documentElement.dataset.phoneSheet, undefined);
   assert.equal(navItem('Now').getAttribute('aria-current'), 'page');
   assert.equal(navItem('More').getAttribute('aria-expanded'), 'false');
   await tap(more);
+  assert.equal(sheet().getAttribute('aria-modal'), null);
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
   assert.equal(sheet(), null);
   assert.equal(harness.document.activeElement, more, 'focus goes back to More');
-  // Another slot closes More and goes there.
+  // Another slot closes More and goes there, keeping the focus.
   await tap(more);
+  assert.equal(sheet().getAttribute('aria-modal'), null, 'not modal: the nav stays in reach for a screen reader too');
+  navItem('Board').focus();
   await tap(navItem('Board'));
   assert.equal(sheet(), null);
   assert.equal(navItem('Board').getAttribute('aria-current'), 'page');
+  assert.equal(harness.document.activeElement, navItem('Board'), 'focus stays on the slot tapped');
 });
 
 test('a sheet from the top bar is modal: the nav is inert under it', async (t) => {
@@ -248,6 +254,7 @@ test('a sheet from the top bar is modal: the nav is inert under it', async (t) =
   const nav = mounted.container.querySelector('.phone-nav');
   assert.equal(nav.inert, true);
   assert.equal(mounted.container.querySelector('.phone-sheet').classList.contains('phone-sheet-over-nav'), false);
+  assert.equal(mounted.container.querySelector('.phone-sheet').getAttribute('aria-modal'), 'true');
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
   assert.equal(nav.inert, false);
 });

@@ -134,9 +134,3 @@
 :root[data-layout="phone"] .phone-compose-note { flex: 1; min-width: 0; margin: 0; text-align: center; }
 :root[data-layout="phone"] .phone-compose-ask { flex: 1; min-width: 0; color: var(--ui-text-strong); font-weight: 600; }
 :root[data-layout="phone"] .phone-compose-foot .phone-btns { margin-top: 0; flex-wrap: nowrap; }
-/* A sheet's grab handle takes a swipe down (phone-sheet.js): a taller strip
-   to catch it than the bar it draws. */
-:root[data-layout="phone"] .phone-sheet-grab {
-  width: auto; height: 26px; margin: -8px 0 0; border-radius: 0; touch-action: none; cursor: grab;
-  background: linear-gradient(var(--ui-pressed-bg), var(--ui-pressed-bg)) center / 40px 5px no-repeat;
-}

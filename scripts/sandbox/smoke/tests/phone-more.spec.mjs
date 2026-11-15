@@ -134,10 +134,11 @@ test('More sits above the nav, More again closes it; its handle drags it closed'
   await page.mouse.down();
   await page.mouse.move(x, y + 30, { steps: 6 });
   expect(await dialog.evaluate((el) => el.style.transform)).toBe('translateY(30px)');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(300); // held, so letting go is no flick (phone-sheet.js dragCloses)
   await page.mouse.up();
   await expect(dialog).toBeVisible();
-  await expect.poll(() => dialog.evaluate((el) => el.style.transform)).toBe('');
+  // Slid all the way back, not just told to.
+  await expect.poll(() => dialog.evaluate((el) => getComputedStyle(el).transform)).toBe('none');
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x, y + 200, { steps: 10 });

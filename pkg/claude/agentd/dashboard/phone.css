@@ -287,8 +287,9 @@
 /* A sheet from the bottom nav (More) sits above it, and the nav stays in
    reach: its slot lit, a tap on it closing the sheet. */
 :root[data-layout="phone"] :is(.phone-sheet, .phone-sheet-scrim).phone-sheet-over-nav { bottom: max(var(--footer-h), var(--phone-keyboard)); }
+:root[data-layout="phone"][data-phone-sheet="over-nav"] .phone-nav { z-index: calc(var(--z-dialog) + 2); }
 :root[data-layout="phone"] .phone-sheet.phone-sheet-over-nav {
-  max-height: calc(85vh - var(--footer-h)); padding-bottom: 16px;
+  max-height: calc(85vh - max(var(--footer-h), var(--phone-keyboard))); padding-bottom: 16px;
 }
 :root[data-layout="phone"] .phone-menu { list-style: none; margin: 0; padding: 0; }
 :root[data-layout="phone"] .phone-menu-head { margin: 14px 0 4px; }
