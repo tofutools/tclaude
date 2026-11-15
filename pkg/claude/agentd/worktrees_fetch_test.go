@@ -102,9 +102,7 @@ func TestCreateDashboardWorktreeRetriesTrackingConfigLock(t *testing.T) {
 	t.Setenv("LC_ALL", "sv_SE.UTF-8")
 	t.Setenv("LANG", "sv_SE.UTF-8")
 	repo, _, _, _ := worktreeFetchFixture(t)
-	lockPath := filepath.Join(repo, ".git", "config.lock")
-	require.NoError(t, os.WriteFile(lockPath, nil, 0o644))
-	t.Cleanup(func() { _ = os.Remove(lockPath) })
+	lockPath := holdGitConfigLock(t, repo)
 
 	waits := 0
 	wait := func(context.Context) error {
@@ -150,9 +148,7 @@ func TestCreateDashboardWorktreeRemovesSandboxConfigLock(t *testing.T) {
 
 func TestCreateDashboardWorktreeFallsBackAfterTrackingRetries(t *testing.T) {
 	repo, _, _, _ := worktreeFetchFixture(t)
-	lockPath := filepath.Join(repo, ".git", "config.lock")
-	require.NoError(t, os.WriteFile(lockPath, nil, 0o644))
-	t.Cleanup(func() { _ = os.Remove(lockPath) })
+	holdGitConfigLock(t, repo)
 
 	waits := 0
 	var attempts []int
@@ -194,6 +190,20 @@ func postDashboardWorktree(t *testing.T, body map[string]any) *httptest.Response
 	rec := httptest.NewRecorder()
 	dashboardCreateWorktree(rec, req)
 	return rec
+}
+
+// holdGitConfigLock takes repo's config.lock as a concurrent writer would.
+// Git 2.55+ retries a held config lock for core.configLockTimeout (1s by
+// default) before failing; these tests drive the daemon's own retry ladder
+// with an injected wait, so git's wait is set to zero first. Older git
+// ignores the key.
+func holdGitConfigLock(t *testing.T, repo string) string {
+	t.Helper()
+	gitOutput(t, repo, "config", "core.configLockTimeout", "0")
+	lockPath := filepath.Join(repo, ".git", "config.lock")
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o644))
+	t.Cleanup(func() { _ = os.Remove(lockPath) })
+	return lockPath
 }
 
 func worktreeFetchFixture(t *testing.T) (local, writer, initial, latest string) {

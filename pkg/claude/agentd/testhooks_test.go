@@ -2489,6 +2489,20 @@ func IsCountableForTest(slug string) bool {
 // SweepCopilotUsageForTest runs one tick of the daemon's Copilot poller.
 func SweepCopilotUsageForTest() { sweepCopilotUsage(context.Background()) }
 
+// SetCopilotContextRefreshIntervalForTest replaces the per-session refresh
+// throttle (0 lets every sweep re-read the log) and returns its restore.
+func SetCopilotContextRefreshIntervalForTest(d time.Duration) func() {
+	copilotContextRefreshMu.Lock()
+	defer copilotContextRefreshMu.Unlock()
+	old := copilotContextRefreshInterval
+	copilotContextRefreshInterval = d
+	return func() {
+		copilotContextRefreshMu.Lock()
+		defer copilotContextRefreshMu.Unlock()
+		copilotContextRefreshInterval = old
+	}
+}
+
 // ReconcileStewardAccessForTest runs what a daemon start runs.
 func ReconcileStewardAccessForTest() {
 	cfg, _ := clconfig.Load()
