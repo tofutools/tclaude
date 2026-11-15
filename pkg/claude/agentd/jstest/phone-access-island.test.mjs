@@ -157,8 +157,11 @@ test('Slugs shows the first page until searched or asked for all', async (t) => 
 test('before the first snapshot it says it is loading, then picks Requests if any wait', async (t) => {
   const { harness, root, snapshot, tab } = await setup(t, { loaded: false });
   assert.match(root.textContent, /Loading/);
+  const { phoneBar } = await harness.importDashboardModule('js/phone-page.js');
+  assert.equal(phoneBar.value?.actions?.length ?? 0, 0, 'no + Grant before there is anyone to grant to');
   await harness.act(() => { snapshot.value = snapshotWith({ requests: [{ id: 'r1', perm: 'x', agent_id: 'agt_lead', status: 'pending' }] }); });
   assert.equal(tab('Requests').getAttribute('aria-selected'), 'true');
+  assert.equal(phoneBar.value.actions[0].text, '+ Grant');
 });
 
 test('a subtab picked before the first snapshot is not overridden by a waiting request', async (t) => {

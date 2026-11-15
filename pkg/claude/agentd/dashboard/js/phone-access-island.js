@@ -177,8 +177,10 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
     if (changed || requests) navigated(key);
     setRequests(false);
   };
-  // "+ Grant" sits in the top bar, as in the mock, whichever view is open.
-  usePhoneBar({ tab: 'access', actions: [{ key: 'grant', text: '+ Grant', label: 'Grant sudo', onClick: () => actions.openGrant() }] });
+  // "+ Grant" sits in the top bar, as in the mock, whichever view is open,
+  // once the snapshot it picks an agent from has landed.
+  usePhoneBar({ tab: 'access', actions: current.snapshotLoaded
+    ? [{ key: 'grant', text: '+ Grant', label: 'Grant sudo', onClick: () => actions.openGrant() }] : [] });
   const items = VIEWS.map((view) => ({
     key: view.key,
     label: view.key === 'requests' && waiting > 0
