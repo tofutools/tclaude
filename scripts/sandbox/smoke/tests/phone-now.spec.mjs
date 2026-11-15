@@ -45,3 +45,20 @@ test('Now shows what needs you as cards, and its strip and rows go where they sa
   await expect(page.locator('.phone-bar-title')).toHaveText('Usage');
   expect(errors).toEqual([]);
 });
+
+test('with three subscriptions the usage strip wraps inside the phone instead of overflowing', async ({ page }) => {
+  await page.route(/\/api\/snapshot/, async (route) => {
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    snapshot.usage = { ...(snapshot.usage || {}), available: true, five_hour: { pct: 62 }, seven_day: { pct: 46 },
+      codex: { available: true, five_hour: { pct: 12 }, seven_day: { pct: 27 } }, copilot: { available: true, monthly: { pct: 40 } } };
+    await route.fulfill({ response, json: snapshot });
+  });
+  await page.goto('/');
+  await booted(page);
+  const strip = page.getByRole('button', { name: /^Usage: Claude .*Codex .*Copilot .*Open Usage$/ });
+  await expect(strip).toBeVisible();
+  const fits = await strip.evaluate((el) => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= document.documentElement.clientWidth);
+  expect(fits, 'the strip stays inside the phone').toBe(true);
+  await strip.screenshot({ path: test.info().outputPath('strip-three.png') });
+});

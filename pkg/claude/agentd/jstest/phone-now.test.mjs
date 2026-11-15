@@ -14,7 +14,7 @@ const SNAPSHOT = {
     { name: 'webshop', members: [
       { agent_id: ASKER, conv_id: 'c1', title: 'payments-fix', online: true, state: { status: 'awaiting_permission' } },
       { agent_id: WORKER, conv_id: 'c2', title: 'lead', online: true, state: { status: 'working' } },
-      { agent_id: BROKEN, conv_id: 'c3', title: 'release-bot', online: true, state: { status: 'error' } },
+      { agent_id: BROKEN, conv_id: 'c3', title: 'release-bot', online: true, state: { status: 'error', status_detail: 'rate limited until 14:00' } },
     ] },
     { name: 'steward', scribe: true, members: [{ agent_id: STEWARD, conv_id: 'c4', title: 'steward', online: true, state: { status: 'idle' } }] },
   ],
@@ -85,6 +85,7 @@ test('a decision is a purple card with the recommended option and one more; ⋯ 
   await tap(harness.getByRole(card, 'button', { name: 'All options, a note, or dismiss' }));
   const sheet = root.querySelector('[role="dialog"]');
   assert.equal(sheet.getAttribute('aria-label'), 'Where should the health check live?');
+  assert.equal(harness.document.activeElement, harness.getByRole(sheet, 'button', { name: 'Close' }), 'focus lands on Close, not on an answer');
   assert.match(sheet.textContent, /Admin server or a new one\./);
   await harness.input(harness.getByRole(sheet, 'textbox', { name: 'Note to send with your choice' }), 'keep it small');
   await tap([...sheet.querySelectorAll('.ui-btn')].find((b) => b.textContent.trim() === 'New server'));
@@ -100,6 +101,8 @@ test('agents at work and in error are rows in one card, with pills, that open th
   assert.deepEqual(rows.map((r) => [r.querySelector('.phone-who-name').textContent, r.querySelector('.phone-pill').textContent]),
     [['release-bot', 'error'], ['lead', 'working']]);
   assert.match(working.querySelector('.phone-section-head').textContent, /Working · 2/);
+  assert.equal(rows[0].querySelector('.phone-card-line').textContent, 'rate limited until 14:00', 'an error row says why');
+  assert.equal(rows[1].querySelector('.phone-card-line'), null);
   await tap(rows[1]);
   assert.equal(calls.at(-1)[0], 'openTerminal');
   assert.equal(calls.at(-1)[1].agentId, WORKER);

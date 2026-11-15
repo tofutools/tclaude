@@ -5,7 +5,8 @@
 
 /* The usage strip: one line, each subscription's fullest window. */
 :root[data-layout="phone"] .phone-usage-strip {
-  display: flex; align-items: center; gap: 12px; width: 100%; min-height: var(--phone-tap); margin-bottom: 4px; padding: 6px 12px;
+  /* Wraps rather than overflows: three subscriptions do not fit one line. */
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; width: 100%; min-height: var(--phone-tap); margin-bottom: 4px; padding: 6px 12px;
   background: var(--phone-panel); border: 1px solid var(--phone-line); border-radius: var(--phone-r);
   color: var(--ui-muted-text); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: left; cursor: pointer;
 }
@@ -34,6 +35,12 @@
 :root[data-layout="phone"] .phone-star { color: #e3b341; }
 
 /* A decision in full (its ⋯ sheet). */
+:root[data-layout="phone"] .phone-sheet-head { display: flex; align-items: flex-start; gap: 8px; }
+:root[data-layout="phone"] .phone-sheet-head .phone-sheet-title { flex: 1; }
+:root[data-layout="phone"] .phone-sheet-close {
+  flex: none; width: var(--phone-tap); height: var(--phone-tap); margin: -8px -6px 0 0; padding: 0;
+  background: none; border: 0; border-radius: var(--phone-btn-r); color: var(--ui-muted-text); font-size: 18px; cursor: pointer;
+}
 :root[data-layout="phone"] .phone-sheet-title { margin: 0 4px 4px; font-size: 17px; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-sheet-sub { margin: 0 4px 10px; color: var(--ui-muted-text); font-size: 13px; }
 :root[data-layout="phone"] .phone-decision-body { margin: 0 4px 12px; color: var(--ui-text); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -55,5 +62,6 @@
   display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--phone-tap); padding: 6px 0;
   background: none; border: 0; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer;
 }
-:root[data-layout="phone"] .phone-row-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; }
+:root[data-layout="phone"] .phone-row-text { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
+:root[data-layout="phone"] .phone-row-text .phone-card-line { flex-basis: 100%; margin-top: 0; }
 :root[data-layout="phone"] .phone-pr-title { color: var(--ui-text-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -93,8 +93,13 @@ export function DecisionSheet({ decision, from = '', fetchImpl, notify, close })
     }
   };
   const question = decision.subject || 'Decision';
+  // Close comes first: the sheet focuses its first button, and that must not
+  // be an answer a stray Enter would send.
   return html`<div class="phone-decision-sheet">
-    <h2 class="phone-sheet-title">${question}</h2>
+    <div class="phone-sheet-head">
+      <h2 class="phone-sheet-title">${question}</h2>
+      <button data-ui-exempt type="button" class="phone-sheet-close" aria-label="Close" onClick=${close}>✕</button>
+    </div>
     ${from && html`<p class="phone-sheet-sub">from ${from}</p>`}
     ${decision.body && decision.body !== decision.subject && html`<p class="phone-decision-body">${decision.body}</p>`}
     ${image && html`<a class="phone-decision-image" href=${image.url} target="_blank" rel="noopener"><img src=${image.url} alt=${image.filename || 'attached image'} /></a>`}

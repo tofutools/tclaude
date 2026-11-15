@@ -44,13 +44,15 @@ function UsageStrip({ snapshot, onOpen }) {
 }
 
 // AgentRows is one card of plain rows, one per agent at work or in error,
-// with its state pill. A row opens the agent's terminal.
+// with its state pill; an error row says what went wrong. A row opens the
+// agent's terminal.
 function AgentRows({ rows, onOpen }) {
   return html`<${Card} class="phone-rows-card">
     <ul class="phone-rows">
       ${rows.map(({ agent, state }) => html`<li key=${agent.agentId}>
         <button data-ui-exempt type="button" class="phone-row" onClick=${() => onOpen(agent)} aria-label=${`${agent.name}, ${state}: open its terminal`}>
-          <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}</span>
+          <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}
+            ${state === 'error' && agent.detail && html`<span class="phone-card-line">${agent.detail}</span>`}</span>
           <${StatePill} state=${state} />
         </button>
       </li>`)}
