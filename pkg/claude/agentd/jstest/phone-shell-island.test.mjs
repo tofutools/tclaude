@@ -64,6 +64,10 @@ test('a fresh load lands on Now, with the counts on the nav', async (t) => {
   assert.equal(navItem('Now').querySelector('.ui-badge').textContent, '1', 'one agent is asking');
   assert.equal(navItem('Mail').querySelector('.ui-badge').textContent, '3');
   assert.ok(mounted.container.querySelector('[aria-label="Needs you"]').textContent.includes('checkout-ui'));
+  // Every nav icon is one colour: Agents' is drawn in currentColor, not the
+  // 🤖 emoji, and no glyph is left to an emoji presentation.
+  assert.equal(navItem('Agents').querySelector('.phone-nav-icon svg').getAttribute('stroke'), 'currentColor');
+  for (const item of items) assert.doesNotMatch(item.querySelector('.phone-nav-icon').textContent, /\p{Extended_Pictographic}(?!\uFE0E)/u);
 });
 
 test('Agents and Mail show their tab; Now and Board come back over it', async (t) => {
@@ -208,17 +212,44 @@ test('leaving Now for the tab already under it still shows that tab', async (t) 
   assert.equal(root.dataset.phoneView, undefined);
 });
 
-test('the More sheet is modal: the shell behind it is inert until it closes', async (t) => {
+test('the More sheet sits above the nav: More lit, the rest of the shell inert, More again closes it', async (t) => {
   const { harness, mounted, navItem, tap } = await setup(t);
   const more = navItem('More');
   more.focus();
   await tap(more);
   const nav = mounted.container.querySelector('.phone-nav');
-  assert.equal(nav.inert, true, 'the bottom nav is inert under the sheet');
+  const sheet = () => mounted.container.querySelector('.phone-sheet');
+  assert.ok(sheet().classList.contains('phone-sheet-over-nav'));
+  assert.notEqual(nav.inert, true, 'the bottom nav stays in reach');
   assert.equal(mounted.container.querySelector('.phone-view').inert, true);
+  assert.equal(mounted.container.querySelector('.phone-bar').inert, true);
+  assert.equal(navItem('More').getAttribute('aria-current'), 'page', 'More is lit while its sheet is up');
+  assert.equal(navItem('Now').getAttribute('aria-current'), null);
+  assert.equal(navItem('More').getAttribute('aria-expanded'), 'true');
+  await tap(navItem('More'));
+  assert.equal(sheet(), null, 'More again closes it');
+  assert.equal(navItem('Now').getAttribute('aria-current'), 'page');
+  assert.equal(navItem('More').getAttribute('aria-expanded'), 'false');
+  await tap(more);
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+  assert.equal(sheet(), null);
+  assert.equal(harness.document.activeElement, more, 'focus goes back to More');
+  // Another slot closes More and goes there.
+  await tap(more);
+  await tap(navItem('Board'));
+  assert.equal(sheet(), null);
+  assert.equal(navItem('Board').getAttribute('aria-current'), 'page');
+});
+
+test('a sheet from the top bar is modal: the nav is inert under it', async (t) => {
+  const { harness, mounted, navItem, tap } = await setup(t);
+  await tap(navItem('Agents'));
+  await tap(mounted.container.querySelector('[aria-label="Power"]'));
+  const nav = mounted.container.querySelector('.phone-nav');
+  assert.equal(nav.inert, true);
+  assert.equal(mounted.container.querySelector('.phone-sheet').classList.contains('phone-sheet-over-nav'), false);
   await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
   assert.equal(nav.inert, false);
-  assert.equal(harness.document.activeElement, more, 'focus goes back to More');
 });
 
 test('a tab\'s pushed page takes the top bar and the bottom edge until it goes', async (t) => {
@@ -395,13 +426,13 @@ test('🔍 finds agents, groups, mail and tasks, and opens what is tapped', asyn
 
 test('a search for a group opens Agents on that group', async (t) => {
   const { harness, calls, bar, sheet, tap } = await setup(t);
-  const { agentsTab, ALL } = await harness.importDashboardModule('js/phone-agents-model.js');
-  t.after(() => { agentsTab.value = ALL; });
+  const { agentsFilter } = await harness.importDashboardModule('js/phone-agents-model.js');
+  t.after(() => { agentsFilter.value = []; });
   await tap(harness.getByRole(bar(), 'button', { name: 'Search' }));
   await harness.input(harness.getByRole(sheet(), 'textbox', { name: 'Search' }), 'webshop');
   await tap(sheet().querySelector('[aria-label="Groups"] .phone-search-hit'));
   assert.deepEqual(calls.at(-1), ['showTab', 'groups']);
-  assert.equal(agentsTab.value, 'g:webshop');
+  assert.deepEqual(agentsFilter.value, ['g:webshop']);
 });
 
 test('with linked nodes the node chip opens a picker, on Now and atop More', async (t) => {

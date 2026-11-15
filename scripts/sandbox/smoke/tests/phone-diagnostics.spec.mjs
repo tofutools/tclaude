@@ -77,7 +77,7 @@ test('Diagnostics: Doctor first, Audit and Logs as rows, Doctor findings as page
   await page.goto('/diagnostics/performance');
   await booted(page);
   await expect(page.locator('.phone-desktop-page:visible')).toContainText('Performance is desktop only');
-  await page.getByRole('button', { name: 'Open the Doctor' }).click();
+  await page.getByRole('button', { name: 'Open the Doctor', exact: true }).click();
   await expect(page).toHaveURL(/\/diagnostics\/doctor$/);
   await expect(page.locator('.phone-doctor-row').first()).toBeVisible();
   expect(errors).toEqual([]);

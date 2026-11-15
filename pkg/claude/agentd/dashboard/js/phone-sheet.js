@@ -9,8 +9,10 @@
 // through its props (signals), so a sheet stays current while open.
 //
 // While a sheet is open the shell, the tab under it and the own views are
-// inert, Escape, the scrim and a swipe down on its grab handle close it, and
-// focus goes back to whatever opened it.
+// inert, Escape, the scrim and a drag down on its grab handle close it, and
+// focus goes back to whatever opened it. A sheet opened from the bottom nav
+// (More) passes overNav and slot: it sits above the nav, which stays in
+// reach, and the nav lights that slot while it is open.
 //
 // A Body holding something the operator would lose (a draft) guards those
 // closes with useSheetGuard: its guard runs instead of the close, and the
@@ -27,8 +29,8 @@ const html = htm.bind(h);
 
 export const phoneSheet = signal(null);
 
-export function openPhoneSheet({ label, Body, props = {} }) {
-  phoneSheet.value = { label, Body, props };
+export function openPhoneSheet({ label, Body, props = {}, overNav = false, slot = '' }) {
+  phoneSheet.value = { label, Body, props, overNav, slot };
 }
 
 export function closePhoneSheet() {
@@ -63,31 +65,70 @@ export function useSheetGuard(onRequestClose) {
 
 // What the sheet makes inert while it is open: everything a tap could reach
 // behind it, the docked terminal too. The sheet itself renders outside all of
-// these.
+// these. A sheet over the nav leaves the nav out.
 const BEHIND = 'main, .phone-bar, .phone-view, .phone-nav, .phone-term';
+const BEHIND_ABOVE_NAV = 'main, .phone-bar, .phone-view, .phone-term';
 
-// How far down a grab handle drag goes before it closes the sheet.
+// A drag on the grab handle closes the sheet once it went this far down (or
+// a quarter of the sheet's height, whichever is more, up to SWIPE_MAX_PX), or
+// when it was a flick: at least FLICK_MIN_PX at FLICK_PX_PER_MS or faster.
 export const SWIPE_CLOSE_PX = 60;
+const SWIPE_MAX_PX = 140;
+const FLICK_MIN_PX = 24;
+const FLICK_PX_PER_MS = 0.5;
 
-// Grab is the handle at a sheet's top: dragging it down far enough closes
-// the sheet (onClose, so a guard may hold it). Screen readers have Escape and
-// the sheet's own buttons.
-function Grab({ onClose }) {
-  const start = useRef(null);
-  const down = (event) => {
-    start.current = event.clientY;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  };
-  const up = (event) => {
-    const from = start.current;
-    start.current = null;
-    if (from !== null && event.clientY - from >= SWIPE_CLOSE_PX) onClose();
-  };
-  return html`<div class="phone-sheet-grab" aria-hidden="true"
-    onPointerDown=${down} onPointerUp=${up} onPointerCancel=${() => { start.current = null; }}></div>`;
+// dragCloses says whether a drag of dy px down in ms milliseconds, on a
+// sheet height px tall, closes it.
+export function dragCloses(dy, ms, height = 0) {
+  const far = Math.min(SWIPE_MAX_PX, Math.max(SWIPE_CLOSE_PX, height / 4));
+  if (dy >= far) return true;
+  return dy >= FLICK_MIN_PX && ms > 0 && dy / ms >= FLICK_PX_PER_MS;
 }
 
-function Sheet({ label, onClose, children }) {
+const reducedMotion = (win) => !!win?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
+// Grab is the handle at a sheet's top. The sheet follows a finger dragging
+// it down; let go far or fast enough and the sheet closes (onClose, so a
+// guard may hold it), otherwise it slides back (at once under reduced
+// motion). Screen readers have Escape and the sheet's own buttons.
+function Grab({ sheet, onClose }) {
+  const drag = useRef(null);
+  const place = (dy, animate) => {
+    const el = sheet.current;
+    if (!el) return;
+    el.style.transition = animate && !reducedMotion(el.ownerDocument.defaultView) ? 'transform 180ms ease-out' : 'none';
+    el.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
+  };
+  const down = (event) => {
+    drag.current = { y: event.clientY, t: event.timeStamp, dy: 0 };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+  const move = (event) => {
+    if (!drag.current) return;
+    drag.current.dy = Math.max(0, event.clientY - drag.current.y);
+    place(drag.current.dy, false);
+  };
+  const up = (event) => {
+    const from = drag.current;
+    drag.current = null;
+    if (!from) return;
+    const dy = Math.max(0, event.clientY - from.y);
+    const height = sheet.current?.getBoundingClientRect?.().height || 0;
+    // Back in place either way: a guard holding the close shows its question
+    // in the sheet, which must not be left half off screen.
+    place(0, !dragCloses(dy, event.timeStamp - from.t, height));
+    if (dragCloses(dy, event.timeStamp - from.t, height)) onClose();
+  };
+  const cancel = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    place(0, true);
+  };
+  return html`<div class="phone-sheet-grab" aria-hidden="true"
+    onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${cancel}></div>`;
+}
+
+function Sheet({ label, overNav = false, onClose, children }) {
   const sheet = useRef(null);
   // A layout effect: Escape, the inert page behind and the focus are in place
   // in the same commit as the sheet. A passive effect can run a frame or more
@@ -96,7 +137,7 @@ function Sheet({ label, onClose, children }) {
   useLayoutEffect(() => {
     const doc = sheet.current.ownerDocument;
     const opener = doc.activeElement;
-    const behind = [...doc.querySelectorAll(BEHIND)];
+    const behind = [...doc.querySelectorAll(overNav ? BEHIND_ABOVE_NAV : BEHIND)];
     for (const element of behind) element.inert = true;
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
     doc.addEventListener('keydown', onKey);
@@ -110,9 +151,10 @@ function Sheet({ label, onClose, children }) {
       if (opener?.isConnected) opener.focus();
     };
   }, []);
-  return html`<div class="phone-sheet-scrim" onClick=${onClose}></div>
-    <div class="phone-sheet" role="dialog" aria-modal="true" aria-label=${label} ref=${sheet}>
-      <${Grab} onClose=${onClose} />
+  const above = overNav ? ' phone-sheet-over-nav' : '';
+  return html`<div class=${`phone-sheet-scrim${above}`} onClick=${onClose}></div>
+    <div class=${`phone-sheet${above}`} role="dialog" aria-modal="true" aria-label=${label} ref=${sheet}>
+      <${Grab} sheet=${sheet} onClose=${onClose} />
       ${children}
     </div>`;
 }
@@ -121,8 +163,8 @@ function Sheet({ label, onClose, children }) {
 export function PhoneSheetHost() {
   const open = phoneSheet.value;
   if (!open) return null;
-  const { label, Body, props } = open;
-  return html`<${Sheet} key=${label} label=${label} onClose=${requestClosePhoneSheet}>
+  const { label, Body, props, overNav } = open;
+  return html`<${Sheet} key=${label} label=${label} overNav=${!!overNav} onClose=${requestClosePhoneSheet}>
     <${Body} ...${props} close=${closePhoneSheet} />
   <//>`;
 }

@@ -119,7 +119,9 @@ test('every phone sheet rule is scoped under :root[data-layout="phone"]', () => 
 
 test('phone rules live only in the phone sheets', () => {
   const sheets = readdirSync(DASHBOARD).filter((name) => name.endsWith('.css') && !isPhoneSheet(name));
-  const offenders = sheets.filter((name) => /data-layout/.test(read(name)));
+  // A desktop rule may leave the phone out (:not([data-layout="phone"])):
+  // that keeps desktop chrome off the phone, it styles nothing there.
+  const offenders = sheets.filter((name) => /data-layout/.test(read(name).replaceAll(':not([data-layout="phone"])', '')));
   assert.deepEqual(offenders, [], 'style the phone layout in phone.css or phone-<view>.css, not in the desktop sheets');
 });
 

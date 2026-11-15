@@ -12,10 +12,31 @@ import { normalizeSpawnName } from './agent-spawn-model.js';
 export const ALL = 'all';
 export const UNGROUPED = '-ungrouped';
 
-// agentsTab is the group tab the Agents view shows (ALL, groupKey(name) or
-// UNGROUPED). Module state, so the view keeps it across tab switches and the
-// phone search (phone-search.js) can open the view on one group.
-export const agentsTab = signal(ALL);
+// agentsFilter is the groups the Agents view shows: their keys
+// (groupKey(name) or UNGROUPED), none for every group. Module state, so the
+// view keeps it across tab switches and the phone search (phone-search.js)
+// can open the view on one group.
+export const agentsFilter = signal([]);
+
+// toggleFilter is the filter after a tap on a chip: All clears it, a group's
+// chip adds or takes out that group.
+export function toggleFilter(filter, key) {
+  if (key === ALL) return [];
+  return filter.includes(key) ? filter.filter((k) => k !== key) : [...filter, key];
+}
+
+// FOLD_PREF is where a phone keeps a group section folded ('1'), in the
+// daemon's dashboard prefs (prefs.js) as the desktop keeps its own group
+// folds, under keys of its own so a phone's fold never folds the desktop's
+// tree. By group name; the agents in no group are under UNGROUPED.
+export const FOLD_PREF = 'tclaude.dash.phone.fold.';
+export const foldPref = (group) => FOLD_PREF + (group.group ? group.name : UNGROUPED);
+
+// waiting counts a group's agents that wait on the operator (an approval,
+// a question, an error), which a folded section still shows.
+export function waiting(group) {
+  return [...group.shown, ...group.offline].filter((row) => ['key', 'ask', 'err'].includes(row.pill.tone)).length;
+}
 
 // A group's tab key: prefixed, so no group name collides with All or
 // Ungrouped.
@@ -169,12 +190,16 @@ export function spawnBody({ prompt = '', name = '', profile = '' } = {}) {
   return body;
 }
 
-// shownGroups is what a tab shows; an unknown tab (a group that went away)
-// shows All.
-export function shownGroups(groups, tab) {
-  if (tab === ALL) return groups;
-  const picked = groups.filter((g) => g.key === tab);
-  return picked.length ? picked : groups;
+// liveFilter is the filter without the groups that went away.
+export function liveFilter(groups, filter) {
+  return (filter || []).filter((key) => groups.some((g) => g.key === key));
+}
+
+// shownGroups is what a filter shows, in the groups' order: every group when
+// none is picked (or every one picked went away).
+export function shownGroups(groups, filter) {
+  const keys = liveFilter(groups, filter);
+  return keys.length ? groups.filter((g) => keys.includes(g.key)) : groups;
 }
 
 // findRow finds an agent's row by its key, with its group: in the group

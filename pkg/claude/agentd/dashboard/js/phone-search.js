@@ -12,7 +12,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { scoreMatch } from './palette-score.js';
-import { agentsTab, groupKey } from './phone-agents-model.js';
+import { agentsFilter, groupKey } from './phone-agents-model.js';
 import { openHumanNotifications } from './mail-bridge.js';
 import { Input } from './ui-components.js';
 import { Avatar, Section, StatePill } from './phone-ui.js';
@@ -122,7 +122,7 @@ export function SearchSheet({ state, actions, boardSource = null, close }) {
     <//>
     <${Kind} title="Groups" found=${hits.groups}>
       ${hits.groups.items.map((group) => html`<${Hit} key=${group.name}
-        onClick=${go(() => { agentsTab.value = groupKey(group.name); actions.showTab('groups'); })}
+        onClick=${go(() => { agentsFilter.value = [groupKey(group.name)]; actions.showTab('groups'); })}
         lead=${html`<${Avatar} name=${group.name} />`} title=${group.name} sub=${`${group.online}/${group.members} online`} />`)}
     <//>
     <${Kind} title="Mail" found=${hits.mail}>

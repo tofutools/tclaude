@@ -108,3 +108,40 @@ test('Settings › Notifications is the simple form: no config keys, no Advanced
   await expectNoSideScroll(page, 'Notifications');
   expect(errors).toEqual([]);
 });
+
+test('More sits above the nav, More again closes it; its handle drags it closed', async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto('/');
+  await booted(page);
+  const dialog = page.getByRole('dialog', { name: 'More' });
+  const navBar = page.getByRole('navigation', { name: 'Views' });
+  await more(page).click();
+  await expect(dialog).toBeVisible();
+  await expect(navBar).toBeVisible();
+  await expect(more(page)).toHaveAttribute('aria-current', 'page');
+  const sheetBox = await dialog.boundingBox();
+  const navBox = await navBar.boundingBox();
+  expect(Math.round(sheetBox.y + sheetBox.height), 'the sheet ends where the nav starts').toBeLessThanOrEqual(Math.round(navBox.y) + 1);
+  await more(page).click();
+  await expect(dialog).toHaveCount(0);
+
+  // A short slow drag slides back; a long one closes.
+  await more(page).click();
+  const grab = await dialog.locator('.phone-sheet-grab').boundingBox();
+  const x = grab.x + grab.width / 2;
+  const y = grab.y + grab.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + 30, { steps: 6 });
+  expect(await dialog.evaluate((el) => el.style.transform)).toBe('translateY(30px)');
+  await page.waitForTimeout(300);
+  await page.mouse.up();
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => dialog.evaluate((el) => el.style.transform)).toBe('');
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + 200, { steps: 10 });
+  await page.mouse.up();
+  await expect(dialog).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

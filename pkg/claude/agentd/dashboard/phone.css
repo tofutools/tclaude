@@ -200,9 +200,18 @@
   background: none; border: 0; color: var(--ui-muted-text);
   font: inherit; font-size: 11px; cursor: pointer;
 }
-:root[data-layout="phone"] .phone-nav-icon { font-size: 20px; line-height: 1; padding: 3px 16px; border-radius: 14px; }
-:root[data-layout="phone"] .phone-nav-item.on { color: var(--phone-accent); }
-:root[data-layout="phone"] .phone-nav-item.on .phone-nav-icon { background: var(--phone-on-bg); }
+:root[data-layout="phone"] .phone-nav-icon {
+  display: inline-flex; align-items: center; justify-content: center; height: 26px; box-sizing: border-box;
+  font-size: 20px; line-height: 1; padding: 3px 16px; border-radius: 14px;
+}
+:root[data-layout="phone"] .phone-nav-svg { display: block; }
+/* The tab on screen: its icon in a filled pill, icon and label in the
+   primary colour, the label bolder. */
+:root[data-layout="phone"] .phone-nav-item.on { color: var(--phone-accent); font-weight: 600; }
+:root[data-layout="phone"] .phone-nav-item.on .phone-nav-icon {
+  background: color-mix(in srgb, var(--phone-accent-bg) 55%, var(--ui-card-bg));
+  box-shadow: inset 0 0 0 1px var(--phone-accent-bg);
+}
 :root[data-layout="phone"] .phone-nav-badge {
   position: absolute; top: 4px; left: calc(50% + 6px);
   min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; font-size: 10px; line-height: 17px;
@@ -263,7 +272,24 @@
   background: var(--ui-dialog-bg); border-top: 1px solid var(--ui-dialog-line); border-radius: 20px 20px 0 0;
   box-shadow: var(--ui-dialog-shadow);
 }
-:root[data-layout="phone"] .phone-sheet-grab { width: 40px; height: 5px; border-radius: 3px; background: var(--ui-pressed-bg); margin: 2px auto 10px; }
+/* The grab handle: a full-width strip at the sheet's top that a finger can
+   drag down (js/phone-sheet.js Grab), the bar drawn in its middle. It stays
+   at the top while the sheet scrolls, and keeps the browser from taking the
+   drag as a scroll. */
+:root[data-layout="phone"] .phone-sheet-grab {
+  position: sticky; top: -8px; z-index: 1; height: 24px; margin: -8px calc(-1 * var(--phone-gutter)) 4px;
+  background: var(--ui-dialog-bg); border-radius: 20px 20px 0 0; touch-action: none; cursor: grab;
+}
+:root[data-layout="phone"] .phone-sheet-grab::before {
+  content: ""; position: absolute; left: 50%; top: 10px; width: 40px; height: 5px; margin-left: -20px;
+  border-radius: 3px; background: var(--ui-pressed-bg);
+}
+/* A sheet from the bottom nav (More) sits above it, and the nav stays in
+   reach: its slot lit, a tap on it closing the sheet. */
+:root[data-layout="phone"] :is(.phone-sheet, .phone-sheet-scrim).phone-sheet-over-nav { bottom: max(var(--footer-h), var(--phone-keyboard)); }
+:root[data-layout="phone"] .phone-sheet.phone-sheet-over-nav {
+  max-height: calc(85vh - var(--footer-h)); padding-bottom: 16px;
+}
 :root[data-layout="phone"] .phone-menu { list-style: none; margin: 0; padding: 0; }
 :root[data-layout="phone"] .phone-menu-head { margin: 14px 0 4px; }
 :root[data-layout="phone"] .phone-menu-item {

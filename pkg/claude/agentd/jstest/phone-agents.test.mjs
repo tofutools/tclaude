@@ -43,8 +43,17 @@ test('the model: groups in order, loudest first, offline apart, PR and checks', 
   assert.equal(lead.branch, 'main');
   assert.deepEqual(model.groupTabs(groups).map((tab) => `${tab.label} ${tab.online}/${tab.total}`),
     ['All 3/5', 'webshop 2/3', 'steward 1/1', 'Ungrouped 0/1']);
-  assert.equal(model.shownGroups(groups, model.groupKey('steward')).length, 1);
-  assert.equal(model.shownGroups(groups, 'gone').length, 3, 'a group that went away shows All');
+  assert.equal(model.shownGroups(groups, [model.groupKey('steward')]).length, 1);
+  assert.deepEqual(model.shownGroups(groups, [model.UNGROUPED, model.groupKey('webshop')]).map((g) => g.name), ['webshop', 'Ungrouped'],
+    'several groups, in the groups\' order');
+  assert.equal(model.shownGroups(groups, ['gone']).length, 3, 'a group that went away shows All');
+  assert.deepEqual(model.liveFilter(groups, ['gone', model.UNGROUPED]), [model.UNGROUPED]);
+  assert.deepEqual(model.toggleFilter([], 'g:a'), ['g:a']);
+  assert.deepEqual(model.toggleFilter(['g:a', 'g:b'], 'g:a'), ['g:b']);
+  assert.deepEqual(model.toggleFilter(['g:a'], model.ALL), []);
+  assert.equal(model.waiting(webshop), 1, 'the approval waits on the operator');
+  assert.equal(model.foldPref(webshop), 'tclaude.dash.phone.fold.webshop');
+  assert.equal(model.foldPref(groups[2]), 'tclaude.dash.phone.fold.-ungrouped');
   assert.equal(model.findRow(groups, id(5)).group.key, model.UNGROUPED);
   assert.equal(model.ciState({ passed: 2, pending: 1 }), 'running');
   assert.equal(model.ciState({ passed: 2 }), 'passing');
@@ -84,7 +93,7 @@ test('the model: crashed agents stay in view, group names never collide, an agen
   assert.deepEqual(all.shown.map((r) => r.name), ['shared', 'dead'], 'crashed is not folded away');
   assert.deepEqual({ live: all.live, total: all.total }, { live: 1, total: 2 });
   assert.equal(new Set(groups.map((g) => g.key)).size, 3);
-  assert.deepEqual(model.shownGroups(groups, all.key), [all], 'a group named all is its own tab');
+  assert.deepEqual(model.shownGroups(groups, [all.key]), [all], 'a group named all is its own chip');
   assert.equal(model.findRow(groups, id(6), named.key).group, named);
   assert.equal(model.findRow(groups, id(6)).group, all);
 });
@@ -94,7 +103,13 @@ async function settle(harness) {
   for (let i = 0; i < 5; i += 1) await harness.act(async () => { await Promise.resolve(); });
 }
 
-async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () => ({}) }) } = {}) {
+// memPrefs stands in for the daemon's dashboard prefs (prefs.js).
+function memPrefs(init = {}) {
+  const map = new Map(Object.entries(init));
+  return { getItem: (k) => (map.has(k) ? map.get(k) : null), setItem: (k, v) => map.set(k, String(v)), removeItem: (k) => map.delete(k), map };
+}
+
+async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () => ({}) }), prefs = memPrefs() } = {}) {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, island, sheet, page, board] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -103,6 +118,8 @@ async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () =>
     harness.importDashboardModule('js/phone-page.js'),
     harness.importDashboardModule('js/phone-board.js'),
   ]);
+  const model = await harness.importDashboardModule('js/phone-agents-model.js');
+  t.after(() => { model.agentsFilter.value = []; });
   const state = createDashboardState();
   state.beginRequest();
   state.commitRequest(1, SNAPSHOT);
@@ -112,7 +129,7 @@ async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () =>
     openTerminal: record('openTerminal'), message: record('message'), rename: record('rename'), spawn: record('spawn'),
     rowAction: (act, row) => calls.push(['rowAction', act, row.name]),
   };
-  const mounted = await harness.mount(harness.html`<main><${island.PhoneAgents} state=${state} order=${(g) => g} actions=${actions} fetchImpl=${fetchImpl} /></main>
+  const mounted = await harness.mount(harness.html`<main><${island.PhoneAgents} state=${state} order=${(g) => g} actions=${actions} fetchImpl=${fetchImpl} prefs=${prefs} /></main>
     <${sheet.PhoneSheetHost} />`);
   const c = mounted.container;
   const tap = (element) => harness.act(() => element.click());
@@ -120,11 +137,14 @@ async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () =>
   const row = (name) => item(name).querySelector('.phone-agent-row');
   const more = (name) => item(name).querySelector('.phone-agent-more');
   const menu = (label) => [...c.querySelectorAll('.phone-sheet .phone-menu-item')].find((b) => b.textContent === label);
-  return { harness, state, calls, c, tap, item, row, more, menu, page, board };
+  const chip = (label) => [...c.querySelectorAll('.phone-agents-chips button')].find((b) => b.firstChild.textContent.trim() === label);
+  const titles = () => [...c.querySelectorAll('.phone-agent-title')].map((n) => n.textContent);
+  const sections = () => [...c.querySelectorAll('.phone-agents > .phone-section')].map((n) => n.getAttribute('aria-label'));
+  return { harness, state, calls, c, tap, item, row, more, menu, page, board, chip, titles, sections, prefs, model };
 }
 
 test('rows: an avatar, a pill, the meta line; offline agents inline; the chips filter', async (t) => {
-  const { c, tap, item, row } = await setup(t);
+  const { c, tap, item, row, chip, titles } = await setup(t);
   assert.equal(row('payments-fix').querySelector('.phone-pill').textContent, 'approval');
   assert.ok(row('payments-fix').querySelector('.phone-pill-key'));
   assert.equal(row('payments-fix').querySelector('.phone-av-badge').textContent, '🔑');
@@ -138,10 +158,52 @@ test('rows: an avatar, a pill, the meta line; offline agents inline; the chips f
   assert.ok(row('old-worker').querySelector('.phone-av-dim'));
   assert.equal(row('old-worker').querySelector('.phone-agent-meta').textContent, 'dev · resume ›');
   assert.equal(c.querySelector('details'), null, 'no Offline fold');
-  const tabs = [...c.querySelectorAll('[role=tab]')];
-  assert.deepEqual(tabs.map((tab) => tab.textContent), ['All 5', 'webshop 3', 'steward 1', 'Ungrouped 1']);
-  await tap(tabs[2]);
-  assert.deepEqual([...c.querySelectorAll('.phone-agent-title')].map((n) => n.textContent), ['steward']);
+  const chips = [...c.querySelectorAll('.phone-agents-chips button')];
+  assert.deepEqual(chips.map((b) => b.textContent.replace(/\s+/g, ' ').trim()), ['All 5', 'webshop 3', 'steward 1', 'Ungrouped 1']);
+  await tap(chip('steward'));
+  assert.deepEqual(titles(), ['steward']);
+});
+
+test('the chips filter by any number of groups; All shows every one', async (t) => {
+  const { tap, chip, sections, model } = await setup(t);
+  const pressed = () => ['All', 'webshop', 'steward', 'Ungrouped'].filter((l) => chip(l).getAttribute('aria-pressed') === 'true');
+  assert.deepEqual(pressed(), ['All']);
+  await tap(chip('Ungrouped'));
+  await tap(chip('webshop'));
+  assert.deepEqual(sections(), ['webshop', 'Ungrouped'], 'two groups, in the groups\' order');
+  assert.deepEqual(pressed(), ['webshop', 'Ungrouped']);
+  await tap(chip('webshop'));
+  assert.deepEqual(sections(), ['Ungrouped'], 'a second tap takes a group out');
+  await tap(chip('All'));
+  assert.deepEqual(sections(), ['webshop', 'steward', 'Ungrouped']);
+  assert.deepEqual(pressed(), ['All']);
+  assert.deepEqual(model.agentsFilter.value, []);
+  // The last picked group taken out shows every group again.
+  await tap(chip('steward'));
+  await tap(chip('steward'));
+  assert.deepEqual(pressed(), ['All']);
+});
+
+test('a group\'s header folds it, remembered in the prefs; folded, it counts who waits', async (t) => {
+  const prefs = memPrefs({ 'tclaude.dash.phone.fold.steward': '1' });
+  const { c, tap, titles, prefs: kept, calls } = await setup(t, { prefs });
+  const head = (name) => c.querySelector(`[aria-label="${name}"] .phone-agents-fold`);
+  assert.deepEqual(titles(), ['payments-fix', 'lead', 'old-worker', 'loner'], 'steward starts folded');
+  assert.equal(head('steward').getAttribute('aria-expanded'), 'false');
+  assert.equal(head('webshop').getAttribute('aria-expanded'), 'true');
+  await tap(head('webshop'));
+  assert.deepEqual(titles(), ['loner']);
+  assert.equal(kept.getItem('tclaude.dash.phone.fold.webshop'), '1');
+  assert.equal(head('webshop').querySelector('.phone-agents-waiting').textContent, '1 waiting', 'the approval still shows');
+  assert.ok(head('webshop').getAttribute('aria-label').includes('1 waiting on you'));
+  assert.equal(head('webshop').querySelector('.phone-agents-count').textContent, '2/3');
+  // Board › stays its own button beside the header.
+  assert.ok(c.querySelector('[aria-label="webshop\'s board"]'));
+  await tap(head('steward'));
+  assert.deepEqual(titles(), ['steward', 'loner']);
+  assert.equal(kept.getItem('tclaude.dash.phone.fold.steward'), null, 'unfolding forgets it');
+  assert.equal(head('steward').querySelector('.phone-agents-waiting'), null);
+  assert.equal(calls.length, 0, 'folding opens nothing');
 });
 
 test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ opens the sheet', async (t) => {
@@ -200,8 +262,8 @@ test('＋ in the top bar spawns from a short sheet: group, profile, prompt', asy
   const bar = page.phoneBar.value;
   assert.equal(bar.tab, 'groups');
   assert.deepEqual(bar.actions.map((a) => a.icon), ['＋']);
-  // On a group's chip the sheet starts on that group.
-  await tap([...c.querySelectorAll('[role=tab]')][2]);
+  // With one group picked the sheet starts on that group.
+  await tap([...c.querySelectorAll('.phone-agents-chips button')][2]);
   await harness.act(() => page.phoneBar.value.actions[0].onClick());
   const form = c.querySelector('.phone-sheet form');
   const [groupSel, profileSel] = form.querySelectorAll('select');
