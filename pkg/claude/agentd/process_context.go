@@ -39,27 +39,27 @@ const (
 
 // processRunProjection is the mini-graph a run renders as in context.
 type processRunProjection struct {
-	RunID       string                  `json:"runId"`
-	TemplateID  string                  `json:"templateId"`
-	TemplateRef string                  `json:"templateRef"`
-	Name        string                  `json:"name"`
-	Status      engine.RunStatus        `json:"status"`
-	Action      string                  `json:"action"`
-	NeedsYou    bool                    `json:"needsYou"`
+	RunID       string           `json:"runId"`
+	TemplateID  string           `json:"templateId"`
+	TemplateRef string           `json:"templateRef"`
+	Name        string           `json:"name"`
+	Status      engine.RunStatus `json:"status"`
+	Action      string           `json:"action"`
+	NeedsYou    bool             `json:"needsYou"`
 	// Concerns counts the run's open concerns, and ConcernsForYou those
 	// waiting on the operator's decision (process_oversight.go).
-	Concerns       int `json:"concerns,omitempty"`
-	ConcernsForYou int `json:"concernsForYou,omitempty"`
-	Scope       processRunScopeView     `json:"scope"`
-	Paused      *processRunPauseView    `json:"paused,omitempty"`
-	Nodes       []processProjectionNode `json:"nodes"`
-	Edges       []processProjectionEdge `json:"edges"`
-	Current     []string                `json:"current"`
-	Truncated   bool                    `json:"truncated,omitempty"`
-	StartedAt   time.Time               `json:"startedAt"`
-	UpdatedAt   time.Time               `json:"updatedAt"`
-	stepOrder   map[string]int          // node id → 1-based work-step index
-	steps       int                     // work steps in the projection
+	Concerns       int                     `json:"concerns,omitempty"`
+	ConcernsForYou int                     `json:"concernsForYou,omitempty"`
+	Scope          processRunScopeView     `json:"scope"`
+	Paused         *processRunPauseView    `json:"paused,omitempty"`
+	Nodes          []processProjectionNode `json:"nodes"`
+	Edges          []processProjectionEdge `json:"edges"`
+	Current        []string                `json:"current"`
+	Truncated      bool                    `json:"truncated,omitempty"`
+	StartedAt      time.Time               `json:"startedAt"`
+	UpdatedAt      time.Time               `json:"updatedAt"`
+	stepOrder      map[string]int          // node id → 1-based work-step index
+	steps          int                     // work steps in the projection
 }
 
 // processProjectionNode is one authored node. Kind is the template node type

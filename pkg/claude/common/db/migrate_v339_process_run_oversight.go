@@ -30,7 +30,7 @@ func migrateV338toV339(d *sql.DB) error {
 			set_by   TEXT NOT NULL DEFAULT ''
 			             CHECK(length(CAST(set_by AS BLOB)) <= 256),
 			set_at   INTEGER NOT NULL
-		);
+		) STRICT;
 
 		CREATE TABLE IF NOT EXISTS process_run_concerns (
 			id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,7 +60,7 @@ func migrateV338toV339(d *sql.DB) error {
 			created_at       INTEGER NOT NULL,
 			updated_at       INTEGER NOT NULL,
 			resolved_at      INTEGER
-		);
+		) STRICT;
 		CREATE INDEX IF NOT EXISTS idx_process_run_concerns_run
 			ON process_run_concerns(run_id, id);
 		CREATE INDEX IF NOT EXISTS idx_process_run_concerns_due
