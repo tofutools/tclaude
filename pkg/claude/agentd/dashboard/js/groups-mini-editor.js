@@ -220,6 +220,17 @@ function StartFrom({ roster, api, wizard, busy, onView, onDescribe, onImport }) 
   const [open, setOpen] = useState('');
   const [text, setText] = useState('');
   const [templates, setTemplates] = useState(null);
+  // The built-in ways of working (tk_d02b0f4c), read from the daemon: [] when
+  // it offers none, so the row stays hidden.
+  const [builtins, setBuiltins] = useState([]);
+  useEffect(() => {
+    if (typeof api?.listBuiltins !== 'function') return undefined;
+    let live = true;
+    api.listBuiltins().then((rows) => { if (live) setBuiltins(rows || []); }).catch(() => {});
+    return () => { live = false; };
+  }, [api]);
+  const builtin = (item) => void api.getBuiltin(item.id).then((view) => onView(view, item.name)).catch(() => {});
+  const builtinTitle = (item) => `${item.description || item.name}${item.steps?.length ? `\nSteps: ${item.steps.join(' → ')}` : ''}\nBuilt in: this process gets its own copy, yours to change.`;
   useEffect(() => {
     if (open !== 'library' || templates) return undefined;
     let live = true;
@@ -237,6 +248,10 @@ function StartFrom({ roster, api, wizard, busy, onView, onDescribe, onImport }) 
   const chip = (attrs, label, title, onClick, on = false) => html`<button data-ui-exempt type="button" class=${`gm-from${on ? ' on' : ''}`} ...${attrs}
     disabled=${!!busy} title=${title} onClick=${onClick}>${label}</button>`;
   return html`<div class="gm-start-from" data-mini-start-from>
+    ${builtins.length > 0 && html`<div class="gm-start-row" data-mini-builtins>
+      <span class="gq-dim">${wizard ? 'Known rites' : 'Ways of working'}</span>
+      ${builtins.map((item) => chip({ key: item.id, 'data-mini-builtin': item.id }, `◈ ${item.name}`, builtinTitle(item), () => builtin(item)))}
+    </div>`}
     <div class="gm-start-row">
       <span class="gq-dim">Start from</span>
       ${STARTERS.map((item) => chip({ key: item.key, 'data-mini-starter': item.key }, item.chain.map(([, label]) => label).join(' → '),
@@ -253,7 +268,9 @@ function StartFrom({ roster, api, wizard, busy, onView, onDescribe, onImport }) 
     </form>`}
     ${open === 'library' && html`<div class="gm-start-row gm-library" data-mini-library-list>
       ${templates === null && html`<span class="gq-dim">Loading the template library…</span>`}
-      ${templates?.length === 0 && html`<span class="gq-dim">The template library is empty.</span>`}
+      ${builtins.map((item) => chip({ key: `builtin:${item.id}`, 'data-mini-library-builtin': item.id }, html`◈ ${item.name} <span class="gm-from-tag">built in</span>`,
+    builtinTitle(item), () => builtin(item)))}
+      ${templates?.length === 0 && !builtins.length && html`<span class="gq-dim">The template library is empty.</span>`}
       ${(templates || []).map((template) => chip({ key: template.id, 'data-mini-library-pick': template.id }, `▣ ${template.name || template.id}`,
     template.description || `Copy ${template.name || template.id} into this process`,
     () => void api.getTemplate(template.id).then((view) => onView(view, view?.template?.name || template.name)).catch(() => {})))}

@@ -1,0 +1,56 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: build-review-ship
+name: Build → review → ship
+description: >-
+  A developer builds the task and opens a PR, a reviewer who did not build it
+  approves or sends it back, and the group's lead ships it.
+params:
+  task:
+    type: string
+    required: true
+start: start
+nodes:
+  start:
+    type: start
+    next: { next: build }
+
+  # A developer builds it and opens a PR.
+  build:
+    type: task
+    captures: [pr]
+    performer:
+      kind: agent
+      role: dev
+      fallback: { action: spawn }
+      prompt: "Build this: {{ params.task }}\nOpen a PR and report its link as pr."
+    next: { next: review }
+
+  # A reviewer who did not build it.
+  review:
+    type: decision
+    performer:
+      kind: agent
+      role: reviewer
+      differentFrom: [build]
+      fallback: { action: spawn }
+      prompt: "Review the PR for this task: {{ params.task }}\nThe PR:\n{{ outputs.pr }}\nChoose approve, or changes with what to change."
+    next: { approve: ship, changes: build, escalate: escalated }
+    loops:
+      changes: { maxIterations: 3, onExhausted: escalate }
+
+  # The group's lead ships it.
+  ship:
+    type: task
+    performer:
+      kind: agent
+      lead: true
+      prompt: "The review approved this PR. Merge and ship it:\n{{ outputs.pr }}"
+    next: { next: done }
+
+  done:
+    type: end
+    result: success
+  escalated:
+    type: end
+    result: canceled

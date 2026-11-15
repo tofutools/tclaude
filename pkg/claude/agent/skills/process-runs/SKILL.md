@@ -43,6 +43,12 @@ explicit deny overrides everything.
 
 ## Start and watch
 
+A group with no process yet can start from a built-in way of working
+(`plan-vet-build`, `build-review-ship`, `bug-fix`, `quick-change`):
+`tclaude process templates builtin ls`, then
+`tclaude process templates builtin use <id> --group <group>` copies it into the
+group (needs `process.templates.manage`) and prints the copy's id to run.
+
 ```bash
 tclaude process templates ls
 tclaude process run release --param version=1.4.0 --group webshop

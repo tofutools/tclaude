@@ -1,0 +1,57 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: quick-change
+name: Quick change + one review
+description: >-
+  For a small change: a developer makes it, one reviewer who did not make it
+  approves or sends it back, and the developer merges it.
+params:
+  task:
+    type: string
+    required: true
+start: start
+nodes:
+  start:
+    type: start
+    next: { next: change }
+
+  # A developer makes the change.
+  change:
+    type: task
+    captures: [pr]
+    performer:
+      kind: agent
+      role: dev
+      fallback: { action: spawn }
+      prompt: "Make this change: {{ params.task }}\nOpen a PR and report its link as pr."
+    next: { next: review }
+
+  # One reviewer who did not make it.
+  review:
+    type: decision
+    performer:
+      kind: agent
+      role: reviewer
+      differentFrom: [change]
+      fallback: { action: spawn }
+      prompt: "Review the PR for this change: {{ params.task }}\nThe PR:\n{{ outputs.pr }}\nChoose approve, or changes with what to change."
+    next: { approve: merge, changes: change, escalate: escalated }
+    loops:
+      changes: { maxIterations: 2, onExhausted: escalate }
+
+  # The developer who made it merges it.
+  merge:
+    type: task
+    performer:
+      kind: agent
+      role: dev
+      sameAs: change
+      prompt: "The review approved your PR. Merge it:\n{{ outputs.pr }}"
+    next: { next: done }
+
+  done:
+    type: end
+    result: success
+  escalated:
+    type: end
+    result: canceled

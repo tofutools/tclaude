@@ -284,6 +284,16 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
       }, fetchImpl);
     },
+    // listBuiltins lists the built-in ways of working compiled into tclaude
+    // ({id, name, description, steps}); getBuiltin reads one in a template's
+    // edit-view shape. A group gets its own copy when its draft is saved.
+    async listBuiltins() {
+      const body = await processRequest('/v1/process/builtins', {}, fetchImpl);
+      return body.builtins || [];
+    },
+    getBuiltin(id) {
+      return processRequest(`/v1/process/builtins/${encodeURIComponent(id)}`, {}, fetchImpl);
+    },
     // getTemplate reads a stored template's edit view ({template, edges,
     // layout, sourceHash, listed, ...}).
     getTemplate(templateId) {
