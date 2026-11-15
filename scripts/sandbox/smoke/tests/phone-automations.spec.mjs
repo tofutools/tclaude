@@ -76,7 +76,7 @@ test('a run waiting on the operator shows on Now and is approved from Runs', asy
   await booted(page);
   const gate = page.locator('.phone-gate-card', { hasText: 'Release train' });
   await expect(gate).toBeVisible();
-  await expect(gate.getByRole('button', { name: /approve/ })).toBeVisible();
+  await expect(gate.getByRole('button', { name: /approve/i })).toBeVisible();
 
   await page.goto('/automations/processes');
   await booted(page);
@@ -92,7 +92,7 @@ test('a run waiting on the operator shows on Now and is approved from Runs', asy
   await expect(page.locator('.phone-run-gate.phone-box-key')).toContainText('Waiting on you');
   await expect(page.locator('.phone-run-step.mine')).toContainText('Checks pass?');
   await expectNoSideScroll(page, 'the run page');
-  await page.locator('.phone-run-page').getByRole('button', { name: /approve/ }).click();
+  await page.locator('.phone-run-page').getByRole('button', { name: /approve/i }).click();
   // The verdict lets the run go on: the gate is done and no longer yours.
   await expect(page.locator('.phone-run-step', { hasText: 'Checks pass?' })).toHaveClass(/s-done/, { timeout: 15_000 });
   await expect(page.locator('.phone-run-step.mine')).toHaveCount(0);

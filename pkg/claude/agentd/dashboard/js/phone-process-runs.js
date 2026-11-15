@@ -237,12 +237,21 @@ function GateNoteSheet({ label, title, onSend, close }) {
 }
 
 // verdictLabel is a verdict as a phone button says it, the mock's way: the
-// desktop's words (verdictPresentation) without their glyph, capitalised
-// ("✓ approve" → "Approve").
+// desktop's words for the verdicts it knows (verdictPresentation), without
+// their glyph and capitalised ("✓ approve" → "Approve"). Any other verdict
+// is said as the template wrote it.
 export function verdictLabel(verdict) {
-  const words = verdictPresentation(verdict).label.replace(/^[^\p{L}\p{N}]+/u, '').trim() || String(verdict);
+  const raw = String(verdict);
+  const { label } = verdictPresentation(raw);
+  if (label === raw) return raw;
+  const words = label.replace(/^[✓↺]\s*/u, '');
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+// REQUESTING matches a verdict that sends the work back (the desktop's
+// "request changes" family): it is the red button. Any other verdict that
+// does not approve is a plain one.
+const REQUESTING = /^(changes?|changes?[_-]requested|request[_-]changes|reject(ed)?|rework|no|fail(ed)?)$/i;
 
 // GateVerdicts is one awaited gate on a card: its step and a button per
 // verdict. A decided gate says what was recorded until the refreshed run
@@ -277,7 +286,7 @@ function GateVerdicts({ run, decision, node, onDecide, since = '' }) {
         ${verdicts.map((verdict) => APPROVING.test(verdict)
           ? html`<${Button} key=${verdict} class="phone-btn phone-btn-ok phone-btn-grow" data-run-verdict=${verdict} disabled=${!!busy}
               onClick=${() => now(verdict)}>${busy === verdict ? '…' : label(verdict)}<//>`
-          : html`<${Button} key=${verdict} class="phone-btn phone-btn-no phone-btn-grow" data-run-verdict=${verdict} disabled=${!!busy} aria-haspopup="dialog"
+          : html`<${Button} key=${verdict} class=${`phone-btn${REQUESTING.test(verdict) ? ' phone-btn-no' : ''} phone-btn-grow`} data-run-verdict=${verdict} disabled=${!!busy} aria-haspopup="dialog"
               onClick=${() => openPhoneSheet({ label: `${runName(run)}: ${node.label}`, Body: GateNoteSheet,
                 props: { label: label(verdict), title: `${node.label}: ${label(verdict)}`, onSend: send(verdict) } })}>${label(verdict)}…<//>`)}
       </div>`}
@@ -365,7 +374,8 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
     ${holdError && html`<p class="ui-error-box" role="alert">${holdError}</p>`}
     ${decisions.map((decision) => {
       const node = steps.find((step) => String(step.id) === String(decision.nodeId)) || { id: String(decision.nodeId), label: String(decision.nodeId) };
-      return html`<${Card} key=${`${node.id}:${decision.attempt || 0}`} accent="key" class="phone-gate-card phone-run-gate">
+      return html`<${Card} key=${`${node.id}:${decision.attempt || 0}`} accent="key" class="phone-gate-card phone-run-gate"
+        role="group" aria-label=${`Gate: ${node.label}`}>
         <${GateVerdicts} run=${run} decision=${decision} node=${node} onDecide=${onDecide} since=${relTime(lastEvent.get(String(node.id))?.occurredAt)} />
       <//>`;
     })}

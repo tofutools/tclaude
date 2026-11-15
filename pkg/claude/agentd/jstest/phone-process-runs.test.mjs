@@ -140,7 +140,8 @@ test('the run page tops the steps with the gate, marks your step, and pauses fro
   const root = mounted.container;
   assert.ok(root.querySelector('.phone-box-key.phone-run-gate .phone-gate [data-run-verdict="approved"]'), 'the gate is on top, in an amber card');
   assert.ok(root.querySelector('[data-run-verdict="approved"]').classList.contains('phone-btn-ok'), 'Approve is green');
-  assert.ok(root.querySelector('[data-run-verdict="changes"]').classList.contains('phone-btn-no'), 'the other verdict is red');
+  assert.ok(root.querySelector('[data-run-verdict="changes"]').classList.contains('phone-btn-no'), 'request changes is red');
+  assert.equal(root.querySelector('.phone-run-gate').getAttribute('aria-label'), 'Gate: Review gate');
   const mine = root.querySelector('.phone-run-step.mine');
   assert.match(mine.textContent, /Review gate/);
   assert.match(mine.textContent, /you/);
@@ -245,7 +246,9 @@ test('verdicts are said the mock\'s way: no glyph, capitalised', async (t) => {
   const { mod } = await load(t);
   assert.equal(mod.verdictLabel('approved'), 'Approve');
   assert.equal(mod.verdictLabel('changes'), 'Request changes');
-  assert.equal(mod.verdictLabel('ship-it'), 'Ship-it');
+  assert.equal(mod.verdictLabel('ship-it'), 'ship-it', 'a verdict of its own is said as written');
+  assert.equal(mod.verdictLabel('+1'), '+1');
+  assert.equal(mod.verdictLabel('-1'), '-1');
 });
 
 test('runPill: what a run row wears', async (t) => {
@@ -257,4 +260,17 @@ test('runPill: what a run row wears', async (t) => {
   assert.deepEqual(mod.runPill({ status: 'failed' }), { text: 'Failed', tone: 'err' });
   assert.deepEqual(mod.runPill({ status: 'canceled' }), { text: 'Cancelled', tone: 'off' });
   assert.deepEqual(mod.runPill({ status: 'completed' }), { text: 'Done', tone: 'idle' });
+});
+
+test('a verdict of its own is a plain button, neither green nor red', async (t) => {
+  const { harness, mod } = await load(t);
+  const api = fakeApi();
+  api.getRun = async (runId) => ({ id: runId, blocked: [], awaitingDecisions: [{ nodeId: 'review', verdicts: ['ship', 'hold'], attempt: 1 }] });
+  const mounted = await harness.mount(harness.html`<${mod.RunPage} runId="run_release" api=${api} source=${fakeSource(harness)} back=${() => {}} />`);
+  await settle(harness);
+  for (const verdict of ['ship', 'hold']) {
+    const button = mounted.container.querySelector(`[data-run-verdict="${verdict}"]`);
+    assert.ok(!button.classList.contains('phone-btn-no') && !button.classList.contains('phone-btn-ok'), verdict);
+    assert.equal(button.textContent, `${verdict}…`);
+  }
 });
