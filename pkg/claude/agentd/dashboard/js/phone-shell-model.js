@@ -13,8 +13,8 @@ import { companionAgents, pendingAccess, pendingApprovals, pendingDecisions } fr
 // are the shell's own views (now, board) or the More sheet.
 export const PHONE_SLOTS = Object.freeze([
   Object.freeze({ id: 'now', label: 'Now', icon: '◉' }),
-  Object.freeze({ id: 'agents', label: 'Agents', icon: '🤖', tab: 'groups' }),
-  Object.freeze({ id: 'mail', label: 'Mail', icon: '✉', tab: 'messages' }),
+  Object.freeze({ id: 'agents', label: 'Agents', icon: 'robot', tab: 'groups' }),
+  Object.freeze({ id: 'mail', label: 'Mail', icon: '✉\uFE0E', tab: 'messages' }),
   Object.freeze({ id: 'board', label: 'Board', icon: '▤' }),
   Object.freeze({ id: 'more', label: 'More', icon: '☰' }),
 ]);

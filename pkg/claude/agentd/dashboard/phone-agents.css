@@ -39,6 +39,22 @@
 :root[data-layout="phone"] .phone-agent-more { color: var(--ui-muted-text); }
 :root[data-layout="phone"] .phone-agents-board { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 
+/* A group's header folds its section: the caret, name and count are one
+   button the width of the row; Board › stays its own. Folded, the header is
+   all there is, with how many wait on the operator. */
+:root[data-layout="phone"] .phone-agents-head { align-items: center; gap: 8px; margin-bottom: 4px; }
+:root[data-layout="phone"] .phone-agents-fold {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  min-height: var(--phone-tap); padding: 0; background: none; border: 0;
+  color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-agents-caret { width: 12px; flex: none; color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-agents-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-layout="phone"] .phone-agents-count { color: var(--ui-muted-text); font-weight: 400; }
+:root[data-layout="phone"] .phone-agents-waiting { text-transform: none; letter-spacing: 0; font-weight: 600; }
+:root[data-layout="phone"] .phone-agents-folded { margin-top: 6px; }
+:root[data-layout="phone"] .phone-agents-folded .phone-agents-head { margin-bottom: 0; border-bottom: 1px solid var(--ui-line); }
+
 /* The short spawn sheet. */
 :root[data-layout="phone"] .phone-agents-spawn { display: flex; flex-direction: column; gap: 10px; }
 :root[data-layout="phone"] .phone-agents-sheet-title { margin: 4px 4px 0; color: var(--ui-text-strong); font-weight: 600; }

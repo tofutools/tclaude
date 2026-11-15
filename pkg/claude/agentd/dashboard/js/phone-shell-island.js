@@ -23,7 +23,7 @@ import { barFor, phoneBar, phonePage } from './phone-page.js';
 import { processContext } from './process-context.js';
 import { gateItems, openRunLink } from './phone-process-runs.js';
 import { PROCESSES_SUBTAB, openAutomationsEntry } from './automations-subnav.js';
-import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
+import { PhoneSheetHost, closePhoneSheet, openPhoneSheet, phoneSheet } from './phone-sheet.js';
 import { DesktopOnlyPage, desktopOnlyView } from './phone-desktop-only.js';
 import { featureState } from './feature-state-registry.js';
 import { activitySubtab, setActivitySubtab } from './activity-state.js';
@@ -67,10 +67,25 @@ export function landsOnNow(loc = globalThis.location) {
   return [...new URLSearchParams(loc?.search || '').keys()].every((key) => LOOK_PARAMS.has(key));
 }
 
+// NAV_ICONS are the bottom nav's drawn icons, by a slot's icon name: one
+// colour (currentColor), like the text glyphs beside them, where an emoji
+// (🤖) would be drawn in its own colours and look like the tab on screen.
+const NAV_ICONS = Object.freeze({
+  robot: html`<svg class="phone-nav-svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+    stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3v3" /><circle cx="12" cy="2.6" r="0.9" fill="currentColor" stroke="none" />
+    <rect x="4.5" y="6.5" width="15" height="12" rx="3.5" />
+    <circle cx="9.2" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="14.8" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <path d="M9.5 15.6h5" /><path d="M2.5 11.5v3M21.5 11.5v3" />
+  </svg>`,
+});
+
 export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = globalThis.fetch, processSource = processContext, fleet = fleetState }) {
   const activeTab = state.activeTab.value;
   const view = shell.view.value;
   const slot = slotFor(view, activeTab);
+  // The nav lights the slot a sheet over it belongs to (More) while it is up.
+  const lit = phoneSheet.value?.slot || slot;
   const snapshot = state.snapshot.value;
   const needs = (snapshot ? nowView(snapshot).needs : 0) + gateItems(processSource.context.value).length;
   const mail = messagesBadgeView(snapshot);
@@ -184,9 +199,11 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // Picking the tab that is already showing keeps it: nothing would put it
   // back, and the page would lose its back button.
   function pick(target) {
+    // More's sheet sits above the nav: More again closes it.
+    const wasMore = phoneSheet.peek()?.slot === 'more';
     closePhoneSheet();
     if (target.id === 'more') {
-      openPhoneSheet({ label: 'More', Body: MoreMenu, props: { state, actions: viewActions, fleet } });
+      if (!wasMore) openPhoneSheet({ label: 'More', Body: MoreMenu, props: { state, actions: viewActions, fleet }, overNav: true, slot: 'more' });
       return;
     }
     if (OWN_VIEWS.includes(target.id)) {
@@ -256,9 +273,10 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
       other=${desktopOther} /></div>`}
     ${!hideNav && html`<nav class="phone-nav" aria-label="Views">
       ${PHONE_SLOTS.map((target) => html`<button data-ui-exempt key=${target.id} type="button"
-        class=${`phone-nav-item${slot === target.id ? ' on' : ''}`} aria-current=${slot === target.id ? 'page' : undefined}
-        aria-haspopup=${target.id === 'more' ? 'dialog' : undefined} onClick=${() => pick(target)}>
-        <span class="phone-nav-icon" aria-hidden="true">${target.icon}</span>${target.label}${badge(target.id)}
+        class=${`phone-nav-item${lit === target.id ? ' on' : ''}`} aria-current=${lit === target.id ? 'page' : undefined}
+        aria-haspopup=${target.id === 'more' ? 'dialog' : undefined}
+        aria-expanded=${target.id === 'more' ? String(lit === 'more' && !!phoneSheet.value) : undefined} onClick=${() => pick(target)}>
+        <span class="phone-nav-icon" aria-hidden="true">${NAV_ICONS[target.icon] || target.icon}</span>${target.label}${badge(target.id)}
       </button>`)}
     </nav>`}
     <${PhoneSheetHost} />

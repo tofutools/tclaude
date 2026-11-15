@@ -1,10 +1,13 @@
 // phone-agents-island.js -- the phone's Agents view (the Groups tab in the
-// phone layout): group chips, then each group's agents with an avatar, a
+// phone layout): group chips that filter (any number of groups, All for
+// every one), then each group's agents with an avatar, a
 // state pill and a line of role · harness · context · PR or branch. A tap
 // does a row's one thing (an online agent's terminal, an offline one's
 // resume); ⋯ opens its sheet with the rest. ＋ in the top bar spawns an agent
 // from a short sheet (group, profile, prompt), and a group's "Board ›" opens
-// its board. No drag and drop, no columns, no side panel: those stay on the
+// its board. A tap on a group's header folds it (remembered, phone-agents-
+// model.js FOLD_PREF), a folded one still counting who waits on the
+// operator. No drag and drop, no columns, no side panel: those stay on the
 // desktop.
 //
 // Every action goes through the desktop's own entry points (the row action
@@ -13,12 +16,13 @@
 // posts the same spawn route `tclaude agent spawn` does.
 
 import { h, render } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useReducer, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ALL, agentsTab, agentGroups, findRow, groupTabs, metaParts, shownGroups, spawnBody, spawnChoices } from './phone-agents-model.js';
+import { ALL, agentsFilter, agentGroups, findRow, foldPref, groupTabs, liveFilter, metaParts, shownGroups, spawnBody, spawnChoices, toggleFilter, waiting } from './phone-agents-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { usePhoneBar } from './phone-page.js';
-import { Avatar, ChipRow, IconButton, StatePill } from './phone-ui.js';
+import { Avatar, IconButton, StatePill } from './phone-ui.js';
+import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
 import { Button } from './ui-components.js';
 import { shellToast } from './shell-state.js';
@@ -150,21 +154,50 @@ export function AgentSheet({ state, order, actions, agentKey, groupKey, here = f
   </div>`;
 }
 
-export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetch }) {
-  const tab = agentsTab.value;
-  const setTab = (key) => { agentsTab.value = key; };
+// GroupChips is the filter row: All, then each group, any number of them
+// picked. It has the phone's chip look (phone.css .phone-chips), but its
+// chips are toggle buttons, not tabs: tabs pick one.
+function GroupChips({ tabs, picked, onToggle }) {
+  const chip = (t, on) => html`<button data-ui-exempt key=${t.key} type="button" class=${`ui-tab${on ? ' active' : ''}`}
+    aria-pressed=${on ? 'true' : 'false'} title=${`${t.online} of ${t.total} online`} onClick=${() => onToggle(t.key)}>
+    ${t.label} <span class="phone-chip-count">${t.total}</span></button>`;
+  return html`<div class="phone-chips phone-agents-chips" role="group" aria-label="Show groups">
+    ${tabs.map((t) => chip(t, t.key === ALL ? !picked.length : picked.includes(t.key)))}
+  </div>`;
+}
+
+// GroupHead is a group section's header: a tap folds or unfolds it; folded,
+// it says how many agents it has and how many wait on the operator.
+function GroupHead({ g, folded, onFold }) {
+  const asks = waiting(g);
+  return html`<h2 class="phone-section-head ui-eyebrow phone-agents-head">
+    <button data-ui-exempt type="button" class="phone-agents-fold" aria-expanded=${folded ? 'false' : 'true'}
+      aria-label=${`${g.name}, ${g.live} of ${g.total} online${asks ? `, ${asks} waiting on you` : ''}: ${folded ? 'unfold' : 'fold'}`} onClick=${onFold}>
+      <span class="phone-agents-caret" aria-hidden="true">${folded ? '▸' : '▾'}</span>
+      <span class="phone-agents-name">${g.name}</span>
+      <span class="phone-agents-count">${g.live}/${g.total}</span>
+      ${folded && asks > 0 && html`<${StatePill} tone="ask" class="phone-agents-waiting">${asks} waiting<//>`}
+    </button>
+    ${g.group && html`<button data-ui-exempt type="button" class="phone-link phone-agents-board"
+      aria-label=${`${g.name}'s board`} onClick=${() => openBoardGroup(g.name)}>Board ›</button>`}
+  </h2>`;
+}
+
+export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetch, prefs = dashPrefs }) {
+  const [, refold] = useReducer((n) => n + 1, 0);
   const snapshot = state.snapshot.value;
   const groups = snapshot ? agentGroups(snapshot, order) : [];
   const tabs = groupTabs(groups);
-  const current = tabs.some((t) => t.key === tab) ? tab : ALL;
-  const picked = groups.find((g) => g.key === current && g.group);
+  const picked = liveFilter(groups, agentsFilter.value);
+  const onToggle = (key) => { agentsFilter.value = toggleFilter(picked, key); };
+  const only = picked.length === 1 ? groups.find((g) => g.key === picked[0] && g.group) : null;
   // A peer's page (remote-node.js) spawns through its own route and shape,
   // which the desktop form knows; the short sheet is this node's.
   const spawn = (group) => (globalThis.__tclaudeRemoteNode?.id ? actions.spawn(group) : openPhoneSheet({
     label: 'New agent', Body: SpawnSheet,
     props: { state, group, fetchImpl, openFull: (g) => actions.spawn(g) },
   }));
-  usePhoneBar({ tab: 'groups', actions: snapshot ? [{ key: 'spawn', icon: '＋', label: 'New agent', onClick: () => spawn(picked?.name || '') }] : [] });
+  usePhoneBar({ tab: 'groups', actions: snapshot ? [{ key: 'spawn', icon: '＋', label: 'New agent', onClick: () => spawn(only?.name || '') }] : [] });
   if (!snapshot) return html`<p class="ui-empty phone-empty">Loading…</p>`;
   if (!groups.length) return html`<p class="ui-empty phone-empty">No agents yet.</p>`;
   const steward = snapshot.steward_active || '';
@@ -177,18 +210,22 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
     else if (row.waking) more(g)(row);
     else actions.rowAction('dot-toggle', row);
   };
+  const isFolded = (g) => prefs.getItem(foldPref(g)) === '1';
+  const fold = (g) => () => {
+    if (isFolded(g)) prefs.removeItem(foldPref(g));
+    else prefs.setItem(foldPref(g), '1');
+    refold();
+  };
   return html`<div class="phone-agents">
-    <${ChipRow} label="Group" value=${current} onSelect=${setTab}
-      items=${tabs.map((t) => ({ key: t.key, label: t.label, count: t.total, title: `${t.online} of ${t.total} online` }))} />
-    ${shownGroups(groups, current).map((g) => html`<div key=${g.key} class="phone-section" role="group" aria-label=${g.name}>
-      <h2 class="phone-section-head ui-eyebrow">
-        <span>${g.name}</span>
-        ${g.group && html`<button data-ui-exempt type="button" class="phone-link phone-agents-board"
-          aria-label=${`${g.name}'s board`} onClick=${() => openBoardGroup(g.name)}>Board ›</button>`}
-      </h2>
-      <ul class="phone-list phone-agents-list">${[...g.shown, ...g.offline].map((row) => html`<${AgentRow} key=${row.key} row=${row}
-        steward=${!!steward && (row.agent === steward || row.conv === steward)} onTap=${tap(g)} onMore=${more(g)} />`)}</ul>
-    </div>`)}
+    <${GroupChips} tabs=${tabs} picked=${picked} onToggle=${onToggle} />
+    ${shownGroups(groups, picked).map((g) => {
+      const folded = isFolded(g);
+      return html`<div key=${g.key} class=${`phone-section${folded ? ' phone-agents-folded' : ''}`} role="group" aria-label=${g.name}>
+        <${GroupHead} g=${g} folded=${folded} onFold=${fold(g)} />
+        ${!folded && html`<ul class="phone-list phone-agents-list">${[...g.shown, ...g.offline].map((row) => html`<${AgentRow} key=${row.key} row=${row}
+          steward=${!!steward && (row.agent === steward || row.conv === steward)} onTap=${tap(g)} onMore=${more(g)} />`)}</ul>`}
+      </div>`;
+    })}
   </div>`;
 }
 

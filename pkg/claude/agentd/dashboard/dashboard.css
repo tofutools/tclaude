@@ -17115,7 +17115,7 @@ html.scope-fused nav [data-tab].active:not([data-tab="groups"]):not([data-tab="t
 /* Keyed on a chip row with a map (.has-fleet, or .has-map on a connected node
    with no peers yet): if the hub drops while the map is open, the per-node
    tabs come back rather than leaving an empty bar. */
-nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+html:not([data-layout="phone"]) nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="map"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
 .fleet-toplevel-bar { display: inline-flex; align-items: center; height: 41px; gap: 16px; }
 .fleet-seg { display: inline-flex; height: 28px; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
 .fleet-seg-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; color: #8b949e; font-size: 13px; background: #0d1117; }
@@ -17314,7 +17314,9 @@ html.remote-node #usage.peer-view-na { font-style: italic; color: #7d8590; }
    anchor exists for routing only. Groups are named group@node, the suffix in
    the node's own colour; an unreachable node's groups read as stale. */
 nav [data-tab="fleet-admin"] { display: none; }
-nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="fleet-admin"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
+/* The desktop nav only: a phone reads the tab anchors to list More's entries
+   (phone-more.js), so hiding them there left More with Fleet alone. */
+html:not([data-layout="phone"]) nav:has(#node-chips-root :is(.has-fleet, .has-map)):has([data-tab="fleet-admin"].active) .nav-inner > [data-tab]:not([data-tab="map"]) { display: none; }
 .fleet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
 .fleet-seg-btn + .fleet-seg-btn { border-left: 1px solid #30363d; }
 .fleet-seg-btn.on { cursor: default; }
