@@ -79,14 +79,27 @@
   display: flex; justify-content: center; align-items: center; gap: 6px; width: 100%; min-height: var(--phone-tap); margin-top: 6px;
   background: none; border: 0; color: var(--ui-focus); font: inherit; cursor: pointer;
 }
-/* The chips over Now (All, Needs you, Idle, Recent, Stuck?): the shared
-   .phone-chips look, kept to one line on a 390px phone. */
-:root[data-layout="phone"] .phone-chips.phone-now-chips { gap: 5px; margin-bottom: 10px; }
+/* The chips over Now (All, Needs you, Idle, Recent, Problems): the shared
+   .phone-chips look, a little narrower. */
+/* On a narrower phone the row scrolls inside itself; a chip scrolled into
+   view stops inside the page's gutter, not at the screen edge. */
+:root[data-layout="phone"] .phone-chips.phone-now-chips { gap: 5px; margin-bottom: 10px; scroll-padding-inline: 16px; }
 :root[data-layout="phone"] .phone-now-chips .ui-tab { padding-inline: 8px; }
-/* A row's time line (idle 12m, updated 4m ago, last update 47m ago); amber
-   once a busy agent has been quiet past STUCK_AFTER_MS. */
+/* A row's time or reason line (idle 12m, updated 4m ago, ✓ finished, PR #9
+   checks failing): green when done, red when broken, blue for a merge,
+   amber (quiet) for a quiet busy agent or a nearly full context. */
 :root[data-layout="phone"] .phone-now-when { flex-basis: 100%; color: var(--ui-muted-text); font-size: 13px; }
 :root[data-layout="phone"] .phone-now-when.quiet { color: var(--ui-warn-text); }
 /* A group's name over its first row in Idle. */
 :root[data-layout="phone"] .phone-now-group { margin: 0; padding: 9px 12px 2px; }
-:root[data-layout="phone"] .phone-now-hint { margin: 0 4px 10px; }
+
+:root[data-layout="phone"] .phone-now-when.ok { color: var(--phone-ok); }
+:root[data-layout="phone"] .phone-now-when.bad { color: var(--phone-bad); }
+:root[data-layout="phone"] .phone-now-when.info { color: var(--ui-focus); }
+/* The dot on a row that changed since the viewer last looked. */
+:root[data-layout="phone"] .phone-now-new { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ui-focus); }
+/* "ctx 91%" by the name of an agent whose context is nearly full. */
+:root[data-layout="phone"] .phone-ctx-tag {
+  flex: none; align-self: center; padding: 1px 7px; border-radius: 9px; font-size: 12px; font-weight: 600;
+  background: color-mix(in srgb, var(--phone-warn) 25%, transparent); color: var(--ui-warn-text);
+}

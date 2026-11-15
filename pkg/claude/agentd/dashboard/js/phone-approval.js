@@ -17,12 +17,21 @@ import { approvalContext, cardOptions, countdown } from './phone-now-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { Button, Input } from './ui-components.js';
 import { Avatar, ButtonRow, Card, StatePill } from './phone-ui.js';
+import { contextHigh } from './phone-shell-model.js';
 
 const html = htm.bind(h);
 
-// Who a card is from: the agent's name, its group muted after it.
-function Who({ name, sub = '' }) {
-  return html`<div class="phone-who"><span class="phone-who-name">${name}</span>${sub && html`<span class="phone-who-sub">${sub}</span>`}</div>`;
+// Who a card is from: the agent's name, its group muted after it, and an
+// amber tag when its context is nearly full (ctx, a percentage).
+function Who({ name, sub = '', ctx = null }) {
+  return html`<div class="phone-who"><span class="phone-who-name">${name}</span>${sub && html`<span class="phone-who-sub">${sub}</span>`}<${ContextTag} ctx=${ctx} /></div>`;
+}
+
+// ContextTag is "ctx 91%" in amber by an agent's name once its context is at
+// CONTEXT_HIGH_PCT or over; nothing below that.
+export function ContextTag({ ctx }) {
+  if (!contextHigh({ ctx })) return null;
+  return html`<span class="phone-ctx-tag" title=${`Context ${ctx}% full`}>ctx ${ctx}%</span>`;
 }
 
 // useNow ticks once a second while the card shows, for its countdown.
@@ -40,7 +49,7 @@ function useNow(enabled) {
 // opens the request in Mail (onMore), where its details and "Always allow"
 // are. decide(id, decision) replaces the default call (Mail's controller,
 // which updates its list at once).
-export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group = '', onMore = null, decide: decideWith = null, moreLabel = '' }) {
+export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group = '', ctx = null, onMore = null, decide: decideWith = null, moreLabel = '' }) {
   const [busy, setBusy] = useState('');
   const now = useNow(!!request.deadline);
   const left = secondsLeft(request.deadline, now);
@@ -60,7 +69,7 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
     }
   }
   const context = approvalContext(request);
-  const text = html`<${Who} name=${name} sub=${group || request.target_group || ''} /><div class="phone-card-line">${context}</div>`;
+  const text = html`<${Who} name=${name} sub=${group || request.target_group || ''} ctx=${ctx} /><div class="phone-card-line">${context}</div>`;
   return html`<${Card} accent="key" class="phone-now-card" role="group" aria-label=${`${name} asks: ${context}`}>
     <div class="phone-card-row">
       <${Avatar} bot glyph="🤖" badge="🔑" />
@@ -162,7 +171,7 @@ export function AskCard({ agent, onOpen }) {
   return html`<${Card} accent="q" class="phone-now-card" role="group" aria-label=${`${agent.name} is asking`}>
     <div class="phone-card-row">
       <${Avatar} bot glyph=${agent.steward ? '✦' : '🤖'} badge=${agent.steward ? '' : '❓'} />
-      <div class="phone-card-text"><${Who} name=${agent.name} sub=${agent.group} />
+      <div class="phone-card-text"><${Who} name=${agent.name} sub=${agent.group} ctx=${agent.ctx ?? null} />
         <div class="phone-card-line">${agent.detail ? `Asking: ${agent.detail}` : 'is asking you'}</div></div>
       <${Button} class="phone-btn" onClick=${() => onOpen(agent)}>Open<//>
     </div>

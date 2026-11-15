@@ -70,10 +70,9 @@ test('the chips over Now switch its view, are kept fitted, and the pick survives
   await page.goto('/');
   await booted(page);
   const chips = page.getByRole('tablist', { name: 'Show on Now' });
-  await expect(chips.getByRole('tab')).toHaveText([/^All/, /^Needs you/, /^Idle/, /^Recent/, /^Stuck\?/]);
-  // Every chip is on screen on a 390px phone, the last one too.
-  const last = await chips.getByRole('tab', { name: /^Stuck\?/ }).boundingBox();
-  expect(last.x + last.width).toBeLessThanOrEqual(390);
+  await expect(chips.getByRole('tab')).toHaveText([/^All/, /^Needs you/, /^Idle/, /^Recent/, /^Problems/]);
+  // The row scrolls sideways inside itself, never the page.
+  expect(await chips.evaluate((el) => getComputedStyle(el).overflowX)).toBe('auto');
 
   // A few online agents: every group's are listed, the idle ones too.
   await expect(page.getByRole('group', { name: 'Online' }).locator('.phone-pill', { hasText: 'idle' }).first()).toBeVisible();
@@ -92,7 +91,24 @@ test('the chips over Now switch its view, are kept fitted, and the pick survives
   await page.reload();
   await booted(page);
   await expect(page.getByRole('tablist', { name: 'Show on Now' }).getByRole('tab', { name: /^Idle/ })).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('tablist', { name: 'Show on Now' }).getByRole('tab', { name: /^Stuck\?/ }).click();
-  await expect(page.getByRole('group', { name: 'Stuck?' })).toBeVisible();
+  await page.getByRole('tablist', { name: 'Show on Now' }).getByRole('tab', { name: /^Problems/ }).click();
+  await expect(page.getByRole('group', { name: 'Problems' })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test('on a 360px phone the chips scroll inside their row: Problems scrolls into view, and the page never scrolls sideways', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.goto('/');
+  await booted(page);
+  const chips = page.getByRole('tablist', { name: 'Show on Now' });
+  const problems = chips.getByRole('tab', { name: /^Problems/ });
+  await problems.click();
+  await expect(problems).toHaveAttribute('aria-selected', 'true');
+  // The row may scroll smoothly: wait for the chip to come fully into view.
+  await expect.poll(async () => { const box = await problems.boundingBox(); return box.x + box.width; },
+    { message: 'the picked chip is on screen' }).toBeLessThanOrEqual(360);
+  const { scroll, width } = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: document.documentElement.clientWidth }));
+  expect(scroll).toBeLessThanOrEqual(width);
+  // Problems lists the fixture's failing PR (payments-fix's #1469) and its error.
+  await expect(page.getByRole('group', { name: 'Problems' }).locator('.phone-now-group')).not.toHaveCount(0);
 });
