@@ -108,7 +108,10 @@ func mailTaskboardWaiters(r *http.Request, g *db.AgentGroup, t *db.GroupTask, st
 	if err != nil {
 		return
 	}
-	by := taskboardCallerName(r)
+	by := "its process run"
+	if r != nil {
+		by = taskboardCallerName(r)
+	}
 	how := "closed as done"
 	if status == db.GroupTaskDropped {
 		how = "dropped"

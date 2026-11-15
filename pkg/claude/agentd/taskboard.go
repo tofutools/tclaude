@@ -1582,8 +1582,11 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return
 		}
-		// A task already under way starts the process it now follows.
-		started = startTaskProcessOnStart(r, g, out)
+		// A task already under way starts the process it now follows: as
+		// its editor's run when the edit named it, as the board's way of
+		// working when it went back to the board's default.
+		named := *body.Process != "" && *body.Process != db.GroupTaskProcessNone
+		started = startTaskProcessOnStart(r, g, out, named)
 	}
 	views, err := taskboardViews(g.Name, []*db.GroupTask{out})
 	if err != nil {

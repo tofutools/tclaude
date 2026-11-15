@@ -1056,11 +1056,10 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 	// expressible through the same identifier operators use to create runs and
 	// lets them survive routine template version updates.
 	templateID := strings.TrimSpace(request.TemplateID)
-	if strings.TrimSpace(request.Task) != "" {
-		processRunTaskMu.Lock()
-		defer processRunTaskMu.Unlock()
+	if id := strings.TrimSpace(request.Task); id != "" {
+		defer lockProcessRunTask(id)()
 	}
-	task, ok := resolveProcessRunTask(w, &request)
+	task, ok := resolveProcessRunTask(w, r, &request, true)
 	if !ok {
 		return
 	}
@@ -1069,6 +1068,9 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if task != nil {
+		if !processRunTaskScopeFits(w, task, scope) {
+			return
+		}
 		scope.TaskID = task.ID
 	}
 	// A grant to start a template covers what its editors made current. Going

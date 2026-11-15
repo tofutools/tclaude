@@ -265,7 +265,11 @@ task chose another (`taskboard edit tk_… --process <template>`) or none
 (`--process none`). A task's process runs once, from its start: a task that
 already had a run starts no other on its own. The board's way of working
 runs as the operator's, so a member that takes the task needs no
-`process.runs.start`; choosing a process for one task does need it.
+`process.runs.start`. Setting the board's way of working, or choosing a
+process for one task, does need it, and the template must exist. Starting a
+run for a task also needs `taskboard.write` on the task's board, whatever the
+run's scope, and a run bound to one agent must be bound to a member of the
+task's group.
 
 ## Run scope
 

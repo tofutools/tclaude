@@ -36,16 +36,51 @@ const (
 
 func init() { executor.SetTerminalHook(settleProcessRunTask) }
 
-// processRunTaskMu serialises the check that a task has no live run with
-// the create that gives it one, so two starts for one task make one run.
-var processRunTaskMu sync.Mutex
+// processRunTaskLocks serialise, per task, the check that a task has no
+// live run with the create that gives it one, so two starts for one task
+// make one run. Per task: a start waiting on a permission popup holds up
+// only starts for the same task.
+var processRunTaskLocks = struct {
+	sync.Mutex
+	held map[string]*processRunTaskLock
+}{held: map[string]*processRunTaskLock{}}
+
+type processRunTaskLock struct {
+	sync.Mutex
+	refs int
+}
+
+// lockProcessRunTask locks task id's starts and returns the unlock.
+func lockProcessRunTask(id string) func() {
+	processRunTaskLocks.Lock()
+	l := processRunTaskLocks.held[id]
+	if l == nil {
+		l = &processRunTaskLock{}
+		processRunTaskLocks.held[id] = l
+	}
+	l.refs++
+	processRunTaskLocks.Unlock()
+	l.Lock()
+	return func() {
+		l.Unlock()
+		processRunTaskLocks.Lock()
+		l.refs--
+		if l.refs == 0 {
+			delete(processRunTaskLocks.held, id)
+		}
+		processRunTaskLocks.Unlock()
+	}
+}
 
 // resolveProcessRunTask reads the task a start names (request.Task) and
 // fits the request to it: a run for a task is its group's unless the caller
 // scopes it to an agent, and it gets the task's text and id as params. It
 // answers the error itself and reports false when the start cannot go on. A
-// request for no task passes through as (nil, true).
-func resolveProcessRunTask(w http.ResponseWriter, request *processRunCreateRequest) (*db.GroupTask, bool) {
+// request for no task passes through as (nil, true). With gate, the caller
+// must be able to change the task's board: the run carries its text and its
+// end closes it. (A board's way of working starting on take or start has had
+// its caller's taskboard gates already.)
+func resolveProcessRunTask(w http.ResponseWriter, r *http.Request, request *processRunCreateRequest, gate bool) (*db.GroupTask, bool) {
 	id := strings.TrimSpace(request.Task)
 	if id == "" {
 		return nil, true
@@ -70,6 +105,9 @@ func resolveProcessRunTask(w http.ResponseWriter, request *processRunCreateReque
 	group, err := db.GetAgentGroupByID(task.GroupID)
 	if err != nil || group == nil {
 		writeError(w, http.StatusNotFound, "process_run_task_not_found", fmt.Sprintf("task %s has no group", id))
+		return nil, false
+	}
+	if gate && !requireTaskboard(w, r, group, true) {
 		return nil, false
 	}
 	groupRef := strings.TrimSpace(request.Group)
@@ -103,6 +141,21 @@ func resolveProcessRunTask(w http.ResponseWriter, request *processRunCreateReque
 	request.Params = params
 	request.Task = task.ID
 	return task, true
+}
+
+// processRunTaskScopeFits refuses a run for a task bound to an agent that is
+// not an active member of the task's group: a task's work is its group's.
+func processRunTaskScopeFits(w http.ResponseWriter, task *db.GroupTask, scope db.ProcessRunScope) bool {
+	if scope.Kind != db.ProcessRunScopeAgent {
+		return true
+	}
+	group, err := db.GetAgentGroupByID(task.GroupID)
+	if err == nil && group != nil && activeGroupMember(group, scope.AgentID) != "" {
+		return true
+	}
+	writeError(w, http.StatusBadRequest, "process_run_task_group",
+		fmt.Sprintf("task %s is on another group's board: bind its run to a member of that group", task.ID))
+	return false
 }
 
 // processRunTaskText is the task as a run's prompt reads it: its title, then
@@ -152,6 +205,10 @@ func settleProcessRunTask(runID string, status engine.RunStatus) {
 	if err != nil || task.Status == db.GroupTaskDone || task.Status == db.GroupTaskDropped {
 		return
 	}
+	group, err := db.GetAgentGroupByID(task.GroupID)
+	if err != nil || group == nil {
+		return
+	}
 	name := processRunTemplateName(runID)
 	var next, reason string
 	switch status {
@@ -162,8 +219,18 @@ func settleProcessRunTask(runID string, status engine.RunStatus) {
 	default:
 		return
 	}
-	if _, err := db.SetGroupTaskStatus(task.ID, next, reason, processRunTaskActor(runID)); err != nil {
+	var waiters []string
+	if next == db.GroupTaskDone {
+		waiters = taskboardWaitersBefore(task)
+	}
+	out, err := db.SetGroupTaskStatus(task.ID, next, reason, processRunTaskActor(runID))
+	if err != nil {
 		slog.Warn("process run: settle its task", "run", runID, "task", task.ID, "error", err)
+		return
+	}
+	// As a close by hand: the tasks waiting on it are told.
+	if next == db.GroupTaskDone {
+		mailTaskboardWaiters(nil, group, out, next, reason, waiters, task.AssigneeID == db.OperatorAssignee)
 	}
 }
 
@@ -220,10 +287,9 @@ type taskProcessStart struct {
 func startTaskProcess(r *http.Request, g *db.AgentGroup, task *db.GroupTask, template string, asCaller bool) taskProcessStart {
 	out := taskProcessStart{Process: template}
 	request := processRunCreateRequest{TemplateID: template, Task: task.ID, Group: g.Name}
-	processRunTaskMu.Lock()
-	defer processRunTaskMu.Unlock()
+	defer lockProcessRunTask(task.ID)()
 	cw := &taskCaptureWriter{}
-	if _, ok := resolveProcessRunTask(cw, &request); !ok {
+	if _, ok := resolveProcessRunTask(cw, r, &request, false); !ok {
 		out.Error = capturedError(cw)
 		return out
 	}
@@ -294,8 +360,10 @@ func taskProcessChoice(task *db.GroupTask) string {
 // startTaskProcessOnStart starts the process a task follows once it is
 // started (taken, started, or created started), if it has never had a run:
 // a process runs for a task once, from its start. It reports what it did,
-// nil when nothing was to start.
-func startTaskProcessOnStart(r *http.Request, g *db.AgentGroup, task *db.GroupTask) *taskProcessStart {
+// nil when nothing was to start. asCaller makes the run the caller's (an
+// edit that picks the process starts it as its editor); else it is the
+// board's way of working, the operator's.
+func startTaskProcessOnStart(r *http.Request, g *db.AgentGroup, task *db.GroupTask, asCaller ...bool) *taskProcessStart {
 	if task == nil || !task.Started() || task.IsEpic() ||
 		task.Status == db.GroupTaskDone || task.Status == db.GroupTaskDropped {
 		return nil
@@ -307,7 +375,7 @@ func startTaskProcessOnStart(r *http.Request, g *db.AgentGroup, task *db.GroupTa
 	if runs, err := db.ProcessRunsForTask(task.ID, 1); err != nil || len(runs) > 0 {
 		return nil
 	}
-	started := startTaskProcess(r, g, task, template, false)
+	started := startTaskProcess(r, g, task, template, len(asCaller) > 0 && asCaller[0])
 	if started.Error != "" {
 		slog.Warn("taskboard: start the task's process", "task", task.ID, "process", template, "error", started.Error)
 	}

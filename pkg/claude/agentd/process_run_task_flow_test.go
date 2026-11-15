@@ -210,3 +210,31 @@ func TestBoardDefaultWayOfWorkingStartsWhenATaskIsTaken(t *testing.T) {
 	h.taskProcess(h.peer, http.MethodPost, "/v1/taskboard/tasks/"+plain.ID+"/assign", map[string]any{"to": ""}, http.StatusOK)
 	assert.Empty(t, h.runsForTask(plain.ID))
 }
+
+// A run for a task carries its brief and its end closes it: starting one
+// takes what changing the task's board does, whatever the run's scope.
+func TestProcessRunForATaskNeedsItsBoard(t *testing.T) {
+	h := processTaskFlow(t)
+	h.f.HaveGroup("other")
+	rec := h.call("", http.MethodPost, "/v1/groups/other/taskboard/tasks", map[string]any{"title": "Not yours", "body": "a private brief"})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var foreign taskProcessWire
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &foreign))
+
+	bound := h.call(h.worker, http.MethodPost, "/v1/process/runs",
+		map[string]any{"templateId": "gate", "agent": tbAgentID(t, h.worker), "task": foreign.ID})
+	assert.NotEqual(t, http.StatusCreated, bound.Code, "a run bound to oneself is not a way onto another board: %s", bound.Body.String())
+	assert.Empty(t, h.runsForTask(foreign.ID))
+}
+
+// The board's way of working runs as the operator's: setting it takes a
+// process that exists, under the setter's own process.runs.start.
+func TestBoardWayOfWorkingIsAProcessTheSetterMayStart(t *testing.T) {
+	h := processTaskFlow(t)
+	missing := h.call("", http.MethodPatch, "/v1/groups/crew/taskboard/options", map[string]any{"set": map[string]string{"process": "nope"}})
+	assert.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
+	cleared := h.call("", http.MethodPatch, "/v1/groups/crew/taskboard/options", map[string]any{"set": map[string]string{"process": "none"}})
+	assert.Equal(t, http.StatusOK, cleared.Code, cleared.Body.String())
+	set := h.call("", http.MethodPatch, "/v1/groups/crew/taskboard/options", map[string]any{"set": map[string]string{"process": "gate"}})
+	assert.Equal(t, http.StatusOK, set.Code, set.Body.String())
+}
