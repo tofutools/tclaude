@@ -12,8 +12,13 @@ package agentd_test
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -235,15 +240,19 @@ func seedSandboxFull(t *testing.T, f *testharness.Flow) {
 	s := &sandboxSeeder{t: t, f: f, dash: agentd.BuildDashboardHandlerForTest()}
 	seedSandboxDrawingBoards(s)
 	seedSandboxTaskboard(s)
+	seedSandboxFleetState(s)
 	seedSandboxAutomations(s)
+	seedSandboxCronHistory(s)
 	seedSandboxProcessRuns(s)
 	seedSandboxAccess(t)
+	seedSandboxAttachment(s)
 	if !sandboxLivePeer() {
 		seedSandboxFederation(t)
 	}
 	seedSandboxUsageLimit(s)
 	seedSandboxPlugin(s)
 	seedSandboxLog(t)
+	seedSandboxAccessRequest(s)
 	s.writeFixture()
 }
 
@@ -255,6 +264,8 @@ const (
 	sbCopy     = "d0c00000-0000-4000-8000-000000000004"
 	sbPayments = "d0c00000-0000-4000-8000-000000000005"
 	sbReviewer = "d0c00000-0000-4000-8000-000000000006"
+	// sbMigrations is the sandbox's own errored agent (seedSandboxFleetState).
+	sbMigrations = "d0c00000-0000-4000-8000-000000000008"
 )
 
 // sbShape is one Excalidraw element.
@@ -434,6 +445,14 @@ func seedSandboxProcessRuns(s *sandboxSeeder) {
 		"id": "run_release_24", "templateId": "release-train", "group": "webshop", "authorizeProgramProfiles": []string{"safe"},
 	}, nil)
 	s.fixture.ProcessRun, s.fixture.Template = "run_release_24", "release-train"
+	// An older run whose decision is already taken, so a run shows a finished
+	// step; run_release_24 stays waiting for the browser tests to decide.
+	s.api(http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": "run_release_23", "templateId": "release-train", "group": "webshop", "authorizeProgramProfiles": []string{"safe"},
+	}, nil)
+	s.api(http.MethodPost, "/v1/process/runs/run_release_23/decide", map[string]any{
+		"nodeId": "checks-pass", "verdict": "yes", "evidence": "All release checks are green.",
+	}, nil)
 }
 
 func seedSandboxAccess(t *testing.T) {
@@ -514,4 +533,194 @@ func seedSandboxPlugin(s *sandboxSeeder) {
 		"name":  "webshop-dev-env",
 		"steps": []map[string]any{{"name": "node-toolchain", "check": "true"}, {"name": "playwright-browsers", "check": "true"}},
 	}, nil)
+	// One whose second step's check fails, and one the operator switched off.
+	s.dashAPI(http.MethodPost, "/api/plugins", map[string]any{
+		"name":  "payments-sandbox",
+		"steps": []map[string]any{{"name": "stripe-cli", "check": "true"}, {"name": "test-webhooks", "check": "false", "run": "false"}},
+	}, nil)
+	s.dashAPI(http.MethodPost, "/api/plugins", map[string]any{
+		"name":  "search-cluster",
+		"steps": []map[string]any{{"name": "opensearch", "check": "true", "stop": "true"}},
+	}, nil)
+	s.dashAPI(http.MethodPost, "/api/plugins/check", nil, nil)
+	s.dashAPI(http.MethodPost, "/api/plugins/search-cluster/deactivate", nil, nil)
+}
+
+// seedSandboxFleetState gives the docs fleet's agents their context-window
+// use, and adds one agent whose last turn failed.
+func seedSandboxFleetState(s *sandboxSeeder) {
+	s.t.Helper()
+	g, err := db.GetAgentGroupByName("webshop")
+	if err != nil || g == nil {
+		s.t.Fatalf("webshop group: %v", err)
+	}
+	seedDocAgent(s.t, s.f, g.ID, "webshop", docAgent{
+		conv: sbMigrations, title: "db-migrations", descr: "Orders table migration", role: "dev",
+		harness: "claude", model: "Sonnet 5.5", effort: "medium", status: "error",
+		detail: "API Error: 529 overloaded_error", online: true, cost: 3.40,
+		startBranch: "orders-migration", age: 70 * time.Minute, last: 6 * time.Minute,
+	})
+	for title, pct := range map[string]float64{
+		"lead": 64, "checkout-ui": 38, "search-indexer": 87, "onboarding-copy": 12,
+		"payments-fix": 52, "cold-reviewer": 21, "db-migrations": 93,
+	} {
+		if err := db.UpdateContextPct("lbl-"+title, pct); err != nil {
+			s.t.Fatalf("context %s: %v", title, err)
+		}
+	}
+}
+
+// seedSandboxCronHistory gives the cron jobs a run history: morning-plan fires
+// now through the dashboard's run-now (delivered, ok), and standup-ping keeps
+// a failed run from earlier in the day.
+func seedSandboxCronHistory(s *sandboxSeeder) {
+	s.t.Helper()
+	jobs, err := db.ListAgentCronJobs()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	ids := map[string]int64{}
+	for _, j := range jobs {
+		ids[j.Name] = j.ID
+	}
+	if ids["morning-plan"] == 0 || ids["standup-ping"] == 0 {
+		s.t.Fatalf("cron jobs not seeded: %v", ids)
+	}
+	s.dashAPI(http.MethodPost, fmt.Sprintf("/api/cron/%d/run-now", ids["morning-plan"]), nil, nil)
+	failed := time.Now().Add(-3 * time.Hour)
+	if _, err := db.InsertAgentCronRun(&db.AgentCronRun{
+		JobID: ids["standup-ping"], FiredAt: failed, Status: "send_failed",
+		ErrorMsg: "queue message for checkout-ui: database is locked",
+	}); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := db.UpdateAgentCronJobLastRun(ids["standup-ping"], failed, "send_failed"); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// seedSandboxAttachment has checkout-ui send the operator a screenshot through
+// notify-human's attachment upload.
+func seedSandboxAttachment(s *sandboxSeeder) {
+	s.t.Helper()
+	if err := db.GrantAgentPermission(sbUI, agentd.PermHumanNotify, "operator"); err != nil {
+		s.t.Fatalf("grant: %v", err)
+	}
+	// notify-human names the sender from a fresh read of its transcript, and
+	// the docs fleet keeps titles in conv_index only. Write the title where
+	// Claude Code's /rename does, or the reread reverts it to the summary.
+	row, err := db.GetConvIndex(sbUI)
+	if err != nil || row == nil || row.FullPath == "" {
+		s.t.Fatalf("checkout-ui transcript: %v", err)
+	}
+	line, err := json.Marshal(map[string]string{"type": "custom-title", "customTitle": "checkout-ui", "sessionId": sbUI})
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	transcript, err := os.OpenFile(row.FullPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	_, err = transcript.Write(append(line, '\n'))
+	if cerr := transcript.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	metadata, err := json.Marshal(map[string]string{
+		"subject": "Checkout buttons: A or B?",
+		"body":    "Two takes on the address step's buttons. I lean to B: the primary action reads first on a phone.",
+		"name":    "checkout-buttons.png",
+	})
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/notify-human/attachment", bytes.NewReader(sandboxButtonsPNG(s.t)))
+	req.Header.Set("Content-Type", "image/png")
+	req.Header.Set("X-Tclaude-Notify-Metadata", base64.RawURLEncoding.EncodeToString(metadata))
+	s.check(http.MethodPost, "/v1/notify-human/attachment", testharness.Serve(s.f.Mux, agentd.AsAgentPeer(req, sbUI)), nil)
+}
+
+// sandboxButtonsPNG draws two button layouts side by side.
+func sandboxButtonsPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 640, 360))
+	fill := func(r image.Rectangle, c color.RGBA) { draw.Draw(img, r, &image.Uniform{c}, image.Point{}, draw.Src) }
+	fill(img.Bounds(), color.RGBA{0xf4, 0xf5, 0xf7, 0xff})
+	for i, primaryFirst := range []bool{false, true} {
+		x := 20 + i*320
+		fill(image.Rect(x, 20, x+280, 340), color.RGBA{0xff, 0xff, 0xff, 0xff})
+		primary, secondary := image.Rect(x+150, 270, x+260, 310), image.Rect(x+20, 270, x+130, 310)
+		if primaryFirst {
+			primary, secondary = image.Rect(x+20, 220, x+260, 260), image.Rect(x+20, 270, x+260, 310)
+		}
+		for row := 0; row < 4; row++ {
+			fill(image.Rect(x+20, 50+row*40, x+260, 76+row*40), color.RGBA{0xe3, 0xe6, 0xeb, 0xff})
+		}
+		fill(secondary, color.RGBA{0xd0, 0xd4, 0xdb, 0xff})
+		fill(primary, color.RGBA{0x2f, 0x6f, 0xeb, 0xff})
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// seedSandboxAccessRequest has cold-reviewer ask for sudo through the real
+// approvals registry, so Access shows a request waiting for the operator. The
+// request blocks for its popup timeout, which the sandbox config stretches to
+// a day; deciding it in the browser ends it as it would in production.
+func seedSandboxAccessRequest(s *sandboxSeeder) {
+	s.t.Helper()
+	cfg, err := config.Load()
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if cfg.Agent == nil {
+		cfg.Agent = &config.AgentConfig{}
+	}
+	if cfg.Agent.Sudo == nil {
+		cfg.Agent.Sudo = &config.SudoConfig{}
+	}
+	cfg.Agent.Sudo.PopupTimeout = "24h"
+	if err := config.Save(cfg); err != nil {
+		s.t.Fatal(err)
+	}
+	// The gate refuses a popup without a dashboard URL. Set one only while the
+	// request is raised: the dashboard pins browser requests to it, and the
+	// sandbox's real URL is not known yet (seedDocFixture's warm-up does the same).
+	restore := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	defer restore()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := agentd.AsAgentPeer(testharness.JSONRequest(s.t, http.MethodPost, "/v1/sudo", map[string]any{
+			"slugs": []string{agentd.PermAgentSpawn}, "duration": "30m",
+			"reason": "spawn a second reviewer for the payments PR",
+		}), sbReviewer)
+		// No t.Logf: an operator's decision can land as the server stops, and
+		// logging after the test returned panics.
+		_ = testharness.Serve(s.f.Mux, req)
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var snap struct {
+			Pending int `json:"access_requests_pending"`
+		}
+		s.dashAPI(http.MethodGet, "/api/snapshot", nil, &snap)
+		if snap.Pending > 0 {
+			return
+		}
+		select {
+		case <-done:
+			s.t.Fatal("sandbox seed: the sudo request ended before it was pending")
+		default:
+		}
+		if time.Now().After(deadline) {
+			s.t.Fatal("sandbox seed: the sudo request never became pending")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
