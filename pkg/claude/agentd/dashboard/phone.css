@@ -94,15 +94,15 @@
 
 /* Disclosures (<details>): a drawn chevron that turns as it opens, apart from
    the text, instead of dashboard.css's "▶ " glyph. Views that draw their own
-   marker (.phone-diag-row) or none (a group tree) keep theirs. */
-:root[data-layout="phone"] details:not([data-group-key]) > summary { list-style: none; cursor: pointer; }
-:root[data-layout="phone"] details:not([data-group-key]) > summary::-webkit-details-marker { display: none; }
-:root[data-layout="phone"] details:not([data-group-key]) > summary::before {
+   marker (.phone-diag-row) or none (a group tree) are left out. */
+:root[data-layout="phone"] details:not([data-group-key], .phone-diag-row) > summary { list-style: none; cursor: pointer; }
+:root[data-layout="phone"] details:not([data-group-key], .phone-diag-row) > summary::-webkit-details-marker { display: none; }
+:root[data-layout="phone"] details:not([data-group-key], .phone-diag-row) > summary::before {
   content: ""; display: inline-block; flex: none; width: 7px; height: 7px; margin: 0 12px 2px 3px;
   border-right: 2px solid var(--ui-muted-text); border-bottom: 2px solid var(--ui-muted-text);
   transform: rotate(-45deg); transition: transform .15s ease;
 }
-:root[data-layout="phone"] details:not([data-group-key])[open] > summary::before { transform: rotate(45deg); margin-bottom: 4px; }
+:root[data-layout="phone"] details:not([data-group-key], .phone-diag-row)[open] > summary::before { transform: rotate(45deg); margin-bottom: 4px; }
 
 /* The one secondary width query in phone mode: a phone held sideways, where a
    view may show two panes side by side (e.g. message list and message).

@@ -66,7 +66,9 @@ export function searchHits(query, { snapshot, board } = {}) {
     // Not by group: a group has its own hits, and would list all its agents.
     agents: rank(agents, q, tokens, (a) => a.name, (a) => a.harness),
     groups: rank(groups, q, tokens, (g) => g.name, () => ''),
-    mail: rank(snapshot?.messages || [], q, tokens, (m) => m.subject || m.body, (m) => `${m.from_title} ${m.group} ${m.body}`),
+    // A message opens in Mail through its sender's folder: one without a
+    // sender could not be opened, so it is not offered.
+    mail: rank((snapshot?.messages || []).filter((m) => m?.from_agent || m?.from_conv), q, tokens, (m) => m.subject || m.body, (m) => `${m.from_title} ${m.group} ${m.body}`),
     tasks: rank(boardTasks(board), q, tokens, (t) => t.title, (t) => `${t.id} ${t.group}`),
   };
 }

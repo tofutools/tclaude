@@ -10,6 +10,11 @@
 
 const TOUCH = new Set(['touch', 'pen']);
 
+function isEditable(target) {
+  if (!target || typeof target.closest !== 'function') return false;
+  return !!target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+}
+
 // installInputModality starts tracking and returns what stops it.
 export function installInputModality(doc = globalThis.document) {
   const root = doc?.documentElement;
@@ -19,8 +24,10 @@ export function installInputModality(doc = globalThis.document) {
     if (root.dataset.phoneInput !== mode) root.dataset.phoneInput = mode;
   };
   const onKey = (event) => {
-    // A modifier alone is not keyboard navigation.
+    // A modifier alone is not keyboard navigation, and nor is typing in a
+    // field: an on-screen keyboard sends keys too. Tab out of a field is.
     if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
+    if (event.key !== 'Tab' && isEditable(event.target)) return;
     if (root.dataset.phoneInput !== 'key') root.dataset.phoneInput = 'key';
   };
   doc.addEventListener('pointerdown', onPointer, true);

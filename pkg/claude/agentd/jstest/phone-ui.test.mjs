@@ -61,7 +61,7 @@ test('searchHits ranks each kind by the palette\'s scoring and caps it', async (
   const members = Array.from({ length: 7 }, (_, i) => ({ agent_id: `agt_${String(i).padStart(32, '0')}`, title: `worker-${i}`, online: true }));
   const snapshot = {
     groups: [{ name: 'webshop', members: [{ agent_id: `agt_${'9'.repeat(32)}`, title: 'shop-lead', online: true }, ...members] }],
-    messages: [{ id: 1, from_title: 'shop-lead', subject: 'Deploy?', body: 'The shop is ready' }],
+    messages: [{ id: 1, from_agent: `agt_${'9'.repeat(32)}`, from_title: 'shop-lead', subject: 'Deploy?', body: 'The shop is ready' }],
   };
   const board = { groups: [{ group: 'webshop', tasks: [{ id: 'tk_1', title: 'Shop banner' }] }] };
   assert.deepEqual(mod.searchHits('  ', { snapshot, board }).agents, { total: 0, items: [] }, 'an empty query finds nothing');
@@ -69,6 +69,8 @@ test('searchHits ranks each kind by the palette\'s scoring and caps it', async (
   assert.deepEqual(shop.agents.items.map((a) => a.name), ['shop-lead']);
   assert.deepEqual(shop.groups.items.map((g) => [g.name, g.online, g.members]), [['webshop', 8, 8]]);
   assert.equal(shop.mail.total, 1, 'a body match finds the message');
+  const anonymous = { messages: [{ id: 2, subject: 'Shop notice' }] };
+  assert.equal(mod.searchHits('shop', { snapshot: anonymous }).mail.total, 0, 'a message with no sender cannot be opened, so it is not offered');
   assert.deepEqual(shop.tasks.items.map((task) => [task.id, task.group]), [['tk_1', 'webshop']]);
   assert.deepEqual([
     { online: true, status: 'awaiting_permission' }, { online: true, status: 'awaiting_input' },
@@ -104,10 +106,43 @@ test('the input mark follows the last touch or key press', async (t) => {
   assert.equal(root.dataset.phoneInput, 'touch');
   harness.fireEvent(harness.document.body, 'keydown', { key: 'Shift' });
   assert.equal(root.dataset.phoneInput, 'touch', 'a modifier alone is not keyboard use');
+  const field = harness.document.body.appendChild(harness.document.createElement('input'));
+  harness.fireEvent(field, 'keydown', { key: 'a' });
+  assert.equal(root.dataset.phoneInput, 'touch', 'typing in a field (an on-screen keyboard) is not keyboard use');
+  harness.fireEvent(field, 'keydown', { key: 'Tab' });
+  assert.equal(root.dataset.phoneInput, 'key', 'tabbing out of it is');
+  harness.fireEvent(harness.document.body, 'pointerdown', { pointerType: 'touch' });
   harness.fireEvent(harness.document.body, 'keydown', { key: 'Tab' });
   assert.equal(root.dataset.phoneInput, 'key');
   harness.fireEvent(harness.document.body, 'pointerdown', { pointerType: 'mouse' });
   assert.equal(root.dataset.phoneInput, 'pointer');
   stop();
   assert.equal(root.dataset.phoneInput, undefined);
+});
+
+test('usePhoneBar shows a view\'s bar while it is active, with its latest handlers, and clears only its own', async (t) => {
+  const { harness, mod } = await load(t, 'js/phone-page.js');
+  const { html } = harness;
+  const calls = [];
+  function View({ active, n }) {
+    mod.usePhoneBar({ tab: 'messages', menu: { sub: 'Human', label: 'Pick', onClick: () => calls.push(`menu${n}`) },
+      actions: [{ key: 'read', icon: '✓✓', label: 'Mark all read', onClick: () => calls.push(`read${n}`) }] }, active);
+    return null;
+  }
+  const mounted = await harness.mount(html`<${View} active=${true} n=${1} />`);
+  const shown = mod.phoneBar.value;
+  assert.equal(shown.tab, 'messages');
+  assert.equal(shown.menu.sub, 'Human');
+  await mounted.rerender(html`<${View} active=${true} n=${2} />`);
+  assert.equal(mod.phoneBar.value, shown, 'a re-render with the same look keeps the bar');
+  shown.actions[0].onClick();
+  shown.menu.onClick();
+  assert.deepEqual(calls, ['read2', 'menu2'], 'its handlers are the latest');
+  await mounted.rerender(html`<${View} active=${false} n=${2} />`);
+  assert.equal(mod.phoneBar.value, null, 'an inactive view takes it down');
+  await mounted.rerender(html`<${View} active=${true} n=${2} />`);
+  const other = { tab: 'groups', actions: [] };
+  await harness.act(() => { mod.phoneBar.value = other; });
+  await mounted.unmount();
+  assert.equal(mod.phoneBar.value, other, 'another view\'s bar is left alone');
 });

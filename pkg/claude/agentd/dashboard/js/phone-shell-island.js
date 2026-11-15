@@ -174,7 +174,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
       : html`<img class="phone-bar-logo" src="/static/tclaude-icon.svg" alt="" />
         <h1 class="phone-bar-title">${added?.menu
           ? html`<button data-ui-exempt type="button" class="phone-bar-title-btn" aria-haspopup="dialog"
-              aria-label=${added.menu.label || `${title}: pick`} onClick=${added.menu.onClick}>
+              aria-label=${`${title}${added.menu.sub ? ` ${added.menu.sub}` : ''}, ${added.menu.label || 'pick'}`} onClick=${added.menu.onClick}>
               ${title}<small>${added.menu.sub ? ` ${added.menu.sub}` : ''} ▾</small></button>`
           : title}</h1>
         ${own.power && html`<${IconButton} icon="⏻" label="Power" aria-haspopup="dialog" onClick=${() => openSheet('Power', PowerMenu)} />`}

@@ -293,7 +293,7 @@ test('a tab view adds bar actions and a title menu while it is the one on screen
       actions: [{ key: 'read', icon: '✓✓', label: 'Mark all read', onClick: () => calls.push('read') }] };
   });
   await tap(harness.getByRole(bar(), 'button', { name: 'Mark all read' }));
-  await tap(harness.getByRole(bar(), 'button', { name: 'Pick a mailbox' }));
+  await tap(harness.getByRole(bar(), 'button', { name: 'Mail Human, Pick a mailbox' }));
   assert.deepEqual(calls, ['read', 'menu']);
   assert.match(bar().querySelector('.phone-bar-title').textContent, /Mail\s*Human ▾/);
   assert.ok(harness.getByRole(bar(), 'button', { name: 'Search' }), 'the shell keeps its own');
