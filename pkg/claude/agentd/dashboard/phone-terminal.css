@@ -13,9 +13,8 @@
   min-height: var(--phone-bar-h); padding: var(--phone-safe-top) 8px 0 4px;
   border-bottom: 1px solid var(--ui-line);
 }
-:root[data-layout="phone"] .phone-term-bar .phone-bar-live { margin: 0 6px; }
-:root[data-layout="phone"] .phone-term-bar .phone-bar-act { font-size: 18px; }
-:root[data-layout="phone"] .phone-term-bar .phone-bar-act.on { background: var(--ui-menu-hover); border-color: var(--ui-focus); }
+:root[data-layout="phone"] .phone-term-bar .phone-bar-title { margin-left: 2px; }
+:root[data-layout="phone"] .phone-term-bar .phone-pill { flex: none; }
 :root[data-layout="phone"] .phone-term-body { flex: 1; min-height: 0; position: relative; }
 /* touch-action: none, so a pinch reaches the terminal (its text size) and
    never zooms the page. */
@@ -41,7 +40,6 @@
   flex: none; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px;
   padding: 8px 8px 0;
 }
-:root[data-layout="phone"] .phone-term-keys:last-child { padding-bottom: calc(8px + var(--phone-safe-bottom)); }
 :root[data-layout="phone"] .phone-term-key {
   min-height: var(--phone-tap); padding: 0; border-radius: 8px;
   background: var(--ui-bg); border: 1px solid var(--ui-btn-line); color: var(--ui-text-strong);
@@ -49,13 +47,32 @@
   touch-action: manipulation;
 }
 :root[data-layout="phone"] .phone-term-key:active { background: var(--ui-menu-hover); }
+/* The input row: ✉ Message as a rounded field, ⌨ a round button beside it. */
+:root[data-layout="phone"] .phone-term-input {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 10px 8px calc(10px + var(--phone-safe-bottom));
+}
 :root[data-layout="phone"] .phone-term-compose {
-  flex: none; margin: 8px 8px calc(8px + var(--phone-safe-bottom)); min-height: 48px; padding: 0 18px;
+  flex: 1; min-width: 0; min-height: 48px; padding: 0 18px;
   border-radius: 24px; text-align: left;
   background: var(--ui-field-bg); border: 1px solid var(--ui-line);
   color: var(--ui-muted-text); font: inherit; font-size: 16px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+:root[data-layout="phone"] .phone-term-kbd {
+  flex: none; margin-left: auto; width: 48px; height: 48px; padding: 0; border-radius: 50%; border: 2px solid transparent;
+  background: var(--phone-accent-bg); color: #fff; font-size: 22px; line-height: 1; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-term-kbd.on { border-color: var(--ui-text-strong); box-shadow: 0 0 0 3px var(--ui-focus); }
+
+/* pinch · N%: the text size, top right over the terminal; a tap resets it. */
+:root[data-layout="phone"] .phone-term-zoom {
+  position: absolute; top: 8px; right: 10px; z-index: 1;
+  min-height: 30px; padding: 0 12px; border-radius: 15px;
+  background: color-mix(in srgb, var(--ui-card-bg) 85%, transparent); border: 1px solid var(--ui-line);
+  color: var(--ui-muted-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-term-zoom:disabled { cursor: default; opacity: 1; }
 
 /* ↓ Live: shown while a swipe has the terminal scrolled back. */
 :root[data-layout="phone"] .phone-term-live {
@@ -63,4 +80,53 @@
   min-height: 40px; padding: 0 16px; border-radius: 20px; border: 0;
   background: var(--ui-primary); color: var(--ui-primary-text);
   font: inherit; font-weight: 700; box-shadow: var(--ui-dialog-shadow); cursor: pointer;
+}
+
+/* The message sheet (js/phone-compose-sheet.js): one agent's note, over
+   whatever is open. Mail's replies reuse it. */
+:root[data-layout="phone"] .phone-compose { display: flex; flex-direction: column; gap: 10px; }
+:root[data-layout="phone"] .phone-compose-head { display: flex; align-items: center; gap: 8px; }
+:root[data-layout="phone"] .phone-compose-title {
+  flex: 1; min-width: 0; margin: 0 2px; font-size: 17px; color: var(--ui-text-strong);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-layout="phone"] .phone-compose-chip {
+  flex: none; min-width: 44px; min-height: 36px; padding: 0 14px; border-radius: 18px;
+  background: var(--phone-panel2); border: 1px solid var(--phone-line); color: var(--ui-text);
+  font: inherit; font-size: 15px; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-compose-chip[aria-expanded="true"] { border-color: var(--phone-accent-bg); }
+:root[data-layout="phone"] .phone-compose-chip:disabled { opacity: .5; cursor: default; }
+:root[data-layout="phone"] .phone-compose-prompts { max-height: 30vh; overflow-y: auto; }
+:root[data-layout="phone"] .phone-compose-prompts .phone-menu-item { min-height: var(--phone-tap); font-size: 15px; }
+/* The phone's own text, not the terminal's: proportional, 16px so iOS does
+   not zoom the page on focus. */
+:root[data-layout="phone"] .phone-compose-body {
+  width: 100%; min-height: 110px; max-height: 40vh; padding: 12px 14px; box-sizing: border-box; resize: none;
+  border-radius: 14px; background: var(--ui-field-bg); border: 1px solid var(--ui-line); color: var(--ui-text-strong);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+:root[data-layout="phone"] .phone-compose-body:focus { outline: none; border-color: var(--phone-accent-bg); }
+:root[data-layout="phone"] .phone-compose-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+:root[data-layout="phone"] .phone-compose-att {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 4px 2px 12px; border-radius: 16px;
+  background: var(--phone-panel2); border: 1px solid var(--phone-line); font-size: 13px;
+}
+:root[data-layout="phone"] .phone-compose-file { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-layout="phone"] .phone-compose-unattach {
+  flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: var(--ui-muted-text); cursor: pointer;
+}
+:root[data-layout="phone"] .phone-compose-error { margin: 0; }
+:root[data-layout="phone"] .phone-compose-foot { display: flex; align-items: center; gap: 10px; }
+:root[data-layout="phone"] .phone-compose-foot .phone-btn { min-height: 44px; font-size: 16px; }
+:root[data-layout="phone"] .phone-compose-send { padding: 0 20px; }
+:root[data-layout="phone"] .phone-compose-note { flex: 1; min-width: 0; margin: 0; text-align: center; }
+:root[data-layout="phone"] .phone-compose-ask { flex: 1; min-width: 0; color: var(--ui-text-strong); font-weight: 600; }
+:root[data-layout="phone"] .phone-compose-foot .phone-btns { margin-top: 0; flex-wrap: nowrap; }
+/* A sheet's grab handle takes a swipe down (phone-sheet.js): a taller strip
+   to catch it than the bar it draws. */
+:root[data-layout="phone"] .phone-sheet-grab {
+  width: auto; height: 26px; margin: -8px 0 0; border-radius: 0; touch-action: none; cursor: grab;
+  background: linear-gradient(var(--ui-pressed-bg), var(--ui-pressed-bg)) center / 40px 5px no-repeat;
 }

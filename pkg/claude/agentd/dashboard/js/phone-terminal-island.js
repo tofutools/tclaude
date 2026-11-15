@@ -7,9 +7,12 @@
 // socket, and coming back redials.
 //
 // A phone has no keyboard to spare, so the terminal does not raise one. Input
-// is the agent's message sheet (the desktop's Ctrl+M), a key strip for the
-// answers a harness asks for (1 2 3, the arrows, Enter, Esc, ^C), and ⌨ for
-// raw typing. A pinch sets the text size and the grid reflows to fit. A
+// is the agent's message sheet (✉ Message, the desktop's Ctrl+M), a key strip
+// for the answers a harness asks for (1 2 3, the arrows, Enter, Esc, ^C), and
+// ⌨ beside ✉ for raw typing. The bar shows the agent's state and, behind ⋯,
+// what else a phone can do to it (the Agents view's sheet). A pinch sets the
+// text size, which the pinch chip shows and resets, and the grid reflows to
+// fit. A
 // one-finger swipe scrolls exactly as the desktop's mouse wheel does, so each
 // harness scrolls its own way: Claude Code its own history, Codex and shells
 // tmux's. Where the wheel scrolls tmux copy-mode (Codex, shells), ↓ Live (or
@@ -21,6 +24,8 @@ import { signal } from '@preact/signals';
 import htm from 'htm';
 import { readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
+import { VARIANT_LABELS } from './phone-agents-model.js';
+import { IconButton, StatePill } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -141,7 +146,7 @@ function useVisualViewport(windowRef) {
 
 // TerminalSurface owns the widget. Preact renders the host div and never a
 // child into it: the widget alone owns what is inside.
-function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange }) {
+function TerminalSurface({ seed, deps, labelRef, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange }) {
   const host = useRef(null);
   useLayoutEffect(() => {
     const key = seed.key || seed.ws;
@@ -162,7 +167,8 @@ function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaiti
       onWaitingChange,
       onReconnectChange,
       onComposeMessage: seed.agent && deps.onComposeMessage
-        ? () => deps.onComposeMessage({ agent: seed.agent, label: seed.label || '' })
+        // The bar's name, read when pressed: the widget keeps its options.
+        ? () => deps.onComposeMessage({ agent: seed.agent, label: labelRef.current })
         : null,
       applicationClipboardShortcuts: seed.harness === 'copilot',
       initialRetry: seed.initialRetry === true,
@@ -181,12 +187,27 @@ function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaiti
 // a raised keyboard, or raise one.
 const keepFocus = (event) => event.preventDefault();
 
+// zoomPercent is the text size against the phone's own, as the pinch chip
+// shows it.
+export function zoomPercent(size) {
+  return Math.round((size / PHONE_TERMINAL_FONT) * 100);
+}
+
+// The bar's title: the agent's name, its group muted after it.
+function Title({ label, group }) {
+  return html`<h1 class="phone-bar-title">${label || 'Terminal'}${group && html`<small>${group}</small>`}</h1>`;
+}
+
 export function PhoneTerminal({ seed, deps, onClose }) {
   const documentRef = deps.documentRef || globalThis.document;
   const visible = useDocumentVisible(documentRef);
   const viewport = useVisualViewport(deps.windowRef || globalThis.window);
   const key = seed.key || seed.ws;
-  const [, onFontChange] = useTerminalFont(FONT_SURFACE, key, deps.prefs);
+  const [font, setFont] = useTerminalFont(FONT_SURFACE, key, deps.prefs);
+  // The pinch chip waits for the widget's size: until then the hook holds
+  // the desktop's default.
+  const [sized, setSized] = useState(false);
+  const onFontChange = (next) => { setSized(true); setFont(next); };
   const [runtime, setRuntime] = useState(deps.loadRuntime ? 'loading' : 'ready');
   const [status, setStatus] = useState('connecting');
   const [waiting, setWaiting] = useState(null);
@@ -219,28 +240,43 @@ export function PhoneTerminal({ seed, deps, onClose }) {
     if (next && keyboard) next.setSoftKeyboard(true);
     if (!next) setScrolledBack(false);
   };
+  // The agent behind the terminal, live from the snapshot: its name (a link
+  // opened before the snapshot came knows only its id), its state for the
+  // pill, its group for the title, and ⋯ for what else a phone can do to it.
+  const found = seed.agent ? deps.agentRow?.(seed.agent) || null : null;
+  const row = found?.row || null;
+  const label = row?.name || seed.label || '';
+  const labelRef = useRef(label);
+  labelRef.current = label;
   const message = seed.agent && deps.onComposeMessage
-    ? () => deps.onComposeMessage({ agent: seed.agent, label: seed.label || '' })
+    ? () => deps.onComposeMessage({ agent: seed.agent, label })
     : null;
   const live = status === 'connected';
   const note = runtime === 'failed' ? 'The terminal could not load.'
     : runtime === 'loading' ? 'Loading…'
       : waiting?.text || (status === 'connected' || status === 'connecting' ? '' : status);
+  const pct = zoomPercent(font.size);
+  const name = label || 'the agent';
 
   const style = viewport ? `height:${viewport.height}px;top:${viewport.top}px` : undefined;
-  return html`<div class="phone-term" role="dialog" aria-modal="true" aria-label=${seed.label ? `Terminal: ${seed.label}` : 'Terminal'} style=${style}>
+  return html`<div class="phone-term" role="dialog" aria-modal="true" aria-label=${label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
     <header class="phone-term-bar">
       <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}>‹</button>
-      <h1 class="phone-bar-title">${seed.label || 'Terminal'}</h1>
-      <span class=${`phone-bar-live ${live ? 'connected' : status === 'disconnected' ? 'disconnected' : ''}`} role="status"
-        aria-label=${live ? 'Connected' : `Terminal: ${status}`} title=${status}></span>
-      <button data-ui-exempt type="button" class=${`phone-bar-act${keyboard ? ' on' : ''}`} aria-pressed=${keyboard ? 'true' : 'false'}
-        aria-label="Keyboard" title="Type into the terminal" onMouseDown=${keepFocus} onClick=${toggleKeyboard}>⌨</button>
+      <${Title} label=${label} group=${row?.group || ''} />
+      ${row
+        ? html`<${StatePill} state=${row.variant} title=${live ? undefined : `Terminal: ${status}`}>${row.waking ? 'waking' : VARIANT_LABELS[row.variant]}<//>`
+        : html`<span class=${`phone-bar-live ${live ? 'connected' : status === 'disconnected' ? 'disconnected' : ''}`} role="status"
+          aria-label=${live ? 'Connected' : `Terminal: ${status}`} title=${status}></span>`}
+      ${row && deps.agentMenu && html`<${IconButton} icon="⋯" label=${`${row.name}: more`} onClick=${() => deps.agentMenu(row)} />`}
     </header>
     <div class="phone-term-body">
-      ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} onWidget=${onWidget}
+      ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} labelRef=${labelRef} onWidget=${onWidget}
         onFontChange=${onFontChange} onStatus=${setStatus} onWaitingChange=${setWaiting} onReconnectChange=${setReconnect}
         onScrollBackChange=${setScrolledBack} />`}
+      ${sized && html`<button data-ui-exempt type="button" class="phone-term-zoom" onMouseDown=${keepFocus}
+        aria-label=${pct === 100 ? 'Text size 100%: pinch to zoom' : `Text size ${pct}%: reset to 100%`}
+        title="Pinch the terminal to zoom it" disabled=${pct === 100}
+        onClick=${() => widget.current?.zoomBy?.(PHONE_TERMINAL_FONT - font.size)}>pinch · ${pct}%</button>`}
       ${scrolledBack && html`<button data-ui-exempt type="button" class="phone-term-live" onMouseDown=${keepFocus}
         onClick=${() => widget.current?.toLive()} aria-label="Back to live">↓ Live</button>`}
       ${(note || reconnect) && html`<div class="phone-term-note" role="status">
@@ -249,11 +285,14 @@ export function PhoneTerminal({ seed, deps, onClose }) {
       </div>`}
     </div>
     <div class="phone-term-keys" role="group" aria-label="Keys">
-      ${KEY_STRIP.map(({ name, label, spoken }) => html`<button data-ui-exempt key=${name} type="button" class="phone-term-key"
-        aria-label=${spoken} onMouseDown=${keepFocus} onClick=${() => widget.current?.key(name)}>${label}</button>`)}
+      ${KEY_STRIP.map(({ name: k, label, spoken }) => html`<button data-ui-exempt key=${k} type="button" class="phone-term-key"
+        aria-label=${spoken} onMouseDown=${keepFocus} onClick=${() => widget.current?.key(k)}>${label}</button>`)}
     </div>
-    ${message && !keyboard && html`<button data-ui-exempt type="button" class="phone-term-compose" onClick=${message}>
-      Message ${seed.label || 'the agent'}…</button>`}
+    <div class="phone-term-input">
+      ${message && !keyboard && html`<button data-ui-exempt type="button" class="phone-term-compose" onClick=${message}>✉ Message ${name}…</button>`}
+      <button data-ui-exempt type="button" class=${`phone-term-kbd${keyboard ? ' on' : ''}`} aria-pressed=${keyboard ? 'true' : 'false'}
+        aria-label="Keyboard" title="Type into the terminal" onMouseDown=${keepFocus} onClick=${toggleKeyboard}>⌨</button>
+    </div>
   </div>`;
 }
 

@@ -9,11 +9,17 @@
 // through its props (signals), so a sheet stays current while open.
 //
 // While a sheet is open the shell, the tab under it and the own views are
-// inert, Escape and the scrim close it, and focus goes back to whatever opened
-// it.
+// inert, Escape, the scrim and a swipe down on its grab handle close it, and
+// focus goes back to whatever opened it.
+//
+// A Body holding something the operator would lose (a draft) guards those
+// closes with useSheetGuard: its guard runs instead of the close, and the
+// Body closes itself once the operator chose. Body's own close() is never
+// guarded. A Body marks what takes focus with data-sheet-focus (a message's
+// text field); otherwise its first button does.
 
 import { h } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
 
@@ -27,11 +33,59 @@ export function openPhoneSheet({ label, Body, props = {} }) {
 
 export function closePhoneSheet() {
   phoneSheet.value = null;
+  guard = null;
+}
+
+// The open sheet's close guard (useSheetGuard), or null.
+let guard = null;
+
+// requestClosePhoneSheet is a close the operator asked for: Escape, the
+// scrim, a swipe down, or a Body's Cancel. A guard may hold it.
+export function requestClosePhoneSheet() {
+  if (guard) guard();
+  else closePhoneSheet();
+}
+
+// useSheetGuard guards the sheet this Body renders in: onRequestClose runs
+// instead of a requested close and returns true when it held the close (a
+// draft to ask about), false to let it go. It is installed as the Body
+// mounts and always calls the latest onRequestClose, so a close the instant
+// after a keystroke is guarded too.
+export function useSheetGuard(onRequestClose) {
+  const latest = useRef(onRequestClose);
+  latest.current = onRequestClose;
+  useLayoutEffect(() => {
+    const mine = () => { if (!latest.current()) closePhoneSheet(); };
+    guard = mine;
+    return () => { if (guard === mine) guard = null; };
+  }, []);
 }
 
 // What the sheet makes inert while it is open: everything a tap could reach
-// behind it. The sheet itself renders outside all of these.
-const BEHIND = 'main, .phone-bar, .phone-view, .phone-nav';
+// behind it, the docked terminal too. The sheet itself renders outside all of
+// these.
+const BEHIND = 'main, .phone-bar, .phone-view, .phone-nav, .phone-term';
+
+// How far down a grab handle drag goes before it closes the sheet.
+export const SWIPE_CLOSE_PX = 60;
+
+// Grab is the handle at a sheet's top: dragging it down far enough closes
+// the sheet (onClose, so a guard may hold it). Screen readers have Escape and
+// the sheet's own buttons.
+function Grab({ onClose }) {
+  const start = useRef(null);
+  const down = (event) => {
+    start.current = event.clientY;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+  const up = (event) => {
+    const from = start.current;
+    start.current = null;
+    if (from !== null && event.clientY - from >= SWIPE_CLOSE_PX) onClose();
+  };
+  return html`<div class="phone-sheet-grab" aria-hidden="true"
+    onPointerDown=${down} onPointerUp=${up} onPointerCancel=${() => { start.current = null; }}></div>`;
+}
 
 function Sheet({ label, onClose, children }) {
   const sheet = useRef(null);
@@ -43,7 +97,9 @@ function Sheet({ label, onClose, children }) {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
     doc.addEventListener('keydown', onKey);
     // The first action, not a link in the sheet's details.
-    (sheet.current.querySelector('button') || sheet.current.querySelector('a[href], input'))?.focus();
+    const first = sheet.current.querySelector('[data-sheet-focus]')
+      || sheet.current.querySelector('button') || sheet.current.querySelector('a[href], input');
+    first?.focus();
     return () => {
       doc.removeEventListener('keydown', onKey);
       for (const element of behind) element.inert = false;
@@ -52,7 +108,7 @@ function Sheet({ label, onClose, children }) {
   }, []);
   return html`<div class="phone-sheet-scrim" onClick=${onClose}></div>
     <div class="phone-sheet" role="dialog" aria-modal="true" aria-label=${label} ref=${sheet}>
-      <div class="phone-sheet-grab" aria-hidden="true"></div>
+      <${Grab} onClose=${onClose} />
       ${children}
     </div>`;
 }
@@ -62,7 +118,7 @@ export function PhoneSheetHost() {
   const open = phoneSheet.value;
   if (!open) return null;
   const { label, Body, props } = open;
-  return html`<${Sheet} key=${label} label=${label} onClose=${closePhoneSheet}>
+  return html`<${Sheet} key=${label} label=${label} onClose=${requestClosePhoneSheet}>
     <${Body} ...${props} close=${closePhoneSheet} />
   <//>`;
 }
