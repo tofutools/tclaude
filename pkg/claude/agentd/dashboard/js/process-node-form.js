@@ -36,6 +36,9 @@ export const PERFORMER_FIELDS = [
   { key: 'assignee', label: 'assignee', kinds: ['human', 'agent'], hint: 'Optional specific person or agent (name or agent id); defaults to whoever holds the profile' },
   { key: 'role', label: 'role', kinds: ['agent'], hint: 'Any member of the run\'s group with this role (idle first). Set at most one of assignee, role and anyone; with none, the profile is the role' },
   { key: 'anyone', label: 'anyone in scope', kinds: ['agent'], flag: true, hint: 'Anyone in the run\'s scope takes it: idle first, then the least busy' },
+  { key: 'lead', label: 'the group\'s lead', kinds: ['agent'], flag: true, hint: 'The group\'s lead takes it: the member with role lead, else a member who owns the group' },
+  { key: 'sameAs', label: 'same agent as step', kinds: ['agent'], hint: 'A step id: the agent that performed that step takes this one too, busy or not' },
+  { key: 'differentFrom', label: 'not the agent of steps', kinds: ['agent'], list: true, hint: 'Step ids, one per line: no agent that performed one of them takes this one' },
   { key: 'spawn', label: 'spawn', kinds: ['agent'], hint: 'Legacy: allowed spawns a fresh agent with the profile when nobody in scope can take the node; prefer the fallback' },
   { key: 'fallback', label: 'if nobody can take it', kinds: ['agent'], fallback: true, hint: 'spawn (with a profile, or the group\'s default spawn profile), wait, or fail the step; blank uses the process default' },
   { key: 'prompt', label: 'prompt', kinds: ['agent', 'human'], multiline: true, hint: 'Instruction text (agents) or long-form context (humans)' },
@@ -303,4 +306,54 @@ export function parseLines(text) {
 
 export function formatLines(list) {
   return (list || []).join('\n');
+}
+
+// ---- Agreement gates: a decision several deciders must agree on ----------
+
+export const MAX_GATE_DECIDERS = 8;
+const APPROVING_OUTCOME = /^(approve|approved|ok|ship|yes|accept|pass|lgtm)$/i;
+
+// gateAgreeChoice is the outcome a new gate asks everyone to choose: an
+// approving one, else one that does not loop back, else the first.
+export function gateAgreeChoice(node, outcomes) {
+  const forward = outcomes.filter((o) => !node.loops?.[o]);
+  return forward.find((o) => APPROVING_OUTCOME.test(o)) || forward[0] || outcomes[0] || '';
+}
+
+// addGateDecider gives a decision another decider (a copy of the first's
+// kind and question); a plain decision becomes a gate. A gate's loops need a
+// way out picked up front: nobody chooses one when its rounds run out.
+export function addGateDecider(node, outcomes) {
+  if (node.type !== 'decision') throw new Error('only a decision is decided by several');
+  if (!node.deciders?.length) {
+    const first = { ...(node.performer || defaultPerformer('human')) };
+    if (first.kind === 'program') throw new Error('a command decides alone');
+    delete first.choices;
+    delete first.choiceOutcomes;
+    node.deciders = [first];
+    delete node.performer;
+    node.agree = gateAgreeChoice(node, outcomes);
+    for (const [outcome, bound] of Object.entries(node.loops || {})) {
+      const way = outcomes.find((o) => o !== outcome && o !== node.agree && !node.loops[o]) || outcomes.find((o) => o !== outcome && !node.loops[o]);
+      if (!bound.onExhausted && way) node.loops[outcome] = { ...bound, onExhausted: way };
+    }
+  }
+  if (node.deciders.length >= MAX_GATE_DECIDERS) throw new Error(`a gate has at most ${MAX_GATE_DECIDERS} deciders`);
+  const first = node.deciders[0];
+  const next = { kind: first.kind };
+  if (first.kind === 'human') next.ask = first.ask || first.prompt || '';
+  else next.prompt = first.prompt || '';
+  node.deciders.push(next);
+}
+
+// removeGateDecider drops decider `index`; one left makes a plain decision,
+// and a person deciding alone answers with the outcomes.
+export function removeGateDecider(node, index, outcomes) {
+  if (!node.deciders?.[index]) return;
+  node.deciders.splice(index, 1);
+  if (node.deciders.length > 1) return;
+  node.performer = node.deciders[0] || defaultPerformer('human');
+  delete node.deciders;
+  delete node.agree;
+  if (node.performer.kind === 'human') node.performer.choices = [...outcomes];
 }

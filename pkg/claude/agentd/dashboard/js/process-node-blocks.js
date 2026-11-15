@@ -37,7 +37,8 @@ export const NODE_BLOCKS = [
     kinds: ['task', 'decision'],
     hint: 'Instruction text for an agent, or the question put to a human',
     // A program performer has no prompt: its command lives in Performer.
-    available: (node) => TASK_PROMPT_KINDS.includes(node.performer?.kind || (node.type === 'decision' ? 'human' : 'agent')),
+    // A gate's deciders each carry their own prompt in Performer.
+    available: (node) => !node.deciders?.length && TASK_PROMPT_KINDS.includes(node.performer?.kind || (node.type === 'decision' ? 'human' : 'agent')),
     present: performerHasPrompt,
     clear: (node) => clearPerformerKeys(node, ['prompt', 'ask']),
   },
@@ -88,6 +89,7 @@ export const NODE_BLOCKS = [
     key: 'bounds', label: 'Bounds', icon: '🛡',
     kinds: ['task', 'decision'],
     hint: 'Performer timeout and contact schedule (nudge cadence, budget, escalation)',
+    available: (node) => !node.deciders?.length,
     present: (node) => !!(node.performer?.timeout || node.performer?.contact),
     clear: (node) => clearPerformerKeys(node, ['timeout', 'contact']),
   },

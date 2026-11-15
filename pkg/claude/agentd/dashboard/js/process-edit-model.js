@@ -1041,6 +1041,8 @@ export class ProcessEditModel {
       this.writeEdgePin(from, oldOutcome, undefined);
       this.writeEdgePin(from, newOutcome, pinned);
     }
+    // So does what a gate's deciders must all choose.
+    if (this.template.nodes[from]?.agree === oldOutcome) this.template.nodes[from].agree = newOutcome;
     // So does a loop bound, and an onExhausted that names the old outcome.
     const loops = this.template.nodes[from]?.loops;
     if (loops) {

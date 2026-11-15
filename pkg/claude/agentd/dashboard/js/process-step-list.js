@@ -68,6 +68,7 @@ export function viewToStepList(view) {
   for (const [id, node] of Object.entries(nodes)) {
     const type = node?.type || '';
     if (!LIST_TYPES.has(type)) return { ok: false, reason: `step ${id} is a ${type || 'typeless'} node, which only the graph editor shows` };
+    if (node.deciders?.length) return { ok: false, reason: `step ${id} is decided by several deciders, which only the graph editor shows` };
   }
   const next = edgesByNode(view);
   const entry = startTarget(view);
@@ -250,6 +251,7 @@ export function expandParamShorthand(text) {
 //                                  legacy performer.profile, which also names
 //                                  the spawn profile)
 //   { mode: 'anyone' }             anyone in the run's scope (performer.anyone)
+//   { mode: 'lead' }               the group's lead (performer.lead)
 //   { mode: 'you' }                the human (a human performer)
 //   { mode: 'command', run }       a program performer (run: its executable)
 //   { mode: 'nobody' }             an agent performer that names no one
@@ -261,6 +263,7 @@ export function stepWho(step) {
   if (performer.assignee) return { mode: 'agent', agent: performer.assignee };
   if (performer.role) return { mode: 'role', role: performer.role };
   if (performer.anyone) return { mode: 'anyone' };
+  if (performer.lead) return { mode: 'lead' };
   if (performer.profile) return { mode: 'role', role: performer.profile, legacy: true };
   return { mode: 'nobody' };
 }
@@ -314,7 +317,7 @@ export function stepText(step) {
   return performer.prompt || '';
 }
 
-const AGENT_FIELDS = ['assignee', 'role', 'anyone', 'profile', 'spawn', 'prompt', 'model', 'effort', 'fallback'];
+const AGENT_FIELDS = ['assignee', 'role', 'anyone', 'lead', 'sameAs', 'differentFrom', 'profile', 'spawn', 'prompt', 'model', 'effort', 'fallback'];
 
 // setStepWho returns the step with its performer switched to who. Fields the
 // new kind cannot carry are dropped; the step's text moves to the new kind's
@@ -347,6 +350,13 @@ export function setStepWho(step, who, { legacyRoles = false } = {}) {
     delete performer.assignee;
     delete performer.role;
     delete performer.anyone;
+    delete performer.lead;
+    if (who.mode === 'agent') {
+      // A named agent leaves no choice for a constraint to narrow.
+      delete performer.sameAs;
+      delete performer.differentFrom;
+    }
+    if (who.mode === 'lead') performer.lead = true;
     if (who.mode === 'agent') performer.assignee = who.agent;
     else if (who.mode === 'role') {
       if (legacyRoles) performer.profile = who.role;
@@ -363,6 +373,81 @@ export function setStepWho(step, who, { legacyRoles = false } = {}) {
   }
   node.performer = performer;
   return { ...step, node };
+}
+
+// ---- which agent: same as, or different from, another step ------------------
+//
+// stepConstraint reads the agent constraint of a step:
+//   { mode: 'none' }
+//   { mode: 'same', step }        performer.sameAs
+//   { mode: 'different', steps }  performer.differentFrom
+export function stepConstraint(step) {
+  const performer = step?.node?.performer || {};
+  if (performer.kind !== 'agent') return { mode: 'none' };
+  if (performer.sameAs) return { mode: 'same', step: performer.sameAs };
+  if (performer.differentFrom?.length) return { mode: 'different', steps: [...performer.differentFrom] };
+  return { mode: 'none' };
+}
+
+// setStepConstraint returns the step with its agent constraint replaced.
+export function setStepConstraint(step, constraint) {
+  const node = clone(step.node);
+  const performer = node.performer;
+  if (!performer || performer.kind !== 'agent') return step;
+  delete performer.sameAs;
+  delete performer.differentFrom;
+  if (constraint.mode === 'same' && constraint.step) performer.sameAs = constraint.step;
+  if (constraint.mode === 'different' && constraint.steps?.length) performer.differentFrom = [...new Set(constraint.steps)];
+  return { ...step, node };
+}
+
+// constraintValue / constraintFromValue map a constraint to a one-pick
+// select's value and back: '', 'same:<step>', 'different:<step>[,<step>…]'.
+export function constraintValue(constraint) {
+  if (constraint.mode === 'same') return `same:${constraint.step}`;
+  if (constraint.mode === 'different') return `different:${constraint.steps.join(',')}`;
+  return '';
+}
+
+export function constraintFromValue(value) {
+  if (value.startsWith('same:')) return { mode: 'same', step: value.slice(5) };
+  if (value.startsWith('different:')) return { mode: 'different', steps: value.slice(10).split(',').filter(Boolean) };
+  return { mode: 'none' };
+}
+
+// agentStepIDs lists the steps of a template an agent performs, other than
+// `except`: the steps a constraint can name.
+export function agentStepIDs(template, except = '') {
+  return Object.entries(template?.nodes || {})
+    .filter(([id, node]) => id !== except && (node.type === 'task' || node.type === 'decision')
+      && (node.performer?.kind === 'agent' || (node.deciders || []).some((d) => d?.kind === 'agent')))
+    .map(([id]) => id)
+    .sort();
+}
+
+// ---- outputs ----------------------------------------------------------------
+
+const OUTPUT_NAME = /^[a-z0-9][a-z0-9._-]*$/;
+
+// stepOutputs is a step's declared outputs (node.captures).
+export function stepOutputs(step) {
+  return [...(step?.node?.captures || [])];
+}
+
+// setStepOutputs returns the step declaring the outputs named in text
+// (separated by commas or spaces), lower-cased; names that are not id-shaped
+// are dropped.
+export function setStepOutputs(step, text) {
+  const node = clone(step.node);
+  const names = [...new Set(String(text ?? '').toLowerCase().split(/[\s,]+/).filter((name) => OUTPUT_NAME.test(name)))];
+  if (names.length) node.captures = names;
+  else delete node.captures;
+  return { ...step, node };
+}
+
+// outputRef is how a prompt reads an output.
+export function outputRef(name) {
+  return `{{ outputs.${name} }}`;
 }
 
 // setStepText writes the step's instruction into its performer's text field.

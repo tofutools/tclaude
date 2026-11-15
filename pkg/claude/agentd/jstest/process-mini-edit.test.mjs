@@ -219,3 +219,68 @@ test('a decision has no sub line, so its fallback marks its label', () => {
   assert.equal(nodes.find((node) => node.id === 'ask').label, 'Review ↯ fail');
   assert.equal(nodes.find((node) => node.id === 'work').label, 'Work', 'a task shows it on its sub line');
 });
+
+test('another decider makes a decision a gate; one left makes it plain again', () => {
+  assert.equal(m.canAddDecider(ship, 'merge'), 'only a decision is decided by several');
+  const { view: gate } = m.addDecider(ship, 'approve', { mode: 'role', role: 'reviewer' });
+  const node = gate.template.nodes.approve;
+  assert.equal(m.miniKind(node), 'gate');
+  assert.equal(node.performer, undefined);
+  assert.equal(node.agree, 'ship', 'an approving outcome is what all must choose');
+  assert.deepEqual(node.deciders.map(m.deciderWho), [{ mode: 'you' }, { mode: 'role', role: 'reviewer' }]);
+  assert.equal(node.deciders[0].choices, undefined, 'a gate votes with its outcomes');
+  assert.equal(node.deciders[1].prompt, node.deciders[0].ask, 'the new decider is asked the same');
+  assert.equal(node.loops.changes.onExhausted, 'hold');
+  assert.throws(() => m.changeKind(gate, 'approve', 'agent'));
+
+  const { view: plain } = m.removeDecider(gate, 'approve', 1);
+  const back = plain.template.nodes.approve;
+  assert.equal(back.deciders, undefined);
+  assert.equal(back.agree, undefined);
+  assert.deepEqual(back.performer.choices, ['ship', 'changes', 'hold'], 'a person deciding alone answers with the outcomes');
+});
+
+test('a gate keeps its deciders, text and agree in step', () => {
+  let { view } = m.addDecider(ship, 'approve', { mode: 'role', role: 'reviewer' });
+  ({ view } = m.setDecider(view, 'approve', 1, { mode: 'lead' }));
+  assert.deepEqual(m.deciderWho(view.template.nodes.approve.deciders[1]), { mode: 'lead' });
+  ({ view } = m.setGateText(view, 'approve', 'Is it good?'));
+  const [person, agent] = view.template.nodes.approve.deciders;
+  assert.equal(person.ask, 'Is it good?');
+  assert.equal(agent.prompt, 'Is it good?');
+  ({ view } = m.renameOutcome(view, 'approve', 'ship', 'go'));
+  assert.equal(view.template.nodes.approve.agree, 'go', 'renaming the agreed outcome follows it');
+  ({ view } = m.setAgree(view, 'approve', 'hold'));
+  assert.equal(view.template.nodes.approve.agree, 'hold');
+  ({ view } = m.removeOutcome(view, 'approve', 'hold'));
+  assert.notEqual(view.template.nodes.approve.agree, 'hold', 'removing the agreed outcome picks another');
+  for (let i = 2; i < 8; i++) ({ view } = m.addDecider(view, 'approve', { mode: 'anyone' }));
+  assert.match(m.canAddDecider(view, 'approve'), /at most 8/);
+});
+
+test('a gate stays valid as its outcomes change', () => {
+  let { view } = m.addDecider(ship, 'approve', { mode: 'role', role: 'reviewer' });
+  ({ view } = m.addOutcome(view, 'approve', 'merge'));
+  const other = m.outcomesOf(view, 'approve').map((o) => o.outcome).find((o) => !['ship', 'changes', 'hold'].includes(o));
+  ({ view } = m.setOutcomeTarget(view, 'approve', other, 'implement'));
+  const gate = view.template.nodes.approve;
+  assert.ok(gate.loops[other]?.onExhausted, 'a new loop on a gate gets its way out');
+  assert.notEqual(gate.loops[other].onExhausted, gate.agree);
+  ({ view } = m.setOutcomeTarget(view, 'approve', 'ship', 'implement'));
+  const after = view.template.nodes.approve;
+  assert.ok(!after.loops?.[after.agree], 'what all must choose never goes back');
+  // A gate keeps two outcomes.
+  let small = m.addDecider(ship, 'approve', { mode: 'anyone' }).view;
+  small = m.removeOutcome(small, 'approve', 'hold').view;
+  assert.match(m.canRemoveOutcome(small, 'approve', 'ship') || m.canRemoveOutcome(small, 'approve', 'changes'), /gate needs/);
+});
+
+test('outputs belong to one task: not kept by a "you" step or a duplicate', async () => {
+  const { setStepOutputs } = await import('../dashboard/js/process-step-list.js');
+  const withOut = m.updateStep(ship, 'review', (s) => setStepOutputs(s, 'notes')).view;
+  assert.deepEqual(withOut.template.nodes.review.captures, ['notes']);
+  assert.equal(m.changeKind(withOut, 'review', 'you').view.template.nodes.review.captures, undefined);
+  const dup = m.duplicate(withOut, 'review');
+  assert.equal(dup.view.template.nodes[dup.id].captures, undefined);
+  assert.deepEqual(dup.view.template.nodes.review.captures, ['notes']);
+});

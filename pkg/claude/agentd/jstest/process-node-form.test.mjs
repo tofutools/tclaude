@@ -95,7 +95,7 @@ test('every performer field is declared for all three kinds or explicitly kind-s
   // The kind-specific sets the dialog spec names, pinned:
   const keysFor = (kind) => performerFieldsFor(kind).map((field) => field.key);
   assert.deepEqual(keysFor('human'), ['profile', 'ask', 'choices', 'choiceOutcomes', 'assignee', 'prompt', 'timeout']);
-  assert.deepEqual(keysFor('agent'), ['profile', 'assignee', 'role', 'anyone', 'spawn', 'fallback', 'prompt', 'model', 'effort', 'timeout']);
+  assert.deepEqual(keysFor('agent'), ['profile', 'assignee', 'role', 'anyone', 'lead', 'sameAs', 'differentFrom', 'spawn', 'fallback', 'prompt', 'model', 'effort', 'timeout']);
   assert.deepEqual(keysFor('program'), ['profile', 'run', 'args', 'timeout']);
 });
 
@@ -107,6 +107,12 @@ test('agent selectors and the fallback edit as their wire shapes', () => {
   assert.equal(performer.anyone, true);
   setPerformerField(performer, 'anyone', 'no');
   assert.ok(!('anyone' in performer));
+  setPerformerField(performer, 'lead', true);
+  setPerformerField(performer, 'sameAs', ' brief ');
+  setPerformerField(performer, 'differentFrom', 'build\nreview\n');
+  assert.deepEqual([performer.lead, performer.sameAs, performer.differentFrom], [true, 'brief', ['build', 'review']]);
+  setPerformerField(performer, 'differentFrom', '');
+  assert.ok(!('differentFrom' in performer));
   assert.throws(() => setFallbackField(performer, 'profile', 'p'), /pick a fallback action first/);
   setFallbackField(performer, 'action', 'spawn');
   setFallbackField(performer, 'profile', 'sonnet-dev');
@@ -318,4 +324,23 @@ test('the dialog save payload carries explicit task-stage choice routing', () =>
     kind: 'human', profile: 'dev', prompt: 'Do the thing', ask: 'Ship?',
     choices: ['ship', 'hold'], choiceOutcomes: { ship: 'pass', hold: 'fail' },
   });
+});
+
+test('a decision takes more deciders as a gate, and one left is plain again', async () => {
+  const form = await import('../dashboard/js/process-node-form.js');
+  const outcomes = ['approve', 'changes', 'escalate'];
+  const node = { type: 'decision', performer: { kind: 'human', ask: 'Ship it?', choices: outcomes }, loops: { changes: { maxIterations: 2 } } };
+  form.addGateDecider(node, outcomes);
+  assert.equal(node.performer, undefined);
+  assert.equal(node.agree, 'approve');
+  assert.deepEqual(node.deciders, [{ kind: 'human', ask: 'Ship it?' }, { kind: 'human', ask: 'Ship it?' }]);
+  assert.equal(node.loops.changes.onExhausted, 'escalate', 'rounds running out need a way out nobody has to pick');
+  for (let i = 2; i < form.MAX_GATE_DECIDERS; i++) form.addGateDecider(node, outcomes);
+  assert.throws(() => form.addGateDecider(node, outcomes), /at most 8/);
+  while (node.deciders?.length > 1) form.removeGateDecider(node, 0, outcomes);
+  assert.equal(node.deciders, undefined);
+  assert.equal(node.agree, undefined);
+  assert.deepEqual(node.performer.choices, outcomes);
+  assert.throws(() => form.addGateDecider({ type: 'task', performer: { kind: 'agent' } }, outcomes));
+  assert.throws(() => form.addGateDecider({ type: 'decision', performer: { kind: 'program', run: 'x' } }, outcomes), /alone/);
 });

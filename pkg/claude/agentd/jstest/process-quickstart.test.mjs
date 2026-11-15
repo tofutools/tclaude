@@ -57,12 +57,12 @@ test('the roster, its roles and the Who options', () => {
   assert.deepEqual(roster.map((m) => [m.name, m.busy, m.online]), [['checkout', false, true], ['search', true, true], ['review-bot', false, false]]);
   assert.deepEqual(groupRoles(roster), [{ role: 'dev', count: 2 }, { role: 'reviewer', count: 1 }]);
   const options = whoOptions(roster);
-  assert.deepEqual(options.map((o) => o.value), ['agent:checkout', 'agent:search', 'agent:review-bot', 'role:dev', 'role:reviewer', 'anyone', 'you', 'command']);
+  assert.deepEqual(options.map((o) => o.value), ['agent:checkout', 'agent:search', 'agent:review-bot', 'role:dev', 'role:reviewer', 'anyone', 'lead', 'you', 'command']);
   assert.ok(!options.find((o) => o.value === 'anyone').disabled, 'anyone free is a real selector');
   assert.deepEqual(whoOptions(roster, { roles: [{ role: 'qa', count: 1 }] }).filter((o) => o.group === 'role').map((o) => o.value),
-    ['role:qa', 'anyone'], 'the process context\'s roles win over the roster\'s');
+    ['role:qa', 'anyone', 'lead'], 'the process context\'s roles win over the roster\'s');
   assert.deepEqual(options.slice(0, 3).map((o) => o.detail), ['dev · idle', 'dev · working', 'reviewer · offline']);
-  for (const value of ['agent:checkout', 'role:dev', 'anyone', 'you', 'command']) assert.equal(whoValue(whoFromValue(value)), value);
+  for (const value of ['agent:checkout', 'role:dev', 'anyone', 'lead', 'you', 'command']) assert.equal(whoValue(whoFromValue(value)), value);
 });
 
 test('who-now guesses the performer the way the resolver ranks them', () => {
@@ -72,6 +72,8 @@ test('who-now guesses the performer the way the resolver ranks them', () => {
     { name: 'gone', id: 'a3', role: 'qa', online: false, busy: false },
   ];
   const step = (performer) => ({ node: { type: 'task', performer } });
+  assert.deepEqual(whoNow(step({ kind: 'agent', lead: true, prompt: 'x' }), roster).label, "the group's lead", 'no member has the role lead: an owner');
+  assert.equal(whoNow(step({ kind: 'agent', lead: true, prompt: 'x' }), [...roster, { name: 'lena', id: 'a4', role: 'Lead', online: true, busy: true }]).label, 'lena');
   assert.equal(whoNow(step({ kind: 'agent', profile: 'dev', prompt: 'x' }), roster).label, 'search', 'an idle member first');
   assert.equal(whoNow(step({ kind: 'agent', profile: 'qa', prompt: 'x' }), roster).waits, true, 'an offline member cannot take it');
   assert.equal(whoNow(step({ kind: 'agent', profile: 'qa', spawn: 'allowed', prompt: 'x' }), roster).spawns, 'qa');

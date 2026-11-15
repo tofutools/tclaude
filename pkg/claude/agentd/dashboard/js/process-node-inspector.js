@@ -18,6 +18,7 @@ import {
   RETRY_ON_FAIL_MODES, PLAN_APPROVAL_MODES,
   defaultPerformer, setStageEnabled, setPlanApproval, addCheck, removeCheck, moveCheck, setCheckID,
   setRetryField, setCaptures, setWaitField, setNodeText, formatLines,
+  MAX_GATE_DECIDERS, addGateDecider, removeGateDecider,
 } from './process-node-form.js';
 import {
   nodeBlock, visibleBlocks, addableBlocks, removeBlock, moveKey, moveKeyBefore, mergeOrder,
@@ -67,14 +68,42 @@ function locateMain(type) {
   };
 }
 
-function PerformerBlock({ node, commit, readOnly }) {
+// DecidersBlock edits a gate: who decides, each asked their own question,
+// and the outcome all of them must choose.
+// A gate's votes are its outcomes, so a decider names no choices of its own.
+const GATE_VOTE_OMIT = ['choices', 'choiceOutcomes'];
+// A command cannot vote: deciders are agents or people.
+const GATE_DECIDER_KINDS = ['agent', 'human'];
+
+function DecidersBlock({ node, commit, readOnly, edges }) {
+  const outcomes = edges.map((edge) => edge.outcome);
+  return html`<div class="pni-deciders" data-node-deciders>
+    <${NodeSelect} fieldKey="agree" label="all must choose" options=${outcomes.includes(node.agree) || !node.agree ? outcomes : [node.agree, ...outcomes]}
+      value=${node.agree || ''} readOnly=${readOnly} apply=${(key, value) => commit(key, (draft) => { draft.agree = value; })} />
+    <p class="process-node-edges-note">Otherwise the first decider below who chose something else decides, and every decider's notes go back with it.</p>
+    ${node.deciders.map((decider, index) => html`<div key=${index} class="process-node-check" data-node-decider=${index}>
+      <div class="process-node-check-head"><span class="process-node-field-label">decider ${index + 1}</span><span class="spacer"></span>
+        ${!readOnly && html`<${Button} size="sm" variant="ghost danger" class="process-action" aria-label=${`Remove decider ${index + 1}`}
+          onClick=${() => commit(`deciders.${index}.remove`, (draft) => removeGateDecider(draft, index, outcomes))}>remove<//>`}</div>
+      <${PerformerEditor} path=${`deciders.${index}`} locate=${(draft) => draft.deciders[index]} performer=${decider}
+        commit=${commit} readOnly=${readOnly} choiceRouting=${false} contact=${true} omit=${GATE_VOTE_OMIT} kinds=${GATE_DECIDER_KINDS} />
+    </div>`)}
+    ${!readOnly && node.deciders.length < MAX_GATE_DECIDERS && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
+      onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, outcomes))}>+ add decider<//>`}
+  </div>`;
+}
+
+function PerformerBlock({ node, commit, readOnly, edges }) {
   const type = node.type || 'task';
+  if (type === 'decision' && node.deciders?.length) return html`<${DecidersBlock} node=${node} commit=${commit} readOnly=${readOnly} edges=${edges} />`;
   if (type === 'task' && !node.performer && !readOnly) {
     return html`<${Button} size="sm" class="process-action process-node-add"
       onClick=${() => commit('work.add', (draft) => { draft.performer = defaultPerformer('agent'); })}>add work performer<//>`;
   }
   return html`<${PerformerEditor} path="performer" locate=${locateMain(type)} performer=${mainPerformer(node)}
-    commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]} />`;
+    commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]} />
+    ${type === 'decision' && !readOnly && node.performer?.kind !== 'program' && edges.length > 1 && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
+      title="Several decide together, and all must agree" onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, edges.map((edge) => edge.outcome)))}>+ another decider<//>`}`;
 }
 
 function PromptBlock({ node, commit, readOnly }) {
@@ -124,7 +153,7 @@ function StagesBlock({ node, commit, readOnly }) {
 function InputsBlock({ inputs }) {
   return html`<div class="pni-inputs">
     ${inputs.captures.length
-    ? html`<ul class="pni-input-list">${inputs.captures.map((capture) => html`<li key=${`${capture.from}:${capture.name}`}><code>${capture.name}</code> ← ${capture.fromName}</li>`)}</ul>`
+    ? html`<ul class="pni-input-list">${inputs.captures.map((capture) => html`<li key=${`${capture.from}:${capture.name}`}><code>${`{{ outputs.${capture.name} }}`}</code> ← ${capture.fromName}</li>`)}</ul>`
     : html`<p class="process-node-empty ui-empty">No upstream captures reach this node.</p>`}
     ${inputs.params.length > 0 && html`<p class="pni-params">params: ${inputs.params.map((name, i) => html`${i > 0 && ', '}<code key=${name}>${name}</code>`)}</p>`}
   </div>`;
@@ -142,6 +171,7 @@ function RetryBlock({ node, commit, readOnly }) {
 }
 
 function OutputsBlock({ node, commit, readOnly }) {
+  // An agent reports each with --output <name>=<value>; later prompts read {{ outputs.<name> }}.
   return html`<${NodeField} fieldKey="captures" label="published outputs" multiline=${true} placeholder="one-name-per-line"
     value=${formatLines(node.captures)} readOnly=${readOnly}
     apply=${(key, raw) => commit(key, (draft) => setCaptures(draft, raw))} />`;
