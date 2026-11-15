@@ -207,3 +207,20 @@
 :root[data-layout="phone"] .phone-agents-subcard .phone-agents-summary { margin: 0; }
 :root[data-layout="phone"] .phone-agents-chev { margin-left: auto; color: var(--ui-muted-text); }
 :root[data-layout="phone"] .phone-agents-note { margin: 4px 4px 8px; color: var(--ui-muted-text); font-size: 13px; }
+/* A row a link found (/groups?agent=, agent-route.js) glows: two slow pulses
+   of the accent, then it fades back, about 3s (FOUND_MS). With reduced
+   motion, an outline that stays still and fades. */
+:root[data-layout="phone"] .phone-agent-found { border-radius: 12px; animation: phone-agent-found 2.8s ease-in-out forwards; }
+@keyframes phone-agent-found {
+  0% { box-shadow: 0 0 0 2px var(--phone-accent), 0 0 18px 4px color-mix(in srgb, var(--phone-accent) 55%, transparent); background: color-mix(in srgb, var(--phone-accent) 16%, transparent); }
+  25% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--phone-accent) 60%, transparent), 0 0 6px 1px color-mix(in srgb, var(--phone-accent) 20%, transparent); background: color-mix(in srgb, var(--phone-accent) 8%, transparent); }
+  50% { box-shadow: 0 0 0 2px var(--phone-accent), 0 0 18px 4px color-mix(in srgb, var(--phone-accent) 55%, transparent); background: color-mix(in srgb, var(--phone-accent) 16%, transparent); }
+  100% { box-shadow: 0 0 0 2px transparent, 0 0 0 0 transparent; background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-layout="phone"] .phone-agent-found { animation: phone-agent-found-still 2.8s linear forwards; }
+}
+@keyframes phone-agent-found-still {
+  0%, 70% { box-shadow: 0 0 0 2px var(--phone-accent); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}

@@ -249,7 +249,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
         <h1 class="phone-bar-title">${page.title || ''}</h1>
         ${(page.actions || []).map((act) => html`<button data-ui-exempt key=${act.key || act.label} type="button"
           class=${`phone-bar-act${act.danger ? ' danger' : ''}`} aria-label=${act.label} title=${act.label}
-          disabled=${!!act.disabled} onClick=${act.onClick}>${act.icon || act.label}</button>`)}`
+          disabled=${!!act.disabled} aria-disabled=${act.muted ? 'true' : undefined} onClick=${act.onClick}>${act.icon || act.label}</button>`)}`
       : html`${desktopOther
           ? html`<button data-ui-exempt type="button" class="phone-bar-back" aria-label=${`Back: ${desktopOther.label}`} onClick=${desktopOther.onClick}>‹</button>`
           : html`<img class="phone-bar-logo" src="/static/tclaude-icon.svg" alt="" />`}

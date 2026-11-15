@@ -406,3 +406,32 @@ export function groupSummaryLine(entry) {
   if (entry.live === entry.total) return 'Everything online';
   return `${entry.live} of ${entry.total} online`;
 }
+
+// findAgent is where an agent (its agent id or conversation id) sits in the
+// Agents view, offline agents and archived groups counted:
+// { row, groupKey, path, archived } with path the keys from the outermost
+// group down to its own (All groups nests them; Active has only its own) and
+// archived whether its group is, or null when no group holds it (retired,
+// deleted, or never here). An agent in several groups is found in the first
+// one the view lists.
+export function findAgent(snapshot, id, view = ACTIVE, order = (groups) => groups) {
+  if (!snapshot || !id) return null;
+  const has = (g) => [...g.shown, ...g.offline].find((row) => row.agent === id || row.conv === id || row.member?.agent_id === id);
+  if (view !== ALL_GROUPS) {
+    for (const g of agentGroups(snapshot, order, { offline: true })) {
+      const row = has(g);
+      if (row) return { row, groupKey: g.key, path: [g.key], archived: !!g.group?.archived };
+    }
+    return null;
+  }
+  const walk = (nodes, above) => {
+    for (const node of nodes) {
+      const row = has(node);
+      if (row) return { row, groupKey: node.key, path: [...above, node.key], archived: node.archived };
+      const deeper = walk(node.children, [...above, node.key]);
+      if (deeper) return deeper;
+    }
+    return null;
+  };
+  return walk(groupsTree(snapshot, order, { showArchived: true, offline: true }).nodes, []);
+}

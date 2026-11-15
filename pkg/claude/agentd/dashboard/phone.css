@@ -432,7 +432,7 @@
   background: var(--ui-bg); border: 1px solid var(--ui-btn-line); color: var(--ui-text-strong);
   font: inherit; font-size: 14px; cursor: pointer;
 }
-:root[data-layout="phone"] .phone-bar-act:disabled { opacity: 0.5; cursor: default; }
+:root[data-layout="phone"] :is(.phone-bar-act:disabled, .phone-bar-act[aria-disabled="true"]) { opacity: 0.5; cursor: default; }
 :root[data-layout="phone"] .phone-bar-act.danger { color: var(--ui-danger-text); }
 :root[data-layout="phone"][data-phone-page] { --footer-h: 0px; }
 

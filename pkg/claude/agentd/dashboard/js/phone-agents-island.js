@@ -6,7 +6,9 @@
 // resume); a touch and hold, or ⋯, opens its menu with the rest
 // (phone-agent-menu.js). ＋ in the top bar spawns an agent
 // from a short sheet (group, profile, prompt), and a group's "Board ›" opens
-// its board. A tap on a group's header folds it (remembered, phone-agents-
+// its board. A link to an agent (/groups?agent=<id>, agent-route.js) opens
+// its group up, scrolls to its row and makes it glow a moment (FOUND_MS).
+// A tap on a group's header folds it (remembered, phone-agents-
 // model.js FOLD_PREF); under the header, folded too, a line counts its agents
 // by state. A worker sits indented under the agent that spawned it.
 //
@@ -27,7 +29,7 @@ import { h, render } from 'preact';
 import { useEffect, useReducer, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ALL, ALL_GROUPS, ARCHIVED_PREF, OFFLINE_PREF, VIEW_PREF, showOffline, agentsFilter, agentGroups, agentsView, foldPref, groupPage, groupSummaryLine,
+  ALL, ALL_GROUPS, ARCHIVED_PREF, OFFLINE_PREF, VIEW_PREF, showOffline, agentsFilter, agentGroups, agentsView, findAgent, foldPref, groupPage, groupSummaryLine,
   groupTabs, groupsTree, metaParts, shownGroups, shownTree, spawnBody, spawnChoices, toggleFilter, treeFoldPref,
   treeFolded, treeTabs,
 } from './phone-agents-model.js';
@@ -41,6 +43,11 @@ import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
 import { Button } from './ui-components.js';
 import { shellToast } from './shell-state.js';
+import { agentFocus, doneAgentFocus } from './agent-route.js';
+
+// FOUND_MS is how long a found row glows (phone-agents.css
+// .phone-agent-found): long enough to spot it after the scroll.
+export const FOUND_MS = 3000;
 
 const html = htm.bind(h);
 
@@ -70,9 +77,9 @@ function MetaLine({ row, kids = 0 }) {
 // rest (its menu). A
 // worker (under) sits indented under the lead that spawned it, last marking
 // the end of that lead's workers; a lead says how many it has (kids).
-function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kids = 0 }) {
+function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kids = 0, found = false }) {
   const { holding, handlers } = useHold(() => onMore(row));
-  const cls = ['phone-agent', `v-${row.variant}`, !row.online && 'phone-agent-off', under && 'phone-agent-worker', last && 'phone-agent-last', holding && 'phone-holding'].filter(Boolean).join(' ');
+  const cls = ['phone-agent', `v-${row.variant}`, !row.online && 'phone-agent-off', under && 'phone-agent-worker', last && 'phone-agent-last', holding && 'phone-holding', found && 'phone-agent-found'].filter(Boolean).join(' ');
   return html`<li class=${cls}>
     <button data-ui-exempt type="button" class="phone-agent-row phone-holdable" ...${handlers} onClick=${() => onTap(row)}
       aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}${under ? `, spawned by ${under.name}` : ''}${kids > 0 ? `, ${kids} ${kids === 1 ? 'worker' : 'workers'}` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
@@ -174,12 +181,13 @@ function Summary({ g }) {
     <i class="phone-agents-dot"></i>${s.count} ${s.text}</span>`)}</p>`;
 }
 
-// AgentList is a group's agents, each worker under its lead.
-function AgentList({ g, isSteward, onTap, onMore }) {
+// AgentList is a group's agents, each worker under its lead; found is the
+// key of the row a link found (it glows), if it is in this group.
+function AgentList({ g, isSteward, onTap, onMore, found = null }) {
   return html`<ul class="phone-list phone-agents-list">${g.tree.map(({ row, kids }) => html`
-    <${AgentRow} key=${row.key} row=${row} kids=${kids.length} steward=${isSteward(row)} onTap=${onTap} onMore=${onMore} />
+    <${AgentRow} key=${row.key} row=${row} kids=${kids.length} steward=${isSteward(row)} onTap=${onTap} onMore=${onMore} found=${row.key === found} />
     ${kids.map((kid, i) => html`<${AgentRow} key=${kid.key} row=${kid} under=${row} last=${i === kids.length - 1}
-      steward=${isSteward(kid)} onTap=${onTap} onMore=${onMore} />`)}`)}</ul>`;
+      steward=${isSteward(kid)} onTap=${onTap} onMore=${onMore} found=${kid.key === found} />`)}`)}</ul>`;
 }
 
 // OfflineToggle is Show offline, beside Active | All groups: a pressed
@@ -239,7 +247,8 @@ function TreeNode({ node, prefs, refold, list }) {
   return html`<div class=${`phone-section phone-agents-node${folded ? ' phone-agents-folded' : ''}${node.dim ? ' phone-agents-dim' : ''}${node.empty ? ' phone-agents-empty' : ''}`}
     role="group" aria-label=${node.name}>
     <${GroupHead} node=${node} folded=${folded} onFold=${fold} onOpen=${() => list.open(node.name)} />
-    ${!folded && node.total > 0 && html`<${AgentList} g=${node} isSteward=${list.isSteward} onTap=${list.tap(node)} onMore=${list.more(node)} />`}
+    ${!folded && node.total > 0 && html`<${AgentList} g=${node} isSteward=${list.isSteward} onTap=${list.tap(node)} onMore=${list.more(node)}
+      found=${list.found?.group === node.key ? list.found.key : null} />`}
     ${!folded && node.children.length > 0 && html`<div class="phone-agents-sub">
       ${node.children.map((child) => html`<${TreeNode} key=${child.key} node=${child} prefs=${prefs} refold=${refold} list=${list} />`)}
     </div>`}
@@ -327,6 +336,39 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   const open = (name) => { globalThis.scrollTo?.(0, 0); setOpened((stack) => [...stack, name]); };
   usePhonePage(page ? { title: page.name, onBack: () => setOpened((stack) => stack.slice(0, -1)), actions: [] } : null, active);
   usePhoneBar({ tab: 'groups', actions: snapshot ? [{ key: 'spawn', icon: '＋', label: 'New agent', onClick: () => spawn(only?.label || '') }] : [] }, !page);
+  // A link to an agent (agent-route.js): open up what would hide it (a group
+  // page over the list, the chips, its group's fold and every one above it,
+  // Show offline, Show archived), then glow its row once it is drawn.
+  const [found, setFound] = useState(null);
+  const ask = agentFocus.value;
+  useEffect(() => {
+    if (!active || !ask || !snapshot) return;
+    const spot = findAgent(snapshot, ask.id, view, order);
+    doneAgentFocus();
+    if (!spot) {
+      shellToast(`No agent ${ask.id} here: it was retired or deleted`, true);
+      return;
+    }
+    setOpened([]);
+    if (!spot.row.online) prefs.removeItem(OFFLINE_PREF);
+    if (picked.length && !picked.some((key) => spot.path.includes(key))) agentsFilter.value = [];
+    if (view === ALL_GROUPS) {
+      for (const key of spot.path) prefs.setItem(treeFoldPref({ group: key.startsWith('g:'), name: key.slice(2) }), '0');
+      if (spot.archived) prefs.setItem(ARCHIVED_PREF, '1');
+    } else {
+      prefs.removeItem(foldPref({ group: spot.groupKey.startsWith('g:'), name: spot.groupKey.slice(2) }));
+    }
+    setFound({ key: spot.row.key, group: spot.groupKey, n: ask.n });
+    refold();
+  }, [active, ask, snapshot]);
+  useEffect(() => {
+    if (!found) return undefined;
+    const row = globalThis.document?.querySelector('.phone-agents .phone-agent-found');
+    const still = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    row?.scrollIntoView?.({ block: 'center', behavior: still ? 'auto' : 'smooth' });
+    const timer = setTimeout(() => setFound(null), FOUND_MS);
+    return () => clearTimeout(timer);
+  }, [found]);
   if (!snapshot) return html`<p class="ui-empty phone-empty">Loading…</p>`;
   const steward = snapshot.steward_active || '';
   const isSteward = (row) => !!steward && (row.agent === steward || row.conv === steward);
@@ -339,7 +381,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
     else if (row.waking) more(g)(row);
     else actions.rowAction('dot-toggle', row);
   };
-  const list = { isSteward, tap, more, open };
+  const list = { isSteward, tap, more, open, found };
   if (page) return html`<${GroupPage} key=${page.name} page=${page} actions=${actions} list=${list} onOpen=${open} spawn=${spawn} />`;
   const pick = (key) => {
     if (key === ALL_GROUPS) prefs.setItem(VIEW_PREF, ALL_GROUPS); else prefs.removeItem(VIEW_PREF);
@@ -375,7 +417,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
       const folded = isFolded(g);
       return html`<div key=${g.key} class=${`phone-section${folded ? ' phone-agents-folded' : ''}`} role="group" aria-label=${g.name}>
         <${GroupHead} node=${{ ...g, children: [], empty: false, archived: false }} folded=${folded} onFold=${fold(g)} onOpen=${() => open(g.name)} />
-        ${!folded && html`<${AgentList} g=${g} isSteward=${isSteward} onTap=${tap(g)} onMore=${more(g)} />`}
+        ${!folded && html`<${AgentList} g=${g} isSteward=${isSteward} onTap=${tap(g)} onMore=${more(g)} found=${found?.group === g.key ? found.key : null} />`}
       </div>`;
     })}
   </div>`;
