@@ -86,17 +86,31 @@ async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = un
 
 const steps = (root) => [...root.querySelectorAll('[data-step]')];
 
-test('an empty group offers Get started: starters, the library, a blank list and the graph editor', async (t) => {
-  const { root } = await mount(t);
-  const panel = root.querySelector('[data-quickstart="webshop"]');
-  assert.ok(panel, 'the empty group shows Get started');
-  assert.equal(root.querySelector('.gp-empty'), null, 'instead of the empty note');
-  assert.deepEqual([...panel.querySelectorAll('[data-starter]')].map((el) => el.dataset.starter),
+// newSteps makes a new process the way the operator does (New process, then
+// a starter when one is named) and shows it as the step list.
+async function newSteps(root, click, starter = '') {
+  await click(root.querySelector('[data-process-new]'));
+  if (starter) await click(root.querySelector(`[data-mini-starter="${starter}"]`));
+  await click(root.querySelector('[data-mini-steps]'));
+  return root.querySelector('[data-step-editor]');
+}
+
+test('a new process offers what to start from under its empty canvas: starters, words, a .pwf and the library', async (t) => {
+  const { root, api, click } = await mount(t);
+  await click(root.querySelector('[data-process-new]'));
+  const strip = root.querySelector('[data-mini-start-from]');
+  assert.ok(strip, 'the empty draft shows Start from');
+  assert.deepEqual([...strip.querySelectorAll('[data-mini-starter]')].map((el) => el.dataset.miniStarter),
     ['build-review-ship', 'plan-fan-out-merge', 'check-fix', 'ask-me-first']);
-  assert.match(panel.querySelector('[data-starter="build-review-ship"] .gq-tag').textContent, /uses: dev, reviewer/);
-  assert.deepEqual([...panel.querySelectorAll('[data-reuse-template]')].map((el) => el.dataset.reuseTemplate), ['release-train', 'db-migrate']);
-  assert.equal(panel.querySelector('.gq-ask-in').disabled, false, 'the flow can be described in words');
-  assert.ok(panel.querySelector('[data-quickstart-draft] button[type="submit"]').disabled, 'an empty description cannot be sent');
+  assert.equal(strip.querySelector('[data-mini-starter="build-review-ship"]').textContent, 'Implement → Review → Approve → Merge');
+  assert.ok(strip.querySelector('[data-mini-import]'));
+  await click(strip.querySelector('[data-mini-describe]'));
+  const form = root.querySelector('[data-mini-describe-form]');
+  assert.equal(form.querySelector('.gq-ask-in').disabled, false, 'the flow can be described in words');
+  assert.ok(form.querySelector('button[type="submit"]').disabled, 'an empty description cannot be sent');
+  await click(strip.querySelector('[data-mini-library]'));
+  assert.deepEqual([...root.querySelectorAll('[data-mini-library-pick]')].map((el) => el.dataset.miniLibraryPick), ['release-train', 'db-migrate']);
+  assert.equal(api.calls.create.length, 1, 'only the draft itself is stored');
 });
 
 const SCRIBE = { agent_id: `agt_${'a'.repeat(32)}`, conv_id: 'conv-scribe', name: 'process-scribe-k3' };
@@ -138,13 +152,15 @@ function withOrigin(t) {
 }
 
 async function describe(view, text = 'Build it,\n then review   and ship') {
-  const form = view.root.querySelector('[data-quickstart-draft]');
+  await view.click(view.root.querySelector('[data-process-new]'));
+  await view.click(view.root.querySelector('[data-mini-describe]'));
+  const form = view.root.querySelector('[data-mini-describe-form]');
   await view.setValue(form.querySelector('.gq-ask-in'), text);
   await view.harness.act(() => view.harness.fireEvent(form, 'submit'));
   await view.settle();
 }
 
-test('Draft steps needs the operator: a declined grant stores and starts nothing', async (t) => {
+test('Describe it needs the operator: a declined grant starts nothing', async (t) => {
   const asked = [];
   const api = scribeApi();
   const view = await mount(t, { api, confirm: async (request) => { asked.push(request); return false; } });
@@ -153,10 +169,10 @@ test('Draft steps needs the operator: a declined grant stores and starts nothing
   assert.equal(asked.length, 1);
   assert.match(asked[0].meta, /process\.templates\.read \+ process\.templates\.manage/);
   assert.match(asked[0].body, /Every other registered capability is explicitly denied/);
-  assert.equal(api.calls.create.length, 0, 'no template before the grant');
+  assert.equal(api.calls.create.length, 1, 'only the new process itself');
   assert.equal(api.calls.summon.length, 0);
   assert.deepEqual(view.opened, []);
-  assert.ok(view.root.querySelector('[data-quickstart]'), 'Get started stays');
+  assert.ok(view.root.querySelector('[data-mini-editor="tmpl_1"]'), 'the draft stays open');
 });
 
 test('an approved draft runs a background scribe in its chat window, with the same grant as any process scribe', async (t) => {
@@ -164,7 +180,8 @@ test('an approved draft runs a background scribe in its chat window, with the sa
   withOrigin(t);
   const view = await mount(t, { api, confirm: async () => true });
   await describe(view);
-  assert.deepEqual(api.calls.create[0].options, { listed: false, pinGroup: 'webshop' }, 'the draft is saved to the group, not the library');
+  assert.deepEqual(api.calls.create[0].options, { listed: false, pinGroup: 'webshop' }, 'the draft is the group\'s, not the library\'s');
+  assert.equal(api.calls.create.length, 1, 'the scribe works on the new process, not another one');
   const [summon] = api.calls.summon;
   assert.deepEqual(summon.slugs, ['process.templates.read', 'process.templates.manage']);
   assert.equal(summon.exclusive, true, 'every other capability is denied');
@@ -239,23 +256,14 @@ test('an idle scribe with nothing saved is waiting for the operator', async (t) 
   assert.match(status.textContent, /waiting for you in its chat window/);
 });
 
-test('a failed start still leaves the group when the draft cannot be deleted', async (t) => {
-  withOrigin(t);
-  const api = scribeApi({ sendError: 'mail refused' });
-  api.deleteTemplate = async () => { throw new Error('store busy'); };
-  const view = await mount(t, { api, confirm: async () => true });
-  await describe(view);
-  assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_1' }]);
-});
-
-test('a failed start takes the empty draft out of the group', async (t) => {
+test('a failed start stops the scribe and leaves the draft open', async (t) => {
   const api = scribeApi({ sendError: 'mail refused' });
   withOrigin(t);
   const view = await mount(t, { api, confirm: async () => true });
   await describe(view);
   assert.deepEqual(api.calls.stop, [SCRIBE.agent_id], 'a scribe with no request does not stay up');
-  assert.deepEqual(api.calls.remove, ['tmpl_1'], 'the empty draft is deleted, not left unlisted');
-  assert.deepEqual(api.calls.unpin, []);
+  assert.deepEqual(api.calls.remove, [], 'the draft is the operator\'s: it stays');
+  assert.ok(view.root.querySelector('[data-mini-editor="tmpl_1"]'));
   assert.deepEqual(view.opened, [], 'no chat window for a scribe that was stopped');
   assert.ok(view.notes.some((note) => note.error && /mail refused/.test(note.message)));
   assert.equal(view.root.querySelector('[data-scribe-draft]'), null);
@@ -285,13 +293,12 @@ test('the scribe draft request and name are bounded', async (t) => {
   assert.match(request, /…and \d+ more/);
 });
 
-test('a starter opens as a filled step list; Start saves it and starts it in the group', async (t) => {
+test('a starter fills a new process; as a step list, Start saves it and starts it in the group', async (t) => {
   const { root, api, notes, source, click, setValue } = await mount(t);
-  await click(root.querySelector('[data-starter="build-review-ship"]'));
+  await newSteps(root, click, 'build-review-ship');
   const editor = root.querySelector('[data-step-editor="webshop"]');
   assert.ok(editor, 'the step-list editor opens in the group body');
-  assert.equal(root.querySelector('[data-quickstart]'), null);
-  assert.equal(editor.querySelector('.gq-name').value, 'build-review-ship');
+  assert.equal(editor.querySelector('.gq-name').value, 'Build → review → ship', 'an untitled draft takes the starter\'s name');
   assert.deepEqual(steps(root).map((el) => el.dataset.step), ['implement', 'review', 'approve', 'merge']);
   assert.deepEqual(steps(root).map((el) => el.querySelector('.gq-who-select').dataset.who),
     ['role:dev', 'role:reviewer', 'you', 'command']);
@@ -314,15 +321,16 @@ test('a starter opens as a filled step list; Start saves it and starts it in the
   await setValue(editor.querySelector('[data-start-profile=""]'), true, 'change');
   assert.equal(start.disabled, false);
   await click(start);
-  assert.equal(api.calls.create.length, 1);
-  assert.deepEqual(api.calls.create[0].options, { listed: false }, 'a one-off start is unlisted and not saved to the group');
-  const created = api.calls.create[0].view;
-  assert.equal(created.template.name, 'build-review-ship');
+  assert.equal(api.calls.create.length, 1, 'only New process stored a template');
+  assert.deepEqual(api.calls.create[0].options, { listed: false, pinGroup: 'webshop' }, 'the group\'s, not the library\'s');
+  assert.equal(api.calls.save.at(-1).id, 'tmpl_1', 'Start saves the steps to it first');
+  const created = api.calls.save.at(-1).view;
+  assert.equal(created.template.name, 'Build → review → ship');
   assert.deepEqual(Object.keys(created.template.params), ['issue']);
   assert.ok(created.edges.some((e) => e.from === 'approve' && e.outcome === 'changes' && e.to === 'implement'));
   assert.deepEqual(created.template.nodes.approve.loops, { changes: { maxIterations: 3, onExhausted: 'hold' } }, 'changes is a bounded loop');
-  assert.deepEqual(api.calls.start, [{ templateId: 'tmpl_1', group: 'webshop', params: { issue: 'JOH-412' }, authorizeProgramProfiles: [''] }]);
-  assert.deepEqual(notes, [{ message: 'Started build-review-ship in webshop', error: false }]);
+  assert.deepEqual(api.calls.start, [{ templateId: 'tmpl_1', group: 'webshop', params: { issue: 'JOH-412' }, authorizeProgramProfiles: [''], expectedRef: 'tmpl_1@sha256:2' }]);
+  assert.deepEqual(notes, [{ message: 'Started Build → review → ship in webshop', error: false }]);
   assert.ok(source.refreshes >= 2, 'the run card shows on the next refresh');
   assert.equal(root.querySelector('[data-step-editor]'), null, 'the editor closes after a start');
 });
@@ -330,7 +338,7 @@ test('a starter opens as a filled step list; Start saves it and starts it in the
 test('a refused start keeps the editor, names the missing authorization, and does not save twice', async (t) => {
   const api = fakeApi({ startErrors: ['process program profiles require explicit authorization: ci'] });
   const { root, click, setValue } = await mount(t, { api });
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   const editor = root.querySelector('[data-step-editor]');
   await setValue(editor.querySelector('.gq-name'), 'nightly');
   await click(editor.querySelector('[data-add-step="command"]'));
@@ -348,14 +356,14 @@ test('a refused start keeps the editor, names the missing authorization, and doe
   assert.ok(editor.querySelector('[data-step-start]').disabled, 'the refused profile needs consent too');
   await tick('ci');
   await click(editor.querySelector('[data-step-start]'));
-  assert.equal(api.calls.create.length, 1, 'the unchanged steps reuse the template already created');
+  assert.equal(api.calls.save.length, 1, 'the unchanged steps are not saved again');
   assert.equal(api.calls.start.length, 2);
-  assert.deepEqual(api.calls.create[0].view.template.nodes['command'].performer, { kind: 'program', run: 'make', args: ['test'] });
+  assert.deepEqual(api.calls.save[0].view.template.nodes['command'].performer, { kind: 'program', run: 'make', args: ['test'] });
 });
 
 test('editing steps: who, answers and their targets, order and removal', async (t) => {
   const { root, api, click, setValue, settle } = await mount(t);
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   const editor = root.querySelector('[data-step-editor]');
   await setValue(editor.querySelector('.gq-name'), 'gate');
   await click(editor.querySelector('[data-add-step="agent"]'));
@@ -385,7 +393,7 @@ test('editing steps: who, answers and their targets, order and removal', async (
   await setValue(steps(root)[1].querySelector('.gq-step-text'), 'Ship it?', 'change');
   await setValue(editor.querySelector('[data-start-param="ticket"]'), 'T-1');
   await click(editor.querySelector('[data-step-save-library]'));
-  const view = api.calls.create.at(-1).view;
+  const view = api.calls.save.at(-1).view;
   assert.deepEqual(view.template.nodes.step.performer, { kind: 'agent', assignee: 'search', prompt: 'Fix {{params.ticket}}' });
   assert.deepEqual(view.edges.filter((e) => e.from === 'approve').map((e) => `${e.outcome}>${e.to}`).sort(), ['hold>end', 'ship>end'],
     'a removed target retargets to what followed it');
@@ -394,7 +402,7 @@ test('editing steps: who, answers and their targets, order and removal', async (
 
 test('an answer that goes back is a bounded loop with its rounds and what follows', async (t) => {
   const { root, api, click, setValue, settle } = await mount(t);
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   const editor = root.querySelector('[data-step-editor]');
   await setValue(editor.querySelector('.gq-name'), 'review-loop');
   await click(editor.querySelector('[data-add-step="agent"]'));
@@ -421,14 +429,14 @@ test('an answer that goes back is a bounded loop with its rounds and what follow
   await setValue(steps(root)[1].querySelector('.gq-loop-rounds'), '4', 'change');
   await setValue(steps(root)[1].querySelector('[aria-label="When changes has used its rounds"]'), 'escalate', 'change');
   await click(editor.querySelector('[data-step-save-library]'));
-  const view = api.calls.create.at(-1).view;
+  const view = api.calls.save.at(-1).view;
   assert.deepEqual(view.template.nodes.approve.loops, { changes: { maxIterations: 4, onExhausted: 'escalate' } });
   assert.ok(view.edges.some((e) => e.from === 'approve' && e.outcome === 'changes' && e.to === 'step'));
 });
 
 test('an agent step can decide: its verdicts loop like a person\'s answers', async (t) => {
   const { root, api, click, setValue } = await mount(t);
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   const editor = root.querySelector('[data-step-editor]');
   await setValue(editor.querySelector('.gq-name'), 'agent-review-loop');
   await click(editor.querySelector('[data-add-step="agent"]'));
@@ -446,7 +454,7 @@ test('an agent step can decide: its verdicts loop like a person\'s answers', asy
   await setValue(review().querySelector('.gq-who-select'), 'agent:review-bot', 'change');
   assert.ok(review().querySelector('[data-loop="changes"]'), 'and an agent takes them back, loop and all');
   await click(editor.querySelector('[data-step-save-library]'));
-  const view = api.calls.create.at(-1).view;
+  const view = api.calls.save.at(-1).view;
   const node = view.template.nodes[id];
   assert.equal(node.type, 'decision');
   assert.equal(node.performer.kind, 'agent');
@@ -458,7 +466,7 @@ test('an agent step can decide: its verdicts loop like a person\'s answers', asy
 
 test('an agent decider with no verdicts is a plain agent step again', async (t) => {
   const { root, click, setValue, settle } = await mount(t);
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   await click(root.querySelector('[data-step-editor] [data-add-step="agent"]'));
   await click(steps(root)[0].querySelector('[data-step-decides]'));
   const verdicts = steps(root)[0].querySelector('.gq-answers-in input');
@@ -471,7 +479,7 @@ test('an agent decider with no verdicts is a plain agent step again', async (t) 
 
 test('an agent decider\'s approve follows the list as steps are added after it', async (t) => {
   const { root, api, click, setValue } = await mount(t);
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   const editor = root.querySelector('[data-step-editor]');
   await setValue(editor.querySelector('.gq-name'), 'decide-then-more');
   await click(editor.querySelector('[data-add-step="agent"]'));
@@ -479,7 +487,7 @@ test('an agent decider\'s approve follows the list as steps are added after it',
   await click(editor.querySelector('[data-add-step="agent"]'));
   const [decider, after] = steps(root).map((el) => el.dataset.step);
   await click(editor.querySelector('[data-step-save-library]'));
-  const view = api.calls.create.at(-1)?.view;
+  const view = api.calls.save.at(-1)?.view;
   assert.ok(view, 'the draft saves');
   assert.equal(view.edges.find((e) => e.from === decider && e.outcome === 'approve').to, after, 'approve continues to the new step');
   assert.equal(view.template.nodes[decider].loops, undefined);
@@ -489,68 +497,34 @@ async function harness_blur(el) {
   el.dispatchEvent(new el.ownerDocument.defaultView.Event('blur'));
 }
 
-test('reuse opens the start form with the template; the graph-shaped starter hands off to the editor', async (t) => {
-  const { harness, root, api, handoff, click, settle } = await mount(t);
-  await click(root.querySelector('[data-reuse-template="db-migrate"]'));
-  const form = root.querySelector('.gp-start-form');
-  assert.ok(form, 'the start form opens');
-  await harness.act(() => harness.fireEvent(form, 'submit'));
-  await settle();
-  assert.equal(api.calls.start.at(-1).templateId, 'db-migrate', 'the reused template is the one started');
-  await click(root.querySelector('[data-quickstart-expand]'));
-  await click(root.querySelector('[data-starter="plan-fan-out-merge"]'));
-  const draft = handoff.takeProcessDraft();
-  assert.equal(draft.name, 'plan-fan-out-merge');
-  assert.equal(draft.view.template.nodes['fan-out'].type, 'parallel');
-  assert.equal(handoff.takeProcessDraft(), null, 'a draft is handed off once');
-});
-
-test('a group with runs builds a new process from the start form instead of Get started', async (t) => {
-  const context = {
-    runs: { run_1: { runId: 'run_1', name: 'nightly', status: 'running', nodes: [{ id: 'a', kind: 'task', state: 'running' }], edges: [], scope: { kind: 'group', group: 'webshop' } } },
-    groups: [{ groupId: 1, group: 'webshop', active: ['run_1'], needsYou: [], done: [], planned: [], activeCount: 1 }], agents: [], orphaned: [],
-  };
-  const { root, click } = await mount(t, { context });
-  assert.equal(root.querySelector('[data-quickstart]'), null);
-  assert.equal(root.querySelector('[data-process-new]'), null, 'no separate new-process button');
-  await click(root.querySelector('[data-resource-add="webshop"]'));
-  await click(root.querySelector('[data-resource-add-process]'));
-  await click(root.querySelector('[data-process-new="webshop"]'));
-  assert.ok(root.querySelector('[data-quickstart="webshop"]'));
-  assert.equal(root.querySelector('.gp-start-form'), null, 'building replaces the start form');
-});
-
 test('open in graph editor saves the steps first, then hands the stored template to the editor', async (t) => {
   const { root, api, handoff, click } = await mount(t);
-  await click(root.querySelector('[data-starter="check-fix"]'));
+  await newSteps(root, click, 'check-fix');
   const editor = root.querySelector('[data-step-editor]');
   await click(editor.querySelector('[data-step-open-graph]'));
-  assert.equal(api.calls.create.length, 1);
+  assert.equal(api.calls.create.length, 1, 'the new process, and nothing more');
+  assert.equal(api.calls.save.at(-1).id, 'tmpl_1', 'the starter\'s steps are saved to it first');
   const draft = handoff.takeProcessDraft();
   assert.equal(draft.id, 'tmpl_1');
-  assert.equal(draft.name, 'check-fix');
+  assert.equal(draft.name, 'Check → fix if red');
   assert.equal(draft.view.template.id, 'tmpl_1');
-  assert.equal(draft.view.currentRef, 'x@sha256:1');
+  assert.equal(draft.view.currentRef, 'tmpl_1@sha256:2');
   assert.equal(root.querySelector('[data-step-editor]'), null);
-  assert.equal(root.querySelector('[data-quickstart]'), null, 'once a process exists, an empty group folds Get started');
-  await click(root.querySelector('[data-quickstart-expand]'));
-  await click(root.querySelector('[data-quickstart-graph]'));
-  assert.deepEqual(handoff.takeProcessDraft(), { create: true }, 'the blank graph editor is the tab\'s own create dialog');
-  assert.equal(api.calls.create.length, 1);
 });
 
-test('a starter stored for the graph editor is created once, however often it is clicked', async (t) => {
+test('New process is stored once, however often it is clicked', async (t) => {
   const { root, api, harness, settle } = await mount(t);
-  const starter = root.querySelector('[data-starter="plan-fan-out-merge"]');
-  await harness.act(() => { harness.fireEvent(starter, 'click'); });
-  await harness.act(() => { harness.fireEvent(root.querySelector('[data-starter="plan-fan-out-merge"]'), 'click'); });
+  const button = root.querySelector('[data-process-new]');
+  // A double click: the second lands while the first is being stored.
+  await harness.act(() => { harness.fireEvent(button, 'click'); harness.fireEvent(button, 'click'); });
   await settle();
   assert.equal(api.calls.create.length, 1);
+  assert.equal(root.querySelectorAll('[data-mini-editor]').length, 1);
 });
 
 test('Start sends only the inputs the steps still use', async (t) => {
   const { root, api, click, setValue } = await mount(t);
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   const editor = root.querySelector('[data-step-editor]');
   await setValue(editor.querySelector('.gq-name'), 'fix');
   await click(editor.querySelector('[data-add-step="agent"]'));
@@ -562,44 +536,33 @@ test('Start sends only the inputs the steps still use', async (t) => {
   assert.deepEqual(api.calls.start.at(-1).params, { ticket: 'T-2' });
 });
 
-test('Save to group stores the steps unlisted and pinned to the group', async (t) => {
+test('a new process is stored unlisted and pinned to the group; Save writes a new version of it', async (t) => {
   const { root, api, notes, click, setValue } = await mount(t);
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
+  assert.deepEqual(api.calls.create.map((call) => call.options), [{ listed: false, pinGroup: 'webshop' }]);
+  assert.equal(JSON.stringify(api.calls.create[0].view).includes('webshop'), false, 'the group never goes into the template');
   const editor = root.querySelector('[data-step-editor]');
+  assert.equal(editor.querySelector('.gq-name').value, 'Untitled process');
   await setValue(editor.querySelector('.gq-name'), 'triage');
   await click(editor.querySelector('[data-add-step="agent"]'));
   const save = editor.querySelector('[data-step-save-group]');
-  assert.equal(save.textContent, 'Save to webshop');
+  assert.equal(save.textContent, 'Save');
   await click(save);
-  assert.deepEqual(api.calls.create.map((call) => call.options), [{ listed: false, pinGroup: 'webshop' }]);
-  assert.equal(JSON.stringify(api.calls.create[0].view).includes('webshop'), false, 'the group never goes into the template');
+  assert.equal(api.calls.save.at(-1).id, 'tmpl_1');
+  assert.equal(api.calls.save.at(-1).view.template.name, 'triage');
   assert.deepEqual(api.calls.start, []);
-  assert.deepEqual(notes, [{ message: 'Saved triage to webshop', error: false }]);
+  assert.deepEqual(notes, [{ message: 'Saved triage', error: false }]);
   assert.equal(root.querySelector('[data-step-editor]'), null);
 });
 
-test('a refused start, then Save to group, pins the template already created', async (t) => {
-  const api = fakeApi({ startErrors: ['boom'] });
-  const { root, click, setValue } = await mount(t, { api });
-  await click(root.querySelector('[data-quickstart-blank]'));
-  const editor = root.querySelector('[data-step-editor]');
-  await setValue(editor.querySelector('.gq-name'), 'triage');
-  await click(editor.querySelector('[data-add-step="agent"]'));
-  await click(editor.querySelector('[data-step-start]'));
-  assert.match(editor.querySelector('.gq-error').textContent, /boom/);
-  await click(editor.querySelector('[data-step-save-group]'));
-  assert.equal(api.calls.create.length, 1);
-  assert.deepEqual(api.calls.pin, [{ group: 'webshop', id: 'tmpl_1' }]);
-});
-
-test('Save to library lists the steps without pinning them', async (t) => {
+test('Save and publish lists the new process in the library', async (t) => {
   const { root, api, click, setValue } = await mount(t);
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   const editor = root.querySelector('[data-step-editor]');
   await setValue(editor.querySelector('.gq-name'), 'triage');
   await click(editor.querySelector('[data-add-step="agent"]'));
   await click(editor.querySelector('[data-step-save-library]'));
-  assert.deepEqual(api.calls.create.map((call) => call.options), [{ listed: true }]);
+  assert.equal(api.calls.save.at(-1).options.listed, true);
 });
 
 const SAVED_VIEW = {
@@ -762,27 +725,12 @@ test('a saved process the step list cannot show opens as the inline graph', asyn
   assert.ok(card.querySelector('[data-mini-steps]').hasAttribute('disabled'), 'the step list cannot show a parallel node');
 });
 
-test('a save whose pin failed keeps the stored template, so a retry only pins it', async (t) => {
-  const api = fakeApi({ createError: 'the template was saved, but pinning it to the group failed: full',
-    createErrorBody: { id: 'tmpl_x', ref: 'tmpl_x@sha256:1', code: 'process_group_pin' }, stored: { tmpl_x: { sourceHash: 'hx' } } });
-  const { root, click, setValue } = await mount(t, { api });
-  await click(root.querySelector('[data-quickstart-blank]'));
-  const editor = root.querySelector('[data-step-editor]');
-  await setValue(editor.querySelector('.gq-name'), 'triage');
-  await click(editor.querySelector('[data-add-step="agent"]'));
-  await click(editor.querySelector('[data-step-save-group]'));
-  assert.match(editor.querySelector('.gq-error').textContent, /pinning it to the group failed/);
-  await click(editor.querySelector('[data-step-save-group]'));
-  assert.equal(api.calls.create.length, 1, 'no second template');
-  assert.deepEqual(api.calls.pin, [{ group: 'webshop', id: 'tmpl_x' }]);
-});
-
 test('the fallback names a spawn profile, for the process and per step, and the preview shows it', async (t) => {
   const api = fakeApi({ preview: () => ({}) });
   api.spawnProfileNames = async () => ['sonnet-dev', 'opus-lead'];
   const context = { ...EMPTY_CONTEXT, groups: [{ ...EMPTY_CONTEXT.groups[0], defaultSpawnProfile: 'sonnet-dev', roles: [{ role: 'qa', count: 0 }] }] };
   const { root, click, setValue, settle } = await mount(t, { api, context });
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   const editor = root.querySelector('[data-step-editor]');
   await setValue(editor.querySelector('.gq-name'), 'triage');
   await click(editor.querySelector('[data-add-step="agent"]'));
@@ -811,7 +759,7 @@ test('who-now reads the server\'s resolve-preview; the process fallback and anyo
       : { spawnProfile: 'sonnet-dev', reason: 'no member has role "qa"; spawns one with profile sonnet-dev' }])) });
   const context = { ...EMPTY_CONTEXT, groups: [{ ...EMPTY_CONTEXT.groups[0], defaultSpawnProfile: 'sonnet-dev', roles: [{ role: 'qa', count: 0 }] }] };
   const { root, click, setValue, settle } = await mount(t, { api, context });
-  await click(root.querySelector('[data-quickstart-blank]'));
+  await newSteps(root, click);
   const editor = root.querySelector('[data-step-editor]');
   await setValue(editor.querySelector('.gq-name'), 'triage');
   await click(editor.querySelector('[data-add-step="agent"]'));
@@ -941,7 +889,7 @@ test('⤢ full editor saves a dirty draft first, then hands the template over', 
   await click(card().querySelector('.gm-menu [data-mini-menu="duplicate"]'));
   await click(card().querySelector('[data-mini-full]'));
   assert.equal(api.calls.save.length, 1);
-  assert.deepEqual(handoff.takeProcessDraft(), { id: 'tmpl_ship', name: 'ship-feature' });
+  assert.deepEqual(handoff.takeProcessDraft(), { id: 'tmpl_ship', name: 'ship-feature', group: 'webshop' }, 'the group comes along, for ← Back inline');
 });
 
 test('dragging the + handle into empty space picks a kind for a step from it', async (t) => {
@@ -1003,15 +951,19 @@ async function dropFile(harness, target, file) {
   return event;
 }
 
-test('Get started imports a .pwf into the group, through the shared review', async (t) => {
+test('Start from imports a .pwf into the group, through the shared review, and drops the untouched draft', async (t) => {
   const fetched = stubImportFetch(t);
   const imports = () => fetched.filter((url) => url.startsWith('/v1/process/import'));
-  const { root, click, settle, harness } = await mount(t);
+  const { root, api, click, settle, harness } = await mount(t);
+  api.calls.remove = [];
+  api.deleteTemplate = async (id) => { api.calls.remove.push(id); };
   let picked = 0;
   const input = root.querySelector('[data-process-group="webshop"] [data-pwf-file]');
   input.addEventListener('click', () => { picked += 1; });
-  await click(root.querySelector('[data-quickstart-import]'));
-  assert.equal(picked, 1, 'the panel opens the group\'s file picker');
+  await click(root.querySelector('[data-process-new]'));
+  await click(root.querySelector('[data-mini-import]'));
+  assert.equal(picked, 1, 'it opens the group\'s file picker');
+  assert.deepEqual(api.calls.remove, ['tmpl_1'], 'the untouched new process is not kept');
   Object.defineProperty(input, 'files', { configurable: true, value: [pwfFile('ship.pwf')] });
   await harness.act(() => harness.fireEvent(input, 'change'));
   await settle();
@@ -1216,7 +1168,7 @@ for (const [name, options] of [
 
 // The group body's start form asks the same question.
 async function formStart(t, options = {}) {
-  const { actor = `agent:${SCRIBE.agent_id}`, online = true, moved = 0, opener = '[data-resource-add-process]' } = options;
+  const { actor = `agent:${SCRIBE.agent_id}`, online = true, moved = 0, scope = 'group' } = options;
   const api = scribeApi({ stored: () => ({ ...SAVED_DRAFT, currentRef: DRAFT_REF, actor }) });
   api.listTemplates = async () => [{ id: 'tmpl_1', name: 'Ship it' }];
   let refusals = moved;
@@ -1227,8 +1179,9 @@ async function formStart(t, options = {}) {
   };
   const view = await mount(t, { api, context: DRAFT_CONTEXT, extraGroups: [scribeGroup({ label: '', online, status: 'idle', scope: 'tmpl_1' })] });
   await view.click(view.root.querySelector('[data-resource-add]'));
-  await view.click(view.root.querySelector(opener));
+  await view.click(view.root.querySelector('[data-resource-run-process]'));
   await view.settle();
+  if (scope !== 'group') await view.click(view.root.querySelector(`[data-start-scope-pick="${scope}"]`));
   const form = view.root.querySelector('.gp-start-form');
   await view.harness.act(() => view.harness.fireEvent(form, 'submit'));
   await view.settle();
@@ -1264,7 +1217,7 @@ test('the start form opens the draft it asks about', async (t) => {
 });
 
 test('opening the draft from an agent-scoped form still starts it for that agent', async (t) => {
-  const { root, api, click, settle, harness } = await formStart(t, { opener: '[data-resource-add-process-agent]' });
+  const { root, api, click, settle, harness } = await formStart(t, { scope: 'agent' });
   const agent = root.querySelector('[data-start-agent]').dataset.value;
   assert.ok(agent);
   await click(root.querySelector('[data-start-draft-open]'));

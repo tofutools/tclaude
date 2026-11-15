@@ -25,7 +25,7 @@ import { wizWord } from './slop.js';
 import { ProcessMiniGraph } from './process-kit.js';
 import { processContext, processRunApi } from './process-context.js';
 import { WorkflowExportButton, WorkflowImportButton } from './process-workflow-share.js';
-import { handOffProcessDraft, openProcessDraft } from './process-draft-handoff.js';
+import { newProcessThere, openProcessDraft } from './process-draft-handoff.js';
 import { requestProcessStart } from './process-start-handoff.js';
 import { dashPrefs } from './prefs.js';
 import { groupsState } from './groups-state.js';
@@ -371,8 +371,8 @@ export function DockProcesses({
       </span>
       <span class="dock-section-tools">
         <${Button} size="sm" variant="ghost" class="dock-section-manage" data-dock-act="new-item" data-dock-kind="processes"
-          title="New process template" aria-label=${`New in ${wizWord('Processes', 'Rites')}`}
-          onClick=${(event) => { event.preventDefault(); handOffProcessDraft({ create: true }); }}>＋<//>
+          title=${wizWord('New process: an untitled one in the library, opened in the editor', 'New rite: an untitled one, opened in the editor')} aria-label=${`New in ${wizWord('Processes', 'Rites')}`}
+          onClick=${(event) => { event.preventDefault(); void newProcessThere({ open: (id, name) => openProcessDraft({ id, name }), notify }); }}>＋<//>
         <${Button} size="sm" variant="ghost" class="dock-section-manage" data-dock-act="manage-all" data-dock-kind="processes"
           title="Open Automations › Processes"
           onClick=${(event) => { event.preventDefault(); document.querySelector('nav [data-tab="processes"]')?.click(); }}>⧉<//>

@@ -27,19 +27,16 @@ import { WorkflowImportButton } from './process-workflow-share.js';
 import {
   ProcessGraphRow, agentRunIndex, enabled, groupProcessCounts,
 } from './groups-process-indicators.js';
-import {
-  GetStarted, StepListEditor, defaultNotify, markQuickStart, openInGraphEditor, quickStartSeen,
-} from './groups-quickstart.js';
+import { StepListEditor, UNTITLED_PROCESS, createdEditView, defaultNotify } from './groups-quickstart.js';
 import { DraftStartWarning, ScribeDraft, draftWithScribe, leaveScribeDraft, noteDraftOpened, restorableScribeDraft, scribeStartWarning } from './groups-scribe-draft.js';
 import { processScribeSessions } from './process-scribe.js';
-import { viewToStepList } from './process-step-list.js';
+import { blankStepList, stepListToView, viewToStepList } from './process-step-list.js';
 import { shellConfirm } from './shell-state.js';
 import { SavedProcesses } from './groups-saved-processes.js';
 import { AddResource, GroupResources, PeerGroupResources, groupShellsOf } from './groups-resources.js';
 import { dashboardState } from './snapshot-store.js';
 import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
-import { handOffProcessDraft } from './process-draft-handoff.js';
 import { takeProcessStart } from './process-start-handoff.js';
 import { fusedSectionOpen, fusedSectionsRevision, setFusedSectionOpen } from './groups-fused-sections.js';
 import { FusedLinks } from './groups-fused-links.js';
@@ -65,18 +62,22 @@ function memberInitial(member) {
   return [...String(memberName(member) || '?')][0].toUpperCase();
 }
 
-// StartRunForm starts a group-scoped run: pick a template, fill its params,
+// StartRunForm starts a run in the group, or for one of its agents (the
+// switch at its head, `initialScope` first): pick a template, fill its params,
 // and explicitly authorize the program profiles it runs under (never
 // pre-ticked: authorizing host program execution is the human's call), then
 // POST it with the group pre-filled. Refusals show inline; a refusal naming
 // unauthorized profiles (a referenced template's) adds them to the list. The
 // created run appears on the next context refresh. While a scribe is at work on
 // the template it asks first, as the ▶ strip does.
-function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '', members = null, onBuild = null, scribes = [], onOpenTemplate = null }) {
-  // members set means an agent-scoped run: the operator picks which member
-  // the run is bound to, and its steps run as that agent's work.
-  const agentScoped = Array.isArray(members);
-  const [agent, setAgent] = useState(() => (agentScoped ? memberKey(members.find((member) => member.agent_id)) : ''));
+// `own` are the group's own processes ({id, name}), which the library lists
+// only once published: a new one is run from here too.
+function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '', initialScope = 'group', members = [], own = [], scribes = [], onOpenTemplate = null }) {
+  // An agent-scoped run: the operator picks which member the run is bound
+  // to, and its steps run as that agent's work.
+  const [scope, setScope] = useState(initialScope === 'agent' ? 'agent' : 'group');
+  const agentScoped = scope === 'agent';
+  const [agent, setAgent] = useState(() => memberKey(members.find((member) => member.agent_id)));
   const [templates, setTemplates] = useState(null);
   const [templateId, setTemplateId] = useState('');
   const [needs, setNeeds] = useState({ params: [], programProfiles: [] });
@@ -88,8 +89,10 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
   const [draftWarning, setDraftWarning] = useState(null);
   useEffect(() => {
     let live = true;
-    api.listTemplates().then((rows) => {
+    api.listTemplates().then((library) => {
       if (!live) return;
+      const listed = new Set(library.map((row) => row.id));
+      const rows = [...own.filter((row) => row.id && !listed.has(row.id)), ...library];
       setTemplates(rows);
       setTemplateId(rows.some((row) => row.id === initialTemplateId) ? initialTemplateId : rows[0]?.id || '');
     }).catch((cause) => { if (live) { setTemplates([]); setError(cause.message); } });
@@ -142,7 +145,6 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     await api.startGroupRun({
       templateId, ...scope, params: values, authorizeProgramProfiles: [...authorized], ...(expectedRef ? { expectedRef } : {}),
     });
-    markQuickStart();
     onClose();
     void source.refresh();
   };
@@ -185,16 +187,21 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
   const label = agentScoped
     ? (wizard ? `Begin a rite for one hero of ${group.name}` : `Start a process for one agent in ${group.name}`)
     : (wizard ? `Begin a rite for ${group.name}` : `Start a process in ${group.name}`);
-  const agents = agentScoped ? members.filter((member) => member.agent_id) : [];
-  return html`<form class="gp-start-form" aria-label=${label} data-start-scope=${agentScoped ? 'agent' : 'group'} onSubmit=${start}
+  const agents = members.filter((member) => member.agent_id);
+  const scopeButton = (value, text, title) => html`<button data-ui-exempt type="button" class=${scope === value ? 'on' : ''} aria-pressed=${scope === value ? 'true' : 'false'}
+    data-start-scope-pick=${value} disabled=${busy} title=${title} onClick=${() => setScope(value)}>${text}</button>`;
+  return html`<form class="gp-start-form" aria-label=${label} data-start-scope=${scope} onSubmit=${start}
     onKeyDown=${(event) => { if (event.key === 'Escape' && !busy) { event.stopPropagation(); onClose(); } }}>
+    <span class="gm-toggle gp-start-scope" role="group" aria-label=${wizard ? 'Who it is for' : 'Run it for'}>
+      ${scopeButton('group', `⌂ ${wizard ? 'the party' : group.name}`, wizard ? `Begin it for ${group.name}` : `Run it in ${group.name}: each step picks who does it`)}
+      ${scopeButton('agent', `◉ ${wizard ? 'one hero' : 'one agent'}`, wizard ? 'Every step is one hero\'s labour' : 'Every agent step runs as the one agent you pick')}
+    </span>
     ${agentScoped
-    ? html`<span class="pk-chip ui-tag pk-scope pk-scope-agent">◉ ${wizard ? 'hero-bound' : 'agent scope'}</span>
-      ${agents.length
+    ? html`${agents.length
         ? html`<${AgentCombobox} attrs=${{ 'data-start-agent': '' }} ariaLabel="Agent" value=${agent} disabled=${busy} agents=${agents} group=${group.name}
           placeholder=${wizard ? 'Type to find a hero…' : 'Type to find an agent…'} onChange=${setAgent} />`
         : html`<span class="gp-start-note">${wizard ? 'No hero here can bear a rite.' : 'No agent in this group to run it.'}</span>`}`
-    : html`<span class="pk-chip ui-tag pk-scope pk-scope-group">⌂ ${wizard ? 'circle-bound' : 'group scope'} · ${group.name}</span>`}
+    : null}
     ${templates === null
     ? html`<span class="gp-start-note">Loading templates…</span>`
     : templates.length === 0 && !error
@@ -207,8 +214,6 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
       title=${missing.length ? `Fill ${missing.map((param) => param.name).join(', ')} first` : ''}>${busy ? 'starting…' : 'start'}<//>
     <${Button} size="sm" disabled=${busy} onClick=${onClose}>cancel<//>
     ${draftWarning && html`<${DraftStartWarning} warning=${draftWarning} busy=${busy} openDisabled=${!onOpenTemplate} onOpen=${openDraft} onStartAnyway=${startAnyway} />`}
-    ${onBuild && html`<${Button} size="sm" variant="link" class="gq-link" data-process-new=${group.name} onClick=${onBuild}
-      title=${wizard ? `Shape a new rite for ${group.name}` : `Build a new process for ${group.name} from steps or a starter`}>${wizard ? 'or shape a new rite ▸' : 'or build a new one ▸'}<//>`}
     ${needs.params.length > 0 && html`<div class="gp-start-params" role="group" aria-label="Parameters">
       ${needs.params.map((param) => html`<label key=${param.name} class="gp-start-param" title=${param.description}>
         <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
@@ -425,22 +430,18 @@ function RunControls({ group, runs, agentIds, runApi, source, notify, add, inlin
 // `fused.after` (the group's triggers).
 function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDetailApi, source, onFocusRun, notify, fused = null, confirm = shellConfirm, scribes = [] }) {
   const [starting, setStarting] = useState(false);
-  // quick is the quick start: null, 'pick' (the Get started panel opened on a
-  // group that has processes), {list, origin, saved} (the step-list editor;
-  // saved when it edits one of the group's saved processes) or {mode:
-  // 'graph', view, process} (the inline mini editor of a saved process).
-  // Both editors of a saved process carry `process` and `stored` (the view
-  // it was opened at), so ☰ Steps / ◈ Graph switch over the same draft.
+  // quick is the inline editor open in the group: null, {list, saved} (the
+  // step list of one of the group's saved processes), {mode: 'graph', view,
+  // process} (the inline graph of one), or {mode: 'scribe', draft} (a
+  // scribe's draft in the works). Both editors carry `process` and `stored`
+  // (the view it was opened at), so ☰ Steps / ◈ Graph switch over the same
+  // draft, and `draft` when it is a new process that autosaves (New process).
   const [quick, setQuick] = useState(null);
   // The ＋ menu, held here: a click on a folded section line opens the
   // section, which moves the button to the title row (a new instance).
   const [adding, setAdding] = useState(false);
-  // dismissed only re-renders this group at once; the pref folds the rest.
-  const [, setDismissed] = useState(false);
-  // "Start in <group>" from the dock's library opens this group's start form
-  // on that template.
-  // The importer sits here rather than in Get started: importing pins a process
-  // to the group, which takes the panel away, and a stale review stays open.
+  // The importer sits beside the body: importing pins a process to the group,
+  // which re-renders it, and a review in progress stays open.
   const importerRef = useRef(null);
   const [droppedPwf, setDroppedPwf] = useState(null);
   const [pwfOver, setPwfOver] = useState(false);
@@ -460,10 +461,15 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       setDroppedPwf(file);
     },
   };
+  // A request from elsewhere: "Start in <group>" (the dock's library) opens
+  // the start form on its template, New process (the palette) makes a draft
+  // here, and ← Back inline (the full editor) opens a template here.
   useEffect(() => {
     const take = () => {
       const request = takeProcessStart(group.name);
       if (!request) return;
+      if (request.create) { void newProcess(); return; }
+      if (request.edit) { void editInline(request.templateId); return; }
       setQuick(null);
       setStarting(request.templateId ? { templateId: request.templateId, scope: 'group' } : { scope: 'group' });
     };
@@ -483,31 +489,71 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const label = filterLabel(filter, wizard);
   const open = (runId) => onFocusRun({ group: group.name, runId });
   const savedProcesses = entry?.processes || [];
-  // A group with no runs at all, in any state, and no saved processes gets
-  // the Get started panel.
+  // A group with no runs at all, in any state, and no saved processes offers
+  // New process where they would be.
   const everything = groupRunsFor(context, entry, 'all');
   const fresh = !everything.runs.length && !everything.planned.length && !savedProcesses.length
     && !memberRunEntries(context, members, 'all').length;
-  // Past the first run (a process exists anywhere, or the operator used or
-  // dismissed the panel) an empty group folds Get started to one line.
-  // Both always folds it: a full panel in every quiet group would bury the
-  // member tables.
-  const folded = fresh && (!!fused || quickStartSeen() || Object.keys(context?.runs || {}).length > 0);
-  const editing = quick && typeof quick === 'object';
-  const picking = !editing && !starting && (quick === 'pick' || (fresh && !folded));
+  const editing = !!quick;
   const people = groupRoster({ members }, busy);
+  const say = notify || defaultNotify;
+  // New process stores an untitled draft of the group's (pinned, not in the
+  // library) and opens it here as a graph: one click from ＋, no name asked.
+  // A second click while it is stored makes nothing more.
+  const creating = useRef(false);
+  async function newProcess() {
+    if (creating.current) return;
+    creating.current = true;
+    try {
+      // start → end, with the first step to go between them.
+      const view = stepListToView(blankStepList(UNTITLED_PROCESS));
+      const body = await api.createTemplate(view, { listed: false, pinGroup: group.name });
+      const templateId = String(body?.id || '');
+      if (!templateId) throw new Error('the template was not created');
+      const stored = createdEditView(view, templateId, body);
+      setStarting(false);
+      setQuick({ mode: 'graph', key: Date.now(), process: { templateId, name: UNTITLED_PROCESS, listed: false }, view: stored, stored, draft: true, untouched: true });
+      void source?.refresh?.();
+    } catch (cause) {
+      say(`Could not make a new process: ${cause.message}`, true);
+    } finally {
+      creating.current = false;
+    }
+  }
+  // editInline opens a stored template here (← Back inline): one the library
+  // does not list is the group's draft and saves itself; a listed one keeps
+  // the explicit save, so no half-made version goes live.
+  async function editInline(templateId) {
+    try {
+      const view = await api.getTemplate(templateId);
+      setStarting(false);
+      const name = view?.template?.name || templateId;
+      setQuick({ mode: 'graph', key: Date.now(), process: { templateId, name, listed: !!view?.listed }, view, stored: view, draft: !view?.listed });
+    } catch (cause) {
+      say(`Could not open the process here: ${cause.message}`, true);
+    }
+  }
+  // An untouched new draft that is closed (or set aside for an import) is
+  // deleted, so a stray click leaves nothing behind.
+  const discardDraft = (templateId) => api.deleteTemplate(templateId)
+    .catch(() => api.unpinProcess(group.name, templateId).catch(() => {}))
+    .finally(() => void source?.refresh?.());
+  const runSaved = (templateId, name = templateId) => {
+    setQuick(null);
+    setStarting({ templateId, scope: 'group', own: { id: templateId, name } });
+  };
   // The step list may have saved a version (a refused start keeps it open):
   // the graph continues from that one, so its CAS base is the newest.
   const toGraph = ({ view, changed, sourceHash, ref }) => {
     const resaved = !!sourceHash && sourceHash !== quick.saved?.sourceHash;
     setQuick({
-      mode: 'graph', key: Date.now(), process: quick.process, changed,
+      mode: 'graph', key: Date.now(), process: quick.process, changed, draft: !!quick.draft,
       stored: resaved && !changed ? view : quick.stored,
       view: { ...view, sourceHash: sourceHash || quick.saved?.sourceHash || '', currentRef: ref || quick.saved?.ref || '' },
     });
   };
   const toSteps = ({ list, changed, sourceHash, ref }) => setQuick({
-    list, origin: '', key: Date.now(), process: quick.process, stored: quick.stored,
+    list, origin: '', key: Date.now(), process: quick.process, stored: quick.stored, draft: !!quick.draft,
     saved: { templateId: quick.process.templateId, sourceHash: sourceHash || quick.view.sourceHash || '', ref: ref || quick.view.currentRef || '', listed: !!quick.process.listed, changed },
   });
   // A stored version opens as any saved process does: the step list, or the
@@ -546,30 +592,26 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     : editing && quick.mode === 'graph'
     ? html`<${MiniGraphEditor} key=${quick.key} group=${group} roster=${people} groupInfo=${entry} process=${quick.process}
         view=${quick.view} stored=${quick.stored || quick.view} changed=${!!quick.changed} api=${api} source=${source} wizard=${wizard}
-        notify=${notify || defaultNotify} onClose=${() => setQuick(null)} onSteps=${toSteps} />`
+        draft=${!!quick.draft} untouched=${!!quick.untouched}
+        notify=${say} onClose=${() => setQuick(null)} onSteps=${toSteps} onRun=${runSaved}
+        onDiscard=${(templateId) => { setQuick(null); void discardDraft(templateId); }}
+        onImport=${pickPwf}
+        onDescribe=${(text, view) => draftWithScribe(api, { group, text, roster: people, confirm, template: view })
+          .then((draft) => { if (draft) { setQuick({ mode: 'scribe', key: Date.now(), draft }); void source?.refresh?.(); } })
+          .catch((cause) => say(`Could not describe the process: ${cause.message}`, true))} />`
     : editing
     ? html`<${StepListEditor} key=${quick.key} group=${group} roster=${people} list=${quick.list} origin=${quick.origin} saved=${quick.saved || null} groupInfo=${entry}
-        runAgent=${quick.process?.runAgent || null}
+        runAgent=${quick.process?.runAgent || null} draft=${!!quick.draft}
         api=${api} source=${source} wizard=${wizard} notify=${notify} onClose=${() => setQuick(null)}
         onGraph=${quick.saved && quick.process ? toGraph : null}
         onNewer=${quick.saved && quick.process ? (view) => openStored(quick.process, view) : null} />`
-    : picking ? html`<${GetStarted} group=${group} roster=${people} wizard=${wizard} api=${api}
-        onEditList=${(list, origin) => setQuick({ list, origin, key: Date.now() })}
-        onOpenGraph=${(view, name) => (view
-          ? openInGraphEditor(api, view, name).catch((cause) => (notify || defaultNotify)(`Could not open the graph editor: ${cause.message}`, true))
-          : handOffProcessDraft({ create: true }))}
-        onDraft=${(text) => draftWithScribe(api, { group, text, roster: people, confirm })
-          .then((draft) => { if (draft) { setQuick({ mode: 'scribe', key: Date.now(), draft }); void source?.refresh?.(); } })
-          .catch((cause) => (notify || defaultNotify)(`Could not draft the process: ${cause.message}`, true))}
-        onImport=${pickPwf}
-        onReuse=${(templateId) => { setQuick(null); setStarting({ templateId }); }}
-        onDismiss=${() => { markQuickStart('dismissed'); setQuick(null); setDismissed(true); }} />`
-      : !fused && fresh && folded && !starting && html`<div class="gp-empty gq-folded ui-empty" data-quickstart-folded=${group.name}>
-        ${wizard ? 'No rites yet' : 'No processes yet'} · <${Button} size="sm" variant="link" class="gq-link" data-quickstart-expand onClick=${() => setQuick('pick')}>Get started ▸<//></div>`;
-  const startScope = (scope) => { setQuick(null); setStarting({ scope }); };
+    : null;
+  const newButton = html`<${Button} size="sm" variant="primary" data-process-new=${group.name} onClick=${() => void newProcess()}
+    title=${wizard ? `Shape a new rite for ${group.name}, here` : `Make a new process for ${group.name}, here`}>${wizard ? '◈ New rite' : '◈ New process'}<//>`;
   // In Both, ＋ also makes the drawing boards, pages and shell its section lists.
   const add = html`<${AddResource} group=${group} pages=${entry?.pages || []} api=${api} source=${source} wizard=${wizard}
-    notify=${notify || defaultNotify} processesOnly=${!fused} open=${adding} onOpen=${setAdding} onAddProcess=${startScope} />`;
+    notify=${say} processesOnly=${!fused} open=${adding} onOpen=${setAdding}
+    onAddProcess=${(kind) => (kind === 'new' ? void newProcess() : (setQuick(null), setStarting({ scope: 'group' })))} />`;
   const controls = (inline) => html`<${RunControls} group=${group} runs=${liveGroupRuns(context, entry, members)}
     agentIds=${members.map((member) => member.agent_id).filter(Boolean)} runApi=${runApi}
     source=${source} notify=${notify} add=${add} inline=${inline} />`;
@@ -584,8 +626,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         setStarting(false);
         setQuick(edit.mode === 'graph' ? { ...edit, stored: edit.view, key: Date.now() } : { ...edit, key: Date.now() });
       }} />`}
-    ${starting && html`<${StartRunForm} key=${starting.scope || 'group'} group=${group} api=${api} source=${source} wizard=${wizard}
-      members=${starting.scope === 'agent' ? members : null} onBuild=${() => { setStarting(false); setQuick('pick'); }}
+    ${starting && html`<${StartRunForm} key=${`${starting.scope || 'group'}:${starting.templateId || ''}`} group=${group} api=${api} source=${source} wizard=${wizard}
+      members=${members} initialScope=${starting.scope || 'group'}
+      own=${[...(starting.own ? [starting.own] : []), ...savedProcesses.map((saved) => ({ id: saved.templateId, name: saved.name || saved.templateId }))]}
       initialTemplateId=${starting?.templateId || ''} scribes=${scribes} onClose=${() => setStarting(false)}
       onOpenTemplate=${async (process) => {
         const view = await api.getTemplate(process.templateId);
@@ -596,6 +639,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
     <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Hero rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
+    ${!fused && fresh && !starting && !quick && html`<div class="gp-empty ui-empty" data-process-empty=${group.name}>${wizard ? 'No rites yet' : 'No processes yet'} ${newButton}</div>`}
     ${!fused && !runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty ui-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
@@ -609,7 +653,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     // what it lists, and the ＋ menu is the one way to add (no "Get started ▸").
     const empty = !shown && !starting && !quick && html`<div class="gp-empty ui-empty" data-resources-empty=${group.name}>${wizard
       ? 'Nothing here yet. The ＋ menu adds a rite, drawing board, page or shell.'
-      : 'No resources yet. The ＋ menu adds a process, drawing board, page or shell.'}</div>`;
+      : 'No resources yet. The ＋ menu adds a process, drawing board, page or shell.'} ${newButton}</div>`;
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.
@@ -617,7 +661,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         actions=${fused.actions} closedActions=${fused.closedActions}>${fused.agents}<//>
       <${FusedSection} group=${group.name} section="processes" label="Resources"
         count=${listed}
-        actions=${quick === 'pick' ? html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>` : null}
+        actions=${null}
         closedActions=${controls(true)}
         auto=${shown} force=${!!starting || !!quick} attrs=${{ 'data-fused-processes': group.name }}>
         <div class=${`gp-group${pwfOver ? ' gp-pwf-over' : ''}`} data-process-group=${group.name} ...${pwfDrop}><div class="group-header-actions gf-title-row">${controls(true)}</div>${body}${empty}</div>
@@ -630,8 +674,6 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${controls(false)}
     <div class="gp-group-head">
       <${GroupAvatarStrip} members=${members} busy=${busy} wizard=${wizard} />
-      <span class="gp-spacer"></span>
-      ${quick === 'pick' && html`<${Button} size="sm" class="gp-start" onClick=${() => setQuick(null)}>close<//>`}
     </div>
     ${body}
   </div>`;

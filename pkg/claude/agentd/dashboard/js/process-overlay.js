@@ -16,10 +16,11 @@ import { OverlayWindow } from './overlay-window.js';
 import { TO_COLLAB_LABEL, TO_WINDOW_LABEL, registerTabMoves } from './overlay-tab-moves.js';
 import { editorToWindow } from './process-editor-window.js';
 import {
-  PROCESS_WINDOW_KIND, closeFloatingEditor, dockProcessEditor, floatingProcessEditor, isProcessTemplateId, observeFloatingHeads,
+  PROCESS_WINDOW_KIND, closeFloatingEditor, dockProcessEditor, editorDirty, floatingProcessEditor, isProcessTemplateId, observeFloatingHeads,
   processEditorHost, processTabToCollab, returnLiveEditor, takeFloatingEditor,
 } from './process-editor-place.js';
 import { useFloatingEditor } from './process-pane.js';
+import { openGroupProcess } from './process-start-handoff.js';
 
 const html = htm.bind(h);
 
@@ -43,6 +44,17 @@ function moveToWindow(tab, { rect, win, notify }) {
   if (!editorToWindow({ id: tab.template, label: tab.label, live, rect, win, notify, restore })) restore(live);
 }
 
+// toGroup hands a process opened from a group's inline editor back to that
+// group: ← Back inline (`edit`) reopens it there, ▶ Run… opens its start form
+// on it. Unsaved edits are saved first; a save that fails keeps the editor.
+export async function toGroup(instance, how, { open = openGroupProcess } = {}) {
+  const live = floatingProcessEditor(instance.template);
+  if (editorDirty(live?.editor) && !(await live.editor.save())) return false;
+  if (!(await closeFloatingEditor(instance.template))) return false;
+  await open({ group: instance.group, templateId: instance.template, ...(how === 'edit' ? { edit: true } : {}) });
+  return true;
+}
+
 // An editor wants room: most of the screen, short of the footer.
 export function processStartPlacement(viewport) {
   const w = Math.min(1180, viewport.width - 48);
@@ -63,7 +75,13 @@ export function ProcessOverlayWindow({ instance, overlay, strip, more = null, cl
   }, [open, fetchImpl, win]);
   const label = instance.label || instance.template;
   const toCollab = () => void processTabToCollab(instance);
-  const title = html`${strip}
+  // Opened from a group's inline editor: the way back there, and a run.
+  const group = instance.group || '';
+  const back = group && html`<button data-ui-exempt type="button" class="drawing-board-overlay-action process-overlay-back" data-process-back-inline=${group}
+      title=${`Close the full editor and edit it in ${group} again, saving first`} onClick=${() => void toGroup(instance, 'edit')}>← Back inline</button>
+    <button data-ui-exempt type="button" class="drawing-board-overlay-action" data-process-run-in=${group}
+      title=${`Save it, then pick how to run it in ${group}`} onClick=${() => void toGroup(instance, 'run')}>▶ Run…</button>`;
+  const title = html`${strip}${back}
     ${look !== 'classic' ? more : html`
     <button data-ui-exempt type="button" class="drawing-board-overlay-action" title="Move this editor to a tab of the Collab view, unsaved edits and all"
       onClick=${toCollab}>${TO_COLLAB_LABEL}</button>

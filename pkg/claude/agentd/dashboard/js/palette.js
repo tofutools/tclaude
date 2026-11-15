@@ -1067,6 +1067,10 @@ export function buildCommands(snapshot) {
     make: {
       drawingBoard: make.drawingBoard,
       page: (g) => make.page(g, []),
+      newProcess: (g) => requestProcessStart({ group: g.name, create: true }, {
+        prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [],
+        showRuns: () => showGroupRuns(groupsState), rerender: groupsState.rerender,
+      }),
       process: (g) => requestProcessStart({ group: g.name }, {
         prefs: dashPrefs, groups: groupsState.snapshot.value?.groups || [],
         showRuns: () => showGroupRuns(groupsState), rerender: groupsState.rerender,

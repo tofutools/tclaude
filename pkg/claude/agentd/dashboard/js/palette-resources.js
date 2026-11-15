@@ -13,7 +13,7 @@
 // Pure: the seams in `make` do the work, so a node test drives it directly.
 
 // buildResourceCreateCommands is one command per group and kind. make holds
-// { drawingBoard(group), page(group), process(group) }; processes is whether this
+// { drawingBoard(group), page(group), newProcess(group), process(group) }; processes is whether this
 // node offers processes; wiz(regular, wizard) picks the theme's wording.
 export function buildResourceCreateCommands(groups = [], {
   wiz = (regular) => regular, processes = false, make = {}, touch = () => {},
@@ -42,11 +42,20 @@ export function buildResourceCreateCommands(groups = [], {
     });
     if (processes) {
       cmds.push({
+        icon: wiz('◈', '📜'),
+        label: wiz(`Make a process in ${group}`, `Shape a rite in ${group}`),
+        hint: wiz(`an untitled process of ${group}'s, opened in its editor there, graph first`,
+          `an untitled rite of ${group}'s, shaped there as a graph`),
+        keywords: `new create make add build design draft process workflow graph resource group ${group}`
+          + ' rite ritual shape party',
+        run: run('newProcess'),
+      });
+      cmds.push({
         icon: wiz('▶', '📜'),
         label: wiz(`Begin a process in ${group}…`, `Begin a rite in ${group}…`),
-        hint: wiz(`open ${group}'s start form: run a saved process, or build a new one`,
-          `open ${group}'s rite form: begin a written rite, or shape a new one`),
-        keywords: `new create make add open start run launch process workflow resource group ${group}`
+        hint: wiz(`open ${group}'s start form: run a saved process for the group or one agent`,
+          `open ${group}'s rite form: begin a written rite for the party or one hero`),
+        keywords: `start run launch begin process workflow resource group ${group}`
           + ' rite ritual labour party',
         run: run('process'),
       });

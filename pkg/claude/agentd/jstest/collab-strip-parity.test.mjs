@@ -39,7 +39,7 @@ function fakeContext() {
     // As shellConfirm: it resolves to what the action returns.
     confirm: async (options) => { calls.push(['confirm', options.title]); return options.action(); },
     spawn: record('spawn'), shell: record('shell'), drawingBoard: record('drawing_board'), page: record('page'),
-    openDrawingBoard: record('openDrawingBoard'), openProcess: record('openProcess'), drawingBoardIds: async () => [],
+    openDrawingBoard: record('openDrawingBoard'), openProcess: record('openProcess'), newProcess: record('newProcess'), drawingBoardIds: async () => [],
   };
 }
 
@@ -106,21 +106,23 @@ test('＋ New lists every kind there is a create path for, and a group\'s ＋ ma
   const header = newMenuEntries({ groups: GROUPS, processes: true });
   assert.deepEqual(header.map((e) => [e.id, e.label, e.view || '', !!e.disabled]), [
     ['agent', 'Agent…', '', false], ['shell', 'Shell…', 'shell', false], ['drawing_board', 'Drawing board…', 'drawing-boards', false],
-    ['process', 'Process…', 'processes', false], ['page', 'Page…', 'page', false], ['import', 'Import drawing board…', '', false],
+    ['process', 'New process', '', false], ['process-open', 'Open a process…', 'processes', false],
+    ['page', 'Page…', 'page', false], ['import', 'Import drawing board…', '', false],
   ]);
   assert.deepEqual(newMenuEntries({ groups: [GROUPS[1]] }).map((e) => [e.id, !!e.disabled]),
     [['agent', false], ['shell', true], ['drawing_board', false], ['page', false], ['import', false]],
     'without Processes there is no Process…; with no group directory there is no shell to open');
-  assert.equal(newMenuEntries({ processes: true, wizard: true }).find((e) => e.id === 'process').label, 'Rite…');
+  assert.equal(newMenuEntries({ processes: true, wizard: true }).find((e) => e.id === 'process').label, 'New rite');
 
   const group = GROUPS[0];
   const ctx = fakeContext();
   const preset = newMenuEntries({ group, groups: GROUPS, processes: true });
   assert.deepEqual(preset.map((e) => [e.id, e.label, e.view || '']), [
-    ['agent', 'Agent…', ''], ['shell', 'Shell', ''], ['drawing_board', 'Drawing board', ''], ['process', 'Process…', 'processes'], ['page', 'Page…', ''], ['import', 'Import drawing board…', ''],
+    ['agent', 'Agent…', ''], ['shell', 'Shell', ''], ['drawing_board', 'Drawing board', ''], ['process', 'New process', ''], ['process-open', 'Open a process…', 'processes'],
+    ['page', 'Page…', ''], ['import', 'Import drawing board…', ''],
   ]);
   for (const entry of preset.filter((e) => e.run)) await entry.run({ ...ctx, pickImport: () => ctx.calls.push(['pickImport']) });
-  assert.deepEqual(ctx.calls, [['spawn', { groupName: 'tclaude' }], ['shell', group], ['drawing_board', group], ['page', group], ['pickImport']]);
+  assert.deepEqual(ctx.calls, [['spawn', { groupName: 'tclaude' }], ['shell', group], ['drawing_board', group], ['newProcess', group], ['page', group], ['pickImport']]);
   assert.equal(newMenuEntries({ group: GROUPS[1] }).find((e) => e.id === 'shell').disabled, true);
 });
 

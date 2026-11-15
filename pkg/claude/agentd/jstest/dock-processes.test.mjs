@@ -74,7 +74,7 @@ test('a Start in request expands the group and expires if never taken', async (t
   assert.equal(rerenders, 1);
   assert.equal(shown, 1, 'the runs are brought on screen');
   assert.equal(takeProcessStart('infra', { now: () => 1000 }), null);
-  assert.deepEqual(takeProcessStart('webshop', { now: () => 2000 }), { group: 'webshop', templateId: 'ship' });
+  assert.deepEqual(takeProcessStart('webshop', { now: () => 2000 }), { group: 'webshop', templateId: 'ship', create: false, edit: false });
   assert.equal(takeProcessStart('webshop', { now: () => 2000 }), null, 'taken once');
   requestProcessStart({ group: 'webshop', templateId: 'ship' }, opts);
   assert.equal(takeProcessStart('webshop', { now: () => 60_000 }), null, 'stale request dropped');

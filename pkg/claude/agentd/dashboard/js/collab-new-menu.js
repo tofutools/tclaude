@@ -20,6 +20,7 @@ import { ProcessMenuList } from './process-collab-menu.js';
 import { drawingBoardDeleteRequest, importDrawingBoardFile } from './drawing-board-manage.js';
 import { openDrawingBoardPane } from './drawing-board-overlay-state.js';
 import { openProcessTab } from './process-editor-place.js';
+import { newProcessThere } from './process-draft-handoff.js';
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { addGroupDrawingBoard, addGroupPage, addGroupShell } from './groups-resources.js';
 import { groupContextEntry, processRunApi, processContext } from './process-context.js';
@@ -45,7 +46,13 @@ export function newMenuEntries({ group = null, groups = [], processes = false, w
       disabled: !groups.some((g) => cwdOf(g)) });
     entries.push({ id: 'drawing_board', label: 'Drawing board…', line: 'Open a drawing board, or create one', view: 'drawing-boards' });
   }
-  if (processes) entries.push({ id: 'process', label: wizard ? 'Rite…' : 'Process…', line: wizard ? 'Open a rite, or shape a new one' : 'Open a process, or build a new one', view: 'processes' });
+  if (processes) {
+    entries.push({ id: 'process', label: wizard ? 'New rite' : 'New process', line: group
+      ? (wizard ? `An untitled rite of ${group.name}, opened here` : `An untitled process of ${group.name}, opened here`)
+      : (wizard ? 'An untitled rite, opened here' : 'An untitled process in the library, opened here'),
+    run: (ctx) => ctx.newProcess(group) });
+    entries.push({ id: 'process-open', label: wizard ? 'Open a rite…' : 'Open a process…', line: wizard ? 'Any written rite' : 'Any saved process', view: 'processes' });
+  }
   entries.push(group
     ? { id: 'page', label: 'Page…', line: 'A web page a member serves, live here for you to view and mark up; starts blank', run: (ctx) => ctx.page(group) }
     : { id: 'page', label: 'Page…', line: 'A web page a member of a group serves, live to view and mark up', view: 'page', disabled: !groups.length });
@@ -68,6 +75,7 @@ export const defaultNewContext = () => ({
   drawingBoardIds: () => processRunApi.drawingBoardIds(),
   openDrawingBoard: openDrawingBoardPane,
   openProcess: openProcessTab,
+  newProcess: (group) => newProcessThere({ group: group?.name || '', open: openProcessTab, notify: shellToast }),
   notify: shellToast,
   fetchImpl: (...args) => globalThis.fetch(...args),
 });

@@ -442,10 +442,10 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"editor?.destroy?.()",
 		"document.addEventListener('tclaude:snapshot', poll)",
 		"void actions.observeTemplateHeads()",
-		// The rename and create forms render the shared Dialog, which owns
-		// their focus trap, Escape and backdrop close.
+		// The rename form renders the shared Dialog, which owns its focus
+		// trap, Escape and backdrop close. A new template asks no name.
 		`<${Dialog} id="process-rename-modal"`,
-		`<${Dialog} id="process-create-modal"`,
+		"void actions.newTemplate()",
 		"registerCommandProvider('process-editor'",
 		"buildProcessEditorCommands({ editor: paletteEditor(docked), actions })",
 	)

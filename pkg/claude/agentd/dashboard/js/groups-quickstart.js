@@ -1,59 +1,47 @@
-// groups-quickstart.js -- the Groups › Processes quick start (mocks Q1/Q2,
-// tcl-7p6bgt). GetStarted is an empty group's first-run panel: starters that
-// arrive filled from the group's roster, library templates to reuse, a blank
-// step list or the full graph editor. StepListEditor edits a process as
-// numbered steps (process-step-list.js) with a live preview, its start
-// inputs and who it would use now, and starts it in the group, saves it to
-// the library, or hands it to the full graph editor. Nothing runs until
-// Start.
+// groups-quickstart.js -- the Groups › Processes step list (mock Q2,
+// tcl-7p6bgt) and the pickers it shares with the inline graph.
+// StepListEditor edits a stored process as numbered steps
+// (process-step-list.js) with a live preview, its start inputs and who it
+// would use now, and starts it in the group, saves it, publishes it to the
+// library, or hands it to the full graph editor. Nothing runs until Start.
 
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { templateStartRequirements, unauthorizedProfiles } from './process-context.js';
 import {
-  STARTERS, fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, ownFallback, setStepFallback, stepFallbackValue,
+  fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, ownFallback, setStepFallback, stepFallbackValue,
   whoFromValue, whoNow, whoOptions, whoValue,
 } from './process-quickstart.js';
 import {
-  YOU_CONTINUE, blankStepList, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
+  YOU_CONTINUE, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
   collapseParamShorthand, setStepChoices, setStepName, setStepText, setStepWho, stepListFlow, stepListToView,
   stepTargetLabel, stepText, stepWho, backTargetLabel, backTargets, setStepLoop, stepLoop, stepAnswers, AGENT_VERDICTS,
 } from './process-step-list.js';
 import {
   LOOP_DEFAULT_ROUNDS, LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopSummary, normalizeRounds,
 } from './process-loops.js';
-import { openProcessDraft } from './process-draft-handoff.js';
+import { UNTITLED_PROCESS, openProcessDraft } from './process-draft-handoff.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
-import { dashPrefs } from './prefs.js';
 import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
 const GLYPHS = Object.freeze({ agent: '🤖', you: '👤', command: '⌘', decision: '◇', parallel: '‖' });
 const VALIDATE_DELAY_MS = 400;
+// A draft saves itself this long after its last change.
+export const AUTOSAVE_DELAY_MS = 800;
+
+export { UNTITLED_PROCESS };
 
 // createdEditView is the stored template's edit view after a create, as the
 // graph editor opens a stored template.
-function createdEditView(view, id, body) {
+export function createdEditView(view, id, body) {
   return {
     ...view, template: { ...view.template, id },
     currentRef: String(body?.ref || ''), sourceHash: String(body?.sourceHash || ''), semanticHash: String(body?.semanticHash || ''),
     diagnostics: body?.diagnostics || [],
   };
-}
-
-// openInGraphEditor stores the draft as a template (the store mints its id,
-// exactly as the Processes tab's create dialog does) and opens it in the full
-// graph editor.
-export async function openInGraphEditor(api, view, name) {
-  const named = { ...view, template: { ...view.template, name: name || view.template.name || 'untitled process' } };
-  const body = await api.createTemplate(named);
-  const id = String(body?.id || '');
-  if (!id) throw new Error('the template was not created');
-  markQuickStart();
-  await openProcessDraft({ id, name: named.template.name, view: createdEditView(named, id, body) });
-  return id;
 }
 
 // The operator's description is bounded so that, with the group context
@@ -91,19 +79,6 @@ export function scribeDraftRequest(text, groupName, roster = []) {
   return listed < members.length ? `${body}\n…and ${members.length - listed} more` : body;
 }
 
-// QUICKSTART_PREF remembers that the operator is past the first run: 'used'
-// once they created or started a process here, 'dismissed' once they closed
-// the Get started panel. Either folds an empty group's panel to one line.
-export const QUICKSTART_PREF = 'tclaude.dash.groupsProcesses.getStarted';
-
-export function quickStartSeen() {
-  try { return !!dashPrefs.getItem(QUICKSTART_PREF); } catch { return false; }
-}
-
-export function markQuickStart(value = 'used') {
-  try { if (!dashPrefs.getItem(QUICKSTART_PREF)) dashPrefs.setItem(QUICKSTART_PREF, value); } catch { /* best effort */ }
-}
-
 export function defaultNotify(message, isError = false) {
   void import('./refresh.js').then(({ toast }) => toast(message, isError)).catch(() => {});
 }
@@ -113,78 +88,6 @@ function stepKind(step) {
   if (mode === 'you') return 'you';
   if (mode === 'command') return 'command';
   return 'agent';
-}
-
-// GetStarted is the first-run panel of a group without processes.
-export function GetStarted({ group, roster, wizard = false, api, onEditList, onOpenGraph, onDraft = null, onImport = null, onReuse, onDismiss }) {
-  const [templates, setTemplates] = useState(null);
-  const [description, setDescription] = useState('');
-  // pending holds the panel while a starter is stored for the graph editor,
-  // so a double click creates one template, not two.
-  const [pending, setPending] = useState(false);
-  useEffect(() => {
-    let live = true;
-    api.listTemplates().then((rows) => { if (live) setTemplates(rows); }).catch(() => { if (live) setTemplates([]); });
-    return () => { live = false; };
-  }, [api]);
-  const pick = (starter) => {
-    const built = starter.build(roster);
-    if (!built.view) { onEditList(built.list, starter.title); return; }
-    if (pending) return;
-    setPending(true);
-    void Promise.resolve(onOpenGraph(built.view, starter.key)).finally(() => setPending(false));
-  };
-  const draft = (event) => {
-    event?.preventDefault?.();
-    const text = description.trim();
-    if (!text || pending || !onDraft) return;
-    setPending(true);
-    void Promise.resolve(onDraft(text)).finally(() => setPending(false));
-  };
-  const shown = (templates || []).slice(0, 3);
-  return html`<section class="gq-start" aria-label=${wizard ? 'Begin a first rite' : 'Get started with processes'} data-quickstart=${group.name}>
-    <div class="gq-start-head">
-      <h3>${wizard ? `Set ${group.name}'s heroes walking a rite` : `Get ${group.name}'s agents working through a process`}</h3>
-      ${onDismiss && html`<${Button} size="sm" variant="link" class="gq-link" data-quickstart-dismiss title="Fold this panel to one line in every empty group" onClick=${onDismiss}>✕ not now<//>`}
-    </div>
-    <p class="gq-sub">A process is a set of steps. Each step is done by an agent of this group, by you, or by a command. Steps run in order, and your answers can branch them.</p>
-    <form class="gq-ask" data-quickstart-draft onSubmit=${draft}>
-      <input type="text" class="gq-ask-in" aria-label="Describe the process in plain words" maxlength=${DRAFT_DESCRIPTION_MAX}
-        disabled=${!onDraft || pending} value=${description} onInput=${(event) => setDescription(event.currentTarget.value)}
-        placeholder="Describe the flow in plain words, e.g. implement the issue, have the reviewer check it, I approve, then merge" />
-      <${Button} size="sm" variant="primary" type="submit" disabled=${!onDraft || pending || !description.trim()}
-        title=${wizard
-          ? 'Ask a process scribe, working in the background, to set down the rite\'s steps from your words. It uses a model run. You grant its access first, and you review the steps before anything is performed.'
-          : 'Asks a process scribe, in the background, to draft the steps from your words. It uses a model run. You approve its access first and review the steps here; nothing runs until you press Start.'}
-      >✨ Draft steps<//>
-    </form>
-    ${onImport && html`<p class="gq-import"><${Button} size="sm" variant="link" class="gq-link" data-quickstart-import disabled=${pending} onClick=${onImport}
-      title="Import a shared .pwf workflow file: you review what it runs before anything is stored, and it never starts a run">⤒ Import a .pwf<//> or drop one on this group</p>`}
-    <div class="ui-eyebrow gq-sec">Or start from</div>
-    <div class="gq-starters">
-      ${STARTERS.map((starter) => {
-        const uses = starter.build(roster).uses;
-        return html`<button data-ui-exempt key=${starter.key} type="button" class="gq-starter" data-starter=${starter.key} disabled=${pending} onClick=${() => pick(starter)}>
-          <span class="gq-starter-title">${starter.title}</span>
-          <span class="gq-flow">${starter.chain.map(([kind, label], i) => html`${i > 0 && html`<i aria-hidden="true">→</i>`}<span>${GLYPHS[kind] || ''} ${label}</span>`)}</span>
-          <span class="gq-note">${starter.note}</span>
-          <span class="gq-tag">uses: ${uses.length ? uses.join(', ') : 'pick who later'}</span>
-        </button>`;
-      })}
-    </div>
-    <div class="ui-eyebrow gq-sec">Or reuse</div>
-    <div class="gq-reuse">
-      ${templates === null && html`<span class="gq-note">Loading the template library…</span>`}
-      ${templates !== null && !shown.length && html`<span class="gq-note">The template library is empty.</span>`}
-      ${shown.map((template) => html`<button data-ui-exempt key=${template.id} type="button" class="gq-chip" data-reuse-template=${template.id}
-        title=${`Start ${template.name} in ${group.name}`} onClick=${() => onReuse(template.id)}>▣ ${template.name}</button>`)}
-      ${shown.length > 0 && html`<span class="gq-note">from the template library ·</span>
-        <${Button} size="sm" variant="link" class="gq-link" onClick=${() => onReuse('')}>browse all ›<//>`}
-      <span class="gq-spacer"></span>
-      <${Button} size="sm" data-quickstart-blank onClick=${() => onEditList(blankStepList(''), '')}>blank step list<//>
-      <${Button} size="sm" data-quickstart-graph disabled=${pending} onClick=${() => onOpenGraph(null, '')}>⤢ full graph editor<//>
-    </div>
-  </section>`;
 }
 
 export function WhoPicker({ step, roster, roles, onChange }) {
@@ -450,11 +353,12 @@ function previewNow(node) {
   return { label: 'nobody now', detail: node.reason || '', waits: true, fails: !!node.fails };
 }
 
-// StepListEditor is the inline step-list editor (mock Q2). With `saved` it
-// edits one of the group's saved processes ({templateId, sourceHash}):
+// StepListEditor is the inline step-list editor (mock Q2) of one of the
+// group's stored processes (`saved`: {templateId, sourceHash, ref, listed}):
 // saving writes a new version of that template instead of a new one.
 // `groupInfo` is the group's process context ({roles, defaultSpawnProfile}).
-export function StepListEditor({ group, roster, list: initial, origin = '', saved = null, groupInfo = null, runAgent = null, api, source, wizard = false, onClose, onGraph = null, onNewer = null, notify = defaultNotify }) {
+// A `draft` (a new process, from New process) saves itself as it changes.
+export function StepListEditor({ group, roster, list: initial, origin = '', saved, draft = false, groupInfo = null, runAgent = null, api, source, wizard = false, onClose, onGraph = null, onNewer = null, notify = defaultNotify }) {
   const [list, setList] = useState(initial);
   const [name, setName] = useState(initial.template?.name || '');
   const [values, setValues] = useState({});
@@ -463,6 +367,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [diagnostics, setDiagnostics] = useState([]);
+  const [autosave, setAutosave] = useState({ state: '', error: '' });
   // newerKey is the view Start was refused for: a newer version of the saved
   // process exists, and these steps are not it. Editing them leaves the choice
   // behind, because a save then meets the template's own stale-version error.
@@ -479,9 +384,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   if (!created.current) {
     // `changed`: the graph view handed over unsaved edits, so these steps
     // are not what is stored.
-    created.current = saved
-      ? { key: saved.changed ? '' : viewKey, id: saved.templateId, sourceHash: saved.sourceHash || '', ref: saved.ref || '', pinned: true, listed: !!saved.listed }
-      : { key: '', id: '' };
+    created.current = { key: saved.changed ? '' : viewKey, id: saved.templateId, sourceHash: saved.sourceHash || '', ref: saved.ref || '', pinned: true, listed: !!saved.listed };
   }
   const needs = templateStartRequirements(view.template);
   const programProfiles = [...new Set([...needs.programProfiles, ...extraProfiles])].sort();
@@ -566,17 +469,21 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   // storeSteps writes the steps: a new version of the template already
   // stored, or a new template.
   const storeSteps = async (current, { listed, pinGroup }) => {
-    if (current.id) {
-      const body = await api.saveTemplate(current.id, view, { sourceHash: current.sourceHash, ...(listed ? { listed } : {}), ...(pinGroup && !current.pinned ? { pinGroup } : {}) });
-      created.current = { ...current, key: viewKey, body, sourceHash: String(body?.sourceHash || ''), ref: String(body?.ref || ''), pinned: current.pinned || !!pinGroup, listed: current.listed || !!listed };
-    } else {
-      const body = await api.createTemplate(view, { ...(listed === undefined ? {} : { listed }), ...(pinGroup ? { pinGroup } : {}) });
-      const id = String(body?.id || '');
-      if (!id) throw new Error('the template was not created');
-      created.current = { key: viewKey, id, body, sourceHash: String(body?.sourceHash || ''), pinned: !!pinGroup, listed: listed !== false };
-    }
+    const body = await api.saveTemplate(current.id, view, { sourceHash: current.sourceHash, ...(listed ? { listed } : {}), ...(pinGroup && !current.pinned ? { pinGroup } : {}) });
+    created.current = { ...current, key: viewKey, body, sourceHash: String(body?.sourceHash || ''), ref: String(body?.ref || ''), pinned: current.pinned || !!pinGroup, listed: current.listed || !!listed };
     return created.current.id;
   };
+  // A draft saves itself a moment after each change; a save already under
+  // way (a button's) leaves it for the next change. A name is needed first.
+  useEffect(() => {
+    if (!draft || busy || !name.trim() || created.current.key === viewKey) return undefined;
+    const timer = setTimeout(() => {
+      setAutosave({ state: 'saving', error: '' });
+      ensureSaved({}).then(() => setAutosave({ state: 'saved', error: '' }))
+        .catch((cause) => setAutosave({ state: 'failed', error: cause.message }));
+    }, AUTOSAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [draft, viewKey, busy]);
   const label = name.trim() || 'this process';
   // The start names the version on screen, so a save made elsewhere since it
   // opened cannot run in its place, with command consent given for other
@@ -589,16 +496,15 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     try {
       // A one-off start leaves no trace in the library or the group: only
       // Save to group pins, and the library lists only what is published.
-      const templateId = await ensureSaved(saved ? {} : { listed: false });
+      const templateId = await ensureSaved({});
       // Only the inputs the steps still use: a renamed {{param}} leaves its
       // old value behind in `values`.
       const params = Object.fromEntries(needs.params.filter((param) => values[param.name] !== undefined).map((param) => [param.name, values[param.name]]));
-      const ref = saved ? created.current.ref : '';
+      const ref = created.current.ref;
       await api.startGroupRun({
         templateId, ...(runAgent ? { agent: runAgent.id } : { group: group.name }), params, authorizeProgramProfiles: programProfiles.filter((p) => authorized.has(p)),
         ...(ref ? { [reviewed ? 'templateRef' : 'expectedRef']: ref } : {}),
       });
-      markQuickStart();
       notify(runAgent ? `Started ${label} for ${runAgent.name}` : `Started ${label} in ${group.name}`);
       void source?.refresh?.();
       onClose();
@@ -633,7 +539,6 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     setError('');
     try {
       await ensureSaved({ listed: true });
-      markQuickStart();
       notify(`Saved ${label} to the template library`);
       void source?.refresh?.();
       onClose();
@@ -650,9 +555,8 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     setBusy('group');
     setError('');
     try {
-      await ensureSaved(saved ? { pinGroup: group.name } : { listed: false, pinGroup: group.name });
-      markQuickStart();
-      notify(saved ? `Saved ${label}` : `Saved ${label} to ${group.name}`);
+      await ensureSaved({ pinGroup: group.name });
+      notify(`Saved ${label}`);
       void source?.refresh?.();
       onClose();
     } catch (cause) {
@@ -668,7 +572,6 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     setError('');
     try {
       const id = await ensureSaved({});
-      markQuickStart();
       const body = created.current.body;
       await openProcessDraft(body ? { id, name: name.trim(), view: createdEditView(view, id, body) } : { id, name: name.trim() });
       onClose();
@@ -684,15 +587,19 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         : unconsented.length ? `Allow ${consentSubject(consents.find((c) => c.profile === unconsented[0]))} to run first` : '';
   const newer = !!newerKey && newerKey === viewKey;
   const whoRows = list.steps.map((step, i) => ({ step, i, now: nowOf(step) }));
-  const title = saved ? (wizard ? 'Rite' : 'Process') : (wizard ? 'New rite' : 'New process');
-  return html`<section class="gq-editor" aria-label=${saved ? `Edit ${label} of ${group.name}` : `New process for ${group.name}`} data-step-editor=${group.name}
-    data-step-editor-saved=${saved?.templateId}>
+  const title = wizard ? 'Rite' : 'Process';
+  const tag = !draft ? `saved in ${group.name} · editing`
+    : autosave.state === 'saving' ? 'draft · saving…'
+      : autosave.state === 'failed' ? 'draft · not saved'
+        : created.current.key === viewKey ? `draft · autosaved to ${group.name}` : 'draft';
+  return html`<section class="gq-editor" aria-label=${`Edit ${label} of ${group.name}`} data-step-editor=${group.name}
+    data-step-editor-saved=${saved.templateId}>
     <div class="gq-main">
       <div class="gq-top">
         <span class="gq-dim">${title}</span>
         <input type="text" class="gq-name" aria-label="Process name" placeholder="name it, e.g. ship-feature" value=${name}
           onInput=${(event) => setName(event.currentTarget.value)} />
-        <span class="gq-tag">${saved ? `saved in ${group.name} · editing` : 'draft · not saved'}</span>
+        <span class="gq-tag" data-step-autosave=${draft ? autosave.state : undefined} title=${autosave.error || ''}>${tag}</span>
         ${onGraph && html`<span class="gm-toggle" role="group" aria-label="View">
           <button data-ui-exempt type="button" aria-pressed="true" class="on">☰ Steps</button>
           <button type="button" data-ui-exempt data-mini-graph title="Show the same draft as a graph"
@@ -752,19 +659,17 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         <${Button} size="sm" variant="primary" data-step-start disabled=${!!busy || !!blockedWhy || newer} title=${newer ? 'Choose a version above' : blockedWhy}
           onClick=${() => start()}>${busy === 'start' ? 'starting…' : '▶ Start now'}<//>
         <${Button} size="sm" data-step-save-group disabled=${!!busy || !name.trim() || hasErrors}
-          title=${saved ? `Save a new version of ${label}` : `Save to ${group.name}'s processes, for one-click reruns; the template library lists it only once you publish it`}
-          onClick=${saveToGroup}>${busy === 'group' ? 'saving…' : saved ? 'Save' : `Save to ${group.name}`}<//>
-        ${!saved?.listed && html`<${Button} size="sm" data-step-save-library disabled=${!!busy || !name.trim() || hasErrors}
-          title=${saved ? 'Save and list it in the template library, for every group to reuse' : 'Save it to the template library, for every group to reuse'}
-          onClick=${saveToLibrary}>${busy === 'save' ? 'saving…' : saved ? 'Save and publish' : 'Save to library'}<//>`}
+          title=${`Save a new version of ${label}`}
+          onClick=${saveToGroup}>${busy === 'group' ? 'saving…' : 'Save'}<//>
+        ${!saved.listed && html`<${Button} size="sm" data-step-save-library disabled=${!!busy || !name.trim() || hasErrors}
+          title="Save and list it in the template library, for every group to reuse"
+          onClick=${saveToLibrary}>${busy === 'save' ? 'saving…' : 'Save and publish'}<//>`}
         <${Button} size="sm" data-step-open-graph disabled=${!!busy || !name.trim()} title=${name.trim() ? 'Save the steps as a template and open it in the full graph editor' : 'Name the process first'}
           onClick=${openGraph}>${busy === 'graph' ? 'opening…' : '⤢ open in graph editor'}<//>
-        <${Button} size="sm" variant="link" class="gq-link" onClick=${onClose}>cancel<//>
+        <${Button} size="sm" variant="link" class="gq-link" data-step-close onClick=${onClose}>${draft ? 'close' : 'cancel'}<//>
       </div>
       ${blockedWhy && html`<div class="gq-why" data-start-blocked>▶ ${blockedWhy}</div>`}
-      <p class="gq-hint ui-hint">${saved
-    ? `Start now saves any changes as a new version, then starts it in ${group.name}. Nothing runs before Start.`
-    : `Start now runs the steps once in ${group.name} without adding them to its processes or the library; Save to ${group.name} keeps them for one-click reruns. Nothing runs before Start.`}</p>
+      <p class="gq-hint ui-hint">Start now saves any changes as a new version, then starts it in ${group.name}. Nothing runs before Start.</p>
       ${error && html`<div class="gq-error ui-error" role="alert">${error}</div>`}
     </div>
   </section>`;

@@ -11,6 +11,7 @@ function build(wizard, processes = true) {
   const make = {
     drawingBoard: (g) => made.push(['drawing_board', g.name]),
     page: (g) => made.push(['page', g.name]),
+    newProcess: (g) => made.push(['newProcess', g.name]),
     process: (g) => made.push(['process', g.name]),
   };
   const commands = buildResourceCreateCommands(groups, {
@@ -30,7 +31,11 @@ test('a phrased query makes the named resource in the named group, in either the
       ['new page awb', ['page', 'awb']],
       ['looking glass tclaude', ['page', 'tclaude']],
       ['start process in awb', ['process', 'awb']],
-      ['rite tclaude', ['process', 'tclaude']],
+      ['run process tclaude', ['process', 'tclaude']],
+      ['new process in awb', ['newProcess', 'awb']],
+      ['make a process tclaude', ['newProcess', 'tclaude']],
+      ['shape rite tclaude', ['newProcess', 'tclaude']],
+      ['begin rite tclaude', ['process', 'tclaude']],
     ];
     for (const [query, want] of cases) {
       const { commands, made, touched } = build(wizard);
@@ -53,4 +58,5 @@ test('no process command where the node offers no processes', () => {
   const { commands } = build(false, false);
   assert.equal(rankCommands(commands, 'process tclaude').length, 0);
   assert.equal(commands.length, 4);
+  assert.equal(build(false).commands.length, 8, 'with processes: New process and Begin a process per group');
 });

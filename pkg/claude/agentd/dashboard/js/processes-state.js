@@ -9,7 +9,6 @@ export function createProcessesState({ activeTab = dashboardState.activeTab } = 
   const notice = signal('');
   const templates = signal(null);
   const rename = signal(null);
-  const create = signal(null);
   const mutation = signal({ busy: false, error: null });
   let editor = null;
 
@@ -31,7 +30,6 @@ export function createProcessesState({ activeTab = dashboardState.activeTab } = 
   function setEditor(value) { editor = value; }
   function currentEditor() { return editor; }
   function setRename(value) { rename.value = value; }
-  function setCreate(value) { create.value = value; }
 
   const navLocation = computed(() => {
     const loc = { tab: 'processes', subtab: 'templates' };
@@ -49,15 +47,14 @@ export function createProcessesState({ activeTab = dashboardState.activeTab } = 
     scribes: processScribeSessions(dashboardState.snapshot.value),
     templates: templates.value?.templates || [],
     rename: rename.value,
-    create: create.value,
     mutation: mutation.value,
     requests: { templates: templatesRequest.request.value },
   }));
 
   return Object.freeze({
-    subtab, canvas, notice, templates, rename, create, mutation, view, location: navLocation,
+    subtab, canvas, notice, templates, rename, mutation, view, location: navLocation,
     templatesRequest, setSubtab, setCanvas, setNotice, beginMutation, endMutation,
-    setEditor, currentEditor, setRename, setCreate,
+    setEditor, currentEditor, setRename,
   });
 }
 

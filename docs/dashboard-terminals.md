@@ -97,7 +97,7 @@ this does anything on touch screens.
   [background sessions](#background-sessions).
 - **＋ New ▾** makes something: **Agent…** (the spawn dialog), **Shell…** and
   **Page…** (pick the group), **Drawing board…** (the drawing board list: open one, or create
-  one), **Process…** (the process list, with Processes on) and **Import
+  one), **New process** and **Open a process…** (an untitled process opened here, or the process list, with Processes on) and **Import
   drawing board…** (an `.excalidraw` file). Each group's header has a **＋** that opens
   the same menu for that group: a **Shell** in its directory, a **Drawing board** and a
   **Page** in the group, and an agent spawned into it.

@@ -470,12 +470,13 @@ export function addGroupShell(group) {
   if (!revealResourceOverlay(`shell:${group.name}`)) void openGroupWebTermPane(group.name, `${group.name} shell`);
 }
 
-// AddResource is the section's one ＋ button (icon-only): a process for the whole
-// group or for one agent (the start form, which also builds a new one), a
-// drawing board linked to the group, a blank live page, or the group's shell, each
-// with what it is in one line. `processesOnly` keeps just the two process
-// scopes, for the Processes perspective, which lists no drawing boards, pages or
-// shells. `open`/`onOpen` let the caller hold the menu's state, so it stays
+// AddResource is the section's one ＋ button (icon-only): New process (an
+// untitled draft of the group's, opened in place), Run a process… (the start
+// form, where the group or one agent is picked), a drawing board linked to the
+// group, a blank live page, or the group's shell, each with what it is in one
+// line. `onAddProcess` gets 'new' or 'run'. `processesOnly` keeps just the two
+// process items, for the Processes perspective, which lists no drawing boards,
+// pages or shells. `open`/`onOpen` let the caller hold the menu's state, so it stays
 // open when a click on a folded section line moves the button to the open
 // section's title row (a new instance).
 export function AddResource({ group, pages = [], api, source, wizard = false, notify = defaultNotify, onAddProcess, processesOnly = false, open: heldOpen, onOpen }) {
@@ -501,18 +502,18 @@ export function AddResource({ group, pages = [], api, source, wizard = false, no
   const addShell = () => { setOpen(false); addGroupShell(group); };
   const item = (attr, onClick, name, line, disabled = false) => html`<${MenuItem} ...${{ [attr]: true }} class="gr-new-item" onClick=${onClick}
     disabled=${disabled}><span class="gr-new-name">${name}</span><span class="gr-new-line">${line}</span><//>`;
-  const process = (scope) => () => { setOpen(false); onAddProcess(scope); };
+  const process = (kind) => () => { setOpen(false); onAddProcess(kind); };
   // Icon-only, like the Agents section's spawn buttons beside it, so the
   // name lives in the title and aria-label.
   const addTitle = processesOnly
-    ? `Start a process in ${group.name}: for the group or for one agent`
+    ? `New process in ${group.name}, or run a saved one`
     : `Add a resource to ${group.name}: a process, drawing board, live page or shell`;
   return html`<span class="gr-add" ref=${ref}>
     <${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn" domRef=${trigger} data-resource-add=${group.name} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       title=${addTitle} aria-label=${addTitle} onClick=${() => setOpen(!open)}><span class="gr-add-plus" aria-hidden="true">＋</span><span class="gr-add-caret" aria-hidden="true">▾</span><//>
     ${open && html`<${Menu} size="sm" class="gr-add-menu gr-new-menu">
-      ${item('data-resource-add-process', process('group'), wizard ? 'Rite for the party' : 'Process for the group', wizard ? 'Begin a written rite, or shape a new one' : 'Run a saved process, or build a new one')}
-      ${item('data-resource-add-process-agent', process('agent'), wizard ? 'Rite for one hero' : 'Process for one agent', wizard ? 'Pick a hero; its steps are that hero\'s labour' : 'Pick a member; its steps run as that agent')}
+      ${item('data-resource-new-process', process('new'), wizard ? '◈ New rite' : '◈ New process', wizard ? 'Shape it here, as a graph' : 'Opens the editor here, graph first')}
+      ${item('data-resource-run-process', process('run'), wizard ? '▶ Begin a rite…' : '▶ Run a process…', wizard ? 'A written one, for the party or one hero' : 'A saved one, for the group or one agent')}
       ${!processesOnly && html`<${MenuSep} />
       ${item('data-resource-add-drawing-board', addDrawingBoard, 'Drawing board', "A drawing board shared with the group's agents")}
       ${item('data-resource-add-page', addPage, 'Live page', 'A web page a member serves, live here for you to view and mark up; starts blank')}

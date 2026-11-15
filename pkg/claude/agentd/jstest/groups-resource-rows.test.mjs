@@ -112,7 +112,7 @@ test('a process pill reads its own group\'s entry: one template pinned in two gr
   assert.equal(pill.resourceView(snap, 9, 'process', 'deploy'), 'running');
 });
 
-test('＋ lists both process scopes, Board, Live page and Shell with a line each; Shell needs the group\'s directory', async (t) => {
+test('＋ lists New process, Run a process, Board, Live page and Shell with a line each; Shell needs the group\'s directory', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/groups-resources.js');
   const { container } = await harness.mount(harness.html`<div>
@@ -128,7 +128,7 @@ test('＋ lists both process scopes, Board, Live page and Shell with a line each
   assert.equal(trigger.getAttribute('title'), trigger.getAttribute('aria-label'));
   await harness.act(() => harness.fireEvent(trigger, 'click'));
   const names = [...withDir.querySelectorAll('.gr-new-name')].map((el) => el.textContent);
-  assert.deepEqual(names, ['Process for the group', 'Process for one agent', 'Drawing board', 'Live page', 'Shell']);
+  assert.deepEqual(names, ['◈ New process', '▶ Run a process…', 'Drawing board', 'Live page', 'Shell']);
   assert.match(withDir.querySelector('[data-resource-add-shell]').textContent, /A terminal in \/src\/crew/);
   assert.equal(withDir.querySelector('[data-resource-add-shell]').disabled, false);
   await harness.act(() => harness.fireEvent(bare.querySelector('[data-resource-add]'), 'click'));
@@ -188,7 +188,7 @@ test('⋯ renames a row in place and moves it to another group', async (t) => {
   assert.deepEqual(notes, ['Renamed App to Checkout', 'Moved App to ops']);
 });
 
-test('＋ hands each process item its scope, and processesOnly lists just those two', async (t) => {
+test('＋ hands New process and Run a process over, and processesOnly lists just those two', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/groups-resources.js');
   const scopes = [];
@@ -196,12 +196,12 @@ test('＋ hands each process item its scope, and processesOnly lists just those 
     processesOnly=${true} onAddProcess=${(scope) => scopes.push(scope)} />`);
   const open = () => harness.act(() => harness.fireEvent(container.querySelector('[data-resource-add]'), 'click'));
   await open();
-  assert.deepEqual([...container.querySelectorAll('.gr-new-name')].map((el) => el.textContent), ['Process for the group', 'Process for one agent']);
-  await harness.act(() => harness.fireEvent(container.querySelector('[data-resource-add-process-agent]'), 'click'));
+  assert.deepEqual([...container.querySelectorAll('.gr-new-name')].map((el) => el.textContent), ['◈ New process', '▶ Run a process…']);
+  await harness.act(() => harness.fireEvent(container.querySelector('[data-resource-new-process]'), 'click'));
   assert.equal(container.querySelector('.gr-new-menu'), null, 'picking closes the menu');
   await open();
-  await harness.act(() => harness.fireEvent(container.querySelector('[data-resource-add-process]'), 'click'));
-  assert.deepEqual(scopes, ['agent', 'group']);
+  await harness.act(() => harness.fireEvent(container.querySelector('[data-resource-run-process]'), 'click'));
+  assert.deepEqual(scopes, ['new', 'run']);
 });
 
 test('Resources sorts by its headers, across kinds', async (t) => {

@@ -14,7 +14,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { unauthorizedProfiles } from './process-context.js';
 import { viewToStepList } from './process-step-list.js';
-import { defaultNotify, markQuickStart } from './groups-quickstart.js';
+import { defaultNotify } from './groups-quickstart.js';
 import { DraftStartWarning, noteDraftOpened, reopenScribeDraft, scribeDraftsOf, scribeStartWarning } from './groups-scribe-draft.js';
 import { bindSavedProcessDnd, registerSavedProcessRemover } from './groups-saved-process-dnd.js';
 import { WorkflowExportButton } from './process-workflow-share.js';
@@ -75,7 +75,6 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
       authorizeProgramProfiles: profiles.filter((profile) => authorized.has(profile)),
       ...(expectedRef ? { expectedRef } : {}),
     });
-    markQuickStart();
     notify(`Started ${process.name} in ${group.name}`);
     void source?.refresh?.();
     onClose();

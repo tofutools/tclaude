@@ -17,7 +17,8 @@ which half is which.
 ## Start here
 
 1. Create a template under **Automations › Processes**, or let **Edit with agent** draft it.
-2. Start a run from a group's Resources section: the **＋** menu › **Process for the group**.
+   Or, in a group's Resources section, the **＋** menu › **◈ New process** opens a new one in place.
+2. Start a run from a group's Resources section: the **＋** menu › **▶ Run a process…**.
 3. Follow it in [Groups](dashboard-groups.md#agents-and-processes).
 
 [In the dashboard](#in-the-dashboard) covers all of this. The next sections are
@@ -87,7 +88,7 @@ command the workflow would run, the roles it asks for and the signer, and an
 
 In the dashboard, **share** downloads a `.pwf` from a template's row, the full
 editor (saved versions only) or a group's process strip. Import one from the
-Processes toolbar, the dock, or a group: use *Import a .pwf* in *Get started*,
+Processes toolbar, the dock, or a group: use *↥ Import .pwf* under a new process's canvas,
 or drop the file on the group in Groups › Processes. A group's import offers to
 pin the process to that group.
 
@@ -346,14 +347,27 @@ The dashboard covers the whole loop: authoring,
 starting a run in a group or for one agent, following it, and acting on it.
 All of it goes through the same daemon routes and permissions as the CLI.
 
-**Quick start** (Groups › Processes). Before your first process, a group
-with no processes shows *Get started* in its body; afterwards (or once you
-dismiss it) it folds to *No processes yet · Get started ▸*. In the Both view,
-*Get started* opens from the start form instead: the **＋** menu › *Process for
-the group* (or *for one agent*), then *or build a new one ▸*. From it, pick a starter (filled from the group's roles and
-members), reuse a library template, or begin a blank step list. Or describe
-the flow in plain words and press *Draft steps*: a process scribe drafts the
-steps in the background for the group's members and roles.
+**New process** (Groups). The group's **＋** menu › **◈ New process** (or
+*New process* in a group with none yet) stores an untitled draft pinned to the
+group at once and opens it in place in the graph editor, with its name field
+focused: type the name and press Enter. There is no name dialog. The draft
+saves itself as you edit (*draft · autosaved to* the group), and one closed
+untouched is not kept. *◈ Graph* and *☰ Steps* show the same draft from the
+start. The empty canvas reads start → *＋ Add first step* → end, and *Start
+from* under it fills it: a starter (filled from the group's roles and members,
+which also names an untitled draft), *✨ Describe it*, *↥ Import .pwf*, or
+*More ways of working ›* (a library template). The inline inspector keeps to
+the essentials (what, who, if nobody takes it, then); *⤢ Full editor* opens
+the same draft over the page, still pinned, with *← Back inline* and *▶ Run…*
+in its bar. *Save* closes the inline editor and *▶ Run…* opens the start form
+on the draft. The other ways to make one (**＋ new template** under Automations
+› Processes, the dock's ＋, **＋ New ▾** › **New process** and the palette's
+*Make a process in …*) take the same path: in a group they open it there, and
+otherwise they store an untitled library template and open it in the editor.
+
+With *✨ Describe it*, describe the flow in plain words and press *Draft
+steps*: a process scribe drafts the steps in the background for the group's
+members and roles.
 This uses a model run, so it only ever starts from that click, after you
 approve the scribe's access: the same grant as any process scribe
 (`process.templates.read` and `process.templates.manage`, every other
@@ -461,6 +475,7 @@ things there are specific to processes:
   groups it is pinned to (*Not pinned* last), with a box that searches names,
   ids, descriptions and groups. Pick one to open its editor as a Collab tab, or
   type a new name and *＋ New process* stores a blank template and opens it.
+  **＋ New ▾** › **New process** skips the list and opens an untitled one.
   `/collab/processes/<id>` opens that template's tab, and
   `/collab/processes` opens the list. A process tab reorders, joins tab
   groups and drags off the strip like a drawing board tab, and its **View**
@@ -491,8 +506,8 @@ things there are specific to processes:
   *⇲ unwrap* inlines a body again.
 
 **Starting a run.** In Groups, in the **Both** or **Processes** focus, open
-the **＋** menu on the group and pick **Process for the group**, or **Process for
-one agent** for a run bound to one agent: pick a template, fill its params, and tick the
+the **＋** menu on the group and pick **▶ Run a process…**, and choose the group
+or one agent (for a run bound to that agent): pick a template, fill its params, and tick the
 program profiles you authorize it to run under (never pre-ticked). A group process
 is group-scoped (⌂) and an agent process is agent-scoped (◉). The CLI equivalent
 for an agent is `--agent`.
