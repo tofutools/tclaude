@@ -75,12 +75,12 @@
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 3px 10px; border: 1px solid var(--ui-line); border-radius: 14px; font-size: 13px; color: var(--ui-text);
 }
-:root[data-layout="phone"] .phone-mail-inline { padding: 0 0 12px 52px; }
-:root[data-layout="phone"] .phone-mail-inline .mail-decision {
-  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-  margin: 0; padding: 0; border: 0; background: none;
+/* A decision waiting on the operator: a pill on its row (the row opens it;
+   the options are in the reader). */
+:root[data-layout="phone"] .phone-mail-decide {
+  align-self: flex-start; margin-top: 6px; padding: 2px 10px;
+  border: 1px solid var(--phone-accent); border-radius: 14px; color: var(--phone-accent); font-size: 13px;
 }
-:root[data-layout="phone"] .phone-mail-inline .mail-decision-label { display: none; }
 /* A plain access request is its approval card. */
 :root[data-layout="phone"] .phone-mail-list > li.phone-mail-card { padding: 8px var(--phone-gutter); border-bottom: 0; overflow: visible; touch-action: auto; user-select: auto; }
 :root[data-layout="phone"] .phone-mail-pager {
@@ -178,3 +178,8 @@
    Terminal › opens it here instead. */
 :root[data-layout="phone"] .phone-mail-reader [data-act="msg-focus"] { display: none; }
 :root[data-layout="phone"] .phone-mail :is(.phone-empty, .ui-error-box) { margin: 12px var(--phone-gutter); }
+
+/* The reader's decision: Now's decision block (a note, full-width options,
+   Dismiss) under the message. */
+:root[data-layout="phone"] .phone-mail-decision { margin-top: 18px; }
+:root[data-layout="phone"] .phone-mail-decision-head { margin: 0 2px 8px; }

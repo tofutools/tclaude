@@ -66,7 +66,8 @@ function Requests({ snapshot, current, actions, fetchImpl, notify, openInMail })
 }
 
 // SudoRows are the sudo grants running: who has what, by whom, the time left
-// and why, each with its Revoke.
+// (and the uses left, when the grant has a use limit) and why, each with its
+// Revoke.
 function SudoRows({ current, actions }) {
   return html`${current.mutation.error && html`<div role="alert" class="ui-error-box">${current.mutation.error}</div>`}
     <ul class="phone-list">${current.sudo.map((grant) => {
@@ -75,7 +76,7 @@ function SudoRows({ current, actions }) {
         <div class="phone-access-text">
           <span class="phone-access-name">${grant.conv_title || shortAgentId(grant.agent_id, grant.conv_id) || '(unknown)'}</span>
           <span class="phone-access-sub"><span class="slug">${grant.slug}</span>${grant.granted_by ? ` · by ${grant.granted_by}` : ''} · ${relTime(grant.granted_at)}</span>
-          <span class="phone-access-left">${fmtRemaining(grant.remaining_seconds)} left${grant.reason ? ` · "${grant.reason}"` : ''}</span>
+          <span class="phone-access-left">${fmtRemaining(grant.remaining_seconds)} left${grant.uses_limit > 0 ? ` · ${grant.uses_left} of ${grant.uses_limit} uses left` : ''}${grant.reason ? ` · "${grant.reason}"` : ''}</span>
         </div>
         <${Button} class="phone-btn phone-btn-no phone-access-revoke" disabled=${busy}
           aria-label=${`Revoke ${grant.slug} from ${grant.conv_title || grant.agent_id || 'this agent'}`}

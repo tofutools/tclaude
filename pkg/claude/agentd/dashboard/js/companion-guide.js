@@ -34,7 +34,9 @@ export const TARGET_SELECTOR = [
 // A cue never points at the operator's own consent: an agent could steer an
 // approval of its own request, or a decision, with a ring and a note. Those
 // controls cannot be a target or a mark.
-const CONSENT_AREAS = '.companion-approval, .companion-decision, .mail-decision, .access-btn';
+// .phone-decision-options holds a decision's answers on a phone (Mail's
+// reader, Now's ⋯ sheet), as .mail-decision does on the desktop.
+const CONSENT_AREAS = '.companion-approval, .companion-decision, .mail-decision, .phone-decision-options, .access-btn';
 const CONSENT_WORDS = /^(approve|allow|deny|decline)\b/i;
 
 export function consentControl(el) {

@@ -171,6 +171,12 @@ test('the Now model: the strip, a request in one line, the options a card shows'
   assert.deepEqual(model.usageStrip(null), []);
   assert.equal(model.approvalContext({ perm: 'git.push', body: '\n  push it\nmore' }), 'git.push: push it');
   assert.equal(model.approvalContext({ perm: 'sudo.git.push,agent.spawn' }), 'Plan: git.push, agent.spawn');
+  const planBody = 'Sudo request:\n  slugs:\n    - agent.spawn\n    - git.push\n  duration: 1h30m0s\n  expires_at: 2026-11-15T12:00:00Z\n  reason: run the release smoke';
+  assert.equal(model.approvalContext({ perm: 'sudo.agent.spawn,git.push', body: planBody }), 'Plan: agent.spawn, git.push · for 1 h 30 min');
+  assert.deepEqual(model.planDetails({ body: planBody }),
+    { slugs: ['agent.spawn', 'git.push'], duration: '1 h 30 min', reason: 'run the release smoke', expiresAt: '2026-11-15T12:00:00Z' });
+  assert.deepEqual(model.planDetails({ body: 'not a plan' }), { slugs: [], duration: '', reason: '', expiresAt: '' });
+  assert.deepEqual(['30m0s', '1h0m0s', '45s', '2h5m0s', 'soon'].map(model.goDuration), ['30 min', '1 h', '45 s', '2 h 5 min', 'soon']);
   assert.equal(model.approvalContext({ perm: 'http.get', method: 'GET', path: '/api/x' }), 'http.get: GET /api/x');
   const pick = (options, recommended) => model.cardOptions({ options, recommended }).map((o) => o.label);
   assert.deepEqual(pick(['a', 'b', 'c'], 0), ['a', 'b']);

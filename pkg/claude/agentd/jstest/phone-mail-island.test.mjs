@@ -119,7 +119,7 @@ test('the row helpers: subject and preview line, inline decisions, plain access 
   assert.equal(island.avatarHue('Alpha'), island.avatarHue('Alpha'));
 });
 
-test('the list shows mailbox chips, rows with previews and files, and answers decisions inline', async (t) => {
+test('the list shows mailbox chips, rows with previews and files, and marks decisions without answering them', async (t) => {
   const { $, $$, calls, tap } = await setup(t);
   const chips = $$('.phone-mail-chip').map((chip) => chip.textContent.trim());
   assert.deepEqual(chips, ['Human 1', 'All agent mail', 'Access 2', 'webshop 3'], 'pinned folders first, then groups');
@@ -131,8 +131,12 @@ test('the list shows mailbox chips, rows with previews and files, and answers de
   assert.match(rows[0].querySelector('.phone-mail-file').textContent, /🖼 shot\.png · 10 B/, 'a file shows its size');
   assert.equal(rows[0].querySelector('.phone-av').textContent, 'A', 'the sender\'s avatar');
   assert.equal(rows[0].querySelector('.phone-mail-group'), null);
-  assert.ok(rows[1].querySelector('.phone-mail-inline'), 'a pending decision answers on its row');
-  assert.equal(rows[0].querySelector('.phone-mail-inline'), null);
+  assert.equal(rows[1].querySelector('.phone-mail-decide').textContent, 'Decide · 2 options ›', 'a pending decision says so');
+  assert.equal(rows[0].querySelector('.phone-mail-decide'), null);
+  assert.deepEqual([...rows[1].querySelectorAll('button')].map((b) => b.className), ['phone-mail-open'],
+    'no answer on the row: its one button opens it');
+  await tap(rows[1].querySelector('.phone-mail-decide'));
+  assert.deepEqual(calls.at(-1), ['selectMessage', 2, { navigate: true }], 'a tap on the pill opens the message');
 
   await tap($$('.phone-mail-chip')[3]);
   assert.deepEqual(calls.at(-1), ['selectMailbox', 'group:webshop', { navigate: true }]);
@@ -375,6 +379,44 @@ test('a decision Mail could not record frees the card\'s buttons again', async (
   await harness.act(async () => {});
   assert.equal(approve().textContent.trim(), 'Approve', 'not stuck on Approving…');
   assert.equal(approve().disabled, false);
+});
+
+test('a decision\'s reader answers it with a note, as on Now, or dismisses it', async (t) => {
+  const posts = [];
+  const fetchBefore = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { posts.push([url, JSON.parse(init.body)]); return { ok: true }; };
+  t.after(() => { globalThis.fetch = fetchBefore; });
+  const { $, $$, tap, harness } = await setup(t, { selectedMsgId: 2 });
+  const block = $('.phone-mail-decision');
+  assert.ok(block, 'the phone decision block');
+  assert.equal($('.mail-decision'), null, 'not the desktop Decide: box');
+  assert.deepEqual([...block.querySelectorAll('.phone-decision-options button')].map((b) => b.textContent.trim()), ['Ship', 'Wait', 'Dismiss']);
+  const note = block.querySelector('.phone-decision-note');
+  await harness.act(() => { note.value = 'after lunch'; note.dispatchEvent(new globalThis.Event('input', { bubbles: true })); });
+  await tap($$('.phone-decision-options button')[1]);
+  await harness.act(async () => {});
+  assert.deepEqual(posts, [['/api/human-messages/reply', { id: 2, choice: 2, body: 'after lunch' }]]);
+});
+
+test('an answered decision\'s reader says what was decided', async (t) => {
+  const { $ } = await setup(t, { selectedMsgId: 2, messages: [message(2, { options: ['Ship', 'Wait'], decision: 'Ship' })] });
+  assert.equal($('.phone-mail-decision'), null);
+  assert.match($('.mail-decision.decided').textContent, /Decided:\s*Ship/);
+});
+
+test('a sudo plan\'s reader reads its body as facts: what, for how long, why', async (t) => {
+  const request = { id: 'ar_2', perm: 'sudo.agent.spawn', conv_title: 'cold-reviewer', created_at: '2026-07-12T00:00:00Z',
+    body: 'Sudo request:\n  slugs:\n    - agent.spawn\n  duration: 30m0s\n  expires_at: 2026-07-12T00:30:00Z\n  reason: spawn a test runner' };
+  const access = (controller) => {
+    controller.messageView = () => ({ access: true, allAccess: [request], pendingAccess: [request], handledAccess: [] });
+  };
+  const reader = await setup(t, { selected: 'access-requests', selectedMsgId: 'ar_2' }, access);
+  const facts = reader.$$('.phone-mail-facts > div').map((d) => [d.querySelector('dt').textContent, d.querySelector('dd').textContent]);
+  assert.deepEqual(facts, [['Permissions', 'agent.spawn'], ['For', '30 min'], ['Reason', 'spawn a test runner']], 'no raw body');
+  const card = reader.$('.phone-box-key');
+  assert.match(card.textContent, /Plan: agent\.spawn · for 30 min/);
+  assert.match(card.querySelector('.phone-plan-reason').textContent, /“spawn a test runner”/);
+  assert.match(card.getAttribute('aria-label'), /because: spawn a test runner$/);
 });
 
 test('a plain access request\'s reader stacks what it asks for, with Always allow', async (t) => {

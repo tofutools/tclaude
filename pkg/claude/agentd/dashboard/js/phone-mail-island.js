@@ -41,7 +41,8 @@ import { companionAgents } from './companion-model.js';
 import { createMessageAccessDialogActions } from './message-access-dialog-actions.js';
 import { openPhoneCompose } from './phone-compose-sheet.js';
 import { openPhoneSheet } from './phone-sheet.js';
-import { PhoneApprovalCard } from './phone-approval.js';
+import { DecisionAnswer, PhoneApprovalCard } from './phone-approval.js';
+import { planDetails } from './phone-now-model.js';
 import { shellToast } from './shell-state.js';
 import { trustLock } from './lock-reason.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
@@ -77,8 +78,11 @@ export function rowLines(message) {
   return { subject: lines[0] || '(no subject)', preview: lines[1] || '' };
 }
 
-// pendingDecision reports whether a row can answer its decision inline: a
-// notification with options that nobody has answered or dismissed yet.
+// pendingDecision reports whether a message is a decision still waiting on
+// the operator: a notification with options that nobody has answered or
+// dismissed yet. Its row says so (Decide · N options ›) but never answers it:
+// a tap opens the message, where the options are (an answer sent from the
+// list was too easy to send by a tap meant to open it).
 export function pendingDecision(message, folder) {
   return folder === HUMAN && Array.isArray(message.options) && message.options.length >= 2
     && !message.decision && !message.dismissed_at;
@@ -229,11 +233,9 @@ function MessageRow({ message, folder, aggregate, open, controller, selecting, s
         <span class="phone-mail-subject">${subject}</span>
         ${preview && html`<span class="phone-mail-preview">${preview}</span>`}
         <${AttachmentChips} message=${message} />
+        ${!selecting && pendingDecision(message, folder) && html`<span class="phone-mail-decide">Decide · ${message.options.length} options ›</span>`}
       </span>
     </button>
-    ${!selecting && pendingDecision(message, folder) && html`<div class="phone-mail-inline">
-      <${DecisionChoices} message=${message} toast=${shellToast} onDone=${controller.reloadMail} remote=${!!remoteNodeID()} />
-    </div>`}
   <//>`;
 }
 
@@ -560,7 +562,13 @@ function PhoneReader({ current, controller, item, active, back }) {
     </div>
     <${MessageBody} message=${item} agentMail=${!human} />
     <${PhoneAttachments} message=${item} />
-    ${human && html`<${DecisionChoices} message=${item} toast=${shellToast} onDone=${controller.reloadMail} />`}
+    ${human && (pendingDecision(item, HUMAN) && (item.from_conv || item.from_agent)
+      ? html`<section class="phone-mail-decision" aria-label="Decide">
+          <h2 class="ui-eyebrow phone-mail-decision-head">Decide</h2>
+          <${DecisionAnswer} decision=${item} notify=${shellToast}
+            onDone=${(sent) => { shellToast(sent ? `Sent “${sent}” to ${sender}` : `Dismissed; ${sender} is told`, false); controller.reloadMail(); }} />
+        </section>`
+      : html`<${DecisionChoices} message=${item} toast=${shellToast} onDone=${controller.reloadMail} />`)}
     ${human && html`<${MessageAction} message=${item} toast=${shellToast} onDone=${controller.reloadMail} onRefused=${controller.reloadMail} />`}
     ${canReply && html`<div class="phone-mail-replybar">
       <button data-ui-exempt type="button" class="phone-mail-reply" onClick=${reply}>Reply to ${sender}…</button>
@@ -606,15 +614,22 @@ function AccessReader({ controller, item, active, back }) {
   const lapsed = !controller.accessIsPending(item);
   usePhonePage({ title: '', onBack: back, hideNav: true, routed: true, actions: [] }, active);
   useLayoutEffect(() => { globalThis.scrollTo?.(0, 0); }, [item.id]);
+  // A sudo plan's body is agentd's "Sudo request:" preview; read as facts
+  // (what, how long, why) it replaces the raw body.
+  const plan = String(item.perm || '').startsWith('sudo.') ? planDetails(item) : null;
+  const planned = !!plan?.slugs.length;
   const rows = [
-    ['Permission', item.perm, true], ['Endpoint', item.path, true], ['Group', item.target_group],
+    ...(planned
+      ? [['Permissions', plan.slugs.join(', '), true], ['For', plan.duration], ['Reason', plan.reason]]
+      : [['Permission', item.perm, true]]),
+    ['Endpoint', item.path, true], ['Group', item.target_group],
     ['Target', item.target_conv_title || item.target_conv_id], ['Scope', item.scope_display, true],
   ].filter(([, value]) => value);
   return html`<div class="phone-mail-reader phone-mail-read">
     <h1 class="phone-mail-title">${controller.accessSubject(item)}</h1>
     <${PhoneApprovalCard} request=${item} from=${who} notify=${shellToast} decide=${decideThrough(controller)} />
     <dl class="phone-mail-facts">${rows.map(([k, v, mono]) => html`<div key=${k}><dt>${k}</dt><dd class=${mono ? 'mono' : undefined}>${v}</dd></div>`)}
-      ${item.body && html`<div><dt>${item.body_label || 'Body'}</dt><dd><pre class="phone-mail-pre">${item.body}</pre></dd></div>`}</dl>
+      ${item.body && !planned && html`<div><dt>${item.body_label || 'Body'}</dt><dd><pre class="phone-mail-pre">${item.body}</pre></dd></div>`}</dl>
     ${item.auto_grantable && html`<div class="phone-btns phone-mail-always">
       ${item.scope_display && html`<${Button} class="phone-btn phone-btn-grow" title=${`Approve now, and from now on for ${item.scope_display} only`}
         disabled=${always || lapsed} onClick=${() => allow('always_scoped')}>Always allow — ${item.scope_display}<//>`}
