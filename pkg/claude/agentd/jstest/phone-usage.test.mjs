@@ -136,13 +136,22 @@ test('phone Usage helpers', async (t) => {
   assert.equal(quotaBarTone({ latest: null }), 'ok');
   assert.deepEqual(spanChips({ span: 'calmonth', monthLabel: 'August 2026' }).map((chip) => chip.key),
     ['month', '7d', '30d', '90d', 'calmonth'], 'a browsed month shows as its own chip');
+  // Only the models narrowed (opus kept): codex has no kept model, so it is
+  // not a provider row, and the rows add up to the total.
   const totals = costTotals({
-    narrowed: { total_usd: 2 }, providers: ['a', 'b'], models: ['m'],
-    selectedProviders: new Set(['a']), selectedModels: new Set(['m']),
-    providerStats: [{ provider: 'a', cost: 2 }, { provider: 'b', cost: 5 }],
-    modelStats: [{ model: 'm', cost: 2, available: true, availableProviders: ['a'] }],
+    narrowed: {
+      total_usd: 3,
+      agents: [
+        { agent_id: 'a', provider: 'anthropic', model: 'opus', cost_usd: 1 },
+        { agent_id: 'a', provider: 'anthropic', model: 'opus', cost_usd: 1 },
+        { agent_id: 'b', provider: 'anthropic', model: 'opus', cost_usd: 1 },
+      ],
+    },
+    providers: ['anthropic', 'codex'], models: ['gpt', 'opus'],
+    selectedProviders: new Set(['anthropic', 'codex']), selectedModels: new Set(['opus']),
     rows: [],
   });
-  assert.deepEqual(totals.providers.map((p) => p.provider), ['a'], 'a provider the desktop filtered out is left out');
+  assert.deepEqual(totals.providers.map((p) => [p.key, p.cost, p.agentCount, p.share]), [['anthropic', 3, 2, 1]]);
+  assert.deepEqual(totals.models.map((m) => [m.key, m.subs]), [['opus', ['anthropic']]]);
   assert.equal(totals.narrowed, true);
 });

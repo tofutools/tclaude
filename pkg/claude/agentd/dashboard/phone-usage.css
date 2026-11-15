@@ -1,8 +1,9 @@
 /* Usage on a phone (phone-usage.js): the hub draws Quota and Costs as
    summaries, so the desktop islands under it stay mounted (they keep their
    data fresh, and Costs' span buttons do the span changes) but hidden. Without
-   the hub (no data-subview) they show, with the fallback rules further down. */
-:root[data-layout="phone"] #tab-usage[data-subview] :is(#usage-root, #costs-root) { display: none; }
+   the hub (no data-subview) they show, with the fallback rules further down.
+   An island that failed to load keeps its alert on screen. */
+:root[data-layout="phone"] #tab-usage[data-subview] :is(#usage-root, #costs-root):not(:has(> [role="alert"])) { display: none; }
 
 :root[data-layout="phone"] .phone-usage-chips { margin-bottom: 12px; }
 :root[data-layout="phone"] .phone-cost-spans { margin-bottom: 10px; }

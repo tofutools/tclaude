@@ -14,7 +14,7 @@
 
 import { h } from 'preact';
 import htm from 'htm';
-import { COST_SPANS, fmtUSD } from './costs-model.js';
+import { COST_SPANS, costModelLabel, costProviderLabel, fmtUSD } from './costs-model.js';
 import { shortAgentId } from './helpers.js';
 import { formatUsageTime, usageProviderLabel, usageWindowScopeLabel } from './usage-history-model.js';
 import { Sparkline, topCostAgents } from './usage-overview-charts.js';
@@ -43,22 +43,37 @@ export function quotaCardMeta(item, wizard = false) {
 }
 
 // costTotals are the Costs view's figures as the phone lists them: the
-// providers and models the current selection covers (the desktop's
-// Providers and Models choices still apply), the top agents, and the total.
+// totals per provider and per model, and the top agents, all read off the
+// narrowed rows (the desktop's Providers and Models choices still apply), so
+// the lists add up to the total.
 export function costTotals(costs, topLimit = 5) {
-  const providers = (costs.providerStats || [])
-    .filter((entry) => !costs.selectedProviders || costs.selectedProviders.has(entry.provider))
-    .filter((entry) => entry.cost > 0);
-  const models = (costs.modelStats || [])
-    .filter((entry) => entry.available && (!costs.selectedModels || costs.selectedModels.has(entry.model)))
-    .filter((entry) => entry.cost > 0);
+  const rows = costs.narrowed?.agents || [];
+  const fold = (labelOf, subOf) => {
+    const byKey = new Map();
+    for (const row of rows) {
+      if (!(row.cost_usd > 0)) continue;
+      const key = labelOf(row);
+      const entry = byKey.get(key) || { key, cost: 0, agents: new Set(), subs: new Set() };
+      entry.cost += row.cost_usd;
+      entry.agents.add(row.agent_id || row.conv_id);
+      entry.subs.add(subOf(row));
+      byKey.set(key, entry);
+    }
+    const total = [...byKey.values()].reduce((sum, entry) => sum + entry.cost, 0);
+    return [...byKey.values()].map((entry) => ({
+      key: entry.key, cost: entry.cost, agentCount: entry.agents.size, subs: [...entry.subs].sort(),
+      share: total > 0 ? entry.cost / total : 0,
+    })).sort((a, b) => b.cost - a.cost || a.key.localeCompare(b.key));
+  };
   const narrowed = (costs.selectedProviders?.size ?? 0) < (costs.providers?.length ?? 0)
     || (costs.selectedModels?.size ?? 0) < (costs.models?.length ?? 0);
   return {
     total: costs.narrowed?.total_usd || 0,
     real: costs.narrowed?.real_total_usd || 0,
     whatIf: costs.narrowed?.what_if_total_usd || 0,
-    providers, models, narrowed,
+    providers: fold(costProviderLabel, costModelLabel),
+    models: fold(costModelLabel, costProviderLabel),
+    narrowed,
     top: topCostAgents(costs.rows, topLimit),
   };
 }
@@ -145,9 +160,6 @@ export function PhoneCosts({ costs, wizard, pickSpan, spanLabel }) {
   }
   if (!loaded) return html`<div class="phone-usage-costs">${chips}<div class="phone-empty">Loading…</div></div>`;
   const t = costTotals(costs);
-  const sum = (list) => list.reduce((acc, entry) => acc + entry.cost, 0) || 1;
-  const providerSum = sum(t.providers);
-  const modelSum = sum(t.models);
   return html`<div class="phone-usage-costs">
     ${chips}
     <${Card} class="phone-cost-total" role="group" aria-label=${`Total ${spanLabel}`}>
@@ -161,14 +173,14 @@ export function PhoneCosts({ costs, wizard, pickSpan, spanLabel }) {
     <//>
     <${Section} title=${w('By provider', 'By house')} count=${t.providers.length}>
       ${t.providers.length
-        ? html`<ul class="phone-cost-list">${t.providers.map((entry) => html`<${CostRow} key=${entry.provider} name=${entry.provider}
-          sub=${`${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}`} cost=${entry.cost} share=${entry.cost / providerSum} />`)}</ul>`
+        ? html`<ul class="phone-cost-list">${t.providers.map((entry) => html`<${CostRow} key=${entry.key} name=${entry.key}
+          sub=${`${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}`} cost=${entry.cost} share=${entry.share} />`)}</ul>`
         : html`<div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>`}
     <//>
     <${Section} title=${w('By model', 'By familiar')} count=${t.models.length}>
       ${t.models.length
-        ? html`<ul class="phone-cost-list">${t.models.map((entry) => html`<${CostRow} key=${entry.model} name=${entry.model}
-          sub=${entry.availableProviders.join(', ')} cost=${entry.cost} share=${entry.cost / modelSum} />`)}</ul>`
+        ? html`<ul class="phone-cost-list">${t.models.map((entry) => html`<${CostRow} key=${entry.key} name=${entry.key}
+          sub=${entry.subs.join(', ')} cost=${entry.cost} share=${entry.share} />`)}</ul>`
         : html`<div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>`}
     <//>
     <${Section} title=${w('Top agents', 'Top spenders')} count=${t.top.length}>

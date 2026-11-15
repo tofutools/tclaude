@@ -299,7 +299,8 @@ export function UsageHubApp({ state, quotaState, costsState, fleet = fleetState,
     // A quota card names its series; bring that graph into view.
     const series = event?.currentTarget?.dataset?.series;
     if (series) {
-      requestAnimationFrame(() => document.querySelector(`#usage-root [data-series-key="${CSS.escape(series)}"]`)
+      const target = phone ? `.phone-quota-card[data-series="${CSS.escape(series)}"]` : `#usage-root [data-series-key="${CSS.escape(series)}"]`;
+      requestAnimationFrame(() => document.querySelector(target)
         ?.scrollIntoView({ block: 'nearest' }));
     }
   };
