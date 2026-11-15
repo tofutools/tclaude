@@ -60,6 +60,14 @@
   /* The column a desktop preview (?layout=phone) keeps the phone shell in. */
   --phone-col: 480px;
 }
+/* The wizard skin's --ui-primary is a gradient, which color-mix() and
+   border-color cannot take: the tokens above came out empty, so the picked
+   nav slot and chips lost their pill. Its gradient's top colour stands in. */
+:root[data-layout="phone"] body.wizard {
+  --phone-accent-bg: #7a5db0;
+  --phone-on-bg: color-mix(in srgb, #7a5db0 28%, var(--ui-card-bg));
+  --phone-on-line: color-mix(in srgb, #7a5db0 45%, var(--ui-card-bg));
+}
 
 /* ── Controls on every phone view ───────────────────────────────────────────
    Set once here rather than per view, so a desktop island still showing on a

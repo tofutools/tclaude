@@ -209,7 +209,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     openPhoneSheet({ label, Body, props: { state, actions: viewActions, ...props } });
   };
   const title = desktopOnly || titleFor(view, activeTab);
-  // A desktop-only page over a tab with a phone view of its own offers it.
+  // A desktop-only page over a tab with a phone view of its own offers it,
+  // both as a button on the page and as the bar's ‹ (as in the mock).
   const desktopOther = !desktopOnly ? null
     : activeTab === 'groups' ? { label: 'Show agents', onClick: () => viewActions.navigate('/') }
       : activeTab === 'map' ? { label: 'Show fleet', onClick: () => actions.showTab('fleet-admin') }
@@ -229,7 +230,9 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
         ${(page.actions || []).map((act) => html`<button data-ui-exempt key=${act.key || act.label} type="button"
           class=${`phone-bar-act${act.danger ? ' danger' : ''}`} aria-label=${act.label} title=${act.label}
           disabled=${!!act.disabled} onClick=${act.onClick}>${act.icon || act.label}</button>`)}`
-      : html`<img class="phone-bar-logo" src="/static/tclaude-icon.svg" alt="" />
+      : html`${desktopOther
+          ? html`<button data-ui-exempt type="button" class="phone-bar-back" aria-label=${`Back: ${desktopOther.label}`} onClick=${desktopOther.onClick}>‹</button>`
+          : html`<img class="phone-bar-logo" src="/static/tclaude-icon.svg" alt="" />`}
         <h1 class="phone-bar-title">${added?.menu
           ? html`<button data-ui-exempt type="button" class="phone-bar-title-btn" aria-haspopup="dialog"
               aria-label=${`${title}${added.menu.sub ? ` ${added.menu.sub}` : ''}, ${added.menu.label || 'pick'}`} onClick=${added.menu.onClick}>

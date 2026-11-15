@@ -26,6 +26,7 @@ import { cronRunSucceeded, formatJobInterval } from './jobs-format.js';
 import { actionSummary, scopeSummary, triggerState, whenSummary } from './jobs-triggers.js';
 import { groupScopeLabel, localStamp } from './cell-format.js';
 import { relTime, shortAgentId } from './helpers.js';
+import { formatUsageTime } from './usage-history-model.js';
 import { pageTriggersReadable } from './feature-availability.js';
 import { dashboardState } from './snapshot-store.js';
 import { processContext } from './process-context.js';
@@ -37,6 +38,15 @@ import { Button, Input, Switch } from './ui-components.js';
 import { ChipRow } from './phone-ui.js';
 
 const html = htm.bind(h);
+
+// Stamp is a time on a phone page as the mock writes it, short and relative
+// ("3h ago", "in 16h"), with the full local date and time on hover.
+function Stamp({ iso, empty = 'unknown time' }) {
+  const full = localStamp(iso, { empty: '' });
+  if (!full) return empty;
+  const at = new Date(iso).getTime();
+  return html`<time datetime=${iso} title=${full}>${at > Date.now() ? formatUsageTime(at) : relTime(iso)}</time>`;
+}
 
 const CHIP_LABELS = Object.freeze({
   all: 'All', export: 'Exports', cron: 'Cron', 'standing-order': 'Standing orders', trigger: 'Triggers',
@@ -251,7 +261,7 @@ function CronPage({ job, actions }) {
       ['Schedule', job.cron_expr ? `${cronSchedule(job)} (${job.cron_expr})` : cronSchedule(job)],
       ['Target', cronTarget(job)],
       [job.action_kind === 'spawn' ? 'Does' : 'Sends', sends],
-      ['Next', job.enabled && job.next_due_at ? localStamp(job.next_due_at) : ''],
+      ['Next', job.enabled && job.next_due_at ? html`<${Stamp} iso=${job.next_due_at} />` : ''],
       ['By', job.operator_authored ? 'the operator' : (job.owner_label || shortAgentId(job.owner_agent, job.owner_conv))],
       ['On', html`<${OnOff} on=${!!job.enabled} label=${job.name} onToggle=${() => actions.toggleCron(job)} />`],
     ]} />
@@ -259,7 +269,7 @@ function CronPage({ job, actions }) {
     <${History} load=${() => actions.loadCronLogs(job.id)} empty="No runs recorded."
       render=${(run) => {
         const outcome = cronOutcome({ enabled: true, last_run_status: run.status || 'unknown', last_run_at: run.fired_at });
-        return html`<li key=${run.id}><span class=${`phone-auto-meta ${outcome.tone}`}>${localStamp(run.fired_at, { empty: 'unknown time' })} · ${run.status || 'unknown'}</span>
+        return html`<li key=${run.id}><span class=${`phone-auto-meta ${outcome.tone}`}><${Stamp} iso=${run.fired_at} /> · ${run.status || 'unknown'}</span>
           ${run.error_msg && html`<span class="phone-auto-log">${run.error_msg}</span>`}</li>`;
       }} />
     <${DesktopOnlyNote} what="Editing, duplicating and deleting are" />
@@ -298,7 +308,7 @@ function TriggerPage({ rule, actions, onChanged }) {
     ]} />
     <h2 class="ui-eyebrow phone-section-title">Recent firings</h2>
     <${History} load=${() => actions.loadTriggerFirings(rule.id)} empty="Never fired."
-      render=${(firing) => html`<li key=${firing.id}><span class=${`phone-auto-meta ${firing.outcome === 'ok' ? 'ok' : 'warn'}`}>${localStamp(firing.started_at, { empty: 'unknown time' })} · ${firing.outcome || 'fired'}</span>
+      render=${(firing) => html`<li key=${firing.id}><span class=${`phone-auto-meta ${firing.outcome === 'ok' ? 'ok' : 'warn'}`}><${Stamp} iso=${firing.started_at} /> · ${firing.outcome || 'fired'}</span>
         ${firing.detail && html`<span class="phone-auto-log">${firing.detail}</span>`}</li>`} />
     <${DesktopOnlyNote} what="Editing and deleting are" />
   </div>`;
