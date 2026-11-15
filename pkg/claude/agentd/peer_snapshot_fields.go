@@ -22,7 +22,7 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 		"identity":  "ID Name Descr",
 		"projected": "Members Online",
 		"settings":  "AttachmentURL AttachmentLabel AttachmentLabelOverride DefaultCwd DefaultContext Environment DefaultProfile DefaultPrompts SandboxProfile MaxMembers NotifyEnabled RemoteControlPolicy ReinjectAfterCompact Parent Permissions PermissionScopes UnreadablePermissionScopes OwnerScopes",
-		"denied":    "DefaultSpawnGroup Mission SourceTemplate RouteGeneration Process Waves Scribe FederationLinks",
+		"denied":    "DefaultSpawnGroup Mission SourceTemplate RouteGeneration Archived Process Waves Scribe FederationLinks",
 	}),
 	reflect.TypeFor[dashboardMember](): classifyPeerFields(map[string]string{
 		"identity": "AgentID ConvID Title",

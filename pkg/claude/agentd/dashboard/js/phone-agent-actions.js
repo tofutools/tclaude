@@ -27,6 +27,10 @@ export function phoneAgentActions({ onComposeMessage = null, navigate = navigate
     } }),
     rename: (row, group) => featureState('groups-actions')?.openMemberEditor(row.member, group.group, 'title'),
     spawn: (groupName) => openAgentSpawnModal({ groupName }),
+    // groupAction is a group's own control (power-on-group, shutdown-group,
+    // view-group-messages), as the desktop group header's data-* carry it:
+    // the desktop's confirm, POST and toast.
+    groupAction: (act, groupName) => handleRowAction({ data: { act, group: groupName } }),
     // grant opens Access › + Grant on this agent's step (phone-grant.js).
     grant: (row) => {
       grantFor.value = row.member?.agent_id || row.agent;

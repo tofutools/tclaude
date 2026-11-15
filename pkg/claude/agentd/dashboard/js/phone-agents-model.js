@@ -8,6 +8,7 @@ import { VARIANT_ORDER, memberVariant } from './group-activity.js';
 import { isAwayPlaceholder } from './agent-presence.js';
 import { signal } from '@preact/signals';
 import { normalizeSpawnName } from './agent-spawn-model.js';
+import { buildGroupTree } from './groups-view-model.js';
 
 export const ALL = 'all';
 export const UNGROUPED = '-ungrouped';
@@ -121,30 +122,34 @@ export function byLoudness(a, b) {
   return (rank(a) - rank(b)) || a.name.localeCompare(b.name);
 }
 
-// agentGroups lists the groups that have agents, in the operator's group
-// order (order is sortGroupsByPref over the dashboard prefs), then the agents
-// in no group. Placeholders for agents away on another node are left out.
-// Each group: { key, name, group, shown, offline, live, total }: shown is the
-// open list (online agents, and crashed ones, which always need a look),
-// offline the folded rest, both loudest first; live counts the online ones.
+// groupEntry is one group as the Agents view shows it: { key, name, group,
+// shown, offline, tree, summary, live, total }: shown is the open list
+// (online agents, and crashed ones, which always need a look), offline the
+// folded rest, both loudest first; tree nests workers under their leads;
+// live counts the online ones. Placeholders for agents away on another node
+// are left out. group is the snapshot's group, null for the agents in none.
+export function groupEntry(key, name, group, members) {
+  const rows = (members || []).filter((m) => m && !isAwayPlaceholder(m)).map((m) => agentRow(m, group ? name : ''));
+  const open = (row) => row.online || row.variant === 'crashed';
+  const shown = rows.filter(open).sort(byLoudness);
+  const offline = rows.filter((row) => !open(row)).sort(byLoudness);
+  return {
+    key, name, group, shown, offline,
+    tree: agentTree([...shown, ...offline]),
+    summary: stateSummary(rows),
+    live: rows.filter((row) => row.online).length,
+    total: rows.length,
+  };
+}
+
+// agentGroups lists the groups that have agents (groupEntry), in the
+// operator's group order (order is sortGroupsByPref over the dashboard
+// prefs), then the agents in no group.
 export function agentGroups(snapshot, order = (groups) => groups) {
   const out = [];
-  const add = (key, name, group, members) => {
-    const rows = (members || []).filter((m) => m && !isAwayPlaceholder(m)).map((m) => agentRow(m, group ? name : ''));
-    if (!rows.length) return;
-    const open = (row) => row.online || row.variant === 'crashed';
-    const shown = rows.filter(open).sort(byLoudness);
-    const offline = rows.filter((row) => !open(row)).sort(byLoudness);
-    out.push({
-      key, name, group, shown, offline,
-      tree: agentTree([...shown, ...offline]),
-      summary: stateSummary(rows),
-      live: rows.filter((row) => row.online).length,
-      total: rows.length,
-    });
-  };
-  for (const group of order(snapshot?.groups || [])) add(groupKey(group.name), group.name, group, group.members);
-  add(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped);
+  const add = (entry) => { if (entry.total) out.push(entry); };
+  for (const group of order(snapshot?.groups || [])) add(groupEntry(groupKey(group.name), group.name, group, group.members));
+  add(groupEntry(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped));
   return out;
 }
 
@@ -266,4 +271,121 @@ export function findRow(groups, key, inGroup = '') {
     if (row) return { row, group: g };
   }
   return null;
+}
+
+// The Agents view's two modes: Active (the groups with agents, online first)
+// and All groups (every group, as the desktop's tree). VIEW_PREF keeps the
+// one picked, per viewer like the folds: 'all', or nothing for Active.
+export const ACTIVE = 'active';
+export const ALL_GROUPS = 'all';
+export const VIEW_PREF = 'tclaude.dash.phone.agents.view';
+export const agentsView = (prefs) => (prefs.getItem(VIEW_PREF) === ALL_GROUPS ? ALL_GROUPS : ACTIVE);
+
+// TREE_FOLD_PREF is where All groups keeps a group folded ('1') or unfolded
+// ('0'); with neither, a group is folded when nothing in it is online (its
+// own agents or its subgroups'). Apart from Active's folds (FOLD_PREF), whose
+// default is the other way round.
+export const TREE_FOLD_PREF = 'tclaude.dash.phone.tree.fold.';
+export const treeFoldPref = (node) => TREE_FOLD_PREF + (node.group ? node.name : UNGROUPED);
+export function treeFolded(node, prefs) {
+  const saved = prefs.getItem(treeFoldPref(node));
+  return saved === '1' || (saved !== '0' && node.dim);
+}
+
+// ARCHIVED_PREF shows the archived groups ('1') at the end of All groups.
+export const ARCHIVED_PREF = 'tclaude.dash.phone.agents.archived';
+
+// groupsTree is every group as the desktop's Groups tree nests them
+// (buildGroupTree): a node is a groupEntry with children (its subgroups),
+// archived, empty (no agents) and dim (nothing online in it or under it).
+// At every level the groups with someone online come first, then those with
+// only offline agents, then empty ones, then archived ones, each in the
+// operator's order (treeRank; a group counts what is under it too). The
+// agents in no group rank like a group. Without showArchived the archived
+// groups are left out, and a subgroup that is not archived takes its
+// archived parent's place. archived counts them either way, count the
+// groups that are not.
+export function groupsTree(snapshot, order = (groups) => groups, { showArchived = false } = {}) {
+  const groups = order((snapshot?.groups || []).filter((g) => g?.name));
+  const toNode = (node) => {
+    const group = node.group;
+    const children = node.children.map(toNode);
+    const entry = groupEntry(groupKey(group.name), group.name, group, group.members);
+    return { ...entry, children, archived: !!group.archived, empty: entry.total === 0 };
+  };
+  // dim and populated are counted over what is shown: a hidden archived
+  // subgroup's agents do not light its parent. A crashed agent needs a look,
+  // as in Active, so it lights its group too.
+  const lit = (n, children) => {
+    const needsLook = n.live > 0 || n.shown.length > 0;
+    return {
+      ...n, children,
+      dim: !needsLook && children.every((child) => child.dim),
+      populated: n.total > 0 || children.some((child) => child.populated),
+    };
+  };
+  const ranked = (nodes) => nodes.map((n, i) => [treeRank(n), i, n]).sort((a, b) => (a[0] - b[0]) || (a[1] - b[1])).map(([, , n]) => n);
+  const keep = (nodes) => ranked(nodes.flatMap((n) => (n.archived && !showArchived
+    ? keep(n.children) : [lit(n, keep(n.children))])));
+  const all = buildGroupTree(groups, () => true).map(toNode);
+  const loose = groupEntry(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped);
+  if (loose.total) all.push({ ...loose, children: [], archived: false, empty: false });
+  const nodes = keep(all);
+  const archived = groups.filter((g) => g.archived).length;
+  return { nodes, archived, count: groups.length - archived };
+}
+
+// treeRank is where a node sits among its siblings: someone online in it
+// or under it (0), only offline agents (1), no agents (2), archived (3).
+export function treeRank(node) {
+  if (node.archived) return 3;
+  if (!node.dim) return 0;
+  return node.populated ? 1 : 2;
+}
+
+// treeNodes is every node of a tree, each before its subgroups.
+export function treeNodes(nodes) {
+  return nodes.flatMap((n) => [n, ...treeNodes(n.children)]);
+}
+
+// treeTabs are All groups' chips: All, then each group in the tree's order.
+export function treeTabs(nodes) {
+  const flat = treeNodes(nodes);
+  const all = flat.reduce((sum, n) => ({ online: sum.online + n.live, total: sum.total + n.total }), { online: 0, total: 0 });
+  return [{ key: ALL, label: 'All', ...all }, ...flat.map((n) => ({ key: n.key, label: n.name, online: n.live, total: n.total }))];
+}
+
+// shownTree is what a filter shows of the tree: each picked group with its
+// subgroups, in the tree's order (one picked under another picked one shows
+// once, under it); the whole tree when none is picked (or every one picked
+// went away).
+export function shownTree(nodes, filter) {
+  const keys = new Set((filter || []).filter((key) => treeNodes(nodes).some((n) => n.key === key)));
+  if (!keys.size) return nodes;
+  const pick = (list) => list.flatMap((n) => (keys.has(n.key) ? [n] : pick(n.children)));
+  return pick(nodes);
+}
+
+// groupPage is one group's page (the group's name tapped): its groupEntry
+// with crumbs (its ancestors' names, outermost first, then its own) and
+// children (its subgroups, archived ones last), or null when the snapshot
+// has no such group.
+export function groupPage(snapshot, name, order = (groups) => groups) {
+  const groups = (snapshot?.groups || []).filter((g) => g?.name);
+  const group = groups.find((g) => g.name === name);
+  if (!group) return null;
+  const byName = new Map(groups.map((g) => [g.name, g]));
+  const crumbs = [group.name];
+  for (let at = byName.get(group.parent); at && !crumbs.includes(at.name); at = byName.get(at.parent)) crumbs.unshift(at.name);
+  const { nodes } = groupsTree(snapshot, order, { showArchived: true });
+  const node = treeNodes(nodes).find((n) => n.group && n.name === name);
+  return { ...(node || groupEntry(groupKey(name), name, group, group.members)), children: node?.children || [], crumbs };
+}
+
+// groupSummaryLine is the page's first line: how much of the group is up.
+export function groupSummaryLine(entry) {
+  if (!entry.total) return 'No agents yet';
+  if (!entry.live) return 'Everything offline';
+  if (entry.live === entry.total) return 'Everything online';
+  return `${entry.live} of ${entry.total} online`;
 }
