@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// migrateV338toV339 adds run oversight (tk_e2fa2bd0): the overseer a run was
+// migrateV339toV340 adds run oversight (tk_e2fa2bd0): the overseer a run was
 // given explicitly, and the concerns raised about a run on their way up the
 // escalation chain (overseer, then the group's escalation agent, then the
 // operator).
@@ -14,10 +14,10 @@ import (
 // without a row takes the default overseer (the group's lead, else whoever
 // started it), which is resolved when it is needed, so existing runs need no
 // backfill.
-func migrateV338toV339(d *sql.DB) error {
+func migrateV339toV340(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v338→v339 (process run oversight): begin: %w", err)
+		return fmt.Errorf("migrate v339→v340 (process run oversight): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -70,13 +70,13 @@ func migrateV338toV339(d *sql.DB) error {
 			ON process_run_concerns(human_message_id)
 			WHERE human_message_id != 0;
 	`); err != nil {
-		return fmt.Errorf("migrate v338→v339 (create oversight tables): %w", err)
+		return fmt.Errorf("migrate v339→v340 (create oversight tables): %w", err)
 	}
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 339`); err != nil {
-		return fmt.Errorf("migrate v338→v339 (version): %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 340`); err != nil {
+		return fmt.Errorf("migrate v339→v340 (version): %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v338→v339 (commit): %w", err)
+		return fmt.Errorf("migrate v339→v340 (commit): %w", err)
 	}
 	return nil
 }
