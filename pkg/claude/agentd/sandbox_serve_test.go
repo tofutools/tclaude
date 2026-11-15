@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,6 +67,9 @@ func TestSandboxServe(t *testing.T) {
 		}
 	}
 	mux, page := seedDocFixture(t, fixture)
+	if os.Getenv("TCLAUDE_SANDBOX_SWIPE_TUI") != "" {
+		sandboxSwipeTUI(t)
+	}
 	if sandboxLivePeer() {
 		seedSandboxLivePeer(t, dir, mux)
 	}
@@ -766,4 +770,35 @@ func seedSandboxAccessRequest(s *sandboxSeeder) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// sandboxSwipeTUI (TCLAUDE_SANDBOX_SWIPE_TUI=1) attaches every terminal to
+// testdata/swipe-tui.py, a stand-in for Claude Code's fullscreen view, in a
+// tmux server of the sandbox's own (its socket in the throwaway TMPDIR), with
+// the client flags a dashboard terminal uses. It is how a phone swipe is
+// measured in a real browser (scripts/sandbox/smoke/tests/phone-swipe-measure.spec.mjs).
+func sandboxSwipeTUI(t *testing.T) {
+	t.Helper()
+	tui, err := filepath.Abs("testdata/swipe-tui.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp("", "sw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(dir, "s")
+	tmux := func(args ...string) *exec.Cmd {
+		cmd := exec.Command("tmux", append([]string{"-u", "-S", sock, "-f", "/dev/null"}, args...)...)
+		cmd.Env = append(os.Environ(), "TMUX=")
+		return cmd
+	}
+	if out, err := tmux("new-session", "-d", "-s", "swipe", "-x", "46", "-y", "38", "python3 "+tui).CombinedOutput(); err != nil {
+		t.Fatalf("swipe TUI: tmux: %v: %s", err, out)
+	}
+	t.Cleanup(func() { _ = tmux("kill-server").Run() })
+	attach := fmt.Sprintf("TMUX= exec tmux -u -S %s %s attach-session -f ignore-size -t swipe", sock, agentd.WebTerminalTmuxFlagsForTest())
+	t.Cleanup(agentd.SetTermWSHookForTest(&agentd.TermWSHook{
+		RewriteCommand: func(_, session string) (string, string) { return attach, "" },
+	}))
 }
