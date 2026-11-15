@@ -700,8 +700,9 @@ func seedSandboxAccessRequest(s *sandboxSeeder) {
 			"slugs": []string{agentd.PermAgentSpawn}, "duration": "30m",
 			"reason": "spawn a second reviewer for the payments PR",
 		}), sbReviewer)
-		rec := testharness.Serve(s.f.Mux, req)
-		s.t.Logf("sandbox: the seeded sudo request ended: %d %s", rec.Code, strings.TrimSpace(rec.Body.String()))
+		// No t.Logf: an operator's decision can land as the server stops, and
+		// logging after the test returned panics.
+		_ = testharness.Serve(s.f.Mux, req)
 	}()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
