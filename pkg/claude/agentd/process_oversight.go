@@ -338,9 +338,21 @@ func processConcernMail(c db.ProcessRunConcern, why string) string {
 	return b.String()
 }
 
-// sweepProcessConcerns passes over holders that did not answer in time: the
-// run pauses (if it is not paused already) and the concern goes up a level.
+// sweepProcessConcerns settles the concerns of runs that ended, and passes
+// over holders that did not answer in time: the concern goes up a level and
+// the run pauses (if it is not paused already).
 func sweepProcessConcerns() {
+	ended, err := db.ListProcessRunConcernsOfEndedRuns(32)
+	if err != nil {
+		slog.Warn("process oversight: concerns of ended runs unreadable", "error", err)
+	}
+	for _, c := range ended {
+		resolved, err := db.ResolveProcessRunConcern(c.RunID, c.ID, processConcernRunEnded, "", processOversightActor)
+		if err != nil {
+			continue
+		}
+		closeProcessConcernCard(resolved, processOversightActor)
+	}
 	due, err := db.ListDueProcessRunConcerns(processOversightNow(), 32)
 	if err != nil {
 		slog.Warn("process oversight: due concerns unreadable", "error", err)
@@ -348,14 +360,24 @@ func sweepProcessConcerns() {
 	}
 	for _, c := range due {
 		why := fmt.Sprintf("%s did not answer within %s", processActorName(c.Holder), processConcernPatience.Round(time.Minute))
+		// The move is conditional on the concern still waiting where it was
+		// listed, so one its holder answered meanwhile neither moves nor
+		// pauses the run.
+		if _, err := escalateProcessConcern(c, processOversightActor, why); err != nil {
+			if !errors.Is(err, db.ErrProcessConcernClosed) {
+				slog.Warn("process oversight: pass over an unanswered holder", "run", c.RunID, "concern", c.ID, "error", err)
+			}
+			continue
+		}
 		if err := pauseProcessRunFor(c.RunID, processOversightActor); err != nil {
 			slog.Warn("process oversight: pause an unanswered run", "run", c.RunID, "error", err)
 		}
-		if _, err := escalateProcessConcern(c, processOversightActor, why); err != nil && !errors.Is(err, db.ErrProcessConcernClosed) {
-			slog.Warn("process oversight: pass over an unanswered holder", "run", c.RunID, "concern", c.ID, "error", err)
-		}
 	}
 }
+
+// processConcernRunEnded settles a concern whose run completed, failed or
+// was canceled.
+const processConcernRunEnded = "run_ended"
 
 // pauseProcessRunFor pauses a run as actor, ordered against planning like an
 // operator's pause.

@@ -381,3 +381,65 @@ func TestProcessOversight_OverseerIsSetAtStartAndChangedLater(t *testing.T) {
 	kinds, _ := performerEventKinds(t, f, "run_ov4")
 	assert.Equal(t, 2, countKind(kinds, db.ProcessEventOverseerSet))
 }
+
+// Scenario: the group's lead oversees a run and the group has no escalation
+// agent, so its own concern would go straight to the operator. That takes
+// human.notify, as reaching the operator always does; with it, the card is
+// posted.
+func TestProcessOversight_ALoneOverseerNeedsHumanNotifyToReachTheOperator(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	f.HaveGroup("crew")
+	const leadConv = "ovl5-1111-2222-3333-4444"
+	havePerformerAgent(t, f, "crew", leadConv, "lena", "lead", "idle")
+	putProcessRuntimeTemplate(t, root, epicTemplate())
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": "run_ov5", "templateId": "epic", "group": "crew", "authorizeProgramProfiles": []string{},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+
+	raiseConcernAs(t, f, leadConv, "run_ov5", "", "Nobody above me on this run.", http.StatusForbidden)
+	assert.Empty(t, showOversightRun(t, f, "run_ov5").Concerns)
+
+	require.NoError(t, db.SetAgentPermissionOverride(leadConv, agentd.PermHumanNotify, db.PermEffectGrant, "test"))
+	concern := raiseConcernAs(t, f, leadConv, "run_ov5", "", "Nobody above me on this run.", http.StatusCreated)
+	assert.Equal(t, db.ProcessConcernLevelOperator, concern.Level)
+	assert.NotZero(t, concern.MessageID)
+}
+
+// Scenario: the operator cancels a run from one concern's card while another
+// concern is still open. The sweep settles the other one as run_ended and
+// takes its card down, so nothing is left asking about a run that is over.
+func TestProcessOversight_ConcernsOfAnEndedRunAreSettled(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	putProcessRuntimeTemplate(t, root, processBlockingTemplate("ov-parking", 1))
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(_ context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+		return processObservation(dispatch.Command(), engine.ProgramFailed, 1), nil
+	}))
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": "run_ov6", "templateId": "ov-parking", "authorizeProgramProfiles": []string{"safe"},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	raise := func(reason string) oversightConcernWire {
+		rec := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_ov6/concerns", map[string]any{"reason": reason, "nodeId": "task-01"})
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var raised struct {
+			Concern oversightConcernWire `json:"concern"`
+		}
+		testharness.DecodeJSON(t, rec, &raised)
+		return raised.Concern
+	}
+	require.Len(t, showOversightRun(t, f, "run_ov6").Blocked, 1)
+	first, second := raise("task-01 cannot pass."), raise("And the vendor is down.")
+
+	pickOnCard(t, first.MessageID, "Cancel the run", "", http.StatusOK)
+	require.Equal(t, engine.RunCanceled, showOversightRun(t, f, "run_ov6").Status)
+	assert.Equal(t, "open", showOversightRun(t, f, "run_ov6").concern(t, second.ID).State)
+
+	agentd.SweepProcessConcernsForTest()
+	other := showOversightRun(t, f, "run_ov6").concern(t, second.ID)
+	assert.Equal(t, "resolved", other.State)
+	assert.Equal(t, "run_ended", other.Resolution)
+	card, err := db.GetHumanMessage(second.MessageID)
+	require.NoError(t, err)
+	assert.False(t, card.IsOpenDecision(), "the ended run's card is taken down")
+}

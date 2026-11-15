@@ -76,6 +76,11 @@ test('a concern with the operator offers its card\'s choices; one with an agent 
   await harness.act(async () => { agentCard.querySelector('[data-concern-answer="escalate"]').click(); await tick(); });
   assert.deepEqual(api.calls.at(-1), ['answer', 'run_ov', 4, { action: 'escalate', note: '' }]);
   assert.equal(changed, 2);
+
+  const cardless = await harness.mount(harness.html`<${RunOversight} view=${view([{ id: 5, source: 'agent', raisedName: 'alice', reason: 'Card gone.', state: 'open', level: 'operator' }])} runId="run_ov" api=${api} />`);
+  const orphan = cardless.container.querySelector('[data-run-concern="5"]');
+  assert.deepEqual([...orphan.querySelectorAll('[data-concern-answer]')].map((b) => b.dataset.concernAnswer), ['continue', 'pause'],
+    'a concern whose card is gone is still settled from the run, but has nowhere further to go');
 });
 
 test('the operator raises a concern about the selected step from the strip', async (t) => {

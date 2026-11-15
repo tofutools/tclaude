@@ -245,6 +245,17 @@ func handleProcessRunConcernRaise(w http.ResponseWriter, r *http.Request) {
 	if caller == "" {
 		source = db.ProcessConcernSourceOperator
 	}
+	// An agent whose concern nobody above it on the run would hear (it
+	// oversees a run with no escalation agent, say) is asking for the
+	// operator: that takes what reaching the operator always takes.
+	if caller != "" && resolvePermission(caller, PermProcessRunsManage) != permAllow {
+		raiser, _ := strings.CutPrefix(actor, "agent:")
+		if nextProcessConcernStep(runID, "", raiser).Level == db.ProcessConcernLevelOperator {
+			if _, ok := requireNotifyHumanPermission(w, r); !ok {
+				return
+			}
+		}
+	}
 	c, err := raiseProcessConcern(runID, strings.TrimSpace(request.NodeID), source, "", actor, reason)
 	if err != nil {
 		writeProcessConcernError(w, err)
@@ -302,13 +313,15 @@ func handleProcessRunConcernAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	var resolved db.ProcessRunConcern
 	switch action {
+	// Settling is conditional on the concern still waiting where it was read:
+	// one the sweep passed up meanwhile is no longer this holder's to settle.
 	case processConcernContinue:
-		if err = resumeProcessRunFor(runID, actor); err == nil {
-			resolved, err = db.ResolveProcessRunConcern(runID, id, processConcernContinue, note, actor)
+		if resolved, err = db.ResolveProcessRunConcernAt(runID, id, c.Level, c.Holder, processConcernContinue, note, actor); err == nil {
+			err = resumeProcessRunFor(runID, actor)
 		}
 	case processConcernPause:
 		if err = pauseProcessRunFor(runID, actor); err == nil {
-			resolved, err = db.ResolveProcessRunConcern(runID, id, "paused", note, actor)
+			resolved, err = db.ResolveProcessRunConcernAt(runID, id, c.Level, c.Holder, "paused", note, actor)
 		}
 	case processConcernEscalate:
 		why := note
@@ -324,8 +337,8 @@ func handleProcessRunConcernAnswer(w http.ResponseWriter, r *http.Request) {
 		writeProcessConcernError(w, err)
 		return
 	}
-	if !resolved.Open() {
-		closeProcessConcernCard(c, actor)
+	if resolved.ID != 0 && !resolved.Open() {
+		closeProcessConcernCard(resolved, actor)
 		tellProcessOverseerOfAnswer(resolved, actor)
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"concern": processConcernViewOf(runID, id)})

@@ -1096,9 +1096,17 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
 	}
-	if _, err := processOverseerRefOf(request.Overseer); err != nil {
+	overseer, err := processOverseerRefOf(request.Overseer)
+	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "process_overseer", err.Error())
 		return
+	}
+	// Overseeing a run lets an agent read, pause, resume and reassign it, so
+	// naming anyone but yourself is process.runs.manage, as it is later.
+	if caller != "" && overseer != "" && overseer != processAgentRef(peerAgentID(caller)) {
+		if _, ok := requirePermission(w, r, PermProcessRunsManage); !ok {
+			return
+		}
 	}
 	startProcessRunAs(w, r, request, string(actor), scope)
 }

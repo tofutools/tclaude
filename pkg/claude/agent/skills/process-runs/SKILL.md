@@ -109,7 +109,10 @@ passed over, and the run pauses until the next level decides. The operator
 gets a decision card (Resume, Skip this step, Reassign, Keep paused, Cancel
 the run, depending on what the run allows). The daemon applies the pick and
 mails it to the overseer. If the pick is Reassign, the overseer does the
-reassigning.
+reassigning. A concern of yours that would go straight to the operator (you
+oversee the run and the group has no escalation agent) needs `human.notify`.
+Naming someone other than yourself with `run --overseer` needs
+`process.runs.manage`.
 
 ```bash
 tclaude process concern <run-id> "CI is red on main" [--node <step>]   # raise one

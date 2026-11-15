@@ -279,7 +279,8 @@ in it raises a concern.
 
 - The overseer is the one set with `tclaude process run --overseer <agent>`
   or later with `tclaude process oversee <run-id> <agent|operator|default>`
-  (`process.runs.manage`). With none set, it is the group's lead (a member with the
+  (`process.runs.manage`; an agent starting a run may name only itself
+  without it). With none set, it is the group's lead (a member with the
   role `lead`, else an owner), else whoever started the run.
 - Overseeing a run grants, for that run only, what steering it needs:
   pause, resume, reassigning a step, and answering its concerns. It does not
@@ -314,7 +315,10 @@ A holder that does not answer within 30 minutes is passed over: the run
 pauses and the concern goes to the next level. A run only pauses when its
 overseer pauses it, or when a holder does not answer. A concern raised by
 someone who would hold it starts one level up, so an overseer raising one is
-escalating it.
+escalating it. An agent whose concern would go straight to the operator needs
+`human.notify` (or `process.runs.manage`), as reaching the operator always
+does. When a run ends, its open concerns are settled as `run_ended` and their
+cards taken down.
 
 Every step is in the run's events and its log in the dashboard:
 `concern_raised`, `concern_escalated` (with why it moved), `concern_resolved`

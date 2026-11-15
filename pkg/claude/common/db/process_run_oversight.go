@@ -426,6 +426,31 @@ func ListDueProcessRunConcerns(now time.Time, limit int) ([]ProcessRunConcern, e
 	return out, rows.Err()
 }
 
+// ListProcessRunConcernsOfEndedRuns lists open concerns whose run has
+// completed, failed or been canceled: nothing is left for them to act on.
+func ListProcessRunConcernsOfEndedRuns(limit int) ([]ProcessRunConcern, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT `+processConcernColumns+` FROM process_run_concerns
+		WHERE state = 'open' AND run_id IN (SELECT id FROM process_runs WHERE status IN (?, ?, ?))
+		ORDER BY id LIMIT ?`, ProcessRunStatusCompleted, ProcessRunStatusFailed, ProcessRunStatusCanceled, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ProcessRunConcern
+	for rows.Next() {
+		c, err := scanProcessConcern(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ProcessConcernEscalation moves an open concern up the chain.
 type ProcessConcernEscalation struct {
 	Level          string
@@ -506,6 +531,13 @@ func SetProcessRunConcernMessage(runID string, id, messageID int64) error {
 // paused, resume, skip, cancel, …) and records concern_resolved evidence.
 // Only the first resolution counts: a resolved concern is refused.
 func ResolveProcessRunConcern(runID string, id int64, resolution, note, actor string) (ProcessRunConcern, error) {
+	return ResolveProcessRunConcernAt(runID, id, "", "", resolution, note, actor)
+}
+
+// ResolveProcessRunConcernAt is ResolveProcessRunConcern conditional on the
+// concern still waiting at level with holder (either may be "" for any), so a
+// holder's answer cannot settle a concern the sweep just passed up.
+func ResolveProcessRunConcernAt(runID string, id int64, level, holder, resolution, note, actor string) (ProcessRunConcern, error) {
 	if !validProcessRuntimeIdentifier(resolution, MaxProcessConcernResolution, false) || !validProcessActorRef(actor, false) {
 		return ProcessRunConcern{}, fmt.Errorf("%w: invalid resolution", ErrProcessRunInvalid)
 	}
@@ -531,6 +563,9 @@ func ResolveProcessRunConcern(runID string, id int64, resolution, note, actor st
 	}
 	if !current.Open() {
 		return ProcessRunConcern{}, ErrProcessConcernClosed
+	}
+	if (level != "" && current.Level != level) || (holder != "" && current.Holder != holder) {
+		return ProcessRunConcern{}, fmt.Errorf("%w: it moved to the %s", ErrProcessConcernClosed, current.Level)
 	}
 	now := time.Now().UTC()
 	if _, err := tx.Exec(`UPDATE process_run_concerns

@@ -147,6 +147,8 @@ export function ConcernCard({ concern, runId, api, onChanged, compact = false })
     }
   };
   const forYou = concern.level === 'operator';
+  // Without its card (dismissed, or never posted) a concern with the operator
+  // is still settled here: carry on or pause, as a holder would.
   const choices = forYou ? concern.choices || [] : [];
   const due = concern.answerBy ? eventTime(concern.answerBy) : '';
   return html`<li class=${`pov-concern${forYou ? ' pov-for-you' : ''}${compact ? ' pov-compact' : ''}`} data-run-concern=${concern.id}>
@@ -159,7 +161,7 @@ export function ConcernCard({ concern, runId, api, onChanged, compact = false })
     <div class="pov-concern-actions">
       <input class="pov-note" type="text" maxlength="4096" aria-label=${`Note for concern ${concern.id} (optional)`} placeholder="note (optional)"
         value=${note} disabled=${!!busy} onInput=${(event) => setNote(event.currentTarget.value)} />
-      ${forYou
+      ${choices.length
     ? choices.map((choice, i) => html`<${Button} key=${choice} size="sm" variant=${i === 0 ? 'primary' : undefined} disabled=${!!busy}
           data-concern-choice=${choice} onClick=${() => act(choice, () => api.pickConcern(concern.messageId, i + 1, note.trim()))}>${busy === choice ? '…' : choice}<//>`)
     : html`
@@ -167,8 +169,8 @@ export function ConcernCard({ concern, runId, api, onChanged, compact = false })
           onClick=${() => act('continue', () => api.answerConcern(runId, concern.id, { action: 'continue', note: note.trim() }))}>${busy === 'continue' ? '…' : 'Carry on'}<//>
         <${Button} size="sm" disabled=${!!busy} data-concern-answer="pause" title="Settle it by holding the run"
           onClick=${() => act('pause', () => api.answerConcern(runId, concern.id, { action: 'pause', note: note.trim() }))}>${busy === 'pause' ? '…' : 'Pause run'}<//>
-        <${Button} size="sm" disabled=${!!busy} data-concern-answer="escalate" title="Pass it up the chain: to the group's escalation agent, else to you as a decision"
-          onClick=${() => act('escalate', () => api.answerConcern(runId, concern.id, { action: 'escalate', note: note.trim() }))}>${busy === 'escalate' ? '…' : 'Pass it up'}<//>`}
+        ${!forYou && html`<${Button} size="sm" disabled=${!!busy} data-concern-answer="escalate" title="Pass it up the chain: to the group's escalation agent, else to you as a decision"
+          onClick=${() => act('escalate', () => api.answerConcern(runId, concern.id, { action: 'escalate', note: note.trim() }))}>${busy === 'escalate' ? '…' : 'Pass it up'}<//>`}`}
     </div>
     ${error && html`<div class="grf-error ui-error" role="alert">${error}</div>`}
   </li>`;
