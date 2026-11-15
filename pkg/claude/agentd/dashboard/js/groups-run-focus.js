@@ -12,7 +12,7 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { Button, Select } from './ui-components.js';
+import { Button, Seg, Select } from './ui-components.js';
 import {
   ProcessMiniGraph, ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip,
   ProcessStepStrip,
@@ -22,6 +22,7 @@ import {
   formatRunDuration, groupContextEntry, groupRunsFor, runDetailApi, runNeedsYou, withPerformerNames,
 } from './process-context.js';
 import { AgentCombobox } from './agent-picker.js';
+import { RunLog, RunOversight, eventSentence, openConcerns } from './process-oversight.js';
 
 const html = htm.bind(h);
 
@@ -156,9 +157,8 @@ function eventTime(iso) {
   return Number.isNaN(when.getTime()) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function eventText(event) {
-  const kind = String(event.kind || '').replace(/[_.]+/g, ' ');
-  return event.actor ? `${kind} · ${event.actor}` : kind;
+function eventText(event, nameOf) {
+  return eventSentence(event, nameOf, { withStep: false }).text;
 }
 
 export function DecisionForm({ decision, node, onDecide, wizard }) {
@@ -242,7 +242,7 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
       run=${run} node=${node} members=${members} onAssign=${onAssign} wizard=${wizard} />`}
     <div class="ui-eyebrow grf-section">${wizard ? 'CHRONICLE' : 'HISTORY'}</div>
     ${history.length
-    ? html`<ol class="grf-history">${history.map((event) => html`<li key=${event.sequence}><time>${eventTime(event.occurredAt)}</time> ${eventText(event)}</li>`)}</ol>`
+    ? html`<ol class="grf-history">${history.map((event) => html`<li key=${event.sequence}><time>${eventTime(event.occurredAt)}</time> ${eventText(event, nameOf)}</li>`)}</ol>`
     : html`<div class="grf-muted">${view ? 'No events for this node yet.' : 'Loading…'}</div>`}
     ${detail.catchingUp && html`<div class="grf-muted" role="status">Reading the rest of this run's history…</div>`}
   </aside>`;
@@ -354,6 +354,8 @@ export function GroupsRunFocus({
   const run = raw ? withPerformerNames(raw, nameOf) : null;
   const [detail, refresh] = useRunDetail(api, runId);
   const [picked, setPicked] = useState({ runId, nodeId: '' });
+  // The side pane shows the selected step, or the whole run's log.
+  const [pane, setPane] = useState('step');
   const nodeId = picked.runId === runId && picked.nodeId ? picked.nodeId : defaultNode(run, detail.view);
   const node = run ? runGraphNodes(run).find((item) => item.id === nodeId) || null : null;
   // Opening a run shows the whole graph: it scales down to fit the pane
@@ -474,6 +476,9 @@ export function GroupsRunFocus({
         ${detail.error && html`<span class="grf-error ui-error" role="status">${detail.error}</span>`}
         ${dropError && html`<span class="grf-error ui-error" role="alert">${dropError}</span>`}
       </div>
+      ${run && detail.view && html`<${RunOversight} view=${detail.view} runId=${runId} api=${api} wizard=${wizard}
+        nodeId=${node?.id || ''} nodeLabel=${node?.label || ''}
+        onChanged=${() => { refresh(); void source?.refresh?.(); }} />`}
       ${run
     ? html`<div class=${`grf-graph${dropTarget ? ' grf-drop-armed' : ''}`} ref=${graphRef} data-drop-target=${dropTarget}
         onDragOver=${onDragOver} onDragLeave=${(event) => { if (!event.currentTarget?.contains?.(event.relatedTarget)) setDropTarget(''); }} onDrop=${(event) => void onDrop(event)}><div class="grf-graph-fit" style=${`zoom:${graphScale}`} data-graph-scale=${graphScale}><${ProcessMiniGraph} run=${run} wizard=${wizard} selectedId=${node?.id || ''}
@@ -482,8 +487,16 @@ export function GroupsRunFocus({
       <${PerformerDock} members=${members} busy=${busy} wizard=${wizard} />
     </section>
     ${run
-    ? html`<${RunNodeInspector} run=${run} node=${node} detail=${detail} nameOf=${nameOf} wizard=${wizard} onDecide=${onDecide}
-        members=${members} onAssign=${onAssign} />`
+    ? html`<div class="grf-side">
+        <${Seg} class="grf-side-tabs" aria-label="Side pane">
+          <${Button} size="sm" pressed=${pane === 'step'} data-run-pane="step" onClick=${() => setPane('step')}>Step<//>
+          <${Button} size="sm" pressed=${pane === 'log'} data-run-pane="log" onClick=${() => setPane('log')}>Run log${openConcerns(detail.view).length ? ' ⚑' : ''}<//>
+        <//>
+        ${pane === 'log'
+    ? html`<aside class="grf-inspector" aria-label="Run log"><${RunLog} events=${detail.events} nameOf=${nameOf} catchingUp=${detail.catchingUp} /></aside>`
+    : html`<${RunNodeInspector} run=${run} node=${node} detail=${detail} nameOf=${nameOf} wizard=${wizard} onDecide=${onDecide}
+        members=${members} onAssign=${onAssign} />`}
+      </div>`
     : html`<aside class="grf-inspector"></aside>`}
   </div>`;
 }

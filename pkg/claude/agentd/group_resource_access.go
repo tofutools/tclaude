@@ -439,6 +439,13 @@ func memberReadableProcessTemplates(r *http.Request) (readableProcessTemplates, 
 // requireProcessRunRead gates the read of one run: process.runs.read, or the
 // group read slug in the group the run is scoped to.
 func requireProcessRunRead(w http.ResponseWriter, r *http.Request, runID string) (string, bool) {
+	// A run's overseer, and whoever holds one of its concerns, reads the run
+	// it answers for (process_oversight.go).
+	if conv := confirmedAgentConv(r); conv != "" && peerActionFromRequest(r) == nil {
+		if agentID := peerAgentID(conv); processRunIsOverseer(runID, agentID) || processRunHoldsConcern(runID, agentID) {
+			return conv, true
+		}
+	}
 	group := ""
 	if scope, err := db.GetProcessRunScope(runID); err == nil && scope.Kind == db.ProcessRunScopeGroup {
 		group = scope.GroupName

@@ -86,7 +86,7 @@ func refreshProcessRunHold(runID string, run *executor.Run) {
 
 // handleProcessRunPause pauses a run. Pausing a paused run changes nothing.
 func handleProcessRunPause(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermission(w, r, PermProcessRunsManage)
+	caller, ok := requireProcessRunSteward(w, r, r.PathValue("id"))
 	if !ok {
 		return
 	}

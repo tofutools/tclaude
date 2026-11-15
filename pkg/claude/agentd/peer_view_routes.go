@@ -35,6 +35,11 @@ var peerViewLocalRoutes = []string{
 	// Re-binding a run's scope is this node's human's: it is human-only
 	// locally too, whatever an agent is granted.
 	"POST /v1/process/runs/{id}/rescope",
+	// Run oversight (process_oversight_http.go) answers to this node's agents
+	// and operator; a peer's view shows no concerns to act on.
+	"POST /v1/process/runs/{id}/concerns",
+	"POST /v1/process/runs/{id}/concerns/{concern}/answer",
+	"POST /v1/process/runs/{id}/overseer",
 	"GET /api/federation/hub/boards", "PATCH /api/federation/hub/boards/{board}", "DELETE /api/federation/hub/boards/{board}",
 	"GET /api/federation/boards/{board}/items", "POST /api/federation/boards/{board}/items", "GET /api/federation/boards/{board}/items/{item}/versions", "PUT /api/federation/boards/{board}/items/{item}/pin", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/fetch", "GET /api/federation/boards/{board}/items/{item}/versions/{version}/contents", "GET /api/federation/boards/{board}/items/{item}/versions/{version}/download", "HEAD /api/federation/boards/{board}/items/{item}/versions/{version}/download", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/preview", "POST /api/federation/boards/{board}/items/{item}/versions/{version}/import", "GET /api/federation/boards/updates", "PUT /api/federation/boards/updates", "GET /api/federation/boards", "POST /api/federation/boards", "POST /api/federation/boards/join", "GET /api/federation/boards/{board}", "DELETE /api/federation/boards/{board}/membership", "GET /api/federation/boards/{board}/members", "PUT /api/federation/boards/{board}/members/{instance}", "DELETE /api/federation/boards/{board}/members/{instance}", "GET /api/federation/boards/{board}/invites", "POST /api/federation/boards/{board}/invites", "DELETE /api/federation/boards/{board}/invites/{token_id}", "POST /api/federation/boards/{board}/rotate-key",
 	"POST /api/agent-bundle/import", "POST /api/paf/redact",

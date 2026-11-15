@@ -18389,6 +18389,38 @@ button.gpi-graph:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px
 .grf-verdicts { display: flex; gap: 8px; flex-wrap: wrap; }
 .grf-history { list-style: none; margin: 0; padding: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #8b949e; }
 .grf-history time { color: #6e7681; }
+/* The side pane: the selected step, or the whole run's log. */
+.grf-side { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-left: 1px solid #2a3340; background: #11161d; }
+.grf-side > .grf-inspector { flex: 1; border-left: 0; }
+.grf-side-tabs { margin: 10px 16px 0; align-self: flex-start; }
+
+/* Run oversight (js/process-oversight.js): overseer, concerns, run log. */
+.pov { display: flex; flex-direction: column; gap: 8px; margin: 0 14px 6px; padding: 8px 12px; border: 1px solid #2a3340; border-radius: 10px; background: #11161d; font-size: 12px; }
+.pov-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: #8b949e; }
+.pov-line b { color: #e6edf3; font-weight: 600; }
+.pov-count { color: #f2cc60; border-color: #4d3c12; }
+.pov-concerns { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.pov-concern { border: 1px solid #30363d; border-left: 3px solid #d29922; border-radius: 6px; padding: 8px 10px; background: #0d1117; display: flex; flex-direction: column; gap: 6px; }
+.pov-concern.pov-for-you { border-left-color: #f0883e; background: #1c1610; }
+.pov-concern-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; color: #c9d1d9; }
+.pov-step { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #c9d1d9; padding: 0 5px; border: 1px solid #30363d; border-radius: 4px; }
+.pov-holder { margin-left: auto; color: #8b949e; }
+.pov-holder-you { color: #f0883e; font-weight: 600; }
+.pov-reason { color: #e6edf3; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pov-concern-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pov-note { flex: 1 1 140px; min-width: 0; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; font-size: 12px; padding: 4px 8px; }
+.pov-raise { display: flex; flex-direction: column; gap: 6px; }
+.pov-raise textarea { width: 100%; box-sizing: border-box; resize: vertical; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; font-size: 12px; padding: 6px 8px; }
+.pov-raise-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pov-raise-row label { margin-right: auto; display: inline-flex; align-items: center; gap: 4px; }
+.pov-log { width: 100%; }
+.pov-log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #c9d1d9; }
+.pov-log-list li { display: grid; grid-template-columns: auto 14px 1fr; gap: 6px; align-items: baseline; }
+.pov-log-list time { color: #6e7681; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: nowrap; }
+.pov-log-list .pov-log-concern { color: #f2cc60; }
+.pov-log-list .pov-log-settled { color: #56d364; }
+.pov-log-icon { text-align: center; }
+body.wizard .pov, body.wizard .grf-side { background: #1a1430; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .grf { border-color: rgba(122, 93, 176, 0.4); background: #120d24; }
 body.wizard .grf-runs, body.wizard .grf-inspector, body.wizard .grf-dock { background: #1a1430; border-color: rgba(122, 93, 176, 0.4); }
 body.wizard .grf-run.selected { background: #241a40; border-left-color: #a97bd6; }
@@ -18396,6 +18428,8 @@ body.wizard .grf-run.selected { background: #241a40; border-left-color: #a97bd6;
   .grf { grid-template-columns: 1fr; }
   .grf-runs { border-right: 0; border-bottom: 1px solid #2a3340; max-height: 220px; }
   .grf-inspector { border-left: 0; border-top: 1px solid #2a3340; }
+  .grf-side { border-left: 0; border-top: 1px solid #2a3340; }
+  .grf-side > .grf-inspector { border-top: 0; }
 }
 td.process-cell { white-space: nowrap; }
 

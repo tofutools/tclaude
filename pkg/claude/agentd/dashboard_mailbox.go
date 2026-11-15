@@ -561,6 +561,7 @@ type mailboxMessage struct {
 	DismissedAt   string   `json:"dismissed_at,omitempty"`
 	DismissedBy   string   `json:"dismissed_by,omitempty"`
 	DismissReason string   `json:"dismiss_reason,omitempty"`
+	ProcessRun    string   `json:"process_run,omitempty"`
 }
 
 // Mailbox pagination bounds. defaultMailboxPageSize is what the
@@ -784,6 +785,7 @@ func humanMailboxMessages(page []*db.HumanMessage) []mailboxMessage {
 			Decision:    m.Decision,
 			DecidedAt:   m.DecidedAt,
 			DismissedAt: m.DismissedAt, DismissedBy: m.DismissedBy, DismissReason: m.DismissReason,
+			ProcessRun: m.ProcessRun,
 		})
 	}
 	return out
