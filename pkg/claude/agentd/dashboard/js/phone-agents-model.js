@@ -1,13 +1,19 @@
 // phone-agents-model.js -- the phone Agents view as plain data: the groups and
 // their agents, one row per agent with what a phone shows of it (state, role,
 // harness, context, branch or PR and its checks), and the group tabs above.
-// No DOM, no Preact: phone-agents-island.js renders these.
+// No DOM, no rendering: phone-agents-island.js renders these.
 
 import { VARIANT_ORDER, memberVariant } from './group-activity.js';
 import { isAwayPlaceholder } from './agent-presence.js';
+import { signal } from '@preact/signals';
 
 export const ALL = 'all';
 export const UNGROUPED = '-ungrouped';
+
+// agentsTab is the group tab the Agents view shows (ALL, groupKey(name) or
+// UNGROUPED). Module state, so the view keeps it across tab switches and the
+// phone search (phone-search.js) can open the view on one group.
+export const agentsTab = signal(ALL);
 
 // A group's tab key: prefixed, so no group name collides with All or
 // Ungrouped.

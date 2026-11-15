@@ -6,7 +6,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const AGENT = 'agt_00000000000000000000000000000001';
 
-async function setup(t, { startOnNow = true, available = () => true, processes = null } = {}) {
+async function setup(t, { startOnNow = true, available = () => true, processes = null, fleetView = null } = {}) {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, island] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -35,17 +35,23 @@ async function setup(t, { startOnNow = true, available = () => true, processes =
     context: signal(processes), status: signal('ready'), error: signal(''), refreshes: 0,
     refresh() { this.refreshes += 1; return Promise.resolve(); },
   };
+  // The Fleet island's state the node chip reads: this node alone unless a
+  // test links peers.
+  const fleet = { view: signal(fleetView || { fleet: null, node: { self: { id: 'inst_self', name: 'dev@box', color: '#58a6ff', local: true } } }) };
   state.beginRequest();
   state.commitRequest(1, {
     groups: [{ name: 'webshop', members: [{ agent_id: AGENT, conv_id: 'c1', title: 'checkout-ui', online: true, state: { status: 'awaiting_input' } }] }],
     messages_unread: 3, access_requests_pending: 0,
+    messages: [{ id: 7, from_agent: AGENT, from_title: 'checkout-ui', group: 'webshop', subject: 'Checkout build is green', body: 'All checks pass.' }],
   });
   const mounted = await harness.mount(harness.html`<${island.PhoneShell} shell=${shell} state=${state} actions=${actions}
-    boardSource=${boardSource} processSource=${processSource} fetchImpl=${async () => ({ ok: true })} />`);
+    boardSource=${boardSource} processSource=${processSource} fleet=${fleet} fetchImpl=${async () => ({ ok: true })} />`);
   const root = harness.document.documentElement;
   const navItem = (label) => [...mounted.container.querySelectorAll('.phone-nav-item')].find((b) => b.textContent.includes(label));
   const tap = (element) => harness.act(() => element.click());
-  return { harness, state, shell, calls, mounted, root, navItem, tap, processSource };
+  const bar = () => mounted.container.querySelector('.phone-bar');
+  const sheet = () => mounted.container.querySelector('[role="dialog"]');
+  return { harness, state, shell, calls, mounted, root, navItem, tap, processSource, bar, sheet };
 }
 
 test('a fresh load lands on Now, with the counts on the nav', async (t) => {
@@ -251,4 +257,99 @@ test('More → Fleet over Now shows Fleet even when it is the tab underneath', a
   await tap(fleet);
   assert.deepEqual(calls.at(-1), ['showTab', 'fleet-admin']);
   assert.equal(shell.view.value, null, 'Now steps aside for the tab');
+});
+
+test('each root view has its own top-bar actions: node chip and 🔍 on Now, ⏻ on Agents', async (t) => {
+  const { harness, bar, navItem, tap } = await setup(t);
+  const named = (name) => harness.getByRole(bar(), 'button', { name });
+  assert.ok(named('Search'), 'Now has search');
+  assert.equal(bar().querySelector('.phone-node-chip').textContent.trim(), '⌂dev@box', 'and names the node on screen');
+  assert.equal(bar().querySelector('[aria-label="Power"]'), null);
+  await tap(navItem('Agents'));
+  assert.ok(named('Power'));
+  assert.ok(named('Search'));
+  assert.equal(bar().querySelector('.phone-node-chip'), null, 'the node chip is on Now and More only');
+  await tap(navItem('Board'));
+  assert.equal(bar().querySelector('.phone-ib'), null, 'Board adds its own');
+});
+
+test('⏻ opens the power actions', async (t) => {
+  const { harness, calls, bar, navItem, sheet, tap } = await setup(t);
+  await tap(navItem('Agents'));
+  await tap(harness.getByRole(bar(), 'button', { name: 'Power' }));
+  assert.equal(sheet().getAttribute('aria-label'), 'Power');
+  await tap(harness.getByRole(sheet(), 'button', { name: /Power on all$/ }));
+  assert.deepEqual(calls.at(-1), ['powerOnAll']);
+  assert.equal(sheet(), null);
+});
+
+test('a tab view adds bar actions and a title menu while it is the one on screen', async (t) => {
+  const { harness, bar, navItem, tap, state } = await setup(t, { startOnNow: false });
+  const { phoneBar } = await harness.importDashboardModule('js/phone-page.js');
+  const calls = [];
+  await harness.act(() => state.setActiveTab('messages'));
+  await harness.act(() => {
+    phoneBar.value = { tab: 'messages', menu: { sub: 'Human', label: 'Pick a mailbox', onClick: () => calls.push('menu') },
+      actions: [{ key: 'read', icon: '✓✓', label: 'Mark all read', onClick: () => calls.push('read') }] };
+  });
+  await tap(harness.getByRole(bar(), 'button', { name: 'Mark all read' }));
+  await tap(harness.getByRole(bar(), 'button', { name: 'Pick a mailbox' }));
+  assert.deepEqual(calls, ['read', 'menu']);
+  assert.match(bar().querySelector('.phone-bar-title').textContent, /Mail\s*Human ▾/);
+  assert.ok(harness.getByRole(bar(), 'button', { name: 'Search' }), 'the shell keeps its own');
+  await harness.act(() => state.setActiveTab('groups'));
+  assert.equal(bar().querySelector('[aria-label="Mark all read"]'), null, 'another tab does not show it');
+  await tap(navItem('Board'));
+  await harness.act(() => state.setActiveTab('messages'));
+  assert.ok(bar().querySelector('[aria-label="Mark all read"]'), 'its tab shows it again');
+});
+
+test('🔍 finds agents, groups, mail and tasks, and opens what is tapped', async (t) => {
+  const { harness, calls, bar, sheet, tap, shell } = await setup(t);
+  await tap(harness.getByRole(bar(), 'button', { name: 'Search' }));
+  const field = harness.getByRole(sheet(), 'textbox', { name: 'Search' });
+  assert.equal(harness.document.activeElement, field, 'the field has focus, so the keyboard comes up');
+  await harness.input(field, 'checkout');
+  const kinds = [...sheet().querySelectorAll('.phone-section')].map((s) => s.getAttribute('aria-label'));
+  assert.deepEqual(kinds, ['Agents', 'Mail']);
+  await tap(sheet().querySelector('[aria-label="Agents"] .phone-search-hit'));
+  assert.equal(calls.at(-1)[0], 'openTerminal');
+  assert.equal(calls.at(-1)[1].agentId, AGENT);
+  assert.equal(sheet(), null, 'a pick closes the sheet');
+
+  await tap(harness.getByRole(bar(), 'button', { name: 'Search' }));
+  await harness.input(harness.getByRole(sheet(), 'textbox', { name: 'Search' }), 'ship');
+  await tap(sheet().querySelector('[aria-label="Tasks"] .phone-search-hit'));
+  assert.deepEqual(calls.at(-1), ['navigate', '/?task=tk_1%3Awebshop']);
+  assert.equal(shell.view.value, null, 'it leaves Now for the task');
+});
+
+test('a search for a group opens Agents on that group', async (t) => {
+  const { harness, calls, bar, sheet, tap } = await setup(t);
+  const { agentsTab, ALL } = await harness.importDashboardModule('js/phone-agents-model.js');
+  t.after(() => { agentsTab.value = ALL; });
+  await tap(harness.getByRole(bar(), 'button', { name: 'Search' }));
+  await harness.input(harness.getByRole(sheet(), 'textbox', { name: 'Search' }), 'webshop');
+  await tap(sheet().querySelector('[aria-label="Groups"] .phone-search-hit'));
+  assert.deepEqual(calls.at(-1), ['showTab', 'groups']);
+  assert.equal(agentsTab.value, 'g:webshop');
+});
+
+test('with linked nodes the node chip opens a picker, on Now and atop More', async (t) => {
+  const self = { id: 'inst_self', name: 'dev@box', color: '#58a6ff', local: true, online: true };
+  const peers = [
+    { id: 'inst_lap', name: 'laptop', color: '#a371f7', local: false, online: true, level: 'restricted' },
+    { id: 'inst_nas', name: 'nas', color: '#3fb950', local: false, online: false, level: 'restricted' },
+  ];
+  const { harness, bar, sheet, navItem, tap } = await setup(t, { fleetView: { fleet: { self, peers }, node: { self } } });
+  await tap(harness.getByRole(bar(), 'button', { name: 'Node: dev@box. Pick a node' }));
+  assert.equal(sheet().getAttribute('aria-label'), 'Nodes');
+  const rows = [...sheet().querySelectorAll('.phone-node-row')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.phone-node-name').textContent), ['dev@box', 'laptop', 'nas']);
+  assert.equal(rows[0].getAttribute('aria-current'), 'page');
+  assert.equal(rows[2].disabled, true, 'an offline peer cannot be opened');
+  await harness.act(() => harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }));
+
+  await tap(navItem('More'));
+  assert.ok(sheet().querySelector('.phone-more-node .phone-node-chip'), 'More names the node too');
 });

@@ -114,6 +114,10 @@
   if (layout !== 'phone') return;
 
   document.documentElement.dataset.layout = 'phone';
+  // A desktop browser showing the phone layout (?layout=phone) is a preview:
+  // phone.css keeps the shell in a phone-wide column instead of stretching it
+  // across the window.
+  if (detected !== 'phone') document.documentElement.dataset.phonePreview = '';
   const head = document.head || document.documentElement;
   const meta = document.createElement('meta');
   meta.name = 'viewport';

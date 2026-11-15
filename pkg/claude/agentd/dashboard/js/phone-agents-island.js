@@ -9,9 +9,8 @@
 // confirmations and transactions are the desktop's.
 
 import { h, render } from 'preact';
-import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { ALL, VARIANT_LABELS, agentGroups, findRow, groupTabs, shownGroups } from './phone-agents-model.js';
+import { ALL, VARIANT_LABELS, agentsTab, agentGroups, findRow, groupTabs, shownGroups } from './phone-agents-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { Button } from './ui-components.js';
 import { Tabs } from './ui-tabs.js';
@@ -82,7 +81,8 @@ export function AgentSheet({ state, order, actions, agentKey, groupKey, close })
 }
 
 export function PhoneAgents({ state, order, actions }) {
-  const [tab, setTab] = useState(ALL);
+  const tab = agentsTab.value;
+  const setTab = (key) => { agentsTab.value = key; };
   const snapshot = state.snapshot.value;
   if (!snapshot) return html`<p class="ui-empty phone-empty">Loading…</p>`;
   const groups = agentGroups(snapshot, order);

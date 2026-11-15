@@ -127,3 +127,11 @@ test('the phone layout\'s own params leave the address: layers always, the own v
   const clean = boot({ href: 'http://h/messages?q=x' });
   assert.deepEqual(clean.replaced, [], 'an address without them is left alone');
 });
+
+test('a desktop showing the phone layout is marked a preview; a phone is not', () => {
+  const preview = boot({ href: 'http://h/?layout=phone' });
+  assert.equal(preview.dataset.layout, 'phone');
+  assert.equal(preview.dataset.phonePreview, '', 'phone.css keeps the shell in a phone-wide column');
+  assert.equal(boot({ device: IPHONE }).dataset.phonePreview, undefined);
+  assert.equal(boot({ device: IPHONE, href: 'http://h/?layout=phone' }).dataset.phonePreview, undefined);
+});

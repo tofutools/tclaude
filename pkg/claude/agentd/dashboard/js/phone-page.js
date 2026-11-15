@@ -64,3 +64,48 @@ export function usePhonePage(page, active = true) {
     };
   }, [key]);
 }
+
+// phoneBar is what a tab's root view (no page pushed) adds to the top bar:
+// icon actions before the shell's own (🔍, the node chip, the live dot), and
+// a menu on the title (the mock's "Notifications ▾", "Board webshop ▾").
+//
+//   phoneBar.value = {
+//     tab:     string, the tab it belongs to; the shell shows it only while
+//              that tab is the one on screen
+//     menu:    { sub, label, onClick } | null, a ▾ after the title: sub is the
+//              small text beside it, label what it does for a screen reader
+//     actions: [{ key, icon, label, onClick, disabled?, danger?, badge? }]
+//   } | null
+export const phoneBar = signal(null);
+
+function barKey(bar) {
+  if (!bar) return '';
+  const acts = (bar.actions || []).map((act) => [act.key || act.label, act.icon || '', act.label, !!act.disabled, !!act.danger, Number(act.badge) || 0]);
+  return JSON.stringify([bar.tab || '', bar.menu ? [bar.menu.sub || '', bar.menu.label || ''] : null, acts]);
+}
+
+// usePhoneBar shows `bar` in the shell's top bar while `active` holds and the
+// component is mounted, the way usePhonePage does for a page: replaced only
+// when its look changes, its handlers always the latest, and cleared only if
+// it is still this component's.
+export function usePhoneBar(bar, active = true) {
+  const latest = useRef(bar);
+  latest.current = bar;
+  const key = active && bar ? barKey(bar) : '';
+  useEffect(() => {
+    if (!key) return undefined;
+    const now = latest.current;
+    const shown = {
+      tab: now.tab || '',
+      menu: now.menu ? { sub: now.menu.sub || '', label: now.menu.label || '', onClick: () => latest.current?.menu?.onClick?.() } : null,
+      actions: (now.actions || []).map((act, index) => ({
+        ...act,
+        onClick: () => latest.current?.actions?.[index]?.onClick?.(),
+      })),
+    };
+    phoneBar.value = shown;
+    return () => {
+      if (phoneBar.peek() === shown) phoneBar.value = null;
+    };
+  }, [key]);
+}
