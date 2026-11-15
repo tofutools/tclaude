@@ -18,6 +18,7 @@ import {
   RETRY_ON_FAIL_MODES, PLAN_APPROVAL_MODES,
   defaultPerformer, setStageEnabled, setPlanApproval, addCheck, removeCheck, moveCheck, setCheckID,
   setRetryField, setCaptures, setWaitField, setNodeText, formatLines,
+  MAX_GATE_DECIDERS, addGateDecider, removeGateDecider,
 } from './process-node-form.js';
 import {
   nodeBlock, visibleBlocks, addableBlocks, removeBlock, moveKey, moveKeyBefore, mergeOrder,
@@ -67,14 +68,37 @@ function locateMain(type) {
   };
 }
 
-function PerformerBlock({ node, commit, readOnly }) {
+// DecidersBlock edits a gate: who decides, each asked their own question,
+// and the outcome all of them must choose.
+function DecidersBlock({ node, commit, readOnly, edges }) {
+  const outcomes = edges.map((edge) => edge.outcome);
+  return html`<div class="pni-deciders" data-node-deciders>
+    <${NodeSelect} fieldKey="agree" label="all must choose" options=${outcomes.includes(node.agree) || !node.agree ? outcomes : [node.agree, ...outcomes]}
+      value=${node.agree || ''} readOnly=${readOnly} apply=${(key, value) => commit(key, (draft) => { draft.agree = value; })} />
+    <p class="process-node-edges-note">Otherwise the first decider below who chose something else decides, and every decider's notes go back with it.</p>
+    ${node.deciders.map((decider, index) => html`<div key=${index} class="process-node-check" data-node-decider=${index}>
+      <div class="process-node-check-head"><span class="process-node-field-label">decider ${index + 1}</span><span class="spacer"></span>
+        ${!readOnly && html`<${Button} size="sm" variant="ghost danger" class="process-action" aria-label=${`Remove decider ${index + 1}`}
+          onClick=${() => commit(`deciders.${index}.remove`, (draft) => removeGateDecider(draft, index, outcomes))}>remove<//>`}</div>
+      <${PerformerEditor} path=${`deciders.${index}`} locate=${(draft) => draft.deciders[index]} performer=${decider}
+        commit=${commit} readOnly=${readOnly} choiceRouting=${false} contact=${true} />
+    </div>`)}
+    ${!readOnly && node.deciders.length < MAX_GATE_DECIDERS && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
+      onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, outcomes))}>+ add decider<//>`}
+  </div>`;
+}
+
+function PerformerBlock({ node, commit, readOnly, edges }) {
   const type = node.type || 'task';
+  if (type === 'decision' && node.deciders?.length) return html`<${DecidersBlock} node=${node} commit=${commit} readOnly=${readOnly} edges=${edges} />`;
   if (type === 'task' && !node.performer && !readOnly) {
     return html`<${Button} size="sm" class="process-action process-node-add"
       onClick=${() => commit('work.add', (draft) => { draft.performer = defaultPerformer('agent'); })}>add work performer<//>`;
   }
   return html`<${PerformerEditor} path="performer" locate=${locateMain(type)} performer=${mainPerformer(node)}
-    commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]} />`;
+    commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]} />
+    ${type === 'decision' && !readOnly && node.performer?.kind !== 'program' && edges.length > 1 && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
+      title="Several decide together, and all must agree" onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, edges.map((edge) => edge.outcome)))}>+ another decider<//>`}`;
 }
 
 function PromptBlock({ node, commit, readOnly }) {

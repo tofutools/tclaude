@@ -102,7 +102,7 @@ test('each node kind gets its required blocks, present optional ones, and only v
   assert.deepEqual(addable(), ['stages', 'inputs', 'retry', 'bounds', 'about']);
   await open('build');
   assert.deepEqual(blocks(), ['performer', 'inputs', 'outcomes'], 'upstream captures show the Inputs block');
-  assert.match(dock().querySelector('[data-node-block="inputs"]').textContent, /spec ← Write spec/);
+  assert.match(dock().querySelector('[data-node-block="inputs"]').textContent, /\{\{ outputs\.spec \}\} ← Write spec/);
   assert.match(dock().querySelector('[data-node-block="inputs"]').textContent, /params: ticket/);
   await open('gate');
   assert.deepEqual(blocks(), ['performer', 'prompt', 'outcomes']);
@@ -251,4 +251,22 @@ test('Delete on an inspector button stays in the panel; stage performers show th
   await set('plan.enabled', true);
   assert.ok(editor.model.node('build').plan, 'plan stage enabled');
   assert.ok(field('plan.performer.contact.cadence'), 'the plan performer keeps its contact schedule');
+});
+
+test('a decision takes another decider and edits as a gate', async (t) => {
+  const ctx = await openEditor(t);
+  await ctx.open('gate');
+  await ctx.click('[data-node-add-decider]');
+  let gate = ctx.editor.model.saveBody().template.nodes.gate;
+  assert.deepEqual(gate.deciders, [{ kind: 'human', ask: 'Ship it?' }, { kind: 'human', ask: 'Ship it?' }]);
+  assert.equal(gate.agree, 'yes');
+  assert.ok(ctx.dock().querySelector('[data-node-deciders]'));
+  assert.ok(!ctx.blocks().includes('prompt') && !ctx.blocks().includes('bounds'), 'each decider carries its own question');
+  assert.equal(ctx.dock().querySelectorAll('[data-node-decider]').length, 2);
+  await ctx.set('agree', 'no');
+  assert.equal(ctx.editor.model.saveBody().template.nodes.gate.agree, 'no');
+  await ctx.click('[aria-label="Remove decider 2"]');
+  gate = ctx.editor.model.saveBody().template.nodes.gate;
+  assert.equal(gate.deciders, undefined);
+  assert.deepEqual(gate.performer, { kind: 'human', ask: 'Ship it?', choices: ['yes', 'no'] });
 });

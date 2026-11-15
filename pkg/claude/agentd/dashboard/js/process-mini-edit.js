@@ -21,7 +21,8 @@ const PASS_LABELS = ['pass', 'done', 'success', 'next'];
 // continues.
 const CONTINUE = { agent: 'next', command: 'next', you: 'continue' };
 
-export const MINI_KINDS = Object.freeze(['agent', 'you', 'command']);
+// A gate is an agreement gate: a decision several deciders take together.
+export const MINI_KINDS = Object.freeze(['agent', 'you', 'command', 'gate']);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -40,6 +41,7 @@ export function miniKind(node) {
   const type = node?.type || 'task';
   if (type === 'start' || type === 'end') return type;
   if (type !== 'task' && type !== 'decision') return 'advanced';
+  if (type === 'decision' && node.deciders?.length) return 'gate';
   const kind = node.performer?.kind;
   if (kind === 'human') return 'you';
   if (kind === 'program') return 'command';
@@ -282,6 +284,7 @@ export function changeKind(view, id, kind) {
   const node = view.template.nodes[id];
   if (!isStep(node)) throw new Error('only a step can change kind here');
   const from = miniKind(node);
+  if (from === 'gate' || kind === 'gate') throw new Error('a gate gains and loses deciders, not a kind');
   if (from === kind) return { view, id };
   const next = copyView(view);
   const who = kind === 'you' ? { mode: 'you' } : kind === 'command' ? { mode: 'command' } : { mode: 'nobody' };
@@ -437,6 +440,7 @@ export function removeOutcome(view, id, outcome) {
   const decision = next.template.nodes[id];
   next.edges = next.edges.filter((edge) => !(edge.from === id && edge.outcome === outcome));
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).filter((c) => c !== outcome);
+  if (decision.agree === outcome) decision.agree = agreeChoice(next, id, decision);
   dropStaleJoins(next);
   return { view: syncLoops(next), id };
 }
@@ -459,6 +463,7 @@ export function renameOutcome(view, id, outcome, name) {
     if (other.onExhausted === outcome) decision.loops[looped] = { ...other, onExhausted: value };
   }
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).map((c) => (c === outcome ? value : c));
+  if (decision.agree === outcome) decision.agree = value;
   return { view: syncLoops(next), id };
 }
 
@@ -568,4 +573,139 @@ export function changeSummary(before, after) {
   const changed = Object.keys(now).filter((id) => was[id] && (JSON.stringify(was[id]) !== JSON.stringify(now[id]) || edgesOf(before, id) !== edgesOf(after, id)))
     .map((id) => `${name(now, id)} changed`);
   return [...added, ...removed, ...changed];
+}
+
+// ---- agreement gates ----------------------------------------------------------
+//
+// A decision with deciders is an agreement gate: each decider votes one of its
+// outcomes, and `agree` is the one they must all choose. A decision with one
+// decider is a plain decision, so adding a second decider makes the gate and
+// removing down to one makes a plain decision again.
+
+export const MAX_DECIDERS = 8;
+const APPROVING = /^(approved?|accept(ed)?|yes|ok|pass(ed)?|lgtm|agree[ds]?)$/i;
+
+// deciderOf is the performer a new decider starts as: an agent (a role, a
+// member, anyone, the lead) or a person, asked what the gate's first decider
+// is asked.
+function deciderOf(who, text) {
+  if (who.mode === 'you') return { kind: 'human', ask: text || 'Do you agree?' };
+  const decider = { kind: 'agent', prompt: text || 'Decide this step.' };
+  if (who.mode === 'agent') decider.assignee = who.agent;
+  else if (who.mode === 'role') decider.role = who.role;
+  else if (who.mode === 'anyone') decider.anyone = true;
+  else if (who.mode === 'lead') decider.lead = true;
+  return decider;
+}
+
+// deciderWho reads a decider as a Who.
+export function deciderWho(decider) {
+  if (!decider || decider.kind === 'human') return { mode: 'you' };
+  if (decider.assignee) return { mode: 'agent', agent: decider.assignee };
+  if (decider.role) return { mode: 'role', role: decider.role };
+  if (decider.anyone) return { mode: 'anyone' };
+  if (decider.lead) return { mode: 'lead' };
+  return { mode: 'nobody' };
+}
+
+function deciderText(decider) {
+  return decider?.kind === 'human' ? decider.ask || decider.prompt || '' : decider?.prompt || '';
+}
+
+// gateDeciders is a decision's deciders: its gate's, or its one performer.
+export function gateDeciders(node) {
+  if (node?.deciders?.length) return node.deciders;
+  return node?.performer ? [node.performer] : [];
+}
+
+// canAddDecider says why a step cannot take another decider, or ''.
+export function canAddDecider(view, id) {
+  const node = view.template.nodes[id];
+  if (node?.type !== 'decision') return 'only a decision is decided by several';
+  if (node.performer?.kind === 'program') return 'a command decides alone';
+  if (gateDeciders(node).length >= MAX_DECIDERS) return `a gate has at most ${MAX_DECIDERS} deciders`;
+  if (outcomesOf(view, id).length < 2) return 'a gate needs an outcome besides the one all must choose';
+  return '';
+}
+
+// agreeChoice is the outcome a new gate asks all deciders to choose: an
+// approving one if there is one, else its first that does not go back.
+function agreeChoice(view, id, node) {
+  const outcomes = outcomesOf(view, id).map((o) => o.outcome);
+  return outcomes.find((o) => APPROVING.test(o)) || outcomes.find((o) => !node.loops?.[o]) || outcomes[0] || '';
+}
+
+// addDecider gives decision id another decider; a plain decision becomes a
+// gate. A person's answer choices do not carry over: a gate's votes are its
+// outcomes.
+export function addDecider(view, id, who) {
+  const why = canAddDecider(view, id);
+  if (why) throw new Error(why);
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  if (!node.deciders?.length) {
+    const first = { ...node.performer };
+    delete first.choices;
+    delete first.choiceOutcomes;
+    node.deciders = [first];
+    delete node.performer;
+    node.agree = agreeChoice(next, id, node);
+    // Nobody is there to pick another outcome when a gate's rounds run out.
+    for (const [outcome, bound] of Object.entries(node.loops || {})) {
+      if (!bound.onExhausted) {
+        const ways = exhaustionChoices(node, outcomesOf(next, id).map((o) => o.outcome), outcome);
+        const way = ways.find((o) => o !== node.agree) || ways[0];
+        if (way) node.loops[outcome] = { ...bound, onExhausted: way };
+      }
+    }
+  }
+  node.deciders.push(deciderOf(who, deciderText(node.deciders[0])));
+  return { view: next, id };
+}
+
+// removeDecider drops decider `index`; with one left the gate is a plain
+// decision again, and a person deciding alone answers with the outcomes.
+export function removeDecider(view, id, index) {
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  if (!node.deciders?.[index]) return { view, id };
+  node.deciders.splice(index, 1);
+  if (node.deciders.length === 1) {
+    node.performer = node.deciders[0];
+    delete node.deciders;
+    delete node.agree;
+    if (node.performer.kind === 'human') node.performer.choices = outcomesOf(next, id).map((o) => o.outcome);
+  }
+  return { view: next, id };
+}
+
+// setDecider makes decider `index` who, keeping what it is asked.
+export function setDecider(view, id, index, who) {
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  const old = node.deciders?.[index];
+  if (!old) return { view, id };
+  const decider = deciderOf(who, deciderText(old));
+  if (decider.kind === 'agent' && old.kind === 'agent') {
+    for (const key of ['sameAs', 'differentFrom', 'fallback', 'model', 'effort', 'profile']) if (old[key] !== undefined && who.mode !== 'agent') decider[key] = old[key];
+  }
+  node.deciders[index] = decider;
+  return { view: next, id };
+}
+
+// setGateText asks every decider the same: the inline inspector's one text.
+export function setGateText(view, id, text) {
+  const next = copyView(view);
+  for (const decider of next.template.nodes[id].deciders || []) {
+    if (decider.kind === 'human') decider.ask = text;
+    else decider.prompt = text;
+  }
+  return { view: next, id };
+}
+
+// setAgree sets the outcome all deciders must choose.
+export function setAgree(view, id, outcome) {
+  const next = copyView(view);
+  next.template.nodes[id].agree = outcome;
+  return { view: next, id };
 }

@@ -68,6 +68,7 @@ export function viewToStepList(view) {
   for (const [id, node] of Object.entries(nodes)) {
     const type = node?.type || '';
     if (!LIST_TYPES.has(type)) return { ok: false, reason: `step ${id} is a ${type || 'typeless'} node, which only the graph editor shows` };
+    if (node.deciders?.length) return { ok: false, reason: `step ${id} is decided by several deciders, which only the graph editor shows` };
   }
   const next = edgesByNode(view);
   const entry = startTarget(view);
