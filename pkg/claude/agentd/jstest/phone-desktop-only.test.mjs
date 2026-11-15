@@ -13,6 +13,8 @@ test('desktopOnlyView names the views a phone leaves out', async (t) => {
   assert.equal(mod.desktopOnlyView('groups', 'routes'), 'Route map');
   assert.equal(mod.desktopOnlyView('groups', 'members'), '');
   assert.equal(mod.desktopOnlyView('access'), '');
+  assert.equal(mod.desktopOnlyView('diagnostics', 'performance'), 'Performance', 'Diagnostics is Doctor, Audit and Logs on a phone');
+  assert.equal(mod.desktopOnlyView('diagnostics', 'doctor'), '');
 });
 
 test('the note and the page both switch to the desktop layout', async (t) => {

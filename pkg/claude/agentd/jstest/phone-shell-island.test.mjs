@@ -429,3 +429,14 @@ test('Agents\' Board › brings the Board up over the tab, on that group', async
   assert.equal(root.dataset.phoneView, 'board');
   assert.ok(mounted.container.querySelector('.phone-bar-title').textContent.includes('webshop'));
 });
+
+test('Performance is desktop only: leaving it, Diagnostics opens on the Doctor again', async (t) => {
+  const { harness, state } = await setup(t, { startOnNow: false });
+  const { activitySubtab } = await harness.importDashboardModule('js/activity-state.js');
+  await harness.act(() => { activitySubtab.value = 'performance'; state.setActiveTab('diagnostics'); });
+  assert.ok(harness.document.querySelector('.phone-desktop-page'), 'the desktop-only page');
+  await harness.act(() => state.setActiveTab('groups'));
+  assert.equal(activitySubtab.value, 'doctor');
+  await harness.act(() => state.setActiveTab('diagnostics'));
+  assert.equal(harness.document.querySelector('.phone-desktop-page'), null, 'back on Diagnostics, not the desktop-only page');
+});

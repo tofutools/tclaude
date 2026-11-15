@@ -1280,10 +1280,13 @@ export async function mountDoctorFeature(dependencies = {}) {
       const islandModule = import('./doctor-island.js');
       const stateModule = import('./doctor-state.js');
       const [{ mountDoctorIsland }, { doctorState }] = await Promise.all([islandModule, stateModule]);
+      // A phone shows its own Doctor (phone-doctor.js) over the same state.
+      const phone = isPhone ? await import('./phone-doctor.js') : null;
       return {
         state: doctorState,
         mount: (registerCleanup) => mountDoctorIsland({
           host, badgeHosts, state: doctorState, notify: dependencies.notify, registerCleanup,
+          ...(phone ? { App: phone.PhoneDoctor } : {}),
         }),
       };
     },

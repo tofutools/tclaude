@@ -72,12 +72,14 @@ export function createDoctorActions({ state, notify, fetchImpl = globalThis.fetc
   return Object.freeze({ load, setSandboxDefault });
 }
 
-async function copy(text, notify) {
+// copyFix puts a check's fix command on the clipboard, or says how to copy
+// it by hand. The phone Doctor's page uses it too (phone-doctor.js).
+export async function copyFix(text, notify) {
   if (await writeClipboard(text)) notify?.('Copied');
   else notify?.(`Copy failed: ${clipboardFailure()}. Select the command and copy it by hand`, true);
 }
 
-function SandboxDefaultControl({ check, state, actions }) {
+export function SandboxDefaultControl({ check, state, actions }) {
   const busy = state.busy.value;
   if (check.severity === 'decision' || !check.value) {
     return html`<div class="doctor-choice">
@@ -114,7 +116,7 @@ function CheckRow({ check, state, actions, notify }) {
         ${showCategory && categoryLabel && html`<span class="doctor-cat">${categoryLabel}</span>`}${showCategory && categoryLabel && check.detail ? ' · ' : ''}${check.detail}
       </div>`}
       ${check.fix && html`<div class="doctor-fix"><code>${check.fix}</code>
-        <${Button} size="sm" variant="link" class="doctor-copy" onClick=${() => copy(check.fix, notify)}>copy<//></div>`}
+        <${Button} size="sm" variant="link" class="doctor-copy" onClick=${() => copyFix(check.fix, notify)}>copy<//></div>`}
       ${check.action === 'sandbox-default' && html`<${SandboxDefaultControl} check=${check} state=${state} actions=${actions} />`}
       ${check.action === 'harness-config-repair' && html`<${HarnessConfigRepairControl} notify=${notify} onDone=${() => actions.load({ refresh: true })} />`}
     </div>
@@ -171,9 +173,11 @@ function DoctorBadge({ state }) {
   </span>`;
 }
 
-export function mountDoctorIsland({ host, badgeHosts = [], state, notify, registerCleanup, shares = doctorShared }) {
+// App is the view to render: the desktop's, or the phone's (phone-doctor.js)
+// over the same state, actions, poll and badges.
+export function mountDoctorIsland({ host, badgeHosts = [], state, notify, registerCleanup, shares = doctorShared, App = DoctorApp }) {
   const actions = createDoctorActions({ state, notify, shares });
-  render(html`<${DoctorApp} state=${state} actions=${actions} notify=${notify} />`, host);
+  render(html`<${App} state=${state} actions=${actions} notify=${notify} />`, host);
   for (const badgeHost of badgeHosts) render(html`<${DoctorBadge} state=${state} />`, badgeHost);
   // The first load waits until the page's node is known to share the checks
   // (at once on this node; on a peer's page, once its snapshot says so).

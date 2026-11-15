@@ -1,8 +1,9 @@
 // Diagnostics, Plugins and Fleet on a phone (js/phone-diagnostics.js,
 // js/phone-plugins.js, js/phone-fleet.js) in a real browser: each fits the
 // phone, Audit and Logs are two-line rows that open, Doctor leads the
-// sub-tabs, Performance keeps its endpoint cards, a plugin is a card with its
-// steps, and Fleet is reached from More and changes nothing.
+// sub-tabs and lists its findings as rows that open as pages, Performance is
+// desktop only, a plugin is a card with its steps, and Fleet is reached from
+// More and changes nothing.
 //
 //   scripts/sandbox/ui.sh smoke phone-diagnostics
 import { test, expect, devices } from '@playwright/test';
@@ -30,12 +31,14 @@ function collectErrors(page) {
   return errors;
 }
 
-test('Diagnostics: Doctor first, Audit and Logs as rows, Performance as cards', async ({ page }) => {
+test('Diagnostics: Doctor first, Audit and Logs as rows, Doctor findings as pages, Performance desktop only', async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto('/diagnostics/audit');
   await booted(page);
   const subtabs = page.locator('#tab-diagnostics .activity-subtab');
-  const first = await subtabs.evaluateAll((tabs) => tabs.slice().sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0].dataset.subtab);
+  // The chips a phone shows (Performance has none), left to right.
+  const first = await subtabs.evaluateAll((tabs) => tabs.filter((tab) => tab.getClientRects().length)
+    .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0].dataset.subtab);
   expect(first).toBe('doctor');
 
   const row = page.locator('#audit-root .phone-diag-row').first();
@@ -52,14 +55,31 @@ test('Diagnostics: Doctor first, Audit and Logs as rows, Performance as cards', 
   await expect(page.locator('#logs-root .phone-diag-row').first()).toBeVisible();
   await expectNoSideScroll(page, 'Diagnostics › Logs');
 
-  await subtabs.filter({ hasText: 'Performance' }).click();
-  await expect(page.locator('.debug-card').first()).toBeVisible();
-  await expect(page.locator('#profiles-root')).toBeHidden();
-  await expectNoSideScroll(page, 'Diagnostics › Performance');
+  await expect(subtabs.filter({ hasText: 'Performance' })).toBeHidden();
 
+  // Doctor: one list by severity (no second row of category tabs, B12); a
+  // finding opens as its own page, and Back returns to the list.
   await subtabs.filter({ hasText: 'Doctor' }).click();
-  await expect(page.locator('.doctor-row').first()).toBeVisible();
+  const finding = page.locator('.phone-doctor-row').first();
+  await expect(finding).toBeVisible();
+  await expect(page.locator('.doctor-side')).toHaveCount(0);
   await expectNoSideScroll(page, 'Diagnostics › Doctor');
+  await finding.click();
+  await expect(page.locator('.phone-doctor-heading')).toBeVisible();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Doctor');
+  await expectNoSideScroll(page, 'a Doctor finding');
+  await page.goBack();
+  await expect(page.locator('.phone-doctor-heading')).toHaveCount(0);
+  await expect(finding).toBeVisible();
+
+  // Performance, reached by its route, says it is desktop only and leads to
+  // the Doctor.
+  await page.goto('/diagnostics/performance');
+  await booted(page);
+  await expect(page.locator('.phone-desktop-page:visible')).toContainText('Performance is desktop only');
+  await page.getByRole('button', { name: 'Open the Doctor' }).click();
+  await expect(page).toHaveURL(/\/diagnostics\/doctor$/);
+  await expect(page.locator('.phone-doctor-row').first()).toBeVisible();
   expect(errors).toEqual([]);
 });
 
