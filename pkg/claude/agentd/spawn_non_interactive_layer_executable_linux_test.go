@@ -240,3 +240,62 @@ func TestSpliceOneShotExecutableReplacesAnAbsoluteArgv0(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"env", "A=1", "/n/node", "/g/gemini.js", "-p", "x"}, got)
 }
+
+// piManaged installs pi the way pi 1.5's own installer does: `pi` on PATH is
+// a symlink to a `#!/bin/sh` launcher beside install/current-version, the
+// release is an npm install under install/releases/<version>, and Node lives
+// under the data home's pi-node/current. It returns the install root, the
+// CLI and the installer's Node.
+func (f oneShotLayerFixture) piManaged(t *testing.T) (install, cli, node string) {
+	t.Helper()
+	agent := filepath.Join(f.root, "pihome", ".pi", "agent")
+	launcher := filepath.Join(agent, "bin", "pi")
+	require.NoError(t, os.MkdirAll(filepath.Dir(launcher), 0o755))
+	require.NoError(t, os.WriteFile(launcher, []byte("#!/bin/sh\nexec \"$PI_REAL\" \"$@\"\n"), 0o755))
+	require.NoError(t, os.Symlink(launcher, filepath.Join(f.bin, "pi")))
+	install = filepath.Join(agent, "install")
+	require.NoError(t, os.MkdirAll(install, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(install, "current-version"), []byte("1.5.0\n"), 0o644))
+	modules := filepath.Join(install, "releases", "1.5.0", "node_modules")
+	pkg := filepath.Join(modules, "@earendil-works", "pi-coding-agent")
+	require.NoError(t, os.MkdirAll(filepath.Join(pkg, "dist", "bundle"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkg, "package.json"),
+		[]byte(`{"name":"@earendil-works/pi-coding-agent","bin":{"pi":"dist/bundle/cli.js"}}`), 0o644))
+	cli = filepath.Join(pkg, "dist", "bundle", "cli.js")
+	require.NoError(t, os.WriteFile(cli, []byte("#!/usr/bin/env node\n"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(modules, ".bin"), 0o755))
+	require.NoError(t, os.Symlink("../@earendil-works/pi-coding-agent/dist/bundle/cli.js", filepath.Join(modules, ".bin", "pi")))
+	data := filepath.Join(f.root, "data")
+	t.Setenv("XDG_DATA_HOME", data)
+	node = filepath.Join(data, "pi-node", "v22.23.4", "bin", "node")
+	require.NoError(t, os.MkdirAll(filepath.Dir(node), 0o755))
+	require.NoError(t, os.WriteFile(node, []byte("\x7fELF"), 0o755))
+	require.NoError(t, os.Symlink("v22.23.4", filepath.Join(data, "pi-node", "current")))
+	return install, cli, node
+}
+
+// pi's managed installer puts a /bin/sh launcher on PATH, which a constructed
+// root used to refuse. The one-shot starts the CLI that launcher would exec,
+// under the installer's Node (node is not on PATH here), with the launcher's
+// PI_MANAGED_INSTALL_ROOT, and mounts the release read-only.
+func TestWrapOneShotLayer_PiManagedInstallUnderAConstructedRoot(t *testing.T) {
+	f := newOneShotLayerFixture(t)
+	install, cli, node := f.piManaged(t)
+	h, ok := harness.Get(harness.PiName)
+	require.True(t, ok)
+	cwd := filepath.Join(f.root, "work")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	profile := sandboxpolicy.Profile{Name: "separate", FilesystemRoot: sandboxpolicy.FilesystemRootSeparate}
+
+	command, err := wrapOneShotLayer(h, cwd, oneShotLayerSnapshot(t, profile), nil,
+		[]string{h.Spawn.Binary(), "-p", "hello"}, "")
+	require.NoError(t, err)
+	assert.Regexp(t, `exec env `+harness.PiAgentDirEnvVar+`=\S+ `+
+		regexp.QuoteMeta(harness.PiManagedInstallEnvVar+"="+install)+` `+
+		regexp.QuoteMeta(node+" "+cli)+` -p hello`, command)
+	pkg := filepath.Join(install, "releases", "1.5.0", "node_modules", "@earendil-works", "pi-coding-agent")
+	for _, path := range []string{node, pkg, filepath.Join(install, "current-version")} {
+		assert.Contains(t, command, "--ro-bind "+path+" "+path, "%s is mounted read-only", path)
+	}
+	assert.NotContains(t, command, filepath.Join(f.bin, "pi"), "the launcher itself is not what runs")
+}

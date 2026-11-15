@@ -73,6 +73,13 @@ func (piSpawner) BuildCommand(spec SpawnSpec) string {
 			prefix = "export " + PiHookBinEnvVar + "=" + clcommon.ShellQuoteArg(spec.TclaudeExecutable) + "; "
 		}
 	}
+	if spec.ExecutablePath != "" {
+		// A CLI pinned from pi's managed install gets what its launcher would
+		// have exported (ResolvePiLaunchExecutable starts the CLI directly).
+		if root := PiManagedInstallRoot(spec.ExecutablePath); root != "" {
+			prefix += "export " + PiManagedInstallEnvVar + "=" + clcommon.ShellQuoteArg(root) + "; "
+		}
+	}
 	managedArgs, managedRules := piManagedInstructions(spec.ManagedInstructionsRoot, spec.StatusExtensionPath != "")
 	if managedRules != "" {
 		prefix += "export " + PiManagedRulesEnvVar + "=" + clcommon.ShellQuoteArg(managedRules) + "; "
