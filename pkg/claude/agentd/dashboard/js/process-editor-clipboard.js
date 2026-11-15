@@ -32,7 +32,8 @@ const STEP_FIELDS = new Set([
 ]);
 const PERFORMER_FIELDS = new Set([
   'kind', 'profile', 'prompt', 'ask', 'choices', 'choiceOutcomes', 'assignee',
-  'role', 'anyone', 'fallback', 'spawn', 'model', 'effort', 'run', 'args', 'timeout', 'contact',
+  'role', 'anyone', 'lead', 'sameAs', 'differentFrom', 'fallback', 'spawn', 'model', 'effort', 'run',
+  'args', 'timeout', 'contact',
 ]);
 const FALLBACK_FIELDS = new Set(['action', 'profile']);
 const CONTACT_FIELDS = new Set(['cadence', 'budget', 'escalationTarget']);
@@ -111,9 +112,11 @@ function validatePerformer(value) {
   validateWireRecord(value, PERFORMER_FIELDS);
   if (!PROCESS_PERFORMER_KINDS.has(value.kind)) wireShapeReject();
   validateOptionalStrings(value, [
-    'profile', 'prompt', 'ask', 'assignee', 'role', 'spawn', 'model', 'effort', 'run', 'timeout',
+    'profile', 'prompt', 'ask', 'assignee', 'role', 'spawn', 'model', 'effort', 'run', 'timeout', 'sameAs',
   ]);
   if (Object.hasOwn(value, 'anyone') && typeof value.anyone !== 'boolean') wireShapeReject();
+  if (Object.hasOwn(value, 'lead') && typeof value.lead !== 'boolean') wireShapeReject();
+  if (Object.hasOwn(value, 'differentFrom')) validateStringList(value.differentFrom);
   if (Object.hasOwn(value, 'fallback')) {
     validateWireRecord(value.fallback, FALLBACK_FIELDS);
     validateOptionalStrings(value.fallback, ['action', 'profile']);

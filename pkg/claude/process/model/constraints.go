@@ -7,28 +7,29 @@ import (
 )
 
 // captureRefPattern is a reference to a step output in a prompt or ask:
-// {{ name }}, with name a capture some step of the scope declares. A
-// parameter reference ({{ params.x }}) is not one.
-var captureRefPattern = regexp.MustCompile(`\{\{\s*([a-z0-9][a-z0-9._-]*)\s*\}\}`)
+// {{ outputs.name }}, with name a capture some step of the scope declares.
+// The outputs. prefix keeps it apart from a parameter ({{ params.x }}) and from
+// the editors' bare {{x}} shorthand, which means {{ params.x }}.
+var captureRefPattern = regexp.MustCompile(`\{\{\s*outputs\.([a-z0-9][a-z0-9._-]*)\s*\}\}`)
 
 // CaptureReferences returns the step outputs one interpolated performer field
 // refers to, in source order.
 func CaptureReferences(value string) []string {
 	var references []string
 	for _, match := range captureRefPattern.FindAllStringSubmatch(value, -1) {
-		if len(match) == 2 && !strings.HasPrefix(match[1], "params.") {
+		if len(match) == 2 {
 			references = append(references, match[1])
 		}
 	}
 	return references
 }
 
-// InterpolateCaptures replaces each {{ name }} that names a known output with
+// InterpolateCaptures replaces each {{ outputs.name }} that names a known output with
 // value(name). An unknown name is left as written.
 func InterpolateCaptures(text string, value func(name string) (string, bool)) string {
 	return captureRefPattern.ReplaceAllStringFunc(text, func(reference string) string {
 		match := captureRefPattern.FindStringSubmatch(reference)
-		if len(match) != 2 || strings.HasPrefix(match[1], "params.") {
+		if len(match) != 2 {
 			return reference
 		}
 		if replaced, ok := value(match[1]); ok {
@@ -133,7 +134,7 @@ func validatePerformerConstraints(tmpl *Template, diagnostics *templateDiagnosti
 }
 
 // validateCaptureRefs checks the outputs prompts and asks refer to: an output
-// is declared by one step only, and a {{ name }} that names no declared output
+// is declared by one step only, and a {{ outputs.name }} that names no declared output
 // is a warning (it stays as written at run time).
 func validateCaptureRefs(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
 	owners := map[string]string{}
@@ -157,7 +158,7 @@ func validateCaptureRefs(tmpl *Template, diagnostics *templateDiagnosticCollecto
 					// previous round's value.
 					if _, ok := owners[ref]; !ok {
 						if !diagnostics.Add(diagWarning("unknown_capture_ref", slot.path+"."+field.name,
-							fmt.Sprintf("{{ %s }} names no step output; it is left as written", ref))) {
+							fmt.Sprintf("{{ outputs.%s }} names no step output; it is left as written", ref))) {
 							return false
 						}
 					}

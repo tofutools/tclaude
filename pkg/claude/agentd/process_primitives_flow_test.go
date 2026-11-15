@@ -17,7 +17,7 @@ import (
 // performed by the group's lead; it can be bound to the agent that performed
 // another step (sameAs) or kept from every agent that performed others
 // (differentFrom); and a step can declare outputs its performer reports,
-// which later steps' prompts read as {{ name }}.
+// which later steps' prompts read as {{ outputs.name }}.
 
 func agentStep(prompt string, edit func(*model.Performer)) *model.Performer {
 	performer := &model.Performer{Kind: model.PerformerAgent, Prompt: prompt}
@@ -160,6 +160,33 @@ func TestProcessPerformerConstraints_SameAsAndDifferentFrom(t *testing.T) {
 	assert.Equal(t, engine.RunCompleted, showPerformerRun(t, f, runID).Status)
 }
 
+// Scenario: a run bound to one agent cannot hand a differentFrom step to
+// anyone else, so the step waits and says why instead of ignoring the rule.
+func TestProcessPerformerConstraints_AgentScopedRunWaitsOnDifferentFrom(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	f.HaveGroup("crew")
+	const aliceConv = "cdsa-1111-2222-3333-4444"
+	alice := havePerformerAgent(t, f, "crew", aliceConv, "alice", "dev", "idle")
+	tmpl := chainTemplate("constraints-bound", []string{"implement", "review"}, map[string]model.Node{
+		"implement": {Performer: agentStep("Implement it.", nil)},
+		"review": {Performer: agentStep("Review it independently.", func(p *model.Performer) {
+			p.DifferentFrom = []string{"implement"}
+		})},
+	})
+
+	const runID = "run_constraints_bound"
+	view := startPerformerRun(t, f, root, runID, tmpl, agentd.ProcessRunScopeForTest{Kind: "agent", AgentID: alice})
+	agentID, attempt, _ := commandFor(t, view, "implement")
+	require.Equal(t, alice, agentID)
+	reportStep(t, f, aliceConv, runID, "implement", attempt, nil)
+
+	view = showPerformerRun(t, f, runID)
+	_, _, state := commandFor(t, view, "review")
+	assert.Equal(t, db.ProcessDispatchNeedsPerformer, state)
+	assert.Contains(t, view.Commands[0].Performer.WaitReason, "the run is bound to that agent")
+	assert.Len(t, processInbox(t, aliceConv), 1, "alice is not handed the review of her own work")
+}
+
 // Scenario: two reviewers alongside each other, the first one declared
 // different from the second. They are dispatched together, the first one
 // first; both would take the one idle reviewer, but differentFrom holds both
@@ -206,8 +233,8 @@ func TestProcessStepOutputs_PassOnToLaterPrompts(t *testing.T) {
 	}
 	tmpl := chainTemplate("outputs", []string{"plan", "build", "check"}, map[string]model.Node{
 		"plan":  {Performer: dev("Plan the change."), Captures: []string{"plan"}},
-		"build": {Performer: dev("Build this plan:\n{{ plan }}"), Captures: []string{"pr", "branch"}},
-		"check": {Performer: dev("Check {{pr}} on {{ branch }} against the plan:\n{{plan}}")},
+		"build": {Performer: dev("Build this plan:\n{{ outputs.plan }}"), Captures: []string{"pr", "branch"}},
+		"check": {Performer: dev("Check {{outputs.pr}} on {{ outputs.branch }} against the plan:\n{{outputs.plan}}")},
 	})
 
 	const runID = "run_outputs"
@@ -231,7 +258,9 @@ func TestProcessStepOutputs_PassOnToLaterPrompts(t *testing.T) {
 	_, attempt, _ = commandFor(t, view, "build")
 	inbox = processInbox(t, devConv)
 	require.Len(t, inbox, 2)
-	assert.Contains(t, inbox[1].Body, "Build this plan:\n1. add a filter field\n2. save it per user")
+	assert.Contains(t, inbox[1].Body,
+		"Build this plan:\n[output plan, reported by an earlier step:]\n1. add a filter field\n2. save it per user\n[end of output plan]",
+		"the value is marked as another step's report, not the template's own words")
 	assert.Contains(t, inbox[1].Body, `--output pr="<value>" --output branch="<value>"`)
 	onlyOne := reportAs(t, f, devConv, map[string]any{"runId": runID, "nodeId": "build", "attempt": attempt,
 		"outcome": "succeeded", "note": "PR is up", "outputs": map[string]any{"pr": "PR #51"}})
@@ -243,7 +272,9 @@ func TestProcessStepOutputs_PassOnToLaterPrompts(t *testing.T) {
 	_, attempt, _ = commandFor(t, view, "check")
 	inbox = processInbox(t, devConv)
 	require.Len(t, inbox, 3)
-	assert.Contains(t, inbox[2].Body, "Check PR #51 on saved-filters against the plan:\n1. add a filter field")
+	assert.Contains(t, inbox[2].Body, "Check [output pr, reported by an earlier step:]\nPR #51\n[end of output pr] on")
+	assert.Contains(t, inbox[2].Body, "\nsaved-filters\n[end of output branch] against the plan:")
+	assert.Contains(t, inbox[2].Body, "\n1. add a filter field\n2. save it per user\n[end of output plan]")
 	reportStep(t, f, devConv, runID, "check", attempt, nil)
 
 	view = showPerformerRun(t, f, runID)
@@ -319,8 +350,8 @@ func TestProcessPrimitives_Validation(t *testing.T) {
 	assert.Contains(t, codes(two(plain(), &model.Performer{Kind: model.PerformerProgram, Run: "true", SameAs: "one"})),
 		"kind_scoped_field", "a program step has no performer constraints")
 	assert.Contains(t, codes(two(plain(), plain(), []string{"pr"}, []string{"pr"})), "duplicate_capture")
-	assert.Contains(t, validate(two(plain(), with(func(p *model.Performer) { p.Prompt = "Check {{ pr }}." }))),
+	assert.Contains(t, validate(two(plain(), with(func(p *model.Performer) { p.Prompt = "Check {{ outputs.pr }}." }))),
 		finding{Code: "unknown_capture_ref", Severity: "warning"})
-	assert.NotContains(t, codes(two(plain(), with(func(p *model.Performer) { p.Prompt = "Check {{ pr }}." }), []string{"pr"})),
+	assert.NotContains(t, codes(two(plain(), with(func(p *model.Performer) { p.Prompt = "Check {{ outputs.pr }}." }), []string{"pr"})),
 		"unknown_capture_ref")
 }

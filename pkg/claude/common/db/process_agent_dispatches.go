@@ -301,6 +301,18 @@ func CloseProcessAgentDispatch(runID, commandID, reason string) error {
 	return err
 }
 
+// ClearProcessAgentDispatchOutputs drops the outputs a dispatch's report
+// carried, for a report the run never applied.
+func ClearProcessAgentDispatchOutputs(runID, commandID string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE process_agent_dispatches SET report_outputs = '', updated_at = ?
+		WHERE run_id = ? AND command_id = ?`, dbTime(time.Now().UTC()), runID, commandID)
+	return err
+}
+
 // ListProcessRunIDsWithAgentCommands returns one page of live runs whose
 // checkpoint holds at least one outstanding agent command. It is the
 // rediscovery source for a dispatch row lost between a planning commit and its

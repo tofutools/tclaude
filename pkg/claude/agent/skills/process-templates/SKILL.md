@@ -160,7 +160,7 @@ warns when placed in inert fields such as profile, timeout, or backoff.
 - `task`: require `performer`; usually route `pass` and `fail`. Optionally add
   `plan`, ordered `checks`, `review`, `retry`, and `captures` (outputs: a
   plain agent task's performer reports each with `--output name=value`, and a
-  later prompt reads it as `{{ name }}`; params stay `{{ params.x }}`).
+  later prompt reads it as `{{ outputs.name }}`; params stay `{{ params.x }}`).
 - `decision`: require a decider `performer`; each possible verdict needs an
   exact outcome key in `next`.
 - `wait`: require `wait.duration`, `wait.until`, or `wait.signal`, plus `next`.

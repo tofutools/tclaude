@@ -751,9 +751,12 @@ nodes:
 `captures: [<name>, ...]`. Its performer reports a value for each with
 `--output <name>=<value>`; a step with a single output can leave that out,
 and its note is the output. A later step's prompt (or a person's ask) reads
-the value as `{{ <name> }}`, filled in when the step is handed to its
+the value as `{{ outputs.<name> }}`, filled in when the step is handed to its
 performer, so a loop's next round reads the latest value. Parameters keep
-their own form, `{{ params.<name> }}`.
+their own form, `{{ params.<name> }}` (the editors' bare `{{name}}` is short
+for a parameter, never an output). The value is marked in the prompt as
+reported by an earlier step, so the agent reads it as data, not as the
+template's instructions.
 
 ```yaml
 nodes:
@@ -764,16 +767,16 @@ nodes:
   build:
     type: task
     captures: [pr]
-    performer: {kind: agent, role: dev, prompt: "Build this plan:\n{{ plan }}\nReport the PR link as pr."}
+    performer: {kind: agent, role: dev, prompt: "Build this plan:\n{{ outputs.plan }}\nReport the PR link as pr."}
   review:
     type: task
-    performer: {kind: agent, role: reviewer, prompt: "Review {{ pr }} against the plan:\n{{ plan }}"}
+    performer: {kind: agent, role: reviewer, prompt: "Review {{ outputs.pr }} against the plan:\n{{ outputs.plan }}"}
 ```
 
 A success that leaves out a declared output is refused at that step, with
 the command that would fix it, and the agent reports again; nothing later
 ever reads a blank. A name the step does not declare is refused too. An
-output is declared by one step only; a `{{ name }}` that names no declared
+output is declared by one step only; a `{{ outputs.name }}` that names no declared
 output is a validation warning and stays as written. Each value is at most
 16 KiB. `show --json` lists what each attempt reported under `performers[].outputs`.
 
