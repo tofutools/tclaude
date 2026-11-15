@@ -50,8 +50,24 @@ type processRunJSON struct {
 	Blocked               []processRunBlockedJSON  `json:"blocked"`
 	Scope                 processRunScopeJSON      `json:"scope"`
 	Paused                *processRunPauseJSON     `json:"paused,omitempty"`
+	Gates                 []processRunGateJSON     `json:"gates,omitempty"`
 	CreatedAt             time.Time                `json:"createdAt"`
 	UpdatedAt             time.Time                `json:"updatedAt"`
+}
+
+// processRunGateJSON mirrors the daemon's view of an agreement gate whose
+// votes are out.
+type processRunGateJSON struct {
+	NodeID string `json:"nodeId"`
+	Agree  string `json:"agree"`
+	Agreed int    `json:"agreed"`
+	Total  int    `json:"total"`
+	Votes  []struct {
+		NodeID  string `json:"nodeId"`
+		Decider string `json:"decider"`
+		Verdict string `json:"verdict,omitempty"`
+	} `json:"votes"`
+	Summary string `json:"summary"`
 }
 
 // processRunPauseJSON mirrors the daemon's operator-pause view.
@@ -950,6 +966,15 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 		for _, blocked := range run.Blocked {
 			fmt.Fprintf(tw, "%s\t%d\t%s\n", blocked.NodeID, blocked.Attempt,
 				displayProcessEventField(blocked.Reason))
+		}
+		_ = tw.Flush()
+	}
+	if len(run.Gates) > 0 {
+		fmt.Fprintln(out, "gates:")
+		tw := newTable(out)
+		fmt.Fprintln(tw, "NODE\tTALLY")
+		for _, gate := range run.Gates {
+			fmt.Fprintf(tw, "%s\t%s\n", gate.NodeID, displayProcessEventField(gate.Summary))
 		}
 		_ = tw.Flush()
 	}

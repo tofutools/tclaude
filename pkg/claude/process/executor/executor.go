@@ -322,6 +322,24 @@ func (r *Run) AgentCommands() []engine.Command {
 	return commands
 }
 
+// GateOfTally reports the agreement gate whose tally is tallyID, with its
+// votes as the run has them now.
+func (r *Run) GateOfTally(tallyID string) (engine.Gate, bool) {
+	if r == nil || r.definition == nil {
+		return engine.Gate{}, false
+	}
+	gateID, ok := r.definition.GateOfTally(tallyID)
+	if !ok {
+		return engine.Gate{}, false
+	}
+	for _, gate := range r.definition.Gates(r.checkpoint) {
+		if gate.NodeID == gateID {
+			return gate, true
+		}
+	}
+	return engine.Gate{}, false
+}
+
 // AwaitingDecisions reports every branch currently parked on a human.
 func (r *Run) AwaitingDecisions() []engine.DecisionObligation {
 	if r == nil || len(r.checkpoint.AwaitingDecisions) == 0 {
@@ -605,6 +623,36 @@ func loopEvidence(feedback string, step engine.LoopStep) db.ProcessRunEvent {
 		Round: step.Loop.Round, MaxIterations: step.Loop.MaxIterations,
 		OnExhausted: step.Loop.OnExhausted, Feedback: feedback,
 	})
+}
+
+// gateEvidence is the record of every agreement gate this commit settled: the
+// verdict its votes added up to, the edge it took, and the round it started or
+// the limit it hit. The deciders' notes are on their own votes' rows.
+func gateEvidence(definition *engine.Definition, before, after engine.Checkpoint) []db.ProcessRunEvent {
+	var events []db.ProcessRunEvent
+	for _, settled := range definition.GateSettlements(before, after) {
+		loopStep, looped := definition.LoopStepOf(settled.TallyID, settled.Verdict, before, after)
+		route := settled.Verdict
+		if looped && loopStep.Exhausted {
+			route = loopStep.Loop.OnExhausted
+		}
+		payload := gateEvidencePayload{Gate: settled.GateID, Verdict: settled.Verdict}
+		if chosen, ok := definition.DecisionEdge(settled.TallyID, route); ok {
+			payload.ChosenEdge = &chosen
+		}
+		events = append(events, eventForNode("gate_settled", settled.GateID, EngineActor, payload))
+		if looped {
+			events = append(events, loopEvidence("", loopStep))
+		}
+	}
+	return events
+}
+
+// gateEvidencePayload is the body of a gate_settled row.
+type gateEvidencePayload struct {
+	Gate       string             `json:"gate"`
+	Verdict    string             `json:"verdict"`
+	ChosenEdge *engine.ChosenEdge `json:"chosenEdge,omitempty"`
 }
 
 // loopEvidencePayload is the body of loop_iterated and loop_exhausted rows.
@@ -999,6 +1047,9 @@ type awaitedEvidencePayload struct {
 // so it is the part that yields, and it says so when it does.
 func commitEvidence(definition *engine.Definition, before, after engine.Checkpoint,
 	input, advance []db.ProcessRunEvent, engineAdvanced bool) []db.ProcessRunEvent {
+	// A gate the votes settled in this commit is an input of its own: it is
+	// what the advance went on from.
+	input = append(slices.Clone(input), gateEvidence(definition, before, after)...)
 	blocked := blockedEvidence(before, after)
 	awaited := awaitedEvidence(definition, before, after)
 	joins := joinEvidence(definition, before, after,

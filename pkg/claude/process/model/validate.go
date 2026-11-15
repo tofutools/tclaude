@@ -212,7 +212,12 @@ func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector, dep
 				}
 			}
 		case NodeTypeDecision:
-			if node.Performer == nil {
+			if !validateGate(node, path, diagnostics) {
+				return false
+			}
+			if node.IsGate() {
+				// The deciders are checked; there is no performer.
+			} else if node.Performer == nil {
 				if !diagnostics.Add(diagError("missing_performer", path+".performer", "decision node requires a decider performer")) {
 					return false
 				}
@@ -384,7 +389,7 @@ func validateExpansionCollisions(tmpl *Template, diagnostics *templateDiagnostic
 	derivedBy := map[string]string{}
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
 		node := tmpl.Nodes[nodeID]
-		if !node.IsCompound() {
+		if !node.IsCompound() && !(node.Type == NodeTypeDecision && node.IsGate()) {
 			continue
 		}
 		visitChildID := func(childID string) bool {
@@ -404,6 +409,15 @@ func validateExpansionCollisions(tmpl *Template, diagnostics *templateDiagnostic
 				))
 			}
 			return true
+		}
+		if !node.IsCompound() {
+			// An agreement gate: its votes and tally.
+			for _, childID := range GateDerivedIDs(nodeID, node) {
+				if !visitChildID(childID) {
+					return false
+				}
+			}
+			continue
 		}
 		if node.Plan != nil {
 			if !visitChildID(stageChildID(nodeID, StagePlan, "")) {
@@ -1107,6 +1121,11 @@ func validateParamRefs(tmpl *Template, diagnostics *templateDiagnosticCollector)
 		}
 		if node.Performer != nil {
 			if !collectPerformerParamRefs(diagnostics, declared, path+".performer", *node.Performer) {
+				return
+			}
+		}
+		for i, decider := range node.Deciders {
+			if !collectPerformerParamRefs(diagnostics, declared, fmt.Sprintf("%s.deciders[%d]", path, i), decider) {
 				return
 			}
 		}

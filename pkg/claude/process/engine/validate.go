@@ -30,6 +30,8 @@ type Definition struct {
 	fallback *model.PerformerFallback
 	// loops are the bounded back edges (loops.go), in prepared scope order.
 	loops []definitionLoop
+	// gates maps each agreement gate's id to its tally's prepared index.
+	gates map[string]int
 }
 
 type definitionNodeKind uint8
@@ -58,6 +60,10 @@ const (
 	// completes the owning subprocess node through the outcome its out-port
 	// names, which is the one way a body leaves.
 	definitionSubprocessExit
+	// definitionTally is the engine-owned last node of an agreement gate
+	// (gates.go): a join of the gate's votes that takes the gate's agree
+	// outcome when every vote chose it, and the first dissent's otherwise.
+	definitionTally
 )
 
 type definitionNode struct {
@@ -138,6 +144,10 @@ type definitionNode struct {
 	// sourceOf the loops whose bounded edge leaves this decision.
 	loops    []int
 	sourceOf []int
+	// agree and voters are a tally's agree outcome and its votes' prepared
+	// indices, in decider order.
+	agree  string
+	voters []int
 }
 
 type definitionEdge struct {
@@ -291,6 +301,11 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 			}
 			prepared.program = program
 		case model.NodeTypeDecision:
+			if node.IsGate() {
+				// The gate itself is the fork to its votes (gates.go).
+				prepared.kind = definitionParallel
+				break
+			}
 			prepared.kind = definitionDecision
 			prepared.verdicts = sortedOutcomes(node.Next)
 			// An agent decider is planned like an agent task, one attempt per
@@ -326,6 +341,12 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 		}
 		if prepared.kind != definitionSubprocessExit {
 			nexts[parentIndex] = namespacedNext(node.Next, prefix)
+		}
+		if node.Type == model.NodeTypeDecision && node.IsGate() {
+			if err := prepareGate(definition, parentIndex, node, params, scope, prefix, appendNode, nexts); err != nil {
+				return err
+			}
+			continue
 		}
 		if prepared.kind == definitionSubprocess {
 			if err := prepareSubprocess(definition, parentIndex, node, params, appendNode, nexts, loops); err != nil {
@@ -420,7 +441,7 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				ErrInvalidDefinition, id)
 		}
 	}
-	*loops = append(*loops, scopeLoops(tmpl, prefix)...)
+	*loops = append(*loops, gateLoops(tmpl, prefix, scopeLoops(tmpl, prefix))...)
 	return nil
 }
 
@@ -598,7 +619,7 @@ func (d *Definition) DecisionEdge(nodeID, verdict string) (ChosenEdge, bool) {
 		return ChosenEdge{}, false
 	}
 	index, ok := d.index[nodeID]
-	if !ok || d.nodes[index].kind != definitionDecision {
+	if !ok || (d.nodes[index].kind != definitionDecision && d.nodes[index].kind != definitionTally) {
 		return ChosenEdge{}, false
 	}
 	for _, edgeIndex := range d.nodes[index].outgoing {
@@ -732,6 +753,14 @@ func mutualDifferentFrom(definition *Definition) {
 			owner = definition.nodes[node.parent].id
 		}
 		agentNodes[owner] = append(agentNodes[owner], index)
+	}
+	// A constraint naming an agreement gate means its agent votes.
+	for gateID, tallyIndex := range definition.gates {
+		for _, voter := range definition.nodes[tallyIndex].voters {
+			if definition.nodes[voter].agent != nil {
+				agentNodes[gateID] = append(agentNodes[gateID], voter)
+			}
+		}
 	}
 	for index := range definition.nodes {
 		node := &definition.nodes[index]
@@ -1195,7 +1224,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				if out.arrived != len(node.outgoing) {
 					return invalid("done node %q must have arrived outgoing edges", node.id)
 				}
-			case definitionDecision:
+			case definitionDecision, definitionTally:
 				deferred := deferredOutgoing(checkpoint, definition, node)
 				if out.arrived != 1 || out.notTaken+deferred != len(node.outgoing)-1 {
 					return invalid("done decision %q must have exactly one chosen edge with every alternative closed", node.id)

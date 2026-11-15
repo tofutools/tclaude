@@ -183,7 +183,18 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 					add("unsupported_routing", path+".next", "a task requires exactly one outgoing route in this engine")
 				}
 			case model.NodeTypeDecision:
+				for i, decider := range node.Deciders {
+					deciderPath := fmt.Sprintf("%s.deciders[%d]", path, i)
+					switch {
+					case decider.Contact != nil:
+						add("unsupported_contact", deciderPath+".contact", "performer contact schedules are not executable in this engine yet")
+					case decider.Kind == model.PerformerAgent && strings.TrimSpace(decider.Timeout) != "":
+						add("unsupported_timeout", deciderPath+".timeout", "agent performer timeouts are not executable in this engine yet")
+					}
+				}
 				switch {
+				case node.IsGate():
+					// Decided by its deciders, checked above.
 				case node.Performer == nil || (node.Performer.Kind != model.PerformerHuman && node.Performer.Kind != model.PerformerAgent):
 					add("unsupported_performer", path+".performer.kind", "this engine executes only human and agent deciders")
 				case node.Performer.Contact != nil:

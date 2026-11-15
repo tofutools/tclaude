@@ -110,6 +110,11 @@ type Node struct {
 	// later step's prompt or ask reads it as {{ name }}. A report that leaves
 	// one out is refused, so a missing output fails at its own step.
 	Captures []string `json:"captures,omitempty" yaml:"captures,omitempty"`
+	// Deciders makes a decision an agreement gate (gates.go): each decider
+	// votes one of its outcomes, and Agree is the outcome they must all choose
+	// for the gate to take it.
+	Deciders []Performer `json:"deciders,omitempty" yaml:"deciders,omitempty"`
+	Agree    string      `json:"agree,omitempty" yaml:"agree,omitempty"`
 	// Subprocess is the nested graph of a subprocess node, and is only valid on
 	// that node type.
 	Subprocess *Subprocess `json:"subprocess,omitempty" yaml:"subprocess,omitempty"`

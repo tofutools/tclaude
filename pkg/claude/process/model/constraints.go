@@ -42,6 +42,13 @@ func InterpolateCaptures(text string, value func(name string) (string, bool)) st
 // agentPerformed reports whether an agent may perform node: a task or
 // decision whose performer (or a compound task's do stage) is an agent.
 func agentPerformed(node Node) bool {
+	if node.Type == NodeTypeDecision {
+		for _, decider := range node.Deciders {
+			if decider.Kind == PerformerAgent {
+				return true
+			}
+		}
+	}
 	return node.Performer != nil && node.Performer.Kind == PerformerAgent &&
 		(node.Type == NodeTypeTask || node.Type == NodeTypeDecision)
 }
@@ -66,6 +73,9 @@ func performerSlots(nodeID string, node Node) []struct {
 		}
 	}
 	add(path+".performer", node.Performer)
+	for i := range node.Deciders {
+		add(fmt.Sprintf("%s.deciders[%d]", path, i), &node.Deciders[i])
+	}
 	if node.Plan != nil {
 		add(path+".plan.performer", &node.Plan.Performer)
 	}

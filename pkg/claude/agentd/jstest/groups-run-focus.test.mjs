@@ -172,6 +172,21 @@ test('approve / request changes posts the verdict with the note and refreshes', 
   assert.equal(api.decisions.length, 1, 'no second decide');
 });
 
+test('an agreement gate shows its tally, and your vote is decided under its own id', async (t) => {
+  const saved = VIEWS.run_release;
+  VIEWS.run_release = { ...saved,
+    awaitingDecisions: [{ nodeId: 'review.vote.2', verdicts: ['approved', 'changes'], attempt: 1 }],
+    gates: [{ nodeId: 'review', agree: 'approved', agreed: 1, total: 2, summary: '1/2 agreed, waiting on human' }] };
+  t.after(() => { VIEWS.run_release = saved; });
+  const { harness, root, api } = await mountRunFocus(t);
+  const inspector = root.querySelector('[data-run-inspector]');
+  assert.equal(inspector.dataset.runInspector, 'review', 'your vote opens its gate');
+  assert.equal(inspector.querySelector('[data-run-gate="review"]').textContent, '1/2 agreed, waiting on human');
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-run-verdict="approved"]'), 'click'));
+  await settle(harness);
+  assert.deepEqual(api.decisions, [['run_release', { nodeId: 'review.vote.2', verdict: 'approved', evidence: '', attempt: 1 }]]);
+});
+
 test('polls during a slow read queue one follow-up instead of discarding it, and long histories catch up', async (t) => {
   const api = fakeApi();
   const gates = [];

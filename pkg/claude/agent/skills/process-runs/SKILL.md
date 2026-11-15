@@ -63,6 +63,7 @@ pauses as `orphaned` until the human rescopes it.
 tclaude process pause <run-id>          # nothing new dispatched; in-flight work finishes
 tclaude process resume <run-id>
 tclaude process decide <run-id> --node <node> --verdict <outcome> [--evidence "why"] [--attempt N]
+#   at an agreement gate a person votes as --node <gate>.vote.<k>; `show` prints the gate's tally
 tclaude process assign <run-id> --node <node> --agent <agent>   # hand an unreported agent attempt over
 tclaude process resolve-blocked <run-id> --node <node> --attempt <n> --action retry|skip|cancel [--note "why"]
 ```

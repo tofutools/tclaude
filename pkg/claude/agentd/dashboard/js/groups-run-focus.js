@@ -111,9 +111,22 @@ export function useRunDetail(api, runId) {
 // else the run's current node.
 function defaultNode(run, view) {
   const ids = new Set(runGraphNodes(run).map((node) => node.id));
-  const awaited = (view?.awaitingDecisions || []).find((decision) => ids.has(String(decision.nodeId)));
-  if (awaited) return String(awaited.nodeId);
+  const awaited = (view?.awaitingDecisions || []).map((decision) => gateNodeOf(decision.nodeId)).find((id) => ids.has(id));
+  if (awaited) return awaited;
   return [].concat(run?.current || []).map(String).find((id) => ids.has(id)) || '';
+}
+
+// gateNodeOf maps a vote of an agreement gate (<gate>.vote.<k>) to the gate,
+// which is the node the graph draws; any other node id is its own.
+export function gateNodeOf(nodeId) {
+  return String(nodeId).replace(/\.vote\.\d+$/, '');
+}
+
+// nodeDecision is the decision waiting on you at a node: its own, or your vote
+// at an agreement gate.
+export function nodeDecision(view, nodeId) {
+  return (view?.awaitingDecisions || []).find((item) => String(item.nodeId) === nodeId)
+    || (view?.awaitingDecisions || []).find((item) => gateNodeOf(item.nodeId) === nodeId);
 }
 
 const VERDICT_PRESENTATION = [
@@ -199,7 +212,10 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
   const downstream = edges.filter((edge) => String(edge.from) === node.id).map((edge) => byId.get(String(edge.to))).filter(Boolean);
   const view = detail.view;
   const bounds = programBounds(node);
-  const decision = (view?.awaitingDecisions || []).find((item) => String(item.nodeId) === node.id);
+  const decision = nodeDecision(view, node.id);
+  // A vote is decided under its own id, shown on its gate.
+  const decisionNode = decision && String(decision.nodeId) !== node.id ? { ...node, id: String(decision.nodeId) } : node;
+  const gate = (view?.gates || []).find((item) => String(item.nodeId) === node.id);
   const blocked = (view?.blocked || []).find((item) => String(item.nodeId) === node.id);
   const history = detail.events.filter((event) => String(event.nodeId || '') === node.id).slice(-HISTORY_ROWS);
   const neighbours = (list) => (list.length
@@ -214,9 +230,10 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
       ${bounds && html`<dt>runs</dt><dd class=${bounds.warning ? 'grf-blocked' : ''} title=${bounds.cwd || undefined} data-run-bounds>${bounds.warning || bounds.text}</dd>`}
       <dt>upstream</dt><dd>${neighbours(upstream)}</dd>
       <dt>downstream</dt><dd>${neighbours(downstream)}</dd>
+      ${gate && html`<dt>${wizard ? 'accord' : 'tally'}</dt><dd data-run-gate=${node.id}>${gate.summary}</dd>`}
       ${blocked && html`<dt>blocked</dt><dd class="grf-blocked">${blocked.reason || 'parked on an operator'}</dd>`}
     </dl>
-    ${decision && html`<${DecisionForm} key=${`${node.id}:${decision.attempt || 0}`} decision=${decision} node=${node} onDecide=${onDecide} wizard=${wizard} />`}
+    ${decision && html`<${DecisionForm} key=${`${decisionNode.id}:${decision.attempt || 0}`} decision=${decision} node=${decisionNode} onDecide=${onDecide} wizard=${wizard} />`}
     ${onAssign && html`<${ReassignForm} key=${`${node.id}:${node.dispatch?.nodeId || ''}:${node.dispatch?.attempt || 0}`}
       run=${run} node=${node} members=${members} onAssign=${onAssign} wizard=${wizard} />`}
     <div class="ui-eyebrow grf-section">${wizard ? 'CHRONICLE' : 'HISTORY'}</div>

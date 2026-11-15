@@ -18,7 +18,7 @@ import {
   formatRunDuration, processContext, runDetailApi, withPerformerNames,
 } from './process-context.js';
 import { ProcessStepStrip, runName, runPauseState, runSteps, stateLabel } from './process-kit.js';
-import { useRunDetail, verdictPresentation } from './groups-run-focus.js';
+import { gateNodeOf, useRunDetail, verdictPresentation } from './groups-run-focus.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { Button, Textarea } from './ui-components.js';
 import { Avatar, Card, StatePill } from './phone-ui.js';
@@ -27,6 +27,17 @@ import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
 
 const html = htm.bind(h);
+
+// decisionNode is the step a decision is drawn as. A vote at an agreement gate
+// (<gate>.vote.<k>) is decided under its own id but labelled as its gate.
+function decisionNode(decision, find) {
+  const id = String(decision.nodeId);
+  const own = find(id);
+  if (own) return own;
+  const gate = find(gateNodeOf(id));
+  if (gate) return { ...gate, id, label: `${gate.label} (your vote)` };
+  return { id, label: id };
+}
 
 // runRequest is a run a link asks the phone's Runs to open: the run id, or
 // '' for the list; null when nothing is asked. A Groups run link
@@ -331,7 +342,7 @@ export function GateCard({ item, api = runDetailApi, source = processContext, on
     </div>
     ${detail.view
       ? decisions.map((decision) => {
-        const node = nodes.get(String(decision.nodeId)) || { id: String(decision.nodeId), label: String(decision.nodeId) };
+        const node = decisionNode(decision, (id) => nodes.get(id));
         return html`<${GateVerdicts} key=${`${node.id}:${decision.attempt || 0}`} run=${run} decision=${decision} node=${node} onDecide=${onDecide} />`;
       })
       : html`<p class="ui-empty phone-empty">${detail.error ? `Could not read the run: ${detail.error}` : 'Loading…'}</p>`}
@@ -389,7 +400,7 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
   return html`<div class="phone-run-page">
     ${holdError && html`<p class="ui-error-box" role="alert">${holdError}</p>`}
     ${decisions.map((decision) => {
-      const node = steps.find((step) => String(step.id) === String(decision.nodeId)) || { id: String(decision.nodeId), label: String(decision.nodeId) };
+      const node = decisionNode(decision, (id) => steps.find((step) => String(step.id) === id));
       return html`<${Card} key=${`${node.id}:${decision.attempt || 0}`} accent="key" class="phone-gate-card phone-run-gate"
         role="group" aria-label=${`Gate: ${node.label}`}>
         <${GateVerdicts} run=${run} decision=${decision} node=${node} onDecide=${onDecide} since=${relTime(lastEvent.get(String(node.id))?.occurredAt)} />
