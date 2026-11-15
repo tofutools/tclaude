@@ -108,6 +108,10 @@ func TestFederation_RouteFlowControlServesBulkToSlowPeer(t *testing.T) {
 		return len(cat.Groups) == 1 && len(cat.Groups[0].Routes) == 1
 	})
 
+	// The publisher attaches on its own goroutine: an open that beats it is
+	// refused "publisher unavailable" (a CI flake), so wait until the broker
+	// owns the route.
+	fedEventually(t, "publisher attached", func() bool { return agentd.GroupRouteBroker().PublisherAttached(routeID) })
 	kp, err := stream.NewKeyPair()
 	require.NoError(t, err)
 	sid := proto.NewEnvelopeID()
