@@ -273,9 +273,12 @@ type processRunView struct {
 	// Loops are the template's bounded back edges with the round each is in
 	// (tcl-eu70x9). Listed while a decision is awaited or a loop went back;
 	// the context projection carries rounds on every read.
-	Loops     []engine.LoopEdge `json:"loops,omitempty"`
-	CreatedAt time.Time         `json:"createdAt"`
-	UpdatedAt time.Time         `json:"updatedAt"`
+	Loops []engine.LoopEdge `json:"loops,omitempty"`
+	// Gates are the agreement gates still collecting votes this round: who
+	// agreed, who did not, and who has yet to vote.
+	Gates     []processRunGateView `json:"gates,omitempty"`
+	CreatedAt time.Time            `json:"createdAt"`
+	UpdatedAt time.Time            `json:"updatedAt"`
 }
 
 // processRunPauseView is who paused a run, and when.
@@ -1723,12 +1726,14 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 
 	awaitingDecisions := make([]processRunDecisionView, 0, len(checkpoint.AwaitingDecisions))
 	var loops []engine.LoopEdge
-	if len(checkpoint.AwaitingDecisions) > 0 || len(checkpoint.Iterations) > 0 {
+	var gates []processRunGateView
+	if len(checkpoint.AwaitingDecisions) > 0 || len(checkpoint.Iterations) > 0 || processRunMayHaveGates(checkpoint) {
 		definition, err := prepareProcessRunDefinition(record)
 		if err != nil {
 			return processRunView{}, err
 		}
 		loops = definition.Loops(checkpoint)
+		gates = processRunGateViews(definition, checkpoint, performers)
 		for _, obligation := range checkpoint.AwaitingDecisions {
 			verdicts, ok := definition.DecisionVerdicts(obligation.NodeID)
 			if !ok {
@@ -1814,7 +1819,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
 		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
 		Paused: processRunPauseViewOf(record.Scope), ProgramBounds: programBounds, Loops: loops,
-		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
+		Gates: gates, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
 }
 

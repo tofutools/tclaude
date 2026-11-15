@@ -692,7 +692,9 @@ func processPerformerOfNode(rowNode, node string) bool {
 	}
 	switch {
 	case rest == string(model.StagePlan), rest == string(model.StageDo), rest == string(model.StageReview),
-		strings.HasPrefix(rest, string(model.StageTest)+"."):
+		strings.HasPrefix(rest, string(model.StageTest)+"."),
+		// An agreement gate's votes.
+		strings.HasPrefix(rest, "vote."):
 		return true
 	}
 	return false
@@ -1670,6 +1672,9 @@ func processLoopReentry(runID string, command engine.Command, previous *db.Proce
 func processLoopFeedback(runID string, command engine.Command) string {
 	if command.Round < 2 {
 		return ""
+	}
+	if feedback := processAgreementFeedback(runID, command.NodeID, command.LoopFrom, command.Round, command.Rounds); feedback != "" {
+		return feedback
 	}
 	events, err := db.ListLatestProcessRunNodeEvents(runID, "loop_iterated")
 	if err != nil {

@@ -158,7 +158,9 @@ with no `onExhausted`, the outcome is refused and the decider picks another.
 
 The decider can be an agent instead of a person — `performer: {kind: agent,
 role: reviewer, prompt: "Review the change and decide."}` — so a review loop
-runs without anyone in it. See [Agent deciders](#agent-deciders).
+runs without anyone in it. See [Agent deciders](#agent-deciders). Several
+deciders can decide together, with every one of them needed to approve: see
+[Agreement gates](#agreement-gates).
 
 Every cycle needs a bounded outcome; an unbounded one is a `graph_cycle`
 error that says how to bound it. To keep a round well defined, a loop body is
@@ -166,9 +168,13 @@ entered only at its target, left only through decisions, holds no
 `join: any`, and two loops' bodies nest or are disjoint. An inner loop starts
 its count over with each round of the loop around it.
 
-Two worked examples live in the repo under `docs/examples/`
-(`code-change-with-review.yaml`, `parallel-any-review.yaml`). Both pass template
-validation. `parallel-any-review.yaml` also passes the engine's eligibility check,
+Three worked examples live in the repo under `docs/examples/`
+(`code-change-with-review.yaml`, `parallel-any-review.yaml`,
+`ways-of-working.yaml`). All pass template validation.
+`ways-of-working.yaml` is a whole way of working that runs as is: the group's
+lead frames the task, a planner plans it, a usability vet checks the plan, a
+developer builds it, two reviewers who did not build it must both approve, and
+the lead who framed it merges. `parallel-any-review.yaml` also passes the engine's eligibility check,
 and needs its `reviewer` and `codex-reviewer` profiles to exist. Run creation
 refuses `code-change-with-review.yaml` today, because it uses stage retries,
 `plan.approvalRetry`, a human review stage and two routes out of a task, which the
@@ -873,6 +879,44 @@ again. An agent that cannot decide reports `failed`, which fails the decision
 like any failed agent step. Nobody can decide in an agent's place with
 `tclaude process decide`; reassigning or recording an outcome works as for any
 agent step.
+
+### Agreement gates
+
+A decision with `deciders` (2 to 8) instead of a `performer` is an agreement
+gate: every decider votes one of the gate's outcomes, and `agree` names the
+outcome they must all choose. Deciders are agents or people, mixed as you
+like:
+
+```yaml
+review:
+  type: decision
+  agree: approve
+  deciders:
+    - {kind: agent, role: reviewer, differentFrom: [build], prompt: "Review {{ outputs.pr }}."}
+    - {kind: agent, role: reviewer, differentFrom: [build], prompt: "Check {{ outputs.pr }} for tests."}
+    - {kind: human, ask: "Does it look right to you?"}
+  next: {approve: merge, changes: build, escalate: ask-owner}
+  loops:
+    changes: {maxIterations: 3, onExhausted: escalate}
+```
+
+All deciders vote at once. An agent decider is dispatched like any agent
+decider (one vote each: two agent deciders of one gate are always two
+different agents), and a person's vote waits in the run's awaiting decisions
+as `<gate>.vote.<k>`, numbered in decider order. Decide it with
+`tclaude process decide --node review.vote.3`, or in the dashboard, where it
+shows on the gate. Nobody decides the gate itself.
+
+When the last vote is in, the gate goes on: through `agree` when every vote
+chose it, and otherwise through the outcome of the first decider, in decider
+order, that chose something else. When that outcome sends the work back for
+another round, its performers are told what every decider voted and noted,
+not just the dissent. A gate's loop needs `onExhausted`, since nobody is
+there to pick another outcome once the rounds run out, and `agree` cannot
+loop. While votes are out the run view lists the gate under `gates` with a
+tally — `2/3 agreed, waiting on rita` — which `tclaude process show` prints
+and the dashboard shows on the gate node. A `differentFrom` or `sameAs`
+naming the gate means its agent deciders.
 
 ## Crashes and reconciliation
 

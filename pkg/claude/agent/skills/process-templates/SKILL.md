@@ -162,7 +162,10 @@ warns when placed in inert fields such as profile, timeout, or backoff.
   plain agent task's performer reports each with `--output name=value`, and a
   later prompt reads it as `{{ outputs.name }}`; params stay `{{ params.x }}`).
 - `decision`: require a decider `performer`; each possible verdict needs an
-  exact outcome key in `next`.
+  exact outcome key in `next`. For an agreement gate, give `deciders` (2..8
+  agent or human performers) and `agree: <outcome>` instead of `performer`:
+  all must choose `agree` for the gate to take it, else the first dissent's
+  outcome in decider order wins; a gate's `loops` need `onExhausted`.
 - `wait`: require `wait.duration`, `wait.until`, or `wait.signal`, plus `next`.
 - `parallel`: fan out to concurrent branches, then reduce them at a node with
   `join: all` or `join: any`.

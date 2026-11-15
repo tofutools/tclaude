@@ -274,3 +274,16 @@ test('a verdict of its own is a plain button, neither green nor red', async (t) 
     assert.equal(button.textContent, `${verdict}…`);
   }
 });
+
+test('your vote at an agreement gate is labelled as its gate, with the tally, and decided under its own id', async (t) => {
+  const { harness, mod } = await load(t);
+  const api = fakeApi();
+  api.getRun = async (runId) => ({ id: runId, blocked: [],
+    awaitingDecisions: [{ nodeId: 'review.vote.3', verdicts: ['approved', 'changes'], attempt: 1 }],
+    gates: [{ nodeId: 'review', summary: '2/3 agreed, waiting on person 3' }] });
+  const mounted = await harness.mount(harness.html`<${mod.RunPage} runId="run_release" api=${api} source=${fakeSource(harness)} back=${() => {}} />`);
+  await settle(harness);
+  const gate = mounted.container.querySelector('[data-run-decision="review.vote.3"]');
+  assert.match(gate.querySelector('.phone-gate-title').textContent, /\(your vote\)$/);
+  assert.equal(gate.querySelector('[data-run-gate="review"]').textContent, '2/3 agreed, waiting on person 3');
+});

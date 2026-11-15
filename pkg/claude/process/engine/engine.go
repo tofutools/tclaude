@@ -170,6 +170,16 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			if err := completeAndSettle(&next, definition, index, arrivesAt(soleOutcome(definition, node))); err != nil {
 				return Checkpoint{}, err
 			}
+		case definitionTally:
+			// Every vote is in: the gate takes the verdict they add up to, loops
+			// included, exactly as one decider's verdict would.
+			verdict, err := tallyVerdict(next, definition, node)
+			if err != nil {
+				return Checkpoint{}, err
+			}
+			if err := settleVerdict(&next, definition, index, verdict); err != nil {
+				return Checkpoint{}, err
+			}
 		case definitionParallel:
 			// A ready parallel fork is engine-owned: completing it settles ALL of
 			// its authored outgoing edges as arrived, so every branch activates
@@ -1120,7 +1130,8 @@ func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transi
 			continue
 		}
 		switch node.kind {
-		case definitionStart, definitionParallel, definitionCompound, definitionStageDone, definitionSubprocess:
+		case definitionStart, definitionParallel, definitionCompound, definitionStageDone, definitionSubprocess,
+			definitionTally:
 			return Transition{Kind: TransitionAdvance, NodeID: node.id}, true
 		case definitionSubprocessExit:
 			// The subprocess-scoped twin of the end-node rule below: a body exit

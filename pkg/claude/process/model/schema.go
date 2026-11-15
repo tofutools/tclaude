@@ -10,7 +10,7 @@ import (
 var (
 	templateFields   = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "fallback", "start", "nodes", "layout")
 	paramFields      = stringSet("type", "name", "description", "doc", "required", "default")
-	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "loops", "result", "captures", "subprocess", "metadata")
+	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "wait", "next", "loops", "result", "captures", "deciders", "agree", "subprocess", "metadata")
 	stepFields       = stringSet("id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
 	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "role", "anyone", "lead", "sameAs", "differentFrom", "fallback", "spawn", "model", "effort", "run", "args", "timeout", "contact")
 	fallbackFields   = stringSet("action", "profile")

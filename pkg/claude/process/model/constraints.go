@@ -42,6 +42,13 @@ func InterpolateCaptures(text string, value func(name string) (string, bool)) st
 // agentPerformed reports whether an agent may perform node: a task or
 // decision whose performer (or a compound task's do stage) is an agent.
 func agentPerformed(node Node) bool {
+	if node.Type == NodeTypeDecision {
+		for _, decider := range node.Deciders {
+			if decider.Kind == PerformerAgent {
+				return true
+			}
+		}
+	}
 	return node.Performer != nil && node.Performer.Kind == PerformerAgent &&
 		(node.Type == NodeTypeTask || node.Type == NodeTypeDecision)
 }
@@ -66,6 +73,9 @@ func performerSlots(nodeID string, node Node) []struct {
 		}
 	}
 	add(path+".performer", node.Performer)
+	for i := range node.Deciders {
+		add(fmt.Sprintf("%s.deciders[%d]", path, i), &node.Deciders[i])
+	}
 	if node.Plan != nil {
 		add(path+".plan.performer", &node.Plan.Performer)
 	}
@@ -103,8 +113,17 @@ func validatePerformerConstraints(tmpl *Template, diagnostics *templateDiagnosti
 				}
 				return true
 			}
-			if same := strings.TrimSpace(performer.SameAs); same != "" && !check("sameAs", same) {
-				return false
+			if same := strings.TrimSpace(performer.SameAs); same != "" {
+				if !check("sameAs", same) {
+					return false
+				}
+				// Several agents vote at a gate, so "the same agent" names none.
+				if target := tmpl.Nodes[same]; target.Type == NodeTypeDecision && target.IsGate() {
+					if !diagnostics.Add(diagError("invalid_performer_constraint", slot.path+".sameAs",
+						fmt.Sprintf("sameAs names %q, an agreement gate several agents decide; name a step one agent performs", same))) {
+						return false
+					}
+				}
 			}
 			seen := map[string]bool{}
 			for i, ref := range performer.DifferentFrom {

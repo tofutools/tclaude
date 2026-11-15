@@ -1,0 +1,99 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: ways-of-working
+name: Ways of working
+description: >-
+  The lead frames the task, a planner plans it, a usability vet checks the
+  plan, a developer builds it, two reviewers who did not build it must both
+  approve, and the lead who framed it merges.
+params:
+  task:
+    type: string
+    required: true
+start: start
+nodes:
+  start:
+    type: start
+    next: { next: brief }
+
+  # 1. The group's lead frames the task.
+  brief:
+    type: task
+    captures: [brief]
+    performer:
+      kind: agent
+      lead: true
+      prompt: >-
+        Frame this task for the team: {{ params.task }}. Report the brief
+        (goal, constraints, what done looks like) as your note.
+    next: { next: plan }
+
+  # 2. A planner turns the brief into a plan.
+  plan:
+    type: task
+    captures: [plan]
+    performer:
+      kind: agent
+      role: planner
+      fallback: { action: spawn }
+      prompt: "Plan the work in this brief:\n{{ outputs.brief }}\nReport the plan as your note."
+    next: { next: vet }
+
+  # 3. A usability vet checks the plan from the user's side.
+  vet:
+    type: decision
+    performer:
+      kind: agent
+      role: ux
+      fallback: { action: spawn }
+      prompt: "Vet this plan for usability:\n{{ outputs.plan }}\nChoose ok, or rework with what to change."
+    next: { ok: build, rework: plan, escalate: escalated }
+    loops:
+      rework: { maxIterations: 2, onExhausted: escalate }
+
+  # 4. A developer builds it and opens a PR.
+  build:
+    type: task
+    captures: [pr]
+    performer:
+      kind: agent
+      role: dev
+      fallback: { action: spawn }
+      prompt: "Build this plan:\n{{ outputs.plan }}\nReport the PR link as pr."
+    next: { next: review }
+
+  # 5-7. Two reviewers who did not build it; both must approve.
+  review:
+    type: decision
+    agree: approve
+    deciders:
+      - kind: agent
+        role: reviewer
+        differentFrom: [build]
+        fallback: { action: spawn }
+        prompt: "Review {{ outputs.pr }} against the plan:\n{{ outputs.plan }}\nChoose approve, or changes with what to change."
+      - kind: agent
+        role: reviewer
+        differentFrom: [build]
+        fallback: { action: spawn }
+        prompt: "Review {{ outputs.pr }} for correctness and tests.\nChoose approve, or changes with what to change."
+    next: { approve: merge, changes: build, escalate: escalated }
+    loops:
+      changes: { maxIterations: 3, onExhausted: escalate }
+
+  # 8. The lead who framed it merges.
+  merge:
+    type: task
+    performer:
+      kind: agent
+      lead: true
+      sameAs: brief
+      prompt: "Both reviewers approved {{ outputs.pr }}. Check it against your brief and merge it."
+    next: { next: done }
+
+  done:
+    type: end
+    result: success
+  escalated:
+    type: end
+    result: canceled

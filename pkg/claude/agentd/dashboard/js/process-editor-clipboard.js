@@ -24,7 +24,8 @@ const MAX_JSON_ITEMS = 32_768;
 const PROTOTYPE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const NODE_FIELDS = new Set([
   'type', 'join', 'name', 'description', 'doc', 'performer', 'plan', 'checks',
-  'review', 'retry', 'wait', 'next', 'loops', 'result', 'captures', 'metadata', 'subprocess',
+  'review', 'retry', 'wait', 'next', 'loops', 'result', 'captures', 'deciders', 'agree', 'metadata',
+  'subprocess',
 ]);
 const LOOP_FIELDS = new Set(['maxIterations', 'onExhausted']);
 const STEP_FIELDS = new Set([
@@ -143,8 +144,12 @@ function validateStep(value) {
 export function validateProcessEditNode(value) {
   validateWireRecord(value, NODE_FIELDS);
   if (!PROCESS_NODE_TYPES.has(value.type)) wireShapeReject();
-  validateOptionalStrings(value, ['join', 'name', 'description', 'doc', 'result']);
+  validateOptionalStrings(value, ['join', 'name', 'description', 'doc', 'result', 'agree']);
   if (Object.hasOwn(value, 'performer')) validatePerformer(value.performer);
+  if (Object.hasOwn(value, 'deciders')) {
+    if (!Array.isArray(value.deciders)) wireShapeReject();
+    for (const decider of value.deciders) validatePerformer(decider);
+  }
   if (Object.hasOwn(value, 'plan')) validateStep(value.plan);
   if (Object.hasOwn(value, 'checks')) {
     if (!Array.isArray(value.checks)) wireShapeReject();
