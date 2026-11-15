@@ -247,6 +247,7 @@ func seedSandboxFull(t *testing.T, f *testharness.Flow) {
 	seedSandboxProcessRuns(s)
 	seedSandboxAccess(t)
 	seedSandboxAttachment(s)
+	seedSandboxOfflineSender(t)
 	if !sandboxLivePeer() {
 		seedSandboxFederation(t)
 	}
@@ -265,6 +266,8 @@ const (
 	sbCopy     = "d0c00000-0000-4000-8000-000000000004"
 	sbPayments = "d0c00000-0000-4000-8000-000000000005"
 	sbReviewer = "d0c00000-0000-4000-8000-000000000006"
+	// sbPerf is the docs fleet's offline agent (perf-audit).
+	sbPerf = "d0c00000-0000-4000-8000-000000000007"
 	// sbMigrations is the sandbox's own errored agent (seedSandboxFleetState).
 	sbMigrations = "d0c00000-0000-4000-8000-000000000008"
 )
@@ -625,6 +628,22 @@ func seedSandboxCronHistory(s *sandboxSeeder) {
 
 // seedSandboxAttachment has checkout-ui send the operator a screenshot through
 // notify-human's attachment upload.
+// seedSandboxOfflineSender leaves a read notification from perf-audit, which
+// is offline: the Mail reader's Find › finds it in Agents to power it on
+// (smoke phone-agent-find). Read and a day old, so it sits below the rest.
+func seedSandboxOfflineSender(t *testing.T) {
+	t.Helper()
+	at := time.Now().Add(-26 * time.Hour)
+	if _, err := db.InsertHumanMessageWithAttachments(&db.HumanMessage{
+		FromConv: sbPerf, FromTitle: "perf-audit", GroupName: "webshop",
+		Subject:   "Lighthouse budget: paused",
+		Body:      "The budget run is paused until the image CDN change lands. Power me on when it does.",
+		CreatedAt: at, ReadAt: at,
+	}, nil); err != nil {
+		t.Fatalf("offline sender's notification: %v", err)
+	}
+}
+
 func seedSandboxAttachment(s *sandboxSeeder) {
 	s.t.Helper()
 	if err := db.GrantAgentPermission(sbUI, agentd.PermHumanNotify, "operator"); err != nil {

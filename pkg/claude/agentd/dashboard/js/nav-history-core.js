@@ -182,9 +182,11 @@ export const TAB_PARAMS = {
 //   - own: the phone shell's own view, now or board (phone-history.js).
 //   - file: the phone Mail reader's attachment viewer, as the file's index
 //     in the open message (phone-mail-island.js).
+//   - agent: an agent the Agents view is to find, as its agent id (or
+//     conversation id): its group opened up, its row glowing (agent-route.js).
 // An overlay key must not also be a tab's param (TAB_PARAMS): withOverlays
 // strips every overlay key from a location before adding the live ones.
-export const OVERLAY_PARAMS = ['manage', 'notification', 'task', 'board-options', 'terminal', 'phone', 'own', 'file'];
+export const OVERLAY_PARAMS = ['manage', 'notification', 'task', 'board-options', 'terminal', 'phone', 'own', 'file', 'agent'];
 const PHONE_VIEWS = new Set(['now', 'board']);
 const TASK_ROUTE = /^tk_[0-9a-z]+(@inst_[0-9a-z]+)?:.+$/;
 const TERMINAL_ROUTE = /^[^\u0000-\u001f\u007f]{1,300}$/;
@@ -211,6 +213,7 @@ function normalizeParams(tab, params) {
     if (key === 'phone' && !/^[1-9]$/.test(str)) continue;
     if (key === 'own' && !PHONE_VIEWS.has(str)) continue;
     if (key === 'file' && !/^\d{1,3}$/.test(str)) continue;
+    if (key === 'agent' && !/^[A-Za-z0-9_-]{1,128}$/.test(str)) continue;
     if (key === 'crop' && !FOCUS_CROP.test(str)) continue;
     if (key === 'elements' && !FOCUS_ELEMENTS.test(str)) continue;
     out[key] = key === 'page' ? String(Math.floor(Number(str))) : str;

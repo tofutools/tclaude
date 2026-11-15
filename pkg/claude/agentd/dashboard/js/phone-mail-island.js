@@ -12,7 +12,9 @@
 //   reader a full-screen page pushed over the list (js/phone-page.js puts its
 //          back button and actions in the shell's top bar and hides the
 //          bottom nav): ⌖ (the sender's terminal), ✉̸ (mark unread) and 🗑 in
-//          the bar; the subject, a sender row, the body, images inline (tap
+//          the bar; the subject, a sender row (Terminal ›, and Find ›: the
+//          sender's row in Agents, agent-route.js; a terminal that cannot
+//          open says why on a tap), the body, images inline (tap
 //          to zoom, a history step of its own), and a reply bar that opens
 //          the message sheet. Another node's mail, a peer's and a spawn
 //          request keep the desktop reader, whose peer rules they need.
@@ -48,6 +50,7 @@ import { trustLock } from './lock-reason.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
 import { Button } from './ui-components.js';
 import { Avatar, avatarHue } from './phone-ui.js';
+import { findAgentRoute } from './agent-route.js';
 
 const html = htm.bind(h);
 
@@ -513,6 +516,45 @@ function PhoneAttachments({ message }) {
 // openTerminal opens the sender's terminal (the phone's docked one).
 const openTerminal = (agent, label) => import('./terminals-tab.js').then(({ openWebWindowPane }) => openWebWindowPane(agent, label, {}));
 
+// findable says whether a message's sender has a row to find in Agents
+// (Find ›, agent-route.js): an agent of this node. Mail a peer relayed, and
+// a peer's page, have none here.
+const findable = (item) => !!item.from_agent && !peerOfMessage(item) && !remoteNodeID();
+
+// whyNotLive is what a tap on a sender's terminal says when it cannot open:
+// the sender is offline (Find › to power it on), retired, deleted, or not
+// known at all. The snapshot holds every agent that is not retired; a
+// retired one is asked for (GET /api/retired, a contains filter).
+export async function whyNotLive(item, sender, { snapshot = dashboardState.snapshot.value, fetchImpl = globalThis.fetch } = {}) {
+  const id = item.from_agent || item.from_conv || '';
+  if (!id) return 'Unknown sender: there is no agent to open.';
+  const same = (m) => m && (m.agent_id === id || m.conv_id === id || (item.from_conv && m.conv_id === item.from_conv));
+  if ([...(snapshot?.agents || []), ...(snapshot?.ungrouped || [])].some(same)) {
+    return `${sender} is offline. Find › shows it in Agents, where you can power it on.`;
+  }
+  try {
+    const response = await fetchImpl(`/api/retired?limit=20&q=${encodeURIComponent(id)}`, { credentials: 'same-origin' });
+    const rows = response.ok ? (await response.json())?.rows || [] : null;
+    if (rows?.some(same)) return `${sender} was retired.`;
+    if (rows) return `${sender} no longer exists (deleted).`;
+  } catch (_) { /* below */ }
+  return `${sender} is not running.`;
+}
+
+// tryTerminal opens the sender's terminal, or says why it cannot.
+const tryTerminal = (item, sender, live) => {
+  if (live) openTerminal(item.from_agent, sender);
+  else whyNotLive(item, sender).then((why) => shellToast(why, true));
+};
+
+// FindButton goes to the sender's row in Agents (agent-route.js): its group
+// opened up, the row glowing. Never off: finding an offline sender to power
+// it on is what it is for.
+function FindButton({ item, sender }) {
+  return html`<${Button} class="phone-btn phone-mail-find" aria-label=${`Find ${sender} in Agents`}
+    onClick=${() => findAgentRoute(item.from_agent)}>Find ›<//>`;
+}
+
 // replyActions send a notification's reply, as the desktop reply dialog does.
 let replies = null;
 
@@ -522,6 +564,7 @@ function PhoneReader({ current, controller, item, active, back }) {
   const sender = human ? (item.from_title || item.from_conv || item.from_agent || 'the agent') : senderLabel(item);
   const live = !!item.from_agent && controller.senderOnline(item.from_agent, item.from_conv);
   const terminal = human && !!item.from_agent;
+  const find = findable(item);
   const acts = rowActions(controller, folder);
   usePhonePage({
     title: '',
@@ -530,8 +573,8 @@ function PhoneReader({ current, controller, item, active, back }) {
     // The reader is a location of its own (/messages/<folder>/<id>).
     routed: true,
     actions: [
-      ...(terminal ? [{ key: 'focus', icon: '⌖', label: live ? `Open ${sender}'s terminal` : `${sender} is offline`, disabled: !live,
-        onClick: () => openTerminal(item.from_agent, sender) }] : []),
+      ...(terminal ? [{ key: 'focus', icon: '⌖', label: live ? `Open ${sender}'s terminal` : `${sender} is offline`, muted: !live,
+        onClick: () => tryTerminal(item, sender, live) }] : []),
       { key: 'read', icon: item.read ? '✉̸' : '✉', label: item.read ? 'Mark unread' : 'Mark read', onClick: () => acts.setRead(item, !item.read) },
       { key: 'delete', icon: '🗑', label: acts.deleteLock || 'Delete this message', danger: true, disabled: !!acts.deleteLock,
         onClick: () => acts.remove(item) },
@@ -557,8 +600,11 @@ function PhoneReader({ current, controller, item, active, back }) {
         <span class="phone-mail-sender-name">${human ? sender : rowParty(item, true)}</span>
         <span class="phone-mail-sender-line">${sentLine(item, human)}</span>
       </div>
-      ${terminal && html`<${Button} class="phone-btn phone-mail-terminal" disabled=${!live}
-        title=${live ? undefined : `${sender} is offline`} onClick=${() => openTerminal(item.from_agent, sender)}>Terminal ›<//>`}
+      ${(terminal || find) && html`<div class="phone-mail-sender-acts">
+        ${terminal && html`<${Button} class="phone-btn phone-mail-terminal" aria-disabled=${live ? undefined : 'true'}
+          title=${live ? undefined : `${sender} is offline`} onClick=${() => tryTerminal(item, sender, live)}>Terminal ›<//>`}
+        ${find && html`<${FindButton} item=${item} sender=${human ? sender : senderLabel(item)} />`}
+      </div>`}
     </div>
     <${MessageBody} message=${item} agentMail=${!human} />
     <${PhoneAttachments} message=${item} />
@@ -590,9 +636,11 @@ function DesktopReader({ current, controller, model, item, active, back }) {
     hideNav: true,
     routed: true,
     actions: terminal ? [{
-      key: 'terminal', icon: 'Terminal ›', label: live ? `Open ${sender}'s terminal` : `${sender} is offline`, disabled: !live,
-      onClick: () => openTerminal(item.from_agent, sender),
-    }] : [],
+      key: 'terminal', icon: 'Terminal ›', label: live ? `Open ${sender}'s terminal` : `${sender} is offline`, muted: !live,
+      onClick: () => tryTerminal(item, sender, live),
+    }, ...(findable(item) ? [{
+      key: 'find', icon: 'Find ›', label: `Find ${sender} in Agents`, onClick: () => findAgentRoute(item.from_agent),
+    }] : [])] : [],
   }, active);
   useLayoutEffect(() => { globalThis.scrollTo?.(0, 0); }, [item.id]);
   return html`<div class=${`phone-mail-reader${model.access ? ' phone-mail-access-reader' : ''}`}>

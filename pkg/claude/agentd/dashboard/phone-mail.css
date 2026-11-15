@@ -117,7 +117,10 @@
 :root[data-layout="phone"] .phone-mail-sender-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 :root[data-layout="phone"] .phone-mail-sender-name { font-weight: 700; color: var(--ui-text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :root[data-layout="phone"] .phone-mail-sender-line { color: var(--ui-muted-text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:root[data-layout="phone"] .phone-mail-terminal { flex: none; min-height: 40px; }
+:root[data-layout="phone"] .phone-mail-sender-acts { flex: none; display: flex; gap: 6px; }
+:root[data-layout="phone"] :is(.phone-mail-terminal, .phone-mail-find) { flex: none; min-height: 40px; padding-inline: 12px; }
+/* Off, but a tap says why (phone-mail-island.js whyNotLive). */
+:root[data-layout="phone"] .phone-mail-terminal[aria-disabled="true"] { opacity: .45; cursor: default; }
 :root[data-layout="phone"] .phone-mail-read .mail-reader-body { font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
 :root[data-layout="phone"] .phone-mail-read .mail-decision { margin-top: 14px; }
 :root[data-layout="phone"] .phone-mail-attachments { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }

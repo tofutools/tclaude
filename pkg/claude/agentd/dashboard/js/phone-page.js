@@ -11,7 +11,8 @@
 //   phonePage.value = {
 //     title:   string, may be empty
 //     onBack:  () => void, what the back button does
-//     actions: [{ key, icon, label, onClick, disabled?, danger? }], top bar buttons
+//     actions: [{ key, icon, label, onClick, disabled?, danger?, muted? }], top bar buttons
+//     (muted: looks off but still takes a tap, which says why)
 //     hideNav: boolean, hide the bottom nav while the page is up
 //     routed:  boolean, the page is a router location of its own; otherwise
 //              it is a history step of its own (phone-history.js)
@@ -37,7 +38,7 @@ export const phonePage = signal(null);
 // of it.
 export function pageKey(page) {
   if (!page) return '';
-  const acts = (page.actions || []).map((act) => [act.key || act.label, act.icon || '', act.label, !!act.disabled, !!act.danger]);
+  const acts = (page.actions || []).map((act) => [act.key || act.label, act.icon || '', act.label, !!act.disabled, !!act.danger, !!act.muted]);
   return JSON.stringify([page.title || '', !!page.hideNav, acts, page.view || '']);
 }
 
