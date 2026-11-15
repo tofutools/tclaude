@@ -44,6 +44,17 @@ export function openBoardTask(id, group) {
 // another view so coming back finds the board as it was left.
 const boardPick = signal({ group: '', column: '' });
 
+// boardRequest counts asks to show the Board from a view outside the shell
+// (Agents' "Board ›"); the shell (phone-shell-island.js) shows it on each.
+export const boardRequest = signal(0);
+
+// openBoardGroup shows the Board on one group's board.
+export function openBoardGroup(group) {
+  boardPick.value = { group: group || '', column: '' };
+  boardTask.value = null;
+  boardRequest.value += 1;
+}
+
 // moveTo is the write that puts task in column (phone-board-model.js
 // columnMoves), as the desktop Lanes' drop does (groups-taskboard-lanes.js
 // baseLaneDrop): a stage or custom column through the stage route, an

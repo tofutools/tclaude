@@ -33,7 +33,7 @@ import { IconButton } from './phone-ui.js';
 import { NodeChip } from './phone-node-picker.js';
 import { SearchSheet } from './phone-search.js';
 import { NowView } from './phone-now.js';
-import { BoardView, openBoardTask } from './phone-board.js';
+import { BoardView, boardRequest, openBoardTask } from './phone-board.js';
 import { MoreMenu, PowerMenu } from './phone-more.js';
 
 // The own views live in their own files; re-exported for this module's
@@ -135,6 +135,17 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
       },
     };
   }, [actions, shell]);
+
+  // A view outside the shell asked for the Board (Agents' "Board ›",
+  // phone-board.js openBoardGroup): it comes up over the tab.
+  const boardAsked = useRef(boardRequest.peek());
+  const boardAsk = boardRequest.value;
+  useEffect(() => {
+    if (boardAsk === boardAsked.current) return;
+    boardAsked.current = boardAsk;
+    closePhoneSheet();
+    shell.view.value = 'board';
+  }, [boardAsk, shell]);
 
   // A tab's pushed page goes when its tab does (the view takes it down when
   // it goes inactive; clearing it here as well covers a view that does not).

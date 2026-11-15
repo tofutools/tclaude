@@ -1,31 +1,32 @@
 // phone-agents-island.js -- the phone's Agents view (the Groups tab in the
-// phone layout): a tab per group, one row per agent with its state, role,
-// harness, context and branch or PR, and a bottom sheet per agent with what a
-// phone can do to it. No drag and drop, no columns, no side panel: those stay
-// on the desktop.
+// phone layout): group chips, then each group's agents with an avatar, a
+// state pill and a line of role · harness · context · PR or branch. A tap
+// does a row's one thing (an online agent's terminal, an offline one's
+// resume); ⋯ opens its sheet with the rest. ＋ in the top bar spawns an agent
+// from a short sheet (group, profile, prompt), and a group's "Board ›" opens
+// its board. No drag and drop, no columns, no side panel: those stay on the
+// desktop.
 //
 // Every action goes through the desktop's own entry points (the row action
 // handler, the message dialog, the spawn dialog, the member editor), so the
-// confirmations and transactions are the desktop's.
+// confirmations and transactions are the desktop's; the short spawn sheet
+// posts the same spawn route `tclaude agent spawn` does.
 
 import { h, render } from 'preact';
+import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { ALL, VARIANT_LABELS, agentsTab, agentGroups, findRow, groupTabs, shownGroups } from './phone-agents-model.js';
+import { ALL, agentsTab, agentGroups, findRow, groupTabs, metaParts, shownGroups, spawnBody, spawnChoices } from './phone-agents-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
+import { usePhoneBar } from './phone-page.js';
+import { Avatar, ChipRow, IconButton, StatePill } from './phone-ui.js';
+import { openBoardGroup } from './phone-board.js';
 import { Button } from './ui-components.js';
-import { Tabs } from './ui-tabs.js';
+import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
-// The tag a state wears: what needs a look stands out, the rest is quiet.
-const TAG_CLASS = Object.freeze({
-  error: 'ui-tag ui-tag-warn', crashed: 'ui-tag ui-tag-warn', asking: 'ui-tag ui-tag-accent',
-  working: 'ui-tag', idle: 'ui-tag', offline: 'ui-tag',
-});
-
-function StateTag({ row }) {
-  const label = row.waking ? 'waking' : VARIANT_LABELS[row.variant];
-  return html`<span class=${`${TAG_CLASS[row.variant]} phone-agent-state v-${row.variant}`}>${label}</span>`;
+function Pill({ row }) {
+  return html`<${StatePill} tone=${row.pill.tone} class="phone-agent-state">${row.pill.text}<//>`;
 }
 
 const CI_MARK = Object.freeze({ passing: '✓', failing: '✗', running: '…' });
@@ -34,22 +35,86 @@ function PRLabel({ pr }) {
   return html`<span class=${`phone-agent-pr${pr.ci ? ` ci-${pr.ci}` : ''}`}>PR #${pr.number}${pr.ci ? ` ${CI_MARK[pr.ci]}` : ''}</span>`;
 }
 
-// MetaLine is a row's second line: role · harness · context · PR or branch.
+// MetaLine is a row's second line (phone-agents-model.js metaParts).
 function MetaLine({ row }) {
-  const parts = [row.role, row.harness, row.ctx !== null ? `ctx ${row.ctx}%` : ''].filter(Boolean);
-  return html`<span class="phone-agent-meta">
-    ${parts.join(' · ')}${row.pr ? html`${parts.length ? ' · ' : ''}<${PRLabel} pr=${row.pr} />` : row.branch ? `${parts.length ? ' · ' : ''}⎇ ${row.branch}` : ''}
-  </span>`;
+  const parts = metaParts(row);
+  return html`<span class="phone-agent-meta">${parts.map((part, i) => html`${i ? ' · ' : ''}${typeof part === 'string' ? part : html`<${PRLabel} pr=${part.pr} />`}`)}</span>`;
 }
 
-function AgentRow({ row, onOpen }) {
-  return html`<li>
-    <button data-ui-exempt type="button" class=${`phone-agent-row v-${row.variant}`} onClick=${() => onOpen(row)}>
-      <span class="phone-agent-line"><span class="phone-agent-title">${row.name}</span><${StateTag} row=${row} /></span>
-      <${MetaLine} row=${row} />
-      ${row.detail && html`<span class="phone-agent-why">${row.detail}</span>`}
+// AgentRow is one agent: the row itself does its one thing, ⋯ the rest.
+function AgentRow({ row, steward, onTap, onMore }) {
+  return html`<li class=${`phone-agent v-${row.variant}${row.online ? '' : ' phone-agent-off'}`}>
+    <button data-ui-exempt type="button" class="phone-agent-row" onClick=${() => onTap(row)}
+      aria-label=${`${row.name}, ${row.pill.text}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
+      <${Avatar} bot glyph=${steward ? '✦' : '🤖'} badge=${row.pill.badge} dim=${!row.online} />
+      <span class="phone-agent-text">
+        <span class="phone-agent-line"><span class="phone-agent-title">${row.name}</span><${Pill} row=${row} /></span>
+        <${MetaLine} row=${row} />
+        ${row.detail && html`<span class="phone-agent-why">${row.detail}</span>`}
+      </span>
     </button>
+    <${IconButton} icon="⋯" label=${`${row.name}: more`} aria-haspopup="dialog" class="phone-agent-more" onClick=${() => onMore(row)} />
   </li>`;
+}
+
+// SpawnSheet spawns an agent the short way: a group, a profile (the group's
+// default unless another is picked), a prompt and maybe a name. Everything
+// else is the desktop form's, one tap away.
+export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch, openFull, close }) {
+  const { groups, profiles } = spawnChoices(state.snapshot.value);
+  const [group, setGroup] = useState(groups.some((g) => g.name === initial) ? initial : groups[0]?.name || '');
+  const [profile, setProfile] = useState('');
+  const [name, setName] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!groups.length) return html`<p class="ui-empty phone-empty">Make a group on the desktop first.</p>`;
+  const fallback = groups.find((g) => g.name === group)?.profile || '';
+  const submit = async (event) => {
+    event?.preventDefault?.();
+    if (!prompt.trim() || !group || busy) return;
+    setBusy(true);
+    const body = spawnBody({ prompt: prompt.trim(), name, profile });
+    try {
+      const response = await fetchImpl(`/api/groups/${encodeURIComponent(group)}/spawn`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error((await response.text().catch(() => '')).trim() || `HTTP ${response.status}`);
+      const out = await response.json().catch(() => ({}));
+      shellToast(out?.queued ? `Queued ${body.name || 'the agent'} in ${group}` : `Spawned ${body.name || 'an agent'} in ${group}`);
+      close();
+    } catch (cause) {
+      shellToast(`Could not spawn: ${cause?.message || cause}`, true);
+      setBusy(false);
+    }
+  };
+  return html`<form class="phone-agents-spawn" onSubmit=${submit}>
+    <p class="phone-agents-sheet-title">New agent</p>
+    <label class="phone-agents-label">Group
+      <select class="ui-select phone-agents-field" value=${group} onChange=${(event) => setGroup(event.currentTarget.value)}>
+        ${groups.map((g) => html`<option key=${g.name} value=${g.name} selected=${g.name === group}>${g.name}</option>`)}
+      </select>
+    </label>
+    <label class="phone-agents-label">Profile
+      <select class="ui-select phone-agents-field" value=${profile} onChange=${(event) => setProfile(event.currentTarget.value)}>
+        <option value="" selected=${!profile}>${fallback ? `Group default (${fallback})` : 'No profile'}</option>
+        ${profiles.filter((p) => p !== fallback).map((p) => html`<option key=${p} value=${p} selected=${p === profile}>${p}</option>`)}
+      </select>
+    </label>
+    <label class="phone-agents-label">Prompt
+      <textarea class="ui-input phone-agents-field" rows="4" placeholder="What should it do?"
+        value=${prompt} onInput=${(event) => setPrompt(event.currentTarget.value)}></textarea>
+    </label>
+    <label class="phone-agents-label">Name
+      <input class="ui-input phone-agents-field" placeholder="From the prompt" autocapitalize="off" autocomplete="off"
+        value=${name} onInput=${(event) => setName(event.currentTarget.value)} />
+    </label>
+    <div class="phone-btns">
+      <${Button} class="phone-btn" onClick=${() => { close(); openFull(group); }}>All options…<//>
+      <${Button} type="submit" class="phone-btn phone-btn-pri phone-btn-grow" disabled=${busy || !prompt.trim()}>${busy ? 'Spawning…' : 'Spawn'}<//>
+    </div>
+  </form>`;
 }
 
 // AgentSheet is one agent's sheet. It reads the agent live from the snapshot,
@@ -62,7 +127,7 @@ export function AgentSheet({ state, order, actions, agentKey, groupKey, here = f
   const run = (act) => () => { close(); act(row, group); };
   const item = (label, onClick, extra = '') => html`<li><button data-ui-exempt type="button" class=${`phone-menu-item${extra}`} onClick=${onClick}>${label}</button></li>`;
   return html`<div class="phone-agent-sheet">
-    <div class="phone-agent-line"><h2 class="phone-agent-sheet-name">${row.name}</h2><${StateTag} row=${row} /></div>
+    <div class="phone-agent-line"><h2 class="phone-agent-sheet-name">${row.name}</h2><${Pill} row=${row} /></div>
     <p class="phone-agent-sheet-meta">${[group.group ? group.name : 'No group', row.role, row.harness, row.ctx !== null ? `context ${row.ctx}%` : ''].filter(Boolean).join(' · ')}</p>
     ${row.detail && html`<p class="phone-agent-why">${row.detail}</p>`}
     ${row.pr && html`<p class="phone-agent-sheet-meta"><a href=${row.pr.url} target="_blank" rel="noopener">PR #${row.pr.number}${row.pr.title ? ` · ${row.pr.title}` : ''}</a>${row.pr.ci ? ` · checks ${row.pr.ci}` : ''}</p>`}
@@ -81,29 +146,42 @@ export function AgentSheet({ state, order, actions, agentKey, groupKey, here = f
   </div>`;
 }
 
-export function PhoneAgents({ state, order, actions }) {
+export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetch }) {
   const tab = agentsTab.value;
   const setTab = (key) => { agentsTab.value = key; };
   const snapshot = state.snapshot.value;
-  if (!snapshot) return html`<p class="ui-empty phone-empty">Loading…</p>`;
-  const groups = agentGroups(snapshot, order);
-  if (!groups.length) return html`<p class="ui-empty phone-empty">No agents yet.</p>`;
+  const groups = snapshot ? agentGroups(snapshot, order) : [];
   const tabs = groupTabs(groups);
   const current = tabs.some((t) => t.key === tab) ? tab : ALL;
-  const open = (g) => (row) => openPhoneSheet({ label: row.name, Body: AgentSheet, props: { state, order, actions, agentKey: row.key, groupKey: g.key } });
+  const picked = groups.find((g) => g.key === current && g.group);
+  const spawn = (group) => openPhoneSheet({
+    label: 'New agent', Body: SpawnSheet,
+    props: { state, group, fetchImpl, openFull: (g) => actions.spawn(g) },
+  });
+  usePhoneBar({ tab: 'groups', actions: snapshot ? [{ key: 'spawn', icon: '＋', label: 'New agent', onClick: () => spawn(picked?.name || '') }] : [] });
+  if (!snapshot) return html`<p class="ui-empty phone-empty">Loading…</p>`;
+  if (!groups.length) return html`<p class="ui-empty phone-empty">No agents yet.</p>`;
+  const steward = snapshot.steward_active || '';
+  const more = (g) => (row) => openPhoneSheet({ label: row.name, Body: AgentSheet, props: { state, order, actions, agentKey: row.key, groupKey: g.key } });
+  // A tap: an online agent's terminal; an offline one wakes (the desktop's
+  // status light, no confirm: starting a session is harmless); one already
+  // waking shows its sheet.
+  const tap = (g) => (row) => {
+    if (row.online) actions.openTerminal(row);
+    else if (row.waking) more(g)(row);
+    else actions.rowAction('dot-toggle', row);
+  };
   return html`<div class="phone-agents">
-    <${Tabs} class="phone-chips" label="Group" value=${current} onSelect=${setTab}
-      items=${tabs.map((t) => ({ key: t.key, label: html`${t.label} <span class="phone-chip-count">${t.online}/${t.total}</span>` }))} />
+    <${ChipRow} label="Group" value=${current} onSelect=${setTab}
+      items=${tabs.map((t) => ({ key: t.key, label: t.label, count: t.total, title: `${t.online} of ${t.total} online` }))} />
     ${shownGroups(groups, current).map((g) => html`<div key=${g.key} class="phone-section" role="group" aria-label=${g.name}>
       <h2 class="phone-section-head ui-eyebrow">
-        <span>${g.name} · ${g.live}/${g.total}</span>
-        ${g.group && html`<${Button} size="sm" class="phone-agents-spawn" onClick=${() => actions.spawn(g.name)} aria-label=${`New agent in ${g.name}`}>＋ New<//>`}
+        <span>${g.name}</span>
+        ${g.group && html`<button data-ui-exempt type="button" class="phone-link phone-agents-board"
+          aria-label=${`${g.name}'s board`} onClick=${() => openBoardGroup(g.name)}>Board ›</button>`}
       </h2>
-      <ul class="phone-list">${g.shown.map((row) => html`<${AgentRow} key=${row.key} row=${row} onOpen=${open(g)} />`)}</ul>
-      ${g.offline.length > 0 && html`<details class="phone-agents-offline">
-        <summary>Offline · ${g.offline.length}</summary>
-        <ul class="phone-list">${g.offline.map((row) => html`<${AgentRow} key=${row.key} row=${row} onOpen=${open(g)} />`)}</ul>
-      </details>`}
+      <ul class="phone-list phone-agents-list">${[...g.shown, ...g.offline].map((row) => html`<${AgentRow} key=${row.key} row=${row}
+        steward=${!!steward && (row.agent === steward || row.conv === steward)} onTap=${tap(g)} onMore=${more(g)} />`)}</ul>
     </div>`)}
   </div>`;
 }
