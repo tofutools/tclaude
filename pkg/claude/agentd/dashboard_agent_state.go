@@ -323,6 +323,11 @@ type agentState struct {
 	// rides the harness catalog's can_remote_control, the same place the
 	// rename control reads can_rename from.
 	RemoteControl bool `json:"remote_control,omitempty"`
+	// RemoteControlURL is the Claude Code Remote Access session link
+	// (https://claude.ai/code/…) last read from the live pane while Remote
+	// Access is on, for "Open in Claude app ↗". It gives control of the
+	// session, so a peer gets it only for agents it may attach to.
+	RemoteControlURL string `json:"remote_control_url,omitempty"`
 	// Recovery fields are a bounded view of the durable Codex crash-loop
 	// ledger. They deliberately expose identifiers/counts/timestamps only;
 	// never pane contents, argv, environment, stderr, or harness logs.
@@ -415,6 +420,9 @@ func stateForConvInSessionsBatched(
 		// launch/row properties — the dashboard reflects the recorded intent
 		// and reconciles on the next refresh (the harness has no readback).
 		RemoteControl: pick.RemoteControl,
+		// RemoteControlURL is the Remote Access session link last read from
+		// this live session's pane (remote_control_url.go), never polled.
+		RemoteControlURL: rcSessionURLFor(pick, alive),
 	}
 	// resource-only and tclaude-layer request the cgroup through the
 	// implementation alone, so this read must not require a launch snapshot to

@@ -239,10 +239,12 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 				if peerActionFromRequest(r) == nil {
 					resp.SessionURL, resp.Note = obs.sessionURL, obs.note
 				}
+				rememberRCSessionURL(sess, obs.sessionURL)
 				selfHealRemoteControl(sess, true)
 			case rcSeenOff:
 				resp.RemoteControl = false
 				resp.Source = "pane"
+				forgetRCSessionURL(sess.ConvID)
 				selfHealRemoteControl(sess, false)
 			case rcUnknown:
 				// Couldn't confirm from the pane — keep the tracked flag and
@@ -272,6 +274,11 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 	if obs := observeRemoteControl(sess.TmuxSession + ":0.0"); obs.state != rcUnknown {
 		current = obs.state.armed()
 		selfHealRemoteControl(sess, current)
+		if current {
+			rememberRCSessionURL(sess, obs.sessionURL)
+		} else {
+			forgetRCSessionURL(sess.ConvID)
+		}
 	}
 
 	var desired bool
@@ -300,6 +307,9 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 	}
 
 	disable := !desired
+	// Switching either way ends the session link: on starts a new session with
+	// a new link, which the next status read records.
+	forgetRCSessionURL(target)
 	reason := slashReason("remote-control "+onOff(desired), caller, target)
 	injected, ok := deliverRemoteControl(target, h, disable, reason)
 	if !ok {

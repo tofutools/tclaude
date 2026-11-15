@@ -41,6 +41,9 @@ var peerSnapshotFields = map[reflect.Type]map[string]string{
 	reflect.TypeFor[taskRefView](): classifyPeerFields(map[string]string{"status": "TaskURL TaskLabel", "denied": "TaskLabelOverride"}),
 	reflect.TypeFor[agentState](): classifyPeerFields(map[string]string{
 		"status": "Status SubagentCount BgShellCount MonitorCount ContextPct TokensInput TokensOutput ContextWindowSize Model EffortLevel Harness ExitReason RecoveryStatus",
+		// The Remote Access session link controls the session: a row drops it,
+		// and peer_snapshot.go sets it where the peer may attach to the agent.
+		"settings": "RemoteControlURL",
 		"denied": "StatusDetail StatusWarning TemporaryHarnessBuiltinMode PendingMorph FastMode LastHook Cwd ContextWindowMax ContextWindowSource CopilotAPI CopilotAPIConnected CodexAppServer CodexAppServerState CodexAppServerHealth CodexAppServerSource CodexAppServerVersion CodexAppServerDetail CodexObserverMode CodexObserverUpdated CopilotAPIChannelFailed AutoCompactWindow CostUSD VirtualCostUSD VirtualCostCredits BrokerRefusals BrokerRefusalDetail BrokerRefusalSince HarnessBuiltinMode HarnessBuiltinModeSource SandboxImplementation OSSandboxState OSSandboxSource OSSandboxUnverified SandboxProfiles SandboxProfilesRecorded SandboxAccessNotices SandboxProfilesOmitted ResourceCgroup ResourceMemoryLimit ResourceCPULimit ResourcePIDsLimit RemoteControl RecoveryDetail RecoveryReason RecoveryCount RecoveryBackoff RecoveryNextAttempt RecoveryLastExitCode",
 	}),
 }
