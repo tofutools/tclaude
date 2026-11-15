@@ -668,13 +668,18 @@ export function mountTerminalWidget({
     const { clientX: x, clientY: y } = event.touches[0];
     if (!swipe.moving) {
       const dy = y - swipe.y0;
-      if (Math.abs(dy) < SWIPE_START_PX || Math.abs(dy) < Math.abs(x - swipe.x0)) return;
+      if (Math.abs(dy) < SWIPE_START_PX || Math.abs(dy) < Math.abs(x - swipe.x0)) {
+        // Where the finger was just before the swipe started, for its speed:
+        // a flick after a rest is as fast as the flick, not the rest.
+        swipe.before = { t: now(), y };
+        return;
+      }
       swipe.moving = true;
     }
     event.preventDefault();
     const time = now();
     const dy = y - swipe.y;
-    if (!swipe.samples.length) swipe.samples.push({ t: swipe.at, y: swipe.y });
+    if (!swipe.samples.length) swipe.samples.push(swipe.before || { t: swipe.at, y: swipe.y });
     swipe.samples.push({ t: time, y });
     while (swipe.samples.length > 2 && time - swipe.samples[1].t > SWIPE_VELOCITY_MS) swipe.samples.shift();
     swipe.y = y;

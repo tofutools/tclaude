@@ -50,20 +50,23 @@ export function wheelCopyMode(seed, { harnesses = [], agent = () => null } = {})
 }
 
 // terminalHarness is the harness a terminal's session runs, as wheelCopyMode
-// reads it, or '' for a terminal of no agent.
-function terminalHarness(seed, agent = () => null) {
+// reads it, or '' for a terminal of no agent. Without known, an agent's
+// terminal of no known harness is Claude Code's, the default harness.
+function terminalHarness(seed, agent = () => null, known = false) {
   const agentId = seed?.agent || seed?.remote?.agent || '';
   let harness = seed?.harness || '';
   if (!harness && seed?.agent) harness = agent(seed.agent)?.harness || '';
-  if (!harness && agentId) harness = 'claude';
+  if (!harness && agentId && !known) harness = 'claude';
   return harness;
 }
 
 // swipeWheel is how far a terminal's session scrolls a wheel notch, for the
 // swipe (terminals-core.js): Claude Code's own measured acceleration, else
-// five lines a notch, which tmux copy-mode scrolls.
+// five lines a notch, which tmux copy-mode scrolls. Only a harness known to
+// be Claude Code's: a notch a row over tmux copy-mode would run five times
+// ahead of the finger, where the other way round only lags.
 export function swipeWheel(seed, { agent = () => null } = {}) {
-  return terminalHarness(seed, agent) === 'claude' ? 'claude' : 'tmux';
+  return terminalHarness(seed, agent, true) === 'claude' ? 'claude' : 'tmux';
 }
 
 // The terminals this page opened, by key, so Back and Forward can bring one

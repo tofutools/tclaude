@@ -1842,6 +1842,13 @@ test('a flick over Claude Code coasts about as far as a native list, and a tiny 
   // 2px/ms: about 970px, 60 rows, before it is slower than 0.05px/ms.
   assert.ok(coasted >= 52 && coasted <= 64, `a 2px/ms flick coasted ${coasted} rows`);
 
+  // A flick after a rest: as fast as the flick, so it coasts.
+  clock.now = 5000;
+  touch('touchstart', 100); clock.now += 200; touch('touchmove', 104); clock.now += 200; touch('touchmove', 106);
+  for (const y of [136, 166, 196]) { clock.now += 16; touch('touchmove', y); }
+  touch('touchend');
+  assert.ok(runFrames() > 0, 'the rest before the flick does not slow it');
+
   // A flick of a row is a tap gone astray, not a scroll.
   notches.length = 0;
   clock.now = 9000;

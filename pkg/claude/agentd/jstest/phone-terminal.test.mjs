@@ -205,6 +205,18 @@ test('wheelCopyMode: an agent terminal without a harness takes the agent\'s, els
   assert.equal(wheelCopyMode({ ws: '/api/open-window-ws/x', agent: 'agt_x', harness: 'claude' }, { agent }), true, 'no catalog yet: keep ↓ Live');
 });
 
+test('swipeWheel: Claude Code\'s model only for a harness known to be Claude Code\'s', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { swipeWheel } = await harness.importDashboardModule('js/phone-terminal-island.js');
+  const agent = (id) => (id === 'agt_cc' ? { harness: 'claude' } : id === 'agt_codex' ? { harness: 'codex' } : null);
+  assert.equal(swipeWheel({ ws: '/api/open-window-ws/x', agent: 'agt_x', harness: 'claude' }, { agent }), 'claude');
+  assert.equal(swipeWheel({ ws: '/api/open-window-ws/agt_cc', agent: 'agt_cc' }, { agent }), 'claude', 'the agent\'s harness');
+  assert.equal(swipeWheel({ ws: '/api/open-window-ws/agt_codex', agent: 'agt_codex' }, { agent }), 'tmux');
+  assert.equal(swipeWheel({ ws: '/api/open-window-ws/agt_gone', agent: 'agt_gone' }, { agent }), 'tmux',
+    'not known yet (a deep link before the snapshot): five lines a notch, which at worst lags');
+  assert.equal(swipeWheel({ ws: '/api/group-term-ws/g' }, { agent }), 'tmux');
+});
+
 test('the bar names the agent and its group, wears its state, and ⋯ opens its sheet', async (t) => {
   const row = { key: AGENT, agent: AGENT, name: 'checkout-ui', group: 'webshop', variant: 'asking', online: true };
   const menus = [];
