@@ -1,4 +1,55 @@
-/* Usage › Costs: each agent's row is two lines (name and cost, then harness,
+/* Usage on a phone (phone-usage.js): the hub draws Quota and Costs as
+   summaries, so the desktop islands under it stay mounted (they keep their
+   data fresh, and Costs' span buttons do the span changes) but hidden. Without
+   the hub (no data-subview) they show, with the fallback rules further down. */
+:root[data-layout="phone"] #tab-usage[data-subview] :is(#usage-root, #costs-root) { display: none; }
+
+:root[data-layout="phone"] .phone-usage-chips { margin-bottom: 12px; }
+:root[data-layout="phone"] .phone-cost-spans { margin-bottom: 10px; }
+:root[data-layout="phone"] .phone-usage-foot { margin: 14px 0 4px; color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-usage-warn { margin: 0 0 10px; color: var(--phone-warn); font-size: 13px; }
+
+/* Quota: one card per window. */
+:root[data-layout="phone"] .phone-quota-card.at-risk { border-color: color-mix(in srgb, var(--phone-bad) 55%, var(--phone-line)); }
+:root[data-layout="phone"] .phone-quota-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+:root[data-layout="phone"] .phone-quota-name { display: flex; flex-direction: column; min-width: 0; }
+:root[data-layout="phone"] .phone-quota-name strong { font-size: 16px; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-quota-pct { font-size: 26px; font-weight: 600; line-height: 1.1; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-quota-pct.warn { color: var(--phone-warn); }
+:root[data-layout="phone"] .phone-quota-pct.bad { color: var(--phone-bad); }
+:root[data-layout="phone"] .phone-quota-bar { height: 8px; margin: 10px 0 6px; border-radius: 4px; background: var(--phone-tile); overflow: hidden; }
+:root[data-layout="phone"] .phone-quota-bar b { display: block; height: 100%; border-radius: 4px; background: var(--phone-accent); }
+:root[data-layout="phone"] .phone-quota-bar b.warn { background: var(--phone-warn); }
+:root[data-layout="phone"] .phone-quota-bar b.bad { background: var(--phone-bad); }
+:root[data-layout="phone"] .phone-quota-meta { color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-quota-card .usage-ov-spark { height: 44px; margin: 8px 0 4px; }
+:root[data-layout="phone"] .phone-quota-status { font-size: 14px; font-weight: 600; color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-quota-status.danger { color: var(--phone-bad); }
+:root[data-layout="phone"] .phone-quota-status.warn { color: var(--phone-warn); }
+:root[data-layout="phone"] .phone-quota-status.good { color: var(--phone-ok); }
+
+/* Costs: the total, then provider, model and agent lists. */
+:root[data-layout="phone"] .phone-cost-total { display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] .phone-cost-big { font-size: 30px; font-weight: 600; color: var(--phone-ok); line-height: 1.2; }
+:root[data-layout="phone"] .phone-cost-meta { color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-cost-caveat { margin-top: 6px; color: var(--phone-warn); font-size: 12px; }
+:root[data-layout="phone"] .phone-cost-list {
+  list-style: none; margin: 0; padding: 0 12px;
+  background: var(--phone-panel); border: 1px solid var(--phone-line); border-radius: var(--phone-r);
+}
+:root[data-layout="phone"] .phone-cost-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline;
+  padding: 10px 0; border-bottom: 1px solid var(--phone-line);
+}
+:root[data-layout="phone"] .phone-cost-row:last-child { border-bottom: 0; }
+:root[data-layout="phone"] .phone-cost-name { min-width: 0; overflow-wrap: anywhere; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-cost-sub { display: block; color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-cost-fig { text-align: right; font-variant-numeric: tabular-nums; color: var(--ui-text-strong); white-space: nowrap; }
+:root[data-layout="phone"] .phone-cost-share { display: block; color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-cost-bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--phone-tile); overflow: hidden; }
+:root[data-layout="phone"] .phone-cost-bar b { display: block; height: 100%; background: var(--phone-accent); }
+
+/* Fallback, without the hub: Usage › Costs: each agent's row is two lines (name and cost, then harness,
    model and last activity) instead of a six-column table wider than the
    phone. The header stays as a row of sort buttons. */
 :root[data-layout="phone"] #costs-table :is(table, thead, tbody) { display: block; width: 100%; }

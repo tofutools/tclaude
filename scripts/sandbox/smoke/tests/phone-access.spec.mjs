@@ -73,7 +73,8 @@ test('Costs fits the phone, and a Fleet admin section says it is desktop only', 
   const errors = collectErrors(page);
   await page.goto('/usage/costs');
   await booted(page);
-  await expect(page.locator('#costs-table tbody tr').first()).toBeVisible();
+  // The phone's Costs summary (phone-usage.js; phone-usage.spec.mjs has the rest).
+  await expect(page.locator('.phone-usage-costs .phone-cost-row').first()).toBeVisible();
   await expectNoSideScroll(page, 'Usage › Costs');
 
   // Fleet's own view is read-only (phone-diagnostics.spec.mjs); its admin
