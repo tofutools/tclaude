@@ -218,7 +218,13 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 					prior = dashboardAgent{AgentID: aid, ConvID: m.ConvID, Title: ar.Title, Groups: []string{}, OwnedGroups: []string{}, Effective: []string{}}
 				}
 				if status {
+					// A link one of its groups showed stays when a later
+					// group, whose grants show none, refreshes its state.
+					link := prior.State.RemoteControlURL
 					prior.State = ar.State
+					if prior.State.RemoteControlURL == "" {
+						prior.State.RemoteControlURL = link
+					}
 					prior.taskRefView = ar.taskRefView
 				}
 				if status || presence {
@@ -238,14 +244,16 @@ func (v *peerView) groups() ([]dashboardGroup, []dashboardAgent, error) {
 			}
 		}
 		// The Remote Access link controls the session as an interactive terminal
-		// does, so a peer that may attach to the group's agents gets it.
-		if status && v != nil && fedPeerAllows(v.peer.InstanceID, g.ID, PermSessionsAttach) {
+		// does, so the peer's operator gets it where it may attach to the
+		// group's agents; a peer's agent, which cannot attach, never does. It
+		// comes from the shared gather, which read no pane for it.
+		if status && shared != nil && v != nil && v.agent == nil && fedPeerAllows(v.peer.InstanceID, g.ID, PermSessionsAttach) {
 			for i := range row.Members {
 				m := &row.Members[i]
 				if !m.Online {
 					continue
 				}
-				if url := rcSessionURLForConv(m.ConvID); url != "" {
+				if url := shared.states[m.ConvID].RemoteControlURL; url != "" {
 					m.State.RemoteControlURL = url
 					if a, ok := agents[m.AgentID]; ok {
 						a.State.RemoteControlURL = url

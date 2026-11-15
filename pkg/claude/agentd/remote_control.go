@@ -239,7 +239,7 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 				if peerActionFromRequest(r) == nil {
 					resp.SessionURL, resp.Note = obs.sessionURL, obs.note
 				}
-				rememberRCSessionURL(sess.ConvID, sess.TmuxSession, obs.sessionURL)
+				rememberRCSessionURL(sess, obs.sessionURL)
 				selfHealRemoteControl(sess, true)
 			case rcSeenOff:
 				resp.RemoteControl = false
@@ -275,7 +275,7 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		current = obs.state.armed()
 		selfHealRemoteControl(sess, current)
 		if current {
-			rememberRCSessionURL(sess.ConvID, sess.TmuxSession, obs.sessionURL)
+			rememberRCSessionURL(sess, obs.sessionURL)
 		} else {
 			forgetRCSessionURL(sess.ConvID)
 		}

@@ -22,7 +22,7 @@ export function phoneAgentActions({ onComposeMessage = null, navigate = navigate
     openTerminal: (row) => openWebWindowPane(row.agent, row.name, { harness: row.harness }),
     message: (row) => onComposeMessage?.({ agent: row.agent, label: row.name }),
     // openClaudeApp turns Remote Access on (turnOn) and opens the session in
-    // the Claude app (claude-app.js); it opens its tab inside the tap.
+    // the Claude app (claude-app.js): a toast offers the Open tap.
     openClaudeApp: (row, turnOn) => openInClaudeApp({ conv: row.agent || row.conv, label: row.name, turnOn, notify }),
     // rowAction takes the same data a desktop row's data-* attributes carry.
     rowAction: (act, row) => handleRowAction({ data: {

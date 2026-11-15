@@ -24,8 +24,11 @@ import (
 // only for agents the peer may attach to (peer_snapshot.go).
 
 type rcSessionLink struct {
-	tmux string // the session it was read from: a new session has a new link
-	url  string
+	// session is the session row it was read from. Each launch (spawn,
+	// resume, restart) is a new row, whose Claude Code has a new link, while
+	// a resume may reuse the tmux session's name.
+	session string
+	url     string
 }
 
 var rcSessionLinks = struct {
@@ -33,16 +36,16 @@ var rcSessionLinks = struct {
 	byConv map[string]rcSessionLink
 }{byConv: map[string]rcSessionLink{}}
 
-// rememberRCSessionURL records the link a confident "armed" read of conv's
+// rememberRCSessionURL records the link a confident "armed" read of sess's
 // pane found. Only the exact claude.ai/code origin is kept; an armed read
 // with no link keeps what was known for the same session.
-func rememberRCSessionURL(convID, tmux, url string) {
-	if convID == "" || tmux == "" || !strings.HasPrefix(url, rcSessionURLPrefix) {
+func rememberRCSessionURL(sess *db.SessionRow, url string) {
+	if sess == nil || sess.ConvID == "" || sess.ID == "" || !strings.HasPrefix(url, rcSessionURLPrefix) {
 		return
 	}
 	rcSessionLinks.Lock()
 	defer rcSessionLinks.Unlock()
-	rcSessionLinks.byConv[convID] = rcSessionLink{tmux: tmux, url: url}
+	rcSessionLinks.byConv[sess.ConvID] = rcSessionLink{session: sess.ID, url: url}
 }
 
 // forgetRCSessionURL drops conv's link: its pane read "off", or Remote Access
@@ -53,22 +56,16 @@ func forgetRCSessionURL(convID string) {
 	delete(rcSessionLinks.byConv, convID)
 }
 
-// rcSessionURLForConv returns the link of conv's live session, if known.
-func rcSessionURLForConv(convID string) string {
-	sess := aliveSessionForConv(convID)
-	return rcSessionURLFor(sess, sess != nil)
-}
-
 // rcSessionURLFor returns the link for a live session row whose Remote Access
 // is (best known) on, read from that same session; else "".
 func rcSessionURLFor(sess *db.SessionRow, alive bool) string {
-	if sess == nil || !alive || !sess.RemoteControl || sess.TmuxSession == "" {
+	if sess == nil || !alive || !sess.RemoteControl || sess.ID == "" {
 		return ""
 	}
 	rcSessionLinks.Lock()
 	defer rcSessionLinks.Unlock()
 	link, ok := rcSessionLinks.byConv[sess.ConvID]
-	if !ok || link.tmux != sess.TmuxSession {
+	if !ok || link.session != sess.ID {
 		return ""
 	}
 	return link.url

@@ -199,14 +199,15 @@ Access is switched, or a read finds it off), and never logs it. Where the
 dashboard has no link yet, the entry reads:
 
 - **Open in Claude app ↗** while Remote Access is on: the tap reads the pane
-  once for the link, then opens it.
+  once for the link.
 - **Turn on Remote Access & open** while it is off, on a running Claude Code
-  agent of this node: the tap switches it on, waits up to 10 s for the link,
-  then opens it. A toast says when it did not come up.
+  agent of this node: the tap switches it on and waits up to 10 s for the
+  link. A toast says when it did not come up.
 
-The tab is opened inside the tap and pointed at the link when it arrives,
-because a browser opens tabs only from a tap; where the browser blocks it, the
-toast offers a second **Open in Claude app ↗** tap.
+Once the link is there, a toast offers **Open in Claude app ↗**, and the
+agent's menu shows the link itself from then on. That second tap is what
+opens the app: a phone opens an app from a universal link only on a tap, not
+from a page's own navigation.
 
 The link controls the session for whoever is signed in to its Claude account,
 so it is treated like an interactive terminal. A [federated](federation.md)

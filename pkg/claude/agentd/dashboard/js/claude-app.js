@@ -12,9 +12,11 @@
 // "Turn on Remote Access & open" (or, when Remote Access is on but its link
 // was not read yet, the same Open entry) switches it on through the existing
 // remote-control route, asks the pane for the link until it shows, then
-// opens it. A browser opens a tab only inside the tap, so the tab is opened
-// at once and pointed at the link when it arrives; where the browser blocks
-// that, a toast offers a second Open tap.
+// offers it: a toast with Open in Claude app ↗, a second tap. The second tap
+// is deliberate. A tab opened in the first tap and pointed at the link later
+// fails on phones: iOS suspends the page that would point it while that tab
+// is in front, and a universal link opens the app only from a tap, not from
+// a script's navigation. The menu shows the link itself from then on.
 //
 // dashboard-imperative-boundary: browser-io
 
@@ -48,26 +50,14 @@ export function pageCanToggleRemote(snapshot) {
 
 const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-// openInClaudeApp gets agent conv's session link and opens it. Call it from
-// the tap itself (before any await): it opens the tab synchronously.
+// openInClaudeApp gets agent conv's session link (switching Remote Access
+// on first when turnOn) and offers it in a toast whose Open tap opens it.
 export async function openInClaudeApp({
   conv, label = 'the agent', turnOn = false,
   fetchImpl = (...args) => globalThis.fetch(...args), notify = () => {},
   win = globalThis.window, timeoutMs = 10_000, intervalMs = 1_000,
   sleep = delay, now = () => Date.now(),
 }) {
-  let tab = null;
-  try {
-    tab = win?.open?.('', '_blank') || null;
-  } catch {
-    tab = null;
-  }
-  if (tab) {
-    try {
-      tab.document.title = 'Opening the Claude app…';
-      tab.document.body.textContent = `Waiting for ${label}'s Remote Access link…`;
-    } catch { /* not ours to write: it is navigated below all the same */ }
-  }
   notify(turnOn ? `Turning on Remote Access for ${label}…` : `Finding ${label}'s Remote Access link…`);
   const call = async (intent) => {
     const r = await fetchImpl(`/api/agents/${encodeURIComponent(conv)}/remote-control`, {
@@ -93,18 +83,12 @@ export async function openInClaudeApp({
     failure = err?.message || String(err);
   }
   if (!url) {
-    try { tab?.close(); } catch { /* already gone */ }
     const why = failure ? `: ${failure}` : ` within ${Math.round(timeoutMs / 1000)} s`;
     notify(`${turnOn ? 'Remote Access did not come up' : 'No Remote Access link'} for ${label}${why}. Try again, or check its terminal.`, true);
     return { ok: false };
   }
-  if (tab && !tab.closed) {
-    tab.location.href = url;
-    return { ok: true, url };
-  }
-  // The browser blocked the tab: a second tap opens the link.
   notify(`Remote Access is on for ${label}.`, false, {
     action: { label: OPEN_IN_CLAUDE_APP, run: () => win?.open?.(url, '_blank', 'noopener') },
   });
-  return { ok: true, url, deferred: true };
+  return { ok: true, url };
 }

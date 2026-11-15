@@ -24,12 +24,11 @@ test('the offer: open a known link anywhere; get one only where this page may sw
   }
 });
 
-function fakeWorld({ statuses, blocked = false, onFails = false }) {
+function fakeWorld({ statuses, onFails = false }) {
   const calls = [];
   const toasts = [];
   const opened = [];
-  const tab = { closed: false, location: { href: '' }, document: { title: '', body: { textContent: '' } }, close() { this.closed = true; } };
-  const win = { open: (...args) => { opened.push(args); return blocked ? null : tab; } };
+  const win = { open: (...args) => { opened.push(args); return null; } };
   let i = 0;
   const fetchImpl = async (url, init) => {
     const { intent } = JSON.parse(init.body);
@@ -40,7 +39,7 @@ function fakeWorld({ statuses, blocked = false, onFails = false }) {
   };
   let clock = 0;
   return {
-    calls, toasts, opened, tab,
+    calls, toasts, opened,
     opts: {
       conv: 'agt_1', label: 'cc', win, fetchImpl,
       notify: (...args) => toasts.push(args),
@@ -49,24 +48,35 @@ function fakeWorld({ statuses, blocked = false, onFails = false }) {
   };
 }
 
-test('turn on & open: the tab opens in the tap, then follows the link once it shows', async () => {
+test('turn on & open: switches it on, waits for the link, and a tap on the toast opens it', async () => {
   const w = fakeWorld({ statuses: [{}, {}, { session_url: LINK }] });
-  const pending = openInClaudeApp({ ...w.opts, turnOn: true });
-  assert.equal(w.opened.length, 1, 'the tab is opened before anything is awaited');
-  const result = await pending;
+  const result = await openInClaudeApp({ ...w.opts, turnOn: true });
   assert.deepEqual(result, { ok: true, url: LINK });
   assert.deepEqual(w.calls, ['on', 'status', 'status', 'status']);
-  assert.equal(w.tab.location.href, LINK);
   assert.match(w.toasts[0][0], /Turning on Remote Access for cc/);
+  assert.equal(w.opened.length, 0, 'nothing opens without a tap: a universal link needs one');
+  const [message, error, options] = w.toasts.at(-1);
+  assert.equal(message, 'Remote Access is on for cc.');
+  assert.equal(error, false);
+  assert.equal(options.action.label, 'Open in Claude app ↗');
+  options.action.run();
+  assert.deepEqual(w.opened, [[LINK, '_blank', 'noopener']]);
 });
 
-test('no link within the wait: the tab closes and a toast says so', async () => {
+test('on but not read yet: no switch, just the read', async () => {
+  const w = fakeWorld({ statuses: [{ session_url: LINK }] });
+  assert.deepEqual(await openInClaudeApp({ ...w.opts }), { ok: true, url: LINK });
+  assert.deepEqual(w.calls, ['status']);
+  assert.match(w.toasts[0][0], /Finding cc's Remote Access link/);
+});
+
+test('no link within the wait, or a refused switch: a toast says so', async () => {
   const w = fakeWorld({ statuses: [{}] });
   const result = await openInClaudeApp({ ...w.opts, turnOn: true, timeoutMs: 3000, intervalMs: 1000 });
   assert.equal(result.ok, false);
-  assert.equal(w.tab.closed, true);
-  const [message, error] = w.toasts.at(-1);
+  const [message, error, options] = w.toasts.at(-1);
   assert.equal(error, true);
+  assert.equal(options, undefined);
   assert.match(message, /Remote Access did not come up for cc within 3 s/);
   assert.ok(w.calls.filter((c) => c === 'status').length <= 4, 'it stops at the deadline');
 
@@ -74,15 +84,4 @@ test('no link within the wait: the tab closes and a toast says so', async () => 
   await openInClaudeApp({ ...failing.opts, turnOn: true });
   assert.match(failing.toasts.at(-1)[0], /did not come up for cc: no tmux/);
   assert.deepEqual(failing.calls, ['on']);
-});
-
-test('a blocked tab: a second tap from the toast opens the link', async () => {
-  const w = fakeWorld({ statuses: [{ session_url: LINK }], blocked: true });
-  const result = await openInClaudeApp({ ...w.opts });
-  assert.deepEqual(result, { ok: true, url: LINK, deferred: true });
-  assert.deepEqual(w.calls, ['status'], 'Remote Access already on: no switch');
-  const [, , options] = w.toasts.at(-1);
-  assert.equal(options.action.label, 'Open in Claude app ↗');
-  options.action.run();
-  assert.deepEqual(w.opened.at(-1), [LINK, '_blank', 'noopener']);
 });

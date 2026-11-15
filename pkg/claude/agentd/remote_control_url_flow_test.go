@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -61,6 +63,29 @@ func TestRemoteControlSessionURL_LocalSnapshotAndPeerAttachGate(t *testing.T) {
 	require.NotContains(t, peerSnapshot(), "remote_control_url", "watch-only shows no link")
 	grant(agentd.PermSessionsAttach)
 	require.Contains(t, peerSnapshot(), link, "a peer that may attach gets the link")
+
+	// The peer's agents cannot attach, so they never get it, even where the
+	// peer's operator does.
+	worker := &proto.PeerViewAgent{ID: "agt_bobworker000000000000000", Name: "bob-worker", Groups: []string{"crew"}}
+	reply := agentPeerViewExchange(t, fh.peer, worker, http.MethodGet, "/api/snapshot", nil)
+	require.Equal(t, http.StatusOK, reply.Status, string(reply.Body))
+	require.Contains(t, string(reply.Body), conv, "the peer's agent sees the agent")
+	require.NotContains(t, string(reply.Body), "remote_control_url", "a peer's agent gets no link")
+
+	// A relaunch is a new session (whose Claude Code has a new link), even
+	// where it reuses the tmux session's name: the old link is not shown.
+	f.HaveAliveSession(conv, "cc-url-2", "tmux-cc-url", f.TestCwd("url"))
+	require.NoError(t, db.SetSessionRemoteControl("cc-url-2", true))
+	require.NotContains(t, local(), "remote_control_url", "a relaunched session shows no old link")
+	relaunched := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, relaunched)
+	if !relaunched.RemoteControlOn() {
+		relaunched.Receive("/remote-control")
+		relaunched.Receive("Enter")
+	}
+	st = f.AsHuman().RemoteControl(conv, "status")
+	require.Equal(t, http.StatusOK, st.Code, st.Raw)
+	require.Contains(t, local(), `"remote_control_url":"`+st.SessionURL+`"`, "the new session's link, once read")
 
 	// Switching Remote Access drops the link until the next read.
 	off := f.AsHuman().RemoteControl(conv, "off")

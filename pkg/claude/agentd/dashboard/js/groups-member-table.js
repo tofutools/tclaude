@@ -790,7 +790,6 @@ function ClaudeAppMenuItem({ member, group, snapshot, canRemote }) {
     event.preventDefault();
     event.stopPropagation();
     interactions.closeMenu(true);
-    // The tab opens inside this click, before anything is awaited.
     void openInClaudeApp({ conv: member.agent_id || member.conv_id, label, turnOn: offer.turnOn, notify: shellToast });
   } }} />`;
 }
