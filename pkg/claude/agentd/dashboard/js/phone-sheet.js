@@ -19,7 +19,7 @@
 // text field); otherwise its first button does.
 
 import { h } from 'preact';
-import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
 
@@ -89,7 +89,11 @@ function Grab({ onClose }) {
 
 function Sheet({ label, onClose, children }) {
   const sheet = useRef(null);
-  useEffect(() => {
+  // A layout effect: Escape, the inert page behind and the focus are in place
+  // in the same commit as the sheet. A passive effect can run a frame or more
+  // late on a busy page, and an Escape in between was lost, leaving the sheet
+  // up.
+  useLayoutEffect(() => {
     const doc = sheet.current.ownerDocument;
     const opener = doc.activeElement;
     const behind = [...doc.querySelectorAll(BEHIND)];

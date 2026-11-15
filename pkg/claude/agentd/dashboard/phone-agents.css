@@ -13,32 +13,38 @@
 }
 :root[data-layout="phone"] #groups-list :is(.modal-overlay, .manage-overlay) { visibility: visible; }
 
-:root[data-layout="phone"] .phone-agents-spawn { min-height: var(--phone-tap); }
+/* A row: avatar, name and pill over the meta line, all one tap; ⋯ beside it
+   opens the agent's sheet. */
+:root[data-layout="phone"] .phone-agent { display: flex; align-items: center; gap: 4px; }
 :root[data-layout="phone"] .phone-agent-row {
-  display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%;
-  min-height: 56px; padding: 9px 0; background: none; border: 0;
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
+  min-height: 60px; padding: 10px 0; background: none; border: 0;
   color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
 }
+:root[data-layout="phone"] .phone-agent-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 :root[data-layout="phone"] .phone-agent-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 :root[data-layout="phone"] .phone-agent-title {
-  flex: 1; min-width: 0; font-weight: 600; color: var(--ui-text-strong);
+  flex: 1; min-width: 0; font-size: 16px; font-weight: 600; color: var(--ui-text-strong);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-:root[data-layout="phone"] .phone-agent-state { flex: none; }
 :root[data-layout="phone"] .phone-agent-meta,
 :root[data-layout="phone"] .phone-agent-why {
   color: var(--ui-muted-text); font-size: 13px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 :root[data-layout="phone"] .phone-agent-why { color: var(--ui-warn-text); }
-:root[data-layout="phone"] .phone-agent-row.v-offline .phone-agent-title { color: var(--ui-muted-text); font-weight: 500; }
+:root[data-layout="phone"] .phone-agent-off .phone-agent-title { color: var(--ui-muted-text); font-weight: 500; }
 :root[data-layout="phone"] .phone-agent-pr.ci-passing { color: var(--ui-success-line); }
 :root[data-layout="phone"] .phone-agent-pr.ci-failing { color: var(--ui-danger-text); }
-:root[data-layout="phone"] .phone-agents-offline { margin-top: 6px; }
-:root[data-layout="phone"] .phone-agents-offline > summary {
-  min-height: var(--phone-tap); display: flex; align-items: center;
-  color: var(--ui-muted-text); cursor: pointer;
-}
+:root[data-layout="phone"] .phone-agent-more { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-agents-board { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+
+/* The short spawn sheet. */
+:root[data-layout="phone"] .phone-agents-spawn { display: flex; flex-direction: column; gap: 10px; }
+:root[data-layout="phone"] .phone-agents-sheet-title { margin: 4px 4px 0; color: var(--ui-text-strong); font-weight: 600; }
+:root[data-layout="phone"] .phone-agents-label { display: flex; flex-direction: column; gap: 4px; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-agents-field { width: 100%; box-sizing: border-box; min-height: var(--phone-tap); font-size: 16px; }
+:root[data-layout="phone"] textarea.phone-agents-field { min-height: 96px; resize: vertical; }
 
 :root[data-layout="phone"] .phone-agent-sheet-name {
   flex: 1; min-width: 0; margin: 0; font-size: 18px; color: var(--ui-text-strong);
@@ -48,4 +54,3 @@
 :root[data-layout="phone"] .phone-agent-sheet-meta a { color: var(--ui-focus); }
 :root[data-layout="phone"] .phone-agent-cwd { font-family: ui-monospace, monospace; font-size: 12px; }
 :root[data-layout="phone"] .phone-agent-sheet .phone-menu { margin-top: 10px; }
-:root[data-layout="phone"] .phone-agent-state.v-working { color: var(--ui-success-line); border-color: var(--ui-success); }

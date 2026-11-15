@@ -94,17 +94,18 @@ test.describe('on a phone', () => {
     expect(errors).toEqual([]);
   });
 
-  test('Agents lists agents by group, and a row opens its sheet and its actions', async ({ page }) => {
+  test('Agents lists agents by group: a row opens its terminal, ⋯ its sheet, ＋ a short spawn, Board › the board', async ({ page }) => {
     const errors = collectErrors(page);
     await page.goto('/');
     await booted(page);
     await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Agents/ }).click();
-    const rows = page.locator('.phone-agent-row');
-    await expect(rows.first()).toBeVisible();
+    const items = page.locator('.phone-agent:not(.phone-agent-off)');
+    await expect(items.first()).toBeVisible();
     await expect(page.locator('#groups-list')).not.toBeInViewport();
     await expectNoSideScroll(page, 'Agents');
-    const name = await rows.first().locator('.phone-agent-title').textContent();
-    await rows.first().click();
+    const name = await items.first().locator('.phone-agent-title').textContent();
+    // ⋯ is the agent's sheet, with the desktop's confirmations behind it.
+    await items.first().locator('.phone-agent-more').click();
     const sheet = page.getByRole('dialog', { name, exact: true });
     await expect(sheet).toBeVisible();
     await sheet.getByRole('button', { name: 'Restart…' }).click();
@@ -113,6 +114,23 @@ test.describe('on a phone', () => {
     await expect(confirm).toBeVisible();
     await confirm.getByRole('button', { name: 'Cancel' }).click();
     await expect(confirm).toBeHidden();
+    // The row itself docks the agent's terminal.
+    await items.first().locator('.phone-agent-row').click();
+    const terminal = page.locator('.phone-term[role=dialog]');
+    await expect(terminal).toBeVisible();
+    await terminal.getByRole('button', { name: 'Back' }).click();
+    await expect(terminal).toBeHidden();
+    // ＋ is the short spawn sheet, never the desktop form.
+    await page.getByRole('button', { name: 'New agent' }).click();
+    const spawn = page.getByRole('dialog', { name: 'New agent' });
+    await expect(spawn.getByLabel('Prompt')).toBeVisible();
+    await expect(page.getByText('Spawn a new agent')).toHaveCount(0);
+    await expectNoSideScroll(page, 'Spawn sheet');
+    await page.keyboard.press('Escape');
+    await expect(spawn).toBeHidden();
+    // A group's Board › shows that group's board.
+    await page.getByRole('button', { name: "webshop's board" }).click();
+    await expect(page.locator('.phone-bar-title')).toHaveText(/^Board\s*webshop/);
     expect(errors).toEqual([]);
   });
 

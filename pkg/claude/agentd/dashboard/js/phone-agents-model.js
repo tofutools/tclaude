@@ -1,11 +1,13 @@
 // phone-agents-model.js -- the phone Agents view as plain data: the groups and
 // their agents, one row per agent with what a phone shows of it (state, role,
-// harness, context, branch or PR and its checks), and the group tabs above.
-// No DOM, no rendering: phone-agents-island.js renders these.
+// harness, context, branch or PR and its checks), the group chips above, and
+// what the spawn sheet offers. No DOM, no rendering: phone-agents-island.js
+// renders these.
 
 import { VARIANT_ORDER, memberVariant } from './group-activity.js';
 import { isAwayPlaceholder } from './agent-presence.js';
 import { signal } from '@preact/signals';
+import { normalizeSpawnName } from './agent-spawn-model.js';
 
 export const ALL = 'all';
 export const UNGROUPED = '-ungrouped';
@@ -28,6 +30,21 @@ export const VARIANT_LABELS = Object.freeze({
   crashed: 'crashed',
   offline: 'offline',
 });
+
+// The pill a row wears, by what the agent waits on: an approval (amber, 🔑),
+// a question (purple, ❓), an error (red, 💥), else its state word. tone is a
+// phone-ui.js StatePill tone, badge the corner glyph on its avatar.
+export function agentPill(member, variant = memberVariant(member)) {
+  const status = member?.state?.status || '';
+  if (member?.waking) return { text: 'waking', tone: 'idle', badge: '' };
+  if (variant === 'asking' && status === 'awaiting_permission') return { text: 'approval', tone: 'key', badge: '🔑' };
+  if (variant === 'asking') return { text: 'asking', tone: 'ask', badge: '❓' };
+  if (variant === 'error') return { text: 'error', tone: 'err', badge: '💥' };
+  if (variant === 'crashed') return { text: 'crashed', tone: 'err', badge: '💥' };
+  if (variant === 'working') return { text: 'working', tone: 'work', badge: '' };
+  if (variant === 'offline') return { text: 'offline', tone: 'off', badge: '' };
+  return { text: 'idle', tone: 'idle', badge: '' };
+}
 
 // ciState folds a PR's check summary ({ passed, failed, pending, skipped })
 // into one word: failing wins over running, running over passing.
@@ -69,6 +86,7 @@ export function agentRow(member, group = '') {
     online: member.online === true,
     waking: member.waking === true,
     variant,
+    pill: agentPill(member, variant),
     detail: variant === 'asking' || variant === 'error' ? String(state.status_detail || '') : '',
     ctx: Number.isFinite(pct) && state.context_pct !== undefined && state.context_pct !== null ? Math.round(pct) : null,
     branch: member.branch || member.startup_branch || '',
@@ -110,11 +128,45 @@ export function agentGroups(snapshot, order = (groups) => groups) {
   return out;
 }
 
-// groupTabs are the tabs above the list: All, then each group with its
-// online / total count.
+// groupTabs are the chips above the list: All, then each group, with how
+// many agents each has.
 export function groupTabs(groups) {
   const all = groups.reduce((sum, g) => ({ online: sum.online + g.live, total: sum.total + g.total }), { online: 0, total: 0 });
   return [{ key: ALL, label: 'All', ...all }, ...groups.map((g) => ({ key: g.key, label: g.name, online: g.live, total: g.total }))];
+}
+
+// metaParts are a row's second line: role, harness, context, then the PR or
+// the branch. An offline agent's ends in "resume ›", what its tap does.
+export function metaParts(row) {
+  const parts = [row.role, row.harness];
+  if (row.ctx !== null && row.online) parts.push(`ctx ${row.ctx}%`);
+  if (!row.online) parts.push(row.waking ? 'waking…' : 'resume ›');
+  else if (row.pr) parts.push({ pr: row.pr });
+  else if (row.branch) parts.push(row.branch);
+  return parts.filter(Boolean);
+}
+
+// spawnChoices is what the phone's spawn sheet offers: the groups an agent
+// can be spawned into, and the spawn profiles, each group with
+// the profile its spawns get when none is picked.
+export function spawnChoices(snapshot) {
+  const groups = (snapshot?.groups || []).filter((g) => g?.name)
+    .map((g) => ({ name: g.name, profile: g.default_profile || snapshot?.spawn_profile_default || '' }));
+  const profiles = (snapshot?.profiles || []).filter((p) => p?.name && !p.disabled).map((p) => p.name);
+  return { groups, profiles };
+}
+
+// spawnBody is the request the spawn sheet sends (POST
+// /api/groups/<group>/spawn): the prompt, the name when one is given (as the
+// desktop form normalizes it) and a profile when one is picked. What it
+// leaves out the daemon fills from the group's default profile and
+// directory, as for `tclaude agent spawn`, the profile's agent name among it.
+export function spawnBody({ prompt = '', name = '', profile = '' } = {}) {
+  const body = { initial_message: String(prompt) };
+  const named = normalizeSpawnName(name);
+  if (named) body.name = named;
+  if (profile) body.profile = profile;
+  return body;
 }
 
 // shownGroups is what a tab shows; an unknown tab (a group that went away)

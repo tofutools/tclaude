@@ -372,3 +372,14 @@ test('with linked nodes the node chip opens a picker, on Now and atop More', asy
   await tap(navItem('More'));
   assert.ok(sheet().querySelector('.phone-more-node .phone-node-chip'), 'More names the node too');
 });
+
+test('Agents\' Board › brings the Board up over the tab, on that group', async (t) => {
+  const { harness, shell, mounted, navItem, tap, root } = await setup(t);
+  await tap(navItem('Agents'));
+  assert.equal(shell.view.value, null);
+  const board = await harness.importDashboardModule('js/phone-board.js');
+  await harness.act(() => board.openBoardGroup('webshop'));
+  assert.equal(shell.view.value, 'board');
+  assert.equal(root.dataset.phoneView, 'board');
+  assert.ok(mounted.container.querySelector('.phone-bar-title').textContent.includes('webshop'));
+});
