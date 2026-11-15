@@ -63,7 +63,8 @@
 :root[data-layout="phone"] .tone-key .phone-agents-dot { color: #d29922; }
 :root[data-layout="phone"] .tone-ask .phone-agents-dot { color: #a371f7; }
 :root[data-layout="phone"] .tone-off .phone-agents-dot { background: none; border: 1.5px solid #6e7681; }
-:root[data-layout="phone"] .phone-agents-folded { margin-top: 6px; }
+/* Folding changes only what is under the header: a folded section keeps
+   .phone-section's top margin, so its header does not jump on a tap. */
 :root[data-layout="phone"] .phone-agents-folded .phone-agents-summary { margin-bottom: 0; padding-bottom: 8px; border-bottom: 1px solid var(--ui-line); }
 
 /* A worker sits under the lead that spawned it: indented on a guide line,
