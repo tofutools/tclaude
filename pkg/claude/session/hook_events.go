@@ -134,8 +134,8 @@ func routeSubagentHook(ev *hookEvent) hookOutcome {
 //   - exit comes from the session reaper (tmux has-session → PID
 //     liveness, RefreshSessionStatus) rather than a SessionEnd hook.
 //
-// A subset event tclaude doesn't model (e.g. PreCompact) falls through
-// to the default arm: last_hook is stamped, status is left untouched.
+// An event tclaude doesn't model falls through to the default arm:
+// last_hook is stamped, status is left untouched.
 func applyHookEvent(ev *hookEvent) hookOutcome {
 	state, input := ev.state, ev.input
 	switch input.HookEventName {
@@ -178,6 +178,16 @@ func applyHookEvent(ev *hookEvent) hookOutcome {
 		if state.StatusDetail == "" {
 			state.StatusDetail = "permission"
 		}
+
+	case "PreCompact":
+		// A hook-callback PreCompact never reaches here: DispatchHookEvent
+		// takes it on its own path, as the pre-compact guard's gate. What
+		// does is a compaction an in-process projector observed and nothing
+		// can refuse (OpenCode's, including the automatic one after a context
+		// overflow), so paint the same phase an allowed PreCompact paints. It
+		// also lifts the error a preceding overflow StopFailure painted.
+		state.Status = StatusWorking
+		state.StatusDetail = "compacting"
 
 	case "PostCompact":
 		return applyPostCompactHook(ev)

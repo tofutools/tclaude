@@ -535,6 +535,86 @@ func TestOpenCodeProjectionDrivesSharedStatusStateMachine(t *testing.T) {
 	assert.Equal(t, harness.OpenCodeName, state.Harness)
 }
 
+// openCodeStatusFixture tracks one OpenCode session row and returns a
+// function that consumes an event through the production path and reads the
+// row back.
+func openCodeStatusFixture(t *testing.T) func(event string) *session.SessionState {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+	cleanupAgentdTestDB(t)
+	const (
+		sessionID = "spwn-opencode"
+		convID    = "ses_target"
+		cwd       = "/tmp/project"
+	)
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, TmuxSession: sessionID, ConvID: convID, Cwd: cwd,
+		Harness: harness.OpenCodeName, Status: session.StatusIdle,
+	}))
+	runtime := db.OpenCodeRuntime{SessionID: sessionID, ConvID: convID, Cwd: cwd}
+	projector := newOpenCodeEventProjector(convID, cwd)
+	return func(event string) *session.SessionState {
+		t.Helper()
+		consumeOpenCodeEvent(context.Background(), runtime, projector, json.RawMessage(event))
+		state, err := session.LoadSessionState(sessionID)
+		require.NoError(t, err)
+		return state
+	}
+}
+
+// A context overflow OpenCode recovers from by compacting is working, not a
+// failed turn that needs the operator: the overflow's session.error paints the
+// error, and the compaction part that follows repaints it working: compacting
+// for as long as the summary takes.
+func TestOpenCodeOverflowAutoCompactionShowsCompacting(t *testing.T) {
+	apply := openCodeStatusFixture(t)
+	const convID = "ses_target"
+
+	state := apply(openCodeTestEvent("evt_busy", "session.status", convID, `"status":{"type":"busy"}`))
+	require.Equal(t, session.StatusWorking, state.Status)
+
+	state = apply(openCodeTestEvent("evt_overflow", "session.error", convID,
+		`"error":{"name":"ContextOverflowError","data":{"message":"request (524338 tokens) exceeds the available context size (524288 tokens)"}}`))
+	require.Equal(t, session.StatusError, state.Status)
+
+	compaction := `"part":{"id":"prt_compact","sessionID":"ses_target","type":"compaction","auto":true,"overflow":true}`
+	state = apply(openCodeTestEvent("evt_compact", "message.part.updated", convID, compaction))
+	assert.Equal(t, session.StatusWorking, state.Status, "the compaction lifts the overflow's error")
+	assert.Equal(t, "compacting", state.StatusDetail)
+
+	// OpenCode reports the compaction run busy, and may update the part again:
+	// neither ends the phase.
+	state = apply(openCodeTestEvent("evt_busy_2", "session.status", convID, `"status":{"type":"busy"}`))
+	assert.Equal(t, "compacting", state.StatusDetail)
+	state = apply(openCodeTestEvent("evt_compact_2", "message.part.updated", convID, compaction))
+	assert.Equal(t, "compacting", state.StatusDetail)
+
+	// The turn carries on after the summary: its next tool call ends the phase.
+	state = apply(openCodeTestEvent("evt_tool", "message.part.updated", convID,
+		`"part":{"id":"prt_1","sessionID":"ses_target","type":"tool","tool":"bash","callID":"call_1",`+
+			`"state":{"status":"running","input":{"command":"ls"}}}`))
+	assert.Equal(t, session.StatusWorking, state.Status)
+	assert.Equal(t, "Bash", state.StatusDetail)
+}
+
+// A failed turn is over: the busy that starts the next one repaints working,
+// although the last status OpenCode reported before the error was busy too.
+func TestOpenCodeBusyAfterErrorRepaintsWorking(t *testing.T) {
+	apply := openCodeStatusFixture(t)
+	const convID = "ses_target"
+
+	apply(openCodeTestEvent("evt_busy", "session.status", convID, `"status":{"type":"busy"}`))
+	state := apply(openCodeTestEvent("evt_error", "session.error", convID,
+		`"error":{"name":"APIError","data":{"message":"limited","statusCode":429}}`))
+	require.Equal(t, session.StatusError, state.Status)
+
+	state = apply(openCodeTestEvent("evt_busy_2", "session.status", convID, `"status":{"type":"busy"}`))
+	assert.Equal(t, session.StatusWorking, state.Status)
+}
+
 func TestOpenCodeStandingOrderOriginSurvivesProjectorRestartUntilStop(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
