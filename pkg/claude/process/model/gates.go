@@ -31,7 +31,7 @@ func GateTallyID(gateID string) string { return gateID + ".tally" }
 
 // GateDerivedIDs are the ids an engine expansion of the gate takes.
 func GateDerivedIDs(gateID string, node Node) []string {
-	ids := make([]string, 0, len(node.Deciders)+1)
+	var ids []string
 	for k := range node.Deciders {
 		ids = append(ids, GateVoteID(gateID, k+1))
 	}
