@@ -41,6 +41,12 @@ test('the Fleet map and the Route map say they are desktop only, with a way on',
   await expect(desktopPage(page)).toContainText('Route map is desktop only');
   await desktopPage(page).getByRole('button', { name: 'Show agents' }).click();
   await expect(page.locator('.phone-bar-title')).toHaveText('Agents');
+
+  // The bar's ‹ leads the same way, as in the mock.
+  await page.goto('/groups/routes');
+  await booted(page);
+  await page.getByRole('button', { name: 'Back: Show agents' }).click();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Agents');
   expect(errors).toEqual([]);
 });
 

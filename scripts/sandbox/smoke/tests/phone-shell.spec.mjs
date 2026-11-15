@@ -246,7 +246,11 @@ test.describe('on a phone', () => {
     await booted(page);
     await expect(page.locator('body')).toHaveClass(/\bwizard\b/);
     await expect(page.locator('.phone-bar-title')).toHaveText('Now');
-    await expect(page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Now/ })).toHaveAttribute('aria-current', 'page');
+    const now = page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Now/ });
+    await expect(now).toHaveAttribute('aria-current', 'page');
+    // The wizard skin's primary is a gradient; the picked slot keeps its pill.
+    const pill = await now.locator('.phone-nav-icon').evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(pill, 'the picked nav slot has its pill in the wizard skin').not.toBe('rgba(0, 0, 0, 0)');
   });
 
   test('Desktop site shows the desktop page, and Phone view comes back', async ({ page }) => {

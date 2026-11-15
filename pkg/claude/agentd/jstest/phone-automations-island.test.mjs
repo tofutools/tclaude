@@ -132,6 +132,12 @@ test('a cron job opens as a page with its details and recent runs, and back retu
   assert.match($('.phone-auto-facts').textContent, /0 9 \* \* 1-5/);
   assert.deepEqual(calls.find(([name]) => name === 'loadCronLogs'), ['loadCronLogs', 1]);
   assert.match($('.phone-auto-history').textContent, /agent offline/);
+  // Times read short, as in the mock; the full date is on hover.
+  const ran = $('.phone-auto-history time');
+  assert.equal(ran.getAttribute('datetime'), '2026-07-11T10:00:00Z');
+  assert.match(ran.textContent, /^\d+[smhd] ago$/);
+  assert.ok(ran.title.length > ran.textContent.length, 'the full local date and time');
+  assert.ok($('.phone-auto-facts time[datetime="2026-07-12T09:00:00Z"]'), 'Next is a short time too');
 
   // A poll that turns it off shows on the open page.
   await harness.act(() => {

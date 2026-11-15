@@ -283,6 +283,7 @@ test('a tab a phone does not offer gets a desktop-only page in its place', async
   assert.equal(root.dataset.phoneView, 'desktop-only', 'the desktop content is hidden under it');
   assert.equal(mounted.container.querySelector('.phone-bar-title').textContent, 'Vegas');
   assert.match(mounted.container.querySelector('.phone-desktop-page').textContent, /Vegas is desktop only/);
+  assert.equal(mounted.container.querySelector('.phone-bar-back'), null, 'no phone view under it to go back to');
   assert.equal(navItem('More').getAttribute('aria-current'), 'page');
   await tap(harness.getByRole(mounted.container, 'button', { name: 'Desktop site' }));
   assert.deepEqual(calls.at(-1), ['desktopSite']);
@@ -304,6 +305,9 @@ test('a deep link left Groups on the route map: Agents and Show agents both go b
   assert.match(mounted.container.querySelector('.phone-desktop-page').textContent, /Route map is desktop only/);
   await tap(harness.getByRole(mounted.container, 'button', { name: 'Show agents' }));
   assert.deepEqual(calls.at(-1), ['navigate', '/']);
+  calls.length = 0;
+  await tap(mounted.container.querySelector('.phone-bar .phone-bar-back'));
+  assert.deepEqual(calls.at(-1), ['navigate', '/'], 'the bar\'s ‹ goes back to the list too, as in the mock');
   await tap(navItem('Agents'));
   assert.deepEqual(calls.at(-1), ['navigate', '/'], 'not a no-op showTab of the active tab');
   await harness.act(() => { subview.value = 'members'; });
