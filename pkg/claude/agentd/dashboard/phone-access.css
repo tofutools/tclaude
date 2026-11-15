@@ -51,7 +51,6 @@
   min-height: 32px; padding: 0 10px; border: 1px solid var(--phone-on-line); border-radius: 16px;
   background: var(--phone-on-bg); color: var(--ui-text-strong); font: 13px ui-monospace, monospace; cursor: pointer;
 }
-:root[data-layout="phone"] .phone-grant-filters { margin: 4px 0 6px; }
 :root[data-layout="phone"] .phone-grant-row {
   display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 0;
   border-bottom: 1px solid var(--phone-line); cursor: pointer;

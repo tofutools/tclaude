@@ -147,11 +147,11 @@ function Slugs({ state, current }) {
 // PhoneAccessApp renders the Access tab. `snapshot` is the dashboard snapshot
 // signal, for the access requests; `openInMail` opens a request (or all of
 // them) in Mail, as the Now view does.
-export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThis.fetch, notify = () => {}, openInMail = () => {}, grantActions = null }) {
+export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThis.fetch, notify = () => {}, openInMail = () => {}, grantActions = null, refresh = async () => {} }) {
   // + Grant's page is up (phone-grant.js); it covers the views until it is
   // left or a grant goes through.
   const [granting, setGranting] = useState(false);
-  const [grantWith] = useState(() => grantActions || createMessageAccessDialogActions({ notify }));
+  const [grantWith] = useState(() => grantActions || createMessageAccessDialogActions({ notify, refresh }));
   const current = state.view.value;
   const data = snapshot.value;
   const waiting = data ? pendingAccess(data).length : 0;
@@ -218,8 +218,8 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
   </div>`;
 }
 
-export function mountPhoneAccessIsland({ host, state, actions, snapshot, notify, openInMail, registerCleanup }) {
+export function mountPhoneAccessIsland({ host, state, actions, snapshot, notify, openInMail, refresh, registerCleanup }) {
   state.initialize();
-  render(html`<${PhoneAccessApp} state=${state} actions=${actions} snapshot=${snapshot} notify=${notify} openInMail=${openInMail} />`, host);
+  render(html`<${PhoneAccessApp} state=${state} actions=${actions} snapshot=${snapshot} notify=${notify} openInMail=${openInMail} refresh=${refresh} />`, host);
   registerCleanup(() => render(null, host));
 }

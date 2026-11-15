@@ -212,6 +212,8 @@ async function settleInitialLayout() {
     () => mountUsageHubFeature(),
     () => mountAccessFeature({
       requestMutation: dashboardActions.requestMutation,
+      // The phone's grant page re-reads the snapshot after a grant.
+      refresh: dashboardActions.refresh,
       confirm: confirmModal,
       notify: toast,
       openGrant: async () => {

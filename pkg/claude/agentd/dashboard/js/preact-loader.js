@@ -858,7 +858,7 @@ function mountPhoneAccessFeature(host, actionDependencies) {
         state: accessState,
         mount: (registerCleanup) => mountPhoneAccessIsland({
           host, state: accessState, actions: accessActions, snapshot: dashboardState.snapshot,
-          notify: actionDependencies.notify, openInMail: (id) => focusAccessRequest(id), registerCleanup,
+          notify: actionDependencies.notify, openInMail: (id) => focusAccessRequest(id), refresh: actionDependencies.refresh, registerCleanup,
         }),
       };
     },

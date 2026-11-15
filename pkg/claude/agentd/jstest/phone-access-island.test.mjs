@@ -15,14 +15,17 @@ function prefs() {
 
 const NOW = Date.parse('2026-11-14T12:00:00Z');
 
-function snapshotWith({ requests = [], slugs = 3, uses = null } = {}) {
+function snapshotWith({ requests = [], slugs = 3, uses = null, deniedDefault = '' } = {}) {
   return {
     generated_at: new Date(NOW).toISOString(),
     agents: [
       { agent_id: 'agt_lead', conv_id: 'c-lead', title: 'lead', online: true, groups: ['webshop'] },
       { agent_id: 'agt_old', conv_id: 'c-old', title: 'old-bot', online: false, groups: ['webshop'] },
     ],
-    permissions: { defaults: ['self.rename', 'self.task'], overrides: { 'c-lead': { 'agent.spawn': 'grant', 'git.push': 'deny' } } },
+    // deniedDefault: a slug every agent holds by default, which lead is denied.
+    permissions: deniedDefault
+      ? { defaults: ['self.rename', 'self.task', deniedDefault], overrides: { 'c-lead': { 'agent.spawn': 'grant', 'git.push': 'deny', [deniedDefault]: 'deny' } } }
+      : { defaults: ['self.rename', 'self.task'], overrides: { 'c-lead': { 'agent.spawn': 'grant', 'git.push': 'deny' } } },
     slugs: Array.from({ length: slugs }, (_, i) => ({ slug: `slug.${String(i).padStart(3, '0')}`, description: `does ${i}`, countable: i !== 2, risky: i === 1 })),
     sudo: [{
       id: 7, agent_id: 'agt_lead', conv_id: 'c-lead', conv_title: 'lead', slug: 'human.notify', granted_by: 'operator',
@@ -173,7 +176,7 @@ test('Grant, step 2: the warning, nothing sent until a permission is picked, the
 
 test('Grant, step 2: the policy caps the time, refuses a slug, and a failed grant stays open', async (t) => {
   const policy = { max_seconds: 900, default_seconds: 600, refused: { 'slug.000': 'Refused: it hands out permissions itself.' } };
-  const { root, tap, settle, submit, check, pressSeg, type, box } = await openGrant(t, { slugs: 4, policy, grantFails: 'agent is gone' });
+  const { root, tap, settle, submit, check, pressSeg, type, box, grants } = await openGrant(t, { slugs: 4, policy, grantFails: 'agent is gone', deniedDefault: 'slug.003' });
   await tap(root.querySelector('[data-agent="agt_lead"]'));
   await settle();
   assert.deepEqual([...root.querySelector('.phone-grant-seg[aria-label="Time limit"]').querySelectorAll('button')].map((b) => b.textContent.trim()),
@@ -182,6 +185,13 @@ test('Grant, step 2: the policy caps the time, refuses a slug, and a failed gran
   assert.match(root.querySelector('[data-slug="slug.000"]').textContent, /Refused/);
   await check('slug.003');
   assert.equal(submit().textContent.trim(), 'Grant 1 · 10 min', 'the policy\'s default');
+  assert.equal(root.querySelector('.phone-grant-seg[aria-label="Time limit"] [aria-pressed="true"]').textContent, '…',
+    'a default no preset shows is the custom value');
+  assert.equal(root.querySelector('[aria-label="Custom time limit"].phone-grant-custom').value, '10m');
+  await pressSeg('Max uses', '1');
+  await tap(submit());
+  await settle();
+  assert.deepEqual(grants.at(-1).uses, { 'slug.003': 1 }, 'a default the agent is denied is not held: it takes the use limit');
   await pressSeg('Time limit', '…');
   await type(root.querySelector('[aria-label="Custom time limit"].phone-grant-custom'), '1h');
   assert.equal(submit().disabled, true);

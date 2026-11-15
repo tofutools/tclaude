@@ -130,6 +130,9 @@ const FILTERS = [
 // a text field under the row.
 function Limit({ label, presets, value, onChange, show, customLabel, placeholder, inputMode = 'text', bad = false }) {
   const [custom, setCustom] = useState(() => !presets.includes(value));
+  // A value no preset shows (the policy's default time, say) shows in the
+  // field, never as no choice at all.
+  useEffect(() => { if (!presets.includes(value)) setCustom(true); }, [value, presets.join('|')]);
   return html`<div class="phone-grant-limit">
     <h2 class="ui-eyebrow phone-grant-label">${label}</h2>
     <${Seg} class="phone-grant-seg" aria-label=${label}>
@@ -170,8 +173,10 @@ function PermsStep({ snapshot, agent, grantActions, onBack, onGranted }) {
   useEffect(() => {
     if (!touched && policy.default_seconds) setDuration(sudoDurationText(policy.default_seconds));
   }, [policy]);
-  const rows = useMemo(() => permissionRows(snapshot, { mode: 'sudo', agentID: agent.agent_id, conv: agent.conv_id }, {}),
-    [snapshot, agent.agent_id, agent.conv_id]);
+  // The agent's own overrides decide what it already holds (and so which
+  // permissions take a use limit), as in the desktop's sudo editor.
+  const rows = useMemo(() => permissionRows(snapshot, { mode: 'sudo', agentID: agent.agent_id, conv: agent.conv_id },
+    (snapshot?.permissions?.overrides || {})[agent.conv_id] || {}), [snapshot, agent.agent_id, agent.conv_id]);
   const refused = (row) => policy.refused?.[row.slug] || '';
   const pickedRows = rows.filter((row) => picked.has(row.slug) && !refused(row));
   const toggle = (slug) => setPicked((current) => {
