@@ -340,8 +340,16 @@ type taskboardTaskView struct {
 	BlockReason string `json:"block_reason,omitempty"`
 	// BlockedOn is the task a blocked task waits on (block --on, add
 	// --blocks): closing it as done reopens this one.
-	BlockedOn string        `json:"blocked_on,omitempty"`
-	Ref       *taskboardRef `json:"ref,omitempty"`
+	BlockedOn string `json:"blocked_on,omitempty"`
+	// Process is the task's own choice of process against its board's
+	// default way of working: a template id, "none", or "" to follow the
+	// board (process_run_task.go).
+	Process string `json:"process,omitempty"`
+	// ProcessStart is the process run this write started for the task (add
+	// --process, or the task's way of working when it started), or why it
+	// could not start. Only on the answer to that write.
+	ProcessStart *taskProcessStart `json:"process_start,omitempty"`
+	Ref          *taskboardRef     `json:"ref,omitempty"`
 	// ResolveNotes are why a resolve_ref in this write linked a ref not:
 	// "<id>: <reason>" each (an add's or an edit's answer only).
 	ResolveNotes []string `json:"resolve_notes,omitempty"`
@@ -516,6 +524,10 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 	if err != nil {
 		return nil, err
 	}
+	processes, err := db.GroupTaskProcesses(ids)
+	if err != nil {
+		return nil, err
+	}
 	names := map[string]string{}
 	actorName := func(actor string) string {
 		id, ok := strings.CutPrefix(actor, "agent:")
@@ -538,7 +550,7 @@ func taskboardViews(group string, tasks []*db.GroupTask) ([]taskboardTaskView, e
 			ID: t.ID, Group: group, Title: t.Title, Body: t.Body, Stage: t.Stage, Status: t.Status, Rank: t.Rank,
 			BlockReason: t.BlockReason, DependsOn: t.DependsOn, CreatedBy: t.CreatedBy,
 			CreatedAt: rfc3339(t.CreatedAt), UpdatedAt: rfc3339(t.UpdatedAt), ClosedAt: rfc3339(t.ClosedAt),
-			ArchivedAt: rfc3339(t.ArchivedAt),
+			ArchivedAt: rfc3339(t.ArchivedAt), Process: processes[t.ID],
 		}
 		if v.DependsOn == nil {
 			v.DependsOn = []string{}
@@ -639,26 +651,32 @@ func writeTaskboardTask(w http.ResponseWriter, status int, g *db.AgentGroup, t *
 
 // writeTaskboardTaskLimit is writeTaskboardTask with the limit the write
 // met.
-func writeTaskboardTaskLimit(w http.ResponseWriter, status int, g *db.AgentGroup, t *db.GroupTask, note *taskboardLimitNote) {
+func writeTaskboardTaskLimit(w http.ResponseWriter, status int, g *db.AgentGroup, t *db.GroupTask, note *taskboardLimitNote, started ...*taskProcessStart) {
 	views, err := taskboardViews(g.Name, []*db.GroupTask{t})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
 	views[0].Limit = note
+	if len(started) > 0 {
+		views[0].ProcessStart = started[0]
+	}
 	writeJSON(w, status, views[0])
 }
 
 // writeTaskboardTaskLinked is writeTaskboardTask with the task's dashboard
 // link, for show and add: a caller on this node gets it, a linked node's
 // does not (its operator opens the task from its own dashboard).
-func writeTaskboardTaskLinked(w http.ResponseWriter, r *http.Request, status int, g *db.AgentGroup, t *db.GroupTask, note *taskboardLimitNote) {
+func writeTaskboardTaskLinked(w http.ResponseWriter, r *http.Request, status int, g *db.AgentGroup, t *db.GroupTask, note *taskboardLimitNote, started ...*taskProcessStart) {
 	views, err := taskboardViews(g.Name, []*db.GroupTask{t})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
 	views[0].Limit = note
+	if len(started) > 0 {
+		views[0].ProcessStart = started[0]
+	}
 	views[0].ResolveNotes = refResolveNotes(r)
 	if taskboardPeerAuthor(r) == "" {
 		views[0].URL = taskboardTaskURL(g.Name, t.ID)
@@ -1056,6 +1074,10 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		// OverLimit lets the operator put the task in a full lane
 		// (docs/taskboard.md "Limits").
 		OverLimit bool `json:"over_limit"`
+		// Process is the task's choice of process (`add --process`): a
+		// template id starts it for the new task at once, as the caller;
+		// "none" keeps the board's default way of working off it.
+		Process string `json:"process"`
 	}
 	// A multipart create carries its files beside the JSON (a "task" part);
 	// the task and its files land in one transaction.
@@ -1281,6 +1303,14 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	if hit.queued() && hit.note.Lane == db.QueueLaneInProgress {
 		hold = db.GroupTaskStageNext
 	}
+	process := strings.TrimSpace(body.Process)
+	if process != "" && (taskKind == db.GroupTaskKindEpic || status == db.GroupTaskDone) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a process runs for a live task, not an epic or one logged done")
+		return
+	}
+	if !validateTaskProcessChoice(w, r, g, process) {
+		return
+	}
 	actor := taskboardActor(r)
 	atts, ok := storeTaskUploadsOrFail(w, files, actor)
 	if !ok {
@@ -1300,6 +1330,18 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	t, note := queueTaskboardLimit(r, g, hit, t)
 	setAuditDetail(r, "created "+t.ID+" in "+g.Name)
+	var started *taskProcessStart
+	if process != "" {
+		if err := db.SetGroupTaskProcess(t.ID, process); err != nil {
+			slog.Warn("taskboard: record the task's process", "task", t.ID, "error", err)
+		}
+	}
+	if process != "" && process != db.GroupTaskProcessNone {
+		run := startTaskProcess(r, g, t, process, true)
+		started = &run
+	} else {
+		started = startTaskProcessOnStart(r, g, t)
+	}
 	// Someone else's new task is briefed as an assign is; work logged as
 	// done tells nobody.
 	if assignee != "" && assignee != db.OperatorAssignee && t.Status != db.GroupTaskDone {
@@ -1327,7 +1369,7 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	} else {
 		announceTaskboardLimit(r, g, t, note, nil)
 	}
-	writeTaskboardTaskLinked(w, r, http.StatusCreated, g, t, note)
+	writeTaskboardTaskLinked(w, r, http.StatusCreated, g, t, note, started)
 }
 
 func handleTaskboardShow(w http.ResponseWriter, r *http.Request, t *db.GroupTask, g *db.AgentGroup) {
@@ -1387,9 +1429,23 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 		// takes it out of its epic (`edit --parent tk_… | --rm-parent`).
 		Parent      *string `json:"parent"`
 		ClearParent bool    `json:"clear_parent"`
+		// Process changes the task's choice of process (`edit --process`): a
+		// template id, "none", or "" to follow the board's default again.
+		Process *string `json:"process"`
 	}
 	if !requireTaskboardTaskChange(w, r, g, t) || !decodeTaskboardBody(w, r, &body) {
 		return
+	}
+	if body.Process != nil {
+		choice := strings.TrimSpace(*body.Process)
+		if choice != "" && t.IsEpic() {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "an epic runs no process: give one to its tasks")
+			return
+		}
+		if !validateTaskProcessChoice(w, r, g, choice) {
+			return
+		}
+		body.Process = &choice
 	}
 	if body.Title != nil || body.Body != nil {
 		// A question task made for a mirrored question shows its original
@@ -1520,12 +1576,22 @@ func handleTaskboardEdit(w http.ResponseWriter, r *http.Request, t *db.GroupTask
 		return
 	}
 	setAuditDetail(r, "edited "+t.ID)
+	var started *taskProcessStart
+	if body.Process != nil {
+		if err := db.SetGroupTaskProcess(out.ID, *body.Process); err != nil {
+			writeError(w, http.StatusInternalServerError, "db", err.Error())
+			return
+		}
+		// A task already under way starts the process it now follows.
+		started = startTaskProcessOnStart(r, g, out)
+	}
 	views, err := taskboardViews(g.Name, []*db.GroupTask{out})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
 		return
 	}
 	views[0].ResolveNotes = refResolveNotes(r)
+	views[0].ProcessStart = started
 	writeJSON(w, http.StatusOK, views[0])
 }
 

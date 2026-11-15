@@ -332,7 +332,7 @@ func handleTaskboardAssign(w http.ResponseWriter, r *http.Request, t *db.GroupTa
 		}
 	}
 	announceTaskboardLimit(r, g, out, note, told)
-	writeTaskboardTaskLimit(w, http.StatusOK, g, out, note)
+	writeTaskboardTaskLimit(w, http.StatusOK, g, out, note, startTaskProcessOnStart(r, g, out))
 }
 
 // POST /v1/taskboard/tasks/{id}/unassign — the assignee releases its task, or

@@ -39,13 +39,24 @@ type processRunScopeView struct {
 	AgentID string `json:"agentId,omitempty"`
 	Owner   string `json:"owner,omitempty"`
 	State   string `json:"state"`
+	// Task is the board task the run is for, TaskTitle its title as it reads
+	// now ("" once the task is gone).
+	Task      string `json:"task,omitempty"`
+	TaskTitle string `json:"taskTitle,omitempty"`
 }
 
 func processRunScopeViewOf(scope db.ProcessRunScope) processRunScopeView {
-	return processRunScopeView{
+	view := processRunScopeView{
 		Kind: scope.Kind, GroupID: scope.GroupID, Group: scope.GroupName,
 		AgentID: scope.AgentID, Owner: scope.Owner, State: scope.State,
+		Task: scope.TaskID,
 	}
+	if scope.TaskID != "" {
+		if task, err := db.GetGroupTask(scope.TaskID); err == nil {
+			view.TaskTitle = task.Title
+		}
+	}
+	return view
 }
 
 // authorizeProcessRunCreate resolves the requested scope and runs its start
@@ -172,6 +183,8 @@ func processRunListFilter(w http.ResponseWriter, r *http.Request) (db.ProcessRun
 		}
 		*field.dst = resolved.AgentID
 	}
+	// ?task= lists the runs for one board task.
+	filter.TaskID = strings.TrimSpace(query.Get("task"))
 	return filter, true
 }
 

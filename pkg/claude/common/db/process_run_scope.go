@@ -33,7 +33,32 @@ func processRunFilterSQL(filter ProcessRunFilter) (string, []any) {
 			OR id IN (SELECT run_id FROM process_agent_dispatches WHERE agent_id = ?))`)
 		args = append(args, filter.Performer, filter.Performer)
 	}
+	if filter.TaskID != "" {
+		where.WriteString(` AND task_id = ?`)
+		args = append(args, filter.TaskID)
+	}
 	return where.String(), args
+}
+
+// ProcessRunsForTask returns the runs for a board task, newest first, up to
+// limit, terminal ones included: the task card shows the latest.
+func ProcessRunsForTask(taskID string, limit int) ([]ProcessRunSummary, error) {
+	if !validProcessRunTaskID(taskID) || taskID == "" {
+		return nil, fmt.Errorf("%w: invalid task id", ErrProcessRunInvalid)
+	}
+	if limit <= 0 || limit > MaxProcessRunReadPage {
+		return nil, fmt.Errorf("%w: run page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunReadPage)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return queryProcessRunSummaries(d, `WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, limit, taskID, limit)
+}
+
+// validProcessRunTaskID accepts "" (no task) or a task id's shape.
+func validProcessRunTaskID(taskID string) bool {
+	return taskID == "" || validProcessRuntimeIdentifier(taskID, 128, false)
 }
 
 // GetProcessRunScope reads only a run's scope binding — the cheap read the

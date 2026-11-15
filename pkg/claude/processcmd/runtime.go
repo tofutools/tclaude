@@ -137,6 +137,9 @@ type processRunScopeJSON struct {
 	AgentID string `json:"agentId,omitempty"`
 	Owner   string `json:"owner,omitempty"`
 	State   string `json:"state"`
+	// Task is the board task the run is for, TaskTitle its title.
+	Task      string `json:"task,omitempty"`
+	TaskTitle string `json:"taskTitle,omitempty"`
 }
 
 // String renders the binding for tables: none, group:<name>, agent:<id>,
@@ -189,13 +192,14 @@ type processRunParams struct {
 	Agent      string   `long:"agent" optional:"true" help:"Bind the run to this agent; self needs self.process, another agent agent.process or groups.members.process"`
 	Remote     string   `long:"remote" optional:"true" help:"Start the run on a trusted peer node (label or instance id), scoped to one of its groups (--group, by name) or agents (--agent, by agt_ id); needs that node's process.runs.start or groups.members.process grant to this node"`
 	AskHuman   string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+	Task       string   `long:"task" optional:"true" help:"Run it for this board task (tk_ id): scoped to the task's group unless --agent, the task's text and id fill {{params.task}} and {{params.task_ref}}, its card shows the run's progress, and the run's end closes the task (done) or blocks it (failed)"`
 }
 
 func processRunCmd() *cobra.Command {
 	return boa.CmdT[processRunParams]{
 		Use:         "run",
 		Short:       "Instantiate and run the saved template head through agentd",
-		Long:        "Pins the exact saved template head and initial checkpoint transactionally. Repeat --param key=value and --authorize-program-profile profile for every exact program profile the run may execute. Use --authorize-program-profile= to explicitly authorize an empty profile. --group or --agent binds the run's scope; without either it is unscoped.",
+		Long:        "Pins the exact saved template head and initial checkpoint transactionally. Repeat --param key=value and --authorize-program-profile profile for every exact program profile the run may execute. Use --authorize-program-profile= to explicitly authorize an empty profile. --group or --agent binds the run's scope; without either it is unscoped. --task runs it for a board task, in the task's group.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *processRunParams, cmd *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Params).SetNoFlag(true)
@@ -229,10 +233,12 @@ func runProcessRun(p *processRunParams, stdout, stderr io.Writer) error {
 		AuthorizeProgramProfiles []string          `json:"authorizeProgramProfiles"`
 		Group                    string            `json:"group,omitempty"`
 		Agent                    string            `json:"agent,omitempty"`
+		Task                     string            `json:"task,omitempty"`
 	}{
 		ID: strings.TrimSpace(p.RunID), TemplateID: strings.TrimSpace(p.TemplateID),
 		Params: params, AuthorizeProgramProfiles: append([]string(nil), p.Authorize...),
 		Group: strings.TrimSpace(p.Group), Agent: strings.TrimSpace(p.Agent),
+		Task: strings.TrimSpace(p.Task),
 	}
 	if request.TemplateID == "" {
 		return fmt.Errorf("template id is required")
@@ -241,6 +247,9 @@ func runProcessRun(p *processRunParams, stdout, stderr io.Writer) error {
 		return fmt.Errorf("--group and --agent are mutually exclusive")
 	}
 	remote := strings.TrimSpace(p.Remote)
+	if remote != "" && request.Task != "" {
+		return fmt.Errorf("--task runs a process for a task on this node's board; --remote cannot take it")
+	}
 	if remote != "" && request.Group == "" && request.Agent == "" {
 		return fmt.Errorf("--remote starts a run scoped to one of the peer's groups (--group) or agents (--agent)")
 	}
@@ -266,6 +275,7 @@ type processRunsLsParams struct {
 	Group     string `long:"group" optional:"true" help:"Only runs scoped to this group (name or id)"`
 	Agent     string `long:"agent" optional:"true" help:"Only runs scoped to this agent"`
 	Performer string `long:"performer" optional:"true" help:"Only runs this agent performs in"`
+	Task      string `long:"task" optional:"true" help:"Only runs for this board task (tk_ id)"`
 	Remote    string `long:"remote" optional:"true" help:"List a trusted peer node's runs instead (label or instance id); needs its process.runs.read grant to this node"`
 	AskHuman  string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
@@ -303,7 +313,7 @@ func runProcessRunsLs(p *processRunsLsParams, stdout, stderr io.Writer) error {
 		}
 		query.Set("limit", strconv.Itoa(p.Limit))
 	}
-	for key, value := range map[string]string{"group": p.Group, "agent": p.Agent, "performer": p.Performer} {
+	for key, value := range map[string]string{"group": p.Group, "agent": p.Agent, "performer": p.Performer, "task": p.Task} {
 		if value = strings.TrimSpace(value); value != "" {
 			query.Set(key, value)
 		}
@@ -933,6 +943,9 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 		run.ID, run.TemplateRef, run.Status, run.Action, run.StateVersion, run.Scope)
 	if run.Scope.Owner != "" {
 		fmt.Fprintf(out, "owner=%s\n", run.Scope.Owner)
+	}
+	if run.Scope.Task != "" {
+		fmt.Fprintf(out, "task=%s %s\n", run.Scope.Task, displayProcessEventField(run.Scope.TaskTitle))
 	}
 	if run.Paused != nil {
 		fmt.Fprintf(out, "paused=%s by %s\n", run.Paused.At.Format(time.RFC3339), displayProcessEventField(run.Paused.By))

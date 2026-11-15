@@ -386,6 +386,11 @@ type processRunCreateRequest struct {
 	// for that.
 	ExpectedRef string `json:"expectedRef,omitempty"`
 	TemplateRef string `json:"templateRef,omitempty"`
+	// Task runs the process for a board task (its id): the run is scoped to
+	// the task's group unless an agent is named, the task's text and id are
+	// its task and task_ref params, the task card shows its progress, and its
+	// end settles the task (process_run_task.go).
+	Task string `json:"task,omitempty"`
 }
 
 type processRunOutcomeRequest struct {
@@ -1051,9 +1056,20 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 	// expressible through the same identifier operators use to create runs and
 	// lets them survive routine template version updates.
 	templateID := strings.TrimSpace(request.TemplateID)
+	if strings.TrimSpace(request.Task) != "" {
+		processRunTaskMu.Lock()
+		defer processRunTaskMu.Unlock()
+	}
+	task, ok := resolveProcessRunTask(w, &request)
+	if !ok {
+		return
+	}
 	caller, scope, ok := authorizeProcessRunCreate(w, r, request, templateID)
 	if !ok {
 		return
+	}
+	if task != nil {
+		scope.TaskID = task.ID
 	}
 	// A grant to start a template covers what its editors made current. Going
 	// back to an older version is the operator's call, not an agent's.
