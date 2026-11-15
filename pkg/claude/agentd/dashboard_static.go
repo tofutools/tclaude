@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"compress/gzip"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net/http"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // The dashboard is ~700 no-build ES modules, stylesheets and vendor runtimes.
@@ -69,7 +71,11 @@ func splitStaticVersion(p string) (version, asset string, versioned bool) {
 func handleDashboardStatic() http.Handler {
 	files := http.FileServerFS(dashboardAssetsFS)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !checkDashboardAuth(w, r) {
+		start := dashboardStaticNow()
+		authed := checkDashboardAuth(w, r)
+		authDone := dashboardStaticNow()
+		defer func() { warnSlowDashboardStatic(r.URL.Path, start, authDone, dashboardStaticNow()) }()
+		if !authed {
 			return
 		}
 		rest, ok := strings.CutPrefix(r.URL.Path, "/static/")
@@ -92,6 +98,24 @@ func handleDashboardStatic() http.Handler {
 		r2.URL.RawPath = ""
 		files.ServeHTTP(w, r2)
 	})
+}
+
+// dashboardStaticNow is the static handler's clock (a seam for tests).
+var dashboardStaticNow = time.Now
+
+// dashboardStaticSlow is how long a static request may take inside agentd
+// before it is logged. The boot graph is ~300 parallel module requests, so
+// one slow response holds the whole boot. No warning for a request that was
+// slow end to end means it was held before it reached agentd (a tunnel, a
+// CDN). "serve" includes writing the response, so a slow reader shows there.
+const dashboardStaticSlow = time.Second
+
+func warnSlowDashboardStatic(path string, start, authDone, end time.Time) {
+	if end.Sub(start) < dashboardStaticSlow {
+		return
+	}
+	slog.Warn("dashboard static: slow request", "path", path,
+		"total", end.Sub(start), "auth", authDone.Sub(start), "serve", end.Sub(authDone))
 }
 
 // dashboardCompressible lists the asset types worth gzipping: text. Images,

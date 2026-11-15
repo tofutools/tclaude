@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <title>tclaude</title>
+<!-- First, before any resource: the boot bar below counts its modules from
+     resource-timing entries, and Chrome keeps only 250 of them by default.
+     This page loads ~300 resources, and on a cached reload the buffer can be
+     full before the counter's observer is registered; entries that overflow
+     then are never replayed to it, and the bar stops short (281 / 283) with
+     nothing pending. -->
+<script>try { performance.setResourceTimingBufferSize(2000); } catch (e) {}</script>
 <!-- The favicon shares the agent-network mark with the system tray. -->
 <link rel="icon" href="/static/tclaude-icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/dashboard.css">
@@ -110,6 +117,69 @@
   var appLabel = '';
   var lastPct = 0;
   var ready = false;
+  // Stall and failure. The boot graph is ~300 parallel requests, and one
+  // that a tunnel or CDN holds (seconds, with nothing else in flight) holds
+  // the whole graph: dashboard.js runs only once every module has arrived.
+  // Once downloads go quiet the bar names the modules it still waits on;
+  // when boot has not started after a while, or a boot module fails, it
+  // offers a Reload and stays up past the CSS failsafe (.boot-stuck).
+  var STALL_QUIET_MS = 1500;
+  var STUCK_MS = 6000;
+  var started = false;
+  var lastArrival = Date.now();
+  var stalledNote = '';
+  var failure = '';
+  function waitingOn() {
+    var names = [];
+    for (var href in wanted) {
+      if (!seen[href]) names.push(href.slice(href.lastIndexOf('/') + 1));
+    }
+    if (names.length > 3) return names.slice(0, 3).join(', ') + ' and ' + (names.length - 3) + ' more';
+    return names.join(', ');
+  }
+  // isStuck is applied on every render: a preload can fail while the parser
+  // is still in <head>, before the body and its Reload button exist.
+  var isStuck = false;
+  function stuck() { isStuck = true; }
+  function showStuck() {
+    var button = document.getElementById('boot-progress-reload');
+    if (!button || !document.body) return;
+    document.body.classList.toggle('boot-stuck', isStuck);
+    button.hidden = !isStuck;
+  }
+  function watch() {
+    if (started || ready) return;
+    var quiet = Date.now() - lastArrival;
+    if (failure) {
+      // Nothing to wait for; keep rendering until the body and its Reload exist.
+    } else if (total && loaded < total && quiet >= STALL_QUIET_MS) {
+      stalledNote = 'Waiting on ' + waitingOn() + '…';
+    } else if (total && loaded >= total && quiet >= STALL_QUIET_MS) {
+      stalledNote = 'Starting app…';
+    }
+    if (quiet >= STUCK_MS) stuck();
+    render();
+    setTimeout(watch, 500);
+  }
+  setTimeout(watch, 500);
+  function fail(message) {
+    if (started || ready || failure) return;
+    failure = 'The dashboard did not load: ' + message;
+    stuck();
+    render();
+  }
+  // A boot module that fails to load (an error event on its <link> or
+  // <script>, caught on the way down) or throws while the graph evaluates
+  // stops the graph for good: say so instead of waiting.
+  window.addEventListener('error', function (ev) {
+    var el = ev && ev.target;
+    if (el && el !== window && (el.tagName === 'SCRIPT' || el.tagName === 'LINK')) {
+      var src = el.src || el.href || '';
+      if (el.tagName === 'SCRIPT' || el.rel === 'modulepreload') fail(src.slice(src.lastIndexOf('/') + 1) + ' could not be loaded.');
+      return;
+    }
+    if (ev && ev.filename && ev.filename.indexOf('/static/') >= 0) fail(String(ev.message || 'a script error'));
+  }, true);
   function stop() {
     if (window.__bootProgressPO) {
       try { window.__bootProgressPO.disconnect(); } catch (e) {}
@@ -130,17 +200,20 @@
     if (fill) fill.style.width = pct + '%';
     if (count) {
       count.textContent = ready ? 'Starting…'
+        : failure ? failure
         : appLabel ? appLabel
+        : stalledNote ? stalledNote
         : !total ? ''
         : loaded >= total ? 'Starting app…'
         : loaded + ' / ' + total + ' modules';
     }
+    showStuck();
     if (ready) stop();
   }
   function absorb(entries) {
     for (var i = 0; i < entries.length; i++) {
       var name = entries[i].name;
-      if (wanted[name] && !seen[name]) { seen[name] = 1; loaded++; }
+      if (wanted[name] && !seen[name]) { seen[name] = 1; loaded++; lastArrival = Date.now(); stalledNote = ''; }
     }
     render();
   }
@@ -157,6 +230,14 @@
   // pending), so the counter text describes what the wait is for.
   document.addEventListener('tclaude:boot-app', function (ev) {
     if (ready) return;
+    // dashboard.js runs: the graph is in, whatever the counter saw.
+    if (!started) {
+      started = true;
+      stalledNote = '';
+      failure = '';
+      isStuck = false;
+      stop();
+    }
     var d = (ev && ev.detail) || {};
     if (d.total) appTotal = d.total;
     if (d.step) appDone += d.step;
@@ -169,10 +250,9 @@
   // spend the reserved top band and drive the bar to 100%.
   document.addEventListener('tclaude:snapshot', function () { ready = true; render(); }, { once: true });
   document.addEventListener('DOMContentLoaded', render);
-  // Ceiling so the observer can never outlive boot even if a preload never
-  // reports a matching entry (network fault) — matches the 8s CSS reveal
-  // failsafe, after which the curtain is gone and #boot-progress is display:none.
-  setTimeout(stop, 8000);
+  // The observer lives until dashboard.js starts (or the first snapshot): the
+  // stall label and the Reload offer judge progress by the last arrival, so a
+  // slow but steady boot past 8s must keep being counted, not look stuck.
 })();
 </script>
 </head>
@@ -187,7 +267,9 @@
   <div class="boot-progress-title">Loading dashboard…</div>
   <div class="boot-progress-bar"><div id="boot-progress-fill" class="boot-progress-fill"></div></div>
   <div id="boot-progress-count" class="boot-progress-count"></div>
+  <button id="boot-progress-reload" class="ui-btn ui-sm boot-progress-reload" type="button" hidden>Reload</button>
 </div>
+<script>document.getElementById('boot-progress-reload').addEventListener('click', function () { location.reload(); });</script>
 <header>
   <!-- .bar-inner pins the header's content to the viewport width so its
        right-aligned controls don't fly off when the bar is widened to the
