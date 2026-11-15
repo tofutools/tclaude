@@ -1,6 +1,6 @@
 // Measures a phone swipe over a Claude Code like fullscreen view on a
 // throttled connection, in a real browser: the sandbox attaches the terminal
-// to testdata/swipe-tui.py in a tmux of its own (TCLAUDE_SANDBOX_SWIPE_TUI),
+// to a stand-in for Claude Code's view (RunSwipeTUIForTest) in a tmux of its own (TCLAUDE_SANDBOX_SWIPE_TUI),
 // so each notch makes a real tmux redraw come back through the real socket.
 // It prints numbers, and only checks that the screen answered the swipe.
 //

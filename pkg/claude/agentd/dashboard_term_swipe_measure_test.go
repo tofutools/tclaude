@@ -20,23 +20,17 @@ import (
 // TestMeasureTerminalSwipe measures what one wheel notch over a Claude Code
 // like fullscreen view costs on the wire, through a real tmux client and the
 // real runPTYOverWS: bytes, WebSocket messages, and how long the redraw takes
-// to arrive. It runs testdata/swipe-tui.py in a private tmux server (its own
-// socket directory, never the tclaude one). Gated, as it needs tmux and
-// python3 and only prints numbers:
+// to arrive. It runs this binary as a stand-in for Claude Code's view
+// (RunSwipeTUIForTest) in a private tmux server (its own socket, never the
+// tclaude one). Gated, as it needs tmux and only prints numbers:
 //
 //	TCLAUDE_SWIPE_MEASURE=1 go test ./pkg/claude/agentd/ -run TestMeasureTerminalSwipe -v
 func TestMeasureTerminalSwipe(t *testing.T) {
 	if os.Getenv("TCLAUDE_SWIPE_MEASURE") == "" {
 		t.Skip("set TCLAUDE_SWIPE_MEASURE=1 to measure a terminal swipe")
 	}
-	for _, bin := range []string{"tmux", "python3"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			t.Skipf("needs %s", bin)
-		}
-	}
-	tui, err := filepath.Abs("testdata/swipe-tui.py")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("needs tmux")
 	}
 	// A unix socket path is short: under os.TempDir, not the test's own dir.
 	dir, err := os.MkdirTemp("", "swipe")
@@ -50,7 +44,7 @@ func TestMeasureTerminalSwipe(t *testing.T) {
 		cmd.Env = append(os.Environ(), "TMUX=")
 		return cmd
 	}
-	if out, err := tmux("new-session", "-d", "-s", "m", "-x", "46", "-y", "38", "python3 "+tui).CombinedOutput(); err != nil {
+	if out, err := tmux("new-session", "-d", "-s", "m", "-x", "46", "-y", "38", swipeTUICommand()).CombinedOutput(); err != nil {
 		t.Fatalf("tmux: %v: %s", err, out)
 	}
 	t.Cleanup(func() { _ = tmux("kill-server").Run() })

@@ -37,6 +37,10 @@ var agentdTestTmuxBase string
 // `package agentd` test files compiled alongside this external
 // package.
 func TestMain(m *testing.M) {
+	if os.Getenv(agentd.SwipeTUIEnvForTest) != "" {
+		agentd.RunSwipeTUIForTest()
+		os.Exit(0)
+	}
 	hub.RunExecGuardian()
 	if err := applyAgentdTestPartition(); err != nil {
 		panic(fmt.Sprintf("select agentd test partition: %v", err))
