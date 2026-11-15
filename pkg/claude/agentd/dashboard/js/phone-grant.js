@@ -21,6 +21,7 @@ import htm from 'htm';
 import {
   DEFAULT_SUDO_POLICY, SUDO_DURATION_PRESETS, permissionRows, sudoDurationSeconds, sudoDurationText,
 } from './message-access-dialog-model.js';
+import { shortAgentId } from './helpers.js';
 import { goDuration } from './phone-now-model.js';
 import { usePhonePage } from './phone-page.js';
 import { ChipRow, Section } from './phone-ui.js';
@@ -107,7 +108,7 @@ function AgentStep({ snapshot, onPick, onBack }) {
           <span class=${`phone-grant-dot${agent.online ? ' on' : ''}`} role="img" aria-label=${agent.online ? 'online' : 'offline'}></span>
           <span class="phone-access-text">
             <span class="phone-access-name">${agent.title || agent.agent_id}</span>
-            <span class="phone-access-sub">${agent.agent_id}</span>
+            <span class="phone-access-sub">${shortAgentId(agent.agent_id, agent.conv_id)}</span>
           </span>
           <span class="phone-grant-more" aria-hidden="true">›</span>
         </button>
