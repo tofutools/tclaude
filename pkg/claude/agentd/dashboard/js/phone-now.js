@@ -1,8 +1,12 @@
-// phone-now.js -- the phone shell's Now view, in the shape of the Now mock:
-// a one-line usage strip that opens Usage, then what needs the operator as
+// phone-now.js -- the phone shell's Now view, in the shape of the Now mock.
+// A row of chips picks what it shows: All (below), Needs you (the cards
+// only), Idle (online idle agents by group), Recent (every online agent, the
+// latest heard from first) and Stuck? (the agents at work, quiet the longest
+// first). All is a one-line usage strip that opens Usage, then what needs the operator as
 // cards (access requests, decisions, process gates, agents asking), the
-// agents at work and in error in one card of rows, and the operator's open
-// PRs behind a collapsed header. The shell (phone-shell-island.js) shows it as
+// online agents in one card of rows (every one when there are few, else the
+// ones at work or in error, with Show all), and the operator's open PRs
+// behind a collapsed header. The shell (phone-shell-island.js) shows it as
 // its home view.
 
 import { h } from 'preact';
@@ -11,11 +15,12 @@ import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { authoredOpenPRsView } from './shell-model.js';
 import { featureState } from './peer-view-limits.js';
-import { askerName, nowView } from './phone-shell-model.js';
+import { FEW_ONLINE, agentRows, askerName, hookAt, idleGroups, nowView, recentRows, stuckRows } from './phone-shell-model.js';
 import { usageStrip } from './phone-now-model.js';
 import { AskCard, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
 import { Button } from './ui-components.js';
-import { Card, Section, StatePill } from './phone-ui.js';
+import { Card, ChipRow, Section, StatePill } from './phone-ui.js';
+import { relTime } from './helpers.js';
 import { processContext } from './process-context.js';
 import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
 
@@ -43,21 +48,41 @@ function UsageStrip({ snapshot, onOpen }) {
   </button>`;
 }
 
-// AgentRows is one card of plain rows, one per agent at work or in error,
-// with its state pill; an error row says what went wrong. A row opens the
-// agent's terminal.
+// AgentRows is one card of plain rows, one per agent, with its state pill;
+// an error row says what went wrong, and a row may carry a time line (when)
+// marked amber when quiet. A row opens the agent's terminal. heads put a
+// group's name over its first row.
 function AgentRows({ rows, onOpen }) {
   return html`<${Card} class="phone-rows-card">
     <ul class="phone-rows">
-      ${rows.map(({ agent, state }) => html`<li key=${agent.agentId}>
-        <button data-ui-exempt type="button" class="phone-row" onClick=${() => onOpen(agent)} aria-label=${`${agent.name}, ${state}: open its terminal`}>
+      ${rows.map(({ agent, state, when, quiet, head }) => html`<li key=${agent.agentId}>
+        ${head && html`<p class="ui-eyebrow phone-now-group">${head}</p>`}
+        <button data-ui-exempt type="button" class="phone-row" onClick=${() => onOpen(agent)} aria-label=${`${agent.name}, ${state}${when ? `, ${when}` : ''}: open its terminal`}>
           <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}
-            ${state === 'error' && agent.detail && html`<span class="phone-card-line">${agent.detail}</span>`}</span>
+            ${state === 'error' && agent.detail && html`<span class="phone-card-line">${agent.detail}</span>`}
+            ${when && html`<span class=${`phone-now-when${quiet ? ' quiet' : ''}`}>${when}</span>`}</span>
           <${StatePill} state=${state} />
         </button>
       </li>`)}
     </ul>
   <//>`;
+}
+
+// since is how long ago an agent last called a hook ("4m"), or '' if never.
+const since = (agent) => (hookAt(agent) === null ? '' : relTime(agent.lastHook).replace(/ ago$/, ''));
+
+// CHIPS are Now's views, one picked at a time; the pick is remembered per
+// viewer (this browser) under CHIP_KEY.
+export const CHIPS = Object.freeze(['all', 'needs', 'idle', 'recent', 'stuck']);
+const CHIP_KEY = 'tclaude.phone.now.chip';
+export function storedChip(storage = globalThis.localStorage) {
+  try {
+    const chip = storage?.getItem(CHIP_KEY);
+    return CHIPS.includes(chip) ? chip : 'all';
+  } catch { return 'all'; }
+}
+function storeChip(chip, storage = globalThis.localStorage) {
+  try { storage?.setItem(CHIP_KEY, chip); } catch { /* private mode: the pick lasts this visit */ }
 }
 
 // OpenPRs is the operator's open PRs, collapsed under its header: the count
@@ -67,9 +92,7 @@ function OpenPRs({ snapshot }) {
   const view = authoredOpenPRsView(snapshot);
   if (!view.available || !view.total) return null;
   const shown = view.items.slice(0, 5);
-  return html`<${Section} title="Open PRs" count=${view.total}
-    more=${html`<button data-ui-exempt type="button" class="phone-link" aria-expanded=${open ? 'true' : 'false'}
-      aria-label=${open ? 'Hide open PRs' : 'Show open PRs'} onClick=${() => setOpen(!open)}>${open ? '⌄' : '›'}</button>`}>
+  return html`<${Section} title="Open PRs" count=${view.total} fold=${{ open, onToggle: () => setOpen(!open) }}>
     ${open && html`<${Card} class="phone-rows-card">
       <ul class="phone-rows">
         ${shown.map((pr) => html`<li key=${pr.url}>
@@ -88,6 +111,9 @@ function OpenPRs({ snapshot }) {
 const CHECK_TONES = Object.freeze({ success: 'work', passing: 'work', failure: 'err', failing: 'err', pending: 'key', running: 'key' });
 
 export function NowView({ state, actions, fetchImpl = globalThis.fetch, processSource = processContext }) {
+  const [showAll, setShowAll] = useState(false);
+  const [chip, setChip] = useState(storedChip);
+  const pick = (key) => { setChip(key); storeChip(key); };
   // Process gates waiting on the operator come from the process read model,
   // not the snapshot: Now keeps it fresh while it shows.
   const gates = gateItems(useProcessRuns(processSource).context);
@@ -98,10 +124,17 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   const agents = companionAgents(snapshot);
   const asker = askerName(snapshot, agents);
   const quiet = view.needs === 0;
-  const rows = [...view.errors.map((agent) => ({ agent, state: 'error' })), ...view.working.map((agent) => ({ agent, state: 'working' }))];
-  return html`<div class="phone-now">
-    <${UsageStrip} snapshot=${snapshot} onOpen=${() => actions.navigate('/usage')} />
-    <${Section} title="Needs you" count=${view.needs}>
+  const list = agentRows(view, { showAll });
+  const rows = list.rows;
+  const stuck = stuckRows(view);
+  const chips = [
+    { key: 'all', label: 'All', count: view.online.length },
+    { key: 'needs', label: 'Needs you', badge: view.needs, badgeTone: 'danger' },
+    { key: 'idle', label: 'Idle', count: view.resting.length },
+    { key: 'recent', label: 'Recent' },
+    { key: 'stuck', label: 'Stuck?', badge: stuck.quiet, badgeTone: 'warn' },
+  ];
+  const needsYou = html`<${Section} title="Needs you" count=${view.needs}>
       ${quiet && html`<p class="ui-empty phone-empty">Nothing needs you right now.</p>`}
       ${view.approvals.map((request) => {
         const agent = agents.get(request.agent_id);
@@ -114,13 +147,43 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
         notify=${actions.notify} from=${asker(decision)} steward=${!!agents.get(decision.from_agent)?.steward} />`)}
       ${gates.map((item) => html`<${GateCard} key=${item.run.runId} item=${item} source=${processSource} />`)}
       ${view.asking.map((agent) => html`<${AskCard} key=${agent.agentId} agent=${agent} onOpen=${actions.openTerminal} />`)}
-    <//>
-    <${Section} title="Working" count=${rows.length}
+    <//>`;
+  const rowsOr = (list, empty) => (list.length
+    ? html`<${AgentRows} rows=${list} onOpen=${actions.openTerminal} />`
+    : html`<p class="ui-empty phone-empty">${empty}</p>`);
+  let body;
+  if (chip === 'needs') body = needsYou;
+  else if (chip === 'idle') {
+    const idle = idleGroups(view).flatMap(({ group, agents: list }) => list.map((agent, i) => ({
+      agent, state: 'idle', when: since(agent) && `idle ${since(agent)}`, head: i === 0 ? `${group || 'No group'} · ${list.length}` : '',
+    })));
+    body = html`<${Section} title="Idle" count=${idle.length}>${rowsOr(idle, 'No agent is idle.')}<//>`;
+  } else if (chip === 'recent') {
+    const recent = recentRows(view).map((row) => ({ ...row, when: since(row.agent) && `updated ${since(row.agent)} ago` }));
+    body = html`<${Section} title="Recent" count=${recent.length}>${rowsOr(recent, 'No agent is online.')}<//>`;
+  } else if (chip === 'stuck') {
+    const rows = stuck.rows.map((row) => ({ ...row, when: since(row.agent) ? `last update ${since(row.agent)} ago` : 'no update time' }));
+    body = html`<${Section} title="Stuck?" count=${stuck.quiet}>
+      <p class="ui-hint phone-now-hint">Busy, but nothing heard for a while. Worth a look?</p>
+      ${rowsOr(rows, 'No agent is working.')}
+    <//>`;
+  } else {
+    body = html`
+    <${UsageStrip} snapshot=${snapshot} onOpen=${() => actions.navigate('/usage')} />
+    ${needsYou}
+    <${Section} title=${list.all ? 'Online' : 'Working'} count=${rows.length}
       more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button>`}>
       ${rows.length === 0
-        ? html`<p class="ui-empty phone-empty">No agent is working.</p>`
+        ? html`<p class="ui-empty phone-empty">${list.all ? 'No agent is online.' : 'No agent is working.'}</p>`
         : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} />`}
+      ${list.total > FEW_ONLINE && html`<button data-ui-exempt type="button" class="phone-now-all" aria-expanded=${showAll ? 'true' : 'false'}
+        onClick=${() => setShowAll(!showAll)}>${showAll ? 'Only the recent ones' : `Show all ${list.total} online`}
+        <span aria-hidden="true">${showAll ? '⌄' : '›'}</span></button>`}
     <//>
-    <${OpenPRs} snapshot=${snapshot} />
+    <${OpenPRs} snapshot=${snapshot} />`;
+  }
+  return html`<div class="phone-now">
+    <${ChipRow} label="Show on Now" class="phone-now-chips" items=${chips} value=${chip} onSelect=${pick} />
+    ${body}
   </div>`;
 }

@@ -78,6 +78,8 @@ export function companionAgents(snapshot) {
       online: member.online === true,
       status: String(member.state?.status || ''),
       detail: String(member.state?.status_detail || ''),
+      // When the harness last called a hook: the agent's last sign of life.
+      lastHook: String(member.state?.last_hook || ''),
       harness: String(member.harness || member.state?.harness || ''),
       cwd: String(member.state?.cwd || member.cwd || prev?.cwd || ''),
       group: String(group || prev?.group || ''),
