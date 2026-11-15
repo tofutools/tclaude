@@ -285,7 +285,9 @@ func waitOneSecond(ctx context.Context) error {
 // the branch before attempting that config write, so retries complete the
 // missing upstream directly and then check out the already-created branch.
 // After ten one-second waits, the checkout still completes without tracking;
-// a config lock must not make agent spawning unavailable indefinitely.
+// a config lock must not make agent spawning unavailable indefinitely. The
+// first attempt keeps Git's own config-lock wait (Git 2.55+), which absorbs a
+// brief writer; the retries turn it off, since the ladder's wait is the wait.
 func createDashboardWorktree(
 	ctx context.Context,
 	repoRoot, branch, base, path string,
@@ -320,11 +322,11 @@ func createDashboardWorktree(
 			timing("upstream_set_complete", "attempt", retries, "failed", err != nil)
 			if err == nil {
 				timing("retry_checkout_begin")
-				createdPath, err = worktree.AddWorktreeIn(repoRoot, branch, base, path)
+				createdPath, err = worktree.AddWorktreeInNoConfigLockWait(repoRoot, branch, base, path)
 				return createdPath, retries, false, err
 			}
 		} else {
-			createdPath, err = worktree.AddWorktreeIn(repoRoot, branch, base, path)
+			createdPath, err = worktree.AddWorktreeInNoConfigLockWait(repoRoot, branch, base, path)
 			if err == nil {
 				return createdPath, retries, false, nil
 			}
@@ -339,7 +341,7 @@ func createDashboardWorktree(
 	// this version did not, explicitly suppress automatic tracking on the final
 	// attempt so the still-locked config is not touched again.
 	if worktree.BranchExistsIn(repoRoot, branch) {
-		createdPath, err = worktree.AddWorktreeIn(repoRoot, branch, base, path)
+		createdPath, err = worktree.AddWorktreeInNoConfigLockWait(repoRoot, branch, base, path)
 	} else {
 		createdPath, err = worktree.AddWorktreeInWithoutTracking(repoRoot, branch, base, path)
 	}

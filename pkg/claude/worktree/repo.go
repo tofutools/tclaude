@@ -663,7 +663,15 @@ func HasCommitsIn(dir string) bool {
 // else named, so the checkout runs with the repo's own hooks disabled
 // (see gitInNoRepoHooks).
 func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
-	return addWorktreeIn(repoPath, branch, fromBranch, path, true)
+	return addWorktreeIn(repoPath, branch, fromBranch, path, true, false)
+}
+
+// AddWorktreeInNoConfigLockWait is AddWorktreeIn for a caller that owns its
+// own config-lock retry timing: Git (2.55+) does not wait on a held
+// config.lock itself (see noConfigLockWait), so a locked config fails at
+// once and the caller's own wait decides when to try again.
+func AddWorktreeInNoConfigLockWait(repoPath, branch, fromBranch, path string) (string, error) {
+	return addWorktreeIn(repoPath, branch, fromBranch, path, true, true)
 }
 
 // AddWorktreeInWithoutTracking is AddWorktreeIn with Git's automatic upstream
@@ -672,10 +680,16 @@ func AddWorktreeIn(repoPath, branch, fromBranch, path string) (string, error) {
 // repository config stayed locked. The new branch still starts at fromBranch;
 // only branch.<name>.remote / merge are omitted.
 func AddWorktreeInWithoutTracking(repoPath, branch, fromBranch, path string) (string, error) {
-	return addWorktreeIn(repoPath, branch, fromBranch, path, false)
+	return addWorktreeIn(repoPath, branch, fromBranch, path, false, true)
 }
 
-func addWorktreeIn(repoPath, branch, fromBranch, path string, track bool) (string, error) {
+// noConfigLockWait sets Git's own wait for a held config.lock
+// (core.configLockTimeout, Git 2.55+, 1s by default) to zero. A caller with
+// its own retry ladder passes it so each attempt does not add Git's second on
+// top of the ladder's wait. Older Git ignores the key.
+var noConfigLockWait = []string{"-c", "core.configLockTimeout=0"}
+
+func addWorktreeIn(repoPath, branch, fromBranch, path string, track, noLockWait bool) (string, error) {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		return "", fmt.Errorf("branch name is required")
@@ -733,6 +747,9 @@ func addWorktreeIn(repoPath, branch, fromBranch, path string, track bool) (strin
 			args = append(args, "--no-track")
 		}
 		args = append(args, "-b", branch, worktreePath, baseBranch)
+	}
+	if noLockWait {
+		args = append(append([]string{}, noConfigLockWait...), args...)
 	}
 	if _, err := gitInNoRepoHooks(repoRoot, args...); err != nil {
 		if !hasCommits {
@@ -830,13 +847,16 @@ func removeSandboxConfigLockIn(dir string, onCandidate func()) (bool, error) {
 // SetBranchUpstreamIn completes the tracking setup that `git worktree add -b`
 // attempted automatically. upstream may be a full remote-tracking ref such as
 // refs/remotes/origin/main; Git stores its canonical remote + merge pair.
+// Its only caller is a config-lock retry ladder, so Git does not add its own
+// config-lock wait (noConfigLockWait).
 func SetBranchUpstreamIn(dir, branch, upstream string) error {
 	branch = strings.TrimSpace(branch)
 	upstream = strings.TrimSpace(upstream)
 	if branch == "" || upstream == "" {
 		return fmt.Errorf("branch and upstream are required")
 	}
-	if _, err := gitIn(dir, "branch", "--set-upstream-to="+upstream, branch); err != nil {
+	args := append(append([]string{}, noConfigLockWait...), "branch", "--set-upstream-to="+upstream, branch)
+	if _, err := gitIn(dir, args...); err != nil {
 		return fmt.Errorf("set branch %s upstream to %s: %w", branch, upstream, err)
 	}
 	return nil
