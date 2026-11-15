@@ -271,6 +271,64 @@ run for a task also needs `taskboard.write` on the task's board, whatever the
 run's scope, and a run bound to one agent must be bound to a member of the
 task's group.
 
+## Oversight and escalation
+
+A process cannot encode every corner case, so every run has an **overseer**:
+the agent (or the operator) that answers when the run gets stuck or someone
+in it raises a concern.
+
+- The overseer is the one set with `tclaude process run --overseer <agent>`
+  or later with `tclaude process oversee <run-id> <agent|operator|default>`
+  (`process.runs.manage`). With none set, it is the group's lead (a member with the
+  role `lead`, else an owner), else whoever started the run.
+- Overseeing a run grants, for that run only, what steering it needs:
+  pause, resume, reassigning a step, and answering its concerns. It does not
+  grant editing the template, or handing the run to another overseer.
+
+Anyone taking part in a run (its overseer, its group's members, its
+performers, whoever started it, the operator) can raise a **concern**:
+
+```bash
+tclaude process concern <run-id> "The spec contradicts itself on retries" --node work
+```
+
+A concern climbs the escalation chain until someone settles it:
+
+1. **The overseer** answers with `tclaude process answer-concern <run-id> <n>
+   continue|pause|escalate --note "why"`. `continue` settles it and lets the
+   run go on, resuming it if paused. `pause` settles it by holding the run.
+   `escalate` passes it up.
+2. **The group's escalation agent**, if the group has one: a member with the
+   role `escalation` that holds `process.runs.manage`. It answers the same
+   way.
+3. **The operator** gets a decision card in Messages, on the run in Groups ›
+   Processes, and on the run's phone page. The card names who raised it, why,
+   and how it got there. Its choices depend on what the run allows: **Resume**,
+   **Skip this step** (when the step is blocked), **Reassign** (when the step
+   has an agent attempt), **Keep paused**, and **Cancel the run** (when a
+   branch is blocked). The daemon applies the pick, records it in the run log
+   and mails it to the overseer. For Reassign, the overseer then hands the
+   step on with `tclaude process assign`.
+
+A holder that does not answer within 30 minutes is passed over: the run
+pauses and the concern goes to the next level. A run only pauses when its
+overseer pauses it, or when a holder does not answer. A concern raised by
+someone who would hold it starts one level up, so an overseer raising one is
+escalating it.
+
+Every step is in the run's events and its log in the dashboard:
+`concern_raised`, `concern_escalated` (with why it moved), `concern_resolved`
+(with the pick and note), `overseer_set`, `run_paused` and `run_resumed`,
+each with its actor. `tclaude process show` prints the overseer and the open
+concerns. `tclaude process concerns <run-id> --all` lists settled ones too.
+
+In the dashboard the run focus (Groups › Processes › a run) has an
+oversight strip under its header. It shows who oversees the run, its open
+concerns with their answers, and ⚑ Raise a concern. The side pane switches
+between the selected step and the whole **Run log**. A run card wears ⚑ while a
+concern is open, and a concern waiting on the operator puts the run in
+"needs you".
+
 ## Run scope
 
 Every run is bound to a context when it starts, and keeps that binding:

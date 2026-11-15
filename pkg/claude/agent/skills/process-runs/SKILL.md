@@ -4,7 +4,8 @@ description: >-
   Start, watch and steer daemon-owned process runs via `tclaude process`:
   run (start a saved template, scoped to a group or agent), runs ls, show,
   events, pause/resume, decide, assign, resolve-blocked, reconcile, reissue,
-  record-outcome; report a node you were dispatched; and read event triggers
+  record-outcome; oversee a run and raise or answer its concerns (concern,
+  answer-concern, concerns, oversee); report a node you were dispatched; and read event triggers
   via `tclaude agent triggers ls|show|explain`. Covers the
   process.runs.read/start/manage and self.process permissions (group ownership
   confers read and group- or member-scoped start, never manage). Use when asked to run, kick off,
@@ -87,6 +88,43 @@ tclaude process reissue <run-id> [--node <node>]            # run it again (same
 tclaude process record-outcome <run-id> [--node <node>] --outcome succeeded|failed [--exit-code N] [--note ...]
 ```
 
+## Oversight: concerns and escalation
+
+Every run has an **overseer**: the agent set with `run --overseer` or
+`oversee`, else the group's lead (role `lead`, else an owner), else whoever
+started it. `show` prints it. Overseeing a run lets you, for that run only,
+`pause`, `resume` and `assign`, and answer its concerns, without
+`process.runs.manage`. It never lets you edit the template or hand the run
+to another overseer.
+
+Anyone in the run (its overseer, its group's members, its performers, its
+starter) raises a **concern** when something is off that the process cannot
+handle. It climbs a chain until someone settles it:
+
+    overseer → the group's escalation agent → operator
+
+The escalation agent is a group member with the role `escalation` that holds
+`process.runs.manage`. A holder that does not answer within 30 minutes is
+passed over, and the run pauses until the next level decides. The operator
+gets a decision card (Resume, Skip this step, Reassign, Keep paused, Cancel
+the run, depending on what the run allows). The daemon applies the pick and
+mails it to the overseer. If the pick is Reassign, the overseer does the
+reassigning.
+
+```bash
+tclaude process concern <run-id> "CI is red on main" [--node <step>]   # raise one
+tclaude process concerns <run-id> [--all]                              # open (and settled) concerns
+tclaude process answer-concern <run-id> <n> continue --note "why"       # settle: the run goes on (resumes if paused)
+tclaude process answer-concern <run-id> <n> pause --note "why"          # settle by holding the run
+tclaude process answer-concern <run-id> <n> escalate --note "why"       # pass it up the chain
+tclaude process oversee <run-id> <agent|operator|default>               # process.runs.manage
+```
+
+A concern you hold arrives as `[process] concern #N on <run>` mail with
+these commands. Raising a concern you would hold yourself sends it up the
+chain. Every step (raised, passed on, settled, paused) is in
+`tclaude process events <run-id>`.
+
 ## When you are the performer
 
 A node assigned to you arrives as an inbox message with the run id, node,
@@ -98,6 +136,10 @@ tclaude process report failed --run <run-id> --node <node> --attempt <n> --note 
 tclaude process report succeeded ... --verdict changes --note "reasoning"   # when asked to decide
 tclaude process report succeeded ... --output pr="PR #12" --note "done"   # when the step declares outputs
 ```
+
+If you cannot do the step as asked, or the run looks wrong, do not just
+fail it: raise a concern (`tclaude process concern <run-id> "why" --node <node>`)
+and let the overseer decide.
 
 A step with outputs must report each one the message names (with a single
 output, the note stands in for it); a success without them is refused, so

@@ -366,8 +366,11 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
   useEffect(() => { setBusy(0); }, [message.id]);
   const options = Array.isArray(message.options) ? message.options : [];
   // A decision is answered back to the agent that asked; without one there
-  // is nobody to send the pick to.
-  if (options.length < 2 || (!message.from_conv && !message.from_agent && !message.decision && !message.dismissed_at)) return null;
+  // is nobody to send the pick to. A process run's decision (a concern that
+  // reached the operator) is answered by the daemon, which applies it to the
+  // run and tells the run's overseer.
+  const process = !!message.process_run && !message.from_conv && !message.from_agent;
+  if (options.length < 2 || (!process && !message.from_conv && !message.from_agent && !message.decision && !message.dismissed_at)) return null;
   if (message.dismissed_at) {
     return html`<div class="mail-decision decided dismissed" role="group" aria-label="Decision">
       <span class="mail-decision-label">${dismissedNote(message)}</span>
@@ -390,7 +393,8 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
         try { reason = (await res.json())?.error || reason; } catch (_) { /* keep the status */ }
         throw new Error(reason);
       }
-      toast?.(`Sent “${options[choice - 1]}” to ${message.from_title || 'the agent'}`, false);
+      toast?.(process ? `“${options[choice - 1]}” applied to run ${message.process_run}`
+        : `Sent “${options[choice - 1]}” to ${message.from_title || 'the agent'}`, false);
       onDone?.();
     } catch (e) {
       setBusy(0);
@@ -413,10 +417,12 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
     ${options.map((option, i) => {
       const recommended = i + 1 === message.recommended;
       return html`<${Button} key=${option} size="sm" variant=${recommended ? 'primary' : ''} disabled=${!!busy || remote}
-        title=${remote ? 'Answer this decision on the node it came from' : recommended ? 'The agent recommends this one' : 'Send this choice to the agent'}
+        title=${remote ? 'Answer this decision on the node it came from'
+          : process ? `Apply this to run ${message.process_run}; its overseer is told`
+            : recommended ? 'The agent recommends this one' : 'Send this choice to the agent'}
         onClick=${() => choose(i + 1)}>${busy === i + 1 ? 'Sending…' : option}${recommended ? ' ★' : ''}<//>`;
     })}
-    ${!remote && html`<${Button} size="sm" disabled=${!!busy} title="No longer relevant: dismiss without answering; the agent is told"
+    ${!remote && !process && html`<${Button} size="sm" disabled=${!!busy} title="No longer relevant: dismiss without answering; the agent is told"
       onClick=${dismiss}>${busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}<//>`}
   </div>`;
 }

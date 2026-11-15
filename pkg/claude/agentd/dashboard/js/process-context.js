@@ -548,6 +548,32 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
       return [...found.values()];
     },
     resume: (runId, { attemptKey = randomUUID() } = {}) => postEmpty(`${runPath(runId)}/resume`, attemptKey),
+    // raiseConcern puts a concern about the run to its overseer
+    // (process_oversight.go); from the dashboard it is the operator's.
+    async raiseConcern(runId, { reason, nodeId = '', attemptKey = randomUUID() }) {
+      const path = `${runPath(runId)}/concerns`;
+      const body = JSON.stringify({ reason, ...(nodeId ? { nodeId } : {}) });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    // answerConcern settles a concern an agent holds (continue, pause) or
+    // passes it on (escalate); the operator may answer at any level.
+    async answerConcern(runId, concernId, { action, note = '', attemptKey = randomUUID() }) {
+      const path = `${runPath(runId)}/concerns/${encodeURIComponent(concernId)}/answer`;
+      const body = JSON.stringify({ action, ...(note ? { note } : {}) });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    // pickConcern answers a concern's operator card, as Messages does: the
+    // daemon applies the pick to the run and tells its overseer.
+    async pickConcern(messageId, choice, note = '') {
+      return processRequest('/api/human-messages/reply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: messageId, choice, ...(note ? { body: note } : {}) }),
+      }, fetchImpl);
+    },
   };
 }
 

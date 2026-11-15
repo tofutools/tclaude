@@ -115,7 +115,7 @@ func postProcessConcernCard(c db.ProcessRunConcern, why string) (int64, error) {
 	}
 	fmt.Fprintf(&b, ":\n\n%s\n", sanitizeProcessText(c.Reason))
 	if why != "" {
-		fmt.Fprintf(&b, "\nIt reached you because %s.\n", sanitizeProcessText(why))
+		fmt.Fprintf(&b, "\nWhy it reached you: %s\n", sanitizeProcessText(why))
 	}
 	if view.Paused != nil {
 		fmt.Fprintf(&b, "\nThe run is paused (by %s).", processActorName(view.Paused.By))

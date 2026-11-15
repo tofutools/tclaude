@@ -25,6 +25,7 @@ import { Avatar, Card, StatePill } from './phone-ui.js';
 import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
+import { RunLog, RunOversight } from './process-oversight.js';
 
 const html = htm.bind(h);
 
@@ -147,6 +148,7 @@ export function useProcessRuns(source = processContext) {
 // runPill is the pill a run row wears: what it waits on, else how it runs
 // or how it ended.
 export function runPill(run, waiting = false) {
+  if (waiting && !decidable(run) && run?.concernsForYou && !WAIT_REASONS[run?.action]) return { text: 'Concern', tone: 'key' };
   if (waiting) return decidable(run) ? { text: 'Decide', tone: 'key' } : { text: 'Needs you', tone: 'err' };
   if (run?.paused) return { text: 'Paused', tone: 'idle' };
   const status = String(run?.status || '').toLowerCase();
@@ -166,6 +168,9 @@ function RunRow({ item, waiting, onOpen }) {
         <span class="phone-run-name">${runName(run)}</span>
         <span class="phone-run-sub">${[where, runPosition(run)].filter(Boolean).join(' · ')}</span>
         ${run.scope?.task && html`<span class="phone-run-task" data-run-task=${run.scope.task}>◈ for task: ${run.scope.taskTitle || run.scope.task}</span>`}
+        ${run.concerns > 0 && html`<span class="phone-run-concerns" data-run-concerns=${run.concerns}>⚑ ${run.concernsForYou
+          ? `${run.concernsForYou === 1 ? 'a concern waits' : `${run.concernsForYou} concerns wait`} on you`
+          : `${run.concerns === 1 ? 'a concern' : `${run.concerns} concerns`} with its overseer`}</span>`}
         <${ProcessStepStrip} run=${run} />
       </span>
       ${tag}
@@ -417,7 +422,9 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
           tally=${gateTally(detail.view, decision)} />
       <//>`;
     })}
-    ${run.needsYou && !decidable(run) && html`<div class="phone-run-wait" role="status">
+    ${detail.view && html`<${RunOversight} view=${detail.view} runId=${runId} api=${api} compact
+      onChanged=${() => { refresh(); void source.refresh(); }} />`}
+    ${run.needsYou && !decidable(run) && WAIT_REASONS[run.action] && html`<div class="phone-run-wait" role="status">
       <strong>${waitReason(run)}.</strong>${blocked.length ? ` ${blocked.join('; ')}.` : ''}
       <${DesktopOnlyNote} what="Resolving it is" />
     </div>`}
@@ -438,5 +445,7 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
         <span class="phone-run-step-meta">${meta || stateLabel(step.state)}</span>
       </li>`;
     })}</ol>
+    <h2 class="ui-eyebrow phone-section-title">Log</h2>
+    <${RunLog} events=${detail.events} nameOf=${nameOf} catchingUp=${detail.catchingUp} limit=${40} />
   </div>`;
 }

@@ -840,6 +840,9 @@ type dashboardHumanMessage struct {
 	// Action is the message's one action link, a Collab surface like a
 	// decision. Not offered on a peer's view of this node.
 	Action *dashboardHumanMessageAction `json:"action,omitempty"`
+	// ProcessRun is the run a process decision is about: a run concern's
+	// card has no agent sender, the daemon answers it (process_oversight_card.go).
+	ProcessRun string `json:"process_run,omitempty"`
 }
 
 // dashboardHumanMessageAttachment is one downloadable file on a notification.
@@ -1288,16 +1291,17 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 			fromTitle = pendingNames[fromAgent]
 		}
 		view := dashboardHumanMessage{
-			ID:        m.ID,
-			FromConv:  m.FromConv,
-			FromAgent: fromAgent,
-			FromTitle: fromTitle,
-			Group:     m.GroupName,
-			Subject:   m.Subject,
-			Body:      m.Body,
-			CreatedAt: m.CreatedAt.Format(time.RFC3339),
-			Read:      m.IsRead(),
-			Decision:  m.Decision,
+			ID:         m.ID,
+			FromConv:   m.FromConv,
+			FromAgent:  fromAgent,
+			FromTitle:  fromTitle,
+			Group:      m.GroupName,
+			Subject:    m.Subject,
+			Body:       m.Body,
+			CreatedAt:  m.CreatedAt.Format(time.RFC3339),
+			Read:       m.IsRead(),
+			Decision:   m.Decision,
+			ProcessRun: m.ProcessRunID,
 		}
 		if len(m.Options) > 0 {
 			view.Options, view.Recommended = m.Options, m.Recommended

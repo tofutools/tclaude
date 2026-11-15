@@ -76,3 +76,15 @@
 :root[data-layout="phone"] .phone-run-text .pk-step { flex: 1; width: auto; height: 4px; margin: 0; border-radius: 2px; }
 :root[data-layout="phone"] .phone-run-wait { margin: 8px 0 12px; color: var(--ui-warn-text); }
 :root[data-layout="phone"] .phone-run-wait .phone-desktop-only { margin-top: 8px; }
+
+/* A run's oversight on its page (process-oversight.js): the overseer, the
+   open concerns with their answers, and the run log, at phone size. */
+:root[data-layout="phone"] .phone-run-concerns { display: block; margin-top: 2px; color: var(--ui-warn-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-run-page .pov { margin: 4px 0 12px; padding: 10px; font-size: 14px; background: var(--ui-card-bg); }
+:root[data-layout="phone"] .phone-run-page .pov-line { gap: 8px; }
+:root[data-layout="phone"] .phone-run-page .pov-concern-head { font-size: 13px; }
+:root[data-layout="phone"] .phone-run-page .pov-holder { margin-left: 0; flex-basis: 100%; }
+:root[data-layout="phone"] .phone-run-page .pov-concern-actions .ui-btn { min-height: 36px; }
+:root[data-layout="phone"] .phone-run-page .pov-note { flex-basis: 100%; font-size: 14px; padding: 8px; }
+:root[data-layout="phone"] .phone-run-page .pov-raise textarea { font-size: 14px; }
+:root[data-layout="phone"] .phone-run-page .pov-log-list { font-size: 13px; }

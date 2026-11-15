@@ -252,6 +252,7 @@ func seedSandboxFull(t *testing.T, f *testharness.Flow) {
 	seedSandboxCronHistory(s)
 	seedSandboxProcessRuns(s)
 	seedSandboxAgreementGate(s)
+	seedSandboxOversight(s)
 	seedSandboxAccess(t)
 	seedSandboxAttachment(s)
 	seedSandboxOfflineSender(t)
@@ -486,6 +487,34 @@ func seedSandboxProcessRuns(s *sandboxSeeder) {
 	s.api(http.MethodPost, "/v1/process/runs/run_release_23/decide", map[string]any{
 		"nodeId": "checks-pass", "verdict": "yes", "evidence": "All release checks are green.",
 	}, nil)
+}
+
+// seedSandboxOversight raises two concerns on run_release_24, which the
+// webshop lead oversees: checkout-ui's, which the lead passed up so it waits
+// on the operator's decision card, and search's, still with the lead.
+func seedSandboxOversight(s *sandboxSeeder) {
+	s.t.Helper()
+	var raised struct {
+		Concern struct {
+			ID int64 `json:"id"`
+		} `json:"concern"`
+	}
+	s.agentAPI(sbUI, http.MethodPost, "/v1/process/runs/run_release_24/concerns", map[string]any{
+		"nodeId": "checks-pass",
+		"reason": "The release checks pass, but the payment provider's sandbox has been down since this morning, so checkout was never tested end to end.",
+	}, &raised)
+	s.agentAPI(sbLead, http.MethodPost, fmt.Sprintf("/v1/process/runs/run_release_24/concerns/%d/answer", raised.Concern.ID), map[string]any{
+		"action": "escalate", "note": "Shipping without an end-to-end checkout test is a product call.",
+	}, nil)
+	s.agentAPI(sbSearch, http.MethodPost, "/v1/process/runs/run_release_24/concerns", map[string]any{
+		"reason": "The search index rebuild in this release takes about 40 minutes; we may want a maintenance window.",
+	}, nil)
+}
+
+// agentAPI calls a daemon route as the agent conv, as its CLI does.
+func (s *sandboxSeeder) agentAPI(conv, method, path string, body, out any) {
+	s.t.Helper()
+	s.check(method, path, testharness.Serve(s.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(s.t, method, path, body), conv)), out)
 }
 
 // seedSandboxAgreementGate stores a three-person agreement gate and runs it
