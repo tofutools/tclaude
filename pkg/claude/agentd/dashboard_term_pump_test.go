@@ -71,6 +71,33 @@ func TestPumpPTYFramesLetsGoOfAFrameThatNeverEnds(t *testing.T) {
 	require.ErrorIs(t, <-done, io.EOF)
 }
 
+// Output that keeps trickling into a frame that never closes goes out on
+// time: the hold is per message, not per read (tk_77cabfac: a frame held
+// while a spinner kept writing froze the view at the bottom).
+func TestPumpPTYFramesHoldsAMessageOnlySoLong(t *testing.T) {
+	reads, sent, done := startPump(t)
+	const pieces = 40
+	go func() {
+		reads <- []byte("\x1b[?2026hstart")
+		for i := 0; i < pieces; i++ {
+			time.Sleep(20 * time.Millisecond)
+			reads <- []byte(".")
+		}
+		close(reads)
+	}()
+	first := next(t, sent)
+	assert.Less(t, len(first), len("\x1b[?2026hstart")+pieces, "the first message went before the trickle ended: %q", first)
+	// The rest drains as the pump sends it, until the reads end.
+	for {
+		select {
+		case <-sent:
+		case err := <-done:
+			require.ErrorIs(t, err, io.EOF)
+			return
+		}
+	}
+}
+
 func TestPumpPTYFramesSendsWhatIsReadBeforeTheEnd(t *testing.T) {
 	reads, sent, done := startPump(t)
 	reads <- []byte("\x1b[?2026hlast")

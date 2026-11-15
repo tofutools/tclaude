@@ -15,7 +15,7 @@ import (
 // TCLAUDE_SANDBOX_SWIPE_TUI). Like Claude Code it takes the alternate screen
 // and SGR mouse reporting, keeps its own transcript, and scrolls it on each
 // wheel notch, redrawing every row in colour, the frame bracketed in
-// synchronized output (DEC 2026).
+// synchronized output (DEC 2026); a notch past either end draws nothing.
 const swipeTUIEnv = "TCLAUDE_SWIPE_TUI_CHILD"
 
 // SwipeTUIEnvForTest is swipeTUIEnv, for TestMain.
@@ -89,13 +89,20 @@ func RunSwipeTUIForTest() {
 		if strings.ContainsAny(string(data), "q\x03") {
 			return
 		}
-		for _, m := range swipeWheel.FindAllSubmatch(data, -1) {
+		was := top
+		wheel := swipeWheel.FindAllSubmatch(data, -1)
+		for _, m := range wheel {
 			switch string(m[1]) {
 			case "64":
 				top = max(40, top-3)
 			case "65":
 				top = min(total, top+3)
 			}
+		}
+		// Like Claude Code, a notch that scrolls nothing (past either end)
+		// draws nothing.
+		if len(wheel) > 0 && top == was {
+			continue
 		}
 		draw()
 	}

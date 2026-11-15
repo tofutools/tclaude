@@ -2,7 +2,9 @@
 // throttled connection, in a real browser: the sandbox attaches the terminal
 // to a stand-in for Claude Code's view (RunSwipeTUIForTest) in a tmux of its own (TCLAUDE_SANDBOX_SWIPE_TUI),
 // so each notch makes a real tmux redraw come back through the real socket.
-// It prints numbers, and only checks that the screen answered the swipe.
+// It prints numbers, and checks that only redraws move the screen (the page
+// never shifts it, nor itself), that a steady drag scrolls one way, and that
+// the view settles within 150ms of the last frame, at the bottom too.
 //
 //   TCLAUDE_SANDBOX_SWIPE_TUI=1 scripts/sandbox/ui.sh smoke phone-swipe-measure
 //
@@ -41,42 +43,75 @@ function throttle(target, link) {
 }
 
 // drag moves one finger over the terminal by dy px, a move every 16ms (a
-// frame), at speed px per move, and returns what the screen did, frame by
-// frame: when it first moved, when the first redraw landed, and the longest
-// stretch without visible movement while the finger moved (from its first
-// move, so the first visible move counts as a still stretch too).
-async function drag(page, { dy, speed }) {
-  return page.evaluate(async ({ dy, speed }) => {
+// frame), at speed px per move, then rests and lifts (or flings, with fling),
+// and returns what the screen did, frame by frame:
+// - firstMove, firstRedraw: when the screen first changed, from the first move;
+// - longestStill: the longest stretch without a visible change while the
+//   finger moved (from its first move, so the first change counts too);
+// - shifted: whether the page ever moved the screen itself (it must not:
+//   Claude Code redraws it, tk_77cabfac);
+// - pageMoved: whether the page or the terminal's box moved;
+// - reversals: how often the view's top line went against the swipe;
+// - settleMs: how long after the last terminal message the screen last
+//   changed (a freeze shows here).
+async function drag(page, { dy, speed, fling = false }) {
+  return page.evaluate(async ({ dy, speed, fling }) => {
     const host = document.querySelector('.phone-term-host');
     const screen = host.querySelector('.xterm-screen');
     const rowsText = () => host.querySelector('.xterm-rows')?.textContent || '';
+    // The stand-in's rows end in their line number.
+    const topLine = () => {
+      const first = host.querySelector('.xterm-rows')?.firstElementChild?.textContent || '';
+      const m = first.trim().match(/(\d+)$/);
+      return m ? Number(m[1]) : null;
+    };
+    const where = () => `${document.scrollingElement?.scrollTop || 0}|${window.visualViewport?.offsetTop || 0}|${Math.round(host.getBoundingClientRect().top)}`;
+    const shiftOf = () => `${screen.style.translate || ''}${screen.style.transform || ''}`;
     const box = host.getBoundingClientRect();
     const x = box.left + box.width / 2;
-    const y0 = box.top + box.height / 3;
+    const y0 = box.top + (dy > 0 ? box.height / 5 : box.height * 4 / 5);
     const fire = (type, y) => {
       const touch = y === null ? [] : [new Touch({ identifier: 1, target: host, clientX: x, clientY: y })];
       host.dispatchEvent(new TouchEvent(type, { touches: touch, targetTouches: touch, changedTouches: touch, bubbles: true, cancelable: true }));
     };
     const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const messages = window.__termMessages || [];
+    const firstMessage = messages.length;
     let text = rowsText();
-    let shift = screen.style.translate;
-    const seen = { firstMove: null, firstRedraw: null, redraws: 0, longestStill: 0, moves: 0 };
+    let shift = shiftOf();
+    let top = topLine();
+    const startWhere = where();
+    const seen = { firstMove: null, firstRedraw: null, redraws: 0, longestStill: 0, moves: 0, shifted: false, pageMoved: false, reversals: 0 };
+    // Finger down shows older lines: the top line number falls.
+    const way = dy > 0 ? -1 : 1;
     let start = null;
     let lastChange = null;
     let dragging = true;
     const look = () => {
       const now = performance.now();
       const nextText = rowsText();
-      const nextShift = screen.style.translate;
-      const redraw = nextText !== text;
-      if (redraw) { seen.redraws += 1; if (seen.firstRedraw === null) seen.firstRedraw = now - start; }
-      if (redraw || nextShift !== shift) {
+      const nextShift = shiftOf();
+      if (nextShift) seen.shifted = true;
+      if (where() !== startWhere) seen.pageMoved = true;
+      // A shift of the screen is a visible change too (the page must make
+      // none, but a measure of the old way counts them).
+      if (nextShift !== shift) {
         if (seen.firstMove === null) seen.firstMove = now - start;
         if (dragging) seen.longestStill = Math.max(seen.longestStill, now - lastChange);
         lastChange = now;
+        shift = nextShift;
+      }
+      if (nextText !== text) {
+        seen.redraws += 1;
+        if (seen.firstRedraw === null) seen.firstRedraw = now - start;
+        if (seen.firstMove === null) seen.firstMove = now - start;
+        if (dragging) seen.longestStill = Math.max(seen.longestStill, now - lastChange);
+        lastChange = now;
+        const nextTop = topLine();
+        if (top !== null && nextTop !== null && Math.sign(nextTop - top) === -way) seen.reversals += 1;
+        top = nextTop ?? top;
       }
       text = nextText;
-      shift = nextShift;
     };
     fire('touchstart', y0);
     await frame();
@@ -91,13 +126,16 @@ async function drag(page, { dy, speed }) {
     // How long the screen had been still when the finger stopped counts too.
     seen.longestStill = Math.max(seen.longestStill, performance.now() - lastChange);
     dragging = false;
-    // Rest, then lift: no fling. Keep watching while the last redraws land.
-    const end = performance.now() + 1500;
+    if (fling) fire('touchend', null);
+    // Keep watching while the last redraws land.
+    const end = performance.now() + 2500;
     while (performance.now() < end) { await frame(); look(); }
-    fire('touchend', null);
+    if (!fling) fire('touchend', null);
     seen.dragMs = steps * 16;
+    const lastMessage = messages.slice(firstMessage).at(-1);
+    seen.settleMs = lastMessage === undefined || lastChange === null ? 0 : Math.max(0, lastChange - lastMessage);
     return seen;
-  }, { dy, speed });
+  }, { dy, speed, fling });
 }
 
 test('a phone swipe over a Claude Code like view on Fast 4G', async ({ page, context, baseURL }) => {
@@ -114,6 +152,18 @@ test('a phone swipe over a Claude Code like view on Fast 4G', async ({ page, con
   const frames = [];
   cdp.on('Network.webSocketFrameReceived', ({ timestamp, response }) => frames.push({ t: timestamp, bytes: response.payloadData.length }));
 
+  // When each terminal message arrived, for settleMs.
+  await page.addInitScript(() => {
+    window.__termMessages = [];
+    const Native = window.WebSocket;
+    window.WebSocket = class extends Native {
+      constructor(...args) {
+        super(...args);
+        // Terminal output is binary; control messages (JSON) do not count.
+        this.addEventListener('message', (event) => { if (typeof event.data !== 'string') window.__termMessages.push(performance.now()); });
+      }
+    };
+  });
   await page.goto(`${via}/?terminal=${encodeURIComponent(`window:${agent.agent_id}`)}`);
   await expect(page.locator('.phone-term-host .xterm-rows')).toContainText('⏺', { timeout: 60_000 });
   await page.waitForTimeout(1000); // the attach's own redraws settle
@@ -138,6 +188,12 @@ test('a phone swipe over a Claude Code like view on Fast 4G', async ({ page, con
       }
     }
   }
+  // Down to the live bottom, then on past it, dragged and flung: the view
+  // stays put and settles at once (tk_77cabfac: it froze, then jumped).
+  for (let i = 0; i < 6; i += 1) await drag(page, { dy: -320, speed: 16, fling: true });
+  const bottom = [];
+  for (const fling of [false, true, false, true]) bottom.push(await drag(page, { dy: -320, speed: 16, fling }));
+  console.log('past the bottom:', JSON.stringify(bottom.map(({ settleMs, redraws, shifted, pageMoved }) => ({ settleMs: Math.round(settleMs), redraws, shifted, pageMoved }))));
   const median = (values) => { const v = values.filter((x) => x !== null).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : null; };
   const rows = [];
   for (const name of ['slow', 'medium', 'fast']) {
@@ -151,6 +207,8 @@ test('a phone swipe over a Claude Code like view on Fast 4G', async ({ page, con
       longestStillMs: Math.round(median(of.map((r) => r.longestStill))),
       messagesPerRedraw: +(of.reduce((s, r) => s + r.messages, 0) / Math.max(1, redraws)).toFixed(2),
       payloadBytesPerRedraw: Math.round(of.reduce((s, r) => s + r.bytes, 0) / Math.max(1, redraws)),
+      settleMs: Math.round(median(of.map((r) => r.settleMs))),
+      reversals: of.reduce((s, r) => s + r.reversals, 0),
     });
   }
   console.log(`\nphone swipe on Fast 4G (medians of ${runs.length / 3} drags each):`);
@@ -161,4 +219,10 @@ test('a phone swipe over a Claude Code like view on Fast 4G', async ({ page, con
   }
   proxy.close();
   for (const row of rows) expect(row.firstRedrawMs, `${row.swipe}: a redraw came back`).not.toBeNull();
+  for (const run of [...runs, ...bottom]) {
+    expect(run.shifted, 'the page never shifts the screen: only redraws move it').toBe(false);
+    expect(run.pageMoved, 'the page and the terminal box stay put').toBe(false);
+    expect(run.settleMs, 'the view settles within 150ms of the last frame').toBeLessThanOrEqual(150);
+  }
+  for (const run of runs) expect(run.reversals, `${run.name}: a steady drag scrolls one way`).toBe(0);
 });

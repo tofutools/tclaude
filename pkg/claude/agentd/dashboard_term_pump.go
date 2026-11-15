@@ -17,7 +17,9 @@ import (
 // tmux brackets each redraw in synchronized output (DEC 2026) for a client
 // with the sync feature (webTerminalAttachCmd asks for it), and the end of a
 // frame is then known: output that opened a frame and has not closed it is
-// held until it does, at most ptyFrameHold, so a frame is one message.
+// held until it does, so a frame is one message. A message is held at most
+// ptyFrameHold in all, from its first read: output that keeps trickling into
+// a frame never closed goes out on time instead of waiting on itself.
 const (
 	ptyReadSize  = 32 << 10
 	ptyFrameMax  = 256 << 10
@@ -80,6 +82,7 @@ func pumpPTYFrames(r io.Reader, send func([]byte) error) error {
 		}
 		out := first.data
 		var readErr error
+		deadline := time.Now().Add(ptyFrameHold)
 	gather:
 		for len(out) < ptyFrameMax {
 			// What is already read joins this message at no cost.
@@ -96,11 +99,15 @@ func pumpPTYFrames(r io.Reader, send func([]byte) error) error {
 			if !syncOpen(out) {
 				break
 			}
-			// A frame is still open: wait a moment for its end.
+			// A frame is still open: wait for its end, until the deadline.
+			wait := time.Until(deadline)
+			if wait <= 0 {
+				break
+			}
 			if hold == nil {
-				hold = time.NewTimer(ptyFrameHold)
+				hold = time.NewTimer(wait)
 			} else {
-				hold.Reset(ptyFrameHold)
+				hold.Reset(wait)
 			}
 			select {
 			case next := <-chunks:
