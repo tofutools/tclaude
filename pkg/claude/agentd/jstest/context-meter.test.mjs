@@ -23,6 +23,8 @@ test('ContextMeter: five segments lit by band, its figure in the title, a wizard
   assert.ok(regular.classList.contains('ctx-regular') && mana.classList.contains('ctx-mana'));
   assert.deepEqual([...regular.querySelectorAll('.ctx-seg')].map((s) => s.className), ['ctx-seg lit-green', 'ctx-seg lit-green', 'ctx-seg lit-yellow', 'ctx-seg lit-yellow', 'ctx-seg lit-red']);
   assert.equal(regular.getAttribute('title'), 'context: 182k / 200k tokens (reported cap) — 91%');
+  assert.equal(regular.getAttribute('role'), 'img');
+  assert.equal(regular.getAttribute('aria-label'), regular.getAttribute('title'), 'a screen reader reads its figure');
   assert.match(mana.getAttribute('title'), /^🔮 Mana: 182k \/ 200k channeled/);
   const unknown = await harness.mount(harness.html`<div><${ContextMeter} state=${{}} /></div>`);
   assert.ok(unknown.container.querySelector('.ctx-meter.ctx-unknown'));

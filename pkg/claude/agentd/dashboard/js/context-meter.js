@@ -43,7 +43,9 @@ export function ContextMeter({ state }) {
     return html`<span key=${i} class=${`ctx-seg${i < filled ? ` lit-${band}` : ''}`}></span>`;
   });
   const unknown = known ? '' : ' ctx-unknown';
-  return html`<span class=${`ctx-meter ctx-regular${unknown}`} title=${regularTitle}>${segments}</span><span class=${`ctx-meter ctx-mana${unknown}`} title=${wizardTitle}>${segments}</span>`;
+  // An image to a screen reader, named by its title: its segments say nothing.
+  // The theme hides one twin (display: none), so only the other is read.
+  return html`<span class=${`ctx-meter ctx-regular${unknown}`} role="img" aria-label=${regularTitle} title=${regularTitle}>${segments}</span><span class=${`ctx-meter ctx-mana${unknown}`} role="img" aria-label=${wizardTitle} title=${wizardTitle}>${segments}</span>`;
 }
 
 // contextFigure is an agent's context in words, "ctx 91% · 182k / 200k", or

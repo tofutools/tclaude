@@ -90,10 +90,10 @@ const NEEDS = new Set(['awaiting_permission', 'awaiting_input']);
 const WORKING = new Set(['working', 'main_agent_idle', 'restarting']);
 const ERRORS = new Set(['error', 'crashed', 'crash loop / backoff']);
 
-// CONTEXT_HIGH_PCT is how full an agent's context window must be for Now to
-// say so to a screen reader by its name. Only that: a full context is no
-// problem, as the harness compacts or the agent reincarnates on its own, so
-// it is not in Problems; the meter by the pill shows it to the eye.
+// CONTEXT_HIGH_PCT is how full an agent's context window must be for a Now
+// row's label to say so. Only that: a full context is no problem, as the
+// harness compacts or the agent reincarnates on its own, so it is not in
+// Problems; the meter by the pill (context-meter.js) shows it.
 export const CONTEXT_HIGH_PCT = 85;
 
 // agentFacts is, per agent id, what Now reads beyond companionAgents: how
