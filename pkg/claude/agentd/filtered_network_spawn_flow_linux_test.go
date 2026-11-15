@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,6 +131,10 @@ func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
 // contract: the authored deny is still enforced, but tclaude does not require
 // provider configuration merely to prove that inference will remain reachable.
 func TestOpenCodeDefaultAllowDenyAllowsUserManagedInference(t *testing.T) {
+	// These assert on the inline answer (conv_id). Under CI load an OpenCode
+	// launch can outlast the 750 ms response grace and answer Pending, with
+	// no conv_id yet; the provider gate under test has passed either way.
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(time.Minute))
 	testharness.ClearModelTransportProxyEnv(t)
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -383,6 +388,10 @@ func TestLocalModelAPIsSpawnAllowsFirstPartyCloudProvider(t *testing.T) {
 }
 
 func TestLocalPresetsOpenCodeAllowUserManagedInference(t *testing.T) {
+	// These assert on the inline answer (conv_id). Under CI load an OpenCode
+	// launch can outlast the 750 ms response grace and answer Pending, with
+	// no conv_id yet; the provider gate under test has passed either way.
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(time.Minute))
 	for _, tc := range []struct {
 		name  string
 		allow []sandboxpolicy.NetworkAllowEntry
@@ -441,6 +450,10 @@ func TestLocalPresetsOpenCodeAllowUserManagedInference(t *testing.T) {
 // prerequisite does not apply to this engine, and provider validation is only
 // activated when the operator selects a model.
 func TestLocalPresetsOpenCodeProxyEngineAllowsUserManagedInference(t *testing.T) {
+	// These assert on the inline answer (conv_id). Under CI load an OpenCode
+	// launch can outlast the 750 ms response grace and answer Pending, with
+	// no conv_id yet; the provider gate under test has passed either way.
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(time.Minute))
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	const profileName = "opencode-local-model-apis-proxy"
