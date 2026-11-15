@@ -199,10 +199,11 @@ test('the chips filter by any number of groups; All shows every one', async (t) 
   assert.deepEqual(pressed(), ['All']);
 });
 
-test('a group\'s header folds it, remembered in the prefs; its state summary shows folded too', async (t) => {
+test('a group\'s caret folds it, remembered in the prefs; its state summary shows folded too; its name opens its page', async (t) => {
   const prefs = memPrefs({ 'tclaude.dash.phone.fold.steward': '1' });
-  const { c, tap, titles, prefs: kept, calls } = await setup(t, { prefs });
-  const head = (name) => c.querySelector(`[aria-label="${name}"] .phone-agents-fold`);
+  const { c, tap, titles, prefs: kept, calls, page } = await setup(t, { prefs });
+  const head = (name) => c.querySelector(`[aria-label="${name}"] .phone-agents-caret-btn`);
+  const nameOf = (name) => c.querySelector(`[aria-label="${name}"] .phone-agents-fold`);
   assert.deepEqual(titles(), ['payments-fix', 'lead', 'old-worker', 'loner'], 'steward starts folded');
   assert.equal(head('steward').getAttribute('aria-expanded'), 'false');
   assert.equal(head('webshop').getAttribute('aria-expanded'), 'true');
@@ -212,8 +213,9 @@ test('a group\'s header folds it, remembered in the prefs; its state summary sho
   const summary = (name) => [...c.querySelectorAll(`[aria-label="${name}"] .phone-agents-sum`)].map((n) => n.textContent.trim());
   assert.deepEqual(summary('webshop'), ['1 approval', '1 idle', '1 offline'], 'the approval still shows');
   assert.ok(c.querySelector('[aria-label="webshop"] .phone-agents-sum.tone-key'), 'in the approval pill\'s colour');
-  assert.ok(head('webshop').getAttribute('aria-label').includes('2 of 3 online: 1 approval, 1 idle, 1 offline'));
-  assert.equal(head('webshop').querySelector('.phone-agents-count').textContent, '2/3');
+  assert.ok(nameOf('webshop').getAttribute('aria-label').includes('2 of 3 online: 1 approval, 1 idle, 1 offline'));
+  assert.equal(nameOf('webshop').querySelector('.phone-agents-count').textContent, '2/3');
+  assert.equal(head('webshop').getAttribute('aria-label'), 'Unfold webshop');
   // Board › stays its own button beside the header.
   assert.ok(c.querySelector('[aria-label="webshop\'s board"]'));
   await tap(head('steward'));
@@ -221,6 +223,16 @@ test('a group\'s header folds it, remembered in the prefs; its state summary sho
   assert.equal(kept.getItem('tclaude.dash.phone.fold.steward'), null, 'unfolding forgets it');
   assert.deepEqual(summary('steward'), ['1 working']);
   assert.equal(calls.length, 0, 'folding opens nothing');
+  // The name opens the group's page, as in All groups.
+  await tap(nameOf('steward'));
+  assert.equal(page.phonePage.value.title, 'steward');
+  assert.ok(c.querySelector('.phone-group-page'));
+  await tap(c.querySelector('.phone-group-page') && { click: () => page.phonePage.value.onBack() });
+  assert.equal(c.querySelector('.phone-group-page'), null);
+  // The agents in no group have no page: their name folds them.
+  assert.equal(nameOf('Ungrouped').getAttribute('aria-expanded'), 'true');
+  await tap(nameOf('Ungrouped'));
+  assert.ok(!titles().includes('loner'));
 });
 
 test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ opens its menu', async (t) => {

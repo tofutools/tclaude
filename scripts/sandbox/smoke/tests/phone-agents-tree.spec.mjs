@@ -175,3 +175,92 @@ test.describe('desktop', () => {
     expect(errors).toEqual([]);
   });
 });
+
+// A group's header stays put when it folds or unfolds, in Active and in All
+// groups at every level of the tree (folding changes only what is under it);
+// its caret is a 44px zone with a 16px chevron, its name opens its page in
+// both modes; and Show offline hides offline agents and nobody-online groups.
+test.describe('iPhone 13 header and offline', () => {
+  const { defaultBrowserType: _ignored, ...use } = devices['iPhone 13'];
+  test.use(use);
+
+  test('headers stay put on a fold at every level, the caret is a 44px zone, Show offline hides', async ({ page }) => {
+    const errors = collectErrors(page);
+    await page.goto('/groups');
+    await booted(page);
+    const made = [];
+    let added = '';
+    try {
+      const out = await api(page, 'POST', '/api/groups', { name: SUB, parent: 'webshop' });
+      expect(out.status, out.text).toBeLessThan(300);
+      made.push(SUB);
+      const snapshot = JSON.parse((await api(page, 'GET', '/api/snapshot')).text);
+      const member = snapshot.groups.find((g) => g.name === 'webshop').members.find((m) => m.online && m.conv_id);
+      const join = await api(page, 'POST', `/api/groups/${SUB}/members`, { conv: member.conv_id });
+      expect(join.status, join.text).toBeLessThan(300);
+      added = member.conv_id;
+      await page.goto('/groups');
+      await booted(page);
+      const seg = (label) => page.getByRole('group', { name: 'Show', exact: true }).getByRole('button', { name: new RegExp(`^${label}`) });
+      const offline = page.getByRole('button', { name: 'Show offline' });
+      if (await offline.getAttribute('aria-pressed') === 'false') await offline.click();
+
+      // The caret: its own 44px zone, a 16px chevron, turned down when open.
+      await seg('Active').click();
+      const activeHead = page.locator('.phone-agents > .phone-section[aria-label="webshop"] > h2');
+      const caret = activeHead.locator('.phone-agents-caret-btn');
+      const zone = await caret.boundingBox();
+      expect(zone.width).toBeGreaterThanOrEqual(44);
+      expect(zone.height).toBeGreaterThanOrEqual(44);
+      expect((await caret.locator('svg').boundingBox()).width).toBeGreaterThanOrEqual(16);
+      await expect(caret).toHaveAttribute('aria-expanded', 'true');
+
+      const top = (head) => head.evaluate((el) => Math.round(el.getBoundingClientRect().top + window.scrollY));
+      const steady = async (head, label) => {
+        const caretOf = head.locator('.phone-agents-caret-btn');
+        const before = await top(head);
+        await caretOf.click();
+        await expect(caretOf).toHaveAttribute('aria-expanded', 'false');
+        expect(await top(head), `${label}: folding does not move the header`).toBe(before);
+        await caretOf.click();
+        await expect(caretOf).toHaveAttribute('aria-expanded', 'true');
+        expect(await top(head), `${label}: unfolding does not move the header`).toBe(before);
+      };
+      await steady(activeHead, 'Active');
+      await seg('All groups').click();
+      const rootHead = page.locator('.phone-agents > .phone-agents-node[aria-label="webshop"] > h2');
+      const subHead = page.locator(`.phone-agents-sub > .phone-agents-node[aria-label="${SUB}"] > h2`);
+      await expect(subHead).toBeVisible();
+      await steady(subHead, 'All groups, nested');
+      await steady(rootHead, 'All groups, top level');
+      await shot(page, 'iphone-13-all-groups-caret');
+
+      // The name opens the page in Active too.
+      await seg('Active').click();
+      await activeHead.locator('.phone-agents-fold').click();
+      await expect(page.locator('.phone-bar-title')).toHaveText('webshop');
+      await page.getByRole('button', { name: 'Back', exact: true }).click();
+      await expect(page.locator('.phone-group-page')).toHaveCount(0);
+
+      // Show offline off: no offline agent, no nobody-online group; kept.
+      await expect(page.locator('.phone-agent-off').first()).toBeVisible();
+      await shot(page, 'iphone-13-offline-on');
+      await offline.click();
+      await expect(offline).toHaveAttribute('aria-pressed', 'false');
+      await expect(page.locator('.phone-agent-off:not(.v-crashed)')).toHaveCount(0);
+      await shot(page, 'iphone-13-offline-off');
+      await seg('All groups').click();
+      await expect(page.locator('.phone-agents-node.phone-agents-dim')).toHaveCount(0);
+      await expect.poll(() => page.evaluate(() => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
+        .then((r) => r.json()).then((prefs) => prefs['tclaude.dash.phone.agents.offline'] ?? null))).toBe('0');
+      await offline.click();
+      await seg('Active').click();
+      await expect.poll(() => page.evaluate(() => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
+        .then((r) => r.json()).then((prefs) => [prefs['tclaude.dash.phone.agents.offline'] ?? null, prefs['tclaude.dash.phone.agents.view'] ?? null]))).toEqual([null, null]);
+      expect(errors).toEqual([]);
+    } finally {
+      if (added) await api(page, 'DELETE', `/api/groups/${SUB}/members/${added}`);
+      for (const name of made.reverse()) await api(page, 'DELETE', `/api/groups/${name}`);
+    }
+  });
+});
