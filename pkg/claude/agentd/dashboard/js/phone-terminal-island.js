@@ -43,13 +43,30 @@ const keyOf = (seed) => (seed ? seed.key || seed.ws : '');
 // Code (the default harness, as harnessCanRename assumes); a terminal of no
 // agent (a shell, a group terminal) may scroll copy-mode.
 export function wheelCopyMode(seed, { harnesses = [], agent = () => null } = {}) {
-  const agentId = seed?.agent || seed?.remote?.agent || '';
-  let harness = seed?.harness || '';
-  if (!harness && seed?.agent) harness = agent(seed.agent)?.harness || '';
-  if (!harness && agentId) harness = 'claude';
+  const harness = terminalHarness(seed, agent);
   if (!harness) return true;
   const known = (Array.isArray(harnesses) ? harnesses : []).find((h) => h?.name === harness);
   return known?.tmux_scrollback !== false;
+}
+
+// terminalHarness is the harness a terminal's session runs, as wheelCopyMode
+// reads it, or '' for a terminal of no agent. Without known, an agent's
+// terminal of no known harness is Claude Code's, the default harness.
+function terminalHarness(seed, agent = () => null, known = false) {
+  const agentId = seed?.agent || seed?.remote?.agent || '';
+  let harness = seed?.harness || '';
+  if (!harness && seed?.agent) harness = agent(seed.agent)?.harness || '';
+  if (!harness && agentId && !known) harness = 'claude';
+  return harness;
+}
+
+// swipeWheel is how far a terminal's session scrolls a wheel notch, for the
+// swipe (terminals-core.js): Claude Code's own measured acceleration, else
+// five lines a notch, which tmux copy-mode scrolls. Only a harness known to
+// be Claude Code's: a notch a row over tmux copy-mode would run five times
+// ahead of the finger, where the other way round only lags.
+export function swipeWheel(seed, { agent = () => null } = {}) {
+  return terminalHarness(seed, agent, true) === 'claude' ? 'claude' : 'tmux';
 }
 
 // The terminals this page opened, by key, so Back and Forward can bring one
@@ -159,6 +176,7 @@ function TerminalSurface({ seed, deps, labelRef, onWidget, onFontChange, onStatu
       touchZoom: true,
       touchScroll: true,
       wheelCopyMode: wheelCopyMode(seed, { harnesses: deps.harnesses?.() || [], agent: deps.agent || (() => null) }),
+      swipeWheel: swipeWheel(seed, { agent: deps.agent || (() => null) }),
       onScrollBackChange,
       softKeyboard: false,
       initialFontSize: readTerminalFont(FONT_SURFACE, key, deps.prefs) ?? PHONE_TERMINAL_FONT,

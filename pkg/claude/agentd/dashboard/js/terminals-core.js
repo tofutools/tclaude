@@ -17,6 +17,7 @@ import { terminalThemeFor } from './terminal-theme.js';
 import { drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js';
 import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
 import { isPageId, pagePaneKey } from './page-pane-model.js';
+import { claudeWheelState, claudeWheelStep } from './claude-wheel.js';
 
 // A newly-created browser terminal can briefly lose an attach race with the
 // client it is replacing (pop-out / reattach), or arrive while a freshly
@@ -141,21 +142,34 @@ const ZOOM_WHEEL_SETTLE_MS = 110;
 // reflows the grid once, not on every move.
 const ZOOM_PINCH_SETTLE_MS = 220;
 
-// A one-finger swipe scrolls as a mouse wheel does (touchScroll): one wheel
-// notch per SWIPE_ROWS_PER_NOTCH rows the finger travels (tmux scrolls
-// copy-mode five lines a notch, so the text keeps up with the finger). Each
-// notch is the desktop wheel's own event, so every harness scrolls its own
-// way. A swipe starts once the finger has moved SWIPE_START_PX, mostly up or
-// down. Let go while moving and it coasts, slowing by SWIPE_DECAY each frame
-// until slower than SWIPE_STOP px/ms.
+// A one-finger swipe scrolls as a mouse wheel does (touchScroll), sending
+// the notches that move the content as far as the finger went. Each notch is
+// the desktop wheel's own event, so every harness scrolls its own way, and
+// how far a notch goes is the harness's (swipeWheel):
+//   - 'tmux': one notch per SWIPE_ROWS_PER_NOTCH rows; tmux scrolls copy-mode
+//     five lines a notch, and the harnesses not measured yet keep that;
+//   - 'claude': Claude Code's fullscreen view, one line a notch with its own
+//     wheel acceleration on close notches (claude-wheel.js), so a notch is
+//     sent once the finger has gone as many rows as it will scroll.
+// A swipe starts once the finger has moved SWIPE_START_PX, mostly up or
+// down. Let go while moving (faster than SWIPE_FLING px/ms over the last
+// SWIPE_VELOCITY_MS, after at least SWIPE_FLING_MIN_ROWS rows) and it coasts
+// as a native list does, slowing by SWIPE_FRICTION each ms until slower than
+// SWIPE_STOP px/ms.
 const SWIPE_ROWS_PER_NOTCH = 5;
 const SWIPE_START_PX = 10;
 const SWIPE_FLING = 0.3;
+const SWIPE_FLING_MIN_ROWS = 2;
+const SWIPE_VELOCITY_MS = 100;
+const SWIPE_MAX_SPEED = 6;
 // A finger that rested this long before lifting does not fling.
 const SWIPE_REST_MS = 100;
 const SWIPE_STOP = 0.05;
-const SWIPE_DECAY = 0.95;
-const SWIPE_MAX_NOTCHES_PER_FRAME = 4;
+// UIScrollView's normal deceleration rate, per ms.
+const SWIPE_FRICTION = 0.998;
+const SWIPE_MAX_NOTCHES_PER_FRAME = { tmux: 4, claude: 12 };
+// Past Claude Code's acceleration window (40ms), its next notch is one line.
+const SWIPE_CLAUDE_FLUSH_MS = 50;
 // A mouse report is how xterm hands the session a wheel notch; it is not
 // typing, and must not bring a scrolled-back view back to live.
 const MOUSE_REPORT = /^\x1b\[(<|M)/;
@@ -321,6 +335,10 @@ export function mountTerminalWidget({
   // harness that scrolls its own history (Claude Code), which takes keys
   // while scrolled back, as on the desktop.
   wheelCopyMode = true,
+  // swipeWheel: how far the session scrolls a notch, so the swipe moves the
+  // content with the finger: 'claude' (Claude Code's fullscreen view) or
+  // 'tmux' (five lines a notch).
+  swipeWheel = 'tmux',
   onScrollBackChange = () => {},
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
@@ -522,6 +540,7 @@ export function mountTerminalWidget({
   // arrow keys, as the desktop wheel does.
   let swipe = null;
   let coast = null;
+  let flush = null;
   // Where tmux's wheel copy-mode is, in notches, while notches are wheel
   // reports and the session's wheel scrolls copy-mode (wheelCopyMode), where
   // keys would go to copy-mode instead of the session: scrolledBack is how
@@ -531,7 +550,13 @@ export function mountTerminalWidget({
   let scrolledBack = 0;
   let inCopyMode = false;
   let dispatching = false;
+  // Claude Code's wheel handler, as far as this terminal's notches have
+  // driven it (claude-wheel.js): its acceleration lives across swipes.
+  let claudeWheel = claudeWheelState();
   const mouseTaken = () => (term.modes?.mouseTrackingMode || 'none') !== 'none';
+  // Claude Code scrolls its own view only while it takes the mouse (its
+  // fullscreen renderer); otherwise a notch is an arrow key.
+  const wheelModel = () => (swipeWheel === 'claude' && mouseTaken() ? 'claude' : 'tmux');
   const canSend = () => !!ws && ws.readyState === WebSocketCtor.OPEN && (!remote || remoteState.mode === 'interactive');
   function rowHeight() {
     const screen = host.getElementsByClassName?.('xterm-screen')[0];
@@ -578,18 +603,50 @@ export function mountTerminalWidget({
   function travel(px) {
     if (!swipe) return;
     swipe.rest += px;
+    const model = wheelModel();
+    const cap = SWIPE_MAX_NOTCHES_PER_FRAME[model];
+    if (model === 'claude') { travelClaude(cap); return; }
     const step = notchPx();
     let sent = 0;
-    while (Math.abs(swipe.rest) >= step && sent < SWIPE_MAX_NOTCHES_PER_FRAME) {
+    while (Math.abs(swipe.rest) >= step && sent < cap) {
       const older = swipe.rest > 0;
       if (!notch(older)) { swipe.rest = 0; return; }
       swipe.rest += older ? -step : step;
       sent += 1;
     }
   }
+  // travelClaude sends a notch once the finger has gone as many rows as
+  // Claude Code will scroll for it. A reversal's first notch scrolls nothing
+  // and takes a full row the new way, so a wobble does not flip Claude's
+  // direction back and forth. Rows held back because Claude's acceleration
+  // would scroll the next notch further than the finger went are sent once
+  // it has worn off (SWIPE_CLAUDE_FLUSH_MS), so the view ends where the
+  // finger did even if it stops there, or lifts.
+  function travelClaude(cap, s = swipe) {
+    stopFlush();
+    const row = rowHeight();
+    for (let sent = 0; sent < cap && Math.abs(s.rest) >= row; sent += 1) {
+      const older = s.rest > 0;
+      const step = claudeWheelStep(claudeWheel, older ? -1 : 1, now());
+      if (Math.abs(s.rest) < step.lines * row) {
+        if (typeof setTimeoutImpl === 'function') {
+          flush = setTimeoutImpl(() => { flush = null; if (!disposed) travelClaude(cap, s); }, SWIPE_CLAUDE_FLUSH_MS);
+        }
+        return;
+      }
+      if (!notch(older)) { s.rest = 0; return; }
+      claudeWheel = step.state;
+      s.rest += (older ? -1 : 1) * step.lines * row;
+    }
+  }
+  function stopFlush() {
+    if (flush !== null) clearTimeoutImpl(flush);
+    flush = null;
+  }
   function stopCoasting() {
     if (coast !== null && typeof cancelAnimationFrameImpl === 'function') cancelAnimationFrameImpl(coast);
     coast = null;
+    stopFlush();
   }
   function coastFrom(velocity, at) {
     if (typeof requestAnimationFrameImpl !== 'function') return;
@@ -602,7 +659,7 @@ export function mountTerminalWidget({
       const dt = Math.max(1, time - last);
       last = time;
       travel(speed * dt);
-      speed *= SWIPE_DECAY ** (dt / 16);
+      speed *= SWIPE_FRICTION ** dt;
       if (Math.abs(speed) >= SWIPE_STOP) coast = requestAnimationFrameImpl(frame);
     };
     coast = requestAnimationFrameImpl(frame);
@@ -611,28 +668,47 @@ export function mountTerminalWidget({
     stopCoasting();
     if (event.touches?.length !== 1) { swipe = null; return; }
     const { clientX: x, clientY: y } = event.touches[0];
-    swipe = { x0: x, y0: y, y, at: now(), speed: 0, rest: 0, moving: false };
+    swipe = { x0: x, y0: y, y, at: now(), rest: 0, moving: false, samples: [] };
+  }
+  // releaseSpeed is the finger's speed over about its last SWIPE_VELOCITY_MS
+  // (swipeMove keeps those moves and the one before them), in px/ms, so one
+  // jittery last move neither kills nor doubles a flick.
+  function releaseSpeed() {
+    const last = swipe.samples.at(-1);
+    const first = swipe.samples[0];
+    if (!last || first === last) return 0;
+    const speed = (last.y - first.y) / Math.max(1, last.t - first.t);
+    return Math.max(-SWIPE_MAX_SPEED, Math.min(SWIPE_MAX_SPEED, speed));
   }
   function swipeMove(event) {
     if (!swipe || event.touches?.length !== 1) return;
     const { clientX: x, clientY: y } = event.touches[0];
     if (!swipe.moving) {
       const dy = y - swipe.y0;
-      if (Math.abs(dy) < SWIPE_START_PX || Math.abs(dy) < Math.abs(x - swipe.x0)) return;
+      if (Math.abs(dy) < SWIPE_START_PX || Math.abs(dy) < Math.abs(x - swipe.x0)) {
+        // Where the finger was just before the swipe started, for its speed:
+        // a flick after a rest is as fast as the flick, not the rest.
+        swipe.before = { t: now(), y };
+        return;
+      }
       swipe.moving = true;
     }
     event.preventDefault();
     const time = now();
     const dy = y - swipe.y;
-    swipe.speed = dy / Math.max(1, time - swipe.at);
+    if (!swipe.samples.length) swipe.samples.push(swipe.before || { t: swipe.at, y: swipe.y });
+    swipe.samples.push({ t: time, y });
+    while (swipe.samples.length > 2 && time - swipe.samples[1].t > SWIPE_VELOCITY_MS) swipe.samples.shift();
     swipe.y = y;
     swipe.at = time;
     travel(dy);
   }
   function swipeEnd(event) {
     if (!swipe || (event.touches?.length ?? 0) > 0) return;
-    const fling = swipe.moving && Math.abs(swipe.speed) >= SWIPE_FLING && now() - swipe.at < SWIPE_REST_MS;
-    if (fling) coastFrom(swipe.speed, now());
+    const speed = releaseSpeed();
+    const fling = swipe.moving && Math.abs(speed) >= SWIPE_FLING && now() - swipe.at < SWIPE_REST_MS &&
+      Math.abs(swipe.y - swipe.y0) >= SWIPE_FLING_MIN_ROWS * rowHeight();
+    if (fling) coastFrom(speed, now());
     else swipe = null;
   }
   // toLive scrolls back down to live: tmux's wheel copy-mode leaves itself

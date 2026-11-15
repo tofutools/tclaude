@@ -84,6 +84,43 @@ test('over Claude Code a swipe is the desktop wheel: its own scrolling, no ↓ L
   expect(pane.sent.join('')).not.toContain('"scroll"');
 });
 
+// Claude Code scrolls a line a notch, faster on close notches (claude-wheel.js,
+// measured on Claude Code 2.1.323): the swipe sends what moves its view as far
+// as the finger went, where it used to send a notch per five rows.
+test('over Claude Code a swipe moves its view as far as the finger went', async ({ page }) => {
+  const { claudeWheelState, claudeWheelStep } = await import('../../../../pkg/claude/agentd/dashboard/js/claude-wheel.js');
+  // When each notch goes, on the page's own clock (the swipe dispatches each
+  // as a wheel event on xterm): the routed socket's arrival times here are
+  // the test harness's, not the swipe's.
+  await page.addInitScript(() => {
+    window.__wheelUp = [];
+    document.addEventListener('wheel', (event) => { if (event.deltaY < 0) window.__wheelUp.push(performance.now()); }, true);
+  });
+  const { pane } = await openPane(page, 'claude');
+  const row = await page.evaluate(() => {
+    const screen = document.querySelector('.phone-term-host .xterm-screen');
+    const rows = document.querySelectorAll('.phone-term-host .xterm-rows > div').length;
+    return screen.getBoundingClientRect().height / rows;
+  });
+  await swipe(page, 60, 360);
+  await settled(pane);
+  const stamped = await page.evaluate(() => window.__wheelUp);
+  let state = claudeWheelState();
+  let lines = 0;
+  for (const at of stamped) {
+    const step = claudeWheelStep(state, -1, at);
+    state = step.state;
+    lines += step.lines;
+  }
+  const rows = 300 / row;
+  const measured = `${rows.toFixed(1)} rows (${row.toFixed(1)}px) of finger: ${stamped.length} notches, ${lines} lines of view`;
+  test.info().annotations.push({ type: 'measured', description: measured });
+  console.log(measured);
+  expect(stamped.length, `notches for ${rows.toFixed(1)} rows`).toBeGreaterThan(rows / 3);
+  expect(lines, measured).toBeGreaterThanOrEqual(Math.floor(rows));
+  expect(lines, measured).toBeLessThanOrEqual(Math.ceil(rows));
+});
+
 test('over Codex a swipe scrolls tmux copy-mode: ↓ Live shows, and a key scrolls back down first', async ({ page }) => {
   const { pane, terminal, live } = await openPane(page, 'codex');
   await swipe(page, 60, 360);
