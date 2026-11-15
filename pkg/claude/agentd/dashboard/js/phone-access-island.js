@@ -4,7 +4,9 @@
 // operator, answered with the same card as the Now view, and the sudo grants
 // running), Sudo (time-bounded grants, revoked here), Agents (the per-agent
 // overrides, read-only) and Slugs (the registry, searched rather than listed
-// in full). "+ Grant" in the top bar grants sudo from any of them. It runs on the desktop island's state and actions (access-state.js,
+// in full). "+ Grant" in the top bar grants sudo from any of them, on the
+// phone's own two-step page (phone-grant.js). It runs on the desktop island's
+// state and actions (access-state.js,
 // access-actions.js); Agents, Sudo and Slugs are that state's subtabs and keep
 // their /access/<subtab> routes. Requests is the phone's own and the default
 // while any request waits.
@@ -16,6 +18,8 @@ import { fmtRemaining } from './access-model.js';
 import { companionAgents, pendingAccess, pendingApprovals } from './companion-model.js';
 import { relTime, shortAgentId } from './helpers.js';
 import { PhoneApprovalCard } from './phone-approval.js';
+import { PhoneGrant } from './phone-grant.js';
+import { createMessageAccessDialogActions } from './message-access-dialog-actions.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
 import { usePhoneBar } from './phone-page.js';
 import { Section } from './phone-ui.js';
@@ -143,7 +147,11 @@ function Slugs({ state, current }) {
 // PhoneAccessApp renders the Access tab. `snapshot` is the dashboard snapshot
 // signal, for the access requests; `openInMail` opens a request (or all of
 // them) in Mail, as the Now view does.
-export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThis.fetch, notify = () => {}, openInMail = () => {} }) {
+export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThis.fetch, notify = () => {}, openInMail = () => {}, grantActions = null, refresh = async () => {} }) {
+  // + Grant's page is up (phone-grant.js); it covers the views until it is
+  // left or a grant goes through.
+  const [granting, setGranting] = useState(false);
+  const [grantWith] = useState(() => grantActions || createMessageAccessDialogActions({ notify, refresh }));
   const current = state.view.value;
   const data = snapshot.value;
   const waiting = data ? pendingAccess(data).length : 0;
@@ -181,7 +189,7 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
   // "+ Grant" sits in the top bar, as in the mock, whichever view is open,
   // once the snapshot it picks an agent from has landed.
   usePhoneBar({ tab: 'access', actions: current.snapshotLoaded
-    ? [{ key: 'grant', text: '+ Grant', label: 'Grant sudo', onClick: () => actions.openGrant() }] : [] });
+    ? [{ key: 'grant', text: '+ Grant', label: 'Grant sudo', onClick: () => setGranting(true) }] : [] });
   const items = VIEWS.map((view) => ({
     key: view.key,
     label: view.key === 'requests' && waiting > 0
@@ -193,6 +201,10 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
     class: view.key === 'requests' ? 'access-requests-tab' : 'access-subtab',
     attrs: view.key === 'requests' ? undefined : { 'data-subtab': view.key },
   }));
+  if (granting && current.snapshotLoaded) {
+    return html`<${PhoneGrant} snapshot=${data} grantActions=${grantWith} close=${() => setGranting(false)}
+      granted=${() => { setGranting(false); select('sudo'); }} />`;
+  }
   return html`<div class="phone-access">
     <${Tabs} class="phone-chips phone-access-chips" label="Access views" value=${shown} onSelect=${select} items=${items} />
     ${!current.snapshotLoaded
@@ -206,8 +218,8 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
   </div>`;
 }
 
-export function mountPhoneAccessIsland({ host, state, actions, snapshot, notify, openInMail, registerCleanup }) {
+export function mountPhoneAccessIsland({ host, state, actions, snapshot, notify, openInMail, refresh, registerCleanup }) {
   state.initialize();
-  render(html`<${PhoneAccessApp} state=${state} actions=${actions} snapshot=${snapshot} notify=${notify} openInMail=${openInMail} />`, host);
+  render(html`<${PhoneAccessApp} state=${state} actions=${actions} snapshot=${snapshot} notify=${notify} openInMail=${openInMail} refresh=${refresh} />`, host);
   registerCleanup(() => render(null, host));
 }
