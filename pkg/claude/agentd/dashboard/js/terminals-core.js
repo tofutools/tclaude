@@ -179,7 +179,7 @@ const SWIPE_CLAUDE_GAP_MARGIN_MS = 10;
 // finger by the rows not yet drawn (followSwipe), up to this many rows, and
 // lets go of an offset whose redraw has not come back after
 // SWIPE_FOLLOW_GIVE_UP_MS.
-const SWIPE_FOLLOW_MAX_ROWS = 3;
+const SWIPE_FOLLOW_MAX_ROWS = 5;
 const SWIPE_FOLLOW_GIVE_UP_MS = 1000;
 // A mouse report is how xterm hands the session a wheel notch; it is not
 // typing, and must not bring a scrolled-back view back to live.

@@ -43,7 +43,8 @@ function throttle(target, link) {
 // drag moves one finger over the terminal by dy px, a move every 16ms (a
 // frame), at speed px per move, and returns what the screen did, frame by
 // frame: when it first moved, when the first redraw landed, and the longest
-// stretch without visible movement while the finger moved.
+// stretch without visible movement while the finger moved (from its first
+// move, so the first visible move counts as a still stretch too).
 async function drag(page, { dy, speed }) {
   return page.evaluate(async ({ dy, speed }) => {
     const host = document.querySelector('.phone-term-host');
@@ -62,6 +63,7 @@ async function drag(page, { dy, speed }) {
     const seen = { firstMove: null, firstRedraw: null, redraws: 0, longestStill: 0, moves: 0 };
     let start = null;
     let lastChange = null;
+    let dragging = true;
     const look = () => {
       const now = performance.now();
       const nextText = rowsText();
@@ -70,7 +72,7 @@ async function drag(page, { dy, speed }) {
       if (redraw) { seen.redraws += 1; if (seen.firstRedraw === null) seen.firstRedraw = now - start; }
       if (redraw || nextShift !== shift) {
         if (seen.firstMove === null) seen.firstMove = now - start;
-        if (lastChange !== null && seen.moves) seen.longestStill = Math.max(seen.longestStill, now - lastChange);
+        if (dragging) seen.longestStill = Math.max(seen.longestStill, now - lastChange);
         lastChange = now;
       }
       text = nextText;
@@ -86,6 +88,9 @@ async function drag(page, { dy, speed }) {
       await frame();
       look();
     }
+    // How long the screen had been still when the finger stopped counts too.
+    seen.longestStill = Math.max(seen.longestStill, performance.now() - lastChange);
+    dragging = false;
     // Rest, then lift: no fling. Keep watching while the last redraws land.
     const end = performance.now() + 1500;
     while (performance.now() < end) { await frame(); look(); }
@@ -113,6 +118,15 @@ test('a phone swipe over a Claude Code like view on Fast 4G', async ({ page, con
   await expect(page.locator('.phone-term-host .xterm-rows')).toContainText('⏺', { timeout: 60_000 });
   await page.waitForTimeout(1000); // the attach's own redraws settle
 
+  // SHOTS=<dir>: the screen a round trip into a medium drag, and once it rests.
+  if (process.env.SHOTS) {
+    const path = await import('node:path');
+    const dragging = drag(page, { dy: 240, speed: 6 });
+    await page.waitForTimeout(170);
+    await page.screenshot({ path: path.join(process.env.SHOTS, 'swipe-mid-drag.png') });
+    await dragging;
+    await page.screenshot({ path: path.join(process.env.SHOTS, 'swipe-rest.png') });
+  }
   const runs = [];
   for (const [name, dy, speed] of [['slow', 160, 2], ['medium', 240, 6], ['fast', 320, 16]]) {
     for (let i = 0; i < 3; i += 1) {
