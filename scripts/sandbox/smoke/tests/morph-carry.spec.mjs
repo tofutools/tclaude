@@ -14,7 +14,7 @@ test('the carry-over section previews overrides and warns without blocking', asy
   await page.goto('/groups');
   await page.evaluate(async () => {
     const { h, render } = await import('preact');
-    const { LaunchTargetDialog } = await import('/static/js/launch-target-dialog.js');
+    const { LaunchTargetDialog } = await import(`${document.querySelector('script[type="module"][src$="/js/dashboard.js"]').src.replace(/js\/dashboard\.js$/, '')}js/launch-target-dialog.js`);
     const hist = (b) => {
       const all = b.history_budget === 'all';
       const keep = b.history_keep?.tool_output;

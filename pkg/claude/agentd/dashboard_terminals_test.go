@@ -101,7 +101,7 @@ func TestDashboardTerminals_SoloRequiresExactValue(t *testing.T) {
 			t.Errorf("GET %s: status %d, want 200", path, rec.Code)
 			continue
 		}
-		if strings.Contains(rec.Body.String(), `/static/js/terminals.js`) {
+		if strings.Contains(unversionedStatic(rec.Body.String()), `/static/js/terminals.js`) {
 			t.Errorf("GET %s must not serve the standalone popout page", path)
 		}
 	}
@@ -126,7 +126,7 @@ func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
-	body := rec.Body.String()
+	body := unversionedStatic(rec.Body.String())
 	for _, needle := range []string{
 		`id="terminals-root"`,
 		`id="message-access-dialog-root"`,
@@ -158,8 +158,8 @@ func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 // out of the ordinary dashboard response. The standalone popout is already a
 // terminal surface, so it intentionally retains the eager script tag.
 func TestDashboardTerminals_XtermCoreIsLazy(t *testing.T) {
-	dashboard := string(dashboardIndexHTML)
-	popout := string(terminalsPageHTML)
+	dashboard := unversionedStatic(string(dashboardIndexHTML))
+	popout := unversionedStatic(string(terminalsPageHTML))
 	const core = `<script src="/static/third_party/xterm/xterm.min.js"></script>`
 	if strings.Contains(dashboard, core) {
 		t.Error("dashboard must not fetch xterm core before a terminal is requested")
@@ -168,7 +168,7 @@ func TestDashboardTerminals_XtermCoreIsLazy(t *testing.T) {
 		t.Error("standalone terminals page must load xterm core immediately")
 	}
 	loader := string(mustReadFS(dashboardAssetsFS, "js/xterm-loader.js"))
-	for _, needle := range []string{"loadXtermRuntime", "/static/third_party/xterm/xterm.min.js", "runtimePromise"} {
+	for _, needle := range []string{"loadXtermRuntime", "../third_party/xterm/xterm.min.js', import.meta.url", "runtimePromise"} {
 		if !strings.Contains(loader, needle) {
 			t.Errorf("lazy xterm loader missing %q", needle)
 		}
@@ -198,7 +198,7 @@ func TestDashboardTerminals_PlainServesSPA(t *testing.T) {
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
-	body := rec.Body.String()
+	body := unversionedStatic(rec.Body.String())
 	if !strings.Contains(body, `/static/js/dashboard.js`) || !strings.Contains(body, `id="tab-terminals"`) {
 		t.Error("plain /terminals must serve the dashboard SPA (so the Terminals tab restores)")
 	}
@@ -236,7 +236,7 @@ func TestDashboardTerminals_DeepLinkServesSPA(t *testing.T) {
 			t.Errorf("GET %s: status %d, want 200; body=%s", path, rec.Code, rec.Body.String())
 			continue
 		}
-		body := rec.Body.String()
+		body := unversionedStatic(rec.Body.String())
 		if !strings.Contains(body, `/static/js/dashboard.js`) || !strings.Contains(body, `id="tab-terminals"`) {
 			t.Errorf("GET %s must serve the dashboard SPA", path)
 		}
@@ -250,7 +250,7 @@ func TestDashboardTerminals_DeepLinkServesSPA(t *testing.T) {
 	r.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, r)
-	if !strings.Contains(rec.Body.String(), `/static/js/terminals.js`) {
+	if !strings.Contains(unversionedStatic(rec.Body.String()), `/static/js/terminals.js`) {
 		t.Error("/terminals?solo=1 must still serve the standalone popout page")
 	}
 }
@@ -274,7 +274,7 @@ func TestDashboardTerminals_RemotePreAuthed(t *testing.T) {
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
-	if !strings.Contains(rec.Body.String(), `/static/js/terminals.js`) {
+	if !strings.Contains(unversionedStatic(rec.Body.String()), `/static/js/terminals.js`) {
 		t.Error("remote pre-authed /terminals?solo=1 must serve the popout page")
 	}
 }
@@ -310,7 +310,7 @@ func TestDashboardTerminals_RemotePreAuthedPlainServesSPA(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("remote pre-authed plain /terminals GET: status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `/static/js/dashboard.js`) {
+	if !strings.Contains(unversionedStatic(rec.Body.String()), `/static/js/dashboard.js`) {
 		t.Error("remote pre-authed plain /terminals must serve the dashboard SPA")
 	}
 }

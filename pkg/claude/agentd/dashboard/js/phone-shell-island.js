@@ -43,6 +43,8 @@ import { MoreMenu, PowerMenu } from './phone-more.js';
 export { NowView, BoardView };
 
 const html = htm.bind(h);
+// Relative to this module, so it shares the page's versioned asset prefix.
+const LOGO_SRC = new URL('../tclaude-icon.svg', import.meta.url).href;
 
 // createPhoneShellState holds the shell's own view ('now', 'board' or null
 // for a tab). A fresh load of the bare dashboard URL lands on Now; a deep
@@ -252,7 +254,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
           disabled=${!!act.disabled} aria-disabled=${act.muted ? 'true' : undefined} onClick=${act.onClick}>${act.icon || act.label}</button>`)}`
       : html`${desktopOther
           ? html`<button data-ui-exempt type="button" class="phone-bar-back" aria-label=${`Back: ${desktopOther.label}`} onClick=${desktopOther.onClick}>‹</button>`
-          : html`<img class="phone-bar-logo" src="/static/tclaude-icon.svg" alt="" />`}
+          : html`<img class="phone-bar-logo" src=${LOGO_SRC} alt="" />`}
         <h1 class="phone-bar-title">${added?.menu
           ? html`<button data-ui-exempt type="button" class="phone-bar-title-btn" aria-haspopup="dialog"
               aria-label=${`${title}${added.menu.sub ? ` ${added.menu.sub}` : ''}, ${added.menu.label || 'pick'}`} onClick=${added.menu.onClick}>

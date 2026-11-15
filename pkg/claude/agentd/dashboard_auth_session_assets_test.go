@@ -6,7 +6,7 @@ import (
 )
 
 func TestDashboardAuthSessionWrapperLoadsBeforeApp(t *testing.T) {
-	html := string(dashboardIndexHTML)
+	html := unversionedStatic(string(dashboardIndexHTML))
 	wrapper := `<script src="/static/js/auth-session.js"></script>`
 	app := `<script type="module" src="/static/js/dashboard.js"></script>`
 	wrapperAt, appAt := strings.Index(html, wrapper), strings.Index(html, app)
@@ -29,7 +29,7 @@ func TestDashboardAuthSessionWrapperLoadsBeforeApp(t *testing.T) {
 		}
 	}
 
-	terminalsHTML := string(terminalsPageHTML)
+	terminalsHTML := unversionedStatic(string(terminalsPageHTML))
 	termApp := `<script type="module" src="/static/js/terminals.js"></script>`
 	if wrapperAt, appAt := strings.Index(terminalsHTML, wrapper), strings.Index(terminalsHTML, termApp); wrapperAt < 0 || appAt < 0 || wrapperAt >= appAt {
 		t.Fatal("standalone terminals must load auth-session before its module graph")

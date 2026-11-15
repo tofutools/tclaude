@@ -85,7 +85,7 @@ const EMPTY_SELECTOR = '.empty, .ui-empty, .ui-empty-block';
 async function routes(page) {
   await page.goto('/');
   return page.evaluate(async ({ skip, fx, peer }) => {
-    const nav = await import('/static/js/nav-history-core.js');
+    const nav = await import(`${document.querySelector('script[type="module"][src$="/js/dashboard.js"]').src.replace(/js\/dashboard\.js$/, '')}js/nav-history-core.js`);
     const out = [];
     for (const tab of nav.KNOWN_TABS) {
       if (skip.includes(tab)) continue;

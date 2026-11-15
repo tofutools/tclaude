@@ -6,7 +6,7 @@ import (
 )
 
 func TestStandaloneTerminalShell_PreactOwnsStableRoot(t *testing.T) {
-	html := string(terminalsPageHTML)
+	html := unversionedStatic(string(terminalsPageHTML))
 	for _, want := range []string{
 		`<body class="solo">`,
 		`<div id="terminals-root"></div>`,

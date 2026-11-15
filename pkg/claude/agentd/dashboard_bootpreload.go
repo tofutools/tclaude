@@ -22,10 +22,12 @@ import (
 // is now known and finite — the boot curtain can show an honest N-of-M progress
 // bar (see the inline counter in dashboard.html) instead of an indefinite label.
 //
-// Only STATIC imports are followed: dynamically imported (import(...)) island
-// modules load lazily per tab and must stay off the boot path. Paths that don't
-// resolve to a real embedded file (a "from '...'" that is actually inside a
-// string or comment) are dropped, so the emitted set never 404s.
+// Only STATIC imports are followed, with one exception: the islands every boot
+// awaits in turn before anything else mounts (bootIslandDescriptors) load by
+// dynamic import(), and their graphs are added as further roots. Other islands'
+// dynamic imports load lazily per tab and stay off the boot path. Paths that
+// don't resolve to a real embedded file (a "from '...'" that is actually inside
+// a string or comment) are dropped, so the emitted set never 404s.
 
 // bootStaticImportRe matches a static relative import/export specifier:
 //
@@ -58,6 +60,46 @@ var bootVendorPreload = []string{
 // bootPreloadEntry is the entry module the SPA's <script type="module"> loads.
 const bootPreloadEntry = "js/dashboard.js"
 
+// bootIslandLoader is the module that defines the island descriptors.
+const bootIslandLoader = "js/preact-loader.js"
+
+// bootIslandDescriptors names the island descriptors (in bootIslandLoader)
+// that every boot awaits one after the other before the other features mount:
+// the shell ("Starting shell…") and the desktop Jobs island. Their load()
+// bodies reach their modules by dynamic import(), so without preloading them
+// each boot walks their graphs as a discover→parse→fetch waterfall.
+var bootIslandDescriptors = []string{"shellDescriptor", "jobsDescriptor"}
+
+// bootDynamicImportRe matches a dynamic import of a relative module.
+var bootDynamicImportRe = regexp.MustCompile(`\bimport\(\s*['"](\.\.?\/[^'"]+)['"]\s*\)`)
+
+// bootIslandRoots returns the modules the named descriptors dynamically
+// import: the text from "const <name> = createIslandDescriptor(" to the next
+// descriptor (or the end of the file).
+func bootIslandRoots(fsys fs.FS) []string {
+	src, err := fs.ReadFile(fsys, bootIslandLoader)
+	if err != nil {
+		return nil
+	}
+	text := string(src)
+	var roots []string
+	for _, name := range bootIslandDescriptors {
+		start := strings.Index(text, "const "+name+" = createIslandDescriptor(")
+		if start < 0 {
+			continue
+		}
+		const call = "createIslandDescriptor("
+		body := text[start+strings.Index(text[start:], call)+len(call):]
+		if next := strings.Index(body, call); next >= 0 {
+			body = body[:next]
+		}
+		for _, m := range bootDynamicImportRe.FindAllStringSubmatch(body, -1) {
+			roots = append(roots, path.Join(path.Dir(bootIslandLoader), m[1]))
+		}
+	}
+	return roots
+}
+
 // bootPreloadModules returns the ordered list of embedded asset paths (relative
 // to dashboardAssetsFS, e.g. "js/foo.js") to modulepreload on boot: the static
 // import graph rooted at dashboard.js plus the vendor import-map targets. The
@@ -66,8 +108,10 @@ const bootPreloadEntry = "js/dashboard.js"
 func bootPreloadModules(fsys fs.FS) []string {
 	visited := map[string]bool{}
 	var stack []string
-	if _, err := fs.ReadFile(fsys, bootPreloadEntry); err == nil {
-		stack = append(stack, bootPreloadEntry)
+	for _, root := range append([]string{bootPreloadEntry}, bootIslandRoots(fsys)...) {
+		if _, err := fs.ReadFile(fsys, root); err == nil {
+			stack = append(stack, root)
+		}
 	}
 	for len(stack) > 0 {
 		cur := stack[len(stack)-1]

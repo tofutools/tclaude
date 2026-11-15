@@ -3,6 +3,7 @@ package agentd
 import (
 	"io/fs"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -51,7 +52,8 @@ func TestInjectBootPreload_EmitsLinksAndTotal(t *testing.T) {
 	}
 	mods := bootPreloadModules(dashboardAssetsFS)
 
-	linkRe := regexp.MustCompile(`<link rel="modulepreload" href="/static/([^"]+)">`)
+	// The served page names the versioned prefix (dashboard_static.go).
+	linkRe := regexp.MustCompile(`<link rel="modulepreload" href="` + regexp.QuoteMeta(dashboardStaticBase) + `([^"]+)">`)
 	links := linkRe.FindAllStringSubmatch(out, -1)
 	if len(links) != len(mods) {
 		t.Fatalf("emitted %d modulepreload links, expected %d", len(links), len(mods))
@@ -110,4 +112,25 @@ func TestInjectBootPreload_PanicsWithoutMarker(t *testing.T) {
 		}
 	}()
 	injectBootPreload([]byte("<html><head></head><body></body></html>"), dashboardAssetsFS)
+}
+
+// TestBootPreloadCoversTheBootIslands: the islands every boot awaits in turn
+// load their modules by dynamic import(); their graphs are in the preload set,
+// or each boot walks them as a waterfall ("Starting shell…").
+func TestBootPreloadCoversTheBootIslands(t *testing.T) {
+	roots := bootIslandRoots(dashboardAssetsFS)
+	for _, want := range []string{"js/shell-island.js", "js/palette-island.js", "js/jobs-island.js"} {
+		if !slices.Contains(roots, want) {
+			t.Errorf("boot island roots %v miss %s: is a descriptor in bootIslandDescriptors renamed?", roots, want)
+		}
+	}
+	if slices.Contains(roots, "js/plugins-state.js") {
+		t.Errorf("roots %v reach past the boot islands into the plugins descriptor", roots)
+	}
+	mods := bootPreloadModules(dashboardAssetsFS)
+	for _, root := range roots {
+		if !slices.Contains(mods, root) {
+			t.Errorf("preload set misses boot island module %s", root)
+		}
+	}
 }

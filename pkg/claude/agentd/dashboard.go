@@ -37,7 +37,7 @@ var dashboardAssetsFS fs.FS = dashboard.FS
 // modulepreload block + module-total for the boot progress bar, so the entry
 // import graph is fetched in parallel rather than as a discover-one-at-a-time
 // waterfall.
-var dashboardIndexHTML = injectAssetsVersion(injectBootPreload(mustReadFS(dashboardAssetsFS, "dashboard.html"), dashboardAssetsFS))
+var dashboardIndexHTML = versionStaticRefs(injectAssetsVersion(injectBootPreload(mustReadFS(dashboardAssetsFS, "dashboard.html"), dashboardAssetsFS)))
 
 func mustReadFS(fsys fs.FS, name string) []byte {
 	b, err := fs.ReadFile(fsys, name)
@@ -186,31 +186,6 @@ func dashboardProcessRoute(next http.HandlerFunc) http.HandlerFunc {
 		}
 		guarded.ServeHTTP(w, asDashboardHumanPeer(r))
 	}
-}
-
-// handleDashboardStatic serves the dashboard's static assets — the
-// stylesheet and the ES-module JS files — from the embedded dashboard/
-// directory, behind the same session-cookie gate as /api/*.
-//
-// The assets are versioned with the agentd binary (//go:embed) and an
-// embed.FS reports a zero modtime, so http.FileServerFS emits no
-// Last-Modified / ETag validators. Cache-Control: no-store keeps a
-// browser from running stale module JS after an agentd upgrade — on a
-// loopback-only tool the lack of caching costs nothing.
-func handleDashboardStatic() http.Handler {
-	files := http.StripPrefix("/static/", http.FileServerFS(dashboardAssetsFS))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !checkDashboardAuth(w, r) {
-			return
-		}
-		// No directory listings — only the named asset files are served.
-		if strings.HasSuffix(r.URL.Path, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		files.ServeHTTP(w, r)
-	})
 }
 
 // handleDashboardRoot serves the dashboard HTML behind a token-

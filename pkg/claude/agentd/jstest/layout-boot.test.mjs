@@ -23,7 +23,7 @@ function memoryStorage(initial = {}) {
   };
 }
 
-function boot({ device = LAPTOP, href = 'http://127.0.0.1:8123/messages', storage = memoryStorage(), userAgentData, brokenStorage = false } = {}) {
+function boot({ device = LAPTOP, href = 'http://127.0.0.1:8123/messages', storage = memoryStorage(), userAgentData, brokenStorage = false, scriptSrc } = {}) {
   const appended = [];
   const replaced = [];
   const dataset = {};
@@ -31,6 +31,7 @@ function boot({ device = LAPTOP, href = 'http://127.0.0.1:8123/messages', storag
     documentElement: { dataset },
     head: { appendChild: (node) => appended.push(node) },
     createElement: (tag) => ({ tagName: tag.toUpperCase() }),
+    currentScript: scriptSrc ? { src: scriptSrc } : null,
   };
   const window = {
     location: { href },
@@ -134,4 +135,9 @@ test('a desktop showing the phone layout is marked a preview; a phone is not', (
   assert.equal(preview.dataset.phonePreview, '', 'phone.css keeps the shell in a phone-wide column');
   assert.equal(boot({ device: IPHONE }).dataset.phonePreview, undefined);
   assert.equal(boot({ device: IPHONE, href: 'http://h/?layout=phone' }).dataset.phonePreview, undefined);
+});
+
+test('the phone sheets come from the same versioned prefix as the script', () => {
+  const { appended } = boot({ href: 'http://127.0.0.1:8123/?layout=phone', scriptSrc: 'http://127.0.0.1:8123/static/v-abc123/js/layout-boot.js' });
+  assert.equal(appended[1].href, 'http://127.0.0.1:8123/static/v-abc123/phone.css');
 });

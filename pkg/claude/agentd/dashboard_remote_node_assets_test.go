@@ -9,7 +9,7 @@ import (
 // captures it, and after auth-session.js so an expired session on a peer view
 // still reaches the sign-in redirect.
 func TestDashboardRemoteNodeRouterLoadsBeforeApp(t *testing.T) {
-	html := string(dashboardIndexHTML)
+	html := unversionedStatic(string(dashboardIndexHTML))
 	auth := strings.Index(html, `<script src="/static/js/auth-session.js"></script>`)
 	router := strings.Index(html, `<script src="/static/js/remote-node.js"></script>`)
 	app := strings.Index(html, `<script type="module" src="/static/js/dashboard.js"></script>`)

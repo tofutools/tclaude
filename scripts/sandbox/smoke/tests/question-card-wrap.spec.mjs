@@ -14,7 +14,7 @@ test('a long task title on a question card wraps inside the card', async ({ page
   await page.goto('/groups');
   await page.evaluate(async (title) => {
     const { h, render } = await import('preact');
-    const { QuestionCard } = await import('/static/js/groups-taskboard-answer.js');
+    const { QuestionCard } = await import(`${document.querySelector('script[type="module"][src$="/js/dashboard.js"]').src.replace(/js\/dashboard\.js$/, '')}js/groups-taskboard-answer.js`);
     const column = document.createElement('div');
     column.id = 'qc-probe';
     column.style.cssText = 'position:fixed;left:20px;top:80px;width:150px;z-index:99999;background:#0d1117;padding:6px';

@@ -4,7 +4,7 @@ import "net/http"
 
 // terminalsPageHTML is terminals.html, read once at init — the standalone
 // /terminals page handleDashboardTerminals serves.
-var terminalsPageHTML = mustReadFS(dashboardAssetsFS, "terminals.html")
+var terminalsPageHTML = versionStaticRefs(mustReadFS(dashboardAssetsFS, "terminals.html"))
 
 // handleDashboardTerminals serves the /terminals route, behind the same auth
 // gate as the dashboard root. It has two jobs, discriminated by the ?solo query:

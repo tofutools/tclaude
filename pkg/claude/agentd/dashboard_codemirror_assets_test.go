@@ -42,7 +42,7 @@ func TestDashboardCodeMirrorVendorAssets(t *testing.T) {
 // the boot path: it serves the task forms only, so a dashboard load must not
 // fetch it.
 func TestDashboardCodeMirrorImportMap(t *testing.T) {
-	html := string(dashboardIndexHTML)
+	html := unversionedStatic(string(dashboardIndexHTML))
 	const mapping = `"codemirror": "/static/third_party/codemirror/codemirror.esm.min.mjs"`
 	if !strings.Contains(html, mapping) {
 		t.Errorf("dashboard import map missing %s", mapping)
