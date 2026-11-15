@@ -71,10 +71,25 @@ test('Access: a deep link lands on Sudo, revoke asks first, and slugs are search
   await expect(page).toHaveURL(/\/access$/);
   await expect(views(page).getByRole('tab', { name: 'Requests' })).toHaveAttribute('aria-selected', 'true');
 
-  // + Grant in the top bar opens the sudo grant's agent picker.
+  // + Grant in the top bar opens the phone's grant page: the agent, then the
+  // permissions and limits; Grant stays off until one is picked.
   await page.locator('.phone-bar').getByRole('button', { name: 'Grant sudo' }).click();
-  await expect(page.getByText('Grant sudo to')).toBeVisible();
-  await expectNoSideScroll(page, 'the grant picker');
+  await expect(page.locator('.phone-bar-title')).toHaveText('Grant sudo');
+  await expectNoSideScroll(page, 'the grant page, step 1');
+  await page.locator('.phone-grant-agent', { hasText: 'checkout-ui' }).click();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Grant to checkout-ui');
+  await expect(page.locator('.phone-grant-warn')).toContainText('Sudo wins over an explicit Deny');
+  const submit = page.locator('.phone-grant-submit');
+  await expect(submit).toBeDisabled();
+  await page.getByRole('searchbox', { name: 'Filter permissions' }).fill('human.clipboard');
+  await page.locator('.phone-grant-row[data-slug="human.clipboard"]').click();
+  await page.getByRole('group', { name: 'Max uses' }).getByRole('button', { name: '3' }).click();
+  await expect(submit).toHaveText(/^Grant 1 · \d+ (min|h)( \d+ min)? · 3 uses$/);
+  await expect(submit).toBeInViewport();
+  await expectNoSideScroll(page, 'the grant page, step 2');
+  await submit.click();
+  await expect(page).toHaveURL(/\/access\/sudo$/);
+  await expect(page.locator('.phone-access-row', { hasText: 'human.clipboard' })).toContainText('3 of 3 uses left');
   expect(errors).toEqual([]);
 });
 
