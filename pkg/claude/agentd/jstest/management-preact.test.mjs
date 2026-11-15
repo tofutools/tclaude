@@ -1222,6 +1222,18 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   broken.network.allow[0].domain = 'https://example.com';
   broken.unix_sockets.allow[0].path_glob = 'relative/**/agent';
   assert.match(model.sandboxAccessDraftErrors(broken).join(' '), /scheme.*absolute.*\*\*/i);
+  // The daemon masks host bits, so an address inside a network would save as
+  // that network, or as no change: the editor says so.
+  const hostBits = (cidr) => model.sandboxAccessDraftErrors({
+    network: { baseline: 'deny', packs: [], deny_packs: [], allow: [{ cidr }], deny: [] },
+  });
+  assert.deepEqual(hostBits('192.168.1.42/24'), [
+    'Network allow row 1 CIDR 192.168.1.42/24 means the network 192.168.1.0/24: write that, or /32 for one address.',
+  ]);
+  assert.match(hostBits('2001:db8::1/64').join(' '), /means the network 2001:db8::\/64: write that, or \/128/);
+  assert.deepEqual(hostBits('192.168.1.0/24'), []);
+  assert.deepEqual(hostBits('192.168.1.42/32'), []);
+  assert.match(hostBits('10.0.0.0/33').join(' '), /CIDR is invalid/);
   assert.match(model.sandboxAccessDraftErrors({
     network: {
       baseline: 'deny', packs: ['net-local'], deny_packs: ['net-local'],

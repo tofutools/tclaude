@@ -1,4 +1,5 @@
 import { CODEX_BUILTIN_FILTERED_NETWORK_SHORT } from './sandbox-network-disclosure.js';
+import { cidrNetwork } from './cidr.js';
 
 const API = '/api/sandbox-profiles';
 
@@ -276,7 +277,17 @@ export function sandboxAccessDraftErrors(draft) {
     if (selectors !== 1) errors.push(`Network ${mode} row ${index + 1} must set exactly one selector.`);
     if (entry.host && dnsError(entry.host)) errors.push(`Network ${mode} row ${index + 1} host ${dnsError(entry.host)}.`);
     if (entry.domain && dnsError(entry.domain)) errors.push(`Network ${mode} row ${index + 1} domain ${dnsError(entry.domain)}.`);
-    if (entry.cidr && !/^([0-9a-f:.]+)\/\d{1,3}$/i.test(entry.cidr)) errors.push(`Network ${mode} row ${index + 1} CIDR is invalid.`);
+    if (entry.cidr) {
+      // The daemon stores a CIDR as its network (prefix.Masked()), so an
+      // address with host bits set would save as the network it sits in, or
+      // as no change at all ("No sandbox profile changes to save" on an edit
+      // that changed only host bits): say so here instead.
+      const cidr = cidrNetwork(entry.cidr);
+      if (!cidr) errors.push(`Network ${mode} row ${index + 1} CIDR is invalid.`);
+      else if (cidr.hostBits) {
+        errors.push(`Network ${mode} row ${index + 1} CIDR ${entry.cidr} means the network ${cidr.network}: write that, or /${cidr.single} for one address.`);
+      }
+    }
     const rawPorts = Array.isArray(entry.ports) ? entry.ports : String(entry.ports || '').split(',').filter((part) => part.trim());
     if (rawPorts.some((port) => !/^\d+$/.test(String(port).trim()) || Number(port) < 1 || Number(port) > 65535)) {
       errors.push(`Network ${mode} row ${index + 1} ports must be comma-separated values from 1 to 65535.`);
