@@ -25,7 +25,10 @@ import {
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
-import { collapseParamShorthand, setStepName, setStepText, setStepWho, stepListToView, stepText, stepWho, viewToStepList } from './process-step-list.js';
+import {
+  agentStepIDs, collapseParamShorthand, constraintFromValue, constraintValue, outputRef, setStepConstraint, setStepName, setStepOutputs,
+  setStepText, setStepWho, stepConstraint, stepListToView, stepOutputs, stepText, stepWho, viewToStepList,
+} from './process-step-list.js';
 import { openProcessDraft } from './process-draft-handoff.js';
 import {
   AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
@@ -50,6 +53,7 @@ function whoLine(node, fallbackInfo) {
   if (who.mode === 'agent') return agent(who.agent);
   if (who.mode === 'role') return agent(`any ${who.role}`);
   if (who.mode === 'anyone') return agent('anyone free');
+  if (who.mode === 'lead') return agent('the lead');
   if (who.mode === 'you') return 'you';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
   return agent('pick who');
@@ -124,17 +128,37 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
     onApply(updateStep(view, id, (s) => setStepWho(s, who)));
   };
   const label = { agent: 'What', you: 'Asks', command: 'Runs' }[kind];
+  const stepName = (stepID) => view.template.nodes[stepID]?.name || stepID;
+  // Which agent: the same as, or not the one of, another agent step.
+  const others = kind === 'agent' && stepWho(step).mode !== 'agent' ? agentStepIDs(view.template, id) : [];
+  const constraint = constraintValue(stepConstraint(step));
+  const constraintKnown = !constraint || others.some((other) => constraint === `same:${other}` || constraint === `different:${other}`);
+  const outputs = stepOutputs(step);
+  // What this step's text can read: the other steps' outputs.
+  const readable = Object.entries(view.template.nodes).filter(([other]) => other !== id)
+    .flatMap(([, other]) => other.captures || []);
   return html`<div class="gm-inspector" data-mini-inspector=${id} role="dialog" aria-label=${`Step ${node.name || id}`}
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <label class="gm-field"><span>Step</span><input type="text" data-mini-name value=${node.name || ''} placeholder=${id}
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepName(s, event.currentTarget.value)))} /></label>
     <label class="gm-field"><span>${label}</span><textarea rows="3" data-mini-text value=${text}
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepText(s, event.currentTarget.value)))}></textarea></label>
+    ${readable.length > 0 && kind !== 'command' && html`<p class="gq-dim gm-readable" data-mini-readable>Can use: ${readable.map((name, i) => html`${i > 0 && ', '}<code key=${name}>${outputRef(name)}</code>`)}</p>`}
     <div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} /></div>
+    ${others.length > 0 && html`<div class="gm-field" data-mini-constraint=${id}><span>Which agent</span><${Select} size="sm" aria-label="Which agent does this step"
+      value=${constraint} onChange=${(event) => onApply(updateStep(view, id, (s) => setStepConstraint(s, constraintFromValue(event.currentTarget.value))))}>
+      <option value="">whoever fits</option>
+      ${!constraintKnown && html`<option value=${constraint}>${constraint.startsWith('same:') ? `same as ${stepName(constraint.slice(5))}` : `not the agent of ${constraint.slice(10).split(',').map(stepName).join(', ')}`}</option>`}
+      <optgroup label="The same agent as">${others.map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>${stepName(other)}</option>`)}</optgroup>
+      <optgroup label="Not the agent of">${others.map((other) => html`<option key=${`different:${other}`} value=${`different:${other}`}>${stepName(other)}</option>`)}</optgroup>
+    <//></div>`}
     ${kind === 'agent' && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}
       label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}
+    ${kind === 'agent' && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><input type="text"
+      value=${outputs.join(', ')} placeholder="none (e.g. pr)" title="Names this step reports, which later steps read as {{ outputs.<name> }}"
+      onChange=${(event) => onApply(updateStep(view, id, (s) => setStepOutputs(s, event.currentTarget.value)))} /></label>`}
     <div class="gm-field"><span>${node.type === 'decision' ? 'Outcomes' : 'Then'}</span><div class="gm-outcomes">
       ${outcomes.map(({ outcome, to }) => html`<span key=${outcome} class="gm-outcome" data-mini-outcome=${outcome}>
         ${node.type === 'decision'

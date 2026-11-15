@@ -95,7 +95,7 @@ test('every performer field is declared for all three kinds or explicitly kind-s
   // The kind-specific sets the dialog spec names, pinned:
   const keysFor = (kind) => performerFieldsFor(kind).map((field) => field.key);
   assert.deepEqual(keysFor('human'), ['profile', 'ask', 'choices', 'choiceOutcomes', 'assignee', 'prompt', 'timeout']);
-  assert.deepEqual(keysFor('agent'), ['profile', 'assignee', 'role', 'anyone', 'spawn', 'fallback', 'prompt', 'model', 'effort', 'timeout']);
+  assert.deepEqual(keysFor('agent'), ['profile', 'assignee', 'role', 'anyone', 'lead', 'sameAs', 'differentFrom', 'spawn', 'fallback', 'prompt', 'model', 'effort', 'timeout']);
   assert.deepEqual(keysFor('program'), ['profile', 'run', 'args', 'timeout']);
 });
 
@@ -107,6 +107,12 @@ test('agent selectors and the fallback edit as their wire shapes', () => {
   assert.equal(performer.anyone, true);
   setPerformerField(performer, 'anyone', 'no');
   assert.ok(!('anyone' in performer));
+  setPerformerField(performer, 'lead', true);
+  setPerformerField(performer, 'sameAs', ' brief ');
+  setPerformerField(performer, 'differentFrom', 'build\nreview\n');
+  assert.deepEqual([performer.lead, performer.sameAs, performer.differentFrom], [true, 'brief', ['build', 'review']]);
+  setPerformerField(performer, 'differentFrom', '');
+  assert.ok(!('differentFrom' in performer));
   assert.throws(() => setFallbackField(performer, 'profile', 'p'), /pick a fallback action first/);
   setFallbackField(performer, 'action', 'spawn');
   setFallbackField(performer, 'profile', 'sonnet-dev');

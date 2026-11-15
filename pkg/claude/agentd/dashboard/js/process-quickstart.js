@@ -194,6 +194,7 @@ export function whoOptions(roster, { roles = null } = {}) {
     ...roster.map((m) => ({ value: `agent:${m.name}`, group: 'agent', label: m.name, detail: `${m.role || 'member'} · ${memberState(m)}` })),
     ...(roles?.length ? roles : groupRoles(roster)).map(({ role, count }) => ({ value: `role:${role}`, group: 'role', label: `any ${role}`, detail: `${count} in group` })),
     { value: 'anyone', group: 'role', label: 'anyone free in the group', detail: 'idle first, then the least busy' },
+    { value: 'lead', group: 'role', label: "the group's lead", detail: 'the member with role lead, else an owner' },
     { value: 'you', group: 'other', label: 'you (a question or sign-off)', detail: '' },
     { value: 'command', group: 'other', label: 'a command', detail: '' },
   ];
@@ -327,6 +328,11 @@ export function whoNow(step, roster, { fallback = null, defaultSpawnProfile = ''
     const member = matching.find((m) => !m.busy) || matching[0];
     if (member) return { label: member.name, detail: member.busy ? `${memberState(member)} (any ${who.role})` : `idle (any ${who.role})`, member };
     return nobody(`any ${who.role}`, 'nobody has the role');
+  }
+  if (who.mode === 'lead') {
+    const member = roster.find((m) => m.role.toLowerCase() === 'lead' && m.online);
+    return member ? { label: member.name, detail: "the group's lead", member }
+      : { label: "the group's lead", detail: 'an owner of the group, when no member has the role lead' };
   }
   if (who.mode === 'anyone') {
     const member = roster.find((m) => m.online && !m.busy) || roster.find((m) => m.online);

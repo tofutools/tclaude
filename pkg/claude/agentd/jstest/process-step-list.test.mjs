@@ -10,6 +10,7 @@ import {
   setStepChoices, setStepLinks, setStepText, setStepWho, stepListFlow, stepListParams,
   stepListToView, stepTargetLabel, stepText, stepWho, viewToStepList,
   backTargetLabel, backTargets, isBackLink, syncStepLoops, setOutcomeLoop, setStepLoop, stepLoop,
+  agentStepIDs, constraintFromValue, constraintValue, outputRef, setStepConstraint, setStepOutputs, stepConstraint, stepOutputs,
 } from '../dashboard/js/process-step-list.js';
 
 // viewOf builds an edit view from a template whose nodes carry `next`, the
@@ -399,4 +400,46 @@ test('a move that turns a decision answer back bounds it, so the list never hold
   assert.deepEqual(stepLoop(moved.steps.find((s) => s.id === 'decide'), 'approved'), { maxIterations: 3, onExhausted: '' });
   assert.deepEqual(stepLoop(moved.steps.find((s) => s.id === 'decide'), 'changes'), { maxIterations: 3, onExhausted: 'escalate' },
     'an existing bound is kept');
+});
+
+test('the group lead is a Who of its own, and switching away drops it', () => {
+  const step = { id: 'merge', node: { type: 'task', performer: { kind: 'agent', role: 'dev', prompt: 'Merge it.' } } };
+  const lead = setStepWho(step, { mode: 'lead' });
+  assert.deepEqual(lead.node.performer, { kind: 'agent', prompt: 'Merge it.', lead: true });
+  assert.deepEqual(stepWho(lead), { mode: 'lead' });
+  assert.deepEqual(setStepWho(lead, { mode: 'role', role: 'dev' }).node.performer, { kind: 'agent', prompt: 'Merge it.', role: 'dev' });
+});
+
+test('which agent: the same as, or not the one of, another step', () => {
+  const template = { nodes: {
+    plan: { type: 'task', performer: { kind: 'agent', role: 'planner', prompt: 'p' } },
+    build: { type: 'task', performer: { kind: 'agent', role: 'dev', prompt: 'b' } },
+    ask: { type: 'decision', performer: { kind: 'human', ask: '?' } },
+    review: { type: 'decision', agree: 'approve', deciders: [{ kind: 'agent', prompt: 'r' }, { kind: 'human', ask: '?' }] },
+    run: { type: 'task', performer: { kind: 'program', run: 'true' } },
+  } };
+  assert.deepEqual(agentStepIDs(template, 'build'), ['plan', 'review'], 'agent steps and gates with agent deciders, not itself');
+  const build = { id: 'build', node: template.nodes.build };
+  assert.deepEqual(stepConstraint(build), { mode: 'none' });
+  const same = setStepConstraint(build, constraintFromValue('same:plan'));
+  assert.equal(same.node.performer.sameAs, 'plan');
+  assert.equal(constraintValue(stepConstraint(same)), 'same:plan');
+  const different = setStepConstraint(same, constraintFromValue('different:plan,review'));
+  assert.equal(different.node.performer.sameAs, undefined, 'one constraint replaces the other');
+  assert.deepEqual(different.node.performer.differentFrom, ['plan', 'review']);
+  assert.equal(setStepConstraint(different, constraintFromValue('')).node.performer.differentFrom, undefined);
+  assert.equal(template.nodes.build.performer.sameAs, undefined, 'the step is not edited in place');
+  const named = setStepWho(different, { mode: 'agent', agent: 'dana' });
+  assert.equal(named.node.performer.differentFrom, undefined, 'a named agent drops the constraint');
+  assert.deepEqual(setStepWho(different, { mode: 'lead' }).node.performer.differentFrom, ['plan', 'review'], 'a selector keeps it');
+});
+
+test('outputs are id-shaped names, and a prompt reads them as {{ outputs.name }}', () => {
+  const step = { id: 'build', node: { type: 'task', performer: { kind: 'agent', prompt: 'b' } } };
+  const declared = setStepOutputs(step, 'PR, branch  pr, ok!');
+  assert.deepEqual(stepOutputs(declared), ['pr', 'branch']);
+  assert.equal(setStepOutputs(declared, ' ').node.captures, undefined);
+  assert.equal(outputRef('pr'), '{{ outputs.pr }}');
+  // The step list's {{name}} shorthand means a parameter; an output is dotted, so it stays.
+  assert.equal(setStepText(declared, 'Review {{ outputs.pr }} for {{task}}').node.performer.prompt, 'Review {{ outputs.pr }} for {{params.task}}');
 });

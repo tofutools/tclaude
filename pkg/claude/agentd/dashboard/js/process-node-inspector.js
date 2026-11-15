@@ -124,7 +124,7 @@ function StagesBlock({ node, commit, readOnly }) {
 function InputsBlock({ inputs }) {
   return html`<div class="pni-inputs">
     ${inputs.captures.length
-    ? html`<ul class="pni-input-list">${inputs.captures.map((capture) => html`<li key=${`${capture.from}:${capture.name}`}><code>${capture.name}</code> ← ${capture.fromName}</li>`)}</ul>`
+    ? html`<ul class="pni-input-list">${inputs.captures.map((capture) => html`<li key=${`${capture.from}:${capture.name}`}><code>${`{{ outputs.${capture.name} }}`}</code> ← ${capture.fromName}</li>`)}</ul>`
     : html`<p class="process-node-empty ui-empty">No upstream captures reach this node.</p>`}
     ${inputs.params.length > 0 && html`<p class="pni-params">params: ${inputs.params.map((name, i) => html`${i > 0 && ', '}<code key=${name}>${name}</code>`)}</p>`}
   </div>`;
@@ -142,6 +142,7 @@ function RetryBlock({ node, commit, readOnly }) {
 }
 
 function OutputsBlock({ node, commit, readOnly }) {
+  // An agent reports each with --output <name>=<value>; later prompts read {{ outputs.<name> }}.
   return html`<${NodeField} fieldKey="captures" label="published outputs" multiline=${true} placeholder="one-name-per-line"
     value=${formatLines(node.captures)} readOnly=${readOnly}
     apply=${(key, raw) => commit(key, (draft) => setCaptures(draft, raw))} />`;
