@@ -1860,9 +1860,8 @@ test('a swipe over Claude Code moves the screen with the finger until the redraw
   assert.equal(notches.length, 2);
   clock.now += 300; touch('touchend');
   assert.equal(offset(), '0 20px', 'let go while its line is on the way: held');
-  clock.now += 1100; render({ start: 3, end: 3 });
-  touch('touchstart', 100); touch('touchend');
-  assert.equal(offset(), '', 'past the give-up time it goes back');
+  clock.now += 1100; timers.flush();
+  assert.equal(offset(), '', 'past the give-up time it goes back, with no touch and no redraw');
   widget.dispose();
 });
 

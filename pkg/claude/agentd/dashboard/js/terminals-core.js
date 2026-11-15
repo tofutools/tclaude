@@ -572,6 +572,7 @@ export function mountTerminalWidget({
   let followed = null;
   let unpainted = 0;
   let unpaintedSince = null;
+  let giveUp = null;
   const mouseTaken = () => (term.modes?.mouseTrackingMode || 'none') !== 'none';
   // Claude Code scrolls its own view only while it takes the mouse (its
   // fullscreen renderer); otherwise a notch is an arrow key.
@@ -698,6 +699,13 @@ export function mountTerminalWidget({
     // Back into place gently; with the finger, at once.
     screen.style.transition = px ? '' : 'translate 90ms ease-out';
     screen.style.translate = px ? `0 ${Math.round(px * 10) / 10}px` : '';
+    // A notch Claude does not answer (past either end of its view) brings
+    // no redraw: look again once the wait for it is over.
+    if (!unpainted && giveUp !== null) { clearTimeoutImpl(giveUp); giveUp = null; }
+    if (unpainted && giveUp === null && unpaintedSince !== null && typeof setTimeoutImpl === 'function') {
+      giveUp = setTimeoutImpl(() => { giveUp = null; if (!disposed) followSwipe(); },
+        Math.max(1, SWIPE_FOLLOW_GIVE_UP_MS - (now() - unpaintedSince) + 1));
+    }
   }
   function stopFlush() {
     if (flush !== null) clearTimeoutImpl(flush);
@@ -1583,6 +1591,7 @@ export function mountTerminalWidget({
       cancelLimitedHold();
       cancelRestartWatchIfAny();
       if (zoomFitTimer !== null) clearTimeoutImpl(zoomFitTimer);
+      if (giveUp !== null) clearTimeoutImpl(giveUp);
       host.removeEventListener?.('wheel', zoomWheel, { capture: true });
       for (const [type, listener] of pinchListeners) host.removeEventListener?.(type, listener, { capture: true });
       stopCoasting();

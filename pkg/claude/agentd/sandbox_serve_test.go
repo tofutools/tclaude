@@ -787,6 +787,7 @@ func sandboxSwipeTUI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "s")
 	tmux := func(args ...string) *exec.Cmd {
 		cmd := exec.Command("tmux", append([]string{"-u", "-S", sock, "-f", "/dev/null"}, args...)...)
