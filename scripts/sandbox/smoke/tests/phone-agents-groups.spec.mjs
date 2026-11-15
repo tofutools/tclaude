@@ -1,6 +1,6 @@
 // The phone Agents tab's groups and the bottom nav (js/phone-agents-island.js,
 // js/phone-shell-island.js) in a real browser on the sandbox's data: the
-// chips filter by any number of groups, a group's header folds it and the
+// chips filter by any number of groups, a group's caret folds it and the
 // fold survives a reload, the nav's icons are one colour with the tab on
 // screen in a filled pill, and More lists every entry after Fleet.
 //
@@ -35,7 +35,7 @@ const chips = (page) => page.getByRole('group', { name: 'Show groups' });
 const chip = (page, name) => chips(page).getByRole('button', { name: new RegExp(`^${name} \\d+$`) });
 const sections = (page) => page.locator('.phone-agents > .phone-section');
 
-test('Agents: the chips filter by several groups, a header folds its group across a reload', async ({ page }) => {
+test('Agents: the chips filter by several groups, a caret folds its group across a reload', async ({ page }) => {
   const errors = collectErrors(page);
   await page.goto('/groups');
   await booted(page);
@@ -56,7 +56,7 @@ test('Agents: the chips filter by several groups, a header folds its group acros
   await expect(chip(page, second)).toHaveAttribute('aria-pressed', 'false');
 
   const group = page.getByRole('group', { name: first, exact: true });
-  const fold = group.locator('.phone-agents-fold');
+  const fold = group.locator('.phone-agents-caret-btn');
   await expect(fold).toHaveAttribute('aria-expanded', 'true');
   await fold.click();
   await expect(fold).toHaveAttribute('aria-expanded', 'false');
@@ -68,8 +68,8 @@ test('Agents: the chips filter by several groups, a header folds its group acros
   await page.reload();
   await booted(page);
   await nav(page, 'Agents').click();
-  await expect(page.getByRole('group', { name: first, exact: true }).locator('.phone-agents-fold')).toHaveAttribute('aria-expanded', 'false');
-  await page.getByRole('group', { name: first, exact: true }).locator('.phone-agents-fold').click();
+  await expect(page.getByRole('group', { name: first, exact: true }).locator('.phone-agents-caret-btn')).toHaveAttribute('aria-expanded', 'false');
+  await page.getByRole('group', { name: first, exact: true }).locator('.phone-agents-caret-btn').click();
   await expect(page.getByRole('group', { name: first, exact: true }).locator('.phone-agent').first()).toBeVisible();
   expect(errors).toEqual([]);
 });
@@ -135,14 +135,14 @@ test('Agents: each header counts its agents by state, folded too; workers sit un
   await expectNoSideScroll(page);
   // Folded, the summary stays, and the header stays where it was: folding
   // changes only what is under it (it used to jump 12px on every tap).
-  const headTop = () => webshop.locator('.phone-agents-fold')
+  const headTop = () => webshop.locator('.phone-agents-caret-btn')
     .evaluate((el) => Math.round(el.getBoundingClientRect().top + window.scrollY));
   const openTop = await headTop();
-  await webshop.locator('.phone-agents-fold').click();
+  await webshop.locator('.phone-agents-caret-btn').click();
   await expect(webshop.locator('.phone-agent')).toHaveCount(0);
   await expect(summary.first()).toBeVisible();
   expect(await headTop(), 'folding does not move the header').toBe(openTop);
-  await webshop.locator('.phone-agents-fold').click();
+  await webshop.locator('.phone-agents-caret-btn').click();
   await expect(webshop.locator('.phone-agent').first()).toBeVisible();
   expect(await headTop(), 'unfolding does not move the header').toBe(openTop);
   expect(errors).toEqual([]);

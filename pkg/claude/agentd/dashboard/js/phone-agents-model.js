@@ -128,9 +128,12 @@ export function byLoudness(a, b) {
 // folded rest, both loudest first; tree nests workers under their leads;
 // live counts the online ones. Placeholders for agents away on another node
 // are left out. group is the snapshot's group, null for the agents in none.
-export function groupEntry(key, name, group, members) {
-  const rows = (members || []).filter((m) => m && !isAwayPlaceholder(m)).map((m) => agentRow(m, group ? name : ''));
+// Without offline (Show offline off) only the open list is kept, and an
+// agent waking up: an offline agent is left out, a crashed one never.
+export function groupEntry(key, name, group, members, { offline: withOffline = true } = {}) {
   const open = (row) => row.online || row.variant === 'crashed';
+  const rows = (members || []).filter((m) => m && !isAwayPlaceholder(m)).map((m) => agentRow(m, group ? name : ''))
+    .filter((row) => withOffline || open(row) || row.waking);
   const shown = rows.filter(open).sort(byLoudness);
   const offline = rows.filter((row) => !open(row)).sort(byLoudness);
   return {
@@ -144,12 +147,12 @@ export function groupEntry(key, name, group, members) {
 
 // agentGroups lists the groups that have agents (groupEntry), in the
 // operator's group order (order is sortGroupsByPref over the dashboard
-// prefs), then the agents in no group.
-export function agentGroups(snapshot, order = (groups) => groups) {
+// prefs), then the agents in no group. offline is Show offline.
+export function agentGroups(snapshot, order = (groups) => groups, { offline = true } = {}) {
   const out = [];
   const add = (entry) => { if (entry.total) out.push(entry); };
-  for (const group of order(snapshot?.groups || [])) add(groupEntry(groupKey(group.name), group.name, group, group.members));
-  add(groupEntry(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped));
+  for (const group of order(snapshot?.groups || [])) add(groupEntry(groupKey(group.name), group.name, group, group.members, { offline }));
+  add(groupEntry(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped, { offline }));
   return out;
 }
 
@@ -292,7 +295,12 @@ export function treeFolded(node, prefs) {
 }
 
 // ARCHIVED_PREF shows the archived groups ('1') at the end of All groups.
+// OFFLINE_PREF hides ('0') offline agents, and in All groups the groups with
+// nobody online, in both modes; shown otherwise, as before there was a
+// switch. Per viewer, like the mode.
 export const ARCHIVED_PREF = 'tclaude.dash.phone.agents.archived';
+export const OFFLINE_PREF = 'tclaude.dash.phone.agents.offline';
+export const showOffline = (prefs) => prefs.getItem(OFFLINE_PREF) !== '0';
 
 // groupsTree is every group as the desktop's Groups tree nests them
 // (buildGroupTree): a node is a groupEntry with children (its subgroups),
@@ -303,14 +311,18 @@ export const ARCHIVED_PREF = 'tclaude.dash.phone.agents.archived';
 // agents in no group rank like a group. Without showArchived the archived
 // groups are left out, and a subgroup that is not archived takes its
 // archived parent's place. archived counts them either way, count the
-// groups that are not.
-export function groupsTree(snapshot, order = (groups) => groups, { showArchived = false } = {}) {
+// groups that are not. Without offline (Show offline off) a group with
+// nobody online in it or under it (empty, or only offline agents) is left
+// out too, unless an agent in it is waking; count counts what is left.
+export function groupsTree(snapshot, order = (groups) => groups, { showArchived = false, offline = true } = {}) {
   const groups = order((snapshot?.groups || []).filter((g) => g?.name));
   const toNode = (node) => {
     const group = node.group;
     const children = node.children.map(toNode);
-    const entry = groupEntry(groupKey(group.name), group.name, group, group.members);
-    return { ...entry, children, archived: !!group.archived, empty: entry.total === 0 };
+    const entry = groupEntry(groupKey(group.name), group.name, group, group.members, { offline });
+    // Empty means no agents at all, not none left after Show offline.
+    const empty = !(group.members || []).some((m) => m && !isAwayPlaceholder(m));
+    return { ...entry, children, archived: !!group.archived, empty };
   };
   // dim and populated are counted over what is shown: a hidden archived
   // subgroup's agents do not light its parent. A crashed agent needs a look,
@@ -324,14 +336,20 @@ export function groupsTree(snapshot, order = (groups) => groups, { showArchived 
     };
   };
   const ranked = (nodes) => nodes.map((n, i) => [treeRank(n), i, n]).sort((a, b) => (a[0] - b[0]) || (a[1] - b[1])).map(([, , n]) => n);
-  const keep = (nodes) => ranked(nodes.flatMap((n) => (n.archived && !showArchived
-    ? keep(n.children) : [lit(n, keep(n.children))])));
+  const keep = (nodes) => ranked(nodes.flatMap((n) => {
+    if (n.archived && !showArchived) return keep(n.children);
+    const node = lit(n, keep(n.children));
+    // Without offline, what is left in a group is listed (online, crashed or
+    // waking), so a group goes when nothing is left in it or under it.
+    return !offline && !node.populated ? [] : [node];
+  }));
   const all = buildGroupTree(groups, () => true).map(toNode);
-  const loose = groupEntry(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped);
+  const loose = groupEntry(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped, { offline });
   if (loose.total) all.push({ ...loose, children: [], archived: false, empty: false });
   const nodes = keep(all);
   const archived = groups.filter((g) => g.archived).length;
-  return { nodes, archived, count: groups.length - archived };
+  const count = offline ? groups.length - archived : treeNodes(nodes).filter((n) => n.group && !n.archived).length;
+  return { nodes, archived, count };
 }
 
 // treeRank is where a node sits among its siblings: someone online in it

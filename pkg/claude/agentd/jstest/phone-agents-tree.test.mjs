@@ -245,3 +245,46 @@ test('an archived group\'s page offers only its mail', async (t) => {
   assert.match(view.querySelector('.phone-agent-sheet-meta').textContent, /archived/);
   assert.equal(button('＋ Spawn'), undefined);
 });
+
+test('the model without offline: offline agents and nobody-online groups left out, crashed kept, counts follow', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/phone-agents-model.js');
+  const crash = { groups: [
+    { name: 'broke', members: [{ ...off(40, 'b'), state: { exit_reason: 'unexpected' } }, off(41, 'quiet')] },
+    { name: 'waking', members: [{ ...off(42, 'w'), waking: true }] },
+    { name: 'old', members: [off(43, 'x')] },
+    { name: 'new', parent: 'old', members: [on(44, 'y')] },
+  ] };
+  assert.deepEqual(model.agentGroups(crash, (g) => g, { offline: false }).map((g) => [g.name, g.tree.map(({ row }) => row.name)]),
+    [['broke', ['b']], ['waking', ['w']], ['new', ['y']]], 'a crashed agent needs a look and a waking one is coming up: both stay');
+  const tree = model.groupsTree(crash, (g) => g, { offline: false });
+  assert.deepEqual(names(tree.nodes), ['broke', ['old', ['new']], 'waking'], 'in All groups too; old stays for its online subgroup');
+  assert.equal(tree.nodes[1].empty, false, 'old has agents, only hidden: not tagged empty');
+  const hidden = model.groupsTree(SNAPSHOT, (g) => g, { offline: false });
+  assert.deepEqual(names(hidden.nodes), [['webshop', ['checkout']], 'infra', 'hotfix'], 'payments, research and the loner gone');
+  assert.equal(hidden.count, 4, 'webshop, checkout, infra, hotfix');
+  assert.deepEqual(model.groupsTree(SNAPSHOT).count, 6, 'with offline: every group but the archived one');
+  assert.deepEqual(model.agentGroups(SNAPSHOT, (g) => g, { offline: false }).map((g) => [g.name, g.total]),
+    [['webshop', 2], ['checkout', 1], ['infra', 1], ['hotfix', 1]]);
+});
+
+test('Show offline: off hides offline agents and nobody-online groups in both modes, remembered; counts follow', async (t) => {
+  const prefs = memPrefs();
+  const { c, tap, seg, shownGroups, titles } = await setup(t, { prefs });
+  const toggle = () => c.querySelector('.phone-agents-offline');
+  assert.equal(toggle().getAttribute('aria-pressed'), 'true', 'on by default: as before');
+  assert.equal(toggle().getAttribute('aria-label'), 'Show offline');
+  assert.ok(titles().includes('pay-lead'));
+  await tap(toggle());
+  assert.equal(prefs.getItem('tclaude.dash.phone.agents.offline'), '0');
+  assert.equal(toggle().getAttribute('aria-pressed'), 'false');
+  assert.ok(!titles().includes('pay-lead') && !titles().includes('loner'), 'Active: no offline agents');
+  const chips = () => [...c.querySelectorAll('.phone-agents-chips button')].map((b) => b.textContent.replace(/\s+/g, ' ').trim());
+  assert.deepEqual(chips(), ['All 5', 'webshop 2', 'checkout 1', 'infra 1', 'hotfix 1'], 'the chips count what shows');
+  assert.equal(seg('All groups').textContent.replace(/\s+/g, ' ').trim(), 'All groups · 4');
+  await tap(seg('All groups'));
+  assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'infra', 'hotfix']);
+  await tap(toggle());
+  assert.equal(prefs.getItem('tclaude.dash.phone.agents.offline'), null, 'on again: forgotten');
+  assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'payments', 'infra', 'hotfix', 'Ungrouped', 'research']);
+});
