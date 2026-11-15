@@ -1,5 +1,6 @@
 import { templateHeadSignature } from './process-external-change.js';
 import { idempotentRequestHeaders } from './request-idempotency.js';
+import { UNTITLED_PROCESS } from './process-draft-handoff.js';
 import { processTemplateDeleteConfirmation } from './process-template-delete.js';
 import { dashboardState } from './snapshot-store.js';
 import {
@@ -199,62 +200,30 @@ export function createProcessesActions({
     // pushing it back would forge a duplicate history entry.
     if (navigate) announceLocation();
   }
-  // Creation collects a NAME, never an id. Submitting the dialog persists the
-  // named scaffold through the collection endpoint, which mints the permanent
-  // id; only then do we open the normal stored-template editor. That keeps the
-  // editor's identity, name, and CAS base in one backend-confirmed generation.
-  function openCreate() {
-    state.setCreate({ key: `create:${Date.now()}`, name: '' });
-    return true;
-  }
-  function closeCreate() {
-    if (state.mutation.value.busy) return false;
-    state.setCreate(null);
-    return true;
-  }
-  async function submitCreate(name) {
-    const next = String(name ?? '').trim();
-    if (!next) return false;
-    const spec = state.create.value;
-    if (!spec) return false;
-    if (spec.attempt?.name === next && spec.attempt.blocked) {
-      const message = 'The earlier create may already have succeeded. Refresh Templates to reconcile it before starting another creation.';
-      state.setCreate({ ...spec, name: next, error: message });
-      state.setNotice(`Template creation paused: ${message}`);
-      return false;
-    }
+  // newTemplate is "+ new template": an untitled template, stored at once
+  // through the collection endpoint (which mints the permanent id) and opened
+  // in the editor, whose title field names it. No dialog asks first. A
+  // second press while one is being stored makes nothing more.
+  async function newTemplate() {
     if (!state.beginMutation()) return false;
-    const attempt = spec.attempt?.name === next
-      ? spec.attempt : { name: next, key: mintAttemptID() };
-    state.setCreate({ ...spec, name: next, error: '', attempt });
     try {
       const { blankEditView } = await import('./process-edit-model.js');
-      const scaffold = blankEditView(next);
+      const scaffold = blankEditView(UNTITLED_PROCESS);
       const template = { ...scaffold.template };
       delete template.id;
       const path = '/v1/process/templates';
       const requestBody = JSON.stringify({ template, edges: scaffold.edges, layout: scaffold.layout });
       const response = await fetchImpl(path, {
-        method: 'POST', headers: idempotentRequestHeaders('POST', path, requestBody, attempt.key),
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, requestBody, mintAttemptID()),
         credentials: 'same-origin', body: requestBody,
       });
       const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        const outcomeUnknown = body?.code === 'idempotency_unknown';
-        const detail = body?.message || body?.error || `${response.status} ${response.statusText}`;
-        const error = new Error(outcomeUnknown
-          ? `${detail} Refresh Templates to reconcile the earlier create before starting another creation.`
-          : detail);
-        error.definitiveResponse = !outcomeUnknown;
-        error.outcomeUnknown = outcomeUnknown;
-        throw error;
-      }
-      if (!body) throw new Error('template creation returned an unreadable response');
-      const id = String(body.id || '').trim();
+      if (!response.ok) throw new Error(body?.message || body?.error || `${response.status} ${response.statusText}`);
+      const id = String(body?.id || '').trim();
+      const currentRef = String(body?.ref || '').trim();
+      const sourceHash = String(body?.sourceHash || '').trim();
+      const semanticHash = String(body?.semanticHash || '').trim();
       if (!id) throw new Error('template creation returned no id');
-      const currentRef = String(body.ref || '').trim();
-      const sourceHash = String(body.sourceHash || '').trim();
-      const semanticHash = String(body.semanticHash || '').trim();
       if (!currentRef || !sourceHash || !semanticHash) throw new Error('template creation returned incomplete version metadata');
       const createdView = {
         ...scaffold,
@@ -264,17 +233,10 @@ export function createProcessesActions({
         ...(body.actor ? { actor: body.actor } : {}),
         ...(body.authoredAt ? { authoredAt: body.authoredAt } : {}),
       };
-      if (state.create.value?.key === spec.key) state.setCreate(null);
-      await openEditor(id, false, next, { view: createdView });
+      await openEditor(id, false, UNTITLED_PROCESS, { view: createdView });
       void load('templates', { quiet: true });
       return true;
     } catch (error) {
-      if (state.create.value?.key === spec.key) {
-        state.setCreate({
-          ...spec, name: next, error: error.message,
-          attempt: error.definitiveResponse ? null : { ...attempt, blocked: !!error.outcomeUnknown },
-        });
-      }
       state.setNotice(`Template creation failed: ${error.message}`);
       notify(`process template creation failed: ${error.message}`, true);
       return false;
@@ -713,7 +675,7 @@ export function createProcessesActions({
     summonScribe, askAgent, describeActor, openActor,
     openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,
-    openCreate, closeCreate, submitCreate,
+    newTemplate,
     closeCanvas, floatEditor, releaseEditor, editorToSeparateWindow, refreshActive,
   });
 }

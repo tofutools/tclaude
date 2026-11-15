@@ -110,7 +110,7 @@ const seeds = new Map();
 // it was handed, readable that the editor may open it before the list knows
 // it. It answers false without an overlay host, for the caller to go to the
 // Processes tab instead.
-export function openProcessOverlay(id, label = '', { view = null, readable = false } = {}) {
+export function openProcessOverlay(id, label = '', { view = null, readable = false, group = '' } = {}) {
   if (!isProcessTemplateId(id) || !overlayHostUp.peek()) return false;
   const away = processEditorAway(id);
   if (away) {
@@ -140,7 +140,7 @@ export function openProcessOverlay(id, label = '', { view = null, readable = fal
       docked.editor.destroy?.();
     }
     if (view) seeds.set(id, { view, readable });
-    openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id });
+    openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id, ...(group ? { group } : {}) });
   }
   focusOverlayWindow(processWindowId(id));
   return true;
@@ -222,7 +222,7 @@ export function floatHandoff(id, label, handoff) {
   if (floating.has(id) || opening.has(id) || handoffs.has(id) || floatingProcessTab(id)) return Promise.resolve(false);
   return new Promise((settle) => {
     handoffs.set(id, { handoff, settle });
-    openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id });
+    openOverlayWindow({ id: processWindowId(id), kind: PROCESS_WINDOW_KIND, template: id, label: label || id, ...(group ? { group } : {}) });
   });
 }
 

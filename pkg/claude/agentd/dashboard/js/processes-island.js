@@ -80,7 +80,7 @@ function EditableDescription({ template, actions, busy }) {
 
 function Templates({ current, actions }) {
   return html`<div id="process-panel-templates" class="process-panel active" role="tabpanel" aria-label="Process templates">
-    <div class="filter-bar process-toolbar"><strong>Reusable process graphs</strong><span class="spacer"></span><${Button} id="process-scribe-library" class="process-action" title="Open a scoped agent that can safely author process templates" onClick=${() => actions.summonScribe({ kind: 'library' })}><span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span><//><${WorkflowImportButton} onImported=${() => actions.load('templates')} /><${Button} variant="primary" id="process-template-new" class="process-action" onClick=${actions.openCreate}>+ new template<//></div>
+    <div class="filter-bar process-toolbar"><strong>Reusable process graphs</strong><span class="spacer"></span><${Button} id="process-scribe-library" class="process-action" title="Open a scoped agent that can safely author process templates" onClick=${() => actions.summonScribe({ kind: 'library' })}><span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span><//><${WorkflowImportButton} onImported=${() => actions.load('templates')} /><${Button} variant="primary" id="process-template-new" class="process-action" disabled=${current.mutation.busy} onClick=${() => void actions.newTemplate()}>+ new template<//></div>
     <div id="process-templates-list" class="process-list" aria-busy=${current.requests.templates.phase === 'loading'}><${RequestBody} request=${current.requests.templates} label="templates" retry=${() => actions.load('templates')}>
       ${current.templates.length === 0 ? html`<div class="process-placeholder"><h3>No process templates yet</h3><p>Create a blank template to start shaping a repeatable graph.</p></div>` : html`<table><thead><tr><th>Template</th><th>Description</th><th>Latest</th><th>Versions</th><th></th></tr></thead><tbody>${current.templates.map((template) => { const latest = template.latestVersion || {}; const actor = actions.describeActor(latest.actor); return html`<tr key=${template.id} data-process-template=${template.id} draggable=${true} data-process-template-drag=${template.id} data-process-template-name=${template.name || ''} data-process-template-versions=${template.versionCount || 0}><td><${EditableName} template=${template} actions=${actions} busy=${current.mutation.busy} /><div class="process-secondary" title="Template id (permanent)">${template.id}</div></td><td class="process-description"><${EditableDescription} template=${template} actions=${actions} busy=${current.mutation.busy} /></td><td><span class="process-hash" title=${latest.semanticHash || ''}>${(latest.semanticHash || '').slice(0, 10) || '—'}</span>${actor && html`<div class="process-secondary process-version-actor">by ${actor.label}</div>`}</td><td>${template.versionCount || 0}</td><td class="process-actions"><${Button} size="sm" class="process-action" data-process-action="edit" data-id=${template.id} onClick=${() => actions.openEditor(template.id)}>open<//><${Button} size="sm" class="process-action" data-process-action="rename" data-id=${template.id} title="Change the display name; the id stays fixed" onClick=${() => actions.openRename({ id: template.id, name: template.name || '', sourceHash: latest.sourceHash || '' })}>rename<//><${WorkflowExportButton} id=${template.id} size="sm" /><${Button} size="sm" icon=${true} variant="ghost danger" class="process-action process-delete-btn" data-process-action="delete" data-id=${template.id} disabled=${current.mutation.busy} title="Delete this template and all its versions" aria-label=${`Delete ${template.name || template.id}`} onClick=${() => actions.deleteTemplate({ id: template.id, name: template.name || '', versionCount: template.versionCount || 0 })}><${TrashIcon} /><//></td></tr>`; })}</tbody></table>`}
     </${RequestBody}></div>
@@ -170,21 +170,6 @@ function RenameDialog({ spec, busy, actions }) {
   <//>`;
 }
 
-function CreateDialog({ spec, busy, actions }) {
-  const nameRef = useRef(null); const [name, setName] = useState(spec.name || '');
-  const outcomeUnknown = !!spec.attempt?.blocked && name.trim() === spec.attempt.name;
-  const submit = (event) => { event?.preventDefault(); if (!busy && !outcomeUnknown) void actions.submitCreate(name); };
-  return html`<${Dialog} id="process-create-modal" overlayClass="process-editor-modal process-rename-modal" dialogClass="modal process-rename-dialog"
-    title="New process template" initialFocusRef=${nameRef} onClose=${() => actions.closeCreate()} busy=${busy} onSubmitHotkey=${submit}
-    error=${spec.error || ''} cancel="Cancel"
-    footer=${html`<${Button} variant="primary" type="submit" form="process-create-form" disabled=${busy || !name.trim() || outcomeUnknown}>${busy ? 'Creating…' : 'Create'}<//>`}>
-    <form id="process-create-form" onSubmit=${submit}>
-      <div class="field process-editor-field process-rename-field"><label for="process-create-input">Display name</label><input ref=${nameRef} id="process-create-input" data-process-create-input type="text" autocomplete="off" spellcheck="false" placeholder="e.g. Release train" value=${name} disabled=${busy} onInput=${(event) => setName(event.currentTarget.value)} /></div>
-      <p class="muted">Creating the template assigns its permanent id automatically.</p>
-    </form>
-  <//>`;
-}
-
 // FusedPeerProcesses is a section per ticked peer after this node's
 // templates: its library, opened on its own view; delete acts on that node.
 function FusedPeerProcesses({ peers, active, describeActor, confirm, notify, fetchFor }) {
@@ -265,7 +250,7 @@ export function ProcessesApp({ state, actions, confirmDiscard, fleet = fleetStat
   // Processes is an Automations subtab: render the shared Automations row with
   // Processes active. Re-picking Processes returns to the template list.
   const selectEntry = (key) => { if (key === PROCESSES_SUBTAB) void actions.activateSubtab('templates'); else openAutomationsEntry(key); };
-  return html`<div class="processes-island"><div class="process-subnav"><${AutomationsSubnav} entries=${automationsSubnavEntries(current.snapshot)} active=${PROCESSES_SUBTAB} onSelect=${selectEntry} /><span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div><${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />${spec ? html`<div id="process-editor-view" class="process-canvas-view"><div class="process-canvas-tools"><${Button} class="process-action" data-process-close-view title=${withShortcut('Return to templates', 'process-open')} onClick=${actions.closeCanvas}>← templates<//></div><${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} moves=${spec.id && !spec.blank ? editorMoves({ actions, state, spec }) : []} /></div>` : html`<${Templates} current=${current} actions=${actions} />${peers.length ? html`<${FusedPeerProcesses} peers=${peers} active=${current.active} describeActor=${actions.describeActor} confirm=${confirm} notify=${notify} fetchFor=${fetchFor} />` : null}`}${current.create && html`<${CreateDialog} key=${current.create.key} spec=${current.create} busy=${current.mutation.busy} actions=${actions} />`}${current.rename && html`<${RenameDialog} key=${current.rename.key} spec=${current.rename} busy=${current.mutation.busy} actions=${actions} />`}</div>`;
+  return html`<div class="processes-island"><div class="process-subnav"><${AutomationsSubnav} entries=${automationsSubnavEntries(current.snapshot)} active=${PROCESSES_SUBTAB} onSelect=${selectEntry} /><span class="spacer"></span><span id="process-notice" class="process-notice" role="status">${current.notice}</span></div><${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />${spec ? html`<div id="process-editor-view" class="process-canvas-view"><div class="process-canvas-tools"><${Button} class="process-action" data-process-close-view title=${withShortcut('Return to templates', 'process-open')} onClick=${actions.closeCanvas}>← templates<//></div><${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} moves=${spec.id && !spec.blank ? editorMoves({ actions, state, spec }) : []} /></div>` : html`<${Templates} current=${current} actions=${actions} />${peers.length ? html`<${FusedPeerProcesses} peers=${peers} active=${current.active} describeActor=${actions.describeActor} confirm=${confirm} notify=${notify} fetchFor=${fetchFor} />` : null}`}${current.rename && html`<${RenameDialog} key=${current.rename.key} spec=${current.rename} busy=${current.mutation.busy} actions=${actions} />`}</div>`;
 }
 
 export function mountProcessesIsland({ host, state, actions, confirmDiscard, registerCleanup }) {
@@ -282,12 +267,11 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
   };
   document.addEventListener('tclaude:restore-location', restore);
   registerCleanup(() => document.removeEventListener('tclaude:restore-location', restore));
-  // A process handed over from Groups › Processes (the quick start) opens in
-  // the full editor: a template it just created, or the new-template dialog.
+  // A process handed over from another tab (the Groups tab's inline editor,
+  // the dock) opens in the full editor.
   const takeDraft = () => {
     const draft = takeProcessDraft();
-    if (draft?.create) actions.openCreate();
-    else if (draft?.id) {
+    if (draft?.id) {
       // The editor may hold unsaved edits of another template; the draft is
       // already saved, so declining only leaves it in Templates.
       void Promise.resolve(actions.canLeaveEditor ? actions.canLeaveEditor() : true).then((ok) => {

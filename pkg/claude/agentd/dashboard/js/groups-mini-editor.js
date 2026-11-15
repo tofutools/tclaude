@@ -7,7 +7,11 @@
 // step for + handles, click it for a compact inspector (the step list's
 // fields), right-click it for structure, or drag a handle into empty space.
 // ☰ Steps shows the same draft as the step list, ⤢ full editor opens it in
-// Automations › Processes, and Save writes a new version.
+// Automations › Processes, and Save writes a new version. A new process
+// (`draft`, from New process) opens here too: its name is a field, it saves
+// itself as it changes, and while it has no steps the canvas offers the first
+// one and a Start from strip (a starter, a description for the scribe, a
+// .pwf, or a library process to copy).
 
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -21,10 +25,12 @@ import {
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
-import { collapseParamShorthand, setStepName, setStepText, setStepWho, stepText, stepWho, viewToStepList } from './process-step-list.js';
+import { collapseParamShorthand, setStepName, setStepText, setStepWho, stepListToView, stepText, stepWho, viewToStepList } from './process-step-list.js';
 import { openProcessDraft } from './process-draft-handoff.js';
-import { FallbackPicker, WhoPicker, defaultNotify, inheritLabel, markQuickStart, useSpawnProfiles } from './groups-quickstart.js';
-import { fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
+import {
+  AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
+} from './groups-quickstart.js';
+import { STARTERS, fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
 import { withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
 
@@ -52,6 +58,27 @@ function whoLine(node, fallbackInfo) {
 function viewOf(model) {
   const { template, edges, layout } = model.saveBody();
   return { template, edges, layout };
+}
+
+// FIRST_STEP is the placeholder an empty process shows between start and
+// what follows it: a step-shaped "＋ Add first step" that the layout spaces
+// like any step. It is drawn only; it is never part of the process.
+const FIRST_STEP = 'mini-first-step';
+
+// withFirstStep puts the placeholder after `startId` in a projection, taking
+// over start's own edges, when startId is given.
+function withFirstStep(projection, startId) {
+  if (!startId) return projection;
+  const after = projection.edges.filter((edge) => edge.from === startId);
+  return {
+    ...projection,
+    nodes: [...projection.nodes, { id: FIRST_STEP, label: '＋ Add first step', state: 'planned', kind: 'agent', sub: 'or start from one below' }],
+    edges: [
+      ...projection.edges.filter((edge) => edge.from !== startId),
+      { from: startId, to: FIRST_STEP, label: '' },
+      ...after.map((edge) => ({ ...edge, from: FIRST_STEP, label: '' })),
+    ],
+  };
 }
 
 // floating places a popup at viewport coordinates, kept inside the window:
@@ -96,18 +123,18 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
     if (kind !== 'agent') { onKind('agent', who); return; }
     onApply(updateStep(view, id, (s) => setStepWho(s, who)));
   };
-  const label = { agent: 'Prompt', you: 'Asks', command: 'Runs' }[kind];
+  const label = { agent: 'What', you: 'Asks', command: 'Runs' }[kind];
   return html`<div class="gm-inspector" data-mini-inspector=${id} role="dialog" aria-label=${`Step ${node.name || id}`}
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <label class="gm-field"><span>Step</span><input type="text" data-mini-name value=${node.name || ''} placeholder=${id}
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepName(s, event.currentTarget.value)))} /></label>
+    <label class="gm-field"><span>${label}</span><textarea rows="3" data-mini-text value=${text}
+      onChange=${(event) => onApply(updateStep(view, id, (s) => setStepText(s, event.currentTarget.value)))}></textarea></label>
     <div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} /></div>
     ${kind === 'agent' && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}
       label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}
-    <label class="gm-field"><span>${label}</span><textarea rows="3" data-mini-text value=${text}
-      onChange=${(event) => onApply(updateStep(view, id, (s) => setStepText(s, event.currentTarget.value)))}></textarea></label>
     <div class="gm-field"><span>${node.type === 'decision' ? 'Outcomes' : 'Then'}</span><div class="gm-outcomes">
       ${outcomes.map(({ outcome, to }) => html`<span key=${outcome} class="gm-outcome" data-mini-outcome=${outcome}>
         ${node.type === 'decision'
@@ -127,7 +154,56 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
         onClick=${() => onApply(addOutcome(view, id, outcomes.find((o) => !loopBound(node, o.outcome))?.to || targets.find((t) => view.template.nodes[t.id]?.type === 'end')?.id || targets[0]?.id))}>+<//>`}
       ${!outcomes.length && html`<span class="gq-dim">nothing yet: hover the step for + after</span>`}
     </div></div>
-    <div class="gm-row"><span class="gq-spacer"></span><${Button} size="sm" variant="link" class="gq-link" onClick=${onClose}>done<//></div>
+    <div class="gm-row"><${Button} size="sm" variant="link" class="gq-link gm-more" data-mini-more onClick=${onFullEditor}
+      title="Retry, model and effort, plan/check/review stages and the rest are edited in the full editor">More options in ⤢ Full editor<//>
+      <span class="gq-spacer"></span><${Button} size="sm" variant="link" class="gq-link" onClick=${onClose}>done<//></div>
+  </div>`;
+}
+
+// StartFrom is the strip under a new process's empty canvas: what it can
+// start from instead of a first step.
+function StartFrom({ roster, api, wizard, busy, onView, onDescribe, onImport }) {
+  const [open, setOpen] = useState('');
+  const [text, setText] = useState('');
+  const [templates, setTemplates] = useState(null);
+  useEffect(() => {
+    if (open !== 'library' || templates) return undefined;
+    let live = true;
+    api.listTemplates().then((rows) => { if (live) setTemplates(rows); }).catch(() => { if (live) setTemplates([]); });
+    return () => { live = false; };
+  }, [open]);
+  const starter = (item) => {
+    const built = item.build(roster);
+    onView(built.view || stepListToView(built.list), item.title);
+  };
+  const describe = (event) => {
+    event.preventDefault();
+    if (text.trim() && !busy) onDescribe(text.trim());
+  };
+  const chip = (attrs, label, title, onClick, on = false) => html`<button data-ui-exempt type="button" class=${`gm-from${on ? ' on' : ''}`} ...${attrs}
+    disabled=${!!busy} title=${title} onClick=${onClick}>${label}</button>`;
+  return html`<div class="gm-start-from" data-mini-start-from>
+    <div class="gm-start-row">
+      <span class="gq-dim">Start from</span>
+      ${STARTERS.map((item) => chip({ key: item.key, 'data-mini-starter': item.key }, item.chain.map(([, label]) => label).join(' → '),
+    `${item.title}: ${item.note}`, () => starter(item)))}
+      ${chip({ 'data-mini-describe': '' }, '✨ Describe it…', wizard ? 'Tell a scribe the rite in plain words' : 'Describe it in plain words and a process scribe drafts the steps', () => setOpen(open === 'describe' ? '' : 'describe'), open === 'describe')}
+      ${onImport && chip({ 'data-mini-import': '' }, '↥ Import .pwf', 'Import a shared .pwf workflow file: you review what it runs first', onImport)}
+      ${chip({ 'data-mini-library': '' }, wizard ? 'More written rites ›' : 'More ways of working ›', 'Copy a process from the template library', () => setOpen(open === 'library' ? '' : 'library'), open === 'library')}
+    </div>
+    ${open === 'describe' && html`<form class="gq-ask gm-describe" data-mini-describe-form onSubmit=${describe}>
+      <input type="text" class="gq-ask-in" aria-label="Describe the process in plain words" maxlength=${DRAFT_DESCRIPTION_MAX} value=${text} disabled=${!!busy}
+        placeholder="e.g. implement the issue, have the reviewer check it, I approve, then merge" onInput=${(event) => setText(event.currentTarget.value)} />
+      <${Button} size="sm" variant="primary" type="submit" disabled=${!!busy || !text.trim()}
+        title="A process scribe drafts the steps in the background. It uses a model run; you approve its access first, and nothing runs until you start it.">✨ Draft steps<//>
+    </form>`}
+    ${open === 'library' && html`<div class="gm-start-row gm-library" data-mini-library-list>
+      ${templates === null && html`<span class="gq-dim">Loading the template library…</span>`}
+      ${templates?.length === 0 && html`<span class="gq-dim">The template library is empty.</span>`}
+      ${(templates || []).map((template) => chip({ key: template.id, 'data-mini-library-pick': template.id }, `▣ ${template.name || template.id}`,
+    template.description || `Copy ${template.name || template.id} into this process`,
+    () => void api.getTemplate(template.id).then((view) => onView(view, view?.template?.name || template.name)).catch(() => {})))}
+    </div>`}
   </div>`;
 }
 
@@ -167,7 +243,8 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
 // step list handed over unsaved edits).
 export function MiniGraphEditor({
   group, roster, groupInfo = null, process, view, stored = view, changed = false, api, source, wizard = false,
-  notify = defaultNotify, onClose, onSteps,
+  notify = defaultNotify, onClose, onSteps, draft: isDraft = false, untouched = false, onRun = null, onDiscard = null,
+  onImport = null, onDescribe = null,
 }) {
   const model = useRef(null);
   if (!model.current) {
@@ -185,6 +262,11 @@ export function MiniGraphEditor({
   const [diagnostics, setDiagnostics] = useState([]);
   const [publish, setPublish] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  // autosave is how a draft's own saving goes: '', 'saving', 'saved' or 'failed'.
+  const [autosave, setAutosave] = useState('');
+  // touched: the operator has changed this draft since it was made.
+  const touched = useRef(!untouched);
+  const nameRef = useRef(null);
   const canvas = useRef(null);
   // dragged swallows the click that ends a handle drag.
   const dragged = useRef(false);
@@ -193,6 +275,13 @@ export function MiniGraphEditor({
   const dirty = model.current.dirty;
   const summary = dirty ? changeSummary(stored, draft) : [];
   const name = draft.template.name || process.name;
+  const [title, setTitle] = useState(name);
+  // A new process opens with its name ready to type over.
+  useEffect(() => {
+    if (!isDraft || !untouched) return;
+    nameRef.current?.focus?.();
+    nameRef.current?.select?.();
+  }, []);
   useEffect(() => {
     let live = true;
     if (typeof api.validateTemplate !== 'function') return undefined;
@@ -215,6 +304,7 @@ export function MiniGraphEditor({
   const fallbackInfo = { fallback: draft.template.fallback || null, defaultSpawnProfile: String(groupInfo?.defaultSpawnProfile || ''), profiles };
   // apply lands one operation's result as one undoable edit.
   const apply = (result, focus = undefined) => {
+    touched.current = true;
     setError('');
     model.current.applyDraft(result.view);
     setRev(model.current.rev);
@@ -233,16 +323,15 @@ export function MiniGraphEditor({
   };
   const undo = () => { if (model.current.undo()) { setRev(model.current.rev); setSelected(''); } };
   const stepsList = viewToStepList(draft);
-  const save = async () => {
+  const save = async ({ quiet = false } = {}) => {
     if (busy) return false;
-    setBusy('save');
+    setBusy(quiet ? 'auto' : 'save');
     setError('');
     const savedAt = model.current.rev;
     try {
       const body = await api.saveTemplate(process.templateId, draft, { sourceHash: model.current.sourceHash, ...(publish ? { listed: true } : {}) });
       model.current.markSaved(body, savedAt);
-      markQuickStart();
-      notify(`Saved ${name} as a new version`);
+      if (!quiet) notify(isDraft ? `Saved ${name}` : `Saved ${name} as a new version`);
       void source?.refresh?.();
       return true;
     } catch (cause) {
@@ -253,10 +342,56 @@ export function MiniGraphEditor({
       setBusy('');
     }
   };
+  // A draft saves itself a moment after each change; a change made while a
+  // save is under way is saved after it.
+  useEffect(() => {
+    if (!isDraft || !dirty || busy) return undefined;
+    const timer = setTimeout(() => {
+      setAutosave('saving');
+      void save({ quiet: true }).then((ok) => setAutosave(ok ? 'saved' : 'failed'));
+    }, AUTOSAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [isDraft, draftKey, dirty, busy]);
+  // The full editor opens over this tab, pinned to the group still: its
+  // ← Back inline brings the process back here.
   const fullEditor = async () => {
-    if (dirty && !(await save())) return;
-    await openProcessDraft({ id: process.templateId, name });
+    if (dirty && !(await save({ quiet: isDraft }))) return;
+    await openProcessDraft({ id: process.templateId, name, group: group.name });
     onClose();
+  };
+  const commitTitle = (value) => {
+    const next = String(value || '').trim() || UNTITLED_PROCESS;
+    setTitle(next);
+    if (next !== draft.template.name) apply({ view: { ...draft, template: { ...draft.template, name: next } } });
+  };
+  const empty = !Object.values(draft.template.nodes || {}).some(isStep);
+  // startFrom fills an empty draft with a starter's or a library process's
+  // graph, under this draft's id, named after it while still untitled.
+  const startFrom = (from, label) => {
+    if (!from?.template) return;
+    const keep = draft.template.name && draft.template.name !== UNTITLED_PROCESS;
+    const next = keep ? draft.template.name : (label || from.template.name || UNTITLED_PROCESS);
+    setTitle(next);
+    apply({ view: { template: { ...from.template, id: draft.template.id, name: next }, edges: from.edges || [], layout: from.layout || {} } });
+  };
+  // Closing a draft keeps it (saved first); one never touched is deleted.
+  const closeDraft = async () => {
+    if (!touched.current && empty && onDiscard) { onDiscard(process.templateId); return; }
+    if (dirty && !(await save({ quiet: true }))) return;
+    onClose();
+  };
+  const runDraft = async () => {
+    if (dirty && !(await save({ quiet: true }))) return;
+    onRun?.(process.templateId, name);
+  };
+  const describe = async (text) => {
+    if (dirty && !(await save({ quiet: true }))) return;
+    onDescribe?.(text, { id: process.templateId, sourceHash: model.current.sourceHash, ref: model.current.currentRef, view: draft });
+  };
+  const importPwf = () => {
+    onImport?.();
+    if (!touched.current && empty && onDiscard) onDiscard(process.templateId);
+    else onClose();
   };
   // pointAt is a pointer position in the graph's own coordinates, where the
   // handles, the picker and the menu are drawn.
@@ -304,31 +439,51 @@ export function MiniGraphEditor({
       ${menu && html`<${StructureMenu} view=${draft} menu=${menu} onRun=${run} onClose=${() => setMenu(null)}
         onWrap=${() => { setMenu(null); void fullEditor(); }} />`}`;
   };
-  const projection = draftProjection(draft, { whoOf: (id, node) => whoLine(node, fallbackInfo), noteOf: (id, node) => fallbackNote({ node }, fallbackInfo), name });
+  const startId = Object.keys(draft.template.nodes || {}).find((id) => draft.template.nodes[id]?.type === 'start') || '';
+  const projection = withFirstStep(draftProjection(draft, { whoOf: (id, node) => whoLine(node, fallbackInfo), noteOf: (id, node) => fallbackNote({ node }, fallbackInfo), name }), empty ? startId : '');
+  // The placeholder opens the kind picker for a step after start.
+  const addFirst = () => {
+    const box = canvas.current?.querySelector?.(`[data-process-node="${FIRST_STEP}"]`)?.getBoundingClientRect?.() || { left: 0, bottom: 0 };
+    setMenu(null);
+    setPicker({ op: 'after', id: startId, cx: box.left, cy: box.bottom + 4 });
+  };
   return html`<section class="gm-card ui-card ui-inset" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
     onKeyDown=${(event) => {
       if (event.key === 'Escape' && (menu || picker)) { event.stopPropagation(); setMenu(null); setPicker(null); }
       if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !/INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '')) { event.preventDefault(); undo(); }
     }}>
     <div class="gm-head">
-      <b class="gm-name">${name}</b>
-      <span class="gq-dim">${dirty ? 'draft' : 'saved'}</span>
+      ${isDraft
+    ? html`<input type="text" class="gm-title" data-mini-title ref=${nameRef} aria-label="Process name" maxlength="120" value=${title}
+        onInput=${(event) => setTitle(event.currentTarget.value)} onChange=${(event) => commitTitle(event.currentTarget.value)}
+        onKeyDown=${(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
+      <span class="ui-tag gm-autosave" data-mini-autosave=${autosave || (dirty ? 'pending' : 'saved')} title=${autosave === 'failed' ? error : ''}>${
+        autosave === 'saving' || busy === 'auto' ? 'draft · saving…' : autosave === 'failed' ? 'draft · not saved' : `draft · autosaved to ${group.name}`}</span>`
+    : html`<b class="gm-name">${name}</b>
+      <span class="gq-dim">${dirty ? 'draft' : 'saved'}</span>`}
       <span class="gm-toggle" role="group" aria-label="View">
+        <button data-ui-exempt type="button" aria-pressed="true" class="on">◈ Graph</button>
         <button type="button" data-ui-exempt data-mini-steps disabled=${!stepsList.ok} title=${stepsList.ok ? 'Show the same draft as a step list' : `The step list cannot show it: ${stepsList.reason}`}
           onClick=${() => onSteps({ list: stepsList.list, changed: dirty, sourceHash: model.current.sourceHash, ref: model.current.currentRef })}>☰ Steps</button>
-        <button data-ui-exempt type="button" aria-pressed="true" class="on">◈ Graph</button>
       </span>
-      ${dirty && html`<span class="gm-changes" data-mini-changes=${summary.length}>● ${summary.length || 1} unsaved change${summary.length === 1 ? '' : 's'}${summary.length ? `: ${summary.slice(0, 3).join(', ')}${summary.length > 3 ? '…' : ''}` : ''}</span>`}
+      ${dirty && !isDraft && html`<span class="gm-changes" data-mini-changes=${summary.length}>● ${summary.length || 1} unsaved change${summary.length === 1 ? '' : 's'}${summary.length ? `: ${summary.slice(0, 3).join(', ')}${summary.length > 3 ? '…' : ''}` : ''}</span>`}
       <span class="gq-spacer"></span>
       <${Button} size="sm" data-mini-undo disabled=${!model.current.canUndo} title=${withShortcut('Undo', 'mini-undo')} onClick=${undo}>↶ undo<//>
-      <${Button} size="sm" data-mini-full disabled=${!!busy} title=${dirty ? 'Save, then open it in the full editor' : 'Open it in the full editor'} onClick=${fullEditor}>⤢ full editor<//>
-      ${discarding
+      <${Button} size="sm" data-mini-full disabled=${!!busy && busy !== 'auto'} title=${dirty ? 'Save, then open it in the full editor' : 'Open it in the full editor'} onClick=${fullEditor}>⤢ ${isDraft ? 'Full editor' : 'full editor'}<//>
+      ${isDraft
+    ? html`<${Button} size="sm" variant="primary" data-mini-save disabled=${!!busy && busy !== 'auto'} title="Save it now and close the editor"
+        onClick=${() => void closeDraft()}>Save<//>
+      ${onRun && html`<${Button} size="sm" data-mini-run disabled=${(!!busy && busy !== 'auto') || empty} title=${empty ? 'Add a step first' : `Save it, then pick how to run it in ${group.name}`}
+        onClick=${() => void runDraft()}>▶ Run…<//>`}
+      <${Button} size="sm" icon=${true} variant="ghost" data-mini-close aria-label="Close" title=${!touched.current && empty ? 'Close: an untouched new process is not kept' : 'Close: it stays saved in the group'}
+        onClick=${() => void closeDraft()}>✕<//>`
+    : html`${discarding
     ? html`<span class="gq-confirm">Discard ${summary.length || 'the'} change${summary.length === 1 ? '' : 's'}?
         <${Button} size="sm" variant="danger" data-mini-discard onClick=${onClose}>discard<//>
         <${Button} size="sm" variant="link" class="gq-link" onClick=${() => setDiscarding(false)}>keep<//></span>`
     : html`<${Button} size="sm" data-mini-cancel onClick=${() => (dirty ? setDiscarding(true) : onClose())}>cancel<//>`}
       <${Button} size="sm" variant="primary" data-mini-save disabled=${!!busy || !dirty} title=${dirty ? 'Save as a new version' : 'Nothing changed'}
-        onClick=${async () => { if (await save()) onClose(); }}>${busy === 'save' ? 'saving…' : 'Save new version'}<//>
+        onClick=${async () => { if (await save()) onClose(); }}>${busy === 'save' ? 'saving…' : 'Save new version'}<//>`}
     </div>
     <div class="gm-canvas" ref=${canvas} data-mini-canvas
       onMouseLeave=${() => { if (!drag) setHover(''); }}
@@ -344,9 +499,12 @@ export function MiniGraphEditor({
         if (event.target === canvas.current || event.target?.classList?.contains?.('pk-mini-graph')) { setSelected(''); setMenu(null); setPicker(null); }
       }}>
       <${ProcessMiniGraph} run=${projection} wizard=${wizard} selectedId=${selected}
-        onNodeClick=${(node) => { setMenu(null); setPicker(null); setSelected(node.id === selected ? '' : node.id); }}
-        onNodeContextMenu=${openMenu} onNodeHover=${setHover} overlay=${overlay} />
+        onNodeClick=${(node) => { if (node.id === FIRST_STEP) { addFirst(); return; } setMenu(null); setPicker(null); setSelected(node.id === selected ? '' : node.id); }}
+        onNodeContextMenu=${(node, event) => (node.id === FIRST_STEP ? event.preventDefault() : openMenu(node, event))}
+        onNodeHover=${(id) => setHover(id === FIRST_STEP ? '' : id)} overlay=${overlay} />
     </div>
+    ${isDraft && empty && html`<${StartFrom} roster=${roster} api=${api} wizard=${wizard} busy=${busy && busy !== 'auto' ? busy : ''}
+      onView=${startFrom} onDescribe=${onDescribe ? (text) => void describe(text) : null} onImport=${onImport ? importPwf : null} />`}
     ${selected && html`<${Inspector} view=${draft} id=${selected} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
       onApply=${(result) => apply(result)} onClose=${() => setSelected('')} onFullEditor=${fullEditor}
       onKind=${(kind, who) => run(() => {
@@ -354,7 +512,7 @@ export function MiniGraphEditor({
         return who ? updateStep(result.view, selected, (s) => setStepWho(s, who)) : result;
       })} />`}
     <div class="gm-foot">
-      <span class="gq-dim">Saving makes a new version; runs already going keep theirs.</span>
+      <span class="gq-dim">${isDraft ? 'It saves itself as you go; runs already going keep their version.' : 'Saving makes a new version; runs already going keep theirs.'}</span>
       ${errors.length > 0 && html`<span class="gq-error ui-error" role="alert" data-mini-problems=${errors.length}>${errors.length} problem${errors.length === 1 ? '' : 's'}: ${errors[0].message}</span>`}
       <span class="gq-spacer"></span>
       ${!process.listed && html`<label class="gq-dim"><input type="checkbox" data-mini-publish checked=${publish}

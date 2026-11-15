@@ -13,7 +13,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
-import { markQuickStart, scribeDraftName, scribeDraftRequest } from './groups-quickstart.js';
+import { scribeDraftName, scribeDraftRequest } from './groups-quickstart.js';
 import { openProcessDraft } from './process-draft-handoff.js';
 import { dashPrefs } from './prefs.js';
 import { openHelperWindow } from './get-help.js';
@@ -135,25 +135,40 @@ export function restorableScribeDraft(scribes, processes) {
 // request goes as operator mail, so it reads as the operator's first message
 // in the scribe's chat window, which opens once it is sent. A declined
 // approval stores and starts nothing and answers null. A failed start deletes
-// the empty draft again, so nothing is left behind unlisted.
-export async function draftWithScribe(api, { group, text, roster = [], confirm, openChat = openHelperWindow }) {
-  const name = scribeDraftName(text);
+// the empty draft again, so nothing is left behind unlisted. With `template`
+// ({id, sourceHash, ref, view}: a new process already stored, from its Start
+// from strip) the scribe works on that one, and a failed start leaves it be.
+export async function draftWithScribe(api, { group, text, roster = [], confirm, openChat = openHelperWindow, template = null }) {
+  const name = template ? (template.view?.template?.name || scribeDraftName(text)) : scribeDraftName(text);
   const approved = await confirm({
     title: 'Grant process-scribe access?',
-    body: processScribeGrantBody(`a new draft process, "${name}"`),
+    body: processScribeGrantBody(template ? `the draft process "${name}"` : `a new draft process, "${name}"`),
     meta: PROCESS_SCRIBE_GRANT_META,
     okLabel: 'Grant & draft',
   });
   if (!approved) return null;
-  // Loaded on demand, as the Processes tab does: the graph model is not part
-  // of the Groups tab's startup.
-  const { blankEditView } = await import('./process-edit-model.js');
-  const view = blankEditView(name);
-  const body = await api.createTemplate(view, { listed: false, pinGroup: group.name });
-  const templateId = String(body?.id || '');
-  if (!templateId) throw new Error('the template was not created');
-  const sourceHash = String(body?.sourceHash || '');
-  const currentRef = String(body?.ref || '');
+  let view;
+  let templateId;
+  let sourceHash;
+  let currentRef;
+  let semanticHash = '';
+  if (template) {
+    ({ view } = template);
+    templateId = String(template.id || '');
+    sourceHash = String(template.sourceHash || '');
+    currentRef = String(template.ref || '');
+  } else {
+    // Loaded on demand, as the Processes tab does: the graph model is not
+    // part of the Groups tab's startup.
+    const { blankEditView } = await import('./process-edit-model.js');
+    view = blankEditView(name);
+    const body = await api.createTemplate(view, { listed: false, pinGroup: group.name });
+    templateId = String(body?.id || '');
+    if (!templateId) throw new Error('the template was not created');
+    sourceHash = String(body?.sourceHash || '');
+    currentRef = String(body?.ref || '');
+    semanticHash = String(body?.semanticHash || '');
+  }
   let agentId = '';
   try {
     const handoff = processScribeHandoff({ kind: 'template', id: templateId, currentRef, sourceHash });
@@ -169,7 +184,6 @@ export async function draftWithScribe(api, { group, text, roster = [], confirm, 
       subject: PROCESS_SCRIBE_CHAT_SUBJECT,
       body: processScribeChatMessage({ prompt: scribeDraftRequest(text, group.name, roster) }),
     });
-    markQuickStart();
     const scribeName = String(scribe?.name || PROCESS_SCRIBE_NAME);
     // The conversation is the chat window's; a window that cannot open still
     // leaves the draft and its panel, which opens it again.
@@ -177,11 +191,11 @@ export async function draftWithScribe(api, { group, text, roster = [], confirm, 
     return {
       templateId, name, sourceHash, request: String(text || '').trim(),
       scribe: { agentId, convId, name: scribeName },
-      view: { ...view, template: { ...view.template, id: templateId }, currentRef, sourceHash, semanticHash: String(body?.semanticHash || '') },
+      view: { ...view, template: { ...view.template, id: templateId }, currentRef, sourceHash, semanticHash },
     };
   } catch (cause) {
     if (agentId) await api.stopAgent(agentId).catch(() => {});
-    await api.deleteTemplate(templateId).catch(() => api.unpinProcess(group.name, templateId).catch(() => {}));
+    if (!template) await api.deleteTemplate(templateId).catch(() => api.unpinProcess(group.name, templateId).catch(() => {}));
     throw cause;
   }
 }

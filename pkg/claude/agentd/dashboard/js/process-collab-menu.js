@@ -1,14 +1,13 @@
 // process-collab-menu.js -- the Processes half of the Collab strip's ＋ menu
 // (tcl-tnbtwp): every process template, by the groups it is pinned to, with a
-// filter, and a new one. Picking one opens its editor as a Collab tab
+// filter, and a new one (named by the box, or untitled when it is empty). Picking one opens its editor as a Collab tab
 // (process-editor-place.js openProcessTab).
 
 import { h } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Input } from './ui-components.js';
-import { idempotentRequestHeaders } from './request-idempotency.js';
-import { randomUUID } from './insecure-origin.js';
+import { UNTITLED_PROCESS, createProcessTemplate } from './process-draft-handoff.js';
 
 const html = htm.bind(h);
 
@@ -35,24 +34,6 @@ export function groupProcessTemplates(templates, query = '') {
     .sort((a, b) => (!a.name) - (!b.name) || a.name.localeCompare(b.name));
 }
 
-// createProcessTemplate stores a blank template named name, and answers its id.
-export async function createProcessTemplate(name, { fetchImpl = globalThis.fetch, attempt = randomUUID() } = {}) {
-  const { blankEditView } = await import('./process-edit-model.js');
-  const scaffold = blankEditView(name);
-  const template = { ...scaffold.template };
-  delete template.id;
-  const path = '/v1/process/templates';
-  const body = JSON.stringify({ template, edges: scaffold.edges, layout: scaffold.layout });
-  const response = await fetchImpl(path, {
-    method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attempt), credentials: 'same-origin', body,
-  });
-  const result = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(result?.message || result?.error || `${response.status} ${response.statusText}`);
-  const id = String(result?.id || '').trim();
-  if (!id) throw new Error('template creation returned no id');
-  return id;
-}
-
 // ProcessMenuList offers every template, and a new one; one box does both, as
 // the drawing boards half does.
 export function ProcessMenuList({ fetchImpl, notify, onOpen, wizard = false }) {
@@ -77,7 +58,7 @@ export function ProcessMenuList({ fetchImpl, notify, onOpen, wizard = false }) {
   const noun = wizard ? 'rite' : 'process';
   async function submit(event) {
     event.preventDefault();
-    if (!clean || creating) return;
+    if (creating) return;
     // The box filters too, so naming a template that exists means that one.
     if (same) {
       onOpen(same.id, same.name || same.id);
@@ -85,9 +66,11 @@ export function ProcessMenuList({ fetchImpl, notify, onOpen, wizard = false }) {
     }
     setCreating(true);
     try {
-      const id = await createProcessTemplate(clean, { fetchImpl });
+      // An empty box makes an untitled one, named in its editor.
+      const name = clean || UNTITLED_PROCESS;
+      const id = await createProcessTemplate(name, { fetchImpl });
       setText('');
-      onOpen(id, clean);
+      onOpen(id, name);
     } catch (err) {
       notify(`Could not create the ${noun}: ${err?.message || err}`, true);
     } finally {
@@ -99,7 +82,7 @@ export function ProcessMenuList({ fetchImpl, notify, onOpen, wizard = false }) {
     <form class="drawing-board-new" onSubmit=${submit}>
       <${Input} size="sm" placeholder=${`Search, or name a new ${noun}`} aria-label=${`Search ${noun}es, or name a new one`} maxLength="120"
         value=${text} onInput=${(event) => setText(event.currentTarget.value)} />
-      <${Button} size="sm" variant="primary" type="submit" disabled=${!clean || creating}>${same ? 'Open' : creating ? 'Creating…' : `＋ New ${noun}`}<//>
+      <${Button} size="sm" variant="primary" type="submit" disabled=${creating}>${same ? 'Open' : creating ? 'Creating…' : `＋ New ${noun}`}<//>
     </form>
     ${error && html`<p class="drawing-board-error ui-error" role="alert">Processes are unavailable: ${error}</p>`}
     ${templates === null && !error && html`<p class="drawing-board-muted">Loading ${noun}es…</p>`}
