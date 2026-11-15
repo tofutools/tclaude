@@ -96,6 +96,7 @@ func (ar *snapshotAgentRows) add(convID string) *dashboardAgent {
 		ExternalSteward:   db.IsExternalStewardConv(convID),
 
 		SpawnedByExternalSteward: ar.externalStewardParents[b.AgentID],
+		SpawnedBy:                ar.spawnParents[b.AgentID],
 		// init non-nil so JSON serializes [] not null;
 		// the dashboard's JS does .length / .map without a guard.
 		Groups:          []string{},

@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,29 @@ func TestDashboardSnapshot_MemberSpawnedBy(t *testing.T) {
 
 	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	spawnedBy := memberSpawnedBy(t, rec.Body.Bytes(), "alpha")
+	require.Contains(t, spawnedBy, worker.ConvID)
+	require.NotNil(t, spawnedBy[worker.ConvID], "the worker names its spawner")
+	assert.Equal(t, leadID, *spawnedBy[worker.ConvID])
+	require.Contains(t, spawnedBy, lead)
+	assert.Nil(t, spawnedBy[lead], "the lead was added, not spawned by an agent: the field is left out")
+	require.Contains(t, spawnedBy, human)
+	assert.Nil(t, spawnedBy[human])
+
+	// A trusted peer's copy of this snapshot nests nothing: there the
+	// worker is a top-level agent.
+	peer := httptest.NewRecorder()
+	agentd.ServePeerDashboardSnapshotForTest(peer, testharness.JSONRequest(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equal(t, http.StatusOK, peer.Code, peer.Body.String())
+	peerSpawnedBy := memberSpawnedBy(t, peer.Body.Bytes(), "alpha")
+	require.Contains(t, peerSpawnedBy, worker.ConvID)
+	assert.Nil(t, peerSpawnedBy[worker.ConvID], "no spawned_by in a peer's snapshot")
+}
+
+// memberSpawnedBy is each member's spawned_by in the named group of a
+// snapshot body, by conversation; nil when the field is left out.
+func memberSpawnedBy(t *testing.T, body []byte, group string) map[string]*string {
+	t.Helper()
 	var snap struct {
 		Groups []struct {
 			Name    string `json:"name"`
@@ -43,21 +67,15 @@ func TestDashboardSnapshot_MemberSpawnedBy(t *testing.T) {
 			} `json:"members"`
 		} `json:"groups"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap))
-	spawnedBy := map[string]*string{}
+	require.NoError(t, json.Unmarshal(body, &snap))
+	out := map[string]*string{}
 	for _, g := range snap.Groups {
-		if g.Name != "alpha" {
+		if g.Name != group {
 			continue
 		}
 		for _, m := range g.Members {
-			spawnedBy[m.ConvID] = m.SpawnedBy
+			out[m.ConvID] = m.SpawnedBy
 		}
 	}
-	require.Contains(t, spawnedBy, worker.ConvID)
-	require.NotNil(t, spawnedBy[worker.ConvID], "the worker names its spawner")
-	assert.Equal(t, leadID, *spawnedBy[worker.ConvID])
-	require.Contains(t, spawnedBy, lead)
-	assert.Nil(t, spawnedBy[lead], "the lead was added, not spawned by an agent: the field is left out")
-	require.Contains(t, spawnedBy, human)
-	assert.Nil(t, spawnedBy[human])
+	return out
 }

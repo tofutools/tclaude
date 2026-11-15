@@ -1103,6 +1103,8 @@ type dashboardAgent struct {
 	ExternalSteward bool `json:"external_steward,omitempty"`
 	// SpawnedByExternalSteward names the assistant that started this worker.
 	SpawnedByExternalSteward string `json:"spawned_by_external_steward,omitempty"`
+	// SpawnedBy — see dashboardMember.SpawnedBy (the Ungrouped list nests too).
+	SpawnedBy string `json:"spawned_by,omitempty"`
 	// Waking — see dashboardMember.Waking.
 	Waking      bool       `json:"waking,omitempty"`
 	State       agentState `json:"state"`

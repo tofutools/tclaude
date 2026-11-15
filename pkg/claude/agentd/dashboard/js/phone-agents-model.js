@@ -175,7 +175,16 @@ export function agentTree(rows) {
     if (root === row) top.push(row);
     else kids.set(root.agent, [...(kids.get(root.agent) || []), row]);
   }
-  return top.map((row) => ({ row, kids: kids.get(row.agent) || [] }));
+  // A lead sits where its loudest agent would, itself or a worker: an offline
+  // or idle lead must not take an errored or asking worker down the list.
+  // Ties keep the list's order.
+  const at = new Map(rows.map((row, i) => [row, i]));
+  const nodes = top.map((row) => {
+    const own = kids.get(row.agent) || [];
+    return { row, kids: own, loudest: Math.min(...[row, ...own].map((r) => at.get(r))) };
+  });
+  nodes.sort((a, b) => a.loudest - b.loudest);
+  return nodes.map(({ row, kids: own }) => ({ row, kids: own }));
 }
 
 // SUMMARY_ORDER is how a group's state summary lists its pills: what needs a

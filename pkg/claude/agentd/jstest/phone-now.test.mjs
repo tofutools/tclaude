@@ -38,9 +38,17 @@ async function setup(t, snapshot = SNAPSHOT, { stored = null } = {}) {
     harness.importDashboardModule('js/phone-sheet.js'),
   ]);
   t.after(() => sheet.closePhoneSheet());
+  // The access request's deadline counts from this mount, not from when the
+  // module loaded: under a loaded full run the earlier tests took long enough
+  // that the countdown read 0:40.
+  const shared = SNAPSHOT.access_requests[0];
+  const fresh = { ...shared, deadline: new Date(Date.now() + 42_500).toISOString() };
+  const rebased = snapshot.access_requests
+    ? { ...snapshot, access_requests: snapshot.access_requests.map((r) => (r === shared ? fresh : r)) }
+    : snapshot;
   const state = createDashboardState();
   state.beginRequest();
-  state.commitRequest(1, snapshot);
+  state.commitRequest(1, rebased);
   const calls = [];
   const posts = [];
   const record = (name) => (...args) => { calls.push([name, ...args]); };

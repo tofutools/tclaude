@@ -40,12 +40,16 @@ function PRLabel({ pr }) {
   return html`<span class=${`phone-agent-pr${pr.ci ? ` ci-${pr.ci}` : ''}`}>PR #${pr.number}${pr.ci ? ` ${CI_MARK[pr.ci]}` : ''}</span>`;
 }
 
-// MetaLine is a row's second line (phone-agents-model.js metaParts), and
-// how many workers a lead has.
+// MetaLine is a row's second line (phone-agents-model.js metaParts). A
+// lead's says how many workers it has right after its role, where a narrow
+// phone's ellipsis does not reach.
 function MetaLine({ row, kids = 0 }) {
   const parts = metaParts(row);
-  return html`<span class="phone-agent-meta">${parts.map((part, i) => html`${i ? ' · ' : ''}${typeof part === 'string' ? part : html`<${PRLabel} pr=${part.pr} />`}`)}${
-    kids > 0 && html` · <span class="phone-agent-kids">${kids} ${kids === 1 ? 'worker' : 'workers'}</span>`}</span>`;
+  if (kids > 0) parts.splice(row.role ? 1 : 0, 0, { kids });
+  const part = (p) => (typeof p === 'string' ? p
+    : p.kids ? html`<span class="phone-agent-kids">${p.kids} ${p.kids === 1 ? 'worker' : 'workers'}</span>`
+      : html`<${PRLabel} pr=${p.pr} />`);
+  return html`<span class="phone-agent-meta">${parts.map((p, i) => html`${i ? ' · ' : ''}${part(p)}`)}</span>`;
 }
 
 // AgentRow is one agent: the row itself does its one thing, ⋯ the rest. A
@@ -55,7 +59,7 @@ function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kid
   const cls = ['phone-agent', `v-${row.variant}`, !row.online && 'phone-agent-off', under && 'phone-agent-worker', last && 'phone-agent-last'].filter(Boolean).join(' ');
   return html`<li class=${cls}>
     <button data-ui-exempt type="button" class="phone-agent-row" onClick=${() => onTap(row)}
-      aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}${under ? `, spawned by ${under.name}` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
+      aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}${under ? `, spawned by ${under.name}` : ''}${kids > 0 ? `, ${kids} ${kids === 1 ? 'worker' : 'workers'}` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
       <${Avatar} bot glyph=${steward ? '✦' : '🤖'} badge=${row.pill.badge} dim=${!row.online} />
       <span class="phone-agent-text">
         <span class="phone-agent-line"><span class="phone-agent-title">${row.name}</span><${Pill} row=${row} /></span>

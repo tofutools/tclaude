@@ -371,10 +371,24 @@ test('the model: workers nest one level under the agent that spawned them', asyn
   const model = await harness.importDashboardModule('js/phone-agents-model.js');
   const [webshop] = model.agentGroups(TREE);
   assert.deepEqual(webshop.tree.map((n) => [n.row.name, n.kids.map((k) => k.name)]), [
-    ['visitor', []],
     ['lead', ['payments', 'helper', 'ui', 'reviewer']],
+    ['visitor', []],
     ['solo', []],
-  ], 'a worker\'s worker sits flat under the same lead; a spawner from elsewhere leaves it at the top; kids loudest first, offline last');
+  ], 'a worker\'s worker sits flat under the same lead; a spawner from elsewhere leaves it at the top; kids loudest first, offline last;'
+    + ' the idle lead ranks by its errored worker');
+  // An offline lead does not take an asking worker down the list.
+  const [quiet] = model.agentGroups({ groups: [{ name: 'g', members: [
+    { agent_id: id(20), conv_id: 'c20', title: 'busy', online: true, state: { status: 'working' } },
+    { agent_id: id(21), conv_id: 'c21', title: 'gone-lead', online: false, state: {} },
+    { agent_id: id(22), conv_id: 'c22', title: 'asker', online: true, state: { status: 'awaiting_input' }, spawned_by: id(21) },
+  ] }], ungrouped: [] });
+  assert.deepEqual(quiet.tree.map((n) => n.row.name), ['gone-lead', 'busy']);
+  // Ungrouped agents nest too.
+  const ungrouped = model.agentGroups({ groups: [], ungrouped: [
+    { agent_id: id(30), conv_id: 'c30', title: 'boss', online: true, state: { status: 'idle' } },
+    { agent_id: id(31), conv_id: 'c31', title: 'minion', online: true, state: { status: 'idle' }, spawned_by: id(30) },
+  ] });
+  assert.deepEqual(ungrouped[0].tree.map((n) => [n.row.name, n.kids.map((k) => k.name)]), [['boss', ['minion']]]);
   assert.deepEqual(webshop.summary.map((x) => `${x.count} ${x.text}`), ['1 error', '3 working', '2 idle', '1 offline']);
   // A cycle (corrupt lineage) cannot spin: both stay listed.
   const loop = model.agentTree([{ agent: 'a', parent: 'b', name: 'a' }, { agent: 'b', parent: 'a', name: 'b' }]);
@@ -389,11 +403,13 @@ test('rows: a worker sits under its lead, which says how many it has', async (t)
   });
   const rows = [...c.querySelectorAll('[aria-label="webshop"] .phone-agent')];
   assert.deepEqual(rows.map((li) => `${li.classList.contains('phone-agent-worker') ? '  ' : ''}${li.querySelector('.phone-agent-title').textContent}`),
-    ['visitor', 'lead', '  payments', '  helper', '  ui', '  reviewer', 'solo']);
-  const lead = rows[1];
+    ['lead', '  payments', '  helper', '  ui', '  reviewer', 'visitor', 'solo']);
+  const lead = rows[0];
   assert.equal(lead.querySelector('.phone-agent-kids').textContent, '4 workers');
-  assert.ok(rows[5].classList.contains('phone-agent-last'), 'the last worker ends the guide line');
-  assert.equal(rows[2].classList.contains('phone-agent-last'), false);
-  assert.ok(rows[2].querySelector('.phone-agent-row').getAttribute('aria-label').includes('spawned by lead'));
+  assert.match(lead.querySelector('.phone-agent-meta').textContent, /^lead · 4 workers( · |$)/, 'right after the role, before an ellipsis can cut it');
+  assert.ok(lead.querySelector('.phone-agent-row').getAttribute('aria-label').includes('idle, 4 workers'), 'a screen reader hears it too');
+  assert.ok(rows[4].classList.contains('phone-agent-last'), 'the last worker ends the guide line');
+  assert.equal(rows[1].classList.contains('phone-agent-last'), false);
+  assert.ok(rows[1].querySelector('.phone-agent-row').getAttribute('aria-label').includes('spawned by lead'));
   assert.equal(rows[6].querySelector('.phone-agent-kids'), null);
 });
