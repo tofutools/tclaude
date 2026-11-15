@@ -53,6 +53,11 @@ test('a Groups run link opens the run in Automations, and Back goes to the Runs'
   await page.locator('.phone-bar-back').click();
   await expect(page.locator('.phone-bar-title')).toHaveText('Automations');
   await expect(page.locator('.phone-run-open').first()).toBeVisible();
+  // Agents is Agents, not the run link again (the hidden Groups island's
+  // single-run focus is cleared).
+  await page.locator('.phone-nav').getByRole('button', { name: /Agents/ }).click();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Agents');
+  await expect(page).toHaveURL(/\/groups$|\/$/);
   expect(errors).toEqual([]);
 });
 

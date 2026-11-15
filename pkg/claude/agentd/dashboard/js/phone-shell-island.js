@@ -96,7 +96,12 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     const onRestore = (event) => {
       const loc = event.detail?.location;
       if (loc?.tab !== 'groups' || loc.subtab !== 'runs') return;
-      setTimeout(() => openRunLink(loc, { open: () => openAutomationsEntry(PROCESSES_SUBTAB) }), 0);
+      setTimeout(() => {
+        // The hidden desktop Groups island took the link as its single-run
+        // focus; left set, the next Agents tap would record the run link.
+        featureState('groups')?.setFocusedRun?.(null);
+        openRunLink(loc, { open: () => openAutomationsEntry(PROCESSES_SUBTAB) });
+      }, 0);
     };
     document.addEventListener('tclaude:restore-location', onRestore);
     return () => document.removeEventListener('tclaude:restore-location', onRestore);
