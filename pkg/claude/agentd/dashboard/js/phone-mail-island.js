@@ -563,11 +563,11 @@ function PhoneReader({ current, controller, item, active, back }) {
     <${MessageBody} message=${item} agentMail=${!human} />
     <${PhoneAttachments} message=${item} />
     ${human && (pendingDecision(item, HUMAN) && (item.from_conv || item.from_agent)
-      ? html`<section class="phone-mail-decision" aria-label="Decide">
+      ? html`<div class="phone-mail-decision" role="group" aria-label="Decide">
           <h2 class="ui-eyebrow phone-mail-decision-head">Decide</h2>
           <${DecisionAnswer} decision=${item} notify=${shellToast}
             onDone=${(sent) => { shellToast(sent ? `Sent “${sent}” to ${sender}` : `Dismissed; ${sender} is told`, false); controller.reloadMail(); }} />
-        </section>`
+        </div>`
       : html`<${DecisionChoices} message=${item} toast=${shellToast} onDone=${controller.reloadMail} />`)}
     ${human && html`<${MessageAction} message=${item} toast=${shellToast} onDone=${controller.reloadMail} onRefused=${controller.reloadMail} />`}
     ${canReply && html`<div class="phone-mail-replybar">

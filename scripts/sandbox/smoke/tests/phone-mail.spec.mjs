@@ -86,3 +86,22 @@ test('Mail lists, opens, goes back, picks an agent folder and writes', async ({ 
   await expectNoSideScroll(page, 'the write sheet');
   expect(errors).toEqual([]);
 });
+
+test('a decision is never answered from the list: its row opens it, and the reader answers', async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto('/messages/human');
+  await booted(page);
+  const row = page.locator('.phone-mail-row', { has: page.locator('.phone-mail-decide') }).first();
+  await expect(row.locator('.phone-mail-decide')).toHaveText(/^Decide · \d+ options ›$/);
+  await expect(row.locator('button'), 'the row\'s one button opens it').toHaveCount(1);
+  // A tap low on the row, where the options used to sit, opens the message.
+  const box = await row.boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height * 0.8);
+  await expect(page).toHaveURL(/\/messages\/human\/[^/]+$/);
+  const decide = page.getByRole('group', { name: 'Decide' });
+  await expect(decide).toBeVisible();
+  await expect(decide.getByRole('textbox', { name: 'Note to send with your choice' })).toBeVisible();
+  await expect(decide.getByRole('button', { name: 'Dismiss' })).toBeVisible();
+  await expectNoSideScroll(page, 'the decision reader');
+  expect(errors).toEqual([]);
+});
