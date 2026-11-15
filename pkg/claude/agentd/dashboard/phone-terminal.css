@@ -118,6 +118,16 @@
   background: none; color: var(--ui-muted-text); cursor: pointer;
 }
 :root[data-layout="phone"] .phone-compose-error { margin: 0; }
+/* Write's To: a label and a full-width field, the matches listed under it. */
+:root[data-layout="phone"] .phone-compose-to { display: flex; flex-direction: column; gap: 4px; }
+:root[data-layout="phone"] .phone-compose-to-field,
+:root[data-layout="phone"] .phone-compose-to:has(> .phone-compose-to-picked) { display: flex; flex-direction: row; align-items: center; gap: 10px; }
+:root[data-layout="phone"] .phone-compose-to-label { flex: none; color: var(--ui-muted-text); font-size: 15px; }
+:root[data-layout="phone"] .phone-compose-to-input { flex: 1; min-width: 0; min-height: 44px; font-size: 16px; }
+:root[data-layout="phone"] .phone-compose-to-picked { max-width: calc(100% - 40px); }
+:root[data-layout="phone"] .phone-compose-recipients { margin: 0 0 0 34px; }
+:root[data-layout="phone"] .phone-compose-recipient { display: flex; align-items: baseline; gap: 8px; min-height: var(--phone-tap); font-size: 15px; }
+:root[data-layout="phone"] .phone-compose-recipient small { color: var(--ui-muted-text); }
 :root[data-layout="phone"] .phone-compose-foot { display: flex; align-items: center; gap: 10px; }
 :root[data-layout="phone"] .phone-compose-foot .phone-btn { min-height: 44px; font-size: 16px; }
 :root[data-layout="phone"] .phone-compose-send { padding: 0 20px; }
