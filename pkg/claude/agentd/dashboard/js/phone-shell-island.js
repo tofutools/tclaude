@@ -19,7 +19,7 @@ import { signal } from '@preact/signals';
 import htm from 'htm';
 import { messagesBadgeView } from './shell-model.js';
 import { OWN_VIEWS, PHONE_SLOTS, nowView, rootBarFor, slotFor, titleFor } from './phone-shell-model.js';
-import { phoneBar, phonePage } from './phone-page.js';
+import { barFor, phoneBar, phonePage } from './phone-page.js';
 import { processContext } from './process-context.js';
 import { gateItems } from './phone-process-runs.js';
 import { PhoneSheetHost, closePhoneSheet, openPhoneSheet } from './phone-sheet.js';
@@ -82,7 +82,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // page has neither.
   const onScreen = OWN_VIEWS.includes(view) ? view : activeTab;
   const own = desktopOnly ? {} : rootBarFor(slot);
-  const added = !desktopOnly && phoneBar.value?.tab === onScreen ? phoneBar.value : null;
+  const added = desktopOnly ? null : barFor(phoneBar.value, onScreen);
 
   // Any tab activation after the first render clears the own view, so a deep
   // link, Back, or a link inside a view shows its tab; unless Back restored

@@ -45,3 +45,26 @@ test('usePhonePage sets the page once, calls the latest handlers, and clears onl
   await harness.act(() => { props.value = { ...props.value, active: false }; });
   assert.equal(phonePage.value, other, 'another view\'s page is left alone');
 });
+
+test('bars stack: a view on another tab setting its bar later does not hide this one, and each takes out only its own', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { barFor, phoneBar, usePhoneBar } = await harness.importDashboardModule('js/phone-page.js');
+  const { signal } = harness.signals;
+  const shown = signal({ access: true, agents: true });
+  function Bar({ tab, name }) {
+    usePhoneBar({ tab, actions: [{ key: name, icon: name, label: name }] }, shown.value[tab]);
+    return null;
+  }
+  // Access sets its bar first; Agents, mounted the whole time, after.
+  await harness.mount(harness.html`<${Bar} tab="access" name="grant" /><${Bar} tab="groups" name="spawn" />`);
+  await harness.act(() => { shown.value = { ...shown.value, groups: true }; });
+  assert.equal(barFor(phoneBar.value, 'access')?.actions[0].key, 'grant', 'still found under the later bar');
+  assert.equal(barFor(phoneBar.value, 'groups')?.actions[0].key, 'spawn');
+  assert.equal(barFor(phoneBar.value, 'messages'), null);
+
+  await harness.act(() => { shown.value = { ...shown.value, access: false }; });
+  assert.equal(barFor(phoneBar.value, 'access'), null, 'taken out from under the later bar');
+  assert.equal(barFor(phoneBar.value, 'groups')?.actions[0].key, 'spawn', 'the other is left alone');
+  await harness.act(() => { shown.value = { ...shown.value, groups: false }; });
+  assert.equal(phoneBar.value, null);
+});

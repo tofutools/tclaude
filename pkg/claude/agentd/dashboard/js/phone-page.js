@@ -97,11 +97,32 @@ function barKey(bar) {
   return JSON.stringify([bar.tab || '', bar.menu ? [bar.menu.sub || '', bar.menu.label || ''] : null, acts]);
 }
 
+// barFor is the bar of `tab` in phoneBar's stack (the latest set first,
+// each covering the one before), or null when that tab set none.
+export function barFor(bar, tab) {
+  for (let at = bar; at; at = at.covered || null) if (at.tab === tab) return at;
+  return null;
+}
+
+// withoutBar is the stack with `owner`'s bar taken out, wherever it is: a
+// view that stays mounted on a tab not on screen (Agents) may have set its
+// bar after this one.
+function withoutBar(bar, owner) {
+  if (!bar) return null;
+  const rest = withoutBar(bar.covered || null, owner);
+  if (bar.owner === owner) return rest;
+  if (rest === (bar.covered || null)) return bar;
+  const kept = { ...bar };
+  if (rest) kept.covered = rest; else delete kept.covered;
+  return kept;
+}
+
 // usePhoneBar shows `bar` in the shell's top bar while `active` holds and the
 // component is mounted, the way usePhonePage does for a page: replaced only
-// when its look changes, its handlers always the latest, and cleared only if
-// it is still this component's. Clearing it puts back the bar of another tab
-// it covered.
+// when its look changes, its handlers always the latest. Bars stack: each
+// mounted view's stays under the later ones, and the shell shows the one of
+// the tab on screen (barFor), so a view on another tab setting its bar later
+// does not hide this one. Clearing takes out only this component's.
 export function usePhoneBar(bar, active = true) {
   const latest = useRef(bar);
   latest.current = bar;
@@ -109,7 +130,9 @@ export function usePhoneBar(bar, active = true) {
   useLayoutEffect(() => {
     if (!key) return undefined;
     const now = latest.current;
+    const owner = {};
     const shown = {
+      owner,
       tab: now.tab || '',
       menu: now.menu ? { sub: now.menu.sub || '', label: now.menu.label || '', onClick: () => latest.current?.menu?.onClick?.() } : null,
       actions: (now.actions || []).map((act, index) => ({
@@ -121,11 +144,8 @@ export function usePhoneBar(bar, active = true) {
     // (Mail's): that tab's view stays mounted and sets its bar only when its
     // look changes, so taking this one down puts the covered one back.
     const prev = phoneBar.peek();
-    const covered = prev && prev.tab !== shown.tab ? prev : (prev?.covered || null);
-    if (covered) shown.covered = covered;
+    if (prev) shown.covered = prev;
     phoneBar.value = shown;
-    return () => {
-      if (phoneBar.peek() === shown) phoneBar.value = shown.covered || null;
-    };
+    return () => { phoneBar.value = withoutBar(phoneBar.peek(), owner); };
   }, [key]);
 }
