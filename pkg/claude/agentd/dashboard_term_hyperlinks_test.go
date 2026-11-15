@@ -25,7 +25,7 @@ import (
 // process-wide copy to anything the operator starts inside it.
 func TestWebTerminalAttachCmdScopesFeatureRequestToTheCommand(t *testing.T) {
 	got := webTerminalAttachCmd("exec tclaude session attach 'worker'")
-	want := clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature +
+	want := clcommon.TmuxClientFeaturesEnv + "=" + webTerminalTmuxFeatures +
 		" " + session.WebTerminalAttachEnv + "=1 exec tclaude session attach 'worker'"
 	if got != want {
 		t.Fatalf("webTerminalAttachCmd()\n got: %s\nwant: %s", got, want)

@@ -91,7 +91,7 @@ func TestWebOpenWindowWSRequestsHyperlinkPassthrough(t *testing.T) {
 	command := captureWebTermCommand(t, "/api/open-window-ws/"+spawned.ConvID)
 
 	assert.True(t,
-		strings.HasPrefix(command, clcommon.TmuxClientFeaturesEnv+"="+clcommon.TmuxHyperlinksFeature+" "),
+		strings.HasPrefix(command, clcommon.TmuxClientFeaturesEnv+"="+clcommon.TmuxHyperlinksFeature+","+clcommon.TmuxSyncFeature+" "),
 		"the assignment must lead the command so the shell exports it: %q", command)
 	assert.Contains(t, command, "session attach",
 		"still the ordinary attach wrapper, only with the feature request: %q", command)

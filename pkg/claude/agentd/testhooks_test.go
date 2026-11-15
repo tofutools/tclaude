@@ -2899,3 +2899,7 @@ func ProbeShellTimesInlineForTest() {
 	defer shellTimesProbe.mu.Unlock()
 	shellTimesProbe.inline = true
 }
+
+// WebTerminalTmuxFlagsForTest is webTerminalTmuxFlags: the sandbox's swipe
+// TUI attaches with the client flags a dashboard terminal uses.
+func WebTerminalTmuxFlagsForTest() string { return webTerminalTmuxFlags() }
