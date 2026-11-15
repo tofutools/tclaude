@@ -250,13 +250,6 @@
   background: var(--phone-on-bg); border-color: var(--phone-accent-bg); color: var(--ui-text-strong); font-weight: 500;
 }
 :root[data-layout="phone"] .phone-chip-count { color: var(--ui-muted-text); }
-:root[data-layout="phone"] .phone-task {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
-  min-height: var(--phone-tap); padding: 8px 0; background: none; border: 0;
-  color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-task-title { font-weight: 600; color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-task-who { color: var(--ui-muted-text); font-size: 13px; }
 
 /* The More sheet: a bottom sheet over a scrim. */
 :root[data-layout="phone"] .phone-sheet-scrim {

@@ -15,6 +15,11 @@
 //     hideNav: boolean, hide the bottom nav while the page is up
 //     routed:  boolean, the page is a router location of its own; otherwise
 //              it is a history step of its own (phone-history.js)
+//     view:    the shell's own view the page is pushed over ('board': a
+//              task's page), or absent for a tab's page; the shell shows a
+//              page only over the view it belongs to
+//     covered: the tab's page this one took the slot from, put back when
+//              it goes; an unrouted one still counts as a history layer
 //   } | null
 //
 // A page never outlives its tab: usePhonePage takes it down when its view goes
@@ -23,7 +28,7 @@
 // tab finds the page still up.
 
 import { signal } from '@preact/signals';
-import { useEffect, useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 
 export const phonePage = signal(null);
 
@@ -33,7 +38,7 @@ export const phonePage = signal(null);
 export function pageKey(page) {
   if (!page) return '';
   const acts = (page.actions || []).map((act) => [act.key || act.label, act.icon || '', act.label, !!act.disabled, !!act.danger]);
-  return JSON.stringify([page.title || '', !!page.hideNav, acts]);
+  return JSON.stringify([page.title || '', !!page.hideNav, acts, page.view || '']);
 }
 
 // usePhonePage shows `page` in the shell while `active` holds and the
@@ -41,17 +46,23 @@ export function pageKey(page) {
 // replaced only when the page's look changes (pageKey), never on a mere
 // re-render, and its handlers always call the latest ones passed here.
 // Clearing only removes the page this component set, never another view's.
+// It is a layout effect, so the bar, and the history step the page is
+// (phone-history.js), land in the same commit as the page itself: a passive
+// effect can run a frame late, and a Back in between left the page up with
+// the root's bar and no entry to step off.
 export function usePhonePage(page, active = true) {
   const latest = useRef(page);
   latest.current = page;
   const key = active && page ? pageKey(page) : '';
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!key) return undefined;
     const now = latest.current;
     const shown = {
       title: now.title || '',
       hideNav: !!now.hideNav,
       routed: !!now.routed,
+      ...(now.view ? { view: now.view } : {}),
+      ...(now.covered ? { covered: now.covered } : {}),
       onBack: () => latest.current?.onBack?.(),
       actions: (now.actions || []).map((act, index) => ({
         ...act,
@@ -87,12 +98,13 @@ function barKey(bar) {
 // usePhoneBar shows `bar` in the shell's top bar while `active` holds and the
 // component is mounted, the way usePhonePage does for a page: replaced only
 // when its look changes, its handlers always the latest, and cleared only if
-// it is still this component's.
+// it is still this component's. Clearing it puts back the bar of another tab
+// it covered.
 export function usePhoneBar(bar, active = true) {
   const latest = useRef(bar);
   latest.current = bar;
   const key = active && bar ? barKey(bar) : '';
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!key) return undefined;
     const now = latest.current;
     const shown = {
@@ -103,9 +115,15 @@ export function usePhoneBar(bar, active = true) {
         onClick: () => latest.current?.actions?.[index]?.onClick?.(),
       })),
     };
+    // An own view's bar (Board's) covers the bar of the tab under it
+    // (Mail's): that tab's view stays mounted and sets its bar only when its
+    // look changes, so taking this one down puts the covered one back.
+    const prev = phoneBar.peek();
+    const covered = prev && prev.tab !== shown.tab ? prev : (prev?.covered || null);
+    if (covered) shown.covered = covered;
     phoneBar.value = shown;
     return () => {
-      if (phoneBar.peek() === shown) phoneBar.value = null;
+      if (phoneBar.peek() === shown) phoneBar.value = shown.covered || null;
     };
   }, [key]);
 }

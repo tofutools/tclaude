@@ -33,7 +33,7 @@ import { IconButton } from './phone-ui.js';
 import { NodeChip } from './phone-node-picker.js';
 import { SearchSheet } from './phone-search.js';
 import { NowView } from './phone-now.js';
-import { BoardView } from './phone-board.js';
+import { BoardView, openBoardTask } from './phone-board.js';
 import { MoreMenu, PowerMenu } from './phone-more.js';
 
 // The own views live in their own files; re-exported for this module's
@@ -66,9 +66,11 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const needs = (snapshot ? nowView(snapshot).needs : 0) + gateItems(processSource.context.value).length;
   const mail = messagesBadgeView(snapshot);
   const connection = state.connection.value.status;
-  // A tab view's pushed page (js/phone-page.js): back, title and actions in
-  // the top bar, and maybe no bottom nav. An own view has no pages.
-  const page = OWN_VIEWS.includes(view) ? null : phonePage.value;
+  // A pushed page (js/phone-page.js): back, title and actions in the top
+  // bar, and maybe no bottom nav. A page shows over the view it was pushed
+  // on: a tab's page under no own view, a task's page over Board.
+  const pushed = phonePage.value;
+  const page = pushed && (pushed.view || '') === (OWN_VIEWS.includes(view) ? view : '') ? pushed : null;
   const hideNav = !!page?.hideNav;
   // A view a phone does not offer (js/phone-desktop-only.js) gets a page
   // that says so in place of its desktop content.
@@ -124,6 +126,13 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
       // Now or Board: leaving the own view is what shows it.
       showTab: leave(actions.showTab),
       openAccessRequest: leave(actions.openAccessRequest),
+      // A task opens on its phone page over the Board, never in the
+      // desktop's task form.
+      openTask: (id, group) => {
+        closePhoneSheet();
+        openBoardTask(id, group);
+        shell.view.value = 'board';
+      },
     };
   }, [actions, shell]);
 
@@ -187,7 +196,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
           onClick=${() => openSheet('Search', SearchSheet, { boardSource })} />`}`}
     </header>
     ${view === 'now' && html`<div class="phone-view" role="region" aria-label="Now"><${NowView} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} processSource=${processSource} /></div>`}
-    ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} /></div>`}
+    ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} /></div>`}
     ${desktopOnly && html`<div class="phone-view" role="region" aria-label=${desktopOnly}><${DesktopOnlyPage} what=${desktopOnly} open=${actions.desktopSite}
       other=${routeMap ? { label: 'Show agents', onClick: () => viewActions.navigate('/') } : null} /></div>`}
     ${!hideNav && html`<nav class="phone-nav" aria-label="Views">

@@ -1,0 +1,59 @@
+/* Board (js/phone-board.js) and a task's page (js/phone-task-page.js): one
+   column of one group's board, its cards with tags and actions, and the
+   sheets they open. Built from the phone primitives in phone.css. */
+
+/* A card: its title and what it waits on are one tap target that opens the
+   task's page; tags and buttons sit below. */
+:root[data-layout="phone"] .phone-board-card { padding: 12px 14px; }
+:root[data-layout="phone"] .phone-board-open {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%;
+  padding: 0; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-board-title { margin: 0; color: var(--ui-text-strong); font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+:root[data-layout="phone"] :is(.phone-board-asked, .phone-board-note) { margin: 0; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-board-note { color: var(--ui-danger-text); }
+
+/* Tags: rounded outline chips (@agent, PR #n, a ref, the kind). */
+:root[data-layout="phone"] .phone-board-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+:root[data-layout="phone"] .phone-board-tag {
+  padding: 2px 8px; border: 1px solid var(--phone-line); border-radius: 9px;
+  color: var(--ui-text); font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+:root[data-layout="phone"] .phone-board-tag-ok { color: var(--phone-ok); }
+:root[data-layout="phone"] .phone-board-tag-bad { color: var(--phone-bad); }
+
+/* A question's options, answered in place; the recommended one starred. */
+:root[data-layout="phone"] .phone-board-options .phone-btn { flex: 0 1 auto; min-width: 64px; justify-content: center; }
+:root[data-layout="phone"] .phone-board-star { color: var(--phone-warn); }
+
+/* Sheets: Move ▸, Comment, Add a task, the group picker. */
+:root[data-layout="phone"] .phone-board-sheet-title { margin: 4px 4px 8px; color: var(--ui-text-strong); font-weight: 600; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-board-move-label { flex: 1; min-width: 0; }
+:root[data-layout="phone"] .phone-board-move-why { color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-menu-item[aria-current="true"] { color: var(--phone-accent); }
+:root[data-layout="phone"] .phone-board-field { width: 100%; box-sizing: border-box; font-size: 16px; }
+:root[data-layout="phone"] textarea.phone-board-field { min-height: 96px; resize: vertical; }
+
+/* A task's page. */
+:root[data-layout="phone"] .phone-task-page { padding-bottom: 16px; }
+:root[data-layout="phone"] .phone-task-page-title { margin: 4px 0 0; color: var(--ui-text-strong); font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-task-page .phone-board-note { margin-top: 8px; }
+:root[data-layout="phone"] .phone-task-q { margin-top: 12px; }
+:root[data-layout="phone"] .phone-task-answer { display: flex; gap: 8px; margin-top: 10px; }
+:root[data-layout="phone"] .phone-task-answer .phone-board-field { flex: 1; min-width: 0; }
+:root[data-layout="phone"] .phone-task-md { overflow-wrap: anywhere; font-size: 14px; }
+:root[data-layout="phone"] .phone-task-md :is(pre, table) { max-width: 100%; overflow-x: auto; }
+:root[data-layout="phone"] .phone-task-md img { max-width: 100%; height: auto; }
+:root[data-layout="phone"] .phone-task-refs li { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--phone-tile); }
+:root[data-layout="phone"] .phone-task-refs a { color: var(--phone-accent); font-weight: 600; text-decoration: none; }
+:root[data-layout="phone"] .phone-task-ref-sub { color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-task-activity { list-style: none; margin: 0; padding: 0; }
+:root[data-layout="phone"] .phone-task-activity li {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid var(--phone-tile);
+}
+:root[data-layout="phone"] .phone-task-who { color: var(--ui-text-strong); font-size: 13px; font-weight: 600; }
+:root[data-layout="phone"] .phone-task-when { color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-task-what { flex-basis: 100%; color: var(--ui-text); font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-task-comment .phone-task-md { flex-basis: 100%; }
+:root[data-layout="phone"] .phone-task-comment-box { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+:root[data-layout="phone"] .phone-task-comment-box .phone-btn { align-self: flex-end; }

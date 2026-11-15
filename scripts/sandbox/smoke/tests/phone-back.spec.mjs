@@ -26,7 +26,7 @@ test('Back returns to Now and Board, and closes sheets', async ({ page }) => {
   await expect(title(page)).toHaveText('Now');
 
   await nav(page, 'Board');
-  await expect(title(page)).toHaveText('Board');
+  await expect(title(page)).toHaveText(/^Board/);
   await nav(page, 'Mail');
   await nav(page, 'More');
   await expect(page.getByRole('dialog', { name: 'More' })).toBeVisible();
@@ -34,7 +34,7 @@ test('Back returns to Now and Board, and closes sheets', async ({ page }) => {
   await expect(page.getByRole('dialog', { name: 'More' })).toHaveCount(0);
   await expect(title(page)).toHaveText('Mail');
   await page.goBack();
-  await expect(title(page)).toHaveText('Board');
+  await expect(title(page)).toHaveText(/^Board/);
 
   await nav(page, 'Agents');
   await page.locator('.phone-agent-title').first().click();

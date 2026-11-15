@@ -8,7 +8,6 @@
 // own views; Agents, Mail and every More entry show a dashboard tab.
 
 import { companionAgents, pendingAccess, pendingApprovals, pendingDecisions } from './companion-model.js';
-import { taskRowState } from './taskboard-context.js';
 
 // The bottom nav. A slot with a `tab` shows that dashboard tab; the others
 // are the shell's own views (now, board) or the More sheet.
@@ -125,17 +124,6 @@ export function askerName(snapshot, agents = companionAgents(snapshot)) {
   return (decision) => agents.get(decision.from_agent)?.name || decision.from_title || '';
 }
 
-// The Board view's lanes, in reading order, each from the row states
-// taskRowState derives (the same states the desktop lanes use). A custom
-// column's tasks read as in progress here: the phone does not lay out columns.
-export const BOARD_LANES = Object.freeze([
-  Object.freeze({ id: 'waiting', label: 'Waiting on you', states: ['waiting'] }),
-  Object.freeze({ id: 'blocked', label: 'Blocked', states: ['blocked', 'stalled'] }),
-  Object.freeze({ id: 'progress', label: 'In progress', states: ['in-progress'] }),
-  Object.freeze({ id: 'next', label: 'Next', states: ['open', 'queued'] }),
-  Object.freeze({ id: 'ideas', label: 'Ideas', states: ['idea'] }),
-]);
-
 // boardGroups lists the groups that have a board with live tasks, busiest
 // first by what waits on the operator, then by name.
 export function boardGroups(context) {
@@ -145,20 +133,3 @@ export function boardGroups(context) {
     .sort((a, b) => (b.waiting - a.waiting) || a.group.localeCompare(b.group));
 }
 
-// boardLanes splits one group's open tasks into BOARD_LANES, keeping the
-// board's own order inside each lane. Lanes with no tasks are left out.
-export function boardLanes(entry) {
-  const lanes = BOARD_LANES.map((lane) => ({ ...lane, tasks: [] }));
-  for (const task of entry?.tasks || []) {
-    let state = taskRowState(task);
-    if (state.startsWith('col:')) state = 'in-progress';
-    lanes.find((lane) => lane.states.includes(state))?.tasks.push(task);
-  }
-  return lanes.filter((lane) => lane.tasks.length > 0);
-}
-
-// taskPath is the dashboard location that opens a task: the Groups tab with
-// the task's dialog over it (the same ?task= deep link the desktop uses).
-export function taskPath(task, group) {
-  return `/?task=${encodeURIComponent(`${task.id}:${group}`)}`;
-}
