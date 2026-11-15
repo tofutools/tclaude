@@ -133,10 +133,17 @@ test('Agents: each header counts its agents by state, folded too; workers sit un
   const box = await worker.locator('.phone-agent-row').boundingBox();
   expect(box.width, 'the indent leaves the row most of the phone').toBeGreaterThan(260);
   await expectNoSideScroll(page);
-  // Folded, the summary stays.
+  // Folded, the summary stays, and the header stays where it was: folding
+  // changes only what is under it (it used to jump 12px on every tap).
+  const headTop = () => webshop.locator('.phone-agents-fold')
+    .evaluate((el) => Math.round(el.getBoundingClientRect().top + window.scrollY));
+  const openTop = await headTop();
   await webshop.locator('.phone-agents-fold').click();
   await expect(webshop.locator('.phone-agent')).toHaveCount(0);
   await expect(summary.first()).toBeVisible();
+  expect(await headTop(), 'folding does not move the header').toBe(openTop);
   await webshop.locator('.phone-agents-fold').click();
+  await expect(webshop.locator('.phone-agent').first()).toBeVisible();
+  expect(await headTop(), 'unfolding does not move the header').toBe(openTop);
   expect(errors).toEqual([]);
 });
