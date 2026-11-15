@@ -19,13 +19,14 @@ const PENDING_TTL_MS = 10_000;
 // Groups tab's runs on screen (showRuns leaves the Route map). A
 // nested group's ancestors open too (`groups`: the snapshot's), or its body
 // never mounts to take the start.
-export function requestProcessStart({ group, templateId, create = false, edit = false }, {
+export function requestProcessStart({ group, templateId, create = false, edit = false, task = null }, {
   doc = document, prefs = null, groups = [], showRuns = null, rerender = null, now = Date.now,
 } = {}) {
   if (!group) return;
   // No template opens the start form on its picker (the palette's "Start a
   // process in <group>").
-  pending = { group, templateId: templateId || '', create: !!create, edit: !!edit && !!templateId, at: now() };
+  // `task` ({id, title}) starts the run for a board task (tk_8aa88514).
+  pending = { group, templateId: templateId || '', create: !!create, edit: !!edit && !!templateId, task: task?.id ? { id: task.id, title: task.title || '' } : null, at: now() };
   prefs?.setItem?.(`tclaude.dash.group.${group}`, '1');
   if (prefs) revealGroupPath(group, groups, prefs);
   doc.querySelector('nav [data-tab="groups"]')?.click();
@@ -39,9 +40,9 @@ export function requestProcessStart({ group, templateId, create = false, edit = 
 export function takeProcessStart(group, { now = Date.now } = {}) {
   if (pending && now() - pending.at > PENDING_TTL_MS) pending = null;
   if (!pending || pending.group !== group) return null;
-  const { group: g, templateId, create, edit } = pending;
+  const { group: g, templateId, create, edit, task } = pending;
   pending = null;
-  return { group: g, templateId, create, edit };
+  return { group: g, templateId, create, edit, task };
 }
 
 // openGroupProcess is requestProcessStart wired to the Groups tab, for a

@@ -1027,7 +1027,8 @@ CREATE TABLE "process_runs" (
 			CHECK(length(CAST(scope_agent_id AS BLOB)) <= 128), owner TEXT NOT NULL DEFAULT ''
 			CHECK(length(CAST(owner AS BLOB)) <= 256), scope_state TEXT NOT NULL DEFAULT 'bound'
 			CHECK(scope_state IN ('bound', 'orphaned')), paused_at INTEGER, paused_by TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(paused_by AS BLOB)) <= 256)) STRICT;
+			CHECK(length(CAST(paused_by AS BLOB)) <= 256), task_id TEXT NOT NULL DEFAULT ''
+			CHECK(length(CAST(task_id AS BLOB)) <= 128)) STRICT;
 
 CREATE INDEX idx_process_runs_active
 			ON process_runs(id)
@@ -1042,6 +1043,8 @@ CREATE INDEX idx_process_runs_scope_agent
 CREATE INDEX idx_process_runs_scope_recent
 			ON process_runs(scope_kind, scope_group_id, scope_agent_id, updated_at)
 			WHERE scope_kind != 'none';
+
+CREATE INDEX process_runs_task ON process_runs(task_id) WHERE task_id <> '';
 
 CREATE TABLE "process_run_events" (
 			run_id       TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE
@@ -2584,3 +2587,8 @@ CREATE TRIGGER group_tasks_backlog_unstarted
 			AFTER UPDATE OF stage, started_at ON group_tasks
 			WHEN NEW.stage = 'backlog' AND NEW.started_at IS NOT NULL
 			BEGIN UPDATE group_tasks SET started_at = NULL WHERE id = NEW.id; END;
+
+CREATE TABLE group_task_process (
+		task_id TEXT PRIMARY KEY REFERENCES group_tasks(id) ON DELETE CASCADE,
+		process TEXT NOT NULL CHECK(length(CAST(process AS BLOB)) BETWEEN 1 AND 128)
+	);

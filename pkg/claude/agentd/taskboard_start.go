@@ -96,7 +96,7 @@ func handleTaskboardStart(w http.ResponseWriter, r *http.Request, t *db.GroupTas
 		}
 		n.others(what, "", boardopts.RecipientAssignee)
 	}
-	writeTaskboardTaskLimit(w, http.StatusOK, g, out, note)
+	writeTaskboardTaskLimit(w, http.StatusOK, g, out, note, startTaskProcessOnStart(r, g, out))
 }
 
 // taskboardHeldNote is the light mail an agent gets for a task assigned to

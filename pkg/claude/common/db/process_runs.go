@@ -112,6 +112,10 @@ type ProcessRunScope struct {
 	// read because every gate that consults the binding must also honour it.
 	PausedAt time.Time
 	PausedBy string
+	// TaskID is the board task the run is for (group_tasks.id), "" for none.
+	// It rides the scope because every run read projects the scope, and it is
+	// fixed at creation like the rest of the binding.
+	TaskID string
 }
 
 // Orphaned reports whether the run's scope target is gone.
@@ -127,6 +131,7 @@ type ProcessRunFilter struct {
 	GroupID   int64
 	AgentID   string
 	Performer string
+	TaskID    string
 }
 
 // ProcessRun is the canonical cold-load record. CheckpointJSON is returned
@@ -401,6 +406,9 @@ func validateProcessRunScope(scope ProcessRunScope) error {
 	if !validProcessRunScopeBinding(scope.Kind, scope.GroupID, scope.AgentID) {
 		return fmt.Errorf("%w: invalid %s scope binding", ErrProcessRunInvalid, scope.Kind)
 	}
+	if !validProcessRunTaskID(scope.TaskID) {
+		return fmt.Errorf("%w: invalid task id", ErrProcessRunInvalid)
+	}
 	return nil
 }
 
@@ -480,12 +488,12 @@ func CreateProcessRun(input ProcessRunCreate) error {
 	result, err := tx.Exec(`INSERT INTO process_runs
 		(id, template_ref, template_snapshot_json, params_json, program_authorizations_json, status,
 		 state_version, checkpoint_json, created_at, updated_at,
-		 scope_kind, scope_group_id, scope_agent_id, owner, scope_state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 scope_kind, scope_group_id, scope_agent_id, owner, scope_state, task_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING`,
 		input.ID, input.TemplateRef, string(input.TemplateSnapshotJSON), string(input.ParamsJSON), string(input.ProgramAuthorizationsJSON), input.Status,
 		InitialProcessRunStateVersion, string(input.CheckpointJSON), now, now,
-		scope.Kind, scope.GroupID, scope.AgentID, scope.Owner, ProcessRunScopeBound)
+		scope.Kind, scope.GroupID, scope.AgentID, scope.Owner, ProcessRunScopeBound, input.Scope.TaskID)
 	if err != nil {
 		return fmt.Errorf("create process run: %w", err)
 	}
@@ -674,7 +682,7 @@ const processRunSelect = `SELECT
 // resolved through the id at read time because groups are renameable; a
 // deleted group reads as NULL → "".
 const processRunScopeColumnsSelect = `scope_kind, scope_group_id, scope_agent_id, owner, scope_state,
-	paused_at, paused_by,
+	paused_at, paused_by, task_id,
 	(SELECT name FROM agent_groups WHERE agent_groups.id = process_runs.scope_group_id AND process_runs.scope_kind = 'group')`
 
 type processRunScopeColumns struct {
@@ -682,10 +690,11 @@ type processRunScopeColumns struct {
 	groupID                                sql.NullInt64
 	pausedAt                               dbTimestamp
 	pausedBy                               sql.NullString
+	taskID                                 sql.NullString
 }
 
 func (c *processRunScopeColumns) targets() []any {
-	return []any{&c.kind, &c.groupID, &c.agentID, &c.owner, &c.state, &c.pausedAt, &c.pausedBy, &c.groupName}
+	return []any{&c.kind, &c.groupID, &c.agentID, &c.owner, &c.state, &c.pausedAt, &c.pausedBy, &c.taskID, &c.groupName}
 }
 
 func (c *processRunScopeColumns) decode() (ProcessRunScope, error) {
@@ -695,7 +704,7 @@ func (c *processRunScopeColumns) decode() (ProcessRunScope, error) {
 	scope := ProcessRunScope{
 		Kind: c.kind.String, GroupID: c.groupID.Int64, GroupName: c.groupName.String,
 		AgentID: c.agentID.String, Owner: c.owner.String, State: c.state.String,
-		PausedBy: c.pausedBy.String,
+		PausedBy: c.pausedBy.String, TaskID: c.taskID.String,
 	}
 	if c.pausedAt.valid {
 		scope.PausedAt = c.pausedAt.time

@@ -38,6 +38,7 @@ import { dashboardState } from './snapshot-store.js';
 import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
 import { takeProcessStart } from './process-start-handoff.js';
+import { taskLink } from './cross-links.js';
 import { fusedSectionOpen, fusedSectionsRevision, setFusedSectionOpen } from './groups-fused-sections.js';
 import { FusedLinks } from './groups-fused-links.js';
 import { useProcessScope } from './groups-process-scope.js';
@@ -72,10 +73,12 @@ function memberInitial(member) {
 // the template it asks first, as the ▶ strip does.
 // `own` are the group's own processes ({id, name}), which the library lists
 // only once published: a new one is run from here too.
-function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '', initialScope = 'group', members = [], own = [], scribes = [], onOpenTemplate = null }) {
+function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId = '', initialScope = 'group', members = [], own = [], scribes = [], onOpenTemplate = null, task = null }) {
   // An agent-scoped run: the operator picks which member the run is bound
   // to, and its steps run as that agent's work.
   const [scope, setScope] = useState(initialScope === 'agent' ? 'agent' : 'group');
+  // A run for a board task (tk_8aa88514): the server fills its task and
+  // task_ref params, so the form does not ask for them.
   const agentScoped = scope === 'agent';
   const [agent, setAgent] = useState(() => memberKey(members.find((member) => member.agent_id)));
   const [templates, setTemplates] = useState(null);
@@ -108,7 +111,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     if (!templateId || typeof api.templateRequirements !== 'function') return () => { live = false; };
     api.templateRequirements(templateId).then((found) => {
       if (!live) return;
-      const params = found.params || [];
+      const params = (found.params || []).filter((param) => !task || (param.name !== 'task' && param.name !== 'task_ref'));
       // The server binds only what is sent (root params get no default
       // fill), so a default starts out as the field's value.
       setValues((current) => ({
@@ -144,6 +147,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     const scope = agentScoped ? { agent } : { group: group.name };
     await api.startGroupRun({
       templateId, ...scope, params: values, authorizeProgramProfiles: [...authorized], ...(expectedRef ? { expectedRef } : {}),
+      ...(task ? { task: task.id } : {}),
     });
     onClose();
     void source.refresh();
@@ -192,6 +196,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     data-start-scope-pick=${value} disabled=${busy} title=${title} onClick=${() => setScope(value)}>${text}</button>`;
   return html`<form class="gp-start-form" aria-label=${label} data-start-scope=${scope} onSubmit=${start}
     onKeyDown=${(event) => { if (event.key === 'Escape' && !busy) { event.stopPropagation(); onClose(); } }}>
+    ${task && html`<span class="gp-start-note gp-start-task" data-start-task=${task.id} title=${task.id}>◈ for task: <b>${task.title || task.id}</b></span>`}
     <span class="gm-toggle gp-start-scope" role="group" aria-label=${wizard ? 'Who it is for' : 'Run it for'}>
       ${scopeButton('group', `⌂ ${wizard ? 'the party' : group.name}`, wizard ? `Begin it for ${group.name}` : `Run it in ${group.name}: each step picks who does it`)}
       ${scopeButton('agent', `◉ ${wizard ? 'one hero' : 'one agent'}`, wizard ? 'Every step is one hero\'s labour' : 'Every agent step runs as the one agent you pick')}
@@ -283,7 +288,7 @@ function GroupAvatarStrip({ members, busy, wizard }) {
   </span>`;
 }
 
-function RunCard({ run, entry, nameOf, wizard, onOpen }) {
+function RunCard({ run, entry, nameOf, wizard, onOpen, group = null }) {
   const named = withPerformerNames(run, nameOf);
   const state = runState(named);
   const terminal = state === 'done' || state === 'failed';
@@ -295,6 +300,7 @@ function RunCard({ run, entry, nameOf, wizard, onOpen }) {
       <span class="gp-card-name">${runName(named)}</span>
       <${ProcessStateChip} state=${state} label=${`${stateLabel(state)}${duration ? ` · ${duration}` : ''}`} />
       <${ProcessScopeChip} scope=${named.scope?.kind === 'agent' && nameOf(named.scope.agentId) ? { kind: 'agent', name: nameOf(named.scope.agentId) } : named.scope} wizard=${wizard} />
+      ${named.scope?.task && html`<span class="pk-chip ui-tag gp-card-task" data-process-run-task=${named.scope.task}>◈ for task:${' '}<a class="tk-link" href="#" ...${taskLink({ shown: group?.name || named.scope?.group || '', group: named.scope?.group || group?.name || '', node: group?.fleet_node?.id || '', taskId: named.scope.task, title: named.scope.taskTitle })}>${named.scope.taskTitle || named.scope.task}</a></span>`}
       ${(template || owner) && html`<span class="gp-card-meta">${template && html`${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}${template && owner && ' · '}${owner && html`owner <b>${owner}</b>`}</span>`}
       <span class="gp-spacer"></span>
       ${runNeedsYou(named, entry) && html`<span class="pk-chip ui-tag pk-state-waiting gp-needs-you">👤 ${wizard ? 'awaits your word' : 'waiting on you'}</span>`}
@@ -471,7 +477,8 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       if (request.create) { void newProcess(); return; }
       if (request.edit) { void editInline(request.templateId); return; }
       setQuick(null);
-      setStarting(request.templateId ? { templateId: request.templateId, scope: 'group' } : { scope: 'group' });
+      const task = request.task || null;
+      setStarting(request.templateId ? { templateId: request.templateId, scope: 'group', task } : { scope: 'group', task });
     };
     take();
     document.addEventListener('tclaude:process-start', take);
@@ -626,17 +633,17 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         setStarting(false);
         setQuick(edit.mode === 'graph' ? { ...edit, stored: edit.view, key: Date.now() } : { ...edit, key: Date.now() });
       }} />`}
-    ${starting && html`<${StartRunForm} key=${`${starting.scope || 'group'}:${starting.templateId || ''}`} group=${group} api=${api} source=${source} wizard=${wizard}
+    ${starting && html`<${StartRunForm} key=${`${starting.scope || 'group'}:${starting.templateId || ''}:${starting.task?.id || ''}`} group=${group} api=${api} source=${source} wizard=${wizard}
       members=${members} initialScope=${starting.scope || 'group'}
       own=${[...(starting.own ? [starting.own] : []), ...savedProcesses.map((saved) => ({ id: saved.templateId, name: saved.name || saved.templateId }))]}
-      initialTemplateId=${starting?.templateId || ''} scribes=${scribes} onClose=${() => setStarting(false)}
+      initialTemplateId=${starting?.templateId || ''} task=${starting.task || null} scribes=${scribes} onClose=${() => setStarting(false)}
       onOpenTemplate=${async (process) => {
         const view = await api.getTemplate(process.templateId);
         setStarting(false);
         openStored({ ...process, listed: view.listed }, view);
       }} />`}
     ${quickStart}
-    ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
+    ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} group=${group} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
     <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Hero rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
     ${!fused && fresh && !starting && !quick && html`<div class="gp-empty ui-empty" data-process-empty=${group.name}>${wizard ? 'No rites yet' : 'No processes yet'} ${newButton}</div>`}

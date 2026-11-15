@@ -32,6 +32,29 @@ type Options struct {
 	Events map[string]*Event `json:"events,omitempty"`
 	// Limits are the board's work-in-progress limits.
 	Limits *Limits `json:"limits,omitempty"`
+	// Process is the board's default way of working: the process template
+	// (by id) a task runs when it is taken or started, unless the task chose
+	// another or none. "" (the default) runs nothing: processes are opt-in.
+	Process string `json:"process,omitempty"`
+}
+
+// MaxProcess bounds a default process's template id.
+const MaxProcess = 128
+
+// ValidProcess reports whether id has a process template id's shape:
+// letters, digits, '.', '_' and '-', not starting with a dot.
+func ValidProcess(id string) bool {
+	if id == "" || len(id) > MaxProcess || id[0] == '.' {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Limits caps how many tasks a lane of the board holds at once: In progress
@@ -204,7 +227,7 @@ var Keys = func() []string {
 		keys = append(keys, "events."+name+".enabled", "events."+name+".to")
 	}
 	return append(keys, "limits.at_limit", "limits.per", "limits.in_progress.max", "limits.in_progress.at_limit",
-		"limits.columns.<column>.max", "limits.columns.<column>.at_limit")
+		"limits.columns.<column>.max", "limits.columns.<column>.at_limit", "process")
 }()
 
 // Sections are what Reset takes besides keys.
@@ -244,7 +267,7 @@ func (o Options) Encode() (string, error) {
 // IsZero reports whether the board sets nothing.
 func (o Options) IsZero() bool {
 	o.compact()
-	return o.Idle == nil && o.Events == nil && o.Limits == nil
+	return o.Idle == nil && o.Events == nil && o.Limits == nil && o.Process == ""
 }
 
 // compact drops empty sections, so an options document that sets nothing
@@ -321,6 +344,9 @@ func (o *Options) event(name string) *Event {
 // and ordered). columns are the board's custom column slugs; a column named
 // in check_columns must be one of them.
 func (o *Options) Validate(columns []string) error {
+	if o.Process != "" && !ValidProcess(o.Process) {
+		return fmt.Errorf("process: %q is not a process template id", o.Process)
+	}
 	for name, e := range o.Events {
 		if _, ok := eventInfo[name]; !ok {
 			return fmt.Errorf("events: no event %q; the events are %s", name, strings.Join(EventNames, ", "))
@@ -496,6 +522,16 @@ func (o *Options) Set(key, value string) error {
 		return o.Idle
 	}
 	switch key {
+	case "process":
+		if strings.EqualFold(value, "none") || value == "" {
+			o.Process = ""
+			return nil
+		}
+		if !ValidProcess(value) {
+			return fmt.Errorf("process: %q is not a process template id", value)
+		}
+		o.Process = value
+		return nil
 	case "idle.enabled":
 		b, err := parseBool(key, value)
 		if err != nil {
@@ -626,6 +662,9 @@ func (o *Options) Reset(key string) error {
 	case "limits":
 		o.Limits = nil
 		return nil
+	case "process":
+		o.Process = ""
+		return nil
 	}
 	if done, err := o.resetLimit(key); done || err != nil {
 		return err
@@ -754,7 +793,7 @@ func parseList(s string) []string {
 // (limits.columns.<slug>.max, .at_limit) come last, in the order of
 // columns.
 func (o Options) SetKeys(columns []string) []string {
-	set := map[string]bool{}
+	set := map[string]bool{"process": o.Process != ""}
 	if i := o.Idle; i != nil {
 		set["idle.enabled"], set["idle.grace"], set["idle.nudge"] = i.Enabled != nil, i.Grace != "", i.Nudge != nil
 		set["idle.tell"], set["idle.check_columns"] = i.Tell != nil, i.CheckColumns != nil
@@ -815,6 +854,9 @@ type Resolved struct {
 	// Events are every event, in EventNames order.
 	Events []ResolvedEvent `json:"events"`
 	Limits ResolvedLimits  `json:"limits"`
+	// Process is the default way of working in force: a template id, or ""
+	// for none.
+	Process Value[string] `json:"process"`
 }
 
 // ResolvedLimits are the work-in-progress limits in force.
@@ -980,7 +1022,11 @@ func Resolve(o Options, g Globals, columns []string) Resolved {
 		}
 		events = append(events, e)
 	}
-	return Resolved{Idle: r, Events: events, Limits: resolveLimits(o.Limits, columns)}
+	process := Value[string]{"", SourceDefault}
+	if o.Process != "" {
+		process = Value[string]{o.Process, SourceBoard}
+	}
+	return Resolved{Idle: r, Events: events, Limits: resolveLimits(o.Limits, columns), Process: process}
 }
 
 func resolveLimits(in *Limits, columns []string) ResolvedLimits {

@@ -29,6 +29,8 @@ import {
   DONE, boardColumns, cardView, columnMoves, columnSections, defaultColumn, positionMoves, sectionPeers,
 } from './phone-board-model.js';
 import { TaskPage, boardWrite } from './phone-task-page.js';
+import { processContext } from './process-context.js';
+import { TaskRunLine, WillFollowLine, taskRunOf } from './process-task-run.js';
 
 const html = htm.bind(h);
 
@@ -158,7 +160,16 @@ function GroupSheet({ groups, value, onPick, close }) {
 }
 
 // TaskCard is one task on the board.
-export function TaskCard({ task, view, onOpen, onMove, onComment, onAnswer }) {
+// openPhoneRun opens a task's run in Automations' Runs (phone-process-runs.js).
+async function openPhoneRun(run) {
+  const { openRunLink } = await import('./phone-process-runs.js');
+  const { PROCESSES_SUBTAB, openAutomationsEntry } = await import('./automations-subnav.js');
+  openRunLink({ selection: true, item: run.runId }, { open: () => openAutomationsEntry(PROCESSES_SUBTAB) });
+}
+
+// TaskCard is one task on the board. `run` is the task's process run
+// (tk_8aa88514), `follows` the board's default way of working.
+export function TaskCard({ task, view, onOpen, onMove, onComment, onAnswer, run = null, follows = '', nameOf = () => '' }) {
   const q = view.question;
   return html`<${Card} accent=${view.accent} class="phone-board-card" data-task-id=${task.id}>
     <button data-ui-exempt type="button" class="phone-board-open" onClick=${onOpen}>
@@ -166,6 +177,8 @@ export function TaskCard({ task, view, onOpen, onMove, onComment, onAnswer }) {
       ${q && html`<span class="phone-board-asked">asked by ${q.asker || 'an agent'}${q.options.length ? ` · ${q.options.length} options` : ''}</span>`}
       ${view.note && html`<span class="phone-board-note">${view.note}</span>`}
     </button>
+    ${run ? html`<${TaskRunLine} run=${run} compact=${true} nameOf=${nameOf} onOpen=${(picked) => { void openPhoneRun(picked); }} />`
+    : !view.done && !task.started_at && task.status !== 'blocked' && task.kind !== 'epic' && html`<${WillFollowLine} task=${task} boardDefault=${follows} />`}
     ${view.tags.length > 0 && html`<div class="phone-board-tags">
       ${view.tags.map((tag) => html`<span key=${tag.key} class=${`phone-board-tag${tag.tone ? ` phone-board-tag-${tag.tone}` : ''}`}>${tag.text}</span>`)}
     </div>`}
@@ -185,6 +198,13 @@ export function TaskCard({ task, view, onOpen, onMove, onComment, onAnswer }) {
 export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch, api: given = null }) {
   const api = useMemo(() => given || createTaskboardApi({ fetchImpl: (...args) => fetchImpl(...args), limits: localLimitHooks() }), [given, fetchImpl]);
   useEffect(() => source.attach(), [source]);
+  // The process context, for a task's run on its card: read with the board.
+  useEffect(() => {
+    void processContext.refresh();
+    const poll = () => void processContext.refresh();
+    document.addEventListener('tclaude:snapshot', poll);
+    return () => document.removeEventListener('tclaude:snapshot', poll);
+  }, []);
   // The task page goes with the board: coming back to Board shows the board.
   useEffect(() => () => { boardTask.value = null; }, []);
   const status = source.status.value;
@@ -239,6 +259,8 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
     }
   };
   const sections = columnSections(entry, column);
+  // The tasks' process runs (tk_8aa88514): none where processes are off.
+  const runs = processContext.context.value;
   return html`<div class="phone-board">
     <${ChipRow} label="Column" value=${column} onSelect=${(key) => setPick({ column: key })}
       items=${columns.map((c) => ({ key: c.key, label: c.label, count: c.count }))} />
@@ -246,6 +268,7 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
       ${section.tasks.length === 0
         ? null
         : section.tasks.map((task) => html`<${TaskCard} key=${task.id} task=${task} view=${cardView(task, names)}
+            run=${taskRunOf(runs, task.id)} follows=${entry?.process || ''} nameOf=${(id) => names.get?.(id)?.name || ''}
             onOpen=${() => openBoardTask(task.id, group)}
             onAnswer=${answer(task)}
             onMove=${() => openSheet('Move', MoveSheet, { task, entry, peers: section.tasks })}

@@ -457,13 +457,14 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
     // agent is given instead. `expectedRef` refuses the start with
     // process_run_template_moved if the head is no longer that version;
     // `templateRef` runs that version even though a newer one exists.
-    async startGroupRun({ templateId, group, agent, params = {}, authorizeProgramProfiles = [], expectedRef = '', templateRef = '', attemptKey = randomUUID() }) {
+    async startGroupRun({ templateId, group, agent, task = '', params = {}, authorizeProgramProfiles = [], expectedRef = '', templateRef = '', attemptKey = randomUUID() }) {
       const path = '/v1/process/runs';
       const filled = Object.fromEntries(Object.entries(params).filter(([, value]) => String(value ?? '') !== ''));
       const body = JSON.stringify({
         templateId, ...(agent ? { agent } : { group }), ...(Object.keys(filled).length ? { params: filled } : {}),
         authorizeProgramProfiles: [...authorizeProgramProfiles],
         ...(expectedRef ? { expectedRef } : {}), ...(templateRef ? { templateRef } : {}),
+        ...(task ? { task } : {}),
       });
       return processRequest(path, {
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,

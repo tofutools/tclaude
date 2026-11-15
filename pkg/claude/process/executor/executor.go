@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -911,6 +912,7 @@ func persistEvents(run *Run, checkpoint engine.Checkpoint, events []db.ProcessRu
 	if err != nil {
 		return fmt.Errorf("encode process checkpoint: %w", err)
 	}
+	was := run.checkpoint.Status
 	version, err := db.TransitionProcessRun(run.id, db.ProcessRunTransition{
 		ExpectedStateVersion: run.stateVersion,
 		Status:               string(checkpoint.Status),
@@ -922,6 +924,15 @@ func persistEvents(run *Run, checkpoint engine.Checkpoint, events []db.ProcessRu
 	}
 	run.stateVersion = version
 	run.checkpoint = checkpoint
+	if was == engine.RunRunning && checkpoint.Status != engine.RunRunning {
+		if hook := terminalHook.Load(); hook != nil {
+			terminalHooks.Add(1)
+			go func(id string, status engine.RunStatus) {
+				defer terminalHooks.Done()
+				(*hook)(id, status)
+			}(run.id, checkpoint.Status)
+		}
+	}
 	// Live permissions survive a commit by another branch — that is the whole
 	// point of the plural outbox — but a permission whose command has left the
 	// outbox is spent and must not linger as an accounted-for entry.
@@ -1269,4 +1280,26 @@ func (d *Dispatch) RunID() string {
 		return ""
 	}
 	return d.runID
+}
+
+// terminalHook is told, once, of each run whose commit ended it: the
+// committed status, after the commit. It runs on its own goroutine, so it may
+// read the run and act on what it was for (a board task) without holding up
+// the executor.
+var terminalHook atomic.Pointer[func(runID string, status engine.RunStatus)]
+
+// terminalHooks counts the hook calls still running, for WaitTerminalHooks.
+var terminalHooks sync.WaitGroup
+
+// WaitTerminalHooks waits for every terminal hook call begun so far, so a
+// shutdown does not leave a run's end half told.
+func WaitTerminalHooks() { terminalHooks.Wait() }
+
+// SetTerminalHook installs the hook told of each run's end (nil removes it).
+func SetTerminalHook(hook func(runID string, status engine.RunStatus)) {
+	if hook == nil {
+		terminalHook.Store(nil)
+		return
+	}
+	terminalHook.Store(&hook)
 }

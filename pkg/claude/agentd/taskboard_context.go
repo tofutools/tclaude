@@ -111,6 +111,10 @@ type taskboardGroupContext struct {
 	// Options summarises the board's options (taskboard_context_options.go);
 	// absent from the node summary.
 	Options *taskboardContextOptions `json:"options,omitempty"`
+	// Process is the board's default way of working (a process template id),
+	// "" for none: what a task follows when it is started, unless it chose
+	// another. A board fact every reader's cards show, not an option.
+	Process string `json:"process,omitempty"`
 }
 
 type taskboardContextView struct {
@@ -141,6 +145,9 @@ func handleTaskboardContext(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db", err.Error())
 			return
+		}
+		if _, o, _, err := taskboardOptions(g.ID); err == nil {
+			entry.Process = o.Process
 		}
 		view.Groups = append(view.Groups, entry)
 	}

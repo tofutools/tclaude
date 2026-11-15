@@ -184,6 +184,9 @@ func handleTaskboardOptionsPut(w http.ResponseWriter, r *http.Request, g *db.Age
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	if !validateTaskProcessChoice(w, r, g, next.Process) {
+		return
+	}
 	updateTaskboardOptions(w, r, g, *body.Version, func(_ boardopts.Options) (boardopts.Options, error) { return next, nil },
 		"replaced board options", false)
 }
@@ -203,6 +206,11 @@ func handleTaskboardOptionsPatch(w http.ResponseWriter, r *http.Request, g *db.A
 	}
 	if len(body.Set) == 0 && len(body.Reset) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "give set {key: value} and/or reset [key]; the keys are "+strings.Join(boardopts.Keys, ", "))
+		return
+	}
+	// The board's way of working starts runs as the operator's: setting it
+	// takes what starting that process does.
+	if v, ok := body.Set["process"]; ok && !validateTaskProcessChoice(w, r, g, boardProcessChoice(v)) {
 		return
 	}
 	expect := int64(db.AnyTaskboardOptionsVersion)
@@ -325,4 +333,14 @@ func pruneTaskboardOptionsColumn(g *db.AgentGroup, actor string) {
 	if err != nil {
 		slog.Warn("taskboard: pruning board options after a column removal failed", "group", g.Name, "error", err)
 	}
+}
+
+// boardProcessChoice reads a set of the board option process as a choice:
+// "none" and "default" clear it.
+func boardProcessChoice(v string) string {
+	switch v = strings.TrimSpace(v); v {
+	case "none", "default":
+		return ""
+	}
+	return v
 }

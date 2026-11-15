@@ -121,29 +121,34 @@ type taskboardTask struct {
 	// dashboard listener; absent from a linked node).
 	URL string `json:"url,omitempty"`
 	// ResolveNotes are why a --resolve-ref linked a ref not (add, edit).
-	ResolveNotes     []string `json:"resolve_notes,omitempty"`
-	Group            string   `json:"group"`
-	Title            string   `json:"title"`
-	Body             string   `json:"body,omitempty"`
-	Stage            string   `json:"stage"`
-	Column           string   `json:"column,omitempty"`
-	Status           string   `json:"status"`
-	BlockReason      string   `json:"block_reason,omitempty"`
-	BlockedOn        string   `json:"blocked_on,omitempty"`
-	DependsOn        []string `json:"depends_on"`
-	Unmet            []string `json:"unmet,omitempty"`
-	Queued           bool     `json:"queued,omitempty"`
-	QueuedReason     string   `json:"queued_reason,omitempty"`
-	QueuedFor        string   `json:"queued_for,omitempty"`
-	CreatedBy        string   `json:"created_by"`
-	CreatedByName    string   `json:"created_by_name,omitempty"`
-	LastEditedBy     string   `json:"last_edited_by,omitempty"`
-	LastEditedByName string   `json:"last_edited_by_name,omitempty"`
-	LastEditedAt     string   `json:"last_edited_at,omitempty"`
-	CommentCount     int      `json:"comment_count"`
-	CreatedAt        string   `json:"created_at"`
-	UpdatedAt        string   `json:"updated_at"`
-	ClosedAt         string   `json:"closed_at,omitempty"`
+	ResolveNotes []string `json:"resolve_notes,omitempty"`
+	// Process is the task's own choice of process ("" follows the board's
+	// default way of working, "none" opts out), and ProcessStart the run a
+	// write started for it (add --process, or its way of working on start).
+	Process          string                 `json:"process,omitempty"`
+	ProcessStart     *taskboardProcessStart `json:"process_start,omitempty"`
+	Group            string                 `json:"group"`
+	Title            string                 `json:"title"`
+	Body             string                 `json:"body,omitempty"`
+	Stage            string                 `json:"stage"`
+	Column           string                 `json:"column,omitempty"`
+	Status           string                 `json:"status"`
+	BlockReason      string                 `json:"block_reason,omitempty"`
+	BlockedOn        string                 `json:"blocked_on,omitempty"`
+	DependsOn        []string               `json:"depends_on"`
+	Unmet            []string               `json:"unmet,omitempty"`
+	Queued           bool                   `json:"queued,omitempty"`
+	QueuedReason     string                 `json:"queued_reason,omitempty"`
+	QueuedFor        string                 `json:"queued_for,omitempty"`
+	CreatedBy        string                 `json:"created_by"`
+	CreatedByName    string                 `json:"created_by_name,omitempty"`
+	LastEditedBy     string                 `json:"last_edited_by,omitempty"`
+	LastEditedByName string                 `json:"last_edited_by_name,omitempty"`
+	LastEditedAt     string                 `json:"last_edited_at,omitempty"`
+	CommentCount     int                    `json:"comment_count"`
+	CreatedAt        string                 `json:"created_at"`
+	UpdatedAt        string                 `json:"updated_at"`
+	ClosedAt         string                 `json:"closed_at,omitempty"`
 	Assignee         *struct {
 		AgentID string `json:"agent_id"`
 		Name    string `json:"name,omitempty"`
@@ -418,6 +423,7 @@ func taskboardWrite(peer, method, path string, body any, askHuman string, asJSON
 	}
 	fmt.Fprintf(stdout, "%s %s: %s  [%s, %s]\n", verb, t.ID, t.Title, t.where(), t.Status)
 	printTaskboardLimit(stdout, t)
+	printTaskboardProcessStart(stdout, stderr, t)
 	// Only add's reply carries the link (the daemon's show and add).
 	if t.URL != "" {
 		fmt.Fprintf(stdout, "  link: %s\n", t.URL)
@@ -923,6 +929,13 @@ func runTaskboardShow(p *taskboardShowParams, stdout, stderr io.Writer) int {
 	if t.Column != "" {
 		fmt.Fprintf(stdout, "  column:  %s\n", t.Column)
 	}
+	switch t.Process {
+	case "":
+	case "none":
+		fmt.Fprintf(stdout, "  process: none (the board's default way of working is off for it)\n")
+	default:
+		fmt.Fprintf(stdout, "  process: %s (runs when it is started; tclaude process runs ls --task %s)\n", t.Process, t.ID)
+	}
 	if t.BlockReason != "" {
 		fmt.Fprintf(stdout, "  blocked: %s\n", t.BlockReason)
 	}
@@ -1044,6 +1057,8 @@ type taskboardAddParams struct {
 	// Epics (tk_a970ef38).
 	Epic   bool   `long:"epic" help:"Add an epic: a container of the board's tasks, with no assignee of its own; its progress is its tasks'"`
 	Parent string `long:"parent" optional:"true" help:"Add the task to this epic of the board (tk_…)"`
+	// Process runs a process for the task (tk_8aa88514).
+	Process string `long:"process" optional:"true" help:"Run this saved process (template id) for the task, starting now: the run carries the task, fills {{params.task}} and {{params.task_ref}}, shows on its card, and closes it (done) or blocks it (failed) when it ends. Needs process.runs.start in the group. --process none keeps the board's default way of working off the task"`
 	// Import flags: one task per ref or line, titles looked up through the
 	// tracker proxies.
 	FromAWB    string   `long:"from-awb" optional:"true" help:"Import awb issues: comma-separated ids (tcl-a1b2c3,…), one task each"`
@@ -1193,6 +1208,9 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	if parent := strings.TrimSpace(p.Parent); parent != "" {
 		req["parent"] = parent
 	}
+	if process := strings.TrimSpace(p.Process); process != "" {
+		req["process"] = process
+	}
 	switch {
 	case strings.TrimSpace(p.Blocked) != "":
 		req["status"], req["block_reason"] = "blocked", strings.TrimSpace(p.Blocked)
@@ -1224,6 +1242,7 @@ func runTaskboardAdd(p *taskboardAddParams, stdin io.Reader, stdout, stderr io.W
 	}
 	fmt.Fprintf(stdout, "added %s: %s  [%s, %s]\n", t.ID, t.Title, t.Stage, t.Status)
 	printTaskboardLimit(stdout, t)
+	printTaskboardProcessStart(stdout, stderr, t)
 	if t.URL != "" {
 		fmt.Fprintf(stdout, "  link: %s\n", t.URL)
 	}
@@ -1474,6 +1493,7 @@ type taskboardEditParams struct {
 	RmDep      string `long:"rm-dep" optional:"true" help:"Comma-separated task ids to stop depending on"`
 	Parent     string `long:"parent" optional:"true" help:"Move the task into this epic of the board (tk_…); recorded on the task and both epics"`
 	RmParent   bool   `long:"rm-parent" help:"Take the task out of its epic"`
+	Process    string `long:"process" optional:"true" help:"The process the task follows when it is started (template id), 'none' for none, or 'default' for the board's default way of working; a task already started with no run starts it now"`
 	Peer       string `long:"peer" optional:"true" help:"Act on a linked node's board instead, under the grants it gave this node (taskboard.read / taskboard.write)"`
 	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 	JSON       bool   `long:"json" help:"Output JSON"`
@@ -1561,6 +1581,13 @@ func runTaskboardEdit(p *taskboardEditParams, stdin io.Reader, stdout, stderr io
 		req["parent"] = parent
 	case p.RmParent:
 		req["clear_parent"] = true
+	}
+	switch process := strings.TrimSpace(p.Process); process {
+	case "":
+	case "default":
+		req["process"] = ""
+	default:
+		req["process"] = process
 	}
 	if len(req) == 0 {
 		fmt.Fprintln(stderr, "Error: nothing to change; see --help")
@@ -2534,4 +2561,24 @@ func btoi(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// taskboardProcessStart is the process run a taskboard write started for its
+// task, or why it could not.
+type taskboardProcessStart struct {
+	Process string `json:"process"`
+	Run     string `json:"run,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// printTaskboardProcessStart says which process run a write started for the
+// task, or, on stderr, why the one it should have started did not.
+func printTaskboardProcessStart(stdout, stderr io.Writer, t taskboardTask) {
+	switch ps := t.ProcessStart; {
+	case ps == nil:
+	case ps.Run != "":
+		fmt.Fprintf(stdout, "  process %s: run %s started for it (tclaude process show %s)\n", ps.Process, ps.Run, ps.Run)
+	default:
+		fmt.Fprintf(stderr, "warning: process %s did not start for %s: %s\n", ps.Process, t.ID, ps.Error)
+	}
 }
