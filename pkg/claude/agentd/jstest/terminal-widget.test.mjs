@@ -1703,7 +1703,7 @@ async function xtermLikeWidget(t, options = {}) {
     host, wsPath: '/api/open-window-ws/agt_three', authenticate: false,
     initialResizeDelayMs: 0, attachResizeMode: 'initial-only', touchScroll: true,
     onScrollBackChange: (on) => back.push(on), ...options,
-    TerminalCtor: XtermLike, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
+    TerminalCtor: options.TerminalCtor || XtermLike, FitAddonCtor: fakes.FakeFitAddon, WebSocketCtor: fakes.FakeWebSocket,
     ResizeObserverCtor: fakes.FakeResizeObserver, locationRef: { protocol: 'http:', host: 'dashboard.test' },
     documentRef: harness.document, interactionsFactory: fakes.interactionsFactory, now: () => clock.now,
     requestAnimationFrameImpl: (run) => { frames.push(run); return frames.length; }, cancelAnimationFrameImpl: () => {}, ...timers,
@@ -1811,6 +1811,58 @@ test('a swipe over Claude Code sends no notch near its acceleration gap, so a cl
     const off = notches.map((n, i) => ({ ...n, at: n.at + (i % 2 ? skew : -skew) }));
     assert.equal(await claudeLines(harness, off), 20, `the same twenty with Claude's clock ${skew}ms off`);
   }
+  widget.dispose();
+});
+
+// On a phone the redraw for a notch is a round trip away, so the screen
+// follows the finger by what has not been drawn yet, and goes back into place
+// as Claude Code's redraws land.
+test('a swipe over Claude Code moves the screen with the finger until the redraw lands', async (t) => {
+  let render = null;
+  class Rendering {
+    constructor(options) { this.options = options; this.cols = 80; this.rows = 24; }
+    loadAddon() {}
+    open(host) {
+      this.screen = host.ownerDocument.createElement('div');
+      this.screen.className = 'xterm-screen';
+      host.append(this.screen);
+      this.modes = { mouseTrackingMode: 'vt200' };
+      host.addEventListener('wheel', (event) => this.dataHandler(event.deltaY < 0 ? '\x1b[<64;1;1M' : '\x1b[<65;1;1M'));
+    }
+    onData(handler) { this.dataHandler = handler; return { dispose() {} }; }
+    onResize() { return { dispose() {} }; }
+    onRender(handler) { render = handler; return { dispose() {} }; }
+    focus() {}
+    write() {}
+    dispose() {}
+  }
+  const { widget, notches, touch, clock, timers, harness } = await xtermLikeWidget(t, { wheelCopyMode: false, swipeWheel: 'claude', TerminalCtor: Rendering });
+  const screen = harness.document.querySelector('.xterm-screen');
+  const offset = () => screen.style.translate;
+  clock.now = 1000;
+  touch('touchstart', 100);
+  clock.now += 60; touch('touchmove', 112);
+  assert.equal(notches.length, 0, 'not a row yet: no notch');
+  assert.equal(offset(), '0 12px', 'but the screen moves with the finger at once');
+  clock.now += 60; touch('touchmove', 124);
+  assert.equal(notches.length, 1, 'a row: one notch');
+  assert.equal(offset(), '0 24px', 'its line is not drawn yet, so the screen still carries it');
+  render({ start: 0, end: 1 });
+  assert.equal(offset(), '0 24px', 'a line or two redrawn (a spinner) is not the scroll');
+  render({ start: 0, end: 23 });
+  assert.equal(offset(), '0 8px', 'the redraw landed: only the part of a row still owed');
+  clock.now += 300; touch('touchend');
+  timers.flush();
+  assert.equal(offset(), '', 'let go with nothing on its way: back into place');
+  // A redraw that never comes is given up on.
+  touch('touchstart', 100);
+  clock.now += 60; touch('touchmove', 120);
+  assert.equal(notches.length, 2);
+  clock.now += 300; touch('touchend');
+  assert.equal(offset(), '0 20px', 'let go while its line is on the way: held');
+  clock.now += 1100; render({ start: 3, end: 3 });
+  touch('touchstart', 100); touch('touchend');
+  assert.equal(offset(), '', 'past the give-up time it goes back');
   widget.dispose();
 });
 

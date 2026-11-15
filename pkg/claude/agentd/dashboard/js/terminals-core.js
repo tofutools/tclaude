@@ -175,6 +175,12 @@ const SWIPE_CLAUDE_FLUSH_MS = 50;
 // notch may not go (claudeWheelWait): the clocks of this page and Claude,
 // and the way between them, differ by about that much.
 const SWIPE_CLAUDE_GAP_MARGIN_MS = 10;
+// While a Claude swipe's notches are on their way, the screen follows the
+// finger by the rows not yet drawn (followSwipe), up to this many rows, and
+// lets go of an offset whose redraw has not come back after
+// SWIPE_FOLLOW_GIVE_UP_MS.
+const SWIPE_FOLLOW_MAX_ROWS = 3;
+const SWIPE_FOLLOW_GIVE_UP_MS = 1000;
 // A mouse report is how xterm hands the session a wheel notch; it is not
 // typing, and must not bring a scrolled-back view back to live.
 const MOUSE_REPORT = /^\x1b\[(<|M)/;
@@ -524,6 +530,7 @@ export function mountTerminalWidget({
     if (event.touches?.length !== 2) return;
     swipe = null;
     stopCoasting();
+    followSwipe();
     const distance = spread(event.touches);
     if (!(distance > 0)) return;
     pinch = { distance, size: zoomPending ?? term.options.fontSize };
@@ -560,6 +567,11 @@ export function mountTerminalWidget({
   // Claude Code's wheel handler, as far as this terminal's notches have
   // driven it (claude-wheel.js): its acceleration lives across swipes.
   let claudeWheel = claudeWheelState();
+  // followSwipe's state: the swipe it follows, and the lines its notches
+  // scroll that the screen has not drawn yet (older positive), since when.
+  let followed = null;
+  let unpainted = 0;
+  let unpaintedSince = null;
   const mouseTaken = () => (term.modes?.mouseTrackingMode || 'none') !== 'none';
   // Claude Code scrolls its own view only while it takes the mouse (its
   // fullscreen renderer); otherwise a notch is an arrow key.
@@ -632,6 +644,10 @@ export function mountTerminalWidget({
   // it has worn off (SWIPE_CLAUDE_FLUSH_MS), so the view ends where the
   // finger did even if it stops there, or lifts.
   function travelClaude(cap, s = swipe) {
+    stepClaude(cap, s);
+    followSwipe(s);
+  }
+  function stepClaude(cap, s) {
     stopFlush();
     const row = rowHeight();
     for (let sent = 0; sent < cap && Math.abs(s.rest) >= row; sent += 1) {
@@ -656,7 +672,32 @@ export function mountTerminalWidget({
       if (!notch(older)) { s.rest = 0; return; }
       claudeWheel = step.state;
       s.rest += (older ? -1 : 1) * step.lines * row;
+      if (step.lines) {
+        unpainted += (older ? 1 : -1) * step.lines;
+        unpaintedSince = unpaintedSince ?? now();
+      }
     }
+  }
+  // followSwipe moves the screen with the finger while Claude Code's redraws
+  // are on their way, so a swipe answers in the next frame rather than a
+  // round trip later: by the finger's travel not yet sent (s.rest) and the
+  // rows sent but not yet drawn (unpainted). A redraw of most of the screen
+  // (onRender) is taken for the notches sent so far, and the offset falls by
+  // their rows as the content moves the same way. Once the swipe is over and
+  // nothing more is coming, the screen goes back where it was.
+  function followSwipe(s = followed) {
+    followed = s;
+    const screen = host.getElementsByClassName?.('xterm-screen')[0];
+    if (!screen?.style) return;
+    if (unpainted && unpaintedSince !== null && now() - unpaintedSince > SWIPE_FOLLOW_GIVE_UP_MS) unpainted = 0;
+    const settled = (!swipe || swipe.lifted) && flush === null && coast === null && !unpainted;
+    const row = rowHeight();
+    const max = row * SWIPE_FOLLOW_MAX_ROWS;
+    const px = settled || !s || wheelModel() !== 'claude' ? 0 : Math.max(-max, Math.min(max, s.rest + unpainted * row));
+    if (!px) unpaintedSince = unpainted ? unpaintedSince : null;
+    // Back into place gently; with the finger, at once.
+    screen.style.transition = px ? '' : 'translate 90ms ease-out';
+    screen.style.translate = px ? `0 ${Math.round(px * 10) / 10}px` : '';
   }
   function stopFlush() {
     if (flush !== null) clearTimeoutImpl(flush);
@@ -680,6 +721,7 @@ export function mountTerminalWidget({
       travel(speed * dt);
       speed *= SWIPE_FRICTION ** dt;
       if (Math.abs(speed) >= SWIPE_STOP) coast = requestAnimationFrameImpl(frame);
+      else followSwipe();
     };
     coast = requestAnimationFrameImpl(frame);
   }
@@ -729,6 +771,8 @@ export function mountTerminalWidget({
       Math.abs(swipe.y - swipe.y0) >= SWIPE_FLING_MIN_ROWS * rowHeight();
     if (fling) coastFrom(speed, now());
     else swipe = null;
+    if (swipe) swipe.lifted = true;
+    followSwipe();
   }
   // toLive scrolls back down to live: tmux's wheel copy-mode leaves itself
   // at the bottom. One notch more covers a count that drifted (scrolling up
@@ -1452,6 +1496,15 @@ export function mountTerminalWidget({
     }
   }));
   disposables.push(term.onResize(sendResize));
+  // A redraw of most of the screen is Claude Code's answer to the notches.
+  if (typeof term.onRender === 'function') {
+    disposables.push(term.onRender(({ start, end }) => {
+      if (!unpainted || end - start + 1 < term.rows / 2) return;
+      unpainted = 0;
+      unpaintedSince = null;
+      followSwipe();
+    }));
+  }
 
   const observer = typeof ResizeObserverCtor === 'function'
     // A shared remote view reports its panel even when inactive: a visible

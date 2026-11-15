@@ -46,7 +46,8 @@ import (
 // check here would only duplicate that logic — mirrors the equally
 // permissive CheckOrigin in the former standalone `tclaude web` server.
 var termWSUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:       func(r *http.Request) bool { return true },
+	EnableCompression: true,
 }
 
 // termSessionName builds the tmux session name backing an ad hoc
@@ -791,8 +792,16 @@ func winchProcessGroup(proc *os.Process) {
 // flag here — the wrapper builds the tmux argv itself — and uses
 // webTerminalAttachCmd instead.
 func webTerminalTmuxFlags() string {
-	return "-T " + clcommon.TmuxHyperlinksFeature
+	return "-T " + webTerminalTmuxFeatures
 }
+
+// webTerminalTmuxFeatures are the tmux terminal features xterm.js has and
+// tmux cannot detect: OSC 8 hyperlinks (above), and synchronized output (DEC
+// 2026), so each redraw is bracketed and xterm.js paints only finished frames.
+// That matters most for a Claude Code swipe on a phone, where each notch
+// redraws the whole screen (pumpPTYFrames sends a bracketed frame as one
+// message).
+const webTerminalTmuxFeatures = clcommon.TmuxHyperlinksFeature + "," + clcommon.TmuxSyncFeature
 
 // webShellMouseScrollback is the tmux command chained after a web shell's
 // `new-session -A` (per-agent and group shells alike) to turn on mouse mode
@@ -821,7 +830,7 @@ func webShellMouseScrollback(sessionName string) string {
 // Scoping it to the exec'd command keeps the claim attached to the client it is
 // true of. `VAR=value exec cmd` exports VAR to cmd.
 func webTerminalAttachCmd(attachCommand string) string {
-	return clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature + " " +
+	return clcommon.TmuxClientFeaturesEnv + "=" + webTerminalTmuxFeatures + " " +
 		session.WebTerminalAttachEnv + "=1 " + attachCommand
 }
 
@@ -1074,30 +1083,26 @@ initialSize:
 	go func() {
 		defer wg.Done()
 		defer closeBoth()
-		buf := make([]byte, 4096)
-		for {
-			n, err := ptmx.Read(buf)
-			if err != nil {
-				// Nothing closed us first, so the attached command exited by
-				// itself: tell the browser why before the socket goes. Only a
-				// clean exit is a settled answer, though — see cleanExit.
-				if !closing.Load() && cleanExit(exited, &exitState) && !closing.Load() {
-					if code, reason, ok := terminalExitClose(hook, detachSession, exitTarget); ok {
-						if code == termCloseSessionEndedKeep || code == termCloseSessionEndedClose {
-							for _, probe := range starting {
-								if probe != nil && probe() {
-									code, reason = termCloseStarting, "the agent is starting"
-								}
-							}
+		readErr := pumpPTYFrames(ptmx, func(frame []byte) error {
+			return conn.WriteMessage(websocket.BinaryMessage, frame)
+		})
+		if readErr == nil {
+			return // the socket failed first
+		}
+		// Nothing closed us first, so the attached command exited by
+		// itself: tell the browser why before the socket goes. Only a
+		// clean exit is a settled answer, though — see cleanExit.
+		if !closing.Load() && cleanExit(exited, &exitState) && !closing.Load() {
+			if code, reason, ok := terminalExitClose(hook, detachSession, exitTarget); ok {
+				if code == termCloseSessionEndedKeep || code == termCloseSessionEndedClose {
+					for _, probe := range starting {
+						if probe != nil && probe() {
+							code, reason = termCloseStarting, "the agent is starting"
 						}
-						_ = conn.WriteControl(websocket.CloseMessage,
-							websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
 					}
 				}
-				return
-			}
-			if err := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
-				return
+				_ = conn.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
 			}
 		}
 	}()
