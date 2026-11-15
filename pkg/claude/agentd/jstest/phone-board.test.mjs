@@ -238,3 +238,35 @@ test("a question is also answered in words on the task's page", async (t) => {
   await settle();
   assert.deepEqual(writes.at(-1), ['answer', 'tk_carrier', [], 'DHL for the EU only', 1]);
 });
+
+test('Move out of a custom column lands where it was sent, as the desktop drop does', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { moveTo } = await harness.importDashboardModule('js/phone-board.js');
+  const m = await harness.importDashboardModule('js/phone-board-model.js');
+  const calls = [];
+  const api = new Proxy({}, { get: (_, name) => async (...args) => { calls.push([name, ...args]); return {}; } });
+  const run = async (task, column) => { calls.length = 0; await moveTo(api, task, column); return calls.map((c) => c.slice(0, 3)); };
+  const startedInReview = { id: 'tk_s', status: 'open', stage: 'next', column: 'in-review', assignee: { agent_id: AGENT } };
+  const heldInReview = { id: 'tk_h', status: 'open', stage: 'next', column: 'in-review', held: true, assignee: { agent_id: AGENT } };
+  const freeInReview = { id: 'tk_f', status: 'open', stage: 'next', column: 'in-review' };
+  assert.deepEqual(await run(startedInReview, 'next'), [['stage', 'tk_s', 'next'], ['hold', 'tk_s', 'next']], 'Next: out of the column, not started');
+  assert.deepEqual(await run(startedInReview, 'started'), [['stage', 'tk_s', 'next']], 'Started: back to In progress');
+  assert.deepEqual(await run(heldInReview, 'started'), [['stage', 'tk_h', 'next'], ['start', 'tk_h']]);
+  assert.deepEqual(await run(startedInReview, 'idea'), [['hold', 'tk_s', 'idea']], 'Idea: its agent keeps it, not started');
+  assert.deepEqual(await run(freeInReview, 'idea'), [['stage', 'tk_f', 'idea']]);
+  assert.deepEqual(await run({ id: 'tk_w', status: 'open', stage: 'next', assignee: { agent_id: AGENT } }, 'idea'), [['hold', 'tk_w', 'idea']]);
+  assert.deepEqual(await run(freeInReview, 'done'), [['status', 'tk_f', 'done']]);
+  const entry = { columns: [{ slug: 'in-review', label: 'In review' }, { slug: 'qa', label: 'QA', state: 'cordoned' }], tasks: [startedInReview] };
+  const moves = m.columnMoves(startedInReview, entry);
+  assert.equal(moves.find((c) => c.key === 'started').disabled, false, 'a started task in a column can go back to In progress');
+  assert.deepEqual(moves.find((c) => c.key === 'col:qa'), { key: 'col:qa', label: 'QA', current: false, disabled: true, why: 'cordoned' });
+});
+
+test("a task's page over a tab's unrouted page counts as a layer above it", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { layerDepth } = await harness.importDashboardModule('js/phone-history.js');
+  const tabPage = { title: 'standup-ping' };
+  assert.equal(layerDepth(tabPage, null), 1);
+  assert.equal(layerDepth({ view: 'board', title: 'webshop', covered: tabPage }, null), 2, 'Back closes the task page first');
+  assert.equal(layerDepth({ view: 'board', title: 'webshop', covered: { title: 'mail', routed: true } }, null), 1, 'a routed page is the router\'s');
+});

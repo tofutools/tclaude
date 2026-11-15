@@ -22,11 +22,11 @@ import { boardGroups } from './phone-shell-model.js';
 import { ButtonRow, Card, ChipRow, Section } from './phone-ui.js';
 import { usePhoneBar } from './phone-page.js';
 import { openPhoneSheet } from './phone-sheet.js';
-import { createTaskboardApi } from './taskboard-actions.js';
+import { createTaskboardApi, localLimitHooks } from './taskboard-actions.js';
 import { newCommentKey } from './groups-taskboard-comments.js';
 import { Button } from './ui-components.js';
 import {
-  DONE, boardColumns, cardView, columnMoves, columnSections, defaultColumn, positionMoves,
+  DONE, boardColumns, cardView, columnMoves, columnSections, defaultColumn, positionMoves, sectionPeers,
 } from './phone-board-model.js';
 import { TaskPage, boardWrite } from './phone-task-page.js';
 
@@ -45,15 +45,26 @@ export function openBoardTask(id, group) {
 const boardPick = signal({ group: '', column: '' });
 
 // moveTo is the write that puts task in column (phone-board-model.js
-// columnMoves): a stage or custom column through the stage route, keeping an
-// agent's task held by it; Started starts its agent on it; Done closes it.
-export function moveTo(api, task, column) {
+// columnMoves), as the desktop Lanes' drop does (groups-taskboard-lanes.js
+// baseLaneDrop): a stage or custom column through the stage route, an
+// agent's task kept held by it; Started starts its agent on it; Done closes
+// it. Out of a custom column a task goes back to Next first, then is held or
+// started so it lands where it was sent.
+export async function moveTo(api, task, column) {
   if (column === DONE) return api.status(task.id, 'done');
+  const agent = !!task.assignee?.agent_id && !task.assignee?.operator;
+  const started = agent && !task.held;
+  if (column.startsWith('col:')) return api.stage(task.id, column.slice(4));
+  if (task.column) {
+    if (column === 'idea') return agent ? api.hold(task.id, 'idea') : api.stage(task.id, 'idea');
+    await api.stage(task.id, 'next');
+    if (column === 'next' && started) return api.hold(task.id, 'next');
+    if (column === 'started' && task.held) return api.start(task.id);
+    return null;
+  }
   if (column === 'started') return api.start(task.id);
-  const stage = column.startsWith('col:') ? column.slice(4) : column;
-  const agentStarted = !!task.assignee?.agent_id && !task.assignee?.operator && !task.held && !task.column;
-  if (agentStarted && (stage === 'idea' || stage === 'next')) return api.hold(task.id, stage);
-  return api.stage(task.id, stage);
+  if (started) return api.hold(task.id, column);
+  return api.stage(task.id, column);
 }
 
 // MoveSheet is Move ▸: the task's other columns, then its place among the
@@ -161,7 +172,7 @@ export function TaskCard({ task, view, onOpen, onMove, onComment, onAnswer }) {
 }
 
 export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch, api: given = null }) {
-  const api = useMemo(() => given || createTaskboardApi({ fetchImpl: (...args) => fetchImpl(...args) }), [given, fetchImpl]);
+  const api = useMemo(() => given || createTaskboardApi({ fetchImpl: (...args) => fetchImpl(...args), limits: localLimitHooks() }), [given, fetchImpl]);
   useEffect(() => source.attach(), [source]);
   // The task page goes with the board: coming back to Board shows the board.
   useEffect(() => () => { boardTask.value = null; }, []);
@@ -175,6 +186,7 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
   const column = columns.find((c) => c.key === pick.column && pick.group === group)?.key || (entry ? defaultColumn(entry) : 'next');
   const setPick = (next) => { boardPick.value = { group, column, ...next }; };
   const open = boardTask.value;
+  const answering = useRef(false);
 
   const openSheet = (label, Body, props) => openPhoneSheet({ label, Body, props: { api, source, ...props } });
   usePhoneBar({
@@ -194,7 +206,7 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
 
   if (open) {
     return html`<${TaskPage} key=${open.id} id=${open.id} group=${open.group} source=${source} state=${state} api=${api}
-      onClose=${() => { boardTask.value = null; }} onMove=${(task, peers) => openSheet('Move', MoveSheet, { task, entry: (context?.groups || []).find((g) => g.group === open.group), peers })} />`;
+      onClose=${() => { boardTask.value = null; }} onMove=${(task, entry_) => openSheet('Move', MoveSheet, { task, entry: entry_, peers: sectionPeers(entry_, task) })} />`;
   }
 
   if (status === 'unavailable') return html`<p class="ui-empty phone-empty">Task boards are turned off.</p>`;
@@ -202,7 +214,16 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
   if (!entry) return html`<p class="ui-empty phone-empty">No open tasks on any board.</p>`;
 
   const names = companionAgents(state.snapshot.value);
-  const answer = (task) => (q, option) => boardWrite(source, () => api.answer(task.id, [option.key], '', q.n), 'Could not answer');
+  // One answer at a time: a double tap must not send a second one.
+  const answer = (task) => async (q, option) => {
+    if (answering.current) return false;
+    answering.current = true;
+    try {
+      return await boardWrite(source, () => api.answer(task.id, [option.key], '', q.n), 'Could not answer');
+    } finally {
+      answering.current = false;
+    }
+  };
   const sections = columnSections(entry, column);
   return html`<div class="phone-board">
     <${ChipRow} label="Column" value=${column} onSelect=${(key) => setPick({ column: key })}

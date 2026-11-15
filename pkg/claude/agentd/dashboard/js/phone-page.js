@@ -18,6 +18,8 @@
 //     view:    the shell's own view the page is pushed over ('board': a
 //              task's page), or absent for a tab's page; the shell shows a
 //              page only over the view it belongs to
+//     covered: the tab's page this one took the slot from, put back when
+//              it goes; an unrouted one still counts as a history layer
 //   } | null
 //
 // A page never outlives its tab: usePhonePage takes it down when its view goes
@@ -56,6 +58,7 @@ export function usePhonePage(page, active = true) {
       hideNav: !!now.hideNav,
       routed: !!now.routed,
       ...(now.view ? { view: now.view } : {}),
+      ...(now.covered ? { covered: now.covered } : {}),
       onBack: () => latest.current?.onBack?.(),
       actions: (now.actions || []).map((act, index) => ({
         ...act,

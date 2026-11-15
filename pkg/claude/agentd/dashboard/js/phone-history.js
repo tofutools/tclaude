@@ -26,9 +26,13 @@ import { closePhoneSheet, phoneSheet } from './phone-sheet.js';
 
 export const OWN_VIEW_VALUES = Object.freeze(['now', 'board']);
 
-// layerDepth is how many layers are up: an unrouted page, then a sheet.
+// layerDepth is how many layers are up: an unrouted page (and an unrouted
+// page it covers), then a sheet.
 export function layerDepth(page = phonePage.peek(), sheet = phoneSheet.peek()) {
-  return (page && !page.routed ? 1 : 0) + (sheet ? 1 : 0);
+  // A page over another (a task's page over a tab's unrouted page) is a
+  // layer on top of that one's.
+  const covered = page?.covered && !page.covered.routed ? 1 : 0;
+  return (page && !page.routed ? 1 : 0) + covered + (sheet ? 1 : 0);
 }
 
 function booting(doc) {

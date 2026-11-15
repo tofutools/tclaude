@@ -53,7 +53,7 @@ export function tasksIn(entry, key) {
 // boardColumns are the chips: every fixed column, the board's custom
 // columns, and Done, each with its count.
 export function boardColumns(entry) {
-  const custom = (entry?.columns || []).map((column) => ({ key: COLUMN_STATE + column.slug, label: column.label, custom: true }));
+  const custom = (entry?.columns || []).map((column) => ({ key: COLUMN_STATE + column.slug, label: column.label, custom: true, cordoned: column.state === 'cordoned' }));
   return [...FIXED_BEFORE, ...custom, { key: DONE, label: 'Done' }]
     .map((column) => ({ ...column, count: tasksIn(entry, column.key).length }));
 }
@@ -197,9 +197,15 @@ export function columnMoves(task, entry) {
   return boardColumns(entry).map((column) => {
     const move = { key: column.key, label: column.label, current: column.key === here, disabled: false, why: '' };
     if (move.current) return move;
-    if (column.key === 'started' && !(agent && task.held)) {
+    // Started needs an agent: one holding it to start, or one already at
+    // work on it in a custom column (it goes back to In progress).
+    if (column.key === 'started' && !(agent && (task.held || task.column))) {
       move.disabled = true;
       move.why = agent ? '' : 'Give it to an agent first';
+    }
+    if (column.cordoned) {
+      move.disabled = true;
+      move.why = 'cordoned';
     }
     if (column.key === DONE && task.status !== 'open' && task.status !== 'blocked') move.disabled = true;
     return move;
@@ -217,4 +223,13 @@ export function taskStateLabel(task, entry) {
   const key = phoneColumnOf(task);
   const label = boardColumns(entry).find((column) => column.key === key)?.label || key || '';
   return { text: label.toLowerCase(), tone: key === 'started' || String(key).startsWith('col:') ? 'work' : 'idle' };
+}
+
+// sectionPeers are the tasks a task moves up and down among: those of its
+// section in its column, as the board shows them.
+export function sectionPeers(entry, task) {
+  const key = phoneColumnOf(task);
+  if (!key || key === DONE) return [];
+  const id = sectionOf(task);
+  return columnSections(entry, key).find((section) => section.id === id)?.tasks || [];
 }

@@ -74,9 +74,9 @@ test.describe('on a phone', () => {
     }
 
     await nav.getByRole('button', { name: /Board/ }).click();
-    await expect(title).toHaveText('Board');
+    await expect(title).toHaveText(/^Board/);
     await expect(page.locator('#tab-messages')).toBeHidden();
-    await expect(page.getByRole('tablist', { name: 'Group' })).toBeVisible();
+    await expect(page.getByRole('tablist', { name: 'Column' })).toBeVisible();
     await expectNoSideScroll(page, 'Board');
 
     await nav.getByRole('button', { name: /More/ }).click();
@@ -116,12 +116,31 @@ test.describe('on a phone', () => {
     expect(errors).toEqual([]);
   });
 
-  test('a Board task opens its dialog over the phone shell', async ({ page }) => {
+  test('a Board task opens its phone page, and closing it comes back to the Board', async ({ page }) => {
+    const errors = collectErrors(page);
     await page.goto('/');
     await booted(page);
-    await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Board/ }).click();
-    await page.locator('.phone-task').first().click();
-    await expect(page.locator('.modal-overlay').getByRole('dialog')).toBeVisible();
+    const nav = page.getByRole('navigation', { name: 'Views' });
+    await nav.getByRole('button', { name: /Board/ }).click();
+    const card = page.locator('.phone-board-card').first();
+    const name = (await card.locator('.phone-board-title').textContent()).trim();
+    await card.locator('.phone-board-open').click();
+    await expect(page.locator('.phone-task-page-title')).toHaveText(name);
+    // Not the desktop's task form, and nothing takes the focus to raise the
+    // keyboard (B2).
+    await expect(page.locator('.modal-overlay').getByRole('dialog')).toHaveCount(0);
+    expect(await page.evaluate(() => ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName))).toBe(false);
+    await expectNoSideScroll(page, 'the task page');
+    // ‹ and the phone's Back both come back to the Board, never Agents (B1).
+    await page.locator('.phone-bar-back').click();
+    await expect(page.locator('.phone-bar-title')).toHaveText(/^Board/);
+    await expect(nav.getByRole('button', { name: /Board/ })).toHaveAttribute('aria-current', 'page');
+    await card.locator('.phone-board-open').click();
+    await expect(page.locator('.phone-task-page')).toBeVisible();
+    await page.goBack();
+    await expect(page.locator('.phone-task-page')).toHaveCount(0);
+    await expect(page.locator('.phone-bar-title')).toHaveText(/^Board/);
+    expect(errors).toEqual([]);
   });
 
   test('Open docks the agent terminal full screen; Back closes it where it was opened', async ({ page }) => {

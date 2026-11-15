@@ -115,7 +115,7 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
   const covered = useRef(phonePage.peek());
   // The bar names the board; the page's own heading carries the title,
   // whole, however long.
-  usePhonePage({ view: 'board', title: group, onBack: onClose });
+  usePhonePage({ view: 'board', title: group, onBack: onClose, covered: covered.current && covered.current.view !== 'board' ? covered.current : null });
   useEffect(() => () => {
     const was = covered.current;
     if (!phonePage.peek() && was && was.view !== 'board') phonePage.value = was;
@@ -136,7 +136,6 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
   const body = read.task ? (read.task.body || '') : (typeof task.body === 'string' ? task.body : null);
   const refs = task.refs || (task.ref ? [task.ref] : []);
   const entries = read.activity?.events || [];
-  const peers = (entry?.tasks || []).filter((t) => t.stage === task.stage);
 
   return html`<div class="phone-task-page">
     <h2 class="phone-task-page-title">${task.title}</h2>
@@ -146,7 +145,7 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
     </div>
     ${task.status === 'blocked' && task.block_reason && html`<p class="phone-board-note">${task.block_reason}</p>`}
     ${openQuestions(task).map((q) => html`<${QuestionBlock} key=${q.n || 0} task=${task} q=${q} names=${names} onAnswer=${answer} />`)}
-    ${live && html`<${ButtonRow} buttons=${[{ key: 'move', label: 'Move ▸', onClick: () => onMove(task, peers) }]} />`}
+    ${live && html`<${ButtonRow} buttons=${[{ key: 'move', label: 'Move ▸', onClick: () => onMove(task, entry) }]} />`}
 
     <${Section} title="Brief">
       ${body === null
@@ -159,7 +158,9 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
     ${refs.length > 0 && html`<${Section} title="Refs" count=${refs.length}>
       <ul class="phone-list phone-task-refs">
         ${refs.map((ref) => html`<li key=${ref.url || ref.label}>
-          <a href=${ref.url} target="_blank" rel="noopener noreferrer">${ref.pr?.number ? `PR #${ref.pr.number}` : ref.label || ref.url}</a>
+          ${/^https?:\/\//i.test(ref.url || '')
+            ? html`<a href=${ref.url} target="_blank" rel="noopener noreferrer">${ref.pr?.number ? `PR #${ref.pr.number}` : ref.label || ref.url}</a>`
+            : html`<span class="phone-task-ref-label">${ref.label || ref.url || ''}</span>`}
           ${ref.pr?.title && html`<span class="phone-task-ref-sub">${ref.pr.title}${ref.pr.checks?.total ? ` · ${ref.pr.checks.passed}/${ref.pr.checks.total} checks` : ''}</span>`}
         </li>`)}
       </ul>
