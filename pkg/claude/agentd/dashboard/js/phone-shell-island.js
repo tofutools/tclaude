@@ -52,11 +52,18 @@ export function createPhoneShellState({ startOnNow = true } = {}) {
   };
 }
 
+// LOOK_PARAMS only change how the dashboard looks (the wizard or slop skin,
+// a layout override), so a link carrying them is still the bare dashboard.
+// layout-boot.js already drops ?layout before the shell starts; it is listed
+// so the answer holds whenever this is asked.
+const LOOK_PARAMS = new Set(['wizard', 'slop', 'layout']);
+
 // landsOnNow reports whether a page load at this URL starts on Now: the bare
-// dashboard path with no deep-link query.
+// dashboard path with no deep-link query beyond the look params.
 export function landsOnNow(loc = globalThis.location) {
   const path = loc?.pathname || '/';
-  return (path === '/' || path === '/dashboard') && !loc?.search;
+  if (path !== '/' && path !== '/dashboard') return false;
+  return [...new URLSearchParams(loc?.search || '').keys()].every((key) => LOOK_PARAMS.has(key));
 }
 
 export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = globalThis.fetch, processSource = processContext, fleet = fleetState }) {

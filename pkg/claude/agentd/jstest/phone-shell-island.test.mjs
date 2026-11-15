@@ -115,6 +115,20 @@ test('a deep link starts on its tab, not Now', async (t) => {
   assert.equal(navItem('Agents').getAttribute('aria-current'), 'page', 'the default tab is Groups');
 });
 
+test('landsOnNow: the bare dashboard, with or without a look param, lands on Now; a deep link does not', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { landsOnNow } = await harness.importDashboardModule('js/phone-shell-island.js');
+  const at = (pathname, search = '') => landsOnNow({ pathname, search });
+  assert.equal(at('/'), true);
+  assert.equal(at('/dashboard'), true);
+  assert.equal(at('/', '?wizard=1'), true, 'the wizard link is the bare dashboard in its skin');
+  assert.equal(at('/', '?slop=1'), true);
+  assert.equal(at('/', '?layout=phone&wizard=1'), true);
+  assert.equal(at('/agents'), false);
+  assert.equal(at('/', '?node=inst_peer'), false, 'another node is a deep link');
+  assert.equal(at('/', '?wizard=1&agent=agt_1'), false);
+});
+
 test('More lists the tabs the dashboard shows with their scope, notifications and the Desktop site switch', async (t) => {
   const { harness, calls, mounted, navItem, tap } = await setup(t, { available: (tab) => tab !== 'plugins' });
   await tap(navItem('More'));

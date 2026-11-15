@@ -241,6 +241,14 @@ test.describe('on a phone', () => {
     await expect(page.locator('#tab-messages')).toBeVisible();
   });
 
+  test('the wizard link (/?wizard=1) still lands on Now, in the wizard skin', async ({ page }) => {
+    await page.goto('/?wizard=1');
+    await booted(page);
+    await expect(page.locator('body')).toHaveClass(/\bwizard\b/);
+    await expect(page.locator('.phone-bar-title')).toHaveText('Now');
+    await expect(page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Now/ })).toHaveAttribute('aria-current', 'page');
+  });
+
   test('Desktop site shows the desktop page, and Phone view comes back', async ({ page }) => {
     await page.goto('/');
     await booted(page);
