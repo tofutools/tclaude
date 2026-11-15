@@ -138,6 +138,15 @@ func TestPiManagedInstallRootIsEmptyForAnNpmInstall(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(cli), 0o755))
 	require.NoError(t, os.WriteFile(cli, []byte("#!/usr/bin/env node\n"), 0o755))
 	assert.Empty(t, PiManagedInstallRoot(cli))
+
+	// An npm install under some releases/ directory beside a version file is
+	// not the installer's layout either.
+	deploy := filepath.Join(home, "deploy")
+	local := filepath.Join(deploy, "releases", "2024", "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(local), 0o755))
+	require.NoError(t, os.WriteFile(local, []byte("#!/usr/bin/env node\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(deploy, "current-version"), []byte("2024\n"), 0o644))
+	assert.Empty(t, PiManagedInstallRoot(local))
 }
 
 func TestPiBuildCommandExportsTheManagedInstallRoot(t *testing.T) {

@@ -120,12 +120,22 @@ func PiManagedInstallRoot(cli string) string {
 			return ""
 		}
 		if filepath.Base(parent) == "releases" {
+			// Only the installer's own layout (`<agent>/install` beside the
+			// `<agent>/bin/pi` launcher), so an npm install that merely sits
+			// under some releases/ directory is not taken for a managed one.
 			install := filepath.Dir(parent)
-			if info, err := os.Stat(filepath.Join(install, "current-version")); err == nil && info.Mode().IsRegular() {
+			launcher := filepath.Join(filepath.Dir(install), "bin", "pi")
+			if filepath.Base(install) == "install" && piRegularFile(filepath.Join(install, "current-version")) &&
+				piRegularFile(launcher) {
 				return install
 			}
 		}
 	}
+}
+
+func piRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // piInstallerNode prefers the Node pi's installer ships, as its launcher
