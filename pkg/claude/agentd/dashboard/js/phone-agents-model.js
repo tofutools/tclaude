@@ -312,15 +312,17 @@ export const showOffline = (prefs) => prefs.getItem(OFFLINE_PREF) !== '0';
 // groups are left out, and a subgroup that is not archived takes its
 // archived parent's place. archived counts them either way, count the
 // groups that are not. Without offline (Show offline off) a group with
-// nobody online in it or under it (dim: empty, or only offline agents) is
-// left out too, and count counts what is left.
+// nobody online in it or under it (empty, or only offline agents) is left
+// out too, unless an agent in it is waking; count counts what is left.
 export function groupsTree(snapshot, order = (groups) => groups, { showArchived = false, offline = true } = {}) {
   const groups = order((snapshot?.groups || []).filter((g) => g?.name));
   const toNode = (node) => {
     const group = node.group;
     const children = node.children.map(toNode);
     const entry = groupEntry(groupKey(group.name), group.name, group, group.members, { offline });
-    return { ...entry, children, archived: !!group.archived, empty: entry.total === 0 };
+    // Empty means no agents at all, not none left after Show offline.
+    const empty = !(group.members || []).some((m) => m && !isAwayPlaceholder(m));
+    return { ...entry, children, archived: !!group.archived, empty };
   };
   // dim and populated are counted over what is shown: a hidden archived
   // subgroup's agents do not light its parent. A crashed agent needs a look,
@@ -337,7 +339,9 @@ export function groupsTree(snapshot, order = (groups) => groups, { showArchived 
   const keep = (nodes) => ranked(nodes.flatMap((n) => {
     if (n.archived && !showArchived) return keep(n.children);
     const node = lit(n, keep(n.children));
-    return !offline && node.dim ? [] : [node];
+    // Without offline, what is left in a group is listed (online, crashed or
+    // waking), so a group goes when nothing is left in it or under it.
+    return !offline && !node.populated ? [] : [node];
   }));
   const all = buildGroupTree(groups, () => true).map(toNode);
   const loose = groupEntry(UNGROUPED, 'Ungrouped', null, snapshot?.ungrouped, { offline });

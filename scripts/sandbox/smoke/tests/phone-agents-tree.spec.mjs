@@ -247,7 +247,7 @@ test.describe('iPhone 13 header and offline', () => {
       await shot(page, 'iphone-13-offline-on');
       await offline.click();
       await expect(offline).toHaveAttribute('aria-pressed', 'false');
-      await expect(page.locator('.phone-agent-off:not(.v-crashed)')).toHaveCount(0);
+      await expect(page.locator('.phone-agent-off:not(.v-crashed):not([aria-label$=": waking"])')).toHaveCount(0);
       await shot(page, 'iphone-13-offline-off');
       await seg('All groups').click();
       await expect(page.locator('.phone-agents-node.phone-agents-dim')).toHaveCount(0);

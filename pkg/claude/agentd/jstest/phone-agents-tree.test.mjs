@@ -252,9 +252,14 @@ test('the model without offline: offline agents and nobody-online groups left ou
   const crash = { groups: [
     { name: 'broke', members: [{ ...off(40, 'b'), state: { exit_reason: 'unexpected' } }, off(41, 'quiet')] },
     { name: 'waking', members: [{ ...off(42, 'w'), waking: true }] },
+    { name: 'old', members: [off(43, 'x')] },
+    { name: 'new', parent: 'old', members: [on(44, 'y')] },
   ] };
   assert.deepEqual(model.agentGroups(crash, (g) => g, { offline: false }).map((g) => [g.name, g.tree.map(({ row }) => row.name)]),
-    [['broke', ['b']], ['waking', ['w']]], 'a crashed agent needs a look and a waking one is coming up: both stay');
+    [['broke', ['b']], ['waking', ['w']], ['new', ['y']]], 'a crashed agent needs a look and a waking one is coming up: both stay');
+  const tree = model.groupsTree(crash, (g) => g, { offline: false });
+  assert.deepEqual(names(tree.nodes), ['broke', ['old', ['new']], 'waking'], 'in All groups too; old stays for its online subgroup');
+  assert.equal(tree.nodes[1].empty, false, 'old has agents, only hidden: not tagged empty');
   const hidden = model.groupsTree(SNAPSHOT, (g) => g, { offline: false });
   assert.deepEqual(names(hidden.nodes), [['webshop', ['checkout']], 'infra', 'hotfix'], 'payments, research and the loner gone');
   assert.equal(hidden.count, 4, 'webshop, checkout, infra, hotfix');
