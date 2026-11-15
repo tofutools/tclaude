@@ -89,22 +89,41 @@ test('the Runs list opens a run, keeps the context fresh, and says what is deskt
   assert.deepEqual(opened, ['run_release']);
 });
 
-test('a gate card on Now posts the verdict for the awaited attempt', async (t) => {
+test('a gate card on Now approves in one tap, and asks for a note before changes', async (t) => {
   const { harness, mod } = await load(t);
+  const { PhoneSheetHost, closePhoneSheet } = await harness.importDashboardModule('js/phone-sheet.js');
+  t.after(() => closePhoneSheet());
   const source = fakeSource(harness);
   const api = fakeApi();
   const item = mod.gateItems(FIXTURE).find((entry) => entry.run.runId === 'run_release');
-  const mounted = await harness.mount(harness.html`<${mod.GateCard} item=${item} api=${api} source=${source} />`);
+  const mounted = await harness.mount(harness.html`<div><${mod.GateCard} item=${item} api=${api} source=${source} /><${PhoneSheetHost} /></div>`);
   await settle(harness);
   const card = mounted.container.querySelector('.phone-gate-card');
   assert.match(card.querySelector('.phone-gate-title').textContent, /Review gate/);
-  const approve = card.querySelector('[data-run-verdict="approved"]');
-  card.querySelector('textarea').value = 'looks good';
-  await harness.act(() => card.querySelector('textarea').dispatchEvent(new harness.window.Event('input', { bubbles: true })));
-  await harness.act(() => approve.click());
+  assert.equal(card.querySelector('textarea'), null, 'no note box on the card');
+
+  // Request changes: a sheet takes the note first.
+  await harness.act(() => card.querySelector('[data-run-verdict="changes"]').click());
+  const sheet = mounted.container.querySelector('[role="dialog"]');
+  assert.ok(sheet, 'the note sheet opens');
+  await harness.input(sheet.querySelector('textarea'), 'fix the copy');
+  await harness.act(() => harness.getByRole(sheet, 'button', { name: '↺ request changes' }).click());
   await settle(harness);
-  assert.deepEqual(api.decisions, [['run_release', { nodeId: 'review', verdict: 'approved', evidence: 'looks good', attempt: 2 }]]);
+  assert.deepEqual(api.decisions, [['run_release', { nodeId: 'review', verdict: 'changes', evidence: 'fix the copy', attempt: 2 }]]);
+  assert.equal(mounted.container.querySelector('[role="dialog"]'), null, 'the sheet closes once it is sent');
+  assert.match(card.querySelector('.phone-gate-done').textContent, /Recorded: ↺ request changes/);
   assert.equal(source.refreshes, 1, 'the context is read again after the verdict');
+});
+
+test('approve on a gate card goes in one tap, without a note', async (t) => {
+  const { harness, mod } = await load(t);
+  const api = fakeApi();
+  const item = mod.gateItems(FIXTURE).find((entry) => entry.run.runId === 'run_release');
+  const mounted = await harness.mount(harness.html`<${mod.GateCard} item=${item} api=${api} source=${fakeSource(harness)} />`);
+  await settle(harness);
+  await harness.act(() => mounted.container.querySelector('[data-run-verdict="approved"]').click());
+  await settle(harness);
+  assert.deepEqual(api.decisions, [['run_release', { nodeId: 'review', verdict: 'approved', evidence: '', attempt: 2 }]]);
 });
 
 test('the run page tops the steps with the gate, marks your step, and pauses from the top bar', async (t) => {

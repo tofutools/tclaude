@@ -23,7 +23,30 @@ export function openAccessPanel({ agentId = '', launcher = null, returnFocus = n
   return true;
 }
 
-function secondsLeft(deadline, now) {
+// decideAccessRequest records the operator's answer to an access request:
+// 'approve', 'deny', or 'extend' (five more minutes). It throws with the
+// server's message when the answer is refused.
+export async function decideAccessRequest(fetchImpl, id, decision) {
+  const response = await fetchImpl(`/api/access-requests/${encodeURIComponent(id)}/decision`, {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision }),
+  });
+  if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+}
+
+// answerDecision sends the operator's pick (1-based) on a decision an agent
+// put to them, with an optional note. It throws when the server refuses it.
+export async function answerDecision(fetchImpl, id, choice, note = '') {
+  const response = await fetchImpl('/api/human-messages/reply', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, choice, body: String(note || '').trim() }),
+  });
+  if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+}
+
+// secondsLeft is how long a request has before its deadline, or null when it
+// has none.
+export function secondsLeft(deadline, now) {
   const at = Date.parse(deadline || '');
   return Number.isFinite(at) ? Math.max(0, Math.round((at - now) / 1000)) : null;
 }
@@ -189,11 +212,7 @@ export function ApprovalCard({ request, fetchImpl, notify, from = '', onMore = n
   async function decide(decision) {
     setBusy(decision);
     try {
-      const response = await fetchImpl(`/api/access-requests/${encodeURIComponent(request.id)}/decision`, {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision }),
-      });
-      if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+      await decideAccessRequest(fetchImpl, request.id, decision);
       // An extension leaves the request pending: free the buttons again.
       if (decision === 'extend') setBusy('');
     } catch (error) {
@@ -235,11 +254,7 @@ export function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
   async function choose(choice) {
     setBusy(choice);
     try {
-      const response = await fetchImpl('/api/human-messages/reply', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: decision.id, choice, body: note.trim() }),
-      });
-      if (!response.ok) throw new Error((await response.text?.()) || `${response.status}`);
+      await answerDecision(fetchImpl, decision.id, choice, note);
     } catch (error) {
       notify(`That decision could not be sent: ${error?.message || error}`, true);
       setBusy(0);
