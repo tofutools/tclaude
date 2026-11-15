@@ -23,6 +23,9 @@ type openCodeEventProjector struct {
 	seenEventIDs      map[string]struct{}
 	seenEventOrder    []string
 	pendingNativeHook *session.HookCallbackInput
+	// compactionPart is the last compaction part projected, so its repeated
+	// updates paint the compacting phase once.
+	compactionPart string
 }
 
 type openCodeSessionStatus struct {
@@ -80,6 +83,9 @@ type openCodeMessagePart struct {
 	Tool      string          `json:"tool"`
 	CallID    string          `json:"callID"`
 	State     json.RawMessage `json:"state"`
+	// Auto marks a compaction part OpenCode started by itself (after a
+	// context overflow, or near the model's limit) rather than on /compact.
+	Auto bool `json:"auto,omitempty"`
 }
 
 type openCodeToolState struct {
@@ -154,6 +160,9 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 	case "session.idle":
 		return p.projectStatus(openCodeSessionStatus{Type: "idle"}, false), nil
 	case "message.part.updated":
+		if envelope.Properties.Part.Type == "compaction" {
+			return p.projectCompactionPart(envelope.Properties.Part), nil
+		}
 		return p.projectToolPart(envelope.Properties.Part)
 	case "question.asked", "question.v2.asked":
 		return p.projectQuestion(openCodeQuestionRequest{
@@ -180,6 +189,15 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 		clear(p.activeToolStates)
 		p.deferredIdle = false
 		p.pendingAttention = false
+		// The failed turn is over: OpenCode's next busy is a new turn, not a
+		// repeat of the one before the error, so it must repaint working. A
+		// context overflow is the exception: OpenCode compacts and carries the
+		// same turn on, its compaction part repaints the status, and a busy
+		// projected as a new prompt would fire user-prompt standing orders in
+		// the middle of the recovery.
+		if envelope.Properties.Error.Name != "ContextOverflowError" {
+			p.lastSessionStatus = ""
+		}
 		input := p.hook("StopFailure")
 		input.ErrorType = openCodeHookErrorType(envelope.Properties.Error)
 		input.ErrorMessage = boundedOpenCodeDetail(envelope.Properties.Error.Data.Message)
@@ -273,6 +291,30 @@ func (p *openCodeEventProjector) projectStatus(status openCodeSessionStatus, for
 	default:
 		return nil
 	}
+}
+
+// projectCompactionPart projects the part OpenCode adds when a compaction
+// starts as PreCompact: "working: compacting" until the next turn hook. After
+// a context overflow OpenCode reports session.error and then compacts by
+// itself, and with a local model that summary can take half an hour, so
+// without this the agent shows the overflow's failed turn the whole time.
+// session.compacted, the end of the compaction, stays the SessionStart(compact)
+// boundary below. OpenCode cannot refuse a compaction, so this PreCompact
+// takes the plain status path, never the pre-compact guard's gate.
+func (p *openCodeEventProjector) projectCompactionPart(part openCodeMessagePart) []session.HookCallbackInput {
+	if part.ID != "" && part.ID == p.compactionPart {
+		return nil
+	}
+	p.compactionPart = part.ID
+	// The compaction is the session's busy run: a busy snapshot during it
+	// repeats this turn, and must not repaint the phase as a new one.
+	p.lastSessionStatus = "busy"
+	input := p.hook("PreCompact")
+	input.Trigger = "manual"
+	if part.Auto {
+		input.Trigger = "auto"
+	}
+	return []session.HookCallbackInput{input}
 }
 
 func (p *openCodeEventProjector) projectToolPart(part openCodeMessagePart) ([]session.HookCallbackInput, error) {
