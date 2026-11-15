@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
@@ -14,35 +15,88 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/doctor"
 )
 
-// The Diagnostics › Doctor view polls for its nav badge, and one of its checks is the live
-// tclaude-layer probe, which forks bwrap on Linux. Results are therefore
-// cached for doctorCacheTTL; the tab's Re-check button and any write that
-// changes an answer (the default-sandbox decision) drop the cache.
+// The Diagnostics › Doctor view polls every minute for its nav badge, and one
+// of its checks is the live tclaude-layer probe, which forks bwrap on Linux
+// (through `tmux run-shell` and a tclaude subprocess). A poll must not wait
+// for that, so a read serves the cached checks and, once they are older than
+// doctorCacheTTL, starts a single background rebuild; the badge catches up one
+// poll later. With the TTL equal to the poll interval, an inline rebuild ran
+// on nearly every poll.
+//
+// Two reads still build inline, because the operator is waiting on the answer
+// itself: the tab's Re-check button (refresh=1), and the first read after a
+// write that changed an answer (the default-sandbox decision, a harness config
+// repin) dropped the cache via invalidateDoctorChecks.
 const doctorCacheTTL = time.Minute
 
 var doctorProbes = doctor.HostProbes
 
-var (
-	doctorMu       sync.Mutex
-	doctorCached   []doctor.Check
-	doctorCachedAt time.Time
-)
+// buildDoctorChecks is the full, host-touching check run. A var so tests can
+// count and stall builds.
+var buildDoctorChecks = func() []doctor.Check {
+	return append(doctor.Run(doctorProbes()), harnessConfigRepairChecks()...)
+}
+
+var doctorCache struct {
+	sync.Mutex
+	checks []doctor.Check
+	at     time.Time
+	// gen is bumped by every invalidation and every inline build, so a
+	// background rebuild that started before either does not publish an
+	// answer computed from the state a write just changed.
+	gen        uint64
+	refreshing bool
+}
 
 func invalidateDoctorChecks() {
-	doctorMu.Lock()
-	doctorCached = nil
-	doctorMu.Unlock()
+	doctorCache.Lock()
+	defer doctorCache.Unlock()
+	doctorCache.checks = nil
+	doctorCache.gen++
 }
 
 func doctorChecks(refresh bool) []doctor.Check {
-	doctorMu.Lock()
-	defer doctorMu.Unlock()
-	if refresh || doctorCached == nil || time.Since(doctorCachedAt) >= doctorCacheTTL {
-		doctorCached = append(doctor.Run(doctorProbes()), harnessConfigRepairChecks()...)
-		doctorCachedAt = time.Now()
+	c := &doctorCache
+	c.Lock()
+	defer c.Unlock()
+	switch {
+	case refresh || c.checks == nil:
+		c.gen++
+		c.checks = buildDoctorChecks()
+		c.at = time.Now()
+	case !c.refreshing && time.Since(c.at) >= doctorCacheTTL:
+		c.refreshing = true
+		go refreshDoctorChecks(c.gen)
 	}
 	// The tmux path check is in-memory state, so it is always live.
-	return append(slices.Clip(doctorCached), tmuxControlModeCheck())
+	return append(slices.Clip(c.checks), tmuxControlModeCheck())
+}
+
+// refreshDoctorChecks rebuilds the checks off the request path and publishes
+// them unless an invalidation or inline build happened meanwhile. It runs
+// outside any HTTP handler, so a panic is recovered and logged; the previous
+// checks stay in place and the rebuild is retried after doctorCacheTTL.
+func refreshDoctorChecks(gen uint64) {
+	c := &doctorCache
+	var fresh []doctor.Check
+	ok := false
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("doctor checks refresh panicked", "panic", r, "module", "agentd")
+		}
+		c.Lock()
+		defer c.Unlock()
+		c.refreshing = false
+		if c.gen != gen {
+			return
+		}
+		c.at = time.Now()
+		if ok {
+			c.checks = fresh
+		}
+	}()
+	fresh = buildDoctorChecks()
+	ok = true
 }
 
 // tmuxControlModeCheck reports which path agentd's tmux queries take, so the
