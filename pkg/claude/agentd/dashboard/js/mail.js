@@ -209,7 +209,9 @@ const WIPE_BATCH = 5;
 // shared request lifecycle rejects stale responses.
 export const mailState = createMailState({
   mailboxes: [],
-  selected: dashPrefs.getItem(SELECTED_KEY) || HUMAN_ID,
+  // A phone opens Mail on what needs the operator, Human, not on the
+  // mailbox last used (B14); a link naming a folder still opens it.
+  selected: (isPhone ? '' : dashPrefs.getItem(SELECTED_KEY)) || HUMAN_ID,
   boxQuery: dashPrefs.getItem(BOX_FILTER_KEY) || '',
   messageQuery: dashPrefs.getItem('tclaude.dash.filter.messages') || '',
   // Exact human.notify sender constraint used only by Groups-row deep links.

@@ -38,8 +38,9 @@ function useNow(enabled) {
 
 // PhoneApprovalCard is an agent's pending access request. Tapping its text
 // opens the request in Mail (onMore), where its details and "Always allow"
-// are.
-export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group = '', onMore = null }) {
+// are. decide(id, decision) replaces the default call (Mail's controller,
+// which updates its list at once).
+export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group = '', onMore = null, decide: decideWith = null, moreLabel = '' }) {
   const [busy, setBusy] = useState('');
   const now = useNow(!!request.deadline);
   const left = secondsLeft(request.deadline, now);
@@ -49,7 +50,7 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
   async function decide(decision) {
     setBusy(decision);
     try {
-      await decideAccessRequest(fetchImpl, request.id, decision);
+      await (decideWith ? decideWith(request.id, decision) : decideAccessRequest(fetchImpl, request.id, decision));
       // An extension leaves the request pending: free the buttons again.
       if (decision === 'extend') setBusy('');
     } catch (error) {
@@ -63,7 +64,7 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
     <div class="phone-card-row">
       <${Avatar} bot glyph="🤖" badge="🔑" />
       ${onMore
-        ? html`<button data-ui-exempt type="button" class="phone-card-text" aria-label=${`Open ${name}'s request in Mail`} onClick=${onMore}>${text}</button>`
+        ? html`<button data-ui-exempt type="button" class="phone-card-text" aria-label=${moreLabel || `Open ${name}'s request in Mail`} onClick=${onMore}>${text}</button>`
         : html`<div class="phone-card-text">${text}</div>`}
       ${left !== null && html`<${StatePill} tone="key" title="Declined automatically when this runs out">${expired ? 'timing out' : countdown(left)}<//>`}
     </div>

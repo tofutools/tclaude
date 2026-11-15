@@ -189,3 +189,53 @@ test('Back is a close too: a draft holds it and takes its entry back; an empty s
   await harness.act(() => routes.restoreOverlays({}));
   assert.equal(dialog(), null, 'an empty sheet just closes');
 });
+
+test('Write\'s sheet starts with no one: To finds an agent, and sending needs one', async (t) => {
+  const { harness, compose, dialog, button, tap, sent } = await setup(t);
+  const recipients = () => [
+    { agent: 'agt_a', label: 'lead', group: 'webshop', online: true },
+    { agent: 'agt_b', label: 'checkout-ui', group: 'webshop', online: false },
+    { agent: 'agt_c', label: 'indexer', group: 'search', online: true },
+  ];
+  await harness.act(() => compose.openPhoneCompose({}, { recipients, send: async (draft) => { sent.push(draft); } }));
+  assert.equal(dialog().getAttribute('aria-label'), 'New message');
+  await harness.input(dialog().querySelector('textarea'), 'hello');
+  await tap(button('Send ➤'));
+  assert.match(dialog().querySelector('[role="alert"]').textContent, /Choose who/);
+  assert.equal(sent.length, 0);
+  await harness.input(dialog().querySelector('.phone-compose-to-input'), 'webshop');
+  assert.deepEqual([...dialog().querySelectorAll('.phone-compose-recipient .phone-compose-file')].map((e) => e.textContent), ['lead', 'checkout-ui'],
+    'by group too, live ones first');
+  await tap(dialog().querySelector('.phone-compose-recipient'));
+  await tap(button('Send ➤'));
+  await harness.act(async () => {});
+  assert.deepEqual(sent.map((d) => [d.to, d.body]), [['agt_a', 'hello']]);
+});
+
+test('matchRecipients: by name or group, live first, at most RECIPIENTS_SHOWN', async (t) => {
+  const { compose } = await setup(t);
+  const many = Array.from({ length: 9 }, (_, i) => ({ agent: `a${i}`, label: `agent${i}`, online: i % 2 === 0 }));
+  const hits = compose.matchRecipients(many, '');
+  assert.equal(hits.length, compose.RECIPIENTS_SHOWN);
+  assert.ok(hits.slice(0, 5).every((r) => r.online));
+  assert.deepEqual(compose.matchRecipients(many, 'agent3').map((r) => r.agent), ['a3']);
+});
+
+test('a reply titles its sheet, sends through its own route, and an offline sender takes nothing', async (t) => {
+  const { harness, compose, dialog, button, tap, field } = await setup(t);
+  const replies = [];
+  await harness.act(() => compose.openPhoneCompose({ agent: AGENT, label: 'checkout-ui' }, {
+    title: 'Reply to checkout-ui', send: async (draft) => { replies.push(draft.body); },
+  }));
+  assert.equal(dialog().querySelector('.phone-compose-title').textContent, 'Reply to checkout-ui');
+  await harness.input(field(), 'yes');
+  await tap(button('Send ➤'));
+  await harness.act(async () => {});
+  assert.deepEqual(replies, ['yes']);
+
+  await harness.act(() => compose.openPhoneCompose({ agent: AGENT, label: 'checkout-ui' }, {
+    title: 'Reply to checkout-ui', offline: 'checkout-ui is offline', send: async () => { replies.push('sent'); },
+  }));
+  assert.equal(button('Send ➤').disabled, true);
+  assert.match(dialog().querySelector('.phone-compose-note').textContent, /offline/);
+});
