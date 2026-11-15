@@ -51,6 +51,8 @@ type processRunJSON struct {
 	Scope                 processRunScopeJSON      `json:"scope"`
 	Paused                *processRunPauseJSON     `json:"paused,omitempty"`
 	Gates                 []processRunGateJSON     `json:"gates,omitempty"`
+	Overseer              *processRunOverseerJSON  `json:"overseer,omitempty"`
+	Concerns              []processRunConcernJSON  `json:"concerns,omitempty"`
 	CreatedAt             time.Time                `json:"createdAt"`
 	UpdatedAt             time.Time                `json:"updatedAt"`
 }
@@ -191,6 +193,7 @@ type processRunParams struct {
 	Group      string   `long:"group" optional:"true" help:"Bind the run to this group (name or id); needs process.runs.start covering it (group owners have it)"`
 	Agent      string   `long:"agent" optional:"true" help:"Bind the run to this agent; self needs self.process, another agent agent.process or groups.members.process"`
 	Remote     string   `long:"remote" optional:"true" help:"Start the run on a trusted peer node (label or instance id), scoped to one of its groups (--group, by name) or agents (--agent, by agt_ id); needs that node's process.runs.start or groups.members.process grant to this node"`
+	Overseer   string   `long:"overseer" optional:"true" help:"Who oversees the run: an agent name or id, or operator. Default: the group's lead, else whoever starts the run"`
 	AskHuman   string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 	Task       string   `long:"task" optional:"true" help:"Run it for this board task (tk_ id): scoped to the task's group unless --agent, the task's text and id fill {{params.task}} and {{params.task_ref}}, its card shows the run's progress, and the run's end closes the task (done) or blocks it (failed)"`
 }
@@ -234,11 +237,13 @@ func runProcessRun(p *processRunParams, stdout, stderr io.Writer) error {
 		Group                    string            `json:"group,omitempty"`
 		Agent                    string            `json:"agent,omitempty"`
 		Task                     string            `json:"task,omitempty"`
+		Overseer                 string            `json:"overseer,omitempty"`
 	}{
 		ID: strings.TrimSpace(p.RunID), TemplateID: strings.TrimSpace(p.TemplateID),
 		Params: params, AuthorizeProgramProfiles: append([]string(nil), p.Authorize...),
 		Group: strings.TrimSpace(p.Group), Agent: strings.TrimSpace(p.Agent),
-		Task: strings.TrimSpace(p.Task),
+		Task:     strings.TrimSpace(p.Task),
+		Overseer: strings.TrimSpace(p.Overseer),
 	}
 	if request.TemplateID == "" {
 		return fmt.Errorf("template id is required")
@@ -249,6 +254,9 @@ func runProcessRun(p *processRunParams, stdout, stderr io.Writer) error {
 	remote := strings.TrimSpace(p.Remote)
 	if remote != "" && request.Task != "" {
 		return fmt.Errorf("--task runs a process for a task on this node's board; --remote cannot take it")
+	}
+	if remote != "" && request.Overseer != "" {
+		return fmt.Errorf("--overseer is not available with --remote: a peer's run takes its default overseer")
 	}
 	if remote != "" && request.Group == "" && request.Agent == "" {
 		return fmt.Errorf("--remote starts a run scoped to one of the peer's groups (--group) or agents (--agent)")
@@ -953,6 +961,7 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 	if run.NeedsReconcile {
 		fmt.Fprintln(out, "needsReconcile=true")
 	}
+	printProcessRunOversight(out, run)
 	if len(run.Commands) > 0 {
 		fmt.Fprintln(out, "commands:")
 		tw := newTable(out)
@@ -1040,6 +1049,7 @@ func printProcessRunNextSteps(out io.Writer, run *processRunJSON) {
 		fmt.Fprintf(out, "Next: tclaude process resolve-blocked %s --node %s --attempt %d --action <%s>\n",
 			run.ID, blocked.NodeID, blocked.Attempt, strings.Join(processResolutionActions, "|"))
 	}
+	printProcessRunOversightNextSteps(out, run)
 }
 
 func exitProcessRuntime(err error, stderr io.Writer) {

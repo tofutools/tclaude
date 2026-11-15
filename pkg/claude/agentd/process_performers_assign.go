@@ -41,7 +41,7 @@ func (e *processAssignError) Error() string { return e.message }
 // reported: a node that is not ready yet, already settled, or not agentic has
 // nothing to hand over.
 func handleProcessRunAssign(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermission(w, r, PermProcessRunsManage)
+	caller, ok := requireProcessRunSteward(w, r, r.PathValue("id"))
 	if !ok {
 		return
 	}

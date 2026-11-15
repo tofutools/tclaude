@@ -1671,6 +1671,12 @@ func replyHumanMessage(ctx context.Context, body humanMessageReply) (map[string]
 		}
 		decision = orig.Options[body.Choice-1]
 	}
+	// A run concern's card is answered by the daemon, not mailed to a sender.
+	if concern, ok, err := db.GetProcessRunConcernForHumanMessage(orig.ID); err != nil {
+		return nil, replyFail(http.StatusInternalServerError, "io", "load concern: "+err.Error())
+	} else if ok {
+		return answerProcessConcernCard(orig, concern, decision, body)
+	}
 	if orig.ProcessCommandID != "" {
 		if body.AttachmentToken != "" {
 			return nil, replyFail(http.StatusBadRequest, "invalid_arg", "attachments are not supported for process replies")

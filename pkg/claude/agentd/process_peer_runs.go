@@ -266,6 +266,9 @@ func servePeerProcessRunStart(w http.ResponseWriter, r *http.Request, v *peerVie
 	}
 	v.auditDetail = "template: " + stripControl(strings.TrimSpace(request.TemplateID))
 	rec := httptest.NewRecorder()
+	// A linked node does not pick who oversees a run here: the run takes the
+	// default (the group's lead, else the run's owner).
+	request.Overseer = ""
 	startProcessRunAs(rec, r, request, processPeerOwner(peer, v.agent), scope)
 	writeRedacted(w, rec, redactPeerRunView)
 }

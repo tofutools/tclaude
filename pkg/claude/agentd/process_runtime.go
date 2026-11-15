@@ -276,9 +276,13 @@ type processRunView struct {
 	Loops []engine.LoopEdge `json:"loops,omitempty"`
 	// Gates are the agreement gates still collecting votes this round: who
 	// agreed, who did not, and who has yet to vote.
-	Gates     []processRunGateView `json:"gates,omitempty"`
-	CreatedAt time.Time            `json:"createdAt"`
-	UpdatedAt time.Time            `json:"updatedAt"`
+	Gates []processRunGateView `json:"gates,omitempty"`
+	// Overseer is who answers concerns about the run (process_oversight.go),
+	// and Concerns its open concerns and most recently settled ones.
+	Overseer  *processRunOverseerView `json:"overseer,omitempty"`
+	Concerns  []processRunConcernView `json:"concerns"`
+	CreatedAt time.Time               `json:"createdAt"`
+	UpdatedAt time.Time               `json:"updatedAt"`
 }
 
 // processRunPauseView is who paused a run, and when.
@@ -391,6 +395,10 @@ type processRunCreateRequest struct {
 	// its task and task_ref params, the task card shows its progress, and its
 	// end settles the task (process_run_task.go).
 	Task string `json:"task,omitempty"`
+	// Overseer sets the run's overseer at start (an agent selector, or
+	// "operator"); empty takes the default: the group's lead, else whoever
+	// started the run.
+	Overseer string `json:"overseer,omitempty"`
 }
 
 type processRunOutcomeRequest struct {
@@ -953,6 +961,7 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 			case <-ticker.C:
 				sweepProcessRuns()
 				sweepProcessAgentDispatches()
+				sweepProcessConcerns()
 			}
 		}
 	}()
@@ -1087,6 +1096,10 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
 	}
+	if _, err := processOverseerRefOf(request.Overseer); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "process_overseer", err.Error())
+		return
+	}
 	startProcessRunAs(w, r, request, string(actor), scope)
 }
 
@@ -1098,6 +1111,13 @@ func startProcessRunAs(w http.ResponseWriter, r *http.Request, request processRu
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
+	}
+	// The overseer is set before the run is first driven, so nothing it
+	// raises can reach the default overseer first.
+	if ref, _ := processOverseerRefOf(request.Overseer); ref != "" {
+		if _, err := db.SetProcessRunOverseer(run.ID(), ref, actor); err != nil {
+			slog.Warn("process runtime: set the overseer of a new run", "run", run.ID(), "error", err)
+		}
 	}
 	if _, err := processRuns.beginPrepared(run, processRunStart{mode: processRunResume}); err != nil {
 		// Persistence already succeeded, so creation must remain a successful,
@@ -1125,6 +1145,9 @@ func processRunCreateAuditDetail(request processRunCreateRequest) string {
 	}
 	if pinned := strings.TrimSpace(request.TemplateRef); pinned != "" {
 		detail += ", version: " + stripControl(pinned)
+	}
+	if overseer := strings.TrimSpace(request.Overseer); overseer != "" {
+		detail += ", overseer: " + stripControl(overseer)
 	}
 	return detail
 }
@@ -1201,7 +1224,7 @@ func handleProcessRunEvents(w http.ResponseWriter, r *http.Request) {
 // handleProcessRunResume releases an operator pause, if any, and then resumes
 // (or ticks) the run.
 func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
-	caller, ok := requirePermission(w, r, PermProcessRunsManage)
+	caller, ok := requireProcessRunSteward(w, r, r.PathValue("id"))
 	if !ok {
 		return
 	}
@@ -1840,6 +1863,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
 		Paused: processRunPauseViewOf(record.Scope), ProgramBounds: programBounds, Loops: loops,
 		Gates: gates, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
+		Overseer: processRunOverseerViewOf(record.ID), Concerns: processRunConcernViews(record.ID),
 	}, nil
 }
 
