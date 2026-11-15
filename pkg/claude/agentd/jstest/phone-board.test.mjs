@@ -130,7 +130,7 @@ async function setupView(t) {
   const button = (root, name) => harness.getByRole(root, 'button', { name });
   // A submit button's form, submitted (LinkeDOM does not submit on a click).
   const submit = (btn) => harness.act(() => harness.fireEvent(btn.closest('form'), 'submit'));
-  return { harness, c, tap, submit, settle, card, sheet, button, writes, refreshes: () => refreshes, pageMod, boardMod };
+  return { harness, c, tap, submit, settle, card, sheet, button, writes, refreshes: () => refreshes, pageMod, boardMod, source };
 }
 
 test('the Board draws the chosen column: chips, sections, cards, and a question answered in place', async (t) => {
@@ -269,4 +269,16 @@ test("a task's page over a tab's unrouted page counts as a layer above it", asyn
   assert.equal(layerDepth(tabPage, null), 1);
   assert.equal(layerDepth({ view: 'board', title: 'webshop', covered: tabPage }, null), 2, 'Back closes the task page first');
   assert.equal(layerDepth({ view: 'board', title: 'webshop', covered: { title: 'mail', routed: true } }, null), 1, 'a routed page is the router\'s');
+});
+
+test("Agents' Board › opens a group's board, even one with nothing live yet", async (t) => {
+  const { harness, c, pageMod, boardMod, source } = await setupView(t);
+  t.after(() => boardMod.openBoardGroup(''));
+  await harness.act(() => { source.context.value = { groups: [board(), { group: 'steward', counts: { live: 0 }, tasks: [], closed: [] }] }; });
+  await harness.act(() => boardMod.openBoardGroup('steward'));
+  assert.equal(pageMod.phoneBar.value.menu.sub, 'steward');
+  assert.equal(c.querySelectorAll('.phone-board-card').length, 0);
+  // A group with no board at all shows the first board there is.
+  await harness.act(() => boardMod.openBoardGroup('nowhere'));
+  assert.equal(pageMod.phoneBar.value.menu.sub, 'webshop');
 });

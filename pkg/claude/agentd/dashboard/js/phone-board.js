@@ -191,7 +191,10 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
   const context = source.context.value;
   const groups = boardGroups(context);
   const pick = boardPick.value;
-  const group = groups.find((g) => g.group === pick.group)?.group || groups[0]?.group || '';
+  // A group the board lists, or one asked for by name (Agents' "Board ›")
+  // whose board has nothing live yet; else the first.
+  const asked = (context?.groups || []).some((g) => g.group === pick.group) ? pick.group : '';
+  const group = groups.find((g) => g.group === pick.group)?.group || asked || groups[0]?.group || '';
   const entry = (context?.groups || []).find((g) => g.group === group) || null;
   const columns = entry ? boardColumns(entry) : [];
   const column = columns.find((c) => c.key === pick.column && pick.group === group)?.key || (entry ? defaultColumn(entry) : 'next');

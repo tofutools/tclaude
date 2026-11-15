@@ -37,7 +37,7 @@ test('Back returns to Now and Board, and closes sheets', async ({ page }) => {
   await expect(title(page)).toHaveText(/^Board/);
 
   await nav(page, 'Agents');
-  await page.locator('.phone-agent-title').first().click();
+  await page.locator('.phone-agent-more').first().click();
   const sheet = page.locator('.phone-sheet');
   await expect(sheet).toBeVisible();
   await page.goBack();
