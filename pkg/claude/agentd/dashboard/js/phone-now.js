@@ -1,8 +1,9 @@
 // phone-now.js -- the phone shell's Now view, in the shape of the Now mock.
 // A row of chips picks what it shows: All (below), Needs you (the cards
 // only), Idle (online idle agents by group), Recent (every online agent, the
-// latest heard from first) and Stuck? (the agents at work, quiet the longest
-// first). All is a one-line usage strip that opens Usage, then what needs the operator as
+// latest heard from first) and Problems (one go-look list: errors, CI failed,
+// context nearly full, at work but quiet). All also says what changed since
+// this viewer last looked, and a nearly full context is tagged by the name. All is a one-line usage strip that opens Usage, then what needs the operator as
 // cards (access requests, decisions, process gates, agents asking), the
 // online agents in one card of rows (every one when there are few, else the
 // ones at work or in error, with Show all), and the operator's open PRs
@@ -10,14 +11,14 @@
 // its home view.
 
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { authoredOpenPRsView } from './shell-model.js';
 import { featureState } from './peer-view-limits.js';
-import { FEW_ONLINE, agentRows, askerName, hookAt, idleGroups, nowView, recentRows, stuckRows } from './phone-shell-model.js';
+import { FEW_ONLINE, PROBLEMS, agentRows, askerName, hookAt, idleGroups, lookedState, nowView, problemRows, recentRows, rowState, sinceLooked } from './phone-shell-model.js';
 import { usageStrip } from './phone-now-model.js';
-import { AskCard, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
+import { AskCard, ContextTag, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
 import { Button } from './ui-components.js';
 import { Card, ChipRow, Section, StatePill } from './phone-ui.js';
 import { relTime } from './helpers.js';
@@ -49,18 +50,22 @@ function UsageStrip({ snapshot, onOpen }) {
 }
 
 // AgentRows is one card of plain rows, one per agent, with its state pill;
-// an error row says what went wrong, and a row may carry a time line (when)
-// marked amber when quiet. A row opens the agent's terminal. heads put a
-// group's name over its first row.
-function AgentRows({ rows, onOpen }) {
+// an error row says what went wrong, and a row may carry a time or reason
+// line (when) in a tone (ok, bad, info, warn). A row opens the agent's
+// terminal. heads put a heading over a row (Idle's groups, Problems' kinds);
+// changed (agent ids) puts a blue dot on what changed since the viewer
+// looked, and a nearly full context is tagged by the name.
+function AgentRows({ rows, onOpen, changed = null }) {
   return html`<${Card} class="phone-rows-card">
     <ul class="phone-rows">
-      ${rows.map(({ agent, state, when, quiet, head }) => html`<li key=${agent.agentId}>
+      ${rows.map(({ agent, state, when, tone, head }) => html`<li key=${agent.agentId}>
         ${head && html`<p class="ui-eyebrow phone-now-group">${head}</p>`}
-        <button data-ui-exempt type="button" class="phone-row" onClick=${() => onOpen(agent)} aria-label=${`${agent.name}, ${state}${when ? `, ${when}` : ''}: open its terminal`}>
-          <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}
-            ${state === 'error' && agent.detail && html`<span class="phone-card-line">${agent.detail}</span>`}
-            ${when && html`<span class=${`phone-now-when${quiet ? ' quiet' : ''}`}>${when}</span>`}</span>
+        <button data-ui-exempt type="button" class="phone-row" onClick=${() => onOpen(agent)}
+          aria-label=${`${agent.name}${changed?.has(agent.agentId) ? ' (changed since you looked)' : ''}, ${state}${when ? `, ${when}` : ''}: open its terminal`}>
+          ${changed?.has(agent.agentId) && html`<span class="phone-now-new" aria-hidden="true"></span>`}
+          <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}<${ContextTag} ctx=${agent.ctx ?? null} />
+            ${state === 'error' && agent.detail && tone === undefined && html`<span class="phone-card-line">${agent.detail}</span>`}
+            ${when && html`<span class=${`phone-now-when${tone ? ` ${tone}` : ''}`}>${when}</span>`}</span>
           <${StatePill} state=${state} />
         </button>
       </li>`)}
@@ -73,16 +78,59 @@ const since = (agent) => (hookAt(agent) === null ? '' : relTime(agent.lastHook).
 
 // CHIPS are Now's views, one picked at a time; the pick is remembered per
 // viewer (this browser) under CHIP_KEY.
-export const CHIPS = Object.freeze(['all', 'needs', 'idle', 'recent', 'stuck']);
+export const CHIPS = Object.freeze(['all', 'needs', 'idle', 'recent', 'problems']);
 const CHIP_KEY = 'tclaude.phone.now.chip';
 export function storedChip(storage = globalThis.localStorage) {
   try {
     const chip = storage?.getItem(CHIP_KEY);
+    if (chip === 'stuck') return 'problems'; // Problems took Stuck?'s place
     return CHIPS.includes(chip) ? chip : 'all';
   } catch { return 'all'; }
 }
 function storeChip(chip, storage = globalThis.localStorage) {
   try { storage?.setItem(CHIP_KEY, chip); } catch { /* private mode: the pick lasts this visit */ }
+}
+
+// LOOKED_KEY holds, per viewer, what Now showed when the viewer last looked
+// (phone-shell-model lookedState). It moves on Mark seen, or on leaving Now
+// (or hiding the page) after it has been up LOOK_MS, so a glance does not
+// clear what changed.
+const LOOKED_KEY = 'tclaude.phone.now.looked';
+export const LOOK_MS = 5000;
+export function storedLooked(storage = globalThis.localStorage) {
+  try {
+    const value = JSON.parse(storage?.getItem(LOOKED_KEY) || 'null');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch { return null; }
+}
+function storeLooked(value, storage = globalThis.localStorage) {
+  try { storage?.setItem(LOOKED_KEY, JSON.stringify(value)); } catch { /* private mode: marks last this visit */ }
+}
+
+// The tones and marks of a change's or a problem's line.
+const CHANGE_TONE = Object.freeze({ errored: 'bad', ci: 'bad', merged: 'info', finished: 'ok' });
+const CHANGE_MARK = Object.freeze({ errored: '✗', ci: '✗', merged: '⇡', finished: '✓' });
+const PROBLEM_TONE = Object.freeze({ error: 'bad', ci: 'bad', context: 'quiet', quiet: 'quiet' });
+
+// changeRows folds Since you looked's changes into one row per agent, the
+// worst change's tone leading.
+function changeRows(changes) {
+  const rows = new Map();
+  for (const change of changes) {
+    const row = rows.get(change.agent.agentId);
+    const text = `${CHANGE_MARK[change.kind]} ${change.text}`;
+    if (row) row.when += ` · ${text}`;
+    else rows.set(change.agent.agentId, { agent: change.agent, state: rowState(change.agent), when: text, tone: CHANGE_TONE[change.kind] });
+  }
+  return [...rows.values()];
+}
+
+// problemLine says why a row is in Problems.
+function problemLine({ kind, agent }) {
+  if (kind === 'error') return agent.detail || 'in error';
+  if (kind === 'ci') return `PR #${agent.pr.number} checks failing`;
+  if (kind === 'context') return `context ${agent.ctx}% full`;
+  return since(agent) ? `last update ${since(agent)} ago` : 'no update time';
 }
 
 // OpenPRs is the operator's open PRs, collapsed under its header: the count
@@ -114,6 +162,19 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   const [showAll, setShowAll] = useState(false);
   const [chip, setChip] = useState(storedChip);
   const pick = (key) => { setChip(key); storeChip(key); };
+  const [looked, setLooked] = useState(storedLooked);
+  // latest is what Now shows now, for the look to keep when it moves.
+  const latest = useRef(null);
+  useEffect(() => {
+    const since = Date.now();
+    const leave = () => { if (latest.current && Date.now() - since >= LOOK_MS) storeLooked(latest.current); };
+    const onHide = () => { if (globalThis.document?.visibilityState === 'hidden') leave(); };
+    globalThis.document?.addEventListener('visibilitychange', onHide);
+    return () => { globalThis.document?.removeEventListener('visibilitychange', onHide); leave(); };
+  }, []);
+  const ready = !!state.snapshot.value;
+  // A first visit has nothing to compare: what it sees is the first look.
+  useEffect(() => { if (ready && !looked && latest.current) { storeLooked(latest.current); setLooked(latest.current); } }, [ready]);
   // Process gates waiting on the operator come from the process read model,
   // not the snapshot: Now keeps it fresh while it shows.
   const gates = gateItems(useProcessRuns(processSource).context);
@@ -126,20 +187,26 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   const quiet = view.needs === 0;
   const list = agentRows(view, { showAll });
   const rows = list.rows;
-  const stuck = stuckRows(view);
+  latest.current = lookedState(view);
+  const problems = problemRows(view);
+  const changes = changeRows(sinceLooked(view, looked));
+  const changed = new Set(changes.map((row) => row.agent.agentId));
+  const markSeen = () => { storeLooked(latest.current); setLooked(latest.current); };
+  const online = new Map(view.online.map((agent) => [agent.agentId, agent]));
   const chips = [
     { key: 'all', label: 'All', count: list.total },
     { key: 'needs', label: 'Needs you', badge: view.needs, badgeTone: 'danger' },
     { key: 'idle', label: 'Idle', count: view.resting.length },
     { key: 'recent', label: 'Recent' },
-    { key: 'stuck', label: 'Stuck?', badge: stuck.quiet, badgeTone: 'warn' },
+    { key: 'problems', label: 'Problems', badge: problems.length, badgeTone: 'danger' },
   ];
   const needsYou = html`<${Section} title="Needs you" count=${view.needs}>
       ${quiet && html`<p class="ui-empty phone-empty">Nothing needs you right now.</p>`}
       ${view.approvals.map((request) => {
         const agent = agents.get(request.agent_id);
         return html`<${PhoneApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${actions.notify}
-          from=${agent?.name || request.conv_title || ''} group=${agent?.group || ''} onMore=${() => actions.openAccessRequest(request.id)} />`;
+          from=${agent?.name || request.conv_title || ''} group=${agent?.group || ''} ctx=${online.get(request.agent_id)?.ctx ?? null}
+          onMore=${() => actions.openAccessRequest(request.id)} />`;
       })}
       ${view.elsewhere > 0 && html`<${Button} class="phone-btn phone-wide" onClick=${() => actions.openAccessRequest()}>
         ${view.elsewhere} more access request${view.elsewhere === 1 ? '' : 's'} in Mail ›<//>`}
@@ -149,7 +216,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
       ${view.asking.map((agent) => html`<${AskCard} key=${agent.agentId} agent=${agent} onOpen=${actions.openTerminal} />`)}
     <//>`;
   const rowsOr = (list, empty) => (list.length
-    ? html`<${AgentRows} rows=${list} onOpen=${actions.openTerminal} />`
+    ? html`<${AgentRows} rows=${list} onOpen=${actions.openTerminal} changed=${changed} />`
     : html`<p class="ui-empty phone-empty">${empty}</p>`);
   let body;
   if (chip === 'needs') body = needsYou;
@@ -161,21 +228,26 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   } else if (chip === 'recent') {
     const recent = recentRows(view).map((row) => ({ ...row, when: since(row.agent) && `updated ${since(row.agent)} ago` }));
     body = html`<${Section} title="Recent" count=${recent.length}>${rowsOr(recent, 'No agent is online.')}<//>`;
-  } else if (chip === 'stuck') {
-    const rows = stuck.rows.map((row) => ({ ...row, when: since(row.agent) ? `last update ${since(row.agent)} ago` : 'no update time' }));
-    body = html`<${Section} title="Stuck?" count=${stuck.quiet}>
-      <p class="ui-hint phone-now-hint">Busy, but nothing heard for a while. Worth a look?</p>
-      ${rowsOr(rows, 'No agent is working.')}
-    <//>`;
+  } else if (chip === 'problems') {
+    const rows = problems.map((row, i) => ({
+      ...row, when: problemLine(row), tone: PROBLEM_TONE[row.kind],
+      head: i === 0 || problems[i - 1].kind !== row.kind
+        ? `${PROBLEMS.find((p) => p.kind === row.kind).title} · ${problems.filter((p) => p.kind === row.kind).length}` : '',
+    }));
+    body = html`<${Section} title="Problems" count=${rows.length}>${rowsOr(rows, 'Nothing to look at: no errors, failing checks, full contexts or quiet agents.')}<//>`;
   } else {
     body = html`
     <${UsageStrip} snapshot=${snapshot} onOpen=${() => actions.navigate('/usage')} />
     ${needsYou}
+    ${changes.length > 0 && html`<${Section} title="Since you looked" count=${changes.length}
+      more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${markSeen}>Mark seen</button>`}>
+      <${AgentRows} rows=${changes} onOpen=${actions.openTerminal} />
+    <//>`}
     <${Section} title=${list.all ? 'Online' : 'Active'} count=${rows.length}
       more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button>`}>
       ${rows.length === 0
         ? html`<p class="ui-empty phone-empty">${list.all ? 'No agent is online.' : 'No agent is active right now.'}</p>`
-        : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} />`}
+        : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} changed=${changed} />`}
       ${list.total > FEW_ONLINE && html`<button data-ui-exempt type="button" class="phone-now-all" aria-expanded=${showAll ? 'true' : 'false'}
         onClick=${() => setShowAll(!showAll)}>${showAll ? 'Only the recent ones' : `Show all ${list.total} online`}
         <span aria-hidden="true">${showAll ? '⌄' : '›'}</span></button>`}

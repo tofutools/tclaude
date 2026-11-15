@@ -25,9 +25,10 @@ const SNAPSHOT = {
   authored_open_prs: { available: true, total: 1, items: [{ url: 'https://github.com/o/r/pull/1482', title: 'Checkout redesign', checks: { state: 'passing' } }] },
 };
 
-async function setup(t, snapshot = SNAPSHOT, { stored = null } = {}) {
+async function setup(t, snapshot = SNAPSHOT, { stored = null, looked = null } = {}) {
   const harness = await createPreactHarness(t);
   const store = new Map(stored ? [['tclaude.phone.now.chip', stored]] : []);
+  if (looked) store.set('tclaude.phone.now.looked', JSON.stringify(looked));
   const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } };
   const saved = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true });
@@ -184,7 +185,7 @@ test('the chips: All by default, counts on them, each shows its view, and the pi
   assert.equal(chip(/^All/).getAttribute('aria-selected'), 'true');
   assert.match(chip(/^All/).textContent, /All 3/, 'online agents but the asker, as the rows count them');
   assert.match(chip(/^Needs you/).querySelector('.ui-badge-danger').textContent, /^\d+$/);
-  assert.equal(chip(/^Stuck\?/).querySelector('.ui-badge-warn').textContent, '1', 'lead has been quiet 40m');
+  assert.equal(chip(/^Problems/).querySelector('.ui-badge-danger').textContent, '2', 'release-bot in error, lead quiet 40m');
 
   await tap(chip(/^Needs you/));
   assert.ok(harness.getByRole(root, 'group', { name: 'Needs you' }));
@@ -201,11 +202,14 @@ test('the chips: All by default, counts on them, each shows its view, and the pi
   const recent = harness.getByRole(root, 'group', { name: 'Recent' });
   assert.deepEqual([...recent.querySelectorAll('.phone-who-name')].map((n) => n.textContent).slice(0, 2), ['steward', 'lead']);
 
-  await tap(chip(/^Stuck\?/));
-  const stuck = harness.getByRole(root, 'group', { name: 'Stuck?' });
-  const when = stuck.querySelector('.phone-now-when');
-  assert.match(when.textContent, /^last update 40m ago$/);
-  assert.ok(when.classList.contains('quiet'), 'amber past the threshold');
+  await tap(chip(/^Problems/));
+  const problems = harness.getByRole(root, 'group', { name: 'Problems' });
+  assert.deepEqual([...problems.querySelectorAll('.phone-now-group')].map((n) => n.textContent), ['Errors · 1', 'Quiet while busy · 1']);
+  const lines = [...problems.querySelectorAll('.phone-now-when')];
+  assert.equal(lines[0].textContent, 'rate limited until 14:00');
+  assert.ok(lines[0].classList.contains('bad'));
+  assert.match(lines[1].textContent, /^last update 40m ago$/);
+  assert.ok(lines[1].classList.contains('quiet'), 'amber past the threshold');
 });
 
 test('a remembered chip comes back; a bad one falls back to All', async (t) => {
@@ -213,5 +217,85 @@ test('a remembered chip comes back; a bad one falls back to All', async (t) => {
   assert.ok(harness.getByRole(root, 'group', { name: 'Idle' }));
   const { storedChip } = await harness.importDashboardModule('js/phone-now.js');
   assert.equal(storedChip({ getItem: () => 'nonsense' }), 'all');
+  assert.equal(storedChip({ getItem: () => 'stuck' }), 'problems', 'Problems took Stuck?\'s place');
   assert.equal(storedChip({ getItem: () => { throw new Error('blocked'); } }), 'all');
+});
+
+test('since you looked: what changed shows under Needs you with a dot on its rows, and Mark seen clears it', async (t) => {
+  // The last look: lead was working, release-bot fine, payments-fix's PR open with green checks.
+  const looked = {
+    [WORKER]: { s: 'working', pr: 0, prs: '', ci: '' },
+    [BROKEN]: { s: 'working', pr: 0, prs: '', ci: '' },
+    [STEWARD]: { s: 'idle', pr: 7, prs: 'open', ci: 'passing' },
+  };
+  const snapshot = { ...SNAPSHOT, groups: [
+    { name: 'webshop', members: [
+      SNAPSHOT.groups[0].members[0],
+      { ...SNAPSHOT.groups[0].members[1], state: { status: 'idle' } },
+      SNAPSHOT.groups[0].members[2],
+    ] },
+    { name: 'steward', scribe: true, members: [{ ...SNAPSHOT.groups[1].members[0], branch_pr_number: 7, branch_pr_url: 'https://github.com/o/r/pull/7', branch_pr_state: 'merged' }] },
+  ] };
+  const { harness, root, tap, store } = await setup(t, snapshot, { looked });
+  const section = harness.getByRole(root, 'group', { name: 'Since you looked' });
+  const lines = Object.fromEntries([...section.querySelectorAll('.phone-row')].map((r) => [r.querySelector('.phone-who-name').textContent, r.querySelector('.phone-now-when').textContent]));
+  assert.deepEqual(lines, { lead: '✓ finished · was working', 'release-bot': '✗ errored · rate limited until 14:00', steward: '⇡ PR #7 merged' });
+  const online = harness.getByRole(root, 'group', { name: 'Online' });
+  assert.equal(online.querySelectorAll('.phone-now-new').length, 3, 'the changed agents are dotted in the rows');
+  assert.ok(root.querySelector('[role="group"][aria-label="Needs you"]').compareDocumentPosition(section) & 4, 'under Needs you');
+
+  await tap(harness.getByRole(section, 'button', { name: 'Mark seen' }));
+  assert.equal(root.querySelector('[aria-label="Since you looked"]'), null);
+  assert.equal(root.querySelectorAll('.phone-now-new').length, 0);
+  assert.equal(JSON.parse(store.get('tclaude.phone.now.looked'))[WORKER].s, 'idle', 'the look now is what showed');
+});
+
+test('a first visit takes what it sees as the look; leaving keeps a new look only after LOOK_MS', async (t) => {
+  const { harness, mounted, store, root } = await setup(t, SNAPSHOT);
+  assert.equal(root.querySelector('[aria-label="Since you looked"]'), null, 'nothing to compare on a first visit');
+  const first = JSON.parse(store.get('tclaude.phone.now.looked'));
+  assert.equal(first[WORKER].s, 'working');
+
+  // A second visit shown under LOOK_MS keeps the old look when it leaves.
+  const { LOOK_MS } = await harness.importDashboardModule('js/phone-now.js');
+  store.set('tclaude.phone.now.looked', JSON.stringify({ ...first, [WORKER]: { s: 'idle', pr: 0, prs: '', ci: '' } }));
+  const kept = store.get('tclaude.phone.now.looked');
+  const realNow = Date.now;
+  t.after(() => { Date.now = realNow; });
+  await harness.act(() => mounted.unmount());
+  assert.equal(store.get('tclaude.phone.now.looked'), kept, 'left within LOOK_MS: unchanged');
+  assert.equal(LOOK_MS, 5000);
+});
+
+test('a nearly full context is tagged by the name on rows and cards, and listed in Problems; CI failing too', async (t) => {
+  const snapshot = { ...SNAPSHOT, groups: [
+    { name: 'webshop', members: [
+      { ...SNAPSHOT.groups[0].members[0], state: { status: 'awaiting_permission', context_pct: 91 } },
+      { ...SNAPSHOT.groups[0].members[1], state: { status: 'working', context_pct: 88 }, branch_pr_number: 9, branch_pr_url: 'https://github.com/o/r/pull/9', branch_pr_state: 'open', branch_checks: { failed: 1, passed: 3 } },
+      SNAPSHOT.groups[0].members[2],
+      { agent_id: 'agt_00000000000000000000000000000009', conv_id: 'c9', title: 'sleeper', online: false, state: { status: 'idle', context_pct: 99 } },
+    ] },
+    SNAPSHOT.groups[1],
+  ] };
+  const { harness, root, tap } = await setup(t, snapshot);
+  const card = root.querySelector('.phone-box-key');
+  assert.equal(card.querySelector('.phone-ctx-tag').textContent, 'ctx 91%', 'the approval card tags its agent');
+  const online = harness.getByRole(root, 'group', { name: 'Online' });
+  assert.equal(online.querySelector('.phone-ctx-tag').textContent, 'ctx 88%');
+  await tap(harness.getByRole(harness.getByRole(root, 'tablist', { name: 'Show on Now' }), 'tab', { name: /^Problems/ }));
+  const problems = harness.getByRole(root, 'group', { name: 'Problems' });
+  assert.deepEqual([...problems.querySelectorAll('.phone-now-group')].map((n) => n.textContent), ['Errors · 1', 'CI failed · 1', 'Context high · 1'],
+    'lead is under CI failed, its worst; its 88% is not listed twice. The offline sleeper is not listed');
+  assert.deepEqual([...problems.querySelectorAll('.phone-now-when')].map((n) => n.textContent),
+    ['rate limited until 14:00', 'PR #9 checks failing', 'context 91% full']);
+});
+
+test('leaving Now after LOOK_MS keeps what it showed as the new look', async (t) => {
+  const old = { [WORKER]: { s: 'idle', pr: 0, prs: '', ci: '' } };
+  const { harness, mounted, store } = await setup(t, SNAPSHOT, { looked: old });
+  const realNow = Date.now;
+  t.after(() => { Date.now = realNow; });
+  Date.now = () => realNow() + 6000;
+  await harness.act(() => mounted.unmount());
+  assert.equal(JSON.parse(store.get('tclaude.phone.now.looked'))[WORKER].s, 'working', 'shown 6s: the look moved');
 });

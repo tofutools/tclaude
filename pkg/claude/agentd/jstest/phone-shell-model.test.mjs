@@ -118,6 +118,46 @@ test('Now\'s chips: Idle by group, Recent latest first, Stuck? quiet the longest
   assert.deepEqual(shown.rows.map((r) => r.agent.name), ['lead', 'idle-0'], 'idle-0 called a hook 3m ago; the rest are older than RECENT_MS');
 });
 
+test('Problems: each online agent once under its worst problem; Since you looked: what changed since the last look', async (t) => {
+  const { nowView, problemRows, lookedState, sinceLooked, CONTEXT_HIGH_PCT } = await load(t);
+  const now = Date.parse('2026-11-15T12:00:00Z');
+  const ago = (min) => new Date(now - min * 60_000).toISOString();
+  const id = (n) => `agt_${String(n).padStart(32, '0')}`;
+  const pr = (n, state, checks) => ({ branch_pr_number: n, branch_pr_url: `https://x/pull/${n}`, branch_pr_state: state, branch_checks: checks });
+  const m = (n, title, status, extra = {}) => member(id(n), title, status, { ...extra, state: { status, ...(extra.state || {}) } });
+  const snapshot = { groups: [{ name: 'g', members: [
+    m(1, 'broken', 'error', { state: { context_pct: 95 } }),
+    m(2, 'red', 'idle', pr(10, 'open', { failed: 2 })),
+    m(3, 'merged-red', 'idle', pr(11, 'merged', { failed: 1 })),
+    m(4, 'full', 'working', { state: { context_pct: CONTEXT_HIGH_PCT, last_hook: ago(1) } }),
+    m(5, 'almost', 'working', { state: { context_pct: CONTEXT_HIGH_PCT - 1, last_hook: ago(1) } }),
+    m(6, 'quiet', 'working', { state: { last_hook: ago(30) } }),
+    m(7, 'away', 'working', { online: false, state: { context_pct: 99, last_hook: ago(60) } }),
+  ] }] };
+  const view = nowView(snapshot);
+  assert.deepEqual(problemRows(view, now).map((r) => [r.kind, r.agent.name]),
+    [['error', 'broken'], ['ci', 'red'], ['context', 'full'], ['quiet', 'quiet']],
+    'broken once (its error, not its context); a merged PR\'s red checks are not a problem; under the threshold is not; offline is not');
+
+  const look = lookedState(view);
+  assert.deepEqual(sinceLooked(view, null), [], 'no look yet: nothing to show');
+  assert.deepEqual(sinceLooked(view, look), [], 'nothing changed');
+  const later = nowView({ groups: [{ name: 'g', members: [
+    m(1, 'broken', 'error'),
+    m(2, 'red', 'idle', pr(10, 'merged', { failed: 2 })),
+    m(4, 'full', 'idle'),
+    m(6, 'quiet', 'error', { state: { status_detail: 'crashed' } }),
+    m(8, 'new', 'error'),
+    m(5, 'almost', 'working', pr(12, 'open', { failed: 1 })),
+  ] }] });
+  assert.deepEqual(sinceLooked(later, look).map((c) => [c.agent.name, c.kind, c.text]), [
+    ['red', 'merged', 'PR #10 merged'],
+    ['full', 'finished', 'finished · was working'],
+    ['quiet', 'errored', 'errored · crashed'],
+    ['almost', 'ci', 'PR #12 CI failed'],
+  ], 'an agent already in error, or one the last look did not see, has nothing new');
+});
+
 test('Board lists groups with live tasks, those waiting on you first', async (t) => {
   const { boardGroups } = await load(t);
   const context = { groups: [

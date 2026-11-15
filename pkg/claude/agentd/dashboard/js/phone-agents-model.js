@@ -58,7 +58,7 @@ export function ciState(checks) {
 
 // agentPR is the PR a row shows: the current branch's, else the one the
 // agent started on.
-function agentPR(member) {
+export function agentPR(member) {
   if (member.branch_pr_number && member.branch_pr_url) {
     return { number: member.branch_pr_number, url: member.branch_pr_url, state: member.branch_pr_state || '', title: member.branch_pr_title || '', ci: ciState(member.branch_checks) };
   }

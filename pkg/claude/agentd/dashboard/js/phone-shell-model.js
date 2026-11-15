@@ -8,6 +8,7 @@
 // own views; Agents, Mail and every More entry show a dashboard tab.
 
 import { companionAgents, pendingAccess, pendingApprovals, pendingDecisions } from './companion-model.js';
+import { agentPR } from './phone-agents-model.js';
 
 // The bottom nav. A slot with a `tab` shows that dashboard tab; the others
 // are the shell's own views (now, board) or the More sheet.
@@ -89,6 +90,30 @@ const NEEDS = new Set(['awaiting_permission', 'awaiting_input']);
 const WORKING = new Set(['working', 'main_agent_idle', 'restarting']);
 const ERRORS = new Set(['error', 'crashed', 'crash loop / backoff']);
 
+// CONTEXT_HIGH_PCT is how full an agent's context window must be for Now to
+// flag it (a tag by its name, and a row in Problems).
+export const CONTEXT_HIGH_PCT = 85;
+
+// agentFacts is, per agent id, what Now reads beyond companionAgents: how
+// full its context is (null if not reported) and its PR (phone-agents-model
+// agentPR: number, state, ci). The live membership wins, as there.
+function agentFacts(snapshot) {
+  const out = new Map();
+  const add = (member) => {
+    const id = member?.agent_id;
+    if (!id || (out.has(id) && member.online !== true)) return;
+    const pct = Number(member.state?.context_pct);
+    out.set(id, { ctx: member.state?.context_pct != null && Number.isFinite(pct) ? Math.round(pct) : null, pr: agentPR(member) });
+  };
+  for (const group of snapshot?.groups || []) for (const member of group?.members || []) add(member);
+  for (const member of [...(snapshot?.agents || []), ...(snapshot?.ungrouped || [])]) add(member);
+  return out;
+}
+
+// contextHigh reports whether an agent's context is at CONTEXT_HIGH_PCT or
+// over.
+export const contextHigh = (agent) => agent?.ctx !== null && agent?.ctx !== undefined && agent.ctx >= CONTEXT_HIGH_PCT;
+
 // nowView is the Now view's data: what waits on the operator, then what is
 // going on.
 //
@@ -102,7 +127,8 @@ const ERRORS = new Set(['error', 'crashed', 'crash loop / backoff']);
 //   working    agents doing something
 //   needs      the count the Now slot's badge shows
 export function nowView(snapshot) {
-  const agents = [...companionAgents(snapshot).values()];
+  const facts = agentFacts(snapshot);
+  const agents = [...companionAgents(snapshot).values()].map((agent) => ({ ...agent, ...(facts.get(agent.agentId) || { ctx: null, pr: null }) }));
   const approvals = pendingApprovals(snapshot);
   const elsewhere = pendingAccess(snapshot).length - approvals.length;
   const decisions = pendingDecisions(snapshot);
@@ -199,6 +225,65 @@ export function stuckRows(view, now = Date.now()) {
     return { agent, state: 'working', quiet: at !== null && now - at > STUCK_AFTER_MS };
   });
   return { rows, quiet: rows.filter((row) => row.quiet).length };
+}
+
+// PROBLEMS are the kinds Problems lists, worst first.
+export const PROBLEMS = Object.freeze([
+  { kind: 'error', title: 'Errors' },
+  { kind: 'ci', title: 'CI failed' },
+  { kind: 'context', title: 'Context high' },
+  { kind: 'quiet', title: 'Quiet while busy' },
+]);
+
+// problemRows is the Problems chip: one go-look list of online agents, each
+// once, under the worst of its problems: in error, its open PR's checks
+// failing, its context at CONTEXT_HIGH_PCT or over, or at work but quiet past
+// STUCK_AFTER_MS (quiet the longest first). [{ kind, agent, state }]
+export function problemRows(view, now = Date.now()) {
+  const taken = new Set();
+  const rows = [];
+  const take = (kind, list) => {
+    for (const agent of list) {
+      if (taken.has(agent.agentId)) continue;
+      taken.add(agent.agentId);
+      rows.push({ kind, agent, state: rowState(agent) });
+    }
+  };
+  const online = view.online;
+  take('error', view.errors);
+  take('ci', online.filter((agent) => agent.pr?.ci === 'failing' && agent.pr.state !== 'merged' && agent.pr.state !== 'closed'));
+  take('context', online.filter(contextHigh).sort((a, b) => b.ctx - a.ctx));
+  take('quiet', stuckRows(view, now).rows.filter((row) => row.quiet).map((row) => row.agent));
+  return rows;
+}
+
+// lookedState is what Since you looked compares between visits, per online
+// agent id: its state word, and its PR's number, state and checks.
+export function lookedState(view) {
+  const out = {};
+  for (const agent of view.online) out[agent.agentId] = { s: rowState(agent), pr: agent.pr?.number || 0, prs: agent.pr?.state || '', ci: agent.pr?.ci || '' };
+  return out;
+}
+
+// sinceLooked lists what changed for each agent since the viewer last looked
+// (a lookedState): it finished (was working, now idle), it errored, its PR
+// merged, or its PR's checks turned red. An agent the last look did not
+// see has no change to show. [{ agent, kind, text }]
+export function sinceLooked(view, last) {
+  if (!last) return [];
+  const out = [];
+  for (const agent of view.online) {
+    const was = last[agent.agentId];
+    if (!was) continue;
+    const state = rowState(agent);
+    const pr = agent.pr;
+    const samePR = pr && was.pr === pr.number;
+    if (state === 'error' && was.s !== 'error') out.push({ agent, kind: 'errored', text: `errored${agent.detail ? ` · ${agent.detail}` : ''}` });
+    else if (state === 'idle' && was.s === 'working') out.push({ agent, kind: 'finished', text: 'finished · was working' });
+    if (samePR && pr.state === 'merged' && was.prs !== 'merged') out.push({ agent, kind: 'merged', text: `PR #${pr.number} merged` });
+    else if (pr && pr.ci === 'failing' && pr.state !== 'merged' && !(samePR && was.ci === 'failing')) out.push({ agent, kind: 'ci', text: `PR #${pr.number} CI failed` });
+  }
+  return out;
 }
 
 // askerName names whoever put a decision to the operator, as the companion's
