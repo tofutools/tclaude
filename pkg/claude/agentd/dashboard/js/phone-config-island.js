@@ -13,6 +13,7 @@
 // by a link has no list under it: ‹ shows the list in place.
 
 import { h, render } from 'preact';
+import { signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { configPanel, configSection } from './config-panel.js';
@@ -30,6 +31,18 @@ export const PHONE_EDITABLE = Object.freeze(['notifications', 'steward', 'costs'
 export function sectionMode(id) {
   if (!id) return 'list';
   return PHONE_EDITABLE.includes(configSection(id)) ? 'edit' : 'read';
+}
+
+// sectionRequest is a section another view asked Settings to open (More's
+// Notifications row), after navigating to it: a /config/<section> location
+// alone cannot say so, since the list's URL names a section too.
+export const sectionRequest = signal(null);
+
+// openSettingsSection asks for section id after the caller navigated to it.
+// pushed says whether that navigation recorded a history entry: then
+// Settings' ‹ steps back through it, else ‹ shows the list in place.
+export function openSettingsSection(id, pushed = true) {
+  sectionRequest.value = { id, pushed: !!pushed };
 }
 
 function SectionRow({ panel, onOpen, readOnly, dirty }) {
@@ -115,6 +128,25 @@ export function PhoneConfig({ state, config = null, panels, actions, initialOpen
   const shown = open && open === panel ? open : '';
   const mode = sectionMode(shown);
   useEffect(() => { actions.remember?.(shown, panel); }, [shown, panel]);
+
+  const request = sectionRequest.value;
+  useEffect(() => {
+    if (!request) return;
+    sectionRequest.value = null;
+    pushed.current = request.pushed ? request.id : '';
+    setOpen(request.id);
+  }, [request]);
+
+  // Leaving Settings (the phone's Back, another tab) leaves its section: the
+  // next visit, a bare /config included, starts on the list.
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (wasActive.current && !active) {
+      pushed.current = '';
+      setOpen('');
+    }
+    wasActive.current = active;
+  }, [active]);
 
   useEffect(() => {
     const root = document.documentElement;

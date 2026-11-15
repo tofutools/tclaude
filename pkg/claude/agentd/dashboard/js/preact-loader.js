@@ -281,7 +281,7 @@ const phoneConfigDescriptor = createIslandDescriptor({
     const configStateModule = import('./config-state.js');
     const shellStateModule = import('./shell-state.js');
     const [
-      { mountPhoneConfigIsland }, { dashboardState }, { configLocation, configPanel, setConfigPanel },
+      { mountPhoneConfigIsland }, { dashboardState }, { configLocation, setConfigPanel },
       { CONFIG_PANELS }, { setLayoutOverride }, { isWizardActive, toggleWizard }, { configState }, { shellConfirm },
     ] = await Promise.all([
       islandModule, snapshotStoreModule, configPanelModule, configMarkupModule, layoutModule, slopModule,
@@ -321,7 +321,12 @@ const phoneConfigDescriptor = createIslandDescriptor({
     const OPEN_KEY = 'tclaude.phone.config.open';
     let remembered = null;
     try { remembered = globalThis.sessionStorage?.getItem(OPEN_KEY); } catch { /* storage unavailable */ }
-    const linked = /^\/config\/[^/]+/.test(globalThis.location?.pathname || '') ? configPanel.peek() : '';
+    // The section comes from the URL itself: the router applies the link to
+    // configPanel only after this island loads, and until then configPanel
+    // holds the section this browser showed last.
+    const linkedPath = /^\/config\/([^/]+)/.exec(globalThis.location?.pathname || '');
+    let linked = '';
+    try { linked = linkedPath ? decodeURIComponent(linkedPath[1]) : ''; } catch { /* a malformed link opens the list */ }
     const initialOpen = remembered === `list:${linked}` ? '' : linked;
     return {
       mount: (registerCleanup) => mountPhoneConfigIsland({

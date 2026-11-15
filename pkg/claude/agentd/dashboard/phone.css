@@ -87,10 +87,11 @@
 :root[data-layout="phone"] .ui-switch::after { top: 10px; left: 2px; width: 24px; height: 24px; }
 :root[data-layout="phone"] .ui-switch:checked::after { left: 22px; }
 
-/* Touch draws no focus ring (js/phone-input.js): a closing sheet hands focus
-   back to the button that opened it, and :focus-visible would ring it after
-   every tap. The first key press brings the rings back. */
-:root[data-layout="phone"][data-phone-input="touch"] :focus-visible { outline: none; }
+/* Touch and a mouse draw no focus ring (js/phone-input.js): a closing sheet
+   hands focus back to the button that opened it, and :focus-visible would
+   ring it after every tap or click. The first key press brings the rings
+   back. */
+:root[data-layout="phone"]:is([data-phone-input="touch"], [data-phone-input="pointer"]) :focus-visible { outline: none; }
 
 /* Disclosures (<details>): a drawn chevron that turns as it opens, apart from
    the text, instead of dashboard.css's "▶ " glyph. Views that draw their own

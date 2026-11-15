@@ -199,22 +199,27 @@ export function GroupsRouteMap({ state }) {
     state.setRouteView(next);
     document.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: routesLocation(state.routeSelection.value, state.routeGroup.value, next) } }));
   };
+  // Before the first snapshot it is not known yet whether the map is on: a
+  // deep link (/groups/routes, restored at boot) keeps the map until the
+  // snapshot says it is off, rather than falling back to Members for good.
+  const known = !!snapshot;
   useEffect(() => {
     const restore = (event) => {
       const location = event.detail?.location;
       if (location?.tab !== 'groups') return;
-      const routes = enabled && location.subtab === 'routes';
-      state.setSubview(routes ? 'routes' : 'members', enabled ? (location.selection || '') : '');
+      const allowed = enabled || !known;
+      const routes = allowed && location.subtab === 'routes';
+      state.setSubview(routes ? 'routes' : 'members', allowed ? (location.selection || '') : '');
       if (routes) { state.setRouteGroup(location.params?.group || ''); state.setRouteView(location.params?.view); }
     };
     document.addEventListener('tclaude:restore-location', restore);
     return () => document.removeEventListener('tclaude:restore-location', restore);
-  }, [enabled, state]);
+  }, [enabled, known, state]);
   useEffect(() => {
-    if (!enabled && (state.subview.value === 'routes' || state.routeSelection.value)) {
+    if (known && !enabled && (state.subview.value === 'routes' || state.routeSelection.value)) {
       state.setSubview('members', '');
     }
-  }, [enabled, state]);
+  }, [enabled, known, state]);
   const selectedRoute = useMemo(() => (map.routes || []).find((route) => route.id === selectedRouteID && (route.host_only ? groupName === HOST_ONLY_GROUP : route.group === groupName)) || null, [map.routes, selectedRouteID, groupName]);
   const routes = routesForGroup(map, groupName);
   const members = groups.find((group) => group.name === groupName)?.members || [];

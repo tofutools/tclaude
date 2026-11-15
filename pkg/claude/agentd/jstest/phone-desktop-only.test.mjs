@@ -9,6 +9,7 @@ test('desktopOnlyView names the views a phone leaves out', async (t) => {
   const mod = await harness.importDashboardModule('js/phone-desktop-only.js');
   assert.equal(mod.desktopOnlyView('fleet-admin'), '', 'a phone shows Fleet read-only (phone-fleet.js)');
   assert.equal(mod.desktopOnlyView('vegas'), 'Vegas');
+  assert.equal(mod.desktopOnlyView('map'), 'Fleet map', 'the Fleet map (B8): Fleet is the phone view');
   assert.equal(mod.desktopOnlyView('groups', 'routes'), 'Route map');
   assert.equal(mod.desktopOnlyView('groups', 'members'), '');
   assert.equal(mod.desktopOnlyView('access'), '');

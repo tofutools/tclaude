@@ -1,7 +1,9 @@
 // phone-plugins.js -- the Plugins tab on a phone (data-layout="phone").
 //
-// One card per installed plugin: its lamp and name, an on/off switch
-// (activate, or deactivate: the desktop lamp's own action) and Check. Its steps
+// One card per installed plugin: its lamp, name and description, an on/off
+// switch (activate, or deactivate: the desktop lamp's own action) and Check.
+// A plugin whose checks all pass, or one switched off (dimmed), folds to one
+// line ("2 steps · checked 3m ago"); a tap on its name unfolds it. Its steps
 // are rows, a lamp, the name and the last output, with ▶ run or ■ stop where
 // the desktop step lamp offers that, instead of a six-column table. Installing
 // from the catalog and the plugin editor stay on the desktop. It runs on the
@@ -9,10 +11,13 @@
 // for this node: a fused view's peers' plugins are on the desktop too.
 
 import { h, render } from 'preact';
+import { useState } from 'preact/hooks';
 import htm from 'htm';
 import { pluginLamp, PluginsBadge, statusPill, stepLamp, usePluginsTabShown } from './plugins-island.js';
 import { pluginBusyKey } from './plugins-state.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
+import { usePhoneBar } from './phone-page.js';
+import { relTime } from './helpers.js';
 import { Button, Switch } from './ui-components.js';
 
 const html = htm.bind(h);
@@ -34,8 +39,42 @@ function StepRow({ plugin, step, index, actions, busy }) {
   </li>`;
 }
 
+// lastChecked is when the plugin's steps were last checked: the latest of
+// their check times, or '' when none has run.
+export function lastChecked(plugin) {
+  // By time, not text: a daemon writes local offsets, which do not sort
+  // as strings across a DST change.
+  let latest = '';
+  let latestAt = -Infinity;
+  for (const step of plugin.steps || []) {
+    const at = Date.parse(step.checked_at || '');
+    if (at > latestAt) { latest = step.checked_at; latestAt = at; }
+  }
+  return latest;
+}
+
+// cardSummary is the line under a plugin's name: its description, then for a
+// card shown folded, how many steps and when they were checked ("off" for a
+// plugin switched off).
+export function cardSummary(plugin, folded) {
+  if (plugin.disabled && statusPill(plugin).text === 'off') return [plugin.descr, 'off'].filter(Boolean).join(' · ');
+  if (!folded) return plugin.descr || statusPill(plugin).text;
+  const steps = (plugin.steps || []).length;
+  const at = lastChecked(plugin);
+  return [plugin.descr, steps && `${steps} step${steps === 1 ? '' : 's'}`, steps && (at ? `checked ${relTime(at)}` : 'not checked yet')]
+    .filter(Boolean).join(' · ');
+}
+
+// opensFolded says whether a plugin's card starts folded to one line: one
+// switched off, or one whose every check passes. A plugin that needs a look
+// (a failing or unchecked step, a teardown that did not finish) shows its
+// steps.
+export function opensFolded(plugin) {
+  if (plugin.disabled) return statusPill(plugin).text === 'off';
+  return plugin.status === 'ok';
+}
+
 function PluginCard({ plugin, actions, busy }) {
-  const pill = statusPill(plugin);
   const lamp = pluginLamp(plugin);
   const toggleKey = pluginBusyKey('plugin-toggle', plugin.name);
   const checkKey = pluginBusyKey('plugin-check', plugin.name);
@@ -44,20 +83,34 @@ function PluginCard({ plugin, actions, busy }) {
   // shows: on activates, off deactivates.
   const on = lamp.verb === 'deactivate';
   const steps = plugin.steps || [];
-  return html`<div class="phone-plugin ui-card" data-key=${`plugin-${plugin.name}`}>
+  // Folded by its state until the operator opens or folds it; a change of
+  // state (a step starts failing) unfolds it again.
+  const auto = opensFolded(plugin);
+  const [chosen, setChosen] = useState(null);
+  const [seen, setSeen] = useState(auto);
+  if (seen !== auto) { setSeen(auto); setChosen(null); }
+  const folded = chosen ?? auto;
+  const off = plugin.disabled && statusPill(plugin).text === 'off';
+  // The button reads as the name and the summary line. Where that line (the
+  // mock's: just the description) leaves out the state, the lamp shows it
+  // and a screen reader hears it.
+  const summary = cardSummary(plugin, folded);
+  const status = statusPill(plugin).text;
+  return html`<div class=${`phone-plugin ui-card${off ? ' off' : ''}`} data-key=${`plugin-${plugin.name}`}>
     <div class="phone-plugin-head">
       <span class=${`phone-plugin-dot ${lamp.cls}`} aria-hidden="true">${lamp.glyph}</span>
-      <span class="phone-plugin-text">
+      <button data-ui-exempt type="button" class="phone-plugin-text phone-plugin-fold" aria-expanded=${folded ? 'false' : 'true'}
+        onClick=${() => setChosen(!folded)}>
         <span class="phone-plugin-name">${plugin.name}</span>
-        <span class="phone-plugin-sub"><span class=${`state-pill ${pill.cls}`} title=${pill.title}>${pill.text}</span>${plugin.descr ? ` · ${plugin.descr}` : ''}</span>
-      </span>
+        <span class="phone-plugin-sub" title=${statusPill(plugin).title}>${summary}${!summary.includes(status) && html`<span class="phone-plugin-sr"> · ${status}</span>`}</span>
+      </button>
       <${Switch} checked=${on} disabled=${busy.has(toggleKey)} aria-label=${`${plugin.name}: ${lamp.verb}`}
         onChange=${() => actions.togglePlugin(plugin, lamp.verb, toggleKey)} />
     </div>
-    ${steps.length > 0 && html`<ul class="phone-plugin-steps">${steps.map((step, index) => html`
+    ${!folded && steps.length > 0 && html`<ul class="phone-plugin-steps">${steps.map((step, index) => html`
       <${StepRow} key=${`${plugin.name}:${index}`} plugin=${plugin} step=${step} index=${index} actions=${actions} busy=${busy} />`)}</ul>`}
-    <${Button} class="phone-wide phone-plugin-check" disabled=${busy.has(checkKey)} onClick=${() => actions.checkPlugin(plugin, checkKey)}>
-      ${busy.has(checkKey) ? 'Checking…' : 'Check'}<//>
+    ${!folded && html`<${Button} class="phone-wide phone-plugin-check" disabled=${busy.has(checkKey)} onClick=${() => actions.checkPlugin(plugin, checkKey)}>
+      ${busy.has(checkKey) ? 'Checking…' : 'Check'}<//>`}
   </div>`;
 }
 
@@ -65,13 +118,15 @@ export function PhonePlugins({ state, actions }) {
   const current = state.view.value;
   usePluginsTabShown(current, current.visible);
   const checkKey = pluginBusyKey('plugins-check-all');
+  const checking = current.busy.has(checkKey);
+  // Check all is the app bar's (the mock's), while there is a plugin to check.
+  usePhoneBar({ tab: 'plugins', actions: [{ key: 'check-all', label: 'Check all', text: checking ? 'Checking…' : 'Check all',
+    disabled: checking, onClick: () => actions.checkAll(checkKey) }] }, current.request.hasLoaded && current.all.length > 0);
   if (!current.request.hasLoaded) return html`<p class="ui-empty phone-empty">Loading…</p>`;
   if (current.registryError) {
     return html`<p class="ui-error-box" role="alert">The plugin registry is unreadable: <code>${current.registryError}</code></p>`;
   }
   return html`<div class="phone-plugins">
-    ${current.all.length > 0 && html`<${Button} class="phone-wide" disabled=${current.busy.has(checkKey)} onClick=${() => actions.checkAll(checkKey)}>
-      ${current.busy.has(checkKey) ? 'Checking…' : 'Check all'}<//>`}
     ${current.all.length === 0
       ? html`<p class="ui-empty phone-empty">No plugins installed yet.</p>`
       : current.all.map((plugin) => html`<${PluginCard} key=${plugin.name} plugin=${plugin} actions=${actions} busy=${current.busy} />`)}

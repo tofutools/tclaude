@@ -12,6 +12,7 @@
 
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
+import { signal } from '@preact/signals';
 import htm from 'htm';
 import {
   formatRunDuration, processContext, runDetailApi, withPerformerNames,
@@ -26,6 +27,21 @@ import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
 
 const html = htm.bind(h);
+
+// runRequest is a run a link asks the phone's Runs to open: the run id, or
+// '' for the list; null when nothing is asked. A Groups run link
+// (/groups/runs/<group>/<run-id>, the desktop's single-run focus) lands
+// here, since a phone's runs live in Automations.
+export const runRequest = signal(null);
+
+// openRunLink shows a Groups run location on a phone: Automations' Runs with
+// the run open. The link's own history entry becomes the Runs one, so Back
+// does not land on the link again and bounce.
+export function openRunLink(loc, { doc = document, open } = {}) {
+  doc.dispatchEvent(new CustomEvent('tclaude:navigated', { detail: { location: { tab: 'processes' }, correction: true } }));
+  runRequest.value = loc?.selection && loc?.item ? loc.item : '';
+  open();
+}
 
 // How many finished runs the list keeps under the live ones.
 export const DONE_SHOWN = 10;

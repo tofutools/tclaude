@@ -20,8 +20,11 @@ export const desktopSite = () => setLayoutOverride('desktop');
 // the name the phone page gives them.
 // Fleet admin is not one of them: a phone shows Fleet read-only on its tab
 // (js/phone-fleet.js), and the desktop-only page for its other sections.
+// The Fleet map is a wide canvas of node cards with their admin controls; a
+// phone reads the fleet on Fleet instead.
 export const DESKTOP_ONLY_TABS = Object.freeze({
   vegas: 'Vegas',
+  map: 'Fleet map',
 });
 
 // desktopOnlyView names the view a phone should not show for the active tab,

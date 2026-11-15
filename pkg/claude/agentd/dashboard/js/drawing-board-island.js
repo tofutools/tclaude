@@ -34,6 +34,8 @@ import { DrawingBoardQuickMenu, QUICK_MENU_SIZE } from './drawing-board-quick-me
 import { companionAgents } from './companion-model.js';
 import { shortcutText, withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
+import { isPhone } from './layout.js';
+import { DesktopOnlyNote } from './phone-desktop-only.js';
 import { GroupCombobox } from './group-picker.js';
 import { onPeerPage } from './node-api.js';
 import { peerDrawingBoardAccess, peerDrawingBoardsShared, peerName } from './peer-drawing-boards.js';
@@ -273,7 +275,7 @@ export function drawingBoardFileItems({ drawingBoardId, title = '', group = '', 
 // tab, the overlay, a window of its own: editorMoveItems), which View lists.
 export function DrawingBoardEditor({
   drawingBoardId, fetchImpl, notify = () => {}, snapshot, win, WebSocketCtor = win?.WebSocket, rasterize = rasterizeDrawingBoard, onOpenAgent,
-  onScreen = true, visible = null, moves = [], onTitle = null, peer = onPeerPage(),
+  onScreen = true, visible = null, moves = [], onTitle = null, peer = onPeerPage(), phone = isPhone,
 }) {
   const [gone, setGone] = useState(false);
   const wheelScroll = useRef({ at: -Infinity, mouse: false });
@@ -292,7 +294,8 @@ export function DrawingBoardEditor({
   // the agents' events stay with the drawing board's own node.
   const [peerRefused, setPeerRefused] = useState('');
   const peerAccess = peer ? peerDrawingBoardAccess(meta.group, snapshot?.value, true) : 'write';
-  const readOnly = peer && (peerAccess !== 'write' || !!meta.agentsLocked || !!peerRefused);
+  // A phone only looks: it pans and zooms, and drawing is the desktop's.
+  const readOnly = phone || (peer && (peerAccess !== 'write' || !!meta.agentsLocked || !!peerRefused));
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
   const [status, setStatus] = useState('loading');
@@ -1419,6 +1422,15 @@ export function DrawingBoardEditor({
     return true;
   }
 
+  // A phone opens the drawing board fitted to what is on it: there is no
+  // room to find a drawing by panning about at actual size. Once, when it has
+  // loaded and is laid out (a tab not yet laid out is tried on the next render).
+  const phoneFitted = useRef(false);
+  useEffect(() => {
+    if (!phone || phoneFitted.current || status !== 'ready' || !onScreen) return;
+    if (!liveElements(elements.current).length || fitBox(contentBounds(liveElements(elements.current)))) phoneFitted.current = true;
+  });
+
   // A request to show part of this drawing board (openDrawingBoardAt: a task's
   // drawing) is taken once the board has loaded: the view fits the
   // elements it names that are still here, selected, or else its box.
@@ -1880,10 +1892,10 @@ export function DrawingBoardEditor({
   return html`<div ref=${rootRef} class="drawing-board-editor" onPointerDownCapture=${() => { lastEditor = editorToken; }} onWheel=${onWheel}>
     <${ResourceEditorHeader} class="drawing-board-head" label="Drawing board menu" openMenu=${menuOpen} onOpenMenu=${setMenuOpen}
       title=${html`<h2 class="drawing-board-title">${meta.title}</h2>`}
-      identity=${html`<${LockChip} kind="drawing_board" id=${drawingBoardId} name=${meta.title} locked=${!!meta.agentsLocked} notify=${notify}
+      identity=${phone ? null : html`<${LockChip} kind="drawing_board" id=${drawingBoardId} name=${meta.title} locked=${!!meta.agentsLocked} notify=${notify}
         onChanged=${(agentsLocked) => setMeta((m) => ({ ...m, agentsLocked }))} />
       <span class=${`drawing-board-sync ${status}`} title="Sync with the daemon">${status === 'ready' ? (pending.current.size ? (refused.current ? 'not saved' : 'saving…') : 'synced') : status}</span>`}
-      menus=${[
+      menus=${phone ? [] : [
         { key: 'file', label: 'File', items: () => drawingBoardFileItems({ drawingBoardId, title: meta.title, group: meta.group, peer, elements: () => drawnElements(elements.current),
           selection: () => selected.filter((id) => elements.current.get(id) && !elements.current.get(id).isDeleted), fetchImpl, notify }) },
         { key: 'view', label: 'View', items: () => [
@@ -1907,7 +1919,7 @@ export function DrawingBoardEditor({
           ]),
         ] },
       ]}
-      people=${html`<${PeopleStack} people=${people} label="Agents on this drawing board"
+      people=${phone ? null : html`<${PeopleStack} people=${people} label="Agents on this drawing board"
         onClick=${() => setMenuOpen((open) => (open === 'share' ? '' : 'share'))} />`} />
     ${peer && html`<div class=${`drawing-board-peer-banner${readOnly ? ' read-only' : ''}${status === 'offline' ? ' offline' : ''}`} role="note" data-drawing-board-peer=${readOnly ? 'read' : 'write'}>
       <span class="drawing-board-peer-mark" aria-hidden="true">⇄</span>
@@ -1949,7 +1961,7 @@ export function DrawingBoardEditor({
           <button type="button" data-ui-exempt class=${`drawing-board-tool${shownText.fontStyle ? ' on' : ''}`} title="Italic" aria-label="Italic" aria-pressed=${shownText.fontStyle ? 'true' : 'false'}
             onMouseDown=${(event) => event.preventDefault()} onClick=${() => chooseTextStyle({ fontStyle: shownText.fontStyle ? undefined : 'italic' }, texts)}><i>I</i></button>
         </span>`}
-      ${!peer && html`<span class="drawing-board-sep"></span>
+      ${!peer && !phone && html`<span class="drawing-board-sep"></span>
       <button data-ui-exempt type="button" class="drawing-board-tool" title=${withShortcut('Undo', 'drawing-board-undo')} aria-label="Undo" onClick=${() => undo(false)}>↶</button>
       <button data-ui-exempt type="button" class="drawing-board-tool" title=${withShortcut('Redo', 'drawing-board-redo')} aria-label="Redo" onClick=${() => undo(true)}>↷</button>`}
       ${sels.length > 0 && html`<button data-ui-exempt type="button" class="drawing-board-tool" title="Delete (Del)" aria-label="Delete selection" onClick=${() => remove(selected)}>🗑</button>`}
@@ -2018,9 +2030,11 @@ export function DrawingBoardEditor({
         items=${contextItems(contextMenu, sels)} onClose=${() => setContextMenu(null)} />`}
       ${aiming && html`<div class="drawing-board-hint" role="status">Hold ${borderKeyName(win)} to attach to the border instead of a connection point</div>`}
       ${drawing.length > 0 && html`<div class="drawing-board-drawing-note" role="status">✎ ${drawing.join(', ')} ${drawing.length === 1 ? 'is' : 'are'} drawing…</div>`}
-      ${!live.length && status === 'ready' && html`<div class="drawing-board-empty-hint">Pick a tool and draw. Invite an agent to draw with you; it reads the drawing board as shapes and as an image.</div>`}
-      <${DrawingBoardMinimap} elements=${drawnMap.current} tick=${tick} view=${view} svgRef=${svgRef} onScreen=${onScreen} win=${win} onNavigate=${centerOn} />
+      ${!live.length && status === 'ready' && phone && html`<div class="drawing-board-empty-hint">This drawing board is empty.</div>`}
+      ${!live.length && status === 'ready' && !phone && html`<div class="drawing-board-empty-hint">Pick a tool and draw. Invite an agent to draw with you; it reads the drawing board as shapes and as an image.</div>`}
+      ${!phone && html`<${DrawingBoardMinimap} elements=${drawnMap.current} tick=${tick} view=${view} svgRef=${svgRef} onScreen=${onScreen} win=${win} onNavigate=${centerOn} />`}
     </div>
+    ${phone && html`<${DesktopOnlyNote} what="Drawing and editing are" />`}
   </div>`;
 }
 

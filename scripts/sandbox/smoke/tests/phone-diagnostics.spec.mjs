@@ -87,10 +87,21 @@ test('Plugins: a card per plugin with its steps; Fleet from More, read-only', as
   const errors = collectErrors(page);
   await page.goto('/plugins');
   await booted(page);
-  const card = page.locator('.phone-plugin').first();
-  await expect(card).toBeVisible();
-  await expect(card.getByRole('switch').or(card.locator('input[type=checkbox]'))).toHaveCount(1);
-  await expect(card.locator('.phone-plugin-step').first()).toBeVisible();
+  // Check all is in the app bar, as the mock has it.
+  await expect(page.locator('.phone-bar').getByRole('button', { name: 'Check all' })).toBeVisible();
+  // A plugin whose checks pass folds to one line; one with a failing step
+  // shows its steps and the failing one's output; one switched off is dimmed.
+  const card = (name) => page.locator('.phone-plugin', { has: page.locator('.phone-plugin-name', { hasText: name }) });
+  const healthy = card('webshop-dev-env');
+  await expect(healthy.getByRole('switch').or(healthy.locator('input[type=checkbox]'))).toHaveCount(1);
+  await expect(healthy.locator('.phone-plugin-sub')).toContainText('2 steps · checked');
+  await expect(healthy.locator('.phone-plugin-step')).toHaveCount(0);
+  await healthy.locator('.phone-plugin-fold').click();
+  await expect(healthy.locator('.phone-plugin-step').first()).toBeVisible();
+  const failing = card('payments-sandbox');
+  await expect(failing.locator('.phone-plugin-out')).toContainText('webhook endpoint not listening');
+  await expect(failing.getByRole('button', { name: 'Run test-webhooks' })).toBeVisible();
+  await expect(card('search-cluster')).toHaveClass(/\boff\b/);
   await expect(page.locator('.phone-desktop-only:visible')).toContainText('desktop only');
   await expect(page.locator('.plugin-catalog-card')).toHaveCount(0);
   await expectNoSideScroll(page, 'Plugins');

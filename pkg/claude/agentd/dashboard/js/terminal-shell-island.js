@@ -1,6 +1,8 @@
 import { stripPaneKeys } from './resource-places.js';
 import { CollabRail } from './collab-rail.js';
 import { CollabHome } from './collab-home.js';
+import { PhoneSessions } from './phone-sessions.js';
+import { isPhone } from './layout.js';
 import { railDrag } from './collab-rail-actions.js';
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -2051,8 +2053,10 @@ function TerminalTabs({
 }
 
 // HomeOrHint is the empty strip's body: the Collab home (collab-home.js), or
-// the hint children give.
-function HomeOrHint({ rail, children, ...props }) {
+// the hint children give. A phone lists the open sessions instead
+// (phone-sessions.js).
+export function HomeOrHint({ rail, phone = isPhone, children, ...props }) {
+  if (phone && props.snapshot) return html`<${PhoneSessions} ...${props} />`;
   return rail ? html`<${CollabHome} ...${props} fallback=${children} />` : children;
 }
 
