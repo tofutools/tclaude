@@ -22,7 +22,7 @@
 import { effect } from '@preact/signals';
 import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
 import { phonePage } from './phone-page.js';
-import { closePhoneSheet, phoneSheet } from './phone-sheet.js';
+import { phoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
 
 export const OWN_VIEW_VALUES = Object.freeze(['now', 'board']);
 
@@ -69,12 +69,21 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
     restore: (want) => {
       const depth = Number(want) || 0;
       restoring = true;
+      let held = false;
       try {
-        if (layerDepth() > depth && phoneSheet.peek()) closePhoneSheet();
-        if (layerDepth() > depth) phonePage.peek()?.onBack?.();
+        // Back is a close the operator asked for: a sheet's guard may hold
+        // it (a draft to ask about, a send in flight).
+        if (layerDepth() > depth && phoneSheet.peek()) {
+          requestClosePhoneSheet();
+          held = !!phoneSheet.peek();
+        }
+        if (!held && layerDepth() > depth) phonePage.peek()?.onBack?.();
       } finally {
         restoring = false;
       }
+      // A held sheet stays on screen, so it takes its entry back, once this
+      // restore is done: the next Back asks again.
+      if (held) setTimeout(() => announceOverlay({ doc }), 0);
     },
   });
   const unView = registerOverlayRoute('own', {

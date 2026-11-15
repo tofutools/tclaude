@@ -206,10 +206,11 @@ test('wheelCopyMode: an agent terminal without a harness takes the agent\'s, els
 test('the bar names the agent and its group, wears its state, and ⋯ opens its sheet', async (t) => {
   const row = { key: AGENT, agent: AGENT, name: 'checkout-ui', group: 'webshop', variant: 'asking', online: true };
   const menus = [];
-  const { harness, tab, host, button, tap } = await setup(t, {
+  const ctx = await setup(t, {
     agentRow: (id) => (id === AGENT ? { row, group: { key: 'g:webshop', name: 'webshop' } } : null),
     agentMenu: (r) => menus.push(r.key),
   });
+  const { harness, tab, host, button, tap } = ctx;
   // A link opened before the snapshot came knows only the agent's id: the
   // bar takes the name from the agent's row.
   await harness.act(() => tab.openWebWindowPane(AGENT, AGENT, { harness: 'claude' }));
@@ -222,10 +223,14 @@ test('the bar names the agent and its group, wears its state, and ⋯ opens its 
   assert.equal(host.querySelector('.phone-bar-live'), null, 'the state pill stands in for the live dot');
   await tap(button('checkout-ui: more'));
   assert.deepEqual(menus, [AGENT]);
+  // The widget's own message key (Ctrl+M) takes the bar's name too.
+  const { composed, made } = ctx;
+  made[0].options.onComposeMessage();
+  assert.deepEqual(composed.at(-1), { agent: AGENT, label: 'checkout-ui' });
   assert.match(host.querySelector('.phone-term-compose').textContent, /✉ Message checkout-ui…/);
 });
 
-test('a terminal of no agent keeps the live dot and has only ⌨', async (t) => {
+test('a terminal with no agent row keeps the live dot and has no ⋯', async (t) => {
   const { harness, tab, host } = await setup(t, { agentRow: () => null, agentMenu: () => {} });
   await harness.act(() => tab.openWebWindowPane('agt_unknown', 'shell', { harness: 'shell' }));
   assert.ok(host.querySelector('.phone-bar-live'));

@@ -146,7 +146,7 @@ function useVisualViewport(windowRef) {
 
 // TerminalSurface owns the widget. Preact renders the host div and never a
 // child into it: the widget alone owns what is inside.
-function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange }) {
+function TerminalSurface({ seed, deps, labelRef, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange }) {
   const host = useRef(null);
   useLayoutEffect(() => {
     const key = seed.key || seed.ws;
@@ -167,7 +167,8 @@ function TerminalSurface({ seed, deps, onWidget, onFontChange, onStatus, onWaiti
       onWaitingChange,
       onReconnectChange,
       onComposeMessage: seed.agent && deps.onComposeMessage
-        ? () => deps.onComposeMessage({ agent: seed.agent, label: seed.label || '' })
+        // The bar's name, read when pressed: the widget keeps its options.
+        ? () => deps.onComposeMessage({ agent: seed.agent, label: labelRef.current })
         : null,
       applicationClipboardShortcuts: seed.harness === 'copilot',
       initialRetry: seed.initialRetry === true,
@@ -245,6 +246,8 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   const found = seed.agent ? deps.agentRow?.(seed.agent) || null : null;
   const row = found?.row || null;
   const label = row?.name || seed.label || '';
+  const labelRef = useRef(label);
+  labelRef.current = label;
   const message = seed.agent && deps.onComposeMessage
     ? () => deps.onComposeMessage({ agent: seed.agent, label })
     : null;
@@ -267,7 +270,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
       ${row && deps.agentMenu && html`<${IconButton} icon="⋯" label=${`${row.name}: more`} onClick=${() => deps.agentMenu(row)} />`}
     </header>
     <div class="phone-term-body">
-      ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} onWidget=${onWidget}
+      ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} labelRef=${labelRef} onWidget=${onWidget}
         onFontChange=${onFontChange} onStatus=${setStatus} onWaitingChange=${setWaiting} onReconnectChange=${setReconnect}
         onScrollBackChange=${setScrolledBack} />`}
       ${sized && html`<button data-ui-exempt type="button" class="phone-term-zoom" onMouseDown=${keepFocus}

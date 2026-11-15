@@ -147,3 +147,45 @@ test('another node\'s agent takes text only: no 📎', async (t) => {
   assert.equal(dialog().querySelector('[aria-label="Attach files"]'), null);
   assert.match(dialog().querySelector('.phone-compose-note').textContent, /text only/);
 });
+
+test('the discard question takes focus, and Escape while it is up means Keep', async (t) => {
+  const { harness, open, dialog, field, button, tap, escape } = await setup(t);
+  await open();
+  await harness.input(field(), 'draft');
+  await tap(button('Cancel'));
+  assert.equal(harness.document.activeElement, button('Keep'), 'focus moves into the question, not to the page');
+  await escape();
+  assert.equal(dialog().querySelector('.phone-compose-ask'), null, 'Escape again keeps the draft');
+  assert.equal(field().value, 'draft');
+  assert.equal(harness.document.activeElement, field(), 'and goes back to the text');
+});
+
+test('Back is a close too: a draft holds it and takes its entry back; an empty sheet goes', async (t) => {
+  const { harness, open, dialog, field } = await setup(t);
+  const [history, routes] = await Promise.all([
+    harness.importDashboardModule('js/phone-history.js'),
+    harness.importDashboardModule('js/overlay-routes.js'),
+  ]);
+  const announced = [];
+  harness.document.addEventListener(routes.OVERLAY_EVENT, (event) => announced.push(event.detail));
+  const uninstall = history.installPhoneHistory({ view: harness.signals.signal(null), doc: harness.document });
+  t.after(uninstall);
+  const turn = () => harness.act(() => new Promise((resolve) => setTimeout(resolve, 5)));
+  await turn();
+
+  await open();
+  assert.equal(routes.overlayParams().phone, '1');
+  await harness.input(field(), 'a long reply');
+  announced.length = 0;
+  await harness.act(() => routes.restoreOverlays({}));
+  assert.ok(dialog(), 'Back does not drop the draft');
+  assert.ok(dialog().querySelector('.phone-compose-ask'), 'it asks');
+  await turn();
+  assert.deepEqual(announced, [{ closed: false, replace: false }], 'the sheet takes its history entry back');
+
+  await harness.act(() => routes.restoreOverlays({}));
+  assert.equal(dialog().querySelector('.phone-compose-ask'), null, 'Back again while asked means Keep');
+  await harness.input(field(), '');
+  await harness.act(() => routes.restoreOverlays({}));
+  assert.equal(dialog(), null, 'an empty sheet just closes');
+});

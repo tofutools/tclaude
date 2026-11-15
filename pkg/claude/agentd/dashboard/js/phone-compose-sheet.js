@@ -16,7 +16,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { createMessageAccessDialogActions } from './message-access-dialog-actions.js';
 import { loadSavedPrompts } from './saved-prompts-actions.js';
-import { nodeFetch } from './node-api.js';
 import { openPhoneSheet, requestClosePhoneSheet, useSheetGuard } from './phone-sheet.js';
 import { Button } from './ui-components.js';
 import { ButtonRow } from './phone-ui.js';
@@ -38,13 +37,14 @@ export function insertAt(value, text, start = value.length, end = start) {
   return { value: next, caret: start + text.length };
 }
 
-// The saved prompts, loaded when the sheet first lists them.
-function usePrompts(open, node) {
+// The operator's saved prompts (this node's, as the desktop dialog lists them
+// for any agent), loaded when the sheet first lists them.
+function usePrompts(open) {
   const [state, setState] = useState({ prompts: null, error: '' });
   useEffect(() => {
     if (!open || state.prompts) return undefined;
     let live = true;
-    loadSavedPrompts(node ? nodeFetch(node) : undefined).then(
+    loadSavedPrompts().then(
       (prompts) => { if (live) setState({ prompts: prompts || [], error: '' }); },
       (error) => { if (live) setState({ prompts: null, error: error?.message || String(error) }); },
     );
@@ -63,19 +63,28 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
   const [listing, setListing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [caret, setCaret] = useState(null);
+  const root = useRef(null);
   const field = useRef(null);
   const picker = useRef(null);
   const textOnly = !!node;
   const dirty = !!body || files.length > 0;
-  const prompts = usePrompts(listing, node);
+  const prompts = usePrompts(listing);
   const name = label || 'the agent';
 
   // A close the operator asked for waits for a yes while there is a draft.
+  // Asked again while the question is up (Escape, Back), it means Keep.
   useSheetGuard(() => {
     if (!dirty && !busy) return false;
-    if (!busy) setConfirming(true);
+    if (busy) return true;
+    if (confirming) keep();
+    else setConfirming(true);
     return true;
   });
+  const keep = () => { setConfirming(false); setCaret(field.current?.selectionStart ?? body.length); };
+  // The question takes focus: its row replaces the Cancel just pressed.
+  useLayoutEffect(() => {
+    if (confirming) root.current?.querySelector('.phone-compose-foot button')?.focus();
+  }, [confirming]);
 
   useLayoutEffect(() => {
     if (caret === null) return;
@@ -121,7 +130,7 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
     }
   };
 
-  return html`<div class="phone-compose" onPaste=${(event) => {
+  return html`<div class="phone-compose" ref=${root} onPaste=${(event) => {
       const pasted = Array.from(event.clipboardData?.files || []);
       if (!pasted.length || textOnly) return;
       event.preventDefault();
@@ -159,7 +168,7 @@ export function ComposeSheet({ agent, label = '', node = '', send, close }) {
       ? html`<div class="phone-compose-foot" role="alertdialog" aria-label="Discard this message?">
           <span class="phone-compose-ask">Discard this message?</span>
           <${ButtonRow} buttons=${[
-            { key: 'keep', label: 'Keep', onClick: () => { setConfirming(false); field.current?.focus(); } },
+            { key: 'keep', label: 'Keep', onClick: keep },
             { key: 'discard', label: 'Discard', tone: 'no', onClick: close },
           ]} />
         </div>`
