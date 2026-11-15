@@ -23,7 +23,8 @@ function fakeApi() {
     id: runId, blocked: runId === 'run_migrate' ? [{ nodeId: 'apply', attempt: 1, reason: 'migration lock held' }] : [],
     awaitingDecisions: runId === 'run_release' ? [{ nodeId: 'review', verdicts: ['approved', 'changes'], attempt: 2 }] : [],
   });
-  api.listEvents = async () => { api.eventReads += 1; return { events: [], more: false }; };
+  api.events = [];
+  api.listEvents = async () => { api.eventReads += 1; return { events: api.events, more: false }; };
   api.decide = async (runId, request) => { api.decisions.push([runId, request]); return { started: true }; };
   api.pause = async (runId) => {
     api.holds.push(['pause', runId]);
@@ -80,7 +81,10 @@ test('the Runs list opens a run, keeps the context fresh, and says what is deskt
   const root = mounted.container;
   const sections = [...root.querySelectorAll('.phone-run-section')].map((section) => section.getAttribute('aria-label'));
   assert.deepEqual(sections, ['Waiting on you', 'Running', 'Done']);
-  assert.equal(root.querySelector('.phone-run-row.waiting[data-run="run_release"] .ui-tag').textContent, 'Decide');
+  assert.equal(root.querySelector('.phone-run-row.waiting[data-run="run_release"] .phone-pill').textContent, 'Decide');
+  assert.ok(root.querySelector('[data-run="run_release"] .phone-pill-key'), 'Decide is amber');
+  assert.equal(root.querySelector('[data-run="run_reindex"] .phone-pill').textContent, 'Running');
+  assert.equal(root.querySelector('[data-run="run_hotfix"] .phone-pill').textContent, 'Done');
   assert.ok(root.querySelector('.phone-desktop-only').textContent.includes('desktop only'));
   assert.equal(source.refreshes, 1, 'read once on mount');
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot')));
@@ -107,11 +111,11 @@ test('a gate card on Now approves in one tap, and asks for a note before changes
   const sheet = mounted.container.querySelector('[role="dialog"]');
   assert.ok(sheet, 'the note sheet opens');
   await harness.input(sheet.querySelector('textarea'), 'fix the copy');
-  await harness.act(() => harness.getByRole(sheet, 'button', { name: '↺ request changes' }).click());
+  await harness.act(() => harness.getByRole(sheet, 'button', { name: 'Request changes' }).click());
   await settle(harness);
   assert.deepEqual(api.decisions, [['run_release', { nodeId: 'review', verdict: 'changes', evidence: 'fix the copy', attempt: 2 }]]);
   assert.equal(mounted.container.querySelector('[role="dialog"]'), null, 'the sheet closes once it is sent');
-  assert.match(card.querySelector('.phone-gate-done').textContent, /Recorded: ↺ request changes/);
+  assert.match(card.querySelector('.phone-gate-done').textContent, /Recorded: Request changes/);
   assert.equal(source.refreshes, 1, 'the context is read again after the verdict');
 });
 
@@ -134,7 +138,9 @@ test('the run page tops the steps with the gate, marks your step, and pauses fro
   const mounted = await harness.mount(harness.html`<${mod.RunPage} runId="run_release" api=${api} source=${source} back=${() => backs.push(1)} />`);
   await settle(harness);
   const root = mounted.container;
-  assert.ok(root.querySelector('.phone-gate [data-run-verdict="approved"]'), 'the gate is on top');
+  assert.ok(root.querySelector('.phone-box-key.phone-run-gate .phone-gate [data-run-verdict="approved"]'), 'the gate is on top, in an amber card');
+  assert.ok(root.querySelector('[data-run-verdict="approved"]').classList.contains('phone-btn-ok'), 'Approve is green');
+  assert.ok(root.querySelector('[data-run-verdict="changes"]').classList.contains('phone-btn-no'), 'the other verdict is red');
   const mine = root.querySelector('.phone-run-step.mine');
   assert.match(mine.textContent, /Review gate/);
   assert.match(mine.textContent, /you/);
@@ -178,7 +184,7 @@ test('Now gets only runs waiting on a verdict; Runs tags the rest as needing you
   const { harness, mod } = await load(t);
   assert.deepEqual(mod.gateItems(FIXTURE).map((item) => item.run.runId), ['run_release'], 'the blocked run has no gate to answer');
   const mounted = await harness.mount(harness.html`<${mod.RunsList} source=${fakeSource(harness)} onOpen=${() => {}} />`);
-  const tag = (id) => mounted.container.querySelector(`.phone-run-row[data-run="${id}"] .ui-tag`).textContent;
+  const tag = (id) => mounted.container.querySelector(`.phone-run-row[data-run="${id}"] .phone-pill`).textContent;
   assert.equal(tag('run_release'), 'Decide');
   assert.equal(tag('run_migrate'), 'Needs you');
 });
@@ -214,4 +220,41 @@ test('a gate card reads the run view only, never its event history', async (t) =
   await settle(harness);
   assert.deepEqual(api.runReads, ['run_release', 'run_release'], 'read on mount and on the poll');
   assert.equal(api.eventReads, 0);
+});
+
+test("the run page's gate says how long it has waited, and a finished step who did it and when", async (t) => {
+  const { harness, mod } = await load(t);
+  const api = fakeApi();
+  const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
+  const steps = FIXTURE.runs.run_release.nodes;
+  const done = steps.find((node) => node.state === 'done' && node.kind !== 'start' && node.kind !== 'end');
+  api.events = [
+    ...(done ? [{ sequence: 1, nodeId: done.id, kind: 'node_completed', occurredAt: ago(30) }] : []),
+    { sequence: 2, nodeId: 'review', kind: 'decision_awaited', occurredAt: ago(12) },
+  ];
+  const mounted = await harness.mount(harness.html`<${mod.RunPage} runId="run_release" api=${api} source=${fakeSource(harness)} back=${() => {}} />`);
+  await settle(harness);
+  assert.equal(mounted.container.querySelector('.phone-run-gate .phone-gate-since').textContent, 'Waiting on you · 12m ago');
+  if (done) {
+    const row = [...mounted.container.querySelectorAll('.phone-run-step.s-done')].find((li) => li.textContent.includes(done.label));
+    assert.match(row.querySelector('.phone-run-step-meta').textContent, /30m ago$/);
+  }
+});
+
+test('verdicts are said the mock\'s way: no glyph, capitalised', async (t) => {
+  const { mod } = await load(t);
+  assert.equal(mod.verdictLabel('approved'), 'Approve');
+  assert.equal(mod.verdictLabel('changes'), 'Request changes');
+  assert.equal(mod.verdictLabel('ship-it'), 'Ship-it');
+});
+
+test('runPill: what a run row wears', async (t) => {
+  const { mod } = await load(t);
+  assert.deepEqual(mod.runPill({ action: 'awaiting_decision' }, true), { text: 'Decide', tone: 'key' });
+  assert.deepEqual(mod.runPill({ action: 'blocked' }, true), { text: 'Needs you', tone: 'err' });
+  assert.deepEqual(mod.runPill({ status: 'running', paused: { by: 'x' } }), { text: 'Paused', tone: 'idle' });
+  assert.deepEqual(mod.runPill({ status: 'running' }), { text: 'Running', tone: 'work' });
+  assert.deepEqual(mod.runPill({ status: 'failed' }), { text: 'Failed', tone: 'err' });
+  assert.deepEqual(mod.runPill({ status: 'canceled' }), { text: 'Cancelled', tone: 'off' });
+  assert.deepEqual(mod.runPill({ status: 'completed' }), { text: 'Done', tone: 'idle' });
 });

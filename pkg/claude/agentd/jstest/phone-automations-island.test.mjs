@@ -86,7 +86,8 @@ test('the row helpers say when, where to and how it last went', async (t) => {
   assert.equal(island.cronTarget({ target_conv: 'c1', target_label: 'reviewer' }), 'reviewer');
   assert.equal(island.cronOutcome({ enabled: true }).text, 'never run');
   assert.equal(island.cronOutcome({ ...CRON, last_run_status: 'failed' }).tone, 'bad');
-  assert.match(island.cronOutcome({ ...CRON, enabled: false }).text, /^off · ✓ ok/);
+  assert.match(island.cronOutcome({ ...CRON, enabled: false }).text, /^off · ✓ ran /);
+  assert.match(island.cronOutcome({ ...CRON, last_run_status: 'send_failed' }).text, /^✗ send failed /);
   assert.equal(island.orderTarget({ target: { kind: 'global' } }), 'every agent');
   assert.equal(island.orderOutcome({ enabled: true, last_evaluation: { outcome: 'delivered' } }).tone, 'ok');
   const rows = page().jobs;

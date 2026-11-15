@@ -88,12 +88,43 @@ test('a run waiting on the operator shows on Now and is approved from Runs', asy
 
   await run.click();
   await expect(page.locator('.phone-bar-title')).toHaveText('Release train');
+  // The gate is Now's card, amber, with how long it has waited.
+  await expect(page.locator('.phone-run-gate.phone-box-key')).toContainText('Waiting on you');
   await expect(page.locator('.phone-run-step.mine')).toContainText('Checks pass?');
   await expectNoSideScroll(page, 'the run page');
   await page.locator('.phone-run-page').getByRole('button', { name: /approve/ }).click();
   // The verdict lets the run go on: the gate is done and no longer yours.
   await expect(page.locator('.phone-run-step', { hasText: 'Checks pass?' })).toHaveClass(/s-done/, { timeout: 15_000 });
   await expect(page.locator('.phone-run-step.mine')).toHaveCount(0);
-  await expect(page.locator('.phone-run-page .grf-decide')).toHaveCount(0);
+  await expect(page.locator('.phone-run-page .phone-run-gate')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+// chipInSight reports whether a chip lies wholly inside its row's visible
+// part (the row scrolls sideways).
+async function chipInSight(chip) {
+  return chip.evaluate((el) => {
+    const row = el.closest('.phone-chips').getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    return box.left >= row.left - 1 && box.right <= row.right + 1;
+  });
+}
+
+test('the Runs chip stays Automations, picked and in sight (B7)', async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto('/automations');
+  await booted(page);
+  await expect(page.locator('.phone-bar-title')).toHaveText('Automations');
+  await chips(page).getByRole('tab', { name: /Runs/ }).click();
+  const runs = chips(page).getByRole('tab', { name: /Runs/ });
+  await expect(runs).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.phone-bar-title')).toHaveText('Automations');
+  await expect.poll(() => chipInSight(runs)).toBe(true);
+  // The same on a deep link.
+  await page.goto('/automations/processes/templates');
+  await booted(page);
+  await expect(page.locator('.phone-bar-title')).toHaveText('Automations');
+  await expect(runs).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => chipInSight(runs)).toBe(true);
   expect(errors).toEqual([]);
 });
