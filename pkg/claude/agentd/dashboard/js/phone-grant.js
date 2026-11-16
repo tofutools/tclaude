@@ -223,7 +223,7 @@ function PermsStep({ snapshot, agent, grantActions, onBack, onGranted }) {
       const on = picked.has(row.slug) && !why;
       return html`<li key=${row.slug}>
         <label class=${`phone-grant-row${why ? ' refused' : ''}`} data-slug=${row.slug}>
-          <input type="checkbox" class="phone-grant-box" checked=${on} disabled=${!!why || busy} onClick=${() => toggle(row.slug)} />
+          <input name="phone-grant-box" type="checkbox" class="phone-grant-box" checked=${on} disabled=${!!why || busy} onClick=${() => toggle(row.slug)} />
           <span class="phone-access-text">
             <span class="phone-access-name slug">${row.slug}${row.risky ? html` <span class="ui-tag ui-tag-warn">risky</span>` : ''}${row.owner_implied ? html` <span class="ui-tag ui-tag-own">👑 owner</span>` : ''}${row.granted ? html` <span class="ui-tag">has it</span>` : ''}</span>
             <span class="phone-access-desc">${why || row.description || row.descr || ''}</span>

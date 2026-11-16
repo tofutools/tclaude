@@ -62,7 +62,7 @@ function WhyCell({ why, gap }) {
 function ModeControl({ row, disabled, onSet }) {
   const label = `${row.label}: on relaunch`;
   if (row.modes.length !== 2) {
-    return html`<${Select} size="sm" aria-label=${label} value=${row.mode} disabled=${disabled}
+    return html`<${Select} size="sm" name=${`relaunch-${row.field}`} aria-label=${label} value=${row.mode} disabled=${disabled}
       onChange=${(e) => onSet(row.field, e.currentTarget.value)}>
       ${row.modes.map((mode) => html`<option key=${mode} value=${mode}>${modeLabel(mode)}${mode === row.default ? ' (default)' : ''}</option>`)}
     <//>`;

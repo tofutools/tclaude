@@ -80,7 +80,7 @@ function MailboxRow({ mailbox, nested = false, prevGen = false, current, control
   // Wiping is this node's operator's: a peer serves it under unrestricted
   // trust only.
   if (mailbox.kind === 'agent' && !nested && operatorHere()) {
-    lead = html`<input type="checkbox" class="mail-box-check" data-conv=${mailbox.id}
+    lead = html`<input name="mail-box-check" type="checkbox" class="mail-box-check" data-conv=${mailbox.id}
       checked=${current.selectedBoxes.has(mailbox.id)} disabled=${current.busy} title="Select for bulk wipe"
       onChange=${(event) => controller.toggleBoxSelection(mailbox.id, event.currentTarget.checked)} />`;
   } else if (mailbox.kind === 'group') {
@@ -516,7 +516,7 @@ function UsageAccessDecision({ request, controller }) {
     <span class="grow"></span>
     ${request.http_proxy ? html`<span class="access-usage-gateway mono">${request.http_proxy}</span>` : html`<${Select} class="access-usage-gateway" title="The model gateway it bills to" value=${gateway} onChange=${(e) => setGateway(e.currentTarget.value)}>
       ${gateways.map((g) => html`<option key=${g} value=${g}>${g}</option>`)}<option value="">any gateway</option><//>`}
-    <input class="access-usage-amount" title="Dollars it may spend (blank: no cap)" inputmode="decimal" placeholder="no cap" size="7" value=${amount} onInput=${(e) => setAmount(e.currentTarget.value)} />
+    <input name="no-cap" class="access-usage-amount" title="Dollars it may spend (blank: no cap)" inputmode="decimal" placeholder="no cap" size="7" value=${amount} onInput=${(e) => setAmount(e.currentTarget.value)} />
     <${Select} class="access-peer-ttl" title="How long the share lasts" value=${ttl} onChange=${(e) => setTtl(e.currentTarget.value)}>
       ${ttlChoices.map((c) => html`<option key=${c.s} value=${String(c.s)}>${c.label}</option>`)}<//>
     <${Button} class="access-btn extend" title="Push the auto-decline back 5 minutes" onClick=${() => controller.decideAccess(request.id, 'extend')}>+5m<//>

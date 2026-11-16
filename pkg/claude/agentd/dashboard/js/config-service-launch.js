@@ -298,7 +298,7 @@ export function LaunchProfile({
           : 'Its values are hidden here, so it is changed only where they are shown: on that node, or with full access.'}</span><//>` : html`
       <${Row} label="Serve flags"><div class="cfg-launch-rows" id="${idp}launch-flags">
         ${draft.flags.map((flag, i) => html`<div key=${`f${i}`} class="cfg-launch-row" data-launch-row=${`f${i}`}>
-          <div class="cfg-launch-fields"><input type="text" class=${`ui-input ui-sm cfg-launch-flag${errors.rows[`f${i}`] ? ' is-invalid' : ''}`} spellcheck="false" autocomplete="off"
+          <div class="cfg-launch-fields"><input name="no-tray" type="text" class=${`ui-input ui-sm cfg-launch-flag${errors.rows[`f${i}`] ? ' is-invalid' : ''}`} spellcheck="false" autocomplete="off"
             aria-label=${`Serve flag ${i + 1}`} placeholder="--no-tray" value=${flag} disabled=${any} onInput=${(e) => setFlag(i, e.currentTarget.value)} />
           <${Button} size="sm" variant="ghost" class="cfg-launch-remove" title="Remove this flag" aria-label="Remove this flag" disabled=${any} onClick=${() => drop('flags', i)}>×<//></div>
           ${rowError(`f${i}`)}
@@ -309,14 +309,14 @@ export function LaunchProfile({
       <${Row} label="Environment"><div class="cfg-launch-rows" id="${idp}launch-env">
         ${draft.env.map((row, i) => html`<div key=${`e${i}`} class="cfg-launch-row" data-launch-row=${`e${i}`}>
           <div class="cfg-launch-fields">
-            <input type="text" class=${`ui-input ui-sm cfg-launch-key${errors.rows[`e${i}`] ? ' is-invalid' : ''}`} spellcheck="false" autocomplete="off" aria-label=${`Variable ${i + 1} name`}
+            <input name="name" type="text" class=${`ui-input ui-sm cfg-launch-key${errors.rows[`e${i}`] ? ' is-invalid' : ''}`} spellcheck="false" autocomplete="off" aria-label=${`Variable ${i + 1} name`}
               placeholder="NAME" value=${row.key} disabled=${any} onInput=${(e) => setEnv(i, { key: e.currentTarget.value })} />
-            <select class="ui-select ui-sm cfg-launch-mode" aria-label=${`Variable ${i + 1}: set a value or inherit agentd's`} disabled=${any}
+            <select name="ui-select" class="ui-select ui-sm cfg-launch-mode" aria-label=${`Variable ${i + 1}: set a value or inherit agentd's`} disabled=${any}
               onChange=${(e) => setEnv(i, { mode: e.currentTarget.value, ...(e.currentTarget.value === INHERIT ? { value: '' } : {}) })}>
               <option value=${SET} selected=${row.mode === SET}>set</option>
               <option value=${INHERIT} selected=${row.mode === INHERIT}>inherit</option>
             </select>
-            <input type="text" class="ui-input ui-sm cfg-launch-value" spellcheck="false" autocomplete="off" data-capture-mask="" aria-label=${`Variable ${i + 1} value`}
+            <input name="ui-input" type="text" class="ui-input ui-sm cfg-launch-value" spellcheck="false" autocomplete="off" data-capture-mask="" aria-label=${`Variable ${i + 1} value`}
               disabled=${any || row.mode === INHERIT} value=${row.mode === INHERIT ? '' : row.value}
               placeholder=${row.mode === INHERIT ? (row.secret || secretKeys.has(row.key) ? 'secret · inherited, never stored' : "agentd's own value") : 'value'}
               onInput=${(e) => setEnv(i, { value: e.currentTarget.value })} />

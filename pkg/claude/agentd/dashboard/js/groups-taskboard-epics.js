@@ -331,11 +331,11 @@ export function EpicChildren({ epic, api, group, tasks = [], nameOf = (actor) =>
         })}
       </tbody></table>`}
     ${writes && html`<div class="tb-epic-add">
-      <input class="ui-input ui-sm tb-epic-add-title" aria-label="New task in the epic" placeholder="+ add a task to it (title)" maxLength=${200}
+      <input name="new-task-in-the-epic" class="ui-input ui-sm tb-epic-add-title" aria-label="New task in the epic" placeholder="+ add a task to it (title)" maxLength=${200}
         value=${title} disabled=${!!busy} onInput=${(event) => setTitle(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); event.stopPropagation(); void addChild(); } }} />
       <${Button} size="sm" class="tb-epic-add-new" disabled=${!title.trim() || !!busy} busy=${busy === 'add'} onClick=${() => void addChild()}>Add<//>
-      ${candidates.length > 0 && html`<select class="ui-select ui-sm tb-epic-add-pick" aria-label="A task of the board to add to the epic" value=${pick} disabled=${!!busy}
+      ${candidates.length > 0 && html`<select name="a-task-of-the-board" class="ui-select ui-sm tb-epic-add-pick" aria-label="A task of the board to add to the epic" value=${pick} disabled=${!!busy}
           onChange=${(event) => setPick(event.currentTarget.value)}>
           <option value="">add an existing task…</option>
           ${candidates.map((task) => html`<option key=${task.id} value=${task.id}>${task.title}</option>`)}

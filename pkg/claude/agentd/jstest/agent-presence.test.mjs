@@ -89,6 +89,8 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   assert.equal(lost.tagName, 'BUTTON', 'a lost token is actionable');
   assert.equal(lost.dataset.act, 'claude-subscription');
   assert.equal(lost.dataset.agent, 'agt_1');
+  // Row menus render their items once opened.
+  for (const cog of host.querySelectorAll('tr .cog-btn')) await harness.act(() => harness.fireEvent(cog, 'click'));
   const modes = [...host.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode);
   assert.deepEqual(modes, ['move', 'teleport', 'clone', 'morph'], 'recall home shows only on a visiting agent');
   const recall = [...host.querySelectorAll('tr.away-placeholder [data-act="send-elsewhere"]')].map((b) => b.dataset.mode);
@@ -104,12 +106,14 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   dashPrefs.setItem('tclaude.dash.group.builders@forge', '1');
   const host3 = harness.document.body.appendChild(harness.document.createElement('div'));
   await harness.mount(harness.html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${[peerGroup]} snapshot=${{ activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' }, links: [] }} actions=${{}} /><//>`, host3);
+  for (const cog of host3.querySelectorAll('tr .cog-btn')) await harness.act(() => harness.fireEvent(cog, 'click'));
   assert.deepEqual([...host3.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode), ['move'], 'another node\'s agent can only be moved here');
   assert.ok(host3.querySelector('[data-act="clone"][data-conv="c1"]'), 'another node\'s agent clones there (the clone dialog on that node)');
   const nodeApi = await harness.importDashboardModule('js/node-api.js');
   const release = nodeApi.setNodeSnapshotSource((id) => (id === 'inst_forge' ? { peer_view: { level: 'unrestricted' } } : null));
   const host4 = harness.document.body.appendChild(harness.document.createElement('div'));
   await harness.mount(harness.html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${[peerGroup]} snapshot=${{ activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' }, links: [] }} actions=${{}} /><//>`, host4);
+  for (const cog of host4.querySelectorAll('tr .cog-btn')) await harness.act(() => harness.fireEvent(cog, 'click'));
   assert.deepEqual([...host4.querySelectorAll('[data-act="send-elsewhere"][data-conv="c1"]')].map((b) => b.dataset.mode), ['move', 'morph'], 'a node trusting this one unrestricted morphs its agent from here');
   release();
 });

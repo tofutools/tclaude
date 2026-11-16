@@ -65,7 +65,7 @@ function To({ to, query, busy, recipients, onQuery, onPick, onClear }) {
   const hits = matchRecipients(recipients(), query);
   return html`<div class="phone-compose-to">
     <label class="phone-compose-to-field"><span class="phone-compose-to-label">To</span>
-      <input class="ui-input phone-compose-to-input" data-sheet-focus type="search" autocomplete="off" enterkeyhint="search"
+      <input name="phone-compose-sheet-input" class="ui-input phone-compose-to-input" data-sheet-focus type="search" autocomplete="off" enterkeyhint="search"
         placeholder="An agent's name or group" aria-label="To" value=${query} onInput=${(event) => onQuery(event.currentTarget.value)} /></label>
     ${hits.length ? html`<ul class="phone-menu phone-compose-recipients" aria-label="Agents">${hits.map((r) => html`<li key=${r.agent}>
       <button data-ui-exempt type="button" class="phone-menu-item phone-compose-recipient" onClick=${() => onPick({ agent: r.agent, label: r.label })}>
@@ -185,7 +185,7 @@ export function ComposeSheet({ agent = '', label = '', node = '', title = '', hi
       <h2 class="phone-compose-title">${title || (recipients ? 'New message' : `Message ${name}`)}</h2>
       ${!textOnly && html`<button data-ui-exempt type="button" class="phone-compose-chip" disabled=${busy || files.length >= MAX_ATTACHMENTS}
         aria-label="Attach files" title="Attach files" onClick=${() => picker.current?.click()}>📎</button>
-        <input ref=${picker} type="file" multiple hidden class="phone-compose-files" disabled=${busy}
+        <input name="phone-compose-files" ref=${picker} type="file" multiple hidden class="phone-compose-files" disabled=${busy}
           onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }} />`}
       <button data-ui-exempt type="button" class="phone-compose-chip" disabled=${busy}
         aria-expanded=${listing ? 'true' : 'false'} onClick=${() => setListing(!listing)}>Prompts ${listing ? '▴' : '▾'}</button>
@@ -201,7 +201,7 @@ export function ComposeSheet({ agent = '', label = '', node = '', title = '', hi
     ${recipients && html`<${To} to=${to} query=${query} busy=${busy} recipients=${recipients}
       onQuery=${setQuery} onPick=${(next) => { setTo(next); setQuery(''); setError(''); setCaret(body.length); }}
       onClear=${() => setTo(null)} />`}
-    <textarea ref=${field} data-sheet-focus=${picking ? undefined : ''} class="phone-compose-body" rows="5" maxlength=${MESSAGE_MAX_BYTES}
+    <textarea name="write-a-message" ref=${field} data-sheet-focus=${picking ? undefined : ''} class="phone-compose-body" rows="5" maxlength=${MESSAGE_MAX_BYTES}
       aria-label=${`Message to ${name}`} placeholder="Write a message…" enterkeyhint="enter" spellcheck=${true}
       value=${body} readOnly=${busy} onInput=${(event) => setBody(event.currentTarget.value)} onKeyDown=${onKeyDown}></textarea>
     ${files.length > 0 && html`<ul class="phone-compose-attachments" aria-label="Attachments">

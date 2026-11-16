@@ -132,7 +132,7 @@ export function LibraryBundleImportDialog({ descriptor, onClose, confirmDiscard,
       ${rows.map((row) => {
         const label = bundleItemLabel(row.item);
         return html`<label key=${row.item} class=${`library-import-row${row.skipped ? ' is-skipped' : ''}`} data-library-import-item=${row.item}>
-          <input type="checkbox" checked=${!row.skipped} disabled=${busy === 'apply'} onChange=${() => toggleSkip(row.item)} />
+          <input name="library-dialogs-input" type="checkbox" checked=${!row.skipped} disabled=${busy === 'apply'} onChange=${() => toggleSkip(row.item)} />
           <span class="library-import-kind">${label.section}</span>
           <span class="library-import-name">${label.name}</span>
           <span class=${`library-import-action is-${row.skipped ? 'skipped' : row.action}`}>${row.skipped ? 'Skipped' : ACTION_LABELS[row.action] || row.action}</span>
@@ -143,10 +143,10 @@ export function LibraryBundleImportDialog({ descriptor, onClose, confirmDiscard,
         onChange=${(event) => setReplace(event.currentTarget.checked)} /> Replace the ${conflicts.length} existing item${conflicts.length === 1 ? '' : 's'} with the imported version</label>`}
     ${(placeholders.length > 0 || keepPaths) && html`<div class="library-import-values">
       <div class="modal-meta">The bundle names paths relative to its home or workspace. Say where they are here, or keep the paths exactly as written.</div>
-      <label class="library-import-option"><input type="checkbox" checked=${keepPaths} onChange=${(event) => setKeepPaths(event.currentTarget.checked)} /> Keep paths as written</label>
+      <label class="library-import-option"><input name="library-dialogs-input" type="checkbox" checked=${keepPaths} onChange=${(event) => setKeepPaths(event.currentTarget.checked)} /> Keep paths as written</label>
       ${placeholders.map((entry) => html`<label key=${entry.name} class="cron-create-row">
         <span class="cron-create-label" title=${`${entry.item} ${entry.field}${entry.original ? ` (was ${entry.original})` : ''}`}>${entry.name}</span>
-        <input type="text" value=${values[entry.name] || ''} placeholder=${entry.original || ''} data-library-import-value=${entry.name}
+        <input name="library-dialogs-input" type="text" value=${values[entry.name] || ''} placeholder=${entry.original || ''} data-library-import-value=${entry.name}
           onInput=${(event) => { const value = event.currentTarget.value; setValues((current) => ({ ...current, [entry.name]: value })); }} />
       </label>`)}
     </div>`}

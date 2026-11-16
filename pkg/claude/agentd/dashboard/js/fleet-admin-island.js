@@ -235,9 +235,9 @@ export function TrustDialog({ row, actions, onClose, onDone }) {
     ${!labelOK && html`<div class="cron-create-error ui-error-box">Labels are 1–32 characters of a-z, 0-9, - _ .</div>`}
     ${profile
       ? html`<div class="fa-profile">Default profile <b>${profile.name}</b> applies: level <b>${preview.level}</b>${plan ? `, ${plan.changes?.length || 0} change(s), ${plan.security_changes || 0} security-relevant` : ''}.
-          <label><input type="checkbox" checked=${noDefault} onChange=${(e) => setNoDefault(e.currentTarget.checked)} /> Don't apply the default profile</label></div>`
+          <label><input name="fleet-admin-island-input" type="checkbox" checked=${noDefault} onChange=${(e) => setNoDefault(e.currentTarget.checked)} /> Don't apply the default profile</label></div>`
       : html`<div class="fa-levels" role="radiogroup" aria-label="Trust level">
-          ${noDefault && html`<label><input type="checkbox" checked=${noDefault} onChange=${(e) => setNoDefault(e.currentTarget.checked)} /> Don't apply the default profile</label>`}
+          ${noDefault && html`<label><input name="fleet-admin-island-input" type="checkbox" checked=${noDefault} onChange=${(e) => setNoDefault(e.currentTarget.checked)} /> Don't apply the default profile</label>`}
           <label><input type="radio" name="fa-level" checked=${level === 'restricted'} onChange=${() => setLevel('restricted')} /> <b>Restricted</b> — the peer gets only the grants you give it</label>
           <label><input type="radio" name="fa-level" checked=${level === 'unrestricted'} onChange=${() => setLevel('unrestricted')} /> <b>Unrestricted</b></label>
         </div>`}

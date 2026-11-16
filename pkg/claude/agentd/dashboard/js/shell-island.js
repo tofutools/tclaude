@@ -128,7 +128,7 @@ function PeopleTabs({ active, mine, people, onSelect, onAdd, onRemove }) {
             event.stopPropagation();
             cancel();
           }}>
-          <input ref=${inputRef} type="text" aria-label="GitHub username" placeholder="GitHub username"
+          <input name="github-username" ref=${inputRef} type="text" aria-label="GitHub username" placeholder="GitHub username"
             maxlength="40" autocomplete="off" spellcheck="false" value=${login} disabled=${busy}
             onInput=${(event) => { setLogin(event.currentTarget.value); setError(''); }} />
           <${Button} size="sm" variant="primary" type="submit" class="open-prs-add-ok" disabled=${busy || !login.trim()}>Add<//>
@@ -494,7 +494,7 @@ function useTitleDetails() {
 function TitleDetailsToggle({ checked, onChange, noun }) {
   return html`<label class="open-prs-title-details"
     title=${`Show a ${noun}'s details card when hovering its title`}>
-    <input type="checkbox" checked=${checked}
+    <input name="shell-island-input" type="checkbox" checked=${checked}
       onChange=${(event) => onChange(event.currentTarget.checked)} />
     <span>Hover details</span>
   </label>`;
@@ -709,13 +709,13 @@ function OpenPRs({ state }) {
             <span>${panel.truncated ? html`<span>Showing the first ${panel.items.length} · </span>` : null}${panel.searchURL ? html`<a href=${panel.searchURL} target="_blank" rel="noopener noreferrer">${panel.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a>` : null}</span>
             ${panel.showingRecent ? html`<label class="open-prs-final-ci"
               title="Show the last cached CI result. Closed and merged pull requests are never refreshed.">
-              <input type="checkbox" checked=${showFinalCI}
+              <input name="shell-island-input" type="checkbox" checked=${showFinalCI}
                 onChange=${(event) => setShowFinalCI(event.currentTarget.checked)} />
               <span>Final CI</span>
             </label>` : null}
             ${filter === 'attention' && panel.hasDrafts ? html`<label class="open-prs-include-drafts"
               title="Include draft pull requests in Needs attention">
-              <input type="checkbox" checked=${includeDraftsInAttention}
+              <input name="shell-island-input" type="checkbox" checked=${includeDraftsInAttention}
                 onChange=${(event) => {
                   const checked = event.currentTarget.checked;
                   setIncludeDraftsInAttention(checked);
@@ -894,13 +894,13 @@ function OpenMRs({ state }) {
                 .map((entry, index) => html`${index > 0 ? ' · ' : null}<a key=${entry.host} href=${entry.url} target="_blank" rel="noopener noreferrer">Open all on ${entry.host} ↗</a>`)}</span>
             ${panel.showingRecent ? html`<label class="open-prs-final-ci"
               title="Show the last pipeline result. Merged and closed merge requests are never read again.">
-              <input type="checkbox" checked=${showFinalCI}
+              <input name="shell-island-input" type="checkbox" checked=${showFinalCI}
                 onChange=${(event) => setShowFinalCI(event.currentTarget.checked)} />
               <span>Final CI</span>
             </label>` : null}
             ${view.filter === 'attention' && panel.hasDrafts ? html`<label class="open-prs-include-drafts"
               title="Include draft merge requests in Needs attention">
-              <input type="checkbox" checked=${includeDraftsInAttention}
+              <input name="shell-island-input" type="checkbox" checked=${includeDraftsInAttention}
                 onChange=${(event) => {
                   const checked = event.currentTarget.checked;
                   setIncludeDraftsInAttention(checked);
@@ -994,7 +994,7 @@ function Confirm({ feedback }) {
         <div class="modal-meta" id="confirm-meta" style=${`display:${model?.meta ? 'block' : 'none'}`}>${model?.meta || ''}</div>
         ${model?.checks?.length ? html`<div class="confirm-checks">
           ${model.checks.map((check, i) => html`<label key=${i} class="confirm-check">
-            <input type="checkbox" checked=${!!check.checked} disabled=${busy}
+            <input name="shell-island-input" type="checkbox" checked=${!!check.checked} disabled=${busy}
               onChange=${(event) => {
                 check.checked = event.currentTarget.checked;
                 feedback.confirmation.value = { ...model };

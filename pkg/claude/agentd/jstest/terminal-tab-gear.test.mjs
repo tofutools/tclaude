@@ -47,14 +47,15 @@ test('an agent tab carries the Groups ⚙ menu next to its status light; a plain
   assert.equal(gear.previousElementSibling.classList.contains('mux-tab-status'), true, 'it sits next to the status light');
   assert.equal(s.tab('shell').querySelector('.mux-tab-gear'), null, 'a plain shell has no ⚙');
   const menu = gear.querySelector('.action-menu');
-  assert.ok(menu.querySelector('[data-act="terminal-chooser"][data-agent="agt_one"]'), 'the same row menu items');
-  assert.deepEqual([...menu.querySelectorAll('[data-act="send-elsewhere"]')].map((b) => b.dataset.mode), ['move', 'teleport', 'clone', 'morph']);
-  assert.equal(menu.querySelector('[data-act="remove-member"]'), null, 'agent level: no group to remove it from');
+  assert.equal(menu.querySelector('[role="menuitem"]'), null, 'a closed menu renders no items');
 
   const active = s.state.view.value.activeKey;
   assert.equal(active, 'shell');
   await s.harness.act(() => gear.querySelector('.cog-btn').click());
   assert.equal(menu.classList.contains('open'), true);
+  assert.ok(menu.querySelector('[data-act="terminal-chooser"][data-agent="agt_one"]'), 'the same row menu items');
+  assert.deepEqual([...menu.querySelectorAll('[data-act="send-elsewhere"]')].map((b) => b.dataset.mode), ['move', 'teleport', 'clone', 'morph']);
+  assert.equal(menu.querySelector('[data-act="remove-member"]'), null, 'agent level: no group to remove it from');
   assert.match(menu.style.top, /^\d+px$/, 'placed as it opens, not on the next snapshot');
   assert.equal(s.state.view.value.activeKey, 'shell', 'opening ⚙ does not switch tabs');
   await s.harness.act(() => s.harness.fireEvent(menu.querySelector('.action-menu-filter'), 'keydown', { key: 'Enter' }));
@@ -67,6 +68,7 @@ test('an agent tab carries the Groups ⚙ menu next to its status light; a plain
 
 test('a peer agent tab offers moving it here, naming its node; a peer view shows no ⚙', async (t) => {
   const s = await mountTabs(t);
+  await s.harness.act(() => s.tab('peer').querySelector('.mux-tab-gear .cog-btn').click());
   const items = [...s.tab('peer').querySelectorAll('.mux-tab-gear [role="menuitem"]')];
   assert.equal(items.length, 1);
   assert.match(items[0].textContent, /^move here…/);
@@ -83,6 +85,7 @@ test('without a hub, local terminal gear shows move/teleport greyed out with the
   const s = await mountTabs(t, null);
   const menu = s.tab('one').querySelector('.mux-tab-gear .action-menu');
   assert.ok(menu);
+  await s.harness.act(() => s.tab('one').querySelector('.mux-tab-gear .cog-btn').click());
   const items = [...menu.querySelectorAll('[data-act="send-elsewhere"]')];
   assert.deepEqual(items.map((b) => b.dataset.mode), ['move', 'teleport', 'clone', 'morph']);
   assert.deepEqual(items.map((b) => b.disabled), [true, true, false, false]);

@@ -320,7 +320,7 @@ function SettingsSection({ settings, actions, confirm, toast, reload }) {
           ? html`<span class="muted" data-host-only>set on the hub host</span>`
           : s.type === 'bool'
           ? html`<${OptionalSelect} size="sm" aria-label=${`New ${s.key}`} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} onChange=${(value) => edit(s.key, value)} unset="—" options=${[['true', 'true'], ['false', 'false']]}/>`
-          : html`<input aria-label=${`New ${s.key}`} inputmode=${s.type === 'string' ? null : 'numeric'} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} placeholder=${s.min != null || s.max != null ? `${s.min ?? ''}–${s.max ?? ''}` : ''}
+          : html`<input name="fleet-admin-hub-input" aria-label=${`New ${s.key}`} inputmode=${s.type === 'string' ? null : 'numeric'} value=${s.key in edits && edits[s.key] !== null ? edits[s.key] : ''} placeholder=${s.min != null || s.max != null ? `${s.min ?? ''}–${s.max ?? ''}` : ''}
               title=${s.min != null || s.max != null ? `${settingValue(s, s.min)} to ${settingValue(s, s.max)}${s.unit ? `, entered in ${s.unit}` : ''}` : ''} onInput=${(e) => edit(s.key, e.currentTarget.value)} />${typed(s)}`}</td>
         <td class="fa-acts">${(s.source === 'remote' || s.source === 'db') && html`<${Button} size="sm" variant="link" class="fa-link" data-revert=${s.key} onClick=${() => edit(s.key, null)}>${edits[s.key] === null ? 'reverts on save' : 'revert'}<//>`}</td>
       </tr>`)}<//>
@@ -586,7 +586,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
         ${(hl.recent_errors || []).length ? html`<ul class="fa-hub-errors">${hl.recent_errors.map((e, i) => html`<li key=${i} class="fa-danger">${when(e.at)} ${e.code ? html`<code>${e.code}</code> ` : ''}${e.message || ''}</li>`)}</ul>` : html`<span class="muted">no recent errors</span>`}
       </div>`)}
       ${h4('Admissions', html` <${Button} size="sm" variant="link" class="fa-link" id="fleet-hub-admit-open" onClick=${() => setDialog('admit')}>admit…<//> <${Button} size="sm" variant="link" class="fa-link" id="fleet-hub-identity-open" onClick=${() => setDialog('identity')}>identity recovery…<//>`)}
-      <div class="fa-grant-form"><label>Remove instances not seen for <input aria-label="Stale admission days" inputmode="numeric" style="width:4em" value=${staleDays} onInput=${(e) => setStaleDays(e.currentTarget.value)} /> days</label>
+      <div class="fa-grant-form"><label>Remove instances not seen for <input name="stale-admission-days" aria-label="Stale admission days" inputmode="numeric" style="width:4em" value=${staleDays} onInput=${(e) => setStaleDays(e.currentTarget.value)} /> days</label>
         <${Button} size="sm" id="fleet-hub-stale-preview" disabled=${staleBusy || !status.connected} onClick=${cleanupStale}>${staleBusy ? 'Preparing…' : 'Preview cleanup…'}<//></div>
       ${listOr(data.admissions, (rows) => html`<${FaTable} id="fleet-hub-admissions" head=${['Instance', 'Fingerprint', 'Spaces', 'Seen', '']}>${rows.map((a) => (a.revoked ? html`<tr key=${a.instance} data-instance=${a.instance} data-revoked class="muted">
           <td>${a.name || ''} <code>${a.instance}</code></td>
@@ -596,7 +596,7 @@ export function HubPage({ view, actions, updateActions, confirm, toast, copy, ti
         </tr>` : html`<tr key=${a.instance} data-instance=${a.instance}>
           <td>${a.name || ''} <code>${a.instance}</code>${a.instance === self.id ? html` <span class="muted">(this node)</span>` : ''}</td>
           <td><code>${a.fingerprint || '—'}</code></td>
-          <td><input class="fa-hub-spaces" aria-label=${`Spaces for ${a.instance}`} value=${(a.spaces || []).join(', ')} onChange=${(e) => editSpaces(a, e.currentTarget.value)} /></td>
+          <td><input name="fa-hub-spaces" class="fa-hub-spaces" aria-label=${`Spaces for ${a.instance}`} value=${(a.spaces || []).join(', ')} onChange=${(e) => editSpaces(a, e.currentTarget.value)} /></td>
           <td class="fa-nowrap">${a.connected ? 'connected' : when(a.last_seen)}</td>
           <td class="fa-acts">${ok(data.admins) && caps.length > 0 && !admins.some((x) => x.instance === a.instance) && html`<${Button} size="sm" data-hub="make-admin" onClick=${() => addAdmin(a)}>Make admin…<//>`}
             ${a.instance !== self.id && html`<${Button} size="sm" variant="ghost danger" data-hub="revoke" onClick=${() => revokeAdmission(a)}>Revoke…<//>`}</td>

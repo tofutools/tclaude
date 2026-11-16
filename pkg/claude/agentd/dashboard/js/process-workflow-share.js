@@ -306,8 +306,8 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
     ${review.envelope && html`<${EnvelopeSection} envelope=${review.envelope} workflow=${choices.workflow} disabled=${busy}
       onPick=${(workflow) => choose({ workflow, roleMap: {} })} onLand=${(performer) => { managementController().openGroupImport(source, { agent: performer.agentKey, role: performer.target }); onClose(); }} />`}
     <div class="pwf-section"><h4 class="ui-eyebrow">What changes here</h4><ul class="pwf-templates">${review.templates.map((t) => html`<li key=${t.ref} data-pwf-template=${t.id} data-pwf-status=${t.status}><b>${t.name || t.id}</b> <span class=${`pwf-status is-${t.status}`}>${t.label}</span></li>`)}</ul>
-      ${(review.updates > 0 || choices.rename) && html`<label class="pwf-replace"><input type="checkbox" data-pwf-rename checked=${choices.rename} disabled=${busy} onChange=${(e) => { setReplace(false); choose({ rename: e.currentTarget.checked }); }} /> Import under new ids (${'<id>-2'}, …) instead of replacing mine</label>`}
-      ${review.updates > 0 && !choices.rename && html`<label class="pwf-replace"><input type="checkbox" data-pwf-replace checked=${replace} onChange=${(e) => setReplace(e.currentTarget.checked)} /> Replace my current version of ${review.updates === 1 ? 'that template' : `those ${review.updates} templates`}</label>`}
+      ${(review.updates > 0 || choices.rename) && html`<label class="pwf-replace"><input name="process-workflow-share-input" type="checkbox" data-pwf-rename checked=${choices.rename} disabled=${busy} onChange=${(e) => { setReplace(false); choose({ rename: e.currentTarget.checked }); }} /> Import under new ids (${'<id>-2'}, …) instead of replacing mine</label>`}
+      ${review.updates > 0 && !choices.rename && html`<label class="pwf-replace"><input name="process-workflow-share-input" type="checkbox" data-pwf-replace checked=${replace} onChange=${(e) => setReplace(e.currentTarget.checked)} /> Replace my current version of ${review.updates === 1 ? 'that template' : `those ${review.updates} templates`}</label>`}
     </div>
     ${(groups.length > 0 || choices.group) && html`<div class="pwf-section"><h4 class="ui-eyebrow">Save to a group</h4>
       <label class="pwf-group">Pin it to <${GroupCombobox} attrs=${{ 'data-pwf-group': '' }} disabled=${busy} value=${choices.group}
@@ -349,7 +349,7 @@ export function WorkflowImportButton({
   };
   useEffect(() => { void load(dropped); }, [dropped]);
   return html`<span class="pwf-import-entry">
-    <input ref=${input} type="file" accept=".pwf,.paf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
+    <input name="process-workflow-share-input" ref=${input} type="file" accept=".pwf,.paf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
     <${Button} id=${id || undefined} class=${className} variant=${variant} size=${size} title="Import a shared .pwf workflow file, or a .paf carrying one: you review what it runs before anything is stored" onClick=${() => (from ? void load(from) : input.current?.click())}>${label}<//>
     ${error && html`<span class="island-error pwf-inline-error" role="alert">${error}</span>`}
     ${state && html`<${ImportDialog} ...${state} group=${group} onClose=${() => setState(null)} onImported=${onImported} />`}

@@ -102,7 +102,7 @@ function RunJobDialog({ peers, pools, actions, confirm, onClose, onDone }) {
       <option value="pick">nodes I pick</option><option value="auto">automatic: any trusted node</option>
       ${pools.map((p) => html`<option key=${p} value=${`group:${p}`}>automatic: a node of pool ${p}</option>`)}<//></label>
     ${form.target === 'pick'
-      ? html`<div class="fa-jb-nodes">${peers.map((p) => html`<label key=${p.id} class=${p.online ? '' : 'muted'}><input type="checkbox" data-node=${p.id} checked=${form.nodes.includes(p.id)} onChange=${toggle(p.id)} /> ${p.label}${p.online ? '' : ' (offline)'}</label>`)}</div>`
+      ? html`<div class="fa-jb-nodes">${peers.map((p) => html`<label key=${p.id} class=${p.online ? '' : 'muted'}><input name="fleet-admin-jobs-input" type="checkbox" data-node=${p.id} checked=${form.nodes.includes(p.id)} onChange=${toggle(p.id)} /> ${p.label}${p.online ? '' : ' (offline)'}</label>`)}</div>`
       : html`<label class="fa-jb-row"><span class="fa-k">prefer</span><${Select} size="sm" id="fleet-job-prefer" value=${form.prefer} onChange=${set('prefer')}><option value="least-loaded">least loaded</option><option value="most-free-ram">most free RAM</option><//></label>`}
     <label class="fa-jb-row"><span class="fa-k">repo</span><input id="fleet-job-repo" value=${form.repo} placeholder="the peer's allowed repository alias" autocomplete="off" spellcheck="false" onInput=${set('repo')} /></label>
     <label class="fa-jb-row"><span class="fa-k">ref</span><input id="fleet-job-ref" value=${form.ref} placeholder="branch, full ref or exact commit" autocomplete="off" spellcheck="false" onInput=${set('ref')} /></label>
@@ -263,7 +263,7 @@ function RepoDialog({ repo, groups, actions, confirm, onClose, onDone }) {
     <label class="fa-jb-row"><span class="fa-k">alias</span><input id="fleet-repo-name" value=${form.name} disabled=${!!repo} placeholder="name peers use (--repo)" autocomplete="off" spellcheck="false" onInput=${set('name')} /></label>
     <label class="fa-jb-row"><span class="fa-k">URL</span><input id="fleet-repo-url" value=${form.url} placeholder="git remote, e.g. git@github.com:org/repo.git" autocomplete="off" spellcheck="false" onInput=${set('url')} /></label>
     <label class="fa-jb-row"><span class="fa-k">clone</span><input id="fleet-repo-clone" value=${form.clone} placeholder="/abs/path of the local clone on this node" autocomplete="off" spellcheck="false" onInput=${set('clone')} /></label>
-    <div class="fa-jb-row"><span class="fa-k">groups</span><div class="fa-jb-nodes">${groups.map((g) => html`<label key=${g}><input type="checkbox" data-group=${g} checked=${form.groups.includes(g)} onChange=${toggle(g)} /> ${g}</label>`)}</div></div>
+    <div class="fa-jb-row"><span class="fa-k">groups</span><div class="fa-jb-nodes">${groups.map((g) => html`<label key=${g}><input name="fleet-admin-jobs-input" type="checkbox" data-group=${g} checked=${form.groups.includes(g)} onChange=${toggle(g)} /> ${g}</label>`)}</div></div>
     ${repo && !(repo.group_names || []).length && (repo.definition?.groups || []).length > 0 && html`<div class="muted">Currently ${groupText(repo)}; tick the groups to keep.</div>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation repos ${repo ? 'update' : 'add'} …</code></div>

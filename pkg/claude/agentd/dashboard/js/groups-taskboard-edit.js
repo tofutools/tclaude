@@ -294,7 +294,7 @@ function EpicStatus({ task, draft, busy, canClose, onChange }) {
       <option value="done" disabled=${!canClose && task.status !== 'done'}>Done</option>
       <option value="dropped" disabled=${!canClose && task.status !== 'dropped'}>Dropped</option>
     <//>
-    ${idea && status === 'open' && html`<label class="tb-epic-promote"><input type="checkbox" class="tb-edit-epic-promote" checked=${draft.where === 'next'} disabled=${busy}
+    ${idea && status === 'open' && html`<label class="tb-epic-promote"><input name="tb-edit-epic-promote" type="checkbox" class="tb-edit-epic-promote" checked=${draft.where === 'next'} disabled=${busy}
       onChange=${(event) => onChange(event.currentTarget.checked ? 'next' : 'idea')} /> Promote to open epic</label>`}
   </span>`;
 }

@@ -311,7 +311,7 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
     <div class="cleanup-list" id="window-list">
       ${visibleCandidates.length ? visibleCandidates.map((candidate) => html`
         <div class="cleanup-row" key=${candidate.conv_id}><label>
-          <input
+          <input name="transaction-dialog-island-input"
             type="checkbox" data-conv=${candidate.conv_id}
             checked=${selected.has(candidate.conv_id)} disabled=${busy || locked}
             onChange=${(event) => updateCandidate(candidate, event.currentTarget.checked)}
@@ -611,7 +611,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
     ${multiCategory ? html`<div class="cleanup-cats" id="cleanup-cats">
       <span class="cleanup-cats-label">categories:</span>
       ${CLEANUP_CATEGORY_ORDER.map((category) => html`<label class="cleanup-cat-toggle" key=${category}>
-        <input
+        <input name="transaction-dialog-island-input"
           type="checkbox" data-cat=${category} checked=${categoryOn[category]}
           disabled=${controlsDisabled}
           onChange=${(event) => setCategoryOn({
@@ -631,7 +631,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
           ${rows.map((candidate) => {
             const enabled = rowEnabled(candidate);
             return html`<div class=${`cleanup-row${enabled ? '' : ' disabled'}`} key=${candidate.conv_id}>
-              <label><input
+              <label><input name="transaction-dialog-island-input"
                 type="checkbox" data-conv=${candidate.conv_id}
                 checked=${enabled && selected.has(candidate.conv_id)}
                 disabled=${controlsDisabled || !enabled}
@@ -836,7 +836,7 @@ function DeleteGroupDialog({ descriptor, actions, confirmDiscard }) {
             ? `also in ${otherNames.join(', ')} — not auto-banished`
             : retireEnabled ? 'exempted from banishment' : 'banish option off';
         return html`<div class="cleanup-row" key=${member.selector}><label>
-          <input
+          <input name="transaction-dialog-island-input"
             type="checkbox" data-agent=${member.selector}
             checked=${willRetire} disabled=${busy || locked || !retireEnabled}
             onChange=${(event) => updateMember(member, event.currentTarget.checked)}
@@ -1116,7 +1116,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
       <div class="cleanup-list" id="retire-preview-list">
         ${visibleCandidates.length ? visibleCandidates.map((candidate) => html`
           <div class="cleanup-row" key=${candidate.conv_id}><label>
-            <input
+            <input name="transaction-dialog-island-input"
               type="checkbox"
               data-conv=${candidate.conv_id}
               checked=${selected.has(candidate.conv_id)}
@@ -1358,7 +1358,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
           const age = candidate.retired_at
             ? `retired ${relTime(candidate.retired_at)}` : 'retired (unknown)';
           return html`<div class="cleanup-row" key=${candidate.conv_id}><label>
-            <input
+            <input name="transaction-dialog-island-input"
               type="checkbox"
               data-conv=${candidate.conv_id}
               checked=${selected.has(candidate.conv_id)}

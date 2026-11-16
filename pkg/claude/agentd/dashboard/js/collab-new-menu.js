@@ -163,7 +163,7 @@ export function NewMenu({ group = null, groups = [], pagesOf = () => [], process
       data-new-menu=${group ? group.name : ''} title=${title} aria-label=${title}
       onClick=${(event) => { event.stopPropagation(); setOpen(!open); }}>${label}</button>
     ${open ? body : null}
-    <input ref=${fileRef} type="file" accept=".excalidraw,.json,application/json" hidden aria-label="Import an .excalidraw file"
+    <input name="import-an-excalidraw-file" ref=${fileRef} type="file" accept=".excalidraw,.json,application/json" hidden aria-label="Import an .excalidraw file"
       data-new-import="" onChange=${importFile} onCancel=${() => setPicking(false)} />
   </span>`;
 }

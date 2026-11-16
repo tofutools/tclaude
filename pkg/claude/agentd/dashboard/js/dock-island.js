@@ -574,7 +574,7 @@ function DockSection({
               ${section.onExportAll ? html`<${DockMenuItem} act="export-all" kind=${section.key} setOpenMenu=${setOpenMenu}
                 onRun=${() => section.onExportAll()}>Export all</${DockMenuItem}>` : null}
             </div>
-            <input ref=${fileRef} type="file" accept=".json,application/json" hidden data-dock-import=${section.key}
+            <input name="dock-island-input" ref=${fileRef} type="file" accept=".json,application/json" hidden data-dock-import=${section.key}
               onChange=${(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; importFile(file); }} />
           </span>` : null}
         </span>
@@ -682,6 +682,7 @@ export function Dock({
   return [
     html`<div key="search" class="dock-search">
       <input
+        name="dock-search"
         type="search"
         class="dock-search-input"
         placeholder=${wizWord('Filter profiles, templates, roles…', 'Scry the grimoire…')}

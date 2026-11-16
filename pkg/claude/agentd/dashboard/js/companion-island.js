@@ -187,7 +187,7 @@ function AddMenu({ agents, tabs, steward, stewardsOn = true, stewardLabel, retur
       <span class="companion-avatar steward" aria-hidden="true">✦</span>
       <span><b>${steward?.online ? 'Open' : 'Summon'} ${stewardLabel}</b><small>Helper for all of tclaude. Config > Steward sets what it can do without asking.</small></span>
     </button>`}
-    <input ref=${filterRef} type="search" class="companion-menu-filter" placeholder="Pin a live agent…" aria-label="Filter live agents"
+    <input name="filter-live-agents" ref=${filterRef} type="search" class="companion-menu-filter" placeholder="Pin a live agent…" aria-label="Filter live agents"
       value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />
     <div class="companion-menu-list">
       ${candidates.length ? candidates.map((agent) => html`<button key=${agent.agentId} type="button" role="menuitem" class="ui-menu-item" onClick=${() => onPin(agent.agentId)}>

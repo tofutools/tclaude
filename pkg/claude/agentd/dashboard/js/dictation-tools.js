@@ -478,7 +478,7 @@ export function FloatingTools({
   const { listening, block, toggle, continuing } = dictation;
   return html`<div class=${`companion-floating${listening ? ' listening' : ''}`} role="group" aria-label="Message tools">
       ${!block && withContext !== null && html`<label class="companion-context" title="Attach the dashboard view you are on to dictated messages, so the agent knows what you are looking at">
-        <input type="checkbox" checked=${withContext} onChange=${(event) => onContext(event.currentTarget.checked)} /> view
+        <input name="dictation-tools-input" type="checkbox" checked=${withContext} onChange=${(event) => onContext(event.currentTarget.checked)} /> view
         ${contextNote && html`<span class="companion-context-off" title=${contextNote}>capture off</span>`}
       </label>`}
       <button data-ui-exempt type="button" class=${`companion-tool companion-mic${listening ? ' on' : ''}${continuing ? ' steady' : ''}`} aria-pressed=${listening ? 'true' : 'false'}
@@ -513,7 +513,7 @@ export function DraftField({
     }
   };
   return html`<form class=${`companion-input${listening ? ' listening' : ''}`} onSubmit=${onSubmit}>
-    <input type="text" class="companion-draft" ref=${bindInput} maxLength=${COMPANION_MESSAGE_MAX}
+    <input name="companion-draft" type="text" class="companion-draft" ref=${bindInput} maxLength=${COMPANION_MESSAGE_MAX}
       placeholder=${listening ? 'Listening…' : ''} onFocus=${onFocus} onBlur=${onBlur} onKeyDown=${onKeyDown}
       aria-label=${label} value=${draft} onInput=${(event) => { if (listeningRef.current) abort(); onEdit(event.currentTarget.value); }} />
     ${continuing ? html`<span class="companion-send-hint companion-continuous" role="status">⏺ ${silenceLeft ? `Sending in ${silenceLeft}s` : 'Continuous mode'}${stopPhrase ? ` · say “${stopPhrase}” to stop` : ''} · ${route}</span>

@@ -265,7 +265,7 @@ function ExposeView({ win }) {
   return html`<div class=${`overlay-expose${spread ? ' spread' : ''}`} role="dialog" aria-modal="true" aria-label="All windows" onKeyDown=${onKey}
     onPointerDown=${away}>
     <div class="overlay-expose-bar">
-      <input ref=${input} class="overlay-expose-filter" type="text" placeholder="Type to filter windows" aria-label="Filter windows by title"
+      <input name="filter-windows-by-title" ref=${input} class="overlay-expose-filter" type="text" placeholder="Type to filter windows" aria-label="Filter windows by title"
         role="combobox" aria-expanded="true" aria-controls="overlay-expose-list" aria-activedescendant=${shown[at] ? optionId(at) : undefined}
         value=${query} onInput=${(event) => { setQuery(event.currentTarget.value); setChosen(0); }} />
       <span class="overlay-expose-hint ui-hint">Enter or a click raises · Esc leaves</span>

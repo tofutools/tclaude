@@ -59,7 +59,7 @@ export function NodeField({
 export function NodeSelect({ fieldKey, label, options, value, apply, readOnly, blankLabel = null, invalid = false }) {
   const selected = options.includes(value) ? value : (blankLabel !== null ? '' : options[0]);
   return html`<label class="field process-node-field"><span class="process-node-field-label">${label}</span>
-    <select data-ui-exempt class="process-node-select" aria-label=${label} disabled=${readOnly} data-node-field=${fieldKey}
+    <select name="process-node-select" data-ui-exempt class="process-node-select" aria-label=${label} disabled=${readOnly} data-node-field=${fieldKey}
       value=${selected} aria-invalid=${invalid ? 'true' : undefined}
       onChange=${(event) => apply?.(fieldKey, event.currentTarget.value)}>
       ${blankLabel !== null && html`<option value="">${blankLabel}</option>`}

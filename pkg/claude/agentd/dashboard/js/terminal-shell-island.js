@@ -498,7 +498,7 @@ function TerminalPane({
           hidden=${!theme.wizard}
           title="Recolour terminal defaults with the persisted wizard palette; explicit application RGB colours are unchanged"
         >
-          <input
+          <input name="arcane-terminal-palette"
             type="checkbox"
             checked=${theme.palette}
             aria-label="Arcane terminal palette"

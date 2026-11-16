@@ -236,9 +236,9 @@ function StepEditor({ step, index, state }) {
   const field = (name, label, rows, placeholder) => html`<label class="cron-create-row">
     <span class="cron-create-label">${label}</span>
     ${rows
-      ? html`<textarea data-step-field=${name} rows=${rows} placeholder=${placeholder} spellcheck=${false}
+      ? html`<textarea name="plugins-island-textarea" data-step-field=${name} rows=${rows} placeholder=${placeholder} spellcheck=${false}
           value=${step[name]} onInput=${(event) => state.updateStep(index, { [name]: event.currentTarget.value })}></textarea>`
-      : html`<input type="text" data-step-field=${name} placeholder=${placeholder} autocomplete="off" spellcheck=${false}
+      : html`<input name="plugins-island-input" type="text" data-step-field=${name} placeholder=${placeholder} autocomplete="off" spellcheck=${false}
           value=${step[name]} onInput=${(event) => state.updateStep(index, { [name]: event.currentTarget.value })} />`}
   </label>`;
   return html`<fieldset class="plugin-step-edit">

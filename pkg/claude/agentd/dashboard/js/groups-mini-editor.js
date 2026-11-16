@@ -148,9 +148,9 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
     .flatMap(([, other]) => other.captures || []);
   return html`<div class="gm-inspector" data-mini-inspector=${id} role="dialog" aria-label=${`Step ${node.name || id}`}
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
-    <label class="gm-field"><span>Step</span><input type="text" data-mini-name value=${node.name || ''} placeholder=${id}
+    <label class="gm-field"><span>Step</span><input name="groups-mini-editor-input" type="text" data-mini-name value=${node.name || ''} placeholder=${id}
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepName(s, event.currentTarget.value)))} /></label>
-    <label class="gm-field"><span>${label}</span><textarea rows="3" data-mini-text value=${gate ? deciderAsk(deciders[0]) : text}
+    <label class="gm-field"><span>${label}</span><textarea name="groups-mini-editor-textarea" rows="3" data-mini-text value=${gate ? deciderAsk(deciders[0]) : text}
       title=${gate ? 'Every decider is asked this; ask each their own in the full editor' : undefined}
       onChange=${(event) => onApply(gate ? setGateText(view, id, event.currentTarget.value)
         : updateStep(view, id, (s) => setStepText(s, event.currentTarget.value)))}></textarea></label>
@@ -186,20 +186,20 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
       label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}
-    ${kind === 'agent' && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><input type="text"
+    ${kind === 'agent' && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><input name="none-e-g-pr" type="text"
       value=${outputs.join(', ')} placeholder="none (e.g. pr)" title="Names this step reports, which later steps read as {{ outputs.<name> }}"
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepOutputs(s, event.currentTarget.value)))} /></label>`}
     <div class="gm-field"><span>${node.type === 'decision' ? 'Outcomes' : 'Then'}</span><div class="gm-outcomes">
       ${outcomes.map(({ outcome, to }) => html`<span key=${outcome} class="gm-outcome" data-mini-outcome=${outcome}>
         ${node.type === 'decision'
-    ? html`<input type="text" class="gm-outcome-name" aria-label=${`Rename ${outcome}`} value=${outcome}
+    ? html`<input name="gm-outcome-name" type="text" class="gm-outcome-name" aria-label=${`Rename ${outcome}`} value=${outcome}
           onChange=${(event) => onApply(renameOutcome(view, id, outcome, event.currentTarget.value))} />`
     : ''} →
         <${Select} size="sm" aria-label=${`After ${outcome}`} value=${to} onChange=${(event) => onApply(setOutcomeTarget(view, id, outcome, event.currentTarget.value))}>
           ${targetsFor(view, id, outcome).map((target) => html`<option key=${target.id} value=${target.id} data-mini-back=${target.back ? '' : undefined}>${target.back ? `↺ ${target.label} (again)` : target.label}</option>`)}
         <//>
         ${loopBound(node, outcome) && html`<label class="ui-tag ui-tag-warn gm-loop" data-mini-loop=${outcome} title="Going back runs that work again; past the last round this outcome is refused">
-          ≤<input type="number" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} aria-label=${`Rounds for ${outcome}`} value=${loopBound(node, outcome).maxIterations}
+          ≤<input name="groups-mini-editor-input" type="number" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} aria-label=${`Rounds for ${outcome}`} value=${loopBound(node, outcome).maxIterations}
             onChange=${(event) => { const rounds = normalizeRounds(event.currentTarget.value); if (rounds) onApply(setLoopRounds(view, id, outcome, rounds)); else event.currentTarget.value = String(loopBound(node, outcome).maxIterations); }} /> rounds</label>`}
         ${node.type === 'decision' && !canRemoveOutcome(view, id, outcome) && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove ${outcome}`}
           onClick=${() => onApply(removeOutcome(view, id, outcome))}>✕<//>`}
@@ -253,7 +253,7 @@ function StartFrom({ api, wizard, busy, onView, onDescribe, onImport }) {
       ${chip({ 'data-mini-library': '' }, wizard ? 'More written rites ›' : 'More ways of working ›', 'Copy a process from the template library', () => setOpen(open === 'library' ? '' : 'library'), open === 'library')}
     </div>
     ${open === 'describe' && html`<form class="gq-ask gm-describe" data-mini-describe-form onSubmit=${describe}>
-      <input type="text" class="gq-ask-in" aria-label="Describe the process in plain words" maxlength=${DRAFT_DESCRIPTION_MAX} value=${text} disabled=${!!busy}
+      <input name="describe-the-process-in-plain" type="text" class="gq-ask-in" aria-label="Describe the process in plain words" maxlength=${DRAFT_DESCRIPTION_MAX} value=${text} disabled=${!!busy}
         placeholder="e.g. implement the issue, have the reviewer check it, I approve, then merge" onInput=${(event) => setText(event.currentTarget.value)} />
       <${Button} size="sm" variant="primary" type="submit" disabled=${!!busy || !text.trim()}
         title="A process scribe drafts the steps in the background. It uses a model run; you approve its access first, and nothing runs until you start it.">✨ Draft steps<//>
@@ -532,7 +532,7 @@ export function MiniGraphEditor({
     }}>
     <div class="gm-head">
       ${isDraft
-    ? html`<input type="text" class="gm-title" data-mini-title ref=${nameRef} aria-label="Process name" maxlength="120" value=${title}
+    ? html`<input name="process-name" type="text" class="gm-title" data-mini-title ref=${nameRef} aria-label="Process name" maxlength="120" value=${title}
         onInput=${(event) => setTitle(event.currentTarget.value)} onChange=${(event) => commitTitle(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
       <span class="ui-tag gm-autosave" data-mini-autosave=${autosave || (dirty ? 'pending' : 'saved')} title=${autosave === 'failed' ? error : ''}>${
@@ -595,7 +595,7 @@ export function MiniGraphEditor({
       <span class="gq-dim">${isDraft ? 'It saves itself as you go; runs already going keep their version.' : 'Saving makes a new version; runs already going keep theirs.'}</span>
       ${errors.length > 0 && html`<span class="gq-error ui-error" role="alert" data-mini-problems=${errors.length}>${errors.length} problem${errors.length === 1 ? '' : 's'}: ${errors[0].message}</span>`}
       <span class="gq-spacer"></span>
-      ${!process.listed && html`<label class="gq-dim"><input type="checkbox" data-mini-publish checked=${publish}
+      ${!process.listed && html`<label class="gq-dim"><input name="groups-mini-editor-input" type="checkbox" data-mini-publish checked=${publish}
         onChange=${(event) => setPublish(event.currentTarget.checked)} /> also publish to the library</label>`}
     </div>
     ${error && html`<div class="gq-error ui-error" role="alert">${error}</div>`}

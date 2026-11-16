@@ -133,22 +133,22 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
   return html`<form class="phone-agents-spawn" onSubmit=${submit}>
     <p class="phone-agents-sheet-title">New agent</p>
     <label class="phone-agents-label">Group
-      <select class="ui-select phone-agents-field" value=${group} onChange=${(event) => setGroup(event.currentTarget.value)}>
+      <select name="ui-select" class="ui-select phone-agents-field" value=${group} onChange=${(event) => setGroup(event.currentTarget.value)}>
         ${groups.map((g) => html`<option key=${g.name} value=${g.name} selected=${g.name === group}>${g.name}</option>`)}
       </select>
     </label>
     <label class="phone-agents-label">Profile
-      <select class="ui-select phone-agents-field" value=${profile} onChange=${(event) => setProfile(event.currentTarget.value)}>
+      <select name="ui-select" class="ui-select phone-agents-field" value=${profile} onChange=${(event) => setProfile(event.currentTarget.value)}>
         <option value="" selected=${!profile}>${fallback ? `Group default (${fallback})` : 'No profile'}</option>
         ${profiles.filter((p) => p !== fallback).map((p) => html`<option key=${p} value=${p} selected=${p === profile}>${p}</option>`)}
       </select>
     </label>
     <label class="phone-agents-label">Prompt
-      <textarea class="ui-input phone-agents-field" rows="4" placeholder="What should it do?"
+      <textarea name="what-should-it-do" class="ui-input phone-agents-field" rows="4" placeholder="What should it do?"
         value=${prompt} onInput=${(event) => setPrompt(event.currentTarget.value)}></textarea>
     </label>
     <label class="phone-agents-label">Name
-      <input class="ui-input phone-agents-field" placeholder="Optional" autocapitalize="off" autocomplete="off"
+      <input name="optional" class="ui-input phone-agents-field" placeholder="Optional" autocapitalize="off" autocomplete="off"
         value=${name} onInput=${(event) => setName(event.currentTarget.value)} />
     </label>
     <div class="phone-btns">

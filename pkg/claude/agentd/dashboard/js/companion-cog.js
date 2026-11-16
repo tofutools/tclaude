@@ -122,7 +122,7 @@ export function CompanionCog({ sections, children = null }) {
       aria-label="More actions" title="More actions" onClick=${() => setOpen((value) => !value)}>⚙</button>
     <div ref=${menuRef} class=${`ui-menu ui-sm action-menu companion-cog-menu${open ? ' open' : ''}`} role="menu"
       onPointerDown=${(event) => event.stopPropagation()}>
-      <input ref=${filterRef} class="ui-input ui-sm action-menu-filter" type="text" autocomplete="off" spellcheck=${false} role="combobox"
+      <input ref=${filterRef} class="ui-input ui-sm action-menu-filter" name="action-menu-filter" type="text" autocomplete="off" spellcheck=${false} role="combobox"
         aria-expanded="true" aria-autocomplete="list" aria-label="Filter actions"
         placeholder=${isWizardActive() ? MENU_FILTER_WIZARD_PLACEHOLDER : MENU_FILTER_PLACEHOLDER} value=${query}
         onInput=${(event) => setQuery(event.currentTarget.value)}

@@ -179,9 +179,9 @@ export function ExternalStewardManager({ enabled, fetchImpl = globalThis.fetch, 
     </table>`}
     ${enabled
       ? html`<form class="cfg-steward-add" onSubmit=${add}>
-          <input type="text" aria-label="External steward name" placeholder="name" maxlength="40" pattern="[a-z0-9][a-z0-9\\-]*" title="Lowercase letters, digits and hyphens" required spellcheck="false"
+          <input name="external-steward-name" type="text" aria-label="External steward name" placeholder="name" maxlength="40" pattern="[a-z0-9][a-z0-9\\-]*" title="Lowercase letters, digits and hyphens" required spellcheck="false"
             value=${name} onInput=${event => setName(event.currentTarget.value)} />
-          <input type="number" aria-label="Days until the credential expires" placeholder="30" min="1" max="365"
+          <input name="days-until-the-credential-expires" type="number" aria-label="Days until the credential expires" placeholder="30" min="1" max="365"
             value=${days} onInput=${event => setDays(event.currentTarget.value)} />
           <span>days</span>
           <${Button} type="submit" size="sm" class="cfg-list-add" disabled=${busy || !!issued}>Add<//>

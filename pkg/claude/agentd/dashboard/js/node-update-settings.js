@@ -224,7 +224,7 @@ export function NodeUpdateSettings({ node, actions, confirm, toast }) {
         <span class="muted">${setupText(setup).replace(/^On · |^On$|^Off$/, '')}</span>
         <${Button} size="sm" variant="ghost" id="fleet-nus-setup-edit" aria-expanded=${showFlags ? 'true' : 'false'} onClick=${() => setShowFlags(!showFlags)}>${showFlags ? 'Hide options' : 'Options…'}<//></span>
       ${showFlags && html`<span></span><span class="nus-flags">
-        ${SETUP_FLAGS.map(({ flag, label }) => html`<label key=${flag} class="nus-check"><input type="checkbox" data-nus-flag=${flag} checked=${(setup.flags || []).includes(flag)}
+        ${SETUP_FLAGS.map(({ flag, label }) => html`<label key=${flag} class="nus-check"><input name="node-update-settings-input" type="checkbox" data-nus-flag=${flag} checked=${(setup.flags || []).includes(flag)}
           onChange=${(e) => { const on = e.currentTarget.checked; set((n) => {
             const flags = (n.post_update_setup?.flags || []).filter((f) => f !== flag);
             n.post_update_setup = { ...(n.post_update_setup || {}), flags: on ? [...flags, flag] : flags };

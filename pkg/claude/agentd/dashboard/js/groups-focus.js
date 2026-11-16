@@ -108,7 +108,7 @@ export function RunKindFilter({ state, wizard = false, source = processContext }
       ${RUN_KINDS.map((kind) => {
         const checked = runFilterHas(filter, kind);
         return html`<label key=${kind} class=${`filter-toggle groups-run-kind groups-run-kind-${kind}`}>
-          <input type="checkbox" data-process-filter=${kind} checked=${checked}
+          <input name="groups-focus-input" type="checkbox" data-process-filter=${kind} checked=${checked}
             onChange=${(event) => {
               const next = toggleRunKind(state.processFilter?.value, kind);
               // A refused untick leaves the signal unchanged, so nothing

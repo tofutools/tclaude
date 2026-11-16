@@ -260,7 +260,7 @@ export function LauncherPanel({
       ${byProfile && html`<div class="cfg-svc-warn" id="${idp}launcher-by-profile">The launch profile (under Start automatically) is set, so it decides these flags: change them there. The launcher's own setting is kept, and takes over once the profile is cleared.</div>`}
       <div class="cfg-launcher-flags">
         ${LAUNCHER_FLAGS.map((f) => html`<label key=${f.name} class="cfg-launcher-flag">
-          <input type="checkbox" data-launcher-flag=${f.name} checked=${!!draft.on[f.name]} disabled=${flagsDisabled} onChange=${(e) => setOn(f.name, e.currentTarget.checked)} />
+          <input name="config-launcher-input" type="checkbox" data-launcher-flag=${f.name} checked=${!!draft.on[f.name]} disabled=${flagsDisabled} onChange=${(e) => setOn(f.name, e.currentTarget.checked)} />
           <span class="cfg-launcher-flag-text"><span>${f.label} <code class="cfg-key">${f.name}${f.value ? '=<port>' : ''}</code></span>
             <span class="muted">${f.meaning}</span>
             ${f.value && draft.on[f.name] && html`<span><input type="number" class="ui-input ui-sm" id="${idp}launcher-port" min="1" max="65535" placeholder=${DEFAULT_PORT} aria-label="Dashboard port"

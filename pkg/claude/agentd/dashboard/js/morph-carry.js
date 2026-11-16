@@ -178,7 +178,7 @@ export function CarryOver({ carry, onChange, hist, disabled, advanced, onAdvance
         const shown = Number.isInteger(v) ? v : (u?.keep_percent ?? 100);
         return html`<div key=${cat} class="lt-cat-row">
           <span>${label}</span>
-          <input type="range" class="lt-carry-range" min="0" max="100" step="5" value=${shown} disabled=${disabled}
+          <input name="lt-carry-range" type="range" class="lt-carry-range" min="0" max="100" step="5" value=${shown} disabled=${disabled}
             aria-label=${`${label}: share kept whole`} data-lt-keep=${cat} onInput=${(e) => setKeep(cat, Number(e.currentTarget.value))} />
           <span class="lt-cat-v">${Number.isInteger(v) ? `${v}%` : 'auto'}</span>
           <span class="lt-cat-t">${u ? `${fmtTokens(u.source_tokens)} → ${fmtTokens(u.carried_tokens)}${u.shortened ? ` · ${u.shortened} stubbed` : ''}` : ''}

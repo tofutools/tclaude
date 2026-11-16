@@ -135,7 +135,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
             const held = heldText(rows || [], s.slug);
             const on = picked.includes(s.slug);
             return html`${head}<label key=${s.slug} class=${`fa-gd-item${on ? ' on' : ''}`} data-grant-slug=${s.slug}>
-              <input type="checkbox" checked=${on} onChange=${() => toggle(s.slug)} />
+              <input name="fleet-admin-grant-dialog-input" type="checkbox" checked=${on} onChange=${() => toggle(s.slug)} />
               <code class=${s.sensitive ? 'fa-sensitive' : ''}>${s.slug}</code>
               <span class="fa-gd-badges">${held && html`<span class="ui-tag fa-gd-badge held">${held}</span>`}${s.sensitive && html`<span class="ui-tag fa-gd-badge sens">sensitive</span>`}<span class="ui-tag fa-gd-badge">${s.gateway ? 'gateway' : s.kind === 'node' ? 'node-wide' : 'group'}</span></span>
               <span class="fa-gd-what muted">${s.what}</span>
@@ -144,7 +144,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
           })}
           ${ungrantable.length > 0 && html`<div class="ui-eyebrow fa-gd-cat" key="c|ungrantable">Not grantable to peers</div>`}
           ${ungrantable.map((s) => html`<label key=${s.slug} class="fa-gd-item fa-gd-ungrantable" data-ungrantable-slug=${s.slug} aria-disabled="true">
-            <input type="checkbox" disabled />
+            <input name="fleet-admin-grant-dialog-input" type="checkbox" disabled />
             <code>${s.slug}</code>
             <span class="fa-gd-badges"><span class="ui-tag fa-gd-badge">local only</span></span>
             <span class="fa-gd-what muted">not grantable to peers: ${s.why}</span>
@@ -160,7 +160,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
         ${groupKinds && html`<div class="fa-gd-row fa-gd-top"><span class="fa-k">Where</span><div>
           ${!scopedOnly || infos.some((i) => i.kind === 'group') ? html`<label class="fa-gd-radio"><input type="radio" name="fleet-grant-where" id="fleet-grant-all-groups" checked=${allGroups} onChange=${() => setAllGroups(true)} /> <span class="fa-warn">all groups, incl. future</span></label>` : ''}
           <label class="fa-gd-radio"><input type="radio" name="fleet-grant-where" id="fleet-grant-some-groups" checked=${!allGroups} onChange=${() => setAllGroups(false)} /> these groups:</label>
-          <div class="fa-gd-groups">${groups.length === 0 ? html`<span class="muted">no groups on this node</span>` : groups.map((g) => html`<label key=${g} class=${`fa-gd-group${chosen.includes(g) ? ' on' : ''}`} data-grant-group=${g}><input type="checkbox" checked=${chosen.includes(g)} onChange=${() => toggleGroup(g)} />${g}</label>`)}</div>
+          <div class="fa-gd-groups">${groups.length === 0 ? html`<span class="muted">no groups on this node</span>` : groups.map((g) => html`<label key=${g} class=${`fa-gd-group${chosen.includes(g) ? ' on' : ''}`} data-grant-group=${g}><input name="fleet-admin-grant-dialog-input" type="checkbox" checked=${chosen.includes(g)} onChange=${() => toggleGroup(g)} />${g}</label>`)}</div>
           ${allGroups && scopedOnly && html`<div class="muted fa-gd-note">${picked.filter((s) => slugInfo(s).kind === 'scoped').join(', ')} always need${picked.filter((s) => slugInfo(s).kind === 'scoped').length === 1 ? 's' : ''} the groups picked here.</div>`}
         </div></div>`}
         ${gatewayKinds && html`<label class="fa-gd-row"><span class="fa-k">Gateway</span><input id="fleet-grant-gateway" type="text" placeholder="all gateways (or a name)" value=${gateway} autocomplete="off" spellcheck="false" onInput=${(e) => setGateway(e.currentTarget.value)} /></label>`}
@@ -169,7 +169,7 @@ export function AddGrantDialog({ targets, initialTarget, groups, actions, confir
           <span class="muted"> live workers</span> <${Button} size="sm" variant="link" id="fleet-grant-launch-toggle" class="fa-link" aria-expanded=${showLaunch ? 'true' : 'false'} onClick=${() => setShowLaunch(!showLaunch)}>launch settings${Object.keys(launch).length ? ' •' : ''}<//></span></div>`}
         ${policySlugs.length > 0 && showLaunch && html`<div class="fa-grant-launch" id="fleet-grant-launch">
           <span class="muted">How this node starts workers for the peer. Empty uses the group's or profile's default; on an existing grant, untouched settings are kept.</span>
-          ${fields.map((f) => html`<label key=${f.key}><span class="fa-k">${f.label}</span><input data-launch=${f.key} type="text" placeholder=${f.hint} value=${launch[f.key] ?? ''} autocomplete="off" spellcheck="false" onInput=${(e) => setLaunch({ ...launch, [f.key]: e.currentTarget.value })} /></label>`)}
+          ${fields.map((f) => html`<label key=${f.key}><span class="fa-k">${f.label}</span><input name="fleet-admin-grant-dialog-input" data-launch=${f.key} type="text" placeholder=${f.hint} value=${launch[f.key] ?? ''} autocomplete="off" spellcheck="false" onInput=${(e) => setLaunch({ ...launch, [f.key]: e.currentTarget.value })} /></label>`)}
           ${policySlugs.includes('groups.members.spawn') && html`<label><span class="fa-k">requester pays</span><${Select} size="sm" data-launch="requester_pays" value=${launch.requester_pays ?? ''} onChange=${(e) => setLaunch({ ...launch, requester_pays: e.currentTarget.value })}>
             ${REQUESTER_PAYS.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>`}
           ${policySlugs.includes('jobs.run') && html`<label><span class="fa-k">job approval</span><${Select} size="sm" data-launch="job_approval" value=${launch.job_approval ?? ''} onChange=${(e) => setLaunch({ ...launch, job_approval: e.currentTarget.value })}>

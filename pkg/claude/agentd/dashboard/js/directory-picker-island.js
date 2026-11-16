@@ -97,7 +97,7 @@ function DirectoryOperationDialog({ operation, currentPath, actions, browse, onC
     </div>`}
     <label class="directory-picker-action-field">
       <span>${deleting ? 'Type the exact host path to confirm' : 'Folder name'}</span>
-      <input ref=${inputRef} value=${value} autocomplete="off" spellcheck="false"
+      <input name="directory-picker-island-input" ref=${inputRef} value=${value} autocomplete="off" spellcheck="false"
         onInput=${(event) => setValue(event.currentTarget.value)} />
     </label>
     <div class="directory-picker-action-path">${destination}</div>

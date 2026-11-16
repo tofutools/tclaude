@@ -185,7 +185,7 @@ export function DecisionForm({ decision, node, onDecide, wizard }) {
   };
   const verdicts = decision.verdicts || [];
   return html`<div class="grf-decide" data-run-decision=${node.id}>
-    <textarea aria-label=${wizard ? 'Words for the record (optional)' : 'Note for the record (optional)'} rows="2" maxlength="4096"
+    <textarea name="groups-run-focus-textarea" aria-label=${wizard ? 'Words for the record (optional)' : 'Note for the record (optional)'} rows="2" maxlength="4096"
       placeholder=${wizard ? 'words for the record (optional)' : 'note (optional)'} value=${note} disabled=${!!busy || !!decided}
       onInput=${(event) => setNote(event.currentTarget.value)}></textarea>
     <div class="grf-verdicts">${verdicts.map((verdict) => {

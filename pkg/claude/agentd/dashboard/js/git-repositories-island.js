@@ -72,9 +72,9 @@ export function GitRepositoriesDialog({ current, state, actions }) {
       <p class="git-repos-hint ui-hint"><${Words} plain="Scope: " />${current.group || html`<${Words} plain="All groups" wizard="All parties" />`} · <${Words} plain="Canonical absolute paths; shared directories appear once." /></p>
     </div>
     <div class="git-repos-options">
-      <label><input type="checkbox" checked=${switchDefault} disabled=${locked} onChange=${(e) => setSwitchDefault(e.currentTarget.checked)} />
+      <label><input name="git-repositories-island-input" type="checkbox" checked=${switchDefault} disabled=${locked} onChange=${(e) => setSwitchDefault(e.currentTarget.checked)} />
         <span><${Words} plain="Switch to default branch first" /><small><${Words} plain="Branch hints are local; the default is verified when you start. Only locally identified default-branch checkouts are shown." /></small></span></label>
-      <label><input type="checkbox" checked=${discard} disabled=${locked} onChange=${(e) => setDiscard(e.currentTarget.checked)} />
+      <label><input name="git-repositories-island-input" type="checkbox" checked=${discard} disabled=${locked} onChange=${(e) => setDiscard(e.currentTarget.checked)} />
         <span><${Words} plain="Discard uncommitted changes" /><small class="git-repos-warning"><${Words} plain="Deletes tracked edits and untracked files in selected repositories. Ignored files are kept." /></small></span></label>
       <label class="git-repos-concurrency">
         <span><${Words} plain="Parallel updates" wizard="Parallel invocations" /><small><${Words} plain="Repositories to update at once. Remembered for this dashboard." /></small></span>
@@ -86,7 +86,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     </div>
     <p class="git-repos-hint ui-hint"><${Words} plain=${sync ? 'Fetch remote updates, prune stale remote references, then pull. Does not push.' : 'Fetch and pull the latest code. Does not push.'} /></p>
     <div class="git-repos-toolbar">
-      <input ref=${filterRef} type="search" aria-label="Filter repositories or groups" placeholder="Filter repositories / groups…"
+      <input name="filter-repositories-or-groups" ref=${filterRef} type="search" aria-label="Filter repositories or groups" placeholder="Filter repositories / groups…"
         value=${query} onInput=${(e) => setQuery(e.currentTarget.value)} />
       <${Button} size="sm" disabled=${locked || !selectable.length} onClick=${() => {
         setSelected((before) => { const next = new Set(before); selectable.forEach((r) => allShown ? next.delete(r.path) : next.add(r.path)); return next; });
@@ -97,7 +97,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
         const outcome = outcomes[repo.path];
         return html`<div key=${repo.path} class="git-repo-entry">
           <label class="git-repo-row">
-            <input type="checkbox" aria-label=${`Select ${repo.name}: ${repo.path}`} checked=${selected.has(repo.path)} disabled=${locked || !!repo.error}
+            <input name="git-repositories-island-input" type="checkbox" aria-label=${`Select ${repo.name}: ${repo.path}`} checked=${selected.has(repo.path)} disabled=${locked || !!repo.error}
               onChange=${(e) => toggle(repo.path, e.currentTarget.checked)} />
             <span class="git-repo-name"><strong>${repo.name}</strong><small title=${repo.path}>${repo.path}</small></span>
             <span class="git-repo-branch" title=${`${repo.branch || 'Detached HEAD'} → ${switchDefault ? repo.default_branch || 'default' : repo.branch || '?'}`}>${repo.branch || '(detached)'} → ${switchDefault ? repo.default_branch || 'default' : repo.branch || '?'}</span>

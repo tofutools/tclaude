@@ -170,7 +170,7 @@ export function ConcernCard({ concern, runId, api, onChanged, compact = false })
     </div>
     <div class="pov-reason">${concern.reason}</div>
     <div class="pov-concern-actions">
-      <input class="pov-note" type="text" maxlength="4096" aria-label=${`Note for concern ${concern.id} (optional)`} placeholder="note (optional)"
+      <input name="note-optional" class="pov-note" type="text" maxlength="4096" aria-label=${`Note for concern ${concern.id} (optional)`} placeholder="note (optional)"
         value=${note} disabled=${!!busy} onInput=${(event) => setNote(event.currentTarget.value)} />
       ${choices.length
     ? choices.map((choice, i) => html`<${Button} key=${choice} size="sm" variant=${i === 0 ? 'primary' : undefined} disabled=${!!busy}
@@ -209,10 +209,10 @@ export function RaiseConcern({ runId, nodeId = '', nodeLabel = '', api, onChange
     }
   };
   return html`<div class="pov-raise" data-run-raise>
-    <textarea rows="2" maxlength="4096" aria-label="What is wrong or stuck" placeholder="What is wrong or stuck? It goes to the run's overseer."
+    <textarea name="what-is-wrong-or-stuck" rows="2" maxlength="4096" aria-label="What is wrong or stuck" placeholder="What is wrong or stuck? It goes to the run's overseer."
       value=${reason} disabled=${busy} onInput=${(event) => setReason(event.currentTarget.value)}></textarea>
     <div class="pov-raise-row">
-      ${nodeId && html`<label class="grf-muted"><input type="checkbox" checked=${aboutStep} disabled=${busy}
+      ${nodeId && html`<label class="grf-muted"><input name="process-oversight-input" type="checkbox" checked=${aboutStep} disabled=${busy}
         onChange=${(event) => setAboutStep(event.currentTarget.checked)} /> about ${nodeLabel || nodeId}</label>`}
       <${Button} size="sm" variant="primary" disabled=${busy || !reason.trim()} onClick=${() => void submit()}>${busy ? '…' : 'Raise'}<//>
       <${Button} size="sm" disabled=${busy} onClick=${onClose}>Cancel<//>
@@ -242,7 +242,7 @@ function SteerForm({ kind, label, placeholder, confirm, required, send, onChange
     }
   };
   return html`<div class="pov-raise" data-run-steer=${kind}>
-    <textarea rows="2" maxlength="1024" aria-label=${label} placeholder=${placeholder}
+    <textarea name="process-oversight-textarea" rows="2" maxlength="1024" aria-label=${label} placeholder=${placeholder}
       value=${text} disabled=${busy} onInput=${(event) => setText(event.currentTarget.value)}></textarea>
     <div class="pov-raise-row">
       <${Button} size="sm" variant="danger" disabled=${busy || (required && !text.trim())} onClick=${() => void submit()}>${busy ? '…' : confirm}<//>
@@ -352,9 +352,9 @@ export function AmendRun({ runId, api, onChanged, onClose }) {
   const direct = checked ? checked.direct : source?.canAmendDirectly;
   return html`<div class="pov-raise pov-amend" data-run-amend>
     <div class="grf-muted">Change the steps this run has not reached yet. Only this run changes; the template stays as it is.</div>
-    <textarea rows="14" spellcheck="false" class="pov-amend-yaml" aria-label="The run's template (YAML)" value=${text}
+    <textarea name="the-run-s-template-yaml" rows="14" spellcheck="false" class="pov-amend-yaml" aria-label="The run's template (YAML)" value=${text}
       disabled=${busy || !source} onInput=${(event) => { setText(event.currentTarget.value); setChecked(null); }}></textarea>
-    <input class="pov-note" type="text" maxlength="4096" aria-label="Why (optional)" placeholder="why (optional, shown to the operator and in the log)"
+    <input name="why-optional" class="pov-note" type="text" maxlength="4096" aria-label="Why (optional)" placeholder="why (optional, shown to the operator and in the log)"
       value=${note} disabled=${busy} onInput=${(event) => setNote(event.currentTarget.value)} />
     ${checked && html`<div class="pov-amend-check" data-amend-check>This ${amendSummaryText(checked.summary)}.</div>`}
     <div class="pov-raise-row">

@@ -339,9 +339,9 @@ export function HubBoards({ actions, confirm, toast }) {
     ${boards?.error ? html`<div class="fa-danger">${boards.error}</div>` : !boards ? html`<div class="muted">Loading…</div>` : !list.length ? html`<div class="muted">No boards.</div>` : html`<${FaTable} head=${['Board', 'ID', 'Limits', '']}>${list.map((b) => html`<tr key=${b.id} data-hub-board=${b.id}>
         <td>${b.name || '—'}${b.frozen ? html` <span class="ui-tag ui-tag-warn fa-warn-chip">frozen</span>` : ''}</td><td><code>${b.id}</code></td>
         <td>${edit?.board.id === b.id ? html`<span class="fa-row">
-            <input class="fa-num" aria-label="members" value=${edit.members} onInput=${(e) => setEdit({ ...edit, members: e.currentTarget.value })} /> members
-            <input class="fa-num" aria-label="MiB" value=${edit.mib} onInput=${(e) => setEdit({ ...edit, mib: e.currentTarget.value })} /> MiB
-            <input class="fa-num" aria-label="versions" value=${edit.versions} onInput=${(e) => setEdit({ ...edit, versions: e.currentTarget.value })} /> versions</span>` : limits(b)}</td>
+            <input name="members" class="fa-num" aria-label="members" value=${edit.members} onInput=${(e) => setEdit({ ...edit, members: e.currentTarget.value })} /> members
+            <input name="mib" class="fa-num" aria-label="MiB" value=${edit.mib} onInput=${(e) => setEdit({ ...edit, mib: e.currentTarget.value })} /> MiB
+            <input name="versions" class="fa-num" aria-label="versions" value=${edit.versions} onInput=${(e) => setEdit({ ...edit, versions: e.currentTarget.value })} /> versions</span>` : limits(b)}</td>
         <td class="fa-acts">${edit?.board.id === b.id
           ? html`<${Button} size="sm" variant="primary" data-hub-board-act="save" onClick=${save}>Save…<//> <${Button} size="sm" onClick=${() => setEdit(null)}>Cancel<//>`
           : html`<${Button} size="sm" data-hub-board-act="limits" onClick=${() => setEdit({ board: b, members: String(b.max_members || ''), mib: String(Math.round((b.quota_bytes || 0) / (1 << 20)) || ''), versions: String(b.max_versions || '') })}>Limits…<//>

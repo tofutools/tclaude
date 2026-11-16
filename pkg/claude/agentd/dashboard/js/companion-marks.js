@@ -191,7 +191,7 @@ function MarkTip({ mark, why, place, onEnd, onReply }) {
     ${sent ? html`<small>Reply sent.</small>` : null}
     ${!mark.agent_id ? null : replying
       ? html`<form onSubmit=${send}>
-          <textarea rows="2" maxlength=${MARK_REPLY_MAX} aria-label="Reply to this mark" placeholder="Reply here"
+          <textarea name="reply-to-this-mark" rows="2" maxlength=${MARK_REPLY_MAX} aria-label="Reply to this mark" placeholder="Reply here"
             value=${text} onInput=${(e) => setText(e.target.value)}
             onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey) void send(e); }}></textarea>
           <${Button} size="sm" type="submit">Send<//></form>`

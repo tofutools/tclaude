@@ -136,12 +136,12 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
     <span class="gq-strip-title">▶ ${wizard ? 'Begin' : 'Run'} <b>${process.name}</b></span>
     ${params.map((param) => html`<label key=${param.name} class="gq-param" title=${param.description || ''}>
       <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
-      <input type=${param.type === 'number' ? 'number' : 'text'} data-start-param=${param.name} disabled=${!!busy}
+      <input name="groups-saved-processes-input" type=${param.type === 'number' ? 'number' : 'text'} data-start-param=${param.name} disabled=${!!busy}
         value=${values[param.name] ?? ''}
         onInput=${(event) => { const value = event.currentTarget.value; setValues((current) => ({ ...current, [param.name]: value })); }} />
     </label>`)}
     ${profiles.map((profile) => html`<label key=${profile || '(default)'} class="gq-profile" data-consent-profile=${profile}>
-      <input type="checkbox" data-start-profile=${profile} disabled=${!!busy} checked=${authorized.has(profile)}
+      <input name="groups-saved-processes-input" type="checkbox" data-start-profile=${profile} disabled=${!!busy} checked=${authorized.has(profile)}
         onChange=${(event) => toggle(profile, event.currentTarget.checked)} />
       <span>Allow its commands to run on this host <span class="gq-dim">(program profile: ${profile || 'default'})</span></span>
     </label>`)}

@@ -244,7 +244,7 @@ function RailList({ panes, actions, snapshot, notify, floatsOf, menuRequest = nu
   // The agents' ⚙ is the Groups row menu (groups-interactions.js holds which is open).
   return html`<${GroupsInteractionProvider}><div class="collab-rail" data-collab-rail="" aria-label="Agents and resources">
     <div class="cr-head">
-      <input class="cr-search" type="search" placeholder="Find…" aria-label="Find an agent or resource"
+      <input name="find-an-agent-or-resource" class="cr-search" type="search" placeholder="Find…" aria-label="Find an agent or resource"
         value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
       <${RailFilter} filter=${filter} order=${order} background=${background} snapshot=${snapshot} />
       ${making ? newMenu(null) : null}

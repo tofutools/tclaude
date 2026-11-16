@@ -176,7 +176,7 @@ function NodeDropdown({ state, fleet, pageNode, fused, onPick }) {
       ${shown.local && html`<span class="node-chip-home" aria-hidden="true">⌂</span>`}<span class="node-chip-name">${shown.name}</span><span class="node-pick-caret" aria-hidden="true">▾</span><span class="node-chip-dot"></span>
     </button>
     ${open && html`<div class=${`node-pop ui-popover${closing ? ' closing' : ''}`} role="dialog" aria-label="Choose a node" style=${popStyle}>
-      <label class="node-pop-filter"><input ref=${inputRef} type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes"
+      <label class="node-pop-filter"><input name="filter-nodes" ref=${inputRef} type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes"
         onInput=${(e) => { setQuery(e.currentTarget.value); setHl(0); }} onKeyDown=${onKey} /></label>
       <div role="listbox" aria-label="Nodes">
         ${list.map((node, i) => html`${row(node, i)}${self && i === 0 && list.length > 1 ? html`<hr class="node-pop-sep" />` : ''}`)}
@@ -222,9 +222,9 @@ function FusedDropdown({ state, fleet, fused, pageNode, onPick, onFuse }) {
     </button>
     ${open && html`<div class=${`node-pop ui-popover node-fuse-pop${closing ? ' closing' : ''}`} role="dialog" aria-label="Fuse nodes" style=${popStyle}>
       <div class="ui-eyebrow node-pop-head"><span>Fuse nodes</span>${!alone && fused !== 'all' && html`<${Button} size="sm" variant="link" class="node-pop-link" data-fuse="all" onClick=${() => onFuse('all')}>all<//>`}</div>
-      ${list !== nodes && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
+      ${list !== nodes && html`<label class="node-pop-filter"><input name="filter-nodes" type="text" value=${query} placeholder="type to filter" aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
       ${list.map((node) => html`<div key=${node.id} class=${`node-pop-row${node.online || node.local ? '' : ' offline'}`} style=${`--nc:${node.color}`}>
-        <input type="checkbox" checked=${isTicked(fused || 'all', node.id)} disabled=${alone} aria-label=${`Include ${node.name}`} data-fuse-node=${node.id} onChange=${() => toggle(node.id)} />
+        <input name="fleet-island-input" type="checkbox" checked=${isTicked(fused || 'all', node.id)} disabled=${alone} aria-label=${`Include ${node.name}`} data-fuse-node=${node.id} onChange=${() => toggle(node.id)} />
         <span class="node-pop-swatch" aria-hidden="true"></span>
         <button data-ui-exempt type="button" class="node-pop-name" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || `Show ${node.name} alone`} onClick=${() => { setOpen(false); onPick(node.id); }}>${node.local ? '⌂ ' : ''}${node.name}</button>
         <${Button} size="sm" variant="link" class="node-pop-only" tabindex="-1" disabled=${!!closedNode(node, pageNode)} title=${closedNode(node, pageNode) || undefined} onClick=${() => { setOpen(false); onPick(node.id); }}>only<//>
@@ -618,7 +618,7 @@ function TrustAsk({ row, now, onAsk, onDismiss }) {
       ${req.note && html`<div class="fleet-card-ask-note" title="Written by the instance itself">“${req.note}”</div>`}
     </div>`}
     ${open && html`<div class="fleet-card-ask-form">
-      <input type="text" data-fleet="ask-note" maxlength=${TRUST_NOTE_MAX} placeholder="optional note, e.g. who you are" value=${note} autocomplete="off" spellcheck="false"
+      <input name="optional-note-e-g-who" type="text" data-fleet="ask-note" maxlength=${TRUST_NOTE_MAX} placeholder="optional note, e.g. who you are" value=${note} autocomplete="off" spellcheck="false"
         onInput=${(e) => setNote(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); run(() => onAsk(note))(); } else if (e.key === 'Escape') setOpen(false); }} />
       <${Button} size="sm" variant="primary" data-fleet="ask-send" disabled=${busy} onClick=${run(() => onAsk(note))}>${busy ? 'Sending…' : 'Send'}<//>
       <${Button} size="sm" disabled=${busy} onClick=${() => setOpen(false)}>Cancel<//>
@@ -956,7 +956,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
   const pct = Math.round(zoom.view.s * 100);
   return html`<div class="fleet-map-frame" ref=${frameRef}>
     <div class="fleet-map-tools">
-      <label class="fleet-map-check" title="Show the hub between the nodes; hidden, links run node to node"><input type="checkbox" data-fleet="show-hub" checked=${showHub} onChange=${(e) => state.setShowHub(e.currentTarget.checked)} /> Show hub</label>
+      <label class="fleet-map-check" title="Show the hub between the nodes; hidden, links run node to node"><input name="show-hub" type="checkbox" data-fleet="show-hub" checked=${showHub} onChange=${(e) => state.setShowHub(e.currentTarget.checked)} /> Show hub</label>
       ${!showHub && html`<span class=${`fleet-map-hubstate ${hubState === 'connected' ? 'online' : ''}`}><i aria-hidden="true"></i>hub ${hubState}</span>`}
       <span class="fleet-zoom" role="group" aria-label="Zoom">
         <${Button} size="sm" aria-label="Zoom out" disabled=${zoom.view.s <= ZOOM_MIN} onClick=${() => zoom.zoomBy(1 / ZOOM_STEP)}>−<//>
@@ -986,7 +986,7 @@ export function FleetMap({ state, actions, navigate = defaultNavigate, timers = 
     ${updating && html`<${NodeUpdateDialog} node=${{ ...updating, label: updating.name }} confirm=${confirm} toast=${toast} timers=${timers} actions=${updateActions}
       onClose=${() => { setUpdating(null); actions.loadSummary(updating); }} />`}
     <div class="fleet-legend"><span aria-hidden="true"><i class="live"></i>linked, reachable</span><span aria-hidden="true"><i class="stale"></i>unreachable or stale</span>${strangers.length > 0 && html`<span aria-hidden="true"><i class="untrusted"></i>on the hub, not trusted</span>`}<span aria-hidden="true">Counts show only what each node shares with you. A link's label shows its trust in each direction (→ what you may do there, ← what it may do here); click it for details.</span>
-      ${!remote && html`<label class="fleet-untrusted-toggle" title="Also show instances on the hub that this node has not trusted, to trust them from here"><input type="checkbox" data-fleet="show-untrusted" checked=${current.showUntrusted} onChange=${toggleUntrusted} /> Show untrusted</label>`}</div>
+      ${!remote && html`<label class="fleet-untrusted-toggle" title="Also show instances on the hub that this node has not trusted, to trust them from here"><input name="show-untrusted" type="checkbox" data-fleet="show-untrusted" checked=${current.showUntrusted} onChange=${toggleUntrusted} /> Show untrusted</label>`}</div>
   </div>`;
 }
 

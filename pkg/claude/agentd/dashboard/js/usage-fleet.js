@@ -87,7 +87,7 @@ export function FleetTab({ api, busy, reloadKey = 0, onEdit, onToggle, onManageN
           <span class="usage-rule-scope">${limit.target_label}${limit.include_self ? ' + this node' : ''}</span>
           ${limit.rule.dry_run ? html`<span class="usage-rule-tag">dry run</span>` : null}
           <span class="spacer"></span>
-          <label class="usage-rule-enabled"><input type="checkbox" checked=${limit.enabled} disabled=${busy} onChange=${() => onToggle(limit)}/> enabled</label>
+          <label class="usage-rule-enabled"><input name="usage-fleet-input" type="checkbox" checked=${limit.enabled} disabled=${busy} onChange=${() => onToggle(limit)}/> enabled</label>
           <${Button} size="sm" disabled=${busy} onClick=${() => onEdit(limit, fleet)}>edit<//>
         </div>
         <div class="usage-rule-summary">${ruleSummary(limit.rule)}</div>
@@ -169,9 +169,9 @@ export function FleetLimitEditor({ limit, fleet, busy, RuleEditor, onSave, onDel
     <div class="usage-rule-fields">
       <label>Covers <${Select} size="sm" aria-label="Fleet limit target" value=${target} disabled=${busy}
         onChange=${(e) => touch(setTarget)(e.currentTarget.value)}>${options.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}<//></label>
-      <label title="Add this node's own spend, and let agent steps reach its agents"><input type="checkbox" checked=${includeSelf} disabled=${busy}
+      <label title="Add this node's own spend, and let agent steps reach its agents"><input name="count-this-node" type="checkbox" checked=${includeSelf} disabled=${busy}
         aria-label="Count this node" onChange=${(e) => touch(setIncludeSelf)(e.currentTarget.checked)}/> count this node</label>
-      <label><input type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
+      <label><input name="usage-fleet-input" type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
     </div>
     <${RuleEditor} draft=${draft} scope="fleet" windows=${[]} disabled=${busy} onChange=${touch(setDraft)}/>
     <p class="modal-hint ui-hint">Agent steps (notify agents, wrap up, hard stop, block spawns) reach this node's agents when it is counted, and each member's agents in the groups its <code>usage-rules.enforce</code> grant covers. Elsewhere they only alert you.</p>

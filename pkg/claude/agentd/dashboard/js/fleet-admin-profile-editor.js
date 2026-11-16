@@ -94,7 +94,7 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
     <label class="fa-pe-row"><span class="fa-k">trust</span><${Select} size="sm" id="fleet-profile-level" value=${level} onChange=${(e) => setLevel(e.currentTarget.value)}>
       <option value="restricted">restricted: only its grants</option><option value="unrestricted">unrestricted</option><//></label>
     ${level === 'unrestricted' && html`<div class="fa-consequence" role="note"><b>Unrestricted.</b> ${UNRESTRICTED_CONSEQUENCE}</div>`}
-    <div class="fa-pe-row"><span class="fa-k">pools</span><span>${pools.length ? pools.map((p) => html`<label key=${p.id} class="fa-pe-check"><input type="checkbox" data-pool=${p.id} checked=${poolIDs.has(p.id)}
+    <div class="fa-pe-row"><span class="fa-k">pools</span><span>${pools.length ? pools.map((p) => html`<label key=${p.id} class="fa-pe-check"><input name="fleet-admin-profile-editor-input" type="checkbox" data-pool=${p.id} checked=${poolIDs.has(p.id)}
       onChange=${(e) => { const s = new Set(poolIDs); if (e.currentTarget.checked) s.add(p.id); else s.delete(p.id); setPoolIDs(s); }} /> ${p.name}</label>`) : html`<span class="muted">no pools</span>`}
       ${[...poolIDs].filter((id) => !pools.some((p) => p.id === id)).map((id) => html`<span key=${id} class="fa-danger" title="This pool no longer exists; saving fails until it is unticked">missing pool ${id} <${Button} size="sm" variant="link" class="fa-link" onClick=${() => { const s = new Set(poolIDs); s.delete(id); setPoolIDs(s); }}>drop<//></span>`)}</span></div>
     <label class="fa-pe-row"><span class="fa-k">labels</span><input id="fleet-profile-labels" value=${labels} placeholder="gpu, ci" onInput=${(e) => setLabels(e.currentTarget.value)} /></label>
@@ -104,7 +104,7 @@ export function ProfileEditor({ profile = null, pools = [], groups = [], actions
       ${grants.length === 0 ? html`<div class="muted">none</div>` : html`<table class="fa-table ui-compact" id="fleet-profile-grants"><tbody>${grants.map((g) => html`<tr key=${g.key} data-slug=${g.slug}>
         <td><code class=${slugInfo(g.slug).sensitive ? 'fa-sensitive' : ''}>${g.slug}</code></td>
         <td>${scopeText(g.scope, groupNames) || (slugInfo(g.slug).kind === 'group' ? html`<span class="fa-warn">all groups, incl. future</span>` : slugInfo(g.slug).gateway ? 'all gateways' : html`<span class="muted">node-wide</span>`)}</td>
-        <td>${slugInfo(g.slug).policy ? html`cap <input type="number" min="1" style="width:4em" value=${g.spawn_policy?.max_live || 2}
+        <td>${slugInfo(g.slug).policy ? html`cap <input name="fleet-admin-profile-editor-input" type="number" min="1" style="width:4em" value=${g.spawn_policy?.max_live || 2}
           onInput=${(e) => setGrants(grants.map((x) => (x.key === g.key ? { ...x, spawn_policy: { ...(x.spawn_policy || {}), max_live: Math.max(1, Number(e.currentTarget.value) || 2) } } : x)))} />` : ''}</td>
         <td class="fa-acts"><${Button} size="sm" variant="link" class="fa-link" data-fa="drop-grant" onClick=${() => setGrants(grants.filter((x) => x.key !== g.key))}>remove<//></td>
       </tr>`)}</tbody></table>`}

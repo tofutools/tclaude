@@ -165,7 +165,7 @@ export function FilePicker({ add, busy, full = false, hint = '' }) {
   const input = useRef(null);
   return html`<span class="tb-files-pick">
     <${Button} size="sm" class="tb-files-choose" disabled=${busy || full} onClick=${() => input.current?.click()}>📎 Choose files…<//>
-    <input ref=${input} type="file" class="tb-files-input" multiple hidden disabled=${busy}
+    <input name="tb-files-input" ref=${input} type="file" class="tb-files-input" multiple hidden disabled=${busy}
       onChange=${(event) => { add(event.currentTarget.files); event.currentTarget.value = ''; }} />
     <span class="ui-hint">${full ? `that is ${TASK_FILE_MAX} files` : `${hint || `…or drop files on the dialog, or paste (${shortcutText('terminal-paste')})`} · ${FILE_LIMIT_TEXT}`}</span>
   </span>`;

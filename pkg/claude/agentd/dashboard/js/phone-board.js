@@ -135,9 +135,9 @@ export function TextSheet({ title, label, placeholder = '', send = 'Send', multi
   return html`<form class="phone-board-text" onSubmit=${submit}>
     <p class="phone-board-sheet-title">${title}</p>
     ${multiline
-      ? html`<textarea ref=${field} class="ui-input phone-board-field" rows="4" aria-label=${label} placeholder=${placeholder}
+      ? html`<textarea name="ui-input" ref=${field} class="ui-input phone-board-field" rows="4" aria-label=${label} placeholder=${placeholder}
           value=${text} onInput=${(event) => setText(event.currentTarget.value)}></textarea>`
-      : html`<input ref=${field} class="ui-input phone-board-field" aria-label=${label} placeholder=${placeholder}
+      : html`<input name="ui-input" ref=${field} class="ui-input phone-board-field" aria-label=${label} placeholder=${placeholder}
           value=${text} onInput=${(event) => setText(event.currentTarget.value)} />`}
     <div class="phone-btns">
       <${Button} class="phone-btn phone-btn-grow" onClick=${close}>Cancel<//>

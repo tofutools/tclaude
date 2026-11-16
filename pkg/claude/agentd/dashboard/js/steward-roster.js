@@ -116,7 +116,7 @@ export function StewardRoster({ roster, agents, fetchImpl, notify, openHandover,
           : html`<${Button} size="sm" variant="primary" disabled=${!!busy} title="Make this the active Steward. The current one goes on the roster." onClick=${() => switchTo(entry)}>${busy === entry.agent_id ? 'Switching…' : 'Switch'}<//>`}
         ${entry.seat === 'standby' && html`<${Button} size="sm" variant="ghost danger" icon=${true} class="steward-roster-remove" disabled=${!!busy} aria-label=${`Take ${entry.name} off the roster`} title="Take off the roster. It stays a normal agent." onClick=${() => remove(entry)}>×<//>`}
       </div>`)}
-      <input type="search" class="steward-roster-filter" placeholder="Make another agent the Steward…" aria-label="Find an agent to make the Steward"
+      <input name="find-an-agent-to-make" type="search" class="steward-roster-filter" placeholder="Make another agent the Steward…" aria-label="Find an agent to make the Steward"
         value=${filter} onInput=${(event) => setFilter(event.currentTarget.value)} />
       ${candidates.map((agent) => html`<button data-ui-exempt key=${agent.agentId} type="button" class="steward-roster-candidate"
         title=${`Make ${agent.name} the Steward`} onClick=${() => handOverTo({ agent_id: agent.agentId, name: agent.name })}>${agent.name}</button>`)}

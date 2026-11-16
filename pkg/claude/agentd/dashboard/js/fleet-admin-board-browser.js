@@ -302,7 +302,7 @@ export function SkillInstallDialog({ row, actions, confirm, onClose, onDone }) {
     ${TARGETS.map((t) => html`<label key=${t.id} class=${`fa-cb-opt ui-card ui-inset${opts.target === t.id ? ' on' : ''}`} data-target=${t.id}>
       <input type="radio" name="fleet-cb-target" checked=${opts.target === t.id} onChange=${() => change({ target: t.id })} />
       <span class="fa-cb-opt-body"><span><b>${t.label}</b>${t.id === 'custom' && html` <span class="ui-tag ui-tag-accent fa-badge">human only</span>`}</span><span class="muted">${t.note}</span>
-        ${opts.target === t.id && t.id === 'harness' && (!roots ? html`<span class="muted">Loading…</span>` : html`${harness.map((r) => html`<label key=${r.id} class="fa-cb-sub"><input type="checkbox" data-skill-target=${r.id} checked=${opts.harness.includes(r.id)}
+        ${opts.target === t.id && t.id === 'harness' && (!roots ? html`<span class="muted">Loading…</span>` : html`${harness.map((r) => html`<label key=${r.id} class="fa-cb-sub"><input name="fleet-admin-board-browser-input" type="checkbox" data-skill-target=${r.id} checked=${opts.harness.includes(r.id)}
             onChange=${(e) => change({ harness: e.currentTarget.checked ? [...opts.harness, r.id] : opts.harness.filter((x) => x !== r.id) })} /> ${r.label} <code>${r.path}</code></label>`)}`)}
         ${opts.target === t.id && t.id === 'group' && (!roots ? html`<span class="muted">Loading…</span>` : groups.length ? html`<${GroupCombobox} id="fleet-cb-group" value=${opts.group} onChange=${(key) => change({ group: key })}
             noneLabel="pick a group…" groups=${groups.map((r) => ({ value: r.id, label: r.label }))} />
