@@ -254,6 +254,7 @@ tclaude process send-back <run-id> --node <step> [--note "why"]
 tclaude process amend <run-id> --print > run.yaml   # then edit it
 tclaude process amend <run-id> --file run.yaml [--note "why"]
 tclaude process amend <run-id> --list
+tclaude process amend <run-id> --save-back <n>   # templates.manage
 tclaude process report succeeded|failed [--run <run-id> --node <node> \
     --attempt <n>] [--verdict <verdict>] [--note "summary"]   # agent performers only
 tclaude agent process-templates ls
@@ -362,8 +363,10 @@ in it raises a concern.
   decision and vote it reopens gets a new window, so a verdict given before
   is refused. It needs `process.runs.manage`.
 - **Amending the run** (`tclaude process amend <run-id> --file`, or ✎ Amend
-  run on the run view) changes the run's own copy of its template, never
-  the template itself. It changes only the part the run has not reached:
+  run on the run view, which opens the run's own copy in the graph editor
+  with the steps it has reached locked and marked 🔒, and offers YAML as a
+  fallback) changes the run's own copy of its template, never the template
+  itself until it is saved back. It changes only the part the run has not reached:
   steps that have not started can be added, removed, changed and rerouted,
   and a step being worked on can still be rerouted (to insert a step after
   it). A started step is otherwise left as it is; send the run back to
@@ -376,7 +379,12 @@ in it raises a concern.
   proposed: if the run has moved on since, applying it is refused ("the run
   moved on") and it has to be proposed again. The run view lists every
   amendment with what it changed, who made it and when, and the run log
-  records it.
+  records it. **Saving back** (⤴ Save back to template on the run's latest
+  applied amendment, or `tclaude process amend <run-id> --save-back <n>`,
+  with `process.templates.manage`) makes the amended copy the template's
+  next version, so runs started from then on follow it. It is refused if
+  the template was edited since the run started, so those edits are not
+  lost; carry the amendment over in the editor by hand instead.
 - **Cancelling the run** (`tclaude process cancel <run-id>`, ✕ Cancel run on
   the run view, or the operator's card) gives it up from any state: nothing
   more starts, work still out is withdrawn, and it ends `canceled`. It needs

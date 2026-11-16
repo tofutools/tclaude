@@ -1,11 +1,14 @@
 package agentd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
 )
 
@@ -36,7 +40,10 @@ type processRunAmendRequest struct {
 	// printed (one of the two).
 	Template json.RawMessage `json:"template,omitempty"`
 	YAML     string          `json:"yaml,omitempty"`
-	Note     string          `json:"note,omitempty"`
+	// Edit is the graph editor's model of the copy (template without next,
+	// edges, layout), as GET …/template's editView gives it.
+	Edit *processTemplateEditView `json:"edit,omitempty"`
+	Note string                   `json:"note,omitempty"`
 	// DryRun checks the amendment and says what it changes, storing nothing.
 	DryRun bool `json:"dryRun,omitempty"`
 }
@@ -45,8 +52,28 @@ type processRunAmendRequest struct {
 const MaxProcessAmendYAMLBytes = 1 << 20
 
 func (request processRunAmendRequest) template() (*model.Template, error) {
-	if (len(request.Template) == 0) == (request.YAML == "") {
-		return nil, errors.New("send the amended template as template (JSON) or yaml, one of the two")
+	given := 0
+	for _, set := range []bool{len(request.Template) > 0, request.YAML != "", request.Edit != nil} {
+		if set {
+			given++
+		}
+	}
+	if given != 1 {
+		return nil, errors.New("send the amended template as template (JSON), yaml or edit, one of them")
+	}
+	if request.Edit != nil {
+		if request.Edit.Template == nil || request.Edit.Edges == nil {
+			return nil, errors.New("edit needs its template and edges")
+		}
+		request.Edit.layoutPresent = request.Edit.Layout != nil
+		parsed, err := parseProcessEditView(request.Edit)
+		if err != nil {
+			return nil, err
+		}
+		if errs := parsed.Diagnostics.Errors(); len(errs) > 0 {
+			return nil, fmt.Errorf("the amended template does not validate: %s", errs[0].Message)
+		}
+		return parsed.Template, nil
 	}
 	if request.YAML != "" {
 		if len(request.YAML) > MaxProcessAmendYAMLBytes {
@@ -86,6 +113,9 @@ type processRunAmendmentView struct {
 	// Outdated marks a proposal the run has moved on from since: applying it
 	// would be refused, so it has to be proposed again.
 	Outdated bool `json:"outdated,omitempty"`
+	// Saveable marks the run's latest applied amendment while it is not yet
+	// saved back to its template (process.templates.manage).
+	Saveable bool `json:"saveable,omitempty"`
 }
 
 func processRunAmendmentViewOf(a db.ProcessRunAmendment) processRunAmendmentView {
@@ -114,9 +144,14 @@ func processRunAmendmentViews(runID string, stateVersion int64) []processRunAmen
 		return nil
 	}
 	out := make([]processRunAmendmentView, 0, len(rows))
+	latestSeen := false
 	for _, a := range rows {
 		v := processRunAmendmentViewOf(a)
 		v.Outdated = a.State == db.ProcessAmendmentProposed && a.BaseStateVersion != stateVersion
+		if a.State == db.ProcessAmendmentApplied && !latestSeen {
+			latestSeen = true
+			v.Saveable = a.SavedTemplateRef == ""
+		}
 		out = append(out, v)
 	}
 	return out
@@ -172,7 +207,9 @@ func handleProcessRunAmend(w http.ResponseWriter, r *http.Request) {
 		direct = true
 	}
 	var request processRunAmendRequest
-	if err := decodeProcessRuntimeRequest(w, r, &request); err != nil {
+	// A whole template rides along: the editor's body limit, not a run
+	// request's.
+	if err := decodeProcessAmendRequest(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
@@ -468,8 +505,131 @@ func handleProcessRunTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// The graph editor's model of the copy: the steps the run has reached
+	// are locked, and of those the ones it may still reroute say so.
+	edit := &processTemplateEditView{}
+	if canonical, err := model.CanonicalYAML(&tmpl); err == nil {
+		if parsed, err := model.Parse(canonical); err == nil && parsed.Template != nil {
+			semantic := *parsed.Template
+			semantic.Layout = nil
+			edit = &processTemplateEditView{Template: &semantic, Edges: parsed.Edges, Layout: parsed.Template.Layout}
+		}
+	}
+	var checkpoint engine.Checkpoint
+	_ = json.Unmarshal(record.CheckpointJSON, &checkpoint)
 	writeProcessJSON(w, http.StatusOK, map[string]any{
 		"template": record.TemplateSnapshotJSON, "yaml": string(source), "stateVersion": record.StateVersion,
 		"canAmendDirectly": processAmendDirect(r) || confirmedAgentConv(r) == "",
+		"editView":         edit,
+		"reached":          sortedKeys(engine.StartedSteps(checkpoint)),
+		"reroutable":       sortedKeys(engine.ReroutableSteps(checkpoint)),
 	})
+}
+
+// handleProcessRunAmendmentSaveBack saves an applied amendment's copy as its
+// template's next version (process.templates.manage), so later runs start
+// from it. Only the run's latest applied amendment is saved, and only while
+// the template is still at the version the run started from: a template
+// edited since would otherwise lose those edits.
+func handleProcessRunAmendmentSaveBack(w http.ResponseWriter, r *http.Request) {
+	caller, ok := requirePermission(w, r, PermProcessTemplatesManage)
+	if !ok {
+		return
+	}
+	runID := strings.TrimSpace(r.PathValue("id"))
+	id, err := strconv.ParseInt(r.PathValue("amendment"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "amendment id must be a number")
+		return
+	}
+	actor, err := processRequestActor(r, caller)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "auth", err.Error())
+		return
+	}
+	setAuditDetail(r, fmt.Sprintf("run: %s, save amendment #%d back to its template", runID, id))
+	record, err := db.GetProcessRun(runID)
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	amendments, err := db.ListProcessRunAmendments(runID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	var latest *db.ProcessRunAmendment
+	for i := range amendments {
+		if amendments[i].State == db.ProcessAmendmentApplied {
+			latest = &amendments[i]
+			break
+		}
+	}
+	switch {
+	case latest == nil:
+		writeError(w, http.StatusConflict, "process_amendment_not_applied", "this run has no applied amendment to save back")
+		return
+	case latest.ID != id:
+		writeError(w, http.StatusConflict, "process_amendment_superseded",
+			fmt.Sprintf("amendment #%d is not this run's latest; save back #%d, which includes it", id, latest.ID))
+		return
+	case latest.SavedTemplateRef != "":
+		writeError(w, http.StatusConflict, "process_amendment_saved", "already saved back as "+latest.SavedTemplateRef)
+		return
+	}
+	var tmpl model.Template
+	if err := strictjson.Decode(latest.TemplateJSON, &tmpl); err != nil {
+		writeProcessRuntimeError(w, fmt.Errorf("%w: decode amendment template: %v", executor.ErrInvalidRun, err))
+		return
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
+		return
+	}
+	head, err := fs.GetTemplateHeadGeneration(r.Context(), tmpl.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "the run's template is no longer saved")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
+		return
+	}
+	if head.Ref != record.TemplateRef {
+		writeError(w, http.StatusConflict, "process_template_moved",
+			"the template was changed since this run started; open it in the editor and carry the amendment over by hand")
+		return
+	}
+	commit, err := fs.PutTemplateEditorSourceAttributed(r.Context(), &tmpl, head.SourceHash, actor)
+	var conflict *store.TemplateSourceConflictError
+	if errors.As(err, &conflict) {
+		writeError(w, http.StatusConflict, "process_template_moved", "the template was changed while saving; try again")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_template_store", err.Error())
+		return
+	}
+	if err := db.SetProcessRunAmendmentSaved(runID, id, commit.Ref); err != nil {
+		slog.Warn("process amend: record save-back", "run", runID, "amendment", id, "error", err)
+	}
+	a, _ := db.GetProcessRunAmendment(runID, id)
+	writeProcessJSON(w, http.StatusOK, map[string]any{"amendment": processRunAmendmentViewOf(a), "ref": commit.Ref})
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func decodeProcessAmendRequest(w http.ResponseWriter, r *http.Request, dst *processRunAmendRequest) error {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxProcessEditBody+64<<10))
+	if err != nil {
+		return err
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	return strictjson.Decode(data, dst)
 }

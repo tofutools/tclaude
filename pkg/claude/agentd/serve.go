@@ -1755,6 +1755,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/runs/{id}/amendments", handleProcessRunAmend)
 	mux.HandleFunc("GET /v1/process/runs/{id}/amendments", handleProcessRunAmendments)
 	mux.HandleFunc("GET /v1/process/runs/{id}/template", handleProcessRunTemplate)
+	mux.HandleFunc("POST /v1/process/runs/{id}/amendments/{amendment}/save-back", handleProcessRunAmendmentSaveBack)
 	mux.HandleFunc("GET /v1/process/runs/{id}/amendments/{amendment}", handleProcessRunAmendmentTemplate)
 	mux.HandleFunc("POST /v1/process/runs/{id}/concerns", handleProcessRunConcernRaise)
 	mux.HandleFunc("POST /v1/process/runs/{id}/concerns/{concern}/answer", handleProcessRunConcernAnswer)

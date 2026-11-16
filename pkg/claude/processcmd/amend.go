@@ -23,6 +23,7 @@ type processAmendParams struct {
 	File     string `long:"file" optional:"true" help:"The amended template (YAML), from --print and edited"`
 	Print    bool   `long:"print" optional:"true" help:"Print the run's own template as it stands, to edit"`
 	List     bool   `long:"list" optional:"true" help:"List the run's amendments"`
+	SaveBack int64  `long:"save-back" optional:"true" help:"Save this applied amendment (the run's latest) as its template's next version (process.templates.manage)"`
 	Note     string `long:"note" optional:"true" help:"Why, shown to the operator and recorded in the run log"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 }
@@ -37,7 +38,8 @@ func processAmendCmd() *cobra.Command {
 			"process.templates.manage it applies at once; the run's overseer proposes it, and the operator applies " +
 			"or rejects it from a card that says what it changes. If the run moves on before then, applying it is " +
 			"refused and it has to be proposed again. Programs and subprocesses cannot be added or changed. The " +
-			"template itself is untouched; list the run's amendments with --list.",
+			"template itself is untouched until an applied amendment is saved back with --save-back " +
+			"(process.templates.manage); list the run's amendments with --list.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *processAmendParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -57,6 +59,7 @@ type processAmendmentJSON struct {
 	Note         string `json:"note"`
 	DecidedName  string `json:"decidedName"`
 	DecisionNote string `json:"decisionNote"`
+	SavedRef     string `json:"savedTemplateRef"`
 	CreatedAt    string `json:"createdAt"`
 	Summary      struct {
 		Added    []string `json:"added"`
@@ -89,13 +92,13 @@ func runProcessAmend(p *processAmendParams, stdout, stderr io.Writer) error {
 	}
 	runID := strings.TrimSpace(p.RunID)
 	modes := 0
-	for _, on := range []bool{p.File != "", p.Print, p.List} {
+	for _, on := range []bool{p.File != "", p.Print, p.List, p.SaveBack > 0} {
 		if on {
 			modes++
 		}
 	}
 	if runID == "" || modes != 1 {
-		return fmt.Errorf("a run id and exactly one of --file, --print or --list are required")
+		return fmt.Errorf("a run id and exactly one of --file, --print, --list or --save-back are required")
 	}
 	ask, err := agent.ParseAskHuman(p.AskHuman)
 	if err != nil {
@@ -121,6 +124,15 @@ func runProcessAmend(p *processAmendParams, stdout, stderr io.Writer) error {
 		}
 		_, err = stdout.Write(out)
 		return err
+	case p.SaveBack > 0:
+		var response struct {
+			Ref string `json:"ref"`
+		}
+		if err := agent.DaemonRequest(http.MethodPost, fmt.Sprintf("%s/amendments/%d/save-back", base, p.SaveBack), map[string]any{}, &response, opts); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Saved amendment #%d of %s back to its template as %s. Runs started from now on follow it.\n", p.SaveBack, runID, response.Ref)
+		return nil
 	case p.List:
 		var response struct {
 			Amendments []processAmendmentJSON `json:"amendments"`
@@ -135,6 +147,9 @@ func runProcessAmend(p *processAmendParams, stdout, stderr io.Writer) error {
 			fmt.Fprintf(stdout, "#%d  %-8s  %s  by %s: %s\n", a.ID, a.State, a.CreatedAt, firstNonEmpty(a.ProposedName, a.ProposedBy), a.summaryText())
 			if a.Note != "" {
 				fmt.Fprintf(stdout, "    why: %s\n", a.Note)
+			}
+			if a.SavedRef != "" {
+				fmt.Fprintf(stdout, "    saved back as %s\n", a.SavedRef)
 			}
 			if a.DecisionNote != "" {
 				fmt.Fprintf(stdout, "    %s: %s\n", a.State, a.DecisionNote)

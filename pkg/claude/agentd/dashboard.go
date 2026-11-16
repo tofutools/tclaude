@@ -165,6 +165,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/runs/{id}/amendments", dashboardProcessRoute(handleProcessRunAmend))
 	mux.HandleFunc("GET /v1/process/runs/{id}/amendments", dashboardProcessRoute(handleProcessRunAmendments))
 	mux.HandleFunc("GET /v1/process/runs/{id}/template", dashboardProcessRoute(handleProcessRunTemplate))
+	mux.HandleFunc("POST /v1/process/runs/{id}/amendments/{amendment}/save-back", dashboardProcessRoute(handleProcessRunAmendmentSaveBack))
 	mux.HandleFunc("GET /v1/process/runs/{id}/amendments/{amendment}", dashboardProcessRoute(handleProcessRunAmendmentTemplate))
 	mux.HandleFunc("POST /v1/process/runs/{id}/concerns", dashboardProcessRoute(handleProcessRunConcernRaise))
 	mux.HandleFunc("POST /v1/process/runs/{id}/concerns/{concern}/answer", dashboardProcessRoute(handleProcessRunConcernAnswer))

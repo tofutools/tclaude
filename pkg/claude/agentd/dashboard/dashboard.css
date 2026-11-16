@@ -16438,6 +16438,10 @@ body.wizard .pni-add { border-color: #4a3d6b; }
 /* Proposal review overlay (E4): another author's saved version painted over
    the live draft. Added = green, changed = amber, removed = red dashed; the
    change under review gets a halo; settled changes fade. */
+/* A run's own copy: the steps the run has reached stay as they are. */
+.process-node.is-locked .process-node-shape { fill: #161b22; stroke: #6e7681; stroke-dasharray: 3 3; }
+.process-node.is-locked .process-node-label { fill: #8b949e; }
+.process-editor-run-copy { color: #d2a8ff; border-color: #6e40c9; white-space: nowrap; }
 .process-node.is-diff-added .process-node-shape { stroke: #3fb950; stroke-dasharray: 6 3; }
 .process-node.is-diff-changed .process-node-shape { stroke: #d29922; }
 .process-node.is-diff-removed .process-node-shape { stroke: #f85149; stroke-dasharray: 4 3; opacity: .7; }
@@ -18429,6 +18433,12 @@ button.gpi-graph:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px
 .pov-raise textarea { width: 100%; box-sizing: border-box; resize: vertical; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; font-size: 12px; padding: 6px 8px; }
 .pov-raise-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pov-raise-row label { margin-right: auto; display: inline-flex; align-items: center; gap: 4px; }
+.prc-overlay { position: fixed; inset: 24px; z-index: 6000; display: flex; flex-direction: column; background: #0d1117; border: 1px solid #6e40c9; border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.6); overflow: hidden; }
+.prc-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: #161b22; border-bottom: 1px solid #30363d; color: #c9d1d9; }
+.prc-title b { color: #d2a8ff; }
+.prc-note { max-width: 360px; }
+.prc-mount { flex: 1 1 auto; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.prc-mount > * { flex: 1 1 auto; min-height: 0; }
 .pov-amendments { display: flex; flex-direction: column; gap: 6px; }
 .pov-amendments ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .pov-amend-title { color: #d2a8ff; font-weight: 600; }

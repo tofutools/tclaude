@@ -15,6 +15,7 @@ import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { RunCopyEditor } from './process-run-copy.js';
 
 const html = htm.bind(h);
 
@@ -277,7 +278,8 @@ export function RunAmendments({ view, api, onChanged, compact = false }) {
     setBusy(`${amendment.id}:${choice}`);
     setError('');
     try {
-      await api.pickConcern(amendment.messageId, choice, '');
+      if (choice === 'save') await api.saveAmendmentBack(view.id, amendment.id);
+      else await api.pickConcern(amendment.messageId, choice, '');
       onChanged?.();
     } catch (cause) {
       setError(cause?.message || String(cause));
@@ -295,6 +297,12 @@ export function RunAmendments({ view, api, onChanged, compact = false }) {
       </div>
       <div class="pov-reason" data-amendment-summary>${amendSummaryText(a.summary)}</div>
       ${a.note && html`<div class="grf-muted">why: ${a.note}</div>`}
+      ${a.savedTemplateRef && html`<div class="grf-muted" data-amendment-saved>saved back to the template: runs started since follow it</div>`}
+      ${a.saveable && api?.saveAmendmentBack && html`<div class="pov-concern-actions">
+        <${Button} size="sm" disabled=${!!busy} data-amendment-save-back
+          title="Save this run's copy as the template's next version, so runs started from now on follow it (needs process.templates.manage)"
+          onClick=${() => void pick(a, 'save')}>${busy === `${a.id}:save` ? '…' : '⤴ Save back to template'}<//>
+      </div>`}
       ${a.state === 'proposed' && !a.outdated && a.messageId && api?.pickConcern && html`<div class="pov-concern-actions">
         <${Button} size="sm" variant="primary" disabled=${!!busy} data-amendment-apply onClick=${() => void pick(a, 1)}>${busy === `${a.id}:1` ? '…' : 'Apply amendment'}<//>
         <${Button} size="sm" disabled=${!!busy} data-amendment-reject onClick=${() => void pick(a, 2)}>${busy === `${a.id}:2` ? '…' : 'Reject'}<//>
@@ -393,7 +401,7 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
         onClick=${() => setSteering('back')}>↶ Send back to ${nodeLabel || nodeId}…<//>`}
       ${steerable && !compact && api?.amendRun && !busy && html`<${Button} size="sm" data-run-amend-open
         title="Change the steps this run has not reached yet, for this run only"
-        onClick=${() => setSteering('amend')}>✎ Amend run…<//>`}
+        onClick=${() => setSteering('amend-graph')}>✎ Amend run…<//>`}
       ${steerable && api?.cancelRun && !busy && html`<${Button} size="sm" variant="danger" data-run-cancel-open
         title="Give the whole run up: work still out is withdrawn and it ends canceled"
         onClick=${() => setSteering('cancel')}>✕ Cancel ${wizard ? 'rite' : 'run'}…<//>`}
@@ -407,6 +415,8 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
       placeholder=${`Why run ${nodeLabel || nodeId} again? (optional, recorded in its log) Everything after it is reset.`} confirm="Send back"
       send=${(note) => api.sendBack(runId, { nodeId, note })}
       onChanged=${onChanged} onClose=${() => setSteering('')} />`}
+    ${steering === 'amend-graph' && html`<${RunCopyEditor} runId=${runId} api=${api} onChanged=${onChanged}
+      onClose=${() => setSteering('')} onYaml=${() => setSteering('amend')} />`}
     ${steering === 'amend' && html`<${AmendRun} runId=${runId} api=${api} onChanged=${onChanged} onClose=${() => setSteering('')} />`}
     ${steering === 'cancel' && html`<${SteerForm} kind="cancel" label="Why the run is given up"
       placeholder="Why is the run given up? (optional, recorded in its log)" confirm=${wizard ? 'Cancel the rite' : 'Cancel the run'}

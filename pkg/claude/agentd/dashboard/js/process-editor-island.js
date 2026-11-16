@@ -170,7 +170,10 @@ function Header({ controller, view }) {
   const [menu, setMenu] = useState('');
   const sub = view.scope?.depth > 0;
   const saveable = !(pending.save || externalPending || (!model.dirty && !view.blank));
-  const exportable = !externalPending && !model.dirty && !!model.semanticHash;
+  const runCopy = view.runCopy;
+  const exportable = !runCopy && !externalPending && !model.dirty && !!model.semanticHash;
+  const saveLabel = runCopy ? runCopy.label : 'Save';
+  const saveTitle = runCopy ? runCopy.title : 'Save a new version';
   const exportFile = async () => {
     try {
       const error = await exportWorkflow(model.id);
@@ -181,7 +184,7 @@ function Header({ controller, view }) {
   };
   const menus = [
     { key: 'file', label: 'File', items: () => [
-      { key: 'save', label: 'Save', shortcut: shortcutText('process-save'), disabled: !saveable, title: 'Save a new version', run: () => controller.save() },
+      { key: 'save', label: saveLabel, shortcut: shortcutText('process-save'), disabled: !saveable, title: saveTitle, run: () => controller.save() },
       { sep: true },
       { heading: 'Export' },
       { key: 'export', label: 'Workflow file (.pwf)…', disabled: !exportable,
@@ -215,16 +218,19 @@ function Header({ controller, view }) {
   ];
   return html`<${ResourceEditorHeader} class="process-editor-header" label="Process editor menu" openMenu=${menu} onOpenMenu=${setMenu}
     title=${html`<span class="process-editor-identity"><${EditableTitle} controller=${controller} view=${view} /></span>`}
-    identity=${html`<span class="process-hash process-editor-version" title=${model.semanticHash || 'This template has never been saved'}>
+    identity=${html`${runCopy
+    ? html`<span class="process-hash process-editor-version process-editor-run-copy" data-process-run-copy title=${runCopy.hint || ''}>${runCopy.badge}</span>`
+    : html`<span class="process-hash process-editor-version" title=${model.semanticHash || 'This template has never been saved'}>
         ${model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved'}
-      </span>
-      ${model.id && model.semanticHash && html`<${LockChip} kind="process" id=${model.id} name=${model.name || model.id} locked=${!!view.agentsLocked}
+      </span>`}
+      ${!runCopy && model.id && model.semanticHash && html`<${LockChip} kind="process" id=${model.id} name=${model.name || model.id} locked=${!!view.agentsLocked}
         onChanged=${(locked) => controller.setAgentsLocked(locked)} />`}
       <span class="process-editor-dirty" hidden=${!model.dirty}>● modified</span>
       <span class=${`process-editor-status${view.status.error ? ' is-error' : ''}`} role="status">${view.status.message}</span>`}
     menus=${menus}
-    actions=${html`<${EditorGetHelp} controller=${controller} view=${view} disabled=${externalPending || pending.save} />
-      <${Button} variant="primary" class="process-action" data-process-save disabled=${!saveable} title=${withShortcut('Save a new version', 'process-save')} onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}<//>`} />`;
+    actions=${html`${!runCopy && html`<${EditorGetHelp} controller=${controller} view=${view} disabled=${externalPending || pending.save} />`}
+      ${runCopy?.closable && html`<${Button} class="process-action" data-process-run-copy-close onClick=${() => controller.closeRunCopy()}>Close<//>`}
+      <${Button} variant="primary" class="process-action" data-process-save disabled=${!saveable} title=${withShortcut(saveTitle, 'process-save')} onClick=${() => controller.save()}>${pending.save ? (runCopy ? 'Sending…' : 'Saving…') : saveLabel}<//>`} />`;
 }
 
 function externalSummary(change) {

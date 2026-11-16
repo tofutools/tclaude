@@ -840,7 +840,7 @@ export class ProcessGraph {
   renderNode(node) {
     const overlay = overlayPresentation(node.overlay || node.stateOverlay);
     const group = svgElement('g', {
-      class: `process-node process-node-${node.compound?.collapsed ? 'compound' : node.type || 'task'}${node.pinned ? ' is-pinned' : ''}${diffClasses(node.diff)}`,
+      class: `process-node process-node-${node.compound?.collapsed ? 'compound' : node.type || 'task'}${node.pinned ? ' is-pinned' : ''}${node.locked ? ' is-locked' : ''}${diffClasses(node.diff)}`,
       transform: `translate(${node.x} ${node.y})`,
       'data-key': `node:${node.id}`,
       'data-node-id': node.id,
