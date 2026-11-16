@@ -178,3 +178,14 @@
 :root[data-layout="phone"] .phone-term-link-target {
   margin: 0 4px 8px; font: 13px/1.45 ui-monospace, monospace; color: var(--ui-text-strong); overflow-wrap: anywhere;
 }
+
+/* The bottom nav under a terminal (js/phone-nav-toggle.js): above the
+   terminal, which leaves it its height. Its own height, even over a page
+   that had hidden the nav (data-phone-page zeroes --footer-h). The input
+   row then needs no room for the home indicator: the nav has it. */
+:root[data-layout="phone"][data-phone-terminal][data-phone-terminal-nav] {
+  --footer-h: calc(var(--phone-nav-h) + var(--phone-safe-bottom));
+}
+:root[data-layout="phone"][data-phone-terminal-nav] .phone-nav { z-index: calc(var(--z-panel) + 1); }
+:root[data-layout="phone"][data-phone-terminal-nav] .phone-term { padding-bottom: var(--footer-h); box-sizing: border-box; }
+:root[data-layout="phone"][data-phone-terminal-nav] .phone-term-input { padding-bottom: 10px; }

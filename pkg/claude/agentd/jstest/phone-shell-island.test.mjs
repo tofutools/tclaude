@@ -482,3 +482,74 @@ test('Performance is desktop only: leaving it, Diagnostics opens on the Doctor a
   await harness.act(() => state.setActiveTab('diagnostics'));
   assert.equal(harness.document.querySelector('.phone-desktop-page'), null, 'back on Diagnostics, not the desktop-only page');
 });
+
+// js/phone-nav-toggle.js: a terminal docked over the dashboard shows the
+// nav under it unless the operator hid it there (▾/▴) or the keyboard is
+// up; a view picked in it closes the terminal first. The toggle carries the
+// nav's count while the nav is hidden.
+test('a terminal keeps the nav under it unless hidden or the keyboard is up; a slot closes it', async (t) => {
+  const { harness, mounted, root, navItem, tap, calls } = await setup(t);
+  const toggles = await harness.importDashboardModule('js/phone-nav-toggle.js');
+  const prefs = new Map();
+  const store = { getItem: (k) => prefs.get(k) ?? null, setItem: (k, v) => prefs.set(k, v), removeItem: (k) => prefs.delete(k) };
+  toggles.resetNavToggleForTest();
+  t.after(() => toggles.resetNavToggleForTest());
+  const nav = () => mounted.container.querySelector('.phone-nav');
+  let closed = 0;
+  await harness.act(() => { toggles.terminalDock.value = { keyboard: false, close: () => { closed += 1; toggles.terminalDock.value = null; } }; });
+  assert.ok(nav(), 'shown by default under a terminal');
+  assert.equal(root.dataset.phoneTerminalNav, '', 'the terminal leaves the nav its room');
+  assert.equal(toggles.navBadge.value, 4, 'the nav\'s count: 1 asking + 3 unread');
+
+  await harness.act(() => toggles.setNavShown('terminal', false, store));
+  assert.equal(nav(), null, 'hidden by the toggle');
+  assert.equal(root.dataset.phoneTerminalNav, undefined);
+  assert.equal(prefs.get('tclaude.dash.phone.nav.terminal'), 'hidden', 'remembered');
+  assert.equal(toggles.navShown('mail', store), true, 'mail keeps its own choice');
+
+  await harness.act(() => toggles.setNavShown('terminal', true, store));
+  assert.equal(prefs.has('tclaude.dash.phone.nav.terminal'), false);
+  await harness.act(() => { toggles.terminalDock.value = { ...toggles.terminalDock.value, keyboard: true }; });
+  assert.equal(nav(), null, 'never over a raised keyboard');
+  await harness.act(() => { toggles.terminalDock.value = { ...toggles.terminalDock.value, keyboard: false }; });
+
+  await tap(navItem('Mail'));
+  assert.equal(closed, 1, 'picking a view closes the terminal');
+  assert.deepEqual(calls.at(-1), ['showTab', 'messages']);
+  assert.equal(root.dataset.phoneTerminalNav, undefined);
+});
+
+test('the toggle: ▾ while the nav shows, ▴ with the nav\'s count while hidden', async (t) => {
+  const harness = await createPreactHarness(t);
+  const toggles = await harness.importDashboardModule('js/phone-nav-toggle.js');
+  toggles.resetNavToggleForTest();
+  t.after(() => toggles.resetNavToggleForTest());
+  const prefs = new Map([['tclaude.dash.phone.nav.mail', 'hidden']]);
+  const store = { getItem: (k) => prefs.get(k) ?? null, setItem: (k, v) => prefs.set(k, v), removeItem: (k) => prefs.delete(k) };
+  toggles.navBadge.value = 7;
+  const mounted = await harness.mount(harness.html`<div>
+    <${toggles.NavToggle} kind="terminal" prefs=${store} />
+    <${toggles.NavToggle} kind="mail" prefs=${store} />
+  </div>`);
+  const [term, mail] = mounted.container.querySelectorAll('.phone-nav-toggle');
+  assert.equal(term.textContent.trim(), '▾');
+  assert.equal(term.getAttribute('aria-label'), 'Hide page selector');
+  assert.equal(term.getAttribute('aria-expanded'), 'true');
+  assert.equal(term.querySelector('.ui-badge'), null, 'no count while the nav shows it');
+  assert.ok(mail.classList.contains('off'), 'mail was hidden last time');
+  assert.equal(mail.getAttribute('aria-expanded'), 'false');
+  assert.equal(mail.querySelector('.ui-badge').textContent, '7');
+  assert.equal(mail.getAttribute('aria-label'), 'Show page selector (7 waiting)');
+  await harness.act(() => { toggles.navBadge.value = 0; });
+  assert.equal(mail.querySelector('.ui-badge'), null, 'nothing waiting, no badge');
+  await harness.act(() => mail.click());
+  assert.equal(mail.getAttribute('aria-expanded'), 'true');
+  assert.equal(prefs.has('tclaude.dash.phone.nav.mail'), false);
+
+  // Prefs that throw: the choice still holds for the session.
+  toggles.resetNavToggleForTest();
+  const broken = { getItem: () => { throw new Error('no'); }, setItem: () => { throw new Error('no'); }, removeItem: () => { throw new Error('no'); } };
+  assert.equal(toggles.navShown('terminal', broken), true);
+  toggles.setNavShown('terminal', false, broken);
+  assert.equal(toggles.navShown('terminal', broken), false);
+});

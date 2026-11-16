@@ -38,6 +38,7 @@ import { SearchSheet } from './phone-search.js';
 import { NowView } from './phone-now.js';
 import { BoardView, boardRequest, openBoardTask } from './phone-board.js';
 import { MoreMenu, PowerMenu } from './phone-more.js';
+import { navBadge, navShown, terminalDock } from './phone-nav-toggle.js';
 
 // The own views live in their own files; re-exported for this module's
 // callers.
@@ -92,6 +93,10 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const snapshot = state.snapshot.value;
   const needs = (snapshot ? nowView(snapshot).needs : 0) + gateItems(processSource.context.value).length;
   const mail = messagesBadgeView(snapshot);
+  // What the nav's badges add up to, for the ▾/▴ toggle of a view that has
+  // hidden the nav (js/phone-nav-toggle.js).
+  const waiting = needs + (mail.hidden ? 0 : Number(snapshot?.messages_unread || 0) + Number(snapshot?.access_requests_pending || 0));
+  useEffect(() => { navBadge.value = waiting; }, [waiting]);
   const connection = state.connection.value.status;
   // A pushed page (js/phone-page.js): back, title and actions in the top
   // bar, and maybe no bottom nav. A page shows over the view it was pushed
@@ -99,6 +104,16 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   const pushed = phonePage.value;
   const page = pushed && (pushed.view || '') === (OWN_VIEWS.includes(view) ? view : '') ? pushed : null;
   const hideNav = !!page?.hideNav;
+  // A terminal docked over the dashboard shows the nav under it unless the
+  // operator hid it there, or the phone's keyboard is up (the nav would sit
+  // on the keys).
+  const dock = terminalDock.value;
+  const navOff = dock ? dock.keyboard || !navShown('terminal') : hideNav;
+  useEffect(() => {
+    const root = document.documentElement;
+    if (dock && !navOff) root.dataset.phoneTerminalNav = '';
+    else delete root.dataset.phoneTerminalNav;
+  }, [!!dock, navOff]);
   // A view a phone does not offer (js/phone-desktop-only.js) gets a page
   // that says so in place of its desktop content.
   const routeMap = featureState('groups')?.subview?.value === 'routes';
@@ -211,6 +226,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   function pick(target) {
     // More's sheet sits above the nav: More again closes it.
     const wasMore = phoneSheet.peek()?.slot === 'more';
+    // A view picked under a terminal takes the terminal down first.
+    terminalDock.peek()?.close();
     closePhoneSheet();
     if (target.id === 'more') {
       if (!wasMore) openPhoneSheet({ label: 'More', Body: MoreMenu, props: { state, actions: viewActions, fleet }, overNav: true, slot: 'more' });
@@ -284,7 +301,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     ${view === 'board' && html`<div class="phone-view" role="region" aria-label="Board"><${BoardView} source=${boardSource} state=${state} actions=${viewActions} fetchImpl=${fetchImpl} /></div>`}
     ${desktopOnly && html`<div class="phone-view" role="region" aria-label=${desktopOnly}><${DesktopOnlyPage} what=${desktopOnly} open=${actions.desktopSite}
       other=${desktopOther} /></div>`}
-    ${!hideNav && html`<nav class="phone-nav" aria-label="Views">
+    ${!navOff && html`<nav class="phone-nav" aria-label="Views">
       ${PHONE_SLOTS.map((target) => html`<button data-ui-exempt key=${target.id} type="button"
         class=${`phone-nav-item${lit === target.id ? ' on' : ''}`} aria-current=${lit === target.id ? 'page' : undefined}
         aria-haspopup=${target.id === 'more' ? 'dialog' : undefined}
@@ -305,5 +322,6 @@ export function mountPhoneShellIsland({ host, shell, state, actions, boardSource
     closePhoneSheet();
     delete document.documentElement.dataset.phoneView;
     delete document.documentElement.dataset.phonePage;
+    delete document.documentElement.dataset.phoneTerminalNav;
   });
 }

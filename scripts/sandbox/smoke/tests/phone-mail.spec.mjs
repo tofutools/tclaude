@@ -49,13 +49,14 @@ test('Mail lists, opens, goes back, picks an agent folder and writes', async ({ 
   await rows.first().click();
   await expect(page.locator('.phone-mail-reader')).toBeVisible();
   await expect(page).toHaveURL(/\/messages\/human\/[^/]+$/);
-  await expect(page.locator('html')).toHaveAttribute('data-phone-page', 'full');
-  await expect(page.getByRole('navigation', { name: 'Views' })).toHaveCount(0);
+  // A message with a reply bar keeps the nav under it until the ▾/▴ toggle
+  // hides it (phone-nav-toggle.spec.mjs).
+  await expect(page.locator('.phone-mail-replybar .phone-nav-toggle')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('navigation', { name: 'Views' })).toBeVisible();
   await expectNoSideScroll(page, 'the reader');
   await page.locator('.phone-bar-back').click();
   await expect(page).toHaveURL(/\/messages\/human$/);
   await expect(page.locator('.phone-mail-reader')).toHaveCount(0);
-  await expect(page.locator('html')).not.toHaveAttribute('data-phone-page', 'full');
 
   await rows.first().click();
   await expect(page.locator('.phone-mail-reader')).toBeVisible();
@@ -91,7 +92,9 @@ test('a decision is never answered from the list: its row opens it, and the read
   const errors = collectErrors(page);
   await page.goto('/messages/human');
   await booted(page);
-  const row = page.locator('.phone-mail-row', { has: page.locator('.phone-mail-decide') }).first();
+  // An agent's decision (a note goes with the choice), not a process
+  // oversight concern, whose pick goes to the run and takes no note.
+  const row = page.locator('.phone-mail-row', { has: page.locator('.phone-mail-decide'), hasNotText: 'Process oversight' }).first();
   await expect(row.locator('.phone-mail-decide')).toHaveText(/^Decide · \d+ options ›$/);
   await expect(row.locator('button'), 'the row\'s one button opens it').toHaveCount(1);
   // A tap low on the row, where the options used to sit, opens the message.

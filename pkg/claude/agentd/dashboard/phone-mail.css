@@ -149,6 +149,9 @@
   color: var(--ui-muted-text); font: inherit; font-size: 16px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* With the bottom nav shown (js/phone-nav-toggle.js) the reply bar sits on
+   it, and the nav keeps the home indicator's room. */
+:root[data-layout="phone"] .phone-mail-reader.with-nav .phone-mail-replybar { bottom: var(--footer-h); padding-bottom: 10px; }
 :root[data-layout="phone"] .phone-mail-send {
   flex: none; width: 48px; height: 48px; padding: 0; border-radius: 50%; border: 0;
   background: var(--phone-accent-bg); color: #fff; font-size: 20px; cursor: pointer;

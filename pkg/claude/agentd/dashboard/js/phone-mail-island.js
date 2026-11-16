@@ -48,6 +48,7 @@ import { planDetails } from './phone-now-model.js';
 import { shellToast } from './shell-state.js';
 import { trustLock } from './lock-reason.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
+import { NavToggle, navShown } from './phone-nav-toggle.js';
 import { Button } from './ui-components.js';
 import { Avatar, avatarHue } from './phone-ui.js';
 import { findAgentRoute } from './agent-route.js';
@@ -566,10 +567,14 @@ function PhoneReader({ current, controller, item, active, back }) {
   const terminal = human && !!item.from_agent;
   const find = findable(item);
   const acts = rowActions(controller, folder);
+  const canReply = human && !!(item.from_conv || item.from_agent);
+  // The reply bar owns the bottom edge, with the ▾/▴ toggle for the nav
+  // (js/phone-nav-toggle.js); a message with no reply bar keeps the nav.
+  const nav = !canReply || navShown('mail');
   usePhonePage({
     title: '',
     onBack: back,
-    hideNav: true,
+    hideNav: !nav,
     // The reader is a location of its own (/messages/<folder>/<id>).
     routed: true,
     actions: [
@@ -582,7 +587,6 @@ function PhoneReader({ current, controller, item, active, back }) {
   }, active);
   // A message opens at its top, wherever the list was scrolled to.
   useLayoutEffect(() => { globalThis.scrollTo?.(0, 0); }, [item.id]);
-  const canReply = human && !!(item.from_conv || item.from_agent);
   const reply = () => {
     replies ||= createMessageAccessDialogActions({ notify: shellToast, refresh: () => controller.reloadMail() });
     openPhoneCompose({ agent: item.from_agent || item.from_conv, label: sender }, {
@@ -592,7 +596,7 @@ function PhoneReader({ current, controller, item, active, back }) {
       send: ({ body, files }) => replies.replyHuman({ id: item.id, body, files, label: sender }),
     });
   };
-  return html`<article class=${`phone-mail-reader phone-mail-read${canReply ? ' with-reply' : ''}`} data-kind=${controller.msgKind(item)}>
+  return html`<article class=${`phone-mail-reader phone-mail-read${canReply ? ' with-reply' : ''}${canReply && nav ? ' with-nav' : ''}`} data-kind=${controller.msgKind(item)}>
     <h1 class="phone-mail-title">${item.subject || '(no subject)'}</h1>
     <div class="phone-mail-sender">
       <${Avatar} name=${rowAvatar(item, folder === 'all')} />
@@ -617,6 +621,7 @@ function PhoneReader({ current, controller, item, active, back }) {
       : html`<${DecisionChoices} message=${item} toast=${shellToast} onDone=${controller.reloadMail} />`)}
     ${human && html`<${MessageAction} message=${item} toast=${shellToast} onDone=${controller.reloadMail} onRefused=${controller.reloadMail} />`}
     ${canReply && html`<div class="phone-mail-replybar">
+      <${NavToggle} kind="mail" />
       <button data-ui-exempt type="button" class="phone-mail-reply" onClick=${reply}>Reply to ${sender}…</button>
       <button data-ui-exempt type="button" class="phone-mail-send" aria-label=${`Reply to ${sender}`} onClick=${reply}>➤</button>
     </div>`}

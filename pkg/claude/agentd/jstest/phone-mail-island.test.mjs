@@ -182,7 +182,19 @@ test('an open message is a full-screen page with a back button and a reply bar',
   const { $, view, phonePage, calls, harness, tap } = await setup(t, { selectedMsgId: 1 });
   assert.ok($('.phone-mail-reader'), 'the reader replaces the list');
   assert.equal($('.phone-mail-list'), null);
-  assert.equal(phonePage.value?.hideNav, true, 'the page owns the bottom edge');
+  // The reply bar owns the bottom edge, with the ▾/▴ toggle left of the
+  // field: the nav starts shown, and the toggle hides it (and remembers).
+  assert.equal(phonePage.value?.hideNav, false, 'the nav starts shown under the reader');
+  const toggle = $('.phone-mail-replybar .phone-nav-toggle');
+  assert.equal(toggle.getAttribute('aria-label'), 'Hide page selector');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.ok($('.phone-mail-reader.with-nav'), 'the reply bar sits on the nav');
+  await tap(toggle);
+  assert.equal(phonePage.value?.hideNav, true, 'hidden, the page owns the bottom edge');
+  assert.equal($('.phone-mail-replybar .phone-nav-toggle').getAttribute('aria-expanded'), 'false');
+  assert.equal($('.phone-mail-reader.with-nav'), null);
+  await tap($('.phone-mail-replybar .phone-nav-toggle'));
+  assert.equal(phonePage.value?.hideNav, false);
   assert.deepEqual(phonePage.value.actions.map((a) => a.icon), ['⌖', '✉', '🗑']);
   assert.equal($('.mail-headers'), null, 'no desktop header table');
   assert.equal($('.phone-mail-title').textContent, 'Subject 1');
