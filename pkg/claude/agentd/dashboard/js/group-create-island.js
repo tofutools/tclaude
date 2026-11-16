@@ -435,11 +435,11 @@ function GroupCreateDialog({
       <div class="cron-create-target">
         <div class="sbx-rows">${draft.environment.map((entry, index) => html`
           <div key=${index} class="sbx-row sbx-environment-row">
-            <input name="name" class="sbx-env-name" placeholder="NAME" value=${entry.name}
+            <input name="env-name" class="sbx-env-name" placeholder="NAME" value=${entry.name}
               disabled=${disabled}
               onInput=${(event) => setField('environment', draft.environment.map((row, rowIndex) =>
                 rowIndex === index ? { ...row, name: event.currentTarget.value } : row))} />
-            <input name="value" data-capture-mask class="sbx-env-value" placeholder="value" value=${entry.value}
+            <input name="env-value" data-capture-mask class="sbx-env-value" placeholder="value" value=${entry.value}
               disabled=${disabled}
               onInput=${(event) => setField('environment', draft.environment.map((row, rowIndex) =>
                 rowIndex === index ? { ...row, value: event.currentTarget.value } : row))} />

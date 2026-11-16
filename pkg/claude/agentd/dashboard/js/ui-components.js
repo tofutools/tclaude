@@ -91,13 +91,13 @@ export function Textarea({ size, invalid, class: extra, className, domRef, ...re
 // text toggles it. Props go to the input; labelClass styles the label.
 export function Check({ type = 'checkbox', labelClass, title, domRef, children, ...rest }) {
   return html`<label class=${join('ui-check', labelClass)} title=${title}>
-    <input type=${type} ...${rest} ref=${domRef} />${children}
+    <input type=${type} ...${rest} name=${type === 'radio' ? rest.name : fieldName(rest, 'ui-check')} ref=${domRef} />${children}
   </label>`;
 }
 
 // Switch: an on/off toggle. Give it an aria-label, or wrap it in a label.
 export function Switch({ class: extra, className, domRef, ...rest }) {
-  return html`<input type="checkbox" role="switch" ...${rest} ref=${domRef} class=${join('ui-switch', extra, className)} />`;
+  return html`<input type="checkbox" role="switch" ...${rest} name=${fieldName(rest, 'ui-switch')} ref=${domRef} class=${join('ui-switch', extra, className)} />`;
 }
 
 // Seg: a segmented group of Buttons; mark the chosen one pressed.

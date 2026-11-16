@@ -309,7 +309,7 @@ export function LaunchProfile({
       <${Row} label="Environment"><div class="cfg-launch-rows" id="${idp}launch-env">
         ${draft.env.map((row, i) => html`<div key=${`e${i}`} class="cfg-launch-row" data-launch-row=${`e${i}`}>
           <div class="cfg-launch-fields">
-            <input name="name" type="text" class=${`ui-input ui-sm cfg-launch-key${errors.rows[`e${i}`] ? ' is-invalid' : ''}`} spellcheck="false" autocomplete="off" aria-label=${`Variable ${i + 1} name`}
+            <input name="env-name" type="text" class=${`ui-input ui-sm cfg-launch-key${errors.rows[`e${i}`] ? ' is-invalid' : ''}`} spellcheck="false" autocomplete="off" aria-label=${`Variable ${i + 1} name`}
               placeholder="NAME" value=${row.key} disabled=${any} onInput=${(e) => setEnv(i, { key: e.currentTarget.value })} />
             <select name="ui-select" class="ui-select ui-sm cfg-launch-mode" aria-label=${`Variable ${i + 1}: set a value or inherit agentd's`} disabled=${any}
               onChange=${(e) => setEnv(i, { mode: e.currentTarget.value, ...(e.currentTarget.value === INHERIT ? { value: '' } : {}) })}>
