@@ -1726,6 +1726,10 @@ func buildMux() http.Handler {
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", handleProcessTemplate)
 	mux.HandleFunc("POST /v1/process/templates/{id}/listing", handleProcessTemplateListing)
 	mux.HandleFunc("POST /v1/process/groups/{group}/processes", handleProcessGroupPin)
+	// Built-in ways of working: read from the binary, copied into a group on use.
+	mux.HandleFunc("GET /v1/process/builtins", handleProcessBuiltins)
+	mux.HandleFunc("GET /v1/process/builtins/{id}", handleProcessBuiltin)
+	mux.HandleFunc("POST /v1/process/builtins/{id}/use", handleProcessBuiltinUse)
 	mux.HandleFunc("DELETE /v1/process/groups/{group}/processes/{templateId}", handleProcessGroupUnpin)
 	mux.HandleFunc("POST /v1/process/validate", handleProcessValidate)
 	mux.HandleFunc("POST /v1/process/resolve-preview", handleProcessResolvePreview)

@@ -302,6 +302,11 @@ var peerViewLocalRoutes = []string{
 	// A workflow file is signed with this node's federation identity key: it
 	// stays this node's to hand out.
 	"GET /v1/process/templates/{id}/export",
+	// The built-in ways of working: read from the binary, and a use is a
+	// template create, as local.
+	"GET /v1/process/builtins",
+	"GET /v1/process/builtins/{id}",
+	"POST /v1/process/builtins/{id}/use",
 	"POST /api/access-requests/{id}/decision",
 	"POST /api/broker-refusals/dismiss",
 	"POST /api/groups",

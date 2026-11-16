@@ -113,6 +113,51 @@ test('a new process offers what to start from under its empty canvas: starters, 
   assert.equal(api.calls.create.length, 1, 'only the draft itself is stored');
 });
 
+// The built-in ways of working (tk_d02b0f4c): a row above the starters and
+// the top of the library; picking one fills the draft, which is the group's
+// own copy.
+const BUGFIX_VIEW = {
+  template: { id: 'bug-fix', name: 'Bug: reproduce → fix → verify', start: 'start', nodes: {
+    start: { type: 'start', next: { next: 'reproduce' } },
+    reproduce: { type: 'task', performer: { kind: 'agent', role: 'tester', prompt: 'Reproduce it' }, next: { next: 'done' } },
+    done: { type: 'end', result: 'success' },
+  } },
+  edges: [{ from: 'start', outcome: 'next', to: 'reproduce' }, { from: 'reproduce', outcome: 'next', to: 'done' }],
+};
+test('a new process offers the built-in ways of working, and one fills the group\'s own draft', async (t) => {
+  const api = fakeApi();
+  const asked = [];
+  api.listBuiltins = async () => [
+    { id: 'plan-vet-build', name: 'Plan → vet → build → review → merge', description: 'The 8 steps', steps: ['brief', 'plan'] },
+    { id: 'bug-fix', name: 'Bug: reproduce → fix → verify', description: 'Repro first', steps: ['reproduce', 'fix', 'verify', 'merge'] },
+  ];
+  api.getBuiltin = async (id) => { asked.push(id); return BUGFIX_VIEW; };
+  const { root, click } = await mount(t, { api });
+  await click(root.querySelector('[data-process-new]'));
+  const strip = root.querySelector('[data-mini-start-from]');
+  const row = strip.querySelector('[data-mini-builtins]');
+  assert.ok(row, 'a row of built-ins above the starters');
+  assert.deepEqual([...row.querySelectorAll('[data-mini-builtin]')].map((el) => el.dataset.miniBuiltin), ['plan-vet-build', 'bug-fix']);
+  assert.equal(row.querySelector('[data-mini-builtin="bug-fix"]').textContent, '◈ Bug: reproduce → fix → verify');
+  assert.match(row.querySelector('[data-mini-builtin="bug-fix"]').title, /Steps: reproduce → fix → verify → merge\nBuilt in: this process gets its own copy/);
+  await click(strip.querySelector('[data-mini-library]'));
+  assert.deepEqual([...root.querySelectorAll('[data-mini-library-builtin]')].map((el) => el.dataset.miniLibraryBuiltin), ['plan-vet-build', 'bug-fix'],
+    'the library lists them first, tagged built in');
+  assert.match(root.querySelector('[data-mini-library-builtin="bug-fix"]').textContent, /built in/);
+  await click(row.querySelector('[data-mini-builtin="bug-fix"]'));
+  assert.deepEqual(asked, ['bug-fix']);
+  assert.equal(root.querySelector('[data-mini-start-from]'), null, 'the draft is filled');
+  assert.equal(root.querySelector('[data-mini-title]').value, 'Bug: reproduce → fix → verify', 'named after the built-in');
+  assert.equal(api.calls.create.length, 1, 'no template but the draft itself');
+  assert.deepEqual(api.calls.create[0].options, { listed: false, pinGroup: 'webshop' }, 'the copy is the group\'s');
+});
+
+test('without built-ins the Start from strip has no built-in row', async (t) => {
+  const { root, click } = await mount(t);
+  await click(root.querySelector('[data-process-new]'));
+  assert.equal(root.querySelector('[data-mini-builtins]'), null);
+});
+
 const SCRIBE = { agent_id: `agt_${'a'.repeat(32)}`, conv_id: 'conv-scribe', name: 'process-scribe-k3' };
 const T1 = '2026-11-01T06:01:00Z';
 const SAVED_DRAFT = {

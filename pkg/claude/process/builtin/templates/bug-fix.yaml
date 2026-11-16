@@ -1,0 +1,70 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: bug-fix
+name: "Bug: reproduce → fix → verify"
+description: >-
+  A tester reproduces the bug, a developer fixes it, and the tester who
+  reproduced it verifies the fix against the reproduction before the lead
+  merges it.
+params:
+  task:
+    type: string
+    required: true
+start: start
+nodes:
+  start:
+    type: start
+    next: { next: reproduce }
+
+  # A tester reproduces it first: no fix without a failing case.
+  reproduce:
+    type: task
+    captures: [repro]
+    performer:
+      kind: agent
+      role: tester
+      fallback: { action: spawn }
+      prompt: "Reproduce this bug: {{ params.task }}\nReport the steps (or a failing test) as repro."
+    next: { next: fix }
+
+  # A developer fixes it.
+  fix:
+    type: task
+    captures: [pr]
+    performer:
+      kind: agent
+      role: dev
+      differentFrom: [reproduce]
+      fallback: { action: spawn }
+      prompt: "Fix this bug: {{ params.task }}\nIt reproduces with:\n{{ outputs.repro }}\nAdd a test for it, open a PR and report its link as pr."
+    next: { next: verify }
+
+  # The tester who reproduced it checks the fix.
+  verify:
+    type: decision
+    performer:
+      kind: agent
+      role: tester
+      sameAs: reproduce
+      prompt: "Verify that this fix:\n{{ outputs.pr }}\nfixes the bug you reproduced with:\n{{ outputs.repro }}\nChoose fixed, or broken with what still fails."
+    next: { fixed: merge, broken: fix, escalate: escalated }
+    loops:
+      broken: { maxIterations: 3, onExhausted: escalate }
+
+  # The group's lead merges it.
+  merge:
+    type: task
+    performer:
+      kind: agent
+      lead: true
+      prompt: "The tester verified this fix. Merge it:\n{{ outputs.pr }}"
+    next: { next: done }
+
+  done:
+    type: end
+    result: success
+  # Out of rounds, or escalated by hand: the run fails, so a board task it
+  # runs for is blocked with the reason rather than left as it was.
+  escalated:
+    type: end
+    result: failed

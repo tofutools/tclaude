@@ -24,6 +24,40 @@ which half is which.
 [In the dashboard](#in-the-dashboard) covers all of this. The next sections are
 reference for the format, the engine and the CLI.
 
+## Built-in ways of working
+
+tclaude ships four processes in the binary:
+
+| Id | Name | Steps |
+|---|---|---|
+| `plan-vet-build` | Plan → vet → build → review → merge | the lead frames the task, a planner plans it, a usability vet checks the plan, a developer builds it, two reviewers who did not build it both approve, and the lead who framed it merges ([the example](examples/ways-of-working.yaml)) |
+| `build-review-ship` | Build → review → ship | a developer builds and opens a PR, a reviewer who did not build it approves or sends it back, and the lead ships it |
+| `bug-fix` | Bug: reproduce → fix → verify | a tester reproduces the bug, a developer fixes it, the same tester verifies the fix, and the lead merges it |
+| `quick-change` | Quick change + one review | a developer makes the change, one other reviewer approves or sends it back, and the developer merges it |
+
+Each takes the `task` it is run for. Steps pick members by role (`planner`,
+`ux`, `dev`, `reviewer`, `tester`) and spawn one when the group has none. The
+lead's steps go to the group's lead (a member with the role `lead`, else an
+agent that owns the group) and wait when it has none. Running out of review
+rounds, or a performer choosing escalate, fails the run, so a board task it
+runs for is blocked with the reason (Plan → vet → build → review → merge keeps
+the operator's example, which cancels it). The run's overseer is the group's lead, as for any run (see
+[Oversight and escalation](#oversight-and-escalation)).
+
+A built-in is never run as it is. A group that uses one gets its own copy:
+a template saved to the group (not published to the library), with its own id.
+The group's edits stay with that copy, and using the built-in again makes
+another copy.
+
+- In the dashboard, a new process offers them in the **Ways of working** row of
+  its Start from strip, and first in **More ways of working ›**.
+- From the CLI: `tclaude process templates builtin ls`, then
+  `tclaude process templates builtin use <id> --group <group> [--name <name>]`,
+  which prints the copy's template id to run with `tclaude process run`.
+  This takes what saving a process to the group takes (`process.templates.manage`).
+- The API: `GET /v1/process/builtins`, `GET /v1/process/builtins/{id}` and
+  `POST /v1/process/builtins/{id}/use` with `{"group": "...", "name": "..."}`.
+
 ## Authoring templates
 
 Templates are YAML documents with `apiVersion: tclaude.dev/v1alpha1` and

@@ -18,7 +18,7 @@ func templatesCmd() *cobra.Command {
 		Use:         "templates",
 		Short:       "Inspect stored process templates",
 		ParamEnrich: common.DefaultParamEnricher(),
-		SubCmds:     []*cobra.Command{templatesLsCmd()},
+		SubCmds:     []*cobra.Command{templatesLsCmd(), builtinCmd()},
 		RunFunc: func(_ *templatesParams, cmd *cobra.Command, _ []string) {
 			_ = cmd.Help()
 		},
