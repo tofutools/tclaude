@@ -478,6 +478,7 @@ export function GroupsRunFocus({
       </div>
       ${run && detail.view && html`<${RunOversight} view=${detail.view} runId=${runId} api=${api} wizard=${wizard}
         nodeId=${node?.id || ''} nodeLabel=${node?.label || ''}
+        nodeDone=${node?.state === 'done' && node?.kind !== 'start' && node?.kind !== 'end'}
         onChanged=${() => { refresh(); void source?.refresh?.(); }} />`}
       ${run
     ? html`<div class=${`grf-graph${dropTarget ? ' grf-drop-armed' : ''}`} ref=${graphRef} data-drop-target=${dropTarget}

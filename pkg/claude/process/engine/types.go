@@ -359,6 +359,9 @@ const (
 	// a person, with a reason: its command is withdrawn and the branch waits
 	// on the same retry/skip/cancel resolution an exhausted budget does.
 	TransitionBlockMarked TransitionKind = "block_marked"
+	// TransitionSentBack sends the run back to a finished step: everything
+	// downstream of it is reset and the step is ready again (sendback.go).
+	TransitionSentBack TransitionKind = "sent_back"
 )
 
 // BlockMark is the reducer payload for parking a running agent step by hand.
@@ -385,6 +388,7 @@ type Transition struct {
 	Decision    *DecisionRecord
 	Resolution  *BlockedResolution
 	Mark        *BlockMark
+	Back        *SendBack
 }
 
 var (

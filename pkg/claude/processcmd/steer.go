@@ -134,3 +134,54 @@ func runProcessBlock(p *processBlockParams, stdout, stderr io.Writer) error {
 	printProcessRun(stdout, &response.Run)
 	return nil
 }
+
+type processSendBackParams struct {
+	RunID    string `pos:"true" help:"Process run id"`
+	Node     string `long:"node" help:"The finished step to run again; everything after it is reset"`
+	Note     string `long:"note" optional:"true" help:"Why, recorded in the run log"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+}
+
+func processSendBackCmd() *cobra.Command {
+	return boa.CmdT[processSendBackParams]{
+		Use:   "send-back",
+		Short: "Send a process run back to a finished step: everything after it is reset and the step runs again",
+		Long: "Sends a run back to a finished step of its own graph (process.runs.manage). Everything downstream goes back " +
+			"to pending as if it had never run: agent work still out there is withdrawn, decisions and agreement votes " +
+			"are asked again, and outputs reported there no longer feed later prompts. A program still running " +
+			"downstream refuses the send-back. Attempt numbers never go backwards.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processSendBackParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *processSendBackParams, _ *cobra.Command, _ []string) {
+			exitProcessRuntime(runProcessSendBack(p, os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
+}
+
+func runProcessSendBack(p *processSendBackParams, stdout, stderr io.Writer) error {
+	if err := requireProcessRuntime(stderr); err != nil {
+		return err
+	}
+	runID, node := strings.TrimSpace(p.RunID), strings.TrimSpace(p.Node)
+	if runID == "" || node == "" {
+		return fmt.Errorf("a run id and --node are required")
+	}
+	ask, err := agent.ParseAskHuman(p.AskHuman)
+	if err != nil {
+		return err
+	}
+	var response struct {
+		Run processRunJSON `json:"run"`
+	}
+	request := map[string]string{"nodeId": node, "note": p.Note}
+	if err := agent.DaemonRequest(http.MethodPost, "/v1/process/runs/"+url.PathEscape(runID)+"/send-back", request, &response,
+		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Sent process run %s back to %s.\n", runID, node)
+	printProcessRun(stdout, &response.Run)
+	return nil
+}

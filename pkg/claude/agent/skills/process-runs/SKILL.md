@@ -3,7 +3,7 @@ name: process-runs
 description: >-
   Start, watch and steer daemon-owned process runs via `tclaude process`:
   run (start a saved template, scoped to a group or agent), runs ls, show,
-  events, pause/resume, decide, assign, resolve-blocked, block, cancel, reconcile, reissue,
+  events, pause/resume, decide, assign, resolve-blocked, block, cancel, send-back, reconcile, reissue,
   record-outcome; oversee a run and raise or answer its concerns (concern,
   answer-concern, concerns, oversee); report a node you were dispatched; and read event triggers
   via `tclaude agent triggers ls|show|explain`. Covers the
@@ -28,7 +28,7 @@ change a run in flight. Authoring templates is the process-templates skill.
 |---|---|---|
 | `process.runs.read` | `runs ls`, `show`, `events`, `reconcile` | group owners hold it; otherwise a grant |
 | `groups.resources.read` | `runs ls --group <g>`, `show`, `events` of runs scoped to your group | membership, live; no mutation |
-| `process.runs.manage` | every mutation: unscoped `run`, `pause`, `resume`, `decide`, `assign`, `resolve-blocked`, `block`, `cancel`, `reissue`, `record-outcome`; and any `run` with `--authorize-program-profile` | explicit grant only (can be scoped to a template), never via ownership |
+| `process.runs.manage` | every mutation: unscoped `run`, `pause`, `resume`, `decide`, `assign`, `resolve-blocked`, `block`, `cancel`, `send-back`, `reissue`, `record-outcome`; and any `run` with `--authorize-program-profile` | explicit grant only (can be scoped to a template), never via ownership |
 | `process.runs.start` | `run --group <g>` | group owners hold it for their groups |
 | `self.process` | `run --agent <self>` | default-granted |
 | `agent.process` / `groups.members.process` | `run --agent <other>` | grant / owners hold it for their members |
@@ -82,6 +82,7 @@ tclaude process assign <run-id> --node <node> --agent <agent>   # hand an unrepo
 tclaude process resolve-blocked <run-id> --node <node> --attempt <n> --action retry|skip|cancel [--note "why"]
 tclaude process block <run-id> --node <node> --reason "why"   # park an agent step that is out (overseer too)
 tclaude process cancel <run-id> [--note "why"]                # give the whole run up
+tclaude process send-back <run-id> --node <step> [--note "why"]  # run a finished step again; everything after it resets
 ```
 
 Copy `--node` and `--attempt` from `show`; stale or wrong-attempt input is

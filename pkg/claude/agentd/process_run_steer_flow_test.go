@@ -11,6 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -127,4 +128,73 @@ func TestProcessSteer_CancelEndsTheRunFromTheAPIAndFromTheCard(t *testing.T) {
 	view := showOversightRun(t, f, "run_sc2")
 	assert.Equal(t, engine.RunCanceled, view.Status)
 	assert.Equal(t, "cancel", view.concern(t, concern.ID).Resolution)
+}
+
+// Scenario: the review finds the spec was wrong. The operator sends the run
+// back to the work step while the ship step is out: ship's performer is told
+// to stop, work is handed out again as attempt 2, and the review's notes,
+// reported before the send-back, no longer feed the work's prompt. An
+// overseer cannot send back; a step that has not run cannot be sent back to.
+func TestProcessSteer_SendBackRerunsAStepAndDropsOutputsReportedAfterIt(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	f.HaveGroup("crew")
+	const leadConv, devConv = "sdl1-1111-2222-3333-4444", "sdd1-1111-2222-3333-4444"
+	havePerformerAgent(t, f, "crew", leadConv, "lena", "lead", "working")
+	havePerformerAgent(t, f, "crew", devConv, "dana", "dev", "idle")
+	dev := func(prompt string, captures ...string) model.Node {
+		node := model.Node{Performer: agentStep(prompt, func(p *model.Performer) { p.Profile = "dev" })}
+		node.Captures = captures
+		return node
+	}
+	tmpl := chainTemplate("rework", []string{"work", "review", "ship"}, map[string]model.Node{
+		"work":   dev("Build it. Review notes so far: {{ outputs.notes }}"),
+		"review": dev("Review it.", "notes"),
+		"ship":   dev("Ship it."),
+	})
+	putProcessRuntimeTemplate(t, root, tmpl)
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": "run_sd1", "templateId": "rework", "group": "crew", "authorizeProgramProfiles": []string{},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	agentd.WaitForProcessDispatchForTest()
+	reportStep(t, f, devConv, "run_sd1", "work", 1, nil)
+	agentd.WaitForProcessDispatchForTest()
+	reportStep(t, f, devConv, "run_sd1", "review", 1, map[string]any{"outputs": map[string]any{"notes": "the spec contradicts itself"}})
+	agentd.WaitForProcessDispatchForTest()
+	assert.Contains(t, lastInboxSubject(t, devConv), "ship (attempt 1)")
+
+	refused := agentReq(t, f, leadConv, http.MethodPost, "/v1/process/runs/run_sd1/send-back", map[string]any{"nodeId": "work"})
+	assert.Equal(t, http.StatusForbidden, refused.Code, "an overseer raises a concern; the operator sends back")
+	notYet := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_sd1/send-back", map[string]any{"nodeId": "ship"})
+	assert.Equal(t, http.StatusConflict, notYet.Code, notYet.Body.String())
+
+	// The operator's card offers going back to the concern's finished step.
+	concern := raiseConcernAs(t, f, devConv, "run_sd1", "work", "The spec this was built on contradicts itself.", http.StatusCreated)
+	concern = answerConcernAs(t, f, leadConv, "run_sd1", concern.ID, "escalate", "Needs a rework call.", http.StatusOK)
+	require.NotZero(t, concern.MessageID)
+	assert.Contains(t, concern.Choices, "Send back to work")
+	pickOnCard(t, concern.MessageID, "Send back to work", "spec fixed", http.StatusOK)
+	agentd.WaitForProcessDispatchForTest()
+	assert.Equal(t, "send_back", showOversightRun(t, f, "run_sd1").concern(t, concern.ID).Resolution)
+	inbox := processInbox(t, devConv)
+	var released, again string
+	for _, m := range inbox {
+		if strings.Contains(m.Body, "no longer needs your report") && strings.Contains(m.Body, "ship") {
+			released = m.Body
+		}
+		if strings.Contains(m.Subject, "work (attempt 2)") {
+			again = m.Body
+		}
+	}
+	assert.NotEmpty(t, released, "ship's performer is released")
+	require.NotEmpty(t, again, "work is handed out again")
+	assert.NotContains(t, again, "the spec contradicts itself", "notes reported after the step no longer stand")
+	assert.Contains(t, again, "none reported yet")
+
+	events := processRunEventPage(t, f, "run_sd1")
+	var sent bool
+	for _, e := range events.Events {
+		sent = sent || (e.Kind == "sent_back" && e.NodeID == "work")
+	}
+	assert.True(t, sent, "the log records the send-back")
 }

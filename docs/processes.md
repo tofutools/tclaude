@@ -240,6 +240,7 @@ tclaude process resolve-blocked <run-id> --node <node> --attempt <n> \
     --action retry|skip|cancel [--note "why"]
 tclaude process block <run-id> --node <node> --reason "why" [--attempt <n>]
 tclaude process cancel <run-id> [--note "why"]
+tclaude process send-back <run-id> --node <step> [--note "why"]
 tclaude process report succeeded|failed [--run <run-id> --node <node> \
     --attempt <n>] [--verdict <verdict>] [--note "summary"]   # agent performers only
 tclaude agent process-templates ls
@@ -332,6 +333,18 @@ in it raises a concern.
   attempt is refused, and the step waits as blocked on `resolve-blocked`
   retry, skip or cancel, like a step whose retries ran out. The reason is
   what the operator decides from.
+- **Sending the run back** (`tclaude process send-back <run-id> --node
+  <step>`, ↶ Send back on the run view with a finished step selected, or
+  the operator's card when a concern names a finished step) runs a finished
+  step of the run's own graph again. Everything downstream of it goes back
+  to pending as if it had never run: agent work still out there is
+  withdrawn, decisions and agreement votes are asked again, loops wholly
+  downstream count their rounds afresh, and outputs reported there no
+  longer feed later prompts (`{{ outputs.x }}` reads "none reported yet"
+  until the step reports again). Attempt numbers never go backwards. A
+  program still running downstream refuses it; a branch running alongside
+  that already reached a node downstream refuses it too. It needs
+  `process.runs.manage`.
 - **Cancelling the run** (`tclaude process cancel <run-id>`, ✕ Cancel run on
   the run view, or the operator's card) gives it up from any state: nothing
   more starts, work still out is withdrawn, and it ends `canceled`. It needs

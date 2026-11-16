@@ -1362,12 +1362,18 @@ func processCaptureValues(runID, nodeID string) func(name string) (string, bool)
 	// Output names are unique within one scope only, so a step reads the
 	// outputs of its own scope: the run's top level, or one subprocess body.
 	scope := processNodeScope(nodeID)
+	rewound := processRunRewoundAt(runID)
 	return func(name string) (string, bool) {
 		var latest *db.ProcessAgentDispatch
 		for i := range rows {
 			row := &rows[i]
 			if _, ok := row.ReportOutputs[name]; !ok || row.ReportOutcome != string(engine.ProgramSucceeded) ||
 				processNodeScope(row.NodeID) != scope {
+				continue
+			}
+			// A step the run was sent back over ran again (or will): what it
+			// reported before that no longer stands.
+			if at, ok := rewound[row.NodeID]; ok && !row.ReportedAt.After(at) {
 				continue
 			}
 			if latest == nil || row.ReportedAt.After(latest.ReportedAt) {
@@ -1382,6 +1388,28 @@ func processCaptureValues(runID, nodeID string) func(name string) (string, bool)
 		return fmt.Sprintf("[output %s, reported by an earlier step:]\n%s\n[end of output %s]",
 			name, latest.ReportOutputs[name], name), true
 	}
+}
+
+// processRunRewoundAt is, per node, when the run was last sent back over it
+// (the sent_back events' reset nodes).
+func processRunRewoundAt(runID string) map[string]time.Time {
+	events, err := db.ListLatestProcessRunNodeEvents(runID, "sent_back")
+	if err != nil || len(events) == 0 {
+		return nil
+	}
+	out := map[string]time.Time{}
+	for _, e := range events {
+		var payload executor.SentBackPayload
+		if e.DecodePayload(&payload) != nil {
+			continue
+		}
+		for _, node := range payload.Nodes {
+			if e.OccurredAt.After(out[node]) {
+				out[node] = e.OccurredAt
+			}
+		}
+	}
+	return out
 }
 
 // processNodeScope is the subprocess prefix of a prepared node id ("" at the

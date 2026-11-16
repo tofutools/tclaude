@@ -85,3 +85,35 @@ func submitProcessRunSteer(w http.ResponseWriter, runID, actor string, input pro
 	}
 	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "run": view})
 }
+
+type processRunSendBackRequest struct {
+	NodeID string `json:"nodeId"`
+	Note   string `json:"note,omitempty"`
+}
+
+// handleProcessRunSendBack sends a run back to a finished step of its own
+// graph (process.runs.manage): everything downstream is reset, agent work out
+// there is withdrawn, outputs reported there no longer feed later prompts,
+// and the step runs again. An overseer raises a concern instead; the
+// operator's card offers the send-back to the concern's step.
+func handleProcessRunSendBack(w http.ResponseWriter, r *http.Request) {
+	caller, ok := requirePermission(w, r, PermProcessRunsManage)
+	if !ok {
+		return
+	}
+	var request processRunSendBackRequest
+	if err := decodeProcessRuntimeRequest(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
+		return
+	}
+	actor, err := processRequestActor(r, caller)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
+		return
+	}
+	runID := strings.TrimSpace(r.PathValue("id"))
+	setAuditDetail(r, "run: "+runID+", send back to: "+stripControl(request.NodeID))
+	submitProcessRunSteer(w, runID, string(actor), processRunInput{back: &executor.SendBackInput{
+		NodeID: strings.TrimSpace(request.NodeID), Note: strings.TrimSpace(request.Note),
+	}})
+}

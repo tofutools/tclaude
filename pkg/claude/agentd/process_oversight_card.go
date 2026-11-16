@@ -26,6 +26,9 @@ const (
 	processChoiceReassign   = "Reassign"
 	processChoiceKeepPaused = "Keep paused"
 	processChoiceCancel     = "Cancel the run"
+	// processChoiceSendBackPrefix starts "Send back to <step>", offered when
+	// the concern names a finished step of the run's own graph.
+	processChoiceSendBackPrefix = "Send back to "
 )
 
 // processChoiceSlug is the resolution a choice records.
@@ -41,6 +44,9 @@ func processChoiceSlug(choice string) string {
 		return "keep_paused"
 	case processChoiceCancel:
 		return "cancel"
+	}
+	if strings.HasPrefix(choice, processChoiceSendBackPrefix) {
+		return "send_back"
 	}
 	return ""
 }
@@ -89,6 +95,11 @@ func processConcernChoices(view processRunView, c db.ProcessRunConcern) []string
 	}
 	if processConcernReassignable(view, c.NodeID) {
 		choices = append(choices, processChoiceReassign)
+	}
+	// The concern's own step, when it finished and is of the run's own
+	// graph, is one the run can go back to; a deeper rewind is the run view's.
+	if c.NodeID != "" && !strings.ContainsAny(c.NodeID, "./") && view.Checkpoint.Nodes[c.NodeID] == engine.NodeDone {
+		choices = append(choices, processChoiceSendBackPrefix+c.NodeID)
 	}
 	return append(choices, processChoiceKeepPaused, processChoiceCancel)
 }
@@ -191,6 +202,17 @@ func applyProcessConcernChoice(c db.ProcessRunConcern, choice, note string) erro
 	case processChoiceReassign:
 		// The overseer picks who; the pick is posted to it.
 		return nil
+	case processChoiceSendBackPrefix + c.NodeID:
+		_, err := processRuns.submit(c.RunID, actor, processRunInput{back: &executor.SendBackInput{
+			NodeID: c.NodeID,
+			Note:   truncateBytes(strings.TrimSpace("concern #"+fmt.Sprint(c.ID)+": "+note), executor.MaxResolutionNoteBytes),
+		}})
+		if err != nil {
+			return err
+		}
+		kickProcessAgentDispatch(c.RunID)
+		// The step runs again: what waited on the concern can go on.
+		return resumeProcessRunFor(c.RunID, actor)
 	case processChoiceCancel:
 		_, err := processRuns.submit(c.RunID, actor, processRunInput{cancel: &processRunCancelInput{
 			note: truncateBytes(strings.TrimSpace("concern #"+fmt.Sprint(c.ID)+": "+note), executor.MaxResolutionNoteBytes),
