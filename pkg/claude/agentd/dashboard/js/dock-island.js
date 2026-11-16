@@ -4,6 +4,7 @@ import {
 } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { DisclosureToggle, headToggleClick } from './disclosure.js';
 import { wizWord } from './slop.js';
 import { DockProcesses } from './dock-processes.js';
 import { dashPrefs } from './prefs.js';
@@ -507,19 +508,18 @@ function DockSection({
   const importFile = (file) => { if (file && section.onImportFile) void section.onImportFile(file); };
   const fileDrag = (event) => !!section.onImportFile && [...(event.dataTransfer?.types || [])].includes('Files');
   if (hidden) return null;
+  const shown = open || searching;
+  const toggle = () => {
+    // A search opens every matching section without persisting it.
+    if (searching) return;
+    setOpen(!open);
+    setSectionOpen(section.key, !open);
+  };
 
   return html`
-    <details
-      class=${`dock-section${dropOver ? ' is-drop-over' : ''}`}
+    <div
+      class=${`dock-section${shown ? ' open' : ''}${dropOver ? ' is-drop-over' : ''}`}
       data-key=${section.key}
-      open=${open || searching}
-      onToggle=${(event) => {
-        // A search opens every matching section without persisting it.
-        if (searching) return;
-        const next = event.currentTarget.hasAttribute('open');
-        setOpen(next);
-        setSectionOpen(section.key, next);
-      }}
       onDragOver=${(event) => { if (!fileDrag(event)) return; event.preventDefault(); setDropOver(true); }}
       onDragLeave=${(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropOver(false); }}
       onDrop=${(event) => {
@@ -529,13 +529,13 @@ function DockSection({
         importFile(event.dataTransfer.files?.[0]);
       }}
     >
-      <summary class="dock-section-head">
-        <span class="dock-section-title">
+      <div class="dock-section-head" onClick=${headToggleClick(toggle)}>
+        <${DisclosureToggle} class="dock-section-title" open=${shown} onToggle=${toggle}>
           <span class="dock-section-chevron" aria-hidden="true">▸</span>
           <span class="dock-section-icon" aria-hidden="true">${section.icon()}</span>
           ${section.title()}
           <span class="dock-section-count">${all === null || pageKept ? '' : searching && items.length !== known.length ? `${items.length}/${known.length}` : known.length}</span>
-        </span>
+        <//>
         ${fused ? html`<${DockWithheld} nodes=${fused.nodes} withheld=${many.withheld} />` : null}
         ${pageKept && pageKept !== 'loading' ? html`<${DockWithheld} nodes=${[{ id: 'page', name: globalThis.document?.documentElement?.dataset?.remoteNodeName || 'this peer' }]} withheld=${{ page: pageKept }} />` : null}
         <span class="dock-section-tools">
@@ -578,8 +578,8 @@ function DockSection({
               onChange=${(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; importFile(file); }} />
           </span>` : null}
         </span>
-      </summary>
-      <div class="dock-section-items">
+      </div>
+      <div class="dock-section-items" hidden=${!shown}>
         ${pageKept && pageKept !== 'loading' ? html`<div class="dock-empty ui-empty" data-dock-withheld>${pageKept}</div>` : null}
         ${!pageKept && error ? html`<div class="dock-empty ui-empty island-error" role="alert">${error}</div>` : null}
         ${!pageKept && all === null && !error ? html`<div class="dock-empty ui-empty">Loading…</div>` : null}
@@ -603,7 +603,7 @@ function DockSection({
           />
         `) : html`<div class="dock-empty ui-empty">(${section.empty()})</div>`)}
       </div>
-    </details>
+    </div>
   `;
 }
 

@@ -137,7 +137,7 @@ test('the Processes heading carries the same ＋ ⧉ ⋯ tools as the other sect
   const setOpenMenu = (value) => { openMenu = value; };
   await harness.mount(harness.html`<${DockProcesses} isSectionOpen=${() => false} setSectionOpen=${() => {}}
     openMenu=${'section:processes'} setOpenMenu=${setOpenMenu} />`, host);
-  const head = host.querySelector('summary.dock-section-head');
+  const head = host.querySelector('div.dock-section-head');
   assert.deepEqual([...head.querySelectorAll('.dock-section-tools > .dock-section-manage, .dock-section-tools .dock-card-actions > .dock-section-manage')]
     .map((button) => button.dataset.dockAct), ['new-item', 'manage-all', 'section-menu']);
   assert.deepEqual([...head.querySelectorAll('.dock-card-menu.open [role="menuitem"]')].map((item) => item.textContent),

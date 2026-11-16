@@ -3,6 +3,7 @@ import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, MenuItem, Select } from './ui-components.js';
+import { DisclosureToggle, DisclosureTri, headToggleClick } from './disclosure.js';
 import { UsageProfileChip } from './usage-profile-chip.js';
 import {
   applySort, tableSortState, RETIRED_COLS, RETIRED_ACCESSORS,
@@ -618,16 +619,22 @@ function compactTriggerState(rule) {
 }
 
 function GroupTriggersSection({ group, triggers }) {
+  // Collapsed by default and not remembered, as the <details> it was.
+  const [open, setOpen] = useState(false);
   // In the fused view each rule is its node's (fleet_node): a global rule
   // covers that node's groups only.
   const rows = (triggers || []).filter((rule) => (!group.fleet_node || rule.fleet_node === group.fleet_node.id)).filter((rule) => rule.scope === 'global' ||
     (rule.scope === 'group' && (rule.group === group.name || Number(rule.group_id) === Number(group.id))));
   if (!rows.length) return null;
   const visible = rows.slice(0, 5);
-  return html`<details class="group-triggers-section">
-    <summary><strong>Triggers</strong><span class="muted">${rows.length} installed here</span>
-      <a href="/automations/triggers" onClick=${(event) => event.stopPropagation()}>edit in Automations →</a></summary>
-    <table class="ui-compact"><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
+  const toggle = () => setOpen(!open);
+  return html`<div class=${`group-triggers-section${open ? ' open' : ''}`}>
+    <div class="group-triggers-head" onClick=${headToggleClick(toggle)}>
+      <${DisclosureToggle} class="group-triggers-toggle" open=${open} onToggle=${toggle}>
+        <${DisclosureTri} open=${open} /><strong>Triggers</strong><span class="muted">${rows.length} installed here</span>
+      <//>
+      <a href="/automations/triggers" onClick=${(event) => event.stopPropagation()}>edit in Automations →</a></div>
+    <div class="group-triggers-body" hidden=${!open}><table class="ui-compact"><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
       ${visible.map((rule) => html`<tr key=${rule.id}>
         <td><span class="rowname">${rule.name}</span>${rule.scope === 'global' && html`<span class="ui-tag trigger-scope global">global</span>`}</td>
         <td><code>${rule.source}</code><span class="muted">${rule.author_is_agent === true ? ' · agent PRs' : ''}</span></td>
@@ -635,7 +642,7 @@ function GroupTriggersSection({ group, triggers }) {
         <td>${rule.enabled ? 'yes' : 'no'}</td>
       </tr>`)}</tbody></table>
     ${rows.length > visible.length && html`<div class="muted">+ ${rows.length - visible.length} more — edit in Automations</div>`}
-  </details>`;
+  </div></div>`;
 }
 
 function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {

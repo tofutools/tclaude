@@ -42,10 +42,11 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
     />
   `, host);
 
-  const details = host.querySelector('details.dock-section');
+  const details = host.querySelector('div.dock-section');
   const card = host.querySelector('.dock-card');
   const cog = getByRole(card, 'button', { name: 'Actions for review' });
-  assert.equal(details.hasAttribute('open'), true);
+  assert.equal(details.classList.contains('open'), true);
+  assert.equal(details.querySelector('.dock-section-head button[aria-expanded]').getAttribute('aria-expanded'), 'true', 'the title is the fold button');
   assert.equal(card.hasAttribute('draggable'), true);
   assert.equal(card.dataset.dockKind, 'profiles');
   assert.equal(card.dataset.dockName, 'review');
@@ -70,9 +71,13 @@ test('Dock keeps keyed cards, disclosure and an open menu stable across snapshot
   assert.equal(cog.getAttribute('aria-expanded'), 'false');
   assertSameNode(harness.document.activeElement, cog, 'Escape restores focus to the owning cog');
 
-  details.removeAttribute('open');
-  await harness.act(() => harness.fireEvent(details, 'toggle'));
+  await harness.act(() => harness.fireEvent(details.querySelector('.dock-section-title'), 'click'));
   assert.deepEqual(persisted.at(-1), ['profiles', false]);
+  assert.equal(details.classList.contains('open'), false);
+  assert.equal(details.querySelector('.dock-section-items').hidden, true, 'a folded section keeps its cards mounted, hidden');
+  await harness.act(() => harness.fireEvent(details.querySelector('.dock-section-head'), 'click'));
+  assert.deepEqual(persisted.at(-1), ['profiles', true], 'the rest of the heading folds too, as the summary did');
+  await harness.act(() => harness.fireEvent(details.querySelector('.dock-section-head'), 'click'));
 
   await harness.act(() => harness.fireEvent(cog, 'click'));
   await harness.act(() => harness.fireEvent(getByRole(menu, 'menuitem', { name: 'Edit' }), 'click'));
@@ -349,7 +354,7 @@ test('Dock search filters cards and sections; the card menu carries the library 
     <${Dock} host=${host} state=${state} sections=${[profiles, sandbox]} prefs=${memoryPrefs()}
       isSectionOpen=${(key) => key === 'profiles'} setSectionOpen=${() => {}} />
   `, host);
-  const names = (key) => [...host.querySelectorAll(`details[data-key="${key}"] .dock-card`)].map((card) => card.dataset.dockName);
+  const names = (key) => [...host.querySelectorAll(`.dock-section[data-key="${key}"] .dock-card`)].map((card) => card.dataset.dockName);
   assert.deepEqual(names('profiles'), ['alpha', 'beta', 'gamma']);
   assert.deepEqual(calls, [], 'a closed self-loading section does not fetch');
   assert.equal(host.querySelector('[data-dock-name="beta"] .dock-chip-default')?.textContent, 'default');
@@ -376,14 +381,14 @@ test('Dock search filters cards and sections; the card menu carries the library 
   await harness.act(() => harness.fireEvent(search, 'input'));
   await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
   assert.deepEqual(names('profiles'), ['gamma', 'beta']);
-  assert.equal(host.querySelector('details[data-key="profiles"] .dock-section-count').textContent, '2/3');
-  assert.equal(host.querySelector('details[data-key="sandbox_profiles"]'), null, 'no match hides the section');
+  assert.equal(host.querySelector('.dock-section[data-key="profiles"] .dock-section-count').textContent, '2/3');
+  assert.equal(host.querySelector('.dock-section[data-key="sandbox_profiles"]'), null, 'no match hides the section');
   assert.deepEqual(calls.at(-1), ['fetch']);
 
   search.value = '/opt/data';
   await harness.act(() => harness.fireEvent(search, 'input'));
   assert.deepEqual(names('sandbox_profiles'), ['base'], 'a sandbox profile matches on a path');
-  assert.equal(host.querySelector('details[data-key="profiles"]'), null);
+  assert.equal(host.querySelector('.dock-section[data-key="profiles"]'), null);
 
   search.value = 'sandbox';
   await harness.act(() => harness.fireEvent(search, 'input'));
@@ -395,9 +400,9 @@ test('Dock search filters cards and sections; the card menu carries the library 
 
   search.value = '';
   await harness.act(() => harness.fireEvent(search, 'input'));
-  await harness.act(() => harness.fireEvent(host.querySelector('details[data-key="profiles"] [data-dock-act="new-item"]'), 'click'));
-  await harness.act(() => harness.fireEvent(host.querySelector('details[data-key="profiles"] [data-dock-act="section-menu"]'), 'click'));
-  await harness.act(() => harness.fireEvent(getByRole(host.querySelector('details[data-key="profiles"]'), 'menuitem', { name: 'Export all' }), 'click'));
+  await harness.act(() => harness.fireEvent(host.querySelector('.dock-section[data-key="profiles"] [data-dock-act="new-item"]'), 'click'));
+  await harness.act(() => harness.fireEvent(host.querySelector('.dock-section[data-key="profiles"] [data-dock-act="section-menu"]'), 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(host.querySelector('.dock-section[data-key="profiles"]'), 'menuitem', { name: 'Export all' }), 'click'));
   assert.deepEqual(calls.slice(-2), [['new'], ['export-all']]);
 });
 
@@ -416,7 +421,7 @@ test('Dock draws Processes after the snapshot sections and an afterProcesses sec
     <${Dock} host=${host} state=${state} sections=${[last, section([])]} prefs=${memoryPrefs()}
       isSectionOpen=${() => false} setSectionOpen=${() => {}} />
   `, host);
-  assert.deepEqual([...host.querySelectorAll('details.dock-section')].map((details) => details.dataset.key),
+  assert.deepEqual([...host.querySelectorAll('.dock-section')].map((details) => details.dataset.key),
     ['profiles', 'processes', 'sandbox_profiles']);
 });
 
@@ -450,7 +455,7 @@ test("On a peer's page the dock reads no catalog the peer keeps, and says so in 
       isSectionOpen=${() => true} setSectionOpen=${() => {}} />
   `, host);
   const flush = async () => harness.act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
-  const body = (key) => host.querySelector(`details[data-key="${key}"] .dock-section-items`);
+  const body = (key) => host.querySelector(`.dock-section[data-key="${key}"] .dock-section-items`);
   await flush();
   assert.deepEqual(fetched, [], 'nothing is read before the peer snapshot arrives');
 
@@ -461,7 +466,7 @@ test("On a peer's page the dock reads no catalog the peer keeps, and says so in 
     assert.match(body(key).textContent, /forge keeps its catalogs to itself: it needs node\.spawn\.read/, key);
     assert.equal(body(key).querySelector('[role="alert"]'), null, `${key}: no error`);
     assert.doesNotMatch(body(key).textContent, /no profiles yet|none/, `${key}: not an empty catalog`);
-    assert.ok(host.querySelector(`details[data-key="${key}"] .dock-section-withheld`), `${key}: the header carries the lock`);
+    assert.ok(host.querySelector(`.dock-section[data-key="${key}"] .dock-section-withheld`), `${key}: the header carries the lock`);
   }
 
   await harness.act(() => state.publish({ peer_view: { level: 'restricted', included: ['groups', 'spawn.catalog'], omitted: [] }, profiles: [{ name: 'alpha' }], sandbox_profiles_rev: 'r1' }));

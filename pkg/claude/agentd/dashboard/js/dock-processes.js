@@ -20,6 +20,7 @@ import { h } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { DisclosureToggle, headToggleClick } from './disclosure.js';
 import { GroupCombobox } from './group-picker.js';
 import { wizWord } from './slop.js';
 import { ProcessMiniGraph } from './process-kit.js';
@@ -348,8 +349,9 @@ export function DockProcesses({
   };
   const current = preview && rows?.find((row) => row.id === preview.row.id);
   if (searching && rows !== null && !shown.length) return null;
-  return html`<details ref=${sectionRef} class="dock-section dock-processes" data-key="processes" open=${open || searching}
-      onToggle=${(event) => { if (searching) return; const next = event.currentTarget.hasAttribute('open'); setOpen(next); setSectionOpen('processes', next); }}
+  const unfolded = open || searching;
+  const toggle = () => { if (searching) return; setOpen(!open); setSectionOpen('processes', !open); };
+  return html`<div ref=${sectionRef} class=${`dock-section dock-processes${unfolded ? ' open' : ''}`} data-key="processes"
       onDragOver=${(event) => { if (!fileDrag(event)) return; event.preventDefault(); setDropOver(true); }}
       onDragLeave=${(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropOver(false); }}
       onDrop=${(event) => {
@@ -362,13 +364,13 @@ export function DockProcesses({
         if (!open) { setOpen(true); setSectionOpen('processes', true); }
         setDropped(file);
       }}>
-    <summary class="dock-section-head">
-      <span class="dock-section-title">
+    <div class="dock-section-head" onClick=${headToggleClick(toggle)}>
+      <${DisclosureToggle} class="dock-section-title" open=${unfolded} onToggle=${toggle}>
         <span class="dock-section-chevron" aria-hidden="true">▸</span>
         <span class="dock-section-icon" aria-hidden="true">◈</span>
         ${wizWord('Processes', 'Rites')}
         <span class="dock-section-count">${rows ? (searching && shown.length !== rows.length ? `${shown.length}/${rows.length}` : rows.length) : ''}</span>
-      </span>
+      <//>
       <span class="dock-section-tools">
         <${Button} size="sm" variant="ghost" class="dock-section-manage" data-dock-act="new-item" data-dock-kind="processes"
           title=${wizWord('New process: an untitled one in the library, opened in the editor', 'New rite: an untitled one, opened in the editor')} aria-label=${`New in ${wizWord('Processes', 'Rites')}`}
@@ -388,8 +390,8 @@ export function DockProcesses({
           </div>
         </span>
       </span>
-    </summary>
-    <div class="dock-section-items">
+    </div>
+    <div class="dock-section-items" hidden=${!unfolded}>
       <div class="dock-process-tools">
         <span class="ui-seg dock-process-toggle" role="group" aria-label="Which templates">
           <${Button} size="sm" pressed=${!all} onClick=${() => setAll(false)}>library<//>
@@ -406,5 +408,5 @@ export function DockProcesses({
     </div>
     ${current && html`<${Preview} row=${current} anchor=${preview.anchor} groups=${groups} fetchImpl=${fetchImpl}
       onClose=${() => setPreview(null)} onChanged=${load} onDelete=${remove} />`}
-  </details>`;
+  </div>`;
 }

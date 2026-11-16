@@ -2776,6 +2776,15 @@ body.slop .human-notification-drawer-download:hover { background: rgba(255, 215,
 .slug { font-family: ui-monospace, monospace; font-size: 12px; }
 .muted { color: #7d8590; }
 details { margin: 4px 0; }
+/* disclosure.js: a section's fold button looks like the title it wraps. */
+.disclosure-toggle {
+  background: none; border: 0; margin: 0; padding: 0; color: inherit;
+  font-family: inherit; line-height: inherit; text-align: left; cursor: pointer;
+}
+.disclosure-tri { color: #7d8590; font-size: 10px; }
+.disclosure-tri::before { content: "▶"; }
+.disclosure-tri.open::before { content: "▼"; }
+.disclosure-toggle:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; border-radius: 3px; }
 details > summary {
   cursor: pointer; padding: 6px 0; list-style: none;
 }
@@ -14112,11 +14121,12 @@ body.wizard #activity-performance .debug-table td {
 /* Per-group triggers are a deliberately small projection: collapsed by
    default, read-only, capped to five rows, and linked back to Automations. */
 .group-triggers-section { margin: 7px 0 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d141b; }
-.group-triggers-section > summary { display: flex; align-items: center; gap: 8px; padding: 6px 9px; cursor: pointer; font-size: 11px; }
-.group-triggers-section > summary > a { margin-left: auto; color: #58a6ff; }
+.group-triggers-head { display: flex; align-items: center; gap: 8px; padding: 6px 9px; cursor: pointer; font-size: 11px; }
+.group-triggers-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: inherit; }
+.group-triggers-head > a { margin-left: auto; color: #58a6ff; }
 .group-triggers-section table { margin: 0; width: 100%; font-size: 10px; }
 .group-triggers-section td:first-child .trigger-scope { margin-left: 6px; }
-.group-triggers-section > .muted { display: block; padding: 5px 9px; }
+.group-triggers-body > .muted { display: block; padding: 5px 9px; }
 
 @media (max-width: 900px) {
   .triggers-table { table-layout: auto; min-width: 980px; }
@@ -14158,8 +14168,8 @@ body.wizard :is(.trigger-verdicts, .trigger-firings, .group-triggers-section) {
 body.wizard :is(.trigger-dwell-state, #trigger-modal .trigger-harness-capabilities) {
   background: #18122b; border-color: rgba(122, 93, 176, .55);
 }
-body.wizard .group-triggers-section > summary { color: #f3e6c0; }
-body.wizard .group-triggers-section > summary > a { color: var(--ui-wizard-gold); }
+body.wizard .group-triggers-head { color: #f3e6c0; }
+body.wizard .group-triggers-head > a { color: var(--ui-wizard-gold); }
 body.wizard .access-intro,
 body.wizard .access-sub-intro { color: #b39ddb; }
 body.wizard .access-intro strong { color: #f3e6c0; }
@@ -15139,13 +15149,13 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 .dock-collapse { font-weight: 500; }
 .dock-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; }
 
-.dock-section { margin-bottom: 12px; }
+.dock-section { margin: 4px 0 12px; }
 .dock-section:last-child { margin-bottom: 0; }
-/* Each section is a <details> now (JOH-388 req 5) — collapsible on its own.
-   Its <summary> is the heading; it sticks while its cards scroll under it (a
-   long profile list still tells you which kind you're looking at) and doubles
-   as the fold toggle. Strip the native disclosure marker — a rotating chevron
-   in the title carries the open/closed state instead. */
+/* Each section folds on its own (JOH-388 req 5). Its heading sticks while
+   its cards scroll under it (a long profile list still tells you which kind
+   you're looking at); the title is the fold button (disclosure.js), and the
+   rest of the heading folds too, as a <summary> did. A rotating chevron in
+   the title carries the open/closed state. */
 .dock-section-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 2px 4px 6px;
@@ -15153,18 +15163,13 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
   background: #12171d;
   z-index: 1;
   cursor: pointer;
-  list-style: none;
 }
-.dock-section-head::-webkit-details-marker { display: none; }
-/* The chevron in the title is the only disclosure glyph: drop the global
-   details > summary::before arrow, which otherwise became a third flex item. */
-#agent-dock .dock-section > .dock-section-head::before { content: none; }
 .dock-section-head:hover .dock-section-title { color: #c9d1d9; }
 .dock-section-title { display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: #adbac7; min-width: 0; }
 /* The disclosure chevron points down when the section is open, right when
-   collapsed — the [open] attribute on the parent <details> drives the flip. */
+   collapsed: the section's open class drives the flip. */
 .dock-section-chevron { flex: 0 0 auto; font-size: 9px; color: #6e7681; transition: transform .15s ease; }
-.dock-section[open] > .dock-section-head .dock-section-chevron { transform: rotate(90deg); }
+.dock-section.open > .dock-section-head .dock-section-chevron { transform: rotate(90deg); }
 .dock-section-icon { font-size: 12px; }
 .dock-section-count { color: #6e7681; font-weight: 400; font-size: 11px; margin-left: 2px; }
 /* The dock's icon tools keep their glyph size over the small button's text size. */
@@ -18690,10 +18695,13 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 
 /* Fused Plugins and Processes (fused-sections.js): a section per ticked peer. */
 .fused-self-head { margin: 4px 0 8px; font-size: 13px; }
-.fused-section { margin-top: 16px; border-top: 1px solid #30363d; padding-top: 8px; box-shadow: inset 3px 0 0 var(--nc); padding-left: 10px; }
+.fused-section { margin-bottom: 4px; margin-top: 16px; border-top: 1px solid #30363d; padding-top: 8px; box-shadow: inset 3px 0 0 var(--nc); padding-left: 10px; }
 .fused-section-head { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0 8px; }
 .fused-section-head .spacer { flex: 1; }
-.fused-section:not([open]) .fused-section-head { opacity: .8; }
+/* The rows stay mounted while folded, as in the <details> this was. */
+.fused-section-body { display: contents; }
+.fused-section-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: inherit; }
+.fused-section:not(.open) .fused-section-head { opacity: .8; }
 
 /* Fused Automations (fused-jobs.js): a peer's rows under its node pill. */
 .fused-jobs-head td { padding-top: 12px; border-bottom: 1px solid #30363d; }

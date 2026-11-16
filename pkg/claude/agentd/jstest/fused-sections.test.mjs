@@ -49,8 +49,9 @@ test('a fused Plugins tab adds a section per peer; its actions run on that node'
   assert.match(c.querySelector('.fused-self-head').textContent, /⌂ desk/);
   assert.deepEqual(heads(c), ['forge 1 plugin open on forge ↗', 'mac not shared 🔒']);
   const [forge, mac] = c.querySelectorAll('.fused-section');
-  assert.equal(mac.hasAttribute('open'), false, 'a refused section stays collapsed');
-  assert.equal(forge.hasAttribute('open'), true);
+  assert.equal(mac.classList.contains('open'), false, 'a refused section stays collapsed');
+  assert.equal(forge.classList.contains('open'), true);
+  assert.equal(forge.querySelector('.fused-section-toggle').getAttribute('aria-expanded'), 'true');
   assert.match(mac.querySelector('.lock-why').dataset.why, /needs unrestricted trust from mac/);
   assert.deepEqual([...forge.querySelectorAll('.plugin-catalog-card .plugin-head .rowname')].map((n) => n.textContent), ['github'], 'the peer\'s catalog less what it has installed');
   calls.length = 0;
