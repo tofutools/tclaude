@@ -5805,9 +5805,9 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .modal .field textarea { resize: vertical; min-height: 60px; }
 .term-remote { overflow: auto; }
 /* The terminal's Diagnostics overlay (terminal-diagnostics.js): a small
-   readout over the terminal's top-right corner, on desktop and phone. */
+   readout over the terminal's top-left corner (the phone's pinch chip has the right), on desktop and phone. */
 .term-diag {
-  position: absolute; top: 4px; right: 4px; z-index: 6;
+  position: absolute; top: 4px; left: 4px; z-index: 6;
   max-width: min(460px, calc(100% - 8px)); max-height: calc(100% - 8px); overflow: auto;
   background: rgba(13, 17, 23, 0.88); color: #e6edf3; border: 1px solid #30363d; border-radius: 6px;
   font: 11px/1.35 ui-monospace, "SF Mono", Menlo, Consolas, monospace; pointer-events: auto;
@@ -5818,6 +5818,8 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   font: inherit; color: inherit; background: #21262d; border: 1px solid #30363d; border-radius: 4px; padding: 2px 6px; cursor: pointer;
 }
 .term-diag-body { margin: 0; padding: 4px 6px; white-space: pre-wrap; font: inherit; }
+/* The phone terminal's pinch chip sits over the top edge: below it. */
+:root[data-layout="phone"] .term-diag { top: 40px; }
 /* The remote terminal's file browser (remote-files-panel.js): a strip above
    the terminal, never taller than half the pane. */
 .term-files { flex: none; max-height: 50%; overflow: auto; padding: 6px 10px; border-bottom: 1px solid #2a3340; background: #11161d; color: #c9d1d9; font-size: 12px; }

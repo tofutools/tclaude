@@ -267,7 +267,7 @@ To compare how a terminal streams and draws on two devices (a phone and a
 desktop over the same tunnel, say), turn on **Diagnostics**: on a desktop it's
 in a terminal tab's right-click menu, and on a phone in the terminal's **⋯**
 menu. It's off by default and remembered per device, and it applies to every
-terminal on that device. A small readout over the terminal's corner covers the
+terminal on that device. A small readout over the terminal's top-left corner covers the
 last 5 seconds:
 - frames received and rendered per second, and for each scroll step sent (a
   swipe notch or a wheel notch), the time until the next frame arrives and
