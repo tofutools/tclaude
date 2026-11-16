@@ -247,7 +247,7 @@ test('a remembered chip comes back; a bad one falls back to All', async (t) => {
   assert.equal(storedChip({ getItem: () => { throw new Error('blocked'); } }), 'all');
 });
 
-test('since you looked: what changed shows under Needs you with a dot on its rows, and Mark seen clears it', async (t) => {
+test('since you looked: what changed shows under Needs you, its rows unmarked elsewhere, and Mark seen clears it', async (t) => {
   // The last look: lead was working, release-bot fine, payments-fix's PR open with green checks.
   const looked = {
     [WORKER]: { s: 'working', pr: 0, prs: '', ci: '' },

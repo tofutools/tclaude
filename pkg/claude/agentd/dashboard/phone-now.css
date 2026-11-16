@@ -103,7 +103,6 @@
 :root[data-layout="phone"] .phone-now-when.ok { color: var(--phone-ok); }
 :root[data-layout="phone"] .phone-now-when.bad { color: var(--phone-bad); }
 :root[data-layout="phone"] .phone-now-when.info { color: var(--ui-focus); }
-/* The dot on a row that changed since the viewer last looked. */
 /* An agent's context meter (context-meter.js, the desktop's gauge) by its
    state pill on a row, and by its name on a card: the row's gap spaces it. */
 :root[data-layout="phone"] :is(.phone-row, .phone-who) > .ctx-meter { flex: none; align-self: center; margin-right: 0; }
