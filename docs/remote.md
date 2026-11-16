@@ -66,8 +66,10 @@ enter the passphrase. Do not click through a certificate warning instead of
 installing the CA: an untrusted server certificate on this setup means the
 CA is missing from the device — or that something else is answering as the
 dashboard and could capture the passphrase.
-You get the full desktop dashboard — it is desktop-first, with no PWA or Web
-Push on a self-signed LAN setup.
+You get the dashboard's phone layout, and with the CA trusted you can
+install it on the home screen as an app that opens without the address bar
+([Installing it as an app](dashboard.md#installing-it-as-an-app)). There is
+no Web Push: it has no service worker.
 
 The Config › Daemon & network › Remote access mirrors the CLI: enable toggle, listen
 interface, HTTPS port, first-time setup and regenerate, add device (with CA
