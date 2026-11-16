@@ -78,14 +78,15 @@ export function Card({ accent = '', class: extra, children, ...rest }) {
 // count and a link at its end (more). A div with role="group", not a
 // <section>, for the same reason as Card.
 // fold ({ open, onToggle }) makes the whole head one tap target that opens
-// and closes the section, its chevron at the end. A folding head has no `more`.
+// and closes the section, its chevron at the end; a `more` beside a folding
+// head sits after it, a tap target of its own.
 export function Section({ title, count = null, children, more = null, fold = null, class: extra }) {
   const label = html`<span>${title}${count !== null && html` · ${count}`}</span>`;
   return html`<div class=${join('phone-section', extra)} role="group" aria-label=${title}>
-    <h2 class="phone-section-head ui-eyebrow">
+    <h2 class=${join('phone-section-head ui-eyebrow', fold && more && 'phone-section-head-more')}>
       ${fold
         ? html`<button data-ui-exempt type="button" class="phone-section-fold" aria-expanded=${fold.open ? 'true' : 'false'}
-            onClick=${fold.onToggle}>${label}<span class="phone-section-chev" aria-hidden="true">${fold.open ? '⌄' : '›'}</span></button>`
+            onClick=${fold.onToggle}>${label}<span class="phone-section-chev" aria-hidden="true">${fold.open ? '⌄' : '›'}</span></button>${more}`
         : html`${label}${more}`}
     </h2>
     ${children}

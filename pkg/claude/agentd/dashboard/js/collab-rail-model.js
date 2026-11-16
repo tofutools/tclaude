@@ -310,7 +310,9 @@ export function railItems({
       const shell = item.kind === 'shell' && shellSessions.get(item.paneKey);
       if (shell) {
         shellSessions.delete(item.paneKey);
-        if (shell.killable) items[index] = { ...item, shellSession: shell };
+        // shellRow is its session (when it was last used, when it started);
+        // shellSession, the same row, only when this node may kill it.
+        items[index] = { ...item, shellRow: shell, ...(shell.killable ? { shellSession: shell } : {}) };
       }
     }
   }
