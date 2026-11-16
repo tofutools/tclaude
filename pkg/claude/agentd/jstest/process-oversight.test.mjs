@@ -128,7 +128,7 @@ test('the strip parks the selected step that is out, and gives the run up, each 
   const harness = await createPreactHarness(t);
   const { RunOversight, eventSentence } = await harness.importDashboardModule('js/process-oversight.js');
   const api = fakeApi();
-  const running = { ...view(), commands: [{ nodeId: 'work', kind: 'agent', attempt: 2 }, { nodeId: 'build', kind: 'program', attempt: 1 }] };
+  const running = { ...view(), commands: [{ nodeId: 'work', kind: 'agent', attempt: 2, parkable: true }, { nodeId: 'build', kind: 'program', attempt: 1 }, { nodeId: 'decide', kind: 'agent', attempt: 1 }] };
   const type = async (root, text) => harness.act(async () => {
     const area = root.querySelector('[data-run-steer] textarea');
     area.value = text;
@@ -149,6 +149,11 @@ test('the strip parks the selected step that is out, and gives the run up, each 
 
   const program = await harness.mount(harness.html`<${RunOversight} view=${running} runId="run_ov" api=${api} nodeId="build" />`);
   assert.equal(program.container.querySelector('[data-run-park-open]'), null, 'only an agent step that is out can be parked');
+  const decider = await harness.mount(harness.html`<${RunOversight} view=${running} runId="run_ov" api=${api} nodeId="decide" />`);
+  assert.equal(decider.container.querySelector('[data-run-park-open]'), null, 'an agent decider is not parkable');
+  const draining = await harness.mount(harness.html`<${RunOversight} view=${{ ...running, draining: true }} runId="run_ov" api=${api} nodeId="work" />`);
+  assert.equal(draining.container.querySelector('[data-run-cancel-open]'), null, 'a run given up takes no more steering while it drains');
+  assert.equal(draining.container.querySelector('[data-run-park-open]'), null);
   const done = await harness.mount(harness.html`<${RunOversight} view=${{ ...running, status: 'canceled' }} runId="run_ov" api=${api} nodeId="work" />`);
   assert.equal(done.container.querySelector('[data-run-cancel-open]'), null, 'an ended run is not canceled again');
 

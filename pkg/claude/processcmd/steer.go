@@ -112,12 +112,13 @@ func runProcessBlock(p *processBlockParams, stdout, stderr io.Writer) error {
 			return err
 		}
 		for _, command := range run.Commands {
-			if command.NodeID == node && command.Kind == engine.CommandAgent {
+			if command.NodeID == node && command.Kind == engine.CommandAgent && command.Parkable {
 				attempt = command.Attempt
 			}
 		}
 		if attempt == 0 {
-			return fmt.Errorf("node %s has no agent step out in run %s", node, runID)
+			return fmt.Errorf("node %s has no agent task step out in run %s that can be parked "+
+				"(a decision, vote, or check or review stage cannot be; pause the run or raise a concern)", node, runID)
 		}
 	}
 	request := map[string]any{"nodeId": node, "attempt": attempt, "reason": reason}

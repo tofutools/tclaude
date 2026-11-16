@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,11 +39,22 @@ func lastInboxSubject(t *testing.T, conv string) string {
 func TestProcessSteer_OverseerParksAStepThatIsOutAndTheOperatorRetriesIt(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	f.HaveGroup("crew")
+	advance := moveOversightClock(t)
 	const leadConv, devConv = "sbl1-1111-2222-3333-4444", "sbd1-1111-2222-3333-4444"
 	havePerformerAgent(t, f, "crew", leadConv, "lena", "lead", "working")
 	havePerformerAgent(t, f, "crew", devConv, "dana", "dev", "idle")
 	startEpicRun(t, f, root, "run_sb1")
 	require.Len(t, processInbox(t, devConv), 1, "the step is handed out")
+	var shown struct {
+		Commands []struct {
+			NodeID   string `json:"nodeId"`
+			Parkable bool   `json:"parkable"`
+		} `json:"commands"`
+	}
+	rec := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/run_sb1", nil)
+	testharness.DecodeJSON(t, rec, &shown)
+	require.Len(t, shown.Commands, 1)
+	assert.True(t, shown.Commands[0].Parkable, "the run view says the step can be parked")
 
 	block := map[string]any{"nodeId": "work", "attempt": 1, "reason": "The API this step needs was removed."}
 	refused := agentReq(t, f, devConv, http.MethodPost, "/v1/process/runs/run_sb1/block", block)
@@ -66,6 +78,14 @@ func TestProcessSteer_OverseerParksAStepThatIsOutAndTheOperatorRetriesIt(t *test
 		marked = marked || (e.Kind == "block_marked" && strings.Contains(e.Actor, "agent:"))
 	}
 	assert.True(t, marked, "the log says who parked the step")
+
+	// Left parked past its patience, the engine says who parked it rather
+	// than that its retries are spent.
+	advance(time.Hour)
+	agentd.SweepProcessStuckSignalsForTest()
+	raised := engineConcerns(showOversightRun(t, f, "run_sb1"))
+	require.Len(t, raised, 1)
+	assert.Contains(t, raised[0].Reason, "was parked by lena")
 
 	resolveBlocked(t, f, "run_sb1", map[string]any{"nodeId": "work", "attempt": 1, "action": "retry", "note": "API restored"})
 	agentd.WaitForProcessDispatchForTest()

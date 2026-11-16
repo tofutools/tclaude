@@ -249,7 +249,7 @@ function SteerForm({ kind, label, placeholder, confirm, required, send, onChange
 // the one a person can park.
 export function outAgentStep(view, nodeId) {
   if (!nodeId) return null;
-  return (view?.commands || []).find((command) => command.kind === 'agent' && command.nodeId === nodeId) || null;
+  return (view?.commands || []).find((command) => command.kind === 'agent' && command.parkable && command.nodeId === nodeId) || null;
 }
 
 // RunOversight is the strip under a run's header: its overseer, a way to
@@ -261,7 +261,9 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
   if (!view) return null;
   const open = openConcerns(view);
   const terminal = ['completed', 'failed', 'canceled'].includes(view.status);
-  const out = !terminal && outAgentStep(view, nodeId);
+  // A run given up that is still draining takes no more steering.
+  const steerable = !terminal && !view.draining;
+  const out = steerable && outAgentStep(view, nodeId);
   const busy = raising || steering;
   return html`<section class=${`pov${compact ? ' pov-compact' : ''}`} aria-label="Oversight" data-run-oversight>
     <div class="pov-line">
@@ -272,7 +274,7 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
       ${out && api?.markBlocked && !busy && html`<${Button} size="sm" data-run-park-open
         title="Stop this step: its performer is released, and it waits on retry, skip or cancel"
         onClick=${() => setSteering('park')}>⏹ Park ${nodeLabel || nodeId}…<//>`}
-      ${!terminal && api?.cancelRun && !busy && html`<${Button} size="sm" variant="danger" data-run-cancel-open
+      ${steerable && api?.cancelRun && !busy && html`<${Button} size="sm" variant="danger" data-run-cancel-open
         title="Give the whole run up: work still out is withdrawn and it ends canceled"
         onClick=${() => setSteering('cancel')}>✕ Cancel ${wizard ? 'rite' : 'run'}…<//>`}
     </div>

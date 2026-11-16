@@ -35,6 +35,9 @@ type processStuckSpell struct {
 	Signal string
 	Since  time.Time
 	Detail string
+	// ParkedBy is who parked a blocked step by hand (tclaude process block);
+	// empty when its retries ran out.
+	ParkedBy string
 }
 
 func (s processStuckSpell) key() string { return s.NodeID + "\x00" + s.Signal }
@@ -49,20 +52,35 @@ func processRunStuckSpells(run *db.ProcessRun, oversight processTemplateOversigh
 		return nil, err
 	}
 	if len(checkpoint.Blocked) > 0 {
-		since := map[string]time.Time{}
+		blocked := map[string]db.ProcessRunEvent{}
+		marked := map[string]db.ProcessRunEvent{}
 		events, err := db.ListLatestProcessRunNodeEvents(run.ID, "node_blocked")
 		if err != nil {
 			return nil, err
 		}
 		for _, e := range events {
-			since[e.NodeID] = e.OccurredAt
+			blocked[e.NodeID] = e
+		}
+		marks, err := db.ListLatestProcessRunNodeEvents(run.ID, "block_marked")
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range marks {
+			marked[e.NodeID] = e
 		}
 		for _, b := range checkpoint.Blocked {
-			at := since[b.NodeID]
-			if at.IsZero() {
+			event, ok := blocked[b.NodeID]
+			at := event.OccurredAt
+			if !ok {
 				at = run.UpdatedAt
 			}
-			spells = append(spells, processStuckSpell{NodeID: b.NodeID, Signal: processSignalBlocked, Since: at, Detail: b.Reason})
+			spell := processStuckSpell{NodeID: b.NodeID, Signal: processSignalBlocked, Since: at, Detail: b.Reason}
+			// A park by hand commits its block_marked input right before the
+			// node_blocked it causes.
+			if m, parked := marked[b.NodeID]; parked && ok && event.Sequence-m.Sequence == 1 {
+				spell.ParkedBy = m.Actor
+			}
+			spells = append(spells, spell)
 		}
 	}
 	rows, err := db.ListOpenProcessAgentDispatchesForRun(run.ID)
@@ -99,7 +117,11 @@ func processStuckReason(s processStuckSpell, stuckFor time.Duration) string {
 	var text string
 	switch s.Signal {
 	case processSignalBlocked:
-		text = fmt.Sprintf("Step %s has been blocked for %s: its retries are spent.", s.NodeID, held)
+		if s.ParkedBy != "" {
+			text = fmt.Sprintf("Step %s was parked by %s %s ago and still waits on retry, skip or cancel.", s.NodeID, processActorName(s.ParkedBy), held)
+		} else {
+			text = fmt.Sprintf("Step %s has been blocked for %s: its retries are spent.", s.NodeID, held)
+		}
 	case processSignalNoPerformer:
 		text = fmt.Sprintf("Step %s has had nobody to take it for %s.", s.NodeID, held)
 	case processSignalNoReport:

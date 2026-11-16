@@ -1317,6 +1317,20 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 		if checkpoint.FirstCommand() != nil {
 			return invalid("terminal run cannot have an outstanding command")
 		}
+		// A run given up as a whole (TransitionRunCanceled) stops wherever its
+		// nodes were: one may be left ready, and no node is what doomed it.
+		if checkpoint.Canceled {
+			if checkpoint.Status != RunCanceled {
+				return invalid("a run given up must end canceled, not %q", checkpoint.Status)
+			}
+			if doneEndIndex >= 0 {
+				return invalid("a run given up cannot also have reached end node %q", definition.nodes[doneEndIndex].id)
+			}
+			if activeIndex >= 0 && checkpoint.Nodes[definition.nodes[activeIndex].id] != NodeReady {
+				return invalid("a run given up cannot leave node %q %q", definition.nodes[activeIndex].id, checkpoint.Nodes[definition.nodes[activeIndex].id])
+			}
+			break
+		}
 		if activeIndex >= 0 {
 			return invalid("terminal run cannot have active node %q", definition.nodes[activeIndex].id)
 		}

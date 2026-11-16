@@ -105,6 +105,7 @@ type processRunCommandJSON struct {
 	Program   string                   `json:"program"`
 	State     string                   `json:"state"`
 	Performer *processRunPerformerJSON `json:"performer,omitempty"`
+	Parkable  bool                     `json:"parkable,omitempty"`
 }
 
 // processRunPerformerJSON mirrors the daemon's per-attempt performer view.

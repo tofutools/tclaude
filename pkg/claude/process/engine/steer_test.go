@@ -116,6 +116,9 @@ func TestCancelRunDrainsThenEndsCanceled(t *testing.T) {
 	if done.Status != RunCanceled {
 		t.Fatalf("drained run status = %q", done.Status)
 	}
+	if err := ClassifyCheckpoint(done, definition); err != nil {
+		t.Fatalf("drained canceled checkpoint: %v", err)
+	}
 
 	// With nothing out (the step parked), it ends at once.
 	parked, err := Apply(checkpoint, definition, mark("work", 1, "stuck"))

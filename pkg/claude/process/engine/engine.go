@@ -589,8 +589,8 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		if !out || command.Kind != CommandAgent || next.Nodes[node.id] != NodeRunning {
 			return Checkpoint{}, fmt.Errorf("%w: node %q has no agent step out to park", ErrStaleResolution, node.id)
 		}
-		if !manuallyBlockable(definition, node) {
-			return invalid("node %q is a gate stage; park the step it gates instead", node.id)
+		if !manuallyBlockable(definition, node) || len(command.Verdicts) > 0 {
+			return invalid("node %q is a decision, a vote, or a check or review stage, which cannot be parked; pause the run or raise a concern", node.id)
 		}
 		if mark.Attempt != command.Attempt {
 			return Checkpoint{}, fmt.Errorf("%w: node %q is out at attempt %d, not %d",
@@ -615,6 +615,13 @@ func commandForNode(checkpoint Checkpoint, nodeID string) (Command, bool) {
 		}
 	}
 	return Command{}, false
+}
+
+// Parkable reports whether a person may park this node's agent step by hand
+// (TransitionBlockMarked): a task step, not a decider, vote or gate stage.
+func (d *Definition) Parkable(nodeID string) bool {
+	index, ok := d.index[nodeID]
+	return ok && manuallyBlockable(d, d.nodes[index])
 }
 
 // manuallyBlockable reports whether a person may park this step by hand: any
