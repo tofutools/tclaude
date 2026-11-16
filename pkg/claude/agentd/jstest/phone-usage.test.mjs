@@ -148,6 +148,7 @@ test('phone Usage Costs: the daily spend bars stack by provider; a tapped day sh
   assert.equal(detail(), 'Jul 9$1.00claude$1.00codex$0.00', 'a provider idle that day reads $0');
   assert.deepEqual(days().map((day) => day.classList.contains('picked')), [true, false]);
   assert.equal(days()[0].getAttribute('aria-pressed'), 'true');
+  assert.equal(chart.querySelector('[role="status"]').textContent, 'Jul 9: $1.00; claude $1.00, codex $0.00', 'a tap is read out in one line');
   await harness.act(() => harness.fireEvent(days()[0], 'click', { button: 0 }));
   assert.equal(detail(), 'Jul 10 · latest$3.00claude$2.00codex$1.00', 'tapping it again lets go');
 });

@@ -62,7 +62,7 @@
   column-gap: clamp(1px, calc(120px / var(--phone-spend-days)), 6px); height: 150px;
 }
 :root[data-layout="phone"] .phone-spend-day {
-  display: grid; grid-template-rows: minmax(0, 1fr) 16px; align-items: end; justify-items: stretch;
+  display: grid; grid-template-rows: minmax(0, 1fr) 16px; grid-template-columns: minmax(0, 1fr); align-items: end; justify-items: stretch;
   min-width: 0; height: 100%; padding: 0; border: 0; background: none; color: inherit; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
@@ -76,10 +76,13 @@
 }
 :root[data-layout="phone"] .phone-spend-day.picked .phone-spend-stack i { opacity: 1; }
 :root[data-layout="phone"] .phone-spend-day:focus-visible { outline: 2px solid var(--phone-accent); outline-offset: 1px; border-radius: 3px; }
-:root[data-layout="phone"] .phone-spend-tick { align-self: end; overflow: visible; white-space: nowrap; text-align: center; color: var(--ui-muted-text); font-size: 11px; line-height: 14px; }
+:root[data-layout="phone"] .phone-spend-tick { align-self: end; justify-self: center; width: max-content; white-space: nowrap; color: var(--ui-muted-text); font-size: 11px; line-height: 14px; }
 :root[data-layout="phone"] .phone-spend-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; color: var(--ui-muted-text); font-size: 12px; }
 :root[data-layout="phone"] :is(.phone-spend-legend, .phone-spend-row) span { display: inline-flex; align-items: center; gap: 6px; }
 :root[data-layout="phone"] :is(.phone-spend-legend, .phone-spend-row) i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+:root[data-layout="phone"] .phone-spend-status {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
 :root[data-layout="phone"] .phone-spend-detail { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--phone-line); }
 :root[data-layout="phone"] :is(.phone-spend-detail-head, .phone-spend-row) {
   display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums;

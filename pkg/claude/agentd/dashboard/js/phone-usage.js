@@ -192,6 +192,10 @@ function CostRow({ name, sub, cost, share, whatIf }) {
 export function PhoneSpendChart({ costs, wizard }) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   const [pickedDay, setPickedDay] = useState(null);
+  // What a screen reader hears on a tap: the picked day in one line. The
+  // breakdown itself is not live, so the minute's reload of today's figures
+  // is not read out.
+  const [announcement, setAnnouncement] = useState('');
   const bars = spendBars(costs);
   const title = w('Daily spend', 'Daily tithes');
   if (!bars.days.length) {
@@ -201,7 +205,12 @@ export function PhoneSpendChart({ costs, wizard }) {
     <//>`;
   }
   const shown = dayBreakdown(bars, pickedDay);
-  // A tick under every bar up to two weeks, else about seven along the span.
+  const pick = (day) => {
+    setPickedDay(day?.day || null);
+    const next = dayBreakdown(bars, day?.day || null);
+    setAnnouncement(`${dayLabel(next.day)}${day ? '' : ', latest'}: ${fmtExactUSD(next.cost)}; ${next.rows.map((row) => `${row.provider} ${fmtExactUSD(row.cost)}`).join(', ')}`);
+  };
+  // A tick under every bar up to a week, else about seven along the span.
   const tickEvery = Math.max(1, Math.ceil(bars.days.length / 7));
   const tick = (index) => (bars.days.length - 1 - index) % tickEvery === 0;
   return html`<${Card} class="phone-spend" role="group" aria-label=${title}>
@@ -212,7 +221,7 @@ export function PhoneSpendChart({ costs, wizard }) {
         return html`<button key=${day.day} type="button" data-ui-exempt data-day=${day.day}
           class=${`phone-spend-day${picked ? ' picked' : ''}${day.whatIf ? ' what-if' : ''}`}
           aria-pressed=${picked ? 'true' : 'false'} aria-label=${`${dayLabel(day.day)}, ${fmtExactUSD(day.cost)}`}
-          onClick=${() => setPickedDay(picked ? null : day.day)}>
+          onClick=${() => pick(picked ? null : day)}>
           <span class="phone-spend-stack" style=${`height:${(day.cost / bars.top) * 100}%`}>
             ${day.segments.map((segment) => html`<i key=${segment.provider} class=${segment.className}
               style=${`flex-grow:${segment.cost}`}></i>`)}
@@ -224,7 +233,8 @@ export function PhoneSpendChart({ costs, wizard }) {
     <div class="phone-spend-legend">
       ${bars.providers.map((entry) => html`<span key=${entry.provider}><i class=${entry.className}></i>${entry.provider}</span>`)}
     </div>
-    <div class="phone-spend-detail" role="status" aria-live="polite">
+    <div class="phone-spend-status" role="status" aria-live="polite" aria-atomic="true">${announcement}</div>
+    <div class="phone-spend-detail">
       <div class="phone-spend-detail-head"><strong>${dayLabel(shown.day)}${shown.picked ? '' : html` <span class="phone-spend-latest">· latest</span>`}</strong>
         <span>${shown.whatIf ? '≈' : ''}${fmtExactUSD(shown.cost)}</span></div>
       ${shown.rows.map((row) => html`<div key=${row.provider} class="phone-spend-row">
