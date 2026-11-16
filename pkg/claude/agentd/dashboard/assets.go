@@ -15,5 +15,5 @@ import "embed"
 
 // FS is the dashboard tree, addressed as "dashboard.html", "js/...".
 //
-//go:embed *.css *.html *.svg js sprites third_party
+//go:embed *.css *.html *.svg js pwa sprites third_party
 var FS embed.FS

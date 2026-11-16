@@ -12,6 +12,17 @@
 <script>try { performance.setResourceTimingBufferSize(2000); } catch (e) {}</script>
 <!-- The favicon shares the agent-network mark with the system tray. -->
 <link rel="icon" href="/static/tclaude-icon.svg" type="image/svg+xml">
+<!-- Installable as an app (dashboard_pwa.go): a home-screen install opens
+     standalone, without the address bar. use-credentials, so the manifest
+     fetch carries the cookies of whatever guards this origin (Cloudflare
+     Access). The apple-* tags are iOS's own for a home-screen web app. -->
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<meta name="theme-color" content="#161b22">
+<link rel="apple-touch-icon" href="/pwa/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="tclaude">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <link rel="stylesheet" href="/static/dashboard.css">
 <!-- Vendored (not CDN, like every other dashboard asset) — backs the opaque
      xterm hosts mounted inside the Preact terminal shell. -->
