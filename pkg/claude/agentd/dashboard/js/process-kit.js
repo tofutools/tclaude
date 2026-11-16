@@ -647,7 +647,7 @@ const ARROW_IDS = { done: 'done', running: 'running', planned: 'planned', skippe
 // `onNodeHover` (a node id, never cleared here) and `overlay`, a render prop
 // given the laid-out graph that draws extra positioned elements on top.
 // `problemIds` (a Set) outlines the nodes an editor's diagnostics name. A
-// decision's `caption` (a gate's "2 deciders · all approve") is drawn under
+// decision's `caption` (a gate's "2 deciders · all approve") is drawn over
 // its diamond.
 export function ProcessMiniGraph({
   run, compact = false, performerId = '', onNodeClick = null, selectedId = '', wizard = false,

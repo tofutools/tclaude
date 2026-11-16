@@ -559,7 +559,7 @@ export function setLoopRounds(view, id, outcome, rounds) {
 // a step's sub line saying who does it, and an edge labelled by its outcome
 // unless it is a plain pass.
 // noteOf marks a decision's label: its node draws no sub line. A gate's who
-// ("2 deciders · all approve") is its caption, drawn under the diamond.
+// ("2 deciders · all approve") is its caption, drawn over the diamond.
 export function draftProjection(view, { whoOf = () => '', noteOf = () => '', name = '' } = {}) {
   const nodes = Object.entries(view.template?.nodes || {}).map(([id, node]) => {
     const kind = miniKind(node);

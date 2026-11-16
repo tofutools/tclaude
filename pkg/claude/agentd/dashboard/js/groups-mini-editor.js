@@ -408,10 +408,12 @@ export function MiniGraphEditor({
     return () => window.removeEventListener('scroll', close, true);
   }, [!!menu, !!picker]);
   const errors = diagnostics.filter((d) => d.severity === 'error');
-  // problemNode is the drawn node an error names: its own, or the inline
-  // subprocess holding it ("qa/unit" is drawn as qa); '' for the process's.
+  // problemNode is the drawn node an error names: its own, the inline
+  // subprocess holding it ("qa/unit" is drawn as qa), or the node an edge
+  // error leaves ("review:changes"); '' for the process's.
   const problemNode = (diagnostic) => {
-    const id = diagnostic?.scope === 'node' ? String(diagnostic.targetId || '').split('/')[0] : '';
+    const target = String(diagnostic?.targetId || '');
+    const id = diagnostic?.scope === 'node' ? target.split('/')[0] : diagnostic?.scope === 'edge' ? target.split(':')[0].split('/')[0] : '';
     return id && draft.template.nodes[id] ? id : '';
   };
   const problemIds = new Set(errors.map(problemNode).filter(Boolean));
@@ -773,10 +775,8 @@ export function MiniGraphEditor({
       })} />`}
     <div class="gm-foot">
       <span class="gq-dim">${isDraft ? 'It saves itself as you go; runs already going keep their version.' : 'Saving makes a new version; runs already going keep theirs.'}</span>
-      ${errors.length > 0 && html`<span class="gq-error ui-error" role="alert" data-mini-problems=${errors.length}>${errors.length} problem${errors.length === 1 ? '' : 's'}:
-        ${firstProblem && html`<${Button} size="sm" variant="link" class="gq-link gm-problem-step" data-mini-problem-step=${firstProblem}
-          title="Select this step" onClick=${() => { setMenu(null); setPicker(null); setSelected(firstProblem); }}>${draft.template.nodes[firstProblem].name || firstProblem}<//>:`}
-        ${errors[0].message}${problemIds.size > 1 ? ` (${problemIds.size} steps outlined)` : ''}</span>`}
+      ${errors.length > 0 && html`<span class="gq-error ui-error" role="alert" data-mini-problems=${errors.length}>${`${errors.length} problem${errors.length === 1 ? '' : 's'}: `}${firstProblem && html`<${Button} size="sm" variant="link" class="gq-link gm-problem-step" data-mini-problem-step=${firstProblem}
+          title="Select this step" onClick=${() => { setMenu(null); setPicker(null); setSelected(firstProblem); }}>${draft.template.nodes[firstProblem].name || firstProblem}<//>`}${firstProblem ? ': ' : ''}${errors[0].message}${problemIds.size > 1 ? ` (${problemIds.size} steps outlined)` : ''}</span>`}
       <span class="gq-spacer"></span>
       ${!process.listed && html`<label class="gq-dim"><input name="groups-mini-editor-input" type="checkbox" data-mini-publish checked=${publish}
         onChange=${(event) => setPublish(event.currentTarget.checked)} /> also publish to the library</label>`}
