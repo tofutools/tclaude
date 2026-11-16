@@ -1139,3 +1139,28 @@ func ListActiveGroupProcessRunSummaries(groupID int64, limit int) ([]ProcessRunS
 	return queryProcessRunSummaries(d, `WHERE scope_group_id = ? AND status NOT IN ('completed', 'failed', 'canceled') ORDER BY id LIMIT ?`,
 		limit, groupID, limit)
 }
+
+// ProcessTemplatesRun is the set of template ids with at least one run, of
+// any status. An editor keeps a template's step ids once it has run: run
+// views, decisions and agent messages name the steps by them.
+func ProcessTemplatesRun() (map[string]bool, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT DISTINCT substr(template_ref, 1, instr(template_ref, '@') - 1)
+		FROM process_runs WHERE typeof(template_ref) = 'text' AND instr(template_ref, '@') > 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}

@@ -30,7 +30,7 @@ const GROUPS = [
 const EMPTY_CONTEXT = { runs: {}, groups: [{ groupId: 1, group: 'webshop', active: [], needsYou: [], done: [], planned: [] }], agents: [], orphaned: [] };
 
 function fakeApi({ createError = null, createErrorBody = null, startErrors = [], stored = {}, preview = null } = {}) {
-  const calls = { validate: [], create: [], start: [], save: [], publish: [], pin: [], unpin: [], get: [], preview: [] };
+  const calls = { validate: [], create: [], start: [], save: [], publish: [], pin: [], unpin: [], get: [], preview: [], remove: [] };
   return {
     calls,
     ...(preview ? { resolvePreview: async (view, group) => { calls.preview.push({ view, group }); return { group, nodes: preview(view) }; } } : {}),
@@ -39,6 +39,7 @@ function fakeApi({ createError = null, createErrorBody = null, startErrors = [],
     publishTemplate: async (id) => { calls.publish.push(id); return { id, listed: true }; },
     pinProcess: async (group, id) => { calls.pin.push({ group, id }); return { pinned: true }; },
     unpinProcess: async (group, id) => { calls.unpin.push({ group, id }); return { pinned: false }; },
+    deleteTemplate: async (id) => { calls.remove.push(id); return { deleted: id }; },
     listTemplates: async () => [{ id: 'release-train', name: 'release-train' }, { id: 'db-migrate', name: 'db-migrate' }],
     listBuiltins: async () => BUILTINS,
     getBuiltin: async (id) => structuredClone(BUILTIN_VIEWS[id]),

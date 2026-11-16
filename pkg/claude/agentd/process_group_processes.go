@@ -243,6 +243,9 @@ type processGroupProcess struct {
 	// AgentsLocked is the operator's lock on the template
 	// (group_resource_locks.go).
 	AgentsLocked bool `json:"agentsLocked,omitempty"`
+	// Ran says the template has been run at least once: the editors then
+	// keep its step ids, which runs, decisions and messages name.
+	Ran bool `json:"ran,omitempty"`
 }
 
 type processGroupProcessParam struct {
@@ -259,6 +262,7 @@ type processSavedTemplateStore struct {
 	fs       *store.FS
 	unlisted map[string]bool
 	locked   map[string]bool
+	ran      map[string]bool
 	// read memoizes each template read in this build: a template pinned to
 	// several groups is read once.
 	read map[string]*processGroupProcess
@@ -283,7 +287,12 @@ func processSavedTemplates() processSavedTemplateStore {
 		slog.Warn("process context: template locks unavailable", "error", err)
 		locked = map[string]bool{}
 	}
-	return processSavedTemplateStore{fs: fs, unlisted: unlisted, locked: locked, read: map[string]*processGroupProcess{}}
+	ran, err := db.ProcessTemplatesRun()
+	if err != nil {
+		slog.Warn("process context: run history unavailable", "error", err)
+		ran = nil
+	}
+	return processSavedTemplateStore{fs: fs, unlisted: unlisted, locked: locked, ran: ran, read: map[string]*processGroupProcess{}}
 }
 
 // groupProcesses lists a group's saved processes in pin order. A pin whose
@@ -322,6 +331,8 @@ func (s processSavedTemplateStore) load(ctx context.Context, id string) *process
 	}
 	view := processGroupProcessOf(tmpl, head.Ref, !s.unlisted[id])
 	view.AgentsLocked = s.locked[id]
+	// Unknown history counts as run: ids are kept rather than moved under a run.
+	view.Ran = s.ran == nil || s.ran[id]
 	return &view
 }
 

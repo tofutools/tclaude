@@ -105,3 +105,42 @@ func TestGroupProcessesAreMembersToReadAndEdit(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, agent(member, http.MethodGet, "/v1/process/runs/run_team", nil).Code)
 	assert.Equal(t, http.StatusForbidden, agent(member, http.MethodGet, "/v1/process/templates/gate", nil).Code)
 }
+
+// A group's process says whether it has ever run: the inline editors keep
+// a run template's step ids, which runs and decisions name.
+func TestGroupProcessSaysWhetherItHasRun(t *testing.T) {
+	f := scopedRunFlow(t)
+	f.HaveGroup("team")
+	human := func(method, path string, body any) *httptest.ResponseRecorder {
+		return processRuntimeRequest(t, f, method, path, body)
+	}
+	ran := func() bool {
+		t.Helper()
+		rec := human(http.MethodGet, "/v1/process/context", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var body struct {
+			Groups []struct {
+				Group     string `json:"group"`
+				Processes []struct {
+					TemplateID string `json:"templateId"`
+					Ran        bool   `json:"ran"`
+				} `json:"processes"`
+			} `json:"groups"`
+		}
+		testharness.DecodeJSON(t, rec, &body)
+		for _, g := range body.Groups {
+			for _, p := range g.Processes {
+				if g.Group == "team" && p.TemplateID == "gate" {
+					return p.Ran
+				}
+			}
+		}
+		t.Fatalf("gate is not pinned to team: %s", rec.Body.String())
+		return false
+	}
+	require.Equal(t, http.StatusOK, human(http.MethodPost, "/v1/process/groups/team/processes", map[string]any{"templateId": "gate"}).Code)
+	assert.False(t, ran(), "never run")
+	rec := human(http.MethodPost, "/v1/process/runs", map[string]any{"id": "run_once", "templateId": "gate", "group": "team", "authorizeProgramProfiles": []string{}})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.True(t, ran(), "run once")
+}
