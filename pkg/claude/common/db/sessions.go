@@ -528,19 +528,32 @@ func FindLatestSessionsByTmux(names []string) (map[string]*SessionRow, error) {
 	return out, nil
 }
 
-// currentLaunchOrder orders a conversation's session rows newest launch
-// first. A conv has a row per launch (a resume writes a new one, or reuses
-// its row, restamping created_at): the current launch is the one that started
-// last. Not updated_at: the stop path and the reaper mark a predecessor's row
+// currentLaunchOrder orders a conversation's session rows current launch
+// first: rows not exited before exited ones, then the launch that started
+// last (a resume writes a new row, or reuses its row, restamping created_at),
+// rowid breaking a tie.
+//
+// Not updated_at: the stop path and the reaper mark a predecessor's row
 // exited after its successor is written, so the most recently updated row can
-// be the dead launch's, and posture read from it would be the old launch's
-// (a sandbox tightened while the agent was offline would read as the looser
-// one it replaced). rowid breaks a tie.
-const currentLaunchOrder = `created_at DESC, rowid DESC`
+// be the dead launch's, and posture read from it would be the old launch's (a
+// sandbox tightened while the agent was offline would read as the looser one
+// it replaced). Not created_at alone: an in-pane conv rotation (/resume in a
+// running pane) rebinds a live row to the conv and keeps the pane's launch
+// time, which can be older than a dead row of that conv; the live row is the
+// conv's launch. Between two live rows (a resume before its predecessor is
+// marked exited) the later launch wins.
+const currentLaunchOrder = `(status = 'exited'), created_at DESC, rowid DESC`
+
+// currentLaunchOrderOf is currentLaunchOrder over the sessions table under
+// alias (for a join).
+func currentLaunchOrderOf(alias string) string {
+	return "(" + alias + ".status = 'exited'), " + alias + ".created_at DESC, " + alias + ".rowid DESC"
+}
 
 // FindSessionByConvID finds a conversation's current launch: when several
-// rows exist for the conv_id (a resume, or auto-register alongside an old
-// row), the one that started last (currentLaunchOrder).
+// rows exist for the conv_id (a resume, an in-pane rotation, or
+// auto-register alongside an old row), the live one that started last
+// (currentLaunchOrder).
 func FindSessionByConvID(convID string) (*SessionRow, error) {
 	db, err := Open()
 	if err != nil {

@@ -211,8 +211,8 @@ func GetConvIndexBatch(convIDs []string) (map[string]*ConvIndexRow, error) {
 }
 
 // FindSessionsByConvIDs bulk-loads the session rows for the given conv-ids,
-// grouped by conv-id and — within each conv — ordered most-recently-updated
-// first, exactly as FindSessionsByConvID returns them. The daemon uses the
+// grouped by conv-id and — within each conv — current launch first
+// (currentLaunchOrder), exactly as FindSessionsByConvID returns them. The daemon uses the
 // first live-tmux row per conv, so the per-conv ordering must be preserved.
 //
 // Unlike scanSessions (all-or-nothing), this is BEST-EFFORT per row: a single
@@ -236,7 +236,7 @@ func FindSessionsByConvIDs(convIDs []string) (map[string][]*SessionRow, error) {
 		clause, args := inClause(chunk)
 		rows, err := d.Query(`SELECT `+sessionColumns+`
 			FROM sessions WHERE conv_id `+clause+`
-			ORDER BY conv_id, updated_at DESC`, args...)
+			ORDER BY conv_id, `+currentLaunchOrder, args...)
 		if err != nil {
 			return nil, err
 		}

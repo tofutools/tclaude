@@ -63,8 +63,8 @@ func TestFindSessionByConvID_IsTheNewestLaunchNotTheLastUpdatedRow(t *testing.T)
 }
 
 // A resume can reuse its row (the same id): the upsert restamps created_at,
-// so the reused row is the newest launch even though an older-inserted row
-// exists for the conv.
+// so the reused row is the newest launch even though another row was
+// inserted after it, and even when that other row was updated last.
 func TestFindSessionByConvID_AReusedRowIsTheNewestLaunch(t *testing.T) {
 	setupTestDB(t)
 	const conv = "conv-reused-row"
@@ -73,17 +73,83 @@ func TestFindSessionByConvID_AReusedRowIsTheNewestLaunch(t *testing.T) {
 		ID: "a", TmuxSession: "a", ConvID: conv, Status: "exited", Harness: "claude",
 		SandboxImplementation: "off", CreatedAt: base, UpdatedAt: base,
 	}))
-	require.NoError(t, SaveSession(&SessionRow{
-		ID: "b", TmuxSession: "b", ConvID: conv, Status: "exited", Harness: "claude",
+	b := &SessionRow{
+		ID: "b", TmuxSession: "b", ConvID: conv, Status: "idle", Harness: "claude",
 		SandboxImplementation: "off", CreatedAt: base.Add(time.Minute), UpdatedAt: base.Add(time.Minute),
-	}))
+	}
+	require.NoError(t, SaveSession(b))
 	now := time.Now()
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "a", TmuxSession: "a", ConvID: conv, Status: "running", Harness: "claude",
 		SandboxImplementation: "harness-builtin", CreatedAt: now, UpdatedAt: now,
 	}))
+	// b, not yet marked exited, is touched last: newest by updated_at and by
+	// insertion, but not the newest launch.
+	b.UpdatedAt = now.Add(time.Second)
+	require.NoError(t, SaveSession(b))
 	row, err := FindSessionByConvID(conv)
 	require.NoError(t, err)
 	require.Equal(t, "a", row.ID)
 	require.Equal(t, "harness-builtin", row.SandboxImplementation)
+}
+
+// An in-pane rotation (/resume B inside a running pane) rebinds the live row
+// to conv B and keeps the pane's launch time, which can be older than a dead
+// row of B's own. The live row is B's launch.
+func TestFindSessionByConvID_ALiveRowRotatedOntoTheConvBeatsANewerDeadOne(t *testing.T) {
+	setupTestDB(t)
+	paneLaunched := time.Now().Add(-3 * time.Hour)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "pane", TmuxSession: "pane", ConvID: "conv-a", Status: "running", Harness: "claude",
+		SandboxImplementation: "harness-builtin", CreatedAt: paneLaunched, UpdatedAt: paneLaunched,
+	}))
+	deadLaunched := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "conv-b", TmuxSession: "conv-b", ConvID: "conv-b", Status: "exited", Harness: "claude",
+		SandboxImplementation: "off", CreatedAt: deadLaunched, UpdatedAt: deadLaunched,
+	}))
+	pane, err := LoadSession("pane")
+	require.NoError(t, err)
+	pane.ConvID = "conv-b"
+	pane.UpdatedAt = time.Now()
+	require.NoError(t, SaveSession(pane))
+
+	row, err := FindSessionByConvID("conv-b")
+	require.NoError(t, err)
+	require.Equal(t, "pane", row.ID, "the live pane is conv-b's launch, not its newer dead row")
+	require.Equal(t, "harness-builtin", row.SandboxImplementation)
+	rows, err := FindSessionsByConvID("conv-b")
+	require.NoError(t, err)
+	require.Equal(t, "pane", rows[0].ID)
+}
+
+// The dashboard's batch loader orders each conv's rows as the single-conv
+// loader does, so both pick the same launch.
+func TestFindSessionsByConvIDs_OrdersAsTheSingleConvLoader(t *testing.T) {
+	setupTestDB(t)
+	const conv = "conv-batch"
+	started := time.Now().Add(-time.Minute)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "old", TmuxSession: "old", ConvID: conv, Status: "running", Harness: "claude",
+		CreatedAt: started, UpdatedAt: started,
+	}))
+	old, err := LoadSession("old")
+	require.NoError(t, err)
+	relaunched := time.Now().Add(-30 * time.Second)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "new", TmuxSession: "new", ConvID: conv, Status: "running", Harness: "claude",
+		CreatedAt: relaunched, UpdatedAt: relaunched,
+	}))
+	_, err = MarkSessionExitedIfUnchanged("old", old.Status, old.UpdatedAt, "")
+	require.NoError(t, err)
+
+	single, err := FindSessionsByConvID(conv)
+	require.NoError(t, err)
+	batch, err := FindSessionsByConvIDs([]string{conv})
+	require.NoError(t, err)
+	require.Len(t, batch[conv], 2)
+	for i := range single {
+		require.Equal(t, single[i].ID, batch[conv][i].ID)
+	}
+	require.Equal(t, "new", batch[conv][0].ID)
 }

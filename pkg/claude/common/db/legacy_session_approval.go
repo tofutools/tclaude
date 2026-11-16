@@ -70,7 +70,7 @@ func LegacyCodexApprovalForConv(convID string) (policy string, proven bool, err 
 		  LEFT JOIN agents a ON a.agent_id = CASE
 		       WHEN s.agent_id <> '' THEN s.agent_id ELSE ac.agent_id END
 		 WHERE s.conv_id = ? AND s.harness = 'codex'
-		 ORDER BY s.updated_at DESC LIMIT 1`, strings.TrimSpace(convID)).
+		 ORDER BY `+currentLaunchOrderOf("s")+` LIMIT 1`, strings.TrimSpace(convID)).
 		Scan(&createdVia, &generationReason, &initialSpawnConfig)
 	if err == sql.ErrNoRows {
 		return "", false, nil
