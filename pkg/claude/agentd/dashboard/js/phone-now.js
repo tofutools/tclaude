@@ -57,17 +57,17 @@ function UsageStrip({ snapshot, onOpen }) {
 // AgentRows is one card of plain rows, one per agent, with its state pill;
 // an error row says what went wrong, and a row may carry a time or reason
 // line (when) in a tone (ok, bad, info, warn). A row opens the agent's
-// terminal. heads put a heading over a row (Idle's groups, Problems' kinds);
-// changed (agent ids) puts a blue dot on what changed since the viewer
-// looked, and the agent's context meter sits by its state pill.
+// terminal. heads put a heading over a row (Idle's groups, Problems' kinds),
+// and the agent's context meter sits by its state pill. What changed since
+// the viewer looked is said once, in its own section, not marked again on
+// the rows.
 // NowRow is one agent's row: a tap opens its terminal; a hold, or its ⋯,
 // opens its menu (phone-agent-menu.js) when onMenu is wired.
-function NowRow({ agent, state, when, tone, changed, onOpen, onMenu }) {
+function NowRow({ agent, state, when, tone, onOpen, onMenu }) {
   const { holding, handlers } = useHold(onMenu ? () => onMenu(agent) : null);
   return html`<div class=${`phone-now-agent${holding ? ' phone-holding' : ''}`}>
     <button data-ui-exempt type="button" class="phone-row phone-holdable" ...${handlers} onClick=${() => onOpen(agent)}
-      aria-label=${`${agent.name}${changed ? ' (changed since you looked)' : ''}, ${state}${contextHigh(agent) ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
-      ${changed && html`<span class="phone-now-new" aria-hidden="true"></span>`}
+      aria-label=${`${agent.name}, ${state}${contextHigh(agent) ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
       <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}
         ${state === 'error' && agent.detail && tone === undefined && html`<span class="phone-card-line">${agent.detail}</span>`}
         ${when && html`<span class=${`phone-now-when${tone ? ` ${tone}` : ''}`}>${when}</span>`}</span>
@@ -77,12 +77,12 @@ function NowRow({ agent, state, when, tone, changed, onOpen, onMenu }) {
   </div>`;
 }
 
-function AgentRows({ rows, onOpen, onMenu = null, changed = null }) {
+function AgentRows({ rows, onOpen, onMenu = null }) {
   return html`<${Card} class="phone-rows-card">
     <ul class="phone-rows">
       ${rows.map(({ agent, state, when, tone, head }) => html`<li key=${agent.agentId}>
         ${head && html`<p class="ui-eyebrow phone-now-group">${head}</p>`}
-        <${NowRow} agent=${agent} state=${state} when=${when} tone=${tone} changed=${!!changed?.has(agent.agentId)} onOpen=${onOpen} onMenu=${onMenu} />
+        <${NowRow} agent=${agent} state=${state} when=${when} tone=${tone} onOpen=${onOpen} onMenu=${onMenu} />
       </li>`)}
     </ul>
   <//>`;
@@ -227,7 +227,6 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   latest.current = lookedState(view);
   const problems = problemRows(view);
   const changes = changeRows(sinceLooked(view, looked));
-  const changed = new Set(changes.map((row) => row.agent.agentId));
   pending.current = changes.length;
   marks.current = chip === 'all' ? changes.map((row) => `${row.agent.agentId}:${row.when}`).join('|') : '';
   const markSeen = () => { storeLooked(latest.current); setLooked(latest.current); };
@@ -255,7 +254,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
       ${view.asking.map((agent) => html`<${AskCard} key=${agent.agentId} agent=${agent} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />`)}
     <//>`;
   const rowsOr = (list, empty) => (list.length
-    ? html`<${AgentRows} rows=${list} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} changed=${changed} />`
+    ? html`<${AgentRows} rows=${list} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />`
     : html`<p class="ui-empty phone-empty">${empty}</p>`);
   let body;
   if (chip === 'needs') body = needsYou;
@@ -286,7 +285,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
       more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button>`}>
       ${rows.length === 0
         ? html`<p class="ui-empty phone-empty">${list.all ? 'No agent is online.' : 'No agent is active right now.'}</p>`
-        : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} changed=${changed} />`}
+        : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />`}
       ${list.total > FEW_ONLINE && html`<button data-ui-exempt type="button" class="phone-now-all" aria-expanded=${showAll ? 'true' : 'false'}
         onClick=${() => setShowAll(!showAll)}>${showAll ? 'Only the recent ones' : `Show all ${list.total} online`}
         <span aria-hidden="true">${showAll ? '⌄' : '›'}</span></button>`}
