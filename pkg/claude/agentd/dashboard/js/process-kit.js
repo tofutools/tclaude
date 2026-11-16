@@ -27,6 +27,7 @@ import htm from 'htm';
 import { Button } from './ui-components.js';
 import { layoutProcessGraph } from './process-layout.js';
 import { loopEdgeSuffix } from './process-loops.js';
+import { writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
 
@@ -95,6 +96,22 @@ export function runID(run) {
 
 export function runName(run) {
   return String(run?.name || run?.templateRef || run?.templateId || runID(run) || 'run');
+}
+
+// TEMPLATE_HASH_SHOWN is how much of a version's hash a run's label shows.
+const TEMPLATE_HASH_SHOWN = 4;
+
+// templateVersionLabel is the short form of the template version a run
+// follows: "v3 · 4f2a" (its number among the template's versions, and the
+// start of its hash), with the full ref for a tooltip or a copy. A ref
+// without a hash is shown as it is.
+export function templateVersionLabel(run) {
+  const ref = String(run?.templateRef || run?.templateId || '');
+  const at = ref.indexOf('@sha256:');
+  if (at < 0) return { text: ref, ref, hashed: false };
+  const version = Number(run?.templateVersion) > 0 ? `v${run.templateVersion}` : '';
+  const hash = ref.slice(at + '@sha256:'.length, at + '@sha256:'.length + TEMPLATE_HASH_SHOWN);
+  return { text: [version, hash].filter(Boolean).join(' · '), ref, hashed: true };
 }
 
 // A task's kit kind follows its performer: the read model keeps the template
@@ -528,6 +545,24 @@ export function ProcessNodeChip({ node, compact = false, wizard = false }) {
 export function ProcessStateChip({ state, label = '' }) {
   const key = normalizeNodeState(state);
   return html`<span class=${`pk-chip ui-tag pk-state-${key}`}><span class="pk-dot" aria-hidden="true"></span>${label || stateLabel(key)}</span>`;
+}
+
+// ProcessTemplateVersion is the template version a run follows, short
+// ("version v3 · 4f2a"); hovering shows the full ref and a click copies it.
+export function ProcessTemplateVersion({ run, wizard = false }) {
+  const [copied, setCopied] = useState(false);
+  const { text, ref, hashed } = templateVersionLabel(run);
+  if (!text) return null;
+  const copy = async (event) => {
+    event.stopPropagation();
+    if (await writeClipboard(ref)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  };
+  const word = wizard ? 'grimoire' : hashed ? 'version' : 'template';
+  return html`${word} <button type="button" data-ui-exempt class="pk-template-version" data-process-template-version=${ref}
+    title=${`${ref}\nclick to copy`} aria-label=${`Template version ${text}, copy the full ref`} onClick=${copy}>${copied ? 'copied' : text}</button>`;
 }
 
 export function ProcessScopeChip({ scope, wizard = false }) {

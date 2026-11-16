@@ -248,7 +248,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
         </span></td>
         <td class="name-cell gq-saved-namecell"><span class="gr-glyph" aria-hidden="true">⧉</span>
           <span class="gq-saved-name" title=${process.listed ? 'Also in the template library' : `Saved to ${group.name} only`}>${process.name}</span></td>
-        <td><${ResourcePill} view=${pill} /></td>
+        <td><${ResourcePill} view=${pill} kind="process" /></td>
         <${TimeCells} times=${{ last, age }} />
         <td class="gq-dim gr-kindcell">${wizard ? 'rite' : 'process'}</td>
         <td class="gr-lockcell"><${LockChip} kind="process" id=${process.templateId} name=${process.name} locked=${!!process.agentsLocked} api=${api} source=${source} notify=${notify} /></td>

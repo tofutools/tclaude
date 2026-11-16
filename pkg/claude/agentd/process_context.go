@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
 )
 
@@ -41,13 +43,16 @@ const (
 
 // processRunProjection is the mini-graph a run renders as in context.
 type processRunProjection struct {
-	RunID       string           `json:"runId"`
-	TemplateID  string           `json:"templateId"`
-	TemplateRef string           `json:"templateRef"`
-	Name        string           `json:"name"`
-	Status      engine.RunStatus `json:"status"`
-	Action      string           `json:"action"`
-	NeedsYou    bool             `json:"needsYou"`
+	RunID       string `json:"runId"`
+	TemplateID  string `json:"templateId"`
+	TemplateRef string `json:"templateRef"`
+	// TemplateVersion is which version of its template the run follows,
+	// counting from 1 in the order they were saved; 0 when unknown.
+	TemplateVersion int              `json:"templateVersion,omitempty"`
+	Name            string           `json:"name"`
+	Status          engine.RunStatus `json:"status"`
+	Action          string           `json:"action"`
+	NeedsYou        bool             `json:"needsYou"`
 	// Concerns counts the run's open concerns, and ConcernsForYou those
 	// waiting on the operator's decision (process_oversight.go).
 	Concerns       int                     `json:"concerns,omitempty"`
@@ -479,6 +484,7 @@ func projectProcessRun(runID string, live processLiveness) (processRunProjection
 type processProjectionSkeleton struct {
 	templateID string
 	name       string
+	version    int // the template version the run follows (processTemplateVersionOf)
 	nodes      []processProjectionNode
 	edges      []processProjectionEdge
 	ids        []string // authored ids, longest first, for stage → parent mapping
@@ -503,6 +509,28 @@ func (s *processProjectionSkeleton) engineSource(id string) string {
 	return id
 }
 
+// processTemplateVersionOf numbers ref among its template's stored versions,
+// oldest first, as the template list counts them; 0 when the store cannot
+// say (a deleted template, an unreadable store). A stored version's place
+// never moves, so the skeleton cache keeps the number with the rest.
+func processTemplateVersionOf(templateID, ref string) int {
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil || templateID == "" || ref == "" {
+		return 0
+	}
+	versions, err := fs.ListTemplateVersions(context.Background(), templateID)
+	if err != nil {
+		return 0
+	}
+	slices.SortFunc(versions, func(a, b store.TemplateRecord) int { return -compareTemplateRecordsNewest(a, b) })
+	for i, version := range versions {
+		if version.Ref == ref {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 var processProjectionSkeletons = struct {
 	sync.Mutex
 	byRef map[string]*processProjectionSkeleton // by sha256 of the template snapshot
@@ -524,6 +552,7 @@ func processProjectionSkeletonFor(record *db.ProcessRun) (*processProjectionSkel
 		return nil, fmt.Errorf("%w: decode template snapshot: %v", db.ErrProcessRunCorrupt, err)
 	}
 	skeleton := newProcessProjectionSkeleton(&tmpl)
+	skeleton.version = processTemplateVersionOf(tmpl.ID, record.TemplateRef)
 	processProjectionSkeletons.Lock()
 	if len(processProjectionSkeletons.byRef) >= processProjectionCacheSize {
 		processProjectionSkeletons.byRef = map[string]*processProjectionSkeleton{}
@@ -699,7 +728,7 @@ var processNodeStateRank = map[string]int{
 
 func (s *processProjectionSkeleton) project(run processRunView) processRunProjection {
 	projection := processRunProjection{
-		RunID: run.ID, TemplateID: s.templateID, TemplateRef: run.TemplateRef, Name: s.name,
+		RunID: run.ID, TemplateID: s.templateID, TemplateRef: run.TemplateRef, TemplateVersion: s.version, Name: s.name,
 		Status: run.Status, Action: run.Action, NeedsYou: processContextNeedsYou[run.Action],
 		Scope: run.Scope, Paused: run.Paused, Edges: append([]processProjectionEdge(nil), s.edges...),
 		Current: []string{}, Truncated: s.truncated, StartedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,

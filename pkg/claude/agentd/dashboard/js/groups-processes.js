@@ -13,7 +13,7 @@ import { createContext, h } from 'preact';
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ProcessMiniGraph, ProcessRunBadge, ProcessScopeChip, ProcessStateChip, runName, runState, stateLabel,
+  ProcessMiniGraph, ProcessRunBadge, ProcessScopeChip, ProcessStateChip, ProcessTemplateVersion, runName, runState, stateLabel,
 } from './process-kit.js';
 import {
   DEFAULT_RUN_FILTER, RUN_KINDS, RUN_KIND_LABELS, busyPerformers, formatRunDuration, groupContextEntry, groupRunsFor,
@@ -301,7 +301,7 @@ function RunCard({ run, entry, nameOf, wizard, onOpen, group = null }) {
       <${ProcessStateChip} state=${state} label=${`${stateLabel(state)}${duration ? ` · ${duration}` : ''}`} />
       <${ProcessScopeChip} scope=${named.scope?.kind === 'agent' && nameOf(named.scope.agentId) ? { kind: 'agent', name: nameOf(named.scope.agentId) } : named.scope} wizard=${wizard} />
       ${named.scope?.task && html`<span class="pk-chip ui-tag gp-card-task" data-process-run-task=${named.scope.task}>◈ for task:${' '}<a class="tk-link" href="#" ...${taskLink({ shown: group?.name || named.scope?.group || '', group: named.scope?.group || group?.name || '', node: group?.fleet_node?.id || '', taskId: named.scope.task, title: named.scope.taskTitle })}>${named.scope.taskTitle || named.scope.task}</a></span>`}
-      ${(template || owner) && html`<span class="gp-card-meta">${template && html`${wizard ? 'grimoire' : 'template'} <code>${template}</code>`}${template && owner && ' · '}${owner && html`owner <b>${owner}</b>`}</span>`}
+      ${(template || owner) && html`<span class="gp-card-meta">${template && html`<${ProcessTemplateVersion} run=${named} wizard=${wizard} />`}${template && owner && ' · '}${owner && html`owner <b>${owner}</b>`}</span>`}
       <span class="gp-spacer"></span>
       ${named.concerns > 0 && html`<span class="pk-chip ui-tag pov-count" data-run-concerns=${named.concerns}
         title=${named.concernsForYou ? 'A concern about this run waits on your decision: open the run' : 'A concern about this run is with its overseer'}>⚑ ${named.concerns}${named.concernsForYou ? ' for you' : ''}</span>`}

@@ -22,6 +22,7 @@ nodes:
 
   # A tester reproduces it first: no fix without a failing case.
   reproduce:
+    name: Reproduce the bug
     type: task
     captures: [repro]
     performer:
@@ -33,6 +34,7 @@ nodes:
 
   # A developer fixes it.
   fix:
+    name: Fix it
     type: task
     captures: [pr]
     patience: 2h
@@ -46,6 +48,7 @@ nodes:
 
   # The tester who reproduced it checks the fix.
   verify:
+    name: Verify the fix
     type: decision
     performer:
       kind: agent
@@ -58,6 +61,7 @@ nodes:
 
   # The group's lead merges it.
   merge:
+    name: Merge
     type: task
     performer:
       kind: agent
@@ -66,10 +70,12 @@ nodes:
     next: { next: done }
 
   done:
+    name: Done
     type: end
     result: success
   # Out of rounds, or escalated by hand: the run fails, so a board task it
   # runs for is blocked with the reason rather than left as it was.
   escalated:
+    name: Escalated
     type: end
     result: failed

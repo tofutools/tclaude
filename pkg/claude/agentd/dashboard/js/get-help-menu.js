@@ -21,7 +21,7 @@ export function AgentPicker({ helpers, slugs = [], onPick, onClose }) {
   const [query, setQuery] = useState('');
   const wanted = query.trim().toLowerCase();
   const shown = helpers.filter((helper) => !wanted || `${helper.label} ${helper.id} ${helper.groups.join(' ')}`.toLowerCase().includes(wanted));
-  return html`<${Dialog} id="get-help-pick-modal" title="Ask an existing agent" onClose=${onClose} cancel="Cancel" dialogClass="get-help-pick">
+  return html`<${Dialog} id="get-help-pick-modal" title="Ask an existing agent" onClose=${onClose} cancel="Cancel" dialogClass="modal get-help-pick">
     <p class="muted">The agent gets this page's brief as a message and opens in its chat window. One that lacks the permissions the help needs is granted them after you confirm.</p>
     <${Input} size="sm" placeholder="Filter agents" aria-label="Filter agents" value=${query} data-get-help-filter
       onInput=${(event) => setQuery(event.currentTarget.value)} />
