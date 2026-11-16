@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
 )
 
@@ -41,13 +43,16 @@ const (
 
 // processRunProjection is the mini-graph a run renders as in context.
 type processRunProjection struct {
-	RunID       string           `json:"runId"`
-	TemplateID  string           `json:"templateId"`
-	TemplateRef string           `json:"templateRef"`
-	Name        string           `json:"name"`
-	Status      engine.RunStatus `json:"status"`
-	Action      string           `json:"action"`
-	NeedsYou    bool             `json:"needsYou"`
+	RunID       string `json:"runId"`
+	TemplateID  string `json:"templateId"`
+	TemplateRef string `json:"templateRef"`
+	// TemplateVersion is which version of its template the run follows,
+	// counting from 1 in the order they were saved; 0 when unknown.
+	TemplateVersion int              `json:"templateVersion,omitempty"`
+	Name            string           `json:"name"`
+	Status          engine.RunStatus `json:"status"`
+	Action          string           `json:"action"`
+	NeedsYou        bool             `json:"needsYou"`
 	// Concerns counts the run's open concerns, and ConcernsForYou those
 	// waiting on the operator's decision (process_oversight.go).
 	Concerns       int                     `json:"concerns,omitempty"`
@@ -471,7 +476,9 @@ func projectProcessRun(runID string, live processLiveness) (processRunProjection
 	if err != nil {
 		return processRunProjection{}, err
 	}
-	return skeleton.project(runView), nil
+	projection := skeleton.project(runView)
+	projection.TemplateVersion = processTemplateVersionOf(skeleton.templateID, record.TemplateRef)
+	return projection, nil
 }
 
 // processProjectionSkeleton is the run-independent part of a projection,
@@ -501,6 +508,56 @@ func (s *processProjectionSkeleton) engineSource(id string) string {
 		return model.GateTallyID(id)
 	}
 	return id
+}
+
+// processTemplateVersionsCache keeps the number found for a ref: a stored
+// version's place among its template's versions never moves. Only a found
+// number is kept, so a store that could not say is asked again.
+var processTemplateVersionsCache = struct {
+	sync.Mutex
+	byRef map[string]int
+}{byRef: map[string]int{}}
+
+// processTemplateVersionLookupTimeout bounds the template lock a context read
+// waits on for a version number; a busy template shows its hash alone.
+const processTemplateVersionLookupTimeout = 2 * time.Second
+
+// processTemplateVersionOf numbers ref among its template's stored versions,
+// oldest first, as the template list counts them; 0 when the store cannot
+// say (a deleted template, an unreadable store).
+func processTemplateVersionOf(templateID, ref string) int {
+	if templateID == "" || ref == "" {
+		return 0
+	}
+	processTemplateVersionsCache.Lock()
+	cached := processTemplateVersionsCache.byRef[ref]
+	processTemplateVersionsCache.Unlock()
+	if cached > 0 {
+		return cached
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), processTemplateVersionLookupTimeout)
+	defer cancel()
+	versions, err := fs.ListTemplateVersions(ctx, templateID)
+	if err != nil {
+		return 0
+	}
+	slices.SortFunc(versions, func(a, b store.TemplateRecord) int { return -compareTemplateRecordsNewest(a, b) })
+	for i, version := range versions {
+		if version.Ref == ref {
+			processTemplateVersionsCache.Lock()
+			if len(processTemplateVersionsCache.byRef) >= processProjectionCacheSize {
+				processTemplateVersionsCache.byRef = map[string]int{}
+			}
+			processTemplateVersionsCache.byRef[ref] = i + 1
+			processTemplateVersionsCache.Unlock()
+			return i + 1
+		}
+	}
+	return 0
 }
 
 var processProjectionSkeletons = struct {

@@ -20,6 +20,7 @@ nodes:
 
   # You decide whether it starts.
   go:
+    name: Agree on the approach
     type: decision
     performer:
       kind: human
@@ -29,6 +30,7 @@ nodes:
 
   # A developer does it.
   work:
+    name: Do the work
     type: task
     captures: [result]
     patience: 2h
@@ -41,6 +43,7 @@ nodes:
 
   # You accept it, or send it back.
   accept:
+    name: Accept the result
     type: decision
     performer:
       kind: human
@@ -51,14 +54,17 @@ nodes:
       rework: { maxIterations: 3, onExhausted: escalate }
 
   done:
+    name: Done
     type: end
     result: success
   # You stopped or rejected it.
   stopped:
+    name: Stopped
     type: end
     result: canceled
   # Out of rework rounds: the run fails, so a board task it runs for is
   # blocked with the reason.
   escalated:
+    name: Escalated
     type: end
     result: failed

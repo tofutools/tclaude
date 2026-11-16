@@ -21,6 +21,7 @@ nodes:
 
   # A developer makes the change.
   change:
+    name: Make the change
     type: task
     captures: [pr]
     performer:
@@ -32,6 +33,7 @@ nodes:
 
   # One reviewer who did not make it.
   review:
+    name: Review
     type: decision
     performer:
       kind: agent
@@ -45,6 +47,7 @@ nodes:
 
   # The developer who made it merges it.
   merge:
+    name: Merge
     type: task
     performer:
       kind: agent
@@ -54,10 +57,12 @@ nodes:
     next: { next: done }
 
   done:
+    name: Done
     type: end
     result: success
   # Out of rounds, or escalated by hand: the run fails, so a board task it
   # runs for is blocked with the reason rather than left as it was.
   escalated:
+    name: Escalated
     type: end
     result: failed

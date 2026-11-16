@@ -21,6 +21,7 @@ nodes:
 
   # A tester runs the checks.
   check:
+    name: Check
     type: decision
     performer:
       kind: agent
@@ -31,6 +32,7 @@ nodes:
 
   # A developer fixes what is red.
   fix:
+    name: Fix what failed
     type: task
     captures: [pr]
     patience: 2h
@@ -44,6 +46,7 @@ nodes:
 
   # The tester who found it red checks the fix.
   recheck:
+    name: Check again
     type: decision
     performer:
       kind: agent
@@ -55,10 +58,12 @@ nodes:
       red: { maxIterations: 3, onExhausted: escalate }
 
   done:
+    name: Done
     type: end
     result: success
   # Out of rounds, or escalated by hand: the run fails, so a board task it
   # runs for is blocked with the reason rather than left as it was.
   escalated:
+    name: Escalated
     type: end
     result: failed

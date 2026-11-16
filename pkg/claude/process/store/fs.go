@@ -1187,6 +1187,24 @@ func (s *FS) ListTemplates(ctx context.Context) ([]TemplateRecord, error) {
 	return records, nil
 }
 
+// ListTemplateVersions lists one template's stored versions, in no
+// particular order (each record's StoredAt orders them). An unknown id lists
+// none.
+func (s *FS) ListTemplateVersions(ctx context.Context, id string) ([]TemplateRecord, error) {
+	if err := safeSegment(id); err != nil {
+		return nil, err
+	}
+	unlock, err := s.lockTemplate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+		return nil, fmt.Errorf("recover attributed save for template %q: %w", id, err)
+	}
+	return s.listTemplateRecordsForIDUnlocked(ctx, id)
+}
+
 func (s *FS) listTemplateRecordsForIDUnlocked(ctx context.Context, id string) ([]TemplateRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

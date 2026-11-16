@@ -44,3 +44,11 @@ test('resource model: a group\'s resources from the snapshot', async (t) => {
   assert.deepEqual(rows.map((r) => [r.id, r.view]), [['pg_1', 'open-tab'], ['pg_2', 'closed']]);
   assert.deepEqual(m.groupResourcesOf({}, 1), []);
 });
+
+test('a saved process open nowhere reads ready, not closed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { pillLabel } = await harness.importDashboardModule('js/resource-pill.js');
+  assert.equal(pillLabel('closed', 'process'), 'ready');
+  assert.equal(pillLabel('closed', 'page'), 'closed');
+  assert.equal(pillLabel('running', 'process'), 'running');
+});

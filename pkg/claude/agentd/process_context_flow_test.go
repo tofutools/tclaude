@@ -315,3 +315,33 @@ func TestProcessRunPromoteServedOnDashboardMux(t *testing.T) {
 	require.Len(t, view.Groups, 1)
 	assert.Contains(t, append(view.Groups[0].Active, view.Groups[0].NeedsYou...), "run_promote")
 }
+
+// Scenario: a run started before its template was edited follows the old
+// version. The run cards name the version each run follows: 1 for the first
+// saved version, 2 for the edit, beside the hash.
+func TestProcessContextNumbersTheTemplateVersionARunFollows(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	putProcessRuntimeTemplate(t, root, processHumanGateTemplate("gate"))
+	f.HaveGroup("ver-team")
+	startScopedRun(t, f, "run_ver_1", "gate", map[string]any{"group": "ver-team"}, []string{})
+	edited := processHumanGateTemplate("gate")
+	choose := edited.Nodes["choose"]
+	choose.Description = "Approve the release once the notes are in, or reject it."
+	edited.Nodes["choose"] = choose
+	putProcessRuntimeTemplate(t, root, edited)
+	startScopedRun(t, f, "run_ver_2", "gate", map[string]any{"group": "ver-team"}, []string{})
+
+	var view struct {
+		Runs map[string]struct {
+			TemplateRef     string `json:"templateRef"`
+			TemplateVersion int    `json:"templateVersion"`
+		} `json:"runs"`
+	}
+	rec := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/context", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	testharness.DecodeJSON(t, rec, &view)
+	first, second := view.Runs["run_ver_1"], view.Runs["run_ver_2"]
+	assert.NotEqual(t, first.TemplateRef, second.TemplateRef)
+	assert.Equal(t, 1, first.TemplateVersion)
+	assert.Equal(t, 2, second.TemplateVersion)
+}

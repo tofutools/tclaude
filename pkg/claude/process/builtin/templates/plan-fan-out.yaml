@@ -21,6 +21,7 @@ nodes:
 
   # The lead splits the work.
   plan:
+    name: Plan and split
     type: task
     captures: [plan]
     performer:
@@ -34,9 +35,11 @@ nodes:
 
   # Three developers, one part each, at the same time.
   fan-out:
+    name: Fan out
     type: parallel
     next: { part-1: part-1, part-2: part-2, part-3: part-3 }
   part-1:
+    name: Part 1
     type: task
     captures: [pr1]
     patience: 2h
@@ -48,6 +51,7 @@ nodes:
       prompt: "Build part 1 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr1."
     next: { next: integrate }
   part-2:
+    name: Part 2
     type: task
     captures: [pr2]
     patience: 2h
@@ -59,6 +63,7 @@ nodes:
       prompt: "Build part 2 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr2."
     next: { next: integrate }
   part-3:
+    name: Part 3
     type: task
     captures: [pr3]
     patience: 2h
@@ -72,6 +77,7 @@ nodes:
 
   # The lead who split it puts the parts together, once all three are in.
   integrate:
+    name: Integrate the parts
     type: task
     join: all
     performer:
@@ -82,5 +88,6 @@ nodes:
     next: { next: done }
 
   done:
+    name: Done
     type: end
     result: success

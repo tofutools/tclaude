@@ -14,9 +14,13 @@ export const RESOURCE_PILL = Object.freeze({
 });
 
 // pillLabel is a state's words for a kind: a page that runs open nowhere
-// here is "live" (background is a terminal's word); the rest read alike.
+// here is "live" (background is a terminal's word), a saved process open
+// nowhere is "ready"; the rest read alike.
 export function pillLabel(view, kind = '') {
   if (view === 'background' && kind === 'page') return 'live';
+  // A saved process is a template, not something that runs and closes: one
+  // open nowhere here is ready to run or edit.
+  if (view === 'closed' && kind === 'process') return 'ready';
   return RESOURCE_PILL[view] || view;
 }
 

@@ -21,6 +21,7 @@ nodes:
 
   # A developer builds it and opens a PR.
   build:
+    name: Build it
     type: task
     captures: [pr]
     patience: 2h
@@ -33,6 +34,7 @@ nodes:
 
   # A reviewer who did not build it.
   review:
+    name: Review
     type: decision
     performer:
       kind: agent
@@ -46,6 +48,7 @@ nodes:
 
   # The group's lead ships it.
   ship:
+    name: Ship
     type: task
     performer:
       kind: agent
@@ -54,10 +57,12 @@ nodes:
     next: { next: done }
 
   done:
+    name: Done
     type: end
     result: success
   # Out of rounds, or escalated by hand: the run fails, so a board task it
   # runs for is blocked with the reason rather than left as it was.
   escalated:
+    name: Escalated
     type: end
     result: failed

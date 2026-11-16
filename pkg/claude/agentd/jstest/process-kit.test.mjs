@@ -258,3 +258,20 @@ test('a bounded loop draws amber with its bound, and its body nodes say their ro
   assert.equal(gate.container.querySelector('[data-process-node="review"] .pk-round')?.textContent, '↺ 2/3', 'a decision parked on its verdict wears the badge');
   await gate.unmount();
 });
+
+test('a run names its template version short, and keeps the full ref to copy', async (t) => {
+  const { harness, mod } = await kit(t);
+  const ref = 'a510b3f2c9e84d41@sha256:4f2a9c0e1b7d';
+  assert.deepEqual(mod.templateVersionLabel({ templateRef: ref, templateVersion: 3 }), { text: 'v3 · 4f2a', ref, hashed: true });
+  assert.deepEqual(mod.templateVersionLabel({ templateRef: ref }), { text: '4f2a', ref, hashed: true }, 'an unknown number shows the hash alone');
+  assert.deepEqual(mod.templateVersionLabel({ templateRef: 'release-train v7' }), { text: 'release-train v7', ref: 'release-train v7', hashed: false });
+  const copied = [];
+  globalThis.navigator.clipboard = { writeText: async (text) => { copied.push(text); } };
+  t.after(() => { delete globalThis.navigator.clipboard; });
+  const { container } = await harness.mount(harness.html`<span><${mod.ProcessTemplateVersion} run=${{ templateRef: ref, templateVersion: 3 }} /></span>`);
+  assert.equal(container.textContent, 'version v3 · 4f2a');
+  const button = container.querySelector('[data-process-template-version]');
+  assert.match(button.title, new RegExp(ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  await harness.act(async () => { button.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.deepEqual(copied, [ref]);
+});
