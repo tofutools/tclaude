@@ -72,6 +72,8 @@ func TestSandboxServe(t *testing.T) {
 	mux, page := seedDocFixture(t, fixture)
 	if os.Getenv("TCLAUDE_SANDBOX_SWIPE_TUI") != "" {
 		sandboxSwipeTUI(t)
+	} else if os.Getenv("TCLAUDE_SANDBOX_LIVE_SHELL") != "" {
+		sandboxLiveShell(t)
 	}
 	if sandboxLivePeer() {
 		seedSandboxLivePeer(t, dir, mux)
@@ -910,6 +912,24 @@ func seedSandboxAccessRequest(s *sandboxSeeder) {
 // measured in a real browser (scripts/sandbox/smoke/tests/phone-swipe-measure.spec.mjs).
 func sandboxSwipeTUI(t *testing.T) {
 	t.Helper()
+	sandboxOwnTmux(t, "swipe", 46, 38, agentd.SwipeTUICommandForTest())
+}
+
+// sandboxLiveShell (TCLAUDE_SANDBOX_LIVE_SHELL=1) attaches every terminal to
+// a real interactive shell, in a tmux server of the sandbox's own: how a
+// terminal opening is seen working in a real browser (the simulated panes
+// have nothing to attach to).
+func sandboxLiveShell(t *testing.T) {
+	t.Helper()
+	sandboxOwnTmux(t, "shell", 46, 38, "env PS1='sandbox$ ' bash --noprofile --norc -i")
+}
+
+// sandboxOwnTmux starts command in session name of a tmux server of the
+// sandbox's own (its socket in the throwaway TMPDIR) and points every
+// dashboard terminal's attach at it, with the client flags a dashboard
+// terminal uses.
+func sandboxOwnTmux(t *testing.T, name string, width, height int, command string) {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "sw")
 	if err != nil {
 		t.Fatal(err)
@@ -921,11 +941,11 @@ func sandboxSwipeTUI(t *testing.T) {
 		cmd.Env = append(os.Environ(), "TMUX=")
 		return cmd
 	}
-	if out, err := tmux("new-session", "-d", "-s", "swipe", "-x", "46", "-y", "38", agentd.SwipeTUICommandForTest()).CombinedOutput(); err != nil {
-		t.Fatalf("swipe TUI: tmux: %v: %s", err, out)
+	if out, err := tmux("new-session", "-d", "-s", name, "-x", fmt.Sprint(width), "-y", fmt.Sprint(height), command).CombinedOutput(); err != nil {
+		t.Fatalf("sandbox tmux %s: %v: %s", name, err, out)
 	}
 	t.Cleanup(func() { _ = tmux("kill-server").Run() })
-	attach := fmt.Sprintf("TMUX= exec tmux -u -S %s %s attach-session -f ignore-size -t swipe", sock, agentd.WebTerminalTmuxFlagsForTest())
+	attach := fmt.Sprintf("TMUX= exec tmux -u -S %s %s attach-session -f ignore-size -t %s", sock, agentd.WebTerminalTmuxFlagsForTest(), name)
 	t.Cleanup(agentd.SetTermWSHookForTest(&agentd.TermWSHook{
 		RewriteCommand: func(_, session string) (string, string) { return attach, "" },
 	}))

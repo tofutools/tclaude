@@ -105,7 +105,10 @@ that is still running gets TERM like the server. The peer's log is kept as
 ## What it cannot show
 
 - **Terminals.** A live terminal needs a real tmux and pty, so the Collab view
-  lists the simulated sessions but cannot attach to them.
+  lists the simulated sessions but cannot attach to them. To see one open,
+  start the sandbox with `TCLAUDE_SANDBOX_LIVE_SHELL=1`: every terminal then
+  attaches to one real interactive shell, in a tmux server of the sandbox's
+  own (never the real one).
 - **Performance captures.** A CPU capture needs a busy live daemon.
 
 ## The smoke tests
