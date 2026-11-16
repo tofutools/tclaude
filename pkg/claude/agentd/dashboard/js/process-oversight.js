@@ -367,32 +367,42 @@ export function AmendRun({ runId, api, onChanged, onClose }) {
   </div>`;
 }
 
-// BlockedSteps says, where the operator looks, which steps are parked and
-// why, and resolves one: Retry gives it another round, Skip goes on past it.
-// Cancel the run stays in the strip above. The CLI's resolve-blocked.
+// BlockedSteps says, where the operator looks, which steps are blocked (parked,
+// or out of retries) and why, and resolves one: Retry gives it another round,
+// with an optional note its performer is handed (a park's reason is often a
+// question), and Skip goes on past it. Cancel the run stays in the strip
+// above. The CLI's resolve-blocked.
 export function BlockedSteps({ view, runId, api, labelOf = (id) => id, onChanged, wizard = false }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [notes, setNotes] = useState({});
   const blocked = view?.blocked || [];
   if (!blocked.length) return null;
+  const keyOf = (item) => `${item.nodeId}:${item.attempt}`;
   const resolve = async (item, action) => {
     if (busy) return;
     setBusy(`${item.nodeId}:${action}`);
     setError('');
+    const note = action === 'retry' ? String(notes[keyOf(item)] || '').trim() : '';
     try {
-      await api.resolveBlocked(runId, { nodeId: item.nodeId, attempt: item.attempt, action });
+      await api.resolveBlocked(runId, { nodeId: item.nodeId, attempt: item.attempt, action, ...(note ? { note } : {}) });
       onChanged?.();
     } catch (cause) {
       setError(cause?.message || String(cause));
+      // Resolved elsewhere meanwhile (the CLI, a card): read the run again.
+      onChanged?.();
     } finally {
       setBusy('');
     }
   };
   return html`<ul class="pov-blocked" data-run-blocked>${blocked.map((item) => {
     const label = labelOf(String(item.nodeId)) || item.nodeId;
-    return html`<li key=${`${item.nodeId}:${item.attempt}`} class="pov-blocked-item" data-run-blocked-node=${item.nodeId}>
-      <div class="pov-reason"><b>⏹ ${label}</b> ${wizard ? 'is stayed' : 'is parked'}${item.reason ? html`: <span data-run-blocked-reason>${item.reason}</span>` : ' and waits on you'}</div>
+    return html`<li key=${keyOf(item)} class="pov-blocked-item" data-run-blocked-node=${item.nodeId}>
+      <div class="pov-reason"><b>⏹ ${label}</b> ${wizard ? 'is stayed' : 'is blocked'}${item.reason ? html`: <span data-run-blocked-reason>${item.reason}</span>` : ' and waits on you'}</div>
       ${api?.resolveBlocked && html`<div class="pov-concern-actions">
+        <input class="pov-note" type="text" maxlength="4096" data-run-blocked-note aria-label=${`Note for ${label}'s retry`}
+          placeholder="answer or note for the retry (optional, handed to its performer)" value=${notes[keyOf(item)] || ''} disabled=${!!busy}
+          onInput=${(event) => setNotes({ ...notes, [keyOf(item)]: event.currentTarget.value })} />
         <${Button} size="sm" variant="primary" disabled=${!!busy} data-run-blocked-retry
           title=${`Run ${label} again: its performer gets another round`}
           onClick=${() => void resolve(item, 'retry')}>${busy === `${item.nodeId}:retry` ? '…' : '↻ Retry'}<//>

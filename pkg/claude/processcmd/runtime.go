@@ -788,7 +788,7 @@ type processResolveBlockedParams struct {
 	Node     string `long:"node" help:"Blocked node id"`
 	Attempt  int    `long:"attempt" help:"Exact attempt the node is blocked at, from tclaude process show"`
 	Action   string `long:"action" help:"retry, skip, or cancel"`
-	Note     string `long:"note" optional:"true" help:"Human-facing note recorded with the resolution"`
+	Note     string `long:"note" optional:"true" help:"Note recorded with the resolution; with retry it is also handed to the step's performer with the retried attempt (an answer to the park reason, say)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 	Remote   string `long:"remote" optional:"true" help:"Act on a run of a trusted peer node instead (label or instance id); needs its process.runs.manage grant to this node, and the run must execute no host programs and spawn no performers there (assign then takes an agt_ id)"`
 }

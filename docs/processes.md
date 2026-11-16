@@ -348,8 +348,11 @@ in it raises a concern.
   attempt is refused, and the step waits as blocked on `resolve-blocked`
   retry, skip or cancel, like a step whose retries ran out. The reason is
   what the operator decides from: the run view (desktop and phone) shows each
-  parked step and its reason under the run's header, with **↻ Retry** and
-  **⤼ Skip this step**; **✕ Cancel run…** beside them gives the run up.
+  blocked step and its reason under the run's header, with **↻ Retry** and
+  **⤼ Skip this step**; **✕ Cancel run…** beside them gives the run up. A
+  park's reason is often a question: the note beside Retry (`resolve-blocked
+  --action retry --note "…"`) is its answer, handed to the step's performer
+  with the retried attempt.
 - **Sending the run back** (`tclaude process send-back <run-id> --node
   <step>`, ↶ Send back on the run view with a finished step selected, or
   the operator's card when a concern names a finished step) runs a finished

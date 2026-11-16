@@ -1582,7 +1582,7 @@ func processRetryFeedback(previous db.ProcessAgentDispatch) string {
 // its own failure: a loop round, or a check or review that sent it back.
 func processReworkContext(runID string, command engine.Command) string {
 	var parts []string
-	for _, part := range []string{processLoopFeedback(runID, command), processGateFeedback(runID, command)} {
+	for _, part := range []string{processLoopFeedback(runID, command), processGateFeedback(runID, command), processRetryNote(runID, command)} {
 		if part != "" {
 			parts = append(parts, part)
 		}
@@ -1692,6 +1692,36 @@ func processFeedbackTail(output string) string {
 func processLoopReentry(runID string, command engine.Command, previous *db.ProcessAgentDispatch) bool {
 	return command.Round > 1 && previous != nil && previous.ReportOutcome == string(engine.ProgramSucceeded) &&
 		processReworkGate(runID, command) == ""
+}
+
+// processRetryNote is what the attempt after a parked one is told when the
+// operator retried it with a note (the blocked_resolved evidence): a park's
+// reason is often a question, and the note is its answer. Empty otherwise.
+func processRetryNote(runID string, command engine.Command) string {
+	if command.Attempt < 2 {
+		return ""
+	}
+	events, err := db.ListLatestProcessRunNodeEvents(runID, "blocked_resolved")
+	if err != nil {
+		slog.Warn("process performers: retry note not read", "run", runID, "node", command.NodeID, "error", err)
+		return ""
+	}
+	for _, event := range events {
+		// The executor's resolution payload, field for field: the decode is strict.
+		var payload struct {
+			NodeID  string `json:"nodeId"`
+			Attempt int    `json:"attempt"`
+			Action  string `json:"action"`
+			Note    string `json:"note,omitempty"`
+		}
+		if event.DecodePayload(&payload) != nil || payload.NodeID != command.NodeID ||
+			payload.Action != string(engine.ResolveRetry) || payload.Attempt+1 != command.Attempt || payload.Note == "" {
+			continue
+		}
+		return "## Retried after it was parked\n\nThis step was parked on attempt " + strconv.Itoa(payload.Attempt) +
+			", and retried with this note:\n\n" + payload.Note
+	}
+	return ""
 }
 
 // processLoopFeedback is what a performer in a later round of a loop is told

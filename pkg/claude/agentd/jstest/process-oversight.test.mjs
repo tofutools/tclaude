@@ -175,12 +175,25 @@ test('a parked step shows its reason in the strip, and is retried or skipped fro
     labelOf=${(id) => labels[id]} onChanged=${() => { changed += 1; }} />`);
   const root = mounted.container;
   const item = root.querySelector('[data-run-blocked-node="brief"]');
-  assert.match(item.textContent, /⏹ Frame the task is parked: Are wishlists for guests too\?/, 'the why, without opening the step');
+  assert.match(item.textContent, /⏹ Frame the task is blocked: Are wishlists for guests too\?/, 'the why, without opening the step');
   await harness.act(async () => { item.querySelector('[data-run-blocked-retry]').click(); await tick(); });
-  assert.deepEqual(api.calls.at(-1), ['resolve', 'run_ov', { nodeId: 'brief', attempt: 1, action: 'retry' }]);
+  assert.deepEqual(api.calls.at(-1), ['resolve', 'run_ov', { nodeId: 'brief', attempt: 1, action: 'retry' }], 'the note is optional');
+  await harness.act(async () => {
+    const note = item.querySelector('[data-run-blocked-note]');
+    note.value = 'Guests too, kept in the browser.';
+    note.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+  });
+  await harness.act(async () => { item.querySelector('[data-run-blocked-retry]').click(); await tick(); });
+  assert.deepEqual(api.calls.at(-1), ['resolve', 'run_ov', { nodeId: 'brief', attempt: 1, action: 'retry', note: 'Guests too, kept in the browser.' }],
+    'a retry carries the answer to its performer');
   await harness.act(async () => { item.querySelector('[data-run-blocked-skip]').click(); await tick(); });
-  assert.deepEqual(api.calls.at(-1), ['resolve', 'run_ov', { nodeId: 'brief', attempt: 1, action: 'skip' }]);
-  assert.equal(changed, 2);
+  assert.deepEqual(api.calls.at(-1), ['resolve', 'run_ov', { nodeId: 'brief', attempt: 1, action: 'skip' }], 'a skip carries no note');
+  assert.equal(changed, 3);
+  api.resolveBlocked = async () => { throw new Error('409 the blocked attempt was already resolved'); };
+  await harness.act(async () => { item.querySelector('[data-run-blocked-skip]').click(); await tick(); });
+  assert.match(root.querySelector('[data-run-blocked] [role=alert]').textContent, /already resolved/);
+  assert.equal(changed, 4, 'a refused resolve reads the run again');
   const ended = await harness.mount(harness.html`<${RunOversight} view=${{ ...parked, status: 'canceled' }} runId="run_ov" api=${api} />`);
   assert.equal(ended.container.querySelector('[data-run-blocked]'), null, 'an ended run has nothing to resolve');
 });

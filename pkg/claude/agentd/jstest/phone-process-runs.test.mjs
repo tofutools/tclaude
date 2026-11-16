@@ -198,12 +198,26 @@ test('a parked step says why on the phone, and is retried or skipped there', asy
   const mounted = await harness.mount(harness.html`<${mod.RunPage} runId="run_migrate" api=${api} source=${fakeSource(harness)} back=${() => {}} />`);
   await settle(harness);
   const item = mounted.container.querySelector('[data-run-blocked-node="apply"]');
-  assert.match(item.textContent, /is parked: migration lock held/);
+  assert.match(item.textContent, /is blocked: migration lock held/);
   assert.equal(mounted.container.querySelector('.phone-run-wait'), null, 'no "desktop only" note: it is resolved here');
   await harness.act(async () => { item.querySelector('[data-run-blocked-retry]').click(); });
   await settle(harness);
   assert.deepEqual(api.resolved, [['run_migrate', { nodeId: 'apply', attempt: 1, action: 'retry' }]]);
   assert.equal(mounted.container.querySelector('.phone-gate'), null);
+});
+
+test('a run held by something else as well as a parked step keeps saying what that is', async (t) => {
+  const { harness, mod } = await load(t);
+  const source = fakeSource(harness);
+  const context = structuredClone(source.context.value);
+  context.runs.run_migrate.action = 'needs_reconcile';
+  source.context.value = context;
+  const api = fakeApi();
+  api.resolveBlocked = async () => ({});
+  const mounted = await harness.mount(harness.html`<${mod.RunPage} runId="run_migrate" api=${api} source=${source} back=${() => {}} />`);
+  await settle(harness);
+  assert.ok(mounted.container.querySelector('[data-run-blocked-node="apply"]'), 'the parked step is offered');
+  assert.ok(mounted.container.querySelector('.phone-run-wait'), 'and the other wait still says what it is');
 });
 
 test('a refused pause is shown, not swallowed', async (t) => {
