@@ -18121,6 +18121,9 @@ body.wizard .gp-start-form select:where(:not(.ui-select)) { background: #241b3d;
 .gq-loop .ui-select { border-color: #6b5a1e; }
 .gq-loop-rounds { width: 3.6em; }
 .gq-who-select { width: 100%; }
+/* A Who or If nobody choice with its spawn profile beside it. */
+.gq-pick-pair { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; max-width: 100%; }
+.gq-pick-pair > * { flex: 1 1 9em; min-width: 0; }
 .gq-answer { color: #e3b341; }
 .gq-step-body .gq-decides { align-self: flex-start; font-size: 11px; padding: 0; color: #8b949e; opacity: 0.75; }
 .gq-step:hover .gq-decides, .gq-decides:focus-visible { opacity: 1; color: #e3b341; }

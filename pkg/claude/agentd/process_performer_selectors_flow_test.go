@@ -266,3 +266,66 @@ func TestProcessResolvePreviewAndGroupContext(t *testing.T) {
 	}
 	assert.True(t, found, "a group with no runs is listed: %s", rec.Body.String())
 }
+
+// Scenario: "a new agent" in the editor's Who is an agent step with no
+// selector and a spawn fallback with a profile. Nobody matches no selector,
+// so every run of the step spawns a fresh agent with that profile, even when
+// an idle member could have taken it, and not the group's default profile.
+func TestProcessPerformerFallback_NewAgentStepSpawnsItsProfile(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	_, err := db.SetAgentGroupDefaultCwd("crew", t.TempDir())
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "sonnet-dev", Harness: "claude", Model: "sonnet"})
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "opus-review", Harness: "claude", Model: "opus"})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultProfile("crew", "sonnet-dev")
+	require.NoError(t, err)
+	idle := havePerformerAgent(t, f, "crew", "idle-1111-2222-3333-4444", "alice", "reviewer", "idle")
+	spawns := recordSpawns(t)
+
+	performer := model.Performer{Kind: model.PerformerAgent, Prompt: "Review the change.",
+		Fallback: &model.PerformerFallback{Action: model.FallbackSpawn, Profile: "opus-review"}}
+	view := startPerformerRun(t, f, root, "run_new_agent", performerTemplate("new-agent", performer, nil), groupScope(g))
+	require.NotNil(t, view.Commands[0].Performer, "%+v", view)
+	assert.Equal(t, db.ProcessDispatchDelivered, view.Commands[0].State, "%+v", view.Commands[0].Performer)
+	assert.Equal(t, "spawned", view.Commands[0].Performer.Resolution)
+	assert.NotEqual(t, idle, view.Commands[0].Performer.AgentID, "the idle member is not asked: the step always spawns")
+	require.Len(t, spawns(), 1)
+	assert.Equal(t, "opus", spawns()[0].Model, "spawned with the step's profile, not the group's default")
+}
+
+// Scenario: validating a template warns about a spawn profile this node does
+// not have, on the process's fallback and on a step's; a known one is quiet.
+func TestProcessPerformerFallback_ValidateWarnsAboutAnUnknownSpawnProfile(t *testing.T) {
+	f, _ := processRuntimeFlow(t)
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "opus-review", Harness: "claude"})
+	require.NoError(t, err)
+	warnings := func(stepProfile, processProfile string) map[string]string {
+		t.Helper()
+		tmpl := performerTemplate("profiles", model.Performer{Kind: model.PerformerAgent, Prompt: "Review.",
+			Fallback: &model.PerformerFallback{Action: model.FallbackSpawn, Profile: stepProfile}}, nil)
+		tmpl.Fallback = &model.PerformerFallback{Action: model.FallbackSpawn, Profile: processProfile}
+		rec := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"template": tmpl})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var body struct {
+			Diagnostics []struct {
+				Scope, TargetID, Code, Severity, Message string
+			} `json:"diagnostics"`
+		}
+		testharness.DecodeJSON(t, rec, &body)
+		out := map[string]string{}
+		for _, d := range body.Diagnostics {
+			if d.Code == "unknown_spawn_profile" {
+				assert.Equal(t, "warning", d.Severity)
+				out[d.Scope+":"+d.TargetID] = d.Message
+			}
+		}
+		return out
+	}
+	assert.Empty(t, warnings("opus-review", ""))
+	got := warnings("gone", "missing")
+	assert.Contains(t, got["node:"+performerNode], `"gone"`)
+	assert.Contains(t, got["template:"], `"missing"`)
+}

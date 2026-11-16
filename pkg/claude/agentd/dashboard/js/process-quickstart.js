@@ -31,12 +31,13 @@ export function groupRoles(roster) {
 // whoOptions are the Who picker's choices for a roster: specific agents, the
 // roles the group holds (`roles`, the process context's [{role, count}], else
 // the roster's), anyone free, you, and a command.
-export function whoOptions(roster, { roles = null } = {}) {
+export function whoOptions(roster, { roles = null, spawn = true } = {}) {
   return [
     ...roster.map((m) => ({ value: `agent:${m.name}`, group: 'agent', label: m.name, detail: `${m.role || 'member'} · ${memberState(m)}` })),
     ...(roles?.length ? roles : groupRoles(roster)).map(({ role, count }) => ({ value: `role:${role}`, group: 'role', label: `any ${role}`, detail: `${count} in group` })),
     { value: 'anyone', group: 'role', label: 'anyone free in the group', detail: 'idle first, then the least busy' },
     { value: 'lead', group: 'role', label: "the group's lead", detail: 'the member with role lead, else an owner' },
+    ...(spawn ? [{ value: 'spawn', group: 'spawn', label: 'a new agent…', detail: 'spawned for this step' }] : []),
     { value: 'you', group: 'other', label: 'you (a question or sign-off)', detail: '' },
     { value: 'command', group: 'other', label: 'a command', detail: '' },
   ];
@@ -55,6 +56,7 @@ export function whoValue(who) {
 }
 
 export function whoFromValue(value) {
+  if (value === 'spawn') return { mode: 'spawn', profile: '' };
   if (value.startsWith('agent:')) return { mode: 'agent', agent: value.slice(6) };
   if (value.startsWith('role:')) return { mode: 'role', role: value.slice(5) };
   return { mode: value };
@@ -113,32 +115,49 @@ export function setStepFallback(step, fallback) {
   return { ...step, node };
 }
 
-// fallbackChoices lists a fallback picker's options. `inherit` adds the
-// per-step choice of following the process. The current value stays listed
-// even if its profile no longer exists, so opening a step never rewrites it.
+// fallbackChoices lists a fallback picker's actions: `inherit` adds the
+// per-step choice of following the process, then wait, spawn and fail. Which
+// profile a spawn uses is profileChoices', beside it. Spawning needs a
+// profile: the group's default or a named one, unless it already spawns.
 export function fallbackChoices({ current = '', inherit = '', defaultSpawnProfile = '', profiles = [] } = {}) {
-  const named = [...new Set(profiles)].filter((name) => name && (name !== defaultSpawnProfile || current === `spawn:${name}`));
-  const options = [
+  const spawnable = !!defaultSpawnProfile || profiles.some(Boolean) || current.startsWith('spawn');
+  return [
     ...(inherit ? [{ value: '', label: inherit }] : []),
     { value: 'wait', label: 'wait for one' },
-    {
-      value: 'spawn',
-      label: defaultSpawnProfile ? `spawn one with profile ${defaultSpawnProfile}` : 'spawn one (the group has no default spawn profile)',
-      disabled: !defaultSpawnProfile && current !== 'spawn',
-    },
-    ...named.map((name) => ({ value: `spawn:${name}`, label: `spawn one with profile ${name}` })),
+    { value: 'spawn', label: spawnable ? 'spawn a new agent' : 'spawn a new agent (no spawn profiles)', disabled: !spawnable },
+    { value: 'fail', label: 'fail the step' },
   ];
-  if (current.startsWith('spawn:') && !options.some((option) => option.value === current)) {
-    options.push({ value: current, label: `spawn one with profile ${current.slice(6)}` });
-  }
-  options.push({ value: 'fail', label: 'fail the step' });
+}
+
+// fallbackAction is a picker value's action ('spawn' for 'spawn:<profile>').
+export function fallbackAction(value) {
+  return String(value || '').startsWith('spawn') ? 'spawn' : String(value || '');
+}
+
+// profileChoices lists a spawn's profiles: '' for the group's default spawn
+// profile, then the node's profiles. The current one stays listed even if it
+// no longer exists, so opening a step never rewrites it.
+export function profileChoices({ current = '', defaultSpawnProfile = '', profiles = [] } = {}) {
+  const options = [
+    { value: '', label: defaultSpawnProfile ? `group default (${defaultSpawnProfile})` : 'group default (none set)' },
+    ...[...new Set(profiles)].filter(Boolean).map((name) => ({ value: name, label: name })),
+  ];
+  if (current && !options.some((option) => option.value === current)) options.push({ value: current, label: `${current} (not on this node)` });
   return options;
+}
+
+// firstSpawn is the fallback a picker switched to spawn starts on: the
+// group's default, else the first profile, since with neither nothing spawns.
+export function firstSpawn({ defaultSpawnProfile = '', profiles = [] } = {}) {
+  const named = profiles.find(Boolean);
+  return !defaultSpawnProfile && named ? { action: 'spawn', profile: named } : { action: 'spawn' };
 }
 
 // fallbackNote is the short mark an agent step's node carries when it does
 // not simply wait, so what happens without a member reads off the graph.
 export function fallbackNote(step, { fallback = null, defaultSpawnProfile = '' } = {}) {
-  if (step?.node?.performer?.kind !== 'agent') return '';
+  // A new agent's spawn is its who, not a fallback.
+  if (step?.node?.performer?.kind !== 'agent' || stepWho(step).mode === 'spawn') return '';
   const { action, profile } = stepFallback(step, fallback);
   if (action === 'fail') return '↯ fail';
   // A bare spawn in a group with no default spawn profile waits at runtime.
@@ -175,6 +194,10 @@ export function whoNow(step, roster, { fallback = null, defaultSpawnProfile = ''
     const member = roster.find((m) => m.role.toLowerCase() === 'lead' && m.online);
     return member ? { label: member.name, detail: "the group's lead", member }
       : { label: "the group's lead", detail: 'an owner of the group, when no member has the role lead' };
+  }
+  if (who.mode === 'spawn') {
+    const spawned = nobody('a new agent', 'a new agent for every run');
+    return spawned.waits ? { label: 'a new agent', detail: 'the group has no default spawn profile: the step waits', waits: true } : spawned;
   }
   if (who.mode === 'anyone') {
     const member = roster.find((m) => m.online && !m.busy) || roster.find((m) => m.online);

@@ -7,10 +7,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, groupRoles, groupRoster, setStepFallback, stepFallbackValue,
-  whoFromValue, whoNow, whoOptions, whoValue,
+  fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, firstSpawn, groupRoles, groupRoster, profileChoices, setStepFallback,
+  stepFallbackValue, whoFromValue, whoNow, whoOptions, whoValue,
 } from '../dashboard/js/process-quickstart.js';
-import { stepListToView, viewToStepList } from '../dashboard/js/process-step-list.js';
+import { setStepWho, stepListToView, stepWho, viewToStepList } from '../dashboard/js/process-step-list.js';
 
 const fixture = JSON.parse(readFileSync(new URL('./process-quickstart-starters.json', import.meta.url), 'utf8'));
 
@@ -32,12 +32,13 @@ test('the roster, its roles and the Who options', () => {
   assert.deepEqual(roster.map((m) => [m.name, m.busy, m.online]), [['checkout', false, true], ['search', true, true], ['review-bot', false, false]]);
   assert.deepEqual(groupRoles(roster), [{ role: 'dev', count: 2 }, { role: 'reviewer', count: 1 }]);
   const options = whoOptions(roster);
-  assert.deepEqual(options.map((o) => o.value), ['agent:checkout', 'agent:search', 'agent:review-bot', 'role:dev', 'role:reviewer', 'anyone', 'lead', 'you', 'command']);
+  assert.deepEqual(options.map((o) => o.value), ['agent:checkout', 'agent:search', 'agent:review-bot', 'role:dev', 'role:reviewer', 'anyone', 'lead', 'spawn', 'you', 'command']);
+  assert.equal(whoOptions(roster, { spawn: false }).some((o) => o.value === 'spawn'), false, 'a decider is not a new agent');
   assert.ok(!options.find((o) => o.value === 'anyone').disabled, 'anyone free is a real selector');
   assert.deepEqual(whoOptions(roster, { roles: [{ role: 'qa', count: 1 }] }).filter((o) => o.group === 'role').map((o) => o.value),
     ['role:qa', 'anyone', 'lead'], 'the process context\'s roles win over the roster\'s');
   assert.deepEqual(options.slice(0, 3).map((o) => o.detail), ['dev · idle', 'dev · working', 'reviewer · offline']);
-  for (const value of ['agent:checkout', 'role:dev', 'anyone', 'lead', 'you', 'command']) assert.equal(whoValue(whoFromValue(value)), value);
+  for (const value of ['agent:checkout', 'role:dev', 'anyone', 'lead', 'spawn', 'you', 'command']) assert.equal(whoValue(whoFromValue(value)), value);
 });
 
 test('who-now guesses the performer the way the resolver ranks them', () => {
@@ -88,17 +89,38 @@ test('a step override replaces the legacy spawn opt-in, which the validator refu
   assert.equal(stepFallbackValue(cleared), '');
 });
 
-test('fallback choices offer the default, the other profiles, and keep a value that is gone', () => {
+test('fallback choices are the actions; a spawn\'s profiles list the default, the others, and keep one that is gone', () => {
   const values = (options) => options.map((option) => option.value);
-  assert.deepEqual(values(fallbackChoices({ defaultSpawnProfile: 'dev', profiles: ['dev', 'opus'] })), ['wait', 'spawn', 'spawn:opus', 'fail']);
-  assert.deepEqual(values(fallbackChoices({ inherit: 'as the process', current: 'spawn:gone', profiles: [] })), ['', 'wait', 'spawn', 'spawn:gone', 'fail']);
-  for (const current of ['fail', 'wait', 'spawn']) {
-    const listed = fallbackChoices({ current, defaultSpawnProfile: 'dev' }).filter((option) => option.value === current);
-    assert.equal(listed.length, 1, `${current} is listed once, under its own label`);
-    assert.doesNotMatch(listed[0].label, /profile $/);
-  }
-  const noDefault = fallbackChoices({ profiles: ['opus'] });
-  assert.equal(noDefault.find((option) => option.value === 'spawn').disabled, true, 'no default to spawn');
+  assert.deepEqual(values(fallbackChoices({ defaultSpawnProfile: 'dev', profiles: ['dev', 'opus'] })), ['wait', 'spawn', 'fail']);
+  assert.deepEqual(values(fallbackChoices({ inherit: 'as the process', current: 'spawn:gone' })), ['', 'wait', 'spawn', 'fail']);
+  const spawn = (options) => options.find((option) => option.value === 'spawn');
+  assert.equal(spawn(fallbackChoices({ profiles: ['opus'] })).disabled, false, 'a named profile can spawn without a group default');
+  assert.equal(spawn(fallbackChoices({})).disabled, true, 'no profile at all: nothing to spawn');
+  assert.equal(spawn(fallbackChoices({ current: 'spawn' })).disabled, false, 'a spawn already chosen stays pickable');
+  assert.deepEqual(profileChoices({ defaultSpawnProfile: 'dev', profiles: ['dev', 'opus', 'opus'] }).map((o) => [o.value, o.label]),
+    [['', 'group default (dev)'], ['dev', 'dev'], ['opus', 'opus']]);
+  assert.deepEqual(profileChoices({ current: 'gone', profiles: ['opus'] }).map((o) => [o.value, o.label]),
+    [['', 'group default (none set)'], ['opus', 'opus'], ['gone', 'gone (not on this node)']]);
+  assert.deepEqual(firstSpawn({ defaultSpawnProfile: 'dev', profiles: ['opus'] }), { action: 'spawn' });
+  assert.deepEqual(firstSpawn({ profiles: ['opus'] }), { action: 'spawn', profile: 'opus' }, 'no default: a named one, or it would only wait');
+});
+
+test('a new agent is a step with no one to match and its own spawn, so every run spawns one', () => {
+  const role = { id: 'r', node: { type: 'task', performer: { kind: 'agent', role: 'qa', sameAs: 'x', prompt: 'Review.' } } };
+  const fresh = setStepWho(role, { mode: 'spawn', profile: 'opus-review' });
+  assert.deepEqual(fresh.node.performer, { kind: 'agent', prompt: 'Review.', fallback: { action: 'spawn', profile: 'opus-review' } });
+  assert.deepEqual(stepWho(fresh), { mode: 'spawn', profile: 'opus-review' });
+  assert.deepEqual(setStepWho(fresh, { mode: 'spawn', profile: '' }).node.performer.fallback, { action: 'spawn' }, 'the group default');
+  const legacy = { id: 'l', node: { type: 'task', performer: { kind: 'agent', profile: 'dev', spawn: 'allowed' } } };
+  assert.deepEqual(setStepWho(legacy, { mode: 'spawn', profile: 'opus' }).node.performer, { kind: 'agent', fallback: { action: 'spawn', profile: 'opus' } });
+  const roster = [{ name: 'idle', id: 'a1', role: 'qa', online: true, busy: false }];
+  assert.equal(whoNow(fresh, roster).spawns, 'opus-review', 'an idle member does not take it');
+  assert.equal(fallbackNote(fresh), '', 'the spawn is its who, not a fallback mark');
+  const bare = setStepWho(role, { mode: 'spawn', profile: '' });
+  assert.equal(whoNow(bare, roster, { defaultSpawnProfile: 'sonnet-dev' }).spawns, 'sonnet-dev');
+  assert.equal(whoNow(bare, roster).waits, true, 'no default spawn profile: it waits');
+  // Back to a role keeps the spawn as the step's own fallback.
+  assert.deepEqual(setStepWho(fresh, { mode: 'role', role: 'qa' }).node.performer.fallback, { action: 'spawn', profile: 'opus-review' });
 });
 
 test('a node carries its fallback unless it simply waits', () => {

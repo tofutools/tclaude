@@ -625,6 +625,7 @@ func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
 		if fs, err := store.NewFS(processStoreRoot()); err == nil {
 			diagnostics = append(diagnostics, templateRefDiagnostics(parsed.Template, processSubprocessResolver(r.Context(), fs))...)
 		}
+		diagnostics = append(diagnostics, spawnProfileDiagnostics(parsed.Template)...)
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{
 		"sourceHash": parsed.SourceHash, "semanticHash": parsed.SemanticHash,

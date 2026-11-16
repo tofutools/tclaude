@@ -257,6 +257,10 @@ export function expandParamShorthand(text) {
 //   { mode: 'lead' }               the group's lead (performer.lead)
 //   { mode: 'you' }                the human (a human performer)
 //   { mode: 'command', run }       a program performer (run: its executable)
+//   { mode: 'spawn', profile }     a new agent for the step: names no one,
+//                                  and its own fallback spawns (profile '' is
+//                                  the group's default spawn profile); with
+//                                  no one to match, every run spawns one
 //   { mode: 'nobody' }             an agent performer that names no one
 export function stepWho(step) {
   const performer = step?.node?.performer;
@@ -268,6 +272,7 @@ export function stepWho(step) {
   if (performer.anyone) return { mode: 'anyone' };
   if (performer.lead) return { mode: 'lead' };
   if (performer.profile) return { mode: 'role', role: performer.profile, legacy: true };
+  if (performer.fallback?.action === 'spawn') return { mode: 'spawn', profile: performer.fallback.profile || '' };
   return { mode: 'nobody' };
 }
 
@@ -355,8 +360,9 @@ export function setStepWho(step, who, { legacyRoles = false } = {}) {
     delete performer.role;
     delete performer.anyone;
     delete performer.lead;
-    if (who.mode === 'agent') {
-      // A named agent leaves no choice for a constraint to narrow.
+    if (who.mode === 'agent' || who.mode === 'spawn') {
+      // A named agent leaves no choice for a constraint to narrow, and a new
+      // one is always a different agent.
       delete performer.sameAs;
       delete performer.differentFrom;
     }
@@ -373,6 +379,12 @@ export function setStepWho(step, who, { legacyRoles = false } = {}) {
       if (old.spawn === 'allowed' && !old.fallback) performer.fallback = { action: 'spawn', profile: old.profile };
       delete performer.profile;
       delete performer.spawn;
+    }
+    if (who.mode === 'spawn') {
+      // Who is the fallback: nobody matches no selector, so it always spawns.
+      delete performer.profile;
+      delete performer.spawn;
+      performer.fallback = who.profile ? { action: 'spawn', profile: who.profile } : { action: 'spawn' };
     }
   }
   node.performer = performer;
