@@ -129,6 +129,31 @@ test('chips, badge and icon render the S1 vocabulary', async (t) => {
   await mounted.unmount();
 });
 
+test('the mini-graph draws a gate\'s caption under its diamond and outlines the nodes named as problems', async (t) => {
+  const { harness, mod } = await kit(t);
+  const run = {
+    id: 'r', name: 'r', status: 'planned',
+    nodes: [
+      { id: 'build', kind: 'agent', label: 'Build', state: 'planned', sub: 'any dev' },
+      { id: 'gate', kind: 'decision', label: 'Review', state: 'planned', caption: '2 deciders · all approve' },
+    ],
+    edges: [{ from: 'build', to: 'gate' }],
+  };
+  const mounted = await harness.mount(harness.html`<div>
+    <${mod.ProcessMiniGraph} run=${run} problemIds=${new Set(['build'])} onNodeClick=${() => {}} />
+    <${mod.ProcessMiniGraph} run=${run} compact />
+  </div>`);
+  const [full, compact] = mounted.container.querySelectorAll('.pk-mini-graph');
+  const gate = full.querySelector('[data-process-node="gate"]');
+  assert.equal(gate.querySelector('.pk-gnode-caption').textContent, '2 deciders · all approve');
+  assert.match(gate.getAttribute('title'), /2 deciders · all approve/);
+  assert.equal(compact.querySelector('.pk-gnode-caption'), null, 'a compact graph has no room for it');
+  assert.deepEqual([...full.querySelectorAll('.pk-gnode.problem')].map((n) => n.dataset.processNode), ['build']);
+  assert.match(full.querySelector('[data-process-node="build"]').getAttribute('title'), /has a problem/);
+  assert.equal(compact.querySelectorAll('.pk-gnode.problem').length, 0, 'only where problems are given');
+  await mounted.unmount();
+});
+
 test('the mini-graph marks "you are here", and nodes become buttons only with a handler', async (t) => {
   const { harness, mod, sheet } = await kit(t);
   const clicked = [];

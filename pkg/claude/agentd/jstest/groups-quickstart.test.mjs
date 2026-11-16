@@ -957,6 +957,29 @@ test('right-click structure: branch a "you" step, and delete names what goes wit
   assert.equal(node('new-step'), null, 'the steps only it led to went too');
 });
 
+test('the problems line names the step, selects it on a click, and its node is outlined', async (t) => {
+  const api = fakeApi({ stored: { tmpl_ship: SHIP_VIEW } });
+  api.validateTemplate = async () => [
+    { scope: 'node', targetId: 'review', severity: 'error', code: 'missing_prompt', message: 'agent performer requires prompt' },
+    { scope: 'template', severity: 'error', code: 'x', message: 'the process has another problem' },
+    { scope: 'node', targetId: 'merge', severity: 'warning', code: 'w', message: 'only a warning' },
+  ];
+  const { root, click, settle } = await mount(t, { api, context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-edit-graph="tmpl_ship"]'));
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  await settle();
+  const card = root.querySelector('[data-mini-editor="tmpl_ship"]');
+  const line = card.querySelector('[data-mini-problems]');
+  assert.equal(line.dataset.miniProblems, '2');
+  const step = line.querySelector('[data-mini-problem-step="review"]');
+  assert.ok(step, 'the line names the step');
+  assert.equal(step.textContent, SHIP_VIEW.template.nodes.review.name || 'review');
+  assert.match(line.textContent, /2 problems:\s*\S.*:\s*agent performer requires prompt/);
+  assert.deepEqual([...card.querySelectorAll('.pk-gnode.problem')].map((n) => n.dataset.processNode), ['review'], 'errors only, and only steps');
+  await click(step);
+  assert.ok(card.querySelector('[data-mini-inspector="review"]'), 'a click selects the step');
+});
+
 test('the inspector edits a step; Save writes a new version against the opened hash', async (t) => {
   const { api, card, node, click, setValue, notes, root } = await openMini(t);
   await click(node('review'));

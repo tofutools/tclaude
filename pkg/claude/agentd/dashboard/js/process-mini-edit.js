@@ -558,7 +558,8 @@ export function setLoopRounds(view, id, outcome, rounds) {
 // draftProjection is the kit run projection of a draft: every node planned,
 // a step's sub line saying who does it, and an edge labelled by its outcome
 // unless it is a plain pass.
-// noteOf marks a decision's label: its node draws no sub line.
+// noteOf marks a decision's label: its node draws no sub line. A gate's who
+// ("2 deciders · all approve") is its caption, drawn under the diamond.
 export function draftProjection(view, { whoOf = () => '', noteOf = () => '', name = '' } = {}) {
   const nodes = Object.entries(view.template?.nodes || {}).map(([id, node]) => {
     const kind = miniKind(node);
@@ -566,6 +567,7 @@ export function draftProjection(view, { whoOf = () => '', noteOf = () => '', nam
     if (node.type === 'task' && node.performer) projected.performer = { kind: node.performer.kind };
     else projected.kind = node.type === 'task' ? 'agent' : node.type;
     if (kind === 'advanced') projected.sub = 'full editor';
+    if (node.type === 'decision' && node.deciders?.length) projected.caption = whoOf(id, node);
     const note = node.type === 'decision' ? noteOf(id, node) : '';
     if (note) projected.label = `${projected.label} ${note}`;
     return projected;

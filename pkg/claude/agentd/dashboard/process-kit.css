@@ -223,6 +223,16 @@ button.pk-gnode { cursor: pointer; }
 .pk-gnode.pk-kind-decision.pk-state-waiting::before { border-color: var(--pk-waiting); }
 .pk-gnode.pk-kind-decision.pk-state-failed::before { border-color: var(--pk-failed); }
 .pk-gnode.pk-kind-decision:is(.pk-state-planned, .pk-state-skipped)::before { border-style: dashed; background: var(--pk-plan-bg); }
+/* A gate's caption ("2 deciders · all approve") hangs under its diamond, in
+   the gap between nodes. */
+.pk-gnode.pk-kind-decision .pk-gnode-caption {
+  position: absolute; top: calc(100% - 4px); left: 50%; transform: translateX(-50%); white-space: nowrap;
+  font-size: 9.5px; font-weight: 400; line-height: 1.2; color: var(--pk-muted); pointer-events: none;
+}
+/* A node the editor's diagnostics name, until it is fixed. */
+.pk-gnode.problem:not(.pk-kind-decision) { border-color: var(--pk-failed); outline: 2px solid var(--pk-failed); outline-offset: 2px; }
+.pk-gnode.pk-kind-decision.problem::before { border: 2px solid var(--pk-failed); }
+.pk-gnode.problem.selected:not(.pk-kind-decision) { outline-color: var(--pk-running); }
 .pk-gnode.pk-kind-decision .pk-gnode-label {
   position: relative; font-size: 9px; font-weight: 600; text-align: center; white-space: normal; line-height: 1.1; max-width: 70%;
 }

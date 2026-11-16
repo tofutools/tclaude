@@ -646,9 +646,12 @@ const ARROW_IDS = { done: 'done', running: 'running', planned: 'planned', skippe
 // editing surface (the inline mini editor) adds `onNodeContextMenu`,
 // `onNodeHover` (a node id, never cleared here) and `overlay`, a render prop
 // given the laid-out graph that draws extra positioned elements on top.
+// `problemIds` (a Set) outlines the nodes an editor's diagnostics name. A
+// decision's `caption` (a gate's "2 deciders · all approve") is drawn under
+// its diamond.
 export function ProcessMiniGraph({
   run, compact = false, performerId = '', onNodeClick = null, selectedId = '', wizard = false,
-  onNodeContextMenu = null, onNodeHover = null, overlay = null,
+  onNodeContextMenu = null, onNodeHover = null, overlay = null, problemIds = null,
 }) {
   // Marker ids are per instance: the same run can be drawn on two surfaces
   // in one document, and a hidden copy must not own the visible arrowheads.
@@ -658,10 +661,11 @@ export function ProcessMiniGraph({
   const nodes = layout.nodes.map((node) => {
     const here = performerId && performs(node, performerId);
     const selected = selectedId !== '' && node.id === String(selectedId);
-    const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}`;
+    const problem = !!problemIds?.has?.(node.id);
+    const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}${problem ? ' problem' : ''}`;
     const style = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
     const round = nodeRound(node);
-    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}`;
+    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}${node.caption ? ` · ${node.caption}` : ''}${problem ? ' · has a problem' : ''}`;
     // The round badge marks the loop body's active node; the others say
     // their round in the tooltip.
     const badge = round && (node.state === 'running' || node.state === 'waiting')
@@ -669,7 +673,7 @@ export function ProcessMiniGraph({
     const inner = isTerminalKind(node.kind)
       ? html`<span class="pk-gnode-label">${node.kind}</span>`
       : node.kind === 'decision'
-        ? html`<span class="pk-gnode-label">${node.label}</span>${badge}`
+        ? html`<span class="pk-gnode-label">${node.label}</span>${!compact && node.caption && html`<span class="pk-gnode-caption">${node.caption}</span>`}${badge}`
         : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />${badge}`;
     // Performer ids let the Groups Both lens link a step to its agents' rows.
     const performerIds = (node.performers || []).map((performer) => performer?.id).filter(Boolean).join(' ') || undefined;
