@@ -201,6 +201,51 @@ screen. Drawing boards, processes and pages are on the desktop's Collab.
 Overlay windows, the side panel, drag and drop and the voice wake word aren't
 on the phone layout.
 
+### Installing it as an app
+
+The dashboard can be installed on a phone's home screen, and then opens as an
+app of its own: its own window and icon, with no address bar.
+
+- **Android (Chrome):** open the dashboard, then **⋮ › Add to home screen ›
+  Install** (or **Install app**).
+- **iPhone and iPad (Safari):** **Share › Add to Home Screen**.
+- A desktop Chrome or Edge offers the same as the install icon in the address
+  bar.
+
+Chrome and Edge offer to install only on a secure origin: `https://` (the
+[remote-access listener](remote.md#remote-dashboard-access) with its CA
+trusted on the device, `tailscale serve`, a tunnel) or `localhost`. Over plain
+`http://` on a LAN address, Chrome makes a shortcut that opens in the browser.
+
+Installed, it works as it does in the browser, with these differences:
+
+- **Pull down on the phone layout's header bar to reload.** An installed app has no reload
+  button, and the browser's own pull-to-refresh is off in it, so the dashboard
+  does the pull itself: pull the bar at the top down until the hint says
+  **Release to reload**. In a browser tab the browser's pull-to-refresh does
+  this as before. A desktop install reloads with Ctrl+R or the app's menu.
+- **Links to other sites open in the browser** (or in that site's app), not
+  inside the installed app: a GitHub PR, a claude.ai link. Links within the
+  dashboard stay in it.
+- **Back:** on Android the phone's Back works as in the browser and closes
+  what is open. On an iPhone, which has no Back button for a home-screen app,
+  use the dashboard's own **‹** buttons.
+
+There is no service worker: nothing is cached for offline use and there are no
+push notifications. Every start loads the dashboard from the node, as a
+browser tab does, so an installed app picks up a new version the same way; with
+no connection to the node it shows the browser's error page.
+
+The app's manifest (`/manifest.webmanifest`) and its icons (`/pwa/*.png`) are
+served without a dashboard session, because the browser fetches them on its
+own, outside the page (to check that it can install it, and later to update
+it). They describe the app and hold nothing about the node; every other page,
+file and API still needs the session. Whatever stands in front of the
+dashboard still applies to them: the page requests the manifest with
+credentials, so a Cloudflare Access cookie goes along, and on the
+remote-access listener they need the client certificate and passphrase like
+everything else.
+
 ### Terminals on a phone
 
 **Open** on an agent, from Now, Agents or Mail, shows its terminal full
@@ -216,6 +261,11 @@ away from the browser, disconnects it, and coming back reconnects.
 - The keys above it send **1**, **2**, **3**, **↑**, **↓**, **⏎** (Enter),
   **Esc** and **^C** (Ctrl+C), which is enough to answer a harness's choices
   and interrupt it.
+- A shell's terminal (a group's or an agent's shell, or an agent running the
+  `shell` harness) has **› Type into *shell*…** in place of the message
+  sheet: what you write goes into the shell as keystrokes, with no message
+  header, by **Type** or **Type + ⏎** (then Enter). Its keys are **←**,
+  **→**, **↑**, **↓**, **⇥** (Tab), **␣** (Space), **⏎**, **Esc** and **^C**.
 - **⌨** raises the phone's keyboard for typing straight into the terminal.
   Tapping the terminal doesn't raise it.
 - Pinch to change the text size. The terminal refits its columns to the new
