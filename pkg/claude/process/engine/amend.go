@@ -77,8 +77,10 @@ func DiffTemplates(current, amended *model.Template) AmendSummary {
 			s.Removed = append(s.Removed, id)
 		}
 	}
+	// Where the editor drew the steps is not a change to the run.
 	a, b := *current, *amended
 	a.Nodes, b.Nodes = nil, nil
+	a.Layout, b.Layout = nil, nil
 	s.Settings = !sameJSON(a, b)
 	for _, list := range [][]string{s.Added, s.Removed, s.Changed, s.Rerouted} {
 		slices.Sort(list)
@@ -103,6 +105,26 @@ func StartedSteps(checkpoint Checkpoint) map[string]bool {
 		}
 	}
 	return started
+}
+
+// ReroutableSteps are the started steps an amendment may still reroute: none
+// of their ways out has settled yet.
+func ReroutableSteps(checkpoint Checkpoint) map[string]bool {
+	out := map[string]bool{}
+	settled := map[string]bool{}
+	for from, outcomes := range checkpoint.Edges {
+		for _, disposition := range outcomes {
+			if disposition != EdgeUnresolved {
+				settled[authoredRoot(from)] = true
+			}
+		}
+	}
+	for id := range StartedSteps(checkpoint) {
+		if !settled[id] {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 // Amend carries a running run's checkpoint over to its amended template. It

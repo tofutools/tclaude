@@ -258,6 +258,7 @@ export class ProcessTemplateEditor {
       mode: options.mode || 'template',
       nodeEditable: options.nodeEditable,
       edgeEditable: options.edgeEditable,
+      layoutEditable: options.layoutEditable,
       canInsert: options.canInsert,
     });
     this.loadedView = structuredClone(view);
@@ -336,7 +337,7 @@ export class ProcessTemplateEditor {
     this.canvasPointer = null;
     this.graph?.dispose?.();
     this.graph = createProcessGraphAdapter(host, {
-      graph: this.model.graph(),
+      graph: this.markGraph(this.model.graph()),
       ariaLabel: `Process template editor: ${this.model.template.id}`,
       interactionLayering: true,
       // A template handed over from the quick start opens readable, not
@@ -398,6 +399,13 @@ export class ProcessTemplateEditor {
       diff: this.diffReviewSnapshot(),
       scope: this.scopeSnapshot(),
       status: { ...this.statusState },
+      // A run's own copy (options.runCopy): saving sends it on as an
+      // amendment, under the host's label.
+      runCopy: this.options.runCopy ? {
+        label: this.options.runCopy.label, title: this.options.runCopy.title,
+        badge: this.options.runCopy.badge, hint: this.options.runCopy.hint,
+        closable: !!this.options.runCopy.onClose,
+      } : null,
       paletteHidden: this.paletteHidden,
       helper: this.helper,
       // The operator's lock on the stored template (tcl-dwzsq0), as last read.
@@ -1188,7 +1196,18 @@ export class ProcessTemplateEditor {
   // overlayGraph paints an open review over a (validation-decorated) graph.
   // Every repaint goes through here — the validation round's included — so a
   // late diagnostics response cannot wipe the proposal off the canvas.
+  // markGraph lets the host mark nodes (options.decorateNode): a run's copy
+  // marks the steps the run has reached, which stay as they are.
+  markGraph(graph) {
+    const decorate = this.options.decorateNode;
+    if (!decorate) return graph;
+    for (const node of graph.nodes || []) decorate(node);
+    return graph;
+  }
+
   overlayGraph(graph) {
+    // Every repaint (validation's too) comes through here.
+    this.markGraph(graph);
     const review = this.diffReview;
     const painted = review ? overlayDraftDiff(graph, {
       theirs: review.view, changes: review.changes, decisions: review.decisions, cursor: review.cursor,
@@ -2569,6 +2588,12 @@ export class ProcessTemplateEditor {
     });
   }
 
+  // closeRunCopy hands a run's copy back to its host (options.runCopy.onClose).
+  closeRunCopy() {
+    if (this.destroyed) return;
+    this.options.runCopy?.onClose?.();
+  }
+
   // ---- save + conflict -----------------------------------------------------------
 
   async save() {
@@ -2744,6 +2769,23 @@ export class ProcessTemplateEditor {
     // payload was built at, so edits made in flight keep the model dirty.
     const savedAtRev = this.model.rev;
     const savedView = this.model.saveBody();
+    // A run's own copy (options.saveAction) is not saved as a template
+    // version: the action sends it on (an amendment) and says what happened.
+    if (this.options.saveAction) {
+      let result;
+      try {
+        result = await this.options.saveAction(savedView);
+      } catch (error) {
+        if (requestSeq === this.saveSeq) this.status(error?.message || String(error), true);
+        return;
+      }
+      if (requestSeq !== this.saveSeq) return;
+      this.model.markSaved({}, savedAtRev);
+      this.status(result?.status || 'Done.');
+      this.updateChrome();
+      this.options.onSaved?.(result || {});
+      return;
+    }
     // A draft that has never been persisted has no id yet -- the store mints
     // one. Everything afterwards updates a known key in place.
     const creating = !id;

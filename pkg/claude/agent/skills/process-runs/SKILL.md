@@ -86,6 +86,7 @@ tclaude process send-back <run-id> --node <step> [--note "why"]  # run a finishe
 tclaude process amend <run-id> --print > run.yaml               # this run's own copy of its template
 tclaude process amend <run-id> --file run.yaml --note "why"     # change the steps it has not reached
 tclaude process amend <run-id> --list                           # its amendments and their state
+tclaude process amend <run-id> --save-back <n>                  # make it the template's next version (templates.manage)
 ```
 
 An amendment changes only that run, and only where it has not been yet: steps
