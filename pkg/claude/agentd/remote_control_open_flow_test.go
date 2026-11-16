@@ -43,7 +43,11 @@ func TestRemoteControlOpen_ArmedWithoutLinkCyclesForAFreshOne(t *testing.T) {
 		return got
 	}
 
-	// Off: "open" just switches it on, like "on".
+	// Off, though the tracked flag says on: the cycle goes by the pane, not
+	// the flag, so "open" just switches it on, like "on" (a cycle's disable
+	// menu keys would land in the prompt of a pane that is off).
+	t.Cleanup(agentd.SetRemoteControlLinkGraceForTest(0))
+	require.NoError(t, db.SetSessionRemoteControl("cc-open", true))
 	open := f.AsHuman().RemoteControl(conv, "open")
 	require.Equal(t, http.StatusOK, open.Code, string(open.Raw))
 	require.Equal(t, "enabled", open.Action)
@@ -66,6 +70,7 @@ func TestRemoteControlOpen_ArmedWithoutLinkCyclesForAFreshOne(t *testing.T) {
 	require.True(t, sim.RemoteControlOn(), "the pane is armed")
 
 	// Just switched, a link may still be on its way: no cycle yet.
+	t.Cleanup(agentd.SetRemoteControlLinkGraceForTest(time.Minute))
 	open = f.AsHuman().RemoteControl(conv, "open")
 	require.Equal(t, http.StatusOK, open.Code, string(open.Raw))
 	require.Equal(t, "noop", open.Action, "a second tap while a link may still come does not throw it away")

@@ -625,14 +625,18 @@ func SetRemoteControlLinkGraceForTest(d time.Duration) func() {
 func SetRemoteControlConfirmDelayForTest(d time.Duration) func() {
 	prevConfirm := remoteControlConfirmDelay
 	prevStep := remoteControlMenuStepDelay
-	prevCycle := remoteControlCycleDelay
+	prevCycle, prevPoll := remoteControlCycleDelay, remoteControlCyclePoll
 	remoteControlConfirmDelay = d
 	remoteControlMenuStepDelay = d
-	remoteControlCycleDelay = d
+	// The cycle's wait for the pane to read off is a bound, not a pause: the
+	// sim reads off at once, and a test that needs the bound to pass (a
+	// disconnect that never takes) still gets a short one.
+	remoteControlCycleDelay = 100 * d
+	remoteControlCyclePoll = d
 	return func() {
 		remoteControlConfirmDelay = prevConfirm
 		remoteControlMenuStepDelay = prevStep
-		remoteControlCycleDelay = prevCycle
+		remoteControlCycleDelay, remoteControlCyclePoll = prevCycle, prevPoll
 	}
 }
 

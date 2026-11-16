@@ -67,12 +67,16 @@ var remoteControlMenuStepDelay = 350 * time.Millisecond
 // menu layout, this slice is the one place to adjust.
 var remoteControlDisableMenuKeys = []string{"Up", "Up", "Enter"}
 
-// remoteControlCycleDelay is the pause between the disable and the enable
-// when the "open" intent cycles Remote Access to get a fresh link: Claude
-// Code must finish disconnecting before the next toggle turns it back on
-// rather than reopening the disconnect menu. A package var so flow tests can
-// shrink it (SetRemoteControlConfirmDelayForTest).
-var remoteControlCycleDelay = 1500 * time.Millisecond
+// remoteControlCycleDelay bounds the wait, between the disable and the
+// enable when the "open" intent cycles Remote Access for a fresh link, for
+// the pane to read off: Claude Code must finish disconnecting before the next
+// toggle turns it back on rather than reopening the disconnect menu. The pane
+// is read every remoteControlCyclePoll meanwhile. Package vars so flow tests
+// can shrink them (SetRemoteControlConfirmDelayForTest).
+var (
+	remoteControlCycleDelay = 8 * time.Second
+	remoteControlCyclePoll  = 250 * time.Millisecond
+)
 
 // remoteControlResp is the JSON wire shape for the toggle endpoints. Action
 // is one of "enabled" | "disabled" | "cycled" | "noop" | "status" | "link"; RemoteControl is the
@@ -292,13 +296,17 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 	// explicit switch is all the pane is read for: the link comes from the
 	// transcript (remote_control_url.go).
 	current := sess.RemoteControl
-	if obs := observeRemoteControl(sess.TmuxSession + ":0.0"); obs.state != rcUnknown {
+	obs := observeRemoteControl(sess.TmuxSession + ":0.0")
+	if obs.state != rcUnknown {
 		current = obs.state.armed()
 		selfHealRemoteControl(sess, current)
 	}
 
-	if intent == "open" && current && sess.RCSessionURL == "" && !rcLinkMayStillCome(sess) {
-		cycleRemoteControl(w, r, sess, h, target, caller)
+	// The cycle drives the disable menu (Up, Up, Enter), which on a pane that
+	// is really off would land in the prompt and resubmit an old message, so
+	// it runs only when the pane itself reads on, never on the tracked flag.
+	if intent == "open" && obs.state.armed() && sess.RCSessionURL == "" && !rcLinkMayStillCome(sess) {
+		cycleRemoteControl(w, sess, h, target, caller)
 		return
 	}
 
@@ -376,10 +384,16 @@ func rcLinkMayStillCome(sess *db.SessionRow) bool {
 }
 
 // cycleRemoteControl switches Remote Access off and back on, for the "open"
-// intent when it is on with no link recorded for this launch: Claude Code
-// announces a fresh link on the way back up, which the transcript follower
-// records. The flag ends on whatever the pane was last switched to.
-func cycleRemoteControl(w http.ResponseWriter, r *http.Request, sess *db.SessionRow, h *harness.Harness, target, caller string) {
+// intent when the pane reads on with no link recorded for this launch:
+// Claude Code announces a fresh link on the way back up, which the
+// transcript follower records.
+//
+// Once the disable has landed the enable must follow, whether or not the
+// client is still there (a phone that locks mid-cycle drops its request), so
+// nothing here watches the request context. The enable is sent only once the
+// pane reads off: if the disconnect did not take, a second toggle would open
+// the disconnect menu instead of switching on.
+func cycleRemoteControl(w http.ResponseWriter, sess *db.SessionRow, h *harness.Harness, target, caller string) {
 	clearRCSessionURL(sess)
 	reason := slashReason("remote-control cycle for a fresh link", caller, target)
 	injected, ok := deliverRemoteControl(target, h, true, reason)
@@ -388,16 +402,23 @@ func cycleRemoteControl(w http.ResponseWriter, r *http.Request, sess *db.Session
 			"could not deliver remote-control toggle to conv "+short8(target)+" (no live tmux session to inject into)")
 		return
 	}
+	pane := injected.TmuxSession + ":0.0"
+	deadline := time.Now().Add(remoteControlCycleDelay)
+	for observeRemoteControl(pane).state != rcSeenOff {
+		if time.Now().After(deadline) {
+			// The pane never read off: the disconnect did not take (or the
+			// pane cannot be read), so it is left as it is, on.
+			slog.Warn("remote-control cycle: the pane did not read off after the disable; not re-enabling",
+				"conv_id", target, "session_id", injected.ID)
+			writeError(w, http.StatusConflict, "cycle_incomplete",
+				"remote control did not read off after the switch-off; it was left as it is. Try again, or check its terminal.")
+			return
+		}
+		time.Sleep(remoteControlCyclePoll)
+	}
 	if err := db.SetSessionRemoteControl(injected.ID, false); err != nil {
 		slog.Warn("remote-control state write failed after injection",
 			"conv_id", target, "session_id", injected.ID, "desired", false, "error", err)
-	}
-	select {
-	case <-time.After(remoteControlCycleDelay):
-	case <-r.Context().Done():
-		writeError(w, http.StatusServiceUnavailable, "canceled",
-			"remote control was switched off; the request ended before it was switched back on")
-		return
 	}
 	injected, ok = deliverRemoteControl(target, h, false, reason)
 	if !ok {
