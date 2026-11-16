@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"io/fs"
 	"regexp"
 	"slices"
@@ -13,7 +14,13 @@ import (
 // real embedded asset (never a 404), the set is dedup'd, includes the entry and
 // vendor targets, and excludes lazily dynamic-imported island modules.
 func TestBootPreloadModules_ResolvesRealStaticGraph(t *testing.T) {
-	mods := bootPreloadModules(dashboardAssetsFS)
+	for _, layout := range []string{"desktop", "phone"} {
+		t.Run(layout, func(t *testing.T) { checkBootPreloadGraph(t, bootPreloadModules(dashboardAssetsFS, layout)) })
+	}
+}
+
+func checkBootPreloadGraph(t *testing.T, mods []string) {
+	t.Helper()
 	if len(mods) < 20 {
 		t.Fatalf("expected a substantial static graph, got %d modules: %v", len(mods), mods)
 	}
@@ -42,15 +49,16 @@ func TestBootPreloadModules_ResolvesRealStaticGraph(t *testing.T) {
 	}
 }
 
-// TestInjectBootPreload_EmitsLinksAndTotal: the marker is replaced by a
-// module-total script plus one modulepreload link per module, and the count in
-// the script matches the number of links emitted.
+// TestInjectBootPreload_EmitsLinksAndTotal: the marker is replaced by one
+// modulepreload link per module both layouts share, and a script that adds
+// the links of the layout in force and sets the total to all of them.
 func TestInjectBootPreload_EmitsLinksAndTotal(t *testing.T) {
 	out := string(dashboardIndexHTML)
 	if strings.Contains(out, bootPreloadMarker) {
 		t.Fatalf("boot-preload marker was not replaced in the served HTML")
 	}
-	mods := bootPreloadModules(dashboardAssetsFS)
+	mods, desktop := bootPreloadSets(dashboardAssetsFS, "desktop")
+	_, phone := bootPreloadSets(dashboardAssetsFS, "phone")
 
 	// The served page names the versioned prefix (dashboard_static.go).
 	linkRe := regexp.MustCompile(`<link rel="modulepreload" href="` + regexp.QuoteMeta(dashboardStaticBase) + `([^"]+)">`)
@@ -64,14 +72,38 @@ func TestInjectBootPreload_EmitsLinksAndTotal(t *testing.T) {
 		}
 	}
 
-	totalRe := regexp.MustCompile(`window\.__BOOT_MODULE_TOTAL__=(\d+);`)
-	m := totalRe.FindStringSubmatch(out)
+	// The layout script: the phone list, the desktop list, then the shared
+	// count the total adds the chosen list to. Its paths are versioned too.
+	scriptRe := regexp.MustCompile(`'phone'\?(\[[^\]]*\]):(\[[^\]]*\]);.*window\.__BOOT_MODULE_TOTAL__=(\d+)\+own\.length;`)
+	m := scriptRe.FindStringSubmatch(out)
 	if m == nil {
-		t.Fatalf("__BOOT_MODULE_TOTAL__ assignment not found in served HTML")
+		t.Fatalf("the layout preload script is not in the served HTML")
 	}
-	total, _ := strconv.Atoi(m[1])
+	for i, want := range [][]string{phone, desktop} {
+		var got []string
+		if err := json.Unmarshal([]byte(m[i+1]), &got); err != nil {
+			t.Fatalf("layout list %q: %v", m[i+1], err)
+		}
+		if len(got) != len(want) || len(want) == 0 {
+			t.Fatalf("layout list has %d modules, want %d (non-empty)", len(got), len(want))
+		}
+		for j, href := range got {
+			if href != dashboardStaticBase+want[j] {
+				t.Errorf("layout module %d = %s, want %s", j, href, dashboardStaticBase+want[j])
+			}
+		}
+	}
+	// The script reads the layout js/layout-boot.js marked, and the progress
+	// counter counts the links it adds: it sits between the two.
+	layoutBoot := strings.Index(out, `js/layout-boot.js"></script>`)
+	script := strings.Index(out, m[0])
+	counter := strings.Index(out, "var MODULE_BAND")
+	if layoutBoot < 0 || counter < 0 || layoutBoot >= script || script >= counter {
+		t.Errorf("the layout preload script (at %d) must follow layout-boot.js (%d) and precede the progress counter (%d)", script, layoutBoot, counter)
+	}
+	total, _ := strconv.Atoi(m[3])
 	if total != len(mods) {
-		t.Errorf("__BOOT_MODULE_TOTAL__ = %d, but %d modules emitted", total, len(mods))
+		t.Errorf("__BOOT_MODULE_TOTAL__ adds %d shared modules, but %d links emitted", total, len(mods))
 	}
 
 	// The inline counter reads these DOM hooks; keep them in lockstep with the
@@ -114,23 +146,42 @@ func TestInjectBootPreload_PanicsWithoutMarker(t *testing.T) {
 	injectBootPreload([]byte("<html><head></head><body></body></html>"), dashboardAssetsFS)
 }
 
-// TestBootPreloadCoversTheBootIslands: the islands every boot awaits in turn
-// load their modules by dynamic import(); their graphs are in the preload set,
-// or each boot walks them as a waterfall ("Starting shell…").
+// TestBootPreloadCoversTheBootIslands: the islands a boot awaits load their
+// modules by dynamic import(); their graphs are in that layout's preload set,
+// or each boot walks them as a waterfall ("Starting shell…"). A layout does
+// not preload the other's islands (tk_33321868).
 func TestBootPreloadCoversTheBootIslands(t *testing.T) {
-	roots := bootIslandRoots(dashboardAssetsFS)
-	for _, want := range []string{"js/shell-island.js", "js/palette-island.js", "js/jobs-island.js"} {
-		if !slices.Contains(roots, want) {
-			t.Errorf("boot island roots %v miss %s: is a descriptor in bootIslandDescriptors renamed?", roots, want)
-		}
-	}
-	if slices.Contains(roots, "js/plugins-state.js") {
-		t.Errorf("roots %v reach past the boot islands into the plugins descriptor", roots)
-	}
-	mods := bootPreloadModules(dashboardAssetsFS)
-	for _, root := range roots {
-		if !slices.Contains(mods, root) {
-			t.Errorf("preload set misses boot island module %s", root)
-		}
+	for _, tc := range []struct {
+		layout    string
+		want, not []string
+		desc      []string
+	}{
+		{"desktop", []string{"js/shell-island.js", "js/palette-island.js", "js/jobs-island.js"},
+			[]string{"js/phone-shell-island.js", "js/phone-automations-island.js"}, bootLayoutIslands["desktop"]},
+		{"phone", []string{"js/shell-island.js", "js/palette-island.js", "js/phone-shell-island.js", "js/phone-automations-island.js"},
+			[]string{"js/jobs-island.js"}, bootLayoutIslands["phone"]},
+	} {
+		t.Run(tc.layout, func(t *testing.T) {
+			roots := append(bootIslandRoots(dashboardAssetsFS, bootIslandDescriptors), bootIslandRoots(dashboardAssetsFS, tc.desc)...)
+			for _, want := range tc.want {
+				if !slices.Contains(roots, want) {
+					t.Errorf("boot island roots %v miss %s: is a descriptor renamed?", roots, want)
+				}
+			}
+			if slices.Contains(roots, "js/plugins-state.js") {
+				t.Errorf("roots %v reach past the boot islands into the plugins descriptor", roots)
+			}
+			mods := bootPreloadModules(dashboardAssetsFS, tc.layout)
+			for _, root := range roots {
+				if !slices.Contains(mods, root) {
+					t.Errorf("preload set misses boot island module %s", root)
+				}
+			}
+			for _, other := range tc.not {
+				if slices.Contains(mods, other) {
+					t.Errorf("the %s preload carries the other layout's %s", tc.layout, other)
+				}
+			}
+		})
 	}
 }

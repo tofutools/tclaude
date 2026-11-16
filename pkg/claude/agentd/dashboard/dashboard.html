@@ -55,11 +55,14 @@
 }
 </script>
 <!-- Boot modulepreload block. agentd (injectBootPreload) replaces this marker
-     with a <script> setting window.__BOOT_MODULE_TOTAL__ and a
-     <link rel="modulepreload"> for every module in dashboard.js's static import
-     graph, so the browser fetches the whole graph in parallel instead of
-     discovering it one importer at a time. The marker must stay verbatim — a
-     server-side invariant asserts on it. -->
+     with a <link rel="modulepreload"> for every module both layouts boot
+     (dashboard.js's static import graph and the shell island's), and a
+     <script> that adds the links of the layout in force (the desktop or the
+     phone boot islands) and sets window.__BOOT_MODULE_TOTAL__, so the browser
+     fetches the whole graph in parallel instead of discovering it one
+     importer at a time. It must stay after js/layout-boot.js, which marks the
+     layout, and before the progress counter, which counts the links. The
+     marker must stay verbatim — a server-side invariant asserts on it. -->
 <!--BOOT_PRELOAD-->
 <!-- Embedded-assets fingerprint. agentd (injectAssetsVersion) replaces this
      marker with a <meta name="tclaude-assets-version"> carrying the hash of
