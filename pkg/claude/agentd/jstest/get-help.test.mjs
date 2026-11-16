@@ -178,6 +178,95 @@ test('the Get help menu offers a new helper, an existing agent, and the page act
   await mounted.unmount();
 });
 
+// stewardSnapshot is a node whose Steward (in the steward scribe group) is
+// online or not; the companion finds it the same way.
+const STEWARD = 'agt_0123456789abcdef0123456789abcdef';
+function stewardSnapshot(online, effective = [], extra = {}) {
+  const member = { agent_id: STEWARD, conv_id: 'conv-steward', title: 'steward', online };
+  return {
+    steward_active: STEWARD,
+    steward_roster: [{ agent_id: STEWARD, seat: 'active', online }],
+    ...extra,
+    groups: [{ name: 'steward', scribe: true, members: [member] }],
+    agents: [{ ...member, groups: ['steward'], effective }],
+  };
+}
+
+async function stewardMenu(t, snapshotValue, { resume = null } = {}) {
+  const env = await setup(t);
+  const { GetHelpMenu } = await env.harness.importDashboardModule('js/get-help-menu.js');
+  const daemon = fakeDaemon();
+  // resume answers the resume call instead of the fake daemon.
+  const fetchImpl = resume ? async (url, init) => (String(url).endsWith('/resume') ? (daemon.calls.push({ path: String(url) }), resume) : daemon.fetchImpl(url, init)) : daemon.fetchImpl;
+  const helpers = [];
+  const toasts = [];
+  const mounted = await env.harness.mount(env.harness.html`<${GetHelpMenu} help=${HELP} snapshot=${env.harness.signals.signal(snapshotValue)}
+    fetchImpl=${fetchImpl} confirm=${env.confirmWith(true)} notify=${(message, error) => toasts.push({ message, error })} onHelper=${(helper) => helpers.push(helper)} />`);
+  t.after(() => mounted.unmount());
+  const { container } = mounted;
+  await env.harness.act(async () => { env.harness.fireEvent(container.querySelector('.get-help-toggle'), 'click'); await wait(); });
+  const items = () => [...container.querySelectorAll('.get-help-menu [data-get-help]')];
+  const pick = (key) => env.harness.act(async () => { env.harness.fireEvent(container.querySelector(`[data-get-help="${key}"]`), 'click'); await wait(10); });
+  return { ...env, ...daemon, helpers, toasts, items, pick, container };
+}
+
+test('Ask the steward comes first when there is one, and briefs it as asking any agent does, with no picker', async (t) => {
+  const { items, pick, calls, helpers, opened, harness } = await stewardMenu(t, stewardSnapshot(true, ['process.templates.read']));
+  assert.deepEqual(items().map((item) => item.textContent), ['Ask the steward', 'New helper', 'Ask an existing agent…']);
+  await pick('steward');
+  assert.equal(harness.document.querySelector('#get-help-pick-modal'), null, 'the steward is preselected: no picker');
+  assert.deepEqual(calls.map((call) => call.path), ['/api/permissions', '/api/operator-message'], 'only the slug it lacks is granted, after the confirmation');
+  assert.deepEqual(calls[0].body.overrides, { 'process.templates.manage': 'grant' });
+  assert.equal(calls[1].body.to, 'conv-steward');
+  assert.equal(calls[1].body.body, HELP.brief);
+  assert.equal(helpers[0].agentId, STEWARD);
+  assert.deepEqual(opened.at(-1), { agentId: STEWARD, starting: false });
+});
+
+test('a Steward that is not running is briefed, then brought back', async (t) => {
+  const { items, pick, calls } = await stewardMenu(t, stewardSnapshot(false, ['process.templates.read', 'process.templates.manage']));
+  assert.equal(items()[0].textContent, 'Ask the steward (resumes it)');
+  await pick('steward');
+  assert.deepEqual(calls.map((call) => call.path), ['/api/operator-message', `/api/agents/${STEWARD}/resume`]);
+});
+
+test('a resume that fails after the brief says the brief waits, and the ask still counts', async (t) => {
+  const refused = { ok: true, status: 200, json: async () => ({ action: 'error', detail: 'harness gone' }), text: async () => '' };
+  const { pick, calls, helpers, toasts } = await stewardMenu(t, stewardSnapshot(false, ['process.templates.read', 'process.templates.manage']), { resume: refused });
+  await pick('steward');
+  assert.deepEqual(calls.map((call) => call.path), ['/api/operator-message', `/api/agents/${STEWARD}/resume`]);
+  assert.equal(helpers[0]?.agentId, STEWARD, 'the brief went: the page hears the Steward');
+  assert.match(toasts.at(-1).message, /Briefed steward, but could not resume it: harness gone/);
+  assert.doesNotMatch(toasts.at(-1).message, /Could not get help/);
+});
+
+test('no Ask the steward when the operator turned Stewards off', async (t) => {
+  const off = await stewardMenu(t, stewardSnapshot(true, [], { stewards_disabled: true }));
+  assert.deepEqual(off.items().map((item) => item.textContent), ['New helper', 'Ask an existing agent…'], 'the operator turned Stewards off');
+});
+
+test('a stopped member of the steward group that is not on the roster is not resumed as the Steward', async (t) => {
+  const { items } = await stewardMenu(t, stewardSnapshot(false, [], { steward_active: '', steward_roster: [] }));
+  assert.deepEqual(items().map((item) => item.textContent), ['New helper', 'Ask an existing agent…']);
+});
+
+test('a refused grant asks the Steward nothing and does not bring it back', async (t) => {
+  const env = await setup(t);
+  const { GetHelpMenu } = await env.harness.importDashboardModule('js/get-help-menu.js');
+  const { calls, fetchImpl } = fakeDaemon();
+  const mounted = await env.harness.mount(env.harness.html`<${GetHelpMenu} help=${HELP} snapshot=${env.harness.signals.signal(stewardSnapshot(false))}
+    fetchImpl=${fetchImpl} confirm=${env.confirmWith(false)} />`);
+  t.after(() => mounted.unmount());
+  await env.harness.act(async () => { env.harness.fireEvent(mounted.container.querySelector('.get-help-toggle'), 'click'); await wait(); });
+  await env.harness.act(async () => { env.harness.fireEvent(mounted.container.querySelector('[data-get-help="steward"]'), 'click'); await wait(10); });
+  assert.deepEqual(calls, []);
+});
+
+test('with no Steward on the node the menu has no Ask the steward', async (t) => {
+  const { items } = await stewardMenu(t, { agents: [{ agent_id: 'agt_b', conv_id: 'conv-b', title: 'builder', online: true, groups: [], effective: [] }] });
+  assert.deepEqual(items().map((item) => item.textContent), ['New helper', 'Ask an existing agent…']);
+});
+
 test('the Get help menu hangs from its button and flips rather than be cut off by the window it sits in', async (t) => {
   const { harness } = await setup(t);
   const { GetHelpMenu, menuSide, clipBounds } = await harness.importDashboardModule('js/get-help-menu.js');
