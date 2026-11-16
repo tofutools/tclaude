@@ -1,9 +1,10 @@
-// The phone Agents tab's All groups tree and a group's page
-// (js/phone-agents-island.js) in a real browser on the sandbox's data, with a
-// subgroup, an empty group and an archived one made through the production
-// routes: Active | All groups, the subgroup on its parent's guide line, the
-// empty and archived tags, Show archived, a group's name opening its page,
-// and the page's crumbs, subgroups and Back. Nothing scrolls sideways on an
+// The phone Agents tab's groups and a group's page (js/phone-agents-
+// island.js) in a real browser on the sandbox's data, with a subgroup, an
+// empty group and an archived one made through the production routes: the
+// View sheet (the sliders in the top bar: Tree or List, Show offline, empty
+// and archived groups, Reset, the dot), the subgroup on its parent's guide
+// line, the empty and archived tags, a group's name opening its page, and
+// the page's crumbs, subgroups and Back. Nothing scrolls sideways on an
 // iPhone 13 or an iPhone SE. SHOTS=<dir> saves a screenshot of each view.
 //
 //   scripts/sandbox/ui.sh smoke phone-agents-tree
@@ -49,6 +50,35 @@ async function shot(page, name) {
   await page.screenshot({ path: path.join(process.env.SHOTS, `${name}.png`), fullPage: false });
 }
 
+// The View sheet: openView opens it from the sliders, closeView closes it,
+// setSwitch sets one of its Show switches, resetView puts every setting back.
+async function openView(page) {
+  await page.getByRole('button', { name: /^View/ }).click();
+  const sheet = page.locator('[data-agents-view]');
+  await expect(sheet).toBeVisible();
+  return sheet;
+}
+async function closeView(page) {
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-agents-view]')).toHaveCount(0);
+}
+async function setSwitch(page, label, on) {
+  const sheet = await openView(page);
+  const box = sheet.getByRole('switch', { name: new RegExp(`^${label}`) });
+  if (await box.isChecked() !== on) await box.click();
+  await expect(box).toBeChecked({ checked: on });
+  await closeView(page);
+}
+async function resetView(page) {
+  const sheet = await openView(page);
+  const reset = sheet.getByRole('button', { name: 'Reset' });
+  if (await reset.isEnabled()) await reset.click();
+  await expect(reset).toBeDisabled();
+  await closeView(page);
+}
+const pref = (page, key) => page.evaluate((k) => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
+  .then((r) => r.json()).then((prefs) => prefs[k] ?? null), key);
+
 const SUB = 'smoke-sub';
 const EMPTY = 'smoke-empty';
 const OLD = 'smoke-old';
@@ -59,7 +89,7 @@ for (const [phone, device] of Object.entries(PHONES)) {
     test.use(use);
     const tag = phone.replace(/\s+/g, '-').toLowerCase();
 
-    test('All groups: every group nested, empty and archived tagged; a name opens its page', async ({ page }) => {
+    test('the groups nested, View: List, empty and archived tagged, the dot; a name opens its page', async ({ page }) => {
       const errors = collectErrors(page);
       await page.goto('/groups');
       await booted(page);
@@ -76,36 +106,40 @@ for (const [phone, device] of Object.entries(PHONES)) {
         await page.goto('/groups');
         await booted(page);
 
-        const seg = (label) => page.getByRole('group', { name: 'Show', exact: true }).getByRole('button', { name: new RegExp(`^${label}`) });
-        // A run before may have left All groups picked.
-        await seg('Active').click();
-        await expect(seg('Active')).toHaveAttribute('aria-pressed', 'true');
-        await shot(page, `${tag}-active`);
-        const counts = () => page.locator('.phone-agents-seg button').allTextContents();
-        const onActive = await counts();
-        await seg('All groups').click();
-        await expect(seg('All groups')).toHaveAttribute('aria-pressed', 'true');
-        expect(await counts(), 'the same counts in either mode').toEqual(onActive);
-        // Someone online first, then only offline agents, then empty groups.
-        const roots = await page.locator('.phone-agents > .phone-agents-node').evaluateAll((els) => els.map((el) => ({
-          name: el.getAttribute('aria-label'), dim: el.classList.contains('phone-agents-dim'), empty: el.classList.contains('phone-agents-empty'),
-        })));
-        const rank = (n) => (!n.dim ? 0 : n.empty ? 2 : 1);
-        expect(roots.map(rank), roots.map((n) => n.name).join(', ')).toEqual(roots.map(rank).sort());
+        // A run before may have left settings changed.
+        await resetView(page);
+        await expect(page.locator('.phone-agents-seg')).toHaveCount(0);
+        await expect(page.locator('.phone-ib-dot')).toHaveCount(0);
+        await shot(page, `${tag}-defaults`);
         const node = (name) => page.locator(`.phone-agents-node[aria-label="${name}"]`);
+        await expect(node(EMPTY), 'empty groups are off by default').toHaveCount(0);
+        await expect(node(SUB), 'the empty subgroup too').toHaveCount(0);
+        await setSwitch(page, 'Empty groups', true);
         await expect(node('webshop').locator(`.phone-agents-sub > .phone-agents-node[aria-label="${SUB}"]`)).toBeVisible();
+        await expect(page.locator('.phone-ib-dot'), 'off the defaults: a dot').toHaveCount(1);
         await expect(node(EMPTY).locator('.phone-agents-tag')).toHaveText('empty');
         await expect(node(EMPTY)).toHaveClass(/phone-agents-dim/);
         await expect(node(OLD)).toHaveCount(0);
         await expectNoSideScroll(page);
-        await shot(page, `${tag}-all-groups`);
+        await shot(page, `${tag}-empty-groups`);
 
-        await page.getByRole('button', { name: /^Show archived/ }).click();
+        await setSwitch(page, 'Archived groups', true);
         await expect(node(OLD).locator('.phone-agents-tag')).toHaveText(['empty', 'archived']);
         const order = await page.locator('.phone-agents > .phone-agents-node').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
         expect(order.at(-1), 'archived last').toBe(OLD);
-        await page.getByRole('button', { name: 'Hide archived' }).click();
+        await setSwitch(page, 'Archived groups', false);
         await expect(node(OLD)).toHaveCount(0);
+
+        // List: one level, the subgroup its own section.
+        let sheet = await openView(page);
+        await sheet.getByRole('button', { name: 'List', exact: true }).click();
+        await closeView(page);
+        await expect(page.locator('.phone-agents-sub')).toHaveCount(0);
+        await expect(page.locator(`.phone-agents > .phone-agents-node[aria-label="${SUB}"]`)).toBeVisible();
+        await shot(page, `${tag}-list`);
+        sheet = await openView(page);
+        await sheet.getByRole('button', { name: 'Tree', exact: true }).click();
+        await closeView(page);
 
         // The name, not the caret, opens the group's page.
         await node('webshop').locator(':scope > h2 .phone-agents-fold').click();
@@ -140,19 +174,18 @@ for (const [phone, device] of Object.entries(PHONES)) {
         await expect(page.locator('.phone-bar-title')).toHaveText('webshop');
         await page.goBack();
         await expect(view).toHaveCount(0);
-        await expect(seg('All groups')).toHaveAttribute('aria-pressed', 'true');
-        await expect(seg('All groups')).toHaveAttribute('aria-pressed', 'true');
 
-        // The pick survives a reload. The prefs write is debounced (prefs.js).
-        await expect.poll(() => page.evaluate(() => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
-          .then((r) => r.json()).then((prefs) => prefs['tclaude.dash.phone.agents.view'] ?? null))).toBe('all');
+        // The settings survive a reload, the dot too. The prefs write is
+        // debounced (prefs.js).
+        await expect.poll(() => pref(page, 'tclaude.dash.phone.agents.empty')).toBe('1');
         await page.reload();
         await booted(page);
         await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /^Agents/ }).click();
-        await expect(seg('All groups')).toHaveAttribute('aria-pressed', 'true');
-        await seg('Active').click();
-        await expect.poll(() => page.evaluate(() => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
-          .then((r) => r.json()).then((prefs) => prefs['tclaude.dash.phone.agents.view'] ?? null))).toBe(null);
+        await expect(page.locator('.phone-ib-dot')).toHaveCount(1);
+        await expect(node(EMPTY)).toBeVisible();
+        await resetView(page);
+        await expect(page.locator('.phone-ib-dot')).toHaveCount(0);
+        await expect.poll(() => pref(page, 'tclaude.dash.phone.agents.empty')).toBe(null);
         expect(errors).toEqual([]);
       } finally {
         if (made.includes(OLD)) await api(page, 'POST', `/api/groups/${OLD}/unarchive`);
@@ -165,21 +198,21 @@ for (const [phone, device] of Object.entries(PHONES)) {
 test.describe('desktop', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test('the desktop Groups tab is unchanged: no phone toggle, its own tree', async ({ page }) => {
+  test('the desktop Groups tab is unchanged: no phone View, its own tree', async ({ page }) => {
     const errors = collectErrors(page);
     await page.goto('/groups');
     await booted(page);
     await expect(page.locator('#groups-list')).toBeVisible();
-    await expect(page.locator('.phone-agents-seg')).toBeHidden();
+    await expect(page.locator('.phone-agents')).toBeHidden();
     await shot(page, 'desktop-groups');
     expect(errors).toEqual([]);
   });
 });
 
-// A group's header stays put when it folds or unfolds, in Active and in All
-// groups at every level of the tree (folding changes only what is under it);
-// its caret is a 44px zone with a 16px chevron, its name opens its page in
-// both modes; and Show offline hides offline agents and nobody-online groups.
+// A group's header stays put when it folds or unfolds, at every level of the
+// tree (folding changes only what is under it); its caret is a 44px zone
+// with a 16px chevron, its name opens its page; and Show offline hides
+// offline agents and nobody-online groups.
 test.describe('iPhone 13 header and offline', () => {
   const { defaultBrowserType: _ignored, ...use } = devices['iPhone 13'];
   test.use(use);
@@ -201,14 +234,11 @@ test.describe('iPhone 13 header and offline', () => {
       added = member.conv_id;
       await page.goto('/groups');
       await booted(page);
-      const seg = (label) => page.getByRole('group', { name: 'Show', exact: true }).getByRole('button', { name: new RegExp(`^${label}`) });
-      const offline = page.getByRole('button', { name: 'Show offline' });
-      if (await offline.getAttribute('aria-pressed') === 'false') await offline.click();
+      await resetView(page);
 
       // The caret: its own 44px zone, a 16px chevron, turned down when open.
-      await seg('Active').click();
-      const activeHead = page.locator('.phone-agents > .phone-section[aria-label="webshop"] > h2');
-      const caret = activeHead.locator('.phone-agents-caret-btn');
+      const rootHead = page.locator('.phone-agents > .phone-agents-node[aria-label="webshop"] > h2');
+      const caret = rootHead.locator('.phone-agents-caret-btn');
       const zone = await caret.boundingBox();
       expect(zone.width).toBeGreaterThanOrEqual(44);
       expect(zone.height).toBeGreaterThanOrEqual(44);
@@ -226,18 +256,14 @@ test.describe('iPhone 13 header and offline', () => {
         await expect(caretOf).toHaveAttribute('aria-expanded', 'true');
         expect(await top(head), `${label}: unfolding does not move the header`).toBe(before);
       };
-      await steady(activeHead, 'Active');
-      await seg('All groups').click();
-      const rootHead = page.locator('.phone-agents > .phone-agents-node[aria-label="webshop"] > h2');
       const subHead = page.locator(`.phone-agents-sub > .phone-agents-node[aria-label="${SUB}"] > h2`);
       await expect(subHead).toBeVisible();
-      await steady(subHead, 'All groups, nested');
-      await steady(rootHead, 'All groups, top level');
-      await shot(page, 'iphone-13-all-groups-caret');
+      await steady(subHead, 'nested');
+      await steady(rootHead, 'top level');
+      await shot(page, 'iphone-13-tree-caret');
 
-      // The name opens the page in Active too.
-      await seg('Active').click();
-      await activeHead.locator('.phone-agents-fold').click();
+      // The name opens the group's page.
+      await rootHead.locator('.phone-agents-fold').click();
       await expect(page.locator('.phone-bar-title')).toHaveText('webshop');
       await page.getByRole('button', { name: 'Back', exact: true }).click();
       await expect(page.locator('.phone-group-page')).toHaveCount(0);
@@ -245,18 +271,13 @@ test.describe('iPhone 13 header and offline', () => {
       // Show offline off: no offline agent, no nobody-online group; kept.
       await expect(page.locator('.phone-agent-off').first()).toBeVisible();
       await shot(page, 'iphone-13-offline-on');
-      await offline.click();
-      await expect(offline).toHaveAttribute('aria-pressed', 'false');
+      await setSwitch(page, 'Offline agents', false);
       await expect(page.locator('.phone-agent-off:not(.v-crashed):not([aria-label$=": waking"])')).toHaveCount(0);
-      await shot(page, 'iphone-13-offline-off');
-      await seg('All groups').click();
       await expect(page.locator('.phone-agents-node.phone-agents-dim')).toHaveCount(0);
-      await expect.poll(() => page.evaluate(() => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
-        .then((r) => r.json()).then((prefs) => prefs['tclaude.dash.phone.agents.offline'] ?? null))).toBe('0');
-      await offline.click();
-      await seg('Active').click();
-      await expect.poll(() => page.evaluate(() => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
-        .then((r) => r.json()).then((prefs) => [prefs['tclaude.dash.phone.agents.offline'] ?? null, prefs['tclaude.dash.phone.agents.view'] ?? null]))).toEqual([null, null]);
+      await shot(page, 'iphone-13-offline-off');
+      await expect.poll(() => pref(page, 'tclaude.dash.phone.agents.offline')).toBe('0');
+      await setSwitch(page, 'Offline agents', true);
+      await expect.poll(() => pref(page, 'tclaude.dash.phone.agents.offline')).toBe(null);
       expect(errors).toEqual([]);
     } finally {
       if (added) await api(page, 'DELETE', `/api/groups/${SUB}/members/${added}`);

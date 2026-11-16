@@ -21,7 +21,7 @@ test('group rename migrates every name-keyed dashboard preference', async (t) =>
     'tclaude.dash.quickpin.alpha': '1',
     'tclaude.dash.forcefold.alpha': '1',
     'tclaude.dash.mail.groupexp.alpha': '1',
-    'tclaude.dash.phone.fold.alpha': '1',
+    'tclaude.dash.phone.tree.fold.alpha': '1',
     'tclaude.dash.groupOrder': JSON.stringify(['gamma', 'alpha', 'beta']),
     'tclaude.dash.spawn.lastGroup': 'alpha',
     'tclaude.dash.mail.mailbox': 'group:alpha',
@@ -35,7 +35,7 @@ test('group rename migrates every name-keyed dashboard preference', async (t) =>
     'tclaude.dash.quickpin.',
     'tclaude.dash.forcefold.',
     'tclaude.dash.mail.groupexp.',
-    'tclaude.dash.phone.fold.',
+    'tclaude.dash.phone.tree.fold.',
   ]) {
     assert.equal(prefs.getItem(prefix + 'alpha'), null);
     assert.notEqual(prefs.getItem(prefix + 'delta'), null);

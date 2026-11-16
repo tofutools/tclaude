@@ -385,6 +385,9 @@ export function agentsLayout(snapshot, order = (groups) => groups, settings = VI
       ...n, children: [], tree: [...n.shown, ...n.offline].map((row) => ({ row, kids: [] })),
       dim: !(n.live > 0 || n.shown.length > 0), populated: n.total > 0,
     }))
+      // Without offline a group with nobody listed goes: the tree kept it
+      // only for a subgroup, which is its own section here.
+      .filter((n) => settings.offline || n.populated)
     : nodes;
   const prune = (list) => list.flatMap((n) => {
     const children = prune(n.children);

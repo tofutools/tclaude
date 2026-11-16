@@ -344,3 +344,15 @@ test('a link to an agent unfolds its group and every one above it, archived too'
   assert.equal(prefs.getItem('tclaude.dash.phone.agents.archived'), '1', 'Show archived on');
   assert.equal(found(), 'release-bot');
 });
+
+// List without offline: a parent the tree kept only for an online subgroup
+// has nobody listed of its own, so it goes (the subgroup is its own section).
+test('List without offline drops a group with nobody listed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/phone-agents-model.js');
+  const snap = { groups: [{ name: 'parent', members: [off(50, 'p')] }, { name: 'child', parent: 'parent', members: [on(51, 'c')] }] };
+  const list = model.agentsLayout(snap, (g) => g, { ...model.VIEW_DEFAULTS, layout: 'list', offline: false });
+  assert.deepEqual(list.map((n) => n.name), ['child']);
+  const tree = model.agentsLayout(snap, (g) => g, { ...model.VIEW_DEFAULTS, offline: false });
+  assert.deepEqual(names(tree), [['parent', ['child']]], 'the tree keeps it for its subgroup');
+});
