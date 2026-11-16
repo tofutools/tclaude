@@ -400,7 +400,7 @@ export function BlockedSteps({ view, runId, api, labelOf = (id) => id, onChanged
     return html`<li key=${keyOf(item)} class="pov-blocked-item" data-run-blocked-node=${item.nodeId}>
       <div class="pov-reason"><b>⏹ ${label}</b> ${wizard ? 'is stayed' : 'is blocked'}${item.reason ? html`: <span data-run-blocked-reason>${item.reason}</span>` : ' and waits on you'}</div>
       ${api?.resolveBlocked && html`<div class="pov-concern-actions">
-        <input class="pov-note" type="text" maxlength="4096" data-run-blocked-note aria-label=${`Note for ${label}'s retry`}
+        <input class="pov-note" type="text" name="retry-note" maxlength="4096" data-run-blocked-note aria-label=${`Note for ${label}'s retry`}
           placeholder="answer or note for the retry (optional, handed to its performer)" value=${notes[keyOf(item)] || ''} disabled=${!!busy}
           onInput=${(event) => setNotes({ ...notes, [keyOf(item)]: event.currentTarget.value })} />
         <${Button} size="sm" variant="primary" disabled=${!!busy} data-run-blocked-retry
