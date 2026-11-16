@@ -134,9 +134,24 @@ export function GetHelpMenu({
   const steward = open ? stewardHelper(snapshot.value) : null;
   const askSteward = () => run(async () => {
     const asked = await askHelper(steward);
-    if (asked && !steward.online) await resumeAgent(fetchImpl, steward.id);
+    if (asked && !steward.online) await resumeBriefed(steward);
     return asked;
   });
+  // The brief is already sent, so a failed resume is not a failed ask: it
+  // falls back as the companion's Resume does (the dialogs for a missing
+  // directory or a lost subscription), or says the brief waits.
+  const resumeBriefed = async (steward) => {
+    try {
+      await resumeAgent(fetchImpl, steward.id);
+    } catch (error) {
+      if (error?.recoverable) {
+        const { resumeAgentReq } = await import('./dashboard-operations.js');
+        await resumeAgentReq(steward.id, steward.label);
+        return;
+      }
+      notify(`Briefed ${steward.label}, but could not resume it: ${error?.message || error}. The brief waits until it runs.`, true);
+    }
+  };
   return html`<div ref=${rootRef} class=${`get-help${extra ? ` ${extra}` : ''}`}>
     <${Button} class="get-help-toggle" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'} title=${title} aria-label=${label} disabled=${busy || disabled}
       onClick=${() => setOpen((value) => !value)}>${busy ? 'Starting…' : html`${labelNode || label} ▾`}<//>

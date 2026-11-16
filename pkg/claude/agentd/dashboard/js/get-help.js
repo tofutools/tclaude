@@ -11,7 +11,7 @@
 // that confirmation.
 
 import { companionAvailable, openInCompanion } from './companion-facade.js';
-import { companionAgents, stewardAgent } from './companion-model.js';
+import { companionAgents, stewardAgent, stewardToResume } from './companion-model.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
 const json = { 'Content-Type': 'application/json' };
@@ -79,12 +79,18 @@ export function liveHelpers(snapshotValue) {
 }
 
 // stewardHelper is the Steward as an agent to ask, as the companion finds it:
-// the one in the seat, running or not (online says which); null with none.
+// the one in the seat, running or not (online says which); null with none,
+// or when the operator turned Stewards off. Only the daemon's Steward counts:
+// one in the seat (steward_active) or on its roster, and one not running
+// only as the companion would bring it back (stewardToResume).
 export function stewardHelper(snapshotValue) {
+  if (snapshotValue?.stewards_disabled === true) return null;
   const steward = stewardAgent(companionAgents(snapshotValue));
   if (!steward) return null;
+  const roster = Array.isArray(snapshotValue?.steward_roster) ? snapshotValue.steward_roster : [];
+  const known = steward.active || roster.some((entry) => entry?.agent_id === steward.agentId);
+  if (!known || (!steward.online && stewardToResume(roster)?.agent_id !== steward.agentId)) return null;
   const record = (Array.isArray(snapshotValue?.agents) ? snapshotValue.agents : []).find((agent) => agent?.agent_id === steward.agentId);
-  if (record?.retired) return null;
   return {
     id: steward.agentId, convId: steward.convId, label: steward.name, online: steward.online,
     groups: Array.isArray(record?.groups) ? record.groups : [],
