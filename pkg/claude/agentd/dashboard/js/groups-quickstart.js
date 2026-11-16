@@ -17,7 +17,11 @@ import {
   YOU_CONTINUE, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
   collapseParamShorthand, setStepChoices, setStepName, setStepText, setStepWho, stepListFlow, stepListToView,
   stepTargetLabel, stepText, stepWho, backTargetLabel, backTargets, setStepLoop, stepLoop, stepAnswers, AGENT_VERDICTS,
+  deciderTexts, setDeciderText,
 } from './process-step-list.js';
+import {
+  addStepDecider, agreeChoices, canAddStepDecider, isGateStep, removeStepDecider, setStepAgree, setStepDecider,
+} from './process-step-gate.js';
 import {
   LOOP_DEFAULT_ROUNDS, LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopSummary, normalizeRounds,
 } from './process-loops.js';
@@ -27,7 +31,7 @@ import { Button, Select } from './ui-components.js';
 
 const html = htm.bind(h);
 
-const GLYPHS = Object.freeze({ agent: '🤖', you: '👤', command: '⌘', decision: '◇', parallel: '‖' });
+const GLYPHS = Object.freeze({ agent: '🤖', you: '👤', command: '⌘', gate: '⚖', decision: '◇', parallel: '‖' });
 const VALIDATE_DELAY_MS = 400;
 // A draft saves itself this long after its last change.
 export const AUTOSAVE_DELAY_MS = 800;
@@ -84,19 +88,67 @@ export function defaultNotify(message, isError = false) {
 }
 
 function stepKind(step) {
+  if (isGateStep(step)) return 'gate';
   const mode = stepWho(step).mode;
   if (mode === 'you') return 'you';
   if (mode === 'command') return 'command';
   return 'agent';
 }
 
-export function WhoPicker({ step, roster, roles, onChange }) {
+// deciderStep is one decider of a gate as a step of its own, for the who
+// picker and whoNow.
+function deciderStep(step, index) {
+  return { id: `${step.id}.vote.${index + 1}`, node: { type: 'decision', performer: step.node.deciders[index] }, cont: '', links: [] };
+}
+
+// gateNow is who decides a gate now: each decider as whoNow reads it.
+export function gateNow(step, roster, options) {
+  const each = step.node.deciders.map((_, index) => whoNow(deciderStep(step, index), roster, options));
+  return {
+    label: `${each.length} deciders · all ${step.node.agree || '…'}`,
+    detail: each.map((now) => now.label).join(', '),
+    waits: each.some((now) => now.waits),
+    each,
+  };
+}
+
+// GateDeciders edits a gate's deciders and the outcome all must choose, as
+// the graph inspector does: each decider a role, anyone, the lead, an agent
+// or you; + adds one, ✕ removes one (down to one, the step is a plain
+// decision again).
+function GateDeciders({ list, step, index, roster, roles, now, onChange }) {
+  const deciders = step.node.deciders;
+  const noMore = canAddStepDecider(list, step);
+  const answers = stepAnswers(step);
+  const agreeable = agreeChoices(step, answers);
+  return html`<div class="gq-gate" data-step-deciders=${step.id}>
+    ${deciders.map((_, i) => html`<div key=${i} class="gq-decider" data-step-decider=${i}>
+      <span class="gq-decider-n" aria-hidden="true">${i + 1}</span>
+      <${WhoPicker} step=${deciderStep(step, i)} roster=${roster} roles=${roles} label=${`Decider ${i + 1} of step ${index + 1}`}
+        onChange=${(who) => { if (who.mode !== 'command') onChange(setStepDecider(list, step, i, who)); }} />
+      <${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove decider ${i + 1} of step ${index + 1}`}
+        onClick=${() => onChange(removeStepDecider(list, step, i))}>✕<//>
+      <div class=${`gq-res${now.each[i]?.waits ? ' waits' : ''}`}>${now.each[i]?.detail || ''}</div>
+    </div>`)}
+    <${Button} size="sm" variant="link" class="gq-link" data-step-add-decider=${step.id} disabled=${!!noMore}
+      title=${noMore || 'Add a decider: all must agree'} onClick=${() => onChange(addStepDecider(list, step, { mode: 'nobody' }))}>+ decider<//>
+    <label class="gq-agree" data-step-agree=${step.id}>all must choose
+      <${Select} size="sm" aria-label=${`The outcome every decider of step ${index + 1} must choose`} data-agree=${step.node.agree || ''} value=${step.node.agree || ''}
+        onChange=${(event) => onChange(setStepAgree(list, step, event.currentTarget.value))}>
+        ${!agreeable.includes(step.node.agree) && html`<option value=${step.node.agree || ''}>${step.node.agree || '…'}</option>`}
+        ${agreeable.map((answer) => html`<option key=${answer} value=${answer}>${answer}</option>`)}
+      <//></label>
+    <div class="gq-dim gq-gate-note">Otherwise the first decider, in this order, who chose something else decides.</div>
+  </div>`;
+}
+
+export function WhoPicker({ step, roster, roles, label = 'Who does this step', onChange }) {
   const who = stepWho(step);
   const value = whoValue(who);
   const options = whoOptions(roster, { roles });
   const known = options.some((option) => option.value === value);
   const groups = [['agent', 'Specific agent'], ['role', 'By role'], ['other', 'Not an agent']];
-  return html`<${Select} size="sm" class="gq-who-select" aria-label="Who does this step" data-who=${value} value=${value}
+  return html`<${Select} size="sm" class="gq-who-select" aria-label=${label} data-who=${value} value=${value}
     onChange=${(event) => onChange(whoFromValue(event.currentTarget.value))}>
     ${!known && html`<option value=${value}>${who.mode === 'agent' ? `${who.agent} (not in this group)` : who.mode === 'role' ? `any ${who.role}` : 'nobody yet'}</option>`}
     ${groups.map(([key, label]) => {
@@ -145,6 +197,7 @@ export function inheritLabel(fallback, defaultSpawnProfile = '') {
 // agent decider picks between. Emptying an agent's verdicts makes it a plain
 // agent step again; a person always keeps one answer.
 function Answers({ list, step, onChange }) {
+  const gate = isGateStep(step);
   const agent = step.node.performer?.kind !== 'human';
   const answers = stepAnswers(step);
   const [draft, setDraft] = useState(answers.join(', '));
@@ -184,8 +237,8 @@ function Answers({ list, step, onChange }) {
     if (bound) onChange(setStepLoop(step, answer, { ...bound, onExhausted }));
   };
   return html`<div class="gq-answers">
-    <label class="gq-answers-in">${agent ? 'verdicts' : 'answers'} <input name="groups-quickstart-input" type="text" value=${draft}
-      aria-label=${agent ? 'Verdicts the agent picks from, comma separated' : 'Answers you can give, comma separated'}
+    <label class="gq-answers-in">${gate ? 'outcomes' : agent ? 'verdicts' : 'answers'} <input name="groups-quickstart-input" type="text" value=${draft}
+      aria-label=${gate ? 'Outcomes the deciders vote between, comma separated (at least two)' : agent ? 'Verdicts the agent picks from, comma separated' : 'Answers you can give, comma separated'}
       onInput=${(event) => setDraft(event.currentTarget.value)} onBlur=${commit}
       onKeyDown=${(event) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } }} /></label>
     <div class="gq-then">${answers.map((answer) => {
@@ -204,7 +257,7 @@ function Answers({ list, step, onChange }) {
           <${Select} size="sm" aria-label=${`When ${answer} has used its rounds`} value=${bound.onExhausted}
             onChange=${(event) => setExhausted(answer, event.currentTarget.value)}>
             ${others.map((a) => html`<option key=${a} value=${a}>${a}</option>`)}
-            <option value="">ask again</option>
+            ${!gate && html`<option value="">ask again</option>`}
           <//></span>`}</div>`;
     })}</div>
   </div>`;
@@ -213,9 +266,13 @@ function Answers({ list, step, onChange }) {
 function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo, onChange, onMove, onRemove }) {
   const kind = stepKind(step);
   const decision = step.node.type === 'decision';
+  // A gate whose deciders are asked different things shows each one's text.
+  const texts = deciderTexts(step);
+  const ownTexts = texts.length > 1 && texts.some((t) => t !== texts[0]);
+  const noMoreDeciders = decision && kind !== 'gate' && kind !== 'command' ? canAddStepDecider(list, step) : '';
   // Prompts read {{name}}, the step list's shorthand; edits expand it back.
   const text = collapseParamShorthand(stepText(step));
-  const placeholder = { agent: 'What should the agent do? {{name}} makes a start input', you: 'What do you decide?', command: 'Command line, e.g. make test' }[kind];
+  const placeholder = { agent: 'What should the agent do? {{name}} makes a start input', you: 'What do you decide?', command: 'Command line, e.g. make test', gate: 'What do the deciders decide?' }[kind];
   const following = list.steps[index + 1]?.id || list.mainEnd;
   // A decision keeps its answers across a switch between a person and an
   // agent (an agent's lone "continue" is no decision); a command does not
@@ -236,8 +293,13 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
     <div class="gq-step-body">
       <input name="gq-step-name" type="text" class="gq-step-name" aria-label=${`Step ${index + 1} name`} value=${step.node.name || ''} placeholder=${step.id}
         onInput=${(event) => onChange(setStepName(step, event.currentTarget.value))} />
-      <textarea name="gq-step-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${kind === 'command' ? 'command' : 'instruction'}`} placeholder=${placeholder}
-        value=${text} onChange=${(event) => onChange(setStepText(step, event.currentTarget.value))}></textarea>
+      ${ownTexts
+    ? texts.map((own, i) => html`<label key=${i} class="gq-decider-text" data-step-decider-text=${i}><span class="gq-decider-n">${i + 1}</span>
+        <textarea name="gq-decider-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} decider ${i + 1} instruction`} placeholder=${placeholder}
+          value=${collapseParamShorthand(own)} onChange=${(event) => onChange(setDeciderText(step, i, event.currentTarget.value))}></textarea></label>`)
+    : html`<textarea name="gq-step-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${kind === 'command' ? 'command' : 'instruction'}`} placeholder=${placeholder}
+        title=${kind === 'gate' ? 'Every decider is asked this' : undefined}
+        value=${text} onChange=${(event) => onChange(setStepText(step, event.currentTarget.value))}></textarea>`}
       ${decision && kind !== 'command' && html`<${Answers} list=${list} step=${step} onChange=${onChange} />`}
       ${!decision && kind === 'agent' && html`<${Button} size="sm" variant="link" class="gq-link gq-decides" data-step-decides=${step.id}
         title="The agent reports a verdict (approve or changes) instead of just finishing; send changes back to an earlier step for a review loop"
@@ -246,8 +308,13 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
       ${problems.map((problem) => html`<div key=${problem} class="gq-problem" role="note">${problem}</div>`)}
     </div>
     <div class="gq-who">
-      <${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} />
-      <div class=${`gq-res${now.waits ? ' waits' : ''}`}>${now.detail}</div>
+      ${kind === 'gate'
+    ? html`<${GateDeciders} list=${list} step=${step} index=${index} roster=${roster} roles=${roles} now=${now} onChange=${onChange} />`
+    : html`<${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} />
+      <div class=${`gq-res${now.waits ? ' waits' : ''}`}>${now.detail}</div>`}
+      ${decision && kind !== 'gate' && kind !== 'command' && html`<${Button} size="sm" variant="link" class="gq-link" data-step-add-decider=${step.id}
+        disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
+        onClick=${() => onChange(addStepDecider(list, step, { mode: 'nobody' }))}>+ another decider<//>`}
       ${kind === 'agent' && html`<label class="gq-step-fallback" data-step-fallback=${step.id} title="What this step does when no member can take it">
         <span aria-hidden="true">↯</span>
         <${FallbackPicker} value=${stepFallbackValue(step)} label=${`If no member can take step ${index + 1}`}
@@ -411,7 +478,8 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   const fallback = list.template?.fallback || null;
   const defaultSpawnProfile = String(groupInfo?.defaultSpawnProfile || '');
   const served = preview.key === viewKey ? preview.nodes : null;
-  const nowOf = (step) => previewNow(served?.[step.id]) || whoNow(step, roster, { fallback, defaultSpawnProfile });
+  const nowOf = (step) => (isGateStep(step) ? gateNow(step, roster, { fallback, defaultSpawnProfile })
+    : previewNow(served?.[step.id]) || whoNow(step, roster, { fallback, defaultSpawnProfile }));
   const roles = groupInfo?.roles || null;
   const profiles = useSpawnProfiles(api);
   const fallbackInfo = { fallback, defaultSpawnProfile, profiles };

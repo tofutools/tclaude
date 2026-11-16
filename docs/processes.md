@@ -666,6 +666,14 @@ Groups, so it can sit beside a *Get help* chat; its *Open in the Processes
 tab* and *Open in the Collab tab* still move it there. *Save new version* writes it against the
 version it was opened at. A process the step list cannot
 show (parallel, wait or subprocess nodes) opens in the graph editor instead.
+An agreement gate (a decision several deciders must agree on, like the
+review in *Plan → vet → build → review → merge*) is a step like any other in
+the list: its who column lists the deciders (each a role, anyone, the lead,
+an agent or you; ✕ removes one, *+ decider* adds one) and *all must choose*
+the outcome they agree on. Its outcomes go where they go, with the rounds a
+going-back outcome may run. Deciders asked different things each show their
+own text. *+ another decider* on a plain decision makes it a gate; removing
+down to one decider makes it a plain decision again.
 
 **Authoring** (Automations › Processes, then open a template). The graph
 editor has the node inspector, live validation, undo/redo, snippets and

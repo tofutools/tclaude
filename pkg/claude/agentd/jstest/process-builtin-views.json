@@ -1,0 +1,1073 @@
+{
+  "builtins": {
+    "ask-me-first": {
+      "template": {
+        "apiVersion": "tclaude.dev/v1alpha1",
+        "kind": "ProcessTemplate",
+        "id": "ask-me-first",
+        "name": "Ask me first",
+        "description": "You give the go-ahead, a developer does the task, and you accept the result or send it back with what to change.",
+        "params": {
+          "task": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "overseer": "lead",
+        "start": "start",
+        "nodes": {
+          "accept": {
+            "type": "decision",
+            "performer": {
+              "kind": "human",
+              "ask": "Accept the result of {{ params.task }}?\n{{ outputs.result }}",
+              "choices": [
+                "accept",
+                "rework",
+                "reject"
+              ]
+            },
+            "next": {
+              "accept": "done",
+              "escalate": "escalated",
+              "reject": "stopped",
+              "rework": "work"
+            },
+            "loops": {
+              "rework": {
+                "maxIterations": 3,
+                "onExhausted": "escalate"
+              }
+            }
+          },
+          "done": {
+            "type": "end",
+            "result": "success"
+          },
+          "escalated": {
+            "type": "end",
+            "result": "failed"
+          },
+          "go": {
+            "type": "decision",
+            "performer": {
+              "kind": "human",
+              "ask": "Go ahead with {{ params.task }}?",
+              "choices": [
+                "go",
+                "stop"
+              ]
+            },
+            "next": {
+              "go": "work",
+              "stop": "stopped"
+            }
+          },
+          "start": {
+            "type": "start",
+            "next": {
+              "next": "go"
+            }
+          },
+          "stopped": {
+            "type": "end",
+            "result": "canceled"
+          },
+          "work": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Do this: {{ params.task }}\nReport what you did (and the PR link, if any) as result. When it comes back for rework, address the notes.",
+              "role": "dev",
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "patience": "2h",
+            "next": {
+              "next": "accept"
+            },
+            "captures": [
+              "result"
+            ]
+          }
+        }
+      },
+      "edges": [
+        {
+          "from": "",
+          "outcome": "start",
+          "to": "start"
+        },
+        {
+          "from": "accept",
+          "outcome": "accept",
+          "to": "done"
+        },
+        {
+          "from": "accept",
+          "outcome": "escalate",
+          "to": "escalated"
+        },
+        {
+          "from": "accept",
+          "outcome": "reject",
+          "to": "stopped"
+        },
+        {
+          "from": "accept",
+          "outcome": "rework",
+          "to": "work"
+        },
+        {
+          "from": "go",
+          "outcome": "go",
+          "to": "work"
+        },
+        {
+          "from": "go",
+          "outcome": "stop",
+          "to": "stopped"
+        },
+        {
+          "from": "start",
+          "outcome": "next",
+          "to": "go"
+        },
+        {
+          "from": "work",
+          "outcome": "next",
+          "to": "accept"
+        }
+      ]
+    },
+    "bug-fix": {
+      "template": {
+        "apiVersion": "tclaude.dev/v1alpha1",
+        "kind": "ProcessTemplate",
+        "id": "bug-fix",
+        "name": "Bug: reproduce → fix → verify",
+        "description": "A tester reproduces the bug, a developer fixes it, and the tester who reproduced it verifies the fix against the reproduction before the lead merges it.",
+        "params": {
+          "task": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "overseer": "lead",
+        "patience": "1h",
+        "start": "start",
+        "nodes": {
+          "done": {
+            "type": "end",
+            "result": "success"
+          },
+          "escalated": {
+            "type": "end",
+            "result": "failed"
+          },
+          "fix": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Fix this bug: {{ params.task }}\nIt reproduces with:\n{{ outputs.repro }}\nAdd a test for it, open a PR and report its link as pr.",
+              "role": "dev",
+              "differentFrom": [
+                "reproduce"
+              ],
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "patience": "2h",
+            "next": {
+              "next": "verify"
+            },
+            "captures": [
+              "pr"
+            ]
+          },
+          "merge": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "The tester verified this fix. Merge it:\n{{ outputs.pr }}",
+              "lead": true
+            },
+            "next": {
+              "next": "done"
+            }
+          },
+          "reproduce": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Reproduce this bug: {{ params.task }}\nReport the steps (or a failing test) as repro.",
+              "role": "tester",
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "next": {
+              "next": "fix"
+            },
+            "captures": [
+              "repro"
+            ]
+          },
+          "start": {
+            "type": "start",
+            "next": {
+              "next": "reproduce"
+            }
+          },
+          "verify": {
+            "type": "decision",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Verify that this fix:\n{{ outputs.pr }}\nfixes the bug you reproduced with:\n{{ outputs.repro }}\nChoose fixed, or broken with what still fails.",
+              "role": "tester",
+              "sameAs": "reproduce"
+            },
+            "next": {
+              "broken": "fix",
+              "escalate": "escalated",
+              "fixed": "merge"
+            },
+            "loops": {
+              "broken": {
+                "maxIterations": 3,
+                "onExhausted": "escalate"
+              }
+            }
+          }
+        }
+      },
+      "edges": [
+        {
+          "from": "",
+          "outcome": "start",
+          "to": "start"
+        },
+        {
+          "from": "fix",
+          "outcome": "next",
+          "to": "verify"
+        },
+        {
+          "from": "merge",
+          "outcome": "next",
+          "to": "done"
+        },
+        {
+          "from": "reproduce",
+          "outcome": "next",
+          "to": "fix"
+        },
+        {
+          "from": "start",
+          "outcome": "next",
+          "to": "reproduce"
+        },
+        {
+          "from": "verify",
+          "outcome": "broken",
+          "to": "fix"
+        },
+        {
+          "from": "verify",
+          "outcome": "escalate",
+          "to": "escalated"
+        },
+        {
+          "from": "verify",
+          "outcome": "fixed",
+          "to": "merge"
+        }
+      ]
+    },
+    "build-review-ship": {
+      "template": {
+        "apiVersion": "tclaude.dev/v1alpha1",
+        "kind": "ProcessTemplate",
+        "id": "build-review-ship",
+        "name": "Build → review → ship",
+        "description": "A developer builds the task and opens a PR, a reviewer who did not build it approves or sends it back, and the group's lead ships it.",
+        "params": {
+          "task": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "overseer": "lead",
+        "patience": "1h",
+        "start": "start",
+        "nodes": {
+          "build": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Build this: {{ params.task }}\nOpen a PR and report its link as pr.",
+              "role": "dev",
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "patience": "2h",
+            "next": {
+              "next": "review"
+            },
+            "captures": [
+              "pr"
+            ]
+          },
+          "done": {
+            "type": "end",
+            "result": "success"
+          },
+          "escalated": {
+            "type": "end",
+            "result": "failed"
+          },
+          "review": {
+            "type": "decision",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Review the PR for this task: {{ params.task }}\nThe PR:\n{{ outputs.pr }}\nChoose approve, or changes with what to change.",
+              "role": "reviewer",
+              "differentFrom": [
+                "build"
+              ],
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "next": {
+              "approve": "ship",
+              "changes": "build",
+              "escalate": "escalated"
+            },
+            "loops": {
+              "changes": {
+                "maxIterations": 3,
+                "onExhausted": "escalate"
+              }
+            }
+          },
+          "ship": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "The review approved this PR. Merge and ship it:\n{{ outputs.pr }}",
+              "lead": true
+            },
+            "next": {
+              "next": "done"
+            }
+          },
+          "start": {
+            "type": "start",
+            "next": {
+              "next": "build"
+            }
+          }
+        }
+      },
+      "edges": [
+        {
+          "from": "",
+          "outcome": "start",
+          "to": "start"
+        },
+        {
+          "from": "build",
+          "outcome": "next",
+          "to": "review"
+        },
+        {
+          "from": "review",
+          "outcome": "approve",
+          "to": "ship"
+        },
+        {
+          "from": "review",
+          "outcome": "changes",
+          "to": "build"
+        },
+        {
+          "from": "review",
+          "outcome": "escalate",
+          "to": "escalated"
+        },
+        {
+          "from": "ship",
+          "outcome": "next",
+          "to": "done"
+        },
+        {
+          "from": "start",
+          "outcome": "next",
+          "to": "build"
+        }
+      ]
+    },
+    "check-fix": {
+      "template": {
+        "apiVersion": "tclaude.dev/v1alpha1",
+        "kind": "ProcessTemplate",
+        "id": "check-fix",
+        "name": "Check → fix if red",
+        "description": "Good on a schedule (nightly): a tester runs the checks, and when they are red a developer fixes them and the tester checks again.",
+        "params": {
+          "task": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "overseer": "lead",
+        "patience": "1h",
+        "start": "start",
+        "nodes": {
+          "check": {
+            "type": "decision",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Run {{ params.task }}. Choose green, or red with what fails as your note.",
+              "role": "tester",
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "next": {
+              "green": "done",
+              "red": "fix"
+            }
+          },
+          "done": {
+            "type": "end",
+            "result": "success"
+          },
+          "escalated": {
+            "type": "end",
+            "result": "failed"
+          },
+          "fix": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "{{ params.task }} is red. Run it to see what fails, fix it, open a PR and report its link as pr.",
+              "role": "dev",
+              "differentFrom": [
+                "check"
+              ],
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "patience": "2h",
+            "next": {
+              "next": "recheck"
+            },
+            "captures": [
+              "pr"
+            ]
+          },
+          "recheck": {
+            "type": "decision",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Run {{ params.task }} again with this fix:\n{{ outputs.pr }}\nChoose green, or red with what still fails.",
+              "role": "tester",
+              "sameAs": "check"
+            },
+            "next": {
+              "escalate": "escalated",
+              "green": "done",
+              "red": "fix"
+            },
+            "loops": {
+              "red": {
+                "maxIterations": 3,
+                "onExhausted": "escalate"
+              }
+            }
+          },
+          "start": {
+            "type": "start",
+            "next": {
+              "next": "check"
+            }
+          }
+        }
+      },
+      "edges": [
+        {
+          "from": "",
+          "outcome": "start",
+          "to": "start"
+        },
+        {
+          "from": "check",
+          "outcome": "green",
+          "to": "done"
+        },
+        {
+          "from": "check",
+          "outcome": "red",
+          "to": "fix"
+        },
+        {
+          "from": "fix",
+          "outcome": "next",
+          "to": "recheck"
+        },
+        {
+          "from": "recheck",
+          "outcome": "escalate",
+          "to": "escalated"
+        },
+        {
+          "from": "recheck",
+          "outcome": "green",
+          "to": "done"
+        },
+        {
+          "from": "recheck",
+          "outcome": "red",
+          "to": "fix"
+        },
+        {
+          "from": "start",
+          "outcome": "next",
+          "to": "check"
+        }
+      ]
+    },
+    "plan-fan-out": {
+      "template": {
+        "apiVersion": "tclaude.dev/v1alpha1",
+        "kind": "ProcessTemplate",
+        "id": "plan-fan-out",
+        "name": "Plan → fan out → integrate",
+        "description": "The lead splits the task into three independent parts, three developers take a part each at the same time, and the lead integrates them.",
+        "params": {
+          "task": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "overseer": "lead",
+        "patience": "1h",
+        "start": "start",
+        "nodes": {
+          "done": {
+            "type": "end",
+            "result": "success"
+          },
+          "fan-out": {
+            "type": "parallel",
+            "next": {
+              "part-1": "part-1",
+              "part-2": "part-2",
+              "part-3": "part-3"
+            }
+          },
+          "integrate": {
+            "type": "task",
+            "join": "all",
+            "performer": {
+              "kind": "agent",
+              "prompt": "All three parts are in. Integrate them and merge.\nPart 1:\n{{ outputs.pr1 }}\nPart 2:\n{{ outputs.pr2 }}\nPart 3:\n{{ outputs.pr3 }}",
+              "lead": true,
+              "sameAs": "plan"
+            },
+            "next": {
+              "next": "done"
+            }
+          },
+          "part-1": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Build part 1 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr1.",
+              "role": "dev",
+              "differentFrom": [
+                "part-2",
+                "part-3"
+              ],
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "patience": "2h",
+            "next": {
+              "next": "integrate"
+            },
+            "captures": [
+              "pr1"
+            ]
+          },
+          "part-2": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Build part 2 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr2.",
+              "role": "dev",
+              "differentFrom": [
+                "part-1",
+                "part-3"
+              ],
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "patience": "2h",
+            "next": {
+              "next": "integrate"
+            },
+            "captures": [
+              "pr2"
+            ]
+          },
+          "part-3": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Build part 3 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr3.",
+              "role": "dev",
+              "differentFrom": [
+                "part-1",
+                "part-2"
+              ],
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "patience": "2h",
+            "next": {
+              "next": "integrate"
+            },
+            "captures": [
+              "pr3"
+            ]
+          },
+          "plan": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Split this task into three independent parts that can be built at the same time: {{ params.task }}. Report the three parts, numbered, as your note.",
+              "lead": true
+            },
+            "next": {
+              "next": "fan-out"
+            },
+            "captures": [
+              "plan"
+            ]
+          },
+          "start": {
+            "type": "start",
+            "next": {
+              "next": "plan"
+            }
+          }
+        }
+      },
+      "edges": [
+        {
+          "from": "",
+          "outcome": "start",
+          "to": "start"
+        },
+        {
+          "from": "fan-out",
+          "outcome": "part-1",
+          "to": "part-1"
+        },
+        {
+          "from": "fan-out",
+          "outcome": "part-2",
+          "to": "part-2"
+        },
+        {
+          "from": "fan-out",
+          "outcome": "part-3",
+          "to": "part-3"
+        },
+        {
+          "from": "integrate",
+          "outcome": "next",
+          "to": "done"
+        },
+        {
+          "from": "part-1",
+          "outcome": "next",
+          "to": "integrate"
+        },
+        {
+          "from": "part-2",
+          "outcome": "next",
+          "to": "integrate"
+        },
+        {
+          "from": "part-3",
+          "outcome": "next",
+          "to": "integrate"
+        },
+        {
+          "from": "plan",
+          "outcome": "next",
+          "to": "fan-out"
+        },
+        {
+          "from": "start",
+          "outcome": "next",
+          "to": "plan"
+        }
+      ]
+    },
+    "plan-vet-build": {
+      "template": {
+        "apiVersion": "tclaude.dev/v1alpha1",
+        "kind": "ProcessTemplate",
+        "id": "plan-vet-build",
+        "name": "Plan → vet → build → review → merge",
+        "description": "The lead frames the task, a planner plans it, a usability vet checks the plan, a developer builds it, two reviewers who did not build it must both approve, and the lead who framed it merges.",
+        "params": {
+          "task": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "overseer": "lead",
+        "patience": "1h",
+        "start": "start",
+        "nodes": {
+          "brief": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Frame this task for the team: {{ params.task }}. Report the brief (goal, constraints, what done looks like) as your note.",
+              "lead": true
+            },
+            "next": {
+              "next": "plan"
+            },
+            "captures": [
+              "brief"
+            ]
+          },
+          "build": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Build this plan:\n{{ outputs.plan }}\nReport the PR link as pr.",
+              "role": "dev",
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "patience": "2h",
+            "next": {
+              "next": "review"
+            },
+            "captures": [
+              "pr"
+            ]
+          },
+          "done": {
+            "type": "end",
+            "result": "success"
+          },
+          "escalated": {
+            "type": "end",
+            "result": "failed"
+          },
+          "merge": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Both reviewers approved {{ outputs.pr }}. Check it against your brief and merge it.",
+              "lead": true,
+              "sameAs": "brief"
+            },
+            "next": {
+              "next": "done"
+            }
+          },
+          "plan": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Plan the work in this brief:\n{{ outputs.brief }}\nReport the plan as your note.",
+              "role": "planner",
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "next": {
+              "next": "vet"
+            },
+            "captures": [
+              "plan"
+            ]
+          },
+          "review": {
+            "type": "decision",
+            "next": {
+              "approve": "merge",
+              "changes": "build",
+              "escalate": "escalated"
+            },
+            "loops": {
+              "changes": {
+                "maxIterations": 3,
+                "onExhausted": "escalate"
+              }
+            },
+            "deciders": [
+              {
+                "kind": "agent",
+                "prompt": "Review {{ outputs.pr }} against the plan:\n{{ outputs.plan }}\nChoose approve, or changes with what to change.",
+                "role": "reviewer",
+                "differentFrom": [
+                  "build"
+                ],
+                "fallback": {
+                  "action": "spawn"
+                }
+              },
+              {
+                "kind": "agent",
+                "prompt": "Review {{ outputs.pr }} for correctness and tests.\nChoose approve, or changes with what to change.",
+                "role": "reviewer",
+                "differentFrom": [
+                  "build"
+                ],
+                "fallback": {
+                  "action": "spawn"
+                }
+              }
+            ],
+            "agree": "approve"
+          },
+          "start": {
+            "type": "start",
+            "next": {
+              "next": "brief"
+            }
+          },
+          "vet": {
+            "type": "decision",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Vet this plan for usability:\n{{ outputs.plan }}\nChoose ok, or rework with what to change.",
+              "role": "ux",
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "next": {
+              "escalate": "escalated",
+              "ok": "build",
+              "rework": "plan"
+            },
+            "loops": {
+              "rework": {
+                "maxIterations": 2,
+                "onExhausted": "escalate"
+              }
+            }
+          }
+        }
+      },
+      "edges": [
+        {
+          "from": "",
+          "outcome": "start",
+          "to": "start"
+        },
+        {
+          "from": "brief",
+          "outcome": "next",
+          "to": "plan"
+        },
+        {
+          "from": "build",
+          "outcome": "next",
+          "to": "review"
+        },
+        {
+          "from": "merge",
+          "outcome": "next",
+          "to": "done"
+        },
+        {
+          "from": "plan",
+          "outcome": "next",
+          "to": "vet"
+        },
+        {
+          "from": "review",
+          "outcome": "approve",
+          "to": "merge"
+        },
+        {
+          "from": "review",
+          "outcome": "changes",
+          "to": "build"
+        },
+        {
+          "from": "review",
+          "outcome": "escalate",
+          "to": "escalated"
+        },
+        {
+          "from": "start",
+          "outcome": "next",
+          "to": "brief"
+        },
+        {
+          "from": "vet",
+          "outcome": "escalate",
+          "to": "escalated"
+        },
+        {
+          "from": "vet",
+          "outcome": "ok",
+          "to": "build"
+        },
+        {
+          "from": "vet",
+          "outcome": "rework",
+          "to": "plan"
+        }
+      ]
+    },
+    "quick-change": {
+      "template": {
+        "apiVersion": "tclaude.dev/v1alpha1",
+        "kind": "ProcessTemplate",
+        "id": "quick-change",
+        "name": "Quick change + one review",
+        "description": "For a small change: a developer makes it, one reviewer who did not make it approves or sends it back, and the developer merges it.",
+        "params": {
+          "task": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "overseer": "lead",
+        "patience": "1h",
+        "start": "start",
+        "nodes": {
+          "change": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Make this change: {{ params.task }}\nOpen a PR and report its link as pr.",
+              "role": "dev",
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "next": {
+              "next": "review"
+            },
+            "captures": [
+              "pr"
+            ]
+          },
+          "done": {
+            "type": "end",
+            "result": "success"
+          },
+          "escalated": {
+            "type": "end",
+            "result": "failed"
+          },
+          "merge": {
+            "type": "task",
+            "performer": {
+              "kind": "agent",
+              "prompt": "The review approved your PR. Merge it:\n{{ outputs.pr }}",
+              "role": "dev",
+              "sameAs": "change"
+            },
+            "next": {
+              "next": "done"
+            }
+          },
+          "review": {
+            "type": "decision",
+            "performer": {
+              "kind": "agent",
+              "prompt": "Review the PR for this change: {{ params.task }}\nThe PR:\n{{ outputs.pr }}\nChoose approve, or changes with what to change.",
+              "role": "reviewer",
+              "differentFrom": [
+                "change"
+              ],
+              "fallback": {
+                "action": "spawn"
+              }
+            },
+            "next": {
+              "approve": "merge",
+              "changes": "change",
+              "escalate": "escalated"
+            },
+            "loops": {
+              "changes": {
+                "maxIterations": 2,
+                "onExhausted": "escalate"
+              }
+            }
+          },
+          "start": {
+            "type": "start",
+            "next": {
+              "next": "change"
+            }
+          }
+        }
+      },
+      "edges": [
+        {
+          "from": "",
+          "outcome": "start",
+          "to": "start"
+        },
+        {
+          "from": "change",
+          "outcome": "next",
+          "to": "review"
+        },
+        {
+          "from": "merge",
+          "outcome": "next",
+          "to": "done"
+        },
+        {
+          "from": "review",
+          "outcome": "approve",
+          "to": "merge"
+        },
+        {
+          "from": "review",
+          "outcome": "changes",
+          "to": "change"
+        },
+        {
+          "from": "review",
+          "outcome": "escalate",
+          "to": "escalated"
+        },
+        {
+          "from": "start",
+          "outcome": "next",
+          "to": "change"
+        }
+      ]
+    }
+  }
+}
