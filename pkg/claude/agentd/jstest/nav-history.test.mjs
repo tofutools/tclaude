@@ -798,7 +798,8 @@ test('a phone page\'s ‹ steps back onto its parent only when that is the entry
   assert.equal(s.browsing.at(), '/messages/human/7');
   s.browsing.calls.length = 0;
   s.press();
-  assert.deepEqual(s.browsing.calls.map((c) => c.kind), ['back']);
+  s.press();
+  assert.deepEqual(s.browsing.calls.map((c) => c.kind), ['back'], 'a double tap is one step, never two off Mail');
   assert.deepEqual(s.inPlace, []);
   // The step lands as a popstate, which shows the list (the reader is still up until then).
   const bridge = await s.harness.importDashboardModule('js/mail-bridge.js');

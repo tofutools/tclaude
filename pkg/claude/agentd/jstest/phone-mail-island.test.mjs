@@ -232,9 +232,10 @@ test('back leads to the open folder\'s list: a step back onto it when the router
   const asked = [];
   let below = true;
   t.after(back.registerStepBack((parent) => { asked.push(parent); return below; }));
+  const before = calls.length;
   await harness.act(() => phonePage.value.onBack());
   assert.deepEqual(asked, [{ tab: 'messages', selection: 'human', item: undefined }], 'the parent is the folder\'s list');
-  assert.notDeepEqual(calls.at(-1), ['closeMessage'], 'stepped back onto the list\'s own entry');
+  assert.equal(calls.length, before, 'stepped back onto the list\'s own entry: nothing closed in place');
   below = false;
   await harness.act(() => phonePage.value.onBack());
   assert.deepEqual(calls.at(-1), ['closeMessage'], 'no list under it: the list in place');
