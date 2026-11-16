@@ -80,7 +80,7 @@ test('a run: its phase, agentd restarting (not answering), then back on the new 
   const { c, view, button, tap, poll, daemon } = await setup(t);
   await tap(button('Update…'));
   await tap(button('Update'));
-  assert.deepEqual(daemon.calls, [['apply', 'v1.5.0']]);
+  assert.deepEqual(daemon.calls, [['apply', '']], 'no version pinned: the saved method decides, as Update now does');
   assert.equal(view(), 'running');
   assert.match(c.querySelector('.phone-update-phase').textContent, /downloading/);
   // agentd goes down to restart: the reads fail and are retried.
@@ -91,7 +91,7 @@ test('a run: its phase, agentd restarting (not answering), then back on the new 
   assert.match(c.querySelector('.phone-update-phase').textContent, /agentd is restarting/);
   // Back, on the new version.
   daemon.down = false;
-  daemon.status = { ...daemon.status, current_version: 'v1.5.0', update_available: false, job: { ...daemon.status.job, state: 'completed', phase: 'complete', output: 'installed' } };
+  daemon.status = { ...daemon.status, current_version: 'v1.5.0', update_available: false, job: { ...daemon.status.job, version: 'v1.5.0', state: 'succeeded', phase: 'restarted', restart_required: true, output: 'installed' } };
   await poll();
   assert.equal(view(), 'done');
   assert.equal(c.querySelector('.phone-update-ok').textContent, '✓ Updated to v1.5.0. agentd is back.');
@@ -111,7 +111,7 @@ test('a failed run says so, with the job\'s error and output', async (t) => {
 });
 
 test('a refused start toasts why and shows no old job as its result', async (t) => {
-  const old = { id: 'job-old', action: 'apply', state: 'completed', phase: 'complete', version: 'v1.3.0', warnings: [] };
+  const old = { id: 'job-old', action: 'apply', state: 'succeeded', phase: 'restarted', version: 'v1.3.0', warnings: [] };
   const { view, button, tap, toasts, daemon } = await setup(t, { ...READY, job: old });
   assert.equal(view(), 'ready', 'an earlier job is history, not this sheet\'s');
   daemon.refuse = { message: 'already updating', code: 'update_busy', status: 409 };
@@ -131,10 +131,58 @@ test('Back, a swipe or Escape is held while it runs, and says why; closes once d
   await harness.act(() => sheet.requestClosePhoneSheet());
   assert.ok(c.querySelector('.phone-sheet'), 'held while it runs');
   assert.match(toasts.at(-1)[0], /The update is running/);
-  daemon.status = { ...daemon.status, job: { ...daemon.status.job, state: 'completed', phase: 'complete' } };
+  daemon.status = { ...daemon.status, job: { ...daemon.status.job, state: 'succeeded', phase: 'complete' } };
   await poll();
   await harness.act(() => sheet.requestClosePhoneSheet());
   assert.equal(c.querySelector('.phone-sheet'), null, 'done: Back closes it');
+});
+
+test('a run that installs nothing new says already up to date', async (t) => {
+  const { c, view, button, tap, poll, daemon } = await setup(t, { ...READY, latest_version: 'v1.4.0', update_available: false });
+  await tap(button('Update…'));
+  await tap(button('Update'));
+  daemon.status = { ...daemon.status, job: { ...daemon.status.job, version: 'v1.4.0', state: 'succeeded', phase: 'complete', restart_required: false } };
+  await poll();
+  assert.equal(view(), 'done');
+  assert.equal(c.querySelector('.phone-update-ok').textContent, '✓ Already up to date (v1.4.0): nothing changed.');
+});
+
+test('an install already running when the sheet opens: its progress, then its result stays', async (t) => {
+  const running = { id: 'job-cron', action: 'apply', state: 'running', phase: 'building', from_version: 'v1.4.0', warnings: [] };
+  const { c, view, poll, daemon } = await setup(t, { ...READY, job: running });
+  assert.equal(view(), 'running');
+  daemon.status = { ...daemon.status, current_version: 'v1.5.0', job: { ...running, version: 'v1.5.0', state: 'succeeded', phase: 'restarted', restart_required: true } };
+  await poll();
+  assert.equal(view(), 'done', 'not back to the start: the result shows');
+  assert.match(c.querySelector('.phone-update-ok').textContent, /Updated to v1\.5\.0/);
+});
+
+test('a rollback running says so', async (t) => {
+  const { c, view } = await setup(t, { ...READY, job: { id: 'job-rb', action: 'rollback', state: 'rolling_back', phase: 'rolling_back', warnings: [] } });
+  assert.equal(view(), 'running');
+  assert.match(c.querySelector('.phone-update-state').textContent, /Rolling back/);
+});
+
+test('Check now holds nothing: it is no install', async (t) => {
+  const { harness, c, sheet, view, button, tap, daemon } = await setup(t);
+  await tap(button('Check now'));
+  assert.deepEqual(daemon.calls, [['check', '']]);
+  assert.equal(view(), 'ready', 'a check is not shown as an update');
+  await harness.act(() => sheet.requestClosePhoneSheet());
+  assert.equal(c.querySelector('.phone-sheet'), null, 'Back closes during a check');
+});
+
+test('agentd never coming back does not trap the sheet: Close is offered once it stops answering', async (t) => {
+  const { harness, c, sheet, view, button, tap, poll, daemon } = await setup(t);
+  await tap(button('Update…'));
+  await tap(button('Update'));
+  daemon.down = true;
+  await poll();
+  assert.equal(view(), 'running');
+  assert.match(c.querySelector('.phone-update').textContent, /You can close this: the update goes on at the node/);
+  assert.ok(button('Close'));
+  await harness.act(() => sheet.requestClosePhoneSheet());
+  assert.equal(c.querySelector('.phone-sheet'), null, 'Back closes it now');
 });
 
 test('no method chosen, or one that only notifies: no run, a way to Config › Updates on the desktop', async (t) => {

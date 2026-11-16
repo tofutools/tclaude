@@ -10,14 +10,17 @@
 // agentd?" in the sheet, with what the method will do, then follows the job:
 // its phase while it runs, "restarting" while agentd is away (the reads are
 // retried, so the sheet picks up again when it is back), then the new version,
-// or the error with the job's output. While a run is in progress the sheet
-// holds Back, a swipe and Escape, and says why.
+// or the error with the job's output (or "already up to date" when nothing
+// changed). Update sends no version, as Config › Updates' Update now: the
+// saved method decides. While an install runs and agentd answers, the sheet
+// holds Back, a swipe and Escape, and says why; once agentd stops answering
+// it offers Close, since the run goes on at the node either way.
 //
 // On a peer's page the same routes reach the peer (remote-node.js), which
 // needs node.update there: canUpdateHere tells from its peer_view.
 
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { useSheetGuard } from './phone-sheet.js';
@@ -64,13 +67,22 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
   openDesktop = () => openDesktopUpdates(navigate) }) {
   const { status, error, busy, job, active, unanswered, start } = useNodeUpdate({ node, actions, toast, timers });
   const [confirming, setConfirming] = useState(false);
-  // since: the id of the job before this sheet started one (null until it
-  // does). A job with another id is this sheet's; the one before is history,
-  // also when a start is refused and no new job comes.
+  // since: the id of the job before this sheet's (null until there is one).
+  // A job with another id is this sheet's, the one before history, also when
+  // a start is refused and no new job comes. An install already running
+  // when the sheet opens (a scheduled one, one from the desktop) is the
+  // sheet's too, so its result stays on screen.
   const [since, setSince] = useState(null);
-  const running = busy || active;
+  // An install, not a check: a check only refreshes Latest.
+  const install = job && job.action !== 'check' ? job : null;
+  useEffect(() => { if (install && active && since === null) setSince(''); }, [install?.id, active]);
+  // Close is held while an install runs and agentd answers. Once it stops
+  // answering (restarting), Close is offered: if it never comes back, the
+  // sheet must not hold the page; the run goes on at the node either way.
+  const installing = busy || (active && !!install);
+  const holding = installing && !unanswered;
   useSheetGuard(() => {
-    if (running) { toast(RUN_HOLD_TEXT); return true; }
+    if (holding) { toast(RUN_HOLD_TEXT); return true; }
     if (confirming) { setConfirming(false); return true; }
     return false;
   });
@@ -88,23 +100,26 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
     <dt>Latest</dt><dd>${v.latest || 'not checked'}${v.update ? html` <span class="phone-update-new">update available</span>` : status.update_available === false ? ' · up to date' : ''}</dd>
   </dl>`;
 
-  // An install on screen: running, or this sheet's result. A check is no
-  // install: it only refreshes Latest.
-  const install = job && job.action !== 'check' ? job : null;
+  // An install on screen: running, or this sheet's result.
   if (install && (active || (since !== null && install.id !== since))) {
     const failed = install.state === 'failed' || install.state === 'rolled_back' || !!install.rolled_back;
     const done = !active;
+    const rollback = install.action === 'rollback';
+    // A run that installed nothing new (already on the target) succeeds
+    // without restarting: say so rather than "updated".
+    const changed = install.restart_required || install.phase === 'restarted' || (install.from_version && install.version && install.from_version !== install.version);
     const phase = unanswered ? 'agentd is restarting… the page reconnects when it is back'
       : (install.phase || install.state || '').replaceAll('_', ' ');
     return html`<div class="phone-update" data-update=${!done ? 'running' : failed ? 'failed' : 'done'} aria-live="polite">
       ${head}
-      ${!done && html`<p class="phone-update-state"><span class="phone-update-spin" aria-hidden="true"></span>Updating…</p>
+      ${!done && html`<p class="phone-update-state"><span class="phone-update-spin" aria-hidden="true"></span>${rollback ? 'Rolling back…' : 'Updating…'}</p>
         <p class="phone-update-phase">${phase}</p>
-        <p class="phone-update-note">Agents keep running. Closing waits until agentd is back.</p>`}
-      ${done && !failed && html`<p class="phone-update-ok">✓ Updated${install.version ? ` to ${install.version}` : ''}. agentd is back.</p>`}
+        <p class="phone-update-note">${unanswered ? 'You can close this: the update goes on at the node.' : 'Agents keep running. Closing waits until agentd is back.'}</p>`}
+      ${done && !failed && html`<p class="phone-update-ok">${rollback ? `✓ Rolled back to ${v.current || 'the previous version'}.`
+        : changed ? `✓ Updated to ${v.current || install.version || 'the new version'}. agentd is back.` : `✓ Already up to date${v.current ? ` (${v.current})` : ''}: nothing changed.`}</p>`}
       ${done && failed && html`<p class="ui-error phone-update-fail" role="alert">✗ The update failed${install.rolled_back || install.state === 'rolled_back' ? ' and was rolled back' : ''}.</p>`}
       <div class="phone-update-job"><${UpdateJobView} job=${install} unanswered=${unanswered} standing=${status.warnings || []} idp="phone-" /></div>
-      ${done && html`<${Button} class="phone-btn" onClick=${close}>Close<//>`}
+      ${(done || unanswered) && html`<${Button} class="phone-btn" onClick=${close}>Close<//>`}
     </div>`;
   }
 
@@ -117,15 +132,17 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
     </div>`;
   }
 
-  const plan = applyConfirm({ node, status, method: method.id, methodLabel: method.label, version: method.id === 'custom' ? '' : v.latest });
+  // As Config › Updates' Update now: the saved method, no version pinned
+  // (a checkout following a branch builds its head, not the release tag).
+  const plan = applyConfirm({ node, status, method: method.id, methodLabel: method.label });
   if (confirming) {
     return html`<div class="phone-update" data-update="confirm">
       <h2 class="phone-update-title">Update and restart agentd?</h2>
       <p class="phone-update-body">${plan.body.charAt(0).toUpperCase() + plan.body.slice(1)}</p>
       <div class="phone-btns">
         <${Button} class="phone-btn phone-btn-grow" onClick=${() => setConfirming(false)}>Cancel<//>
-        <${Button} class="phone-btn phone-btn-pri phone-btn-grow" data-sheet-focus disabled=${running}
-          onClick=${() => { setConfirming(false); setSince(job?.id || ''); start('apply', method.id === 'custom' ? undefined : v.latest || undefined); }}>${plan.okLabel}<//>
+        <${Button} class="phone-btn phone-btn-pri phone-btn-grow" data-sheet-focus disabled=${busy || active}
+          onClick=${() => { setConfirming(false); setSince(job?.id || ''); start('apply'); }}>${plan.okLabel}<//>
       </div>
     </div>`;
   }
@@ -133,8 +150,8 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
     ${(status.warnings || []).map((w) => html`<p key=${w} class="phone-update-warn">${w}</p>`)}
     <p class="phone-update-note">Runs ${method.label.toLowerCase()} on ${node.label}, then restarts agentd. Agents keep running.</p>
     <div class="phone-btns">
-      <${Button} class="phone-btn phone-btn-grow" disabled=${running} onClick=${() => start('check')}>${active ? 'Checking…' : 'Check now'}<//>
-      <${Button} class="phone-btn phone-btn-pri phone-btn-grow" disabled=${running} onClick=${() => setConfirming(true)}>Update…<//>
+      <${Button} class="phone-btn phone-btn-grow" disabled=${busy || active} onClick=${() => start('check')}>${active ? 'Checking…' : 'Check now'}<//>
+      <${Button} class="phone-btn phone-btn-pri phone-btn-grow" disabled=${busy || active} onClick=${() => setConfirming(true)}>Update…<//>
     </div>
   </div>`;
 }
