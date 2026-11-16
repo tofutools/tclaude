@@ -1433,3 +1433,18 @@ test('a version that moved to a clean head clears the question instead of wedgin
   assert.match(root.querySelector('.gq-error').textContent, /changed since you were asked/);
   assert.equal(api.calls.start.length, 0);
 });
+
+test('the step list keeps a half-typed command while the groups context refreshes under it', async (t) => {
+  const { root, click, source, settle, harness } = await mount(t);
+  await newSteps(root, click);
+  const editor = root.querySelector('[data-step-editor]');
+  await click(editor.querySelector('[data-add-step="command"]'));
+  const text = steps(root)[0].querySelector('.gq-step-text');
+  text.focus();
+  await harness.act(async () => { text.value = 'make te'; harness.fireEvent(text, 'input'); });
+  for (let i = 0; i < 3; i += 1) {
+    source.context.value = { ...source.context.value };
+    await settle();
+  }
+  assert.equal(steps(root)[0].querySelector('.gq-step-text').value, 'make te', 'a refresh does not reset what is being typed');
+});
