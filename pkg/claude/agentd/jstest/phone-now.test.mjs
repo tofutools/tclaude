@@ -247,7 +247,7 @@ test('a remembered chip comes back; a bad one falls back to All', async (t) => {
   assert.equal(storedChip({ getItem: () => { throw new Error('blocked'); } }), 'all');
 });
 
-test('since you looked: what changed shows under Needs you with a dot on its rows, and Mark seen clears it', async (t) => {
+test('since you looked: what changed shows under Needs you, its rows unmarked elsewhere, and Mark seen clears it', async (t) => {
   // The last look: lead was working, release-bot fine, payments-fix's PR open with green checks.
   const looked = {
     [WORKER]: { s: 'working', pr: 0, prs: '', ci: '' },
@@ -267,12 +267,12 @@ test('since you looked: what changed shows under Needs you with a dot on its row
   const lines = Object.fromEntries([...section.querySelectorAll('.phone-row')].map((r) => [r.querySelector('.phone-who-name').textContent, r.querySelector('.phone-now-when').textContent]));
   assert.deepEqual(lines, { lead: '✓ finished · was working', 'release-bot': '✗ errored · rate limited until 14:00', steward: '⇡ PR #7 merged' });
   const online = harness.getByRole(root, 'group', { name: 'Online' });
-  assert.equal(online.querySelectorAll('.phone-now-new').length, 3, 'the changed agents are dotted in the rows');
+  assert.equal(online.querySelectorAll('.phone-now-new').length, 0, 'the section says what changed; the rows are not marked again');
+  assert.ok(![...online.querySelectorAll('.phone-row')].some((row) => /changed since you looked/.test(row.getAttribute('aria-label'))));
   assert.ok(root.querySelector('[role="group"][aria-label="Needs you"]').compareDocumentPosition(section) & 4, 'under Needs you');
 
   await tap(harness.getByRole(section, 'button', { name: 'Mark seen' }));
   assert.equal(root.querySelector('[aria-label="Since you looked"]'), null);
-  assert.equal(root.querySelectorAll('.phone-now-new').length, 0);
   assert.equal(JSON.parse(store.get('tclaude.phone.now.looked'))[WORKER].s, 'idle', 'the look now is what showed');
 });
 
