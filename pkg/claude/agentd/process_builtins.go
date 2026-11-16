@@ -23,9 +23,9 @@ import (
 
 // processBuiltinSummary is a built-in as a list shows it.
 type processBuiltinSummary struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 	// Steps are its steps in the order a run reaches them, for a one-line
 	// "brief → plan → …" summary.
 	Steps []string `json:"steps"`
