@@ -23,7 +23,7 @@ import { TabContextMenu, TabGroupRename, useArmedCollapse } from './tab-controls
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
-import { terminalTabStatus } from './terminal-tab-status.js';
+import { shellTabStatus } from './terminal-tab-status.js';
 import {
   backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
   startBackgroundTerminalsPoll, visibleBackgroundTerminals,
@@ -426,7 +426,7 @@ function TerminalPane({
   // Dashboard panes get their status from PaneTab. Only the solo title needs
   // to subscribe to the standalone snapshot signal; keeping this null in the
   // dashboard avoids an extra signal subscriber per opaque xterm host.
-  const agentStatus = manageTitle ? terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value) : null;
+  const agentStatus = manageTitle ? shellTabStatus(pane, snapshot?.value, remoteSessionAgents.value) : null;
   const headerRef = useRef(null);
   // Only a detached window asks: in the dashboard the companion owns this.
   const liveSteward = solo && snapshot?.value?.agents?.[0]?.steward === true;
@@ -900,7 +900,7 @@ function PaneTab({
   const drawingBoard = !!pane.seed.drawingBoard;
   const process = !!pane.seed.process;
   const page = !!pane.seed.page;
-  const agentStatus = drawingBoard ? drawingBoardTabStatus(pane) : process ? processTabStatus(pane) : page ? pageTabStatus(pane) : terminalTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
+  const agentStatus = drawingBoard ? drawingBoardTabStatus(pane) : process ? processTabStatus(pane) : page ? pageTabStatus(pane) : shellTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value, peerNotifications);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
   const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');

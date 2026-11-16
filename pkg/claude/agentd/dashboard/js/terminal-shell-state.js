@@ -1,6 +1,6 @@
 import { batch, computed, signal } from '@preact/signals';
 import { normalizeSeed } from './terminals-core.js';
-import { findTerminalAgent } from './terminal-tab-status.js';
+import { findTerminalAgent, isAgentDirShell } from './terminal-tab-status.js';
 import { MAX_TERMINAL_TAB_GROUPS, normalizeColor, normalizeGrouping, sanitizeGroupName, segmentsFor } from './tab-group-model.js';
 
 export function terminalSeedKey(seed) {
@@ -528,6 +528,8 @@ export function createTerminalShellState() {
     if (!snapshotValue) return false;
     let changed = false;
     const next = panes.peek().map((pane) => {
+      // A shell in an agent's directory keeps its own name ("shell · <name>").
+      if (isAgentDirShell(pane)) return pane;
       const title = findTerminalAgent(pane, snapshotValue)?.title;
       if (typeof title !== 'string' || !title.trim() || title === pane.label) return pane;
       changed = true;

@@ -64,6 +64,22 @@ function roster(snapshotValue) {
   return Array.isArray(snapshotValue?.agents) ? snapshotValue.agents : [];
 }
 
+// isAgentDirShell reports whether pane is a shell of the operator's own in an
+// agent's directory (terminals-tab.js openWebTermPane: /api/term-ws/, keyed
+// term:<agent>:<which>:<group>). It carries the agent for where it opens,
+// but it is not the agent.
+export function isAgentDirShell(pane) {
+  return !!pane?.seed?.agent && String(pane.seed.ws || '').startsWith('/api/term-ws/');
+}
+
+// shellTabStatus is a tab's status as it shows it: an agent directory
+// shell's is a plain shell's (no agent behind it), so a shell tab never wears
+// the agent's state, cost or menu.
+export function shellTabStatus(pane, snapshotValue, remoteAgents = null) {
+  if (!isAgentDirShell(pane)) return terminalTabStatus(pane, snapshotValue, remoteAgents);
+  return terminalTabStatus({ ...pane, seed: { ...pane.seed, agent: undefined, hideConv: undefined } }, snapshotValue, remoteAgents);
+}
+
 function paneSelector(pane) {
   // Older pane seeds only retained hideConv. It is still a valid roster
   // conversation selector, so keep those panes observable after a reload.
