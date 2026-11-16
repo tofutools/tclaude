@@ -3,15 +3,23 @@
 // Config › Installation › Updates runs it on the desktop (node-update.js,
 // whose status read, job polling, confirmation text and job view it uses).
 //
-// The sheet shows the version, the saved update method and whether an update
-// is known to be available. With no method chosen, or one that only notifies
-// (manual), it says so and links to Config › Updates on the desktop site
-// instead of offering a run. Otherwise Update asks "Update and restart
-// agentd?" in the sheet, with what the method will do, then follows the job:
-// its phase while it runs, "restarting" while agentd is away (the reads are
-// retried, so the sheet picks up again when it is back), then the new version,
-// or the error with the job's output (or "already up to date" when nothing
-// changed). Update sends no version, as Config › Updates' Update now: the
+// The sheet shows the version, what Update runs and whether an update is
+// known to be available. Update is offered whenever Config › Updates'
+// Update now is (node-update.js updateNowRefusal): with a saved method, that
+// method; with none saved, each binary the way it was installed ("as
+// installed: release download", methodText), with a note that settings and
+// a schedule are set up in Config › Updates on the desktop. Only a
+// notify-only method (manual) holds it back, linking there instead. Update
+// asks "Update and restart agentd?" in the sheet, with what the method will
+// do, then follows the job: its phase while it runs, "restarting" while
+// agentd is away (the reads are retried, so the sheet picks up again when it
+// is back), then the new version, or the error. A finished run's output
+// (JobOutput) is monospace, scrollable and opened at its end, and a failure
+// puts the run's error and the log's failing lines above it, so a long log
+// (a custom command's ansible run) shows where it failed without hunting.
+// "Already up to date" when nothing changed.
+//
+// Update sends no version, as Config › Updates' Update now: the
 // saved method decides. While an install runs and agentd answers, the sheet
 // holds Back, a swipe and Escape, and says why; once agentd stops answering
 // it offers Close, since the run goes on at the node either way.
@@ -20,15 +28,16 @@
 // needs node.update there: canUpdateHere tells from its peer_view.
 
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { useSheetGuard } from './phone-sheet.js';
 import { featureState } from './peer-view-limits.js';
 import { shellToast } from './shell-state.js';
+import { writeClipboard } from './insecure-origin.js';
 import { setLayoutOverride } from './layout.js';
 import {
-  UpdateJobView, accessText, applyConfirm, createNodeUpdateActions, savedMethod, updateJobActive, useNodeUpdate, versionView,
+  UpdateJobView, accessText, applyConfirm, createNodeUpdateActions, installedText, methodText, savedMethod, updateNowRefusal, useNodeUpdate, versionView,
 } from './node-update.js';
 
 const html = htm.bind(h);
@@ -55,6 +64,36 @@ export const RUN_HOLD_TEXT = 'The update is running: this closes once agentd is 
 function openDesktopUpdates(navigate) {
   navigate?.('/config/updates');
   setLayoutOverride('desktop');
+}
+
+// FAILING matches a log line that says what went wrong: an ansible task's
+// "fatal:" or "FAILED!", an error, a non-zero exit. failingLines is the last
+// few of them, so a long log's failure shows without scrolling through it.
+const FAILING = /\b(fatal|failed|failure|error|errors|exception|traceback|panic|exit (status|code) [1-9])\b|FAILED!|^\s*E\s/i;
+export function failingLines(output, max = 6) {
+  const lines = String(output || '').split('\n').map((l) => l.trimEnd()).filter((l) => FAILING.test(l) && !/\b(failed|errors?)=0\b/.test(l));
+  return lines.slice(-max);
+}
+
+// JobOutput is a finished run's output on a phone: on a failure, the run's
+// error and the log's failing lines first, then the whole output, monospace,
+// scrollable and opened at its end (where a script stops), with Copy.
+export function JobOutput({ job, failed, copy = writeClipboard, toast = shellToast }) {
+  const pre = useRef(null);
+  const text = String(job.output || '');
+  useLayoutEffect(() => { if (pre.current) pre.current.scrollTop = pre.current.scrollHeight; }, [text]);
+  const lines = failed ? failingLines(text) : [];
+  if (!text && !(failed && job.error)) return null;
+  return html`<div class="phone-update-out">
+    ${failed && (job.error || lines.length > 0) && html`<div class="phone-update-why" data-update-why>
+      <h3 class="ui-eyebrow">Where it failed</h3>
+      ${job.error && html`<pre class="phone-update-err">${job.error}</pre>`}
+      ${lines.length > 0 && html`<pre class="phone-update-lines">${lines.join('\n')}</pre>`}
+    </div>`}
+    ${text && html`<div class="phone-update-log-head"><h3 class="ui-eyebrow">Output · ${text.split('\n').length} lines, the end shown</h3>
+      <${Button} class="phone-btn phone-update-copy" onClick=${async () => toast(await copy(text) ? 'Copied the output' : 'Could not copy the output', false)}>Copy<//></div>
+      <pre class="phone-update-log" ref=${pre} tabindex="0" aria-label="The update's output">${text}</pre>`}
+  </div>`;
 }
 
 let sharedActions = null;
@@ -88,7 +127,10 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
   });
   const v = versionView(status);
   const method = savedMethod(status);
-  const unset = !method.id || method.id === 'manual';
+  // As Config › Updates' Update now: only a notify-only method holds it
+  // back. With none saved each binary updates the way it was installed.
+  const refusal = updateNowRefusal(method);
+  const running = methodText(method, status);
   const head = html`<h2 class="phone-update-title">Update tclaude</h2>`;
   if (error) return html`<div class="phone-update" data-update="error-read">${head}<p class="ui-error" role="alert">${accessText(error, node)}</p>
     <${Button} class="phone-btn" onClick=${close}>Close<//></div>`;
@@ -96,7 +138,7 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
 
   const facts = html`<dl class="phone-update-facts">
     <dt>Version</dt><dd>${v.current || 'unknown'}</dd>
-    <dt>Method</dt><dd>${method.id ? method.label : 'none chosen'}</dd>
+    <dt>Method</dt><dd data-update-method>${running}</dd>
     <dt>Latest</dt><dd>${v.latest || 'not checked'}${v.update ? html` <span class="phone-update-new">update available</span>` : status.update_available === false ? ' · up to date' : ''}</dd>
   </dl>`;
 
@@ -118,17 +160,17 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
       ${done && !failed && html`<p class="phone-update-ok">${rollback ? `✓ Rolled back to ${v.current || 'the previous version'}.`
         : changed ? `✓ Updated to ${v.current || install.version || 'the new version'}. agentd is back.` : `✓ Already up to date${v.current ? ` (${v.current})` : ''}: nothing changed.`}</p>`}
       ${done && failed && html`<p class="ui-error phone-update-fail" role="alert">✗ The update failed${install.rolled_back || install.state === 'rolled_back' ? ' and was rolled back' : ''}.</p>`}
-      <div class="phone-update-job"><${UpdateJobView} job=${install} unanswered=${unanswered} standing=${status.warnings || []} idp="phone-" /></div>
+      <div class="phone-update-job"><${UpdateJobView} job=${install} unanswered=${unanswered} standing=${status.warnings || []} idp="phone-" output=${false} /></div>
+      ${done && html`<${JobOutput} job=${install} failed=${failed} toast=${toast} />`}
       ${(done || unanswered) && html`<${Button} class="phone-btn" onClick=${close}>Close<//>`}
     </div>`;
   }
 
-  if (unset) {
+  const toDesktop = html`<${Button} class="phone-btn" data-update-desktop onClick=${() => { close(); openDesktop(); }}>Config › Updates on the desktop site ›<//>`;
+  if (refusal) {
     return html`<div class="phone-update" data-update="unset">${head}${facts}
-      <p class="phone-update-note">${method.id === 'manual'
-        ? 'The update method here only notifies: tclaude tells you about a new release and leaves installing it to you.'
-        : 'No update method is chosen here, so there is nothing to run from a phone.'} Choose one in Config › Updates on the desktop.</p>
-      <${Button} class="phone-btn" onClick=${() => { close(); openDesktop(); }}>Config › Updates on the desktop site ›<//>
+      <p class="phone-update-note">The update method here only notifies: tclaude tells you about a new release and leaves installing it to you. Choose one that installs in Config › Updates on the desktop.</p>
+      ${toDesktop}
     </div>`;
   }
 
@@ -148,10 +190,13 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
   }
   return html`<div class="phone-update" data-update="ready">${head}${facts}
     ${(status.warnings || []).map((w) => html`<p key=${w} class="phone-update-warn">${w}</p>`)}
-    <p class="phone-update-note">Runs ${method.label.toLowerCase()} on ${node.label}, then restarts agentd. Agents keep running.</p>
+    <p class="phone-update-note">${method.id
+      ? `Runs ${method.label.toLowerCase()} on ${node.label}, then restarts agentd.`
+      : `No method is saved, so each binary on ${node.label} updates the way it was installed${installedText(status) ? ` (${installedText(status)})` : ''}, then agentd restarts.`} Agents keep running.</p>
     <div class="phone-btns">
       <${Button} class="phone-btn phone-btn-grow" disabled=${busy || active} onClick=${() => start('check')}>${active ? 'Checking…' : 'Check now'}<//>
       <${Button} class="phone-btn phone-btn-pri phone-btn-grow" disabled=${busy || active} onClick=${() => setConfirming(true)}>Update…<//>
     </div>
+    ${!method.id && html`<p class="phone-update-note" data-update-unsaved>Nothing updates on its own until a method is saved: set one up, and a schedule, in Config › Updates on the desktop.</p>${toDesktop}`}
   </div>`;
 }

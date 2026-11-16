@@ -49,3 +49,18 @@
 :root[data-layout="phone"] .phone-update-fail { margin: 0; font-size: 15px; font-weight: 600; }
 :root[data-layout="phone"] .phone-update-job { font-size: 13px; overflow-wrap: anywhere; }
 :root[data-layout="phone"] .phone-update-job pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; font-size: 12px; }
+/* A finished run's output (phone-update.js JobOutput): where it failed,
+   then the whole log, monospace, scrolled to its end. */
+:root[data-layout="phone"] .phone-update-out { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+:root[data-layout="phone"] .phone-update-out h3 { margin: 0; }
+:root[data-layout="phone"] .phone-update-out pre {
+  margin: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--phone-line); background: var(--ui-field-bg);
+  font: 12px/1.45 var(--ui-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ui-text);
+}
+:root[data-layout="phone"] .phone-update-why { display: flex; flex-direction: column; gap: 6px; }
+:root[data-layout="phone"] .phone-update-err { border-color: var(--ui-danger, #f85149); color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-update-lines { max-height: 30vh; overflow: auto; color: var(--ui-danger-text, #ff7b72); }
+:root[data-layout="phone"] .phone-update-log-head { display: flex; align-items: center; gap: 8px; }
+:root[data-layout="phone"] .phone-update-log-head h3 { flex: 1; }
+:root[data-layout="phone"] .phone-update-copy { flex: none; min-height: 32px; padding: 4px 12px; }
+:root[data-layout="phone"] .phone-update-log { max-height: 45vh; overflow: auto; overscroll-behavior: contain; }

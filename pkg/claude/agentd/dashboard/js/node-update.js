@@ -6,7 +6,7 @@ import { Dialog, DialogClose } from './ui-dialog.js';
 import { RequestError, requestJSON } from './request-json.js';
 import { errText } from './cell-format.js';
 import { NodeUpdateSettings } from './node-update-settings.js';
-import { SELF_UPDATE_METHODS } from './config-self-update.js';
+import { SELF_UPDATE_METHODS, managerName } from './config-self-update.js';
 import { ServicePanel } from './config-service.js';
 import { LauncherPanel } from './config-launcher.js';
 
@@ -179,7 +179,7 @@ export function usePreflight({ node, actions }) {
 // UpdateJobView is an update job's progress or result, then its launch
 // report, its own warnings (not the node's standing ones in `standing`) and
 // the custom command's or package manager's output. idp prefixes the ids.
-export function UpdateJobView({ job, unanswered = false, standing = [], idp = 'fleet-' }) {
+export function UpdateJobView({ job, unanswered = false, standing = [], idp = 'fleet-', output = true }) {
   if (!job) return null;
   const launch = launchView(job.launch);
   const warnings = updateJobActive(job) ? [] : (job.warnings || []).filter((w) => !standing.includes(w));
@@ -189,7 +189,7 @@ export function UpdateJobView({ job, unanswered = false, standing = [], idp = 'f
     </div>
     ${launch && html`<div id=${`${idp}node-update-launch`} class=${launch.ok ? 'muted' : 'fa-warn'}>${launch.text}${launch.details && html`<ul>${launch.details.map((d) => html`<li key=${d}>${d}</li>`)}</ul>`}</div>`}
     ${warnings.length > 0 && html`<ul class="fa-warn update-job-warnings" id=${`${idp}node-update-job-warnings`}>${warnings.map((w) => html`<li key=${w}>${w}</li>`)}</ul>`}
-    ${job.output && !updateJobActive(job) && html`<details class="update-job-output"><summary>Output</summary><pre id=${`${idp}node-update-job-output`}>${job.output}</pre></details>`}`;
+    ${output && job.output && !updateJobActive(job) && html`<details class="update-job-output"><summary>Output</summary><pre id=${`${idp}node-update-job-output`}>${job.output}</pre></details>`}`;
 }
 
 const PLAN_MARKS = { ok: '✓', warn: '⚠', fail: '✗' };
@@ -252,6 +252,38 @@ export function applyConfirm({ node, status, method = '', methodLabel = '', vers
 export function savedMethod(status, fallback = '') {
   const id = status && 'chosen_method' in status ? status.chosen_method || '' : fallback;
   return { id, label: SELF_UPDATE_METHODS.find((m) => m.id === id)?.label || id };
+}
+
+// INSTALL_KINDS name a binary's install kind (the status read's
+// install_method) the way the method picker names the method it matches.
+const INSTALL_KINDS = {
+  release: 'release download', go_install: 'go install build', source: 'source build', source_or_unmarked: 'source build',
+  unrecognized: 'unrecognised install',
+};
+
+// installedText is how a node's binaries update with no method saved: each
+// the way it was installed. It names that from the status read: the
+// package manager owning a binary, else its install kind, joined when the
+// binaries differ ('' before the read).
+export function installedText(status) {
+  const kinds = (status?.binaries || []).map((b) => (b.managed_by ? managerName(b.managed_by) : INSTALL_KINDS[b.install_method] || (b.install_method || '').replaceAll('_', ' ')));
+  if (!kinds.length && status?.install_method) kinds.push(INSTALL_KINDS[status.install_method] || status.install_method.replaceAll('_', ' '));
+  return [...new Set(kinds.filter(Boolean))].join(' + ');
+}
+
+// methodText names what Update now runs: the saved method, or with none
+// saved, "as installed" and what that is here. chosen is savedMethod's.
+export function methodText(chosen, status) {
+  if (chosen.id) return chosen.label;
+  const kind = installedText(status);
+  return `as installed${kind ? `: ${kind}` : ''} (no method saved)`;
+}
+
+// updateNowRefusal is why Update now cannot run under the saved method, or
+// '' when it can: only a notify-only method holds it back. No saved method
+// is no refusal: each binary updates the way it was installed.
+export function updateNowRefusal(chosen) {
+  return chosen.id === 'manual' ? 'The saved method only notifies; choose a method that installs' : '';
 }
 
 // NodeUpdateDialog is a node's Installation view, as Config › Installation
@@ -333,9 +365,9 @@ export function UpdateNowPanel({ node, method, methodLabel = '', notifyOnly: not
   // The caller's saved method (Config re-reads it after each save) wins
   // over the status read's, which is taken once.
   const chosen = method !== undefined ? { id: method, label: methodLabel || savedMethod(null, method).label } : savedMethod(status);
-  const notifyOnly = notifyOnlyProp || chosen.id === 'manual';
+  const notifyOnly = notifyOnlyProp || !!updateNowRefusal(chosen);
   const update = () => confirm(applyConfirm({ node, status, method: chosen.id, methodLabel: chosen.label })).then((ok) => ok && start('apply'));
-  const updateTitle = notifyOnly ? 'The saved method only notifies; choose a method that installs'
+  const updateTitle = notifyOnly ? updateNowRefusal({ id: 'manual' })
     : unsaved ? 'Save changes first: Update now uses the saved method' : '';
   return html`<div class="update-now" id=${`${idp}update-now`}>
     <div class="update-now-actions">
@@ -347,7 +379,7 @@ export function UpdateNowPanel({ node, method, methodLabel = '', notifyOnly: not
     </div>
     <div class=${unsaved ? 'cfg-su-warn' : 'cfg-su-note'} id=${`${idp}update-now-note`}>${unsaved
       ? 'You changed the method settings above. These buttons use the saved settings: save changes first.'
-      : `These use the saved method${chosen.id ? ` (${chosen.label})` : ' (none chosen: each binary updates the way it was installed)'}. Test method runs nothing.`}</div>
+      : `These use the saved method${chosen.id ? ` (${chosen.label})` : `: none is saved, so each binary updates the way it was installed (${installedText(status) || 'its install kind'})`}. Test method runs nothing.`}</div>
     ${status && html`<${UpdateJobView} job=${job} unanswered=${unanswered} standing=${status.warnings || []} idp=${idp} />`}
     <${UpdatePlanView} plan=${test.plan} error=${test.error} node=${node} idp=${idp} />
   </div>`;

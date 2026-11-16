@@ -107,7 +107,41 @@ test('a failed run says so, with the job\'s error and output', async (t) => {
   assert.equal(view(), 'failed');
   assert.match(c.querySelector('.phone-update-fail').textContent, /The update failed/);
   assert.match(c.querySelector('.phone-update-job').textContent, /checksum mismatch/);
-  assert.match(c.querySelector('.phone-update-job pre').textContent, /sha256 differs/);
+  assert.match(c.querySelector('.phone-update-log').textContent, /sha256 differs/);
+});
+
+test('a long failed log: the error and the failing lines first, the whole log monospace, scrolled to its end, copyable', async (t) => {
+  const { c, view, button, tap, poll, daemon } = await setup(t, { ...READY, chosen_method: 'custom' });
+  const log = [
+    ...Array.from({ length: 300 }, (_, i) => `TASK [role : step ${i}] *****\nok: [brain]`),
+    'TASK [tclaude : install] *****',
+    'fatal: [brain]: FAILED! => {"changed": false, "msg": "go build failed: exit status 1"}',
+    'PLAY RECAP *****',
+    'brain : ok=300 changed=2 unreachable=0 failed=1 skipped=0',
+  ].join('\n');
+  await tap(button('Update…'));
+  await tap(button('Run it'));
+  daemon.status = { ...daemon.status, job: { ...daemon.status.job, state: 'failed', phase: 'running_command', error: 'update command exited with status 2', output: log } };
+  await poll();
+  assert.equal(view(), 'failed');
+  const why = c.querySelector('[data-update-why]');
+  assert.match(why.querySelector('.phone-update-err').textContent, /exited with status 2/);
+  assert.deepEqual(why.querySelector('.phone-update-lines').textContent.split('\n'), [
+    'fatal: [brain]: FAILED! => {"changed": false, "msg": "go build failed: exit status 1"}',
+    'brain : ok=300 changed=2 unreachable=0 failed=1 skipped=0',
+  ], 'the failing lines, not the ok ones (nor a recap of failed=0)');
+  const pre = c.querySelector('pre.phone-update-log');
+  assert.equal(pre.textContent, log, 'the whole output, as it came');
+  assert.match(c.querySelector('.phone-update-log-head').textContent, /604 lines/);
+  assert.ok(button('Copy'));
+});
+
+test('failingLines keeps the last few failure lines and skips clean recaps', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { failingLines } = await harness.importDashboardModule('js/phone-update.js');
+  assert.deepEqual(failingLines('ok\nhost : ok=3 failed=0\nError: boom\nall fine'), ['Error: boom']);
+  assert.deepEqual(failingLines(Array.from({ length: 9 }, (_, i) => `error ${i}`).join('\n'), 3), ['error 6', 'error 7', 'error 8']);
+  assert.deepEqual(failingLines(''), []);
 });
 
 test('a refused start toasts why and shows no old job as its result', async (t) => {
@@ -185,18 +219,28 @@ test('agentd never coming back does not trap the sheet: Close is offered once it
   assert.equal(c.querySelector('.phone-sheet'), null, 'Back closes it now');
 });
 
-test('no method chosen, or one that only notifies: no run, a way to Config › Updates on the desktop', async (t) => {
-  for (const [method, words] of [['', /No update method is chosen/], ['manual', /only notifies/]]) {
-    await t.test(method || 'none', async (t2) => {
-      const { c, view, button, tap, navigated, daemon } = await setup(t2, { ...READY, chosen_method: method });
-      assert.equal(view(), 'unset');
-      assert.match(c.querySelector('.phone-update-note').textContent, words);
-      assert.equal(button('Update…'), undefined, 'nothing to run');
-      await tap(button('Config › Updates on the desktop site'));
-      assert.deepEqual(navigated, ['/config/updates']);
-      assert.deepEqual(daemon.calls, []);
-    });
-  }
+test('a notify-only method: no run, a way to Config › Updates on the desktop', async (t) => {
+  const { c, view, button, tap, navigated, daemon } = await setup(t, { ...READY, chosen_method: 'manual' });
+  assert.equal(view(), 'unset');
+  assert.match(c.querySelector('.phone-update-note').textContent, /only notifies/);
+  assert.equal(button('Update…'), undefined, 'nothing to run');
+  await tap(button('Config › Updates on the desktop site'));
+  assert.deepEqual(navigated, ['/config/updates']);
+  assert.deepEqual(daemon.calls, []);
+});
+
+test('no method saved: Update is offered as the desktop\'s Update now is, "as installed", sending what it sends', async (t) => {
+  const binaries = [{ name: 'tclaude', install_method: 'release' }, { name: 'tclaude-agentd', install_method: 'release' }];
+  const { c, view, button, tap, daemon } = await setup(t, { ...READY, chosen_method: '', binaries });
+  assert.equal(view(), 'ready');
+  assert.equal(c.querySelector('[data-update-method]').textContent, 'as installed: release download (no method saved)');
+  assert.match(c.querySelector('[data-update="ready"]').textContent, /each binary on this node updates the way it was installed \(release download\)/);
+  assert.match(c.querySelector('[data-update-unsaved]').textContent, /set one up, and a schedule, in Config › Updates on the desktop/);
+  assert.ok(c.querySelector('[data-update-desktop]'), 'the desktop link stays, for setup');
+  await tap(button('Update…'));
+  assert.match(c.querySelector('.phone-update-body').textContent, /downloads and verifies the official tclaude v1\.5\.0 release/);
+  await tap(button('Update'));
+  assert.deepEqual(daemon.calls, [['apply', '']], 'the request Update now sends: apply, no version, no method');
 });
 
 test('a node that refuses the read says why', async (t) => {
