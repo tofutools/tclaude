@@ -19,6 +19,7 @@ import { drawingBoardPaneKey, isDrawingBoardId } from './drawing-board-model.js'
 import { isProcessTemplateId, processPaneKey } from './process-pane-model.js';
 import { isPageId, pagePaneKey } from './page-pane-model.js';
 import { claudeWheelState, claudeWheelStep, claudeWheelWait } from './claude-wheel.js';
+import { diagnosticsEnabled, mountDiagnostics, onDiagnosticsChange, setDiagnosticsEnabled } from './terminal-diagnostics.js';
 
 // A newly-created browser terminal can briefly lose an attach race with the
 // client it is replacing (pop-out / reattach), or arrive while a freshly
@@ -178,6 +179,8 @@ const SWIPE_CLAUDE_GAP_MARGIN_MS = 10;
 // A mouse report is how xterm hands the session a wheel notch; it is not
 // typing, and must not bring a scrolled-back view back to live.
 const MOUSE_REPORT = /^\x1b\[(<|M)/;
+// What xterm sends this soon after a wheel event is that notch (diagnostics).
+const DIAG_WHEEL_MS = 50;
 
 // The keys a touch surface sends by name (key()): what a keyboard's key
 // would send. The arrows follow the application's cursor-key mode.
@@ -456,6 +459,9 @@ export function mountTerminalWidget({
     onRemoteChange(remoteState);
   }
   const disposables = [];
+  // The Diagnostics overlay's hooks while it is on (startDiagnostics), else null.
+  let diag = null;
+  let diagWheelAt = -1;
   // The operator's size, or null to leave it to the terminal: 13, or what fits
   // a remote grid. While set it wins over that fit, and a grid too large for
   // the panel scrolls, because the operator asked for this size.
@@ -800,6 +806,7 @@ export function mountTerminalWidget({
     if (remote && remoteState.mode !== 'interactive') return false;
     if (inCopyMode) toLive();
     ws.send(new TextEncoder().encode(data));
+    diag?.input(false);
     return true;
   }
 
@@ -1274,6 +1281,7 @@ export function mountTerminalWidget({
     socket.onopen = () => {
       if (disposed || mine !== generation || ws !== socket) return;
       openedAt = now();
+      diag?.reconnected();
       // A new socket starts live: agentd cancels a native-scrollback pane's
       // copy-mode when its terminal detaches.
       setCopyMode(false, 0);
@@ -1292,7 +1300,10 @@ export function mountTerminalWidget({
         // Credit flows back only once xterm has consumed the bytes, so the
         // federation stream's window stays bounded through the renderer.
         const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : new TextEncoder().encode(String(event.data));
+        diag?.message(bytes.byteLength);
+        const parsed = diag ? diag.wrote() : null;
         term.write(bytes, () => {
+          parsed?.();
           markOutputParsed();
           if (disposed || mine !== generation || ws !== socket || socket.readyState !== WebSocketCtor.OPEN || !bytes.byteLength) return;
           socket.send(JSON.stringify({ type: 'credit', bytes: bytes.byteLength }));
@@ -1300,7 +1311,14 @@ export function mountTerminalWidget({
         return;
       }
       if (!firstOutputSeen) { attached(); setStatus('connected'); }
-      term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data, markOutputParsed);
+      if (diag) {
+        // Diagnostics: the same write, timed (terminal-diagnostics.js).
+        diag.message(event.data instanceof ArrayBuffer ? event.data.byteLength : String(event.data).length);
+        const parsed = diag.wrote();
+        term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data, () => { parsed(); markOutputParsed(); });
+      } else {
+        term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data, markOutputParsed);
+      }
       // WebSocket open precedes PTY creation on the server. The first output is
       // the browser's earliest proof that the command/tmux attach is actually
       // producing a screen, so anchor the delayed harness reflow here instead
@@ -1480,8 +1498,38 @@ export function mountTerminalWidget({
     if (inCopyMode && !dispatching && !MOUSE_REPORT.test(data)) toLive();
     if (!disposed && ws && ws.readyState === WebSocketCtor.OPEN) {
       ws.send(new TextEncoder().encode(data));
+      diag?.input(dispatching || diagWheelAt >= 0 && now() - diagWheelAt < DIAG_WHEEL_MS);
     }
   }));
+
+  // The Diagnostics overlay (terminal-diagnostics.js), while this device has
+  // it on: it only measures. A scroll step is a swipe notch (dispatching) or
+  // what xterm sends for a desktop wheel notch, just after its wheel event.
+  const diagWheel = () => { diagWheelAt = now(); };
+  function startDiagnostics() {
+    if (diag || disposed) return;
+    diag = mountDiagnostics({
+      host, term, serverSide: !remote,
+      sendControl: (msg) => {
+        if (remote || !ws || ws.readyState !== WebSocketCtor.OPEN) return false;
+        ws.send(JSON.stringify(msg));
+        return true;
+      },
+      onClose: () => setDiagnosticsEnabled(false),
+      win: documentRef.defaultView || globalThis,
+    });
+    host.addEventListener?.('wheel', diagWheel, { capture: true, passive: true });
+  }
+  function stopDiagnostics() {
+    if (!diag) return;
+    host.removeEventListener?.('wheel', diagWheel, { capture: true });
+    diag.stop();
+    diag = null;
+    diagWheelAt = -1;
+  }
+  if (diagnosticsEnabled()) startDiagnostics();
+  const stopListening = onDiagnosticsChange((on) => (on ? startDiagnostics() : stopDiagnostics()));
+  disposables.push({ dispose: () => { stopListening(); stopDiagnostics(); } });
   disposables.push(term.onResize(sendResize));
   const observer = typeof ResizeObserverCtor === 'function'
     // A shared remote view reports its panel even when inactive: a visible

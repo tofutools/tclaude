@@ -918,6 +918,9 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, detachSe
 	var initial *pty.Winsize
 	var preAttachDelay time.Duration
 	var pending []wsFrame
+	// The socket's diagnostics log, while its overlay is on (dashboard_term_diag.go).
+	diag := &termDiagSocket{}
+	defer diag.close()
 	waitExtended := false
 	waitTimer := time.NewTimer(initialResizeWait)
 	defer waitTimer.Stop()
@@ -949,6 +952,10 @@ initialSize:
 					waitTimer.Reset(time.Duration(delayMS+1000) * time.Millisecond)
 					continue
 				}
+			}
+			if id, isDiag := parseTermDiag(frame.messageType, frame.data); isDiag {
+				diag.apply(id)
+				continue
 			}
 			size, isResize := parseTermResize(frame.messageType, frame.data)
 			if isResize {
@@ -987,6 +994,10 @@ initialSize:
 					if size != nil {
 						initial = size
 					}
+					continue
+				}
+				if id, isDiag := parseTermDiag(frame.messageType, frame.data); isDiag {
+					diag.apply(id)
 					continue
 				}
 				pending = append(pending, frame)
@@ -1084,7 +1095,7 @@ initialSize:
 		defer wg.Done()
 		defer closeBoth()
 		readErr := pumpPTYFrames(ptmx, func(frame []byte) error {
-			return conn.WriteMessage(websocket.BinaryMessage, frame)
+			return diag.send(frame, func(frame []byte) error { return conn.WriteMessage(websocket.BinaryMessage, frame) })
 		})
 		if readErr == nil {
 			return // the socket failed first
@@ -1132,9 +1143,14 @@ initialSize:
 				}
 				continue
 			}
+			if id, isDiag := parseTermDiag(frame.messageType, frame.data); isDiag {
+				diag.apply(id)
+				continue
+			}
 			if isStaleScrollFrame(frame.messageType, frame.data) {
 				continue
 			}
+			diag.input(len(frame.data))
 			_, _ = ptmx.Write(frame.data)
 		}
 	}()

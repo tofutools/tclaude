@@ -261,6 +261,28 @@ updates an installed app's icon on its own schedule: Android when Chrome next
 refreshes the installed app (it can take a day), or right away if you
 reinstall it.
 
+### Terminal diagnostics
+
+To compare how a terminal streams and draws on two devices (a phone and a
+desktop over the same tunnel, say), turn on **Diagnostics**: on a desktop it's
+in a terminal tab's right-click menu, and on a phone in the terminal's **⋯**
+menu. It's off by default and remembered per device, and it applies to every
+terminal on that device. A small readout over the terminal's corner covers the
+last 5 seconds:
+- frames received and rendered per second, and for each scroll step sent (a
+  swipe notch or a wheel notch), the time until the next frame arrives and
+  until it's drawn;
+- message sizes, the gaps between arrivals (a sparkline shows clumping), and
+  xterm's parse and write-to-render times;
+- long tasks and dropped animation frames;
+- the renderer, pixel ratio, grid and font size.
+
+For a terminal on this node, it also reads the server's side of the socket:
+when each frame went out, its size, how long the write took, and how soon
+output followed input. **Copy report** copies it all as text. Diagnostics
+only measures: the stream, the terminal and its renderer work exactly as with
+it off.
+
 ### Terminals on a phone
 
 **Open** on an agent, from Now, Agents or Mail, shows its terminal full

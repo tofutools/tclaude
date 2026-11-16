@@ -9,6 +9,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { effect } from '@preact/signals';
 import { mountTerminalWidget } from './terminals-core.js';
+import { diagnosticsEnabled, setDiagnosticsEnabled } from './terminal-diagnostics.js';
 import { arcanePaletteEnabled } from './terminal-theme.js';
 import { terminalComposeShortcutAction } from './terminal-compose-route.js';
 import { openWebWindowPane, registerTerminalShellController, revealHeldSeed } from './terminals-tab.js';
@@ -957,6 +958,8 @@ function PaneTab({
       drawingBoard,
       drawingBoardId: pane.seed.drawingBoard,
       process: pane.seed.process || '',
+      // A terminal: one with a socket, which the Diagnostics overlay measures.
+      terminal: !!pane.seed.ws && !drawingBoard && !pane.seed.process && !pane.seed.page,
       floats: paneFloats(pane, snapshot?.value),
       groupId,
       label: pane.label,
@@ -1229,6 +1232,9 @@ function PaneContextMenu({
         ...(menu.floats ? [item('Open in overlay', () => actions.openPaneInOverlay(menu.key))] : []),
         ...(menu.process ? [item('Open in the Processes tab', () => dockProcessEditor(menu.process, menu.label), { refocus: false })] : []),
         item('Open in separate window', () => actions.popOutPane(menu.key, { floats: menu.floats })),
+        // Diagnostics: the terminal overlay's frame rate and latency readout,
+        // on or off for every terminal on this device.
+        ...(menu.terminal ? [item(diagnosticsEnabled() ? 'Hide diagnostics' : 'Diagnostics', () => setDiagnosticsEnabled(!diagnosticsEnabled()))] : []),
         separator,
         // A peer's drawing board (tcl-ug8bb8) is locked and deleted on its own node.
         ...(menu.drawingBoard && !onPeerPage() && resourceLockState(snapshot?.value, 'drawing_board', menu.drawingBoardId) !== undefined ? [(() => {

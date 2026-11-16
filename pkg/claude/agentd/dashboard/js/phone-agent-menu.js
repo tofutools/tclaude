@@ -26,6 +26,7 @@
 // open shows, and an agent that goes away says so.
 
 import { h } from 'preact';
+import { diagnosticsEnabled, setDiagnosticsEnabled } from './terminal-diagnostics.js';
 import { contextFigure } from './context-meter.js';
 import htm from 'htm';
 import { agentGroups, findRow } from './phone-agents-model.js';
@@ -61,7 +62,7 @@ export function interruptWhy(row) {
 // { quick: [...], session: [...] | null, agent: [...], retire, note }. Each
 // entry is { key, label, sub?, disabled?, href? }. here: the menu is opened
 // from the agent's own terminal, which it then does not offer.
-export function menuModel(row, group, snapshot, { here = false, selectText = false } = {}) {
+export function menuModel(row, group, snapshot, { here = false, selectText = false, diagnostics = false } = {}) {
   const online = row.online;
   const quick = [
     online && here && selectText
@@ -92,6 +93,8 @@ export function menuModel(row, group, snapshot, { here = false, selectText = fal
     ...(online && runsHere ? [{ key: 'reincarnate', label: 'Reincarnate…', sub: 'A fresh successor with the same identity' }] : []),
     ...(row.member?.agent_id ? [{ key: 'grant', label: 'Grant sudo…' }] : []),
     { key: 'copy-name', label: 'Copy name' },
+    // In its own terminal: the Diagnostics overlay, on this device.
+    ...(here ? [{ key: 'diagnostics', label: diagnostics ? 'Hide diagnostics' : 'Diagnostics', sub: 'This terminal\'s frame rate and latency' }] : []),
     ...(row.pr?.url ? [{ key: 'pr', label: `Open PR #${row.pr.number} ›`, href: row.pr.url }] : []),
   ];
   return {
@@ -107,7 +110,7 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
   const found = findRow(agentGroups(snapshot, order), agentKey, groupKey);
   if (!found) return html`<p class="ui-empty phone-empty">This agent is no longer listed.</p>`;
   const { row, group } = found;
-  const model = menuModel(row, group, snapshot, { here, selectText: !!selectText });
+  const model = menuModel(row, group, snapshot, { here, selectText: !!selectText, diagnostics: diagnosticsEnabled() });
   const run = (key) => () => {
     const tile = model.quick.find((q) => q.key === key);
     if (tile?.why) {
@@ -135,6 +138,7 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
       reincarnate: () => actions.rowAction('reincarnate', row),
       grant: () => actions.grant(row),
       'copy-name': () => actions.copy(row.name, `${row.name}'s name`),
+      diagnostics: () => setDiagnosticsEnabled(!diagnosticsEnabled()),
       retire: () => actions.rowAction('retire-agent', row),
     }[key];
     go?.();
