@@ -312,7 +312,7 @@ test('when rounds run out: pick another way, fail the run, or (a plain decision)
   ({ view } = m.setExhaustion(view, 'approve', 'changes', ''));
   assert.deepEqual(view.template.nodes.approve.loops.changes, { maxIterations: 3 });
   const gate = m.addDecider(ship, 'approve', { mode: 'anyone' }).view;
-  assert.throws(() => m.setExhaustion(gate, 'approve', 'changes', ''), /gate needs somewhere/);
+  assert.throws(() => m.setExhaustion(gate, 'approve', 'changes', ''), /needs somewhere to go/);
   // A template that already exhausts to agree shows it, marked.
   const stored = structuredClone(gate);
   stored.template.nodes.approve.loops.changes.onExhausted = 'ship';
@@ -328,7 +328,12 @@ test('an agent deciding a decision keeps it a decision: outcomes and loop stay',
   assert.equal(node.performer.role, 'reviewer');
   assert.equal(node.performer.choices, undefined, 'an agent reports one of the outcomes');
   assert.deepEqual(m.outcomesOf(view, 'approve').map((o) => o.outcome), m.outcomesOf(ship, 'approve').map((o) => o.outcome));
-  assert.deepEqual(node.loops, ship.template.nodes.approve.loops);
+  assert.equal(node.loops.changes.maxIterations, ship.template.nodes.approve.loops.changes.maxIterations);
+  assert.equal(node.loops.changes.onExhausted, 'hold', 'an agent asked again could only pass it on: it goes somewhere safe');
+  const plain = m.removeOutcome(ship, 'approve', 'hold').view;
+  const agent = m.setDecisionWho(plain, 'approve', { mode: 'anyone' }).view;
+  assert.equal(agent.template.nodes.approve.loops.changes.onExhausted, m.GIVE_UP, 'never ship');
+  assert.ok(!m.exhaustionOptions(agent, 'approve', 'changes').some((o) => o.value === '' || o.value === 'ship'));
   const { view: back } = m.setDecisionWho(view, 'approve', { mode: 'you' });
   assert.deepEqual(back.template.nodes.approve.performer.choices, ['ship', 'changes', 'hold']);
   assert.throws(() => m.setDecisionWho(ship, 'approve', { mode: 'command' }));

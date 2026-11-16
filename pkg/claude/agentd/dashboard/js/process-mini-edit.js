@@ -179,8 +179,31 @@ export function syncLoops(view) {
       }
     }
     if (node.deciders?.length) syncGate(view, id, node, outcomes);
+    else if (node.performer?.kind === 'agent') syncAgentDecider(view, id, node, outcomes);
   }
   return view;
+}
+
+// syncAgentDecider gives an agent decision's loops a way out as a gate's get
+// one: past the last round its send-back is refused, and an agent asked again
+// can only pass the work on, so it goes somewhere safe instead.
+function syncAgentDecider(view, id, node, outcomes) {
+  for (const outcome of Object.keys(node.loops || {})) {
+    const bound = loopBound(node, outcome);
+    if (!bound.onExhausted) setLoopBound(node, outcome, { ...bound, onExhausted: safeExhaustion(view, id, node, outcomes, outcome) });
+  }
+}
+
+// passOutcome is the outcome that passes the work on: a gate's agree, else
+// the decision's main way on.
+function passOutcome(view, id, node) {
+  return node.agree || mainEdge(view, id)?.outcome || '';
+}
+
+// decidedAlone says whether nobody but an agent decides: a gate, or a plain
+// decision an agent decides. Its used-up loop cannot be left to a person.
+function decidedAlone(node) {
+  return !!node.deciders?.length || node.performer?.kind === 'agent';
 }
 
 // syncGate keeps a gate valid after its edges change: what all must choose
@@ -204,7 +227,8 @@ export const GIVE_UP = 'give-up';
 // its outcomes that neither loops nor is the agree outcome, else a give-up
 // outcome to a failed end (added here, on the view being built).
 function safeExhaustion(view, id, node, outcomes, outcome) {
-  const way = exhaustionChoices(node, outcomes, outcome).find((o) => o !== node.agree);
+  const passing = passOutcome(view, id, node);
+  const way = exhaustionChoices(node, outcomes, outcome).find((o) => o !== passing && !APPROVING.test(o));
   return way || addGiveUp(view, id);
 }
 
@@ -235,13 +259,15 @@ export function exhaustionOptions(view, id, outcome) {
   const node = view.template.nodes[id];
   const outcomes = outgoing(view, id).map((edge) => edge.outcome);
   const current = loopBound(node, outcome)?.onExhausted || '';
-  const gate = !!node.deciders?.length;
-  const ways = exhaustionChoices(node, outcomes, outcome).filter((o) => !gate || o !== node.agree || o === current);
+  const gate = decidedAlone(node);
+  const passing = passOutcome(view, id, node);
+  const passes = (o) => o === passing || APPROVING.test(o);
+  const ways = exhaustionChoices(node, outcomes, outcome).filter((o) => !gate || !passes(o) || o === current);
   const options = gate ? [] : [{ value: '', label: 'ask again' }];
   for (const way of ways) {
     const to = view.edges.find((edge) => edge.from === id && edge.outcome === way)?.to;
     const failed = isFailedEnd(view.template.nodes[to]);
-    options.push({ value: way, label: failed ? 'fail the run' : way, skipsReview: gate && way === node.agree });
+    options.push({ value: way, label: failed ? 'fail the run' : way, skipsReview: gate && passes(way) });
   }
   if (!options.some((o) => o.label === 'fail the run')) options.push({ value: GIVE_UP, label: 'fail the run', adds: true });
   return options;
@@ -258,7 +284,7 @@ export function setExhaustion(view, id, outcome, value) {
   const outcomes = outgoing(next, id).map((edge) => edge.outcome);
   let way = value;
   if (way === GIVE_UP && !outcomes.includes(GIVE_UP)) way = addGiveUp(next, id);
-  if (!way && node.deciders?.length) throw new Error('a gate needs somewhere to go once its rounds run out');
+  if (!way && decidedAlone(node)) throw new Error('nobody but its deciders decides here: it needs somewhere to go once its rounds run out');
   setLoopBound(node, outcome, way ? { ...bound, onExhausted: way } : { maxIterations: bound.maxIterations });
   return { view: next, id };
 }
@@ -279,7 +305,7 @@ export function setDecisionWho(view, id, who) {
   }
   const next = copyView(view);
   next.template.nodes[id] = changed;
-  return { view: next, id };
+  return { view: syncLoops(next), id };
 }
 
 // insertAfter puts a new step on `id`'s main path, before what came next.
