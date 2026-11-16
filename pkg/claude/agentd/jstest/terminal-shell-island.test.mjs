@@ -1058,3 +1058,41 @@ test('Ctrl/Cmd+M on a peer agent\'s terminal messages that agent on its node', a
   );
   await harness.act(() => cleanup());
 });
+
+test('a shell in an agent\'s directory offers no ✉ Message: it is not the agent, and takes typing itself', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const [loader, terminalController] = await Promise.all([
+    harness.importDashboardModule('js/preact-loader.js'),
+    harness.importDashboardModule('js/terminals-tab.js'),
+  ]);
+  const composed = [];
+  const cleanup = await loader.mountTerminalsFeature({
+    widgetFactory: fake.factory, confirm: async () => true, onComposeMessage: (target) => composed.push(target),
+  });
+  await harness.act(async () => {
+    terminalController.openWebTermPane('agt_worker', 'shell · Worker', 'worktree', { group: 'crew' });
+    await Promise.resolve();
+  });
+  assert.ok(host.querySelector('.mux-pane'), 'the shell opened');
+  assert.equal([...host.querySelectorAll('button')].some((b) => b.textContent.includes('✉ Message')), false);
+  assert.equal(fake.widgets[0].options.onComposeMessage, null, 'no Ctrl+M from inside the shell either');
+  const chord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(chord, { key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true } });
+  harness.document.dispatchEvent(chord);
+  assert.deepEqual(composed, [], 'nor from the page');
+
+  // The agent's own terminal still has it.
+  await harness.act(async () => {
+    terminalController.openTerminalPane({ ws: '/worker', key: 'worker', label: 'Worker', agent: 'agt_worker' });
+    await Promise.resolve();
+  });
+  assert.equal([...host.querySelectorAll('button')].some((b) => b.textContent.includes('✉ Message')), true);
+  // The page's Ctrl+M is live here, so its silence on the shell above meant something.
+  const again = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(again, { key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true } });
+  harness.document.dispatchEvent(again);
+  assert.equal(composed.length, 1, 'the agent\'s own terminal composes');
+  cleanup();
+});
