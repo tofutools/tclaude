@@ -1681,6 +1681,12 @@ func replyHumanMessage(ctx context.Context, body humanMessageReply) (map[string]
 	} else if ok {
 		return answerProcessConcernCard(orig, concern, decision, body)
 	}
+	// So is a proposed run amendment's.
+	if amendment, ok, err := db.GetProcessRunAmendmentForHumanMessage(orig.ID); err != nil {
+		return nil, replyFail(http.StatusInternalServerError, "io", "load amendment: "+err.Error())
+	} else if ok {
+		return answerProcessAmendmentCard(orig, amendment, decision, body)
+	}
 	if orig.ProcessCommandID != "" {
 		if body.AttachmentToken != "" {
 			return nil, replyFail(http.StatusBadRequest, "invalid_arg", "attachments are not supported for process replies")

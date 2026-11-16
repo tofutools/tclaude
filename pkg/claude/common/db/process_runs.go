@@ -201,6 +201,16 @@ type ProcessRunTransition struct {
 	Status               string
 	CheckpointJSON       json.RawMessage
 	Events               []ProcessRunEvent
+	// Amendment, when set, applies that proposed amendment in the same
+	// transaction: the run's template snapshot becomes its copy.
+	Amendment *ProcessRunAmendmentApply
+}
+
+// ProcessRunAmendmentApply is the amendment a transition applies.
+type ProcessRunAmendmentApply struct {
+	ID           int64
+	By           string
+	TemplateJSON json.RawMessage
 }
 
 // NewProcessRunID returns a locally unique, filesystem-safe run identifier.
@@ -564,6 +574,11 @@ func TransitionProcessRun(runID string, transition ProcessRunTransition) (int64,
 			return 0, err
 		}
 		return 0, &ProcessRunVersionConflictError{Expected: transition.ExpectedStateVersion, Actual: actual}
+	}
+	if a := transition.Amendment; a != nil {
+		if err := applyProcessRunAmendmentTx(tx, runID, a.ID, a.By, a.TemplateJSON); err != nil {
+			return 0, err
+		}
 	}
 	events := transition.Events
 	if len(events) > 0 {

@@ -251,13 +251,17 @@ tclaude process resolve-blocked <run-id> --node <node> --attempt <n> \
 tclaude process block <run-id> --node <node> --reason "why" [--attempt <n>]
 tclaude process cancel <run-id> [--note "why"]
 tclaude process send-back <run-id> --node <step> [--note "why"]
+tclaude process amend <run-id> --print > run.yaml   # then edit it
+tclaude process amend <run-id> --file run.yaml [--note "why"]
+tclaude process amend <run-id> --list
 tclaude process report succeeded|failed [--run <run-id> --node <node> \
     --attempt <n>] [--verdict <verdict>] [--note "summary"]   # agent performers only
 tclaude agent process-templates ls
 ```
 
 Creating a run pins the exact saved template head and its parameters; later
-edits to the template never change a run already in flight. Every program
+edits to the template never change a run already in flight (amending a
+run, below, changes only that run's own copy). Every program
 profile a run may execute must be authorized explicitly at creation with
 `--authorize-program-profile` — nothing is authorized implicitly, and that
 includes every derived stage of a compound task, not just the parent's
@@ -357,6 +361,22 @@ in it raises a concern.
   back to the step the loop starts at, not to the middle of its body. Every
   decision and vote it reopens gets a new window, so a verdict given before
   is refused. It needs `process.runs.manage`.
+- **Amending the run** (`tclaude process amend <run-id> --file`, or ✎ Amend
+  run on the run view) changes the run's own copy of its template, never
+  the template itself. It changes only the part the run has not reached:
+  steps that have not started can be added, removed, changed and rerouted,
+  and a step being worked on can still be rerouted (to insert a step after
+  it). A started step is otherwise left as it is; send the run back to
+  before it, or park it, first. An amendment cannot add or change a program
+  step or a subprocess, since programs run under the profiles the run was
+  started with. With `process.runs.manage` or `process.templates.manage` it
+  applies at once. The run's overseer proposes one, and the operator applies
+  or rejects it from a card that lists the steps it adds, removes, changes
+  and reroutes. A proposal is checked against the run as it was when it was
+  proposed: if the run has moved on since, applying it is refused ("the run
+  moved on") and it has to be proposed again. The run view lists every
+  amendment with what it changed, who made it and when, and the run log
+  records it.
 - **Cancelling the run** (`tclaude process cancel <run-id>`, ✕ Cancel run on
   the run view, or the operator's card) gives it up from any state: nothing
   more starts, work still out is withdrawn, and it ends `canceled`. It needs

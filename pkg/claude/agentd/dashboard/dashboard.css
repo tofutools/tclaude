@@ -18429,6 +18429,15 @@ button.gpi-graph:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px
 .pov-raise textarea { width: 100%; box-sizing: border-box; resize: vertical; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; font: inherit; font-size: 12px; padding: 6px 8px; }
 .pov-raise-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pov-raise-row label { margin-right: auto; display: inline-flex; align-items: center; gap: 4px; }
+.pov-amendments { display: flex; flex-direction: column; gap: 6px; }
+.pov-amendments ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pov-amend-title { color: #d2a8ff; font-weight: 600; }
+.pov-amendment { border: 1px solid #30363d; border-left: 3px solid #a371f7; border-radius: 6px; padding: 6px 10px; background: #0d1117; display: flex; flex-direction: column; gap: 4px; }
+.pov-amendment.pov-amend-proposed { border-left-color: #f0883e; background: #1c1610; }
+.pov-amendment.pov-amend-rejected, .pov-amendment.pov-amend-stale { border-left-color: #484f58; opacity: .8; }
+.pov-amend .pov-amend-yaml { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.45; min-height: 180px; }
+.pov-amend-check { color: #d2a8ff; }
+.pov-amend .pov-note { flex: none; }
 .pov-log { width: 100%; }
 .pov-log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #c9d1d9; }
 .pov-log-list li { display: grid; grid-template-columns: auto 14px 1fr; gap: 6px; align-items: baseline; }
