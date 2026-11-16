@@ -21,6 +21,7 @@ function fakeApi() {
     calls,
     raiseConcern: async (runId, body) => { calls.push(['raise', runId, body]); return {}; },
     markBlocked: async (runId, body) => { calls.push(['park', runId, body]); return {}; },
+    resolveBlocked: async (runId, body) => { calls.push(['resolve', runId, body]); return {}; },
     cancelRun: async (runId, body) => { calls.push(['cancel', runId, body]); return {}; },
     sendBack: async (runId, body) => { calls.push(['back', runId, body]); return {}; },
     answerConcern: async (runId, id, body) => { calls.push(['answer', runId, id, body]); return {}; },
@@ -161,6 +162,27 @@ test('the strip parks the selected step that is out, and gives the run up, each 
   const say = (event) => eventSentence(event, nameOf).text;
   assert.equal(say({ kind: 'block_marked', actor: 'agent:agt_lena', nodeId: 'work', payload: { attempt: 2, reason: 'API gone' } }), 'lena parked work (attempt 2): API gone');
   assert.equal(say({ kind: 'run_canceled', actor: 'human:operator', payload: { note: 'superseded' } }), 'you canceled the run: superseded');
+});
+
+test('a parked step shows its reason in the strip, and is retried or skipped from there', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { RunOversight } = await harness.importDashboardModule('js/process-oversight.js');
+  const api = fakeApi();
+  let changed = 0;
+  const parked = { ...view(), blocked: [{ nodeId: 'brief', attempt: 1, reason: 'Are wishlists for guests too?' }] };
+  const labels = { brief: 'Frame the task' };
+  const mounted = await harness.mount(harness.html`<${RunOversight} view=${parked} runId="run_ov" api=${api}
+    labelOf=${(id) => labels[id]} onChanged=${() => { changed += 1; }} />`);
+  const root = mounted.container;
+  const item = root.querySelector('[data-run-blocked-node="brief"]');
+  assert.match(item.textContent, /⏹ Frame the task is parked: Are wishlists for guests too\?/, 'the why, without opening the step');
+  await harness.act(async () => { item.querySelector('[data-run-blocked-retry]').click(); await tick(); });
+  assert.deepEqual(api.calls.at(-1), ['resolve', 'run_ov', { nodeId: 'brief', attempt: 1, action: 'retry' }]);
+  await harness.act(async () => { item.querySelector('[data-run-blocked-skip]').click(); await tick(); });
+  assert.deepEqual(api.calls.at(-1), ['resolve', 'run_ov', { nodeId: 'brief', attempt: 1, action: 'skip' }]);
+  assert.equal(changed, 2);
+  const ended = await harness.mount(harness.html`<${RunOversight} view=${{ ...parked, status: 'canceled' }} runId="run_ov" api=${api} />`);
+  assert.equal(ended.container.querySelector('[data-run-blocked]'), null, 'an ended run has nothing to resolve');
 });
 
 test('a finished step of the run\'s own graph can be sent back to, from the strip', async (t) => {

@@ -367,6 +367,45 @@ export function AmendRun({ runId, api, onChanged, onClose }) {
   </div>`;
 }
 
+// BlockedSteps says, where the operator looks, which steps are parked and
+// why, and resolves one: Retry gives it another round, Skip goes on past it.
+// Cancel the run stays in the strip above. The CLI's resolve-blocked.
+export function BlockedSteps({ view, runId, api, labelOf = (id) => id, onChanged, wizard = false }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const blocked = view?.blocked || [];
+  if (!blocked.length) return null;
+  const resolve = async (item, action) => {
+    if (busy) return;
+    setBusy(`${item.nodeId}:${action}`);
+    setError('');
+    try {
+      await api.resolveBlocked(runId, { nodeId: item.nodeId, attempt: item.attempt, action });
+      onChanged?.();
+    } catch (cause) {
+      setError(cause?.message || String(cause));
+    } finally {
+      setBusy('');
+    }
+  };
+  return html`<ul class="pov-blocked" data-run-blocked>${blocked.map((item) => {
+    const label = labelOf(String(item.nodeId)) || item.nodeId;
+    return html`<li key=${`${item.nodeId}:${item.attempt}`} class="pov-blocked-item" data-run-blocked-node=${item.nodeId}>
+      <div class="pov-reason"><b>⏹ ${label}</b> ${wizard ? 'is stayed' : 'is parked'}${item.reason ? html`: <span data-run-blocked-reason>${item.reason}</span>` : ' and waits on you'}</div>
+      ${api?.resolveBlocked && html`<div class="pov-concern-actions">
+        <${Button} size="sm" variant="primary" disabled=${!!busy} data-run-blocked-retry
+          title=${`Run ${label} again: its performer gets another round`}
+          onClick=${() => void resolve(item, 'retry')}>${busy === `${item.nodeId}:retry` ? '…' : '↻ Retry'}<//>
+        <${Button} size="sm" disabled=${!!busy} data-run-blocked-skip
+          title=${`Go on past ${label} as if it was done`}
+          onClick=${() => void resolve(item, 'skip')}>${busy === `${item.nodeId}:skip` ? '…' : '⤼ Skip this step'}<//>
+      </div>`}
+    </li>`;
+  })}
+    ${error && html`<li class="grf-error ui-error" role="alert">${error}</li>`}
+  </ul>`;
+}
+
 // outAgentStep is the selected step's agent attempt that is out, if any:
 // the one a person can park.
 export function outAgentStep(view, nodeId) {
@@ -377,7 +416,7 @@ export function outAgentStep(view, nodeId) {
 // RunOversight is the strip under a run's header: its overseer, a way to
 // raise a concern, to park the selected step or give the run up, and its
 // open concerns.
-export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLabel = '', nodeDone = false, wizard = false, compact = false }) {
+export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLabel = '', nodeDone = false, wizard = false, compact = false, labelOf = undefined }) {
   const [raising, setRaising] = useState(false);
   const [steering, setSteering] = useState('');
   if (!view) return null;
@@ -422,6 +461,7 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
       placeholder="Why is the run given up? (optional, recorded in its log)" confirm=${wizard ? 'Cancel the rite' : 'Cancel the run'}
       send=${(note) => api.cancelRun(runId, { note })}
       onChanged=${onChanged} onClose=${() => setSteering('')} />`}
+    ${!terminal && html`<${BlockedSteps} view=${view} runId=${runId} api=${api} labelOf=${labelOf} onChanged=${onChanged} wizard=${wizard} />`}
     <${RunAmendments} view=${view} api=${api} onChanged=${onChanged} compact=${compact} />
     ${open.length > 0 && html`<ul class="pov-concerns">${open.map((concern) => html`<${ConcernCard} key=${concern.id}
       concern=${concern} runId=${runId} api=${api} onChanged=${onChanged} compact=${compact} />`)}</ul>`}

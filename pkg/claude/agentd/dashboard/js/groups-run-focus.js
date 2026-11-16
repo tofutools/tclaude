@@ -478,6 +478,7 @@ export function GroupsRunFocus({
       </div>
       ${run && detail.view && html`<${RunOversight} view=${detail.view} runId=${runId} api=${api} wizard=${wizard}
         nodeId=${node?.id || ''} nodeLabel=${node?.label || ''}
+        labelOf=${(id) => runGraphNodes(run).find((item) => item.id === id)?.label || id}
         nodeDone=${node?.state === 'done' && node?.kind !== 'start' && node?.kind !== 'end'}
         onChanged=${() => { refresh(); void source?.refresh?.(); }} />`}
       ${run

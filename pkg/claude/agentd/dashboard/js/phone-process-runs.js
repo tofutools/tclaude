@@ -423,8 +423,9 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
       <//>`;
     })}
     ${detail.view && html`<${RunOversight} view=${detail.view} runId=${runId} api=${api} compact
+      labelOf=${(id) => steps.find((step) => String(step.id) === id)?.label || id}
       onChanged=${() => { refresh(); void source.refresh(); }} />`}
-    ${run.needsYou && !decidable(run) && WAIT_REASONS[run.action] && html`<div class="phone-run-wait" role="status">
+    ${run.needsYou && !decidable(run) && !(detail.view?.blocked || []).length && WAIT_REASONS[run.action] && html`<div class="phone-run-wait" role="status">
       <strong>${waitReason(run)}.</strong>${blocked.length ? ` ${blocked.join('; ')}.` : ''}
       <${DesktopOnlyNote} what="Resolving it is" />
     </div>`}
