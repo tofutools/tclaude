@@ -807,6 +807,16 @@ async function mountSpawn(t, overrides = {}) {
   return { harness, host, state, actions, calls, cleanup: mounted.unmount };
 }
 
+test('the form opens holding what the opener had typed, as the operator\'s own input', async (t) => {
+  const { harness, host, state } = await mountSpawn(t);
+  state.open({ groupName: 'alpha', initialMessage: 'Fix the flaky test', name: 'flaky' });
+  await flush(harness);
+  await settleUntil(harness, () => host.querySelector('#agent-spawn-init-msg'), 'the form');
+  await flush(harness, 20);
+  assert.equal(host.querySelector('#agent-spawn-init-msg').value, 'Fix the flaky test', 'the prompt survives the profile applied on open');
+  assert.equal(host.querySelector('#agent-spawn-name').value, 'flaky');
+});
+
 test('spawn role chips compose multiple roles, inspect details, and feed the permission preview', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state, calls } = mounted;

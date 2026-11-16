@@ -72,8 +72,11 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
   let restoring = false;
   // depth is the layer count the router was last told of.
   let depth = layerDepth();
+  // closing counts the layers Back asked to close whose close has not landed
+  // yet: the step back is taken, so they are no longer in the address.
+  let closing = 0;
   const unLayers = registerOverlayRoute('phone', {
-    value: () => { const depth = layerDepth(); return depth ? String(depth) : ''; },
+    value: () => { const shown = layerDepth() - closing; return shown > 0 ? String(shown) : ''; },
     restore: (want) => {
       // Back over an open dialog or form is that overlay's: it closes the
       // topmost one through its own guarded close, which may ask first (a
@@ -82,7 +85,9 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
       // stayed open takes its entry back, and the next Back asks again.
       if (backLayers.peek().length && layerDepth() > (Number(want) || 0)) {
         depth = layerDepth() - 1;
+        closing += 1;
         void closeTopBackLayer().then((closed) => {
+          closing -= 1;
           if (closed) return;
           depth = layerDepth();
           announceOverlay({ doc });

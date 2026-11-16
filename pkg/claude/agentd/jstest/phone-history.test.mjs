@@ -138,3 +138,17 @@ test('a sheet that hands over to a dialog ("All options…") leaves Back with th
   await harness.act(async () => { routes.restoreOverlays({}); await tick(); });
   assert.equal(open.value, false, 'Back closes the dialog, not the page behind it');
 });
+
+test('while Back\'s close of a form is still asking, the address has already left it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { routes, tick } = await setupWith(t, harness);
+  let answer;
+  const { open } = await mountDialog(t, harness, { dirty: true, confirmDiscard: () => new Promise((resolve) => { answer = resolve; }) });
+  await tick();
+  await harness.act(async () => { routes.restoreOverlays({}); await tick(); });
+  assert.equal(open.value, true, 'the discard prompt is up');
+  assert.equal(routes.overlayParams().phone, '', 'so the router does not put the step back while it asks');
+  await harness.act(async () => { answer(true); await tick(); });
+  assert.equal(open.value, false);
+  assert.equal(routes.overlayParams().phone, '');
+});

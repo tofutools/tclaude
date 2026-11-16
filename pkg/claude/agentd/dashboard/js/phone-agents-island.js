@@ -152,7 +152,7 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
         value=${name} onInput=${(event) => setName(event.currentTarget.value)} />
     </label>
     <div class="phone-btns">
-      <${Button} class="phone-btn" onClick=${() => { close(); openFull(group); }}>All options…<//>
+      <${Button} class="phone-btn" onClick=${() => { close(); openFull(group, { initialMessage: prompt.trim(), name: name.trim(), profileName: profile }); }}>All options…<//>
       <${Button} type="submit" class="phone-btn phone-btn-pri phone-btn-grow" disabled=${busy || !prompt.trim()}>${busy ? 'Spawning…' : 'Spawn'}<//>
     </div>
   </form>`;
@@ -330,7 +330,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   // which the desktop form knows; the short sheet is this node's.
   const spawn = (group) => (globalThis.__tclaudeRemoteNode?.id ? actions.spawn(group) : openPhoneSheet({
     label: 'New agent', Body: SpawnSheet,
-    props: { state, group, fetchImpl, openFull: (g) => actions.spawn(g) },
+    props: { state, group, fetchImpl, openFull: (g, typed) => actions.spawn(g, typed) },
   }));
   const page = snapshot && opened.length ? groupPage(snapshot, opened.at(-1), order) : null;
   const open = (name) => { globalThis.scrollTo?.(0, 0); setOpened((stack) => [...stack, name]); };
