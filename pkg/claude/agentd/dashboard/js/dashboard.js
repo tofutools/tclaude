@@ -20,11 +20,14 @@ import {
 } from './refresh.js';
 import { openWorktreeCleanup } from './dashboard-operations.js';
 import { installPeerViewLimits } from './peer-view-limits.js';
+import { installExternalLinks } from './standalone-app.js';
 import { isPhone } from './layout.js';
 
 // A peer's per-node view greys what the peer does not offer. Installed before
 // any feature binds its listeners so its capture-phase click guard runs first.
 installPeerViewLimits();
+// Installed as an app, a link to another site opens in the browser.
+installExternalLinks();
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
 // exclusive (see `tclaude agent dashboard --slop|--wizard`). Run before any

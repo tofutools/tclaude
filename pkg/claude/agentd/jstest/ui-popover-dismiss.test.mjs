@@ -24,6 +24,7 @@ const ALLOWED = {
   'overlay-snap-assist.js': 'window snapping (overlay-window area): the press picks or ends a snap',
   'row-actions.js': 'a new gesture makes a context-menu activation stale',
   'row-drag.js': 'a press on a control in a draggable table row (agent, resource, task) turns that row\'s drag off for the press, so the control clicks; it closes nothing',
+  'standalone-app.js': 'installed as an app, a pull down that starts on the phone\'s header reloads (Chrome\'s pull-to-refresh is off there); it closes nothing',
   'side-panel-reveal.js': 'a press takes a side-panel peek back, so a click on the scrollbar does not slide the panel in under the drag; it closes nothing',
   'vegas.js': 'the first press unmutes audio',
 };

@@ -491,3 +491,16 @@
 }
 :root[data-layout="phone"][data-phone-preview] .phone-mail-write { right: calc(var(--phone-x) + var(--phone-gutter) + var(--phone-safe-right)); }
 :root[data-layout="phone"][data-phone-preview] .modal-overlay .ui-dialog { max-width: var(--phone-col) !important; }
+
+/* Pull to reload, installed as an app (standalone-app.js installHeaderPull):
+   the hint under the header follows the finger, and turns to the accent once
+   letting go reloads. */
+:root[data-layout="phone"] .phone-pull {
+  position: fixed; left: 50%; top: calc(var(--phone-bar-h) + var(--phone-safe-top));
+  z-index: var(--z-chrome);
+  transform: translate(-50%, calc(var(--phone-pull, 0px) / 2));
+  padding: 6px 14px; border-radius: 16px; pointer-events: none;
+  background: var(--phone-panel); border: 1px solid var(--phone-line);
+  color: var(--ui-muted-text); font-size: 13px; white-space: nowrap;
+}
+:root[data-layout="phone"] .phone-pull.ready { color: var(--ui-text-strong); border-color: var(--phone-accent-bg); }

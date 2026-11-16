@@ -100,6 +100,9 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	// 404, because `terminals` is deliberately not in dashboardAppTabs.
 	mux.HandleFunc("/terminals/", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
+	// The web app manifest and its icons (dashboard_pwa.go), outside the
+	// session gate.
+	registerDashboardPWARoutes(mux)
 	mux.HandleFunc("/api/tui/attach-ws/", handleTUIAttachWS)
 	mux.Handle("/api/tui/", http.StripPrefix(tuiHTTPPrefix, buildTUIHTTPHandler()))
 	mux.HandleFunc("/api/auth/session", handleDashboardAuthSession)

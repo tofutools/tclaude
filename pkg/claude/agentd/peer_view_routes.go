@@ -440,6 +440,9 @@ var peerViewOwnNodeRoutes = []string{
 	"/api/tui/attach-ws/",
 	"/dashboard/login",
 	"/static/",
+	// The web app manifest and its icons describe this node's own page.
+	"GET /manifest.webmanifest",
+	"GET /pwa/{file}",
 	"/terminals",
 	"/terminals/",
 }

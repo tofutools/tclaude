@@ -2930,3 +2930,6 @@ func ProbeShellTimesInlineForTest() {
 // WebTerminalTmuxFlagsForTest is webTerminalTmuxFlags: the sandbox's swipe
 // TUI attaches with the client flags a dashboard terminal uses.
 func WebTerminalTmuxFlagsForTest() string { return webTerminalTmuxFlags() }
+
+// DashboardIndexHTMLForTest is the dashboard page as agentd serves it.
+func DashboardIndexHTMLForTest() []byte { return dashboardIndexHTML }

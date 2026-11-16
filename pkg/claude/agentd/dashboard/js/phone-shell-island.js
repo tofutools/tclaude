@@ -30,6 +30,7 @@ import { activitySubtab, setActivitySubtab } from './activity-state.js';
 import { installPhoneHistory, keptView } from './phone-history.js';
 import { installKeyboardInset } from './phone-keyboard.js';
 import { installInputModality } from './phone-input.js';
+import { installHeaderPull } from './standalone-app.js';
 import { fleetState } from './fleet-state.js';
 import { IconButton } from './phone-ui.js';
 import { NodeChip } from './phone-node-picker.js';
@@ -140,6 +141,9 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   }, []);
   useEffect(() => installKeyboardInset(), []);
   useEffect(() => installInputModality(), []);
+  // Installed as an app, a pull down on the header reloads (Chrome's own
+  // pull-to-refresh is off in a standalone window).
+  useEffect(() => installHeaderPull(), []);
   useEffect(() => {
     if (seenTab.current === activeTab) return;
     seenTab.current = activeTab;
