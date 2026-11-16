@@ -20,6 +20,7 @@ import {
 import { ProcessStepStrip, runName, runPauseState, runSteps, stateLabel } from './process-kit.js';
 import { gateNodeOf, useRunDetail, verdictPresentation } from './groups-run-focus.js';
 import { openPhoneSheet } from './phone-sheet.js';
+import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { Button, Textarea } from './ui-components.js';
 import { Avatar, Card, StatePill } from './phone-ui.js';
 import { usePhonePage } from './phone-page.js';
@@ -256,6 +257,8 @@ function GateNoteSheet({ label, title, onSend, close }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // A note written and not sent is asked about before Back drops it.
+  const guard = useDraftGuard(!!note.trim(), busy);
   const send = async () => {
     setBusy(true);
     setError('');
@@ -272,7 +275,9 @@ function GateNoteSheet({ label, title, onSend, close }) {
     <${Textarea} class="phone-gate-note" rows="3" maxlength="4096" placeholder="Note for the record (optional)"
       aria-label="Note for the record (optional)" value=${note} disabled=${busy} onInput=${(event) => setNote(event.currentTarget.value)} />
     ${error && html`<div class="ui-error" role="alert">${error}</div>`}
-    <${Button} class="phone-btn phone-btn-pri phone-wide" disabled=${busy} onClick=${send}>${busy ? 'Sending…' : label}<//>
+    ${guard.asking
+      ? html`<${DiscardAsk} what="your note" guard=${guard} close=${close} />`
+      : html`<${Button} class="phone-btn phone-btn-pri phone-wide" disabled=${busy} onClick=${send}>${busy ? 'Sending…' : label}<//>`}
   </div>`;
 }
 

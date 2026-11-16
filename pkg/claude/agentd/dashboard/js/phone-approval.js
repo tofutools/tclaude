@@ -14,7 +14,8 @@ import htm from 'htm';
 import { answerDecision, decideAccessRequest, secondsLeft } from './companion-approval.js';
 import { postDismiss } from './decision-dismiss.js';
 import { approvalContext, cardOptions, countdown, planDetails } from './phone-now-model.js';
-import { openPhoneSheet } from './phone-sheet.js';
+import { openPhoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
+import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { Button, Input } from './ui-components.js';
 import { Avatar, ButtonRow, Card, StatePill } from './phone-ui.js';
 import { ContextMeter } from './context-meter.js';
@@ -90,10 +91,13 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
 // option as a full-width button (the recommended one ★ and primary), and
 // Dismiss. onDone(label) runs once it is sent, with the option's label, or ''
 // for a dismissal. Now's ⋯ sheet and Mail's reader show it.
-export function DecisionAnswer({ decision, fetchImpl, notify, onDone }) {
+// onDraft(note, busy) tells a sheet holding it what would be lost and
+// whether an answer is on its way, so it can guard its close.
+export function DecisionAnswer({ decision, fetchImpl, notify, onDone, onDraft = null }) {
   const [busy, setBusy] = useState(0);
   const [note, setNote] = useState('');
   useEffect(() => { setBusy(0); setNote(''); }, [decision.id]);
+  useEffect(() => { onDraft?.(note, !!busy); }, [note, busy]);
   const fetchWith = fetchImpl || ((...args) => globalThis.fetch(...args));
   const run = async (key, act, sent, failure) => {
     setBusy(key);
@@ -127,17 +131,22 @@ export function DecisionAnswer({ decision, fetchImpl, notify, onDone }) {
 export function DecisionSheet({ decision, from = '', fetchImpl, notify, close }) {
   const image = (decision.attachments || []).find((a) => a.previewable);
   const question = decision.subject || 'Decision';
+  // A note written and not sent is asked about before Back or ✕ drops it.
+  const [draft, setDraft] = useState({ note: '', busy: false });
+  const guard = useDraftGuard(!!draft.note.trim(), draft.busy);
   // Close comes first: the sheet focuses its first button, and that must not
   // be an answer a stray Enter would send.
   return html`<div class="phone-decision-sheet">
     <div class="phone-sheet-head">
       <h2 class="phone-sheet-title">${question}</h2>
-      <button data-ui-exempt type="button" class="phone-sheet-close" aria-label="Close" onClick=${close}>✕</button>
+      <button data-ui-exempt type="button" class="phone-sheet-close" aria-label="Close" onClick=${requestClosePhoneSheet}>✕</button>
     </div>
     ${from && html`<p class="phone-sheet-sub">from ${from}</p>`}
     ${decision.body && decision.body !== decision.subject && html`<p class="phone-decision-body">${decision.body}</p>`}
     ${image && html`<a class="phone-decision-image" href=${image.url} target="_blank" rel="noopener"><img src=${image.url} alt=${image.filename || 'attached image'} /></a>`}
-    <${DecisionAnswer} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} onDone=${() => close()} />
+    <${DecisionAnswer} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} onDone=${() => close()}
+      onDraft=${(note, busy) => setDraft({ note, busy })} />
+    ${guard.asking && html`<${DiscardAsk} what="your note" guard=${guard} close=${close} />`}
   </div>`;
 }
 

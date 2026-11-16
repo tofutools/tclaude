@@ -33,6 +33,7 @@ import {
   metaParts, saveViewSettings, shownTree, spawnBody, spawnChoices, toggleFilter, treeTabs, viewSettings,
 } from './phone-agents-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
+import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { AgentMenu } from './phone-agent-menu.js';
 import { useHold } from './phone-hold.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
@@ -106,6 +107,9 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
   const [busy, setBusy] = useState(false);
   // A second tap before the re-render must not spawn twice.
   const lock = useRef(false);
+  // A prompt written and not spawned is asked about before Back drops it;
+  // All options… takes it along, so it closes without asking.
+  const guard = useDraftGuard(!!prompt.trim(), busy);
   if (!groups.length) return html`<p class="ui-empty phone-empty">Make a group on the desktop first.</p>`;
   const fallback = groups.find((g) => g.name === group)?.profile || '';
   const submit = async (event) => {
@@ -151,10 +155,12 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
       <input name="optional" class="ui-input phone-agents-field" placeholder="Optional" autocapitalize="off" autocomplete="off"
         value=${name} onInput=${(event) => setName(event.currentTarget.value)} />
     </label>
-    <div class="phone-btns">
-      <${Button} class="phone-btn" onClick=${() => { close(); openFull(group, { initialMessage: prompt.trim(), name: name.trim(), profileName: profile }); }}>All options…<//>
-      <${Button} type="submit" class="phone-btn phone-btn-pri phone-btn-grow" disabled=${busy || !prompt.trim()}>${busy ? 'Spawning…' : 'Spawn'}<//>
-    </div>
+    ${guard.asking
+      ? html`<${DiscardAsk} what="this prompt" guard=${guard} close=${close} />`
+      : html`<div class="phone-btns">
+          <${Button} class="phone-btn" onClick=${() => { close(); openFull(group, { initialMessage: prompt.trim(), name: name.trim(), profileName: profile }); }}>All options…<//>
+          <${Button} type="submit" class="phone-btn phone-btn-pri phone-btn-grow" disabled=${busy || !prompt.trim()}>${busy ? 'Spawning…' : 'Spawn'}<//>
+        </div>`}
   </form>`;
 }
 
