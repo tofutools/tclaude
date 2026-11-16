@@ -1,6 +1,6 @@
 import { batch, computed, signal } from '@preact/signals';
 import { normalizeSeed } from './terminals-core.js';
-import { findTerminalAgent } from './terminal-tab-status.js';
+import { findTerminalAgent, isAgentDirShell } from './terminal-tab-status.js';
 import { MAX_TERMINAL_TAB_GROUPS, normalizeColor, normalizeGrouping, sanitizeGroupName, segmentsFor } from './tab-group-model.js';
 
 export function terminalSeedKey(seed) {
@@ -521,6 +521,12 @@ export function createTerminalShellState() {
     return panes.value.find((pane) => wanted.has(pane.seed.agent))?.key || null;
   }
 
+  // dirShellLabel names an agent's directory shell, as the background
+  // terminals list does (background-terminals.js rowView).
+  function dirShellLabel(title, which) {
+    return `shell · ${title}${which && which !== 'current' ? ` (${which})` : ''}`;
+  }
+
   // syncAgentLabels follows agent renames: a pane opened for an agent shows
   // the roster's current title, not the one captured when it was opened. The
   // seed's label moves with it so a pop-out or handoff carries the new name.
@@ -528,7 +534,12 @@ export function createTerminalShellState() {
     if (!snapshotValue) return false;
     let changed = false;
     const next = panes.peek().map((pane) => {
-      const title = findTerminalAgent(pane, snapshotValue)?.title;
+      const agentTitle = findTerminalAgent(pane, snapshotValue)?.title;
+      // A shell in an agent's directory is named a shell, after the agent
+      // ("shell · <name>", with which directory where it is not the current
+      // one), however it was opened, and follows the agent's renames.
+      const title = isAgentDirShell(pane) && typeof agentTitle === 'string' && agentTitle.trim()
+        ? dirShellLabel(agentTitle, String(pane.key || '').split(':')[2]) : agentTitle;
       if (typeof title !== 'string' || !title.trim() || title === pane.label) return pane;
       changed = true;
       return Object.freeze({ ...pane, label: title, seed: Object.freeze({ ...pane.seed, label: title }) });

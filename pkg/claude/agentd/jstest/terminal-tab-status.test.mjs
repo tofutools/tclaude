@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 import {
-  findTerminalAgent, terminalTabStatus, TERMINAL_TAB_STATUS_KEYS,
+  findTerminalAgent, isAgentDirShell, shellTabStatus, terminalTabStatus, TERMINAL_TAB_STATUS_KEYS,
 } from '../dashboard/js/terminal-tab-status.js';
 
 const pane = (agent = 'agt_one', label = 'one') => ({
@@ -172,4 +172,20 @@ test('a peer\'s pane takes its status from the federation sessions catalog', asy
   assert.equal(terminalTabStatus(remotePane('agt_old1'), { agents: [] }, roster).key, 'unknown', 'a stale catalog row is not trusted');
   assert.equal(terminalTabStatus(remotePane('agt_ada1'), { agents: [{ agent_id: 'agt_ada1', online: true, state: { status: 'idle' } }] }, null).key, 'unknown',
     'a peer pane never borrows a same-id row from this node\'s roster');
+});
+
+test('a shell in an agent\'s directory never wears the agent\'s state', () => {
+  const snapshot = { agents: [member('working')] };
+  const dirShell = { label: 'shell · one', seed: { agent: 'agt_one', ws: '/api/term-ws/agt_one?which=worktree' } };
+  const groupShell = { label: 'group shell', seed: { ws: '/api/group-term-ws/g' } };
+  assert.equal(isAgentDirShell(dirShell), true);
+  assert.equal(isAgentDirShell(pane('agt_one')), false, 'the agent\'s own terminal');
+  assert.equal(isAgentDirShell(groupShell), false);
+  const shown = shellTabStatus(dirShell, snapshot);
+  assert.equal(shown.agent, null, 'no agent behind it: no state, cost or agent menu');
+  assert.equal(shown.key, shellTabStatus(groupShell, snapshot).key, 'as a group shell');
+  assert.equal(shown.title.startsWith('shell · one'), true);
+  // The agent's own terminal still does.
+  assert.equal(shellTabStatus(pane('agt_one'), snapshot).key, terminalTabStatus(pane('agt_one'), snapshot).key);
+  assert.equal(shellTabStatus(pane('agt_one'), snapshot).agent, snapshot.agents[0]);
 });
