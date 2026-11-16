@@ -119,7 +119,7 @@ func TestRecordSessionRCLink_PerLaunch(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s2", ConvID: conv, TmuxSession: "t1", Status: "idle",
 		CreatedAt: resume, UpdatedAt: resume, ExitLaunchGeneration: "gen-2"}))
 	require.Empty(t, link("s2"), "a resume starts without the last launch's link")
-	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_c2", resume.Add(-time.Second))
+	_, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_c2", resume.Add(-time.Second))
 	require.Empty(t, link("s2"))
 	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_d", resume.Add(time.Second))
 	require.True(t, wrote)
