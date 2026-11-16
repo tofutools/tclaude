@@ -25,8 +25,15 @@ test('＋ Agent on Agents\' group headers and Now\'s Active head opens the spawn
   page.on('pageerror', (error) => errors.push(`page error: ${error.message}`));
   await page.goto('/');
   await booted(page);
-  await page.locator('.phone-now-shells').scrollIntoViewIfNeeded().catch(() => {});
-  await page.evaluate(() => window.scrollTo(0, 0));
+  // Now's Active head, with the Shells head under it for comparison.
+  await page.evaluate(() => {
+    const head = document.querySelector('.phone-section[aria-label="Active"], .phone-section[aria-label="Online"]');
+    head.scrollIntoView({ block: 'start' });
+    // Clear of the top bar.
+    let box = head.parentElement;
+    while (box && box.scrollHeight <= box.clientHeight) box = box.parentElement;
+    if (box) box.scrollTop -= 70; else window.scrollBy(0, -70);
+  });
   await shot(page, 'now');
   const nav = page.getByRole('navigation', { name: 'Views' });
   await nav.getByRole('button', { name: /Agents/ }).click();
