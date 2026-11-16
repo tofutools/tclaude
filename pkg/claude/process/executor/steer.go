@@ -94,3 +94,46 @@ func validateSteerText(text string, limit int, required bool) error {
 	}
 	return nil
 }
+
+// SendBackInput sends the run back to a finished step of its own graph.
+type SendBackInput struct {
+	NodeID string
+	Note   string
+}
+
+// SentBackPayload is the sent_back evidence: the step, every node the
+// send-back reset (outputs they reported before it no longer feed later
+// prompts), and why.
+type SentBackPayload struct {
+	NodeID string   `json:"nodeId"`
+	Nodes  []string `json:"nodes"`
+	Note   string   `json:"note,omitempty"`
+}
+
+// SendBack sends the run back to a finished step: everything downstream of it
+// is reset as if it had never run, agent work still out there is withdrawn,
+// and the step is ready again.
+func SendBack(run *Run, actor string, input SendBackInput) error {
+	if err := validateReconciliationActor(actor); err != nil {
+		return err
+	}
+	if input.NodeID == "" || len(input.NodeID) > MaxDecisionNodeIDBytes || !utf8.ValidString(input.NodeID) {
+		return fmt.Errorf("%w: node id must be 1..%d bytes of UTF-8", ErrInvalidResolutionInput, MaxDecisionNodeIDBytes)
+	}
+	if err := validateSteerText(input.Note, MaxResolutionNoteBytes, false); err != nil {
+		return err
+	}
+	if run == nil || run.definition == nil {
+		return ErrInvalidRun
+	}
+	next, err := engine.Apply(run.checkpoint, run.definition, engine.Transition{
+		Kind: engine.TransitionSentBack, Back: &engine.SendBack{NodeID: input.NodeID},
+	})
+	if err != nil {
+		return err
+	}
+	nodes, _ := run.definition.SendBackSet(input.NodeID)
+	events := commitEvidence(run.definition, run.checkpoint, next,
+		[]db.ProcessRunEvent{eventForNode("sent_back", input.NodeID, actor, SentBackPayload{NodeID: input.NodeID, Nodes: nodes, Note: input.Note})}, nil, false)
+	return persistEvents(run, next, events)
+}

@@ -161,6 +161,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/runs/{id}/resolve-blocked", dashboardProcessRoute(handleProcessRunResolveBlocked))
 	mux.HandleFunc("POST /v1/process/runs/{id}/cancel", dashboardProcessRoute(handleProcessRunCancel))
 	mux.HandleFunc("POST /v1/process/runs/{id}/block", dashboardProcessRoute(handleProcessRunMarkBlocked))
+	mux.HandleFunc("POST /v1/process/runs/{id}/send-back", dashboardProcessRoute(handleProcessRunSendBack))
 	mux.HandleFunc("POST /v1/process/runs/{id}/concerns", dashboardProcessRoute(handleProcessRunConcernRaise))
 	mux.HandleFunc("POST /v1/process/runs/{id}/concerns/{concern}/answer", dashboardProcessRoute(handleProcessRunConcernAnswer))
 	mux.HandleFunc("POST /v1/process/runs/{id}/overseer", dashboardProcessRoute(handleProcessRunOverseer))

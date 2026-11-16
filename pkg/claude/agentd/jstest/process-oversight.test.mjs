@@ -22,6 +22,7 @@ function fakeApi() {
     raiseConcern: async (runId, body) => { calls.push(['raise', runId, body]); return {}; },
     markBlocked: async (runId, body) => { calls.push(['park', runId, body]); return {}; },
     cancelRun: async (runId, body) => { calls.push(['cancel', runId, body]); return {}; },
+    sendBack: async (runId, body) => { calls.push(['back', runId, body]); return {}; },
     answerConcern: async (runId, id, body) => { calls.push(['answer', runId, id, body]); return {}; },
     pickConcern: async (messageId, choice, note) => { calls.push(['pick', messageId, choice, note]); return {}; },
   };
@@ -160,4 +161,21 @@ test('the strip parks the selected step that is out, and gives the run up, each 
   const say = (event) => eventSentence(event, nameOf).text;
   assert.equal(say({ kind: 'block_marked', actor: 'agent:agt_lena', nodeId: 'work', payload: { attempt: 2, reason: 'API gone' } }), 'lena parked work (attempt 2): API gone');
   assert.equal(say({ kind: 'run_canceled', actor: 'human:operator', payload: { note: 'superseded' } }), 'you canceled the run: superseded');
+});
+
+test('a finished step of the run\'s own graph can be sent back to, from the strip', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { RunOversight, eventSentence } = await harness.importDashboardModule('js/process-oversight.js');
+  const api = fakeApi();
+  const mounted = await harness.mount(harness.html`<${RunOversight} view=${view()} runId="run_ov" api=${api} nodeId="implement" nodeLabel="Implement" nodeDone=${true} />`);
+  const root = mounted.container;
+  await harness.act(async () => { root.querySelector('[data-run-send-back-open]').click(); await tick(); });
+  await harness.act(async () => { harness.getByRole(root, 'button', { name: 'Send back' }).click(); await tick(); });
+  assert.deepEqual(api.calls.at(-1), ['back', 'run_ov', { nodeId: 'implement', note: '' }]);
+  const running = await harness.mount(harness.html`<${RunOversight} view=${view()} runId="run_ov" api=${api} nodeId="implement" />`);
+  assert.equal(running.container.querySelector('[data-run-send-back-open]'), null, 'only a finished step');
+  const stage = await harness.mount(harness.html`<${RunOversight} view=${view()} runId="run_ov" api=${api} nodeId="work.review" nodeDone=${true} />`);
+  assert.equal(stage.container.querySelector('[data-run-send-back-open]'), null, 'not a stage inside a step');
+  assert.equal(eventSentence({ kind: 'sent_back', actor: 'human:operator', nodeId: 'implement', payload: { nodes: ['implement', 'review', 'decide'], note: 'spec changed' } }, nameOf).text,
+    'you sent the run back to implement (2 later steps reset): spec changed');
 });

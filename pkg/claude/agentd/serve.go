@@ -1751,6 +1751,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/runs/{id}/resolve-blocked", handleProcessRunResolveBlocked)
 	mux.HandleFunc("POST /v1/process/runs/{id}/cancel", handleProcessRunCancel)
 	mux.HandleFunc("POST /v1/process/runs/{id}/block", handleProcessRunMarkBlocked)
+	mux.HandleFunc("POST /v1/process/runs/{id}/send-back", handleProcessRunSendBack)
 	mux.HandleFunc("POST /v1/process/runs/{id}/concerns", handleProcessRunConcernRaise)
 	mux.HandleFunc("POST /v1/process/runs/{id}/concerns/{concern}/answer", handleProcessRunConcernAnswer)
 	mux.HandleFunc("POST /v1/process/runs/{id}/overseer", handleProcessRunOverseer)

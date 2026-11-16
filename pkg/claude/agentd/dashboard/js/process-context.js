@@ -576,6 +576,15 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
       }, fetchImpl);
     },
+    // sendBack sends the run back to a finished step: everything after it is
+    // reset and the step runs again (process.runs.manage).
+    async sendBack(runId, { nodeId, note = '', attemptKey = randomUUID() }) {
+      const path = `${runPath(runId)}/send-back`;
+      const body = JSON.stringify({ nodeId, ...(note ? { note } : {}) });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
     // markBlocked parks an agent step that is out, with a reason; it then
     // waits on retry, skip or cancel like a step whose retries ran out.
     async markBlocked(runId, { nodeId, attempt, reason, attemptKey = randomUUID() }) {

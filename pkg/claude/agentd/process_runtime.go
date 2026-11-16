@@ -68,6 +68,7 @@ type processRunInput struct {
 	// cancel gives the whole run up; block parks an agent step that is out.
 	cancel *processRunCancelInput
 	block  *executor.MarkBlockInput
+	back   *executor.SendBackInput
 }
 
 type processRunCancelInput struct {
@@ -102,6 +103,8 @@ func (i processRunInput) apply(run *executor.Run, actor string) error {
 		return executor.CancelRun(run, actor, i.cancel.note)
 	case i.block != nil:
 		return executor.MarkBlocked(run, actor, *i.block)
+	case i.back != nil:
+		return executor.SendBack(run, actor, *i.back)
 	default:
 		return fmt.Errorf("process run input names no decision, blocked resolution, or agent report")
 	}

@@ -102,6 +102,10 @@ export function eventSentence(event, nameOf = () => '', { withStep = true } = {}
       return { icon: '▶', tone: '', text: `${who} resumed the run` };
     case 'block_marked':
       return { icon: '⏹', tone: 'concern', text: `${who} parked ${event.nodeId || payload.nodeId} (attempt ${payload.attempt}): ${clip(payload.reason)}` };
+    case 'sent_back': {
+      const reset = Array.isArray(payload.nodes) ? payload.nodes.length - 1 : 0;
+      return { icon: '↶', tone: 'concern', text: `${who} sent the run back to ${event.nodeId || payload.nodeId}${reset > 0 ? ` (${reset} later step${reset === 1 ? '' : 's'} reset)` : ''}${payload.note ? `: ${clip(payload.note)}` : ''}` };
+    }
     case 'run_canceled':
       return { icon: '✕', tone: 'concern', text: `${who} canceled the run${payload.note ? `: ${clip(payload.note)}` : ''}` };
     default:
@@ -255,7 +259,7 @@ export function outAgentStep(view, nodeId) {
 // RunOversight is the strip under a run's header: its overseer, a way to
 // raise a concern, to park the selected step or give the run up, and its
 // open concerns.
-export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLabel = '', wizard = false, compact = false }) {
+export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLabel = '', nodeDone = false, wizard = false, compact = false }) {
   const [raising, setRaising] = useState(false);
   const [steering, setSteering] = useState('');
   if (!view) return null;
@@ -274,6 +278,9 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
       ${out && api?.markBlocked && !busy && html`<${Button} size="sm" data-run-park-open
         title="Stop this step: its performer is released, and it waits on retry, skip or cancel"
         onClick=${() => setSteering('park')}>⏹ Park ${nodeLabel || nodeId}…<//>`}
+      ${steerable && nodeDone && nodeId && !/[./]/.test(nodeId) && api?.sendBack && !busy && html`<${Button} size="sm" data-run-send-back-open
+        title="Run this step again: everything after it is reset, work out there is withdrawn, and its outputs are asked for again"
+        onClick=${() => setSteering('back')}>↶ Send back to ${nodeLabel || nodeId}…<//>`}
       ${steerable && api?.cancelRun && !busy && html`<${Button} size="sm" variant="danger" data-run-cancel-open
         title="Give the whole run up: work still out is withdrawn and it ends canceled"
         onClick=${() => setSteering('cancel')}>✕ Cancel ${wizard ? 'rite' : 'run'}…<//>`}
@@ -282,6 +289,10 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
     ${steering === 'park' && out && html`<${SteerForm} kind="park" label="Why this step cannot go on" required
       placeholder=${`Why can ${nodeLabel || nodeId} not go on? Its performer is told to stop.`} confirm="Park step"
       send=${(reason) => api.markBlocked(runId, { nodeId: out.nodeId, attempt: out.attempt, reason })}
+      onChanged=${onChanged} onClose=${() => setSteering('')} />`}
+    ${steering === 'back' && html`<${SteerForm} kind="back" label="Why the run goes back"
+      placeholder=${`Why run ${nodeLabel || nodeId} again? (optional, recorded in its log) Everything after it is reset.`} confirm="Send back"
+      send=${(note) => api.sendBack(runId, { nodeId, note })}
       onChanged=${onChanged} onClose=${() => setSteering('')} />`}
     ${steering === 'cancel' && html`<${SteerForm} kind="cancel" label="Why the run is given up"
       placeholder="Why is the run given up? (optional, recorded in its log)" confirm=${wizard ? 'Cancel the rite' : 'Cancel the run'}

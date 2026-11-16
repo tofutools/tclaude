@@ -953,8 +953,10 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 func validateAttempts(checkpoint Checkpoint, definition *Definition) error {
 	for nodeID, attempt := range checkpoint.Attempts {
 		node, ok := definitionNodeByID(definition, nodeID)
-		// A decision in a loop body counts its windows here (loops.go).
-		if ok && node.awaitsHuman() && node.parent < 0 && len(node.loops) > 0 {
+		// A decision in a loop body counts its windows here (loops.go), and so
+		// does any person's decision or vote a send-back reopened (sendback.go).
+		// A plan-approval gate's window is its plan's attempt instead.
+		if _, approval := approvalAnchor(definition, node); ok && node.awaitsHuman() && !approval {
 			if attempt < 1 {
 				return fmt.Errorf("%w: decision %q window %d must be positive", ErrInvalidCheckpoint, nodeID, attempt)
 			}
@@ -998,7 +1000,10 @@ func validateAttemptCeilings(checkpoint Checkpoint, definition *Definition) erro
 		node, ok := definitionNodeByID(definition, nodeID)
 		// A loop's new round opens a fresh window for any task of its body.
 		// A step parked by hand and retried gets one too, retry policy or not.
-		if !ok || !node.runsCommand() || (!node.retryAuthored && len(node.loops) == 0 && !manuallyBlockable(definition, node)) {
+		// A send-back gives an agent decider or vote that already ran a fresh
+		// window too (sendback.go).
+		if !ok || !node.runsCommand() || (!node.retryAuthored && len(node.loops) == 0 && !manuallyBlockable(definition, node) &&
+			node.kind != definitionDecision) {
 			return fmt.Errorf("%w: attemptCeilings names %q, which is not a prepared program task with an authored retry policy or in a loop",
 				ErrInvalidCheckpoint, nodeID)
 		}

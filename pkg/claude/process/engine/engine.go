@@ -151,7 +151,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 	switch transition.Kind {
 	case TransitionAdvance:
 		if transition.Command != nil || transition.Observation != nil ||
-			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil {
+			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil || transition.Back != nil {
 			return invalid("advance transition cannot carry a payload")
 		}
 		// Advance is node-addressed. Several nodes can be ready at once under
@@ -253,7 +253,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 	case TransitionCommandPlanned:
 		if transition.Command == nil || transition.Observation != nil ||
-			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil {
+			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil || transition.Back != nil {
 			return invalid("command_planned requires only a command payload")
 		}
 		// The command names its own node, so planning is node-addressed too.
@@ -295,7 +295,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		putCommand(&next, cloneCommand(expected))
 	case TransitionProgramObserved:
 		if transition.Observation == nil || transition.Command != nil ||
-			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil {
+			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil || transition.Back != nil {
 			return invalid("program_observed requires only an observation payload")
 		}
 		observation := transition.Observation
@@ -421,7 +421,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 	case TransitionDecisionRecorded:
 		if transition.Decision == nil || transition.Command != nil ||
-			transition.Observation != nil || transition.Resolution != nil || transition.Mark != nil {
+			transition.Observation != nil || transition.Resolution != nil || transition.Mark != nil || transition.Back != nil {
 			return invalid("decision_recorded requires only a decision payload")
 		}
 		decision := transition.Decision
@@ -485,7 +485,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 	case TransitionBlockedResolved:
 		if transition.Resolution == nil || transition.Command != nil ||
-			transition.Observation != nil || transition.Decision != nil || transition.Mark != nil {
+			transition.Observation != nil || transition.Decision != nil || transition.Mark != nil || transition.Back != nil {
 			return invalid("blocked_resolved requires only a resolution payload")
 		}
 		resolution := transition.Resolution
@@ -561,7 +561,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 	case TransitionRunCanceled:
 		if transition.Command != nil || transition.Observation != nil || transition.Decision != nil ||
-			transition.Resolution != nil || transition.Mark != nil {
+			transition.Resolution != nil || transition.Mark != nil || transition.Back != nil {
 			return invalid("run_canceled transition cannot carry a payload")
 		}
 		if next.Status != RunRunning || next.Canceled {
@@ -574,7 +574,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 	case TransitionBlockMarked:
 		mark := transition.Mark
 		if mark == nil || transition.Command != nil || transition.Observation != nil ||
-			transition.Decision != nil || transition.Resolution != nil {
+			transition.Decision != nil || transition.Resolution != nil || transition.Back != nil {
 			return invalid("block_marked transition requires exactly one mark payload")
 		}
 		if next.Status != RunRunning || doomed(next) {
@@ -601,6 +601,14 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		removeCommand(&next, node.id)
 		next.Nodes[node.id] = NodeBlocked
 		addBlocked(&next, node.id, mark.Reason)
+	case TransitionSentBack:
+		if transition.Back == nil || transition.Command != nil || transition.Observation != nil ||
+			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil {
+			return invalid("sent_back transition requires exactly one send-back payload")
+		}
+		if err := applySendBack(&next, definition, *transition.Back); err != nil {
+			return Checkpoint{}, err
+		}
 	default:
 		return invalid("unknown transition kind %q", transition.Kind)
 	}
