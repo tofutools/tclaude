@@ -1926,6 +1926,25 @@ func ClearSessionRCLink(sessionID string) error {
 	return err
 }
 
+// SessionRCLinkAt is a session's link time: when its last link was
+// announced, its launch started or Remote Access was last switched,
+// whichever is latest (RecordSessionRCLink). It is zero for an unknown row.
+func SessionRCLinkAt(sessionID string) (time.Time, error) {
+	db, err := Open()
+	if err != nil {
+		return time.Time{}, err
+	}
+	var ns int64
+	err = db.QueryRow(`SELECT rc_session_url_at FROM sessions WHERE id = ?`, sessionID).Scan(&ns)
+	if errors.Is(err, sql.ErrNoRows) || ns == 0 {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(0, ns), nil
+}
+
 // RemoteControlForConv reports durable agent intent, or the conversation
 // fallback when unmanaged. The live toggle path still reads the active
 // SessionRow directly because it controls one process generation.

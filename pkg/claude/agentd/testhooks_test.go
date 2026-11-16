@@ -607,19 +607,32 @@ func SetUnknownIntentCleanupDelayForTest(d time.Duration) func() {
 	return func() { unknownIntentCleanupDelay = prev }
 }
 
+// SetRemoteControlLinkGraceForTest sets how long after a launch or a switch
+// the "open" intent waits for a link before it cycles Remote Access, so a
+// test can make a fresh launch count as old. Returns a restore closure.
+func SetRemoteControlLinkGraceForTest(d time.Duration) func() {
+	prev := remoteControlLinkGrace
+	remoteControlLinkGrace = d
+	return func() { remoteControlLinkGrace = prev }
+}
+
 // SetRemoteControlConfirmDelayForTest shrinks the remote-control disable
-// timing for the duration of a test — BOTH the pause before CC's confirm menu
-// renders and the gap between the menu keystrokes (Up/Up/Enter) — the same
-// reason as SetInjectSettleDelayForTest (the sim is synchronous). Returns a
-// restore closure for t.Cleanup.
+// timing for the duration of a test — the pause before CC's confirm menu
+// renders, the gap between the menu keystrokes (Up/Up/Enter) and the pause
+// between the two halves of an "open" cycle — the same reason as
+// SetInjectSettleDelayForTest (the sim is synchronous). Returns a restore
+// closure for t.Cleanup.
 func SetRemoteControlConfirmDelayForTest(d time.Duration) func() {
 	prevConfirm := remoteControlConfirmDelay
 	prevStep := remoteControlMenuStepDelay
+	prevCycle := remoteControlCycleDelay
 	remoteControlConfirmDelay = d
 	remoteControlMenuStepDelay = d
+	remoteControlCycleDelay = d
 	return func() {
 		remoteControlConfirmDelay = prevConfirm
 		remoteControlMenuStepDelay = prevStep
+		remoteControlCycleDelay = prevCycle
 	}
 }
 

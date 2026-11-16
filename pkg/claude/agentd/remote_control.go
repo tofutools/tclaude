@@ -67,8 +67,15 @@ var remoteControlMenuStepDelay = 350 * time.Millisecond
 // menu layout, this slice is the one place to adjust.
 var remoteControlDisableMenuKeys = []string{"Up", "Up", "Enter"}
 
+// remoteControlCycleDelay is the pause between the disable and the enable
+// when the "open" intent cycles Remote Access to get a fresh link: Claude
+// Code must finish disconnecting before the next toggle turns it back on
+// rather than reopening the disconnect menu. A package var so flow tests can
+// shrink it (SetRemoteControlConfirmDelayForTest).
+var remoteControlCycleDelay = 1500 * time.Millisecond
+
 // remoteControlResp is the JSON wire shape for the toggle endpoints. Action
-// is one of "enabled" | "disabled" | "noop" | "status" | "link"; RemoteControl is the
+// is one of "enabled" | "disabled" | "cycled" | "noop" | "status" | "link"; RemoteControl is the
 // resulting effective state. CallerConv is set only on a cross-agent call.
 type remoteControlResp struct {
 	ConvID     string `json:"conv_id"`
@@ -177,11 +184,18 @@ func handleAgentRemoteControl(w http.ResponseWriter, r *http.Request, targetConv
 }
 
 // runRemoteControlOrchestration is the shared body for the self + cross-agent
-// toggle endpoints. It reads the intent (on|off|toggle|status), gates on the
-// harness capability, and — for a mutating intent that actually changes the
-// best-known state — injects the toggle (with the disable confirm) and records
-// the new state on the live session row. caller is recorded in the response
-// for cross-agent calls; for self it equals target.
+// toggle endpoints. It reads the intent (on|off|toggle|open|status|link),
+// gates on the harness capability, and — for a mutating intent that actually
+// changes the best-known state — injects the toggle (with the disable
+// confirm) and records the new state on the live session row. caller is
+// recorded in the response for cross-agent calls; for self it equals target.
+//
+// "open" is "on" for the dashboard's "Turn on Remote Access & open": it must
+// end with a link the transcript follower can record. When Remote Access is
+// already on but this launch has no recorded link (its record predates the
+// v342 upgrade, or was otherwise missed), "on" would change nothing and no
+// link would ever come, so "open" cycles it off and on: Claude Code then
+// announces a fresh link. Only this explicit action cycles.
 func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, target, caller string) {
 	var body struct {
 		Intent string `json:"intent"`
@@ -197,10 +211,10 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		intent = "toggle"
 	}
 	switch intent {
-	case "on", "off", "toggle", "status", "link":
+	case "on", "off", "toggle", "open", "status", "link":
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			`intent must be one of "on", "off", "toggle", "status", "link"`)
+			`intent must be one of "on", "off", "toggle", "open", "status", "link"`)
 		return
 	}
 
@@ -283,9 +297,14 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		selfHealRemoteControl(sess, current)
 	}
 
+	if intent == "open" && current && sess.RCSessionURL == "" && !rcLinkMayStillCome(sess) {
+		cycleRemoteControl(w, r, sess, h, target, caller)
+		return
+	}
+
 	var desired bool
 	switch intent {
-	case "on":
+	case "on", "open":
 		desired = true
 	case "off":
 		desired = false
@@ -331,6 +350,67 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		action = "disabled"
 	}
 	resp := remoteControlResp{ConvID: target, RemoteControl: desired, Action: action}
+	if caller != "" && caller != target {
+		resp.CallerConv = caller
+		resp.CallerAgentID = peerAgentID(caller)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// remoteControlLinkGrace is how long after a launch starts or Remote Access
+// is switched its link may still be on its way: "open" does not cycle within
+// it, so a second tap while the first tap's link is coming does not throw
+// that link away. It matches the dashboard's wait (claude-app.js). A package
+// var so flow tests can age a launch (SetRemoteControlLinkGraceForTest).
+var remoteControlLinkGrace = 30 * time.Second
+
+// rcLinkMayStillCome reports whether sess launched, or had Remote Access
+// switched, recently enough that its link may still come (remoteControlLinkGrace).
+func rcLinkMayStillCome(sess *db.SessionRow) bool {
+	at, err := db.SessionRCLinkAt(sess.ID)
+	if err != nil {
+		slog.Warn("remote-control: could not read the link time", "session_id", sess.ID, "error", err)
+		return true
+	}
+	return time.Since(at) < remoteControlLinkGrace
+}
+
+// cycleRemoteControl switches Remote Access off and back on, for the "open"
+// intent when it is on with no link recorded for this launch: Claude Code
+// announces a fresh link on the way back up, which the transcript follower
+// records. The flag ends on whatever the pane was last switched to.
+func cycleRemoteControl(w http.ResponseWriter, r *http.Request, sess *db.SessionRow, h *harness.Harness, target, caller string) {
+	clearRCSessionURL(sess)
+	reason := slashReason("remote-control cycle for a fresh link", caller, target)
+	injected, ok := deliverRemoteControl(target, h, true, reason)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "no_tmux",
+			"could not deliver remote-control toggle to conv "+short8(target)+" (no live tmux session to inject into)")
+		return
+	}
+	if err := db.SetSessionRemoteControl(injected.ID, false); err != nil {
+		slog.Warn("remote-control state write failed after injection",
+			"conv_id", target, "session_id", injected.ID, "desired", false, "error", err)
+	}
+	select {
+	case <-time.After(remoteControlCycleDelay):
+	case <-r.Context().Done():
+		writeError(w, http.StatusServiceUnavailable, "canceled",
+			"remote control was switched off; the request ended before it was switched back on")
+		return
+	}
+	injected, ok = deliverRemoteControl(target, h, false, reason)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "no_tmux",
+			"remote control was switched off but could not be switched back on for conv "+short8(target))
+		return
+	}
+	if err := db.SetSessionRemoteControl(injected.ID, true); err != nil {
+		slog.Warn("remote-control state write failed after injection",
+			"conv_id", target, "session_id", injected.ID, "desired", true, "error", err)
+	}
+	resp := remoteControlResp{ConvID: target, RemoteControl: true, Action: "cycled",
+		Note: "remote control was on with no link recorded for this launch; switched off and on for a fresh one"}
 	if caller != "" && caller != target {
 		resp.CallerConv = caller
 		resp.CallerAgentID = peerAgentID(caller)
