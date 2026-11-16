@@ -212,22 +212,24 @@ app of its own: its own window and icon, with no address bar.
 - A desktop Chrome or Edge offers the same as the install icon in the address
   bar.
 
-The browser offers to install only on a secure origin: `https://` (the
+Chrome and Edge offer to install only on a secure origin: `https://` (the
 [remote-access listener](remote.md#remote-dashboard-access) with its CA
 trusted on the device, `tailscale serve`, a tunnel) or `localhost`. Over plain
-`http://` on a LAN address you get a bookmark that opens in the browser.
+`http://` on a LAN address, Chrome makes a shortcut that opens in the browser.
 
 Installed, it works as it does in the browser, with these differences:
 
-- **Pull down on the header bar to reload.** An installed app has no reload
+- **Pull down on the phone layout's header bar to reload.** An installed app has no reload
   button, and the browser's own pull-to-refresh is off in it, so the dashboard
   does the pull itself: pull the bar at the top down until the hint says
   **Release to reload**. In a browser tab the browser's pull-to-refresh does
-  this as before.
+  this as before. A desktop install reloads with Ctrl+R or the app's menu.
 - **Links to other sites open in the browser** (or in that site's app), not
   inside the installed app: a GitHub PR, a claude.ai link. Links within the
   dashboard stay in it.
-- **Back** is the phone's Back, as in the browser: it closes what is open.
+- **Back:** on Android the phone's Back works as in the browser and closes
+  what is open. On an iPhone, which has no Back button for a home-screen app,
+  use the dashboard's own **‹** buttons.
 
 There is no service worker: nothing is cached for offline use and there are no
 push notifications. Every start loads the dashboard from the node, as a
