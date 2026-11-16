@@ -68,6 +68,16 @@ const openTerminal = async (page) => {
   await expect(page.locator('.phone-term[role=dialog]')).toBeVisible();
 };
 
+// A short draft's question (phone-draft-guard.js): the message sheet's rule
+// for a comment, a note or an agent's prompt.
+const draftAsk = (what) => (page) => sheet(page).getByRole('alertdialog', { name: `Discard ${what}?` });
+const draftSheet = (what) => ({
+  form: sheet,
+  ask: draftAsk(what),
+  keep: (page) => draftAsk(what)(page).getByRole('button', { name: 'Keep' }).click(),
+  discard: (page) => draftAsk(what)(page).getByRole('button', { name: 'Discard' }).click(),
+});
+
 // GUARDED is every phone form that asks before dropping a draft.
 const GUARDED = [
   {
@@ -111,6 +121,50 @@ const GUARDED = [
     },
     type: (page) => page.locator('#agent-spawn-modal textarea').first().fill('do the thing'),
     ...dialogForm('agent-spawn-modal'),
+  },
+  {
+    name: 'Agents: New agent (its prompt)',
+    open: async (page) => {
+      await views(page).getByRole('button', { name: /Agents/ }).click();
+      await page.getByRole('button', { name: 'New agent' }).click();
+    },
+    type: (page) => sheet(page).getByLabel('Prompt').fill('migrate the checkout'),
+    ...draftSheet('this prompt'),
+  },
+  {
+    name: 'Board: a task › Comment',
+    open: async (page) => {
+      await views(page).getByRole('button', { name: /Board/ }).click();
+      await page.locator('.phone-board-card').first().getByRole('button', { name: 'Comment' }).click();
+    },
+    type: (page) => sheet(page).getByLabel('Comment').fill('looks good, ship it'),
+    ...draftSheet('this comment'),
+  },
+  {
+    name: "Now: a decision's ⋯ (its note)",
+    open: async (page) => {
+      await page.getByRole('button', { name: 'All options, a note, or dismiss' }).first().click();
+    },
+    type: (page) => sheet(page).getByLabel('Note to send with your choice').fill('by region, DHL first'),
+    ...draftSheet('your note'),
+  },
+  {
+    name: "Automations: a run's gate › a verdict's note",
+    open: async (page) => {
+      await page.goto('/automations/processes');
+      await booted(page);
+      // The seeded run's gate; phone-automations approves it, so after that
+      // smoke on the same sandbox there is none left to write a note on.
+      const run = page.getByRole('region', { name: 'Waiting on you' }).locator('.phone-run-open', { hasText: 'Release train' });
+      // The list must have loaded (the seeded runs are there either way), so
+      // a skip means the gate was answered, never that the page broke.
+      await expect(page.locator('.phone-run-open', { hasText: 'Release train' }).first()).toBeVisible();
+      test.skip(!(await run.count()), 'the seeded gate was already answered on this sandbox (phone-automations approves it)');
+      await run.click();
+      await page.locator('.phone-run-page [data-run-verdict][aria-haspopup="dialog"]').first().click();
+    },
+    type: (page) => sheet(page).getByLabel('Note for the record (optional)').fill('the checks were flaky'),
+    ...draftSheet('your note'),
   },
 ];
 
