@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -79,18 +80,39 @@ func startRemoteServer(bind string) (*http.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	tlsCfg := m.TLSConfig()
-	ln, err := tls.Listen("tcp", bind, tlsCfg)
+	ln, err := tls.Listen("tcp", bind, remoteListenerTLSConfig(m))
 	if err != nil {
 		return nil, fmt.Errorf("bind %s: %w", bind, err)
 	}
-	ln = registerStageDaemonListener(ln)
+	srv := serveRemoteListener(registerStageDaemonListener(ln), buildRemoteDashboardHandler(m))
+	setRemoteListenerRunning(bind)
+	return srv, nil
+}
 
-	// The listener (tls.Listen) already terminates TLS, so srv.Serve over it
-	// is correct and srv.TLSConfig is intentionally NOT set (it would be
-	// unused — ServeTLS is the path that reads it).
+// remoteListenerTLSConfig is the remote listener's TLS: the mTLS of the
+// remote-access material, offering HTTP/2 over ALPN (tk_ec754b5e). A cold
+// dashboard boot is ~600 module requests; over HTTP/1.1 a browser opens six
+// connections to a host, so at a phone's round trip they queue for seconds,
+// while HTTP/2 carries them all on one connection.
+//
+// WebSocket terminals keep working: Go's HTTP/2 server does not advertise
+// extended CONNECT (RFC 8441, off unless GODEBUG=http2xconnect=1), so a
+// browser opens its WebSockets on an HTTP/1.1 connection of their own, where
+// the upgrade hijacks the connection as before. Do not turn that GODEBUG on
+// without moving the terminal upgrades off Hijack.
+func remoteListenerTLSConfig(m *remoteaccess.Material) *tls.Config {
+	cfg := m.TLSConfig()
+	cfg.NextProtos = []string{"h2", "http/1.1"}
+	return cfg
+}
+
+// serveRemoteListener serves handler on ln, which already terminates TLS
+// (tls.Listen), so srv.Serve over it is correct and srv.TLSConfig is
+// intentionally NOT set (only ServeTLS reads it). HTTP/2 needs nothing more:
+// Serve speaks it on a *tls.Conn whose ALPN chose "h2".
+func serveRemoteListener(ln net.Listener, handler http.Handler) *http.Server {
 	srv := &http.Server{
-		Handler:           buildRemoteDashboardHandler(m),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -98,8 +120,7 @@ func startRemoteServer(bind string) (*http.Server, error) {
 			slog.Warn("remote-access: server exited", "err", err)
 		}
 	}()
-	setRemoteListenerRunning(bind)
-	return srv, nil
+	return srv
 }
 
 // buildRemoteDashboardHandler mounts the shared dashboard routes behind the

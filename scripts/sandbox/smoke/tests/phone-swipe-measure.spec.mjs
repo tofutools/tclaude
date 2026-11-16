@@ -24,14 +24,35 @@ const FAST_4G = { rttMs: 60 * 2.75, down: (9000 * 1000 / 8) * 0.9, up: (1500 * 1
 // throttle serves a proxy to target that delays each direction by half the
 // round trip and paces it at the link's rate, in order.
 function throttle(target, link) {
+  // Each direction is a FIFO drained by one timer at a time, so bytes keep
+  // their order: a timer per chunk can fire out of order (Node truncates
+  // fractional delays and keeps timers of different lengths apart), which
+  // corrupts a TLS stream. A close is passed on once the queue has drained.
   const pipe = (from, to, rate) => {
+    const queue = [];
     let free = 0;
+    let timer = null;
+    let closed = false;
+    const drain = () => {
+      timer = null;
+      const now = Date.now();
+      while (queue.length && queue[0].at <= now) {
+        const { chunk } = queue.shift();
+        if (!to.destroyed) to.write(chunk);
+      }
+      if (queue.length) timer = setTimeout(drain, Math.max(1, queue[0].at - now));
+      else if (closed) to.destroy();
+    };
     from.on('data', (chunk) => {
       const now = Date.now();
       free = Math.max(free, now) + (chunk.length / rate) * 1000;
-      setTimeout(() => { if (!to.destroyed) to.write(chunk); }, free - now + link.rttMs / 2);
+      queue.push({ at: free + link.rttMs / 2, chunk });
+      if (!timer) timer = setTimeout(drain, Math.max(1, queue[0].at - now));
     });
-    from.on('close', () => setTimeout(() => to.destroy(), link.rttMs / 2 + 50));
+    from.on('close', () => {
+      closed = true;
+      if (!timer) setTimeout(() => { if (!queue.length) to.destroy(); }, link.rttMs / 2);
+    });
     from.on('error', () => to.destroy());
   };
   const server = net.createServer((client) => {
