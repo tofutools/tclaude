@@ -34,6 +34,7 @@ import { TerminalText, indexAt, linkAt, openLinkSheet, screenLines, useTerminalT
 import { writeClipboard } from './insecure-origin.js';
 import { shellToast } from './shell-state.js';
 import { openTypeSheet } from './phone-terminal-type.js';
+import { isAgentTerminalPath } from './terminal-interactions.js';
 
 const html = htm.bind(h);
 
@@ -68,12 +69,14 @@ function terminalHarness(seed, agent = () => null, known = false) {
   return harness;
 }
 
-// terminalKind is what a terminal's input is for: 'shell' for a terminal of
-// no agent (a group shell) or of an agent whose harness takes command input
-// (the catalog's command_input: --harness shell), else 'agent'. An agent of a
-// harness the catalog does not (yet) know is an agent's.
+// terminalKind is what a terminal's input is for, by the pane first: any
+// pane but an agent's own session (isAgentTerminalPath: a group's shell, an
+// agent's directory shell, a peer's shell) is a 'shell'. An agent's session
+// is a 'shell' too when its harness takes command input (the catalog's
+// command_input: --harness shell), else an 'agent', as is one of a harness
+// the catalog does not (yet) know.
 export function terminalKind(seed, { harnesses = [], agent = () => null } = {}) {
-  if (!(seed?.agent || seed?.remote?.agent)) return 'shell';
+  if (!isAgentTerminalPath(seed?.ws || '')) return 'shell';
   const harness = terminalHarness(seed, agent, true);
   const known = (Array.isArray(harnesses) ? harnesses : []).find((h) => h?.name === harness);
   return known?.command_input === true ? 'shell' : 'agent';
@@ -192,7 +195,7 @@ function useVisualViewport(windowRef) {
 
 // TerminalSurface owns the widget. Preact renders the host div and never a
 // child into it: the widget alone owns what is inside.
-function TerminalSurface({ seed, deps, kind, labelRef, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange, onTap, onHold }) {
+function TerminalSurface({ seed, deps, kindRef, labelRef, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange, onTap, onHold }) {
   const host = useRef(null);
   // A tap on a link, or a still hold, on the terminal itself
   // (phone-terminal-text.js); the zoom chip and Live are not the terminal.
@@ -218,9 +221,11 @@ function TerminalSurface({ seed, deps, kind, labelRef, onWidget, onFontChange, o
       onStatus,
       onWaitingChange,
       onReconnectChange,
-      onComposeMessage: kind === 'agent' && seed.agent && deps.onComposeMessage
-        // The bar's name, read when pressed: the widget keeps its options.
-        ? () => deps.onComposeMessage({ agent: seed.agent, label: labelRef.current })
+      // An agent's session only; its kind and the bar's name read when
+      // pressed: the widget keeps its options, and a cold link learns the
+      // harness (a shell's, maybe) only once the snapshot arrives.
+      onComposeMessage: isAgentTerminalPath(seed.ws || '') && seed.agent && deps.onComposeMessage
+        ? () => { if (kindRef.current === 'agent') deps.onComposeMessage({ agent: seed.agent, label: labelRef.current }); }
         : null,
       applicationClipboardShortcuts: seed.harness === 'copilot',
       initialRetry: seed.initialRetry === true,
@@ -326,12 +331,15 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   // is known only once the snapshot arrives.
   const kind = terminalKind(seed, { harnesses: deps.harnesses?.() || [], agent: deps.agent || (() => null) });
   const keys = KEY_STRIPS[kind];
+  const kindRef = useRef(kind);
+  kindRef.current = kind;
   const message = kind === 'agent' && seed.agent && deps.onComposeMessage
     ? () => deps.onComposeMessage({ agent: seed.agent, label })
     : null;
   // A shell's text goes in as typed: the widget's paste, the path its own
   // keys take, then Enter when asked.
-  const typeInto = label || 'the terminal';
+  // An agent's directory shell is named for itself, not for the agent.
+  const typeInto = (isAgentTerminalPath(seed.ws || '') ? label : seed.label || label) || 'the terminal';
   const type = kind === 'shell'
     ? () => openTypeSheet({
       name: typeInto,
@@ -362,7 +370,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
       ${row && deps.agentMenu && html`<${IconButton} icon="⋯" label=${`${row.name}: more`} onClick=${() => deps.agentMenu(row, { selectText: () => openSelect() })} />`}
     </header>
     <div class="phone-term-body">
-      ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} kind=${kind} labelRef=${labelRef} onWidget=${onWidget}
+      ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} kindRef=${kindRef} labelRef=${labelRef} onWidget=${onWidget}
         onFontChange=${onFontChange} onStatus=${setStatus} onWaitingChange=${setWaiting} onReconnectChange=${setReconnect}
         onScrollBackChange=${setScrolledBack} onTap=${onTap} onHold=${openSelect} />`}
       ${sized && html`<button data-ui-exempt type="button" class="phone-term-zoom" onMouseDown=${keepFocus}

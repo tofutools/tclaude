@@ -26,6 +26,9 @@ export function typeProblem(text, enter) {
   return '';
 }
 
+// A command is short and the terminal keeps what was run, so unlike the
+// message sheet a dismissed draft is not asked about.
+//
 // TypeSheet is the sheet's body. type(text, enter) types it and says whether
 // the terminal took it; close() closes the sheet.
 export function TypeSheet({ name = 'the terminal', type, close }) {
@@ -34,7 +37,7 @@ export function TypeSheet({ name = 'the terminal', type, close }) {
   const send = (enter) => {
     const problem = typeProblem(text, enter);
     if (problem) { setError(problem); return; }
-    if (!type(text, enter)) { setError('The terminal is not connected, so nothing was typed.'); return; }
+    if (!type(text, enter)) { setError('The terminal took no input (not connected, or view only), so nothing was typed.'); return; }
     close();
   };
   return html`<div class="phone-compose phone-type">

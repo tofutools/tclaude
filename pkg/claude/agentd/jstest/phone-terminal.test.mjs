@@ -158,7 +158,7 @@ test('a shell terminal types straight into the shell and has the command-line ke
   widget.connected = false;
   widget.calls.length = 0;
   await press('Type');
-  assert.equal(view.container.querySelector('[role=alert]').textContent, 'The terminal is not connected, so nothing was typed.');
+  assert.equal(view.container.querySelector('[role=alert]').textContent, 'The terminal took no input (not connected, or view only), so nothing was typed.');
   assert.equal(closed, 2, 'a send the terminal refused keeps the sheet open');
 
   // An agent of a command-input harness (--harness shell) is a shell too.
@@ -166,6 +166,14 @@ test('a shell terminal types straight into the shell and has the command-line ke
   await harness.act(() => {});
   assert.deepEqual(keyLabels(), SHELL_KEYS);
   assert.ok(host.querySelector('.phone-term-type'));
+  made.at(-1).options.onComposeMessage();
+  assert.equal(composed.length, 0, 'its Ctrl+M messages nobody');
+
+  // An agent's directory shell is a shell, named for itself, whatever runs in the agent.
+  await harness.act(() => tab.openShellResource({ id: `term:${AGENT}:current:webshop`, agent: AGENT, which: 'current' }, 'checkout-ui shell'));
+  await harness.act(() => {});
+  assert.deepEqual(keyLabels(), SHELL_KEYS);
+  assert.equal(host.querySelector('.phone-term-type').textContent, '› Type into checkout-ui shell…');
   assert.equal(made.at(-1).options.onComposeMessage, null);
 
   // Every other harness keeps the message sheet and 1 2 3.
@@ -181,12 +189,16 @@ test('terminalKind: no agent or a command-input harness is a shell; any other or
   const harness = await createPreactHarness(t);
   const { terminalKind } = await harness.importDashboardModule('js/phone-terminal-island.js');
   const harnesses = CATALOG;
-  assert.equal(terminalKind({ ws: '/api/shell-ws/sh_1' }, { harnesses }), 'shell');
-  assert.equal(terminalKind({ agent: 'agt_a', harness: 'shell' }, { harnesses }), 'shell');
-  assert.equal(terminalKind({ agent: 'agt_a', harness: 'codex' }, { harnesses }), 'agent');
-  assert.equal(terminalKind({ agent: 'agt_a' }, { harnesses, agent: () => ({ harness: 'shell' }) }), 'shell', 'the harness from the agent');
-  assert.equal(terminalKind({ agent: 'agt_a', harness: 'shell' }, { harnesses: [] }), 'agent', 'a catalog not yet loaded is an agent\'s');
-  assert.equal(terminalKind({ remote: { agent: 'agt_r' } }, { harnesses }), 'agent');
+  const win = '/api/open-window-ws/agt_a';
+  assert.equal(terminalKind({ ws: '/api/group-term-ws/webshop' }, { harnesses }), 'shell');
+  assert.equal(terminalKind({ ws: '/api/term-ws/agt_a?which=current', agent: 'agt_a', harness: 'claude' }, { harnesses }), 'shell', 'an agent\'s directory shell');
+  assert.equal(terminalKind({ ws: win, agent: 'agt_a', harness: 'shell' }, { harnesses }), 'shell');
+  assert.equal(terminalKind({ ws: win, agent: 'agt_a', harness: 'codex' }, { harnesses }), 'agent');
+  assert.equal(terminalKind({ ws: win, agent: 'agt_a' }, { harnesses, agent: () => ({ harness: 'shell' }) }), 'shell', 'the harness from the agent');
+  assert.equal(terminalKind({ ws: win, agent: 'agt_a', harness: 'shell' }, { harnesses: [] }), 'agent', 'a catalog not yet loaded is an agent\'s');
+  const peer = '/api/federation/terminal?';
+  assert.equal(terminalKind({ ws: `${peer}peer=n1&agent=agt_r&mode=watch`, remote: { agent: 'agt_r' } }, { harnesses }), 'agent');
+  assert.equal(terminalKind({ ws: `${peer}peer=n1&group=g&shell=current&agent=agt_r&mode=interactive`, remote: { agent: 'agt_r' } }, { harnesses }), 'shell', 'a peer agent\'s directory shell');
 });
 
 test('only the terminal on screen is live: a hidden page drops it, coming back redials', async (t) => {
