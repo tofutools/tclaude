@@ -255,14 +255,16 @@ test('terminal shell state follows agent renames from the roster snapshot', asyn
   const byId = state.openPane({ ws: '/w1', key: 'window:agt_one', label: 'old-one', agent: 'agt_one' });
   state.openPane({ ws: '/w2', key: 'window:conv-two', label: 'old-two', hideConv: 'conv-two' });
   state.openPane({ ws: '/g', key: 'groupterm:g', label: 'group shell' });
-  // A shell in the agent's directory carries the agent, but keeps its own name.
-  state.openPane({ ws: '/api/term-ws/agt_one?which=worktree', key: 'term:agt_one:worktree:', label: 'shell · old-one', agent: 'agt_one' });
+  // A shell in the agent's directory carries the agent, but is named a shell,
+  // however it was opened (some open it with the agent's bare title).
+  state.openPane({ ws: '/api/term-ws/agt_one?which=worktree', key: 'term:agt_one:worktree:', label: 'old-one', agent: 'agt_one' });
+  state.openPane({ ws: '/api/term-ws/agt_one?which=current', key: 'term:agt_one:current:g', label: 'shell · old-one', agent: 'agt_one' });
 
   assert.equal(state.syncAgentLabels({ agents: [
     { agent_id: 'agt_one', conv_id: 'conv-one', title: 'new-one' },
     { agent_id: 'agt_two', conv_id: 'conv-two', title: 'new-two' },
   ] }), true);
-  assert.deepEqual(state.panes.value.map((pane) => pane.label), ['new-one', 'new-two', 'group shell', 'shell · old-one']);
+  assert.deepEqual(state.panes.value.map((pane) => pane.label), ['new-one', 'new-two', 'group shell', 'shell · new-one (worktree)', 'shell · new-one']);
   assert.equal(state.panes.value[0].id, byId.id, 'a rename keeps the pane identity');
   assert.equal(state.panes.value[0].seed.label, 'new-one', 'pop-outs carry the new name');
 

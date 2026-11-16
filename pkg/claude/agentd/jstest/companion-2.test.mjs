@@ -554,6 +554,11 @@ test('a Terminals tab knows its agent is asking for permission', async (t) => {
   assert.equal(paneApprovals({ seed: { agent: 'conv-b' } }, snapshot).length, 1, 'a pane seeded with a conv id');
   assert.equal(paneApprovals({ seed: { agent: 'conv-a' } }, { access_requests: [{ id: 'r', perm: 'x', agent_id: A, conv_id: 'conv-a', status: 'pending' }] }).length, 1, 'a conv-seeded pane finds a request naming its agent');
   assert.equal(paneApprovals({ seed: { agent: B } }, snapshot).length, 0);
+  // A shell in the agent's directory is not the agent: no 🔑, no unread mail.
+  const { paneUnreadNotifications } = await harness.importDashboardModule('js/terminal-shell-island.js');
+  const dirShell = { seed: { agent: A, ws: `/api/term-ws/${A}?which=current` } };
+  assert.equal(paneApprovals(dirShell, snapshot).length, 0);
+  assert.deepEqual(paneUnreadNotifications(dirShell, { agents: [{ agent_id: A }], human_messages: [{ id: 1, from_agent_id: A }] }), []);
 });
 
 test('decisions from every agent wait in one "to decide" queue', async (t) => {

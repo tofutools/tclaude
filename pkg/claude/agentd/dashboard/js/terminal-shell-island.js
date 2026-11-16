@@ -23,7 +23,7 @@ import { TabContextMenu, TabGroupRename, useArmedCollapse } from './tab-controls
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
-import { shellTabStatus } from './terminal-tab-status.js';
+import { isAgentDirShell, shellTabStatus } from './terminal-tab-status.js';
 import {
   backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
   startBackgroundTerminalsPoll, visibleBackgroundTerminals,
@@ -663,6 +663,8 @@ function PaneProcessOverlay({ agentId, snapshot, onComposeMessage }) {
 // pane names its agent in seed.remote; its notifications are that peer's
 // (peerLists, read from its mailbox), or the page's on that peer's own page.
 export function paneUnreadNotifications(pane, snapshotValue, peerLists = {}) {
+  // A shell in an agent's directory is not the agent: its mail is not the shell's.
+  if (isAgentDirShell(pane)) return [];
   const remote = paneRemoteNode(pane);
   const selector = pane?.seed?.agent || pane?.seed?.remote?.agent || '';
   if (remote) {
@@ -742,7 +744,7 @@ function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
 // in the quick panel without leaving the terminal. It keeps to this node's panes
 // and to Collab, which the panel belongs to.
 export function paneApprovals(pane, snapshotValue) {
-  if (paneRemoteNode(pane)) return [];
+  if (paneRemoteNode(pane) || isAgentDirShell(pane)) return [];
   const selector = pane?.seed?.agent || '';
   if (!selector) return [];
   return pendingApprovals(snapshotValue).filter((request) => [request.agent_id, request.conv_id, request.current_conv_id].includes(selector));
@@ -1021,7 +1023,7 @@ function PaneTab({
       ${(drawingBoard || process || page) && html`<${LockBadge} kind=${drawingBoard ? 'drawing_board' : process ? 'process' : 'page'}
         locked=${resourceLocked(snapshot?.value, drawingBoard ? 'drawing_board' : process ? 'process' : 'page', pane.seed.drawingBoard || pane.seed.process || pane.seed.page)} />`}
       <${TerminalCosts} agent=${agentStatus.agent} />
-      ${!pane.seed.remote && pane.seed.agent ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
+      ${!pane.seed.remote && pane.seed.agent && !isAgentDirShell(pane) ? html`<${ProcessTabIcons} agentId=${pane.seed.agent}
         enabled=${processesAvailable(snapshot?.value)} />` : null}
       <button data-ui-exempt
         type="button"
