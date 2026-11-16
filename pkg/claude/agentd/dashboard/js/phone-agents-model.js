@@ -219,7 +219,8 @@ export function metaParts(row) {
 // can be spawned into, and the spawn profiles, each group with
 // the profile its spawns get when none is picked.
 export function spawnChoices(snapshot) {
-  const groups = (snapshot?.groups || []).filter((g) => g?.name)
+  // An archived group refuses spawns (the daemon answers 409).
+  const groups = (snapshot?.groups || []).filter((g) => g?.name && !g.archived)
     .map((g) => ({ name: g.name, profile: g.default_profile || snapshot?.spawn_profile_default || '' }));
   const profiles = (snapshot?.profiles || []).filter((p) => p?.name && !p.disabled).map((p) => p.name);
   return { groups, profiles };

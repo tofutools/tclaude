@@ -399,15 +399,42 @@ test('a group header\'s ＋ Agent opens the spawn sheet on that group; Ungrouped
   assert.equal(calls.filter(([name]) => name === 'spawn').length, 0, 'the short sheet, not the desktop form');
 });
 
-test('an archived group\'s header has no ＋ Agent', async (t) => {
-  const { harness, state, c } = await setup(t);
+test('an archived group\'s header has no ＋ Agent, and the sheet never offers it', async (t) => {
+  const { harness, state, c, tap } = await setup(t, { prefs: memPrefs({ 'tclaude.dash.phone.agents.archived': '1' }) });
   await harness.act(() => {
     state.beginRequest();
     state.commitRequest(2, { ...SNAPSHOT, groups: SNAPSHOT.groups.map((g) => (g.name === 'steward' ? { ...g, archived: true } : g)) });
   });
   const head = (group) => [...c.querySelectorAll('.phone-agents-head')].find((h) => h.querySelector('.phone-agents-name')?.textContent === group);
   assert.ok(head('webshop').querySelector('[data-agent-add]'));
-  if (head('steward')) assert.equal(head('steward').querySelector('[data-agent-add]'), null);
+  assert.ok(head('steward'), 'Show archived lists it');
+  assert.equal(head('steward').querySelector('[data-agent-add]'), null);
+  await tap(head('webshop').querySelector('[data-agent-add]'));
+  assert.deepEqual([...c.querySelectorAll('.phone-sheet form select')[0].options].map((o) => o.value), ['webshop'], 'no archived group to pick');
+});
+
+test('an archived group listed first: the sheet starts on one that takes a spawn', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/phone-agents-model.js');
+  const groups = [{ name: 'old', archived: true }, ...SNAPSHOT.groups];
+  assert.deepEqual(model.spawnChoices({ ...SNAPSHOT, groups }).groups.map((g) => g.name), ['webshop', 'steward']);
+});
+
+test("on a peer's page a header-less ＋ still names a group for the peer's form", async (t) => {
+  globalThis.__tclaudeRemoteNode = { id: 'inst_peer1' };
+  t.after(() => { delete globalThis.__tclaudeRemoteNode; });
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, island] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/phone-agents-island.js'),
+  ]);
+  const state = createDashboardState();
+  state.beginRequest();
+  state.commitRequest(1, { ...SNAPSHOT, groups: [{ name: 'old', archived: true }, ...SNAPSHOT.groups] });
+  const spawned = [];
+  island.openSpawnSheet({ state, group: '', remoteSpawn: (g) => spawned.push(g) });
+  island.openSpawnSheet({ state, group: 'steward', remoteSpawn: (g) => spawned.push(g) });
+  assert.deepEqual(spawned, ['webshop', 'steward']);
 });
 
 test("on a peer's page ＋ is the desktop form, which spawns there", async (t) => {
@@ -416,7 +443,7 @@ test("on a peer's page ＋ is the desktop form, which spawns there", async (t) =
   const { harness, calls, c, page } = await setup(t);
   await harness.act(() => page.phoneBar.value.actions[0].onClick());
   assert.equal(c.querySelector('.phone-sheet'), null);
-  assert.deepEqual(calls.at(-1), ['spawn', '']);
+  assert.deepEqual(calls.at(-1), ['spawn', 'webshop'], 'the peer\'s form gets a group to spawn into');
   // A group header's ＋ Agent too, on its group.
   const add = c.querySelector('[data-agent-add]');
   await harness.act(() => add.click());

@@ -101,7 +101,9 @@ function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kid
 // bar's ＋, a group header's ＋ Agent, a group page's ＋ Spawn and Now's
 // ＋ Agent all open it.
 export function openSpawnSheet({ state, group = '', fetchImpl = globalThis.fetch, openFull, remoteSpawn }) {
-  if (globalThis.__tclaudeRemoteNode?.id) return remoteSpawn(group);
+  // A peer's form needs a group to spawn into: with none given, the first
+  // the sheet would have started on.
+  if (globalThis.__tclaudeRemoteNode?.id) return remoteSpawn(group || spawnChoices(state.snapshot.peek?.() ?? state.snapshot.value).groups[0]?.name || '');
   return openPhoneSheet({ label: 'New agent', Body: SpawnSheet, props: { state, group, fetchImpl, openFull } });
 }
 
