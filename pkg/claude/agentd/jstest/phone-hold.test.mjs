@@ -89,3 +89,17 @@ test('a lift that makes no click leaves nothing behind; a lost touch end does no
   await harness.act(() => t.mock.timers.tick(hold.HELD_MAX_MS));
   assert.equal(doc.documentElement.hasAttribute(hold.ARMED_ATTR), false);
 });
+
+test('only the holding finger lifts it; a lift heard only on the held row (unmounted, its events stay with it) still does', async (t) => {
+  const { harness, hold, doc, c, fire } = await setup(t);
+  const row = c.querySelector('[data-row]');
+  await harness.act(() => fire(row, 'pointerdown', { pointerId: 7 }));
+  await harness.act(() => t.mock.timers.tick(hold.HOLD_MS));
+  await harness.act(() => fire(doc, 'pointerup', { pointerId: 8 }));
+  await harness.act(() => fire(doc, 'touchend', { touches: [{}] }));
+  assert.ok(doc.documentElement.hasAttribute(hold.ARMED_ATTR), 'another finger lifting is not this lift');
+  // The row leaves the page; its touchend still reaches it, not the document.
+  row.remove();
+  await harness.act(() => fire(row, 'touchend', { bubbles: false, touches: [] }));
+  assert.equal(doc.documentElement.hasAttribute(hold.ARMED_ATTR), false);
+});

@@ -28,7 +28,7 @@ export const HOLD_SLOP_PX = 10;
 // of a touch whose end never arrives (a lost touchend), so the page cannot
 // stay inert.
 export const LIFT_MS = 400;
-export const HELD_MAX_MS = 15000;
+export const HELD_MAX_MS = 5000;
 export const ARMED_ATTR = 'data-hold-armed';
 
 // Not pointercancel: a browser cancels the pointer as its own long-press
@@ -41,8 +41,12 @@ function clearSelection(doc) {
 
 // armAfterHold keeps the browser's own long-press from acting on what a hold
 // just opened under the finger, until that touch ends (see the top). It
-// returns the function that ends it early.
-export function armAfterHold(doc = globalThis.document) {
+// returns the function that ends it early. held is the element the finger is
+// on: its touch end is heard there too, since a touch's events stay with the
+// element it started on even once a re-render took that out of the page,
+// where the document would not hear them. pointerId is the holding pointer:
+// another finger lifting is not this one. onDone hears the end.
+export function armAfterHold(doc = globalThis.document, { held: el = null, pointerId = null, onDone = null } = {}) {
   if (!doc?.addEventListener) return () => {};
   const root = doc.documentElement;
   const eat = (event) => { event.preventDefault(); event.stopImmediatePropagation(); };
@@ -50,29 +54,35 @@ export function armAfterHold(doc = globalThis.document) {
   const eatClick = (event) => { eat(event); disarm(); };
   let timer = null;
   const held = [['contextmenu', eat], ['selectstart', eatSelect]];
+  const targets = [doc, el].filter((t) => t?.addEventListener);
   const release = () => {
     root?.removeAttribute?.(ARMED_ATTR);
     for (const [type, fn] of held) doc.removeEventListener(type, fn, true);
-    for (const type of ENDS) doc.removeEventListener(type, lift, true);
+    for (const t of targets) for (const type of ENDS) t.removeEventListener(type, lift, true);
   };
   // The finger is up: the page takes presses again, and its one click is
-  // still to come.
-  const lift = () => {
+  // still to come. Only the holding finger: another pointer's up, or a touch
+  // end with fingers still down, is not this lift.
+  const lift = (event) => {
+    if (event?.type === 'pointerup' && pointerId != null && event.pointerId !== pointerId) return;
+    if (event?.type?.startsWith('touch') && (event.touches?.length ?? 0) > 0) return;
     release();
     clearSelection(doc);
     clearTimeout(timer);
     timer = setTimeout(disarm, LIFT_MS);
   };
+  let done = false;
   const disarm = () => {
     clearTimeout(timer);
     release();
     doc.removeEventListener('click', eatClick, true);
     doc.removeEventListener('pointerdown', disarm, true);
+    if (!done) { done = true; onDone?.(); }
   };
   root?.setAttribute?.(ARMED_ATTR, '');
   clearSelection(doc);
   for (const [type, fn] of held) doc.addEventListener(type, fn, true);
-  for (const type of ENDS) doc.addEventListener(type, lift, true);
+  for (const t of targets) for (const type of ENDS) t.addEventListener(type, lift, true);
   doc.addEventListener('click', eatClick, true);
   doc.addEventListener('pointerdown', disarm, true);
   timer = setTimeout(disarm, HELD_MAX_MS);
@@ -101,15 +111,18 @@ export function useHold(onHold, { ms = HOLD_MS } = {}) {
       // The primary button or a finger; a second finger is a pinch, not a hold.
       if (event.button > 0 || (start.current && start.current.id !== event.pointerId)) { stop(); return; }
       swallow.current = false;
-      start.current = { x: event.clientX, y: event.clientY, id: event.pointerId, doc: event.currentTarget?.ownerDocument };
+      start.current = { x: event.clientX, y: event.clientY, id: event.pointerId, el: event.currentTarget, doc: event.currentTarget?.ownerDocument };
       setHolding(true);
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
         timer.current = null;
-        const doc = start.current?.doc;
+        const at = start.current;
+        const doc = at?.doc;
         start.current = null;
         swallow.current = true;
-        armAfterHold(doc);
+        // The document swallows the lift's click before the element sees
+        // it, so the element's own one-click swallow ends with the arming.
+        armAfterHold(doc, { held: at?.el, pointerId: at?.id, onDone: () => { swallow.current = false; } });
         setHolding(false);
         latest.current?.();
       }, ms);
