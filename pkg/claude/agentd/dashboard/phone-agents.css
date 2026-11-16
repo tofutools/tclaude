@@ -40,6 +40,9 @@
 /* The context meter (context-meter.js) by the state pill, as on the desktop. */
 :root[data-layout="phone"] .phone-agent-line > .ctx-meter { flex: none; margin-right: 0; }
 :root[data-layout="phone"] .phone-agents-board { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+/* ＋ Agent before Board ›, as the Shells section's ＋ Shell is (phone-now.css),
+   in Board ›'s size and weight beside it. */
+:root[data-layout="phone"] .phone-agents-spawn-link { flex: none; min-height: var(--phone-tap); font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 
 /* A group's header: the caret (a 44px zone left of the name) folds its
    section, the name and count open the group's page; Board › is its own.

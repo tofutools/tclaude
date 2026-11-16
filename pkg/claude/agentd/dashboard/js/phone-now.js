@@ -30,6 +30,12 @@ import { processContext } from './process-context.js';
 import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
 import { NowShells } from './phone-now-shells.js';
 
+// spawnable says whether the node has a group an agent can be spawned into
+// (one that is not archived), for Now's ＋ Agent.
+export function spawnable(snapshot) {
+  return (snapshot?.groups || []).some((g) => g?.name && !g.archived);
+}
+
 const html = htm.bind(h);
 
 // usageShared reports whether the page's node shares its usage: a peer's
@@ -282,7 +288,10 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
       <${AgentRows} rows=${changes} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />
     <//>`}
     <${Section} title=${list.all ? 'Online' : 'Active'} count=${rows.length}
-      more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button>`}>
+      more=${html`<span class="phone-section-links">
+        ${actions.spawnAgent && spawnable(snapshot) && html`<button data-ui-exempt type="button" class="phone-link" data-agent-add
+          aria-label="New agent" aria-haspopup="dialog" onClick=${() => actions.spawnAgent('')}>＋ Agent</button>`}
+        <button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button></span>`}>
       ${rows.length === 0
         ? html`<p class="ui-empty phone-empty">${list.all ? 'No agent is online.' : 'No agent is active right now.'}</p>`
         : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />`}

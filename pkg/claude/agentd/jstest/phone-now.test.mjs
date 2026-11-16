@@ -53,7 +53,7 @@ async function setup(t, snapshot = SNAPSHOT, { stored = null, looked = null } = 
   const calls = [];
   const posts = [];
   const record = (name) => (...args) => { calls.push([name, ...args]); };
-  const actions = { notify: record('notify'), navigate: record('navigate'), openTerminal: record('openTerminal'), openAccessRequest: record('openAccessRequest'), agentMenu: record('agentMenu') };
+  const actions = { notify: record('notify'), navigate: record('navigate'), openTerminal: record('openTerminal'), openAccessRequest: record('openAccessRequest'), agentMenu: record('agentMenu'), spawnAgent: record('spawnAgent') };
   const fetchImpl = async (url, init) => { posts.push([url, JSON.parse(init.body)]); return { ok: true }; };
   const { signal } = harness.signals;
   const processSource = { context: signal(null), status: signal('ready'), error: signal(''), refresh: () => Promise.resolve() };
@@ -393,4 +393,22 @@ test('a row\'s ⋯ or a hold on it opens the agent\'s menu; so does a hold on an
   const card = harness.getByRole(root, 'group', { name: 'payments-fix is asking' });
   await hold(card);
   assert.deepEqual([calls.at(-1)[0], calls.at(-1)[1].agentId], ['agentMenu', ASKER]);
+});
+
+// Active's head: ＋ Agent opens the short spawn sheet (no group: the
+// shell's spawnAgent), beside All agents ›; a node with no group to spawn
+// into has none.
+test('Active\'s head has ＋ Agent beside All agents ›', async (t) => {
+  const { root: c, calls, harness } = await setup(t);
+  const add = c.querySelector('[data-agent-add]');
+  assert.equal(add.textContent, '＋ Agent');
+  assert.equal(add.getAttribute('aria-label'), 'New agent');
+  assert.equal(add.nextElementSibling.textContent, 'All agents ›');
+  await harness.act(() => add.click());
+  assert.deepEqual(calls.at(-1), ['spawnAgent', '']);
+});
+
+test('no group to spawn into, no ＋ Agent', async (t) => {
+  const { root: c } = await setup(t, { ...SNAPSHOT, groups: (SNAPSHOT.groups || []).map((g) => ({ ...g, archived: true })) });
+  assert.equal(c.querySelector('[data-agent-add]'), null);
 });

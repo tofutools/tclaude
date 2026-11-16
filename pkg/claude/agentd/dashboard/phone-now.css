@@ -80,6 +80,10 @@
 :root[data-layout="phone"] .phone-section-head-more { align-items: center; gap: 12px; }
 :root[data-layout="phone"] .phone-section-head-more .phone-section-fold { flex: 1; min-width: 0; }
 :root[data-layout="phone"] .phone-section-head-more > .phone-link { flex: none; min-height: var(--phone-tap); margin: -6px 0; letter-spacing: normal; text-transform: none; }
+/* A head with two links (Active's ＋ Agent and All agents ›), together on
+   the right. */
+:root[data-layout="phone"] .phone-section-links { display: flex; align-items: baseline; gap: 14px; }
+:root[data-layout="phone"] .phone-section-links > .phone-link { letter-spacing: normal; text-transform: none; }
 :root[data-layout="phone"] .phone-shell-menu .phone-menu { margin-top: 6px; }
 /* Show all / Only the recent ones, under Now's rows of agents. */
 :root[data-layout="phone"] .phone-now-all {

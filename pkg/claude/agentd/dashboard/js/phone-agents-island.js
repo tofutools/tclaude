@@ -95,6 +95,18 @@ function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kid
   </li>`;
 }
 
+// openSpawnSheet opens the short spawn sheet on group ('' for the group
+// list's first), or, on a peer's page (remote-node.js), which spawns through
+// its own route and shape, the desktop form (remoteSpawn). The Agents top
+// bar's ＋, a group header's ＋ Agent, a group page's ＋ Spawn and Now's
+// ＋ Agent all open it.
+export function openSpawnSheet({ state, group = '', fetchImpl = globalThis.fetch, openFull, remoteSpawn }) {
+  // A peer's form needs a group to spawn into: with none given, the first
+  // the sheet would have started on.
+  if (globalThis.__tclaudeRemoteNode?.id) return remoteSpawn(group || spawnChoices(state.snapshot.peek?.() ?? state.snapshot.value).groups[0]?.name || '');
+  return openPhoneSheet({ label: 'New agent', Body: SpawnSheet, props: { state, group, fetchImpl, openFull } });
+}
+
 // SpawnSheet spawns an agent the short way: a group, a profile (the group's
 // default unless another is picked), a prompt and maybe a name. Everything
 // else is the desktop form's, one tap away.
@@ -259,7 +271,7 @@ const Chevron = () => html`<svg class="phone-agents-chev-icon" viewBox="0 0 16 1
 // a 44px zone left of the name, folds it; the name opens its page (the
 // agents in no group have no page: their name folds them too). A group with
 // nothing to fold has no caret. Under it, folded too, its state summary.
-function GroupHead({ node, folded, onFold, onOpen }) {
+function GroupHead({ node, folded, onFold, onOpen, onSpawn }) {
   const canFold = node.total > 0 || (node.children || []).length > 0;
   const words = `${node.name}, ${node.live} of ${node.total} online${node.summary.length ? `: ${summaryText(node)}` : ''}${node.empty ? ', empty' : ''}${node.archived ? ', archived' : ''}`;
   const name = html`<span class="phone-agents-name">${node.name}</span><span class="phone-agents-count">${node.live}/${node.total}</span>
@@ -273,6 +285,8 @@ function GroupHead({ node, folded, onFold, onOpen }) {
       ? html`<button data-ui-exempt type="button" class="phone-agents-fold" aria-label=${`${words}. Open its page`} onClick=${onOpen}>${name}</button>`
       : html`<button data-ui-exempt type="button" class="phone-agents-fold" aria-expanded=${folded ? 'false' : 'true'}
           aria-label=${`${words}. ${folded ? 'Unfold' : 'Fold'}`} onClick=${onFold}>${name}</button>`}
+    ${node.group && !node.archived && onSpawn && html`<button data-ui-exempt type="button" class="phone-link phone-agents-spawn-link" data-agent-add
+      aria-label=${`New agent in ${node.name}`} aria-haspopup="dialog" onClick=${() => onSpawn(node.name)}>＋ Agent</button>`}
     ${node.group && !node.archived && html`<button data-ui-exempt type="button" class="phone-link phone-agents-board"
       aria-label=${`${node.name}'s board`} onClick=${() => openBoardGroup(node.name)}>Board ›</button>`}
   </h2>
@@ -295,7 +309,7 @@ function GroupSection({ node, fold, prefs, refold, list }) {
   const children = node.children || [];
   return html`<div class=${`phone-section phone-agents-node${folded ? ' phone-agents-folded' : ''}${node.dim ? ' phone-agents-dim' : ''}${node.empty ? ' phone-agents-empty' : ''}`}
     role="group" aria-label=${node.name}>
-    <${GroupHead} node=${node} folded=${folded} onFold=${flip} onOpen=${() => list.open(node.name)} />
+    <${GroupHead} node=${node} folded=${folded} onFold=${flip} onOpen=${() => list.open(node.name)} onSpawn=${list.spawn} />
     ${!folded && node.total > 0 && html`<${AgentList} g=${node} isSteward=${list.isSteward} onTap=${list.tap(node)} onMore=${list.more(node)}
       found=${list.found?.group === node.key ? list.found.key : null} />`}
     ${!folded && children.length > 0 && html`<div class="phone-agents-sub">
@@ -379,12 +393,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   const picked = (agentsFilter.value || []).filter((key) => tabs.some((t) => t.key === key && key !== ALL));
   const onToggle = (key) => { agentsFilter.value = toggleFilter(picked, key); };
   const only = picked.length === 1 ? tabs.find((t) => t.key === picked[0] && t.key.startsWith('g:')) : null;
-  // A peer's page (remote-node.js) spawns through its own route and shape,
-  // which the desktop form knows; the short sheet is this node's.
-  const spawn = (group) => (globalThis.__tclaudeRemoteNode?.id ? actions.spawn(group) : openPhoneSheet({
-    label: 'New agent', Body: SpawnSheet,
-    props: { state, group, fetchImpl, openFull: (g, typed) => actions.spawn(g, typed) },
-  }));
+  const spawn = (group) => openSpawnSheet({ state, group, fetchImpl, openFull: (g, typed) => actions.spawn(g, typed), remoteSpawn: actions.spawn });
   const changed = !atDefaults(settings);
   const openView = () => openPhoneSheet({ label: 'View', Body: ViewSheet, props: { prefs, onChange: refold } });
   const page = snapshot && opened.length ? groupPage(snapshot, opened.at(-1), order) : null;
@@ -436,7 +445,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
     else if (row.waking) more(g)(row);
     else actions.rowAction('dot-toggle', row);
   };
-  const list = { isSteward, tap, more, open, found };
+  const list = { isSteward, tap, more, open, found, spawn };
   if (page) return html`<${GroupPage} key=${page.name} page=${page} actions=${actions} list=${list} onOpen=${open} spawn=${spawn} snapshot=${snapshot} />`;
   const none = !(snapshot.groups || []).length && !(snapshot.ungrouped || []).length;
   const empty = none ? 'No groups yet. Make one on the desktop.' : 'Nothing to show here. View (the sliders above) shows more.';
