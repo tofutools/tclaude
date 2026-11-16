@@ -44,6 +44,7 @@ import { openBoardGroup } from './phone-board.js';
 import { Button } from './ui-components.js';
 import { shellToast } from './shell-state.js';
 import { agentFocus, doneAgentFocus } from './agent-route.js';
+import { groupShellOffer, openGroupShell } from './phone-open-shell.js';
 
 // FOUND_MS is how long a found row glows (phone-agents.css
 // .phone-agent-found): long enough to spot it after the scroll.
@@ -273,7 +274,7 @@ function SubgroupCard({ node, onOpen }) {
 // (through the desktop's handlers, so its confirmations), its subgroups, then
 // its members as the lead/worker tree. An archived group refuses changes, so
 // its card offers only its board and mail.
-export function GroupPage({ page, actions, list, onOpen, spawn }) {
+export function GroupPage({ page, actions, list, onOpen, spawn, snapshot = null, openShell = openGroupShell }) {
   const offline = page.total - page.live;
   const name = page.name;
   const buttons = page.archived ? [] : [
@@ -285,6 +286,9 @@ export function GroupPage({ page, actions, list, onOpen, spawn }) {
     !page.archived && { key: 'board', label: 'Board ›', onClick: () => openBoardGroup(name) },
     { key: 'mail', label: 'Mail ›', onClick: () => actions.groupAction('view-group-messages', name) },
   ].filter(Boolean);
+  // A shell of the operator's own in the group's default directory; greyed,
+  // with why, where it has none.
+  const shell = groupShellOffer(snapshot, { ...page.group, name, archived: page.archived });
   return html`<div class="phone-agents phone-group-page">
     ${page.crumbs.length > 1 && html`<div class="phone-agents-crumbs" role="navigation" aria-label="Where this group sits">${page.crumbs.map((crumb, i) => (i === page.crumbs.length - 1
       ? html`<b key=${crumb} aria-current="page">${crumb}</b>`
@@ -294,6 +298,11 @@ export function GroupPage({ page, actions, list, onOpen, spawn }) {
       <${Summary} g=${page} />
       ${buttons.length > 0 && html`<${ButtonRow} buttons=${buttons} />`}
       <${ButtonRow} buttons=${links} />
+      ${shell && html`<${ButtonRow} class="phone-group-shell" buttons=${[{
+        key: 'shell', label: '›_ Shell', disabled: !shell.dir, title: shell.dir ? `A shell in ${shell.dir}` : shell.why,
+        ariaLabel: shell.dir ? `Open a shell in ${shell.dir}` : 'Shell: this group has no default directory', onClick: () => openShell(name),
+      }]} />
+        <p class="phone-group-shell-where" data-group-shell=${shell.dir ? 'dir' : 'none'}>${shell.dir ? `In ${shell.dir}` : shell.why}</p>`}
     <//>
     <${Section} title="Subgroups" count=${page.children.length || null}>
       ${page.children.length
@@ -382,7 +391,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
     else actions.rowAction('dot-toggle', row);
   };
   const list = { isSteward, tap, more, open, found };
-  if (page) return html`<${GroupPage} key=${page.name} page=${page} actions=${actions} list=${list} onOpen=${open} spawn=${spawn} />`;
+  if (page) return html`<${GroupPage} key=${page.name} page=${page} actions=${actions} list=${list} onOpen=${open} spawn=${spawn} snapshot=${snapshot} />`;
   const pick = (key) => {
     if (key === ALL_GROUPS) prefs.setItem(VIEW_PREF, ALL_GROUPS); else prefs.removeItem(VIEW_PREF);
     refold();

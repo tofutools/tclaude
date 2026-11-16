@@ -11,7 +11,9 @@
 //   Session  Open in Claude app ↗ (or Turn on Remote Access & open,
 //            claude-app.js), Compact…, Restart…, Shut down… (left out while
 //            it is offline, with a line saying why)
-//   Agent    Rename…, Reincarnate…, Grant sudo…, Copy name, Open PR #N ›
+//   Agent    Shell here (and Shell in its launch directory, when it was
+//            started elsewhere: phone-open-shell.js), Rename…, Reincarnate…,
+//            Grant sudo…, Copy name, Open PR #N ›
 //   last     Retire…, in red
 //
 // The order never changes with the agent's state, so a thumb finds an entry
@@ -30,6 +32,7 @@ import { agentGroups, findRow } from './phone-agents-model.js';
 import { StatePill } from './phone-ui.js';
 import { harnessCanCompact, harnessCanRemoteControl } from './helpers.js';
 import { claudeAppOffer, pageCanToggleRemote } from './claude-app.js';
+import { agentShellEntries, openAgentShell } from './phone-open-shell.js';
 
 const html = htm.bind(h);
 
@@ -84,6 +87,7 @@ export function menuModel(row, group, snapshot, { here = false, selectText = fal
   ] : null;
   const runsHere = !row.member?.external_steward;
   const agent = [
+    ...agentShellEntries(snapshot, row, group?.group ? group.name : ''),
     ...(group?.group ? [{ key: 'rename', label: 'Rename…' }] : []),
     ...(online && runsHere ? [{ key: 'reincarnate', label: 'Reincarnate…', sub: 'A fresh successor with the same identity' }] : []),
     ...(row.member?.agent_id ? [{ key: 'grant', label: 'Grant sudo…' }] : []),
@@ -111,6 +115,11 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
       return;
     }
     close();
+    const shell = model.agent.find((entry) => entry.key === key && entry.target);
+    if (shell) {
+      void (actions.openShell || openAgentShell)(shell, row.name);
+      return;
+    }
     const go = {
       terminal: () => actions.openTerminal(row),
       select: () => selectText?.(),
