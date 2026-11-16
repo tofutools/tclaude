@@ -1,19 +1,21 @@
 // claude-app.js -- "Open in Claude app ↗": jump from an agent to the same
 // session in Anthropic's Claude app, through Claude Code's Remote Access.
 //
-// The daemon reads the session link (https://claude.ai/code/…) from the
-// agent's /rc footer pill and puts it on the snapshot (state.
-// remote_control_url, remote_control_url.go). It is a universal link: a
-// plain tap on it opens the Claude app where it is installed, claude.ai in
-// the browser otherwise. A peer's page shows it for the agents the peer may
-// attach to.
+// Claude Code writes the session link (https://claude.ai/code/…) into the
+// agent's transcript each time Remote Access comes up; the daemon's
+// transcript follower records it on the launch's session row and the
+// snapshot carries it (state.remote_control_url, remote_control_url.go). It
+// is a universal link: a plain tap on it opens the Claude app where it is
+// installed, claude.ai in the browser otherwise. A peer's page shows it for
+// the agents the peer may attach to.
 //
 // Where no link is known yet, the operator's own page offers to get one:
-// "Turn on Remote Access & open" (or, when Remote Access is on but its link
-// was not read yet, the same Open entry) switches it on through the existing
-// remote-control route, asks the pane for the link until it shows, then
-// offers it: a toast with Open in Claude app ↗, a second tap. The second tap
-// is deliberate. A tab opened in the first tap and pointed at the link later
+// "Turn on Remote Access & open" (or, when Remote Access is on but no link
+// was recorded yet, the same Open entry) switches it on through the existing
+// remote-control route, then asks the daemon for the recorded link (intent
+// "link": no pane capture) until the follower has it, then offers it: a
+// toast with Open in Claude app ↗, a second tap. The second tap is
+// deliberate. A tab opened in the first tap and pointed at the link later
 // fails on phones: iOS suspends the page that would point it while that tab
 // is in front, and a universal link opens the app only from a tap, not from
 // a script's navigation. The menu shows the link itself from then on.
@@ -55,7 +57,7 @@ const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 export async function openInClaudeApp({
   conv, label = 'the agent', turnOn = false,
   fetchImpl = (...args) => globalThis.fetch(...args), notify = () => {},
-  win = globalThis.window, timeoutMs = 10_000, intervalMs = 1_000,
+  win = globalThis.window, timeoutMs = 30_000, intervalMs = 1_000,
   sleep = delay, now = () => Date.now(),
 }) {
   notify(turnOn ? `Turning on Remote Access for ${label}…` : `Finding ${label}'s Remote Access link…`);
@@ -74,7 +76,7 @@ export async function openInClaudeApp({
     if (turnOn) await call('on');
     const deadline = now() + timeoutMs;
     for (;;) {
-      const status = await call('status');
+      const status = await call('link');
       url = claudeAppURL({ remote_control_url: status.session_url });
       if (url || now() >= deadline) break;
       await sleep(intervalMs);

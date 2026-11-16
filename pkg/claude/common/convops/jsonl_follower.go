@@ -225,6 +225,15 @@ func (s *jsonlScanState) consumeLine(line []byte) bool {
 		}
 	}
 
+	// Remote Access came up (last-wins): Claude Code writes a system
+	// bridge_status record with the session link each time it does. There
+	// is no record for it going down.
+	if msg.Type == "system" && msg.Subtype == "bridge_status" && strings.HasPrefix(msg.URL, db.RCSessionURLPrefix) {
+		if ts := parseJSONLTimestamp(msg.Timestamp); !ts.IsZero() {
+			s.entry.RCSessionURL, s.entry.RCSessionURLAt = msg.URL, ts
+		}
+	}
+
 	// Custom title (last-wins) and summary (last-wins).
 	if msg.Type == "custom-title" && msg.CustomTitle != "" {
 		s.entry.CustomTitle = msg.CustomTitle

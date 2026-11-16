@@ -1593,7 +1593,7 @@ func dashboardAgentPRs(w http.ResponseWriter, r *http.Request, convID string) {
 // delegates to the shared /v1 handler under a synthetic human peer
 // (asDashboardHumanPeer) — clearing the agent.remote-control gate exactly
 // the way the rename / clone / reincarnate dashboard verbs clear theirs.
-// Body: {intent} — "on" | "off" | "toggle" | "status"; the merged handler
+// Body: {intent} — "on" | "off" | "toggle" | "status" | "link"; the merged handler
 // owns the toggle direction + the disable confirm-Enter, the UI only sends
 // intent. Codex (no Remote Access) is rejected by the handler's
 // CanRemoteControl gate; the UI also hides the control for it.
