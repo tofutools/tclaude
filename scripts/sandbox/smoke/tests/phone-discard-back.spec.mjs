@@ -28,15 +28,16 @@ const views = (page) => page.getByRole('navigation', { name: 'Views' });
 // The page behind: its path, and what the phone bar says it is.
 const behind = async (page) => ({ path: new URL(page.url()).pathname, bar: (await page.locator('.phone-bar-title').first().textContent()).trim() });
 
-// Back is the browser's: a popstate, and a moment for what it sets off (a
-// held form taking its step back) to land.
+// Back is the browser's: a popstate.
 async function back(page) {
   await page.evaluate(() => new Promise((resolve) => {
     addEventListener('popstate', () => resolve(), { once: true });
     history.back();
   }));
-  await page.waitForTimeout(250);
 }
+// stepTaken waits for the form, still up, to have its step back in the
+// address (?phone=N), which is what it does once Back is done with it.
+const stepTaken = (page) => expect.poll(() => new URL(page.url()).searchParams.get('phone') || '').not.toBe('');
 
 const sheet = (page) => page.locator('.phone-sheet[role=dialog]');
 const sheetAsk = (page) => sheet(page).getByText('Discard this message?');
@@ -125,6 +126,7 @@ for (const form of GUARDED) {
 
     await back(page);
     await expect(form.ask(page), 'Back asks').toBeVisible();
+    await stepTaken(page);
     await expect(form.form(page)).toBeVisible();
     expect(await behind(page), 'and the page behind stays').toEqual(before);
 
@@ -136,15 +138,19 @@ for (const form of GUARDED) {
     // Kept, the form took its step back: Back asks again, still in place.
     await back(page);
     await expect(form.ask(page), 'the next Back asks again').toBeVisible();
+    await stepTaken(page);
     expect(await behind(page)).toEqual(before);
-    // Back again while it asks keeps the draft (the sheet's rule) or leaves
-    // the question up (a dialog's); either way nothing behind moves.
+    // Back again while it asks is Keep (the sheet's rule; a dialog's
+    // question is a layer Back cancels), and nothing behind moves.
     await back(page);
-    expect(await behind(page), 'a Back while it asks moves nothing behind').toEqual(before);
+    await expect(form.ask(page), 'a Back while it asks keeps the form').toBeHidden();
     await expect(form.form(page)).toBeVisible();
-    if (!(await form.ask(page).isVisible())) await back(page);
+    await stepTaken(page);
+    expect(await behind(page), 'a Back while it asks moves nothing behind').toEqual(before);
 
+    await back(page);
     await expect(form.ask(page)).toBeVisible();
+    await stepTaken(page);
     await form.discard(page);
     await expect(form.form(page), 'discarded, the form closes').toBeHidden();
     expect(await behind(page), 'and the page behind is where it was').toEqual(before);
@@ -185,6 +191,7 @@ for (const form of UNGUARDED) {
     const before = await behind(page);
     await back(page);
     await expect(sheet(page)).toBeHidden();
+    await expect.poll(() => new URL(page.url()).searchParams.get('phone') || '').toBe('');
     expect(await behind(page)).toEqual(before);
     expect(errors).toEqual([]);
   });

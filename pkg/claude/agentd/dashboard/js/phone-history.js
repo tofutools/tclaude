@@ -129,9 +129,14 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
       } finally {
         restoring = false;
       }
-      // A held sheet stays on screen, so it takes its entry back, once this
-      // restore is done: the next Back asks again.
-      if (held) setTimeout(() => { closing -= 1; announceOverlay({ doc }); }, 0);
+      // A held sheet stays on screen, so it takes its entry back once this
+      // restore is done. It stops counting as closing as soon as the router
+      // has corrected the entry Back landed on (synchronously, after this
+      // restore), so a further Back finds it up and asks it again.
+      if (held) {
+        queueMicrotask(() => { closing -= 1; });
+        setTimeout(() => announceOverlay({ doc }), 0);
+      }
     },
   });
   const unView = registerOverlayRoute('own', {
