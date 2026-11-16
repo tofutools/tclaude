@@ -1488,6 +1488,11 @@ test('a touch pinch sets the font once it rests; named keys and the soft keyboar
   });
   const term = fakes.terminal();
   assert.equal(term.textarea.inputMode, 'none', 'no on-screen keyboard until asked for');
+  // A phone keyboard's word help is off (tk_087f0183): a suggestion or an
+  // autocorrect replacing a word made xterm send garbage.
+  const quiet = (textarea) => Object.fromEntries(['autocomplete', 'autocorrect', 'autocapitalize', 'spellcheck'].map((name) => [name, textarea.getAttribute(name)]));
+  const QUIET = { autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false' };
+  assert.deepEqual(quiet(term.textarea), QUIET);
   await widget.connect();
   const socket = fakes.sockets[0];
   socket.open();
@@ -1522,6 +1527,11 @@ test('a touch pinch sets the font once it rests; named keys and the soft keyboar
   delete harness.document.activeElement;
   assert.equal(term.textarea.inputMode, 'text');
   assert.deepEqual(order, ['blur', 'focus']);
+  // A textarea xterm made anew is quieted at the next keyboard switch.
+  const fresh = harness.document.createElement('textarea');
+  term.textarea = fresh;
+  widget.setSoftKeyboard(false);
+  assert.deepEqual(quiet(fresh), QUIET);
   widget.dispose();
   assert.equal(widget.key('1'), false, 'a disposed terminal sends nothing');
 });

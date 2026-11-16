@@ -288,6 +288,23 @@ function clampFont(size) {
   return Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, Math.round(size * 2) / 2));
 }
 
+// TEXTAREA_QUIET turns a phone keyboard's word help off on xterm's hidden
+// textarea (tk_087f0183): suggestions, autocorrect, capitals and spell
+// check. A keyboard that replaces a word there makes xterm send the
+// textarea's whole contents, or one DEL for a longer delete, into the
+// terminal. With them off, each key is a key.
+export const TEXTAREA_QUIET = Object.freeze({ autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false' });
+
+// quietTextarea sets TEXTAREA_QUIET on textarea. It runs when the terminal
+// opens, and again with every soft keyboard switch, in case xterm made the
+// textarea anew.
+export function quietTextarea(textarea) {
+  if (!textarea?.setAttribute) return;
+  for (const [name, value] of Object.entries(TEXTAREA_QUIET)) {
+    if (textarea.getAttribute?.(name) !== value) textarea.setAttribute(name, value);
+  }
+}
+
 // mountTerminalWidget is the opaque lifecycle boundary between component-owned
 // terminal chrome and xterm's imperative subtree. The caller owns `host` but
 // must never render children into it: xterm alone creates and mutates those
@@ -463,6 +480,7 @@ export function mountTerminalWidget({
   const fitAddon = new FitAddonCtor();
   term.loadAddon(fitAddon);
   term.open(host);
+  quietTextarea(term.textarea);
   if (remote) host.classList?.add('term-remote');
   reportFont();
 
@@ -764,6 +782,7 @@ export function mountTerminalWidget({
   function setSoftKeyboard(on) {
     const textarea = term.textarea;
     if (disposed || !textarea) return;
+    quietTextarea(textarea);
     // A browser raises its keyboard when an element takes focus, not when
     // inputmode changes under focus: a terminal already focused (tapped)
     // lets go first.
