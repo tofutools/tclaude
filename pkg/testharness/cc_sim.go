@@ -117,6 +117,9 @@ type CCSim struct {
 	remoteOn   bool
 	rcMenuOpen bool
 	rcMenuPos  int
+	// rcBridges counts the times Remote Access came up: each writes a
+	// bridge_status record with a new link (…-<n>).
+	rcBridges int
 	// rcFailed models Claude Code's FAILED remote-control footer pill (a red
 	// "/rc" shown when the connection couldn't be established). Independent of
 	// remoteOn: a pane can be armed-and-reachable (remoteOn && !rcFailed) or
@@ -727,8 +730,19 @@ func (c *CCSim) installDefaultHandlers() {
 				c.rcMenuOpen = true
 				c.rcMenuPos = 0
 			} else {
-				// Toggling while OFF turns remote access on, no confirm.
+				// Toggling while OFF turns remote access on, no confirm, and
+				// (as real Claude Code does) announces it in the transcript:
+				// a system bridge_status record with the session link, a new
+				// one each time it comes up.
 				c.remoteOn = true
+				c.rcBridges++
+				link := fmt.Sprintf("https://claude.ai/code/session_%s-%d-%d", strings.ReplaceAll(c.ConvID, "-", ""), c.rcBridges, time.Now().UnixNano())
+				_ = c.appendLineLocked(map[string]any{
+					"type": "system", "subtype": "bridge_status", "url": link,
+					"content":   "/remote-control is active · Continue here, on your phone, or at " + link,
+					"isMeta":    false,
+					"timestamp": now(), "cwd": c.Cwd, "sessionId": c.ConvID,
+				})
 			}
 			c.mu.Unlock()
 			return true

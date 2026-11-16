@@ -34,7 +34,7 @@ function fakeWorld({ statuses, onFails = false }) {
     const { intent } = JSON.parse(init.body);
     calls.push(intent);
     if (intent === 'on' && onFails) return { ok: false, status: 503, text: async () => 'no tmux', json: async () => ({}) };
-    const body = intent === 'status' ? statuses[Math.min(i++, statuses.length - 1)] : { action: 'enabled' };
+    const body = intent === 'link' ? statuses[Math.min(i++, statuses.length - 1)] : { action: 'enabled' };
     return { ok: true, status: 200, text: async () => '', json: async () => body };
   };
   let clock = 0;
@@ -52,7 +52,7 @@ test('turn on & open: switches it on, waits for the link, and a tap on the toast
   const w = fakeWorld({ statuses: [{}, {}, { session_url: LINK }] });
   const result = await openInClaudeApp({ ...w.opts, turnOn: true });
   assert.deepEqual(result, { ok: true, url: LINK });
-  assert.deepEqual(w.calls, ['on', 'status', 'status', 'status']);
+  assert.deepEqual(w.calls, ['on', 'link', 'link', 'link']);
   assert.match(w.toasts[0][0], /Turning on Remote Access for cc/);
   assert.equal(w.opened.length, 0, 'nothing opens without a tap: a universal link needs one');
   const [message, error, options] = w.toasts.at(-1);
@@ -66,7 +66,7 @@ test('turn on & open: switches it on, waits for the link, and a tap on the toast
 test('on but not read yet: no switch, just the read', async () => {
   const w = fakeWorld({ statuses: [{ session_url: LINK }] });
   assert.deepEqual(await openInClaudeApp({ ...w.opts }), { ok: true, url: LINK });
-  assert.deepEqual(w.calls, ['status']);
+  assert.deepEqual(w.calls, ['link']);
   assert.match(w.toasts[0][0], /Finding cc's Remote Access link/);
 });
 
@@ -78,7 +78,7 @@ test('no link within the wait, or a refused switch: a toast says so', async () =
   assert.equal(error, true);
   assert.equal(options, undefined);
   assert.match(message, /Remote Access did not come up for cc within 3 s/);
-  assert.ok(w.calls.filter((c) => c === 'status').length <= 4, 'it stops at the deadline');
+  assert.ok(w.calls.filter((c) => c === 'link').length <= 4, 'it stops at the deadline');
 
   const failing = fakeWorld({ statuses: [{}], onFails: true });
   await openInClaudeApp({ ...failing.opts, turnOn: true });

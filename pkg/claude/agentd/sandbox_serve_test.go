@@ -70,6 +70,13 @@ func TestSandboxServe(t *testing.T) {
 		}
 	}
 	mux, page := seedDocFixture(t, fixture)
+	// TCLAUDE_SANDBOX_CONV_MONITOR=1 runs the daemon's transcript monitor, as
+	// a real daemon does, so what a simulated agent writes to its transcript
+	// (a Remote Access link) reaches the dashboard. Opt-in: the fixtures seed
+	// titles their transcripts do not carry, which its first scan replaces.
+	if os.Getenv("TCLAUDE_SANDBOX_CONV_MONITOR") != "" {
+		agentd.StartConvMonitorForTest(t, 200*time.Millisecond)
+	}
 	if os.Getenv("TCLAUDE_SANDBOX_SWIPE_TUI") != "" {
 		sandboxSwipeTUI(t)
 	} else if os.Getenv("TCLAUDE_SANDBOX_LIVE_SHELL") != "" {

@@ -47,8 +47,12 @@ type SessionRow struct {
 	MonitorsJSON   string
 	AutoRegistered bool
 	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastHook       time.Time
+	// RCSessionURL is the Claude Code Remote Access link this launch last
+	// announced in its transcript (RecordSessionRCLink), or "". It gives
+	// control of the session: never log it.
+	RCSessionURL string
+	UpdatedAt    time.Time
+	LastHook     time.Time
 	// Harness is the coding tool this session belongs to ("claude",
 	// "codex", …). Empty is coalesced to DefaultHarness ("claude") on
 	// write (schema v56).
@@ -310,9 +314,9 @@ func saveSession(s *SessionRow, preserveLaunchHook bool) error {
 	_, err = tx.Exec(`INSERT INTO sessions
 		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
 		 exit_callback_generation, exit_callback_token_hash, exit_callback_pane_id, exit_callback_used_at,
-		 exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at, exit_launch_gate_state)
+		 exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at, exit_launch_gate_state, rc_session_url_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`,
-		 ?, '', '', NULL, '', '', '', NULL, ?)
+		 ?, '', '', NULL, '', '', '', NULL, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
 			pid = excluded.pid,
@@ -348,11 +352,17 @@ func saveSession(s *SessionRow, preserveLaunchHook bool) error {
 			exit_intent_event_id = CASE WHEN excluded.exit_callback_generation <> '' THEN '' ELSE sessions.exit_intent_event_id END,
 			exit_intent_generation = CASE WHEN excluded.exit_callback_generation <> '' THEN '' ELSE sessions.exit_intent_generation END,
 			exit_intent_at = CASE WHEN excluded.exit_callback_generation <> '' THEN NULL ELSE sessions.exit_intent_at END,
-			exit_launch_gate_state = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_launch_gate_state ELSE sessions.exit_launch_gate_state END`,
+			exit_launch_gate_state = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_launch_gate_state ELSE sessions.exit_launch_gate_state END,
+			-- A launch (a resume reuses its row) starts without a Remote Access
+			-- link: the last launch's is dead, and only a transcript record
+			-- written after this launch started is this launch's link
+			-- (RecordSessionRCLink).
+			rc_session_url = CASE WHEN excluded.exit_callback_generation <> '' THEN '' ELSE sessions.rc_session_url END,
+			rc_session_url_at = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.rc_session_url_at ELSE sessions.rc_session_url_at END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, s.BgShellsJSON, s.MonitorsJSON, boolToInt(s.AutoRegistered),
 		dbTime(s.CreatedAt), dbTime(s.UpdatedAt), nullableDBTime(s.LastHook), harness, s.HarnessBuiltinMode, sandboxImplementation, s.HarnessBuiltinModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
-		s.ExitLaunchGeneration, s.ExitLaunchGateState)
+		s.ExitLaunchGeneration, s.ExitLaunchGateState, s.CreatedAt.UnixNano())
 	if err != nil {
 		return err
 	}
@@ -883,7 +893,7 @@ func scanSession(row *sql.Row) (*SessionRow, error) {
 }
 
 // sessionColumns is the sessions column list scanSessionRow reads, in order.
-const sessionColumns = `id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance`
+const sessionColumns = `id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance, rc_session_url`
 
 // scanSessionRow scans one session row off a *sql.Row or *sql.Rows. It is the
 // shared per-row body of scanSession / scanSessions, and lets best-effort
@@ -895,7 +905,7 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var createdAt, updatedAt, lastHook dbTimestamp
 	var effectiveSandbox, contextFeatures string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdAt, &updatedAt, &lastHook, &row.Harness, &row.HarnessBuiltinMode, &row.SandboxImplementation, &row.HarnessBuiltinModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &peerMessaging, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdAt, &updatedAt, &lastHook, &row.Harness, &row.HarnessBuiltinMode, &row.SandboxImplementation, &row.HarnessBuiltinModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &peerMessaging, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance, &row.RCSessionURL); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0
@@ -1855,6 +1865,65 @@ func SetSessionMonitorsIfUnchanged(sessionID, prev, next string) (bool, error) {
 func SetSessionRemoteControl(sessionID string, on bool) error {
 	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{RemoteControl: true},
 		`UPDATE sessions SET remote_control = ? WHERE id = ?`, boolToInt(on), sessionID)
+}
+
+// RCSessionURLPrefix is the only origin a Remote Access link is kept on.
+const RCSessionURLPrefix = "https://claude.ai/code/"
+
+// RecordSessionRCLink records the Remote Access link convID's transcript
+// announced at time at. Each session row's rc_session_url_at holds the last
+// link's time, or when its launch started (saveSession), or its last switch
+// (ClearSessionRCLink), whichever is latest; the link lands on every row of
+// convID whose time is older than the record. So a record from before a
+// launch, or before a switch, is never that launch's link, and a re-read
+// writes nothing. A dead row may get it too, harmlessly: only a live
+// session's link is shown (rcSessionURLFor). It reports whether it wrote.
+// A link not on RCSessionURLPrefix is ignored.
+//
+// The record is also free evidence that Remote Access is on: the conv's
+// current row, if it took the link, has its tracked flag healed to on.
+func RecordSessionRCLink(convID, url string, at time.Time) (bool, error) {
+	if convID == "" || at.IsZero() || !strings.HasPrefix(url, RCSessionURLPrefix) {
+		return false, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := db.Exec(`UPDATE sessions SET rc_session_url = ?, rc_session_url_at = ?
+		WHERE conv_id = ? AND rc_session_url_at < ?`, url, at.UnixNano(), convID, at.UnixNano())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return false, err
+	}
+	sess, err := FindSessionByConvID(convID)
+	if err != nil || sess == nil {
+		return true, err
+	}
+	if sess.RCSessionURL == url && !sess.RemoteControl {
+		if err := SetSessionRemoteControl(sess.ID, true); err != nil {
+			return true, err
+		}
+	}
+	return true, nil
+}
+
+// ClearSessionRCLink drops a session's Remote Access link: switching
+// Remote Access either way ends it (on starts a new one). It stamps the
+// link's time to now, so only a record written after the switch brings a
+// link back: neither a re-read of the transcript nor a record the follower
+// reaches late, from before the switch.
+func ClearSessionRCLink(sessionID string) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET rc_session_url = '', rc_session_url_at = MAX(rc_session_url_at, ?) WHERE id = ?`,
+		time.Now().UnixNano(), sessionID)
+	return err
 }
 
 // RemoteControlForConv reports durable agent intent, or the conversation

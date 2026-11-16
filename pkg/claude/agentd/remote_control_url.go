@@ -1,72 +1,47 @@
 package agentd
 
 import (
-	"strings"
-	"sync"
+	"log/slog"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// The Claude Code Remote Access session link (https://claude.ai/code/…) an
-// agent's /rc footer pill carries, as last read from its pane. The dashboard
-// offers it as "Open in Claude app ↗": on a phone with the Claude app, the
-// universal link opens the same session there.
+// The Claude Code Remote Access session link (https://claude.ai/code/…) of an
+// agent's current launch. The dashboard offers it as "Open in Claude app ↗":
+// on a phone with the Claude app, the universal link opens the same session
+// there.
 //
-// It is remembered, never polled: reading it forks a tmux capture
-// (observeRemoteControl), so only the remote-control status and toggle calls
-// read it, and the snapshot shows what they last saw. The dashboard asks for
-// a fresh read (intent "status") when a menu that would offer the link opens
-// and none is known yet.
+// Claude Code writes a bridge_status record carrying the link into its
+// transcript each time Remote Access comes up. The transcript follower
+// (convops) reads it and records it on the launch's session row
+// (db.RecordSessionRCLink), so it is known without reading the pane and
+// survives a daemon restart (tk_5ef87574). Switching Remote Access either
+// way clears it (db.ClearSessionRCLink): on starts a new session, whose new
+// record the follower picks up. Nothing records Remote Access going down, so
+// a /remote-control off typed in the pane leaves the link until the next
+// launch (an accepted trade-off): the tracked flag still gates it.
 //
 // The link gives control of the session (for whoever is signed in to that
 // Claude account), so it is treated like an interactive terminal: never
 // logged, in the local snapshot for the operator, and in a peer's projection
 // only for agents the peer may attach to (peer_snapshot.go).
 
-type rcSessionLink struct {
-	// session is the session row it was read from. Each launch (spawn,
-	// resume, restart) is a new row, whose Claude Code has a new link, while
-	// a resume may reuse the tmux session's name.
-	session string
-	url     string
+// rcSessionURLFor returns the link for a live session row whose Remote Access
+// is (best known) on, recorded from that same launch; else "".
+func rcSessionURLFor(sess *db.SessionRow, alive bool) string {
+	if sess == nil || !alive || !sess.RemoteControl {
+		return ""
+	}
+	return sess.RCSessionURL
 }
 
-var rcSessionLinks = struct {
-	sync.Mutex
-	byConv map[string]rcSessionLink
-}{byConv: map[string]rcSessionLink{}}
-
-// rememberRCSessionURL records the link a confident "armed" read of sess's
-// pane found. Only the exact claude.ai/code origin is kept; an armed read
-// with no link keeps what was known for the same session.
-func rememberRCSessionURL(sess *db.SessionRow, url string) {
-	if sess == nil || sess.ConvID == "" || sess.ID == "" || !strings.HasPrefix(url, rcSessionURLPrefix) {
+// clearRCSessionURL drops sess's link before Remote Access is switched.
+func clearRCSessionURL(sess *db.SessionRow) {
+	if sess == nil || sess.ID == "" {
 		return
 	}
-	rcSessionLinks.Lock()
-	defer rcSessionLinks.Unlock()
-	rcSessionLinks.byConv[sess.ConvID] = rcSessionLink{session: sess.ID, url: url}
-}
-
-// forgetRCSessionURL drops conv's link: its pane read "off", or Remote Access
-// was switched (switching it on starts a new session with a new link).
-func forgetRCSessionURL(convID string) {
-	rcSessionLinks.Lock()
-	defer rcSessionLinks.Unlock()
-	delete(rcSessionLinks.byConv, convID)
-}
-
-// rcSessionURLFor returns the link for a live session row whose Remote Access
-// is (best known) on, read from that same session; else "".
-func rcSessionURLFor(sess *db.SessionRow, alive bool) string {
-	if sess == nil || !alive || !sess.RemoteControl || sess.ID == "" {
-		return ""
+	if err := db.ClearSessionRCLink(sess.ID); err != nil {
+		slog.Warn("remote-control: clearing the session link failed", "conv_id", sess.ConvID, "session_id", sess.ID, "error", err)
 	}
-	rcSessionLinks.Lock()
-	defer rcSessionLinks.Unlock()
-	link, ok := rcSessionLinks.byConv[sess.ConvID]
-	if !ok || link.session != sess.ID {
-		return ""
-	}
-	return link.url
+	sess.RCSessionURL = ""
 }

@@ -68,7 +68,7 @@ var remoteControlMenuStepDelay = 350 * time.Millisecond
 var remoteControlDisableMenuKeys = []string{"Up", "Up", "Enter"}
 
 // remoteControlResp is the JSON wire shape for the toggle endpoints. Action
-// is one of "enabled" | "disabled" | "noop" | "status"; RemoteControl is the
+// is one of "enabled" | "disabled" | "noop" | "status" | "link"; RemoteControl is the
 // resulting effective state. CallerConv is set only on a cross-agent call.
 type remoteControlResp struct {
 	ConvID     string `json:"conv_id"`
@@ -89,8 +89,9 @@ type remoteControlResp struct {
 	// Source records where RemoteControl came from: "pane" (observed from the
 	// live footer) or "tracked" (tclaude's best-known flag).
 	Source string `json:"source,omitempty"`
-	// SessionURL is the claude.ai/code link parsed from the footer pill's
-	// hyperlink when armed — i.e. where you actually connect. Best-effort.
+	// SessionURL is the claude.ai/code link this launch's transcript last
+	// announced (remote_control_url.go), while Remote Access is on — where
+	// you actually connect. Only on status and link answers.
 	SessionURL string `json:"session_url,omitempty"`
 }
 
@@ -196,10 +197,10 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		intent = "toggle"
 	}
 	switch intent {
-	case "on", "off", "toggle", "status":
+	case "on", "off", "toggle", "status", "link":
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			`intent must be one of "on", "off", "toggle", "status"`)
+			`intent must be one of "on", "off", "toggle", "status", "link"`)
 		return
 	}
 
@@ -216,7 +217,11 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 	// the /rc footer pill) and self-heal the tracked flag; without one we fall
 	// back to the last-known tracked value. This is the only readback path and
 	// it is on-demand only — never polled.
-	if intent == "status" {
+	//
+	// link: the same answer from what is recorded alone (the tracked flag and
+	// the link the transcript follower recorded), with no pane capture. The
+	// dashboard's "Open in Claude app" polls it while it waits for a link.
+	if intent == "status" || intent == "link" {
 		giveBackSudoUses(r)
 		tracked := false
 		if sess != nil {
@@ -224,33 +229,33 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		} else if rc, err := db.RemoteControlForConv(target); err == nil {
 			tracked = rc
 		}
-		resp := remoteControlResp{ConvID: target, RemoteControl: tracked, Action: "status", Source: "tracked"}
+		resp := remoteControlResp{ConvID: target, RemoteControl: tracked, Action: intent, Source: "tracked"}
 		if sess == nil {
 			resp.Note = "no live session; reporting last-known state"
-		} else {
+		} else if intent == "status" {
 			obs := observeRemoteControl(sess.TmuxSession + ":0.0")
 			resp.Observed = obs.state.String()
 			switch obs.state {
 			case rcSeenOn, rcSeenFailed:
 				resp.RemoteControl = true
 				resp.Source = "pane"
-				// The session link is this node's operator's: a peer acting
-				// under its own grant switches remote access, never reads it.
-				if peerActionFromRequest(r) == nil {
-					resp.SessionURL, resp.Note = obs.sessionURL, obs.note
-				}
-				rememberRCSessionURL(sess, obs.sessionURL)
+				resp.Note = obs.note
 				selfHealRemoteControl(sess, true)
 			case rcSeenOff:
 				resp.RemoteControl = false
 				resp.Source = "pane"
-				forgetRCSessionURL(sess.ConvID)
 				selfHealRemoteControl(sess, false)
 			case rcUnknown:
 				// Couldn't confirm from the pane — keep the tracked flag and
 				// explain why (e.g. pane too narrow to draw the pill).
 				resp.Note = obs.note
 			}
+		}
+		// The session link (recorded from the transcript, never the pane) is
+		// this node's operator's: a peer acting under its own grant switches
+		// remote access, never reads it.
+		if peerActionFromRequest(r) == nil {
+			resp.SessionURL = rcSessionURLFor(sess, sess != nil)
 		}
 		if caller != "" && caller != target {
 			resp.CallerConv = caller
@@ -269,16 +274,13 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 	// Pick the toggle DIRECTION from the live pane when we can read it
 	// confidently, so a drifted tracked flag (someone toggled in-pane) can't
 	// send the toggle the wrong way. Fall back to the tracked flag when the
-	// pane is unreadable. Self-heal as a side effect.
+	// pane is unreadable. Self-heal as a side effect. This one read per
+	// explicit switch is all the pane is read for: the link comes from the
+	// transcript (remote_control_url.go).
 	current := sess.RemoteControl
 	if obs := observeRemoteControl(sess.TmuxSession + ":0.0"); obs.state != rcUnknown {
 		current = obs.state.armed()
 		selfHealRemoteControl(sess, current)
-		if current {
-			rememberRCSessionURL(sess, obs.sessionURL)
-		} else {
-			forgetRCSessionURL(sess.ConvID)
-		}
 	}
 
 	var desired bool
@@ -308,8 +310,8 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 
 	disable := !desired
 	// Switching either way ends the session link: on starts a new session with
-	// a new link, which the next status read records.
-	forgetRCSessionURL(target)
+	// a new link, which the transcript follower records.
+	clearRCSessionURL(sess)
 	reason := slashReason("remote-control "+onOff(desired), caller, target)
 	injected, ok := deliverRemoteControl(target, h, disable, reason)
 	if !ok {

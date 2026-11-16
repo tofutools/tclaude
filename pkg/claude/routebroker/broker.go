@@ -494,9 +494,17 @@ func (b *Broker) getRouteLocked(id string) *routeState {
 
 func (b *Broker) serveSession(s *session, callerCtx context.Context) error {
 	defer b.wg.Done()
-	go s.watchAuthority()
+	// The authority watcher is part of the session: it must be gone before
+	// the session counts as done, so Close does not return while a check is
+	// still reading the authority's store.
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		s.watchAuthority()
+	}()
 	defer func() {
 		s.cancel()
+		<-watcherDone
 		b.detach(s)
 	}()
 

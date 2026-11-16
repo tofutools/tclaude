@@ -41,13 +41,13 @@ func TestRemoteControl_StatusObservesPaneAndSelfHeals(t *testing.T) {
 	require.False(t, tracked, "tracked flag is stale/off — it drifted from the pane")
 
 	// status now reads the pane, reports ON (the answer to "can I connect"),
-	// surfaces the claude.ai/code link, and self-heals the tracked flag.
+	// and self-heals the tracked flag. (The link comes from the transcript,
+	// not the pane: remote_control_url_flow_test.go.)
 	st = f.AsHuman().RemoteControl(conv, "status")
 	require.Equal(t, http.StatusOK, st.Code, "status; body=%s", st.Raw)
 	assert.True(t, st.RemoteControl, "status observes the armed pane, not the stale flag")
 	assert.Equal(t, "on", st.Observed)
 	assert.Equal(t, "pane", st.Source)
-	assert.Contains(t, st.SessionURL, "claude.ai/code/", "armed pill carries the connect link")
 
 	healed, err := db.RemoteControlForConv(conv)
 	require.NoError(t, err)

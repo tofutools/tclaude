@@ -109,6 +109,11 @@ that is still running gets TERM like the server. The peer's log is kept as
   start the sandbox with `TCLAUDE_SANDBOX_LIVE_SHELL=1`: every terminal then
   attaches to one real interactive shell, in a tmux server of the sandbox's
   own (never the real one).
+- **What agents write to their transcripts.** The daemon's transcript monitor
+  is off by default (the fixtures seed titles their transcripts do not
+  carry, which its first scan replaces). `TCLAUDE_SANDBOX_CONV_MONITOR=1`
+  turns it on, so a Remote Access link a simulated agent announces reaches
+  the dashboard's "Open in Claude app".
 - **Performance captures.** A CPU capture needs a busy live daemon.
 
 ## The smoke tests

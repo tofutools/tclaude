@@ -90,6 +90,13 @@ type SessionEntry struct {
 	// parseJSONLSession scan and never persisted; ScanAndUpsertFile
 	// uses it to recover a session stuck 'working' on the dashboard.
 	LastTurnInterrupted bool `json:"-"`
+	// RCSessionURL and RCSessionURLAt are the Claude Code Remote Access link
+	// the transcript last announced (a system bridge_status record with a
+	// url on db.RCSessionURLPrefix) and that record's time; "" and zero when
+	// none. Last-wins. Not part of any wire form: the link gives control of
+	// the session, so it is never logged.
+	RCSessionURL   string    `json:"-"`
+	RCSessionURLAt time.Time `json:"-"`
 }
 
 // MarshalJSON keeps the repository-owned JSON boundary independent of the
@@ -487,6 +494,8 @@ type jsonlMessage struct {
 	GitBranch   string `json:"gitBranch"`
 	Summary     string `json:"summary"`     // For type="summary" messages
 	CustomTitle string `json:"customTitle"` // For type="custom-title" messages
+	Subtype     string `json:"subtype"`     // For type="system" messages
+	URL         string `json:"url"`         // A system bridge_status record's Remote Access link
 	Message     struct {
 		Role    string `json:"role"`
 		Content any    `json:"content"` // Can be string or array
@@ -818,6 +827,16 @@ func upsertScanResult(filePath, convID, projectDir string, info os.FileInfo, sca
 	// complete scan (a truncated branch set is partial).
 	if convIndexErr == nil && scanComplete {
 		_ = db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory)
+	}
+
+	// Remote Access came up (tk_5ef87574): put its link on the session row
+	// of this launch, where the dashboard's "Open in Claude app" reads it.
+	// RecordSessionRCLink keeps a record from before the launch, or one it
+	// already recorded, from writing, so a rescan writes nothing new.
+	if scanned.RCSessionURL != "" {
+		if _, err := db.RecordSessionRCLink(convID, scanned.RCSessionURL, scanned.RCSessionURLAt); err != nil {
+			slog.Warn("conv_index: failed to record the Remote Access link", "conv_id", convID, "error", err)
+		}
 	}
 
 	// When the .jsonl's last turn is a user-interrupt marker, the
