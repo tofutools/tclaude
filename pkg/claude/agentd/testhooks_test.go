@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	clconfig "github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/federation/client"
 	"net"
@@ -2950,3 +2951,7 @@ func WebTerminalTmuxFlagsForTest() string { return webTerminalTmuxFlags() }
 
 // DashboardIndexHTMLForTest is the dashboard page as agentd serves it.
 func DashboardIndexHTMLForTest() []byte { return dashboardIndexHTML }
+
+// DashboardManifestForTest is the web app manifest built for the icons in
+// fsys's pwa/ (dashboard_pwa.go).
+func DashboardManifestForTest(fsys fs.FS) []byte { return buildDashboardManifest(fsys) }

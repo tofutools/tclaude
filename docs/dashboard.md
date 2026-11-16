@@ -236,7 +236,7 @@ push notifications. Every start loads the dashboard from the node, as a
 browser tab does, so an installed app picks up a new version the same way; with
 no connection to the node it shows the browser's error page.
 
-The app's manifest (`/manifest.webmanifest`) and its icons (`/pwa/*.png`) are
+The app's manifest (`/manifest.webmanifest`) and its icons (under `/pwa/`) are
 served without a dashboard session, because the browser fetches them on its
 own, outside the page (to check that it can install it, and later to update
 it). They describe the app and hold nothing about the node; every other page,
@@ -245,6 +245,13 @@ dashboard still applies to them: the page requests the manifest with
 credentials, so a Cloudflare Access cookie goes along, and on the
 remote-access listener they need the client certificate and passphrase like
 everything else.
+
+Each icon's URL carries a hash of its content, so a changed icon after an
+upgrade is never served from an old cache (a CDN in front of a tunnel, the
+phone's own), and the manifest is fetched fresh every time. The phone still
+updates an installed app's icon on its own schedule: Android when Chrome next
+refreshes the installed app (it can take a day), or right away if you
+reinstall it.
 
 ### Terminals on a phone
 
