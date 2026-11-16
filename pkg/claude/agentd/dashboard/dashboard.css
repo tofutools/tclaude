@@ -18216,11 +18216,9 @@ body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176,
 .gm-start-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .gm-from { font: inherit; font-size: 12px; padding: 3px 10px; border: 1px solid #30363d; border-radius: 999px; background: #161b22; color: #c9d1d9; cursor: pointer; }
 .gm-from:hover:not(:disabled), .gm-from:focus-visible, .gm-from.on { border-color: #58a6ff; color: #e6edf3; outline: none; }
-.gm-from[data-mini-starter] { border-color: rgba(163, 113, 247, .55); color: #d2a8ff; }
 .gm-from:disabled { opacity: .5; cursor: progress; }
-/* Built-in ways of working (tk_d02b0f4c): the row above the starters, and their tag in the library list. */
-.gm-from[data-mini-builtin], .gm-from[data-mini-library-builtin] { border-color: rgba(88, 166, 255, .55); color: #a5d6ff; }
-.gm-from-tag { margin-left: 4px; font-size: 10px; padding: 0 5px; border-radius: 999px; background: rgba(88, 166, 255, .15); color: #8b949e; }
+/* Built-in ways of working (tk_d02b0f4c), first in the Start from row. */
+.gm-from[data-mini-builtin] { border-color: rgba(163, 113, 247, .55); color: #d2a8ff; }
 .gm-describe { margin: 0; }
 .gm-more { margin-right: auto; }
 .gp-start-scope { flex: none; }

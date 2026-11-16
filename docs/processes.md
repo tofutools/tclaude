@@ -26,7 +26,7 @@ reference for the format, the engine and the CLI.
 
 ## Built-in ways of working
 
-tclaude ships four processes in the binary:
+tclaude ships seven processes in the binary:
 
 | Id | Name | Steps |
 |---|---|---|
@@ -34,23 +34,30 @@ tclaude ships four processes in the binary:
 | `build-review-ship` | Build → review → ship | a developer builds and opens a PR, a reviewer who did not build it approves or sends it back, and the lead ships it |
 | `bug-fix` | Bug: reproduce → fix → verify | a tester reproduces the bug, a developer fixes it, the same tester verifies the fix, and the lead merges it |
 | `quick-change` | Quick change + one review | a developer makes the change, one other reviewer approves or sends it back, and the developer merges it |
+| `plan-fan-out` | Plan → fan out → integrate | the lead splits the task into three parts, three different developers build one each at the same time, and the lead integrates them |
+| `ask-me-first` | Ask me first | you give the go-ahead, a developer does it, and you accept it or send it back |
+| `check-fix` | Check → fix if red | good on a schedule: a tester runs the checks, and when they are red a developer fixes them and the same tester checks again |
 
 Each takes the `task` it is run for. Steps pick members by role (`planner`,
 `ux`, `dev`, `reviewer`, `tester`) and spawn one when the group has none. The
 lead's steps go to the group's lead (a member with the role `lead`, else an
-agent that owns the group) and wait when it has none. Running out of review
-rounds, or a performer choosing escalate, fails the run, so a board task it
-runs for is blocked with the reason (Plan → vet → build → review → merge keeps
-the operator's example, which cancels it). The run's overseer is the group's lead, as for any run (see
-[Oversight and escalation](#oversight-and-escalation)).
+agent that owns the group) and wait when it has none. Running out of rounds,
+or a performer choosing escalate, fails the run, so a board task it runs for
+is blocked with the reason; only your own stop or reject in Ask me first
+cancels one. Each names the group's lead as its overseer (`overseer: lead`),
+and a step stuck longer than its patience (an hour; two for building or
+fixing) raises a concern to it (see
+[Oversight and escalation](#oversight-and-escalation)). Your own decisions in
+Ask me first wait for you as long as it takes.
 
 A built-in is never run as it is. A group that uses one gets its own copy:
 a template saved to the group (not published to the library), with its own id.
 The group's edits stay with that copy, and using the built-in again makes
 another copy.
 
-- In the dashboard, a new process offers them in the **Ways of working** row of
-  its Start from strip, and first in **More ways of working ›**.
+- In the dashboard, a new process offers them first in its **Start from** row,
+  before *✨ Describe it*, *↥ Import .pwf* and *More ways of working ›* (the
+  library).
 - From the CLI: `tclaude process templates builtin ls`, then
   `tclaude process templates builtin use <id> --group <group> [--name <name>]`,
   which prints the copy's template id to run with `tclaude process run`.
@@ -513,8 +520,8 @@ focused: type the name and press Enter. There is no name dialog. The draft
 saves itself as you edit (*draft · autosaved to* the group), and one closed
 untouched is not kept. *◈ Graph* and *☰ Steps* show the same draft from the
 start. The empty canvas reads start → *＋ Add first step* → end, and *Start
-from* under it fills it: a starter (filled from the group's roles and members,
-which also names an untitled draft), *✨ Describe it*, *↥ Import .pwf*, or
+from* under it fills it: a [built-in way of working](#built-in-ways-of-working)
+(which also names an untitled draft), *✨ Describe it*, *↥ Import .pwf*, or
 *More ways of working ›* (a library template). The inline inspector keeps to
 the essentials (what, who, if nobody takes it, then); *⤢ Full editor* opens
 the same draft over the page, still pinned, with *← Back inline* and *▶ Run…*

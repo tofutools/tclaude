@@ -1,0 +1,59 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: ask-me-first
+name: Ask me first
+description: >-
+  You give the go-ahead, a developer does the task, and you accept the result
+  or send it back with what to change.
+params:
+  task:
+    type: string
+    required: true
+# The group's lead oversees a run; the developer's step raises a concern
+# after two hours stuck. Your own decisions wait for you as long as it takes.
+overseer: lead
+start: start
+nodes:
+  start:
+    type: start
+    next: { next: go }
+
+  # You decide whether it starts.
+  go:
+    type: decision
+    performer:
+      kind: human
+      ask: "Go ahead with {{ params.task }}?"
+      choices: [go, stop]
+    next: { go: work, stop: stopped }
+
+  # A developer does it.
+  work:
+    type: task
+    captures: [result]
+    patience: 2h
+    performer:
+      kind: agent
+      role: dev
+      fallback: { action: spawn }
+      prompt: "Do this: {{ params.task }}\nReport what you did (and the PR link, if any) as result. When it comes back for rework, address the notes."
+    next: { next: accept }
+
+  # You accept it, or send it back.
+  accept:
+    type: decision
+    performer:
+      kind: human
+      ask: "Accept the result of {{ params.task }}?\n{{ outputs.result }}"
+      choices: [accept, rework, reject]
+    next: { accept: done, rework: work, reject: stopped }
+    loops:
+      rework: { maxIterations: 3, onExhausted: reject }
+
+  done:
+    type: end
+    result: success
+  # You stopped or rejected it.
+  stopped:
+    type: end
+    result: canceled

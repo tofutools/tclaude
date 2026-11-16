@@ -275,3 +275,39 @@ func TestProcessWaysOfWorking_EightStepsEndToEnd(t *testing.T) {
 	step("merge", lena, []string{"Both reviewers approved", "PR #77 (with restore test)"}, nil)
 	assert.Equal(t, engine.RunCompleted, showPerformerRun(t, f, runID).Status)
 }
+
+// Scenario: the usability vet escalates the plan instead of passing it, and
+// the run fails, so a board task it runs for is blocked with the reason.
+func TestProcessWaysOfWorking_EscalationFailsTheRun(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	const leadConv, planConv, uxConv = "elead-111-2222-3333-4444", "eplan-111-2222-3333-4444", "eux-1111-2222-3333-4444"
+	lena := havePerformerAgent(t, f, "crew", leadConv, "lena", "lead", "idle")
+	pia := havePerformerAgent(t, f, "crew", planConv, "pia", "planner", "idle")
+	uma := havePerformerAgent(t, f, "crew", uxConv, "uma", "ux", "idle")
+	convOf := map[string]string{lena: leadConv, pia: planConv, uma: uxConv}
+
+	tmpl := waysOfWorking(t)
+	putProcessRuntimeTemplate(t, root, tmpl)
+	const runID = "run_ways_escalate"
+	t.Cleanup(agentd.SetProcessRunScopeForTest(runID, groupScope(g)))
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": runID, "templateId": tmpl.ID, "params": map[string]string{"task": "a new billing model"},
+		"authorizeProgramProfiles": []string{},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	for _, s := range []struct {
+		node, who string
+		extra     map[string]any
+	}{
+		{"brief", lena, map[string]any{"note": "Goal: usage billing."}},
+		{"plan", pia, map[string]any{"note": "1. meter usage"}},
+		{"vet", uma, map[string]any{"verdict": "escalate", "note": "this needs the operator"}},
+	} {
+		view := showPerformerRun(t, f, runID)
+		agentID, attempt, _ := commandFor(t, view, s.node)
+		require.Equal(t, s.who, agentID, s.node)
+		reportStep(t, f, convOf[agentID], runID, s.node, attempt, s.extra)
+	}
+	assert.Equal(t, engine.RunFailed, showPerformerRun(t, f, runID).Status)
+}

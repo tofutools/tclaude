@@ -15,7 +15,7 @@ import (
 func TestEveryBuiltinValidatesWithoutWarnings(t *testing.T) {
 	all, err := List()
 	require.NoError(t, err)
-	require.Len(t, all, 4)
+	require.Len(t, all, 7)
 	for _, b := range all {
 		assert.Equal(t, b.ID, b.Parsed.Template.ID, "the file is named after its id")
 		assert.NotEmpty(t, b.Name)
@@ -23,6 +23,12 @@ func TestEveryBuiltinValidatesWithoutWarnings(t *testing.T) {
 		for _, d := range b.Parsed.Diagnostics {
 			assert.NotEqual(t, model.SeverityError, d.Severity, "%s: %+v", b.ID, d)
 			assert.NotEqual(t, model.SeverityWarning, d.Severity, "%s: %+v", b.ID, d)
+		}
+		assert.Equal(t, "lead", b.Parsed.Template.Overseer, "%s: the group's lead oversees it", b.ID)
+		for id, node := range b.Parsed.Template.Nodes {
+			if node.Type == model.NodeTypeEnd && node.Result == "canceled" {
+				assert.Equal(t, "ask-me-first", b.ID, "%s: %s: escalation fails a run; only your own stop cancels one", b.ID, id)
+			}
 		}
 		_, required := b.Parsed.Template.Params["task"]
 		assert.True(t, required, "%s takes the task it is run for ({{params.task}})", b.ID)
@@ -42,4 +48,6 @@ func TestPlanVetBuildIsTheDocsExample(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, docs.Template.Nodes, b.Parsed.Template.Nodes)
 	assert.Equal(t, docs.Template.Params, b.Parsed.Template.Params)
+	assert.Equal(t, docs.Template.Overseer, b.Parsed.Template.Overseer)
+	assert.Equal(t, docs.Template.Patience, b.Parsed.Template.Patience)
 }

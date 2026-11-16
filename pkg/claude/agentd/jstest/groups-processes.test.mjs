@@ -393,7 +393,7 @@ test('New process stores an untitled draft of the group and opens it in place as
   assert.equal(editor.querySelector('.gm-toggle .on').textContent, '◈ Graph', 'graph first');
   assert.ok(editor.querySelector('[data-mini-steps]'), 'with Steps beside it');
   assert.ok(editor.querySelector('[data-process-node="mini-first-step"]'), 'the empty canvas offers the first step');
-  assert.ok(editor.querySelector('[data-mini-start-from] [data-mini-starter]'), 'and what to start from');
+  assert.ok(editor.querySelector('[data-mini-start-from] [data-mini-describe]'), 'and what to start from');
   assert.ok(editor.querySelector('[data-mini-run]').disabled, 'nothing to run yet');
   await harness.act(async () => { editor.querySelector('[data-mini-close]').click(); });
   await waitForCondition(harness, () => calls.some(([kind]) => kind === 'delete'), 'closed untouched, it is deleted');

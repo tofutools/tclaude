@@ -1,5 +1,6 @@
 // Tests for the inline mini editor's graph operations (mock M1, tcl-jqmrj5):
-// each operation on a quick-start starter builds exactly the fixture
+// each operation on a step-list process (the former quick-start starters,
+// kept as fixtures in process-quickstart-starters.json) builds exactly the fixture
 // TestMiniEditCasesAreRunnable proves valid and executable, and the
 // operations keep the shapes the runtime needs.
 
@@ -7,13 +8,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as m from '../dashboard/js/process-mini-edit.js';
-import { AGENT_VERDICTS, replaceStep, setStepChoices, setStepLoop, setStepText, stepListToView } from '../dashboard/js/process-step-list.js';
-import { STARTERS } from '../dashboard/js/process-quickstart.js';
+import { AGENT_VERDICTS, replaceStep, setStepChoices, setStepLoop, setStepText, stepListToView, viewToStepList } from '../dashboard/js/process-step-list.js';
 
 const fixture = JSON.parse(readFileSync(new URL('./process-mini-edit-cases.json', import.meta.url), 'utf8'));
-const roster = [{ name: 'checkout', id: 'a1', role: 'dev', online: true }, { name: 'review-bot', id: 'a2', role: 'reviewer', online: true }];
-const ship = stepListToView(STARTERS[0].build(roster).list);
-const check = stepListToView(STARTERS[2].build(roster).list);
+const steps = JSON.parse(readFileSync(new URL('./process-quickstart-starters.json', import.meta.url), 'utf8')).starters;
+const ship = steps['build-review-ship'];
+const check = steps['check-fix'];
 // forward is the starter with its changes loop pointed on to merge instead:
 // a decision with no loop yet, for the tests that send an answer back.
 const forward = m.setOutcomeTarget(ship, 'approve', 'changes', 'merge').view;
@@ -21,7 +21,7 @@ const forward = m.setOutcomeTarget(ship, 'approve', 'changes', 'merge').view;
 // agentDecides makes the starter's review an agent decider that sends
 // changes back to implement, the way the step list's "◇ agent decides" does.
 function agentDecides() {
-  const list = STARTERS[0].build(roster).list;
+  const list = viewToStepList(ship).list;
   const review = list.steps.find((step) => step.id === 'review');
   let step = setStepChoices(review, [...AGENT_VERDICTS], 'approve');
   step = { ...step, links: step.links.map((link) => (link.outcome === 'changes' ? { ...link, to: 'implement' } : link)) };

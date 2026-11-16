@@ -10,6 +10,10 @@ params:
   task:
     type: string
     required: true
+# The group's lead oversees a run; a step stuck longer than its patience
+# (an hour, two for building) raises a concern to it.
+overseer: lead
+patience: 1h
 start: start
 nodes:
   start:
@@ -31,6 +35,7 @@ nodes:
   fix:
     type: task
     captures: [pr]
+    patience: 2h
     performer:
       kind: agent
       role: dev

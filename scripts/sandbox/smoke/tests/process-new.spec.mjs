@@ -4,7 +4,7 @@
 // in two clicks. Its name is typed straight away, the first step goes on the
 // empty canvas, and it saves itself. ☰ Steps and ◈ Graph show the same
 // draft, ⤢ Full editor opens it over the page with ← Back inline, ▶ Run…
-// opens the start form on it, a starter fills an empty one, and one closed
+// opens the start form on it, a built-in fills an empty one, and one closed
 // untouched is not kept. SHOTS=<dir> saves a screenshot of each step.
 //
 //   scripts/sandbox/ui.sh smoke process-new
@@ -124,17 +124,17 @@ test('＋ ▾ New process opens a group draft as a graph in two clicks; it saves
     await expect(form).toHaveAttribute('data-start-scope', 'agent');
     await form.getByRole('button', { name: 'cancel' }).click();
 
-    // A starter fills an empty draft and names it.
+    // A built-in way of working fills an empty draft and names it.
     await section.locator(`[data-resource-add="${GROUP}"]`).first().click();
     await page.locator('[data-resource-new-process]').click();
     const second = section.locator('[data-mini-editor]');
     await expect(second).toBeVisible();
     const id2 = await second.getAttribute('data-mini-editor');
     made.push(id2);
-    await second.locator('[data-mini-starter="build-review-ship"]').click();
+    await second.locator('[data-mini-builtin="build-review-ship"]').click();
     await expect(second.locator('[data-mini-title]')).toHaveValue('Build → review → ship');
-    await expect.poll(async () => steps((await template(page, id2)).body), { timeout: 10_000 }).toBe(4);
-    await shot(page, '07-starter');
+    await expect.poll(async () => steps((await template(page, id2)).body), { timeout: 10_000 }).toBe(3);
+    await shot(page, '07-builtin');
     await second.locator('[data-mini-close]').click();
     await expect(second).toHaveCount(0);
 

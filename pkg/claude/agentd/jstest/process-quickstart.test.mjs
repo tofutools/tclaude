@@ -1,50 +1,25 @@
-// Tests for the quick-start's pure pieces (tcl-7p6bgt): the starters build
-// the fixture TestQuickStartStartersAreRunnable proves executable, fill their
-// slots from the group's roster, and the Who picker / who-now guess read the
-// roster the way the step list shows it.
+// Tests for the quick-start's pure pieces (tcl-7p6bgt): the step-list
+// fixtures TestQuickStartStartersAreRunnable proves executable round-trip,
+// and the Who picker / who-now guess read the roster the way the step list
+// shows it.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  STARTERS, fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, groupRoles, groupRoster, setStepFallback, stepFallbackValue,
+  fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, groupRoles, groupRoster, setStepFallback, stepFallbackValue,
   whoFromValue, whoNow, whoOptions, whoValue,
 } from '../dashboard/js/process-quickstart.js';
-import { stepListToView, stepWho, viewToStepList } from '../dashboard/js/process-step-list.js';
+import { stepListToView, viewToStepList } from '../dashboard/js/process-step-list.js';
 
 const fixture = JSON.parse(readFileSync(new URL('./process-quickstart-starters.json', import.meta.url), 'utf8'));
 
-function built(starter, roster) {
-  const out = starter.build(roster);
-  return out.view || stepListToView(out.list);
-}
-
-test('starters build exactly the fixture the Go test proves runnable', () => {
-  assert.deepEqual(Object.keys(fixture.starters), STARTERS.map((s) => s.key));
-  for (const starter of STARTERS) assert.deepEqual(built(starter, fixture.roster), fixture.starters[starter.key], starter.key);
-});
-
-test('starters that are step lists round-trip; the fan-out opens in the graph editor', () => {
-  for (const starter of STARTERS) {
-    const view = fixture.starters[starter.key];
+test('the step-list fixtures round-trip; the fan-out is a graph the step list cannot show', () => {
+  for (const [key, view] of Object.entries(fixture.starters)) {
     const converted = viewToStepList(view);
-    assert.equal(converted.ok, !starter.graph, starter.key);
-    if (converted.ok) assert.deepEqual(stepListToView(converted.list).edges, view.edges, starter.key);
+    assert.equal(converted.ok, key !== 'plan-fan-out-merge', key);
+    if (converted.ok) assert.deepEqual(stepListToView(converted.list).edges, view.edges, key);
   }
-});
-
-test('starters fill roles from the roster, then members, then nobody', () => {
-  const [buildReview] = STARTERS;
-  const roles = buildReview.build(fixture.roster);
-  assert.deepEqual(roles.uses, ['dev', 'reviewer']);
-  assert.deepEqual(stepWho(roles.list.steps[0]), { mode: 'role', role: 'dev' });
-  const plain = [{ name: 'ann', id: 'a', role: '', online: true }, { name: 'bob', id: 'b', role: '', online: true }];
-  const members = buildReview.build(plain);
-  assert.deepEqual(members.uses, ['ann', 'bob'], 'distinct members for implement and review');
-  assert.deepEqual(stepWho(members.list.steps[1]), { mode: 'agent', agent: 'bob' });
-  const empty = buildReview.build([]);
-  assert.deepEqual(empty.uses, []);
-  assert.deepEqual(stepWho(empty.list.steps[0]), { mode: 'nobody' });
 });
 
 test('the roster, its roles and the Who options', () => {
