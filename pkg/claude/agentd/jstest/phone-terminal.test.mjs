@@ -111,6 +111,11 @@ test('an agent terminal opens docked, live, with the key strip and its message s
   assert.equal(input.firstElementChild.getAttribute('aria-label'), 'Hide page selector');
   assert.equal(toggles.terminalDock.value?.keyboard, false);
 
+  await tap(button('Select and copy text'));
+  assert.equal(toggles.terminalDock.value?.keyboard, true, 'Select covers the terminal: the nav keeps off its Copy buttons');
+  await tap(button('Done'));
+  assert.equal(toggles.terminalDock.value?.keyboard, false);
+
   await tap(button('Keyboard'));
   assert.equal(toggles.terminalDock.value?.keyboard, true, 'the shell keeps the nav off the raised keyboard');
   assert.equal(host.querySelector('.phone-nav-toggle'), null, 'no toggle while typing raw');

@@ -61,7 +61,8 @@ export const navBadge = signal(0);
 
 // terminalDock is the terminal docked over the dashboard, for the shell:
 // null with none, else { keyboard, close }. While the phone's keyboard is
-// up the nav stays away whatever the choice (it would sit on the keys), and
+// up, or something covers the whole terminal (Select, whose Copy buttons
+// sit at the bottom), the nav stays away whatever the choice, and
 // picking a view in the nav closes the terminal first.
 export const terminalDock = signal(null);
 

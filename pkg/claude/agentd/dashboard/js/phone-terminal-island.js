@@ -333,9 +333,12 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   // ▾/▴ toggle's choice), and a view picked there closes the terminal.
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  // Select covers the whole terminal, its Copy buttons at the bottom, so
+  // the nav stays away while it is open, as over the keyboard.
+  const covered = !!select;
   useEffect(() => {
-    terminalDock.value = { keyboard, close: () => closeRef.current?.() };
-  }, [keyboard]);
+    terminalDock.value = { keyboard: keyboard || covered, close: () => closeRef.current?.() };
+  }, [keyboard, covered]);
   useEffect(() => () => { terminalDock.value = null; }, []);
 
   const toggleKeyboard = () => {

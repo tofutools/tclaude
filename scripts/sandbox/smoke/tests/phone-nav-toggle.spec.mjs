@@ -63,8 +63,26 @@ test('the terminal: the nav under it, hidden by the toggle and remembered; a slo
   await term.locator('.phone-term-input .phone-nav-toggle').click();
   await expect(nav).toBeVisible();
 
+  // Select covers the terminal, Copy at its bottom: the nav keeps away.
+  await term.getByRole('button', { name: 'Select and copy text' }).click();
+  await expect(nav).toHaveCount(0);
+  await term.getByRole('button', { name: 'Done' }).click();
+  await expect(nav).toBeVisible();
+
   // A view picked in the nav closes the terminal.
   await nav.getByRole('button', { name: /Agents/ }).click();
+  await expect(term).toHaveCount(0);
+  await expect(nav.getByRole('button', { name: /Agents/ })).toHaveAttribute('aria-current', 'page');
+
+  // A terminal opened as a history step (from Agents), then Now picked
+  // under it: the close steps history back and Now still lands; Back
+  // returns to Agents, not to the terminal.
+  await page.locator('.phone-agent-row', { hasText: agent.title || agent.name }).first().click();
+  await expect(term).toBeVisible();
+  await nav.getByRole('button', { name: /Now/ }).click();
+  await expect(term).toHaveCount(0);
+  await expect(nav.getByRole('button', { name: /Now/ })).toHaveAttribute('aria-current', 'page');
+  await page.goBack();
   await expect(term).toHaveCount(0);
   await expect(nav.getByRole('button', { name: /Agents/ })).toHaveAttribute('aria-current', 'page');
   expect(errors).toEqual([]);
