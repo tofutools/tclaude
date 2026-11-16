@@ -38,6 +38,7 @@ test('a step moves to the id its name makes, with every reference to it', () => 
   assert.equal(stepSlug('Build it, then ship!'), 'build-it-then-ship');
   const named = view(STEPS);
   named.template.nodes['new-step'].name = 'Build it';
+  named.layout.edges = { 'new-step': { next: { pinned: true } } };
   const { view: moved, id } = followName(named, 'new-step');
   assert.equal(id, 'build-it');
   assert.deepEqual(Object.keys(moved.template.nodes), ['start', 'build-it', 'new-step-2', 'done'], 'in the same place');
@@ -45,6 +46,7 @@ test('a step moves to the id its name makes, with every reference to it', () => 
   assert.ok(moved.edges.some((e) => e.from === 'build-it' && e.to === 'new-step-2'));
   assert.ok(!JSON.stringify(moved.edges).includes('"new-step"'));
   assert.deepEqual(moved.layout.nodes['build-it'], { x: 160, y: 0 });
+  assert.deepEqual(moved.layout.edges, { 'build-it': { next: { pinned: true } } }, 'a pinned edge label follows its source');
   assert.deepEqual(moved.template.nodes['new-step-2'].performer.differentFrom, ['build-it'], 'a constraint naming it follows');
   // A name another step's id already has is made unique; one that already matches stays.
   moved.template.nodes['new-step-2'].name = 'Build it';

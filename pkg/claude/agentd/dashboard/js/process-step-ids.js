@@ -26,7 +26,7 @@ function performersOf(node) {
 }
 
 // rekeyStep moves step `id` to `next`, with every reference to it: the
-// start, the edges, the layout pin and the sameAs / differentFrom of every
+// start, the edges, its layout pins (node and edge labels) and the sameAs / differentFrom of every
 // performer. The nodes keep their order. Returns the new view.
 export function rekeyStep(view, id, next) {
   const out = clone({ ...view, template: view.template || {}, edges: view.edges || [], layout: view.layout || {} });
@@ -35,9 +35,12 @@ export function rekeyStep(view, id, next) {
   out.template.nodes = Object.fromEntries(Object.entries(nodes).map(([key, node]) => [key === id ? next : key, node]));
   if (out.template.start === id) out.template.start = next;
   out.edges = out.edges.map((edge) => ({ ...edge, ...(edge.from === id ? { from: next } : {}), ...(edge.to === id ? { to: next } : {}) }));
-  const pins = out.layout.nodes;
-  if (pins && Object.hasOwn(pins, id)) {
-    out.layout.nodes = Object.fromEntries(Object.entries(pins).map(([key, pin]) => [key === id ? next : key, pin]));
+  // The layout keys node pins, and edge label pins by their source node.
+  for (const part of ['nodes', 'edges']) {
+    const pins = out.layout[part];
+    if (pins && Object.hasOwn(pins, id)) {
+      out.layout[part] = Object.fromEntries(Object.entries(pins).map(([key, pin]) => [key === id ? next : key, pin]));
+    }
   }
   for (const node of Object.values(out.template.nodes)) {
     for (const performer of performersOf(node)) {
