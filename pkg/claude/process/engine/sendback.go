@@ -119,6 +119,15 @@ func applySendBack(next *Checkpoint, definition *Definition, back SendBack) erro
 	for _, i := range set {
 		in[i] = true
 	}
+	// Into the middle of a loop body: the body's earlier steps keep the exits
+	// they settled when the loop last finished, which a new round could take
+	// into steps already closed. Go back to where the loop starts instead.
+	for _, loop := range definition.loops {
+		if in[loop.from] && !in[loop.to] {
+			return fmt.Errorf("%w: %q is inside the loop that goes back to %q; send the run back to %q instead",
+				ErrInvalidTransition, target.id, definition.nodes[loop.to].id, definition.nodes[loop.to].id)
+		}
+	}
 	for _, i := range set {
 		node := definition.nodes[i]
 		if command, out := commandForNode(*next, node.id); out && command.Kind == CommandProgram {
@@ -143,15 +152,16 @@ func applySendBack(next *Checkpoint, definition *Definition, back SendBack) erro
 		removeObligation(next, node.id)
 		removeBlocked(next, node.id)
 		next.Nodes[node.id] = NodePending
+		_, approval := approvalAnchor(definition, node)
 		switch {
-		case node.awaitsHuman() && node.parent < 0 && len(node.loops) > 0:
-			// A loop decision's window counter moves on, as in a new round.
+		case node.awaitsHuman() && !approval:
+			// A person's decision or vote opens a new window, so a verdict
+			// formed before the send-back names the old one and is refused.
+			// (A plan-approval gate's window is its plan's next attempt.)
 			if next.Attempts[node.id] == math.MaxInt {
 				return fmt.Errorf("%w: decision %q window counter would overflow", ErrInvalidTransition, node.id)
 			}
-			if next.Attempts[node.id] > 0 {
-				recordAttempt(next, node.id, next.Attempts[node.id]+1)
-			}
+			recordAttempt(next, node.id, next.Attempts[node.id]+1)
 		case node.runsCommand():
 			if err := openLoopAttemptWindow(next, definition, node); err != nil {
 				return err

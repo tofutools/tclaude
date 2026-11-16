@@ -343,8 +343,10 @@ in it raises a concern.
   longer feed later prompts (`{{ outputs.x }}` reads "none reported yet"
   until the step reports again). Attempt numbers never go backwards. A
   program still running downstream refuses it; a branch running alongside
-  that already reached a node downstream refuses it too. It needs
-  `process.runs.manage`.
+  that already reached a node downstream refuses it too. Inside a loop, go
+  back to the step the loop starts at, not to the middle of its body. Every
+  decision and vote it reopens gets a new window, so a verdict given before
+  is refused. It needs `process.runs.manage`.
 - **Cancelling the run** (`tclaude process cancel <run-id>`, ✕ Cancel run on
   the run view, or the operator's card) gives it up from any state: nothing
   more starts, work still out is withdrawn, and it ends `canceled`. It needs
