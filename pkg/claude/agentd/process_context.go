@@ -476,7 +476,9 @@ func projectProcessRun(runID string, live processLiveness) (processRunProjection
 	if err != nil {
 		return processRunProjection{}, err
 	}
-	return skeleton.project(runView), nil
+	projection := skeleton.project(runView)
+	projection.TemplateVersion = processTemplateVersionOf(skeleton.templateID, record.TemplateRef)
+	return projection, nil
 }
 
 // processProjectionSkeleton is the run-independent part of a projection,
@@ -484,7 +486,6 @@ func projectProcessRun(runID string, live processLiveness) (processRunProjection
 type processProjectionSkeleton struct {
 	templateID string
 	name       string
-	version    int // the template version the run follows (processTemplateVersionOf)
 	nodes      []processProjectionNode
 	edges      []processProjectionEdge
 	ids        []string // authored ids, longest first, for stage → parent mapping
@@ -509,22 +510,50 @@ func (s *processProjectionSkeleton) engineSource(id string) string {
 	return id
 }
 
+// processTemplateVersionsCache keeps the number found for a ref: a stored
+// version's place among its template's versions never moves. Only a found
+// number is kept, so a store that could not say is asked again.
+var processTemplateVersionsCache = struct {
+	sync.Mutex
+	byRef map[string]int
+}{byRef: map[string]int{}}
+
+// processTemplateVersionLookupTimeout bounds the template lock a context read
+// waits on for a version number; a busy template shows its hash alone.
+const processTemplateVersionLookupTimeout = 2 * time.Second
+
 // processTemplateVersionOf numbers ref among its template's stored versions,
 // oldest first, as the template list counts them; 0 when the store cannot
-// say (a deleted template, an unreadable store). A stored version's place
-// never moves, so the skeleton cache keeps the number with the rest.
+// say (a deleted template, an unreadable store).
 func processTemplateVersionOf(templateID, ref string) int {
-	fs, err := store.NewFS(processStoreRoot())
-	if err != nil || templateID == "" || ref == "" {
+	if templateID == "" || ref == "" {
 		return 0
 	}
-	versions, err := fs.ListTemplateVersions(context.Background(), templateID)
+	processTemplateVersionsCache.Lock()
+	cached := processTemplateVersionsCache.byRef[ref]
+	processTemplateVersionsCache.Unlock()
+	if cached > 0 {
+		return cached
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), processTemplateVersionLookupTimeout)
+	defer cancel()
+	versions, err := fs.ListTemplateVersions(ctx, templateID)
 	if err != nil {
 		return 0
 	}
 	slices.SortFunc(versions, func(a, b store.TemplateRecord) int { return -compareTemplateRecordsNewest(a, b) })
 	for i, version := range versions {
 		if version.Ref == ref {
+			processTemplateVersionsCache.Lock()
+			if len(processTemplateVersionsCache.byRef) >= processProjectionCacheSize {
+				processTemplateVersionsCache.byRef = map[string]int{}
+			}
+			processTemplateVersionsCache.byRef[ref] = i + 1
+			processTemplateVersionsCache.Unlock()
 			return i + 1
 		}
 	}
@@ -552,7 +581,6 @@ func processProjectionSkeletonFor(record *db.ProcessRun) (*processProjectionSkel
 		return nil, fmt.Errorf("%w: decode template snapshot: %v", db.ErrProcessRunCorrupt, err)
 	}
 	skeleton := newProcessProjectionSkeleton(&tmpl)
-	skeleton.version = processTemplateVersionOf(tmpl.ID, record.TemplateRef)
 	processProjectionSkeletons.Lock()
 	if len(processProjectionSkeletons.byRef) >= processProjectionCacheSize {
 		processProjectionSkeletons.byRef = map[string]*processProjectionSkeleton{}
@@ -728,7 +756,7 @@ var processNodeStateRank = map[string]int{
 
 func (s *processProjectionSkeleton) project(run processRunView) processRunProjection {
 	projection := processRunProjection{
-		RunID: run.ID, TemplateID: s.templateID, TemplateRef: run.TemplateRef, TemplateVersion: s.version, Name: s.name,
+		RunID: run.ID, TemplateID: s.templateID, TemplateRef: run.TemplateRef, Name: s.name,
 		Status: run.Status, Action: run.Action, NeedsYou: processContextNeedsYou[run.Action],
 		Scope: run.Scope, Paused: run.Paused, Edges: append([]processProjectionEdge(nil), s.edges...),
 		Current: []string{}, Truncated: s.truncated, StartedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
