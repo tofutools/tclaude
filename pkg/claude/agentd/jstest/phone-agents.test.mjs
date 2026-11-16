@@ -385,6 +385,31 @@ test('a double tap on Spawn spawns once', async (t) => {
   await settle(harness);
 });
 
+test('a group header\'s ＋ Agent opens the spawn sheet on that group; Ungrouped has none', async (t) => {
+  const { c, tap, calls } = await setup(t);
+  const heads = [...c.querySelectorAll('.phone-agents-head')];
+  const add = (group) => heads.find((h) => h.querySelector('.phone-agents-name')?.textContent === group)?.querySelector('[data-agent-add]');
+  assert.equal(add('webshop').textContent, '＋ Agent');
+  assert.equal(add('webshop').getAttribute('aria-label'), 'New agent in webshop');
+  assert.equal(add('webshop').nextElementSibling.textContent, 'Board ›', 'beside Board ›, before it');
+  assert.equal(add('Ungrouped'), null, 'no group, no ＋');
+  await tap(add('steward'));
+  const form = c.querySelector('.phone-sheet form');
+  assert.equal(form.querySelector('select').value, 'steward', 'the sheet starts on the header\'s group');
+  assert.equal(calls.filter(([name]) => name === 'spawn').length, 0, 'the short sheet, not the desktop form');
+});
+
+test('an archived group\'s header has no ＋ Agent', async (t) => {
+  const { harness, state, c } = await setup(t);
+  await harness.act(() => {
+    state.beginRequest();
+    state.commitRequest(2, { ...SNAPSHOT, groups: SNAPSHOT.groups.map((g) => (g.name === 'steward' ? { ...g, archived: true } : g)) });
+  });
+  const head = (group) => [...c.querySelectorAll('.phone-agents-head')].find((h) => h.querySelector('.phone-agents-name')?.textContent === group);
+  assert.ok(head('webshop').querySelector('[data-agent-add]'));
+  if (head('steward')) assert.equal(head('steward').querySelector('[data-agent-add]'), null);
+});
+
 test("on a peer's page ＋ is the desktop form, which spawns there", async (t) => {
   globalThis.__tclaudeRemoteNode = { id: 'inst_peer1' };
   t.after(() => { delete globalThis.__tclaudeRemoteNode; });
@@ -392,6 +417,11 @@ test("on a peer's page ＋ is the desktop form, which spawns there", async (t) =
   await harness.act(() => page.phoneBar.value.actions[0].onClick());
   assert.equal(c.querySelector('.phone-sheet'), null);
   assert.deepEqual(calls.at(-1), ['spawn', '']);
+  // A group header's ＋ Agent too, on its group.
+  const add = c.querySelector('[data-agent-add]');
+  await harness.act(() => add.click());
+  assert.equal(c.querySelector('.phone-sheet'), null);
+  assert.deepEqual(calls.at(-1), ['spawn', 'webshop']);
 });
 
 test('a row tells a screen reader what the agent waits on', async (t) => {
