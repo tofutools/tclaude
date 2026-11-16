@@ -153,3 +153,44 @@ func TestFindSessionsByConvIDs_OrdersAsTheSingleConvLoader(t *testing.T) {
 	}
 	require.Equal(t, "new", batch[conv][0].ID)
 }
+
+// The durable relaunch profiles follow the current launch too. After an
+// in-pane rotation onto conv-b, the live pane is conv-b's launch: its posture
+// is the one a relaunch of conv-b reproduces, not that of conv-b's newer dead
+// row. And the stopped launch's row, marked exited after its successor was
+// written, leaves the successor's projection as it is.
+func TestRelaunchProfile_FollowsTheCurrentLaunch(t *testing.T) {
+	setupTestDB(t)
+	paneLaunched := time.Now().Add(-3 * time.Hour)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "pane", TmuxSession: "pane", ConvID: "conv-a", Status: "running", Harness: "claude",
+		HarnessBuiltinMode: "default", SandboxImplementation: "harness-builtin", CreatedAt: paneLaunched, UpdatedAt: paneLaunched,
+	}))
+	deadLaunched := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "conv-b", TmuxSession: "conv-b", ConvID: "conv-b", Status: "exited", Harness: "claude",
+		HarnessBuiltinMode: "off", SandboxImplementation: "off", CreatedAt: deadLaunched, UpdatedAt: deadLaunched,
+	}))
+	profile, err := SessionLaunchProfileForConv("conv-b")
+	require.NoError(t, err)
+	require.Equal(t, "off", profile.SandboxImplementation, "the fixture: conv-b's own dead launch first")
+
+	pane, err := LoadSession("pane")
+	require.NoError(t, err)
+	pane.ConvID = "conv-b"
+	pane.UpdatedAt = time.Now()
+	require.NoError(t, SaveSession(pane))
+	profile, err = SessionLaunchProfileForConv("conv-b")
+	require.NoError(t, err)
+	require.Equal(t, "harness-builtin", profile.SandboxImplementation,
+		"the live pane rotated onto conv-b is its launch, though it started earlier than the dead row")
+
+	// A late save of the dead row (a stale hook tick) does not take it back.
+	dead, err := LoadSession("conv-b")
+	require.NoError(t, err)
+	dead.UpdatedAt = time.Now()
+	require.NoError(t, SaveSession(dead))
+	profile, err = SessionLaunchProfileForConv("conv-b")
+	require.NoError(t, err)
+	require.Equal(t, "harness-builtin", profile.SandboxImplementation, "a save of a row that is not the current launch leaves it")
+}

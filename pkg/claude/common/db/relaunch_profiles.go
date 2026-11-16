@@ -1030,6 +1030,20 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if strings.TrimSpace(harnessName) == "" {
 		harnessName = DefaultHarness
 	}
+	// The durable profiles follow the conv's current launch (currentLaunchOrder:
+	// live rows first, then the launch that started last). A row that is not
+	// it — the stopped launch's row marked exited after its successor, or a
+	// dead row of a conv a live pane has rotated onto with an in-pane /resume
+	// (which keeps the pane's older launch time) — leaves them as they are.
+	var currentLaunch string
+	err = q.QueryRow(`SELECT id FROM sessions WHERE conv_id = ? ORDER BY `+currentLaunchOrder+` LIMIT 1`, convID).
+		Scan(&currentLaunch)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil && currentLaunch != sessionID {
+		return nil
+	}
 	var existingConversation *ConversationResumeProfile
 	var existingConversationRaw string
 	err = q.QueryRow(`SELECT profile_json FROM conversation_resume_profiles WHERE conv_id = ?`, convID).
@@ -1041,9 +1055,6 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		existingConversation, err = decodeConversationResumeProfile(existingConversationRaw)
 		if err != nil {
 			return err
-		}
-		if existingConversation != nil && sessionProjectionIsOlder(existingConversation, createdAt, rowID) {
-			return nil
 		}
 	}
 	// Capability-incompatible legacy flags are process telemetry, not durable
@@ -1384,21 +1395,6 @@ func sessionsHaveColumn(q dbExecQuerier, column string) (bool, error) {
 		return false, err
 	}
 	return n > 0, nil
-}
-
-func sessionProjectionIsOlder(existing *ConversationResumeProfile, createdAt string, rowID int64) bool {
-	if existing == nil || existing.SourceSessionCreatedAt == "" {
-		return false
-	}
-	currentTime, currentErr := parseLegacyDBTime(existing.SourceSessionCreatedAt)
-	incomingTime, incomingErr := parseLegacyDBTime(createdAt)
-	if currentErr == nil && incomingErr == nil && !incomingTime.Equal(currentTime) {
-		return incomingTime.Before(currentTime)
-	}
-	if (currentErr != nil || incomingErr != nil) && createdAt != existing.SourceSessionCreatedAt {
-		return createdAt < existing.SourceSessionCreatedAt
-	}
-	return rowID < existing.SourceSessionRowID
 }
 
 // conservativeCodexApprovalProjection repairs legacy rows whose harness tag
