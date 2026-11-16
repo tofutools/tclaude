@@ -20,6 +20,7 @@
 // `routed: true` and is left to the router.
 
 import { effect } from '@preact/signals';
+import { backLayers, backSeq, closeTopBackLayer, stepLayers } from './back-layers.js';
 import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
 import { phonePage } from './phone-page.js';
 import { phoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
@@ -27,12 +28,13 @@ import { phoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
 export const OWN_VIEW_VALUES = Object.freeze(['now', 'board']);
 
 // layerDepth is how many layers are up: an unrouted page (and an unrouted
-// page it covers), then a sheet.
-export function layerDepth(page = phonePage.peek(), sheet = phoneSheet.peek()) {
+// page it covers), then a sheet, then the open modal layers over them (a
+// dialog, a form, a preview: back-layers.js).
+export function layerDepth(page = phonePage.peek(), sheet = phoneSheet.peek(), layers = backLayers.peek()) {
   // A page over another (a task's page over a tab's unrouted page) is a
   // layer on top of that one's.
   const covered = page?.covered && !page.covered.routed ? 1 : 0;
-  return (page && !page.routed ? 1 : 0) + covered + (sheet ? 1 : 0);
+  return (page && !page.routed ? 1 : 0) + covered + (sheet ? 1 : 0) + stepLayers(layers).length;
 }
 
 function booting(doc) {
@@ -68,20 +70,52 @@ export function keptView(tab) {
 // function.
 export function installPhoneHistory({ view, tab = () => null, doc = globalThis.document }) {
   let restoring = false;
+  // depth is the layer count the router was last told of.
+  let depth = layerDepth();
+  // sheetSeq is when the open sheet opened, against the layers' (backSeq).
+  let sheetSeq = 0;
+  let sheetShown = phoneSheet.peek();
+  const stopSheetSeq = effect(() => {
+    const next = phoneSheet.value;
+    if (next && next !== sheetShown) sheetSeq = backSeq();
+    sheetShown = next;
+  });
+  // closing counts the layers Back asked to close whose close has not landed
+  // yet: the step back is taken, so they are no longer in the address.
+  let closing = 0;
   const unLayers = registerOverlayRoute('phone', {
-    value: () => { const depth = layerDepth(); return depth ? String(depth) : ''; },
+    value: () => { const shown = layerDepth() - closing; return shown > 0 ? String(shown) : ''; },
     restore: (want) => {
-      const depth = Number(want) || 0;
+      // Back over an open dialog or form is that overlay's: it closes the
+      // topmost one through its own guarded close, which may ask first (a
+      // dirty form's discard prompt) and so lands later. The step back is
+      // already taken, so the close it lands is no step of its own; one that
+      // stayed open takes its entry back, and the next Back asks again.
+      // Whichever of a sheet and a layer opened last is on top.
+      const top = stepLayers().at(-1);
+      const layerOnTop = top && (!phoneSheet.peek() || top.seq > sheetSeq);
+      if (layerOnTop && layerDepth() > (Number(want) || 0)) {
+        depth = layerDepth() - 1;
+        closing += 1;
+        void closeTopBackLayer().then((closed) => {
+          closing -= 1;
+          if (closed) return;
+          depth = layerDepth();
+          announceOverlay({ doc });
+        });
+        return;
+      }
+      const depthWanted = Number(want) || 0;
       restoring = true;
       let held = false;
       try {
         // Back is a close the operator asked for: a sheet's guard may hold
         // it (a draft to ask about, a send in flight).
-        if (layerDepth() > depth && phoneSheet.peek()) {
+        if (layerDepth() > depthWanted && phoneSheet.peek()) {
           requestClosePhoneSheet();
           held = !!phoneSheet.peek();
         }
-        if (!held && layerDepth() > depth) phonePage.peek()?.onBack?.();
+        if (!held && layerDepth() > depthWanted) phonePage.peek()?.onBack?.();
       } finally {
         restoring = false;
       }
@@ -111,9 +145,8 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
 
   // Changes made on screen are history steps; ones Back made are not.
   // A layer closed on screen steps back off its own entry.
-  let depth = layerDepth();
   const stopLayers = effect(() => {
-    const next = layerDepth(phonePage.value, phoneSheet.value);
+    const next = layerDepth(phonePage.value, phoneSheet.value, backLayers.value);
     if (next === depth) return;
     const closed = next < depth;
     depth = next;
@@ -138,6 +171,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
     cancelBoot();
     clearTimeout(pending);
     stopLayers();
+    stopSheetSeq();
     stopView();
     unLayers();
     unView();

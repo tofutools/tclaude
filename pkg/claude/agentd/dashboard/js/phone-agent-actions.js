@@ -30,7 +30,8 @@ export function phoneAgentActions({ onComposeMessage = null, navigate = navigate
       group: row.group, online: row.online ? '1' : '0',
     } }),
     rename: (row, group) => featureState('groups-actions')?.openMemberEditor(row.member, group.group, 'title'),
-    spawn: (groupName) => openAgentSpawnModal({ groupName }),
+    // typed: what the short sheet already holds (its prompt and name).
+    spawn: (groupName, typed = {}) => openAgentSpawnModal({ ...typed, groupName }),
     // groupAction is a group's own control (power-on-group, shutdown-group,
     // view-group-messages), as the desktop group header's data-* carry it:
     // the desktop's confirm, POST and toast.

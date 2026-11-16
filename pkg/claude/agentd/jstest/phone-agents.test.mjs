@@ -128,7 +128,7 @@ async function setup(t, { fetchImpl = async () => ({ ok: true, json: async () =>
   const calls = [];
   const record = (name) => (...args) => { calls.push([name, ...args.map((a) => a?.name ?? a?.key ?? a)]); };
   const actions = {
-    openTerminal: record('openTerminal'), message: record('message'), rename: record('rename'), spawn: record('spawn'),
+    openTerminal: record('openTerminal'), message: record('message'), rename: record('rename'), spawn: (...args) => { calls.push(['spawn', ...args]); },
     rowAction: (act, row) => calls.push(['rowAction', act, row.name]),
     grant: record('grant'), copy: (text, what) => calls.push(['copy', text, what]),
     explain: (text) => calls.push(['explain', text]),
@@ -332,10 +332,12 @@ test('＋ in the top bar spawns from a short sheet: group, profile, prompt', asy
   assert.deepEqual(sent, [['/api/groups/steward/spawn', { initial_message: 'Review the open PRs', profile: 'reviewer' }]]);
   assert.equal(c.querySelector('.phone-sheet'), null, 'the sheet closed');
 
-  // All options… is the desktop form, on the group picked.
+  // All options… is the desktop form, on the group picked, holding what
+  // the sheet already had typed in it.
   await harness.act(() => page.phoneBar.value.actions[0].onClick());
+  await harness.input(c.querySelector('.phone-sheet form textarea'), 'Fix the flaky test ');
   await tap([...c.querySelectorAll('.phone-sheet button')].find((b) => b.textContent === 'All options…'));
-  assert.deepEqual(calls.at(-1), ['spawn', 'steward']);
+  assert.deepEqual(calls.at(-1), ['spawn', 'steward', { initialMessage: 'Fix the flaky test', name: '', profileName: '' }]);
 });
 
 test('a refused spawn keeps the sheet open', async (t) => {

@@ -343,7 +343,13 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
     });
     return current.options.role ? { ...value, role: current.options.role } : value;
   }, [current]);
-  const [draft, setDraft] = useState(initial);
+  // carried is what the opener already typed (the phone's short spawn
+  // sheet: its prompt and name). It is the operator's input, so it survives
+  // the profile applied below and makes the form dirty.
+  const carried = useMemo(() => Object.fromEntries(Object.entries({
+    initialMessage: current.options.initialMessage, name: current.options.name,
+  }).filter(([, value]) => typeof value === 'string' && value !== '')), [current]);
+  const [draft, setDraft] = useState(() => ({ ...initial, ...carried }));
   const [baseline, setBaseline] = useState(initial);
   const [profiles, setProfiles] = useState([]);
   const [worktrees, setWorktrees] = useState({
@@ -384,7 +390,7 @@ function AgentSpawnDialog({ current, state, actions: localActions, confirmDiscar
   const [inspectedRole, setInspectedRole] = useState('');
   const nameRef = useRef(null);
   const fileRef = useRef(null);
-  const touched = useRef(new Set());
+  const touched = useRef(new Set(Object.keys(carried)));
   // Fields the operator explicitly changed in this open dialog remain
   // per-spawn overrides when they switch profiles. This is separate from
   // `touched`, which also guards derived changes against the initial async

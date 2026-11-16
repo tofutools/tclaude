@@ -44,6 +44,10 @@ export function createAgentSpawnState({ getSnapshot = () => null } = {}) {
         chosenProfile: String(options?.chosenProfile || ''),
         fastMode: options?.fastMode === true,
         role: String(options?.role || ''),
+        // What the opener already had typed (the phone's short spawn sheet):
+        // the form opens holding it, as the operator's own input.
+        initialMessage: String(options?.initialMessage || ''),
+        name: String(options?.name || ''),
         // A queued spawn reopened for edit (or launch, with autoSpawn): its id,
         // stored draft and queue time. Null for an ordinary fresh dialog.
         queued: options?.queued?.id ? Object.freeze({

@@ -436,12 +436,21 @@ test('the viewer is a step of its own: Back closes it and leaves the reader (B4)
     message(1, { attachment: { filename: 'shot.png', content_type: 'image/png', size_bytes: 2048, previewable: true } }),
   ] });
   const routes = await harness.importDashboardModule('js/overlay-routes.js');
+  // With the phone's history installed too: the viewer is a Back layer as
+  // well, but a routed one, so it is still one step and not two.
+  const history = await harness.importDashboardModule('js/phone-history.js');
+  const uninstall = history.installPhoneHistory({ view: harness.signals.signal(null), doc: harness.document });
+  t.after(uninstall);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const phoneBefore = routes.overlayParams().phone;
   const announced = [];
   harness.document.addEventListener(routes.OVERLAY_EVENT, (event) => announced.push(event.detail));
   assert.match($('.phone-mail-zoom').textContent, /tap to zoom/);
   await harness.act(() => $('.phone-mail-preview-img').click());
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 5)));
   assert.equal(routes.overlayParams().file, '0');
-  assert.deepEqual(announced, [{ closed: false, replace: false }], 'opening is a history step');
+  assert.equal(routes.overlayParams().phone, phoneBefore, 'no phone step of its own');
+  assert.deepEqual(announced, [{ closed: false, replace: false }], 'opening is one history step');
   assert.ok(harness.document.querySelector('[role="dialog"]'), 'the viewer is open');
   await harness.act(() => routes.restoreOverlays({}));
   assert.equal(routes.overlayParams().file, '');

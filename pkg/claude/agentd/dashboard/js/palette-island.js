@@ -1,4 +1,5 @@
 import { h, render } from 'preact';
+import { useBackLayer } from './back-layers.js';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { isWizardActive } from './slop.js';
@@ -138,6 +139,7 @@ export function PaletteOverlay({
   }, []);
 
   const runSelected = () => state.runSelected({ beforeRun: restoreFocus });
+  useBackLayer(current.open, () => state.close());
   const onInputKeyDown = (event) => {
     switch (event.key) {
       case 'ArrowDown': event.preventDefault(); state.move(1); break;

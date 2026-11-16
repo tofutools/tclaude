@@ -8,6 +8,7 @@
 // window elements, from a stylesheet this view owns, and nothing else changes.
 // No window re-renders or reflows for it; only transforms animate.
 
+import { useBackLayer } from './back-layers.js';
 import { h } from 'preact';
 import htm from 'htm';
 import { computed, signal } from '@preact/signals';
@@ -185,6 +186,7 @@ function ExposeView({ win }) {
   const at = Math.min(chosen, Math.max(0, shown.length - 1));
   const dimmed = new Set(live.filter((entry) => !matches(entry, needle)).map((entry) => entry.windowId));
   const leave = () => { overlayExposeOpen.value = false; };
+  useBackLayer(true, leave);
 
   useSpreadSheet(win, spreadSheet(placed, dimmed, motion), motion);
   // The room the spread has: the stage between the filter and the cards, which

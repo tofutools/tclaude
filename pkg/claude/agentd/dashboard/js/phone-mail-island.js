@@ -509,7 +509,7 @@ function PhoneAttachments({ message }) {
         </figcaption>
       </figure>`;
     })}
-    ${shown && html`<${AttachmentViewer} source=${source} attachment=${shown} attachments=${files} surface="messages" onClose=${close} />`}
+    ${shown && html`<${AttachmentViewer} source=${source} attachment=${shown} attachments=${files} surface="messages" onClose=${close} routed=${true} />`}
   </div>`;
 }
 
