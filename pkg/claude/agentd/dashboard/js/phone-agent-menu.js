@@ -87,7 +87,7 @@ export function menuModel(row, group, snapshot, { here = false, selectText = fal
   ] : null;
   const runsHere = !row.member?.external_steward;
   const agent = [
-    ...agentShellEntries(snapshot, row),
+    ...agentShellEntries(snapshot, row, group?.group ? group.name : ''),
     ...(group?.group ? [{ key: 'rename', label: 'Rename…' }] : []),
     ...(online && runsHere ? [{ key: 'reincarnate', label: 'Reincarnate…', sub: 'A fresh successor with the same identity' }] : []),
     ...(row.member?.agent_id ? [{ key: 'grant', label: 'Grant sudo…' }] : []),

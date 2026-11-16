@@ -62,6 +62,22 @@ test('agent sheet on a peer: only where the peer grants sessions.shell on the gr
   assert.equal(shell.agentShellEntries(granted, row)[0].target.group, 'tclaude');
 });
 
+test('agent sheet: an agent in several groups gets its shell in the group the sheet was opened in', async (t) => {
+  const { shell, model } = await load(t);
+  const m = member();
+  const two = { groups: [{ name: 'alpha', members: [m] }, { name: 'beta', members: [m] }] };
+  const row = model.agentRow(m, 'beta');
+  assert.equal(shell.agentShellEntries(two, row)[0].target.group, 'alpha', 'no group given: its first');
+  assert.equal(shell.agentShellEntries(two, row, 'beta')[0].target.group, 'beta');
+  assert.equal(shell.agentShellEntries(two, row, 'gamma')[0].target.group, 'alpha', 'not a member there: its first');
+  // On a peer, only a group granting sessions.shell.
+  const peer = { ...two, peer_view: { level: 'restricted', groups: { alpha: ['sessions.shell'], beta: ['sessions.watch'] } } };
+  assert.equal(shell.agentShellEntries(peer, row, 'beta')[0].target.group, 'alpha');
+  // The launch directory falls back to its session's cwd, as the desktop's.
+  const noStart = member({ startup_dir: '', state: { status: 'idle', harness: 'claude', cwd: '/home/dev/elsewhere' } });
+  assert.equal(shell.agentShellEntries(snapshotWith(noStart), model.agentRow(noStart, 'tclaude'))[1]?.sub, '/home/dev/elsewhere');
+});
+
 test('openAgentShell: this node opens its directory shell; a peer page opens the peer\'s', async (t) => {
   const { shell, model } = await load(t);
   const m = member();
@@ -76,7 +92,9 @@ test('openAgentShell: this node opens its directory shell; a peer page opens the
 
   await shell.openAgentShell(here, 'builder', { ...seams, node: { id: 'inst_peer0001' } });
   assert.equal(peer.length, 1);
-  assert.deepEqual({ ...peer[0], toast: undefined }, { instance: 'inst_peer0001', group: 'tclaude', shell: 'worktree', agent: AGENT, label: 'builder', toast: undefined });
+  assert.deepEqual({ ...peer[0], toast: undefined }, {
+    instance: 'inst_peer0001', peerLabel: 'inst_peer0001', group: 'tclaude', shell: 'worktree', agent: AGENT, label: 'builder', toast: undefined,
+  });
 
   // A terminal that does not open says so.
   const said = [];
@@ -92,6 +110,8 @@ test('group page: Shell in its default directory; greyed with why without one; h
   assert.equal(shell.groupShellOffer({}, { name: 'tclaude', default_cwd: '/x', archived: true }), null);
   assert.equal(shell.groupShellOffer({ peer_view: { level: 'restricted', groups: { tclaude: [] } } }, { name: 'tclaude', default_cwd: '/x' }), null);
   assert.deepEqual(shell.groupShellOffer({ peer_view: { level: 'unrestricted' } }, { name: 'tclaude', default_cwd: '/x' }), { dir: '/x' });
+  // A peer that grants the shell but withholds the directory: no shell, not "none set".
+  assert.equal(shell.groupShellOffer({ peer_view: { level: 'restricted', groups: { tclaude: ['sessions.shell'] } } }, { name: 'tclaude', default_cwd: '' }), null);
 
   // The group page renders it, and a tap opens the group's shell.
   const opened = [];
