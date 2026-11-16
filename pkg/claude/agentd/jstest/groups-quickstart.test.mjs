@@ -841,8 +841,12 @@ test('the fallback names a spawn profile, for the process and per step, and the 
   await click(editor.querySelector('[data-add-step="agent"]'));
   await settle();
   await setValue(steps(root)[0].querySelector('.gq-who-select'), 'role:qa', 'change');
-  await setValue(editor.querySelector('[data-process-fallback] select'), 'spawn:opus-lead', 'change');
-  const own = () => steps(root)[0].querySelector('[data-step-fallback] select');
+  await setValue(editor.querySelector('[data-process-fallback] .gq-fallback-select'), 'spawn', 'change');
+  const processProfile = editor.querySelector('[data-process-fallback] .gq-profile-select');
+  assert.deepEqual([...processProfile.options].map((o) => o.textContent), ['group default (sonnet-dev)', 'sonnet-dev', 'opus-lead'],
+    'a spawn picks its profile beside the action');
+  await setValue(processProfile, 'opus-lead', 'change');
+  const own = () => steps(root)[0].querySelector('[data-step-fallback] .gq-fallback-select');
   assert.match(own().querySelector('option[value=""]').textContent, /as the process: spawn opus-lead/);
   await setValue(own(), 'fail', 'change');
   await new Promise((resolve) => setTimeout(resolve, 450));
@@ -875,9 +879,10 @@ test('who-now reads the server\'s resolve-preview; the process fallback and anyo
   await setValue(who, 'role:qa', 'change');
   const fallback = editor.querySelector('[data-process-fallback] select');
   assert.equal(editor.querySelector('[data-process-fallback]').dataset.processFallback, 'wait');
-  assert.match(fallback.querySelector('option[value="spawn"]').textContent, /spawn one with profile sonnet-dev/);
+  assert.equal(fallback.querySelector('option[value="spawn"]').textContent, 'spawn a new agent');
   await setValue(fallback, 'spawn', 'change');
   assert.equal(editor.querySelector('[data-process-fallback]').dataset.processFallback, 'spawn');
+  assert.equal(editor.querySelector('[data-process-fallback] .gq-profile-select').dataset.profile, '', 'the group\'s default, which it has');
   await new Promise((resolve) => setTimeout(resolve, 450));
   await settle();
   const last = api.calls.preview.at(-1);
@@ -969,6 +974,61 @@ test('the inspector edits a step; Save writes a new version against the opened h
   assert.equal(view.template.nodes.review.performer.prompt, 'Check {{params.issue}} for security holes.');
   assert.match(notes.at(-1).message, /Saved ship-feature as a new version/);
   assert.equal(root.querySelector('[data-mini-editor]'), null, 'the card closes after a save');
+});
+
+test('Who › a new agent picks its spawn profile; it saves as a spawn with no one to match and reopens the same', async (t) => {
+  const open = async (stored) => {
+    const api = fakeApi({ stored: { tmpl_ship: stored } });
+    api.spawnProfileNames = async () => ['sonnet-dev', 'opus-review'];
+    const context = { ...SAVED_CONTEXT, groups: [{ ...SAVED_CONTEXT.groups[0], defaultSpawnProfile: 'sonnet-dev' }] };
+    const mounted = await mount(t, { api, context });
+    await mounted.click(mounted.root.querySelector('[data-saved-edit-graph="tmpl_ship"]'));
+    const card = () => mounted.root.querySelector('[data-mini-editor="tmpl_ship"]');
+    await mounted.click(card().querySelector('[data-process-node="review"]'));
+    const inspector = () => card().querySelector('[data-mini-inspector="review"]');
+    return { ...mounted, api, card, inspector };
+  };
+  const first = await open(SHIP_VIEW);
+  const who = first.inspector().querySelector('.gq-who-select');
+  const spawn = who.querySelector('option[value="spawn"]');
+  assert.match(spawn.textContent, /a new agent…/);
+  assert.equal(spawn.parentElement.getAttribute('label'), 'New agent');
+  await first.setValue(who, 'spawn', 'change');
+  const profile = first.inspector().querySelector('.gq-profile-select');
+  assert.ok(profile, 'a new agent shows its profile');
+  assert.deepEqual([...profile.options].map((o) => o.textContent), ['group default (sonnet-dev)', 'sonnet-dev', 'opus-review']);
+  assert.equal(first.inspector().querySelector('[data-mini-fallback]'), null, 'If nobody does not apply: it always spawns');
+  assert.equal(first.inspector().querySelector('[data-mini-constraint]'), null, 'a new agent is never the same as another step\'s');
+  assert.match(first.card().querySelector('[data-process-node="review"]').textContent, /a new agent · sonnet-dev/);
+  await first.setValue(profile, 'opus-review', 'change');
+  assert.match(first.card().querySelector('[data-process-node="review"]').textContent, /a new agent · opus-review/);
+  await first.click(first.card().querySelector('[data-mini-save]'));
+  const saved = first.api.calls.save.at(-1).view;
+  const performer = saved.template.nodes.review.performer;
+  assert.deepEqual(performer.fallback, { action: 'spawn', profile: 'opus-review' });
+  for (const key of ['assignee', 'role', 'anyone', 'lead', 'profile', 'spawn', 'sameAs', 'differentFrom']) assert.equal(performer[key], undefined, key);
+  assert.deepEqual(performer, NEW_AGENT_REVIEW(SHIP_VIEW.template.nodes.review.performer.prompt), 'the shape the next test reopens');
+});
+
+// NEW_AGENT_REVIEW is ship's review step as Who › a new agent (opus-review)
+// saves it.
+const NEW_AGENT_REVIEW = (prompt) => ({ kind: 'agent', prompt, fallback: { action: 'spawn', profile: 'opus-review' } });
+
+test('a saved new-agent step reopens as Who › a new agent with its profile', async (t) => {
+  const view = structuredClone(SHIP_VIEW);
+  const old = view.template.nodes.review.performer;
+  view.template.nodes.review.performer = { ...NEW_AGENT_REVIEW(old.prompt), ...(old.timeout ? { timeout: old.timeout } : {}) };
+  const api = fakeApi({ stored: { tmpl_ship: view } });
+  api.spawnProfileNames = async () => ['opus-review'];
+  const { root, click } = await mount(t, { api, context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-edit-graph="tmpl_ship"]'));
+  const card = root.querySelector('[data-mini-editor="tmpl_ship"]');
+  assert.match(card.querySelector('[data-process-node="review"]').textContent, /a new agent · opus-review/);
+  await click(card.querySelector('[data-process-node="review"]'));
+  const inspector = card.querySelector('[data-mini-inspector="review"]');
+  assert.equal(inspector.querySelector('.gq-who-select').dataset.who, 'spawn');
+  assert.equal(inspector.querySelector('.gq-profile-select').dataset.profile, 'opus-review');
+  assert.ok(card.querySelector('[data-mini-save]').hasAttribute('disabled'), 'opening it rewrites nothing');
 });
 
 test('☰ Steps and ◈ Graph switch views over the same unsaved draft', async (t) => {

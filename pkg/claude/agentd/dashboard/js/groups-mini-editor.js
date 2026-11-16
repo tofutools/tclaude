@@ -79,6 +79,7 @@ function whoLine(node, fallbackInfo) {
   if (who.mode === 'role') return agent(`any ${who.role}`);
   if (who.mode === 'anyone') return agent('anyone free');
   if (who.mode === 'lead') return agent('the lead');
+  if (who.mode === 'spawn') return `a new agent · ${who.profile || fallbackInfo?.defaultSpawnProfile || 'group default'}`;
   if (who.mode === 'you') return 'you';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
   return agent('pick who');
@@ -162,7 +163,8 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
   const noMoreDeciders = node.type === 'decision' ? canAddDecider(view, id) : 'only a decision';
   const stepName = (stepID) => view.template.nodes[stepID]?.name || stepID;
   // Which agent: the same as, or not the one of, another agent step.
-  const others = kind === 'agent' && stepWho(step).mode !== 'agent' ? agentStepIDs(view.template, id) : [];
+  const spawns = kind === 'agent' && stepWho(step).mode === 'spawn';
+  const others = kind === 'agent' && !spawns && stepWho(step).mode !== 'agent' ? agentStepIDs(view.template, id) : [];
   const constraint = constraintValue(stepConstraint(step));
   const constraintKnown = !constraint || others.some((other) => constraint === `same:${other}` || constraint === `different:${other}`);
   const outputs = stepOutputs(step);
@@ -181,7 +183,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
     ${gate
     ? html`<div class="gm-field" data-mini-deciders=${id}><span>Deciders</span><div class="gm-outcomes">
         ${deciders.map((decider, index) => html`<span key=${index} class="gm-outcome" data-mini-decider=${index}>
-          <${WhoPicker} step=${{ id: `${id}.vote.${index + 1}`, node: { type: 'decision', performer: decider } }} roster=${roster} roles=${roles}
+          <${WhoPicker} step=${{ id: `${id}.vote.${index + 1}`, node: { type: 'decision', performer: decider } }} roster=${roster} roles=${roles} spawn=${false}
             onChange=${(who) => { if (who.mode !== 'command') onApply(setDecider(view, id, index, who)); }} />
           <${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove decider ${index + 1}`}
             onClick=${() => onApply(removeDecider(view, id, index))}>✕<//>
@@ -194,7 +196,8 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
         ${outcomes.filter(({ outcome }) => !loopBound(node, outcome)).map(({ outcome }) => html`<option key=${outcome} value=${outcome}>${outcome}</option>`)}
       <//></div>
       <p class="gq-dim">Otherwise the first decider, in this order, who chose something else decides; the work goes back with everyone's notes.</p>`
-    : html`<div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} />
+    : html`<div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} profiles=${fallbackInfo.profiles}
+      defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} onChange=${setWho} />
       ${node.type === 'decision' && kind !== 'command' && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-add-decider
         disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
         onClick=${() => onApply(addDecider(view, id, { mode: 'nobody' }))}>+ another decider<//>`}</div>`}
@@ -205,7 +208,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
       <optgroup label="The same agent as">${others.filter((other) => !view.template.nodes[other]?.deciders?.length).map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>${stepName(other)}</option>`)}</optgroup>
       <optgroup label="Not the agent of">${others.map((other) => html`<option key=${`different:${other}`} value=${`different:${other}`}>${stepName(other)}</option>`)}</optgroup>
     <//></div>`}
-    ${kind === 'agent' && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}
+    ${kind === 'agent' && !spawns && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}
       label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}

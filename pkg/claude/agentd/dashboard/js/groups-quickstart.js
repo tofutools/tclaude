@@ -10,8 +10,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { templateStartRequirements, unauthorizedProfiles } from './process-context.js';
 import {
-  fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, ownFallback, setStepFallback, stepFallbackValue,
-  whoFromValue, whoNow, whoOptions, whoValue,
+  fallbackAction, fallbackChoices, fallbackFromValue, fallbackNote, fallbackValue, firstSpawn, ownFallback, profileChoices,
+  setStepFallback, stepFallbackValue, whoFromValue, whoNow, whoOptions, whoValue,
 } from './process-quickstart.js';
 import {
   YOU_CONTINUE, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
@@ -141,7 +141,7 @@ function GateDeciders({ list, step, index, roster, roles, now, onChange }) {
   return html`<div class="gq-gate" data-step-deciders=${step.id}>
     ${deciders.map((_, i) => html`<div key=${i} class="gq-decider" data-step-decider=${i}>
       <span class="gq-decider-n" aria-hidden="true">${i + 1}</span>
-      <${WhoPicker} step=${deciderStep(step, i)} roster=${roster} roles=${roles} label=${`Decider ${i + 1} of step ${index + 1}`}
+      <${WhoPicker} step=${deciderStep(step, i)} roster=${roster} roles=${roles} spawn=${false} label=${`Decider ${i + 1} of step ${index + 1}`}
         onChange=${(who) => { if (who.mode !== 'command') onChange(setStepDecider(list, step, i, who)); }} />
       <${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove decider ${i + 1} of step ${index + 1}`}
         onClick=${() => onChange(removeStepDecider(list, step, i))}>✕<//>
@@ -159,21 +159,36 @@ function GateDeciders({ list, step, index, roster, roles, now, onChange }) {
   </div>`;
 }
 
-export function WhoPicker({ step, roster, roles, label = 'Who does this step', onChange }) {
+// `spawn` offers "a new agent…" (a step's Who, not a decider's), with the
+// spawn profile picked beside it from `profiles` or the group's default.
+export function WhoPicker({ step, roster, roles, label = 'Who does this step', spawn = true, profiles = [], defaultSpawnProfile = '', onChange }) {
   const who = stepWho(step);
   const value = whoValue(who);
-  const options = whoOptions(roster, { roles });
+  const options = whoOptions(roster, { roles, spawn });
   const known = options.some((option) => option.value === value);
-  const groups = [['agent', 'Specific agent'], ['role', 'By role'], ['other', 'Not an agent']];
-  return html`<${Select} size="sm" class="gq-who-select" aria-label=${label} data-who=${value} value=${value}
+  const groups = [['agent', 'Specific agent'], ['role', 'By role'], ['spawn', 'New agent'], ['other', 'Not an agent']];
+  const unknown = { agent: `${who.agent} (not in this group)`, role: `any ${who.role}`, spawn: 'a new agent' }[who.mode] || 'nobody yet';
+  const select = html`<${Select} size="sm" class="gq-who-select" aria-label=${label} data-who=${value} value=${value}
     onChange=${(event) => onChange(whoFromValue(event.currentTarget.value))}>
-    ${!known && html`<option value=${value}>${who.mode === 'agent' ? `${who.agent} (not in this group)` : who.mode === 'role' ? `any ${who.role}` : 'nobody yet'}</option>`}
+    ${!known && html`<option value=${value}>${unknown}</option>`}
     ${groups.map(([key, label]) => {
       const inGroup = options.filter((option) => option.group === key);
       return inGroup.length > 0 && html`<optgroup key=${key} label=${label}>
         ${inGroup.map((option) => html`<option key=${option.value} value=${option.value} disabled=${option.disabled}>${option.label}${option.detail ? ` — ${option.detail}` : ''}</option>`)}
       </optgroup>`;
     })}
+  <//>`;
+  if (who.mode !== 'spawn' || !spawn) return select;
+  return html`<span class="gq-pick-pair" data-who-spawn=${who.profile}>${select}
+    <${ProfilePicker} value=${who.profile} defaultSpawnProfile=${defaultSpawnProfile} profiles=${profiles} label=${`${label}: spawn profile`}
+      onChange=${(profile) => onChange({ mode: 'spawn', profile })} /></span>`;
+}
+
+// ProfilePicker picks a spawn profile: '' is the group's default.
+export function ProfilePicker({ value = '', defaultSpawnProfile = '', profiles = [], label, onChange }) {
+  return html`<${Select} size="sm" class="gq-profile-select" aria-label=${label} data-profile=${value} value=${value}
+    onChange=${(event) => onChange(event.currentTarget.value)}>
+    ${profileChoices({ current: value, defaultSpawnProfile, profiles }).map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
   <//>`;
 }
 
@@ -192,12 +207,19 @@ export function useSpawnProfiles(api) {
 // FallbackPicker chooses what happens when no member can take an agent step.
 // `inherit` is the label of following the process; without it the picker is
 // the process's own.
+// A spawn picks its profile beside the action (ProfilePicker).
 export function FallbackPicker({ value, inherit = '', defaultSpawnProfile = '', profiles = [], label, onChange }) {
   const options = fallbackChoices({ current: value, inherit, defaultSpawnProfile, profiles });
-  return html`<${Select} size="sm" class="gq-fallback-select" aria-label=${label} data-fallback-value=${value} value=${value}
-    onChange=${(event) => onChange(fallbackFromValue(event.currentTarget.value))}>
+  const action = fallbackAction(value);
+  const pick = (next) => onChange(next === 'spawn' ? firstSpawn({ defaultSpawnProfile, profiles }) : fallbackFromValue(next));
+  const select = html`<${Select} size="sm" class="gq-fallback-select" aria-label=${label} data-fallback-value=${value} value=${action}
+    onChange=${(event) => pick(event.currentTarget.value)}>
     ${options.map((option) => html`<option key=${option.value} value=${option.value} disabled=${option.disabled}>${option.label}</option>`)}
   <//>`;
+  if (action !== 'spawn') return select;
+  return html`<span class="gq-pick-pair">${select}
+    <${ProfilePicker} value=${value.startsWith('spawn:') ? value.slice(6) : ''} defaultSpawnProfile=${defaultSpawnProfile} profiles=${profiles}
+      label=${`${label}: spawn profile`} onChange=${(profile) => onChange(profile ? { action: 'spawn', profile } : { action: 'spawn' })} /></span>`;
 }
 
 // inheritLabel names what a step gets by following the process's fallback.
@@ -336,12 +358,13 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
     <div class="gq-who">
       ${kind === 'gate'
     ? html`<${GateDeciders} list=${list} step=${step} index=${index} roster=${roster} roles=${roles} now=${now} onChange=${onChange} />`
-    : html`<${WhoPicker} step=${step} roster=${roster} roles=${roles} onChange=${setWho} />
+    : html`<${WhoPicker} step=${step} roster=${roster} roles=${roles} profiles=${fallbackInfo.profiles}
+        defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} onChange=${setWho} />
       <div class=${`gq-res${now.waits ? ' waits' : ''}`}>${now.detail}</div>`}
       ${decision && kind !== 'gate' && kind !== 'command' && html`<${Button} size="sm" variant="link" class="gq-link" data-step-add-decider=${step.id}
         disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
         onClick=${() => onChange(addStepDecider(list, step, { mode: 'nobody' }))}>+ another decider<//>`}
-      ${kind === 'agent' && html`<label class="gq-step-fallback" data-step-fallback=${step.id} title="What this step does when no member can take it">
+      ${kind === 'agent' && stepWho(step).mode !== 'spawn' && html`<label class="gq-step-fallback" data-step-fallback=${step.id} title="What this step does when no member can take it">
         <span aria-hidden="true">↯</span>
         <${FallbackPicker} value=${stepFallbackValue(step)} label=${`If no member can take step ${index + 1}`}
           inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
@@ -519,7 +542,9 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   // default spawn profile, or fail the step.
   const agentSteps = list.steps.filter((step) => step.node.performer?.kind === 'agent');
   const fallbackAction = fallback?.action || 'wait';
-  const ownFallbacks = agentSteps.filter(ownFallback).length;
+  // A new agent's spawn is its who: the process's fallback never reaches it.
+  const fallbackSteps = agentSteps.filter((step) => stepWho(step).mode !== 'spawn');
+  const ownFallbacks = fallbackSteps.filter(ownFallback).length;
   const setFallback = (next) => {
     const template = { ...list.template };
     if (!next || next.action === 'wait') delete template.fallback;
@@ -711,7 +736,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         ${[['agent', '🤖 agent'], ['you', '👤 you'], ['command', '⌘ command']].map(([kind, text]) => html`<${Button} size="sm" key=${kind} data-add-step=${kind}
           onClick=${() => update(insertStep(list, newStep(list, { kind })))}>${text}<//>`)}
       </div>
-      ${agentSteps.length > 0 && html`<div class="gq-fallback" data-process-fallback=${fallbackAction}>
+      ${fallbackSteps.length > 0 && html`<div class="gq-fallback" data-process-fallback=${fallbackAction}>
         <span aria-hidden="true">↯</span>
         <label>If no member can take an agent step:
           <${FallbackPicker} value=${fallbackValue(fallback) || 'wait'} label="When no member can take a step"

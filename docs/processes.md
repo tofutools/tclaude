@@ -639,9 +639,14 @@ the draft or start anyway, and if the version changes before you answer, nothing
 runs. An idle scribe with nothing new adds no step, so reruns stay one click. The
 step
 list edits a process as numbered steps, each done by a specific agent, any
-member with a role, anyone free in the group, you, or a command; one line sets
-what an agent step does when no member can take it (wait, spawn the group's
-default spawn profile or another profile you pick, or fail: the template's
+member with a role, anyone free in the group, a new agent, you, or a command.
+*A new agent…* spawns a fresh agent for every run of the step in a group, with
+the spawn profile you pick beside it (or the group's default); a run bound to
+one agent gives the step to that agent; the graph shows it as
+`a new agent · <profile>`. One line sets
+what an agent step does when no member can take it (wait, spawn a new agent
+with the group's default spawn profile or another profile you pick beside it,
+or fail: the template's
 `fallback`), and an agent step can override that with its own choice under
 its Who picker, or follow the process; a step that does not simply wait shows
 its fallback (`↯ spawn opus-lead`, `↯ fail`) on its node; your answers to a *you* step branch to
@@ -952,7 +957,11 @@ and fail-fast behave identically.
 
 With none of them, the step's `profile` is the role (the original shape): a
 member whose role matches the profile, or the role that spawn profile
-declares.
+declares. With no selector and no `profile`, no member matches, so the step's
+spawn fallback runs straight away: `{kind: agent, prompt: …, fallback: {action:
+spawn, profile: P}}` spawns a fresh agent with profile P for every group run
+of the step (a run bound to one agent still gives it to that agent, and an
+unscoped run waits). This is the editors' Who › *a new agent…*.
 
 What happens when nobody can take the step is its **fallback**, separate from
 the role: `fallback: {action: spawn, profile: P}` spawns a fresh performer
@@ -961,6 +970,8 @@ waits as **needs performer**, and `fail` fails the attempt, so the step's
 retry and fail routing apply. Set it on a step, or once for the whole process
 with a top-level `fallback`; the step's own wins. A step with neither uses
 the legacy `spawn: allowed` (spawn with its `profile`), and otherwise waits.
+Validating a template warns (`unknown_spawn_profile`) about a fallback that
+names a spawn profile this node does not have; such a spawn is refused.
 
 A spawn fallback that a spawn profile refuses fails the attempt with the reason,
 instead of waiting for a performer that cannot come. The refusing profile can be
