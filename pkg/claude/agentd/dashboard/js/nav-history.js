@@ -411,12 +411,12 @@ function onOverlay(event) {
 
 // stepBackTo steps back onto `loc` when it is exactly the entry under this
 // one, and says whether it did: a phone page's ‹ to its parent (nav-back.js).
+// A plain traversal, unlike an overlay close's: the page is still showing,
+// and the popstate restores the parent.
 function stepBackTo(loc) {
   if (!ready || steppingBack || stack.index < 1) return false;
   if (!locEquals(stack.entries[stack.index - 1], withOverlays(normalizeLocation(loc)))) return false;
-  steppingBack = [];
   history.back();
-  setTimeout(() => { if (steppingBack) flushSteppingBack(); }, 1000);
   return true;
 }
 

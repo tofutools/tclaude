@@ -800,6 +800,14 @@ test('a phone page\'s ‹ steps back onto its parent only when that is the entry
   s.press();
   assert.deepEqual(s.browsing.calls.map((c) => c.kind), ['back']);
   assert.deepEqual(s.inPlace, []);
+  // The step lands as a popstate, which shows the list (the reader is still up until then).
+  const bridge = await s.harness.importDashboardModule('js/mail-bridge.js');
+  const restored = [];
+  t.after(bridge.registerMailController({ restoreLocation: (loc) => restored.push(loc) }));
+  restored.length = 0;
+  s.browsing.history.replaceState({ ...s.browsing.history.state, navIndex: 0 }, '', '/messages/human');
+  s.harness.window.dispatchEvent(new s.harness.window.Event('popstate'));
+  assert.deepEqual(restored, [list], 'the list is restored');
 
   // A fresh load of the reader: no list under it, so the list in place.
   s = await boot('/messages/human/7');
