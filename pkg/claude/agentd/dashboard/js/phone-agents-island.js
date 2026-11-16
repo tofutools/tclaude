@@ -109,7 +109,11 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
   const lock = useRef(false);
   // A prompt written and not spawned is asked about before Back drops it;
   // All options… takes it along, so it closes without asking.
-  const guard = useDraftGuard(!!prompt.trim(), busy);
+  // With no group left the form is gone (the empty state below): nothing to
+  // ask about, so the sheet closes.
+  const form = useRef(null);
+  const guard = useDraftGuard(groups.length > 0 && !!prompt.trim(), busy,
+    () => form.current?.querySelector('textarea'));
   if (!groups.length) return html`<p class="ui-empty phone-empty">Make a group on the desktop first.</p>`;
   const fallback = groups.find((g) => g.name === group)?.profile || '';
   const submit = async (event) => {
@@ -134,7 +138,7 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
       setBusy(false);
     }
   };
-  return html`<form class="phone-agents-spawn" onSubmit=${submit}>
+  return html`<form ref=${form} class="phone-agents-spawn" onSubmit=${submit}>
     <p class="phone-agents-sheet-title">New agent</p>
     <label class="phone-agents-label">Group
       <select name="ui-select" class="ui-select phone-agents-field" value=${group} onChange=${(event) => setGroup(event.currentTarget.value)}>

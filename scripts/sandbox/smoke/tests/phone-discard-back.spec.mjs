@@ -156,8 +156,9 @@ const GUARDED = [
       // The seeded run's gate; phone-automations approves it, so after that
       // smoke on the same sandbox there is none left to write a note on.
       const run = page.getByRole('region', { name: 'Waiting on you' }).locator('.phone-run-open', { hasText: 'Release train' });
-      // Runs load after the page: wait for the list's rows before asking.
-      await page.locator('.phone-run-open').first().waitFor({ timeout: 15_000 }).catch(() => {});
+      // The list must have loaded (the seeded runs are there either way), so
+      // a skip means the gate was answered, never that the page broke.
+      await expect(page.locator('.phone-run-open', { hasText: 'Release train' }).first()).toBeVisible();
       test.skip(!(await run.count()), 'the seeded gate was already answered on this sandbox (phone-automations approves it)');
       await run.click();
       await page.locator('.phone-run-page [data-run-verdict][aria-haspopup="dialog"]').first().click();

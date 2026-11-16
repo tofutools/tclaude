@@ -9,7 +9,7 @@
 // bodies, questions and options are agent text, rendered as text.
 
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { answerDecision, decideAccessRequest, secondsLeft } from './companion-approval.js';
 import { postDismiss } from './decision-dismiss.js';
@@ -96,21 +96,25 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
 export function DecisionAnswer({ decision, fetchImpl, notify, onDone, onDraft = null }) {
   const [busy, setBusy] = useState(0);
   const [note, setNote] = useState('');
-  useEffect(() => { setBusy(0); setNote(''); }, [decision.id]);
-  useEffect(() => { onDraft?.(note, !!busy); }, [note, busy]);
+  useEffect(() => { setBusy(0); setNote(''); onDraft?.('', false); }, [decision.id]);
+  // Reported as it changes, not a render later: a Back right after a
+  // keystroke must find the note.
+  const draft = (nextNote, nextBusy) => onDraft?.(nextNote, !!nextBusy);
   const fetchWith = fetchImpl || ((...args) => globalThis.fetch(...args));
   const run = async (key, act, sent, failure) => {
     setBusy(key);
+    draft(note, true);
     try {
       await act();
       onDone(sent);
     } catch (error) {
       notify(`${failure}: ${error?.message || error}`, true);
       setBusy(0);
+      draft(note, false);
     }
   };
   return html`<${Input} class="phone-decision-note" placeholder="Add a note (optional)" aria-label="Note to send with your choice"
-      value=${note} disabled=${!!busy} onInput=${(event) => setNote(event.currentTarget.value)} />
+      value=${note} disabled=${!!busy} onInput=${(event) => { setNote(event.currentTarget.value); draft(event.currentTarget.value, busy); }} />
     <div class="phone-decision-options">
       ${decision.options.map((option, i) => {
         const recommended = i + 1 === decision.recommended;
@@ -132,11 +136,13 @@ export function DecisionSheet({ decision, from = '', fetchImpl, notify, close })
   const image = (decision.attachments || []).find((a) => a.previewable);
   const question = decision.subject || 'Decision';
   // A note written and not sent is asked about before Back or ✕ drops it.
-  const [draft, setDraft] = useState({ note: '', busy: false });
-  const guard = useDraftGuard(!!draft.note.trim(), draft.busy);
+  const draft = useRef({ note: '', busy: false });
+  const root = useRef(null);
+  const guard = useDraftGuard(() => !!draft.current.note.trim(), () => draft.current.busy,
+    () => root.current?.querySelector('.phone-decision-note'));
   // Close comes first: the sheet focuses its first button, and that must not
   // be an answer a stray Enter would send.
-  return html`<div class="phone-decision-sheet">
+  return html`<div ref=${root} class="phone-decision-sheet">
     <div class="phone-sheet-head">
       <h2 class="phone-sheet-title">${question}</h2>
       <button data-ui-exempt type="button" class="phone-sheet-close" aria-label="Close" onClick=${requestClosePhoneSheet}>✕</button>
@@ -145,7 +151,7 @@ export function DecisionSheet({ decision, from = '', fetchImpl, notify, close })
     ${decision.body && decision.body !== decision.subject && html`<p class="phone-decision-body">${decision.body}</p>`}
     ${image && html`<a class="phone-decision-image" href=${image.url} target="_blank" rel="noopener"><img src=${image.url} alt=${image.filename || 'attached image'} /></a>`}
     <${DecisionAnswer} decision=${decision} fetchImpl=${fetchImpl} notify=${notify} onDone=${() => close()}
-      onDraft=${(note, busy) => setDraft({ note, busy })} />
+      onDraft=${(note, busy) => { draft.current = { note, busy }; }} />
     ${guard.asking && html`<${DiscardAsk} what="your note" guard=${guard} close=${close} />`}
   </div>`;
 }

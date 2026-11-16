@@ -121,7 +121,7 @@ export function TextSheet({ title, label, placeholder = '', send = 'Send', multi
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const field = useRef(null);
-  const guard = useDraftGuard(multiline && !!text.trim(), busy);
+  const guard = useDraftGuard(multiline && !!text.trim(), busy, () => field.current);
   // The operator asked to write: the field takes the focus (the sheet's own
   // focus goes to its first button, so after it).
   useEffect(() => {
@@ -144,7 +144,7 @@ export function TextSheet({ title, label, placeholder = '', send = 'Send', multi
       : html`<input name="ui-input" ref=${field} class="ui-input phone-board-field" aria-label=${label} placeholder=${placeholder}
           value=${text} onInput=${(event) => setText(event.currentTarget.value)} />`}
     ${guard.asking
-      ? html`<${DiscardAsk} what=${what} guard=${guard} close=${close} field=${field} />`
+      ? html`<${DiscardAsk} what=${what} guard=${guard} close=${close} />`
       : html`<div class="phone-btns">
           <${Button} class="phone-btn phone-btn-grow" onClick=${requestClosePhoneSheet}>Cancel<//>
           <${Button} type="submit" class="phone-btn phone-btn-grow phone-btn-pri" disabled=${busy || !text.trim()}>${busy ? 'Sending…' : send}<//>

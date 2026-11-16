@@ -44,11 +44,13 @@ test('the question: Back (a requested close) asks, again keeps, Keep and Discard
   await request();
   assert.equal(ask(), null, 'asked again while it asks: Keep');
   assert.equal(field().value, 'ship after the migration');
+  assert.equal(harness.document.activeElement, field(), 'and the focus is back in the field');
 
   await harness.act(() => button('Cancel').click());
   assert.ok(ask(), 'Cancel is a requested close too');
   await harness.act(() => button('Keep').click());
   assert.equal(ask(), null);
+  assert.equal(harness.document.activeElement, field(), 'Keep gives the focus back to the field');
   assert.ok(sheet.phoneSheet.value, 'kept, it stays');
 
   await request();
