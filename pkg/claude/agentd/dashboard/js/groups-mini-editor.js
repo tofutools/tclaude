@@ -37,11 +37,34 @@ import {
 import { fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
 import { withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
+import { GetHelpMenu } from './get-help-menu.js';
+import { openHelperWindow } from './get-help.js';
+import {
+  PROCESS_SCRIBE_CHAT_SUBJECT, PROCESS_SCRIBE_GRANT_META, PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SCOPE_KIND, PROCESS_SCRIBE_SLUGS,
+  processScribeBrief, processScribeGrantBody, processScribeHandoff, processScribeTaskRef,
+} from './process-scribe.js';
+import { templateHeadFromEditView } from './process-external-change.js';
+import { processActorPresentation } from './processes-actions.js';
+import { dashboardState } from './snapshot-store.js';
+import { LIVE_POLL_MS, changeList, inlineHelpNote, mergeIncoming } from './groups-mini-live.js';
 
 const html = htm.bind(h);
 
 const KIND_CHOICES = Object.freeze([['agent', '🤖', 'agent'], ['you', '👤', 'you'], ['command', '⌘', 'command']]);
 const VALIDATE_DELAY_MS = 400;
+// MAX_REFUSED is how many saves in a row a newer version may refuse before
+// the editor stops merging and saving again, and says so.
+const MAX_REFUSED = 3;
+
+// wholeChoice is the merge when the draft's base is unknown (it opened with
+// unsaved edits of an older version): nothing is merged unasked, and the
+// operator takes theirs or keeps theirs out as a whole.
+function wholeChoice(ours, theirs, choice) {
+  const whole = [{ id: 'whole', kind: 'template', op: 'changed', label: 'the whole process', conflict: true }];
+  if (choice === 'theirs') return { changes: whole, conflicts: whole, merged: { template: theirs.template, edges: theirs.edges, layout: theirs.layout }, clean: true };
+  if (choice === 'mine') return { changes: whole, conflicts: whole, merged: ours, clean: false };
+  return { changes: whole, conflicts: whole, merged: null, clean: false };
+}
 // A pointer that moves this far from a handle is a drag, not a click.
 const DRAG_SLOP = 8;
 
@@ -305,7 +328,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
 export function MiniGraphEditor({
   group, roster, groupInfo = null, process, view, stored = view, changed = false, api, source, wizard = false,
   notify = defaultNotify, onClose, onSteps, draft: isDraft = false, untouched = false, onRun = null, onDiscard = null,
-  onImport = null, onDescribe = null,
+  onImport = null, onDescribe = null, scribes = [],
 }) {
   const model = useRef(null);
   if (!model.current) {
@@ -329,6 +352,26 @@ export function MiniGraphEditor({
   const touched = useRef(!untouched);
   const inflight = useRef(null);
   const failedAt = useRef(null);
+  // base is the saved version the draft rests on: the merge base when an
+  // agent saves a newer one (groups-mini-live.js).
+  // Opened with unsaved edits (from the step list), the view is not the
+  // version its sourceHash names: then the base is the stored one when that is
+  // the same version, and unknown otherwise, so nothing merges unasked.
+  const base = useRef(!changed ? view : stored?.sourceHash && stored.sourceHash === view.sourceHash ? stored : null);
+  // refused counts saves refused for a newer version in a row: after a few,
+  // the merge is not getting anywhere, and the old error shows instead.
+  const refused = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const cardRef = useRef(null);
+  // incoming is a newer version that changes what the operator is editing too,
+  // waiting for their choice; notice is the last one merged, with its undo.
+  const [incoming, setIncoming] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const syncing = useRef(false);
+  const resync = useRef(false);
+  // helper is the agent asked from this editor's ✨ With an agent menu.
+  const [helper, setHelper] = useState(null);
   const nameRef = useRef(null);
   const canvas = useRef(null);
   // dragged swallows the click that ends a handle drag.
@@ -369,6 +412,7 @@ export function MiniGraphEditor({
   const apply = (result, focus = undefined) => {
     touched.current = true;
     setError('');
+    setNotice(null);
     model.current.applyDraft(result.view);
     setRev(model.current.rev);
     if (focus !== undefined) setSelected(focus);
@@ -384,7 +428,7 @@ export function MiniGraphEditor({
       setError(cause.message);
     }
   };
-  const undo = () => { if (model.current.undo()) { setRev(model.current.rev); setSelected(''); } };
+  const undo = () => { if (model.current.undo()) { setRev(model.current.rev); setSelected(''); setNotice(null); } };
   const stepsList = viewToStepList(draft);
   const save = async ({ quiet = false } = {}) => {
     // A click during an autosave waits for it, rather than being dropped.
@@ -401,39 +445,124 @@ export function MiniGraphEditor({
     try {
       const body = await api.saveTemplate(process.templateId, draft, { sourceHash: model.current.sourceHash, ...(publish ? { listed: true } : {}) });
       model.current.markSaved(body, savedAt);
+      base.current = { ...draft, sourceHash: model.current.sourceHash, currentRef: model.current.currentRef };
+      refused.current = 0;
       if (!quiet) notify(isDraft ? `Saved ${name}` : `Saved ${name} as a new version`);
       void source?.refresh?.();
-      return true;
       done(true);
       return true;
     } catch (cause) {
+      done(false);
+      // Someone (an agent, most often) saved a newer version: merge it in and
+      // save again, rather than leave the operator's edit stuck.
+      if (/head changed/.test(cause.message) && live && refused.current < MAX_REFUSED) {
+        refused.current += 1;
+        resync.current = true;
+        return null;
+      }
       setError(/head changed/.test(cause.message)
         ? `${name} was saved elsewhere since you opened it. ${isDraft ? 'Close it without saving' : 'Cancel'} and reopen it to edit the newest version.` : cause.message);
-      done(false);
       return false;
     } finally {
       inflight.current = null;
       setBusy('');
+      if (resync.current) { resync.current = false; void sync({ force: true }); }
     }
   };
+  // live: this editor follows its template's head (an api that can read it).
+  const live = typeof api.getTemplateHead === 'function';
+  // adopt merges theirs, a newer saved version, into the draft as one
+  // undoable edit; a version that also changes what the operator changed
+  // waits for their choice ('theirs' or 'mine').
+  const adopt = (theirs, choice = '') => {
+    if (!mounted.current) return;
+    const ours = viewOf(model.current);
+    const head = templateHeadFromEditView(theirs);
+    const who = head.actor === 'human:operator' ? 'You (elsewhere)'
+      : processActorPresentation(dashboardState.snapshot.value, head.actor)?.label || 'Someone';
+    const result = base.current ? mergeIncoming({ base: base.current, ours, theirs, choice })
+      : wholeChoice(ours, theirs, choice);
+    if (!result.merged) { setIncoming({ theirs, who, conflicts: result.conflicts }); return; }
+    model.current.adoptReviewedGeneration(result.merged,
+      { ref: theirs.currentRef, sourceHash: theirs.sourceHash, semanticHash: theirs.semanticHash }, { clean: result.clean });
+    base.current = theirs;
+    touched.current = true;
+    failedAt.current = null;
+    setIncoming(null);
+    setAutosave('');
+    setError('');
+    if (result.merged.template?.name !== ours.template?.name) setTitle(result.merged.template?.name || name);
+    setNotice(result.changes.length ? { who, what: changeList(result.changes), kept: choice === 'mine' } : null);
+    setRev(model.current.rev);
+  };
+  // sync reads the head and adopts it when it is a version this editor has
+  // not seen. A save under way, or one that lands meanwhile, skips the read:
+  // the save's own answer is the newer truth.
+  // A field the operator is typing in (it commits on change) holds the read
+  // back, so a merge never resets what they have not committed yet; a save's
+  // own retry (force) goes ahead, as the field has just committed.
+  const typing = () => {
+    const active = cardRef.current?.ownerDocument?.activeElement;
+    return !!active && cardRef.current.contains(active) && /^(INPUT|TEXTAREA)$/.test(active.tagName || '');
+  };
+  const sync = async ({ force = false } = {}) => {
+    if (!live || !mounted.current || syncing.current || inflight.current || (!force && typing())) return;
+    syncing.current = true;
+    const at = model.current.sourceHash;
+    try {
+      const theirs = await api.getTemplateHead(process.templateId);
+      if (!inflight.current && model.current.sourceHash === at && theirs?.sourceHash && theirs.sourceHash !== at) adopt(theirs);
+    } catch {
+      // The next read tries again; a save waiting on this merge says why it stopped.
+      if (force && mounted.current) setError(`${name} was saved elsewhere, and the newer version could not be read. Close it and reopen it.`);
+    } finally {
+      syncing.current = false;
+    }
+  };
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
+  useEffect(() => {
+    if (!live) return undefined;
+    let stopped = false;
+    let timer = null;
+    const tick = async () => {
+      if (stopped) return;
+      if (!incomingRef.current) await syncRef.current();
+      if (!stopped) timer = setTimeout(tick, LIVE_POLL_MS);
+    };
+    timer = setTimeout(tick, LIVE_POLL_MS);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [process.templateId, live]);
+  const incomingRef = useRef(null);
+  incomingRef.current = incoming;
   // A draft saves itself a moment after each change; a change made while a
   // save is under way is saved after it.
   // One that fails is not retried until the next change.
   useEffect(() => {
-    if (!isDraft || !dirty || busy || failedAt.current === draftKey) return undefined;
+    if (!isDraft || !dirty || busy || incoming || failedAt.current === draftKey) return undefined;
     const timer = setTimeout(() => {
       setAutosave('saving');
       void save({ quiet: true }).then((ok) => {
+        // null: a newer version is being merged in, and saved after it.
+        if (ok === null) { setAutosave(''); return; }
         failedAt.current = ok ? null : draftKey;
         setAutosave(ok ? 'saved' : 'failed');
       });
     }, AUTOSAVE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [isDraft, draftKey, dirty, busy]);
+  }, [isDraft, draftKey, dirty, busy, !!incoming, model.current.sourceHash]);
   // The full editor opens over this tab, pinned to the group still: its
   // ← Back inline brings the process back here.
+  // saveFirst saves before an action that needs the draft stored. One refused
+  // for a newer version merges that in first: the operator checks it and
+  // presses again, rather than the action going ahead on what they did not see.
+  const saveFirst = async (quiet = true) => {
+    const ok = await save({ quiet });
+    if (ok === null) notify('A newer version was merged in first: check it, then press again.');
+    return !!ok;
+  };
   const fullEditor = async () => {
-    if (dirty && !(await save({ quiet: isDraft }))) return;
+    if (dirty && !(await saveFirst(isDraft))) return;
     await openProcessDraft({ id: process.templateId, name, group: group.name });
     onClose();
   };
@@ -455,15 +584,15 @@ export function MiniGraphEditor({
   // Closing a draft keeps it (saved first); one never touched is deleted.
   const closeDraft = async () => {
     if (!touched.current && empty && onDiscard) { onDiscard(process.templateId); return; }
-    if (dirty && !(await save({ quiet: true }))) return;
+    if (dirty && !(await saveFirst())) return;
     onClose();
   };
   const runDraft = async () => {
-    if (dirty && !(await save({ quiet: true }))) return;
+    if (dirty && !(await saveFirst())) return;
     onRun?.(process.templateId, name);
   };
   const describe = async (text) => {
-    if (dirty && !(await save({ quiet: true }))) return;
+    if (dirty && !(await saveFirst())) return;
     onDescribe?.(text, { id: process.templateId, sourceHash: model.current.sourceHash, ref: model.current.currentRef, view: draft });
   };
   const importPwf = () => {
@@ -517,6 +646,30 @@ export function MiniGraphEditor({
       ${menu && html`<${StructureMenu} view=${draft} menu=${menu} onRun=${run} onClose=${() => setMenu(null)}
         onWrap=${() => { setMenu(null); void fullEditor(); }} />`}`;
   };
+  // ✨ With an agent: the process scribe of this template (the one the full
+  // editor's Get help also reaches), or an agent already running, such as
+  // the steward, briefed on this draft. What it saves lands here as it goes.
+  const brief = () => [
+    processScribeBrief(processScribeHandoff({
+      kind: 'template', id: process.templateId, currentRef: model.current.currentRef, sourceHash: model.current.sourceHash,
+    })),
+    inlineHelpNote(),
+  ].join('\n\n');
+  let taskRef = null;
+  try { taskRef = processScribeTaskRef({ scope: { kind: PROCESS_SCRIBE_SCOPE_KIND, id: process.templateId } }); } catch { taskRef = null; }
+  const help = {
+    name: PROCESS_SCRIBE_NAME, slugs: PROCESS_SCRIBE_SLUGS, exclusive: true, taskRef,
+    scope: { kind: PROCESS_SCRIBE_SCOPE_KIND, id: process.templateId }, subject: PROCESS_SCRIBE_CHAT_SUBJECT, brief,
+    confirmation: {
+      title: 'Grant process-scribe access?', body: processScribeGrantBody(`the process "${name}"`),
+      meta: PROCESS_SCRIBE_GRANT_META, okLabel: 'Grant & start',
+    },
+  };
+  const scribe = scribes.find((session) => session.scope?.id === process.templateId && session.online) || null;
+  const agent = scribe ? { id: scribe.agentId, label: scribe.name, status: scribe.status } : helper;
+  const agentChip = agent && html`<${Button} size="sm" variant="link" class="gq-link gm-agent" data-mini-agent=${agent.id}
+    title=${`Open ${agent.label}'s chat window: ask it for changes there; what it saves shows here`}
+    onClick=${() => void openHelperWindow(agent.id, agent.label)}>💬 ${agent.label}${agent.status === 'working' ? ' · working…' : ''}<//>`;
   const startId = Object.keys(draft.template.nodes || {}).find((id) => draft.template.nodes[id]?.type === 'start') || '';
   const projection = withFirstStep(draftProjection(draft, { whoOf: (id, node) => whoLine(node, fallbackInfo), noteOf: (id, node) => fallbackNote({ node }, fallbackInfo), name }), empty ? startId : '');
   // The placeholder opens the kind picker for a step after start.
@@ -525,7 +678,7 @@ export function MiniGraphEditor({
     setMenu(null);
     setPicker({ op: 'after', id: startId, cx: box.left, cy: box.bottom + 4 });
   };
-  return html`<section class="gm-card ui-card ui-inset" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
+  return html`<section ref=${cardRef} class="gm-card ui-card ui-inset" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
     onKeyDown=${(event) => {
       if (event.key === 'Escape' && (menu || picker)) { event.stopPropagation(); setMenu(null); setPicker(null); }
       if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !/INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '')) { event.preventDefault(); undo(); }
@@ -546,6 +699,11 @@ export function MiniGraphEditor({
       </span>
       ${dirty && !isDraft && html`<span class="gm-changes" data-mini-changes=${summary.length}>● ${summary.length || 1} unsaved change${summary.length === 1 ? '' : 's'}${summary.length ? `: ${summary.slice(0, 3).join(', ')}${summary.length > 3 ? '…' : ''}` : ''}</span>`}
       <span class="gq-spacer"></span>
+      ${agentChip}
+      <${GetHelpMenu} class="gm-get-help" help=${help} label="With an agent" labelNode=${'✨ With an agent'}
+        title="Build this with an agent: a process scribe, or one already running (the steward, a chat). It sees this draft, and what it saves shows here."
+        before=${async () => !model.current.dirty || saveFirst()}
+        onHelper=${(found) => setHelper({ id: found.agentId, label: found.name })} />
       <${Button} size="sm" data-mini-undo disabled=${!model.current.canUndo} title=${withShortcut('Undo', 'mini-undo')} onClick=${undo}>↶ undo<//>
       <${Button} size="sm" data-mini-full disabled=${!!busy && busy !== 'auto'} title=${dirty ? 'Save, then open it in the full editor' : 'Open it in the full editor'} onClick=${fullEditor}>⤢ ${isDraft ? 'Full editor' : 'full editor'}<//>
       ${isDraft
@@ -563,8 +721,19 @@ export function MiniGraphEditor({
         <${Button} size="sm" variant="link" class="gq-link" onClick=${() => setDiscarding(false)}>keep<//></span>`
     : html`<${Button} size="sm" data-mini-cancel onClick=${() => (dirty ? setDiscarding(true) : onClose())}>cancel<//>`}
       <${Button} size="sm" variant="primary" data-mini-save disabled=${!!busy || !dirty} title=${dirty ? 'Save as a new version' : 'Nothing changed'}
-        onClick=${async () => { if (await save()) onClose(); }}>${busy === 'save' ? 'saving…' : 'Save new version'}<//>`}
+        onClick=${async () => { if (await saveFirst(false)) onClose(); }}>${busy === 'save' ? 'saving…' : 'Save new version'}<//>`}
     </div>
+    ${incoming && html`<div class="gm-live gm-live-conflict" role="alert" data-mini-incoming>
+      <span>${incoming.who} saved a version that also changes what you changed: ${changeList(incoming.conflicts)}.</span>
+      <${Button} size="sm" variant="primary" data-mini-take-theirs onClick=${() => adopt(incoming.theirs, 'theirs')}>Use theirs<//>
+      <${Button} size="sm" data-mini-keep-mine onClick=${() => adopt(incoming.theirs, 'mine')}>Keep mine<//>
+      <span class="gq-dim">Their other changes are merged either way.</span>
+    </div>`}
+    ${notice && !incoming && html`<div class="gm-live" role="status" data-mini-notice>
+      <span>✨ ${notice.who} changed ${notice.what}${notice.kept ? ' (your edits kept where you both changed)' : ''}.</span>
+      <${Button} size="sm" variant="link" class="gq-link" data-mini-notice-undo title="Take their change back out; it saves again" onClick=${undo}>undo<//>
+      <${Button} size="sm" variant="link" class="gq-link" aria-label="Dismiss" onClick=${() => setNotice(null)}>✕<//>
+    </div>`}
     <div class="gm-canvas" ref=${canvas} data-mini-canvas
       onMouseLeave=${() => { if (!drag) setHover(''); }}
       onPointerMove=${(event) => { if (drag) { const at = pointAt(event); setDrag({ ...drag, ...at, moved: drag.moved || Math.hypot(at.x - drag.x0, at.y - drag.y0) > DRAG_SLOP }); } }}

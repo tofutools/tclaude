@@ -601,7 +601,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     : editing && quick.mode === 'graph'
     ? html`<${MiniGraphEditor} key=${quick.key} group=${group} roster=${people} groupInfo=${entry} process=${quick.process}
         view=${quick.view} stored=${quick.stored || quick.view} changed=${!!quick.changed} api=${api} source=${source} wizard=${wizard}
-        draft=${!!quick.draft} untouched=${!!quick.untouched}
+        draft=${!!quick.draft} untouched=${!!quick.untouched} scribes=${scribes}
         notify=${say} onClose=${() => setQuick(null)} onSteps=${toSteps} onRun=${runSaved}
         onDiscard=${(templateId) => { setQuick(null); void discardDraft(templateId); }}
         onImport=${pickPwf}
