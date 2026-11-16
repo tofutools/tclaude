@@ -1,0 +1,64 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: check-fix
+name: Check → fix if red
+description: >-
+  Good on a schedule (nightly): a tester runs the checks, and when they are
+  red a developer fixes them and the tester checks again.
+params:
+  task:
+    type: string
+    required: true
+# The group's lead oversees a run; a step stuck longer than its patience
+# (an hour, two for a fix) raises a concern to it.
+overseer: lead
+patience: 1h
+start: start
+nodes:
+  start:
+    type: start
+    next: { next: check }
+
+  # A tester runs the checks.
+  check:
+    type: decision
+    performer:
+      kind: agent
+      role: tester
+      fallback: { action: spawn }
+      prompt: "Run {{ params.task }}. Choose green, or red with what fails as your note."
+    next: { green: done, red: fix }
+
+  # A developer fixes what is red.
+  fix:
+    type: task
+    captures: [pr]
+    patience: 2h
+    performer:
+      kind: agent
+      role: dev
+      differentFrom: [check]
+      fallback: { action: spawn }
+      prompt: "{{ params.task }} is red. Run it to see what fails, fix it, open a PR and report its link as pr."
+    next: { next: recheck }
+
+  # The tester who found it red checks the fix.
+  recheck:
+    type: decision
+    performer:
+      kind: agent
+      role: tester
+      sameAs: check
+      prompt: "Run {{ params.task }} again with this fix:\n{{ outputs.pr }}\nChoose green, or red with what still fails."
+    next: { green: done, red: fix, escalate: escalated }
+    loops:
+      red: { maxIterations: 3, onExhausted: escalate }
+
+  done:
+    type: end
+    result: success
+  # Out of rounds, or escalated by hand: the run fails, so a board task it
+  # runs for is blocked with the reason rather than left as it was.
+  escalated:
+    type: end
+    result: failed

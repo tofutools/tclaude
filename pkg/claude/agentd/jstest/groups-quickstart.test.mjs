@@ -1,13 +1,23 @@
 // Tests for the Groups › Processes quick start (mocks Q1/Q2, tcl-7p6bgt): an
-// empty group offers Get started, a starter opens as an editable step list
-// filled from the roster, and Start saves the steps as a template and starts
-// it in the group. Driven through the real Processes perspective.
+// empty group offers Get started, a built-in way of working opens as an
+// editable step list, and Start saves the steps as a template and starts it
+// in the group. Driven through the real Processes perspective.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
-import { stepListToView } from '../dashboard/js/process-step-list.js';
-import { STARTERS } from '../dashboard/js/process-quickstart.js';
+
+// BUILTINS stand in for the daemon's built-in ways of working: the step-list
+// fixtures (process-quickstart-starters.json, which the Go side proves
+// runnable), served the way GET /v1/process/builtins and /builtins/{id} do.
+const BUILTIN_VIEWS = JSON.parse(readFileSync(new URL('./process-quickstart-starters.json', import.meta.url), 'utf8')).starters;
+const BUILTINS = [
+  { id: 'build-review-ship', name: 'Build → review → ship', description: 'Implement, review, you approve, merge', steps: ['implement', 'review', 'approve', 'merge'] },
+  { id: 'plan-fan-out-merge', name: 'Plan → fan out → integrate', description: 'Three parts at once', steps: ['plan', 'part-1', 'part-2', 'part-3', 'integrate'] },
+  { id: 'check-fix', name: 'Check → fix if red', description: 'Good on a schedule', steps: ['check-fix', 'verify'] },
+  { id: 'ask-me-first', name: 'Ask me first', description: 'Your go-ahead and sign-off', steps: ['brief', 'do-it', 'accept'] },
+];
 
 const GROUPS = [
   { name: 'webshop', members: [
@@ -30,6 +40,8 @@ function fakeApi({ createError = null, createErrorBody = null, startErrors = [],
     pinProcess: async (group, id) => { calls.pin.push({ group, id }); return { pinned: true }; },
     unpinProcess: async (group, id) => { calls.unpin.push({ group, id }); return { pinned: false }; },
     listTemplates: async () => [{ id: 'release-train', name: 'release-train' }, { id: 'db-migrate', name: 'db-migrate' }],
+    listBuiltins: async () => BUILTINS,
+    getBuiltin: async (id) => structuredClone(BUILTIN_VIEWS[id]),
     templateRequirements: async () => ({ params: [], programProfiles: [] }),
     validateTemplate: async (view) => { calls.validate.push(view); return []; },
     createTemplate: async (view, options) => {
@@ -87,22 +99,23 @@ async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = un
 const steps = (root) => [...root.querySelectorAll('[data-step]')];
 
 // newSteps makes a new process the way the operator does (New process, then
-// a starter when one is named) and shows it as the step list.
-async function newSteps(root, click, starter = '') {
+// a built-in when one is named) and shows it as the step list.
+async function newSteps(root, click, builtin = '') {
   await click(root.querySelector('[data-process-new]'));
-  if (starter) await click(root.querySelector(`[data-mini-starter="${starter}"]`));
+  if (builtin) await click(root.querySelector(`[data-mini-builtin="${builtin}"]`));
   await click(root.querySelector('[data-mini-steps]'));
   return root.querySelector('[data-step-editor]');
 }
 
-test('a new process offers what to start from under its empty canvas: starters, words, a .pwf and the library', async (t) => {
+test('a new process offers one Start from row: the built-ins, words, a .pwf and the library', async (t) => {
   const { root, api, click } = await mount(t);
   await click(root.querySelector('[data-process-new]'));
   const strip = root.querySelector('[data-mini-start-from]');
   assert.ok(strip, 'the empty draft shows Start from');
-  assert.deepEqual([...strip.querySelectorAll('[data-mini-starter]')].map((el) => el.dataset.miniStarter),
+  assert.equal(strip.querySelectorAll('.gm-start-row').length, 1, 'one row, not two');
+  assert.deepEqual([...strip.querySelectorAll('[data-mini-builtin]')].map((el) => el.dataset.miniBuiltin),
     ['build-review-ship', 'plan-fan-out-merge', 'check-fix', 'ask-me-first']);
-  assert.equal(strip.querySelector('[data-mini-starter="build-review-ship"]').textContent, 'Implement → Review → Approve → Merge');
+  assert.equal(strip.querySelector('[data-mini-builtin="build-review-ship"]').textContent, '◈ Build → review → ship');
   assert.ok(strip.querySelector('[data-mini-import]'));
   await click(strip.querySelector('[data-mini-describe]'));
   const form = root.querySelector('[data-mini-describe-form]');
@@ -113,49 +126,36 @@ test('a new process offers what to start from under its empty canvas: starters, 
   assert.equal(api.calls.create.length, 1, 'only the draft itself is stored');
 });
 
-// The built-in ways of working (tk_d02b0f4c): a row above the starters and
-// the top of the library; picking one fills the draft, which is the group's
-// own copy.
-const BUGFIX_VIEW = {
-  template: { id: 'bug-fix', name: 'Bug: reproduce → fix → verify', start: 'start', nodes: {
-    start: { type: 'start', next: { next: 'reproduce' } },
-    reproduce: { type: 'task', performer: { kind: 'agent', role: 'tester', prompt: 'Reproduce it' }, next: { next: 'done' } },
-    done: { type: 'end', result: 'success' },
-  } },
-  edges: [{ from: 'start', outcome: 'next', to: 'reproduce' }, { from: 'reproduce', outcome: 'next', to: 'done' }],
-};
-test('a new process offers the built-in ways of working, and one fills the group\'s own draft', async (t) => {
+// The built-in ways of working (tk_d02b0f4c) lead the Start from row;
+// picking one fills the draft, which is the group's own copy.
+test('a built-in fills the group\'s own draft and names it', async (t) => {
   const api = fakeApi();
   const asked = [];
-  api.listBuiltins = async () => [
-    { id: 'plan-vet-build', name: 'Plan → vet → build → review → merge', description: 'The 8 steps', steps: ['brief', 'plan'] },
-    { id: 'bug-fix', name: 'Bug: reproduce → fix → verify', description: 'Repro first', steps: ['reproduce', 'fix', 'verify', 'merge'] },
-  ];
-  api.getBuiltin = async (id) => { asked.push(id); return BUGFIX_VIEW; };
+  const get = api.getBuiltin;
+  api.getBuiltin = async (id) => { asked.push(id); return get(id); };
   const { root, click } = await mount(t, { api });
   await click(root.querySelector('[data-process-new]'));
   const strip = root.querySelector('[data-mini-start-from]');
-  const row = strip.querySelector('[data-mini-builtins]');
-  assert.ok(row, 'a row of built-ins above the starters');
-  assert.deepEqual([...row.querySelectorAll('[data-mini-builtin]')].map((el) => el.dataset.miniBuiltin), ['plan-vet-build', 'bug-fix']);
-  assert.equal(row.querySelector('[data-mini-builtin="bug-fix"]').textContent, '◈ Bug: reproduce → fix → verify');
-  assert.match(row.querySelector('[data-mini-builtin="bug-fix"]').title, /Steps: reproduce → fix → verify → merge\nBuilt in: this process gets its own copy/);
+  const chip = strip.querySelector('[data-mini-builtin="ask-me-first"]');
+  assert.match(chip.title, /Steps: brief → do-it → accept\nBuilt in: this process gets its own copy/);
   await click(strip.querySelector('[data-mini-library]'));
-  assert.deepEqual([...root.querySelectorAll('[data-mini-library-builtin]')].map((el) => el.dataset.miniLibraryBuiltin), ['plan-vet-build', 'bug-fix'],
-    'the library lists them first, tagged built in');
-  assert.match(root.querySelector('[data-mini-library-builtin="bug-fix"]').textContent, /built in/);
-  await click(row.querySelector('[data-mini-builtin="bug-fix"]'));
-  assert.deepEqual(asked, ['bug-fix']);
+  assert.equal(root.querySelectorAll('[data-mini-library-list] [data-mini-builtin]').length, 0, 'the library lists only the library: the built-ins are in the row');
+  await click(chip);
+  assert.deepEqual(asked, ['ask-me-first']);
   assert.equal(root.querySelector('[data-mini-start-from]'), null, 'the draft is filled');
-  assert.equal(root.querySelector('[data-mini-title]').value, 'Bug: reproduce → fix → verify', 'named after the built-in');
+  assert.equal(root.querySelector('[data-mini-title]').value, 'Ask me first', 'named after the built-in');
   assert.equal(api.calls.create.length, 1, 'no template but the draft itself');
   assert.deepEqual(api.calls.create[0].options, { listed: false, pinGroup: 'webshop' }, 'the copy is the group\'s');
 });
 
-test('without built-ins the Start from strip has no built-in row', async (t) => {
-  const { root, click } = await mount(t);
+test('without built-ins Start from still offers words, a .pwf and the library', async (t) => {
+  const api = fakeApi();
+  api.listBuiltins = async () => [];
+  const { root, click } = await mount(t, { api });
   await click(root.querySelector('[data-process-new]'));
-  assert.equal(root.querySelector('[data-mini-builtins]'), null);
+  assert.equal(root.querySelectorAll('[data-mini-builtin]').length, 0);
+  assert.ok(root.querySelector('[data-mini-describe]'));
+  assert.ok(root.querySelector('[data-mini-library]'));
 });
 
 const SCRIBE = { agent_id: `agt_${'a'.repeat(32)}`, conv_id: 'conv-scribe', name: 'process-scribe-k3' };
@@ -338,12 +338,12 @@ test('the scribe draft request and name are bounded', async (t) => {
   assert.match(request, /…and \d+ more/);
 });
 
-test('a starter fills a new process; as a step list, Start saves it and starts it in the group', async (t) => {
+test('a built-in fills a new process; as a step list, Start saves it and starts it in the group', async (t) => {
   const { root, api, notes, source, click, setValue } = await mount(t);
   await newSteps(root, click, 'build-review-ship');
   const editor = root.querySelector('[data-step-editor="webshop"]');
   assert.ok(editor, 'the step-list editor opens in the group body');
-  assert.equal(editor.querySelector('.gq-name').value, 'Build → review → ship', 'an untitled draft takes the starter\'s name');
+  assert.equal(editor.querySelector('.gq-name').value, 'Build → review → ship', 'an untitled draft takes the built-in\'s name');
   assert.deepEqual(steps(root).map((el) => el.dataset.step), ['implement', 'review', 'approve', 'merge']);
   assert.deepEqual(steps(root).map((el) => el.querySelector('.gq-who-select').dataset.who),
     ['role:dev', 'role:reviewer', 'you', 'command']);
@@ -548,7 +548,7 @@ test('open in graph editor saves the steps first, then hands the stored template
   const editor = root.querySelector('[data-step-editor]');
   await click(editor.querySelector('[data-step-open-graph]'));
   assert.equal(api.calls.create.length, 1, 'the new process, and nothing more');
-  assert.equal(api.calls.save.at(-1).id, 'tmpl_1', 'the starter\'s steps are saved to it first');
+  assert.equal(api.calls.save.at(-1).id, 'tmpl_1', 'the built-in\'s steps are saved to it first');
   const draft = handoff.takeProcessDraft();
   assert.equal(draft.id, 'tmpl_1');
   assert.equal(draft.name, 'Check → fix if red');
@@ -831,9 +831,9 @@ test('who-now reads the server\'s resolve-preview; the process fallback and anyo
   assert.match(editor.querySelector('.gq-whonow').textContent, /search · step 1/);
 });
 
-// SHIP_VIEW is the build-review-ship starter stored as tmpl_ship.
+// SHIP_VIEW is the build-review-ship step list stored as tmpl_ship.
 const SHIP_VIEW = (() => {
-  const view = stepListToView(STARTERS[0].build([{ name: 'checkout', id: 'a1', role: 'dev', online: true }, { name: 'review-bot', id: 'a3', role: 'reviewer', online: true }]).list);
+  const view = structuredClone(BUILTIN_VIEWS['build-review-ship']);
   return { ...view, template: { ...view.template, id: 'tmpl_ship', name: 'ship-feature' }, sourceHash: 'h1', listed: false };
 })();
 

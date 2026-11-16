@@ -412,6 +412,8 @@ func TestStopOneConvWithIntent_FailedKillClearsAttribution(t *testing.T) {
 	prevTmux := clcommon.Default
 	clcommon.Default = w.Tmux
 	t.Cleanup(func() { clcommon.Default = prevTmux })
+	// Drain any background tmux probe before the restore (see below).
+	t.Cleanup(waitBackground)
 	const (
 		convID    = "failed-stop-conv-12345678"
 		sessionID = "failed-stop-session"
@@ -446,6 +448,10 @@ func TestStopOneConv_DefaultWrapperArmsForceStopIntent(t *testing.T) {
 	prevTmux := clcommon.Default
 	clcommon.Default = w.Tmux
 	t.Cleanup(func() { clcommon.Default = prevTmux })
+	// The stop arms a force-stop escalation on a background goroutine that
+	// probes tmux; drain it before the restore above swaps clcommon.Default
+	// under it (cleanups run last-registered first).
+	t.Cleanup(waitBackground)
 	const (
 		convID     = "default-force-stop-conv-12345678"
 		sessionID  = "default-force-stop-session"

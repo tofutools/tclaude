@@ -1,0 +1,86 @@
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: plan-fan-out
+name: Plan → fan out → integrate
+description: >-
+  The lead splits the task into three independent parts, three developers
+  take a part each at the same time, and the lead integrates them.
+params:
+  task:
+    type: string
+    required: true
+# The group's lead oversees a run; a step stuck longer than its patience
+# (an hour, two for a part) raises a concern to it.
+overseer: lead
+patience: 1h
+start: start
+nodes:
+  start:
+    type: start
+    next: { next: plan }
+
+  # The lead splits the work.
+  plan:
+    type: task
+    captures: [plan]
+    performer:
+      kind: agent
+      lead: true
+      prompt: >-
+        Split this task into three independent parts that can be built at the
+        same time: {{ params.task }}. Report the three parts, numbered, as
+        your note.
+    next: { next: fan-out }
+
+  # Three developers, one part each, at the same time.
+  fan-out:
+    type: parallel
+    next: { part-1: part-1, part-2: part-2, part-3: part-3 }
+  part-1:
+    type: task
+    captures: [pr1]
+    patience: 2h
+    performer:
+      kind: agent
+      role: dev
+      differentFrom: [part-2, part-3]
+      fallback: { action: spawn }
+      prompt: "Build part 1 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr1."
+    next: { next: integrate }
+  part-2:
+    type: task
+    captures: [pr2]
+    patience: 2h
+    performer:
+      kind: agent
+      role: dev
+      differentFrom: [part-1, part-3]
+      fallback: { action: spawn }
+      prompt: "Build part 2 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr2."
+    next: { next: integrate }
+  part-3:
+    type: task
+    captures: [pr3]
+    patience: 2h
+    performer:
+      kind: agent
+      role: dev
+      differentFrom: [part-1, part-2]
+      fallback: { action: spawn }
+      prompt: "Build part 3 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr3."
+    next: { next: integrate }
+
+  # The lead who split it puts the parts together, once all three are in.
+  integrate:
+    type: task
+    join: all
+    performer:
+      kind: agent
+      lead: true
+      sameAs: plan
+      prompt: "All three parts are in. Integrate them and merge.\nPart 1:\n{{ outputs.pr1 }}\nPart 2:\n{{ outputs.pr2 }}\nPart 3:\n{{ outputs.pr3 }}"
+    next: { next: done }
+
+  done:
+    type: end
+    result: success

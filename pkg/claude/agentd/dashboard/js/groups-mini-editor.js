@@ -10,7 +10,7 @@
 // Automations › Processes, and Save writes a new version. A new process
 // (`draft`, from New process) opens here too: its name is a field, it saves
 // itself as it changes, and while it has no steps the canvas offers the first
-// one and a Start from strip (a starter, a description for the scribe, a
+// one and a Start from strip (a built-in way of working, a description for the scribe, a
 // .pwf, or a library process to copy).
 
 import { h } from 'preact';
@@ -28,13 +28,13 @@ import {
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import {
   agentStepIDs, collapseParamShorthand, constraintFromValue, constraintValue, outputRef, setStepConstraint, setStepName, setStepOutputs,
-  setStepText, setStepWho, stepConstraint, stepListToView, stepOutputs, stepText, stepWho, viewToStepList,
+  setStepText, setStepWho, stepConstraint, stepOutputs, stepText, stepWho, viewToStepList,
 } from './process-step-list.js';
 import { openProcessDraft } from './process-draft-handoff.js';
 import {
   AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
 } from './groups-quickstart.js';
-import { STARTERS, fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
+import { fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
 import { withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
 
@@ -215,13 +215,14 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
 }
 
 // StartFrom is the strip under a new process's empty canvas: what it can
-// start from instead of a first step.
-function StartFrom({ roster, api, wizard, busy, onView, onDescribe, onImport }) {
+// start from instead of a first step. One row: the built-in ways of working,
+// a description for the scribe, a .pwf file, and the library.
+function StartFrom({ api, wizard, busy, onView, onDescribe, onImport }) {
   const [open, setOpen] = useState('');
   const [text, setText] = useState('');
   const [templates, setTemplates] = useState(null);
   // The built-in ways of working (tk_d02b0f4c), read from the daemon: [] when
-  // it offers none, so the row stays hidden.
+  // it offers none.
   const [builtins, setBuiltins] = useState([]);
   useEffect(() => {
     if (typeof api?.listBuiltins !== 'function') return undefined;
@@ -237,10 +238,6 @@ function StartFrom({ roster, api, wizard, busy, onView, onDescribe, onImport }) 
     api.listTemplates().then((rows) => { if (live) setTemplates(rows); }).catch(() => { if (live) setTemplates([]); });
     return () => { live = false; };
   }, [open]);
-  const starter = (item) => {
-    const built = item.build(roster);
-    onView(built.view || stepListToView(built.list), item.title);
-  };
   const describe = (event) => {
     event.preventDefault();
     if (text.trim() && !busy) onDescribe(text.trim());
@@ -248,14 +245,9 @@ function StartFrom({ roster, api, wizard, busy, onView, onDescribe, onImport }) 
   const chip = (attrs, label, title, onClick, on = false) => html`<button data-ui-exempt type="button" class=${`gm-from${on ? ' on' : ''}`} ...${attrs}
     disabled=${!!busy} title=${title} onClick=${onClick}>${label}</button>`;
   return html`<div class="gm-start-from" data-mini-start-from>
-    ${builtins.length > 0 && html`<div class="gm-start-row" data-mini-builtins>
-      <span class="gq-dim">${wizard ? 'Known rites' : 'Ways of working'}</span>
-      ${builtins.map((item) => chip({ key: item.id, 'data-mini-builtin': item.id }, `◈ ${item.name}`, builtinTitle(item), () => builtin(item)))}
-    </div>`}
-    <div class="gm-start-row">
+    <div class="gm-start-row" data-mini-builtins>
       <span class="gq-dim">Start from</span>
-      ${STARTERS.map((item) => chip({ key: item.key, 'data-mini-starter': item.key }, item.chain.map(([, label]) => label).join(' → '),
-    `${item.title}: ${item.note}`, () => starter(item)))}
+      ${builtins.map((item) => chip({ key: item.id, 'data-mini-builtin': item.id }, `◈ ${item.name}`, builtinTitle(item), () => builtin(item)))}
       ${chip({ 'data-mini-describe': '' }, '✨ Describe it…', wizard ? 'Tell a scribe the rite in plain words' : 'Describe it in plain words and a process scribe drafts the steps', () => setOpen(open === 'describe' ? '' : 'describe'), open === 'describe')}
       ${onImport && chip({ 'data-mini-import': '' }, '↥ Import .pwf', 'Import a shared .pwf workflow file: you review what it runs first', onImport)}
       ${chip({ 'data-mini-library': '' }, wizard ? 'More written rites ›' : 'More ways of working ›', 'Copy a process from the template library', () => setOpen(open === 'library' ? '' : 'library'), open === 'library')}
@@ -268,9 +260,7 @@ function StartFrom({ roster, api, wizard, busy, onView, onDescribe, onImport }) 
     </form>`}
     ${open === 'library' && html`<div class="gm-start-row gm-library" data-mini-library-list>
       ${templates === null && html`<span class="gq-dim">Loading the template library…</span>`}
-      ${builtins.map((item) => chip({ key: `builtin:${item.id}`, 'data-mini-library-builtin': item.id }, html`◈ ${item.name} <span class="gm-from-tag">built in</span>`,
-    builtinTitle(item), () => builtin(item)))}
-      ${templates?.length === 0 && !builtins.length && html`<span class="gq-dim">The template library is empty.</span>`}
+      ${templates?.length === 0 && html`<span class="gq-dim">The template library is empty.</span>`}
       ${(templates || []).map((template) => chip({ key: template.id, 'data-mini-library-pick': template.id }, `▣ ${template.name || template.id}`,
     template.description || `Copy ${template.name || template.id} into this process`,
     () => void api.getTemplate(template.id).then((view) => onView(view, view?.template?.name || template.name)).catch(() => {})))}
@@ -593,7 +583,7 @@ export function MiniGraphEditor({
         onNodeContextMenu=${(node, event) => (node.id === FIRST_STEP ? event.preventDefault() : openMenu(node, event))}
         onNodeHover=${(id) => setHover(id === FIRST_STEP ? '' : id)} overlay=${overlay} />
     </div>
-    ${isDraft && empty && html`<${StartFrom} roster=${roster} api=${api} wizard=${wizard} busy=${busy && busy !== 'auto' ? busy : ''}
+    ${isDraft && empty && html`<${StartFrom} api=${api} wizard=${wizard} busy=${busy && busy !== 'auto' ? busy : ''}
       onView=${startFrom} onDescribe=${onDescribe ? (text) => void describe(text) : null} onImport=${onImport ? importPwf : null} />`}
     ${selected && html`<${Inspector} view=${draft} id=${selected} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
       onApply=${(result) => apply(result)} onClose=${() => setSelected('')} onFullEditor=${fullEditor}

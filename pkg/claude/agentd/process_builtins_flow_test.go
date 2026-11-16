@@ -38,9 +38,8 @@ func useBuiltin(t *testing.T, f *testharness.Flow, id, group string) string {
 func builtinRun(t *testing.T, f *testharness.Flow, g *db.AgentGroup, id, runID, task string, convOf map[string]string) func(node, want string, told []string, extra map[string]any) {
 	t.Helper()
 	templateID := useBuiltin(t, f, id, g.Name)
-	t.Cleanup(agentd.SetProcessRunScopeForTest(runID, groupScope(g)))
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
-		"id": runID, "templateId": templateID, "params": map[string]string{"task": task},
+		"id": runID, "templateId": templateID, "group": g.Name, "params": map[string]string{"task": task},
 		"authorizeProgramProfiles": []string{},
 	})
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
@@ -80,7 +79,7 @@ func TestProcessBuiltins_ListedAndCopiedIntoAGroup(t *testing.T) {
 	for _, b := range listed.Builtins {
 		ids = append(ids, b.ID)
 	}
-	assert.Equal(t, []string{"plan-vet-build", "build-review-ship", "bug-fix", "quick-change"}, ids)
+	assert.Equal(t, []string{"plan-vet-build", "build-review-ship", "bug-fix", "quick-change", "plan-fan-out", "ask-me-first", "check-fix"}, ids)
 	assert.Equal(t, "Plan → vet → build → review → merge", listed.Builtins[0].Name)
 	assert.Equal(t, []string{"brief", "plan", "vet", "build", "review", "merge"}, listed.Builtins[0].Steps)
 	assert.Equal(t, []string{"reproduce", "fix", "verify", "merge"}, listed.Builtins[2].Steps)
@@ -239,4 +238,130 @@ func TestProcessBuiltins_QuickChangeEndToEnd(t *testing.T) {
 	assert.Equal(t, "same_as", resolutionOf(t, showPerformerRun(t, f, runID), "merge"))
 	step("merge", dev, []string{"The review approved your PR", "PR #2"}, nil)
 	assert.Equal(t, engine.RunCompleted, showPerformerRun(t, f, runID).Status)
+}
+
+// builtinOverseer is the run's overseer agent and why it is the overseer.
+func builtinOverseer(t *testing.T, f *testharness.Flow, runID string) (agentID, via string) {
+	t.Helper()
+	rec := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/"+runID, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var view struct {
+		Overseer *struct {
+			AgentID string `json:"agentId"`
+			Via     string `json:"via"`
+		} `json:"overseer"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &view))
+	require.NotNil(t, view.Overseer)
+	return view.Overseer.AgentID, view.Overseer.Via
+}
+
+// Scenario: Plan → fan out → integrate. The lead splits the task, three
+// different developers build a part each at the same time, and once all
+// three are in the lead who split it integrates them. The lead oversees it.
+func TestProcessBuiltins_PlanFanOutEndToEnd(t *testing.T) {
+	f, _ := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	const leadConv, d1Conv, d2Conv, d3Conv = "flead-111-2222-3333-4444", "fd1-1111-2222-3333-4444", "fd2-1111-2222-3333-4444", "fd3-1111-2222-3333-4444"
+	lena := havePerformerAgent(t, f, "crew", leadConv, "lena", "lead", "idle")
+	d1 := havePerformerAgent(t, f, "crew", d1Conv, "dana", "dev", "idle")
+	d2 := havePerformerAgent(t, f, "crew", d2Conv, "dave", "dev", "idle")
+	d3 := havePerformerAgent(t, f, "crew", d3Conv, "dina", "dev", "idle")
+	convOf := map[string]string{lena: leadConv, d1: d1Conv, d2: d2Conv, d3: d3Conv}
+	const runID = "run_builtin_fanout"
+	step := builtinRun(t, f, g, "plan-fan-out", runID, "a settings page", convOf)
+	overseer, _ := builtinOverseer(t, f, runID)
+	assert.Equal(t, lena, overseer, "the lead oversees it")
+
+	step("plan", lena, []string{"three independent parts", "a settings page"}, map[string]any{"note": "1. layout\n2. storage\n3. API"})
+	agentd.WaitForProcessDispatchForTest()
+	view := showPerformerRun(t, f, runID)
+	parts := []string{}
+	for i, node := range []string{"part-1", "part-2", "part-3"} {
+		who, _, _ := commandFor(t, view, node)
+		parts = append(parts, who)
+		step(node, who, []string{"1. layout"}, map[string]any{"outputs": map[string]any{"pr" + string(rune('1'+i)): "PR #" + string(rune('1'+i))}})
+	}
+	assert.ElementsMatch(t, []string{d1, d2, d3}, parts, "a different developer for each part")
+	assert.Equal(t, "same_as", resolutionOf(t, showPerformerRun(t, f, runID), "integrate"))
+	step("integrate", lena, []string{"All three parts are in", "PR #1", "PR #2", "PR #3"}, nil)
+	assert.Equal(t, engine.RunCompleted, showPerformerRun(t, f, runID).Status)
+}
+
+// Scenario: Ask me first. The operator says go, a developer does it, the
+// operator sends it back once, then accepts it.
+func TestProcessBuiltins_AskMeFirstEndToEnd(t *testing.T) {
+	f, _ := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	const devConv = "adev-1111-2222-3333-4444"
+	dev := havePerformerAgent(t, f, "crew", devConv, "dana", "dev", "idle")
+	convOf := map[string]string{dev: devConv}
+	const runID = "run_builtin_ask"
+	step := builtinRun(t, f, g, "ask-me-first", runID, "rename the API", convOf)
+
+	require.Equal(t, http.StatusAccepted, decideLoop(t, f, runID, map[string]any{"nodeId": "go", "verdict": "go"}))
+	step("work", dev, []string{"Do this: rename the API"}, map[string]any{"outputs": map[string]any{"result": "renamed in PR #4"}})
+	require.Equal(t, http.StatusAccepted, decideLoop(t, f, runID, map[string]any{"nodeId": "accept", "verdict": "rework", "evidence": "keep the old name as an alias"}))
+	step("work", dev, []string{"keep the old name as an alias"}, map[string]any{"outputs": map[string]any{"result": "alias added"}})
+	require.Equal(t, http.StatusAccepted, decideLoop(t, f, runID, map[string]any{"nodeId": "accept", "verdict": "accept"}))
+	assert.Equal(t, engine.RunCompleted, showPerformerRun(t, f, runID).Status)
+}
+
+// Scenario: Check → fix if red. The tester finds it red, a developer fixes
+// it, the same tester finds it still red, the developer fixes it again, and
+// the tester finds it green.
+func TestProcessBuiltins_CheckFixEndToEnd(t *testing.T) {
+	f, _ := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	const devConv, tessConv = "cdev-1111-2222-3333-4444", "ctess-111-2222-3333-4444"
+	dev := havePerformerAgent(t, f, "crew", devConv, "dana", "dev", "idle")
+	tess := havePerformerAgent(t, f, "crew", tessConv, "tess", "tester", "idle")
+	convOf := map[string]string{dev: devConv, tess: tessConv}
+	const runID = "run_builtin_check"
+	step := builtinRun(t, f, g, "check-fix", runID, "the nightly suite", convOf)
+
+	step("check", tess, []string{"Run the nightly suite"}, map[string]any{"verdict": "red", "note": "TestLogin fails"})
+	step("fix", dev, []string{"the nightly suite is red. Run it to see what fails"}, map[string]any{"outputs": map[string]any{"pr": "PR #8"}})
+	assert.Equal(t, "same_as", resolutionOf(t, showPerformerRun(t, f, runID), "recheck"))
+	step("recheck", tess, []string{"PR #8"}, map[string]any{"verdict": "red", "note": "still flaky"})
+	step("fix", dev, []string{"still flaky"}, map[string]any{"outputs": map[string]any{"pr": "PR #8 v2"}})
+	step("recheck", tess, []string{"PR #8 v2"}, map[string]any{"verdict": "green"})
+	assert.Equal(t, engine.RunCompleted, showPerformerRun(t, f, runID).Status)
+}
+
+// Scenario: a review that keeps asking for changes runs out of rounds, and
+// the run fails (so a board task it runs for is blocked with the reason).
+func TestProcessBuiltins_OutOfRoundsFails(t *testing.T) {
+	f, _ := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	const devConv, revConv = "odev-1111-2222-3333-4444", "orev-1111-2222-3333-4444"
+	dev := havePerformerAgent(t, f, "crew", devConv, "dana", "dev", "idle")
+	rita := havePerformerAgent(t, f, "crew", revConv, "rita", "reviewer", "idle")
+	convOf := map[string]string{dev: devConv, rita: revConv}
+	const runID = "run_builtin_rounds"
+	step := builtinRun(t, f, g, "quick-change", runID, "tweak the logo", convOf)
+	for round := 1; round <= 5 && showPerformerRun(t, f, runID).Status == engine.RunRunning; round++ {
+		step("change", dev, nil, map[string]any{"outputs": map[string]any{"pr": "PR #3"}})
+		step("review", rita, nil, map[string]any{"verdict": "changes", "note": "not yet"})
+		agentd.WaitForProcessDispatchForTest()
+	}
+	assert.Equal(t, engine.RunFailed, showPerformerRun(t, f, runID).Status)
+}
+
+// Scenario: in Ask me first, the operator keeps sending the work back; out of
+// rework rounds the run fails rather than ending as their own reject.
+func TestProcessBuiltins_AskMeFirstOutOfRoundsFails(t *testing.T) {
+	f, _ := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	const devConv = "afdev-111-2222-3333-4444"
+	dev := havePerformerAgent(t, f, "crew", devConv, "dana", "dev", "idle")
+	convOf := map[string]string{dev: devConv}
+	const runID = "run_builtin_ask_rounds"
+	step := builtinRun(t, f, g, "ask-me-first", runID, "rename the API", convOf)
+	require.Equal(t, http.StatusAccepted, decideLoop(t, f, runID, map[string]any{"nodeId": "go", "verdict": "go"}))
+	for round := 1; round <= 6 && showPerformerRun(t, f, runID).Status == engine.RunRunning; round++ {
+		step("work", dev, nil, map[string]any{"outputs": map[string]any{"result": "try"}})
+		require.Equal(t, http.StatusAccepted, decideLoop(t, f, runID, map[string]any{"nodeId": "accept", "verdict": "rework"}))
+	}
+	assert.Equal(t, engine.RunFailed, showPerformerRun(t, f, runID).Status)
 }

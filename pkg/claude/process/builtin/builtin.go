@@ -18,7 +18,7 @@ var files embed.FS
 
 // order is how the built-ins are offered: the operator's full way of working
 // first, then the lighter ones.
-var order = []string{"plan-vet-build", "build-review-ship", "bug-fix", "quick-change"}
+var order = []string{"plan-vet-build", "build-review-ship", "bug-fix", "quick-change", "plan-fan-out", "ask-me-first", "check-fix"}
 
 // Builtin is one built-in way of working.
 type Builtin struct {

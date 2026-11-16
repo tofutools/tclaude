@@ -10,11 +10,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 )
 
-// TestQuickStartStartersAreRunnable keeps the Groups › Processes quick-start
-// starters (process-quickstart.js) honest: each one, as the dashboard builds
-// it for a fixed roster, must parse with no diagnostics and be executable by
-// the engine. jstest/process-quickstart.test.mjs asserts the dashboard still
-// builds exactly this fixture.
+// TestQuickStartStartersAreRunnable keeps the step-list fixtures the jstests
+// edit (the former quick-start starters; a new process now starts from the
+// built-in ways of working) honest: each must parse with no diagnostics and
+// be executable by the engine.
 func TestQuickStartStartersAreRunnable(t *testing.T) {
 	raw, err := os.ReadFile("jstest/process-quickstart-starters.json")
 	require.NoError(t, err)
