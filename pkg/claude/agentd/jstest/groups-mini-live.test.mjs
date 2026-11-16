@@ -225,3 +225,33 @@ test('a save refused for a version that cannot be read stops and says so, rather
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 3000)));
   assert.equal(api.saves.length, saves, 'and no more after it stopped');
 });
+
+// The dashboard re-renders the open editor on every snapshot poll (a new
+// roster array each time). A field commits on change, so until then what the
+// operator typed lives only in the field: a re-render must not reset it.
+test('a re-render while the operator types in a step field keeps what they typed, and it saves', async (t) => {
+  const api = casApi(view(BASE_NODES));
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-mini-editor.js');
+  const stored = view(BASE_NODES);
+  const editor = (roster) => harness.html`<${mod.MiniGraphEditor} group=${{ name: 'webshop' }} roster=${roster}
+    process=${{ templateId: 'tpl_1', name: 'Ship it' }} view=${stored} stored=${stored} api=${api} draft=${true}
+    onClose=${() => {}} onSteps=${() => {}} />`;
+  const mounted = await harness.mount(editor([]));
+  const root = mounted.container;
+  await harness.act(async () => { root.querySelector('[data-process-node="build"]').click(); });
+  for (const [selector, typed] of [['[data-mini-text]', 'Build it, half typed'], ['[data-mini-name]', 'Build, half named']]) {
+    const field = root.querySelector(`[data-mini-inspector="build"] ${selector}`);
+    field.focus();
+    await harness.act(async () => { field.value = typed; harness.fireEvent(field, 'input'); });
+    // Snapshot polls re-render the editor; poll and autosave clocks pass.
+    for (let i = 0; i < 3; i += 1) {
+      await mounted.rerender(editor([]));
+      await harness.act(() => new Promise((resolve) => setTimeout(resolve, 2000)));
+    }
+    assert.equal(root.querySelector(`[data-mini-inspector="build"] ${selector}`).value, typed, `${selector}: what was typed survives the re-renders`);
+    await harness.act(async () => { harness.fireEvent(field, 'change'); field.blur(); });
+  }
+  await waitFor(harness, () => api.saves.at(-1)?.draft.template.nodes.build.name === 'Build, half named', 'the step name is saved');
+  assert.equal(api.saves.at(-1).draft.template.nodes.build.performer.prompt, 'Build it, half typed', 'and the text');
+});

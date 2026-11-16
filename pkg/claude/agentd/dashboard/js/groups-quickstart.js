@@ -36,6 +36,20 @@ const VALIDATE_DELAY_MS = 400;
 // A draft saves itself this long after its last change.
 export const AUTOSAVE_DELAY_MS = 800;
 
+// TypedField is a text input or textarea that commits on change. Until then
+// what the operator typed lives only in the field, and the editor re-renders
+// meanwhile (the dashboard's snapshot poll does, every couple of seconds): a
+// plain value= field would be reset to the committed text each time. So what
+// they type is kept here, against the value it was typed over, and shows
+// until a new value arrives (their own commit, an undo, a merge).
+export function TypedField({ as = 'input', value, onChange, ...rest }) {
+  const [typed, setTyped] = useState(null);
+  const shown = typed && typed.over === value ? typed.text : value;
+  return html`<${as} ...${rest} value=${shown}
+    onInput=${(event) => setTyped({ over: value, text: event.currentTarget.value })}
+    onChange=${(event) => { setTyped(null); onChange(event); }} />`;
+}
+
 export { UNTITLED_PROCESS };
 
 // createdEditView is the stored template's edit view after a create, as the
@@ -304,11 +318,11 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
         onInput=${(event) => onChange(setStepName(step, event.currentTarget.value))} />
       ${ownTexts
     ? texts.map((own, i) => html`<label key=${i} class="gq-decider-text" data-step-decider-text=${i}><span class="gq-decider-n">${i + 1}</span>
-        <textarea name="gq-decider-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} decider ${i + 1} instruction`} placeholder=${placeholder}
-          value=${collapseParamShorthand(own)} onChange=${(event) => onChange(setDeciderText(step, i, event.currentTarget.value))}></textarea></label>`)
-    : html`<textarea name="gq-step-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${kind === 'command' ? 'command' : 'instruction'}`} placeholder=${placeholder}
+        <${TypedField} as="textarea" name="gq-decider-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} decider ${i + 1} instruction`} placeholder=${placeholder}
+          value=${collapseParamShorthand(own)} onChange=${(event) => onChange(setDeciderText(step, i, event.currentTarget.value))} /></label>`)
+    : html`<${TypedField} as="textarea" name="gq-step-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${kind === 'command' ? 'command' : 'instruction'}`} placeholder=${placeholder}
         title=${kind === 'gate' ? 'Every decider is asked this' : undefined}
-        value=${text} onChange=${(event) => onChange(setStepText(step, event.currentTarget.value))}></textarea>`}
+        value=${text} onChange=${(event) => onChange(setStepText(step, event.currentTarget.value))} />`}
       ${decision && kind !== 'command' && html`<${Answers} list=${list} step=${step} onChange=${onChange} />`}
       ${!decision && kind === 'agent' && html`<${Button} size="sm" variant="link" class="gq-link gq-decides" data-step-decides=${step.id}
         title="The agent reports a verdict (approve or changes) instead of just finishing; send changes back to an earlier step for a review loop"
