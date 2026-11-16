@@ -194,3 +194,36 @@ func TestRelaunchProfile_FollowsTheCurrentLaunch(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "harness-builtin", profile.SandboxImplementation, "a save of a row that is not the current launch leaves it")
 }
+
+// The rotation carries the pane's whole posture, opt-gated fields included,
+// and the "project the conv's latest launch" path (head advance, enrollment,
+// backfill) picks the same launch the projection accepts.
+func TestRelaunchProfile_RotationCarriesTheWholePosture(t *testing.T) {
+	setupTestDB(t)
+	paneLaunched := time.Now().Add(-3 * time.Hour)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "pane", TmuxSession: "pane", ConvID: "conv-a", Status: "running", Harness: "claude",
+		SandboxImplementation: "harness-builtin", CreatedAt: paneLaunched, UpdatedAt: paneLaunched,
+	}))
+	require.NoError(t, SetSessionRemoteControl("pane", true))
+	deadLaunched := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "conv-b", TmuxSession: "conv-b", ConvID: "conv-b", Status: "exited", Harness: "claude",
+		SandboxImplementation: "off", CreatedAt: deadLaunched, UpdatedAt: deadLaunched,
+	}))
+	require.NoError(t, SetSessionRemoteControl("conv-b", false))
+
+	require.NoError(t, SetSessionConvID("pane", "conv-b"))
+	profile, err := ConversationResumeProfileForConv("conv-b")
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.Equal(t, "pane", profile.SourceSessionID)
+	require.NotNil(t, profile.FallbackRelaunch)
+	require.NotNil(t, profile.FallbackRelaunch.RemoteControl, "the pane's remote control goes with it")
+	require.True(t, *profile.FallbackRelaunch.RemoteControl)
+
+	require.NoError(t, BackfillDurableRelaunchProfilesFromLatestSession("conv-b"))
+	profile, err = ConversationResumeProfileForConv("conv-b")
+	require.NoError(t, err)
+	require.Equal(t, "pane", profile.SourceSessionID, "the latest-launch projection picks the live pane")
+}
