@@ -45,6 +45,9 @@ export const AUTOSAVE_DELAY_MS = 800;
 export function TypedField({ as = 'input', value, onChange, ...rest }) {
   const [typed, setTyped] = useState(null);
   const shown = typed && typed.over === value ? typed.text : value;
+  // A new value drops what was typed over the old one for good, so it cannot
+  // come back should the value later return to the old one.
+  useEffect(() => { if (typed && typed.over !== value) setTyped(null); }, [value]);
   return html`<${as} ...${rest} value=${shown}
     onInput=${(event) => setTyped({ over: value, text: event.currentTarget.value })}
     onChange=${(event) => { setTyped(null); onChange(event); }} />`;
@@ -274,7 +277,7 @@ function Answers({ list, step, onChange }) {
           ${options.map((id) => html`<option key=${id} value=${id}>${back.includes(id) ? backTargetLabel(list, id) : stepTargetLabel(list, id)}</option>`)}
         <//></label>
         ${bound && html`<span class="gq-loop" data-loop=${answer}>at most
-          <input name="gq-loop-rounds" type="number" class="gq-loop-rounds" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} value=${bound.maxIterations}
+          <${TypedField} name="gq-loop-rounds" type="number" class="gq-loop-rounds" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} value=${bound.maxIterations}
             aria-label=${`Most rounds ${answer} goes back for`} onChange=${(event) => setRounds(answer, event.currentTarget)} />
           rounds, then
           <${Select} size="sm" aria-label=${`When ${answer} has used its rounds`} value=${bound.onExhausted}
