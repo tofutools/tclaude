@@ -18128,6 +18128,17 @@ body.wizard .gq-step-body .gq-decides { color: #a593c2; }
 body.wizard .gq-step:hover .gq-decides { color: #d4af37; }
 .gq-res { margin-top: 3px; font-size: 10.5px; color: #6e7681; }
 .gq-res.waits, .gq-whonow li.waits span { color: #e3b341; }
+/* An agreement gate in the step list (tk_bd629fb5): its deciders, each with
+   who it is now, + decider, and the outcome all must choose. */
+.gq-gate { display: flex; flex-direction: column; gap: 4px; }
+.gq-decider { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px; }
+.gq-decider .gq-res { grid-column: 2 / 4; margin-top: 0; }
+.gq-decider-n { font-size: 10.5px; color: #6e7681; min-width: 1.2em; text-align: center; }
+.gq-agree { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #8b949e; }
+.gq-gate-note { font-size: 10.5px; }
+.gq-decider-text { display: flex; align-items: flex-start; gap: 4px; }
+.gq-decider-text .gq-decider-n { padding-top: 4px; }
+.gq-decider-text textarea { flex: 1; }
 .gq-row-act { display: flex; flex-direction: column; gap: 2px; }
 .gq-problem, .gq-problems { font-size: 11.5px; color: #ff7b72; }
 .gq-problems, .gq-error { margin-top: 8px; }

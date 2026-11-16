@@ -11,8 +11,11 @@
 // yields the same nodes, edges and start. A graph the list cannot show
 // (parallel, wait or subprocess nodes, or a start node with several edges)
 // converts to { ok: false, reason } so the caller opens the full editor.
+// An agreement gate (a decision with deciders) is a step like any other: its
+// deciders, its agree rule and its outcomes stay on the node
+// (tk_bd629fb5; process-step-gate.js edits them).
 
-import { LOOP_DEFAULT_ROUNDS, loopBound, setLoopBound } from './process-loops.js';
+import { LOOP_DEFAULT_ROUNDS, exhaustionChoices, loopBound, setLoopBound } from './process-loops.js';
 
 export const STEP_LIST_START_OUTCOME = 'start';
 export const STEP_CONTINUE_OUTCOME = 'next';
@@ -68,7 +71,6 @@ export function viewToStepList(view) {
   for (const [id, node] of Object.entries(nodes)) {
     const type = node?.type || '';
     if (!LIST_TYPES.has(type)) return { ok: false, reason: `step ${id} is a ${type || 'typeless'} node, which only the graph editor shows` };
-    if (node.deciders?.length) return { ok: false, reason: `step ${id} is decided by several deciders, which only the graph editor shows` };
   }
   const next = edgesByNode(view);
   const entry = startTarget(view);
@@ -216,8 +218,9 @@ export function stepListToView(list) {
 }
 
 function stepTexts(node) {
-  const performer = node?.performer || {};
-  return [performer.prompt, performer.ask, performer.run, ...(performer.args || [])].filter((text) => typeof text === 'string');
+  return [node?.performer || {}, ...(node?.deciders || [])]
+    .flatMap((performer) => [performer?.prompt, performer?.ask, performer?.run, ...(performer?.args || [])])
+    .filter((text) => typeof text === 'string');
 }
 
 // stepListParams is every {{params.x}} the steps reference, in order of first
@@ -311,6 +314,7 @@ function programArgv(performer, line) {
 // stepText is the step's instruction: the agent prompt, the human ask, or the
 // command line.
 export function stepText(step) {
+  if (isGate(step)) return deciderText(step.node.deciders[0]);
   const performer = step?.node?.performer || {};
   if (performer.kind === 'human') return performer.ask || performer.prompt || '';
   if (performer.kind === 'program') return performer.run ? joinCommand([performer.run, ...(performer.args || [])]) : '';
@@ -453,6 +457,7 @@ export function outputRef(name) {
 // setStepText writes the step's instruction into its performer's text field.
 // A command's text is its whole command line (run, no args).
 export function setStepText(step, text) {
+  if (isGate(step)) return step.node.deciders.reduce((next, _, index) => setDeciderText(next, index, text), step);
   const node = clone(step.node);
   const performer = node.performer || { kind: 'agent' };
   const value = expandParamShorthand(text);
@@ -461,6 +466,46 @@ export function setStepText(step, text) {
   else performer.prompt = value;
   node.performer = performer;
   return { ...step, node };
+}
+
+// ---- agreement gates ----------------------------------------------------------
+//
+// A gate's deciders are each asked their own text. The list shows one text
+// while they are all asked the same, and each decider's otherwise.
+
+function isGate(step) {
+  return step?.node?.type === 'decision' && (step.node.deciders?.length || 0) > 0;
+}
+
+function deciderText(decider) {
+  return decider?.kind === 'human' ? decider.ask || decider.prompt || '' : decider?.prompt || '';
+}
+
+// deciderTexts is each decider's text, in order ([] for a step that is no
+// gate).
+export function deciderTexts(step) {
+  return isGate(step) ? step.node.deciders.map(deciderText) : [];
+}
+
+// setDeciderText writes one decider's text: a person's ask, an agent's
+// prompt.
+export function setDeciderText(step, index, text) {
+  if (!isGate(step) || !step.node.deciders[index]) return step;
+  const node = clone(step.node);
+  const decider = node.deciders[index];
+  const value = expandParamShorthand(text);
+  if (decider.kind === 'human') decider.ask = value;
+  else decider.prompt = value;
+  return { ...step, node };
+}
+
+const APPROVING = /^(approved?|accept(ed)?|yes|ok|pass(ed)?|lgtm|agree[ds]?)$/i;
+
+// gateAgreeChoice is the outcome a gate's deciders must agree on when its
+// own has gone: an approving one, else the first that does not go back.
+function gateAgreeChoice(node, answers) {
+  const forward = answers.filter((answer) => !loopBound(node, answer));
+  return forward.find((answer) => APPROVING.test(answer)) || forward[0] || answers[0] || '';
 }
 
 // setStepName renames a step (its node name; the id is kept).
@@ -490,6 +535,9 @@ export const AGENT_VERDICTS = Object.freeze(['approve', 'changes']);
 // decider's are only its edges (choices are human-scoped).
 export function setStepChoices(step, choices, following) {
   const answers = [...new Set((choices || []).map((c) => String(c).trim()).filter(Boolean))];
+  // A gate keeps its deciders. It needs an outcome besides the one all must
+  // choose, so it is never left with fewer than two.
+  if (isGate(step) && answers.length < 2) return step;
   const node = clone(step.node);
   const performer = { ...(node.performer || { kind: 'human' }) };
   if (answers.length) {
@@ -501,7 +549,7 @@ export function setStepChoices(step, choices, following) {
     const kept = step.links.filter((link) => answers.includes(link.outcome) && link.outcome !== cont);
     const added = answers.filter((answer) => answer !== cont && !kept.some((link) => link.outcome === answer))
       .map((outcome) => ({ outcome, to: following }));
-    node.performer = performer;
+    if (!isGate(step)) node.performer = performer;
     // A removed answer takes its loop bound with it, and no bound follows it.
     for (const outcome of Object.keys(node.loops || {})) {
       if (!answers.includes(outcome)) setLoopBound(node, outcome, null);
@@ -511,7 +559,8 @@ export function setStepChoices(step, choices, following) {
         setLoopBound(node, outcome, { maxIterations: bound.maxIterations, onExhausted: '' });
       }
     }
-    return { ...step, node, cont, links: [...kept, ...added].filter((link) => link.to) };
+    // A gate's agree and its loops' ways on follow its outcomes.
+    return syncGateStep({ ...step, node, cont, links: [...kept, ...added].filter((link) => link.to) });
   }
   node.type = 'task';
   delete node.loops;
@@ -635,6 +684,26 @@ export function backTargetLabel(list, id) {
 export function setStepLoop(step, outcome, bound) {
   const node = clone(step.node);
   setLoopBound(node, outcome, bound);
+  return syncGateStep({ ...step, node });
+}
+
+// syncGateStep keeps a gate valid after its outcomes or their loops change,
+// as the graph inspector's syncGate does: what all must choose never goes
+// back, and every loop has a way on once its rounds run out (an outcome that
+// does not loop, another than agree if there is one), since nobody is there
+// to pick one. A step that is no gate is returned as it is.
+export function syncGateStep(step) {
+  if (!isGate(step)) return step;
+  const node = clone(step.node);
+  const answers = stepAnswers({ ...step, node });
+  if (!answers.includes(node.agree) || loopBound(node, node.agree)) node.agree = gateAgreeChoice(node, answers);
+  for (const outcome of Object.keys(node.loops || {})) {
+    const bound = loopBound(node, outcome);
+    const ways = exhaustionChoices(node, answers, outcome);
+    if (bound.onExhausted && ways.includes(bound.onExhausted)) continue;
+    const way = ways.find((other) => other !== node.agree) || ways[0];
+    if (way) setLoopBound(node, outcome, { ...bound, onExhausted: way });
+  }
   return { ...step, node };
 }
 

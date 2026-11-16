@@ -770,6 +770,58 @@ test('a saved process the step list cannot show opens as the inline graph', asyn
   assert.ok(card.querySelector('[data-mini-steps]').hasAttribute('disabled'), 'the step list cannot show a parallel node');
 });
 
+// The flagship built-in as the editor receives it (process-builtin-views.json).
+const FLAGSHIP = JSON.parse(readFileSync(new URL('./process-builtin-views.json', import.meta.url), 'utf8')).builtins['plan-vet-build'];
+
+test('a process with an agreement gate opens in the step list, and the gate edits there (tk_bd629fb5)', async (t) => {
+  const stored = { ...structuredClone(FLAGSHIP), template: { ...structuredClone(FLAGSHIP.template), id: 'tmpl_ship' }, sourceHash: 'h1', listed: false };
+  const api = fakeApi({ stored: { tmpl_ship: stored } });
+  const { root, click, setValue } = await mount(t, { api, context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-run="tmpl_ship"]'));
+  await click(root.querySelector('[data-saved-edit]'));
+  const editor = root.querySelector('[data-step-editor-saved="tmpl_ship"]');
+  assert.ok(editor, 'the flagship opens as a step list, not the graph');
+  assert.deepEqual(steps(root).map((el) => el.dataset.step), ['brief', 'plan', 'vet', 'build', 'review', 'merge']);
+  const review = () => root.querySelector('[data-step="review"]');
+  assert.equal(review().dataset.stepKind, 'gate');
+  assert.equal(review().querySelectorAll('[data-step-decider]').length, 2);
+  // The reviewers are asked different things, so each shows its own text.
+  const ownTexts = () => [...review().querySelectorAll('[data-step-decider-text] textarea')];
+  assert.equal(ownTexts().length, 2);
+  assert.match(ownTexts()[1].value, /correctness and tests/);
+  assert.equal(review().querySelector('[data-step-agree] [data-agree]').dataset.agree, 'approve');
+  // Outcomes with their rounds: changes goes back to Build for at most 3.
+  assert.equal(review().querySelector('[data-loop="changes"] .gq-loop-rounds').value, '3');
+  assert.ok(![...review().querySelectorAll('[data-loop="changes"] option')].some((o) => o.value === ''), 'a gate cannot ask again');
+  // The plain decision (vet) offers to become a gate.
+  assert.ok(root.querySelector('[data-step="vet"] [data-step-add-decider]'));
+
+  // Fewer than two outcomes is refused, and says why.
+  const outcomes = review().querySelector('.gq-answers-in input');
+  await setValue(outcomes, 'approve', 'input');
+  await setValue(outcomes, 'approve', 'blur');
+  assert.match(review().querySelector('[data-answers-refused]').textContent, /at least two outcomes/);
+  assert.equal(review().querySelector('.gq-answers-in input').value, 'approve, changes, escalate');
+
+  await click(review().querySelector('[data-step-add-decider]'));
+  assert.equal(review().querySelectorAll('[data-step-decider]').length, 3);
+  await setValue(ownTexts()[1], 'Check the tests for {{task}}.', 'change');
+  await setValue(review().querySelector('[data-step-agree] [data-agree]'), 'escalate', 'change');
+  assert.equal(review().querySelector('[data-step-agree] [data-agree]').dataset.agree, 'escalate');
+  await setValue(review().querySelector('[data-step-agree] [data-agree]'), 'approve', 'change');
+  await click(review().querySelector('[aria-label="Remove decider 3 of step 5"]'));
+  await setValue(review().querySelector('[data-loop="changes"] .gq-loop-rounds'), '4', 'change');
+  await click(editor.querySelector('[data-step-save-group]'));
+  assert.equal(api.calls.save.length, 1);
+  const saved = api.calls.save[0].view.template.nodes.review;
+  assert.equal(saved.deciders.length, 2);
+  assert.equal(saved.agree, 'approve');
+  assert.equal(saved.deciders[1].prompt, 'Check the tests for {{params.task}}.');
+  assert.match(saved.deciders[0].prompt, /against the plan/);
+  assert.equal(saved.loops.changes.maxIterations, 4);
+  assert.equal(saved.performer, undefined);
+});
+
 test('the fallback names a spawn profile, for the process and per step, and the preview shows it', async (t) => {
   const api = fakeApi({ preview: () => ({}) });
   api.spawnProfileNames = async () => ['sonnet-dev', 'opus-lead'];
