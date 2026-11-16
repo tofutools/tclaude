@@ -14,7 +14,7 @@
 
 
 import { h, render } from 'preact';
-import { useEffect, useMemo, useRef } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import htm from 'htm';
 import { messagesBadgeView } from './shell-model.js';
@@ -30,7 +30,7 @@ import { activitySubtab, setActivitySubtab } from './activity-state.js';
 import { installPhoneHistory, keptView } from './phone-history.js';
 import { installKeyboardInset } from './phone-keyboard.js';
 import { installInputModality } from './phone-input.js';
-import { installHeaderPull } from './standalone-app.js';
+import { installHeaderPull, pullHint } from './standalone-app.js';
 import { fleetState } from './fleet-state.js';
 import { IconButton } from './phone-ui.js';
 import { NodeChip } from './phone-node-picker.js';
@@ -143,7 +143,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   useEffect(() => installInputModality(), []);
   // Installed as an app, a pull down on the header reloads (Chrome's own
   // pull-to-refresh is off in a standalone window).
-  useEffect(() => installHeaderPull(), []);
+  const [pull, setPull] = useState(null);
+  useEffect(() => installHeaderPull({ onPull: setPull }), []);
   useEffect(() => {
     if (seenTab.current === activeTab) return;
     seenTab.current = activeTab;
@@ -249,7 +250,10 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     return null;
   };
 
+  const hint = pull === null ? null : pullHint(pull);
   return html`<div class="phone-shell">
+    ${hint && html`<div class=${`phone-pull${hint.ready ? ' ready' : ''}`} role="status" aria-live="polite"
+      style=${`--phone-pull:${hint.offset}px`}>${hint.text}</div>`}
     <header class=${`phone-bar${page ? ' phone-bar-page' : ''}`}>
       ${page ? html`<button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${() => page.onBack?.()}>‹</button>
         <h1 class="phone-bar-title">${page.title || ''}</h1>

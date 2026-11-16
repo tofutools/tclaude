@@ -86,27 +86,27 @@ test('in a browser tab nothing is installed', async (t) => {
 
 test('installed as an app, a pull down on the header reloads once it went far enough', async (t) => {
   const harness = await createPreactHarness(t);
-  const { installHeaderPull, PULL_RELOAD_PX } = await harness.importDashboardModule('js/standalone-app.js');
+  const { installHeaderPull, pullHint, PULL_RELOAD_PX } = await harness.importDashboardModule('js/standalone-app.js');
   const { win } = appWindow(harness, true);
   let reloads = 0;
-  const uninstall = installHeaderPull({ win, reload: () => { reloads += 1; } });
+  let pulled = null;
+  const uninstall = installHeaderPull({ win, reload: () => { reloads += 1; }, onPull: (dy) => { pulled = dy; } });
   t.after(uninstall);
   harness.document.body.innerHTML = '<header class="phone-bar"><h1 id="title">Now</h1></header><main id="main"></main>';
   const title = harness.document.getElementById('title');
-  const hint = () => harness.document.querySelector('.phone-pull');
+  const hint = () => (pulled === null ? null : pullHint(pulled));
 
   touch(harness, 'touchstart', title, 100, 20);
   touch(harness, 'touchmove', title, 100, 60);
-  assert.equal(hint().textContent, '↓ Pull to reload');
-  assert.equal(hint().classList.contains('ready'), false);
+  assert.equal(pulled, 40);
+  assert.deepEqual(hint(), { ready: false, text: '↓ Pull to reload', offset: 40 });
   touch(harness, 'touchend', title);
   assert.equal(reloads, 0, 'not far enough');
   assert.equal(hint(), null, 'the hint goes with the finger');
 
   touch(harness, 'touchstart', title, 100, 20);
   touch(harness, 'touchmove', title, 104, 20 + PULL_RELOAD_PX + 5);
-  assert.equal(hint().textContent, '↻ Release to reload');
-  assert.equal(hint().classList.contains('ready'), true);
+  assert.deepEqual(hint(), { ready: true, text: '↻ Release to reload', offset: PULL_RELOAD_PX + 5 });
   touch(harness, 'touchend', title);
   assert.equal(reloads, 1);
 

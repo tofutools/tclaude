@@ -52,32 +52,24 @@ export function installExternalLinks(win = globalThis) {
 export const PULL_RELOAD_PX = 80;
 
 // installHeaderPull makes a pull down that starts on the phone's header bar
-// (bar) reload the page (reload), while running as the app: a hint follows
-// the finger, says when letting go reloads, and a pull that turns sideways or
-// goes back up does nothing. Returns the uninstall function.
-export function installHeaderPull({ win = globalThis, bar = '.phone-bar', reload = () => win.location.reload() } = {}) {
+// (bar) reload the page (reload), while running as the app. onPull(dy)
+// follows the finger for the hint the phone shell draws (PullHint): how far
+// down it is, or null once there is no pull to show. A pull that turns
+// sideways, goes back up or gains a second finger does nothing. Returns the
+// uninstall function.
+export function installHeaderPull({ win = globalThis, bar = '.phone-bar', reload = () => win.location.reload(), onPull = () => {} } = {}) {
   const doc = win?.document;
   if (!doc || !isStandalone(win)) return () => {};
   let start = null;
-  let hint = null;
-  const show = (dy) => {
-    if (!hint) {
-      hint = doc.createElement('div');
-      hint.className = 'phone-pull';
-      hint.setAttribute('role', 'status');
-      hint.setAttribute('aria-live', 'polite');
-      doc.body.append(hint);
-    }
-    const ready = dy >= PULL_RELOAD_PX;
-    const text = ready ? '↻ Release to reload' : '↓ Pull to reload';
-    if (hint.textContent !== text) hint.textContent = text;
-    hint.classList.toggle('ready', ready);
-    hint.style.setProperty('--phone-pull', `${Math.min(dy, PULL_RELOAD_PX * 1.5)}px`);
+  let shown = null;
+  const report = (dy) => {
+    if (dy === shown) return;
+    shown = dy;
+    onPull(dy);
   };
   const clear = () => {
     start = null;
-    hint?.remove();
-    hint = null;
+    report(null);
   };
   const onStart = (event) => {
     // A second finger makes it a pinch or the like, not a pull.
@@ -93,8 +85,7 @@ export function installHeaderPull({ win = globalThis, bar = '.phone-bar', reload
     const dx = Math.abs(touch.clientX - start.x);
     if (dx > Math.max(24, dy)) { clear(); return; }
     start.dy = dy;
-    if (dy > 8) show(dy);
-    else if (hint) { hint.remove(); hint = null; }
+    report(dy > 8 ? Math.round(dy) : null);
   };
   const onEnd = (event) => {
     if (event.touches?.length) return;
@@ -113,4 +104,11 @@ export function installHeaderPull({ win = globalThis, bar = '.phone-bar', reload
     doc.removeEventListener('touchcancel', clear);
     clear();
   };
+}
+
+// pullHint is what the hint says at dy px down: the text, and whether
+// letting go reloads.
+export function pullHint(dy) {
+  const ready = dy >= PULL_RELOAD_PX;
+  return { ready, text: ready ? '↻ Release to reload' : '↓ Pull to reload', offset: Math.min(dy, PULL_RELOAD_PX * 1.5) };
 }
