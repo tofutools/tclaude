@@ -100,6 +100,10 @@ export function eventSentence(event, nameOf = () => '', { withStep = true } = {}
       return { icon: '⏸', tone: 'concern', text: `${who} paused the run` };
     case 'run_resumed':
       return { icon: '▶', tone: '', text: `${who} resumed the run` };
+    case 'block_marked':
+      return { icon: '⏹', tone: 'concern', text: `${who} parked ${event.nodeId || payload.nodeId} (attempt ${payload.attempt}): ${clip(payload.reason)}` };
+    case 'run_canceled':
+      return { icon: '✕', tone: 'concern', text: `${who} canceled the run${payload.note ? `: ${clip(payload.note)}` : ''}` };
     default:
       return { icon: '·', tone: '', text: `${String(event.kind || '').replace(/[_.]+/g, ' ')}${step}${event.actor ? ` · ${who}` : ''}` };
   }
@@ -210,21 +214,79 @@ export function RaiseConcern({ runId, nodeId = '', nodeLabel = '', api, onChange
   </div>`;
 }
 
+// SteerForm asks for the why behind a step being parked or the run being
+// given up, and sends it.
+function SteerForm({ kind, label, placeholder, confirm, required, send, onChanged, onClose }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async () => {
+    if ((required && !text.trim()) || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await send(text.trim());
+      onChanged?.();
+      onClose?.();
+    } catch (cause) {
+      setError(cause?.message || String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<div class="pov-raise" data-run-steer=${kind}>
+    <textarea rows="2" maxlength="1024" aria-label=${label} placeholder=${placeholder}
+      value=${text} disabled=${busy} onInput=${(event) => setText(event.currentTarget.value)}></textarea>
+    <div class="pov-raise-row">
+      <${Button} size="sm" variant="danger" disabled=${busy || (required && !text.trim())} onClick=${() => void submit()}>${busy ? '…' : confirm}<//>
+      <${Button} size="sm" disabled=${busy} onClick=${onClose}>Back<//>
+    </div>
+    ${error && html`<div class="grf-error ui-error" role="alert">${error}</div>`}
+  </div>`;
+}
+
+// outAgentStep is the selected step's agent attempt that is out, if any:
+// the one a person can park.
+export function outAgentStep(view, nodeId) {
+  if (!nodeId) return null;
+  return (view?.commands || []).find((command) => command.kind === 'agent' && command.parkable && command.nodeId === nodeId) || null;
+}
+
 // RunOversight is the strip under a run's header: its overseer, a way to
-// raise a concern, and its open concerns.
+// raise a concern, to park the selected step or give the run up, and its
+// open concerns.
 export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLabel = '', wizard = false, compact = false }) {
   const [raising, setRaising] = useState(false);
+  const [steering, setSteering] = useState('');
   if (!view) return null;
   const open = openConcerns(view);
   const terminal = ['completed', 'failed', 'canceled'].includes(view.status);
+  // A run given up that is still draining takes no more steering.
+  const steerable = !terminal && !view.draining;
+  const out = steerable && outAgentStep(view, nodeId);
+  const busy = raising || steering;
   return html`<section class=${`pov${compact ? ' pov-compact' : ''}`} aria-label="Oversight" data-run-oversight>
     <div class="pov-line">
       <span class="pov-overseer" data-run-overseer=${view.overseer?.agentId || view.overseer?.ref || ''}
         title="The overseer answers this run's concerns, and may pause, resume and reassign its steps">👁 ${wizard ? 'watched by' : 'overseen by'} <b>${overseerText(view.overseer, { wizard })}</b></span>
       ${open.length > 0 && html`<span class="pk-chip ui-tag pov-count" data-run-concern-count>⚑ ${open.length} open</span>`}
-      ${!terminal && api?.raiseConcern && !raising && html`<${Button} size="sm" data-run-raise-open onClick=${() => setRaising(true)}>⚑ Raise a concern<//>`}
+      ${!terminal && api?.raiseConcern && !busy && html`<${Button} size="sm" data-run-raise-open onClick=${() => setRaising(true)}>⚑ Raise a concern<//>`}
+      ${out && api?.markBlocked && !busy && html`<${Button} size="sm" data-run-park-open
+        title="Stop this step: its performer is released, and it waits on retry, skip or cancel"
+        onClick=${() => setSteering('park')}>⏹ Park ${nodeLabel || nodeId}…<//>`}
+      ${steerable && api?.cancelRun && !busy && html`<${Button} size="sm" variant="danger" data-run-cancel-open
+        title="Give the whole run up: work still out is withdrawn and it ends canceled"
+        onClick=${() => setSteering('cancel')}>✕ Cancel ${wizard ? 'rite' : 'run'}…<//>`}
     </div>
     ${raising && html`<${RaiseConcern} runId=${runId} nodeId=${nodeId} nodeLabel=${nodeLabel} api=${api} onChanged=${onChanged} onClose=${() => setRaising(false)} />`}
+    ${steering === 'park' && out && html`<${SteerForm} kind="park" label="Why this step cannot go on" required
+      placeholder=${`Why can ${nodeLabel || nodeId} not go on? Its performer is told to stop.`} confirm="Park step"
+      send=${(reason) => api.markBlocked(runId, { nodeId: out.nodeId, attempt: out.attempt, reason })}
+      onChanged=${onChanged} onClose=${() => setSteering('')} />`}
+    ${steering === 'cancel' && html`<${SteerForm} kind="cancel" label="Why the run is given up"
+      placeholder="Why is the run given up? (optional, recorded in its log)" confirm=${wizard ? 'Cancel the rite' : 'Cancel the run'}
+      send=${(note) => api.cancelRun(runId, { note })}
+      onChanged=${onChanged} onClose=${() => setSteering('')} />`}
     ${open.length > 0 && html`<ul class="pov-concerns">${open.map((concern) => html`<${ConcernCard} key=${concern.id}
       concern=${concern} runId=${runId} api=${api} onChanged=${onChanged} compact=${compact} />`)}</ul>`}
   </section>`;

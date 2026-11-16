@@ -3,7 +3,7 @@ name: process-runs
 description: >-
   Start, watch and steer daemon-owned process runs via `tclaude process`:
   run (start a saved template, scoped to a group or agent), runs ls, show,
-  events, pause/resume, decide, assign, resolve-blocked, reconcile, reissue,
+  events, pause/resume, decide, assign, resolve-blocked, block, cancel, reconcile, reissue,
   record-outcome; oversee a run and raise or answer its concerns (concern,
   answer-concern, concerns, oversee); report a node you were dispatched; and read event triggers
   via `tclaude agent triggers ls|show|explain`. Covers the
@@ -28,7 +28,7 @@ change a run in flight. Authoring templates is the process-templates skill.
 |---|---|---|
 | `process.runs.read` | `runs ls`, `show`, `events`, `reconcile` | group owners hold it; otherwise a grant |
 | `groups.resources.read` | `runs ls --group <g>`, `show`, `events` of runs scoped to your group | membership, live; no mutation |
-| `process.runs.manage` | every mutation: unscoped `run`, `pause`, `resume`, `decide`, `assign`, `resolve-blocked`, `reissue`, `record-outcome`; and any `run` with `--authorize-program-profile` | explicit grant only (can be scoped to a template), never via ownership |
+| `process.runs.manage` | every mutation: unscoped `run`, `pause`, `resume`, `decide`, `assign`, `resolve-blocked`, `block`, `cancel`, `reissue`, `record-outcome`; and any `run` with `--authorize-program-profile` | explicit grant only (can be scoped to a template), never via ownership |
 | `process.runs.start` | `run --group <g>` | group owners hold it for their groups |
 | `self.process` | `run --agent <self>` | default-granted |
 | `agent.process` / `groups.members.process` | `run --agent <other>` | grant / owners hold it for their members |
@@ -80,6 +80,8 @@ tclaude process decide <run-id> --node <node> --verdict <outcome> [--evidence "w
 #   at an agreement gate a person votes as --node <gate>.vote.<k>; `show` prints the gate's tally
 tclaude process assign <run-id> --node <node> --agent <agent>   # hand an unreported agent attempt over
 tclaude process resolve-blocked <run-id> --node <node> --attempt <n> --action retry|skip|cancel [--note "why"]
+tclaude process block <run-id> --node <node> --reason "why"   # park an agent step that is out (overseer too)
+tclaude process cancel <run-id> [--note "why"]                # give the whole run up
 ```
 
 Copy `--node` and `--attempt` from `show`; stale or wrong-attempt input is
@@ -100,9 +102,11 @@ Every run has an **overseer**: the agent set with `run --overseer` or
 `oversee`, else the template's `overseer:` (`starter`, `operator`,
 `role:<role>`), else the group's lead (role `lead`, else an owner), else
 whoever started it. `show` prints it. Overseeing a run lets you, for that run only,
-`pause`, `resume` and `assign`, and answer its concerns, without
-`process.runs.manage`. It never lets you edit the template or hand the run
-to another overseer.
+`pause`, `resume`, `assign` and `block` (park a step whose world moved:
+its performer is released and it waits on `resolve-blocked`), and answer
+its concerns, without `process.runs.manage`. It never lets you edit the
+template, hand the run to another overseer, or `cancel` the run: raise a
+concern for that, and the operator's card offers the cancel.
 
 Anyone in the run (its overseer, its group's members, its performers, its
 starter) raises a **concern** when something is off that the process cannot

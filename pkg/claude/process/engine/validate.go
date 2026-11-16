@@ -997,7 +997,8 @@ func validateAttemptCeilings(checkpoint Checkpoint, definition *Definition) erro
 	for nodeID, ceiling := range checkpoint.AttemptCeilings {
 		node, ok := definitionNodeByID(definition, nodeID)
 		// A loop's new round opens a fresh window for any task of its body.
-		if !ok || !node.runsCommand() || (!node.retryAuthored && len(node.loops) == 0) {
+		// A step parked by hand and retried gets one too, retry policy or not.
+		if !ok || !node.runsCommand() || (!node.retryAuthored && len(node.loops) == 0 && !manuallyBlockable(definition, node)) {
 			return fmt.Errorf("%w: attemptCeilings names %q, which is not a prepared program task with an authored retry policy or in a loop",
 				ErrInvalidCheckpoint, nodeID)
 		}
@@ -1315,6 +1316,20 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	case RunCompleted, RunCanceled, RunFailed:
 		if checkpoint.FirstCommand() != nil {
 			return invalid("terminal run cannot have an outstanding command")
+		}
+		// A run given up as a whole (TransitionRunCanceled) stops wherever its
+		// nodes were: one may be left ready, and no node is what doomed it.
+		if checkpoint.Canceled {
+			if checkpoint.Status != RunCanceled {
+				return invalid("a run given up must end canceled, not %q", checkpoint.Status)
+			}
+			if doneEndIndex >= 0 {
+				return invalid("a run given up cannot also have reached end node %q", definition.nodes[doneEndIndex].id)
+			}
+			if activeIndex >= 0 && checkpoint.Nodes[definition.nodes[activeIndex].id] != NodeReady {
+				return invalid("a run given up cannot leave node %q %q", definition.nodes[activeIndex].id, checkpoint.Nodes[definition.nodes[activeIndex].id])
+			}
+			break
 		}
 		if activeIndex >= 0 {
 			return invalid("terminal run cannot have active node %q", definition.nodes[activeIndex].id)

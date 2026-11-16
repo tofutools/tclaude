@@ -151,7 +151,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 	switch transition.Kind {
 	case TransitionAdvance:
 		if transition.Command != nil || transition.Observation != nil ||
-			transition.Decision != nil || transition.Resolution != nil {
+			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil {
 			return invalid("advance transition cannot carry a payload")
 		}
 		// Advance is node-addressed. Several nodes can be ready at once under
@@ -253,7 +253,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 	case TransitionCommandPlanned:
 		if transition.Command == nil || transition.Observation != nil ||
-			transition.Decision != nil || transition.Resolution != nil {
+			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil {
 			return invalid("command_planned requires only a command payload")
 		}
 		// The command names its own node, so planning is node-addressed too.
@@ -295,7 +295,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		putCommand(&next, cloneCommand(expected))
 	case TransitionProgramObserved:
 		if transition.Observation == nil || transition.Command != nil ||
-			transition.Decision != nil || transition.Resolution != nil {
+			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil {
 			return invalid("program_observed requires only an observation payload")
 		}
 		observation := transition.Observation
@@ -421,7 +421,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 	case TransitionDecisionRecorded:
 		if transition.Decision == nil || transition.Command != nil ||
-			transition.Observation != nil || transition.Resolution != nil {
+			transition.Observation != nil || transition.Resolution != nil || transition.Mark != nil {
 			return invalid("decision_recorded requires only a decision payload")
 		}
 		decision := transition.Decision
@@ -485,7 +485,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 	case TransitionBlockedResolved:
 		if transition.Resolution == nil || transition.Command != nil ||
-			transition.Observation != nil || transition.Decision != nil {
+			transition.Observation != nil || transition.Decision != nil || transition.Mark != nil {
 			return invalid("blocked_resolved requires only a resolution payload")
 		}
 		resolution := transition.Resolution
@@ -559,10 +559,80 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		default:
 			return invalid("unknown blocked resolution action %q", resolution.Action)
 		}
+	case TransitionRunCanceled:
+		if transition.Command != nil || transition.Observation != nil || transition.Decision != nil ||
+			transition.Resolution != nil || transition.Mark != nil {
+			return invalid("run_canceled transition cannot carry a payload")
+		}
+		if next.Status != RunRunning || next.Canceled {
+			return Checkpoint{}, fmt.Errorf("%w: run is not running", ErrStaleResolution)
+		}
+		// Commands stay, as for a blocked branch's cancel: their work may still
+		// be running, and their observations are accepted while the run drains.
+		next.Canceled = true
+		abandonAfterDoom(&next)
+	case TransitionBlockMarked:
+		mark := transition.Mark
+		if mark == nil || transition.Command != nil || transition.Observation != nil ||
+			transition.Decision != nil || transition.Resolution != nil {
+			return invalid("block_marked transition requires exactly one mark payload")
+		}
+		if next.Status != RunRunning || doomed(next) {
+			return Checkpoint{}, fmt.Errorf("%w: run is not running", ErrStaleResolution)
+		}
+		index, ok := definition.index[mark.NodeID]
+		if !ok {
+			return invalid("block_marked names unknown node %q", mark.NodeID)
+		}
+		node := definition.nodes[index]
+		command, out := commandForNode(next, node.id)
+		if !out || command.Kind != CommandAgent || next.Nodes[node.id] != NodeRunning {
+			return Checkpoint{}, fmt.Errorf("%w: node %q has no agent step out to park", ErrStaleResolution, node.id)
+		}
+		if !manuallyBlockable(definition, node) || len(command.Verdicts) > 0 {
+			return invalid("node %q is a decision, a vote, or a check or review stage, which cannot be parked; pause the run or raise a concern", node.id)
+		}
+		if mark.Attempt != command.Attempt {
+			return Checkpoint{}, fmt.Errorf("%w: node %q is out at attempt %d, not %d",
+				ErrStaleResolution, node.id, command.Attempt, mark.Attempt)
+		}
+		// The command leaves the outbox, so the performer's later report is
+		// stale and its dispatch is settled without it.
+		removeCommand(&next, node.id)
+		next.Nodes[node.id] = NodeBlocked
+		addBlocked(&next, node.id, mark.Reason)
 	default:
 		return invalid("unknown transition kind %q", transition.Kind)
 	}
 	return next, nil
+}
+
+// commandForNode is a node's outstanding command, if it has one.
+func commandForNode(checkpoint Checkpoint, nodeID string) (Command, bool) {
+	for _, command := range checkpoint.Commands {
+		if command.NodeID == nodeID {
+			return command, true
+		}
+	}
+	return Command{}, false
+}
+
+// Parkable reports whether a person may park this node's agent step by hand
+// (TransitionBlockMarked): a task step, not a decider, vote or gate stage.
+func (d *Definition) Parkable(nodeID string) bool {
+	index, ok := d.index[nodeID]
+	return ok && manuallyBlockable(d, d.nodes[index])
+}
+
+// manuallyBlockable reports whether a person may park this step by hand: any
+// command-running task except a test or review gate, whose retry reworks the
+// stage it gates rather than itself.
+func manuallyBlockable(definition *Definition, node definitionNode) bool {
+	if node.kind != definitionTask || !node.runsCommand() {
+		return false
+	}
+	_, gate := gateAnchor(definition, node)
+	return !gate
 }
 
 // settleVerdict applies an authored decision's verdict, from a person or an
@@ -1011,6 +1081,9 @@ func Draining(checkpoint Checkpoint) bool { return doomed(checkpoint) }
 // the node-status map (one entry per prepared node), not a graph walk, and it
 // reads no edges.
 func doomed(checkpoint Checkpoint) bool {
+	if checkpoint.Canceled {
+		return true
+	}
 	for _, status := range checkpoint.Nodes {
 		if status == NodeFailed || status == NodeCanceled {
 			return true
@@ -1058,6 +1131,9 @@ func abandonAfterDoom(checkpoint *Checkpoint) {
 // the run is over whenever one happened, so it outranks a failure a draining
 // sibling reported afterwards.
 func doomStatus(checkpoint Checkpoint) RunStatus {
+	if checkpoint.Canceled {
+		return RunCanceled
+	}
 	for _, status := range checkpoint.Nodes {
 		if status == NodeCanceled {
 			return RunCanceled

@@ -134,6 +134,11 @@ type Checkpoint struct {
 	// it; the loop's round is that count plus one. Sparse: a run whose loops
 	// never went back encodes nothing. See loops.go.
 	Iterations map[string]map[string]int `json:"iterations,omitempty"`
+	// Canceled records that someone gave the whole run up (TransitionRunCanceled),
+	// whatever its nodes were doing. It dooms the run like a canceled node does:
+	// nothing more is planned, the human outboxes are dropped, and the run
+	// drains its in-flight commands before finishing RunCanceled.
+	Canceled bool `json:"canceled,omitempty"`
 }
 
 // FirstCommand returns the lowest-node-id entry of the command outbox, or nil.
@@ -348,7 +353,21 @@ const (
 	// differ only in what they then do with the parked branch, so they are one
 	// payload with an action rather than three near-identical transitions.
 	TransitionBlockedResolved TransitionKind = "blocked_resolved"
+	// TransitionRunCanceled gives the whole run up, from any running state.
+	TransitionRunCanceled TransitionKind = "run_canceled"
+	// TransitionBlockMarked parks a step whose agent command is still out on
+	// a person, with a reason: its command is withdrawn and the branch waits
+	// on the same retry/skip/cancel resolution an exhausted budget does.
+	TransitionBlockMarked TransitionKind = "block_marked"
 )
+
+// BlockMark is the reducer payload for parking a running agent step by hand.
+// Attempt binds it to the exact attempt the person saw out.
+type BlockMark struct {
+	NodeID  string `json:"nodeId"`
+	Attempt int    `json:"attempt"`
+	Reason  string `json:"reason"`
+}
 
 // Transition is an explicit reducer input. Exactly one payload is allowed for
 // payload-bearing kinds; a plain advance carries no payload and instead names
@@ -365,6 +384,7 @@ type Transition struct {
 	Observation *ProgramObservation
 	Decision    *DecisionRecord
 	Resolution  *BlockedResolution
+	Mark        *BlockMark
 }
 
 var (

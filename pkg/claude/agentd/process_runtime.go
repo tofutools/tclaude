@@ -65,6 +65,13 @@ type processRunInput struct {
 	// outcome is an operator-recorded outcome for an agent command: human
 	// preemption of a performer, which must not wait for sibling programs.
 	outcome *processRunOutcomeInput
+	// cancel gives the whole run up; block parks an agent step that is out.
+	cancel *processRunCancelInput
+	block  *executor.MarkBlockInput
+}
+
+type processRunCancelInput struct {
+	note string
 }
 
 type processRunOutcomeInput struct {
@@ -75,7 +82,7 @@ type processRunOutcomeInput struct {
 // cancels reports whether this input gives the run up — the one input an
 // orphaned run still accepts.
 func (i processRunInput) cancels() bool {
-	return i.resolution != nil && i.resolution.Action == engine.ResolveCancel
+	return i.cancel != nil || (i.resolution != nil && i.resolution.Action == engine.ResolveCancel)
 }
 
 // apply commits this input against the run. It is called only by the run's
@@ -91,6 +98,10 @@ func (i processRunInput) apply(run *executor.Run, actor string) error {
 		return executor.RecordAgentReport(run, actor, *i.agentReport)
 	case i.outcome != nil:
 		return executor.RecordOutcome(run, actor, i.outcome.selector, i.outcome.outcome)
+	case i.cancel != nil:
+		return executor.CancelRun(run, actor, i.cancel.note)
+	case i.block != nil:
+		return executor.MarkBlocked(run, actor, *i.block)
 	default:
 		return fmt.Errorf("process run input names no decision, blocked resolution, or agent report")
 	}
@@ -259,6 +270,9 @@ type processRunView struct {
 	AwaitingDecisions []processRunDecisionView `json:"awaitingDecisions"`
 	Commands          []processRunCommandView  `json:"commands"`
 	Blocked           []processRunBlockedView  `json:"blocked"`
+	// Draining is a run given up (canceled, or a step failed) that is still
+	// waiting for work that was out to come back.
+	Draining bool `json:"draining,omitempty"`
 	Scope             processRunScopeView      `json:"scope"`
 	// Performers is every agent node attempt's performer, oldest attempt first
 	// per node: who was chosen, how, and what they reported.
@@ -344,6 +358,9 @@ type processRunCommandView struct {
 	Program   string                   `json:"program"`
 	State     string                   `json:"state"`
 	Performer *processRunPerformerView `json:"performer,omitempty"`
+	// Parkable marks an agent task step a person may park (POST .../block):
+	// not a decider, a vote, or a check or review stage.
+	Parkable bool `json:"parkable,omitempty"`
 }
 
 const (
@@ -1739,6 +1756,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		return processRunView{}, err
 	}
 	commands := make([]processRunCommandView, 0, len(checkpoint.Commands))
+	var parkable func(string) bool
 	needsReconcile := false
 	anyExecuting := false
 	needsPerformer := false
@@ -1753,6 +1771,20 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		if command.Kind == engine.CommandAgent {
 			if command.Agent != nil {
 				view.Profile = command.Agent.Profile
+			}
+			if len(command.Verdicts) == 0 && checkpoint.Status == engine.RunRunning && !engine.Draining(checkpoint) {
+				// A stage step's kind is in the definition; a top-level task's
+				// is not in doubt.
+				if !strings.Contains(command.NodeID, ".") {
+					view.Parkable = true
+				} else if parkable == nil {
+					if definition, err := prepareProcessRunDefinition(record); err == nil {
+						parkable = definition.Parkable
+					}
+				}
+				if parkable != nil {
+					view.Parkable = parkable(command.NodeID)
+				}
 			}
 			view.State = db.ProcessDispatchPending
 			if performer, ok := performerByCommand[command.ID]; ok {
@@ -1869,6 +1901,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		StateVersion: record.StateVersion, Checkpoint: checkpoint,
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
+		Draining: checkpoint.Status == engine.RunRunning && engine.Draining(checkpoint),
 		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
 		Paused: processRunPauseViewOf(record.Scope), ProgramBounds: programBounds, Loops: loops,
 		Gates: gates, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,

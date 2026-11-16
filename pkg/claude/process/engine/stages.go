@@ -163,7 +163,9 @@ func saturatingNextAttempt(checkpoint Checkpoint, nodeID string) int {
 // a budget of its own, so exhausting it is exactly the case an author who asked
 // for retries wanted a person to look at.
 func blockableTask(definition *Definition, node definitionNode) bool {
-	if node.retryAuthored {
+	// Any step a person may park by hand (TransitionBlockMarked), as well as
+	// one whose authored budget ran out.
+	if node.retryAuthored || manuallyBlockable(definition, node) {
 		return true
 	}
 	anchor, ok := gateAnchor(definition, node)

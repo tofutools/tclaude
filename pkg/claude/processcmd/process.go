@@ -28,6 +28,8 @@ func Cmd() *cobra.Command {
 			processDecideCmd(),
 			processAssignCmd(),
 			processResolveBlockedCmd(),
+			processBlockCmd(),
+			processCancelCmd(),
 			processReportCmd(),
 			processRescopeCmd(),
 			processConcernCmd(),

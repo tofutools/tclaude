@@ -567,6 +567,24 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
       }, fetchImpl);
     },
+    // cancelRun gives the whole run up (process.runs.manage): work still out
+    // is withdrawn and the run ends canceled.
+    async cancelRun(runId, { note = '', attemptKey = randomUUID() } = {}) {
+      const path = `${runPath(runId)}/cancel`;
+      const body = JSON.stringify(note ? { note } : {});
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    // markBlocked parks an agent step that is out, with a reason; it then
+    // waits on retry, skip or cancel like a step whose retries ran out.
+    async markBlocked(runId, { nodeId, attempt, reason, attemptKey = randomUUID() }) {
+      const path = `${runPath(runId)}/block`;
+      const body = JSON.stringify({ nodeId, attempt, reason });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
     // answerConcern settles a concern an agent holds (continue, pause) or
     // passes it on (escalate); the operator may answer at any level.
     async answerConcern(runId, concernId, { action, note = '', attemptKey = randomUUID() }) {
