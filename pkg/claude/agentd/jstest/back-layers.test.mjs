@@ -11,11 +11,11 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const JS = fileURLToPath(new URL('../dashboard/js/', import.meta.url));
 
-// A modal overlay's markup: aria-modal true (or bound), or the shared
-// modal/manage overlay shell.
-const MODAL = /(?<!\[)aria-modal=(?:"true"|\$\{)|class=\$?\{?[`"'][^`"']*\b(?:modal-overlay|manage-overlay)\b/;
+// A modal overlay's markup: aria-modal true (or bound). The shared overlay
+// shells (modal-overlay, manage-overlay) carry one inside them.
+const MODAL = /(?<!\[)aria-modal=(?:"true"|\$\{)/g;
 // Registering: through the shared overlay (every Dialog), or by hand.
-const REGISTERS = /\b(?:useBackLayer|registerBackLayer)\(|<\$\{Dialog\}/;
+const REGISTERS = /\b(?:useBackLayer|registerBackLayer)\(|<\$\{Dialog\}/g;
 // Back layers of their own: history steps the router already takes back.
 const OWN_STEP = new Map([
   ['phone-sheet.js', 'a phone sheet is a phone-history layer'],
@@ -26,8 +26,12 @@ test('every modal overlay is a Back layer', () => {
   const missing = [];
   for (const file of readdirSync(JS).filter((name) => name.endsWith('.js')).sort()) {
     const source = readFileSync(join(JS, file), 'utf8');
-    if (!MODAL.test(source) || REGISTERS.test(source) || OWN_STEP.has(file)) continue;
-    missing.push(file);
+    // One registration per modal drawn: a file with two modals and one
+    // registration leaves the other to the page behind it.
+    const modals = (source.match(MODAL) || []).length;
+    const registered = (source.match(REGISTERS) || []).length;
+    if (!modals || registered >= modals || OWN_STEP.has(file)) continue;
+    missing.push(`${file} (${modals} modal, ${registered} registered)`);
   }
   assert.deepEqual(missing, [],
     'these draw a modal overlay that Back does not close: call useBackLayer(open, close) (back-layers.js), or use Dialog');

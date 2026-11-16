@@ -20,7 +20,7 @@
 // `routed: true` and is left to the router.
 
 import { effect } from '@preact/signals';
-import { backLayers, closeTopBackLayer } from './back-layers.js';
+import { backLayers, backSeq, closeTopBackLayer, stepLayers } from './back-layers.js';
 import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
 import { phonePage } from './phone-page.js';
 import { phoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
@@ -34,7 +34,7 @@ export function layerDepth(page = phonePage.peek(), sheet = phoneSheet.peek(), l
   // A page over another (a task's page over a tab's unrouted page) is a
   // layer on top of that one's.
   const covered = page?.covered && !page.covered.routed ? 1 : 0;
-  return (page && !page.routed ? 1 : 0) + covered + (sheet ? 1 : 0) + layers.length;
+  return (page && !page.routed ? 1 : 0) + covered + (sheet ? 1 : 0) + stepLayers(layers).length;
 }
 
 function booting(doc) {
@@ -72,6 +72,14 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
   let restoring = false;
   // depth is the layer count the router was last told of.
   let depth = layerDepth();
+  // sheetSeq is when the open sheet opened, against the layers' (backSeq).
+  let sheetSeq = 0;
+  let sheetShown = phoneSheet.peek();
+  const stopSheetSeq = effect(() => {
+    const next = phoneSheet.value;
+    if (next && next !== sheetShown) sheetSeq = backSeq();
+    sheetShown = next;
+  });
   // closing counts the layers Back asked to close whose close has not landed
   // yet: the step back is taken, so they are no longer in the address.
   let closing = 0;
@@ -83,7 +91,10 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
       // dirty form's discard prompt) and so lands later. The step back is
       // already taken, so the close it lands is no step of its own; one that
       // stayed open takes its entry back, and the next Back asks again.
-      if (backLayers.peek().length && layerDepth() > (Number(want) || 0)) {
+      // Whichever of a sheet and a layer opened last is on top.
+      const top = stepLayers().at(-1);
+      const layerOnTop = top && (!phoneSheet.peek() || top.seq > sheetSeq);
+      if (layerOnTop && layerDepth() > (Number(want) || 0)) {
         depth = layerDepth() - 1;
         closing += 1;
         void closeTopBackLayer().then((closed) => {
@@ -160,6 +171,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
     cancelBoot();
     clearTimeout(pending);
     stopLayers();
+    stopSheetSeq();
     stopView();
     unLayers();
     unView();

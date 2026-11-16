@@ -102,7 +102,7 @@ export function ImageAttachmentPreview({ messageID, attachment: launcherAttachme
 // the stage's scroll range is exactly the zoomed image and centring it with
 // auto margins stays safe when it overflows. Every zoom keeps one point still:
 // the pointer for a pinch / Ctrl+wheel / double-click, the middle otherwise.
-export function MediaViewer({ source, attachment: launcherAttachment, siblings = [], surface = 'attachment', downloadTitle = 'Download this agent-published file', onClose }) {
+export function MediaViewer({ source, attachment: launcherAttachment, siblings = [], surface = 'attachment', downloadTitle = 'Download this agent-published file', onClose, routed = false }) {
   const [selected, setSelected] = useState(null);
   const items = previewAttachments(siblings.length ? siblings : [launcherAttachment]);
   const attachment = items[selected] || launcherAttachment;
@@ -131,7 +131,7 @@ export function MediaViewer({ source, attachment: launcherAttachment, siblings =
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const close = useCallback(() => { onCloseRef.current?.(); }, []);
-  useBackLayer(true, close);
+  useBackLayer(true, close, { routed });
   const { dialogRef } = useDialogFocus({
     open,
     initialFocusRef: closeRef,

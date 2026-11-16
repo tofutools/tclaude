@@ -38,15 +38,17 @@ export function firstViewable(attachments) {
 // files beside it (the media viewer steps through those it can show, and a
 // document can reference an image among them). `source` reads them; onClose
 // closes it. Renders nothing for a file without a viewer.
-export function AttachmentViewer({ source, attachment, attachments = [], surface = 'attachment', downloadTitle = 'Download this file', onClose }) {
+// routed: the opener made the viewer a location of its own (Mail's ?file=),
+// so Back reaches it through the router rather than as a Back layer.
+export function AttachmentViewer({ source, attachment, attachments = [], surface = 'attachment', downloadTitle = 'Download this file', onClose, routed = false }) {
   const kind = viewerKind(attachment);
   if (kind === 'media') {
     return html`<${MediaViewer} source=${source} attachment=${attachment} siblings=${attachments}
-      surface=${surface} downloadTitle=${downloadTitle} onClose=${onClose} />`;
+      surface=${surface} downloadTitle=${downloadTitle} onClose=${onClose} routed=${routed} />`;
   }
   if (kind === 'markdown') {
     return html`<${MarkdownViewer} files=${source} attachment=${attachment} siblings=${attachments}
-      surface=${surface} downloadTitle=${downloadTitle} onClose=${onClose} />`;
+      surface=${surface} downloadTitle=${downloadTitle} onClose=${onClose} routed=${routed} />`;
   }
   return null;
 }

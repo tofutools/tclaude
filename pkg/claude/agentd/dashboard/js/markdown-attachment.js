@@ -113,7 +113,7 @@ export function MarkdownAttachment({ messageID, attachment, siblings, surface = 
 // is read from; `text`, when the caller already holds the document (the
 // Messages card renders it inline), saves reading it again. onClose runs on
 // ×, Escape or a backdrop click.
-export function MarkdownViewer({ files, attachment, siblings, surface = 'attachment', text = null, downloadTitle = 'Download this agent-published file', onClose }) {
+export function MarkdownViewer({ files, attachment, siblings, surface = 'attachment', text = null, downloadTitle = 'Download this agent-published file', onClose, routed = false }) {
   const [loaded, setLoaded] = useState(() => (text === null ? { state: 'loading', text: '' } : { state: 'ready', text }));
   const source = text === null ? loaded.text : text;
   const loadState = text === null ? loaded.state : 'ready';
@@ -137,7 +137,7 @@ export function MarkdownViewer({ files, attachment, siblings, surface = 'attachm
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const close = useCallback(() => onCloseRef.current?.(), []);
-  useBackLayer(true, close);
+  useBackLayer(true, close, { routed });
   const { dialogRef } = useDialogFocus({
     open: viewerOpen,
     initialFocusRef: closeRef,

@@ -152,3 +152,28 @@ test('while Back\'s close of a form is still asking, the address has already lef
   assert.equal(open.value, false);
   assert.equal(routes.overlayParams().phone, '');
 });
+
+test('a sheet opened over a dialog is on top: Back closes the sheet, then the dialog', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { routes, sheet, tick } = await setupWith(t, harness);
+  const { open } = await mountDialog(t, harness);
+  await tick();
+  sheet.openPhoneSheet({ label: 'Link', Body: () => null });
+  assert.equal(routes.overlayParams().phone, '2');
+  await harness.act(async () => { routes.restoreOverlays({ phone: '1' }); await tick(); });
+  assert.equal(sheet.phoneSheet.value, null, 'Back took the sheet on top');
+  assert.equal(open.value, true, 'and left the dialog under it');
+  await harness.act(async () => { routes.restoreOverlays({}); await tick(); });
+  assert.equal(open.value, false);
+});
+
+test('a layer that is a location of its own (routed) is no extra step', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { routes, announced, tick } = await setupWith(t, harness);
+  const layers = await harness.importDashboardModule('js/back-layers.js');
+  const off = layers.registerBackLayer({ close: () => true, routed: true });
+  t.after(off);
+  await tick();
+  assert.equal(routes.overlayParams().phone, '', 'its own route carries it');
+  assert.deepEqual(announced, [], 'so it takes no history entry of the phone\'s');
+});

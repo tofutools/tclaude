@@ -150,7 +150,8 @@ export function ManagementOverlay({
   }, [blocked, onSubmitEnter, onSubmitHotkey, onSubmitShiftHotkey]);
   // Back closes the topmost overlay, through this same guarded close
   // (back-layers.js).
-  useLayoutEffect(() => registerBackLayer({ close }), [close]);
+  // A library manager is a location of its own (?manage=): routed.
+  useLayoutEffect(() => registerBackLayer({ close, routed: manage }), [close, manage]);
   useLayoutEffect(() => {
     const cleanup = registerClose?.(close);
     return () => {
