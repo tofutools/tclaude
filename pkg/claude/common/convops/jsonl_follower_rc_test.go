@@ -81,19 +81,51 @@ func TestRecordSessionRCLink_PerLaunch(t *testing.T) {
 	wrote, _ = db.RecordSessionRCLink(conv, "https://other.example/x", at.Add(time.Minute))
 	require.False(t, wrote, "another origin is ignored")
 
+	// A switch clears the link: neither a re-read nor a record from before
+	// the switch writes it back; one written after the switch does.
 	require.NoError(t, db.ClearSessionRCLink("s1"))
 	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_a", at)
 	require.False(t, wrote, "a cleared link is not written back")
+	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_late", time.Now().Add(-time.Second))
+	require.False(t, wrote, "a record from before the switch, reached late, is not this link")
 	require.Empty(t, link("s1"))
-	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_b", at.Add(time.Minute))
-	require.True(t, wrote, "a newer record is")
+	after := time.Now().Add(time.Second)
+	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_b", after)
+	require.True(t, wrote, "a record after the switch is")
 
-	// A relaunch: the next record is the new launch's, the old launch keeps
-	// what it had.
-	relaunch := at.Add(10 * time.Minute)
+	// The record heals a drifted flag: Remote Access is on.
+	require.NoError(t, db.SetSessionRemoteControl("s1", false))
+	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_b2", after.Add(time.Second))
+	require.True(t, wrote)
+	rows, err := db.FindSessionsByConvID(conv)
+	require.NoError(t, err)
+	require.True(t, rows[0].RemoteControl, "a bridge_status record heals the flag to on")
+
+	// A launch on a new row starts with no link, and an older record is not
+	// its link; the next record is.
+	relaunch := after.Add(10 * time.Minute)
 	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s2", ConvID: conv, TmuxSession: "t1", Status: "idle", CreatedAt: relaunch, UpdatedAt: relaunch}))
+	require.Empty(t, link("s2"))
+	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_b3", relaunch.Add(-time.Second))
+	require.True(t, wrote, "the old row may take it; it is not shown for a dead launch")
+	require.Empty(t, link("s2"), "a record from before the launch is not its link")
 	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_c", relaunch.Add(time.Second))
 	require.True(t, wrote)
 	require.Equal(t, "https://claude.ai/code/session_c", link("s2"))
-	require.Equal(t, "https://claude.ai/code/session_b", link("s1"))
+
+	// A resume reuses its row: the launch save drops the dead link, and a
+	// record from before the resume is not its link.
+	resume := relaunch.Add(10 * time.Minute)
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s2", ConvID: conv, TmuxSession: "t1", Status: "idle",
+		CreatedAt: resume, UpdatedAt: resume, ExitLaunchGeneration: "gen-2"}))
+	require.Empty(t, link("s2"), "a resume starts without the last launch's link")
+	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_c2", resume.Add(-time.Second))
+	require.Empty(t, link("s2"))
+	wrote, _ = db.RecordSessionRCLink(conv, "https://claude.ai/code/session_d", resume.Add(time.Second))
+	require.True(t, wrote)
+	require.Equal(t, "https://claude.ai/code/session_d", link("s2"))
+
+	// A plain status save (a hook tick) keeps the link.
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "s2", ConvID: conv, TmuxSession: "t1", Status: "working"}))
+	require.Equal(t, "https://claude.ai/code/session_d", link("s2"))
 }

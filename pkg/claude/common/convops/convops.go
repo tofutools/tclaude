@@ -829,14 +829,6 @@ func upsertScanResult(filePath, convID, projectDir string, info os.FileInfo, sca
 		_ = db.RebuildConvBranchHistoryScan(convID, scanned.BranchHistory)
 	}
 
-	// When the .jsonl's last turn is a user-interrupt marker, the
-	// session that owns this conv has no Stop hook coming — Claude Code
-	// fires none on Escape — so its row would stay stuck 'working' on
-	// the dashboard. Recover it here: this scan path already runs on
-	// every dashboard poll (RefreshConvIndexEntry rescans when the file
-	// grew), so the fix rides the existing rescan with no extra poller.
-	// Gated on scanComplete — a truncated scan never reached the real
-	// last turn, so its lastTurnInterrupted is not authoritative.
 	// Remote Access came up (tk_5ef87574): put its link on the session row
 	// of this launch, where the dashboard's "Open in Claude app" reads it.
 	// RecordSessionRCLink keeps a record from before the launch, or one it
@@ -847,6 +839,14 @@ func upsertScanResult(filePath, convID, projectDir string, info os.FileInfo, sca
 		}
 	}
 
+	// When the .jsonl's last turn is a user-interrupt marker, the
+	// session that owns this conv has no Stop hook coming — Claude Code
+	// fires none on Escape — so its row would stay stuck 'working' on
+	// the dashboard. Recover it here: this scan path already runs on
+	// every dashboard poll (RefreshConvIndexEntry rescans when the file
+	// grew), so the fix rides the existing rescan with no extra poller.
+	// Gated on scanComplete — a truncated scan never reached the real
+	// last turn, so its lastTurnInterrupted is not authoritative.
 	if scanComplete && scanned.LastTurnInterrupted {
 		if n, err := db.MarkSessionsIdleAfterInterrupt(convID); err != nil {
 			slog.Warn("conv_index: failed to recover interrupted session",

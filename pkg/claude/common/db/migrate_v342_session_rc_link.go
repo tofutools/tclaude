@@ -3,15 +3,16 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // migrateV341toV342 adds sessions.rc_session_url and rc_session_url_at
 // (tk_5ef87574): the Claude Code Remote Access link a launch announced in
 // its transcript (a bridge_status record, read by the transcript follower),
-// and that record's time. The link lives on the session row, so each launch
-// starts without one and it survives a daemon restart. The time stays when
-// a toggle clears the link, so the follower's next pass does not write the
-// same, now stale, link back; only a newer record does.
+// and that record's time, or the last switch's. The link lives on the
+// session row, so each launch starts without one and it survives a daemon
+// restart. A switch clears the link and stamps the time, so the follower
+// does not write an older, now stale, link back; only a newer record does.
 func migrateV341toV342(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
@@ -31,6 +32,13 @@ func migrateV341toV342(d *sql.DB) error {
 				return fmt.Errorf("migrate v341→v342 (add sessions.%s): %w", col.name, err)
 			}
 		}
+	}
+	// Rows from before the upgrade start at the upgrade: a record they never
+	// saw may be from a launch, or before a switch, this schema never
+	// tracked, so it must neither become their link nor heal their flag.
+	if _, err := tx.Exec(`UPDATE sessions SET rc_session_url_at = ? WHERE rc_session_url_at < ?`,
+		time.Now().UnixNano(), time.Now().UnixNano()); err != nil {
+		return fmt.Errorf("migrate v341→v342 (stamp existing rows): %w", err)
 	}
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 342`); err != nil {
 		return fmt.Errorf("migrate v341→v342 (version): %w", err)
