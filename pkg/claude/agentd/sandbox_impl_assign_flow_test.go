@@ -59,6 +59,20 @@ func showSandboxImpl(t *testing.T, f *testharness.Flow, convID string) sandboxIm
 	return wire
 }
 
+// latestLaunchRow is the row of the conv's newest launch: the newest
+// inserted, not the most recently updated. The stopped launch's row is marked
+// exited asynchronously and can be updated after the relaunch writes its own,
+// so the most recently updated row may be the old launch's.
+func latestLaunchRow(t *testing.T, convID string) *db.SessionRow {
+	t.Helper()
+	id, err := db.LatestInsertedSessionIDForConv(convID)
+	require.NoError(t, err)
+	row, err := db.LoadSession(id)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	return row
+}
+
 // The core claim: an assignment made while the agent is stopped is the posture
 // its next launch runs under. Anything less and the feature does nothing.
 func TestSandboxImplAssign_OfflineAgentRelaunchesUnderTheNewImplementation(t *testing.T) {
@@ -88,9 +102,7 @@ func TestSandboxImplAssign_OfflineAgentRelaunchesUnderTheNewImplementation(t *te
 	assert.Equal(t, string(sandboxpolicy.ImplementationOff), relaunched,
 		"the assignment is only real if the relaunch carries it")
 
-	row, err := db.FindSessionByConvID(spawn.ConvID)
-	require.NoError(t, err)
-	require.NotNil(t, row)
+	row := latestLaunchRow(t, spawn.ConvID)
 	assert.Equal(t, string(sandboxpolicy.ImplementationOff), row.SandboxImplementation,
 		"the relaunched row records the assigned implementation for the launch after it")
 }
@@ -295,9 +307,7 @@ func TestSandboxImplAssign_DashboardRouteReadsAndAssigns(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, string(sandboxpolicy.ImplementationOff), relaunched,
 		"the launch boundary must receive the assigned implementation")
-	resumedRow, err := db.FindSessionByConvID(spawn.ConvID)
-	require.NoError(t, err)
-	require.NotNil(t, resumedRow)
+	resumedRow := latestLaunchRow(t, spawn.ConvID)
 	assert.Equal(t, string(sandboxpolicy.ImplementationOff), resumedRow.SandboxImplementation,
 		"and the row the next relaunch reads must record it")
 }
