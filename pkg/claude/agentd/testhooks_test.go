@@ -3,6 +3,7 @@ package agentd
 import (
 	"github.com/tofutools/tclaude/pkg/hostmetrics"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	clconfig "github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -227,6 +228,26 @@ func ProcessRunSweepCursorForTest() string {
 // WaitForProcessRunRuntimeForTest drains active run claims. Flow tests arrange
 // deterministic executor hooks, so no production timeout is involved.
 func WaitForProcessRunRuntimeForTest() { processRuns.wg.Wait() }
+
+// ServeRemoteListenerForTest serves the REAL remote listener (its TLS with
+// HTTP/2, its serve path, its handler) for m on a loopback port, and returns
+// its address. The dashboard sandbox uses it (TCLAUDE_SANDBOX_REMOTE).
+// optionalClientCert only asks for the client certificate instead of
+// requiring it, for a browser measurement that cannot present one.
+func ServeRemoteListenerForTest(t testing.TB, m *remoteaccess.Material, optionalClientCert bool) string {
+	t.Helper()
+	cfg := remoteListenerTLSConfig(m)
+	if optionalClientCert {
+		cfg.ClientAuth = tls.VerifyClientCertIfGiven
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
+	if err != nil {
+		t.Fatalf("remote listener: %v", err)
+	}
+	srv := serveRemoteListener(ln, buildRemoteDashboardHandler(m))
+	t.Cleanup(func() { _ = srv.Close() })
+	return ln.Addr().String()
+}
 
 // BuildRemoteDashboardHandlerForTest exposes the REAL remote-listener handler
 // (the production remoteAuthMiddleware wrapping the full dashboard route set)

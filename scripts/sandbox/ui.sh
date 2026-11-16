@@ -100,6 +100,8 @@ start() {
   done
   cp "$work/serve/url" "$state/url"
   [[ -f "$work/serve/fixture.json" ]] && cp "$work/serve/fixture.json" "$state/fixture.json"
+  rm -f "$state/remote.json"
+  [[ -f "$work/serve/remote.json" ]] && cp "$work/serve/remote.json" "$state/remote.json"
   echo "up in $((SECONDS - t0))s" >&2
 }
 
@@ -150,6 +152,8 @@ run_smoke() {
   work="$(cat "$state/work")"
   local fixture_env=()
   [[ -f "$state/fixture.json" ]] && fixture_env=(SANDBOX_FIXTURE_JSON="$state/fixture.json")
+  # TCLAUDE_SANDBOX_REMOTE=1: the remote-access listener's URL and credentials.
+  [[ -f "$state/remote.json" ]] && fixture_env+=(SANDBOX_REMOTE_JSON="$state/remote.json")
   # Chrome writes under the XDG dirs, and ~/.config may not be writable under
   # an agent sandbox (crashpad then aborts), so they point at the throwaway dir.
   (

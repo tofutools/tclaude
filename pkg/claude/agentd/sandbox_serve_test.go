@@ -36,6 +36,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/federation/proto"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -75,7 +76,40 @@ func TestSandboxServe(t *testing.T) {
 	if sandboxLivePeer() {
 		seedSandboxLivePeer(t, dir, mux)
 	}
+	if os.Getenv("TCLAUDE_SANDBOX_REMOTE") != "" {
+		sandboxRemoteListener(t, dir)
+	}
 	serveDocFixture(t, dir, sandboxLogFailures(t, sandboxStageReferer(mux)), page, ln)
+}
+
+// sandboxRemoteListener also serves the seeded world on the remote-access
+// listener (mTLS, a passphrase login, HTTP/2), with real remote-access material
+// in the sandbox's HOME, and writes how to reach it to <dir>/remote.json: the
+// URL, the client .p12 and its password, and the passphrase. A measurement
+// (phone-boot-measure) boots the phone through it. TCLAUDE_SANDBOX_REMOTE=nocert
+// asks for the client certificate without requiring it: Playwright presents
+// one through a TLS proxy of its own, which does not hold up under a boot's
+// hundreds of requests.
+func sandboxRemoteListener(t *testing.T, dir string) {
+	t.Helper()
+	const passphrase, p12Password = "sandbox-passphrase", "sandbox-p12"
+	res, err := remoteaccess.Setup(remoteaccess.SetupOptions{
+		Bind: "127.0.0.1:8443", ExtraHosts: []string{"localhost"}, Passphrase: passphrase,
+		ClientName: "sandbox-phone", P12Password: p12Password, RegenerateCerts: true,
+	})
+	if err != nil {
+		t.Fatalf("sandbox: remote-access setup: %v", err)
+	}
+	m, err := remoteaccess.Load()
+	if err != nil {
+		t.Fatalf("sandbox: remote-access load: %v", err)
+	}
+	addr := agentd.ServeRemoteListenerForTest(t, m, os.Getenv("TCLAUDE_SANDBOX_REMOTE") == "nocert")
+	out, _ := json.Marshal(map[string]string{"url": "https://" + addr, "p12": res.P12Path, "p12Password": p12Password, "passphrase": passphrase})
+	if err := os.WriteFile(filepath.Join(dir, "remote.json"), out, 0o600); err != nil {
+		t.Fatalf("sandbox: write remote.json: %v", err)
+	}
+	t.Logf("sandbox: remote-access listener on https://%s", addr)
 }
 
 // sandboxLogFailures writes each request answered 400 or above to the test
