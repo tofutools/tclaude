@@ -56,9 +56,9 @@ test('the operator\'s edit elsewhere survives the agent\'s new step', () => {
   assert.match(changeList(result.changes), /\+ review/);
 });
 
-test('the agent brief says the operator watches and that a moved hash is their edit', () => {
-  const note = inlineHelpNote('webshop', 'Ship it');
-  assert.match(note, /inline editor of group webshop/);
+test('the agent brief says the operator watches and that a moved hash is their edit, and names nothing from the template', () => {
+  const note = inlineHelpNote();
+  assert.match(note, /open in their group's inline editor/);
   assert.match(note, /moved sourceHash is usually their own edit/);
   assert.match(note, /Never revert what they changed/);
 });
@@ -161,4 +161,67 @@ test('when both change the same step the operator picks, and their other changes
   await harness.act(async () => { root.querySelector('[data-mini-keep-mine]').click(); });
   await waitFor(harness, () => head.sourceHash === 'h9', 'mine is saved over theirs');
   assert.equal(head.template.nodes.build.performer.prompt, 'Build it carefully');
+});
+
+function casApi(start) {
+  const api = { head: start, saves: [], reads: 0 };
+  api.getTemplateHead = async () => { api.reads += 1; if (api.readFails) throw new Error('404 not found'); return structuredClone(api.head); };
+  api.saveTemplate = async (id, draft, meta) => {
+    api.saves.push({ draft: structuredClone(draft), sourceHash: meta.sourceHash });
+    if (meta.sourceHash !== api.head.sourceHash) throw new Error('process template head changed');
+    api.head = { ...structuredClone(draft), sourceHash: `h${api.saves.length + 10}`, currentRef: `tpl_1@sha256:s${api.saves.length}` };
+    return { ref: api.head.currentRef, sourceHash: api.head.sourceHash };
+  };
+  return api;
+}
+
+test('a merge waits while the operator is typing in a field, so nothing they typed is reset', async (t) => {
+  const api = casApi(view(BASE_NODES));
+  const { harness, root } = await mountEditor(t, api);
+  await harness.act(async () => { root.querySelector('[data-process-node="build"]').click(); });
+  const asks = root.querySelector('.gm-card textarea');
+  asks.focus();
+  await harness.act(async () => { asks.value = 'Build it, half typed'; harness.fireEvent(asks, 'input'); });
+  api.head = view({ ...BASE_NODES, done: { type: 'end', result: 'success', name: 'Shipped' } }, { hash: 'h2', rev: 'b' });
+  // Absence: let several poll intervals pass (on the fast clock).
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 3 * 2000)));
+  assert.equal(root.querySelector('[data-mini-notice]'), null, 'no merge while typing');
+  assert.equal(asks.value, 'Build it, half typed');
+  asks.blur();
+  await waitFor(harness, () => root.querySelector('[data-mini-notice]'), 'it merges once the field is left');
+});
+
+test('opened with unsaved step-list edits, an agent\'s save asks instead of merging over them', async (t) => {
+  const stored = view(BASE_NODES);
+  const api = casApi(stored);
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/groups-mini-editor.js');
+  const edited = { ...view({ ...BASE_NODES, build: agentStep('Build it with tests') }), sourceHash: stored.sourceHash, currentRef: stored.currentRef };
+  const mounted = await harness.mount(harness.html`<${mod.MiniGraphEditor} group=${{ name: 'webshop' }} roster=${[]}
+    process=${{ templateId: 'tpl_1', name: 'Ship it' }} view=${edited} stored=${{ ...stored, sourceHash: 'older' }} changed=${true} api=${api} draft=${false}
+    onClose=${() => {}} onSteps=${() => {}} />`);
+  const root = mounted.container;
+  api.head = view({ ...BASE_NODES, done: { type: 'end', result: 'success', name: 'Shipped' } }, { hash: 'h2', rev: 'b' });
+  await waitFor(harness, () => root.querySelector('[data-mini-incoming]'), 'it asks');
+  assert.match(root.querySelector('[data-mini-incoming]').textContent, /the whole process/);
+  await harness.act(async () => { root.querySelector('[data-mini-keep-mine]').click(); });
+  assert.equal(root.querySelector('[data-mini-incoming]'), null);
+  await harness.act(async () => { root.querySelector('[data-mini-save]').click(); });
+  await waitFor(harness, () => api.saves.length > 0, 'saved');
+  assert.equal(api.saves.at(-1).sourceHash, 'h2', 'over the agent\'s version');
+  assert.equal(api.saves.at(-1).draft.template.nodes.build.performer.prompt, 'Build it with tests', 'with the operator\'s edits');
+});
+
+test('a save refused for a version that cannot be read stops and says so, rather than retrying for ever', async (t) => {
+  const api = casApi(view(BASE_NODES));
+  const { harness, root } = await mountEditor(t, api);
+  api.head = { ...api.head, sourceHash: 'gone' };
+  api.readFails = true;
+  const title = root.querySelector('[data-mini-title]');
+  await harness.act(async () => { title.value = 'Ship it fast'; harness.fireEvent(title, 'change'); });
+  await waitFor(harness, () => root.querySelector('[data-mini-autosave="failed"]') || root.querySelector('.gq-error'), 'it gives up and says so');
+  const saves = api.saves.length;
+  assert.ok(saves <= 4, `a bounded number of refused saves (${saves})`);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 3000)));
+  assert.equal(api.saves.length, saves, 'and no more after it stopped');
 });

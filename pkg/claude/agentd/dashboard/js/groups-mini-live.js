@@ -45,9 +45,11 @@ export function changeList(changes = []) {
 // inlineHelpNote is what an agent brought in from the inline editor is told
 // on top of the process scribe brief: the operator is looking at the same
 // draft, which saves itself, so a moved sourceHash is usually their own edit.
-export function inlineHelpNote(group, name) {
+// It names nothing from the template: the brief's scope payload, fenced as
+// untrusted data, already says which one.
+export function inlineHelpNote() {
   return [
-    `The human has this process ("${name}") open in the inline editor of group ${group}. It saves their edits as they go and merges each version you save onto their canvas, as one change they can undo.`,
+    'The human has this process open in their group\'s inline editor. It saves their edits as they go and merges each version you save onto their canvas, as one change they can undo.',
     'So a moved sourceHash is usually their own edit: reread, apply your change on top of the newest version, validate, and save. Never revert what they changed; if you disagree with it, say so in chat.',
     'Save in small steps, so they see each one land, and explain each change in chat.',
   ].join('\n\n');

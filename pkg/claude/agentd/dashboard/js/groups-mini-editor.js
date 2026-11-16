@@ -52,6 +52,19 @@ const html = htm.bind(h);
 
 const KIND_CHOICES = Object.freeze([['agent', '🤖', 'agent'], ['you', '👤', 'you'], ['command', '⌘', 'command']]);
 const VALIDATE_DELAY_MS = 400;
+// MAX_REFUSED is how many saves in a row a newer version may refuse before
+// the editor stops merging and saving again, and says so.
+const MAX_REFUSED = 3;
+
+// wholeChoice is the merge when the draft's base is unknown (it opened with
+// unsaved edits of an older version): nothing is merged unasked, and the
+// operator takes theirs or keeps theirs out as a whole.
+function wholeChoice(ours, theirs, choice) {
+  const whole = [{ id: 'whole', kind: 'template', op: 'changed', label: 'the whole process', conflict: true }];
+  if (choice === 'theirs') return { changes: whole, conflicts: whole, merged: { template: theirs.template, edges: theirs.edges, layout: theirs.layout }, clean: true };
+  if (choice === 'mine') return { changes: whole, conflicts: whole, merged: ours, clean: false };
+  return { changes: whole, conflicts: whole, merged: null, clean: false };
+}
 // A pointer that moves this far from a handle is a drag, not a click.
 const DRAG_SLOP = 8;
 
@@ -341,7 +354,16 @@ export function MiniGraphEditor({
   const failedAt = useRef(null);
   // base is the saved version the draft rests on: the merge base when an
   // agent saves a newer one (groups-mini-live.js).
-  const base = useRef(view);
+  // Opened with unsaved edits (from the step list), the view is not the
+  // version its sourceHash names: then the base is the stored one when that is
+  // the same version, and unknown otherwise, so nothing merges unasked.
+  const base = useRef(!changed ? view : stored?.sourceHash && stored.sourceHash === view.sourceHash ? stored : null);
+  // refused counts saves refused for a newer version in a row: after a few,
+  // the merge is not getting anywhere, and the old error shows instead.
+  const refused = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const cardRef = useRef(null);
   // incoming is a newer version that changes what the operator is editing too,
   // waiting for their choice; notice is the last one merged, with its undo.
   const [incoming, setIncoming] = useState(null);
@@ -424,6 +446,7 @@ export function MiniGraphEditor({
       const body = await api.saveTemplate(process.templateId, draft, { sourceHash: model.current.sourceHash, ...(publish ? { listed: true } : {}) });
       model.current.markSaved(body, savedAt);
       base.current = { ...draft, sourceHash: model.current.sourceHash, currentRef: model.current.currentRef };
+      refused.current = 0;
       if (!quiet) notify(isDraft ? `Saved ${name}` : `Saved ${name} as a new version`);
       void source?.refresh?.();
       done(true);
@@ -432,7 +455,8 @@ export function MiniGraphEditor({
       done(false);
       // Someone (an agent, most often) saved a newer version: merge it in and
       // save again, rather than leave the operator's edit stuck.
-      if (/head changed/.test(cause.message) && live) {
+      if (/head changed/.test(cause.message) && live && refused.current < MAX_REFUSED) {
+        refused.current += 1;
         resync.current = true;
         return null;
       }
@@ -442,7 +466,7 @@ export function MiniGraphEditor({
     } finally {
       inflight.current = null;
       setBusy('');
-      if (resync.current) { resync.current = false; void sync(); }
+      if (resync.current) { resync.current = false; void sync({ force: true }); }
     }
   };
   // live: this editor follows its template's head (an api that can read it).
@@ -451,11 +475,13 @@ export function MiniGraphEditor({
   // undoable edit; a version that also changes what the operator changed
   // waits for their choice ('theirs' or 'mine').
   const adopt = (theirs, choice = '') => {
+    if (!mounted.current) return;
     const ours = viewOf(model.current);
     const head = templateHeadFromEditView(theirs);
     const who = head.actor === 'human:operator' ? 'You (elsewhere)'
       : processActorPresentation(dashboardState.snapshot.value, head.actor)?.label || 'Someone';
-    const result = mergeIncoming({ base: base.current, ours, theirs, choice });
+    const result = base.current ? mergeIncoming({ base: base.current, ours, theirs, choice })
+      : wholeChoice(ours, theirs, choice);
     if (!result.merged) { setIncoming({ theirs, who, conflicts: result.conflicts }); return; }
     model.current.adoptReviewedGeneration(result.merged,
       { ref: theirs.currentRef, sourceHash: theirs.sourceHash, semanticHash: theirs.semanticHash }, { clean: result.clean });
@@ -465,21 +491,31 @@ export function MiniGraphEditor({
     setIncoming(null);
     setAutosave('');
     setError('');
-    setTitle(result.merged.template?.name || name);
+    if (result.merged.template?.name !== ours.template?.name) setTitle(result.merged.template?.name || name);
     setNotice(result.changes.length ? { who, what: changeList(result.changes), kept: choice === 'mine' } : null);
     setRev(model.current.rev);
   };
   // sync reads the head and adopts it when it is a version this editor has
   // not seen. A save under way, or one that lands meanwhile, skips the read:
   // the save's own answer is the newer truth.
-  const sync = async () => {
-    if (!live || syncing.current || inflight.current) return;
+  // A field the operator is typing in (it commits on change) holds the read
+  // back, so a merge never resets what they have not committed yet; a save's
+  // own retry (force) goes ahead, as the field has just committed.
+  const typing = () => {
+    const active = cardRef.current?.ownerDocument?.activeElement;
+    return !!active && cardRef.current.contains(active) && /^(INPUT|TEXTAREA)$/.test(active.tagName || '');
+  };
+  const sync = async ({ force = false } = {}) => {
+    if (!live || !mounted.current || syncing.current || inflight.current || (!force && typing())) return;
     syncing.current = true;
     const at = model.current.sourceHash;
     try {
       const theirs = await api.getTemplateHead(process.templateId);
       if (!inflight.current && model.current.sourceHash === at && theirs?.sourceHash && theirs.sourceHash !== at) adopt(theirs);
-    } catch { /* the next read tries again */ } finally {
+    } catch {
+      // The next read tries again; a save waiting on this merge says why it stopped.
+      if (force && mounted.current) setError(`${name} was saved elsewhere, and the newer version could not be read. Close it and reopen it.`);
+    } finally {
       syncing.current = false;
     }
   };
@@ -517,8 +553,16 @@ export function MiniGraphEditor({
   }, [isDraft, draftKey, dirty, busy, !!incoming, model.current.sourceHash]);
   // The full editor opens over this tab, pinned to the group still: its
   // ← Back inline brings the process back here.
+  // saveFirst saves before an action that needs the draft stored. One refused
+  // for a newer version merges that in first: the operator checks it and
+  // presses again, rather than the action going ahead on what they did not see.
+  const saveFirst = async (quiet = true) => {
+    const ok = await save({ quiet });
+    if (ok === null) notify('A newer version was merged in first: check it, then press again.');
+    return !!ok;
+  };
   const fullEditor = async () => {
-    if (dirty && !(await save({ quiet: isDraft }))) return;
+    if (dirty && !(await saveFirst(isDraft))) return;
     await openProcessDraft({ id: process.templateId, name, group: group.name });
     onClose();
   };
@@ -540,15 +584,15 @@ export function MiniGraphEditor({
   // Closing a draft keeps it (saved first); one never touched is deleted.
   const closeDraft = async () => {
     if (!touched.current && empty && onDiscard) { onDiscard(process.templateId); return; }
-    if (dirty && !(await save({ quiet: true }))) return;
+    if (dirty && !(await saveFirst())) return;
     onClose();
   };
   const runDraft = async () => {
-    if (dirty && !(await save({ quiet: true }))) return;
+    if (dirty && !(await saveFirst())) return;
     onRun?.(process.templateId, name);
   };
   const describe = async (text) => {
-    if (dirty && !(await save({ quiet: true }))) return;
+    if (dirty && !(await saveFirst())) return;
     onDescribe?.(text, { id: process.templateId, sourceHash: model.current.sourceHash, ref: model.current.currentRef, view: draft });
   };
   const importPwf = () => {
@@ -609,7 +653,7 @@ export function MiniGraphEditor({
     processScribeBrief(processScribeHandoff({
       kind: 'template', id: process.templateId, currentRef: model.current.currentRef, sourceHash: model.current.sourceHash,
     })),
-    inlineHelpNote(group.name, name),
+    inlineHelpNote(),
   ].join('\n\n');
   let taskRef = null;
   try { taskRef = processScribeTaskRef({ scope: { kind: PROCESS_SCRIBE_SCOPE_KIND, id: process.templateId } }); } catch { taskRef = null; }
@@ -634,7 +678,7 @@ export function MiniGraphEditor({
     setMenu(null);
     setPicker({ op: 'after', id: startId, cx: box.left, cy: box.bottom + 4 });
   };
-  return html`<section class="gm-card ui-card ui-inset" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
+  return html`<section ref=${cardRef} class="gm-card ui-card ui-inset" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
     onKeyDown=${(event) => {
       if (event.key === 'Escape' && (menu || picker)) { event.stopPropagation(); setMenu(null); setPicker(null); }
       if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !/INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '')) { event.preventDefault(); undo(); }
@@ -658,7 +702,7 @@ export function MiniGraphEditor({
       ${agentChip}
       <${GetHelpMenu} class="gm-get-help" help=${help} label="With an agent" labelNode=${'✨ With an agent'}
         title="Build this with an agent: a process scribe, or one already running (the steward, a chat). It sees this draft, and what it saves shows here."
-        before=${async () => !model.current.dirty || !!(await save({ quiet: true }))}
+        before=${async () => !model.current.dirty || saveFirst()}
         onHelper=${(found) => setHelper({ id: found.agentId, label: found.name })} />
       <${Button} size="sm" data-mini-undo disabled=${!model.current.canUndo} title=${withShortcut('Undo', 'mini-undo')} onClick=${undo}>↶ undo<//>
       <${Button} size="sm" data-mini-full disabled=${!!busy && busy !== 'auto'} title=${dirty ? 'Save, then open it in the full editor' : 'Open it in the full editor'} onClick=${fullEditor}>⤢ ${isDraft ? 'Full editor' : 'full editor'}<//>
@@ -677,7 +721,7 @@ export function MiniGraphEditor({
         <${Button} size="sm" variant="link" class="gq-link" onClick=${() => setDiscarding(false)}>keep<//></span>`
     : html`<${Button} size="sm" data-mini-cancel onClick=${() => (dirty ? setDiscarding(true) : onClose())}>cancel<//>`}
       <${Button} size="sm" variant="primary" data-mini-save disabled=${!!busy || !dirty} title=${dirty ? 'Save as a new version' : 'Nothing changed'}
-        onClick=${async () => { if (await save()) onClose(); }}>${busy === 'save' ? 'saving…' : 'Save new version'}<//>`}
+        onClick=${async () => { if (await saveFirst(false)) onClose(); }}>${busy === 'save' ? 'saving…' : 'Save new version'}<//>`}
     </div>
     ${incoming && html`<div class="gm-live gm-live-conflict" role="alert" data-mini-incoming>
       <span>${incoming.who} saved a version that also changes what you changed: ${changeList(incoming.conflicts)}.</span>
