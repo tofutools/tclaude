@@ -97,10 +97,16 @@ test('an agent\'s save shows up in the open inline editor, says who, and undo ta
   assert.ok(root.querySelector('.gm-get-help'), 'the inline editor offers ✨ With an agent');
   assert.match(root.querySelector('.gm-get-help .get-help-toggle').textContent, /With an agent/);
 
-  head = { ...view({ ...BASE_NODES, build: agentStep('Build it', { name: 'Build the thing' }) }, { hash: 'h2', rev: 'b' }), authorship: [] };
+  const scribe = 'agt_0123456789abcdef0123456789abcdef';
+  const store = await harness.importDashboardModule('js/snapshot-store.js');
+  store.dashboardState.snapshot.value = { ...(store.dashboardState.snapshot.value || {}), agents: [{ agent_id: scribe, title: 'process-scribe', online: true }] };
+  head = {
+    ...view({ ...BASE_NODES, build: agentStep('Build it', { name: 'Build the thing' }) }, { hash: 'h2', rev: 'b' }),
+    authorship: [{ ref: 'tpl_1@sha256:b', sourceHash: 'h2', actor: `agent:${scribe}`, authoredAt: '2026-11-16T02:00:00Z' }],
+  };
   await waitFor(harness, () => root.querySelector('[data-mini-notice]'), 'the agent\'s version is merged in');
   assert.match(root.querySelector('[data-process-node="build"]').textContent, /Build the thing/, 'live on the canvas');
-  assert.match(root.querySelector('[data-mini-notice]').textContent, /changed Build the thing \(build\)/);
+  assert.match(root.querySelector('[data-mini-notice]').textContent, /agent process-scribe changed Build the thing \(build\)/, 'it names the agent that saved');
   assert.equal(saves.length, 0, 'exactly theirs: nothing to save');
 
   await harness.act(async () => { root.querySelector('[data-mini-notice-undo]').click(); });
