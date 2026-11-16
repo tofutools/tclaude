@@ -26,7 +26,7 @@ test('ChangeTable renders each change and toggles an item in and out of the skip
   const { html } = harness;
   const changes = [{ item: 'a', action: 'create' }, { item: 'b', action: 'replace', security: true }, { item: 'c', action: 'unchanged', security: true }];
   const old = html`<table class="fa-table ui-compact" id="fleet-offer-changes"><thead><tr><th></th><th>Item</th><th>Change</th><th></th></tr></thead><tbody>${changes.map((c) => html`<tr key=${c.item} data-item=${c.item}>
-    <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!['b'].includes(c.item)} disabled=${c.action === 'unchanged'} onChange=${() => {}} /></td>
+    <td><input name="include-change" type="checkbox" aria-label=${`include ${c.item}`} checked=${!['b'].includes(c.item)} disabled=${c.action === 'unchanged'} onChange=${() => {}} /></td>
     <td><code>${c.item}</code></td>
     <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites yours' : c.action === 'create' ? 'new' : 'unchanged'}</td>
     <td>${c.security && c.action !== 'unchanged' ? html`<span class="ui-tag ui-tag-accent fa-badge fa-sensitive" title="decides what this node's agents may do">security</span>` : ''}</td>

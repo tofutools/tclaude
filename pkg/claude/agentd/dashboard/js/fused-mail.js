@@ -368,7 +368,7 @@ function Reader({ item, remote, snapshot, peerView, timers, actions, confirm, to
     }
     body = html`${headers}
       <${AgentMailAttachments} message=${item} />
-      ${target && html`<textarea class="mail-reply-text" rows="3" placeholder=${`Reply to ${item.from_title || target} on ${node.name}`} value=${text} onInput=${(e) => setText(e.currentTarget.value)}></textarea>`}`;
+      ${target && html`<textarea name="mail-reply-text" class="mail-reply-text" rows="3" placeholder=${`Reply to ${item.from_title || target} on ${node.name}`} value=${text} onInput=${(e) => setText(e.currentTarget.value)}></textarea>`}`;
     buttons = html`
         <${Button} size="sm" data-fused="mark" disabled=${busy} title=${item.read ? 'Mark this message unread for the recipient' : 'Mark this message read on the recipient’s behalf'}
           onClick=${() => run(item.read ? 'Mark unread' : 'Mark read', actions.markAgent(node, item.id, !item.read), `Marked ${item.read ? 'unread' : 'read'} on ${node.name}`)}>${item.read ? 'mark unread' : 'mark read'}<//>

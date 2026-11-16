@@ -132,7 +132,7 @@ export function TabGroupRename({ group, label, onCommit, onCancel }) {
     if (!cancelledRef.current) onCommit(group.id, value);
   };
   return html`
-    <input
+    <input name="mux-group-rename"
       ref=${inputRef}
       class="mux-group-rename"
       type="text"

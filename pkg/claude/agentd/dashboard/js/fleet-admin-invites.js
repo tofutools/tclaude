@@ -203,7 +203,7 @@ export function BecomeNodeDialog({ masters, groups, actions, onClose, onDone }) 
     <input id="fleet-become-filter" class="fa-become-filter" type="search" placeholder="Filter permissions…" value=${q} disabled=${unrestricted} onInput=${(e) => setQ(e.currentTarget.value)} />
     <div class=${`fa-become-perms${unrestricted ? ' off' : ''}`} id="fleet-become-perms">
       ${rows.map((r) => html`<div key=${r.slug} class="fa-become-perm" data-become-slug=${r.slug}>
-        <input type="checkbox" checked=${r.slug in picked} disabled=${unrestricted} onChange=${() => toggle(r)} />
+        <input name="fleet-admin-invites-input" type="checkbox" checked=${r.slug in picked} disabled=${unrestricted} onChange=${() => toggle(r)} />
         <code>${r.slug}</code>
         <span>${r.kind !== 'node' && r.slug in picked && html`<${GroupCombobox} attrs=${{ 'data-become-group': r.slug }} value=${picked[r.slug]} noneLabel="choose a group…" floating=${false}
           groups=${[...(r.kind !== 'scoped' ? [{ value: EVERY_GROUP, label: 'every group, including future ones' }] : []), ...groups]}

@@ -226,7 +226,7 @@ export function MarkdownEditor({
     <div class="md-ed-bar" role="toolbar" aria-label="Formatting">
       <${Tabs} variant="seg" class="md-ed-modes" label="Editor view" value=${mode} onSelect=${setMode}
         items=${MODES.filter((m) => !compact || !m.full).map((m) => ({ key: m.key, label: m.label, attrs: { 'data-md-mode': m.key } }))} />
-      ${!compact && html`<select class="ui-select ui-sm md-ed-heading" aria-label="Heading" title="Heading" value=${String(level)} disabled=${editingOff}
+      ${!compact && html`<select name="heading" class="ui-select ui-sm md-ed-heading" aria-label="Heading" title="Heading" value=${String(level)} disabled=${editingOff}
         onMouseDown=${(event) => event.stopPropagation()}
         onChange=${(event) => {
           const { from, to } = active.selection();
@@ -243,7 +243,7 @@ export function MarkdownEditor({
         <button type="button" data-ui-exempt class="md-ed-tool" data-md-tool="attach" disabled=${editingOff}
           title="Attach images or files (or paste or drop them here)" aria-label="Attach files" onMouseDown=${keep}
           onClick=${() => fileInput.current?.click()}><${Icon} name="attach" /></button>
-        <input ref=${fileInput} type="file" multiple hidden class="md-ed-file-input"
+        <input name="md-ed-file-input" ref=${fileInput} type="file" multiple hidden class="md-ed-file-input"
           onChange=${(event) => {
             const names = onPickFiles(event.currentTarget.files) || [];
             event.currentTarget.value = '';
@@ -259,7 +259,7 @@ export function MarkdownEditor({
     </div>`}
     <div class="md-ed-panes">
       <div class="md-ed-edit" hidden=${!showEditor}>
-        <textarea ref=${(el) => { textarea.current = el; if (textareaRef) textareaRef.current = host ? null : el; }}
+        <textarea name="md-ed-textarea" ref=${(el) => { textarea.current = el; if (textareaRef) textareaRef.current = host ? null : el; }}
           class="md-ed-textarea ui-textarea" aria-label=${label} placeholder=${placeholder} value=${value} disabled=${disabled}
           maxLength=${maxLength || undefined} hidden=${!!host}
           onInput=${(event) => onInput(event.currentTarget.value)}

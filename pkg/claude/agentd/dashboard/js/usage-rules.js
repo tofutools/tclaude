@@ -47,16 +47,16 @@ function StepRow({ step, scope, disabled, onChange, onRemove }) {
   const notify = step.action === 'notify';
   const toggle = (target) => set({ notify: step.notify.includes(target) ? step.notify.filter((t) => t !== target) : [...step.notify, target] });
   return html`<div class="usage-step-row">
-    <label class="usage-step-at">at <input type="number" min="1" max="1000" step="1" value=${step.at} disabled=${disabled}
+    <label class="usage-step-at">at <input name="step-threshold-percent" type="number" min="1" max="1000" step="1" value=${step.at} disabled=${disabled}
       aria-label="Step threshold percent" onInput=${(e) => set({ at: e.currentTarget.value })}/>%</label>
     <${Select} size="sm" aria-label="Step action" value=${step.action} disabled=${disabled}
       onChange=${(e) => set({ action: e.currentTarget.value, notify: e.currentTarget.value === 'notify' ? (step.notify.length ? step.notify : ['operator']) : [] })}>
       ${actionsFor(scope).map((a) => html`<option key=${a.id} value=${a.id}>${a.label}</option>`)}
     <//>
     ${notify ? html`<span class="usage-step-targets">
-      <label><input type="checkbox" checked=${step.notify.includes('operator')} disabled=${disabled} onChange=${() => toggle('operator')}/> operator</label>
-      <label title=${scope === 'agent' ? 'The agent itself' : 'Every active agent in scope'}><input type="checkbox" checked=${step.notify.includes('agent')} disabled=${disabled} onChange=${() => toggle('agent')}/> ${scope === 'agent' ? 'agent' : 'agents'}</label>
-      <input class="usage-step-repeat" value=${step.repeat} disabled=${disabled} placeholder="repeat: 10% / 30m"
+      <label><input name="usage-rules-input" type="checkbox" checked=${step.notify.includes('operator')} disabled=${disabled} onChange=${() => toggle('operator')}/> operator</label>
+      <label title=${scope === 'agent' ? 'The agent itself' : 'Every active agent in scope'}><input name="usage-rules-input" type="checkbox" checked=${step.notify.includes('agent')} disabled=${disabled} onChange=${() => toggle('agent')}/> ${scope === 'agent' ? 'agent' : 'agents'}</label>
+      <input name="repeat-every" class="usage-step-repeat" value=${step.repeat} disabled=${disabled} placeholder="repeat: 10% / 30m"
         aria-label="Repeat every" title="Repeat this notification every N percentage points (10%) or every N minutes (30m) while above"
         onInput=${(e) => set({ repeat: e.currentTarget.value })}/>
     </span>` : html`<span class="usage-step-targets muted">${{ wrap_up: 'ask to hand off and go idle', hard_stop: 'kill the agent process', block_spawn: 'refuse new spawns until the period rolls over' }[step.action]}</span>`}
@@ -72,7 +72,7 @@ function RuleEditor({ draft, scope, windows, disabled, onChange }) {
   const periods = periodsFor(scope);
   return html`<div class="usage-rule-editor ui-card ui-inset">
     <div class="usage-rule-fields">
-      <label>Name <input value=${draft.name} disabled=${disabled} maxlength="64" placeholder="e.g. Monthly spend"
+      <label>Name <input name="rule-name" value=${draft.name} disabled=${disabled} maxlength="64" placeholder="e.g. Monthly spend"
         aria-label="Rule name" onInput=${(e) => set({ name: e.currentTarget.value })}/></label>
       <label>Measure <${Select} size="sm" aria-label="Metric" value=${draft.metric} disabled=${disabled}
         onChange=${(e) => {
@@ -81,15 +81,15 @@ function RuleEditor({ draft, scope, windows, disabled, onChange }) {
             ? { metric, period: 'window', window: draft.window || windows[0] || DEFAULT_WINDOWS[0], budget: 100 }
             : { metric, period: periods.some((p) => p.id === draft.period) ? draft.period : periods[0].id });
         }}>${metricsFor(scope).map((m) => html`<option key=${m.id} value=${m.id} title=${m.hint}>${m.label}</option>`)}<//></label>
-      ${windowPct ? html`<label>Window <input list="usage-rule-windows" value=${draft.window} disabled=${disabled}
+      ${windowPct ? html`<label>Window <input name="quota-window" list="usage-rule-windows" value=${draft.window} disabled=${disabled}
           aria-label="Quota window" placeholder="anthropic:five_hour" onInput=${(e) => set({ window: e.currentTarget.value })}/>
         <datalist id="usage-rule-windows">${[...new Set([...windows, ...DEFAULT_WINDOWS])].map((w) => html`<option key=${w} value=${w}/>`)}</datalist></label>`
-    : html`<label>Budget $<input type="number" min="0.01" step="0.01" value=${draft.budget} disabled=${disabled}
+    : html`<label>Budget $<input name="budget-usd" type="number" min="0.01" step="0.01" value=${draft.budget} disabled=${disabled}
           aria-label="Budget USD" onInput=${(e) => set({ budget: e.currentTarget.value })}/></label>
         <label>Period <${Select} size="sm" aria-label="Period" value=${draft.period} disabled=${disabled}
           onChange=${(e) => set({ period: e.currentTarget.value })}>${periods.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}<//></label>`}
       <label class="usage-rule-dry" title="Record and tell the operator what would happen, without messaging agents, stopping them or blocking spawns">
-        <input type="checkbox" checked=${draft.dry_run} disabled=${disabled} onChange=${(e) => set({ dry_run: e.currentTarget.checked })}/> dry run</label>
+        <input name="usage-rules-input" type="checkbox" checked=${draft.dry_run} disabled=${disabled} onChange=${(e) => set({ dry_run: e.currentTarget.checked })}/> dry run</label>
     </div>
     <div class="usage-steps">
       ${draft.steps.map((step, index) => html`<${StepRow} key=${index} step=${step} scope=${scope} disabled=${disabled}
@@ -122,7 +122,7 @@ function LimitsTab({ overview, busy, onEdit, onToggle }) {
         <span class="usage-rule-scope">${limit.scope === 'group' ? `group ${limit.group}` : 'global'}</span>
         ${limit.rule.dry_run ? html`<span class="usage-rule-tag">dry run</span>` : null}
         <span class="spacer"></span>
-        <label class="usage-rule-enabled"><input type="checkbox" checked=${limit.enabled} disabled=${busy} onChange=${() => onToggle(limit)}/> enabled</label>
+        <label class="usage-rule-enabled"><input name="usage-rules-input" type="checkbox" checked=${limit.enabled} disabled=${busy} onChange=${() => onToggle(limit)}/> enabled</label>
         <${Button} size="sm" disabled=${busy} onClick=${() => onEdit(limit)}>edit<//>
       </div>
       <div class="usage-rule-summary">${ruleSummary(limit.rule)}</div>
@@ -263,7 +263,7 @@ function AgentsTab({ overview, busy, onAdjust, onAssign, focus = '', onClearFocu
           <${Bar} status=${status}/>
           ${entry.override?.extensions?.[status.rule_key] ? html`<span class="usage-rule-tag">+${fmtAmount(status.metric, entry.override.extensions[status.rule_key])}</span>` : null}
           ${extending === `${entry.agentID}|${status.rule_key}` ? html`<span class="usage-extend">
-            <input type="number" min="0" step="1" value=${amount} aria-label="Extra budget" placeholder="extra (0 clears)"
+            <input name="extra-budget" type="number" min="0" step="1" value=${amount} aria-label="Extra budget" placeholder="extra (0 clears)"
               onInput=${(e) => setAmount(e.currentTarget.value)}
               onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); applyExtend(entry, status); } }}/>
             <${Button} size="sm" disabled=${busy} onClick=${() => applyExtend(entry, status)}>set<//>
@@ -311,7 +311,7 @@ function LimitEditor({ limit, overview, busy, onSave, onDelete, onCancel, onDirt
       <//></label>
       ${scope === 'group' ? html`<label>Group <${GroupCombobox} id="usage-limit-group" ariaLabel="Limit group" groups=${overview.groups || []}
         value=${group} disabled=${busy || !!limit.id} onChange=${touch(setGroup)} /></label>` : null}
-      <label><input type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
+      <label><input name="usage-rules-input" type="checkbox" checked=${enabled} disabled=${busy} onChange=${(e) => touch(setEnabled)(e.currentTarget.checked)}/> enabled</label>
     </div>
     <${RuleEditor} draft=${draft} scope=${scope} windows=${overview.windows || []} disabled=${busy}
       onChange=${touch(setDraft)}/>
@@ -341,9 +341,9 @@ function ProfileEditor({ profile, busy, onSave, onDelete, onCancel, onDirty }) {
   return html`<div class="usage-rules-tab usage-editor" id="usage-profile-editor">
     <h4>${profile.id ? `Edit usage profile "${profile.name}"` : 'New usage profile'}</h4>
     <div class="usage-rule-fields">
-      <label>Name <input aria-label="Usage profile name" value=${name} disabled=${busy} maxlength="64" placeholder="e.g. standard"
+      <label>Name <input name="usage-profile-name" aria-label="Usage profile name" value=${name} disabled=${busy} maxlength="64" placeholder="e.g. standard"
         onInput=${(e) => touch(setName)(e.currentTarget.value)}/></label>
-      <label class="usage-wide">Description <input aria-label="Usage profile description" value=${descr} disabled=${busy}
+      <label class="usage-wide">Description <input name="usage-profile-description" aria-label="Usage profile description" value=${descr} disabled=${busy}
         onInput=${(e) => touch(setDescr)(e.currentTarget.value)}/></label>
     </div>
     ${rules.map((rule, index) => html`<div key=${index} class="usage-rule-block">

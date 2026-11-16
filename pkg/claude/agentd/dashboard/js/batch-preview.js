@@ -48,7 +48,7 @@ export function BatchPreview({
         <tbody>${rows.map((row) => {
           const key = rowKey(row);
           return html`<tr key=${key} data-key=${key}>
-            <td><input type="checkbox" aria-label=${`Select ${key}`} checked=${selected.has(key)} disabled=${disabled}
+            <td><input name="batch-preview-input" type="checkbox" aria-label=${`Select ${key}`} checked=${selected.has(key)} disabled=${disabled}
               onChange=${(e) => onChange(toggled(selected, key, e.currentTarget.checked))} /></td>
             ${columns.map((c) => html`<td key=${c.key}>${c.render ? c.render(row) : row[c.key]}</td>`)}
           </tr>`;

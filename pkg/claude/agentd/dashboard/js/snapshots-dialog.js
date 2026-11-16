@@ -186,7 +186,7 @@ function SharePanel({ actions, snap, onDone, onError, fleet }) {
       items=${namedItems((boards || []).map((b) => ({ name: b.id, label: b.name || b.id })))} onChange=${(next) => { changed(); setBoard(next); }} /></${Field}>
     <div class="cron-create-row"><span class="cron-create-label">Recipients</span><span class="snap-recipients" id="snapshot-share-to">
       ${members.length === 0 ? html`<span class="paf-hint ui-hint">no other members</span>` : members.map((m) => html`<label key=${m.instance} class="paf-check">
-        <input type="checkbox" data-instance=${m.instance} checked=${to.includes(m.instance)} disabled=${!!busy} onChange=${(e) => toggle(m.instance, e.currentTarget.checked)} />
+        <input name="snapshots-dialog-input" type="checkbox" data-instance=${m.instance} checked=${to.includes(m.instance)} disabled=${!!busy} onChange=${(e) => toggle(m.instance, e.currentTarget.checked)} />
         <span>${m.label || m.name || m.instance}</span></label>`)}
       <span class="paf-hint ui-hint">Only these members can open it; every member sees that it exists. This node is always a recipient.</span></span></div>
     <${Field} label="Expires"><${Select} id="snapshot-share-expires" value=${expires} disabled=${!!busy} onChange=${(e) => { setExpires(e.currentTarget.value); changed(); }}>

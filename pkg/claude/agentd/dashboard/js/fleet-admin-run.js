@@ -291,7 +291,7 @@ export function RunPage({ view, actions, confirm, toast, timers = globalThis, pr
     <h4>Run a script</h4>
     <div class="fa-run-nodes" id="fleet-run-nodes">
       ${nodes.map((n) => { const r = readiness(n, probes[n.id]); return html`<label key=${n.id} class=${r.ok ? '' : 'muted'} data-node=${n.id}>
-        <input type="checkbox" disabled=${!r.ok} checked=${picked.has(n.id) && r.ok} onChange=${() => toggle(n.id)} />
+        <input name="fleet-admin-run-input" type="checkbox" disabled=${!r.ok} checked=${picked.has(n.id) && r.ok} onChange=${() => toggle(n.id)} />
         ${n.local ? '⌂ ' : n.hub ? '⬡ ' : ''}${n.label} <span class="muted">${r.text}</span></label>`; })}
       <${Button} size="sm" variant="link" id="fleet-run-all" class="fa-link" onClick=${allOnline}>all online<//>
     </div>

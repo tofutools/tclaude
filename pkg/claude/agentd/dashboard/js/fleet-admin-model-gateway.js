@@ -182,7 +182,7 @@ export function GatewayDialog({ setup, actions, confirm, onClose, onDone }) {
       <option value="custom">Custom</option>
     <//></label>
     <div class="fa-jb-row"><span></span><div class="fa-mg-limits">
-      ${LIMIT_FIELDS.map(([f, what]) => html`<label key=${f}><span class="muted">${what}</span><input type="number" min="1" step="1" data-limit=${f} value=${form.limits[f]} onInput=${setLimit(f)} /></label>`)}
+      ${LIMIT_FIELDS.map(([f, what]) => html`<label key=${f}><span class="muted">${what}</span><input name="fleet-admin-model-gateway-input" type="number" min="1" step="1" data-limit=${f} value=${form.limits[f]} onInput=${setLimit(f)} /></label>`)}
     </div></div>
     <div class="fa-jb-row"><span></span><div class="muted">Tokens include cache reads: a busy Claude Code session can use tens of millions a day. Requests over a limit are refused, never billed.</div></div>
     <label class="fa-jb-row"><span class="fa-k">on</span><span><input id="fleet-mg-enabled" type="checkbox" checked=${form.enabled} onChange=${set('enabled')} /> serve peers now</span></label>

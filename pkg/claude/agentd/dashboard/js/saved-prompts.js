@@ -40,7 +40,7 @@ function SavedPromptImport({ incoming, prompts, busy, onImport, onCancel }) {
     <ul class="saved-prompts-import-list">${incoming.map((prompt) => html`<li key=${prompt.name}>
       <code>${prompt.name}</code> <span class="muted">${!existing.has(prompt.name) ? 'new' : existing.get(prompt.name).body === prompt.body ? 'unchanged' : overwrite ? 'overwrite' : 'skip (exists)'}</span>
     </li>`)}</ul>
-    ${changed.length ? html`<label class="saved-prompts-import-overwrite"><input type="checkbox" checked=${overwrite} disabled=${busy}
+    ${changed.length ? html`<label class="saved-prompts-import-overwrite"><input name="saved-prompts-input" type="checkbox" checked=${overwrite} disabled=${busy}
       onChange=${(event) => setOverwrite(event.currentTarget.checked)}/> Overwrite the ${changed.length} existing prompt${changed.length === 1 ? '' : 's'} that differ</label>` : null}
     <div class="modal-buttons">
       <${Button} disabled=${busy} onClick=${onCancel}>Cancel import</${Button}>
@@ -127,7 +127,7 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
           title="Download every saved prompt as a JSON file" onClick=${() => downloadBlob(savedPromptsExportBlob(prompts), 'tclaude-saved-prompts.json')}>⇪ export<//>
         <${Button} id="saved-prompts-import-open" disabled=${busy}
           title="Load saved prompts from an exported JSON file; you confirm before anything is written" onClick=${() => fileRef.current?.click()}>⤒ import<//>
-        <input ref=${fileRef} type="file" accept="application/json,.json" hidden
+        <input name="saved-prompts-input" ref=${fileRef} type="file" accept="application/json,.json" hidden
           onChange=${(event) => { void readImport(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }}/>
       </div>
       ${incoming ? html`<${SavedPromptImport} incoming=${incoming} prompts=${prompts} busy=${busy}
@@ -136,11 +136,11 @@ function SavedPromptManager({ prompts, onClose, onChanged, confirmDiscard, initi
         <${PromptCombobox} id="saved-prompts-edit" ariaLabel="Edit saved prompt" disabled=${busy} value=${original?.name || ''}
           noneLabel="New prompt" entries=${prompts} onChange=${(name) => void choose(name)} /></label>
       <label class="cron-create-row"><span class="cron-create-label">Name</span>
-        <input ref=${nameRef} aria-label="Prompt name" value=${draft.name} disabled=${busy}
+        <input name="prompt-name" ref=${nameRef} aria-label="Prompt name" value=${draft.name} disabled=${busy}
           placeholder="e.g. cold-review" autocomplete="off"
           onInput=${(event) => setDraft({ ...draft, name: event.currentTarget.value })}/></label>
       <label class="cron-create-row"><span class="cron-create-label">Body</span>
-        <textarea aria-label="Prompt body" rows="8" maxlength="16384" value=${draft.body} disabled=${busy}
+        <textarea name="prompt-body" aria-label="Prompt body" rows="8" maxlength="16384" value=${draft.body} disabled=${busy}
           onInput=${(event) => setDraft({ ...draft, body: event.currentTarget.value })}/></label>
       <div role="alert" class="cron-create-error ui-error-box">${error}</div>
       <div class="modal-buttons">

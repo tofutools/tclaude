@@ -238,7 +238,7 @@ function TriggerRow({ rule, selected, actions, onSelect, onEdit, onChanged }) {
       <td><${Fragment}>${lastFiring(rule)}</${Fragment}></td>
       <td><span class=${`ui-tag trigger-state ${state.key}`}>${state.label}</span></td>
       <td><label class="trigger-switch" onClick=${(event) => event.stopPropagation()}>
-        <input type="checkbox" checked=${!!rule.enabled} aria-label=${`${rule.enabled ? 'Disable' : 'Enable'} ${rule.name}`}
+        <input name="jobs-triggers-input" type="checkbox" checked=${!!rule.enabled} aria-label=${`${rule.enabled ? 'Disable' : 'Enable'} ${rule.name}`}
           onChange=${async (event) => {
             const input = event.currentTarget;
             if (await actions.toggleTrigger(rule)) onChanged();
@@ -379,7 +379,7 @@ function ActionEditor({ action, index, update, remove, profileOptions, stateSour
           worker_deadline_seconds: spawn.workerDeadlineSeconds,
         } })} />
       <div class="trigger-action-fields">
-      <label>Max live workers<input type="number" min="1" value=${action.spawn?.max_live_workers || 1}
+      <label>Max live workers<input name="jobs-triggers-input" type="number" min="1" value=${action.spawn?.max_live_workers || 1}
         onInput=${(event) => update({ ...action, spawn: { ...action.spawn, max_live_workers: Number(event.currentTarget.value) } })} /></label>
       </div>
     </${Fragment}>` : html`<div class="trigger-action-fields">
@@ -389,9 +389,9 @@ function ActionEditor({ action, index, update, remove, profileOptions, stateSour
           ? html`<option value="agent">selected fact agent</option>`
           : html`<option value="pr.author_agent">PR author agent</option>`}
         <option value="group">event group</option><//></label>
-      <label>Subject template<input value=${action.message?.subject_template || ''}
+      <label>Subject template<input name="jobs-triggers-input" value=${action.message?.subject_template || ''}
         onInput=${(event) => update({ ...action, message: { ...action.message, subject_template: event.currentTarget.value } })} /></label>
-      <label class="trigger-template-field">Body template<textarea rows="4" required value=${action.message?.body_template || ''}
+      <label class="trigger-template-field">Body template<textarea name="jobs-triggers-textarea" rows="4" required value=${action.message?.body_template || ''}
         onInput=${(event) => update({ ...action, message: { ...action.message, body_template: event.currentTarget.value } })}></textarea>
         <${TemplatePlaceholderChips} tokens=${placeholders} onInsert=${(token) => insert('body_template', token)} /></label>
     </div>`}
@@ -457,9 +457,9 @@ function TriggerDialog({ descriptor, state, actions }) {
     <form onSubmit=${save}>
       <div class="trigger-modal-heading"><div><h3 id="trigger-modal-title">${editing ? `Edit trigger — ${descriptor.rule.name}` : 'New trigger'}</h3>
         <p class="muted">Build a bounded reaction from cause to scope to ordered actions.</p></div>
-        <label class="trigger-enabled-label"><input type="checkbox" checked=${draft.enabled}
+        <label class="trigger-enabled-label"><input name="jobs-triggers-input" type="checkbox" checked=${draft.enabled}
           onChange=${(event) => setDraft({ ...draft, enabled: event.currentTarget.checked })} /> enabled</label></div>
-      <label class="trigger-name-field">Name<input autofocus required maxlength="80" value=${draft.name}
+      <label class="trigger-name-field">Name<input name="jobs-triggers-input" autofocus required maxlength="80" value=${draft.name}
         onInput=${(event) => setDraft({ ...draft, name: event.currentTarget.value })} /></label>
       <${Step} name="WHEN" expanded=${step === 'when'} onToggle=${() => setStep(step === 'when' ? '' : 'when')}
         valid=${whenValid} summary=${stateSource
@@ -469,17 +469,17 @@ function TriggerDialog({ descriptor, state, actions }) {
           <label>Source<${Select} size="sm" value=${draft.source} onChange=${(event) => changeSource(event.currentTarget.value)}>
             ${TRIGGER_SOURCES.map((entry) => html`<option key=${entry.value} value=${entry.value}>${entry.label} · ${entry.value}</option>`)}
           <//></label>
-          ${stateSource ? html`<label>Sustained for (seconds)<input type="number" min="1" required value=${draft.for_seconds}
+          ${stateSource ? html`<label>Sustained for (seconds)<input name="jobs-triggers-input" type="number" min="1" required value=${draft.for_seconds}
             onInput=${(event) => setDraft({ ...draft, for_seconds: Number(event.currentTarget.value) })} /></label>` : html`<${Fragment}>
             <label>Author<${Select} size="sm" value=${String(draft.author_is_agent)} onChange=${(event) => setDraft({ ...draft, author_is_agent: event.currentTarget.value === 'null' ? null : event.currentTarget.value === 'true' })}>
               <option value="true">agent only</option><option value="false">human only</option><option value="null">any author</option><//></label>
             <label>Draft PRs<${Select} size="sm" value=${draft.draft_filter} onChange=${(event) => setDraft({ ...draft, draft_filter: event.currentTarget.value })}>
               <option value="exclude">exclude</option><option value="include">include</option><option value="only">only drafts</option><//></label>
-            <label>Debounce (seconds)<input type="number" min="0" value=${draft.debounce_seconds} onInput=${(event) => setDraft({ ...draft, debounce_seconds: Number(event.currentTarget.value) })} /></label>
+            <label>Debounce (seconds)<input name="jobs-triggers-input" type="number" min="0" value=${draft.debounce_seconds} onInput=${(event) => setDraft({ ...draft, debounce_seconds: Number(event.currentTarget.value) })} /></label>
           </${Fragment}>`}
-          ${stateSource && html`<label>Debounce after dwell (seconds)<input type="number" min="0" value=${draft.debounce_seconds}
+          ${stateSource && html`<label>Debounce after dwell (seconds)<input name="jobs-triggers-input" type="number" min="0" value=${draft.debounce_seconds}
             onInput=${(event) => setDraft({ ...draft, debounce_seconds: Number(event.currentTarget.value) })} /></label>`}
-          <label>Cooldown (seconds)<input type="number" min="0" value=${draft.cooldown_seconds} onInput=${(event) => setDraft({ ...draft, cooldown_seconds: Number(event.currentTarget.value) })} /></label>
+          <label>Cooldown (seconds)<input name="jobs-triggers-input" type="number" min="0" value=${draft.cooldown_seconds} onInput=${(event) => setDraft({ ...draft, cooldown_seconds: Number(event.currentTarget.value) })} /></label>
         </div>
         ${stateSource && html`<div class="trigger-dwell-timing-note">Sustained-for establishes continuous truth. Debounce then delays firing after the dwell matures; cooldown suppresses later firings.</div>`}
         <${HarnessCapabilityNotes} harnesses=${harnesses} source=${draft.source} />

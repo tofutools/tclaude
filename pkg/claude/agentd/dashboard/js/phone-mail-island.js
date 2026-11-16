@@ -335,7 +335,7 @@ export function MailboxSheet({ controller, close }) {
     <ul class="phone-menu">${chips.map((chip) => item(chip.id, chip.label, chip.count,
       html`<span class="phone-menu-icon" aria-hidden="true">${chip.id === HUMAN ? '🔔' : chip.id === ACCESS ? '🔑' : chip.id.startsWith('group:') ? '#' : '✉'}</span>`))}</ul>
     <h3 class="phone-section-head ui-eyebrow phone-mail-boxes-head">Agents</h3>
-    <input class="ui-input phone-mail-search" type="search" placeholder="Filter agents" aria-label="Filter agent mailboxes"
+    <input name="filter-agent-mailboxes" class="ui-input phone-mail-search" type="search" placeholder="Filter agents" aria-label="Filter agent mailboxes"
       value=${current.boxQuery} onInput=${(event) => controller.setBoxQuery(event.currentTarget.value)} />
     <ul class="phone-menu">${view.agents.map((mailbox) => item(mailbox.id, controller.mailboxLabel(mailbox), mailbox.unread,
       html`<${Avatar} name=${controller.mailboxLabel(mailbox)} />`))}</ul>
@@ -418,7 +418,7 @@ function MailList({ current, controller, model, open, listScroll, active }) {
     ${selecting ? html`<${SelectBar} current=${current} controller=${controller} folder=${folder} />`
       : html`<${MailboxChips} current=${current} controller=${controller} />`}
     ${searching && html`<div class="phone-mail-tools">
-      <input ref=${search} class="ui-input phone-mail-search" type="search" placeholder=${`Search ${mailboxName(current, controller)}`}
+      <input name="search-messages" ref=${search} class="ui-input phone-mail-search" type="search" placeholder=${`Search ${mailboxName(current, controller)}`}
         aria-label="Search messages" enterkeyhint="search"
         value=${current.messageQuery} onInput=${(event) => controller.setMessageQuery(event.currentTarget.value)} />
       <p class="phone-mail-count">${controller.messageCountText()}</p>

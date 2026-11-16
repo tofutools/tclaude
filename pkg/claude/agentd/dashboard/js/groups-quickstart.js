@@ -184,7 +184,7 @@ function Answers({ list, step, onChange }) {
     if (bound) onChange(setStepLoop(step, answer, { ...bound, onExhausted }));
   };
   return html`<div class="gq-answers">
-    <label class="gq-answers-in">${agent ? 'verdicts' : 'answers'} <input type="text" value=${draft}
+    <label class="gq-answers-in">${agent ? 'verdicts' : 'answers'} <input name="groups-quickstart-input" type="text" value=${draft}
       aria-label=${agent ? 'Verdicts the agent picks from, comma separated' : 'Answers you can give, comma separated'}
       onInput=${(event) => setDraft(event.currentTarget.value)} onBlur=${commit}
       onKeyDown=${(event) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } }} /></label>
@@ -198,7 +198,7 @@ function Answers({ list, step, onChange }) {
           ${options.map((id) => html`<option key=${id} value=${id}>${back.includes(id) ? backTargetLabel(list, id) : stepTargetLabel(list, id)}</option>`)}
         <//></label>
         ${bound && html`<span class="gq-loop" data-loop=${answer}>at most
-          <input type="number" class="gq-loop-rounds" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} value=${bound.maxIterations}
+          <input name="gq-loop-rounds" type="number" class="gq-loop-rounds" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} value=${bound.maxIterations}
             aria-label=${`Most rounds ${answer} goes back for`} onChange=${(event) => setRounds(answer, event.currentTarget)} />
           rounds, then
           <${Select} size="sm" aria-label=${`When ${answer} has used its rounds`} value=${bound.onExhausted}
@@ -234,9 +234,9 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
     <span class="gq-n">${index + 1}</span>
     <span class="gq-glyph" aria-hidden="true">${GLYPHS[kind]}</span>
     <div class="gq-step-body">
-      <input type="text" class="gq-step-name" aria-label=${`Step ${index + 1} name`} value=${step.node.name || ''} placeholder=${step.id}
+      <input name="gq-step-name" type="text" class="gq-step-name" aria-label=${`Step ${index + 1} name`} value=${step.node.name || ''} placeholder=${step.id}
         onInput=${(event) => onChange(setStepName(step, event.currentTarget.value))} />
-      <textarea class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${kind === 'command' ? 'command' : 'instruction'}`} placeholder=${placeholder}
+      <textarea name="gq-step-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${kind === 'command' ? 'command' : 'instruction'}`} placeholder=${placeholder}
         value=${text} onChange=${(event) => onChange(setStepText(step, event.currentTarget.value))}></textarea>
       ${decision && kind !== 'command' && html`<${Answers} list=${list} step=${step} onChange=${onChange} />`}
       ${!decision && kind === 'agent' && html`<${Button} size="sm" variant="link" class="gq-link gq-decides" data-step-decides=${step.id}
@@ -597,7 +597,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
     <div class="gq-main">
       <div class="gq-top">
         <span class="gq-dim">${title}</span>
-        <input type="text" class="gq-name" aria-label="Process name" placeholder="name it, e.g. ship-feature" value=${name}
+        <input name="process-name" type="text" class="gq-name" aria-label="Process name" placeholder="name it, e.g. ship-feature" value=${name}
           onInput=${(event) => setName(event.currentTarget.value)} />
         <span class="gq-tag" data-step-autosave=${draft ? autosave.state : undefined} title=${autosave.error || ''}>${tag}</span>
         ${onGraph && html`<span class="gm-toggle" role="group" aria-label="View">
@@ -631,13 +631,13 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       ${needs.params.length > 0 && html`<div class="ui-eyebrow gq-sec">Start inputs <span class="gq-dim">· found in the steps</span></div>
         <div class="gq-params">${needs.params.map((param) => html`<label key=${param.name} class="gq-param">
           <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
-          <input type="text" data-start-param=${param.name} value=${values[param.name] ?? ''}
+          <input name="groups-quickstart-input" type="text" data-start-param=${param.name} value=${values[param.name] ?? ''}
             onInput=${(event) => { const value = event.currentTarget.value; setValues((current) => ({ ...current, [param.name]: value })); }} />
         </label>`)}</div>`}
       ${consents.length > 0 && html`<div class="gq-profiles" role="group" aria-label="Allow commands to run">
         <span class="gq-dim">Commands run on this host. Start needs your consent for each:</span>
         ${consents.map(({ profile, steps }) => html`<label key=${profile || '(default)'} class="gq-profile" data-consent-profile=${profile}>
-          <input type="checkbox" data-start-profile=${profile} checked=${authorized.has(profile)}
+          <input name="groups-quickstart-input" type="checkbox" data-start-profile=${profile} checked=${authorized.has(profile)}
             onChange=${(event) => { const on = event.currentTarget.checked; setAuthorized((current) => { const next = new Set(current); if (on) next.add(profile); else next.delete(profile); return next; }); }} />
           <span>Allow ${consentSubject({ profile, steps })} to run${steps.length === 1 && steps[0].command ? html` <code>${steps[0].command}</code>` : ''}
             <span class="gq-dim"> (program profile: ${profile || 'default'})</span></span></label>`)}

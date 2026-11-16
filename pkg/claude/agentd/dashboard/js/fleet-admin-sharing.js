@@ -120,7 +120,7 @@ export function SharingPage({ actions, confirm, toast, now = Date.now(), peerAcc
     <${FaTable} id="fleet-shares-given" head=${['Peer', 'Gateway', 'Spent', 'Ends', '']}>${givenRows.map((s) => html`<${ShareRow} key=${`${s.peer}/${s.gateway}`} share=${s} now=${now}>
         ${s.since && s.pool && html`<span class="muted" title="Change it on Peer grants, as that node group's grant">from node group ${s.pool}</span>`}
         ${s.since && !s.pool && html`${s.grant_expires_at && html`<${Button} size="sm" data-fa="extend-share" onClick=${() => extend(s)}>+7 days…<//>`}
-        ${s.max_usd > 0 && html`<input class="fa-share-add" aria-label=${`Dollars to add for ${s.peer_name || s.peer}`} placeholder="+$" size="5" inputmode="decimal"
+        ${s.max_usd > 0 && html`<input name="fa-share-add" class="fa-share-add" aria-label=${`Dollars to add for ${s.peer_name || s.peer}`} placeholder="+$" size="5" inputmode="decimal"
           value=${raise[s.peer + s.gateway] || ''} onInput=${(e) => setRaise({ ...raise, [s.peer + s.gateway]: e.currentTarget.value })} />
           <${Button} size="sm" data-fa="raise-share" onClick=${() => raiseBy(s)}>Raise…<//>`}
         <${Button} size="sm" variant="ghost danger" data-fa="revoke-share" onClick=${() => revoke(s)}>Revoke…<//>`}</${ShareRow}>`)}<//>`}

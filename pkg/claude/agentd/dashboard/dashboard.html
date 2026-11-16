@@ -448,7 +448,7 @@
                it through the shared menu-filter core (the same one the Preact
                per-group / per-agent cogs use) and sets the themed placeholder on
                open; the items themselves stay plain click targets. -->
-          <input class="ui-input ui-sm action-menu-filter" type="text" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-label="Filter actions" placeholder="filter actions…">
+          <input class="ui-input ui-sm action-menu-filter" name="filter-actions" type="text" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-label="Filter actions" placeholder="filter actions…">
           <button class="ui-menu-item" type="button" role="menuitem" id="group-import-open" title="Import an agent .paf, or a group .zip / .paf produced by ⤓ export. The file decides which preview opens; nothing is written before you confirm. You can also drop a .paf onto the page."><span class="tpl-word-regular">⤒ import…</span><span class="tpl-word-wizard">⤒ unseal an archive</span></button>
           <button class="ui-menu-item" type="button" role="menuitem" id="snapshots-open" title="This node's snapshot library: take, spawn from, export, share on a Board or publish agent snapshots, and see resilience policy status."><span class="tpl-word-regular">📸 snapshots…</span><span class="tpl-word-wizard">📸 captured heroes…</span></button>
           <button class="ui-menu-item" type="button" role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>

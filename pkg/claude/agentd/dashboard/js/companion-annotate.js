@@ -374,7 +374,7 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
       ${ANNOTATE_COLORS.map((c) => html`<button key=${c} type="button" data-ui-exempt class=${`annotate-swatch${color === c ? ' on' : ''}`}
         style=${`background:${c}`} aria-label=${`Pen ${c}`} aria-pressed=${color === c ? 'true' : 'false'} onClick=${() => setColor(c)}></button>`)}
       <${Button} size="sm" class="annotate-btn" title=${withShortcut('Undo', 'mini-undo')} disabled=${!strokes.length} onClick=${() => setStrokes((list) => list.slice(0, -1))}>↶<//>
-      <textarea class="annotate-note" ref=${noteRef} rows="1" maxLength=${ANNOTATE_NOTE_MAX} placeholder="Add a note (optional)" aria-label="Note" value=${note}
+      <textarea name="note" class="annotate-note" ref=${noteRef} rows="1" maxLength=${ANNOTATE_NOTE_MAX} placeholder="Add a note (optional)" aria-label="Note" value=${note}
         onInput=${(event) => setNote(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) send(event); }}></textarea>
       <${Button} size="sm" variant="primary" type="submit" class="annotate-send" disabled=${sending || (!strokes.length && !note.trim())}>${sending ? 'Sending…' : 'Send'}<//>

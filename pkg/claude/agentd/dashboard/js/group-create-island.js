@@ -415,7 +415,7 @@ function GroupCreateDialog({
             onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}<//><${LockReason} why=${browseLock}/>
         </label>
         <label class="group-create-attach-repository">
-          <input type="checkbox" checked=${draft.attachRepository} disabled=${disabled}
+          <input name="group-create-island-input" type="checkbox" checked=${draft.attachRepository} disabled=${disabled}
             onChange=${(event) => setField('attachRepository', event.currentTarget.checked)} />
           <span>Show repository link on the group</span>
         </label>
@@ -435,11 +435,11 @@ function GroupCreateDialog({
       <div class="cron-create-target">
         <div class="sbx-rows">${draft.environment.map((entry, index) => html`
           <div key=${index} class="sbx-row sbx-environment-row">
-            <input class="sbx-env-name" placeholder="NAME" value=${entry.name}
+            <input name="env-name" class="sbx-env-name" placeholder="NAME" value=${entry.name}
               disabled=${disabled}
               onInput=${(event) => setField('environment', draft.environment.map((row, rowIndex) =>
                 rowIndex === index ? { ...row, name: event.currentTarget.value } : row))} />
-            <input data-capture-mask class="sbx-env-value" placeholder="value" value=${entry.value}
+            <input name="env-value" data-capture-mask class="sbx-env-value" placeholder="value" value=${entry.value}
               disabled=${disabled}
               onInput=${(event) => setField('environment', draft.environment.map((row, rowIndex) =>
                 rowIndex === index ? { ...row, value: event.currentTarget.value } : row))} />

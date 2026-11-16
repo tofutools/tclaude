@@ -219,7 +219,7 @@ export function MailRow({
 }) {
   const unread = !message.read;
   return html`<div class="mail-row-wrap" data-key=${id} data-kind=${kind}>
-    <input type="checkbox" class="mail-msg-check" data-id=${id} checked=${checked}
+    <input name="mail-msg-check" type="checkbox" class="mail-msg-check" data-id=${id} checked=${checked}
       disabled=${busy} title="Select message"
       onChange=${(event) => onCheck(event.currentTarget.checked)} />
     <button data-ui-exempt class=${`mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}`}
@@ -245,7 +245,7 @@ export function MailRow({
 
 // SelectAll ticks or clears every message on the page.
 export function SelectAll({ checked, onChange }) {
-  return html`<label title="Select / deselect every message on this page"><input type="checkbox" class="mail-select-all"
+  return html`<label title="Select / deselect every message on this page"><input name="mail-select-all" type="checkbox" class="mail-select-all"
     checked=${checked} onChange=${(event) => onChange(event.currentTarget.checked)} /> all</label>`;
 }
 

@@ -496,6 +496,8 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   assert.equal(loose.querySelector('.rowname-text').dataset.editorKey,
     'member:virtual:ungrouped:agt-loose:name',
     'virtual member tables contribute their own interaction identity');
+  // A row's menu renders its items once it has been opened.
+  await harness.act(() => harness.fireEvent(loose.querySelector('.cog-btn'), 'click'));
   const permanentDelete = loose.querySelector('[data-act="delete-agent"]');
   assert.equal(permanentDelete.dataset.agent, 'agt-loose');
   assert.equal(permanentDelete.dataset.conv, 'loose');
@@ -627,6 +629,7 @@ test('a group menu cycles its offline override and the member list follows', asy
   });
   const item = () => host.querySelector('[data-offline-override]');
   const offlineRow = () => host.querySelector('tr[data-key="gone"]');
+  await harness.act(() => harness.fireEvent(host.querySelector('.group-header-cog .cog-btn'), 'click'));
   assert.equal(item().dataset.offlineOverride, 'inherit');
   assert.ok(offlineRow(), 'the tab default shows offline members');
 
@@ -1144,6 +1147,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.match(richRow.querySelector('.sudo-badge').title, /groups\.manage \(expires in 1m30s\)/);
 
   const menu = richRow.querySelector('.action-menu');
+  await harness.act(() => harness.fireEvent(richRow.querySelector('.cog-btn'), 'click'));
   assert.equal(menu.getAttribute('role'), 'menu');
   assert.equal(menu.querySelectorAll('button:not([role="menuitem"])').length, 0);
   assert.equal(menu.querySelector('[data-act="toggle-remote-control"]').dataset.intent, 'off');

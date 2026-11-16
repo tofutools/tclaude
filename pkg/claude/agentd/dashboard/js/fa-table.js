@@ -26,7 +26,7 @@ export function FaTable({ id, head, children }) {
 // skip list; locked disables every checkbox.
 export function ChangeTable({ id, changes, skip, onSkip, locked = false }) {
   return html`<${FaTable} id=${id} head=${['', 'Item', 'Change', '']}>${changes.map((c) => html`<tr key=${c.item} data-item=${c.item}>
-    <td><input type="checkbox" aria-label=${`include ${c.item}`} checked=${!skip.includes(c.item)} disabled=${locked || c.action === 'unchanged'}
+    <td><input name="include-change" type="checkbox" aria-label=${`include ${c.item}`} checked=${!skip.includes(c.item)} disabled=${locked || c.action === 'unchanged'}
       onChange=${(e) => onSkip(e.currentTarget.checked ? skip.filter((x) => x !== c.item) : [...skip, c.item])} /></td>
     <td><code>${c.item}</code></td>
     <td class=${c.action === 'replace' ? 'fa-warn' : c.action === 'unchanged' ? 'muted' : ''}>${c.action === 'replace' ? 'overwrites yours' : c.action === 'create' ? 'new' : 'unchanged'}</td>

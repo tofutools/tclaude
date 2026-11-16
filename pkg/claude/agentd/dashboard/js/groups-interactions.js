@@ -113,6 +113,10 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
   const [opensUp, setOpensUp] = useState(false);
   const [query, setQuery] = useState('');
   const open = interactions.openMenuKey === menuKey;
+  // Rendered from the first open on, and kept after: an item's click closes
+  // the menu, and the delegated handler it feeds must find it still in place.
+  const [opened, setOpened] = useState(open);
+  if (open && !opened) setOpened(true);
 
   useLayoutEffect(() => interactions.registerMenu(menuKey, {
     button: buttonRef.current,
@@ -175,6 +179,10 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
     setOpensUp(rect.bottom > window.innerHeight && rect.height < button.getBoundingClientRect().top);
   }, [open]);
 
+  // A menu never opened keeps only its (empty) container, for the refs and
+  // listeners above. One menu per group header and agent row would otherwise
+  // put hundreds of hidden controls in the page, many inside group headers'
+  // <summary> (an accessibility error) and every one walked on each publish.
   const body = html`
     <${Button}
       domRef=${buttonRef}
@@ -197,9 +205,10 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
       class=${`ui-menu ui-sm action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
       data-preact-menu="1"
       role="menu"
-    ><input
+    >${(open || opened) && html`<input
         ref=${filterRef}
         class="ui-input ui-sm action-menu-filter"
+        name="action-menu-filter"
         type="text"
         autocomplete="off"
         spellcheck=${false}
@@ -221,7 +230,7 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
     hasQuery: !!query,
     clearQuery: () => setQuery(''),
   })}
-      />${children}</div>
+      />${children}`}</div>
   `;
   return wrapperClass ? html`<span class=${wrapperClass}>${body}</span>` : body;
 }

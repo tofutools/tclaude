@@ -202,7 +202,7 @@ function OfferImportDialog({ offer, label, actions, confirm, onClose, onDone }) 
       ${(preview?.warnings || []).map((w) => html`<div class="fa-warn">${w}</div>`)}
       ${changes.some((c) => c.action === 'replace') && html`<label class="fa-of-check"><input id="fleet-offer-replace" type="checkbox" checked=${opts.replace} onChange=${set('replace')} /> overwrite my items that differ (otherwise untick them)</label>`}`}
     ${unresolved.length > 0 && html`<div class="fa-cli-note">Values this offer needs on this node:</div>
-      ${unresolved.map((u) => html`<label class="fa-of-row" key=${u.name}><span class="fa-k">${u.name}</span><input data-placeholder=${u.name} value=${opts.values[u.name] || ''} placeholder=${u.original || `${u.item} ${u.field}`} autocomplete="off" spellcheck="false" onInput=${(e) => change({ values: { ...opts.values, [u.name]: e.currentTarget.value } })} /></label>`)}
+      ${unresolved.map((u) => html`<label class="fa-of-row" key=${u.name}><span class="fa-k">${u.name}</span><input name="fleet-admin-offers-input" data-placeholder=${u.name} value=${opts.values[u.name] || ''} placeholder=${u.original || `${u.item} ${u.field}`} autocomplete="off" spellcheck="false" onInput=${(e) => change({ values: { ...opts.values, [u.name]: e.currentTarget.value } })} /></label>`)}
       ${!(agent && preview?.landing) && html`<label class="fa-of-check"><input id="fleet-offer-keep-paths" type="checkbox" checked=${opts.keepPaths} onChange=${set('keepPaths')} /> keep the sender's recorded absolute paths</label>`}`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}
     <div class="muted fa-cli-note">CLI: <code>tclaude federation offers import ${offer.offer?.id} --peer ${shortID(offer.peer)}${agent ? ' [--cwd … | --landing ID] [--group …]' : ' [--skip …] [--replace]'} [--apply]</code></div>
@@ -239,7 +239,7 @@ function SendConfigDialog({ peers, actions, confirm, onClose, onDone }) {
     <label class="fa-of-row"><span class="fa-k">peer</span><${PeerCombobox} id="fleet-offer-config-peer" value=${peer} ariaLabel="Peer"
       items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label })))} onChange=${setPeer} /></label>
     <div class="fa-cli-note">Sections (none ticked = all):</div>
-    <div class="fa-grant-form">${CONFIG_SECTIONS.map((s) => html`<label key=${s}><input type="checkbox" data-section=${s} checked=${only.includes(s)} onChange=${toggle(s)} /> ${s}</label>`)}</div>
+    <div class="fa-grant-form">${CONFIG_SECTIONS.map((s) => html`<label key=${s}><input name="fleet-admin-offers-input" type="checkbox" data-section=${s} checked=${only.includes(s)} onChange=${toggle(s)} /> ${s}</label>`)}</div>
     ${flags && html`<div class="fa-plan"><ul>${flags.map((f) => html`<li class="fa-warn"><code>${f.item}</code> ${f.field}: ${f.hint}</li>`)}</ul></div>
       <label class="fa-of-check"><input id="fleet-offer-config-allow" type="checkbox" checked=${allow} onChange=${(e) => setAllow(e.currentTarget.checked)} /> send the flagged items anyway</label>`}
     ${error && html`<div class="fa-danger" role="alert">${error}</div>`}

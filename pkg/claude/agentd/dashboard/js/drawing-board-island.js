@@ -2010,7 +2010,7 @@ export function DrawingBoardEditor({
           </g>`}
         </g>
       </svg>
-      ${editingText && html`<textarea ref=${textInputRef} class=${`drawing-board-text-input${editingText.centred ? ' centred' : ''}`}
+      ${editingText && html`<textarea name="drawing-board-island-textarea" ref=${textInputRef} class=${`drawing-board-text-input${editingText.centred ? ' centred' : ''}`}
         style=${`left:${(editingText.x - view.x) * view.zoom}px;top:${(editingText.y - view.y) * view.zoom}px;font-size:${shownText.fontSize * view.zoom}px;color:${editingText.color};font-family:${drawingBoardFont(shownText).css};font-weight:${shownText.fontWeight || 'normal'};font-style:${shownText.fontStyle || 'normal'}`}
         value=${editingText.text}
         onInput=${(event) => setEditingText({ ...editingText, text: event.currentTarget.value })}
@@ -2127,7 +2127,7 @@ export function DrawingBoardList({ fetchImpl, notify, onOpen, onPicking = () => 
   const groups = groupDrawingBoards(drawingBoards || [], clean);
   return html`<div class=${`drawing-board-list${compact ? ' compact' : ''}`}>
     <form class="drawing-board-new" onSubmit=${create}>
-      <input type="text" placeholder="Search, or type a title to create" aria-label="Search drawing boards, or title a new one" maxLength="120"
+      <input name="search-drawing-boards-or-title" type="text" placeholder="Search, or type a title to create" aria-label="Search drawing boards, or title a new one" maxLength="120"
         value=${title} onInput=${(event) => setTitle(event.currentTarget.value)} />
       <${Button} size="sm" variant="primary" type="submit" disabled=${!clean}>${same ? 'Open' : 'Create'}<//>
     </form>
@@ -2147,7 +2147,7 @@ export function DrawingBoardList({ fetchImpl, notify, onOpen, onPicking = () => 
     <div class="drawing-board-store">
       <span>Stored in this tclaude instance, not in a file. ⤓ exports one.</span>
       <${Button} size="sm" class="drawing-board-import" disabled=${importing} onClick=${() => { onPicking(true); fileRef.current?.click(); }}>${importing ? 'Importing…' : 'Import…'}<//>
-      <input ref=${fileRef} type="file" accept=".excalidraw,.json,application/json" hidden aria-label="Import an .excalidraw file" onChange=${importFile} onCancel=${() => onPicking(false)} />
+      <input name="import-an-excalidraw-file" ref=${fileRef} type="file" accept=".excalidraw,.json,application/json" hidden aria-label="Import an .excalidraw file" onChange=${importFile} onCancel=${() => onPicking(false)} />
     </div>
   </div>`;
 }

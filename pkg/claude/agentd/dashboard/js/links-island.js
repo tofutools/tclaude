@@ -443,10 +443,10 @@ function ProposalComposer({ descriptor, groups, actions, confirmDiscard }) {
         </label>
         <div class="ui-eyebrow proposal-sec"><span>Groups to share with ${label}</span><span>name, description and member count</span></div>
         ${groups.map((group) => html`<div key=${group.name} class=${`proposal-item${shared(group.name) ? '' : ' off'}`} data-group=${group.name}>
-          <label class="grow"><input type="checkbox" class="proposal-share" checked=${!!shared(group.name)} disabled=${busy}
+          <label class="grow"><input name="proposal-share" type="checkbox" class="proposal-share" checked=${!!shared(group.name)} disabled=${busy}
             onChange=${(event) => toggleShare(group.name, event.currentTarget.checked)} /> <b>${group.name}</b> · ${group.members} member${group.members === 1 ? '' : 's'}</label>
           ${shared(group.name) && html`<label class="proposal-members" title="Also share the member list (agent names). Off by default; ${label}'s operator can untick it.">
-            <input type="checkbox" class="proposal-share-members" checked=${shared(group.name).includeMembers} disabled=${busy}
+            <input name="proposal-share-members" type="checkbox" class="proposal-share-members" checked=${shared(group.name).includeMembers} disabled=${busy}
               onChange=${(event) => setMembers(group.name, event.currentTarget.checked)} /> include member list</label>`}
         </div>`)}
         <div class="ui-eyebrow proposal-sec"><span>Links</span><span>each direction is a separate edge</span></div>

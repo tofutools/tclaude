@@ -63,7 +63,7 @@ export function HealthPolicySection({ peers, actions, confirm, toast }) {
   }, [peer]);
   const label = peers.find((p) => p.id === peer)?.label || peer;
   const set = (k) => (e) => setForm({ ...form, [k]: e.currentTarget.type === 'checkbox' ? e.currentTarget.checked : e.currentTarget.value });
-  const num = (k) => html`<input data-num=${k} inputmode="decimal" value=${form[k]} placeholder="default" aria-label=${HEALTH_NUMBERS.find((n) => n.key === k).label} onInput=${set(k)} />`;
+  const num = (k) => html`<input name="default" data-num=${k} inputmode="decimal" value=${form[k]} placeholder="default" aria-label=${HEALTH_NUMBERS.find((n) => n.key === k).label} onInput=${set(k)} />`;
 
   const save = () => {
     const body = policyBody(form);
@@ -88,7 +88,7 @@ export function HealthPolicySection({ peers, actions, confirm, toast }) {
     <label class="fa-ns-row"><span class="fa-k">policy for</span><${PeerCombobox} id="fleet-health-peer" value=${peer} noneLabel="defaults (peers without their own)" ariaLabel="Policy for"
       items=${namedItems(peers.map((p) => ({ name: p.id, label: p.label })))} onChange=${setPeer} /></label>
     ${form?.error ? html`<div class="fa-danger">${form.error}</div>` : !form ? html`<div class="muted">Loading…</div>` : html`
-      <div class="fa-ns-check fa-hp-signals">${HEALTH_SIGNALS.map((s) => html`<label key=${s.key}><input type="checkbox" data-signal=${s.key} checked=${form[s.key]} onChange=${set(s.key)} /> ${s.label}</label>`)}</div>
+      <div class="fa-ns-check fa-hp-signals">${HEALTH_SIGNALS.map((s) => html`<label key=${s.key}><input name="fleet-admin-health-input" type="checkbox" data-signal=${s.key} checked=${form[s.key]} onChange=${set(s.key)} /> ${s.label}</label>`)}</div>
       <div class="fa-hp-rows">
         <div>offline / back after ${num('debounce_seconds')} s steady <span class="muted">(Messages: offline 5 min, 30 min, 4 h, then daily)</span></div>
         <div>disk free under ${num('disk_free_percent')} %, RAM free under ${num('ram_free_percent')} % for ${num('memory_seconds')} s</div>

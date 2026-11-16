@@ -46,9 +46,20 @@ export function Button({ variant, size, icon, busy, pressed, type = 'button', cl
   >${children}</button>`;
 }
 
+// fieldName is the name a form field without a name or id is given: browsers
+// flag such a field (it cannot be autofilled or told apart), so the shared
+// controls name one for its label, else for what it is.
+export function fieldName(props, fallback) {
+  if (props.id || props.name) return props.name;
+  const words = String(props['aria-label'] || props.placeholder || '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').split('-').slice(0, 5).join('-');
+  return words || fallback;
+}
+
 export function Select({ size, invalid, class: extra, className, domRef, children, ...rest }) {
   return html`<select
     ...${rest}
+    name=${fieldName(rest, 'ui-select')}
     ref=${domRef}
     class=${join('ui-select', size === 'sm' && 'ui-sm', extra, className)}
     aria-invalid=${invalid ? 'true' : rest['aria-invalid']}
@@ -58,6 +69,7 @@ export function Select({ size, invalid, class: extra, className, domRef, childre
 export function Input({ size, invalid, type = 'text', class: extra, className, domRef, ...rest }) {
   return html`<input
     ...${rest}
+    name=${fieldName(rest, 'ui-input')}
     ref=${domRef}
     type=${type}
     class=${join('ui-input', size === 'sm' && 'ui-sm', extra, className)}
@@ -68,6 +80,7 @@ export function Input({ size, invalid, type = 'text', class: extra, className, d
 export function Textarea({ size, invalid, class: extra, className, domRef, ...rest }) {
   return html`<textarea
     ...${rest}
+    name=${fieldName(rest, 'ui-textarea')}
     ref=${domRef}
     class=${join('ui-textarea', size === 'sm' && 'ui-sm', extra, className)}
     aria-invalid=${invalid ? 'true' : rest['aria-invalid']}
@@ -78,13 +91,13 @@ export function Textarea({ size, invalid, class: extra, className, domRef, ...re
 // text toggles it. Props go to the input; labelClass styles the label.
 export function Check({ type = 'checkbox', labelClass, title, domRef, children, ...rest }) {
   return html`<label class=${join('ui-check', labelClass)} title=${title}>
-    <input type=${type} ...${rest} ref=${domRef} />${children}
+    <input type=${type} ...${rest} name=${type === 'radio' ? rest.name : fieldName(rest, 'ui-check')} ref=${domRef} />${children}
   </label>`;
 }
 
 // Switch: an on/off toggle. Give it an aria-label, or wrap it in a label.
 export function Switch({ class: extra, className, domRef, ...rest }) {
-  return html`<input type="checkbox" role="switch" ...${rest} ref=${domRef} class=${join('ui-switch', extra, className)} />`;
+  return html`<input type="checkbox" role="switch" ...${rest} name=${fieldName(rest, 'ui-switch')} ref=${domRef} class=${join('ui-switch', extra, className)} />`;
 }
 
 // Seg: a segmented group of Buttons; mark the chosen one pressed.

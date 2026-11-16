@@ -293,7 +293,7 @@ export function PageDrawLayer({ active, tool, color, marks, onMark, scroll }) {
         ${draft ? html`<${DrawingBoardElement} el=${draft.el} />` : null}
       </g>
     </svg>
-    ${typing ? html`<input class="ui-input ui-sm page-draw-text" aria-label="Text for the mark" maxLength="500" autoFocus
+    ${typing ? html`<input name="text-for-the-mark" class="ui-input ui-sm page-draw-text" aria-label="Text for the mark" maxLength="500" autoFocus
       style=${`left:${typing.x - sx}px;top:${typing.y - sy}px`}
       onKeyDown=${(event) => {
         if (event.key === 'Enter') { event.preventDefault(); finishText(event.currentTarget.value); }
@@ -316,7 +316,7 @@ export function PageDrawBar({ tool, setTool, color, setColor, marks, onUndo, onC
     <span class="drawing-board-sep"></span>
     <button type="button" data-ui-exempt class="drawing-board-tool" title="Undo the last mark" aria-label="Undo the last mark" disabled=${!marks.length} onClick=${onUndo}>↶</button>
     <${Button} size="sm" class="mux-btn" disabled=${!marks.length} title="Remove every mark" onClick=${onClear}>Clear<//>
-    <input class="ui-input ui-sm page-draw-note" placeholder="Note for the agent (optional)" aria-label="Note for the agent"
+    <input name="note-for-the-agent" class="ui-input ui-sm page-draw-note" placeholder="Note for the agent (optional)" aria-label="Note for the agent"
       maxLength=${PAGE_NOTE_MAX} value=${note} onInput=${(event) => setNote(event.currentTarget.value)}
       onKeyDown=${(event) => { if (event.key === 'Enter' && canSend) { event.preventDefault(); onSend(); } }} />
     <${Button} size="sm" variant="primary" class="mux-btn" busy=${sending} disabled=${!canSend}

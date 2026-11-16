@@ -120,7 +120,7 @@ function StagesBlock({ node, commit, readOnly }) {
   const field = (key, label, value, mutate, options = {}) => html`<${NodeField} fieldKey=${key} label=${label} value=${value || ''}
     readOnly=${readOnly} apply=${(fieldKey, raw) => commit(fieldKey, (draft) => mutate(draft, raw))} ...${options} />`;
   const toggle = (key, label, stage) => html`<label class="process-node-stage-toggle">
-    <input type="checkbox" class="process-node-toggle" checked=${!!node[stage]} disabled=${readOnly} data-node-field=${key}
+    <input name="process-node-toggle" type="checkbox" class="process-node-toggle" checked=${!!node[stage]} disabled=${readOnly} data-node-field=${key}
       onChange=${(event) => commit(key, (draft) => setStageEnabled(draft, stage, event.currentTarget.checked))} />
     <span>${label}</span>
   </label>`;

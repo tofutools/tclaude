@@ -222,7 +222,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     ${needs.params.length > 0 && html`<div class="gp-start-params" role="group" aria-label="Parameters">
       ${needs.params.map((param) => html`<label key=${param.name} class="gp-start-param" title=${param.description}>
         <span>${param.name}${param.required ? html`<b aria-label="required"> *</b>` : ''}</span>
-        <input type=${param.type === 'number' ? 'number' : 'text'} data-start-param=${param.name} disabled=${busy}
+        <input name="groups-processes-input" type=${param.type === 'number' ? 'number' : 'text'} data-start-param=${param.name} disabled=${busy}
           placeholder=${param.default || param.type} value=${values[param.name] ?? ''}
           onInput=${(event) => { const value = event.currentTarget.value; setValues((current) => ({ ...current, [param.name]: value })); }} />
       </label>`)}
@@ -230,7 +230,7 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
     ${needs.programProfiles.length > 0 && html`<div class="gp-start-profiles" role="group" aria-label="Program authorization">
       <span class="gp-start-note">${wizard ? 'This rite runs host programs as:' : 'This process runs host programs under:'}</span>
       ${needs.programProfiles.map((profile) => html`<label key=${profile || '(default)'} class="gp-start-profile">
-        <input type="checkbox" data-start-profile=${profile} disabled=${busy} checked=${authorized.has(profile)}
+        <input name="groups-processes-input" type="checkbox" data-start-profile=${profile} disabled=${busy} checked=${authorized.has(profile)}
           onChange=${(event) => toggleProfile(profile, event.currentTarget.checked)} />
         authorize <code>${profile || '(default profile)'}</code>
       </label>`)}

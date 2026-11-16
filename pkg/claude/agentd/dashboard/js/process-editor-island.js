@@ -127,7 +127,7 @@ function EditableTitle({ controller, view }) {
       onClick=${() => setEditing(true)}
     >${label}</button>`;
   }
-  return html`<input
+  return html`<input name="template-display-name"
     ref=${inputRef} class="process-editor-title-input" type="text" spellcheck="false"
     placeholder="display name" aria-label="Template display name" data-process-title-input
     defaultValue=${model.name || ''}
@@ -478,7 +478,7 @@ function InlineEditor({ controller, inline }) {
     ref.current?.select();
   }, [inline.token]);
   if (!inline.open) return null;
-  return html`<input ref=${ref} class="process-editor-inline-input" type="text" spellcheck="false"
+  return html`<input name="process-editor-inline-input" ref=${ref} class="process-editor-inline-input" type="text" spellcheck="false"
     style=${`left:${Math.round(inline.left)}px;top:${Math.round(inline.top)}px`}
     defaultValue=${inline.value}
     onKeyDown=${(event) => {
@@ -531,7 +531,7 @@ export function ScribeDialog({ descriptor, complete }) {
       : descriptor.scribeKind === 'diagnostic' ? 'The current diagnostic identity below will be shared.'
         : 'A bounded whole-template summary will be shared.'}</p>
     <label class="process-scribe-prompt-label">Your request (editable)</label>
-    <textarea ref=${input} class="process-scribe-prompt" rows="4" maxlength=${PROCESS_SCRIBE_PROMPT_MAX}
+    <textarea name="request-for-the-process-scribe" ref=${input} class="process-scribe-prompt" rows="4" maxlength=${PROCESS_SCRIBE_PROMPT_MAX}
       aria-label="Request for the process scribe" spellcheck="true" data-select-on-focus
       value=${prompt} onInput=${(event) => setPrompt(event.currentTarget.value)} />
     <span class="process-scribe-prompt-count">${prompt.length} / ${PROCESS_SCRIBE_PROMPT_MAX}</span>

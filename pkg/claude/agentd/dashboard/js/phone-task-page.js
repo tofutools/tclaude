@@ -93,7 +93,7 @@ function QuestionBlock({ task, q, names, onAnswer }) {
       if (!text.trim() && !picked.length) return;
       if (await onAnswer(q, picked, text.trim())) { setText(''); setPicked([]); }
     }}>
-      <input class="ui-input phone-board-field" aria-label="Answer in words" placeholder=${options.length ? 'Or answer in words' : 'Your answer'}
+      <input name="answer-in-words" class="ui-input phone-board-field" aria-label="Answer in words" placeholder=${options.length ? 'Or answer in words' : 'Your answer'}
         value=${text} onInput=${(event) => setText(event.currentTarget.value)} />
       <${Button} type="submit" class="phone-btn phone-btn-pri" disabled=${!text.trim() && !picked.length}>Answer<//>
     </form>
@@ -188,7 +188,7 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
       setSending(false);
       if (ok) { setComment(''); commentKey.current = newCommentKey(); }
     }}>
-      <textarea class="ui-input phone-board-field" rows="3" aria-label="Comment" placeholder="Write a comment"
+      <textarea name="comment" class="ui-input phone-board-field" rows="3" aria-label="Comment" placeholder="Write a comment"
         value=${comment} onInput=${(event) => setComment(event.currentTarget.value)}></textarea>
       <${Button} type="submit" class="phone-btn phone-btn-pri" disabled=${sending || !comment.trim()}>${sending ? 'Sending…' : 'Comment'}<//>
     </form>

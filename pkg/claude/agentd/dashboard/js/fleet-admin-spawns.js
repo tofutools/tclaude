@@ -207,11 +207,11 @@ function SendDialog({ view, pools, actions, confirm, toast, onClose, onDone }) {
         onChange=${setTarget} /></label>
     <label class="fa-spawn-opt">Group <input id="fleet-spawn-group" value=${f.group} onInput=${set('group')} placeholder=${auto ? 'optional with one authorized group' : 'a group the peer exports'} /></label>
     <label class="fa-spawn-opt fa-spawn-top">Brief <textarea id="fleet-spawn-brief" rows="4" maxlength=${BRIEF_MAX} value=${f.brief} onInput=${set('brief')}></textarea></label>
-    <label class="fa-spawn-opt">Name <input value=${f.name} onInput=${set('name')} /></label>
-    <label class="fa-spawn-opt">Role <input value=${f.role} onInput=${set('role')} /></label>
-    <label class="fa-spawn-opt">Profile <input value=${f.profile} onInput=${set('profile')} placeholder="its default" /></label>
-    <label class="fa-spawn-opt">Credentials <input value=${f.credentials} onInput=${set('credentials')} placeholder="local, or proxy:<gateway>@self (requester-paid)" /></label>
-    ${auto && html`<label class="fa-spawn-opt">Require <input value=${f.require} onInput=${set('require')} placeholder="os=linux,harness=claude,label=gpu" /></label>
+    <label class="fa-spawn-opt">Name <input name="fleet-admin-spawns-input" value=${f.name} onInput=${set('name')} /></label>
+    <label class="fa-spawn-opt">Role <input name="fleet-admin-spawns-input" value=${f.role} onInput=${set('role')} /></label>
+    <label class="fa-spawn-opt">Profile <input name="its-default" value=${f.profile} onInput=${set('profile')} placeholder="its default" /></label>
+    <label class="fa-spawn-opt">Credentials <input name="local-or-proxy-gateway-self" value=${f.credentials} onInput=${set('credentials')} placeholder="local, or proxy:<gateway>@self (requester-paid)" /></label>
+    ${auto && html`<label class="fa-spawn-opt">Require <input name="os-linux-harness-claude-label" value=${f.require} onInput=${set('require')} placeholder="os=linux,harness=claude,label=gpu" /></label>
       <label class="fa-spawn-opt">Prefer <${Select} size="sm" value=${f.prefer} onChange=${set('prefer')}><option value="">least-loaded</option><option value="most-free-ram">most-free-ram</option><//></label>`}
     ${result && html`<div id="fleet-spawn-result">
       ${result.error ? html`<div class="fa-danger" role="alert">${result.error}</div>`
@@ -256,7 +256,7 @@ export function SpawnRequestsPage({ view, pools, actions, confirm, toast, now = 
     <div class="fa-run-settings ui-card ui-inset">
       <span class="fa-k">Incoming</span>
       <span class="muted">${Array.isArray(rows) ? `${rows.filter((r) => r.status === 'pending').length} pending` : ''}</span>
-      <label class="muted"><input type="checkbox" checked=${all} onChange=${(e) => setAll(e.currentTarget.checked)} /> show decided${hidden && !all ? ` (${hidden})` : ''}</label>
+      <label class="muted"><input name="fleet-admin-spawns-input" type="checkbox" checked=${all} onChange=${(e) => setAll(e.currentTarget.checked)} /> show decided${hidden && !all ? ` (${hidden})` : ''}</label>
       <${Button} size="sm" variant="link" class="fa-link" onClick=${reload}>refresh<//>
       <span class="grow"></span>
       <${Button} size="sm" id="fleet-spawn-new" onClick=${() => setDialog({ kind: 'send' })}>Request a worker on a peer…<//>

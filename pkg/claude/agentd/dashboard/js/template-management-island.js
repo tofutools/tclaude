@@ -2147,7 +2147,7 @@ function AgentRow({
       ><label
         class="template-agent-owner"
         title="Mark this agent as an owner of the instantiated group — a group can have several owners. This is unioned with the picked profile's own owner default (either one makes the agent an owner)."
-        ><input
+        ><input name="ta-owner"
           type="checkbox"
           class="ta-owner"
           checked=${agent.is_owner}
@@ -2167,19 +2167,19 @@ function AgentRow({
       <//>
     </div>
     <div class="template-agent-grid">
-      <input
+      <input name="name-e-g-po-dev1"
         type="text"
         class="ta-name"
         placeholder="name (e.g. PO, dev1)"
         value=${agent.name}
         onInput=${(event) => update({ name: event.currentTarget.value })}
-      /><input
+      /><input name="role-label-e-g-product"
         type="text"
         class="ta-role"
         placeholder="role label (e.g. product-owner)"
         value=${agent.role}
         onInput=${(event) => update({ role: event.currentTarget.value })}
-      /><input
+      /><input name="wave-0"
         type="number"
         class="ta-wave"
         min="0"
@@ -2205,13 +2205,13 @@ function AgentRow({
     <div class="ta-role-inspect">
       <${RoleInspect} roleName=${agent.role_ref} roles=${roles} />
     </div>
-    <input
+    <input name="one-line-description-dashboard-column"
       type="text"
       class="ta-descr"
       placeholder="one-line description (dashboard column)"
       value=${agent.descr}
       onInput=${(event) => update({ descr: event.currentTarget.value })}
-    /><textarea
+    /><textarea name="task-brief-for-this-agent"
       class="ta-initmsg"
       rows="3"
       placeholder="task brief for this agent — delivered to its inbox at spawn (newlines OK)"
@@ -2717,7 +2717,7 @@ export function TemplateEditor({
                   updateList('work_pattern', index, direction)}
               />
             </div>
-            <textarea
+            <textarea name="briefing-message-delivered-after-the"
               class="tw-value"
               rows="2"
               value=${step.value}
@@ -2774,7 +2774,7 @@ export function TemplateEditor({
                 />
               </div>
               <div class="template-agent-grid">
-                <input
+                <input name="phase-name-e-g-design"
                   type="text"
                   class="tpp-name"
                   value=${phase.name}
@@ -2788,7 +2788,7 @@ export function TemplateEditor({
                       ),
                     }))}
                   placeholder="phase name (e.g. design, build, review)"
-                /><input
+                /><input name="active-roles-comma-separated-e"
                   type="text"
                   class="tpp-roles"
                   value=${phase.roles_text ?? phase.roles.join(', ')}
@@ -2804,7 +2804,7 @@ export function TemplateEditor({
                   placeholder="active roles, comma-separated (e.g. dev, reviewer; 'all' = everyone)"
                 />
               </div>
-              <textarea
+              <textarea name="criteria-entry-exit-handoff-in"
                 class="tpp-criteria"
                 rows="2"
                 value=${phase.criteria}
@@ -2873,14 +2873,14 @@ export function TemplateEditor({
               />
             </div>
             <div class="template-agent-grid">
-              <input
+              <input name="name-e-g-status-ping"
                 type="text"
                 class="trh-name"
                 value=${rhythm.name}
                 onInput=${(event) =>
                   update({ name: event.currentTarget.value })}
                 placeholder="name (e.g. status-ping)"
-              /><input
+              /><input name="role-filter-blank-all-whole"
                 type="text"
                 class="trh-role"
                 value=${rhythm.target_role}
@@ -2890,14 +2890,14 @@ export function TemplateEditor({
               />
             </div>
             <div class="template-agent-grid">
-              <input
+              <input name="interval-e-g-10m-or"
                 type="text"
                 class="trh-interval"
                 value=${rhythm.interval}
                 onInput=${(event) =>
                   update({ interval: event.currentTarget.value })}
                 placeholder="interval (e.g. 10m) — OR cron below"
-              /><input
+              /><input name="cron-expr-e-g-0"
                 type="text"
                 class="trh-cron"
                 value=${rhythm.cron_expr}
@@ -2906,14 +2906,14 @@ export function TemplateEditor({
                 placeholder="cron expr (e.g. '0 * * * *') — OR interval"
               />
             </div>
-            <input
+            <input name="subject-optional"
               type="text"
               class="trh-subject"
               value=${rhythm.subject}
               onInput=${(event) =>
                 update({ subject: event.currentTarget.value })}
               placeholder="subject (optional)"
-            /><textarea
+            /><textarea name="message-body-the-nudge-sends"
               class="trh-body"
               rows="2"
               value=${rhythm.body}

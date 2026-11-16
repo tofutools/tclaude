@@ -105,7 +105,7 @@ export function RunCopyEditor({ runId, api, onChanged, onClose, onYaml, openEdit
     <div class="prc-bar">
       <span class="prc-title">✎ Amending <b>${runId}</b>: only this run changes; the template stays as it is.</span>
       ${info && html`<span class="prc-legend grf-muted">🔒 ${info.reached.length} reached step${info.reached.length === 1 ? '' : 's'} locked</span>`}
-      <input class="pov-note prc-note" type="text" maxlength="4096" aria-label="Why (optional)"
+      <input name="run-amend-note" class="pov-note prc-note" type="text" maxlength="4096" aria-label="Why (optional)"
         placeholder=${info?.direct === false ? 'why (shown to the operator and in the log)' : 'why (optional, recorded in the log)'}
         value=${note} onInput=${(event) => setNote(event.currentTarget.value)} />
       ${onYaml && html`<${Button} size="sm" data-run-copy-yaml onClick=${() => onYaml()}>Edit as YAML instead<//>`}

@@ -471,7 +471,7 @@ function ShareStep({ view, groups, actions, confirm, toast, reload, onOpenGrants
       ${SHARE_PRESETS.map((p) => {
         const held = grants && presetHeld(p, rows, currentGroup);
         return html`<label key=${p.id} class=${`fs-preset${presets.includes(p.id) ? ' on' : ''}${held ? ' held' : ''}${p.sensitive ? ' sensitive' : ''}`} data-preset=${p.id}>
-          <input type="checkbox" checked=${presets.includes(p.id) || held} disabled=${held} onChange=${() => toggle(p.id)} />
+          <input name="fleet-admin-setup-input" type="checkbox" checked=${presets.includes(p.id) || held} disabled=${held} onChange=${() => toggle(p.id)} />
           <span><b>${p.label}</b>${held ? html` <span class="muted">· already shared</span>` : ''}<br /><span class="muted">${p.what}</span></span>
         </label>`;
       })}

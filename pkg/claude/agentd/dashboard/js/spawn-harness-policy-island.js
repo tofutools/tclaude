@@ -242,7 +242,7 @@ function SpawnHarnessPolicyDialog({ descriptor, close, confirmDiscard, notify })
                       <option value="allow">${copy.allow}</option>
                       <option value="deny">${copy.deny}</option>
                     <//>
-                    ${edge?.decision === 'deny' ? html`<textarea rows="3" maxlength="1000"
+                    ${edge?.decision === 'deny' ? html`<textarea name="spawn-harness-policy-island-textarea" rows="3" maxlength="1000"
                       aria-label=${wizard
                         ? `${source.name} to ${target.name} forbidden-summon reason`
                         : `${source.name} to ${target.name} denial reason`}

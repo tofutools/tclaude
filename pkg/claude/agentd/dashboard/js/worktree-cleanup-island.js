@@ -58,7 +58,7 @@ function CleanupCandidateRow({ candidate, locked, wizard, onToggle }) {
     title=${wizard ? wizardReason(candidate.reason) : candidate.reason}
     data-path=${candidate.path}
   ><label>
-    <input
+    <input name="worktree-cleanup-island-input"
       type="checkbox"
       data-path=${candidate.path}
       checked=${candidate.checked}
@@ -93,7 +93,7 @@ function CleanupCandidateRow({ candidate, locked, wizard, onToggle }) {
 function PrunableRepoRow({ repo, locked, onToggle }) {
   return html`<div class="cleanup-row cleanup-prune-row" data-prune-root=${repo.repo_root}>
     <label title="Bookkeeping only — stale-record pruning never removes a checkout directory or branch">
-      <input type="checkbox" data-prune-root=${repo.repo_root} checked=${repo.checked}
+      <input name="worktree-cleanup-island-input" type="checkbox" data-prune-root=${repo.repo_root} checked=${repo.checked}
         disabled=${locked}
         onChange=${(event) => onToggle(repo.repo_root, event.currentTarget.checked)} />
       <span class="branch">${repo.count} stale Git record${repo.count === 1 ? '' : 's'}</span>

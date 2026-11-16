@@ -358,7 +358,7 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
           onClick=${(event) => applyPick(pick, event)}>${pick.label} <span class="recipient-pick-count">${pickCounts.get(pick.key)}</span><//>`)}
         <span class="spacer"></span><span class="cleanup-count" id="message-create-members-count">${selectedMembers.length} of ${members.length} selected</span></div>
       <div class="cleanup-list" id="message-create-members">${members.length ? members.map((member) => html`<div class=${`cleanup-row${member.online ? '' : ' recipient-offline'}`} key=${member.key}><label>
-        <input type="checkbox" data-conv=${member.conv_id} checked=${selectedKeys.has(member.key)}
+        <input name="message-access-dialog-island-input" type="checkbox" data-conv=${member.conv_id} checked=${selectedKeys.has(member.key)}
           onChange=${(event) => toggleMember(member, event.currentTarget.checked)} />
         <span class=${`ui-tag cleanup-badge ${member.online ? 'online' : 'offline'}`}>${member.online ? 'online' : 'offline'}</span>
         <span class="title">${member.title || '(untitled)'}</span><span class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</span>
@@ -659,7 +659,7 @@ function ScopeChipSheet({ dim, values, catalogue, remove }) {
   const rows = matched.slice(at * SCOPE_SHEET_PAGE, (at + 1) * SCOPE_SHEET_PAGE);
   return html`<div class="perm-scope-sheet" data-dim=${dim}>
     <div class="perm-scope-sheet-head"><span>${values.length} more ${dim} values</span>
-      <input type="text" class="perm-scope-sheet-filter" value=${filter} placeholder="filter…" autocomplete="off"
+      <input name="filter" type="text" class="perm-scope-sheet-filter" value=${filter} placeholder="filter…" autocomplete="off"
         spellcheck=${false} aria-label=${`Filter the selected ${dim} values`}
         onInput=${(event) => { setFilter(event.currentTarget.value); setPage(0); }} /></div>
     ${rows.length ? rows.map((value) => html`<div key=${value} class="perm-scope-sheet-row">
@@ -1131,7 +1131,7 @@ function PermissionsDialog({ descriptor: launched, state, actions, snapshot, con
         title="This grant's stored scope cannot be read by this build, so it authorizes nothing at the gate. Saving will not overwrite it — edit it with the tclaude agent permissions CLI, or set the slug back to Default first.">unreadable scope</span></span>`}
       ${sudoMode && picked && (noLimitWhy(row) ? html`<span class="perm-uses none" title=${noLimitWhy(row)}>no limit</span>`
     : html`<label class="perm-uses" title="Ends at whichever comes first, this or the time. Blank uses the bundle's limit, if any. A refused or failed attempt does not use one.">
-        max <input type="text" inputmode="numeric" aria-label=${`Maximum uses of ${row.slug}`} placeholder=${sudoBundleUses.trim() || '∞'} autocomplete="off" value=${sudoUses[row.slug] ?? ''}
+        max <input name="message-access-dialog-island-input" type="text" inputmode="numeric" aria-label=${`Maximum uses of ${row.slug}`} placeholder=${sudoBundleUses.trim() || '∞'} autocomplete="off" value=${sudoUses[row.slug] ?? ''}
           onInput=${(event) => { const value = event.currentTarget.value; setSudoUses((current) => ({ ...current, [row.slug]: value })); }} /></label>`)}
       ${canCarry && html`<${CarryChoice} slug=${row.slug} carried=${carriedNow(row.slug)}
         onChange=${(carried) => setCarryChoices((current) => ({ ...current, [row.slug]: carried }))} />`}

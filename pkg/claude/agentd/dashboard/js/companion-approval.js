@@ -284,7 +284,7 @@ export function DecisionCard({ decision, fetchImpl, notify, from = '' }) {
       <${Button} size="sm" class="companion-decision-dismiss" disabled=${!!busy} title="No longer relevant: take it off the list without answering; the agent is told"
         onClick=${dismiss}>${busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}<//>
     </div>
-    <input class="companion-decision-note" type="text" placeholder="Add a note (optional)" value=${note} disabled=${!!busy}
+    <input name="note-to-send-with-your" class="companion-decision-note" type="text" placeholder="Add a note (optional)" value=${note} disabled=${!!busy}
       aria-label="Note to send with your choice" onInput=${(event) => setNote(event.currentTarget.value)} />
     ${image && html`<a class="companion-decision-image" href=${image.url} target="_blank" rel="noopener"><img src=${image.url} alt=${image.filename || 'attached image'} /></a>`}
   </div>`;

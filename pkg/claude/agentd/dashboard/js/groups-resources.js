@@ -147,7 +147,7 @@ export function RenameField({ value, label, onSave, onDone, class: extra = '' })
     onDone();
     if (next && next !== value) void onSave(next);
   };
-  return html`<input ref=${ref} class=${extra ? `gr-rename ${extra}` : 'gr-rename'} data-resource-rename-input="" aria-label=${`New name for ${label}`}
+  return html`<input name="groups-resources-input" ref=${ref} class=${extra ? `gr-rename ${extra}` : 'gr-rename'} data-resource-rename-input="" aria-label=${`New name for ${label}`}
     value=${value} onKeyDown=${key} onBlur=${onDone} />`;
 }
 

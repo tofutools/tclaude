@@ -70,7 +70,7 @@ export function NotifyApp({ state, actions, documentRef = document }) {
       <div class="notify-pop-sep"></div>
       <div class="notify-pop-hint ui-hint" id="notify-pop-types-hint">Notify me when an agent…</div>
       ${NOTIFY_TYPES.map((type) => html`<label class="notify-pop-row" key=${type}>
-        <input type="checkbox" data-notify-type=${type} checked=${settings.types[type]}
+        <input name="notify-island-input" type="checkbox" data-notify-type=${type} checked=${settings.types[type]}
           onChange=${(event) => { void actions.setType(type, event.currentTarget.checked); }} /> ${TYPE_LABELS[type]}
       </label>`)}
       <div class="notify-pop-sep"></div>

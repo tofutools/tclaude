@@ -218,7 +218,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
         ${draft.triggerMode === 'portable' && draft.triggerEvent === 'session.start' && draft.sourceMode === 'selected' && html`
         <div class="standing-order-options" id="standing-order-sources">
           ${SESSION_SOURCES.map(([value, label]) => html`<label>
-            <input type="checkbox" value=${value} checked=${draft.sources.includes(value)}
+            <input name="jobs-standing-order-dialog-island" type="checkbox" value=${value} checked=${draft.sources.includes(value)}
               onChange=${(event) => updateSource(value, event.currentTarget.checked)} /> ${label}
           </label>`)}
         </div>`}
@@ -241,7 +241,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
                   const checked = draft.hookSelectors.some((selector) =>
                     selector.harness === hook.harness && selector.event === hook.event);
                   return html`<label key=${`${hook.harness}:${hook.event}`}>
-                    <input type="checkbox" checked=${checked}
+                    <input name="jobs-standing-order-dialog-island" type="checkbox" checked=${checked}
                       onChange=${(event) => updateHookSelector(hook, event.currentTarget.checked)} />
                     <code>${hook.event}</code>
                     ${hook.baseline ? html` <span class="muted">(already captured)</span>` : ''}

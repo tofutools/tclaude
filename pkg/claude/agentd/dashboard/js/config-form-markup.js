@@ -36,6 +36,9 @@ const ConfigEventContext = createContext(() => {});
 function routedControl(tag, props) {
   const route = useContext(ConfigEventContext);
   const routed = { ...props };
+  // Every form field carries a name or id (browsers flag one without): a
+  // field the markup gives neither is named for what routes it here.
+  if (tag !== 'button' && !props.id && !props.name) routed.name = configFieldName(props);
   for (const name of ['onInput', 'onChange', 'onClick', 'onKeyDown']) {
     const local = props[name];
     routed[name] = (event) => {
@@ -44,6 +47,12 @@ function routedControl(tag, props) {
     };
   }
   return h(tag, routed);
+}
+function configFieldName(props) {
+  const key = Object.keys(props).find((k) => k.startsWith('data-cfg'));
+  const value = key && typeof props[key] === 'string' ? props[key] : '';
+  const words = (key ? `${key.slice(5)} ${value}` : String(props['aria-label'] || props.placeholder || 'config field'));
+  return words.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 }
 function ConfigInput(props) { return routedControl('input', props); }
 function ConfigSelect(props) { return routedControl('select', props); }

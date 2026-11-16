@@ -84,7 +84,7 @@ export function NodeSelect({
     return html`<div key=${n.id} class=${`node-pop-row node-select-row${on ? ' sel' : ''}${offline ? ' offline' : ''}${why ? ' locked' : ''}`}
       style=${n.color ? `--nc:${n.color}` : null} data-node-option=${n.id} title=${why || status || undefined}>
       ${multiple
-        ? html`<input type="checkbox" checked=${on} disabled=${!!why} aria-label=${`Include ${n.name}`} onChange=${pick} />`
+        ? html`<input name="node-select-input" type="checkbox" checked=${on} disabled=${!!why} aria-label=${`Include ${n.name}`} onChange=${pick} />`
         : html`<input type="radio" name=${id ? `${id}-pick` : undefined} checked=${on} disabled=${!!why} aria-label=${`Show ${n.name}`} onChange=${pick} />`}
       <span class="node-pop-swatch" aria-hidden="true"></span>
       <button data-ui-exempt type="button" class="node-pop-name" disabled=${!!why} onClick=${pick}>${nodeName(n)}</button>
@@ -101,11 +101,11 @@ export function NodeSelect({
       <span class="node-pick-caret" aria-hidden="true">▾</span>
     </button>
     ${open && html`<div class="node-select-menu ui-popover" role="group" aria-label=${menuLabel || label}>
-      ${nodes.length >= NODE_SELECT_FILTER_AT && html`<label class="node-pop-filter"><input type="text" value=${query} placeholder="type to filter"
+      ${nodes.length >= NODE_SELECT_FILTER_AT && html`<label class="node-pop-filter"><input name="filter-nodes" type="text" value=${query} placeholder="type to filter"
         aria-label="Filter nodes" onInput=${(e) => setQuery(e.currentTarget.value)} /></label>`}
       ${(multiple || allowAll) && html`<div class=${`node-pop-row node-select-row node-select-all${all ? ' sel' : ''}`} data-node-option="">
         ${multiple
-          ? html`<input type="checkbox" checked=${all} aria-label=${allLabel} onChange=${() => choose([])} />`
+          ? html`<input name="node-select-input" type="checkbox" checked=${all} aria-label=${allLabel} onChange=${() => choose([])} />`
           : html`<input type="radio" name=${id ? `${id}-pick` : undefined} checked=${all} aria-label=${allLabel} onChange=${() => choose('')} />`}
         <button data-ui-exempt type="button" class="node-pop-name" onClick=${() => choose(multiple ? [] : '')}>${allLabel}</button>
         <span class="node-pop-meta">${nodes.length}</span>

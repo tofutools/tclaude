@@ -30,12 +30,12 @@ function ProposalItemRow({ item, peer, draft, setDraft, open }) {
   const ticked = !!draft.ticked[item.id];
   const set = (key, value) => setDraft({ ...draft, [key]: { ...draft[key], [item.id]: value } });
   return html`<label class=${`proposal-item${ticked ? '' : ' off'}`} data-item=${item.id}>
-    <input type="checkbox" class="proposal-tick" checked=${ticked} disabled=${locked}
+    <input name="proposal-tick" type="checkbox" class="proposal-tick" checked=${ticked} disabled=${locked}
       onChange=${(event) => set('ticked', event.currentTarget.checked)} />
     <span class="grow">${itemText(item, peer)}</span>
     ${item.kind === 'share_visibility' && item.include_members && html`<span class="proposal-members"
       title="The member list (agent names) is shared too. Untick to share only the name, description and member count.">
-      <input type="checkbox" class="proposal-members-tick" checked=${!!draft.members[item.id]} disabled=${locked || !ticked}
+      <input name="proposal-members-tick" type="checkbox" class="proposal-members-tick" checked=${!!draft.members[item.id]} disabled=${locked || !ticked}
         onChange=${(event) => set('members', event.currentTarget.checked)} /> member list</span>`}
     ${item.kind === 'group_link' && (open && !locked
       ? html`<${Select} size="sm" class="proposal-mode" value=${draft.modes[item.id]} disabled=${!ticked}
@@ -56,7 +56,7 @@ function ShareBack({ view, draft, setDraft }) {
   return html`<details class="proposal-shareback">
     <summary>Share some of your groups back with ${view.peer_label || view.peer}…</summary>
     ${groups.map((group) => html`<label key=${group.name} class="proposal-item">
-      <input type="checkbox" class="proposal-shareback-tick" data-group=${group.name} checked=${draft.shareBack.includes(group.name)}
+      <input name="proposal-shareback-tick" type="checkbox" class="proposal-shareback-tick" data-group=${group.name} checked=${draft.shareBack.includes(group.name)}
         onChange=${(event) => toggle(group.name, event.currentTarget.checked)} />
       <span class="grow">${group.name} · ${(group.members || []).length} members</span></label>`)}
     <div class="proposal-hint ui-hint">They see the name, description and member count; no member list, mail or presence.</div>

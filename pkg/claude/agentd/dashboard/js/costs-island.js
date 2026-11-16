@@ -235,7 +235,7 @@ function ProviderFilter({ state, current }) {
         const swatchClass = current.stackByProvider && !current.stackByModel && seriesIndex >= 0
           ? `cost-series-${seriesIndex % 8}` : 'cost-filter-neutral';
         return html`<label class="cost-filter-option costs-provider-choice" title=${`Show ${entry.provider} cost rows`}>
-          <input type="checkbox" data-provider=${entry.provider} checked=${current.selectedProviders.has(entry.provider)}
+          <input name="costs-island-input" type="checkbox" data-provider=${entry.provider} checked=${current.selectedProviders.has(entry.provider)}
             onChange=${(event) => {
               if (!state.toggleProvider(entry.provider)) event.currentTarget.checked = !event.currentTarget.checked;
             }} />
@@ -261,7 +261,7 @@ function ModelFilter({ state, current }) {
     <div class="cost-filter-popover ui-popover model" role="group" aria-label="Cost models"
       title="Cost is grouped by the last model recorded for each agent-day slice.">
       <div class="cost-filter-popover-head"><strong>Models in selected providers</strong>
-        <input type="search" aria-label="Filter cost models" placeholder="Filter models…" value=${query}
+        <input name="filter-cost-models" type="search" aria-label="Filter cost models" placeholder="Filter models…" value=${query}
           onInput=${(event) => setQuery(event.currentTarget.value)} />
       </div>
       <div class="cost-filter-model-list">
@@ -269,7 +269,7 @@ function ModelFilter({ state, current }) {
           const share = Math.round(entry.share * 100);
           return html`<label class=${`cost-filter-option costs-model-choice${entry.available ? '' : ' unavailable'}`}
             title=${entry.available ? `Show ${entry.model} cost rows` : `Unavailable because ${entry.providers.join(', ')} is not selected`}>
-            <input type="checkbox" data-model=${entry.model} disabled=${!entry.available}
+            <input name="costs-island-input" type="checkbox" data-model=${entry.model} disabled=${!entry.available}
               checked=${entry.available && current.selectedModels.has(entry.model)} onChange=${(event) => {
                 if (!state.toggleModel(entry.model)) event.currentTarget.checked = !event.currentTarget.checked;
               }} />
