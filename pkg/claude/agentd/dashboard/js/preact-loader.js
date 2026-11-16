@@ -175,9 +175,9 @@ const phoneShellDescriptor = createIslandDescriptor({
       // Now's ＋ Agent: the Agents view's short spawn sheet (or, on a peer's
       // page, the desktop form), with no group picked.
       spawnAgent: async (group = '') => {
-        const [{ openSpawnSheet }, { phoneAgentActions }] = await Promise.all([
-          import('./phone-agents-island.js'), import('./phone-agent-actions.js'),
-        ]);
+        const islandModule = import('./phone-agents-island.js');
+        const actionsModule = import('./phone-agent-actions.js');
+        const [{ openSpawnSheet }, { phoneAgentActions }] = await Promise.all([islandModule, actionsModule]);
         const agentActions = phoneAgentActions({ onComposeMessage: dependencies.onComposeMessage });
         openSpawnSheet({ state: dashboardState, group, openFull: (g, typed) => agentActions.spawn(g, typed), remoteSpawn: agentActions.spawn });
       },
