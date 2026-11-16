@@ -2,6 +2,8 @@ package agentd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -503,12 +505,16 @@ func (s *processProjectionSkeleton) engineSource(id string) string {
 
 var processProjectionSkeletons = struct {
 	sync.Mutex
-	byRef map[string]*processProjectionSkeleton
+	byRef map[string]*processProjectionSkeleton // by sha256 of the template snapshot
 }{byRef: map[string]*processProjectionSkeleton{}}
 
 func processProjectionSkeletonFor(record *db.ProcessRun) (*processProjectionSkeleton, error) {
+	// Keyed by the snapshot itself, not the template ref: an amended run
+	// follows its own copy under the same ref (process_run_amend.go).
+	sum := sha256.Sum256(record.TemplateSnapshotJSON)
+	key := hex.EncodeToString(sum[:])
 	processProjectionSkeletons.Lock()
-	cached := processProjectionSkeletons.byRef[record.TemplateRef]
+	cached := processProjectionSkeletons.byRef[key]
 	processProjectionSkeletons.Unlock()
 	if cached != nil {
 		return cached, nil
@@ -522,7 +528,7 @@ func processProjectionSkeletonFor(record *db.ProcessRun) (*processProjectionSkel
 	if len(processProjectionSkeletons.byRef) >= processProjectionCacheSize {
 		processProjectionSkeletons.byRef = map[string]*processProjectionSkeleton{}
 	}
-	processProjectionSkeletons.byRef[record.TemplateRef] = skeleton
+	processProjectionSkeletons.byRef[key] = skeleton
 	processProjectionSkeletons.Unlock()
 	return skeleton, nil
 }

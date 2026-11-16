@@ -585,6 +585,19 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
       }, fetchImpl);
     },
+    // runTemplate reads the run's own copy of its template (JSON and YAML), the
+    // starting point for amending it.
+    runTemplate: (runId) => processRequest(`${runPath(runId)}/template`, {}, fetchImpl),
+    // amendRun checks (dryRun), applies or proposes a change to the run's own
+    // copy of its template, sent as YAML. Someone with manage applies it; the
+    // overseer's goes to the operator as a proposal.
+    async amendRun(runId, { yaml, note = '', dryRun = false, attemptKey = randomUUID() }) {
+      const path = `${runPath(runId)}/amendments`;
+      const body = JSON.stringify({ yaml, ...(note ? { note } : {}), ...(dryRun ? { dryRun } : {}) });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
     // markBlocked parks an agent step that is out, with a reason; it then
     // waits on retry, skip or cancel like a step whose retries ran out.
     async markBlocked(runId, { nodeId, attempt, reason, attemptKey = randomUUID() }) {

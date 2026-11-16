@@ -3,7 +3,7 @@ name: process-runs
 description: >-
   Start, watch and steer daemon-owned process runs via `tclaude process`:
   run (start a saved template, scoped to a group or agent), runs ls, show,
-  events, pause/resume, decide, assign, resolve-blocked, block, cancel, send-back, reconcile, reissue,
+  events, pause/resume, decide, assign, resolve-blocked, block, cancel, send-back, amend, reconcile, reissue,
   record-outcome; oversee a run and raise or answer its concerns (concern,
   answer-concern, concerns, oversee); report a node you were dispatched; and read event triggers
   via `tclaude agent triggers ls|show|explain`. Covers the
@@ -83,7 +83,15 @@ tclaude process resolve-blocked <run-id> --node <node> --attempt <n> --action re
 tclaude process block <run-id> --node <node> --reason "why"   # park an agent step that is out (overseer too)
 tclaude process cancel <run-id> [--note "why"]                # give the whole run up
 tclaude process send-back <run-id> --node <step> [--note "why"]  # run a finished step again; everything after it resets
+tclaude process amend <run-id> --print > run.yaml               # this run's own copy of its template
+tclaude process amend <run-id> --file run.yaml --note "why"     # change the steps it has not reached
+tclaude process amend <run-id> --list                           # its amendments and their state
 ```
+
+An amendment changes only that run, and only where it has not been yet: steps
+not started, plus rerouting the step being worked on. With manage it applies
+at once; as the run's overseer it is proposed to the operator. If the run moves
+on before the operator decides, it is refused; print again and re-propose.
 
 Copy `--node` and `--attempt` from `show`; stale or wrong-attempt input is
 refused. An agent decider's decision cannot be made with `decide`.

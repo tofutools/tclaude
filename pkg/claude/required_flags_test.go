@@ -131,6 +131,7 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude process resolve-blocked":                "node attempt action",
 		"claude process block":                          "node reason",
 		"claude process send-back":                      "node",
+		"claude process amend":                          "",
 		"claude process templates ls":                   "store-root",
 		"claude session codex-app-server-relay":         "socket upstream",
 		"claude session codex-app-server-token-consume": "path",

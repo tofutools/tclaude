@@ -69,6 +69,7 @@ type processRunInput struct {
 	cancel *processRunCancelInput
 	block  *executor.MarkBlockInput
 	back   *executor.SendBackInput
+	amend  *executor.AmendInput
 }
 
 type processRunCancelInput struct {
@@ -105,6 +106,8 @@ func (i processRunInput) apply(run *executor.Run, actor string) error {
 		return executor.MarkBlocked(run, actor, *i.block)
 	case i.back != nil:
 		return executor.SendBack(run, actor, *i.back)
+	case i.amend != nil:
+		return executor.Amend(run, actor, *i.amend)
 	default:
 		return fmt.Errorf("process run input names no decision, blocked resolution, or agent report")
 	}
@@ -275,8 +278,8 @@ type processRunView struct {
 	Blocked           []processRunBlockedView  `json:"blocked"`
 	// Draining is a run given up (canceled, or a step failed) that is still
 	// waiting for work that was out to come back.
-	Draining bool `json:"draining,omitempty"`
-	Scope             processRunScopeView      `json:"scope"`
+	Draining bool                `json:"draining,omitempty"`
+	Scope    processRunScopeView `json:"scope"`
 	// Performers is every agent node attempt's performer, oldest attempt first
 	// per node: who was chosen, how, and what they reported.
 	Performers []processRunPerformerView `json:"performers"`
@@ -296,10 +299,14 @@ type processRunView struct {
 	Gates []processRunGateView `json:"gates,omitempty"`
 	// Overseer is who answers concerns about the run (process_oversight.go),
 	// and Concerns its open concerns and most recently settled ones.
-	Overseer  *processRunOverseerView `json:"overseer,omitempty"`
-	Concerns  []processRunConcernView `json:"concerns"`
-	CreatedAt time.Time               `json:"createdAt"`
-	UpdatedAt time.Time               `json:"updatedAt"`
+	Overseer *processRunOverseerView `json:"overseer,omitempty"`
+	Concerns []processRunConcernView `json:"concerns"`
+	// Amendments are changes made to this run's own copy of its template,
+	// newest first; Amended is set once one was applied.
+	Amendments []processRunAmendmentView `json:"amendments,omitempty"`
+	Amended    bool                      `json:"amended,omitempty"`
+	CreatedAt  time.Time                 `json:"createdAt"`
+	UpdatedAt  time.Time                 `json:"updatedAt"`
 }
 
 // processRunPauseView is who paused a run, and when.
@@ -1898,6 +1905,11 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 	if err != nil {
 		return processRunView{}, err
 	}
+	amendments := processRunAmendmentViews(record.ID, record.StateVersion)
+	amended := false
+	for _, a := range amendments {
+		amended = amended || a.State == db.ProcessAmendmentApplied
+	}
 	return processRunView{
 		ID: record.ID, TemplateRef: record.TemplateRef, Params: params,
 		ProgramAuthorizations: authorizations, Status: checkpoint.Status,
@@ -1905,10 +1917,11 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
 		Draining: checkpoint.Status == engine.RunRunning && engine.Draining(checkpoint),
-		Blocked: blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
+		Blocked:  blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
 		Paused: processRunPauseViewOf(record.Scope), ProgramBounds: programBounds, Loops: loops,
 		Gates: gates, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 		Overseer: processRunOverseerViewOf(record.ID), Concerns: processRunConcernViews(record.ID),
+		Amendments: amendments, Amended: amended,
 	}, nil
 }
 

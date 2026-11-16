@@ -2643,3 +2643,33 @@ CREATE INDEX idx_process_run_concerns_due
 CREATE INDEX idx_process_run_concerns_message
 			ON process_run_concerns(human_message_id)
 			WHERE human_message_id != 0;
+
+CREATE TABLE process_run_amendments (
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id             TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE
+			                       CHECK(length(CAST(run_id AS BLOB)) BETWEEN 1 AND 128),
+			state              TEXT NOT NULL CHECK(state IN ('proposed', 'applied', 'rejected', 'stale')),
+			proposed_by        TEXT NOT NULL
+			                       CHECK(length(CAST(proposed_by AS BLOB)) BETWEEN 1 AND 256),
+			note               TEXT NOT NULL DEFAULT ''
+			                       CHECK(length(CAST(note AS BLOB)) <= 4096),
+			base_state_version INTEGER NOT NULL,
+			template_json      TEXT NOT NULL,
+			summary_json       TEXT NOT NULL DEFAULT '{}',
+			human_message_id   INTEGER NOT NULL DEFAULT 0,
+			decided_by         TEXT NOT NULL DEFAULT ''
+			                       CHECK(length(CAST(decided_by AS BLOB)) <= 256),
+			decision_note      TEXT NOT NULL DEFAULT ''
+			                       CHECK(length(CAST(decision_note AS BLOB)) <= 4096),
+			saved_template_ref TEXT NOT NULL DEFAULT ''
+			                       CHECK(length(CAST(saved_template_ref AS BLOB)) <= 512),
+			created_at         INTEGER NOT NULL,
+			decided_at         INTEGER
+		) STRICT;
+
+CREATE INDEX idx_process_run_amendments_run
+			ON process_run_amendments(run_id, id);
+
+CREATE INDEX idx_process_run_amendments_message
+			ON process_run_amendments(human_message_id)
+			WHERE human_message_id != 0;

@@ -12,7 +12,7 @@
 // (phone-process-runs.js) both render these.
 
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 
@@ -106,6 +106,8 @@ export function eventSentence(event, nameOf = () => '', { withStep = true } = {}
       const reset = Array.isArray(payload.nodes) ? payload.nodes.length - 1 : 0;
       return { icon: '↶', tone: 'concern', text: `${who} sent the run back to ${event.nodeId || payload.nodeId}${reset > 0 ? ` (${reset} later step${reset === 1 ? '' : 's'} reset)` : ''}${payload.note ? `: ${clip(payload.note)}` : ''}` };
     }
+    case 'run_amended':
+      return { icon: '✎', tone: 'concern', text: `${who} amended the run (#${payload.amendment}): ${amendSummaryText(payload.summary)}${payload.note ? ` · ${clip(payload.note)}` : ''}` };
     case 'run_canceled':
       return { icon: '✕', tone: 'concern', text: `${who} canceled the run${payload.note ? `: ${clip(payload.note)}` : ''}` };
     default:
@@ -249,6 +251,114 @@ function SteerForm({ kind, label, placeholder, confirm, required, send, onChange
   </div>`;
 }
 
+// amendSummaryText says what an amendment changes, by step.
+export function amendSummaryText(summary = {}) {
+  const parts = [];
+  const add = (label, ids) => { if (ids?.length) parts.push(`${label} ${ids.join(', ')}`); };
+  add('adds', summary.added);
+  add('removes', summary.removed);
+  add('changes', summary.changed);
+  add('reroutes', summary.rerouted);
+  if (summary.settings) parts.push('changes template settings');
+  return parts.length ? parts.join('; ') : 'changes nothing';
+}
+
+const AMENDMENT_STATES = { proposed: 'waiting on you', applied: 'applied', rejected: 'rejected', stale: 'stale: the run moved on' };
+
+// RunAmendments lists the changes made to this run's own copy of its
+// template: what each changes, who and when, and a proposal's Apply/Reject.
+export function RunAmendments({ view, api, onChanged, compact = false }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const amendments = view?.amendments || [];
+  if (!amendments.length) return null;
+  const pick = async (amendment, choice) => {
+    if (busy) return;
+    setBusy(`${amendment.id}:${choice}`);
+    setError('');
+    try {
+      await api.pickConcern(amendment.messageId, choice, '');
+      onChanged?.();
+    } catch (cause) {
+      setError(cause?.message || String(cause));
+    } finally {
+      setBusy('');
+    }
+  };
+  return html`<div class=${`pov-amendments${compact ? ' pov-compact' : ''}`} data-run-amendments>
+    <div class="pov-amend-title">✎ ${view.amended ? 'Amended: this run follows its own copy of the template' : 'Amendments proposed'}</div>
+    <ul>${amendments.map((a) => html`<li key=${a.id} class=${`pov-amendment pov-amend-${a.state}`} data-run-amendment=${a.id}>
+      <div class="pov-concern-head">
+        <b>#${a.id}</b>
+        <span class="grf-muted">by ${actorName(a.proposedBy, () => a.proposedName)} · ${eventTime(a.createdAt)}</span>
+        <span class=${`pov-holder${a.state === 'proposed' && !a.outdated ? ' pov-holder-you' : ''}`} data-amendment-state>${a.outdated ? 'the run moved on: propose it again' : AMENDMENT_STATES[a.state] || a.state}${a.decidedName && a.state !== 'proposed' ? ` · ${a.decidedName}` : ''}</span>
+      </div>
+      <div class="pov-reason" data-amendment-summary>${amendSummaryText(a.summary)}</div>
+      ${a.note && html`<div class="grf-muted">why: ${a.note}</div>`}
+      ${a.state === 'proposed' && !a.outdated && a.messageId && api?.pickConcern && html`<div class="pov-concern-actions">
+        <${Button} size="sm" variant="primary" disabled=${!!busy} data-amendment-apply onClick=${() => void pick(a, 1)}>${busy === `${a.id}:1` ? '…' : 'Apply amendment'}<//>
+        <${Button} size="sm" disabled=${!!busy} data-amendment-reject onClick=${() => void pick(a, 2)}>${busy === `${a.id}:2` ? '…' : 'Reject'}<//>
+      </div>`}
+    </li>`)}</ul>
+    ${error && html`<div class="grf-error ui-error" role="alert">${error}</div>`}
+  </div>`;
+}
+
+// AmendRun edits the run's own copy of its template as YAML: Check says what
+// it would change, then it is applied, or proposed to the operator.
+export function AmendRun({ runId, api, onChanged, onClose }) {
+  const [source, setSource] = useState(null);
+  const [text, setText] = useState('');
+  const [note, setNote] = useState('');
+  const [checked, setChecked] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let live = true;
+    api.runTemplate(runId).then((got) => {
+      if (!live) return;
+      setSource(got);
+      setText(got.yaml || '');
+    }).catch((cause) => live && setError(cause?.message || String(cause)));
+    return () => { live = false; };
+  }, [runId]);
+  const run = async (dryRun) => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const got = await api.amendRun(runId, { yaml: text, note: note.trim(), dryRun });
+      if (dryRun) {
+        setChecked(got);
+      } else {
+        onChanged?.();
+        onClose?.();
+      }
+    } catch (cause) {
+      setChecked(null);
+      setError(cause?.message || String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const direct = checked ? checked.direct : source?.canAmendDirectly;
+  return html`<div class="pov-raise pov-amend" data-run-amend>
+    <div class="grf-muted">Change the steps this run has not reached yet. Only this run changes; the template stays as it is.</div>
+    <textarea rows="14" spellcheck="false" class="pov-amend-yaml" aria-label="The run's template (YAML)" value=${text}
+      disabled=${busy || !source} onInput=${(event) => { setText(event.currentTarget.value); setChecked(null); }}></textarea>
+    <input class="pov-note" type="text" maxlength="4096" aria-label="Why (optional)" placeholder="why (optional, shown to the operator and in the log)"
+      value=${note} disabled=${busy} onInput=${(event) => setNote(event.currentTarget.value)} />
+    ${checked && html`<div class="pov-amend-check" data-amend-check>This ${amendSummaryText(checked.summary)}.</div>`}
+    <div class="pov-raise-row">
+      ${checked
+    ? html`<${Button} size="sm" variant="primary" disabled=${busy} data-amend-submit onClick=${() => void run(false)}>${busy ? '…' : direct ? 'Apply to this run' : 'Propose to the operator'}<//>`
+    : html`<${Button} size="sm" variant="primary" disabled=${busy || !source} data-amend-check-open onClick=${() => void run(true)}>${busy ? '…' : 'Check'}<//>`}
+      <${Button} size="sm" disabled=${busy} onClick=${onClose}>Back<//>
+    </div>
+    ${error && html`<div class="grf-error ui-error" role="alert">${error}</div>`}
+  </div>`;
+}
+
 // outAgentStep is the selected step's agent attempt that is out, if any:
 // the one a person can park.
 export function outAgentStep(view, nodeId) {
@@ -281,6 +391,9 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
       ${steerable && nodeDone && nodeId && !/[./]/.test(nodeId) && api?.sendBack && !busy && html`<${Button} size="sm" data-run-send-back-open
         title="Run this step again: everything after it is reset, work out there is withdrawn, and its outputs are asked for again"
         onClick=${() => setSteering('back')}>↶ Send back to ${nodeLabel || nodeId}…<//>`}
+      ${steerable && !compact && api?.amendRun && !busy && html`<${Button} size="sm" data-run-amend-open
+        title="Change the steps this run has not reached yet, for this run only"
+        onClick=${() => setSteering('amend')}>✎ Amend run…<//>`}
       ${steerable && api?.cancelRun && !busy && html`<${Button} size="sm" variant="danger" data-run-cancel-open
         title="Give the whole run up: work still out is withdrawn and it ends canceled"
         onClick=${() => setSteering('cancel')}>✕ Cancel ${wizard ? 'rite' : 'run'}…<//>`}
@@ -294,10 +407,12 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
       placeholder=${`Why run ${nodeLabel || nodeId} again? (optional, recorded in its log) Everything after it is reset.`} confirm="Send back"
       send=${(note) => api.sendBack(runId, { nodeId, note })}
       onChanged=${onChanged} onClose=${() => setSteering('')} />`}
+    ${steering === 'amend' && html`<${AmendRun} runId=${runId} api=${api} onChanged=${onChanged} onClose=${() => setSteering('')} />`}
     ${steering === 'cancel' && html`<${SteerForm} kind="cancel" label="Why the run is given up"
       placeholder="Why is the run given up? (optional, recorded in its log)" confirm=${wizard ? 'Cancel the rite' : 'Cancel the run'}
       send=${(note) => api.cancelRun(runId, { note })}
       onChanged=${onChanged} onClose=${() => setSteering('')} />`}
+    <${RunAmendments} view=${view} api=${api} onChanged=${onChanged} compact=${compact} />
     ${open.length > 0 && html`<ul class="pov-concerns">${open.map((concern) => html`<${ConcernCard} key=${concern.id}
       concern=${concern} runId=${runId} api=${api} onChanged=${onChanged} compact=${compact} />`)}</ul>`}
   </section>`;
