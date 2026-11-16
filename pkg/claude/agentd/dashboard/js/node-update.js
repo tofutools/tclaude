@@ -6,7 +6,7 @@ import { Dialog, DialogClose } from './ui-dialog.js';
 import { RequestError, requestJSON } from './request-json.js';
 import { errText } from './cell-format.js';
 import { NodeUpdateSettings } from './node-update-settings.js';
-import { SELF_UPDATE_METHODS } from './config-self-update.js';
+import { SELF_UPDATE_METHODS, managerName } from './config-self-update.js';
 import { ServicePanel } from './config-service.js';
 import { LauncherPanel } from './config-launcher.js';
 
@@ -179,17 +179,17 @@ export function usePreflight({ node, actions }) {
 // UpdateJobView is an update job's progress or result, then its launch
 // report, its own warnings (not the node's standing ones in `standing`) and
 // the custom command's or package manager's output. idp prefixes the ids.
-export function UpdateJobView({ job, unanswered = false, standing = [], idp = 'fleet-' }) {
+export function UpdateJobView({ job, unanswered = false, standing = [], idp = 'fleet-', output = true, error = true }) {
   if (!job) return null;
   const launch = launchView(job.launch);
   const warnings = updateJobActive(job) ? [] : (job.warnings || []).filter((w) => !standing.includes(w));
   return html`<div id=${`${idp}node-update-job`} class=${job.state === 'failed' || job.state === 'rolled_back' || job.rolled_back ? 'fa-danger' : ''}>
-      ${job.action} ${job.from_version ? `${job.from_version} → ` : ''}${job.version || ''}: <b>${unanswered ? `${job.state === 'rolling_back' || job.phase === 'rolling_back' ? 'rolling back' : 'restarting'}… (not answering yet)` : job.state.replaceAll('_', ' ')}</b>${job.phase && job.phase !== job.state && !(job.state === 'completed' && job.phase === 'complete') ? ` (${job.phase.replaceAll('_', ' ')})` : ''}${job.rolled_back && job.state !== 'rolled_back' ? ' — rolled back' : ''}${job.error ? ` — ${job.error}` : ''}
+      ${job.action} ${job.from_version ? `${job.from_version} → ` : ''}${job.version || ''}: <b>${unanswered ? `${job.state === 'rolling_back' || job.phase === 'rolling_back' ? 'rolling back' : 'restarting'}… (not answering yet)` : job.state.replaceAll('_', ' ')}</b>${job.phase && job.phase !== job.state && !(job.state === 'completed' && job.phase === 'complete') ? ` (${job.phase.replaceAll('_', ' ')})` : ''}${job.rolled_back && job.state !== 'rolled_back' ? ' — rolled back' : ''}${error && job.error ? ` — ${job.error}` : ''}
       ${job.deadline && updateJobActive(job) && html`<span class="muted"> · healthy by ${new Date(job.deadline).toLocaleTimeString()} or it rolls back</span>`}
     </div>
     ${launch && html`<div id=${`${idp}node-update-launch`} class=${launch.ok ? 'muted' : 'fa-warn'}>${launch.text}${launch.details && html`<ul>${launch.details.map((d) => html`<li key=${d}>${d}</li>`)}</ul>`}</div>`}
     ${warnings.length > 0 && html`<ul class="fa-warn update-job-warnings" id=${`${idp}node-update-job-warnings`}>${warnings.map((w) => html`<li key=${w}>${w}</li>`)}</ul>`}
-    ${job.output && !updateJobActive(job) && html`<details class="update-job-output"><summary>Output</summary><pre id=${`${idp}node-update-job-output`}>${job.output}</pre></details>`}`;
+    ${output && job.output && !updateJobActive(job) && html`<details class="update-job-output"><summary>Output</summary><pre id=${`${idp}node-update-job-output`}>${job.output}</pre></details>`}`;
 }
 
 const PLAN_MARKS = { ok: '✓', warn: '⚠', fail: '✗' };
@@ -252,6 +252,46 @@ export function applyConfirm({ node, status, method = '', methodLabel = '', vers
 export function savedMethod(status, fallback = '') {
   const id = status && 'chosen_method' in status ? status.chosen_method || '' : fallback;
   return { id, label: SELF_UPDATE_METHODS.find((m) => m.id === id)?.label || id };
+}
+
+// asInstalled is what an apply does to binary b with no method saved, as
+// the node decides it (selfupdate apply.go admit and route): { how } names
+// the route, or { refused } says why it refuses. A package-managed binary
+// is refused (tclaude never runs a package manager unasked), and so is one
+// that is not an identifiable tclaude binary; a release build is
+// re-downloaded, and any other build (go install, a checkout's) is rebuilt
+// with go install.
+export function asInstalled(b) {
+  if (b.managed_by) return { refused: `${b.name} is managed by ${managerName(b.managed_by)}` };
+  if (!b.version) return { refused: `${b.name} is not an identifiable tclaude binary` };
+  return { how: b.install_method === 'release' ? 'release download' : 'go install build' };
+}
+
+// installedText names how a node's binaries update with no method saved
+// (asInstalled), joined when they differ ('' before the read, or when none
+// would update).
+export function installedText(status) {
+  const hows = (status?.binaries || []).map((b) => asInstalled(b).how).filter(Boolean);
+  return [...new Set(hows)].join(' + ');
+}
+
+// methodText names what Update now runs: the saved method, or with none
+// saved, "as installed" and what that is here. chosen is savedMethod's.
+export function methodText(chosen, status) {
+  if (chosen.id) return chosen.label;
+  const kind = installedText(status);
+  return `as installed${kind ? `: ${kind}` : ''} (no method saved)`;
+}
+
+// updateNowRefusal is why Update now cannot run, or '' when it can: a
+// notify-only method; or, with none saved, a binary the node would refuse
+// to update as installed (asInstalled). Otherwise none saved is no refusal:
+// each binary updates the way it was installed. status is the status read.
+export function updateNowRefusal(chosen, status = null) {
+  if (chosen.id === 'manual') return 'The saved method only notifies; choose a method that installs';
+  if (chosen.id) return '';
+  const refused = (status?.binaries || []).map((b) => asInstalled(b).refused).find(Boolean);
+  return refused ? `${refused}, so with no method saved it is not updated; choose a method in Config › Updates` : '';
 }
 
 // NodeUpdateDialog is a node's Installation view, as Config › Installation
@@ -333,9 +373,10 @@ export function UpdateNowPanel({ node, method, methodLabel = '', notifyOnly: not
   // The caller's saved method (Config re-reads it after each save) wins
   // over the status read's, which is taken once.
   const chosen = method !== undefined ? { id: method, label: methodLabel || savedMethod(null, method).label } : savedMethod(status);
-  const notifyOnly = notifyOnlyProp || chosen.id === 'manual';
+  const refusal = updateNowRefusal(chosen, status);
+  const notifyOnly = notifyOnlyProp || !!refusal;
   const update = () => confirm(applyConfirm({ node, status, method: chosen.id, methodLabel: chosen.label })).then((ok) => ok && start('apply'));
-  const updateTitle = notifyOnly ? 'The saved method only notifies; choose a method that installs'
+  const updateTitle = notifyOnly ? refusal || updateNowRefusal({ id: 'manual' })
     : unsaved ? 'Save changes first: Update now uses the saved method' : '';
   return html`<div class="update-now" id=${`${idp}update-now`}>
     <div class="update-now-actions">
@@ -347,7 +388,7 @@ export function UpdateNowPanel({ node, method, methodLabel = '', notifyOnly: not
     </div>
     <div class=${unsaved ? 'cfg-su-warn' : 'cfg-su-note'} id=${`${idp}update-now-note`}>${unsaved
       ? 'You changed the method settings above. These buttons use the saved settings: save changes first.'
-      : `These use the saved method${chosen.id ? ` (${chosen.label})` : ' (none chosen: each binary updates the way it was installed)'}. Test method runs nothing.`}</div>
+      : `These use the saved method${chosen.id ? ` (${chosen.label})` : `: none is saved, so each binary updates the way it was installed (${installedText(status) || 'its install kind'})`}. Test method runs nothing.`}</div>
     ${status && html`<${UpdateJobView} job=${job} unanswered=${unanswered} standing=${status.warnings || []} idp=${idp} />`}
     <${UpdatePlanView} plan=${test.plan} error=${test.error} node=${node} idp=${idp} />
   </div>`;

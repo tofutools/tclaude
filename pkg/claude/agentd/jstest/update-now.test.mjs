@@ -125,3 +125,20 @@ test('the hub has no Test method, and a release method keeps Update to <latest>'
   assert.equal(hub.q('#fleet-node-update-test'), null);
   assert.match(hub.q('#fleet-node-update-apply').textContent, /Update to v0\.43\.0/);
 });
+
+test('no method saved: Update now runs, and the note names what runs ("as installed")', async (t) => {
+  const { q, flush, actions } = await mountPanel(t, {}, { status: { chosen_method: '', binaries: [{ name: 'tclaude', version: 'v0.42.0', install_method: 'go_install' }, { name: 'tclaude-agentd', version: 'v0.42.0', install_method: 'go_install' }] } });
+  await flush();
+  assert.ok(!q('#cfg-update-now-apply').hasAttribute('disabled'), 'no saved method is no refusal');
+  assert.match(q('#cfg-update-now-note').textContent, /none is saved, so each binary updates the way it was installed \(go install build\)/);
+  q('#cfg-update-now-apply').click();
+  await flush();
+  assert.deepEqual(actions.calls, [{ action: 'apply', version: undefined }]);
+});
+
+test('no method saved, a package-managed binary: Update now is held, and says why', async (t) => {
+  const { q, flush } = await mountPanel(t, {}, { status: { chosen_method: '', binaries: [{ name: 'tclaude', version: 'v0.42.0', install_method: 'release', managed_by: 'homebrew' }] } });
+  await flush();
+  assert.ok(q('#cfg-update-now-apply').hasAttribute('disabled'));
+  assert.match(q('#cfg-update-now-apply').getAttribute('title'), /managed by Homebrew, so with no method saved it is not updated/);
+});
