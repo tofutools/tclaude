@@ -374,14 +374,16 @@ function loopRound(edge, known) {
 }
 
 // loopLabel is a back edge's label with its bound: "changes · ≤3×" in a
-// template, "changes · round 2 of 3" while a run is in the loop.
+// template ("changes · ≤3× · then fail" when the draft says where a used-up
+// loop goes), "changes · round 2 of 3" while a run is in the loop.
 export function loopLabel(edge, known = new Map()) {
   const base = String(edge.label || edge.outcome || '');
   const max = Number(edge.maxIterations) || 0;
   if (!max) return base;
   const at = loopRound(edge, known);
   const bound = loopEdgeSuffix(at ? at.rounds : max, at ? at.round : 0);
-  return base ? `${base} · ${bound}` : bound;
+  const then = !at && edge.exhausted ? ` · then ${edge.exhausted}` : '';
+  return (base ? `${base} · ${bound}` : bound) + then;
 }
 
 // nodeRound is a loop body node's round ("2/3"), or '' outside loops.

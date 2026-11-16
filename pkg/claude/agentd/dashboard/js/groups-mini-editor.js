@@ -24,6 +24,7 @@ import {
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider, setGateText,
+  exhaustionOptions, setDecisionWho, setExhaustion,
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import {
@@ -134,6 +135,19 @@ function deciderAsk(decider) {
 }
 
 // Inspector is the compact editor of one step: the step list's fields.
+// ExhaustionPicker says where a loop goes once its rounds are used up, beside
+// its rounds: another outcome, failing the run, or (a plain decision) asking
+// the decider again. The agree outcome is listed only when already chosen,
+// marked: it would pass work the deciders kept sending back.
+function ExhaustionPicker({ view, id, outcome, value, onApply }) {
+  const options = exhaustionOptions(view, id, outcome);
+  return html`<label class="gm-exhausted" data-mini-exhausted=${outcome}><span class="gq-dim">then</span>
+    <${Select} size="sm" aria-label=${`When ${outcome} runs out of rounds`} value=${value}
+      onChange=${(event) => onApply(setExhaustion(view, id, outcome, event.currentTarget.value))}>
+      ${options.map((option) => html`<option key=${option.value} value=${option.value}>${option.skipsReview ? `${option.label} (skips the review)` : option.label}</option>`)}
+    <//></label>`;
+}
+
 function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onClose, onFullEditor }) {
   const node = view.template.nodes[id];
   if (!node) return null;
@@ -153,6 +167,8 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
   const outcomes = outcomesOf(view, id);
   const targets = targetsFor(view, id);
   const setWho = (who) => {
+    // A decision stays one whoever decides it: its outcomes and loops stay.
+    if (node.type === 'decision' && who.mode !== 'command') { onApply(setDecisionWho(view, id, who)); return; }
     if (who.mode === 'you' || who.mode === 'command') { onKind(who.mode); return; }
     if (kind !== 'agent') { onKind('agent', who); return; }
     onApply(updateStep(view, id, (s) => setStepWho(s, who)));
@@ -227,6 +243,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
         ${loopBound(node, outcome) && html`<label class="ui-tag ui-tag-warn gm-loop" data-mini-loop=${outcome} title="Going back runs that work again; past the last round this outcome is refused">
           ≤<${TypedField} name="groups-mini-editor-input" type="number" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} aria-label=${`Rounds for ${outcome}`} value=${loopBound(node, outcome).maxIterations}
             onChange=${(event) => { const rounds = normalizeRounds(event.currentTarget.value); if (rounds) onApply(setLoopRounds(view, id, outcome, rounds)); else event.currentTarget.value = String(loopBound(node, outcome).maxIterations); }} /> rounds</label>`}
+        ${loopBound(node, outcome) && html`<${ExhaustionPicker} view=${view} id=${id} outcome=${outcome} value=${loopBound(node, outcome).onExhausted || ''} onApply=${onApply} />`}
         ${node.type === 'decision' && !canRemoveOutcome(view, id, outcome) && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove ${outcome}`}
           onClick=${() => onApply(removeOutcome(view, id, outcome))}>✕<//>`}
       </span>`)}

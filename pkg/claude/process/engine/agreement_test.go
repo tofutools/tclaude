@@ -180,6 +180,16 @@ func TestAgreementGate_Validation(t *testing.T) {
 		}
 		t.Errorf("%s: want %s", name, code)
 	}
+	whole("exhausts to agree", "gate_loop_exhausts_to_agree", func(tmpl *model.Template) {
+		gate := tmpl.Nodes["decide"]
+		gate.Loops = map[string]model.LoopBound{"changes": {MaxIterations: 2, OnExhausted: "approved"}}
+		tmpl.Nodes["decide"] = gate
+	})
+	if got := codes(func(n *model.Node) {
+		n.Loops = map[string]model.LoopBound{"changes": {MaxIterations: 2, OnExhausted: "approved"}}
+	}); len(got) != 0 {
+		t.Errorf("exhausting to agree is a warning, not an error: got %v", got)
+	}
 	whole("deciders on a task", "gate_on_non_decision", func(tmpl *model.Template) {
 		task := tmpl.Nodes["merge"]
 		task.Agree = "approved"

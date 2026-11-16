@@ -18278,9 +18278,11 @@ body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176,
 .gm-field textarea { resize: vertical; }
 .gm-outcomes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .gm-outcome { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid #30363d; border-radius: 999px; color: #d2a8ff; }
+.gm-outcome:has(.gm-exhausted) { flex-wrap: wrap; max-width: 100%; }
 .gm-outcome-name { width: 80px; padding: 1px 5px; }
 .ui-tag.gm-loop { display: inline-flex; align-items: center; gap: 3px; }
 .gm-loop input { width: 40px; padding: 0 3px; }
+.gm-exhausted { display: inline-flex; align-items: center; gap: 4px; }
 .gm-add-outcome { font: inherit; width: 22px; height: 22px; border-radius: 50%; border: 1px dashed #30363d; background: transparent; color: #8b949e; cursor: pointer; }
 .gm-row { display: flex; align-items: center; gap: 8px; }
 .gm-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 14px; border-top: 1px solid #21262d; font-size: 12px; }

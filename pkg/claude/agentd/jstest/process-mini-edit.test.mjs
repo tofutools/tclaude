@@ -269,8 +269,8 @@ test('a gate stays valid as its outcomes change', () => {
   ({ view } = m.setOutcomeTarget(view, 'approve', 'ship', 'implement'));
   const after = view.template.nodes.approve;
   assert.ok(!after.loops?.[after.agree], 'what all must choose never goes back');
-  // A gate keeps two outcomes.
-  let small = m.addDecider(ship, 'approve', { mode: 'anyone' }).view;
+  // A gate keeps two outcomes (no loop here, so no give-up is added).
+  let small = m.addDecider(forward, 'approve', { mode: 'anyone' }).view;
   small = m.removeOutcome(small, 'approve', 'hold').view;
   assert.match(m.canRemoveOutcome(small, 'approve', 'ship') || m.canRemoveOutcome(small, 'approve', 'changes'), /gate needs/);
 });
@@ -283,4 +283,104 @@ test('outputs belong to one task: not kept by a "you" step or a duplicate', asyn
   const dup = m.duplicate(withOut, 'review');
   assert.equal(dup.view.template.nodes[dup.id].captures, undefined);
   assert.deepEqual(dup.view.template.nodes.review.captures, ['notes']);
+});
+
+test('a used-up gate loop never goes on through what all must choose: it gives up', () => {
+  // approve with only ship and changes ↺: the agree outcome is the one way on.
+  const plain = m.removeOutcome(ship, 'approve', 'hold').view;
+  const { view } = m.addDecider(plain, 'approve', { mode: 'role', role: 'reviewer' });
+  const gate = view.template.nodes.approve;
+  assert.equal(gate.agree, 'ship');
+  assert.notEqual(gate.loops.changes.onExhausted, 'ship', 'three rejections must not ship');
+  assert.equal(gate.loops.changes.onExhausted, m.GIVE_UP);
+  const end = view.template.nodes[edge(view, 'approve', m.GIVE_UP)];
+  assert.deepEqual([end.type, end.result], ['end', 'failed']);
+  assert.deepEqual(m.exhaustionOptions(view, 'approve', 'changes').map((o) => o.label), ['fail the run']);
+  assert.match(m.canRemoveOutcome(view, 'approve', m.GIVE_UP), /runs out of rounds/, 'its way out stays while it is chosen');
+  const loop = m.draftProjection(view).edges.find((e) => e.from === 'approve' && e.outcome === undefined && e.back);
+  assert.equal(loop?.exhausted, 'fail', 'the loop edge says where it goes');
+});
+
+test('when rounds run out: pick another way, fail the run, or (a plain decision) ask again', () => {
+  const options = m.exhaustionOptions(ship, 'approve', 'changes');
+  assert.deepEqual(options.map((o) => o.value), ['', 'ship', 'hold', m.FAIL_RUN]);
+  let { view } = m.setExhaustion(ship, 'approve', 'changes', 'hold');
+  assert.equal(view.template.nodes.approve.loops.changes.onExhausted, 'hold');
+  ({ view } = m.setExhaustion(view, 'approve', 'changes', m.FAIL_RUN));
+  assert.equal(view.template.nodes.approve.loops.changes.onExhausted, m.GIVE_UP);
+  assert.ok(view.template.nodes.approve.performer.choices.includes(m.GIVE_UP), 'a person can answer it too');
+  ({ view } = m.setExhaustion(view, 'approve', 'changes', ''));
+  assert.deepEqual(view.template.nodes.approve.loops.changes, { maxIterations: 3 });
+  const gate = m.addDecider(ship, 'approve', { mode: 'anyone' }).view;
+  assert.throws(() => m.setExhaustion(gate, 'approve', 'changes', ''), /needs somewhere to go/);
+  // A template that already exhausts to agree shows it, marked.
+  const stored = structuredClone(gate);
+  stored.template.nodes.approve.loops.changes.onExhausted = 'ship';
+  assert.ok(m.exhaustionOptions(stored, 'approve', 'changes').find((o) => o.value === 'ship')?.skipsReview);
+  assert.ok(!m.exhaustionOptions(gate, 'approve', 'changes').some((o) => o.value === 'ship'), 'never offered otherwise');
+});
+
+test('an agent deciding a decision keeps it a decision: outcomes and loop stay', () => {
+  const { view } = m.setDecisionWho(ship, 'approve', { mode: 'role', role: 'reviewer' });
+  const node = view.template.nodes.approve;
+  assert.equal(node.type, 'decision');
+  assert.equal(node.performer.kind, 'agent');
+  assert.equal(node.performer.role, 'reviewer');
+  assert.equal(node.performer.choices, undefined, 'an agent reports one of the outcomes');
+  assert.deepEqual(m.outcomesOf(view, 'approve').map((o) => o.outcome), m.outcomesOf(ship, 'approve').map((o) => o.outcome));
+  assert.equal(node.loops.changes.maxIterations, ship.template.nodes.approve.loops.changes.maxIterations);
+  assert.equal(node.loops.changes.onExhausted, 'hold', 'an agent asked again could only pass it on: it goes somewhere safe');
+  const plain = m.removeOutcome(ship, 'approve', 'hold').view;
+  const agent = m.setDecisionWho(plain, 'approve', { mode: 'anyone' }).view;
+  assert.equal(agent.template.nodes.approve.loops.changes.onExhausted, m.GIVE_UP, 'never ship');
+  assert.ok(!m.exhaustionOptions(agent, 'approve', 'changes').some((o) => o.value === '' || o.value === 'ship'));
+  const { view: back } = m.setDecisionWho(view, 'approve', { mode: 'you' });
+  assert.deepEqual(back.template.nodes.approve.performer.choices, ['ship', 'changes', 'hold']);
+  assert.throws(() => m.setDecisionWho(ship, 'approve', { mode: 'command' }));
+});
+
+test('a "give-up" outcome that no longer fails is not mistaken for failing the run', () => {
+  let { view } = m.setExhaustion(ship, 'approve', 'changes', m.FAIL_RUN);
+  ({ view } = m.setOutcomeTarget(view, 'approve', m.GIVE_UP, 'merge'));
+  const options = m.exhaustionOptions(view, 'approve', 'changes');
+  assert.equal(new Set(options.map((o) => o.value)).size, options.length, 'no duplicate option values');
+  ({ view } = m.setExhaustion(view, 'approve', 'changes', m.FAIL_RUN));
+  const way = view.template.nodes.approve.loops.changes.onExhausted;
+  assert.equal(view.template.nodes[edge(view, 'approve', way)].result, 'failed', 'fail the run goes to a failed end');
+});
+
+test('an agent decision the operator did not touch keeps its behaviour through other edits', () => {
+  const agent = structuredClone(m.setDecisionWho(ship, 'approve', { mode: 'anyone' }).view);
+  delete agent.template.nodes.approve.loops.changes.onExhausted; // as a stored template may have it
+  const { view } = m.updateStep(agent, 'implement', (step) => setStepText(step, 'Do it differently.'));
+  assert.equal(view.template.nodes.approve.loops.changes.onExhausted, undefined);
+  assert.equal(edge(view, 'approve', m.GIVE_UP), undefined, 'no give-up appears');
+});
+
+test('inside a parallel branch no end is added: the server refuses an end there', () => {
+  // A decision on one branch of review ⫴ new step, looping back to review.
+  let { view } = m.runAlongside(ship, 'review', 'agent');
+  const branch = Object.keys(view.template.nodes).find((id) => !ship.template.nodes[id] && view.template.nodes[id].type !== 'parallel');
+  ({ view } = m.changeKind(view, branch, 'you'));
+  assert.ok(m.inParallelBranch(view, branch));
+  assert.ok(!m.inParallelBranch(view, 'implement'));
+  assert.ok(!m.exhaustionOptions(view, branch, 'continue').some((o) => o.value === m.FAIL_RUN));
+});
+
+test('a gate inside a parallel branch keeps its way out on the branch', () => {
+  const fan = steps['plan-fan-out-merge'];
+  const part = Object.keys(fan.template.nodes).find((id) => /part/.test(id));
+  let { view, id } = m.insertAfter(fan, part, 'you');
+  ({ view } = m.addOutcome(view, id, edge(view, id, 'continue')));
+  const redo = m.outcomesOf(view, id).map((o) => o.outcome).find((o) => o !== 'continue');
+  ({ view } = m.setOutcomeTarget(view, id, redo, part));
+  assert.ok(m.inParallelBranch(view, id), 'the fixture: a decision on a branch');
+  const ends = (v) => Object.values(v.template.nodes).filter((n) => n.type === 'end').length;
+  const before = ends(view);
+  ({ view } = m.addDecider(view, id, { mode: 'anyone' }));
+  assert.equal(ends(view), before, 'no end added inside the fork');
+  const way = view.template.nodes[id].loops[redo].onExhausted;
+  assert.ok(m.outcomesOf(view, id).some((o) => o.outcome === way), 'it goes along an existing outcome');
+  ({ view } = m.setDecisionWho(m.removeDecider(view, id, 0).view, id, { mode: 'anyone' }));
+  assert.equal(ends(view), before);
 });
