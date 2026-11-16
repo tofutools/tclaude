@@ -219,6 +219,7 @@ type dashHarness struct {
 	CanAutoReview              bool              `json:"can_auto_review"`
 	CanRemoteControl           bool              `json:"can_remote_control"`
 	TmuxScrollback             bool              `json:"tmux_scrollback"`
+	CommandInput               bool              `json:"command_input"`
 	CanObserveAwaitingInput    bool              `json:"can_observe_awaiting_input"`
 	CanTclaudeLayer            bool              `json:"can_tclaude_layer"`
 	TclaudeLayerServerBoundary bool              `json:"tclaude_layer_server_boundary"`

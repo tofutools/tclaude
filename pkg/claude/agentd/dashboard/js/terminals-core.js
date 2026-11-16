@@ -182,7 +182,7 @@ const MOUSE_REPORT = /^\x1b\[(<|M)/;
 // The keys a touch surface sends by name (key()): what a keyboard's key
 // would send. The arrows follow the application's cursor-key mode.
 const NAMED_KEYS = Object.freeze({
-  enter: '\r', esc: '\x1b', tab: '\t', 'ctrl-c': '\x03', backspace: '\x7f',
+  enter: '\r', esc: '\x1b', tab: '\t', space: ' ', 'ctrl-c': '\x03', backspace: '\x7f',
 });
 const CURSOR_KEYS = Object.freeze({ up: 'A', down: 'B', right: 'C', left: 'D' });
 // How long a shared view waits for the peer to answer its own size report

@@ -56,3 +56,56 @@ test('the terminal bar, pinch chip and message sheet', async ({ page }) => {
   await expect(term).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+// A shell (here an agent made a --harness shell one in the snapshot): the
+// command-line key strip, and › Type into …, which types the text into the
+// pane's socket as keystrokes, with no message header, then Enter if asked.
+test('a shell terminal types straight in and has the command-line keys', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(`page error: ${error.message}`));
+  const first = await (await page.request.get('/api/snapshot')).json();
+  const agent = (first.groups || []).flatMap((g) => g.members || []).find((m) => m.online);
+  await page.route('**/api/snapshot*', async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const member of [...(body.groups || []).flatMap((g) => g.members || []), ...(body.ungrouped || [])]) {
+      if (member?.agent_id !== agent.agent_id) continue;
+      member.harness = 'shell';
+      if (member.state) member.state.harness = 'shell';
+    }
+    await route.fulfill({ response, json: body });
+  });
+  const typed = [];
+  await page.routeWebSocket(/-ws\//, (ws) => {
+    ws.onMessage((data) => { if (typeof data !== 'string') typed.push(Buffer.from(data).toString('utf8')); });
+    ws.send(Buffer.from('\x1b[?1049h$ \r\n'));
+  });
+  await page.goto(`/?terminal=${encodeURIComponent(`window:${agent.agent_id}`)}`);
+  await page.waitForFunction(() => !document.body.classList.contains('dashboard-booting'), null, { timeout: 60_000 });
+
+  const term = page.locator('.phone-term[role=dialog]');
+  const keys = term.locator('.phone-term-key');
+  await expect(keys).toHaveText(['←', '→', '↑', '↓', '⇥', '␣', '⏎', 'Esc', '^C', 'Copy']);
+  // Every key fits its label on the phone: none is clipped.
+  for (const box of await keys.evaluateAll((all) => all.map((k) => [k.scrollWidth, k.clientWidth]))) {
+    expect(box[0]).toBeLessThanOrEqual(box[1]);
+  }
+  await expect(term.getByRole('button', { name: /^✉ Message/ })).toHaveCount(0);
+
+  typed.length = 0;
+  await term.getByRole('button', { name: 'Tab' }).click();
+  await term.getByRole('button', { name: 'Left' }).click();
+  await expect.poll(() => typed.join('')).toBe('\t\x1b[D');
+
+  await term.locator('.phone-term-type').click();
+  const sheet = page.locator('.phone-sheet[role=dialog]');
+  const field = sheet.getByRole('textbox', { name: /^Text to type into/ });
+  await expect(field).toBeFocused();
+  await field.fill('git status');
+  typed.length = 0;
+  await sheet.getByRole('button', { name: 'Type + ⏎' }).click();
+  await expect(sheet).toBeHidden();
+  await expect.poll(() => typed.join('')).toBe('git status\r');
+  expect(typed.join('')).not.toContain('message from');
+  expect(errors).toEqual([]);
+});

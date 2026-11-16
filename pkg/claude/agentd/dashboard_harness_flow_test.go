@@ -94,6 +94,11 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, codex.CanBuiltinOSSandbox, "Codex owns a real built-in OS sandbox")
 	assert.False(t, codex.CanRemoteControl, "codex has no built-in Remote Access — the toggle must be gated off")
 	assert.True(t, codex.TmuxScrollback, "codex scrolls tmux copy-mode: the phone terminal shows ↓ Live")
+	assert.False(t, claude.CommandInput, "claude takes messages: the phone terminal keeps ✉ Message and 1 2 3")
+	assert.False(t, codex.CommandInput, "codex takes messages too")
+	shell := findDashHarness(snap, harness.ShellName)
+	require.NotNil(t, shell, "catalog missing the shell harness")
+	assert.True(t, shell.CommandInput, "a shell takes command input: the phone terminal types into it and has the command-line keys")
 	assert.Equal(t, harness.MustGet(harness.CodexName).SupportsAwaitingInputObservation(),
 		codex.CanObserveAwaitingInput, "awaiting-input observation follows the harness registry")
 	assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.HarnessBuiltinModes)

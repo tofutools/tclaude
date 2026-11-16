@@ -7,9 +7,13 @@
 // socket, and coming back redials.
 //
 // A phone has no keyboard to spare, so the terminal does not raise one. Input
-// is the agent's message sheet (✉ Message, the desktop's Ctrl+M), a key strip
-// for the answers a harness asks for (1 2 3, the arrows, Enter, Esc, ^C), and
-// ⌨ beside ✉ for raw typing. The bar shows the agent's state and, behind ⋯,
+// depends on what runs in it (terminalKind). An agent's terminal has the
+// agent's message sheet (✉ Message, the desktop's Ctrl+M) and a key strip for
+// the answers a harness asks for (1 2 3, the arrows, Enter, Esc, ^C). A
+// shell's (a group shell, or an agent of a command-input harness) has a sheet
+// that types straight into it, with no message header, and a strip of the
+// keys a command line wants (the four arrows, Tab, Space, Enter, Esc, ^C).
+// Both have ⌨ for raw typing. The bar shows the agent's state and, behind ⋯,
 // what else a phone can do to it (the Agents view's sheet). A pinch sets the
 // text size, which the pinch chip shows and resets, and the grid reflows to
 // fit. A
@@ -29,6 +33,7 @@ import { IconButton, StatePill } from './phone-ui.js';
 import { TerminalText, indexAt, linkAt, openLinkSheet, screenLines, useTerminalTouch, wordAt } from './phone-terminal-text.js';
 import { writeClipboard } from './insecure-origin.js';
 import { shellToast } from './shell-state.js';
+import { openTypeSheet } from './phone-terminal-type.js';
 
 const html = htm.bind(h);
 
@@ -61,6 +66,17 @@ function terminalHarness(seed, agent = () => null, known = false) {
   if (!harness && seed?.agent) harness = agent(seed.agent)?.harness || '';
   if (!harness && agentId && !known) harness = 'claude';
   return harness;
+}
+
+// terminalKind is what a terminal's input is for: 'shell' for a terminal of
+// no agent (a group shell) or of an agent whose harness takes command input
+// (the catalog's command_input: --harness shell), else 'agent'. An agent of a
+// harness the catalog does not (yet) know is an agent's.
+export function terminalKind(seed, { harnesses = [], agent = () => null } = {}) {
+  if (!(seed?.agent || seed?.remote?.agent)) return 'shell';
+  const harness = terminalHarness(seed, agent, true);
+  const known = (Array.isArray(harnesses) ? harnesses : []).find((h) => h?.name === harness);
+  return known?.command_input === true ? 'shell' : 'agent';
 }
 
 // swipeWheel is how far a terminal's session scrolls a wheel notch, for the
@@ -126,14 +142,24 @@ export function registerPhoneTerminalRoute(agent) {
 export const PHONE_TERMINAL_FONT = 11;
 const FONT_SURFACE = 'phone';
 
-// The key strip: each key's name for widget.key(), its label and its
-// spoken name.
+// The key strips, by terminalKind: each key's name for widget.key(), its
+// label and its spoken name. Copy follows each. An agent's answers a
+// harness's numbered prompts; a shell's moves along and through a command
+// line.
 const strip = (name, label, spoken = label) => Object.freeze({ name, label, spoken });
-export const KEY_STRIP = Object.freeze([
-  strip('1', '1'), strip('2', '2'), strip('3', '3'),
-  strip('up', '↑', 'Up'), strip('down', '↓', 'Down'), strip('enter', '⏎', 'Enter'),
-  strip('esc', 'Esc', 'Escape'), strip('ctrl-c', '^C', 'Control C'),
-]);
+export const KEY_STRIPS = Object.freeze({
+  agent: Object.freeze([
+    strip('1', '1'), strip('2', '2'), strip('3', '3'),
+    strip('up', '↑', 'Up'), strip('down', '↓', 'Down'), strip('enter', '⏎', 'Enter'),
+    strip('esc', 'Esc', 'Escape'), strip('ctrl-c', '^C', 'Control C'),
+  ]),
+  shell: Object.freeze([
+    strip('left', '←', 'Left'), strip('right', '→', 'Right'), strip('up', '↑', 'Up'), strip('down', '↓', 'Down'),
+    strip('tab', '⇥', 'Tab'), strip('space', '␣', 'Space'), strip('enter', '⏎', 'Enter'),
+    strip('esc', 'Esc', 'Escape'), strip('ctrl-c', '^C', 'Control C'),
+  ]),
+});
+export const KEY_STRIP = KEY_STRIPS.agent;
 
 function useDocumentVisible(documentRef) {
   const [visible, setVisible] = useState(documentRef.visibilityState !== 'hidden');
@@ -166,7 +192,7 @@ function useVisualViewport(windowRef) {
 
 // TerminalSurface owns the widget. Preact renders the host div and never a
 // child into it: the widget alone owns what is inside.
-function TerminalSurface({ seed, deps, labelRef, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange, onTap, onHold }) {
+function TerminalSurface({ seed, deps, kind, labelRef, onWidget, onFontChange, onStatus, onWaitingChange, onReconnectChange, onScrollBackChange, onTap, onHold }) {
   const host = useRef(null);
   // A tap on a link, or a still hold, on the terminal itself
   // (phone-terminal-text.js); the zoom chip and Live are not the terminal.
@@ -192,7 +218,7 @@ function TerminalSurface({ seed, deps, labelRef, onWidget, onFontChange, onStatu
       onStatus,
       onWaitingChange,
       onReconnectChange,
-      onComposeMessage: seed.agent && deps.onComposeMessage
+      onComposeMessage: kind === 'agent' && seed.agent && deps.onComposeMessage
         // The bar's name, read when pressed: the widget keeps its options.
         ? () => deps.onComposeMessage({ agent: seed.agent, label: labelRef.current })
         : null,
@@ -296,8 +322,26 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   const label = row?.name || seed.label || '';
   const labelRef = useRef(label);
   labelRef.current = label;
-  const message = seed.agent && deps.onComposeMessage
+  // What runs in it, read each render: on a cold link an agent's harness
+  // is known only once the snapshot arrives.
+  const kind = terminalKind(seed, { harnesses: deps.harnesses?.() || [], agent: deps.agent || (() => null) });
+  const keys = KEY_STRIPS[kind];
+  const message = kind === 'agent' && seed.agent && deps.onComposeMessage
     ? () => deps.onComposeMessage({ agent: seed.agent, label })
+    : null;
+  // A shell's text goes in as typed: the widget's paste, the path its own
+  // keys take, then Enter when asked.
+  const typeInto = label || 'the terminal';
+  const type = kind === 'shell'
+    ? () => openTypeSheet({
+      name: typeInto,
+      type: (text, enter) => {
+        const term = widget.current;
+        if (!term) return false;
+        if (text && !term.paste(text)) return false;
+        return enter ? term.key('enter') !== false : true;
+      },
+    })
     : null;
   const live = status === 'connected';
   const note = runtime === 'failed' ? 'The terminal could not load.'
@@ -318,7 +362,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
       ${row && deps.agentMenu && html`<${IconButton} icon="⋯" label=${`${row.name}: more`} onClick=${() => deps.agentMenu(row, { selectText: () => openSelect() })} />`}
     </header>
     <div class="phone-term-body">
-      ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} labelRef=${labelRef} onWidget=${onWidget}
+      ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} kind=${kind} labelRef=${labelRef} onWidget=${onWidget}
         onFontChange=${onFontChange} onStatus=${setStatus} onWaitingChange=${setWaiting} onReconnectChange=${setReconnect}
         onScrollBackChange=${setScrolledBack} onTap=${onTap} onHold=${openSelect} />`}
       ${sized && html`<button data-ui-exempt type="button" class="phone-term-zoom" onMouseDown=${keepFocus}
@@ -332,14 +376,15 @@ export function PhoneTerminal({ seed, deps, onClose }) {
         ${reconnect && html`<button data-ui-exempt type="button" class="phone-term-reconnect" onClick=${() => void widget.current?.connect()}>Reconnect</button>`}
       </div>`}
     </div>
-    <div class="phone-term-keys" role="group" aria-label="Keys">
-      ${KEY_STRIP.map(({ name: k, label, spoken }) => html`<button data-ui-exempt key=${k} type="button" class="phone-term-key"
+    <div class=${`phone-term-keys phone-term-keys-${kind}`} role="group" aria-label="Keys" style=${`--phone-term-keys:${keys.length + 1}`}>
+      ${keys.map(({ name: k, label, spoken }) => html`<button data-ui-exempt key=${k} type="button" class="phone-term-key"
         aria-label=${spoken} onMouseDown=${keepFocus} onClick=${() => widget.current?.key(k)}>${label}</button>`)}
       <button data-ui-exempt type="button" class="phone-term-key phone-term-copy-key" aria-label="Select and copy text"
         onMouseDown=${keepFocus} onClick=${() => openSelect()}>Copy</button>
     </div>
     <div class="phone-term-input">
       ${message && !keyboard && html`<button data-ui-exempt type="button" class="phone-term-compose" onClick=${message}>✉ Message ${name}…</button>`}
+      ${type && !keyboard && html`<button data-ui-exempt type="button" class="phone-term-compose phone-term-type" onClick=${type}>› Type into ${typeInto}…</button>`}
       <button data-ui-exempt type="button" class=${`phone-term-kbd${keyboard ? ' on' : ''}`} aria-pressed=${keyboard ? 'true' : 'false'}
         aria-label="Keyboard" title="Type into the terminal" onMouseDown=${keepFocus} onClick=${toggleKeyboard}>⌨</button>
     </div>
