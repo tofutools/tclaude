@@ -2,7 +2,7 @@
 // offline agent (perf-audit, seedSandboxOfflineSender) goes to its row in
 // Agents with its group unfolded and Show offline turned on, the row glowing,
 // and Power on one tap away in its menu; Back returns to the message. The
-// sender's Terminal › looks off but a tap says why. In All groups too.
+// sender's Terminal › looks off but a tap says why. In the List layout too.
 //
 //   scripts/sandbox/ui.sh smoke phone-agent-find
 import { test, expect, devices } from '@playwright/test';
@@ -16,12 +16,27 @@ async function booted(page) {
 
 const nav = (page) => page.getByRole('navigation', { name: 'Views' });
 
+// view sets the Agents view's settings from its View sheet (the sliders in
+// the top bar): Show offline, the layout, or Reset.
+async function view(page, change) {
+  await page.getByRole('button', { name: /^View/ }).click();
+  const sheet = page.locator('[data-agents-view]');
+  await expect(sheet).toBeVisible();
+  await change(sheet);
+  await page.keyboard.press('Escape');
+  await expect(sheet).toHaveCount(0);
+}
+const offlineSwitch = (sheet) => sheet.getByRole('switch', { name: /^Offline agents/ });
+const offlinePref = (page) => page.evaluate(() => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
+  .then((r) => r.json()).then((prefs) => prefs['tclaude.dash.phone.agents.offline'] ?? null));
+
 // hideIt folds webshop and turns Show offline off in the Agents view on
 // screen, so perf-audit's row is nowhere to be seen.
 async function hideIt(page) {
-  const offline = page.getByRole('button', { name: 'Show offline' });
-  if (await offline.getAttribute('aria-pressed') === 'true') await offline.click();
-  await expect(offline).toHaveAttribute('aria-pressed', 'false');
+  await view(page, async (sheet) => {
+    if (await offlineSwitch(sheet).isChecked()) await offlineSwitch(sheet).click();
+    await expect(offlineSwitch(sheet)).not.toBeChecked();
+  });
   const caret = page.getByRole('button', { name: /^(Fold|Unfold) webshop$/ });
   if (await caret.getAttribute('aria-expanded') === 'true') await caret.click();
   await expect(caret).toHaveAttribute('aria-expanded', 'false');
@@ -45,7 +60,7 @@ async function expectFound(page) {
   const row = page.locator('.phone-agent', { has: page.locator('.phone-agent-title', { hasText: /^perf-audit$/ }) }).first();
   await expect(row).toHaveClass(/phone-agent-found/);
   await expect(row).toBeInViewport();
-  await expect(page.getByRole('button', { name: 'Show offline' })).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => offlinePref(page), 'Show offline is on again').toBe(null);
   await expect(page.getByRole('button', { name: /^Fold webshop$/ })).toHaveAttribute('aria-expanded', 'true');
   // The glow goes after a while (FOUND_MS).
   await expect(row).not.toHaveClass(/phone-agent-found/, { timeout: 8_000 });
@@ -81,21 +96,24 @@ test('Find › on an offline sender: its row in Agents, glowing, Power on a tap 
   expect(errors).toEqual([]);
 });
 
-test('Find › in All groups unfolds the tree to the agent', async ({ page }) => {
+test('Find › in the List layout goes to the agent', async ({ page }) => {
   await page.goto('/groups');
   await booted(page);
-  await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^All groups/ }).click();
+  await view(page, (sheet) => sheet.getByRole('button', { name: 'List', exact: true }).click());
   try {
     await hideIt(page);
     await openPerfMail(page);
     await page.getByRole('button', { name: 'Find perf-audit in Agents' }).click();
-    await expect(page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^All groups/ })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.phone-agents-sub')).toHaveCount(0);
     await expectFound(page);
   } finally {
-    // The view is a daemon pref: leave Active for the smokes after this one.
+    // The settings are daemon prefs: put them back for the smokes after this.
     await page.goto('/groups');
     await booted(page);
-    await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Active/ }).click();
+    await view(page, async (sheet) => {
+      const reset = sheet.getByRole('button', { name: 'Reset' });
+      if (await reset.isEnabled()) await reset.click();
+    });
   }
 });
 

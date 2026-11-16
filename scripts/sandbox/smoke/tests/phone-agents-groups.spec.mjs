@@ -64,7 +64,7 @@ test('Agents: the chips filter by several groups, a caret folds its group across
   // The fold is kept in the daemon's prefs: a reload keeps it folded.
   // The prefs write is debounced (prefs.js): wait until the daemon has it.
   await expect.poll(() => page.evaluate((key) => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
-    .then((r) => r.json()).then((prefs) => prefs[key] ?? null), `tclaude.dash.phone.fold.${first}`)).toBe('1');
+    .then((r) => r.json()).then((prefs) => prefs[key] ?? null), `tclaude.dash.phone.tree.fold.${first}`)).toBe('1');
   await page.reload();
   await booted(page);
   await nav(page, 'Agents').click();

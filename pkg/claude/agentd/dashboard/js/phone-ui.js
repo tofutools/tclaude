@@ -119,11 +119,12 @@ export function ScopeBadge({ kind = 'ro', children }) {
 }
 
 // IconButton is an app-bar action: a 44px square with a glyph, its label for
-// screen readers and as a tooltip. badge is a count in its corner.
-export function IconButton({ icon, label, onClick, disabled = false, danger = false, badge = 0, class: extra, ...rest }) {
+// screen readers and as a tooltip. badge is a count in its corner; dot a
+// plain dot there instead (something is off its defaults).
+export function IconButton({ icon, label, onClick, disabled = false, danger = false, badge = 0, dot = false, class: extra, ...rest }) {
   return html`<button data-ui-exempt type="button" ...${rest} class=${join('phone-ib', danger && 'danger', extra)}
     aria-label=${label} title=${label} disabled=${disabled} onClick=${onClick}>
-    <span aria-hidden="true">${icon}</span>${badge > 0 && html`<span class="ui-badge ui-badge-accent phone-ib-badge">${badge}</span>`}
+    <span aria-hidden="true">${icon}</span>${badge > 0 && html`<span class="ui-badge ui-badge-accent phone-ib-badge">${badge}</span>`}${!badge && dot && html`<span class="phone-ib-dot" aria-hidden="true"></span>`}
   </button>`;
 }
 

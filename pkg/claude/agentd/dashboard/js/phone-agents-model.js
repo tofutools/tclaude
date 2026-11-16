@@ -26,13 +26,6 @@ export function toggleFilter(filter, key) {
   return filter.includes(key) ? filter.filter((k) => k !== key) : [...filter, key];
 }
 
-// FOLD_PREF is where a phone keeps a group section folded ('1'), in the
-// daemon's dashboard prefs (prefs.js) as the desktop keeps its own group
-// folds, under keys of its own so a phone's fold never folds the desktop's
-// tree. By group name; the agents in no group are under UNGROUPED.
-export const FOLD_PREF = 'tclaude.dash.phone.fold.';
-export const foldPref = (group) => FOLD_PREF + (group.group ? group.name : UNGROUPED);
-
 // A group's tab key: prefixed, so no group name collides with All or
 // Ungrouped.
 export const groupKey = (name) => `g:${name}`;
@@ -212,13 +205,6 @@ export function stateSummary(rows) {
   return [...counts.values()].sort((a, b) => rank(a.text) - rank(b.text));
 }
 
-// groupTabs are the chips above the list: All, then each group, with how
-// many agents each has.
-export function groupTabs(groups) {
-  const all = groups.reduce((sum, g) => ({ online: sum.online + g.live, total: sum.total + g.total }), { online: 0, total: 0 });
-  return [{ key: ALL, label: 'All', ...all }, ...groups.map((g) => ({ key: g.key, label: g.name, online: g.live, total: g.total }))];
-}
-
 // metaParts are a row's second line: role, harness, then the PR or the
 // branch. Its context is the meter by its pill (context-meter.js). An offline agent's ends in "resume ›", what its tap does.
 export function metaParts(row) {
@@ -252,18 +238,6 @@ export function spawnBody({ prompt = '', name = '', profile = '' } = {}) {
   return body;
 }
 
-// liveFilter is the filter without the groups that went away.
-export function liveFilter(groups, filter) {
-  return (filter || []).filter((key) => groups.some((g) => g.key === key));
-}
-
-// shownGroups is what a filter shows, in the groups' order: every group when
-// none is picked (or every one picked went away).
-export function shownGroups(groups, filter) {
-  const keys = liveFilter(groups, filter);
-  return keys.length ? groups.filter((g) => keys.includes(g.key)) : groups;
-}
-
 // findRow finds an agent's row by its key, with its group: in the group
 // groupKey names when given (an agent can sit in several), else the first.
 export function findRow(groups, key, inGroup = '') {
@@ -275,44 +249,66 @@ export function findRow(groups, key, inGroup = '') {
   return null;
 }
 
-// The Agents view's two modes: Active (the groups with agents, online first)
-// and All groups (every group, as the desktop's tree). VIEW_PREF keeps the
-// one picked, per viewer like the folds: 'all', or nothing for Active.
-export const ACTIVE = 'active';
-export const ALL_GROUPS = 'all';
-export const VIEW_PREF = 'tclaude.dash.phone.agents.view';
-export const agentsView = (prefs) => (prefs.getItem(VIEW_PREF) === ALL_GROUPS ? ALL_GROUPS : ACTIVE);
-
-// TREE_FOLD_PREF is where All groups keeps a group folded ('1') or unfolded
-// ('0'); with neither, a group is folded when nothing in it is online (its
-// own agents or its subgroups'). Apart from Active's folds (FOLD_PREF), whose
-// default is the other way round.
+// TREE_FOLD_PREF is where the Agents view keeps a group folded ('1') or
+// unfolded ('0'); with neither, a group is folded when nothing in it is
+// online (its own agents or its subgroups').
 export const TREE_FOLD_PREF = 'tclaude.dash.phone.tree.fold.';
 export const treeFoldPref = (node) => TREE_FOLD_PREF + (node.group ? node.name : UNGROUPED);
 
-// ACTIVE_FOLD and TREE_FOLD are the two views' folds, as the one groups
-// list (phone-agents-island.js AgentGroupsList) takes them: pref(node) is
-// the remembered fold's key, folded(node, saved) whether the group is folded
-// given what was remembered ('1', '0' or null), and remember(prefs, node,
-// folded) remembers a fold (Active keeps only the folded ones).
-export const ACTIVE_FOLD = Object.freeze({
-  pref: foldPref,
-  folded: (node, saved) => saved === '1',
-  remember: (prefs, node, folded) => { if (folded) prefs.setItem(foldPref(node), '1'); else prefs.removeItem(foldPref(node)); },
-});
+// TREE_FOLD is the view's fold, as the groups list (phone-agents-island.js
+// AgentGroupsList) takes it: pref(node) is the remembered fold's key,
+// folded(node, saved) whether the group is folded given what was remembered
+// ('1', '0' or null), and remember(prefs, node, folded) remembers a fold.
 export const TREE_FOLD = Object.freeze({
   pref: treeFoldPref,
   folded: (node, saved) => saved === '1' || (saved !== '0' && !!node.dim),
   remember: (prefs, node, folded) => prefs.setItem(treeFoldPref(node), folded ? '1' : '0'),
 });
 
-// ARCHIVED_PREF shows the archived groups ('1') at the end of All groups.
-// OFFLINE_PREF hides ('0') offline agents, and in All groups the groups with
-// nobody online, in both modes; shown otherwise, as before there was a
-// switch. Per viewer, like the mode.
-export const ARCHIVED_PREF = 'tclaude.dash.phone.agents.archived';
+// The Agents view's settings, from its View sheet (the header's sliders),
+// per viewer like the folds: layout ('tree' nests subgroups and puts workers
+// under their lead, 'list' is one level), offline (offline agents, and the
+// groups with nobody online), empty (groups with no agents), archived
+// (archived groups, last) and order (how groups are ordered: ORDERS).
+// Each is kept only when it is off its default (VIEW_DEFAULTS); OFFLINE_PREF
+// and ARCHIVED_PREF keep the values they had before there was a sheet.
+export const LAYOUT_PREF = 'tclaude.dash.phone.agents.layout';
 export const OFFLINE_PREF = 'tclaude.dash.phone.agents.offline';
-export const showOffline = (prefs) => prefs.getItem(OFFLINE_PREF) !== '0';
+export const EMPTY_PREF = 'tclaude.dash.phone.agents.empty';
+export const ARCHIVED_PREF = 'tclaude.dash.phone.agents.archived';
+export const ORDER_PREF = 'tclaude.dash.phone.agents.order';
+export const LAYOUTS = Object.freeze(['tree', 'list']);
+// ORDERS: the operator's group order (as on the desktop), what needs them
+// first (errors, approvals, questions), the most active first (working),
+// or by name.
+export const ORDERS = Object.freeze(['yours', 'needs', 'active', 'name']);
+export const VIEW_DEFAULTS = Object.freeze({ layout: 'tree', offline: true, empty: false, archived: false, order: 'yours' });
+
+export function viewSettings(prefs) {
+  const layout = prefs.getItem(LAYOUT_PREF);
+  const order = prefs.getItem(ORDER_PREF);
+  return {
+    layout: LAYOUTS.includes(layout) ? layout : VIEW_DEFAULTS.layout,
+    offline: prefs.getItem(OFFLINE_PREF) !== '0',
+    empty: prefs.getItem(EMPTY_PREF) === '1',
+    archived: prefs.getItem(ARCHIVED_PREF) === '1',
+    order: ORDERS.includes(order) ? order : VIEW_DEFAULTS.order,
+  };
+}
+
+// saveViewSettings keeps settings, forgetting each one at its default.
+export function saveViewSettings(prefs, settings) {
+  const keep = (key, value, at) => { if (at) prefs.removeItem(key); else prefs.setItem(key, value); };
+  keep(LAYOUT_PREF, settings.layout, settings.layout === VIEW_DEFAULTS.layout);
+  keep(OFFLINE_PREF, '0', settings.offline);
+  keep(EMPTY_PREF, '1', !settings.empty);
+  keep(ARCHIVED_PREF, '1', !settings.archived);
+  keep(ORDER_PREF, settings.order, settings.order === VIEW_DEFAULTS.order);
+}
+
+// atDefaults is whether every setting is at its default: the header's
+// sliders carry a dot when not.
+export const atDefaults = (settings) => Object.keys(VIEW_DEFAULTS).every((key) => settings[key] === VIEW_DEFAULTS[key]);
 
 // groupsTree is every group as the desktop's Groups tree nests them
 // (buildGroupTree): a node is a groupEntry with children (its subgroups),
@@ -372,6 +368,44 @@ export function treeRank(node) {
   return node.populated ? 1 : 2;
 }
 
+// NEEDS_TONES are the pills that need the operator: an error (or crash), an
+// approval, a question.
+const NEEDS_TONES = Object.freeze(['err', 'key', 'ask']);
+const counted = (n, tones) => treeNodes([n]).reduce((sum, x) => sum + x.summary.filter((s) => tones.includes(s.tone)).reduce((k, s) => k + s.count, 0), 0);
+
+// agentsLayout is what the Agents view lists under its settings
+// (viewSettings): the groups as groupsTree has them (offline, archived),
+// without the empty ones unless asked, as the tree or one level (each
+// subgroup its own section, each worker its own row), ordered by
+// settings.order at every level, archived ones last.
+export function agentsLayout(snapshot, order = (groups) => groups, settings = VIEW_DEFAULTS) {
+  const { nodes } = groupsTree(snapshot, order, { showArchived: settings.archived, offline: settings.offline });
+  const flat = settings.layout === 'list'
+    ? treeNodes(nodes).map((n) => ({
+      ...n, children: [], tree: [...n.shown, ...n.offline].map((row) => ({ row, kids: [] })),
+      dim: !(n.live > 0 || n.shown.length > 0), populated: n.total > 0,
+    }))
+      // Without offline a group with nobody listed goes: the tree kept it
+      // only for a subgroup, which is its own section here.
+      .filter((n) => settings.offline || n.populated)
+    : nodes;
+  const prune = (list) => list.flatMap((n) => {
+    const children = prune(n.children);
+    return !settings.empty && n.empty && !children.length ? [] : [{ ...n, children }];
+  });
+  const at = new Map(order((snapshot?.groups || []).filter((g) => g?.name)).map((g, i) => [groupKey(g.name), i]));
+  const place = (n) => (n.group ? at.get(n.key) ?? Infinity : Infinity);
+  const by = {
+    yours: (a, b) => place(a) - place(b),
+    needs: (a, b) => (counted(b, NEEDS_TONES) - counted(a, NEEDS_TONES)) || (treeRank(a) - treeRank(b)) || (place(a) - place(b)),
+    active: (a, b) => (treeRank(a) - treeRank(b)) || (counted(b, ['work']) - counted(a, ['work'])) || (place(a) - place(b)),
+    name: (a, b) => (!a.group - !b.group) || a.name.localeCompare(b.name),
+  }[settings.order] || ((a, b) => place(a) - place(b));
+  const sorted = (list) => list.map((n) => ({ ...n, children: sorted(n.children) }))
+    .sort((a, b) => (a.archived - b.archived) || by(a, b) || 0);
+  return sorted(prune(flat));
+}
+
 // treeNodes is every node of a tree, each before its subgroups.
 export function treeNodes(nodes) {
   return nodes.flatMap((n) => [n, ...treeNodes(n.children)]);
@@ -422,20 +456,12 @@ export function groupSummaryLine(entry) {
 // findAgent is where an agent (its agent id or conversation id) sits in the
 // Agents view, offline agents and archived groups counted:
 // { row, groupKey, path, archived } with path the keys from the outermost
-// group down to its own (All groups nests them; Active has only its own) and
-// archived whether its group is, or null when no group holds it (retired,
-// deleted, or never here). An agent in several groups is found in the first
-// one the view lists.
-export function findAgent(snapshot, id, view = ACTIVE, order = (groups) => groups) {
+// group down to its own, and archived whether its group is, or null when no
+// group holds it (retired, deleted, or never here). An agent in several
+// groups is found in the first one the tree lists.
+export function findAgent(snapshot, id, order = (groups) => groups) {
   if (!snapshot || !id) return null;
   const has = (g) => [...g.shown, ...g.offline].find((row) => row.agent === id || row.conv === id || row.member?.agent_id === id);
-  if (view !== ALL_GROUPS) {
-    for (const g of agentGroups(snapshot, order, { offline: true })) {
-      const row = has(g);
-      if (row) return { row, groupKey: g.key, path: [g.key], archived: !!g.group?.archived };
-    }
-    return null;
-  }
   const walk = (nodes, above) => {
     for (const node of nodes) {
       const row = has(node);

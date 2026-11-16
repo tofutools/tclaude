@@ -13,7 +13,7 @@ const GROUP_KEY_PREFIXES = Object.freeze([
   'tclaude.dash.groups.fused.agents.',
   'tclaude.dash.groups.fused.processes.',
   'tclaude.dash.groups.fused.subgroups.',
-  'tclaude.dash.phone.fold.',
+  'tclaude.dash.phone.tree.fold.',
 ]);
 
 function movePref(prefs, oldKey, newKey) {

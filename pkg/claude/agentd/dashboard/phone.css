@@ -378,6 +378,11 @@
 :root[data-layout="phone"] .phone-ib:disabled { opacity: .5; cursor: default; }
 :root[data-layout="phone"] .phone-ib.danger { color: var(--ui-danger-text); }
 :root[data-layout="phone"] .phone-ib-badge { position: absolute; top: 2px; right: 0; min-width: 16px; font-size: 10px; }
+/* A plain dot in its corner: a view's settings are off their defaults. */
+:root[data-layout="phone"] .phone-ib-dot {
+  position: absolute; top: 9px; right: 7px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--ui-focus); box-shadow: 0 0 0 2px var(--ui-bg);
+}
 
 /* ButtonRow: a card's actions, equal widths in one row. */
 :root[data-layout="phone"] .phone-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
