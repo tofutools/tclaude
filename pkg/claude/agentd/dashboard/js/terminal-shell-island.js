@@ -133,6 +133,10 @@ function composeTarget(pane, actions) {
 
 // composeAgent is the agent a pane's Ctrl/Cmd+M messages, or ''.
 function composeAgent(pane) {
+  // A shell in an agent's directory is not the agent: ✉ Message (and Ctrl+M,
+  // and dictation's target) would message the agent from what reads as a
+  // shell, and the shell itself takes typing directly.
+  if (isAgentDirShell(pane)) return '';
   return pane?.seed?.agent || (SAFE_REMOTE_AGENT.test(pane?.seed?.remote?.agent || '') ? pane.seed.remote.agent : '');
 }
 const SAFE_REMOTE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
