@@ -206,7 +206,8 @@
 :root[data-layout="phone"] .phone-agents-subcard-head { display: flex; gap: 8px; font-weight: 600; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-agents-subcard .phone-agents-summary { margin: 0; }
 :root[data-layout="phone"] .phone-agents-chev { margin-left: auto; color: var(--ui-muted-text); }
-:root[data-layout="phone"] .phone-agents-note { margin: 4px 4px 8px; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-agents-note,
+:root[data-layout="phone"] .phone-group-shell-where { margin: 4px 4px 8px; color: var(--ui-muted-text); font-size: 13px; }
 /* A row a link found (/groups?agent=, agent-route.js) glows: two slow pulses
    of the accent, then it fades back, about 3s (FOUND_MS). With reduced
    motion, an outline that stays still and fades. */

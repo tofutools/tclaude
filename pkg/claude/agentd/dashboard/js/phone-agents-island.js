@@ -302,7 +302,7 @@ export function GroupPage({ page, actions, list, onOpen, spawn, snapshot = null,
         key: 'shell', label: '›_ Shell', disabled: !shell.dir, title: shell.dir ? `A shell in ${shell.dir}` : shell.why,
         ariaLabel: shell.dir ? `Open a shell in ${shell.dir}` : 'Shell: this group has no default directory', onClick: () => openShell(name),
       }]} />
-        <p class="phone-agents-note phone-group-shell-where" data-group-shell=${shell.dir ? 'dir' : 'none'}>${shell.dir ? `In ${shell.dir}` : shell.why}</p>`}
+        <p class="phone-group-shell-where" data-group-shell=${shell.dir ? 'dir' : 'none'}>${shell.dir ? `In ${shell.dir}` : shell.why}</p>`}
     <//>
     <${Section} title="Subgroups" count=${page.children.length || null}>
       ${page.children.length
