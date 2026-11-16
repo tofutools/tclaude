@@ -206,7 +206,7 @@ test('an open message is a full-screen page with a back button and a reply bar',
   await harness.act(() => phonePage.value.actions[2].onClick());
   assert.deepEqual(calls.at(-1), ['deleteOneMessage', 1]);
 
-  // Reached without a tap on the list (a deep link), back closes in place.
+  // With no router to step back through, back closes in place.
   await harness.act(() => phonePage.value.onBack());
   assert.deepEqual(calls.at(-1), ['closeMessage']);
   await harness.act(() => { view.value = { ...view.value, selectedMsgId: null }; });
@@ -222,32 +222,23 @@ test('an agent filter narrows the agent picker, never the folder chips', async (
     ['Human 1', 'All agent mail', 'Access 2', 'webshop 3']);
 });
 
-test('back goes through history only for the reader the list just pushed', async (t) => {
-  const { harness, view, phonePage, calls, $, tap } = await setup(t);
-  const backs = [];
-  const had = Object.getOwnPropertyDescriptor(globalThis, 'history');
-  Object.defineProperty(globalThis, 'history', { configurable: true, value: { length: 3, back: () => backs.push('back') } });
-  t.after(() => {
-    if (had) Object.defineProperty(globalThis, 'history', had);
-    else delete globalThis.history;
-  });
-  const showReader = (id) => harness.act(() => { view.value = { ...view.value, selectedMsgId: id }; });
-
-  await tap($('.phone-mail-open'));
-  await showReader(1);
+test('back leads to the open folder\'s list: a step back onto it when the router can, else in place', async (t) => {
+  const { harness, phonePage, calls } = await setup(t, { selectedMsgId: 1 });
+  const [bridge, back] = await Promise.all([
+    harness.importDashboardModule('js/mail-bridge.js'),
+    harness.importDashboardModule('js/nav-back.js'),
+  ]);
+  t.after(bridge.registerMailController({ mailLocation: () => ({ tab: 'messages', selection: 'human', item: '1' }) }));
+  const asked = [];
+  let below = true;
+  t.after(back.registerStepBack((parent) => { asked.push(parent); return below; }));
+  const before = calls.length;
   await harness.act(() => phonePage.value.onBack());
-  assert.deepEqual(backs, ['back'], 'opened from the list: back is the browser Back');
-
-  // Opened from the list, closed some other way (the OS back gesture), then
-  // reopened by a path that pushes no entry: back must not leave Mail.
-  await showReader(null);
-  await tap($('.phone-mail-open'));
-  await showReader(1);
-  await showReader(null);
-  await showReader(1);
+  assert.deepEqual(asked, [{ tab: 'messages', selection: 'human', item: undefined }], 'the parent is the folder\'s list');
+  assert.equal(calls.length, before, 'stepped back onto the list\'s own entry: nothing closed in place');
+  below = false;
   await harness.act(() => phonePage.value.onBack());
-  assert.deepEqual(backs, ['back']);
-  assert.deepEqual(calls.at(-1), ['closeMessage']);
+  assert.deepEqual(calls.at(-1), ['closeMessage'], 'no list under it: the list in place');
 });
 
 test('a refresh that pushes the open message off the page keeps it open', async (t) => {

@@ -26,7 +26,8 @@
 import { Fragment, h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { registerMailController } from './mail-bridge.js';
+import { mailLocation, registerMailController } from './mail-bridge.js';
+import { toParent } from './nav-back.js';
 import { MessageReader } from './mail-island.js';
 import { PeerMailHost, awayTicket, peerOfMessage } from './peer-mail.js';
 import { DecisionChoices, MailFooterToggles, LoadMore, MessageBody } from './mail-parts.js';
@@ -712,33 +713,22 @@ export function PhoneMailApp({ controller }) {
     document.addEventListener('tclaude:tab-reselected', refreshReselectedTab);
     return () => document.removeEventListener('tclaude:tab-reselected', refreshReselectedTab);
   }, [controller]);
-  // The reader opened from this list pushed a history entry over it, so its
-  // back button is the browser's Back (and the OS back gesture does the
-  // same). A reader reached any other way (a deep link, an attention jump)
-  // has no list entry under it: back then closes it in place.
-  const pushed = useRef(null);
+  // The reader's ‹ always leads to its folder's list (nav-back.js): a step
+  // back when the list's own entry is the one under it, else the list in
+  // place of the reader. The phone's Back keeps its meaning.
   const listScroll = useRef(0);
   const current = controller.state.view.value;
   const model = controller.messageView();
   const kept = useRef(null);
   const item = openedMessage(current, model, kept.current);
   kept.current = item ? { id: current.selectedMsgId, access: !!model.access, item } : null;
-  // Once the reader is gone, however it went (the OS back gesture, a
-  // delete), its entry is no longer the one under a later reader.
-  if (!item) pushed.current = null;
   const open = (id) => {
-    pushed.current = String(id);
     listScroll.current = globalThis.scrollY || 0;
     controller.selectMessage(id, { navigate: true });
   };
   const back = () => {
-    if (pushed.current === String(current.selectedMsgId) && globalThis.history?.length > 1) {
-      pushed.current = null;
-      globalThis.history.back();
-      return;
-    }
-    pushed.current = null;
-    controller.closeMessage();
+    const here = mailLocation();
+    toParent(here && { ...here, item: undefined }, () => controller.closeMessage());
   };
   const active = activeTab === 'messages';
   // The reader's reply to a peer operator's message opens its dialog through

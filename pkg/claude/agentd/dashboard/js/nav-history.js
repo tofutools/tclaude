@@ -24,6 +24,7 @@ import { configLocation, setConfigPanel } from './config-panel.js';
 import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from './mail-bridge.js';
 import { fleetAdminLocation, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.js';
+import { registerStepBack } from './nav-back.js';
 // Registers the agent link (?agent=), so a layout without its view drops it.
 import './agent-route.js';
 import { withCostsPeriod } from './usage-hub-state.js';
@@ -408,6 +409,24 @@ function onOverlay(event) {
   correct(loc);
 }
 
+// stepBackTo steps back onto `loc` when it is exactly the entry under this
+// one, and says whether it did: a phone page's ‹ to its parent (nav-back.js).
+// A plain traversal, unlike an overlay close's: the page is still showing,
+// and the popstate restores the parent. Until it lands the page (and its ‹)
+// is still up: a second tap is the same step, never a second one off Mail.
+let toParentAt = null;
+function stepBackTo(loc) {
+  if (toParentAt !== null) return true;
+  if (!ready || steppingBack || stack.index < 1) return false;
+  if (!locEquals(stack.entries[stack.index - 1], withOverlays(normalizeLocation(loc)))) return false;
+  const at = stack.index;
+  toParentAt = at;
+  history.back();
+  // Should the traversal never arrive, ‹ works again.
+  setTimeout(() => { if (toParentAt === at) toParentAt = null; }, 1000);
+  return true;
+}
+
 function flushSteppingBack() {
   const queued = steppingBack || [];
   steppingBack = null;
@@ -541,6 +560,7 @@ function reconcileLocation() {
 // cross-document nav) falls back to parsing the URL and reseeding the stack, so
 // traversal never throws or desyncs.
 function onPopstate(e) {
+  toParentAt = null;
   // Decide the target from the popped URL + its stamped index. The core
   // validates the index against the URL (a reload leaves older entries carrying
   // stale, cross-instance indices) and falls back to URL relocation/reseed.
@@ -657,6 +677,7 @@ export function initNavHistory() {
   // a tab or subtab), so canonicalise from the stack, not the parsed URL.
   history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
   ready = true;
+  registerStepBack(stepBackTo);
 
   // Observe user navigation. A delegated listener on <nav> bubbles AFTER each
   // button's own bindTabs handler (which set the .active class), so reading the
