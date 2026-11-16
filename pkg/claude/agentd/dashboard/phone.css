@@ -528,3 +528,8 @@
   min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; font-size: 10px; line-height: 17px;
   box-shadow: 0 0 0 2px var(--ui-card-bg);
 }
+
+/* A hold just fired (phone-hold.js armAfterHold): until the finger lifts,
+   nothing under it, the menu it opened included, takes a press, a selection
+   or a long-press menu. */
+:root[data-hold-armed] body * { pointer-events: none !important; -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }

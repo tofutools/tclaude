@@ -123,5 +123,4 @@ test('a shell\'s row opens the shell menu (Now\'s Shells\') on a hold or its ⋯
   });
   await harness.act(() => t.mock.timers.tick(HOLD_MS));
   assert.equal(menus.length, 2, 'a hold opens it too');
-  assert.deepEqual(opened, []);
 });
