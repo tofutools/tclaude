@@ -14,7 +14,7 @@ const SCREEN = [
   ['/home/dev/git/webshop/notes.md', false],
   ['ok  2.1s', false],
 ];
-const CATALOG = [{ name: 'claude', tmux_scrollback: false }, { name: 'codex', tmux_scrollback: true }, { name: 'shell', tmux_scrollback: true }];
+const CATALOG = [{ name: 'claude', tmux_scrollback: false }, { name: 'codex', tmux_scrollback: true }, { name: 'shell', tmux_scrollback: true, command_input: true }];
 
 function fakeWidgets() {
   const made = [];
@@ -23,6 +23,7 @@ function fakeWidgets() {
       options, calls: [], disposed: false,
       connect() { this.calls.push(['connect']); return Promise.resolve(); },
       key(name) { this.calls.push(['key', name]); return true; },
+      paste(text) { this.calls.push(['paste', text]); return this.connected !== false; },
       setSoftKeyboard(on) { this.calls.push(['keyboard', on]); },
       toLive() { this.calls.push(['toLive']); options.onScrollBackChange?.(false); },
       zoomBy(step) { this.calls.push(['zoomBy', step]); },
@@ -112,6 +113,92 @@ test('an agent terminal opens docked, live, with the key strip and its message s
   assert.equal(widget.disposed, true, 'closing drops the socket');
   assert.deepEqual(overlays.at(-1), { closed: true, replace: false }, 'closing steps back');
   assert.equal(harness.document.documentElement.dataset.phoneTerminal, undefined);
+});
+
+// A shell's input: the shell key strip, and a sheet that types into it with
+// no message header, with or without Enter. Group shells and agents of a
+// command-input harness alike; any other agent keeps ✉ and 1 2 3.
+test('a shell terminal types straight into the shell and has the command-line keys', async (t) => {
+  const { harness, tab, made, composed, host, button, tap } = await setup(t, {
+    agent: (id) => (id === AGENT ? { label: 'checkout-ui', harness: 'claude' } : id === 'agt_sh' ? { label: 'ops-shell', harness: 'shell' } : null),
+  });
+  const sheets = await harness.importDashboardModule('js/phone-sheet.js');
+  const SHELL_KEYS = ['←', '→', '↑', '↓', '⇥', '␣', '⏎', 'Esc', '^C', 'Copy'];
+  const keyLabels = () => [...host.querySelectorAll('.phone-term-key')].map((b) => b.textContent);
+
+  await harness.act(() => tab.openShellResource({ id: 'sh_1', group: 'webshop', ws: '/api/shell-ws/sh_1' }, 'webshop shell'));
+  await harness.act(() => {});
+  const widget = made.at(-1);
+  assert.deepEqual(keyLabels(), SHELL_KEYS);
+  assert.equal(host.querySelector('.phone-term-keys').style.getPropertyValue('--phone-term-keys'), '10');
+  for (const spoken of ['Left', 'Right', 'Tab', 'Space']) await tap(button(spoken));
+  assert.deepEqual(widget.calls.slice(1), [['key', 'left'], ['key', 'right'], ['key', 'tab'], ['key', 'space']]);
+  assert.equal(widget.options.onComposeMessage, null, 'no message key');
+  assert.equal(host.querySelector('.phone-term-compose:not(.phone-term-type)'), null, 'no ✉ Message');
+
+  const typeButton = host.querySelector('.phone-term-type');
+  assert.equal(typeButton.textContent, '› Type into webshop shell…');
+  await tap(typeButton);
+  const sheet = sheets.phoneSheet.value;
+  assert.equal(sheet.label, 'Type into webshop shell');
+  let closed = 0;
+  const view = await harness.mount(harness.html`<${sheet.Body} ...${sheet.props} close=${() => { closed += 1; }} />`);
+  const field = view.container.querySelector('textarea[name="terminal-input"]');
+  const press = (label) => harness.act(() => [...view.container.querySelectorAll('button')].find((b) => b.textContent === label).click());
+  await press('Type');
+  assert.equal(view.container.querySelector('[role=alert]').textContent, 'Write something to type.');
+  await harness.act(() => { field.value = 'git status'; field.dispatchEvent(new harness.window.Event('input', { bubbles: true })); });
+  widget.calls.length = 0;
+  await press('Type + ⏎');
+  assert.deepEqual(widget.calls, [['paste', 'git status'], ['key', 'enter']], 'the text as typed, no header, then Enter');
+  assert.equal(closed, 1);
+  widget.calls.length = 0;
+  await press('Type');
+  assert.deepEqual(widget.calls, [['paste', 'git status']], 'Type leaves the line for more');
+  widget.connected = false;
+  widget.calls.length = 0;
+  await press('Type');
+  assert.equal(view.container.querySelector('[role=alert]').textContent, 'The terminal took no input (not connected, or view only), so nothing was typed.');
+  assert.equal(closed, 2, 'a send the terminal refused keeps the sheet open');
+
+  // An agent of a command-input harness (--harness shell) is a shell too.
+  await harness.act(() => tab.openWebWindowPane('agt_sh', 'ops-shell', { harness: 'shell' }));
+  await harness.act(() => {});
+  assert.deepEqual(keyLabels(), SHELL_KEYS);
+  assert.ok(host.querySelector('.phone-term-type'));
+  made.at(-1).options.onComposeMessage();
+  assert.equal(composed.length, 0, 'its Ctrl+M messages nobody');
+
+  // An agent's directory shell is a shell, named for itself, whatever runs in the agent.
+  await harness.act(() => tab.openShellResource({ id: `term:${AGENT}:current:webshop`, agent: AGENT, which: 'current' }, 'checkout-ui shell'));
+  await harness.act(() => {});
+  assert.deepEqual(keyLabels(), SHELL_KEYS);
+  assert.equal(host.querySelector('.phone-term-type').textContent, '› Type into checkout-ui shell…');
+  assert.equal(made.at(-1).options.onComposeMessage, null);
+
+  // Every other harness keeps the message sheet and 1 2 3.
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  await harness.act(() => {});
+  assert.deepEqual(keyLabels(), ['1', '2', '3', '↑', '↓', '⏎', 'Esc', '^C', 'Copy']);
+  assert.equal(host.querySelector('.phone-term-type'), null);
+  await tap(host.querySelector('.phone-term-compose'));
+  assert.deepEqual(composed.at(-1), { agent: AGENT, label: 'checkout-ui' });
+});
+
+test('terminalKind: no agent or a command-input harness is a shell; any other or unknown harness an agent', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { terminalKind } = await harness.importDashboardModule('js/phone-terminal-island.js');
+  const harnesses = CATALOG;
+  const win = '/api/open-window-ws/agt_a';
+  assert.equal(terminalKind({ ws: '/api/group-term-ws/webshop' }, { harnesses }), 'shell');
+  assert.equal(terminalKind({ ws: '/api/term-ws/agt_a?which=current', agent: 'agt_a', harness: 'claude' }, { harnesses }), 'shell', 'an agent\'s directory shell');
+  assert.equal(terminalKind({ ws: win, agent: 'agt_a', harness: 'shell' }, { harnesses }), 'shell');
+  assert.equal(terminalKind({ ws: win, agent: 'agt_a', harness: 'codex' }, { harnesses }), 'agent');
+  assert.equal(terminalKind({ ws: win, agent: 'agt_a' }, { harnesses, agent: () => ({ harness: 'shell' }) }), 'shell', 'the harness from the agent');
+  assert.equal(terminalKind({ ws: win, agent: 'agt_a', harness: 'shell' }, { harnesses: [] }), 'agent', 'a catalog not yet loaded is an agent\'s');
+  const peer = '/api/federation/terminal?';
+  assert.equal(terminalKind({ ws: `${peer}peer=n1&agent=agt_r&mode=watch`, remote: { agent: 'agt_r' } }, { harnesses }), 'agent');
+  assert.equal(terminalKind({ ws: `${peer}peer=n1&group=g&shell=current&agent=agt_r&mode=interactive`, remote: { agent: 'agt_r' } }, { harnesses }), 'shell', 'a peer agent\'s directory shell');
 });
 
 test('only the terminal on screen is live: a hidden page drops it, coming back redials', async (t) => {

@@ -539,6 +539,11 @@ type dashboardHarness struct {
 	// terminal shows ↓ Live, and sends a key only once out of copy-mode, only
 	// where this is true.
 	TmuxScrollback bool `json:"tmux_scrollback"`
+	// CommandInput mirrors Harness.UsesCommandInput: the pane runs a plain
+	// shell, whose input is command text, not a conversation. The phone
+	// terminal gives such a pane the shell's input (keys typed straight in,
+	// the arrows and Tab) in place of the message sheet.
+	CommandInput bool `json:"command_input"`
 	// CanMailMidTurn mirrors Harness.MailMidTurn, which continuous dictation
 	// gates on.
 	CanMailMidTurn bool `json:"can_mail_mid_turn"`
@@ -677,6 +682,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanRename:               h.CanRename(),
 			CanCompact:              h.CanCompact(),
 			TmuxScrollback:          h.WantsTmuxScrollback(),
+			CommandInput:            h.UsesCommandInput(),
 			CanMailMidTurn:          h.MailMidTurn,
 			CanSandbox:              h.SupportsSandbox(),
 			CanBuiltinOSSandbox:     h.SupportsBuiltinOSSandbox(),
