@@ -597,10 +597,14 @@ on the draft. The other ways to make one (**＋ new template** under Automations
 otherwise they store an untitled library template and open it in the editor.
 
 **Building it with an agent.** *✨ With an agent ▾* in the inline editor's
-header brings an agent onto the open draft: *New helper* starts the
+header brings an agent onto the open draft: *Ask the steward*, first when
+your Steward is on this node, briefs it the way *Ask an existing agent…* does,
+and brings it back first if it is not running (it reads the brief as it
+starts); *New helper* starts the
 template's process scribe (the same one the full editor's *Get help*
 reaches), and *Ask an existing agent…* briefs one already running, such as
-the steward or an agent you chat with, after you confirm any grant it lacks.
+an agent you chat with, after you confirm any grant it lacks. The full
+editor's *Get help* has *Ask the steward* too.
 Either opens in its chat window, and a *💬* chip in the header brings that
 window back. The agent edits through `tclaude agent process-templates`, and
 the open editor follows: each version it saves is merged onto your canvas as

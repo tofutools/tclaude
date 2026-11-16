@@ -11,6 +11,7 @@
 // that confirmation.
 
 import { companionAvailable, openInCompanion } from './companion-facade.js';
+import { companionAgents, stewardAgent } from './companion-model.js';
 import { shellConfirm, shellToast } from './shell-state.js';
 
 const json = { 'Content-Type': 'application/json' };
@@ -75,6 +76,20 @@ export function liveHelpers(snapshotValue) {
       effective: Array.isArray(agent.effective) ? agent.effective : [],
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// stewardHelper is the Steward as an agent to ask, as the companion finds it:
+// the one in the seat, running or not (online says which); null with none.
+export function stewardHelper(snapshotValue) {
+  const steward = stewardAgent(companionAgents(snapshotValue));
+  if (!steward) return null;
+  const record = (Array.isArray(snapshotValue?.agents) ? snapshotValue.agents : []).find((agent) => agent?.agent_id === steward.agentId);
+  if (record?.retired) return null;
+  return {
+    id: steward.agentId, convId: steward.convId, label: steward.name, online: steward.online,
+    groups: Array.isArray(record?.groups) ? record.groups : [],
+    effective: Array.isArray(record?.effective) ? record.effective : [],
+  };
 }
 
 // missingSlugs is what an agent lacks of slugs: only those are granted, so

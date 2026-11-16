@@ -1,5 +1,6 @@
 // get-help-menu.js -- the "Get help ▾" toolbar menu (tcl-z32qq1) a page drops in
-// beside its own controls: New helper, Ask an existing agent…, and the page's
+// beside its own controls: Ask the steward (when there is one), New helper,
+// Ask an existing agent…, and the page's
 // own actions, which reach the helper the page last brought in. The agent
 // picker is a standard Dialog. What a helper does lives in get-help.js.
 
@@ -11,7 +12,8 @@ import { Dialog } from './ui-dialog.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { dashboardState } from './snapshot-store.js';
 import { shellToast } from './shell-state.js';
-import { askExistingAgent, liveHelpers, missingSlugs, summonHelper } from './get-help.js';
+import { askExistingAgent, liveHelpers, missingSlugs, stewardHelper, summonHelper } from './get-help.js';
+import { resumeAgent } from './companion-approval.js';
 
 const html = htm.bind(h);
 
@@ -118,18 +120,29 @@ export function GetHelpMenu({
     confirmation: typeof help.confirmation === 'function' ? help.confirmation() : help.confirmation,
     brief: await brief(), fetchImpl, ...(confirm ? { confirm } : {}),
   })));
+  const askHelper = async (helper) => (onAsk ? onAsk(helper) : askExistingAgent({
+    helper, slugs: help.slugs, subject: help.subject || 'Help wanted', brief: await brief(),
+    confirmation: (missing) => help.askConfirmation?.(missing, helper), fetchImpl, ...(confirm ? { confirm } : {}),
+  }));
   const ask = (helper) => {
     setPicking(false);
-    if (onAsk) return run(async () => onAsk(helper));
-    return run(async () => askExistingAgent({
-      helper, slugs: help.slugs, subject: help.subject || 'Help wanted', brief: await brief(),
-      confirmation: (missing) => help.askConfirmation?.(missing, helper), fetchImpl, ...(confirm ? { confirm } : {}),
-    }));
+    return run(() => askHelper(helper));
   };
+  // The Steward is asked as any agent is. One not running is briefed (the
+  // message waits in its inbox) and then brought back; a refused grant
+  // brings back nothing.
+  const steward = open ? stewardHelper(snapshot.value) : null;
+  const askSteward = () => run(async () => {
+    const asked = await askHelper(steward);
+    if (asked && !steward.online) await resumeAgent(fetchImpl, steward.id);
+    return asked;
+  });
   return html`<div ref=${rootRef} class=${`get-help${extra ? ` ${extra}` : ''}`}>
     <${Button} class="get-help-toggle" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'} title=${title} aria-label=${label} disabled=${busy || disabled}
       onClick=${() => setOpen((value) => !value)}>${busy ? 'Starting…' : html`${labelNode || label} ▾`}<//>
     ${open && html`<${Menu} domRef=${menuRef} class=${`get-help-menu get-help-menu-${side}`} aria-label=${label}>
+      ${steward && html`<${MenuItem} data-get-help="steward" title=${steward.online ? `Brief ${steward.label}, your Steward, and open its chat window` : `Brief ${steward.label}, your Steward, and bring it back`}
+        onClick=${askSteward}>Ask the steward${steward.online ? '' : ' (resumes it)'}<//>`}
       <${MenuItem} data-get-help="new" title="Start an agent scoped to this page's work, and open its chat window" onClick=${newHelper}>New helper<//>
       <${MenuItem} data-get-help="ask" title="Brief an agent that is already running, and open its chat window" onClick=${() => { setOpen(false); setPicking(true); }}>Ask an existing agent…<//>
       ${actions.length > 0 && html`<${MenuSep} />`}
