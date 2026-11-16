@@ -99,6 +99,13 @@ func validateGate(node Node, path string, diagnostics *templateDiagnosticCollect
 				"a gate's loop needs onExhausted: nobody picks another outcome once its rounds run out")) {
 				return false
 			}
+		} else if strings.TrimSpace(node.Loops[outcome].OnExhausted) == agree {
+			// Valid, but the work the deciders kept sending back goes on as if
+			// they had all agreed: a review that never passed is merged.
+			if !diagnostics.Add(diagWarning("gate_loop_exhausts_to_agree", path+".loops."+outcome+".onExhausted",
+				fmt.Sprintf("when %q runs out of rounds the gate goes on through %q, as if every decider had agreed; send it to an escalation or a failed end instead", outcome, agree))) {
+				return false
+			}
 		}
 	}
 	return true

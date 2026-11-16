@@ -191,10 +191,95 @@ function syncGate(view, id, node, outcomes) {
   for (const outcome of Object.keys(node.loops || {})) {
     const bound = loopBound(node, outcome);
     if (bound.onExhausted) continue;
-    const ways = exhaustionChoices(node, outcomes, outcome);
-    const way = ways.find((o) => o !== node.agree) || ways[0];
-    if (way) setLoopBound(node, outcome, { ...bound, onExhausted: way });
+    setLoopBound(node, outcome, { ...bound, onExhausted: safeExhaustion(view, id, node, outcomes, outcome) });
   }
+}
+
+// GIVE_UP is the outcome a used-up gate loop takes when nothing else is
+// there: it ends the run as failed. Never the agree outcome: a review the
+// deciders kept sending back must not go on as if they had approved it.
+export const GIVE_UP = 'give-up';
+
+// safeExhaustion is where a gate's used-up loop goes by default: another of
+// its outcomes that neither loops nor is the agree outcome, else a give-up
+// outcome to a failed end (added here, on the view being built).
+function safeExhaustion(view, id, node, outcomes, outcome) {
+  const way = exhaustionChoices(node, outcomes, outcome).find((o) => o !== node.agree);
+  return way || addGiveUp(view, id);
+}
+
+// addGiveUp gives decision id an outcome to a failed end (the draft's own
+// failed end when it has one) and returns its name.
+function addGiveUp(view, id) {
+  const existing = outgoing(view, id).find((edge) => isFailedEnd(view.template.nodes[edge.to]));
+  if (existing) return existing.outcome;
+  let end = Object.keys(view.template.nodes).find((nodeID) => isFailedEnd(view.template.nodes[nodeID]));
+  if (!end) end = addNode(view, { type: 'end', name: 'Gave up', result: 'failed' }, 'gave-up');
+  const outcome = uniqueOutcome(view, id, GIVE_UP);
+  view.edges.push({ from: id, outcome, to: end });
+  const node = view.template.nodes[id];
+  if (node.performer?.kind === 'human') node.performer.choices = [...(node.performer.choices || []), outcome];
+  return outcome;
+}
+
+function isFailedEnd(node) {
+  return node?.type === 'end' && /^fail/i.test(String(node.result || '').trim());
+}
+
+// exhaustionOptions are where a used-up loop on outcome may go: every other
+// outcome that does not loop, the agree outcome last and only when it is
+// already chosen (it skips the review), and GIVE_UP when no failed end is
+// reachable yet. A plain decision may also refuse ('': its decider picks
+// again); a gate may not, since nobody picks.
+export function exhaustionOptions(view, id, outcome) {
+  const node = view.template.nodes[id];
+  const outcomes = outgoing(view, id).map((edge) => edge.outcome);
+  const current = loopBound(node, outcome)?.onExhausted || '';
+  const gate = !!node.deciders?.length;
+  const ways = exhaustionChoices(node, outcomes, outcome).filter((o) => !gate || o !== node.agree || o === current);
+  const options = gate ? [] : [{ value: '', label: 'ask again' }];
+  for (const way of ways) {
+    const to = view.edges.find((edge) => edge.from === id && edge.outcome === way)?.to;
+    const failed = isFailedEnd(view.template.nodes[to]);
+    options.push({ value: way, label: failed ? 'fail the run' : way, skipsReview: gate && way === node.agree });
+  }
+  if (!options.some((o) => o.label === 'fail the run')) options.push({ value: GIVE_UP, label: 'fail the run', adds: true });
+  return options;
+}
+
+// setExhaustion sets where outcome's used-up loop goes: an outcome, '' to
+// refuse (plain decisions only), or GIVE_UP for a failed end (added if the
+// decision has no outcome to one yet).
+export function setExhaustion(view, id, outcome, value) {
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  const bound = loopBound(node, outcome);
+  if (!bound) throw new Error(`${outcome} does not go back`);
+  const outcomes = outgoing(next, id).map((edge) => edge.outcome);
+  let way = value;
+  if (way === GIVE_UP && !outcomes.includes(GIVE_UP)) way = addGiveUp(next, id);
+  if (!way && node.deciders?.length) throw new Error('a gate needs somewhere to go once its rounds run out');
+  setLoopBound(node, outcome, way ? { ...bound, onExhausted: way } : { maxIterations: bound.maxIterations });
+  return { view: next, id };
+}
+
+// setDecisionWho changes who decides a decision and keeps it a decision: its
+// outcomes, loops and their bounds stay. A person answers with the outcomes;
+// an agent reports one of them as its verdict.
+export function setDecisionWho(view, id, who) {
+  const node = view.template.nodes[id];
+  if (node?.type !== 'decision' || node.deciders?.length) throw new Error('only a plain decision changes who decides');
+  if (who.mode === 'command') throw new Error('a command does not decide');
+  const step = setStepWho({ id, node }, who);
+  const changed = step.node;
+  if (changed.performer.kind === 'human') changed.performer.choices = outgoing(view, id).map((edge) => edge.outcome);
+  else {
+    delete changed.performer.choices;
+    delete changed.performer.choiceOutcomes;
+  }
+  const next = copyView(view);
+  next.template.nodes[id] = changed;
+  return { view: next, id };
 }
 
 // insertAfter puts a new step on `id`'s main path, before what came next.
@@ -445,6 +530,9 @@ export function canRemoveOutcome(view, id, outcome) {
   if (out.length < 2) return 'a decision keeps at least one outcome';
   if (view.template.nodes[id]?.deciders?.length && out.length < 3) return 'a gate needs an outcome besides the one all must choose';
   const node = view.template.nodes[id];
+  // A gate's used-up loop must go somewhere: change that first.
+  const exhausting = node?.deciders?.length && Object.entries(node.loops || {}).find(([, bound]) => bound.onExhausted === outcome);
+  if (exhausting) return `it is where ${exhausting[0]} goes once it runs out of rounds; choose another there first`;
   if (!loopBound(node, outcome) && !out.some((edge) => edge.outcome !== outcome && !loopBound(node, edge.outcome))) {
     return 'its only outcome that does not loop back';
   }
@@ -575,8 +663,12 @@ export function draftProjection(view, { whoOf = () => '', noteOf = () => '', nam
       from: edge.from, to: edge.to, label: PASS_LABELS.includes(edge.outcome) || view.template.nodes[edge.from]?.type === 'parallel' ? '' : edge.outcome,
     };
     // A bounded loop (node.loops[outcome]) draws as a back edge with its bound.
-    const max = Number(view.template.nodes[edge.from]?.loops?.[edge.outcome]?.maxIterations) || 0;
-    return max > 0 ? { ...projected, label: projected.label || edge.outcome, back: true, maxIterations: max } : projected;
+    const bound = view.template.nodes[edge.from]?.loops?.[edge.outcome];
+    const max = Number(bound?.maxIterations) || 0;
+    if (!max) return projected;
+    const after = bound.onExhausted && view.edges.find((e) => e.from === edge.from && e.outcome === bound.onExhausted)?.to;
+    const exhausted = after ? (isFailedEnd(view.template.nodes[after]) ? 'fail' : bound.onExhausted) : '';
+    return { ...projected, label: projected.label || edge.outcome, back: true, maxIterations: max, ...(exhausted ? { exhausted } : {}) };
   });
   return { id: 'draft', name: name || view.template?.name || 'draft', status: 'planned', nodes, edges };
 }
@@ -674,9 +766,7 @@ export function addDecider(view, id, who) {
     // Nobody is there to pick another outcome when a gate's rounds run out.
     for (const [outcome, bound] of Object.entries(node.loops || {})) {
       if (!bound.onExhausted) {
-        const ways = exhaustionChoices(node, outcomesOf(next, id).map((o) => o.outcome), outcome);
-        const way = ways.find((o) => o !== node.agree) || ways[0];
-        if (way) node.loops[outcome] = { ...bound, onExhausted: way };
+        node.loops[outcome] = { ...bound, onExhausted: safeExhaustion(next, id, node, outcomesOf(next, id).map((o) => o.outcome), outcome) };
       }
     }
   }
@@ -727,6 +817,12 @@ export function setGateText(view, id, text) {
 // setAgree sets the outcome all deciders must choose.
 export function setAgree(view, id, outcome) {
   const next = copyView(view);
-  next.template.nodes[id].agree = outcome;
+  const node = next.template.nodes[id];
+  node.agree = outcome;
+  // A used-up loop that went this way now goes somewhere safe instead.
+  const outcomes = outgoing(next, id).map((edge) => edge.outcome);
+  for (const [looped, bound] of Object.entries(node.loops || {})) {
+    if (bound.onExhausted === outcome) setLoopBound(node, looped, { ...bound, onExhausted: safeExhaustion(next, id, node, outcomes, looped) });
+  }
   return { view: next, id };
 }

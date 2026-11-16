@@ -269,8 +269,8 @@ test('a gate stays valid as its outcomes change', () => {
   ({ view } = m.setOutcomeTarget(view, 'approve', 'ship', 'implement'));
   const after = view.template.nodes.approve;
   assert.ok(!after.loops?.[after.agree], 'what all must choose never goes back');
-  // A gate keeps two outcomes.
-  let small = m.addDecider(ship, 'approve', { mode: 'anyone' }).view;
+  // A gate keeps two outcomes (no loop here, so no give-up is added).
+  let small = m.addDecider(forward, 'approve', { mode: 'anyone' }).view;
   small = m.removeOutcome(small, 'approve', 'hold').view;
   assert.match(m.canRemoveOutcome(small, 'approve', 'ship') || m.canRemoveOutcome(small, 'approve', 'changes'), /gate needs/);
 });
@@ -283,4 +283,53 @@ test('outputs belong to one task: not kept by a "you" step or a duplicate', asyn
   const dup = m.duplicate(withOut, 'review');
   assert.equal(dup.view.template.nodes[dup.id].captures, undefined);
   assert.deepEqual(dup.view.template.nodes.review.captures, ['notes']);
+});
+
+test('a used-up gate loop never goes on through what all must choose: it gives up', () => {
+  // approve with only ship and changes ↺: the agree outcome is the one way on.
+  const plain = m.removeOutcome(ship, 'approve', 'hold').view;
+  const { view } = m.addDecider(plain, 'approve', { mode: 'role', role: 'reviewer' });
+  const gate = view.template.nodes.approve;
+  assert.equal(gate.agree, 'ship');
+  assert.notEqual(gate.loops.changes.onExhausted, 'ship', 'three rejections must not ship');
+  assert.equal(gate.loops.changes.onExhausted, m.GIVE_UP);
+  const end = view.template.nodes[edge(view, 'approve', m.GIVE_UP)];
+  assert.deepEqual([end.type, end.result], ['end', 'failed']);
+  assert.deepEqual(m.exhaustionOptions(view, 'approve', 'changes').map((o) => o.label), ['fail the run']);
+  assert.match(m.canRemoveOutcome(view, 'approve', m.GIVE_UP), /runs out of rounds/, 'its way out stays while it is chosen');
+  const loop = m.draftProjection(view).edges.find((e) => e.from === 'approve' && e.outcome === undefined && e.back);
+  assert.equal(loop?.exhausted, 'fail', 'the loop edge says where it goes');
+});
+
+test('when rounds run out: pick another way, fail the run, or (a plain decision) ask again', () => {
+  const options = m.exhaustionOptions(ship, 'approve', 'changes');
+  assert.deepEqual(options.map((o) => o.value), ['', 'ship', 'hold', m.GIVE_UP]);
+  let { view } = m.setExhaustion(ship, 'approve', 'changes', 'hold');
+  assert.equal(view.template.nodes.approve.loops.changes.onExhausted, 'hold');
+  ({ view } = m.setExhaustion(view, 'approve', 'changes', m.GIVE_UP));
+  assert.equal(view.template.nodes.approve.loops.changes.onExhausted, m.GIVE_UP);
+  assert.ok(view.template.nodes.approve.performer.choices.includes(m.GIVE_UP), 'a person can answer it too');
+  ({ view } = m.setExhaustion(view, 'approve', 'changes', ''));
+  assert.deepEqual(view.template.nodes.approve.loops.changes, { maxIterations: 3 });
+  const gate = m.addDecider(ship, 'approve', { mode: 'anyone' }).view;
+  assert.throws(() => m.setExhaustion(gate, 'approve', 'changes', ''), /gate needs somewhere/);
+  // A template that already exhausts to agree shows it, marked.
+  const stored = structuredClone(gate);
+  stored.template.nodes.approve.loops.changes.onExhausted = 'ship';
+  assert.ok(m.exhaustionOptions(stored, 'approve', 'changes').find((o) => o.value === 'ship')?.skipsReview);
+  assert.ok(!m.exhaustionOptions(gate, 'approve', 'changes').some((o) => o.value === 'ship'), 'never offered otherwise');
+});
+
+test('an agent deciding a decision keeps it a decision: outcomes and loop stay', () => {
+  const { view } = m.setDecisionWho(ship, 'approve', { mode: 'role', role: 'reviewer' });
+  const node = view.template.nodes.approve;
+  assert.equal(node.type, 'decision');
+  assert.equal(node.performer.kind, 'agent');
+  assert.equal(node.performer.role, 'reviewer');
+  assert.equal(node.performer.choices, undefined, 'an agent reports one of the outcomes');
+  assert.deepEqual(m.outcomesOf(view, 'approve').map((o) => o.outcome), m.outcomesOf(ship, 'approve').map((o) => o.outcome));
+  assert.deepEqual(node.loops, ship.template.nodes.approve.loops);
+  const { view: back } = m.setDecisionWho(view, 'approve', { mode: 'you' });
+  assert.deepEqual(back.template.nodes.approve.performer.choices, ['ship', 'changes', 'hold']);
+  assert.throws(() => m.setDecisionWho(ship, 'approve', { mode: 'command' }));
 });
