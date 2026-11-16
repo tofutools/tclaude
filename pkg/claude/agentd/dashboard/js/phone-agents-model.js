@@ -289,10 +289,22 @@ export const agentsView = (prefs) => (prefs.getItem(VIEW_PREF) === ALL_GROUPS ? 
 // default is the other way round.
 export const TREE_FOLD_PREF = 'tclaude.dash.phone.tree.fold.';
 export const treeFoldPref = (node) => TREE_FOLD_PREF + (node.group ? node.name : UNGROUPED);
-export function treeFolded(node, prefs) {
-  const saved = prefs.getItem(treeFoldPref(node));
-  return saved === '1' || (saved !== '0' && node.dim);
-}
+
+// ACTIVE_FOLD and TREE_FOLD are the two views' folds, as the one groups
+// list (phone-agents-island.js AgentGroupsList) takes them: pref(node) is
+// the remembered fold's key, folded(node, saved) whether the group is folded
+// given what was remembered ('1', '0' or null), and remember(prefs, node,
+// folded) remembers a fold (Active keeps only the folded ones).
+export const ACTIVE_FOLD = Object.freeze({
+  pref: foldPref,
+  folded: (node, saved) => saved === '1',
+  remember: (prefs, node, folded) => { if (folded) prefs.setItem(foldPref(node), '1'); else prefs.removeItem(foldPref(node)); },
+});
+export const TREE_FOLD = Object.freeze({
+  pref: treeFoldPref,
+  folded: (node, saved) => saved === '1' || (saved !== '0' && !!node.dim),
+  remember: (prefs, node, folded) => prefs.setItem(treeFoldPref(node), folded ? '1' : '0'),
+});
 
 // ARCHIVED_PREF shows the archived groups ('1') at the end of All groups.
 // OFFLINE_PREF hides ('0') offline agents, and in All groups the groups with

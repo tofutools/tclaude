@@ -140,8 +140,10 @@ test('Active | All groups: the pick is remembered, each with its count', async (
   assert.equal(seg('Active').getAttribute('aria-pressed'), 'true');
   assert.equal(seg('Active').textContent.replace(/\s+/g, ' ').trim(), 'Active · 5', 'online agents');
   assert.equal(seg('All groups').textContent.replace(/\s+/g, ' ').trim(), 'All groups · 6', 'groups, not counting the archived one');
-  assert.deepEqual(shownGroups(), [], 'Active is today\'s view');
-  assert.ok(c.querySelector('.phone-agents > .phone-section[aria-label="webshop"]'));
+  // One layout (AgentGroupsList): Active's groups are the same sections as
+  // All groups', only flat.
+  assert.ok(c.querySelector('.phone-agents > .phone-section.phone-agents-node[aria-label="webshop"]'));
+  assert.equal(c.querySelector('.phone-agents-sub'), null, 'Active nests nothing');
   await tap(seg('All groups'));
   assert.equal(prefs.getItem('tclaude.dash.phone.agents.view'), 'all');
   assert.equal(seg('All groups').getAttribute('aria-pressed'), 'true');
@@ -287,4 +289,24 @@ test('Show offline: off hides offline agents and nobody-online groups in both mo
   await tap(toggle());
   assert.equal(prefs.getItem('tclaude.dash.phone.agents.offline'), null, 'on again: forgotten');
   assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'payments', 'infra', 'hotfix', 'Ungrouped', 'research']);
+});
+
+// A link to an agent in All groups unfolds every group above it through the
+// tree's own fold (TREE_FOLD), and shows the archived groups when it is in one.
+test('All groups: a link to an agent unfolds its group and every one above it, archived too', async (t) => {
+  const prefs = memPrefs({ 'tclaude.dash.phone.agents.view': 'all', 'tclaude.dash.phone.agents.offline': '0', 'tclaude.dash.phone.tree.fold.webshop': '1' });
+  const { harness, c, titles } = await setup(t, { prefs });
+  const routes = await harness.importDashboardModule('js/overlay-routes.js');
+  assert.ok(!titles().includes('stripe-adapter'), 'folded, offline hidden');
+  const found = () => c.querySelector('.phone-agent-found .phone-agent-title')?.textContent;
+  await harness.act(() => routes.restoreOverlays({ agent: id(5) }));
+  await harness.act(() => {});
+  assert.equal(found(), 'stripe-adapter', 'its row glows');
+  assert.equal(prefs.getItem('tclaude.dash.phone.tree.fold.webshop'), '0', 'its parent unfolded');
+  assert.equal(prefs.getItem('tclaude.dash.phone.tree.fold.payments'), '0', 'its own group, folded for nobody online, unfolded');
+  assert.equal(prefs.getItem('tclaude.dash.phone.agents.archived'), null);
+  await harness.act(() => routes.restoreOverlays({ agent: id(7) }));
+  await harness.act(() => {});
+  assert.equal(prefs.getItem('tclaude.dash.phone.agents.archived'), '1', 'Show archived on');
+  assert.equal(found(), 'release-bot');
 });

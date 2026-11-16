@@ -29,9 +29,9 @@ import { h, render } from 'preact';
 import { useEffect, useReducer, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ALL, ALL_GROUPS, ARCHIVED_PREF, OFFLINE_PREF, VIEW_PREF, showOffline, agentsFilter, agentGroups, agentsView, findAgent, foldPref, groupPage, groupSummaryLine,
-  groupTabs, groupsTree, metaParts, shownGroups, shownTree, spawnBody, spawnChoices, toggleFilter, treeFoldPref,
-  treeFolded, treeTabs,
+  ACTIVE_FOLD, ALL, ALL_GROUPS, ARCHIVED_PREF, OFFLINE_PREF, VIEW_PREF, showOffline, agentsFilter, agentGroups, agentsView, findAgent, groupPage, groupSummaryLine,
+  groupTabs, groupsTree, metaParts, shownGroups, shownTree, spawnBody, spawnChoices, toggleFilter, TREE_FOLD,
+  treeTabs,
 } from './phone-agents-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { AgentMenu } from './phone-agent-menu.js';
@@ -221,7 +221,7 @@ const Chevron = () => html`<svg class="phone-agents-chev-icon" viewBox="0 0 16 1
 // agents in no group have no page: their name folds them too). A group with
 // nothing to fold has no caret. Under it, folded too, its state summary.
 function GroupHead({ node, folded, onFold, onOpen }) {
-  const canFold = node.total > 0 || node.children.length > 0;
+  const canFold = node.total > 0 || (node.children || []).length > 0;
   const words = `${node.name}, ${node.live} of ${node.total} online${node.summary.length ? `: ${summaryText(node)}` : ''}${node.empty ? ', empty' : ''}${node.archived ? ', archived' : ''}`;
   const name = html`<span class="phone-agents-name">${node.name}</span><span class="phone-agents-count">${node.live}/${node.total}</span>
     ${node.empty && html`<${Tag}>empty<//>`}${node.archived && html`<${Tag}>archived<//>`}`;
@@ -240,18 +240,30 @@ function GroupHead({ node, folded, onFold, onOpen }) {
   <${Summary} g=${node} />`;
 }
 
-// TreeNode is a group in All groups and, unfolded, its agents, then its
-// subgroups indented on a guide line.
-function TreeNode({ node, prefs, refold, list }) {
-  const folded = treeFolded(node, prefs);
-  const fold = () => { prefs.setItem(treeFoldPref(node), folded ? '0' : '1'); refold(); };
+// AgentGroupsList is the one layout of groups and their agents, Active and
+// All groups alike: each group a section (GroupHead, then, unfolded, its
+// agents as the lead/worker tree, then its subgroups indented on a guide
+// line), one look and one spacing. The tabs differ only in what they hand
+// it: the groups (a flat list, or the tree with its subgroups, empty and
+// archived groups), and the fold (fold, below). list is the row actions
+// and the found row (PhoneAgents).
+//
+// fold is the view's fold (phone-agents-model.js ACTIVE_FOLD, TREE_FOLD).
+export function AgentGroupsList({ nodes, fold, prefs, refold, list }) {
+  return nodes.map((node) => html`<${GroupSection} key=${node.key} node=${node} fold=${fold} prefs=${prefs} refold=${refold} list=${list} />`);
+}
+
+function GroupSection({ node, fold, prefs, refold, list }) {
+  const folded = fold.folded(node, prefs.getItem(fold.pref(node)));
+  const flip = () => { fold.remember(prefs, node, !folded); refold(); };
+  const children = node.children || [];
   return html`<div class=${`phone-section phone-agents-node${folded ? ' phone-agents-folded' : ''}${node.dim ? ' phone-agents-dim' : ''}${node.empty ? ' phone-agents-empty' : ''}`}
     role="group" aria-label=${node.name}>
-    <${GroupHead} node=${node} folded=${folded} onFold=${fold} onOpen=${() => list.open(node.name)} />
+    <${GroupHead} node=${node} folded=${folded} onFold=${flip} onOpen=${() => list.open(node.name)} />
     ${!folded && node.total > 0 && html`<${AgentList} g=${node} isSteward=${list.isSteward} onTap=${list.tap(node)} onMore=${list.more(node)}
       found=${list.found?.group === node.key ? list.found.key : null} />`}
-    ${!folded && node.children.length > 0 && html`<div class="phone-agents-sub">
-      ${node.children.map((child) => html`<${TreeNode} key=${child.key} node=${child} prefs=${prefs} refold=${refold} list=${list} />`)}
+    ${!folded && children.length > 0 && html`<div class="phone-agents-sub">
+      <${AgentGroupsList} nodes=${children} fold=${fold} prefs=${prefs} refold=${refold} list=${list} />
     </div>`}
   </div>`;
 }
@@ -361,12 +373,9 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
     setOpened([]);
     if (!spot.row.online) prefs.removeItem(OFFLINE_PREF);
     if (picked.length && !picked.some((key) => spot.path.includes(key))) agentsFilter.value = [];
-    if (view === ALL_GROUPS) {
-      for (const key of spot.path) prefs.setItem(treeFoldPref({ group: key.startsWith('g:'), name: key.slice(2) }), '0');
-      if (spot.archived) prefs.setItem(ARCHIVED_PREF, '1');
-    } else {
-      prefs.removeItem(foldPref({ group: spot.groupKey.startsWith('g:'), name: spot.groupKey.slice(2) }));
-    }
+    const fold = view === ALL_GROUPS ? TREE_FOLD : ACTIVE_FOLD;
+    for (const key of spot.path) fold.remember(prefs, { group: key.startsWith('g:'), name: key.slice(2) }, false);
+    if (view === ALL_GROUPS && spot.archived) prefs.setItem(ARCHIVED_PREF, '1');
     setFound({ key: spot.row.key, group: spot.groupKey, n: ask.n });
     refold();
   }, [active, ask, snapshot]);
@@ -408,27 +417,15 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
       ${toggle}
       ${tabs.length > 1 && html`<${GroupChips} tabs=${tabs} picked=${picked} onToggle=${onToggle} />`}
       ${!tree.nodes.length && html`<p class="ui-empty phone-empty">${offline ? 'No groups yet. Make one on the desktop.' : 'No group has anyone online.'}</p>`}
-      ${shownTree(tree.nodes, picked).map((node) => html`<${TreeNode} key=${node.key} node=${node} prefs=${prefs} refold=${refold} list=${list} />`)}
+      <${AgentGroupsList} nodes=${shownTree(tree.nodes, picked)} fold=${TREE_FOLD} prefs=${prefs} refold=${refold} list=${list} />
       ${tree.archived > 0 && !picked.length && html`<button data-ui-exempt type="button" class="phone-link phone-agents-archived" aria-pressed=${showArchived ? 'true' : 'false'}
         onClick=${flipArchived}>${showArchived ? 'Hide archived' : `Show archived · ${tree.archived}`}</button>`}
     </div>`;
   }
-  const isFolded = (g) => prefs.getItem(foldPref(g)) === '1';
-  const fold = (g) => () => {
-    if (isFolded(g)) prefs.removeItem(foldPref(g));
-    else prefs.setItem(foldPref(g), '1');
-    refold();
-  };
   return html`<div class="phone-agents">
     ${toggle}
     <${GroupChips} tabs=${tabs} picked=${picked} onToggle=${onToggle} />
-    ${shownGroups(groups, picked).map((g) => {
-      const folded = isFolded(g);
-      return html`<div key=${g.key} class=${`phone-section${folded ? ' phone-agents-folded' : ''}`} role="group" aria-label=${g.name}>
-        <${GroupHead} node=${{ ...g, children: [], empty: false, archived: false }} folded=${folded} onFold=${fold(g)} onOpen=${() => open(g.name)} />
-        ${!folded && html`<${AgentList} g=${g} isSteward=${isSteward} onTap=${tap(g)} onMore=${more(g)} found=${found?.group === g.key ? found.key : null} />`}
-      </div>`;
-    })}
+    <${AgentGroupsList} nodes=${shownGroups(groups, picked)} fold=${ACTIVE_FOLD} prefs=${prefs} refold=${refold} list=${list} />
   </div>`;
 }
 
