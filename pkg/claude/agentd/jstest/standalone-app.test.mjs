@@ -124,6 +124,15 @@ test('installed as an app, a pull down on the header reloads once it went far en
   touch(harness, 'touchend', title);
   assert.equal(reloads, 1, 'sideways first');
 
+  // A second finger makes it something else.
+  touch(harness, 'touchstart', title, 100, 20);
+  const two = new harness.window.Event('touchstart', { bubbles: true });
+  two.touches = [{ clientX: 100, clientY: 20 }, { clientX: 200, clientY: 20 }];
+  title.dispatchEvent(two);
+  touch(harness, 'touchmove', title, 100, 20 + PULL_RELOAD_PX + 5);
+  touch(harness, 'touchend', title);
+  assert.equal(reloads, 1, 'two fingers');
+
   // Off the header (the page's own scroll) is not a pull.
   const main = harness.document.getElementById('main');
   touch(harness, 'touchstart', main, 100, 200);

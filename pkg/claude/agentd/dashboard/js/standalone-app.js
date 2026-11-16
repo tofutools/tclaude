@@ -80,7 +80,9 @@ export function installHeaderPull({ win = globalThis, bar = '.phone-bar', reload
     hint = null;
   };
   const onStart = (event) => {
-    if (event.touches.length !== 1 || !event.target?.closest?.(bar)) return;
+    // A second finger makes it a pinch or the like, not a pull.
+    if (event.touches.length !== 1) { clear(); return; }
+    if (!event.target?.closest?.(bar)) return;
     const touch = event.touches[0];
     start = { x: touch.clientX, y: touch.clientY, dy: 0 };
   };
@@ -94,7 +96,8 @@ export function installHeaderPull({ win = globalThis, bar = '.phone-bar', reload
     if (dy > 8) show(dy);
     else if (hint) { hint.remove(); hint = null; }
   };
-  const onEnd = () => {
+  const onEnd = (event) => {
+    if (event.touches?.length) return;
     const pulled = start?.dy ?? 0;
     clear();
     if (pulled >= PULL_RELOAD_PX) reload();
