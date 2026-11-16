@@ -957,6 +957,36 @@ test('right-click structure: branch a "you" step, and delete names what goes wit
   assert.equal(node('new-step'), null, 'the steps only it led to went too');
 });
 
+test('the problems line names the step, selects it on a click, and its node is outlined', async (t) => {
+  const api = fakeApi({ stored: { tmpl_ship: SHIP_VIEW } });
+  api.validateTemplate = async () => [
+    { scope: 'node', targetId: 'review', severity: 'error', code: 'missing_prompt', message: 'agent performer requires prompt' },
+    { scope: 'template', severity: 'error', code: 'x', message: 'the process has another problem' },
+    { scope: 'node', targetId: 'merge', severity: 'warning', code: 'w', message: 'only a warning' },
+    { scope: 'edge', targetId: 'approve:hold', severity: 'error', code: 'e', message: 'the branch goes nowhere' },
+  ];
+  const { root, click, settle } = await mount(t, { api, context: SAVED_CONTEXT });
+  await click(root.querySelector('[data-saved-edit-graph="tmpl_ship"]'));
+  const card = root.querySelector('[data-mini-editor="tmpl_ship"]');
+  // The editor validates after a pause: poll for its answer, up to a limit.
+  for (const deadline = Date.now() + 5000; !card.querySelector('[data-mini-problems]');) {
+    if (Date.now() > deadline) assert.fail('the problems line never appeared');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await settle();
+  }
+  const line = card.querySelector('[data-mini-problems]');
+  assert.equal(line.dataset.miniProblems, '3');
+  const step = line.querySelector('[data-mini-problem-step="review"]');
+  assert.ok(step, 'the line names the step');
+  assert.equal(step.textContent, SHIP_VIEW.template.nodes.review.name || 'review');
+  assert.match(line.textContent, /^3 problems: Review: agent performer requires prompt/);
+  assert.deepEqual([...card.querySelectorAll('.pk-gnode.problem')].map((n) => n.dataset.processNode).sort(), ['approve', 'review'],
+    'errors only: a step\'s, and the node an edge error leaves');
+  assert.match(line.textContent, /\(2 steps outlined\)/);
+  await click(step);
+  assert.ok(card.querySelector('[data-mini-inspector="review"]'), 'a click selects the step');
+});
+
 test('the inspector edits a step; Save writes a new version against the opened hash', async (t) => {
   const { api, card, node, click, setValue, notes, root } = await openMini(t);
   await click(node('review'));

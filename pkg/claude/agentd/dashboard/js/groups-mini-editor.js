@@ -425,6 +425,16 @@ export function MiniGraphEditor({
     return () => window.removeEventListener('scroll', close, true);
   }, [!!menu, !!picker]);
   const errors = diagnostics.filter((d) => d.severity === 'error');
+  // problemNode is the drawn node an error names: its own, the inline
+  // subprocess holding it ("qa/unit" is drawn as qa), or the node an edge
+  // error leaves ("review:changes"); '' for the process's.
+  const problemNode = (diagnostic) => {
+    const target = String(diagnostic?.targetId || '');
+    const id = diagnostic?.scope === 'node' ? target.split('/')[0] : diagnostic?.scope === 'edge' ? target.split(':')[0].split('/')[0] : '';
+    return id && draft.template.nodes[id] ? id : '';
+  };
+  const problemIds = new Set(errors.map(problemNode).filter(Boolean));
+  const firstProblem = problemNode(errors[0]);
   const roles = groupInfo?.roles || null;
   const profiles = useSpawnProfiles(api);
   const fallbackInfo = { fallback: draft.template.fallback || null, defaultSpawnProfile: String(groupInfo?.defaultSpawnProfile || ''), profiles };
@@ -767,7 +777,7 @@ export function MiniGraphEditor({
       onClick=${(event) => {
         if (event.target === canvas.current || event.target?.classList?.contains?.('pk-mini-graph')) { setSelected(''); setMenu(null); setPicker(null); }
       }}>
-      <${ProcessMiniGraph} run=${projection} wizard=${wizard} selectedId=${selected}
+      <${ProcessMiniGraph} run=${projection} wizard=${wizard} selectedId=${selected} problemIds=${problemIds}
         onNodeClick=${(node) => { if (node.id === FIRST_STEP) { addFirst(); return; } setMenu(null); setPicker(null); setSelected(node.id === selected ? '' : node.id); }}
         onNodeContextMenu=${(node, event) => (node.id === FIRST_STEP ? event.preventDefault() : openMenu(node, event))}
         onNodeHover=${(id) => setHover(id === FIRST_STEP ? '' : id)} overlay=${overlay} />
@@ -782,7 +792,8 @@ export function MiniGraphEditor({
       })} />`}
     <div class="gm-foot">
       <span class="gq-dim">${isDraft ? 'It saves itself as you go; runs already going keep their version.' : 'Saving makes a new version; runs already going keep theirs.'}</span>
-      ${errors.length > 0 && html`<span class="gq-error ui-error" role="alert" data-mini-problems=${errors.length}>${errors.length} problem${errors.length === 1 ? '' : 's'}: ${errors[0].message}</span>`}
+      ${errors.length > 0 && html`<span class="gq-error ui-error" role="alert" data-mini-problems=${errors.length}>${`${errors.length} problem${errors.length === 1 ? '' : 's'}: `}${firstProblem && html`<${Button} size="sm" variant="link" class="gq-link gm-problem-step" data-mini-problem-step=${firstProblem}
+          title="Select this step" onClick=${() => { setMenu(null); setPicker(null); setSelected(firstProblem); }}>${draft.template.nodes[firstProblem].name || firstProblem}<//>`}${firstProblem ? ': ' : ''}${errors[0].message}${problemIds.size > 1 ? ` (${problemIds.size} steps outlined)` : ''}</span>`}
       <span class="gq-spacer"></span>
       ${!process.listed && html`<label class="gq-dim"><input name="groups-mini-editor-input" type="checkbox" data-mini-publish checked=${publish}
         onChange=${(event) => setPublish(event.currentTarget.checked)} /> also publish to the library</label>`}

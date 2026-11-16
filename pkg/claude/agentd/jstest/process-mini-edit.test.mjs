@@ -146,6 +146,15 @@ test('the draft projects onto the kit: kinds, who lines, outcome labels', () => 
   assert.deepEqual(m.changeSummary(ship, m.insertAfter(ship, 'implement', 'agent').view), ['added “New step”', 'Implement changed']);
 });
 
+test('a gate carries its who as a caption under the diamond; a plain decision does not', () => {
+  const whoOf = (id, node) => (node.deciders?.length ? `${node.deciders.length} deciders · all ${node.agree}` : 'you');
+  assert.equal(m.draftProjection(ship, { whoOf }).nodes.find((n) => n.id === 'approve').caption, undefined);
+  const gated = structuredClone(ship);
+  gated.template.nodes.approve.deciders = [{ kind: 'agent', role: 'reviewer', prompt: 'Review.' }, { kind: 'human', ask: 'Approve?' }];
+  gated.template.nodes.approve.agree = 'ship';
+  assert.equal(m.draftProjection(gated, { whoOf }).nodes.find((n) => n.id === 'approve').caption, '2 deciders · all ship');
+});
+
 test('a bounded loop projects as a back edge carrying its bound', () => {
   const run = m.draftProjection(ship);
   const back = run.edges.find((e) => e.from === 'approve' && e.to === 'implement');
