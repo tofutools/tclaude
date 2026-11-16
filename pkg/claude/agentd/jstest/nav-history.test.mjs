@@ -771,3 +771,56 @@ test('an overlay that changes while a close steps back is read once the step lan
   assert.deepEqual(browsing.calls.filter((c) => c.kind === 'push').length, 1, 'one step: Now, then Agents');
   assert.equal(browsing.at(), '/');
 });
+
+// A phone page's ‹ goes to its parent (nav-back.js): a step back only when
+// the entry under it is exactly that parent, else the parent in place.
+test('a phone page\'s ‹ steps back onto its parent only when that is the entry under it', async (t) => {
+  const reader = { tab: 'messages', selection: 'human', item: '7' };
+  const list = { tab: 'messages', selection: 'human' };
+  const go = (harness, location) => harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:navigated', { detail: { location } }));
+  const boot = async (path) => {
+    const harness = await createPreactHarness(t);
+    installTabsShell(harness, ['groups', 'messages']);
+    const browsing = installBrowsingContext(t, harness, path);
+    const [{ initNavHistory }, back] = await Promise.all([
+      harness.importDashboardModule('js/nav-history.js'),
+      harness.importDashboardModule('js/nav-back.js'),
+    ]);
+    initNavHistory();
+    const inPlace = [];
+    const press = () => back.toParent(list, () => inPlace.push(1));
+    return { harness, browsing, inPlace, press };
+  };
+
+  // Opened from its list: ‹ is a step back, so no history piles up.
+  let s = await boot('/messages/human');
+  go(s.harness, reader);
+  assert.equal(s.browsing.at(), '/messages/human/7');
+  s.browsing.calls.length = 0;
+  s.press();
+  assert.deepEqual(s.browsing.calls.map((c) => c.kind), ['back']);
+  assert.deepEqual(s.inPlace, []);
+
+  // A fresh load of the reader: no list under it, so the list in place.
+  s = await boot('/messages/human/7');
+  s.browsing.calls.length = 0;
+  s.press();
+  assert.deepEqual(s.browsing.calls, [], 'no browser Back');
+  assert.deepEqual(s.inPlace, [1], 'the list is shown in place of the reader');
+
+  // Opened from another page (Groups, Now, a notification): the list in place, never back to that page.
+  s = await boot('/groups');
+  go(s.harness, reader);
+  s.press();
+  assert.equal(s.browsing.calls.filter((c) => c.kind === 'back').length, 0);
+  assert.deepEqual(s.inPlace, [1]);
+
+  // Opened from the list, then left and reopened from elsewhere: the entry under it is not the list any more.
+  s = await boot('/messages/human');
+  go(s.harness, reader);
+  go(s.harness, { tab: 'groups' });
+  go(s.harness, reader);
+  s.press();
+  assert.equal(s.browsing.calls.filter((c) => c.kind === 'back').length, 0);
+  assert.deepEqual(s.inPlace, [1]);
+});

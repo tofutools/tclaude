@@ -24,6 +24,7 @@ import { configLocation, setConfigPanel } from './config-panel.js';
 import { mailLocation, restoreMailLocation, suppressNextMessagesAttention } from './mail-bridge.js';
 import { fleetAdminLocation, setFleetAdminPage, setFleetGrantTarget } from './fleet-admin-page.js';
 import { OVERLAY_EVENT, overlayParams, restoreOverlays } from './overlay-routes.js';
+import { registerStepBack } from './nav-back.js';
 // Registers the agent link (?agent=), so a layout without its view drops it.
 import './agent-route.js';
 import { withCostsPeriod } from './usage-hub-state.js';
@@ -408,6 +409,17 @@ function onOverlay(event) {
   correct(loc);
 }
 
+// stepBackTo steps back onto `loc` when it is exactly the entry under this
+// one, and says whether it did: a phone page's ‹ to its parent (nav-back.js).
+function stepBackTo(loc) {
+  if (!ready || steppingBack || stack.index < 1) return false;
+  if (!locEquals(stack.entries[stack.index - 1], withOverlays(normalizeLocation(loc)))) return false;
+  steppingBack = [];
+  history.back();
+  setTimeout(() => { if (steppingBack) flushSteppingBack(); }, 1000);
+  return true;
+}
+
 function flushSteppingBack() {
   const queued = steppingBack || [];
   steppingBack = null;
@@ -657,6 +669,7 @@ export function initNavHistory() {
   // a tab or subtab), so canonicalise from the stack, not the parsed URL.
   history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
   ready = true;
+  registerStepBack(stepBackTo);
 
   // Observe user navigation. A delegated listener on <nav> bubbles AFTER each
   // button's own bindTabs handler (which set the .active class), so reading the
