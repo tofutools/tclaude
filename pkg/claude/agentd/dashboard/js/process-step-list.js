@@ -257,10 +257,11 @@ export function expandParamShorthand(text) {
 //   { mode: 'lead' }               the group's lead (performer.lead)
 //   { mode: 'you' }                the human (a human performer)
 //   { mode: 'command', run }       a program performer (run: its executable)
-//   { mode: 'spawn', profile }     a new agent for the step: names no one,
-//                                  and its own fallback spawns (profile '' is
-//                                  the group's default spawn profile); with
-//                                  no one to match, every run spawns one
+//   { mode: 'spawn', profile }     a new agent for the step: names no one
+//                                  (no sameAs either), and its own fallback
+//                                  spawns (profile '' is the group's default
+//                                  spawn profile); with no one to match, a
+//                                  group run spawns one every time
 //   { mode: 'nobody' }             an agent performer that names no one
 export function stepWho(step) {
   const performer = step?.node?.performer;
@@ -272,7 +273,9 @@ export function stepWho(step) {
   if (performer.anyone) return { mode: 'anyone' };
   if (performer.lead) return { mode: 'lead' };
   if (performer.profile) return { mode: 'role', role: performer.profile, legacy: true };
-  if (performer.fallback?.action === 'spawn') return { mode: 'spawn', profile: performer.fallback.profile || '' };
+  // With sameAs the step goes to that step's performer once it has run, so
+  // it is not a new agent: it stays "nobody" with its fallback.
+  if (performer.fallback?.action === 'spawn' && !performer.sameAs) return { mode: 'spawn', profile: performer.fallback.profile || '' };
   return { mode: 'nobody' };
 }
 

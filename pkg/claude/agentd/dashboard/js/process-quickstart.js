@@ -37,7 +37,7 @@ export function whoOptions(roster, { roles = null, spawn = true } = {}) {
     ...(roles?.length ? roles : groupRoles(roster)).map(({ role, count }) => ({ value: `role:${role}`, group: 'role', label: `any ${role}`, detail: `${count} in group` })),
     { value: 'anyone', group: 'role', label: 'anyone free in the group', detail: 'idle first, then the least busy' },
     { value: 'lead', group: 'role', label: "the group's lead", detail: 'the member with role lead, else an owner' },
-    ...(spawn ? [{ value: 'spawn', group: 'spawn', label: 'a new agent…', detail: 'spawned for this step' }] : []),
+    ...(spawn ? [{ value: 'spawn', group: 'spawn', label: 'a new agent…', detail: '' }] : []),
     { value: 'you', group: 'other', label: 'you (a question or sign-off)', detail: '' },
     { value: 'command', group: 'other', label: 'a command', detail: '' },
   ];
@@ -196,7 +196,7 @@ export function whoNow(step, roster, { fallback = null, defaultSpawnProfile = ''
       : { label: "the group's lead", detail: 'an owner of the group, when no member has the role lead' };
   }
   if (who.mode === 'spawn') {
-    const spawned = nobody('a new agent', 'a new agent for every run');
+    const spawned = nobody('a new agent', 'a new agent for every group run');
     return spawned.waits ? { label: 'a new agent', detail: 'the group has no default spawn profile: the step waits', waits: true } : spawned;
   }
   if (who.mode === 'anyone') {

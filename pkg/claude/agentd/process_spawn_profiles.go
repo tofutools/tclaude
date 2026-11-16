@@ -12,7 +12,8 @@ import (
 
 // spawnProfileDiagnostics warns about every spawn fallback that names a
 // spawn profile this node does not have: the process's own default, and each
-// agent step's (deciders and inline subprocess bodies included). A warning,
+// agent step's (deciders, a compound task's plan, check and review stages,
+// and inline subprocess bodies included). A warning,
 // not an error: a template travels between nodes, and the profile may exist
 // where it runs. At runtime such a spawn is refused and the step fails.
 func spawnProfileDiagnostics(tmpl *model.Template) []processEditDiag {
@@ -55,6 +56,16 @@ func spawnProfileDiagnostics(tmpl *model.Template) []processEditDiag {
 			for i := range node.Deciders {
 				check(node.Deciders[i].Fallback, "node", target, fmt.Sprintf("decider %d", i+1))
 			}
+			stage := func(step *model.Step, where string) {
+				if step != nil {
+					check(step.Performer.Fallback, "node", target, where)
+				}
+			}
+			stage(node.Plan, "its plan stage")
+			for i := range node.Checks {
+				stage(&node.Checks[i], fmt.Sprintf("its check %d", i+1))
+			}
+			stage(node.Review, "its review stage")
 			if node.Subprocess != nil && node.Subprocess.IsInline() {
 				walk(node.Subprocess.Nodes, target+model.SubprocessNodeIDSeparator)
 			}

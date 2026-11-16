@@ -119,6 +119,9 @@ test('a new agent is a step with no one to match and its own spawn, so every run
   const bare = setStepWho(role, { mode: 'spawn', profile: '' });
   assert.equal(whoNow(bare, roster, { defaultSpawnProfile: 'sonnet-dev' }).spawns, 'sonnet-dev');
   assert.equal(whoNow(bare, roster).waits, true, 'no default spawn profile: it waits');
+  // With sameAs it goes to that step's performer once it ran: not a new agent.
+  const same = { id: 's', node: { type: 'task', performer: { kind: 'agent', sameAs: 'build', fallback: { action: 'spawn' } } } };
+  assert.equal(stepWho(same).mode, 'nobody');
   // Back to a role keeps the spawn as the step's own fallback.
   assert.deepEqual(setStepWho(fresh, { mode: 'role', role: 'qa' }).node.performer.fallback, { action: 'spawn', profile: 'opus-review' });
 });

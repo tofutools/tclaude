@@ -302,11 +302,14 @@ func TestProcessPerformerFallback_ValidateWarnsAboutAnUnknownSpawnProfile(t *tes
 	f, _ := processRuntimeFlow(t)
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "opus-review", Harness: "claude"})
 	require.NoError(t, err)
-	warnings := func(stepProfile, processProfile string) map[string]string {
+	warnings := func(stepProfile, processProfile string, edit ...func(*model.Template)) map[string]string {
 		t.Helper()
 		tmpl := performerTemplate("profiles", model.Performer{Kind: model.PerformerAgent, Prompt: "Review.",
 			Fallback: &model.PerformerFallback{Action: model.FallbackSpawn, Profile: stepProfile}}, nil)
 		tmpl.Fallback = &model.PerformerFallback{Action: model.FallbackSpawn, Profile: processProfile}
+		for _, apply := range edit {
+			apply(tmpl)
+		}
 		rec := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"template": tmpl})
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var body struct {
@@ -328,4 +331,12 @@ func TestProcessPerformerFallback_ValidateWarnsAboutAnUnknownSpawnProfile(t *tes
 	got := warnings("gone", "missing")
 	assert.Contains(t, got["node:"+performerNode], `"gone"`)
 	assert.Contains(t, got["template:"], `"missing"`)
+	// A compound task's review stage is checked too.
+	staged := warnings("opus-review", "", func(tmpl *model.Template) {
+		node := tmpl.Nodes[performerNode]
+		node.Review = &model.Step{ID: "review", Performer: model.Performer{Kind: model.PerformerAgent, Prompt: "Review it.",
+			Fallback: &model.PerformerFallback{Action: model.FallbackSpawn, Profile: "no-such-reviewer"}}}
+		tmpl.Nodes[performerNode] = node
+	})
+	assert.Contains(t, staged["node:"+performerNode], `its review stage spawns profile "no-such-reviewer"`)
 }

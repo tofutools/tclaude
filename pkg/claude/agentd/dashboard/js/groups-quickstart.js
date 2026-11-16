@@ -525,7 +525,9 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
   // default spawn profile, or fail the step.
   const agentSteps = list.steps.filter((step) => step.node.performer?.kind === 'agent');
   const fallbackAction = fallback?.action || 'wait';
-  const ownFallbacks = agentSteps.filter(ownFallback).length;
+  // A new agent's spawn is its who: the process's fallback never reaches it.
+  const fallbackSteps = agentSteps.filter((step) => stepWho(step).mode !== 'spawn');
+  const ownFallbacks = fallbackSteps.filter(ownFallback).length;
   const setFallback = (next) => {
     const template = { ...list.template };
     if (!next || next.action === 'wait') delete template.fallback;
@@ -717,7 +719,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
         ${[['agent', '🤖 agent'], ['you', '👤 you'], ['command', '⌘ command']].map(([kind, text]) => html`<${Button} size="sm" key=${kind} data-add-step=${kind}
           onClick=${() => update(insertStep(list, newStep(list, { kind })))}>${text}<//>`)}
       </div>
-      ${agentSteps.length > 0 && html`<div class="gq-fallback" data-process-fallback=${fallbackAction}>
+      ${fallbackSteps.length > 0 && html`<div class="gq-fallback" data-process-fallback=${fallbackAction}>
         <span aria-hidden="true">↯</span>
         <label>If no member can take an agent step:
           <${FallbackPicker} value=${fallbackValue(fallback) || 'wait'} label="When no member can take a step"
