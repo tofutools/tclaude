@@ -65,6 +65,13 @@ type processRunInput struct {
 	// outcome is an operator-recorded outcome for an agent command: human
 	// preemption of a performer, which must not wait for sibling programs.
 	outcome *processRunOutcomeInput
+	// cancel gives the whole run up; block parks an agent step that is out.
+	cancel *processRunCancelInput
+	block  *executor.MarkBlockInput
+}
+
+type processRunCancelInput struct {
+	note string
 }
 
 type processRunOutcomeInput struct {
@@ -75,7 +82,7 @@ type processRunOutcomeInput struct {
 // cancels reports whether this input gives the run up — the one input an
 // orphaned run still accepts.
 func (i processRunInput) cancels() bool {
-	return i.resolution != nil && i.resolution.Action == engine.ResolveCancel
+	return i.cancel != nil || (i.resolution != nil && i.resolution.Action == engine.ResolveCancel)
 }
 
 // apply commits this input against the run. It is called only by the run's
@@ -91,6 +98,10 @@ func (i processRunInput) apply(run *executor.Run, actor string) error {
 		return executor.RecordAgentReport(run, actor, *i.agentReport)
 	case i.outcome != nil:
 		return executor.RecordOutcome(run, actor, i.outcome.selector, i.outcome.outcome)
+	case i.cancel != nil:
+		return executor.CancelRun(run, actor, i.cancel.note)
+	case i.block != nil:
+		return executor.MarkBlocked(run, actor, *i.block)
 	default:
 		return fmt.Errorf("process run input names no decision, blocked resolution, or agent report")
 	}

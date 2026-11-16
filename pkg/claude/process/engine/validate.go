@@ -997,7 +997,8 @@ func validateAttemptCeilings(checkpoint Checkpoint, definition *Definition) erro
 	for nodeID, ceiling := range checkpoint.AttemptCeilings {
 		node, ok := definitionNodeByID(definition, nodeID)
 		// A loop's new round opens a fresh window for any task of its body.
-		if !ok || !node.runsCommand() || (!node.retryAuthored && len(node.loops) == 0) {
+		// A step parked by hand and retried gets one too, retry policy or not.
+		if !ok || !node.runsCommand() || (!node.retryAuthored && len(node.loops) == 0 && !manuallyBlockable(definition, node)) {
 			return fmt.Errorf("%w: attemptCeilings names %q, which is not a prepared program task with an authored retry policy or in a loop",
 				ErrInvalidCheckpoint, nodeID)
 		}

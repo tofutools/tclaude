@@ -90,11 +90,7 @@ func processConcernChoices(view processRunView, c db.ProcessRunConcern) []string
 	if processConcernReassignable(view, c.NodeID) {
 		choices = append(choices, processChoiceReassign)
 	}
-	choices = append(choices, processChoiceKeepPaused)
-	if len(view.Blocked) > 0 {
-		choices = append(choices, processChoiceCancel)
-	}
-	return choices
+	return append(choices, processChoiceKeepPaused, processChoiceCancel)
 }
 
 // postProcessConcernCard puts a concern to the operator and returns the
@@ -195,34 +191,29 @@ func applyProcessConcernChoice(c db.ProcessRunConcern, choice, note string) erro
 	case processChoiceReassign:
 		// The overseer picks who; the pick is posted to it.
 		return nil
-	case processChoiceSkip, processChoiceCancel:
+	case processChoiceCancel:
+		_, err := processRuns.submit(c.RunID, actor, processRunInput{cancel: &processRunCancelInput{
+			note: truncateBytes(strings.TrimSpace("concern #"+fmt.Sprint(c.ID)+": "+note), executor.MaxResolutionNoteBytes),
+		}})
+		return err
+	case processChoiceSkip:
 		view, err := loadProcessRunView(c.RunID)
 		if err != nil {
 			return err
 		}
-		action := engine.ResolveSkip
 		blocked := processConcernBlocked(view, c.NodeID)
-		if choice == processChoiceCancel {
-			action = engine.ResolveCancel
-			if blocked == nil && len(view.Blocked) > 0 {
-				blocked = &view.Blocked[0]
-			}
-		}
 		if blocked == nil {
 			return fmt.Errorf("the step is no longer blocked")
 		}
 		_, err = processRuns.submit(c.RunID, actor, processRunInput{resolution: &executor.ResolutionInput{
-			NodeID: blocked.NodeID, Attempt: blocked.Attempt, Action: action,
+			NodeID: blocked.NodeID, Attempt: blocked.Attempt, Action: engine.ResolveSkip,
 			Note: truncateBytes(strings.TrimSpace("concern #"+fmt.Sprint(c.ID)+": "+note), executor.MaxResolutionNoteBytes),
 		}})
 		if err != nil {
 			return err
 		}
-		if choice == processChoiceSkip {
-			// What waited on the skipped step can go on.
-			return resumeProcessRunFor(c.RunID, actor)
-		}
-		return nil
+		// What waited on the skipped step can go on.
+		return resumeProcessRunFor(c.RunID, actor)
 	}
 	return fmt.Errorf("unknown choice %q", choice)
 }

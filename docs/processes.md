@@ -204,6 +204,8 @@ tclaude process record-outcome <run-id> [--node <node>] \
     --outcome succeeded|failed
 tclaude process resolve-blocked <run-id> --node <node> --attempt <n> \
     --action retry|skip|cancel [--note "why"]
+tclaude process block <run-id> --node <node> --reason "why" [--attempt <n>]
+tclaude process cancel <run-id> [--note "why"]
 tclaude process report succeeded|failed [--run <run-id> --node <node> \
     --attempt <n>] [--verdict <verdict>] [--note "summary"]   # agent performers only
 tclaude agent process-templates ls
@@ -287,8 +289,20 @@ in it raises a concern.
   hands that member the overseer's steering below, so who holds a role is
   part of the template's trust.
 - Overseeing a run grants, for that run only, what steering it needs:
-  pause, resume, reassigning a step, and answering its concerns. It does not
-  grant editing the template, or handing the run to another overseer.
+  pause, resume, reassigning a step, parking a step, and answering its
+  concerns. It does not grant editing the template, handing the run to
+  another overseer, or cancelling the run.
+- **Parking a step** (`tclaude process block <run-id> --node <node> --reason
+  "why"`, or ⏹ Park on the run view with the step selected) stops an agent
+  step that is out: its performer is told to stop, a late report of that
+  attempt is refused, and the step waits as blocked on `resolve-blocked`
+  retry, skip or cancel, like a step whose retries ran out. The reason is
+  what the operator decides from.
+- **Cancelling the run** (`tclaude process cancel <run-id>`, ✕ Cancel run on
+  the run view, or the operator's card) gives it up from any state: nothing
+  more starts, work still out is withdrawn, and it ends `canceled`. It needs
+  `process.runs.manage`; an overseer without it raises a concern, and the
+  operator's card always offers the cancel.
 
 Anyone taking part in a run (its overseer, its group's members, its
 performers, whoever started it, the operator) can raise a **concern**:
@@ -440,7 +454,8 @@ tclaude process rescope <run-id> --agent <agent>   # re-bind to an agent
 ```
 
 The one input an orphaned run still accepts is giving it up:
-`tclaude process resolve-blocked ... --action cancel` on a blocked node.
+`tclaude process cancel <run-id>`, or `resolve-blocked ... --action cancel`
+on a blocked node.
 Runs of a deleted group stay listable with `runs ls --group <group-id>`.
 
 `rescope` is human-only and records a `run_rescoped` event. On a bound

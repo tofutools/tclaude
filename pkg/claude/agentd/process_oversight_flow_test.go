@@ -201,7 +201,7 @@ func TestProcessOversight_ConcernEscalatesFromOverseerToOperatorWhoResumes(t *te
 	assert.Equal(t, "open", moved.State)
 	assert.Equal(t, db.ProcessConcernLevelOperator, moved.Level, "no escalation agent: straight to the operator")
 	require.NotZero(t, moved.MessageID)
-	assert.Equal(t, []string{"Resume", "Reassign", "Keep paused"}, moved.Choices)
+	assert.Equal(t, []string{"Resume", "Reassign", "Keep paused", "Cancel the run"}, moved.Choices, "Cancel is always offered")
 
 	card, err := db.GetHumanMessage(moved.MessageID)
 	require.NoError(t, err)
