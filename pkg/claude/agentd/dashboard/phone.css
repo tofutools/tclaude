@@ -112,6 +112,14 @@
   transform: rotate(-45deg); transition: transform .15s ease;
 }
 :root[data-layout="phone"] details:not([data-group-key], .phone-diag-row)[open] > summary::before { transform: rotate(45deg); margin-bottom: 4px; }
+/* The same chevron on a disclosure.js section that kept the summary look. */
+:root[data-layout="phone"] .disclosure-tri {
+  display: inline-block; flex: none; width: 7px; height: 7px; margin: 0 12px 2px 3px; font-size: 0;
+  border-right: 2px solid var(--ui-muted-text); border-bottom: 2px solid var(--ui-muted-text);
+  transform: rotate(-45deg); transition: transform .15s ease;
+}
+:root[data-layout="phone"] .disclosure-tri::before { content: none; }
+:root[data-layout="phone"] .disclosure-tri.open { transform: rotate(45deg); margin-bottom: 4px; }
 
 /* The one secondary width query in phone mode: a phone held sideways, where a
    view may show two panes side by side (e.g. message list and message).

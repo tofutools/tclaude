@@ -1502,13 +1502,19 @@ test('Groups keeps its trigger projection read-only, collapsed, and capped', asy
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   const projection = mounted.container.querySelector('.group-triggers-section');
   assert.ok(projection);
-  assert.equal(projection.hasAttribute('open'), false, 'the compact projection is collapsed by default');
-  assert.match(projection.querySelector('summary').textContent, /6 installed here/);
+  assert.equal(projection.classList.contains('open'), false, 'the compact projection is collapsed by default');
+  assert.equal(projection.querySelector('.group-triggers-body').hidden, true);
+  assert.equal(projection.querySelector('summary'), null, 'its link is no longer inside a <summary>');
+  const toggle = projection.querySelector('.group-triggers-toggle');
+  assert.match(toggle.textContent, /6 installed here/);
+  await harness.act(() => harness.fireEvent(toggle, 'click'));
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(projection.querySelector('.group-triggers-body').hidden, false);
   assert.equal(projection.querySelectorAll('tbody tr').length, 5, 'large rule sets do not grow the Groups view');
   const edit = projection.querySelector('a');
   assert.equal(edit.textContent, 'edit in Automations →');
   assert.equal(edit.getAttribute('href'), '/automations/triggers');
-  assert.equal(projection.querySelectorAll('button').length, 0, 'the projection has no editor or mutation controls');
+  assert.equal(projection.querySelectorAll('button:not(.group-triggers-toggle)').length, 0, 'the projection has no editor or mutation controls, only its fold');
   await mounted.unmount();
 });
 

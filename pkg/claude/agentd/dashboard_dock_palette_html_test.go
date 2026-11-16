@@ -78,9 +78,9 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	// The card surface is .ui-card (skinned by its tokens); the wizard's dock
 	// states stay scoped under #agent-dock.
 	must("body.wizard #agent-dock .dock-card:hover {", "the wizard skin is scoped under #agent-dock")
-	// JOH-388 req 5: each category is a collapsible <details>; its per-section
-	// fold persists via dashPrefs and the disclosure chevron flips on [open].
-	must(".dock-section[open] > .dock-section-head .dock-section-chevron", "the section chevron flips with the <details> open state")
+	// JOH-388 req 5: each category folds on its own; its per-section fold
+	// persists via dashPrefs and the disclosure chevron flips on its open class.
+	must(".dock-section.open > .dock-section-head .dock-section-chevron", "the section chevron flips with the section's open state")
 	must("tclaude.dash.dock.section.", "each section's collapse persists via a dashPrefs key")
 	must("classList.add('dock-anim')", "dock.js enables the slide only after the initial paint")
 

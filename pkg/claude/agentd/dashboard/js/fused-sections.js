@@ -14,6 +14,7 @@ import { nodeHref } from './fleet-model.js';
 import { tickedNodes, withFused } from './fleet-scope.js';
 import { toPath } from './nav-history-core.js';
 import { LockReason } from './lock-reason.js';
+import { DisclosureToggle, DisclosureTri, headToggleClick } from './disclosure.js';
 
 const html = htm.bind(h);
 export const PEER_SECTION_POLL_MS = 30000;
@@ -98,13 +99,18 @@ export function usePeerSections({ peers, path, what, read, active, fetchFor = no
 export function NodeSection({ node, entry, summary, onOpen, openLabel, children }) {
   const label = `${node.local ? '⌂ ' : ''}${node.name}`;
   const refused = !!entry?.why;
-  return html`<details class="fused-section" open=${!refused} style=${`--nc:${node.color}`} data-node=${node.id}>
-    <summary class="fused-section-head"><span class="scope-pill" style=${`--nc:${node.color}`}>${label}</span>
+  const [folded, setFolded] = useState(false);
+  // A refused section has nothing to show, so it stays shut.
+  const open = !refused && !folded;
+  const toggle = () => { if (!refused) setFolded(!folded); };
+  return html`<div class=${`fused-section${open ? ' open' : ''}`} style=${`--nc:${node.color}`} data-node=${node.id}>
+    <div class="fused-section-head" onClick=${headToggleClick(toggle)}>
+      <${DisclosureToggle} class="fused-section-toggle" open=${open} onToggle=${toggle}><${DisclosureTri} open=${open} /><span class="scope-pill" style=${`--nc:${node.color}`}>${label}</span><//>
       ${!entry ? html`<span class="muted">loading…</span>`
         : refused ? html`<span class="muted">not shared</span><${LockReason} why=${entry.why} />`
         : html`<span class="muted">${summary}</span>`}
       ${onOpen && !refused ? html`<span class="spacer"></span><${Button} size="sm" class="fused-section-open" onClick=${(event) => { event.preventDefault(); onOpen(); }}>${openLabel || `open on ${node.name}`} ↗<//>` : null}
-    </summary>
-    ${entry && !refused ? children : null}
-  </details>`;
+    </div>
+    ${entry && !refused ? html`<div class="fused-section-body" hidden=${!open}>${children}</div>` : null}
+  </div>`;
 }
