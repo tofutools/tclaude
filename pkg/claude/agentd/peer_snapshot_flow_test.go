@@ -173,6 +173,8 @@ func TestPeerSnapshotPollsShareGatherWithoutStalingLocalReads(t *testing.T) {
 	rec := fedHuman(t, f, "POST", "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermAgentsStatusRead, "scope": "group=team"})
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	agentd.ResetStatusSnapshotForTest()
+	// The polls must share one gather however slowly this machine runs them.
+	t.Cleanup(agentd.SetPeerStatusCacheTTLForTest(time.Hour))
 	var gathers atomic.Int64
 	t.Cleanup(agentd.SetPeerStatusGatherHookForTest(func() { gathers.Add(1) }))
 	h := agentd.PeerViewHandler(p.id.ID())

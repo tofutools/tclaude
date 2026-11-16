@@ -2206,6 +2206,12 @@ func SetPeerStatusGatherHookForTest(fn func()) func() {
 	return func() { statusHook.Lock(); statusHook.peerFn = old; statusHook.Unlock() }
 }
 
+// SetPeerStatusCacheTTLForTest pins how long peer polls share one gather.
+func SetPeerStatusCacheTTLForTest(ttl time.Duration) func() {
+	old := peerStatusCacheTTL.Swap(int64(ttl))
+	return func() { peerStatusCacheTTL.Store(old) }
+}
+
 func ResetStatusSnapshotForTest() {
 	peerStatusCache.mu.Lock()
 	peerStatusCache.value = nil

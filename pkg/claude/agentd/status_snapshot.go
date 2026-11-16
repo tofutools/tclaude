@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -57,11 +58,17 @@ var sharedStatusCache = statusSnapshotCache{revision: db.StatusSnapshotGeneratio
 // dashboard/CLI consumers retain immediate data_version invalidation.
 var peerStatusCache statusSnapshotCache
 
+// peerStatusCacheTTL is that staleness; tests that count gathers pin it so a
+// slow machine cannot expire the cache between polls.
+var peerStatusCacheTTL atomic.Int64
+
+func init() { peerStatusCacheTTL.Store(int64(1500 * time.Millisecond)) }
+
 func gatheredPeerStatusSnapshot() *statusSnapshot {
 	if statusSnapshotDisabled() {
 		return gatheredStatusSnapshot()
 	}
-	return peerStatusCache.get(config.DataDir(), 1500*time.Millisecond, func() *statusSnapshot {
+	return peerStatusCache.get(config.DataDir(), time.Duration(peerStatusCacheTTL.Load()), func() *statusSnapshot {
 		statusHook.RLock()
 		hook := statusHook.peerFn
 		statusHook.RUnlock()
