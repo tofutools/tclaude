@@ -443,6 +443,7 @@ var peerViewOwnNodeRoutes = []string{
 	// The web app manifest and its icons describe this node's own page.
 	"GET /manifest.webmanifest",
 	"GET /pwa/{file}",
+	"GET /pwa/{version}/{file}",
 	"/terminals",
 	"/terminals/",
 }

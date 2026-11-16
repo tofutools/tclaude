@@ -1,10 +1,14 @@
 package agentd
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // The dashboard as an installable web app: a phone's "Add to home screen"
@@ -23,10 +27,50 @@ import (
 // start_url and scope are "/" and the icon paths host-relative, so one
 // manifest serves every origin the dashboard is reached on (localhost, a
 // tunnel's hostname, the remote listener).
+//
+// Icon URLs carry each icon's content hash (/pwa/v-<hash>/<file>), and those
+// are cached for good: a changed icon gets a new URL, so neither a CDN in
+// front of a tunnel nor the phone can hand back the old PNG. The manifest,
+// which names the current URLs, is no-cache, so a deploy is picked up on the
+// browser's next update check. The bare /pwa/<file> an app installed before
+// the hash keeps working, revalidated on every fetch.
 
 // dashboardPWAIconPrefix is where the icons are served (GET /pwa/{file}),
 // from dashboard/pwa/.
 const dashboardPWAIconPrefix = "/pwa/"
+
+// dashboardPWAIconImmutable is a versioned icon's Cache-Control. public: the
+// icons are served without the session and hold nothing about the node.
+const dashboardPWAIconImmutable = "public, max-age=31536000, immutable"
+
+// pwaIconHash is an icon's content hash, as its URL and ETag carry it.
+func pwaIconHash(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// pwaIconURL is the versioned URL of dashboard/pwa/<file> in fsys.
+func pwaIconURL(fsys fs.FS, file string) string {
+	data, err := fs.ReadFile(fsys, "pwa/"+file)
+	if err != nil {
+		panic("agentd: reading web app icon " + file + ": " + err.Error())
+	}
+	return dashboardPWAIconPrefix + "v-" + pwaIconHash(data) + "/" + file
+}
+
+// versionPWARefs rewrites a page's quoted "/pwa/<file>" references (the
+// apple-touch-icon link) to the icons' versioned URLs.
+func versionPWARefs(html []byte, fsys fs.FS) []byte {
+	entries, err := fs.ReadDir(fsys, "pwa")
+	if err != nil {
+		panic("agentd: listing web app icons: " + err.Error())
+	}
+	for _, e := range entries {
+		ref := `"` + dashboardPWAIconPrefix + e.Name() + `"`
+		html = bytes.ReplaceAll(html, []byte(ref), []byte(`"`+pwaIconURL(fsys, e.Name())+`"`))
+	}
+	return html
+}
 
 // The dark theme's colours: the page behind the launch splash, and the phone
 // bar's, which the system status bar takes.
@@ -55,9 +99,12 @@ type dashboardManifest struct {
 	Icons           []dashboardManifestIcon `json:"icons"`
 }
 
-var dashboardManifestJSON = func() []byte {
+var dashboardManifestJSON = buildDashboardManifest(dashboardAssetsFS)
+
+// buildDashboardManifest is the manifest for the icons in fsys's pwa/.
+func buildDashboardManifest(fsys fs.FS) []byte {
 	icon := func(file, sizes, purpose string) dashboardManifestIcon {
-		return dashboardManifestIcon{Src: dashboardPWAIconPrefix + file, Sizes: sizes, Type: "image/png", Purpose: purpose}
+		return dashboardManifestIcon{Src: pwaIconURL(fsys, file), Sizes: sizes, Type: "image/png", Purpose: purpose}
 	}
 	body, err := json.MarshalIndent(dashboardManifest{
 		ID:              "/",
@@ -79,11 +126,12 @@ var dashboardManifestJSON = func() []byte {
 		panic(err)
 	}
 	return body
-}()
+}
 
 func registerDashboardPWARoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /manifest.webmanifest", handleDashboardManifest)
 	mux.HandleFunc("GET /pwa/{file}", handleDashboardPWAIcon)
+	mux.HandleFunc("GET /pwa/{version}/{file}", handleDashboardPWAIcon)
 }
 
 func handleDashboardManifest(w http.ResponseWriter, _ *http.Request) {
@@ -95,10 +143,15 @@ func handleDashboardManifest(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleDashboardPWAIcon serves one of dashboard/pwa/'s PNGs, and nothing
-// else: no other asset is reachable without the session this way.
+// else: no other asset is reachable without the session this way. At its
+// current versioned URL an icon is immutable. Bare (an app installed before
+// icon URLs were versioned) or at another version (a manifest from before a
+// deploy), it is the current icon, revalidated against its ETag every time.
 func handleDashboardPWAIcon(w http.ResponseWriter, r *http.Request) {
 	file := r.PathValue("file")
-	if !strings.HasSuffix(file, ".png") || strings.ContainsAny(file, `/\`) {
+	version := r.PathValue("version")
+	if !strings.HasSuffix(file, ".png") || strings.ContainsAny(file, `/\`) ||
+		(version != "" && !strings.HasPrefix(version, "v-")) {
 		http.NotFound(w, r)
 		return
 	}
@@ -107,7 +160,13 @@ func handleDashboardPWAIcon(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	hash := pwaIconHash(data)
 	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	_, _ = w.Write(data)
+	w.Header().Set("ETag", `"`+hash+`"`)
+	if version == "v-"+hash {
+		w.Header().Set("Cache-Control", dashboardPWAIconImmutable)
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
 }
