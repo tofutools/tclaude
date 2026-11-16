@@ -33,7 +33,7 @@ function fakeWorld({ statuses, onFails = false }) {
   const fetchImpl = async (url, init) => {
     const { intent } = JSON.parse(init.body);
     calls.push(intent);
-    if (intent === 'on' && onFails) return { ok: false, status: 503, text: async () => 'no tmux', json: async () => ({}) };
+    if (intent === 'open' && onFails) return { ok: false, status: 503, text: async () => 'no tmux', json: async () => ({}) };
     const body = intent === 'link' ? statuses[Math.min(i++, statuses.length - 1)] : { action: 'enabled' };
     return { ok: true, status: 200, text: async () => '', json: async () => body };
   };
@@ -52,7 +52,7 @@ test('turn on & open: switches it on, waits for the link, and a tap on the toast
   const w = fakeWorld({ statuses: [{}, {}, { session_url: LINK }] });
   const result = await openInClaudeApp({ ...w.opts, turnOn: true });
   assert.deepEqual(result, { ok: true, url: LINK });
-  assert.deepEqual(w.calls, ['on', 'link', 'link', 'link']);
+  assert.deepEqual(w.calls, ['open', 'link', 'link', 'link']);
   assert.match(w.toasts[0][0], /Turning on Remote Access for cc/);
   assert.equal(w.opened.length, 0, 'nothing opens without a tap: a universal link needs one');
   const [message, error, options] = w.toasts.at(-1);
@@ -63,10 +63,10 @@ test('turn on & open: switches it on, waits for the link, and a tap on the toast
   assert.deepEqual(w.opened, [[LINK, '_blank', 'noopener']]);
 });
 
-test('on but not read yet: no switch, just the read', async () => {
+test('on but no link yet: asks for one (the daemon cycles Remote Access if none is coming), then reads it', async () => {
   const w = fakeWorld({ statuses: [{ session_url: LINK }] });
   assert.deepEqual(await openInClaudeApp({ ...w.opts }), { ok: true, url: LINK });
-  assert.deepEqual(w.calls, ['link']);
+  assert.deepEqual(w.calls, ['open', 'link']);
   assert.match(w.toasts[0][0], /Finding cc's Remote Access link/);
 });
 
@@ -83,5 +83,5 @@ test('no link within the wait, or a refused switch: a toast says so', async () =
   const failing = fakeWorld({ statuses: [{}], onFails: true });
   await openInClaudeApp({ ...failing.opts, turnOn: true });
   assert.match(failing.toasts.at(-1)[0], /did not come up for cc: no tmux/);
-  assert.deepEqual(failing.calls, ['on']);
+  assert.deepEqual(failing.calls, ['open']);
 });

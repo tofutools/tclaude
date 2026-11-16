@@ -11,9 +11,11 @@
 //
 // Where no link is known yet, the operator's own page offers to get one:
 // "Turn on Remote Access & open" (or, when Remote Access is on but no link
-// was recorded yet, the same Open entry) switches it on through the existing
-// remote-control route, then asks the daemon for the recorded link (intent
-// "link": no pane capture) until the follower has it, then offers it: a
+// was recorded yet, the same Open entry) asks the remote-control route for
+// intent "open": it switches Remote Access on, or, when it is already on
+// with no link coming for this launch, off and on again so Claude Code
+// announces a fresh one. Then it asks the daemon for the recorded link
+// (intent "link": no pane capture) until the follower has it, then offers it: a
 // toast with Open in Claude app ↗, a second tap. The second tap is
 // deliberate. A tab opened in the first tap and pointed at the link later
 // fails on phones: iOS suspends the page that would point it while that tab
@@ -73,7 +75,7 @@ export async function openInClaudeApp({
   let url = '';
   let failure = '';
   try {
-    if (turnOn) await call('on');
+    await call('open');
     const deadline = now() + timeoutMs;
     for (;;) {
       const status = await call('link');

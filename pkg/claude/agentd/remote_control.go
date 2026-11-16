@@ -67,8 +67,19 @@ var remoteControlMenuStepDelay = 350 * time.Millisecond
 // menu layout, this slice is the one place to adjust.
 var remoteControlDisableMenuKeys = []string{"Up", "Up", "Enter"}
 
+// remoteControlCycleDelay bounds the wait, between the disable and the
+// enable when the "open" intent cycles Remote Access for a fresh link, for
+// the pane to read off: Claude Code must finish disconnecting before the next
+// toggle turns it back on rather than reopening the disconnect menu. The pane
+// is read every remoteControlCyclePoll meanwhile. Package vars so flow tests
+// can shrink them (SetRemoteControlConfirmDelayForTest).
+var (
+	remoteControlCycleDelay = 8 * time.Second
+	remoteControlCyclePoll  = 250 * time.Millisecond
+)
+
 // remoteControlResp is the JSON wire shape for the toggle endpoints. Action
-// is one of "enabled" | "disabled" | "noop" | "status" | "link"; RemoteControl is the
+// is one of "enabled" | "disabled" | "cycled" | "noop" | "status" | "link"; RemoteControl is the
 // resulting effective state. CallerConv is set only on a cross-agent call.
 type remoteControlResp struct {
 	ConvID     string `json:"conv_id"`
@@ -177,11 +188,18 @@ func handleAgentRemoteControl(w http.ResponseWriter, r *http.Request, targetConv
 }
 
 // runRemoteControlOrchestration is the shared body for the self + cross-agent
-// toggle endpoints. It reads the intent (on|off|toggle|status), gates on the
-// harness capability, and — for a mutating intent that actually changes the
-// best-known state — injects the toggle (with the disable confirm) and records
-// the new state on the live session row. caller is recorded in the response
-// for cross-agent calls; for self it equals target.
+// toggle endpoints. It reads the intent (on|off|toggle|open|status|link),
+// gates on the harness capability, and — for a mutating intent that actually
+// changes the best-known state — injects the toggle (with the disable
+// confirm) and records the new state on the live session row. caller is
+// recorded in the response for cross-agent calls; for self it equals target.
+//
+// "open" is "on" for the dashboard's "Turn on Remote Access & open": it must
+// end with a link the transcript follower can record. When Remote Access is
+// already on but this launch has no recorded link (its record predates the
+// v342 upgrade, or was otherwise missed), "on" would change nothing and no
+// link would ever come, so "open" cycles it off and on: Claude Code then
+// announces a fresh link. Only this explicit action cycles.
 func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, target, caller string) {
 	var body struct {
 		Intent string `json:"intent"`
@@ -197,10 +215,10 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		intent = "toggle"
 	}
 	switch intent {
-	case "on", "off", "toggle", "status", "link":
+	case "on", "off", "toggle", "open", "status", "link":
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			`intent must be one of "on", "off", "toggle", "status", "link"`)
+			`intent must be one of "on", "off", "toggle", "open", "status", "link"`)
 		return
 	}
 
@@ -278,14 +296,23 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 	// explicit switch is all the pane is read for: the link comes from the
 	// transcript (remote_control_url.go).
 	current := sess.RemoteControl
-	if obs := observeRemoteControl(sess.TmuxSession + ":0.0"); obs.state != rcUnknown {
+	obs := observeRemoteControl(sess.TmuxSession + ":0.0")
+	if obs.state != rcUnknown {
 		current = obs.state.armed()
 		selfHealRemoteControl(sess, current)
 	}
 
+	// The cycle drives the disable menu (Up, Up, Enter), which on a pane that
+	// is really off would land in the prompt and resubmit an old message, so
+	// it runs only when the pane itself reads on, never on the tracked flag.
+	if intent == "open" && obs.state.armed() && sess.RCSessionURL == "" && !rcLinkMayStillCome(sess) {
+		cycleRemoteControl(w, sess, h, target, caller)
+		return
+	}
+
 	var desired bool
 	switch intent {
-	case "on":
+	case "on", "open":
 		desired = true
 	case "off":
 		desired = false
@@ -331,6 +358,80 @@ func runRemoteControlOrchestration(w http.ResponseWriter, r *http.Request, targe
 		action = "disabled"
 	}
 	resp := remoteControlResp{ConvID: target, RemoteControl: desired, Action: action}
+	if caller != "" && caller != target {
+		resp.CallerConv = caller
+		resp.CallerAgentID = peerAgentID(caller)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// remoteControlLinkGrace is how long after a launch starts or Remote Access
+// is switched its link may still be on its way: "open" does not cycle within
+// it, so a second tap while the first tap's link is coming does not throw
+// that link away. It matches the dashboard's wait (claude-app.js). A package
+// var so flow tests can age a launch (SetRemoteControlLinkGraceForTest).
+var remoteControlLinkGrace = 30 * time.Second
+
+// rcLinkMayStillCome reports whether sess launched, or had Remote Access
+// switched, recently enough that its link may still come (remoteControlLinkGrace).
+func rcLinkMayStillCome(sess *db.SessionRow) bool {
+	at, err := db.SessionRCLinkAt(sess.ID)
+	if err != nil {
+		slog.Warn("remote-control: could not read the link time", "session_id", sess.ID, "error", err)
+		return true
+	}
+	return time.Since(at) < remoteControlLinkGrace
+}
+
+// cycleRemoteControl switches Remote Access off and back on, for the "open"
+// intent when the pane reads on with no link recorded for this launch:
+// Claude Code announces a fresh link on the way back up, which the
+// transcript follower records.
+//
+// Once the disable has landed the enable must follow, whether or not the
+// client is still there (a phone that locks mid-cycle drops its request), so
+// nothing here watches the request context. The enable is sent only once the
+// pane reads off: if the disconnect did not take, a second toggle would open
+// the disconnect menu instead of switching on.
+func cycleRemoteControl(w http.ResponseWriter, sess *db.SessionRow, h *harness.Harness, target, caller string) {
+	clearRCSessionURL(sess)
+	reason := slashReason("remote-control cycle for a fresh link", caller, target)
+	injected, ok := deliverRemoteControl(target, h, true, reason)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "no_tmux",
+			"could not deliver remote-control toggle to conv "+short8(target)+" (no live tmux session to inject into)")
+		return
+	}
+	pane := injected.TmuxSession + ":0.0"
+	deadline := time.Now().Add(remoteControlCycleDelay)
+	for observeRemoteControl(pane).state != rcSeenOff {
+		if time.Now().After(deadline) {
+			// The pane never read off: the disconnect did not take (or the
+			// pane cannot be read), so it is left as it is, on.
+			slog.Warn("remote-control cycle: the pane did not read off after the disable; not re-enabling",
+				"conv_id", target, "session_id", injected.ID)
+			writeError(w, http.StatusConflict, "cycle_incomplete",
+				"remote control did not read off after the switch-off; it was left as it is. Try again, or check its terminal.")
+			return
+		}
+		time.Sleep(remoteControlCyclePoll)
+	}
+	if err := db.SetSessionRemoteControl(injected.ID, false); err != nil {
+		slog.Warn("remote-control state write failed after injection",
+			"conv_id", target, "session_id", injected.ID, "desired", false, "error", err)
+	}
+	injected, ok = deliverRemoteControl(target, h, false, reason)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "no_tmux",
+			"remote control was switched off but could not be switched back on for conv "+short8(target))
+		return
+	}
+	if err := db.SetSessionRemoteControl(injected.ID, true); err != nil {
+		slog.Warn("remote-control state write failed after injection",
+			"conv_id", target, "session_id", injected.ID, "desired", true, "error", err)
+	}
+	resp := remoteControlResp{ConvID: target, RemoteControl: true, Action: "cycled",
+		Note: "remote control was on with no link recorded for this launch; switched off and on for a fresh one"}
 	if caller != "" && caller != target {
 		resp.CallerConv = caller
 		resp.CallerAgentID = peerAgentID(caller)
