@@ -383,7 +383,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
     <header class="phone-term-bar">
       <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}>‹</button>
       ${dirShell
-        ? html`<h1 class="phone-bar-title phone-term-dir-title"><span>${dirShell.label}</span>${dirShell.sub && html`<small>${dirShell.sub}</small>`}</h1>`
+        ? html`<h1 class="phone-bar-title phone-term-dir-title"><span>${dirShell.label}</span>${dirShell.sub && html`<small><bdi>${dirShell.sub}</bdi></small>`}</h1>`
         : html`<${Title} label=${label} group=${row?.group || ''} />`}
       ${row && !dirShell
         ? html`<${StatePill} state=${row.variant} title=${live ? undefined : `Terminal: ${status}`}>${row.waking ? 'waking' : VARIANT_LABELS[row.variant]}<//>`
