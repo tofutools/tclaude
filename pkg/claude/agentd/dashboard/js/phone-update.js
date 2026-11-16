@@ -9,7 +9,9 @@
 // method; with none saved, each binary the way it was installed ("as
 // installed: release download", methodText), with a note that settings and
 // a schedule are set up in Config › Updates on the desktop. Only a
-// notify-only method (manual) holds it back, linking there instead. Update
+// notify-only method (manual) holds it back, or with none saved a binary the
+// node would refuse to update as installed (package-managed, unidentified),
+// linking there instead. Update
 // asks "Update and restart agentd?" in the sheet, with what the method will
 // do, then follows the job: its phase while it runs, "restarting" while
 // agentd is away (the reads are retried, so the sheet picks up again when it
@@ -69,9 +71,13 @@ function openDesktopUpdates(navigate) {
 // FAILING matches a log line that says what went wrong: an ansible task's
 // "fatal:" or "FAILED!", an error, a non-zero exit. failingLines is the last
 // few of them, so a long log's failure shows without scrolling through it.
-const FAILING = /\b(fatal|failed|failure|error|errors|exception|traceback|panic|exit (status|code) [1-9])\b|FAILED!|^\s*E\s/i;
+const FAILING = /\b(fatal|failed|failure|error|errors|exception|traceback|panic|exit (status|code) [1-9]\d*)\b|FAILED!|^\s*E\s/i;
+// CLEAN is a line that names a failure only to say there was none, or one
+// that was ignored: a recap's failed=0, "0 errors", ansible's -v JSON
+// "failed": false, an ignored task's "...ignoring".
+const CLEAN = /\b(failed|errors?)=0\b|(?:^|[\s(])0 (errors?|failures?|failed)\b|"failed":\s*false|\.\.\.ignoring\s*$/i;
 export function failingLines(output, max = 6) {
-  const lines = String(output || '').split('\n').map((l) => l.trimEnd()).filter((l) => FAILING.test(l) && !/\b(failed|errors?)=0\b/.test(l));
+  const lines = String(output || '').split('\n').map((l) => l.trimEnd()).filter((l) => FAILING.test(l) && !CLEAN.test(l));
   return lines.slice(-max);
 }
 
@@ -129,7 +135,7 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
   const method = savedMethod(status);
   // As Config › Updates' Update now: only a notify-only method holds it
   // back. With none saved each binary updates the way it was installed.
-  const refusal = updateNowRefusal(method);
+  const refusal = updateNowRefusal(method, status);
   const running = methodText(method, status);
   const head = html`<h2 class="phone-update-title">Update tclaude</h2>`;
   if (error) return html`<div class="phone-update" data-update="error-read">${head}<p class="ui-error" role="alert">${accessText(error, node)}</p>
@@ -160,7 +166,7 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
       ${done && !failed && html`<p class="phone-update-ok">${rollback ? `✓ Rolled back to ${v.current || 'the previous version'}.`
         : changed ? `✓ Updated to ${v.current || install.version || 'the new version'}. agentd is back.` : `✓ Already up to date${v.current ? ` (${v.current})` : ''}: nothing changed.`}</p>`}
       ${done && failed && html`<p class="ui-error phone-update-fail" role="alert">✗ The update failed${install.rolled_back || install.state === 'rolled_back' ? ' and was rolled back' : ''}.</p>`}
-      <div class="phone-update-job"><${UpdateJobView} job=${install} unanswered=${unanswered} standing=${status.warnings || []} idp="phone-" output=${false} /></div>
+      <div class="phone-update-job"><${UpdateJobView} job=${install} unanswered=${unanswered} standing=${status.warnings || []} idp="phone-" output=${false} error=${!done} /></div>
       ${done && html`<${JobOutput} job=${install} failed=${failed} toast=${toast} />`}
       ${(done || unanswered) && html`<${Button} class="phone-btn" onClick=${close}>Close<//>`}
     </div>`;
@@ -169,7 +175,9 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
   const toDesktop = html`<${Button} class="phone-btn" data-update-desktop onClick=${() => { close(); openDesktop(); }}>Config › Updates on the desktop site ›<//>`;
   if (refusal) {
     return html`<div class="phone-update" data-update="unset">${head}${facts}
-      <p class="phone-update-note">The update method here only notifies: tclaude tells you about a new release and leaves installing it to you. Choose one that installs in Config › Updates on the desktop.</p>
+      <p class="phone-update-note" data-update-refusal>${method.id === 'manual'
+        ? 'The update method here only notifies: tclaude tells you about a new release and leaves installing it to you. Choose one that installs in Config › Updates on the desktop.'
+        : `${refusal}.`}</p>
       ${toDesktop}
     </div>`;
   }

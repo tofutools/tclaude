@@ -106,7 +106,8 @@ test('a failed run says so, with the job\'s error and output', async (t) => {
   await poll();
   assert.equal(view(), 'failed');
   assert.match(c.querySelector('.phone-update-fail').textContent, /The update failed/);
-  assert.match(c.querySelector('.phone-update-job').textContent, /checksum mismatch/);
+  assert.match(c.querySelector('[data-update-why]').textContent, /checksum mismatch/);
+  assert.doesNotMatch(c.querySelector('.phone-update-job').textContent, /checksum mismatch/, 'the error once, under Where it failed');
   assert.match(c.querySelector('.phone-update-log').textContent, /sha256 differs/);
 });
 
@@ -140,6 +141,11 @@ test('failingLines keeps the last few failure lines and skips clean recaps', asy
   const harness = await createPreactHarness(t);
   const { failingLines } = await harness.importDashboardModule('js/phone-update.js');
   assert.deepEqual(failingLines('ok\nhost : ok=3 failed=0\nError: boom\nall fine'), ['Error: boom']);
+  assert.deepEqual(failingLines('make: *** [all] exit status 127\nexit code 10\nexit status 0'), ['make: *** [all] exit status 127', 'exit code 10'], 'multi-digit exit codes');
+  assert.deepEqual(failingLines([
+    'found 0 errors', 'ok: [h] => {"changed": false, "failed": false}',
+    'fatal: [h]: FAILED! => {"msg": "probe"}...ignoring', 'fatal: [h]: FAILED! => {"msg": "real"}',
+  ].join('\n')), ['fatal: [h]: FAILED! => {"msg": "real"}'], 'none, false, ignored are not failures');
   assert.deepEqual(failingLines(Array.from({ length: 9 }, (_, i) => `error ${i}`).join('\n'), 3), ['error 6', 'error 7', 'error 8']);
   assert.deepEqual(failingLines(''), []);
 });
@@ -230,7 +236,7 @@ test('a notify-only method: no run, a way to Config › Updates on the desktop',
 });
 
 test('no method saved: Update is offered as the desktop\'s Update now is, "as installed", sending what it sends', async (t) => {
-  const binaries = [{ name: 'tclaude', install_method: 'release' }, { name: 'tclaude-agentd', install_method: 'release' }];
+  const binaries = [{ name: 'tclaude', version: 'v1.4.0', install_method: 'release' }, { name: 'tclaude-agentd', version: 'v1.4.0', install_method: 'release' }];
   const { c, view, button, tap, daemon } = await setup(t, { ...READY, chosen_method: '', binaries });
   assert.equal(view(), 'ready');
   assert.equal(c.querySelector('[data-update-method]').textContent, 'as installed: release download (no method saved)');
@@ -280,4 +286,26 @@ test('☰ More: Update tclaude opens the sheet; on a peer that does not share no
   assert.equal(update.canUpdateHere({ peer_view: { level: 'unrestricted' } }), true);
   assert.equal(update.canUpdateHere({ peer_view: { level: 'scoped', included: ['node.update'] } }), true);
   assert.equal(update.canUpdateHere({}), true, 'this node\'s own page');
+});
+
+test('no method saved but the node would refuse a binary as installed: no Update, the reason, the desktop link', async (t) => {
+  const binaries = [{ name: 'tclaude', version: 'v1.4.0', install_method: 'release', managed_by: 'homebrew' }];
+  const { c, view, button } = await setup(t, { ...READY, chosen_method: '', binaries });
+  assert.equal(view(), 'unset');
+  assert.match(c.querySelector('[data-update-refusal]').textContent, /tclaude is managed by Homebrew, so with no method saved it is not updated/);
+  assert.equal(button('Update…'), undefined);
+  assert.ok(c.querySelector('[data-update-desktop]'));
+});
+
+test('asInstalled follows the node: release re-downloads, any other build is go install, managed or unidentified refuses', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { asInstalled, installedText, updateNowRefusal } = await harness.importDashboardModule('js/node-update.js');
+  assert.deepEqual(asInstalled({ name: 't', version: 'v1', install_method: 'release' }), { how: 'release download' });
+  assert.deepEqual(asInstalled({ name: 't', version: 'v1', install_method: 'source' }), { how: 'go install build' });
+  assert.deepEqual(asInstalled({ name: 't', version: 'v1', install_method: 'go_install' }), { how: 'go install build' });
+  assert.match(asInstalled({ name: 't', version: '', install_method: 'unrecognized' }).refused, /not an identifiable tclaude binary/);
+  const mixed = { binaries: [{ name: 'tclaude', version: 'v1', install_method: 'release' }, { name: 'tclaude-agentd', version: 'v1', install_method: 'source' }] };
+  assert.equal(installedText(mixed), 'release download + go install build');
+  assert.equal(updateNowRefusal({ id: '' }, mixed), '');
+  assert.equal(updateNowRefusal({ id: 'release' }, { binaries: [{ name: 't', managed_by: 'homebrew' }] }), '', 'a saved method is the node\'s to judge');
 });
