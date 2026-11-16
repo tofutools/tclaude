@@ -21,6 +21,7 @@ import { onPeerPage } from './node-api.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { Avatar, Card, IconButton, Section } from './phone-ui.js';
 import { terminalShellState } from './terminal-shell-state.js';
+import { openShellResource } from './terminals-tab.js';
 import { writeClipboard } from './insecure-origin.js';
 
 const html = htm.bind(h);
@@ -141,9 +142,15 @@ export function NowShells({ snapshot, notify = () => {}, panes = terminalShellSt
   const shells = nowShells(listed(panes, snapshot));
   if (!shells.length) return null;
   const toggle = () => { storeShellsOpen(!unfolded, storage); setUnfolded(!unfolded); };
-  const onOpen = (item) => open(item, { snapshot, notify });
-  const ctx = { ...defaultRowContext(), open: onOpen, notify };
+  // A shell already open as a pane is brought forward by opening it again
+  // (openShellResource finds its pane): Now has no strip to activate.
+  const attach = (item) => open(item, { snapshot, notify,
+    actions: { activatePane: () => (item.resource ? openShellResource(item.resource, item.title) : null) } });
+  const ctx = { ...defaultRowContext(), open: attach, notify };
   const onMenu = (item) => openPhoneSheet({ label: item.title, Body: ShellMenu, props: { item, ctx, notify } });
+  // A session the dashboard cannot attach (superseded, locked: it has no
+  // key) opens its menu instead, where it can be killed, as on the desktop.
+  const onOpen = (item) => (item.row && !item.row.key ? onMenu(item) : attach(item));
   const groups = onPeerPage() ? [] : shellGroups(snapshot?.value);
   const add = groups.length === 0 ? null : () => (groups.length === 1
     ? start(groups[0])

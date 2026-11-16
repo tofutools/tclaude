@@ -103,3 +103,23 @@ test('a row\'s ⋯ menu: Attach, copy the attach command, Kill session… last',
   await harness.act(() => m.container.querySelector('[data-shell-action="open"]').click());
   assert.deepEqual(ran, [['open', 'shell:webshop']]);
 });
+
+test('a shell already open as a pane is brought forward; an unattachable one opens its menu', async (t) => {
+  const openTab = { ...groupShell, view: 'open-tab', paneKey: 'groupterm:webshop' };
+  const locked = { key: 'bg::locked', kind: 'terminal', title: 'locked shell', view: 'background', bucket: 'background', status: null,
+    row: { kind: 'group_shell', tmux_session: 'locked' } };
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/phone-now-shells.js');
+  const { phoneSheet } = await harness.importDashboardModule('js/phone-sheet.js');
+  const calls = [];
+  const m = await harness.mount(harness.html`<${mod.NowShells} snapshot=${{ value: { groups: [] } }} panes=${[]}
+    storage=${memoryStorage({ 'tclaude.phone.now.shells.open': '1' })}
+    listed=${() => [{ id: 'g1', name: 'webshop', items: [openTab, locked] }]}
+    open=${(item, ctx) => calls.push([item.key, typeof ctx.actions?.activatePane])} />`);
+  const rows = m.container.querySelectorAll('[data-shell-row] .phone-row');
+  await harness.act(() => rows[0].click());
+  assert.deepEqual(calls, [['shell:webshop', 'function']], 'an open pane has a way to be brought forward');
+  await harness.act(() => rows[1].click());
+  assert.equal(calls.length, 1, 'no attach for a session without a key');
+  assert.equal(phoneSheet.value?.props?.item?.key, 'bg::locked', 'its menu opens instead');
+});
