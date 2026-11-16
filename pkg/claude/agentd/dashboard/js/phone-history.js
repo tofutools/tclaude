@@ -112,16 +112,31 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
         // Back is a close the operator asked for: a sheet's guard may hold
         // it (a draft to ask about, a send in flight).
         if (layerDepth() > depthWanted && phoneSheet.peek()) {
-          requestClosePhoneSheet();
-          held = !!phoneSheet.peek();
+          // Until it is known to be held, the sheet is closing: the address
+          // has left it. Were it counted, the router would write a held
+          // sheet onto the entry Back landed on (the page's), so the sheet
+          // would have no step of its own and the next Back would move the
+          // page behind it.
+          closing += 1;
+          try {
+            requestClosePhoneSheet();
+            held = !!phoneSheet.peek();
+          } finally {
+            if (!held) closing -= 1;
+          }
         }
         if (!held && layerDepth() > depthWanted) phonePage.peek()?.onBack?.();
       } finally {
         restoring = false;
       }
-      // A held sheet stays on screen, so it takes its entry back, once this
-      // restore is done: the next Back asks again.
-      if (held) setTimeout(() => announceOverlay({ doc }), 0);
+      // A held sheet stays on screen, so it takes its entry back once this
+      // restore is done. It stops counting as closing as soon as the router
+      // has corrected the entry Back landed on (synchronously, after this
+      // restore), so a further Back finds it up and asks it again.
+      if (held) {
+        queueMicrotask(() => { closing -= 1; });
+        setTimeout(() => announceOverlay({ doc }), 0);
+      }
     },
   });
   const unView = registerOverlayRoute('own', {
