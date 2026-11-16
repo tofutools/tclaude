@@ -92,6 +92,8 @@ func TestProcessSteer_OverseerParksAStepThatIsOutAndTheOperatorRetriesIt(t *test
 	agentd.WaitForProcessDispatchForTest()
 	inbox := processInbox(t, devConv)
 	assert.Contains(t, inbox[len(inbox)-1].Body, "attempt 2", "the step is handed out again")
+	assert.Contains(t, inbox[len(inbox)-1].Body, "retried with this note:\n\nAPI restored",
+		"the operator's answer to the park reason reaches the performer with the retried step")
 }
 
 // Scenario: the operator gives a run up while its first step is out. The

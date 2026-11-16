@@ -188,7 +188,8 @@ exports by kind. Each has a switch to turn it on or off, and a cron job has ▶ 
 run it now. Tap one for its details and its recent runs or firings. **Runs**
 lists process runs from every group: waiting on you, running and done. Tap one
 for its steps, with who did each finished step and when. Its gate is a card on
-top: **Approve** in one tap, or **Request changes** with a note. **Pause** in the
+top: **Approve** in one tap, or **Request changes** with a note. A parked step
+shows its reason with **Retry** and **Skip this step**. **Pause** in the
 top bar pauses the run. Creating and editing automations and process templates
 are desktop only.
 
