@@ -523,3 +523,30 @@ test('screenRows: a line cut by the screen\'s edges comes whole, so its tail is 
   buffer[3] = line('wrote /tmp/notes.md'.padEnd(20), false);
   assert.deepEqual(m.screenLines(interactions.screenRows(term)).at(-1).text, 'wrote /tmp/notes.md');
 });
+
+test('an agent\'s directory shell is titled a shell, with the directory under it, and wears no agent state', async (t) => {
+  const row = {
+    key: AGENT, agent: AGENT, name: 'checkout-ui', group: 'webshop', variant: 'asking', online: true,
+    member: { current_dir: '/home/dev/git/webshop-wt', startup_dir: '/home/dev/git/webshop' },
+  };
+  const ctx = await setup(t, { agentRow: (id) => (id === AGENT ? { row, group: { key: 'g:webshop', name: 'webshop' } } : null) });
+  const { harness, tab, host } = ctx;
+  await harness.act(() => tab.openWebTermPane(AGENT, 'shell · checkout-ui', 'worktree', { group: 'webshop' }));
+  await harness.act(() => {});
+  const title = host.querySelector('.phone-term-bar .phone-bar-title');
+  assert.equal(title.firstChild.textContent, '›_ Shell · checkout-ui\'s dir');
+  assert.equal(title.querySelector('small').textContent, '/home/dev/git/webshop-wt');
+  assert.equal(host.querySelector('.phone-term-bar .phone-pill'), null, 'no agent state on a shell');
+  assert.ok(host.querySelector('.phone-term-bar .phone-bar-live'), 'the connection dot, as any shell');
+  assert.equal(host.querySelector('.phone-term').getAttribute('aria-label'), '›_ Shell · checkout-ui\'s dir');
+
+  // The launch directory, and the current one, whose path the daemon keeps.
+  const { dirShellTitle } = await harness.importDashboardModule('js/phone-terminal-island.js');
+  const seed = (which) => ({ ws: `/api/term-ws/${AGENT}?which=${which}`, key: `term:${AGENT}:${which}:webshop`, agent: AGENT, label: 'shell · checkout-ui' });
+  assert.deepEqual(dirShellTitle(seed('start'), row), { label: '›_ Shell · checkout-ui\'s dir', sub: '/home/dev/git/webshop' });
+  assert.deepEqual(dirShellTitle(seed('current'), row), { label: '›_ Shell · checkout-ui\'s dir', sub: 'where it last edited' });
+  assert.deepEqual(dirShellTitle(seed('worktree'), null), { label: '›_ Shell · checkout-ui\'s dir', sub: 'its worktree' }, 'before the snapshot: the label names it');
+  // Not a directory shell: the agent's own terminal, a group shell.
+  assert.equal(dirShellTitle({ ws: `/api/open-window-ws/${AGENT}`, agent: AGENT }, row), null);
+  assert.equal(dirShellTitle({ ws: '/api/group-term-ws/webshop' }, null), null);
+});

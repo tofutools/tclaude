@@ -255,6 +255,25 @@ function Title({ label, group }) {
   return html`<h1 class="phone-bar-title">${label || 'Terminal'}${group && html`<small>${group}</small>`}</h1>`;
 }
 
+// DIR_SHELL_WHERE says which of an agent's directories its shell is in, when
+// the path itself is not known here (the current one is the daemon's).
+const DIR_SHELL_WHERE = { worktree: 'its worktree', start: 'its launch directory', current: 'where it last edited' };
+
+// dirShellTitle is the bar of an agent's directory shell (a term-ws pane,
+// key term:<agent>:<which>:<group>): it is a shell of the operator's own in
+// the agent's directory, not the agent, so it is named a shell, with the
+// directory under it, and carries no agent state. null for any other
+// terminal.
+export function dirShellTitle(seed, row) {
+  if (!seed?.agent || !String(seed.ws || '').startsWith('/api/term-ws/')) return null;
+  const which = String(seed.key || '').split(':')[2] || 'current';
+  const name = row?.name || String(seed.label || '').replace(/^shell · /, '') || 'the agent';
+  const member = row?.member || {};
+  const path = which === 'worktree' ? member.current_dir || member.startup_dir
+    : which === 'start' ? member.startup_dir || member.state?.cwd : '';
+  return { label: `›_ Shell · ${name}'s dir`, sub: path || DIR_SHELL_WHERE[which] || '' };
+}
+
 export function PhoneTerminal({ seed, deps, onClose }) {
   const documentRef = deps.documentRef || globalThis.document;
   const visible = useDocumentVisible(documentRef);
@@ -357,13 +376,16 @@ export function PhoneTerminal({ seed, deps, onClose }) {
       : waiting?.text || (status === 'connected' || status === 'connecting' ? '' : status);
   const pct = zoomPercent(font.size);
   const name = label || 'the agent';
+  const dirShell = dirShellTitle(seed, row);
 
   const style = viewport ? `height:${viewport.height}px;top:${viewport.top}px` : undefined;
-  return html`<div class="phone-term" role="dialog" aria-modal="true" aria-label=${label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
+  return html`<div class="phone-term" role="dialog" aria-modal="true" aria-label=${dirShell ? dirShell.label : label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
     <header class="phone-term-bar">
       <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}>‹</button>
-      <${Title} label=${label} group=${row?.group || ''} />
-      ${row
+      ${dirShell
+        ? html`<h1 class="phone-bar-title phone-term-dir-title"><span>${dirShell.label}</span>${dirShell.sub && html`<small><bdi>${dirShell.sub}</bdi></small>`}</h1>`
+        : html`<${Title} label=${label} group=${row?.group || ''} />`}
+      ${row && !dirShell
         ? html`<${StatePill} state=${row.variant} title=${live ? undefined : `Terminal: ${status}`}>${row.waking ? 'waking' : VARIANT_LABELS[row.variant]}<//>`
         : html`<span class=${`phone-bar-live ${live ? 'connected' : status === 'disconnected' ? 'disconnected' : ''}`} role="status"
           aria-label=${live ? 'Connected' : `Terminal: ${status}`} title=${status}></span>`}

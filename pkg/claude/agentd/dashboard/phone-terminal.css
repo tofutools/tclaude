@@ -14,6 +14,10 @@
   border-bottom: 1px solid var(--ui-line);
 }
 :root[data-layout="phone"] .phone-term-bar .phone-bar-title { margin-left: 2px; }
+/* An agent's directory shell: "›_ Shell · <name>'s dir" over its path. */
+:root[data-layout="phone"] .phone-term-dir-title { display: flex; flex-direction: column; align-items: stretch; text-align: left; line-height: 1.2; }
+:root[data-layout="phone"] .phone-term-dir-title > * { overflow: hidden; text-overflow: ellipsis; }
+:root[data-layout="phone"] .phone-term-dir-title small { margin-left: 0; font-size: 12px; direction: rtl; text-align: left; }
 :root[data-layout="phone"] .phone-term-bar .phone-pill { flex: none; }
 :root[data-layout="phone"] .phone-term-body { flex: 1; min-height: 0; position: relative; }
 /* touch-action: none, so a pinch reaches the terminal (its text size) and
