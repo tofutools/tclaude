@@ -519,7 +519,7 @@ function TerminalPane({
         `}
       </div>
       ${stewardDown ? html`<${StewardDownNotice} pane=${pane} actions=${actions} />` : null}
-      ${!pane.seed.remote && pane.seed.agent ? html`<${PaneProcessOverlay} agentId=${pane.seed.agent}
+      ${!pane.seed.remote && pane.seed.agent && !isAgentDirShell(pane) ? html`<${PaneProcessOverlay} agentId=${pane.seed.agent}
         snapshot=${processSnapshot} onComposeMessage=${onComposeMessage
           ? (seed) => onComposeMessage({ ...seed, restoreFocus: () => actions.activatePane(pane.key) })
           : null} />` : null}

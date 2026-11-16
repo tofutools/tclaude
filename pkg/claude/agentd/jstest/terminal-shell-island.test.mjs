@@ -1089,5 +1089,10 @@ test('a shell in an agent\'s directory offers no ✉ Message: it is not the agen
     await Promise.resolve();
   });
   assert.equal([...host.querySelectorAll('button')].some((b) => b.textContent.includes('✉ Message')), true);
+  // The page's Ctrl+M is live here, so its silence on the shell above meant something.
+  const again = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(again, { key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true } });
+  harness.document.dispatchEvent(again);
+  assert.equal(composed.length, 1, 'the agent\'s own terminal composes');
   cleanup();
 });
